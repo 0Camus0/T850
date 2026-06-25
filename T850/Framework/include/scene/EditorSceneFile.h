@@ -125,9 +125,11 @@ struct SceneGodRaysVolumeDesc {
   std::string name = "God Rays Volume";
   Vec3f position = {0.0f, 50.0f, 0.0f};
   Vec3f half_extents = {65.0f, 65.0f, 65.0f};
-  bool enabled = true;
+  int light_camera = 0;
+  bool authored = false;
+  bool enabled = false;
   bool clip_enabled = false;
-  bool visible = true;
+  bool visible = false;
   bool frozen = false;
   bool show_wire = true;
 };
@@ -238,6 +240,21 @@ struct SceneNavMeshLinkDesc {
   bool show_wire = true;
 };
 
+struct SceneNavMeshVolumeDesc {
+  std::string name = "Nav Volume";
+  std::string type = "exclude"; // include_bounds, exclude, area_cost, link_include, link_exclude
+  std::string shape = "box";
+  Vec3f position = {0.0f, 0.0f, 0.0f};
+  Vec3f rotation = {0.0f, 0.0f, 0.0f};
+  Vec3f half_extents = {8.0f, 4.0f, 8.0f};
+  std::string area = "walkable";
+  float cost = 1.0f;
+  bool enabled = true;
+  bool visible = true;
+  bool frozen = false;
+  bool show_wire = true;
+};
+
 struct SceneNavigationMeshDesc {
   std::string name = "NavMesh";
   bool enabled = false;
@@ -246,7 +263,10 @@ struct SceneNavigationMeshDesc {
   bool show_wire = true;
   float debug_offset = 0.01f;
   int debug_shape_mode = 0;
+  std::string runtime_mode = "build_cached"; // build_cached, build, baked_asset
+  std::string baked_asset;
   SceneNavMeshBuildSettingsDesc build_settings;
+  std::vector<SceneNavMeshVolumeDesc> volumes;
   std::vector<SceneNavMeshLinkDesc> authored_links;
 };
 

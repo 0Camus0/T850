@@ -118,22 +118,8 @@ bool EditorMesh::Load(const std::string& path) {
   }
 
   unsigned numVerts = (unsigned)(verts.size() / 4);
-  m_vb = EditorLineRenderer::CreatePositionVB(verts.data(), numVerts);
-
-  // Use 16-bit IB when possible (saves memory), 32-bit for large meshes
-  if (numVerts <= 65535) {
-    std::vector<unsigned short> idx16(idx.size());
-    for (size_t i = 0; i < idx.size(); i++)
-      idx16[i] = (unsigned short)idx[i];
-    m_ib = EditorLineRenderer::CreateIndexBuffer16(idx16.data(), (unsigned)idx16.size());
-    m_use32BitIB = false;
-  } else {
-    m_ib = EditorLineRenderer::CreateIndexBuffer32(idx.data(), (unsigned)idx.size());
-    m_use32BitIB = true;
-  }
-
-  m_indexCount = (unsigned)idx.size();
-  if (!m_vb || !m_ib) {
+  if (!m_geometry.CreatePositionBuffer(verts.data(), numVerts) ||
+      !m_geometry.CreateLineIndexBuffer(idx, numVerts)) {
     T8_LOG_ERROR("[T8ditor] EditorMesh: GPU buffer creation failed for '%s'", path.c_str());
     Destroy();
     return false;
@@ -149,7 +135,7 @@ bool EditorMesh::Load(const std::string& path) {
   );
 
   T8_LOG_INFO("[T8ditor] EditorMesh: loaded '%s' (%u verts, %u line indices)",
-              path.c_str(), (unsigned)(verts.size() / 4), m_indexCount);
+              path.c_str(), (unsigned)(verts.size() / 4), m_geometry.GetIndexCount());
   return true;
 }
 
@@ -210,21 +196,8 @@ bool EditorMesh::LoadFromTriangles(const std::string& name,
   }
 
   const unsigned numVerts = static_cast<unsigned>(verts.size() / 4u);
-  m_vb = EditorLineRenderer::CreatePositionVB(verts.data(), numVerts);
-  if (numVerts <= 65535) {
-    std::vector<unsigned short> idx16(idx.size());
-    for (std::size_t i = 0; i < idx.size(); ++i) {
-      idx16[i] = static_cast<unsigned short>(idx[i]);
-    }
-    m_ib = EditorLineRenderer::CreateIndexBuffer16(idx16.data(), static_cast<unsigned>(idx16.size()));
-    m_use32BitIB = false;
-  } else {
-    m_ib = EditorLineRenderer::CreateIndexBuffer32(idx.data(), static_cast<unsigned>(idx.size()));
-    m_use32BitIB = true;
-  }
-
-  m_indexCount = static_cast<unsigned>(idx.size());
-  if (!m_vb || !m_ib) {
+  if (!m_geometry.CreatePositionBuffer(verts.data(), numVerts) ||
+      !m_geometry.CreateLineIndexBuffer(idx, numVerts)) {
     T8_LOG_ERROR("[T8ditor] EditorMesh: GPU buffer creation failed for generated mesh '%s'", name.c_str());
     Destroy();
     return false;
@@ -237,7 +210,7 @@ bool EditorMesh::LoadFromTriangles(const std::string& name,
       XVECTOR3(bbMin[0], bbMin[1], bbMin[2]),
       XVECTOR3(bbMax[0], bbMax[1], bbMax[2]));
   T8_LOG_INFO("[T8ditor] EditorMesh: generated '%s' (%zu verts, %u line indices)",
-              name.c_str(), vertices.size(), m_indexCount);
+              name.c_str(), vertices.size(), m_geometry.GetIndexCount());
   return true;
 }
 
@@ -259,9 +232,7 @@ bool EditorMesh::CloneFrom(const EditorMesh& source) {
 }
 
 void EditorMesh::Destroy() {
-  m_vb = nullptr;
-  m_ib = nullptr;
-  m_indexCount = 0;
+  m_geometry.Destroy();
   m_path.clear();
   m_pickVertices.clear();
   m_pickIndices.clear();
@@ -320,8 +291,14 @@ bool EditorMesh::RaycastSurface(const t850::Ray& ray, float& tOut) const {
 void EditorMesh::Draw(EditorLineRenderer& lines, const XMATRIX44& vp) {
   if (!IsLoaded() || !lines.IsReady()) return;
   XMATRIX44 world = BuildWorld();
-  auto ibFmt = m_use32BitIB ? t850::IndexBufferFormat::R32 : t850::IndexBufferFormat::R16;
-  lines.DrawLines(world, vp, WireColor, m_vb, m_ib, m_indexCount, /*stride=*/16, ibFmt);
+  lines.DrawLines(world,
+                  vp,
+                  WireColor,
+                  m_geometry.GetVertexBuffer(),
+                  m_geometry.GetIndexBuffer(),
+                  m_geometry.GetIndexCount(),
+                  /*stride=*/16,
+                  m_geometry.GetIndexFormat());
 }
 
 } // namespace t8ditor

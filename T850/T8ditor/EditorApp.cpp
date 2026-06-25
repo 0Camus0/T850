@@ -42,6 +42,7 @@
 #include <Descriptors.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cctype>
@@ -143,6 +144,8 @@ struct EditorUndoState {
   int selectionType = 0;
   int selectedIdx = -1;
   int selectedSplinePoint = -1;
+  int selectedNavVolume = -1;
+  int selectedNavLink = -1;
   int activeCameraIdx = -1;
 };
 
@@ -193,6 +196,8 @@ namespace {
   auto& g_lightCameraGizmoCameras = g_world.lightCameraGizmoCameras;
   auto& g_godRaysVolume = g_world.godRaysVolume;
   auto& g_godRaysVolumeGizmo = g_world.godRaysVolumeGizmo;
+  std::vector<GizmoCache> g_navMeshVolumeGizmos;
+  std::array<GizmoCache, 5> g_navMeshClassificationGizmos;
   auto& g_splines = g_world.splines;
   auto& g_splineGizmos = g_world.splineGizmos;
   auto& g_selectedSplinePoint = g_world.selectedSplinePoint;
@@ -228,6 +233,57 @@ namespace {
   t850::RenderGraph   g_renderGraph;
   t850::PrimitiveInst g_quads[8];
   bool                g_deferredReady = false;
+
+  bool RenderGraphSupportsGodRays(const t850::RenderGraph& graph) {
+    const t850::RenderGraphDesc& desc = graph.GetDescriptor();
+    for (const t850::RenderPassDesc& pass : desc.passes) {
+      for (const t850::DrawCmd& draw : pass.draws) {
+        if (draw.signature == "LIGHT_RAY_MARCHING" || draw.signature == "LIGHT_ADD") {
+          return true;
+        }
+        for (const std::string& extra : draw.extra_signatures) {
+          if (extra == "LIGHT_RAY_MARCHING" || extra == "LIGHT_ADD") {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  bool GodRaysVolumeIsAuthored(const t850::scene::SceneGodRaysVolumeDesc& volume) {
+    return volume.authored || volume.enabled || volume.visible || volume.clip_enabled;
+  }
+
+  bool IsValidGodRaysLightCamera(int index) {
+    return index >= 0 &&
+           index < static_cast<int>(g_lightCameras.size()) &&
+           g_lightCameras[static_cast<std::size_t>(index)].enabled;
+  }
+
+  int FirstEnabledGodRaysLightCamera() {
+    for (int i = 0; i < static_cast<int>(g_lightCameras.size()); ++i) {
+      if (g_lightCameras[static_cast<std::size_t>(i)].enabled) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  void ClampGodRaysVolumeLightCamera(t850::scene::SceneGodRaysVolumeDesc& volume) {
+    if (g_lightCameras.empty()) {
+      volume.light_camera = -1;
+      return;
+    }
+    volume.light_camera = std::clamp(volume.light_camera, 0, static_cast<int>(g_lightCameras.size()) - 1);
+  }
+
+  bool GodRaysVolumeCanBeActive(const t850::scene::SceneGodRaysVolumeDesc& volume,
+                                const t850::RenderGraph& graph) {
+    return GodRaysVolumeIsAuthored(volume) &&
+           RenderGraphSupportsGodRays(graph) &&
+           IsValidGodRaysLightCamera(volume.light_camera);
+  }
   XMATRIX44           g_quadVP;  // persistent identity matrix for screen-space quads
 
   // RT debug: which RT attachment to display (-1 = backbuffer)
@@ -243,6 +299,7 @@ namespace {
   // Pending scene load — deferred to execute before next frame's BeginFrame
   std::string g_pendingLoadPath;
   std::string g_pendingDeleteAfterLoadPath;
+  std::string g_loadedScenePath;
   auto& g_loadedSceneFile = g_world.loadedSceneFile;
   auto& g_hasLoadedSceneFile = g_world.hasLoadedSceneFile;
   auto& g_unloadedSceneObjects = g_world.unloadedSceneObjects;
@@ -320,6 +377,12 @@ namespace {
       ReleaseGizmoCache(cache);
     }
     caches.clear();
+  }
+
+  void ReleaseNavMeshClassificationGizmos() {
+    for (GizmoCache& cache : g_navMeshClassificationGizmos) {
+      ReleaseGizmoCache(cache);
+    }
   }
 
   void ReleaseCameraGizmoCaches(std::vector<SceneCamera>& cameras) {
@@ -422,6 +485,19 @@ static void AdjustActiveLightCameraAfterErase(int erasedIndex) {
     g_activeCameraIdx = -1;
   } else if (activeLightCameraIndex > erasedIndex) {
     g_activeCameraIdx = EncodeActiveLightCameraIndex(activeLightCameraIndex - 1);
+  }
+}
+
+static void AdjustGodRaysLightCameraAfterErase(int erasedIndex) {
+  if (!GodRaysVolumeIsAuthored(g_godRaysVolume)) {
+    return;
+  }
+  if (g_godRaysVolume.light_camera == erasedIndex) {
+    g_godRaysVolume.enabled = false;
+    g_godRaysVolume.visible = false;
+    g_godRaysVolume.light_camera = -1;
+  } else if (g_godRaysVolume.light_camera > erasedIndex) {
+    --g_godRaysVolume.light_camera;
   }
 }
 
@@ -2289,6 +2365,54 @@ static bool ShouldDrawPhysicsDebug() {
   return false;
 }
 
+static XVECTOR3 RotateInverseEulerXYZ(const XVECTOR3& point, const t850::scene::Vec3f& rotation) {
+  XVECTOR3 p = point;
+  auto rotateZ = [](XVECTOR3 v, float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return XVECTOR3(v.x * c - v.y * s, v.x * s + v.y * c, v.z, 0.0f);
+  };
+  auto rotateY = [](XVECTOR3 v, float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return XVECTOR3(v.x * c + v.z * s, v.y, -v.x * s + v.z * c, 0.0f);
+  };
+  auto rotateX = [](XVECTOR3 v, float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return XVECTOR3(v.x, v.y * c - v.z * s, v.y * s + v.z * c, 0.0f);
+  };
+  p = rotateZ(p, -rotation.z);
+  p = rotateY(p, -rotation.y);
+  p = rotateX(p, -rotation.x);
+  return p;
+}
+
+static bool NavVolumeContainsPoint(const t850::scene::SceneNavMeshVolumeDesc& volume, const XVECTOR3& point) {
+  if (!volume.enabled || volume.shape != "box") {
+    return false;
+  }
+  XVECTOR3 local(point.x - volume.position.x,
+                 point.y - volume.position.y,
+                 point.z - volume.position.z,
+                 0.0f);
+  local = RotateInverseEulerXYZ(local, volume.rotation);
+  return std::abs(local.x) <= (std::max)(0.001f, std::abs(volume.half_extents.x)) &&
+         std::abs(local.y) <= (std::max)(0.001f, std::abs(volume.half_extents.y)) &&
+         std::abs(local.z) <= (std::max)(0.001f, std::abs(volume.half_extents.z));
+}
+
+static std::string SuggestedNavMeshBakedAssetPath() {
+  std::string baseName = "EditorNavMesh";
+  if (!g_loadedScenePath.empty()) {
+    baseName = std::filesystem::path(g_loadedScenePath).stem().string();
+  }
+  if (baseName.empty()) {
+    baseName = "EditorNavMesh";
+  }
+  return "Navigation/" + baseName + ".t8nav";
+}
+
 void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorNavMesh.Clear();
   m_editorNavMeshDebugRenderer.ReleaseCachedGeometry();
@@ -2302,12 +2426,333 @@ void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorNavMeshDebugShapeMode = 0;
   m_editorNavMeshLastBuildMs = 0.0f;
   m_editorNavMeshDirty = false;
+  ReleaseGizmoCaches(g_navMeshVolumeGizmos);
+  m_editorNavMeshVolumes.clear();
   m_editorNavMeshLinks.clear();
+  m_editorNavMeshRuntimeMode = "build_cached";
+  m_editorNavMeshBakedAsset.clear();
   m_editorNavMeshNodes.clear();
+  m_editorSelectedNavVolume = -1;
   m_editorSelectedNavLink = -1;
+  m_editorSelectedNavTriangle = -1;
+  m_editorSelectedNavTriangles.clear();
   m_editorNavLinkPickMode = 0;
+  InvalidateEditorNavMeshClassification();
   if (!keepSettings) {
     m_editorNavMeshBuildSettings = DefaultEditorNavMeshBuildSettings();
+  }
+}
+
+void EditorApp::MarkEditorNavMeshDirty(const std::string& status) {
+  m_editorNavMeshDirty = true;
+  m_editorNavMeshAuthored = true;
+  InvalidateEditorNavMeshClassification();
+  m_editorNavMeshStatus = status.empty()
+      ? "NavMesh authoring changed. Click Re-generate to update the preview."
+      : status;
+}
+
+void EditorApp::InvalidateEditorNavMeshClassification() {
+  m_editorNavMeshClassificationReady = false;
+  m_editorNavMeshClassificationDirty = true;
+  m_editorNavMeshClassification = t850::navigation::NavMeshClassificationResult{};
+  m_editorSelectedNavTriangle = -1;
+  m_editorSelectedNavTriangles.clear();
+  ReleaseNavMeshClassificationGizmos();
+}
+
+bool EditorApp::DeleteSelectedNavAuthoringChild() {
+  if (m_editorSelectedNavVolume >= 0 &&
+      m_editorSelectedNavVolume < static_cast<int>(m_editorNavMeshVolumes.size())) {
+    if (m_editorSelectedNavVolume < static_cast<int>(g_navMeshVolumeGizmos.size())) {
+      ReleaseGizmoCache(g_navMeshVolumeGizmos[static_cast<std::size_t>(m_editorSelectedNavVolume)]);
+      g_navMeshVolumeGizmos.erase(g_navMeshVolumeGizmos.begin() + m_editorSelectedNavVolume);
+    }
+    m_editorNavMeshVolumes.erase(m_editorNavMeshVolumes.begin() + m_editorSelectedNavVolume);
+    m_editorSelectedNavVolume = m_editorNavMeshVolumes.empty()
+        ? -1
+        : std::clamp(m_editorSelectedNavVolume, 0, static_cast<int>(m_editorNavMeshVolumes.size()) - 1);
+    m_editorSelectedNavLink = -1;
+    MarkEditorNavMeshDirty("NavMesh volume deleted. Click Re-generate.");
+    return true;
+  }
+  if (m_editorSelectedNavLink >= 0 &&
+      m_editorSelectedNavLink < static_cast<int>(m_editorNavMeshLinks.size())) {
+    m_editorNavMeshLinks.erase(m_editorNavMeshLinks.begin() + m_editorSelectedNavLink);
+    m_editorSelectedNavLink = m_editorNavMeshLinks.empty()
+        ? -1
+        : std::clamp(m_editorSelectedNavLink, 0, static_cast<int>(m_editorNavMeshLinks.size()) - 1);
+    m_editorSelectedNavVolume = -1;
+    m_editorSelectedNavTriangle = -1;
+    MarkEditorNavMeshDirty("Authored link deleted. Click Re-generate.");
+    return true;
+  }
+  return false;
+}
+
+bool EditorApp::UpdateEditorNavMeshClassification() {
+  if (!m_editorNavMeshClassificationDirty) {
+    return m_editorNavMeshClassificationReady;
+  }
+  m_editorNavMeshClassificationDirty = false;
+  m_editorNavMeshClassificationReady = false;
+  m_editorNavMeshClassification = t850::navigation::NavMeshClassificationResult{};
+  ReleaseNavMeshClassificationGizmos();
+
+  if (g_objects.empty()) {
+    return false;
+  }
+
+  SyncSceneObjectTransforms();
+  std::vector<t850::navigation::NavSourceInstance> navSources;
+  navSources.reserve(g_objects.size());
+  for (const SceneObject& object : g_objects) {
+    if (object.transient) {
+      continue;
+    }
+    t850::navigation::NavSourceInstance source;
+    source.entityId = object.litInst.GetEntityId();
+    source.instance = &object.litInst;
+    source.worldTransform = object.litInst.Final;
+    source.debugName = object.name;
+    const bool hasExplicitNavigation = object.navigation.has_value();
+    const t850::scene::SceneObjectNavigationDesc navigation =
+        object.navigation.value_or(t850::scene::SceneObjectNavigationDesc{});
+    source.visible = object.visible || (hasExplicitNavigation && navigation.include);
+    source.includeInNavigation = navigation.include;
+    source.navigationStatic = navigation.static_object;
+    source.navigationWalkable = navigation.walkable;
+    source.area = navigation.walkable ? 0 : -1;
+    navSources.push_back(source);
+  }
+
+  t850::navigation::NavMeshGeometry geometry;
+  t850::navigation::NavSourceBuildStats sourceStats;
+  std::string error;
+  if (!t850::navigation::BuildGeometryFromNavSources(navSources, geometry, &sourceStats, &error)) {
+    m_editorNavMeshStatus = "Source preview skipped: " + error;
+    return false;
+  }
+  for (const t850::scene::SceneNavMeshVolumeDesc& volumeDesc : m_editorNavMeshVolumes) {
+    t850::navigation::NavMeshVolumeModifier modifier = NavVolumeModifierFromScene(volumeDesc);
+    if (!modifier.enabled) {
+      continue;
+    }
+    geometry.volumeModifiers.push_back(modifier);
+    if (modifier.mode == t850::navigation::NavMeshModifierMode::Area) {
+      geometry.areaCosts.push_back({modifier.area, modifier.cost});
+    }
+  }
+
+  if (!t850::navigation::ClassifyNavMeshTriangles(
+          geometry,
+          m_editorNavMeshBuildSettings,
+          m_editorNavMeshClassification,
+          &error)) {
+    m_editorNavMeshStatus = "Source preview failed: " + error;
+    return false;
+  }
+  m_editorNavMeshClassificationReady = true;
+  return true;
+}
+
+bool EditorApp::PickEditorNavMeshTriangleFromMouse(int mouseX, int mouseY, int& outTriangleIndex) const {
+  outTriangleIndex = -1;
+  if (!m_editorNavMeshClassificationReady || !m_sceneProps.GetPrimaryCamera()) {
+    return false;
+  }
+  const Camera& cam = *m_sceneProps.GetPrimaryCamera();
+  const t850::Ray ray = BuildEditorCameraRay(cam,
+                                             static_cast<float>(mouseX),
+                                             static_cast<float>(mouseY),
+                                             m_lastW,
+                                             m_lastH);
+  float bestT = FLT_MAX;
+  for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+    float t = 0.0f;
+    float u = 0.0f;
+    float v = 0.0f;
+    if (t850::RayIntersectsTriangle(ray, tri.vertices[0], tri.vertices[1], tri.vertices[2], t, u, v) && t < bestT) {
+      bestT = t;
+      outTriangleIndex = tri.triangleIndex;
+    }
+  }
+  return outTriangleIndex >= 0;
+}
+
+bool EditorApp::CreateNavVolumeFromSelectedTriangle(const char* type) {
+  if (m_editorSelectedNavTriangle >= 0 && m_editorSelectedNavTriangles.empty()) {
+    m_editorSelectedNavTriangles.insert(m_editorSelectedNavTriangle);
+  }
+  return CreateNavVolumeFromSelectedTriangles(type);
+}
+
+bool EditorApp::CreateNavVolumeFromSelectedTriangles(const char* type) {
+  if (m_editorSelectedNavTriangles.empty()) {
+    return false;
+  }
+  if (!UpdateEditorNavMeshClassification()) {
+    return false;
+  }
+
+  t850::AABB bounds;
+  int usedTriangles = 0;
+  for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+    if (m_editorSelectedNavTriangles.count(tri.triangleIndex) == 0) {
+      continue;
+    }
+    for (const XVECTOR3& p : tri.vertices) {
+      bounds.ExpandToInclude(p);
+    }
+    ++usedTriangles;
+  }
+  if (usedTriangles <= 0 || !bounds.IsValid()) {
+    return false;
+  }
+  const XVECTOR3 center = bounds.Center();
+  const XVECTOR3 extents = bounds.Extents();
+  t850::scene::SceneNavMeshVolumeDesc volume;
+  volume.type = type && *type ? type : "exclude";
+  const bool areaVolume = volume.type == "area_cost";
+  const bool linkIncludeVolume = volume.type == "link_include";
+  const bool linkExcludeVolume = volume.type == "link_exclude";
+  const char* namePrefix = areaVolume
+      ? "Area Cost From Triangle "
+      : (linkIncludeVolume ? "Link Include From Triangle "
+                           : (linkExcludeVolume ? "Link Exclude From Triangle " : "Exclude From Triangle "));
+  volume.name = std::string(namePrefix) + std::to_string(m_editorNavMeshVolumes.size() + 1);
+  volume.shape = "box";
+  volume.position = {center.x, center.y, center.z};
+  volume.half_extents = {
+      (std::max)(1.0f, extents.x * 0.5f + 0.5f),
+      (std::max)(1.0f, extents.y * 0.5f + m_editorNavMeshBuildSettings.agentHeight * 0.5f),
+      (std::max)(1.0f, extents.z * 0.5f + 0.5f)};
+  volume.enabled = true;
+  volume.visible = true;
+  volume.show_wire = true;
+  if (areaVolume) {
+    volume.area = "mud";
+    volume.cost = 3.0f;
+  }
+
+  m_editorNavMeshVolumes.push_back(volume);
+  m_editorSelectedNavVolume = static_cast<int>(m_editorNavMeshVolumes.size()) - 1;
+  m_editorSelectedNavLink = -1;
+  m_editorSelectedNavTriangles.clear();
+  m_editorSelectedNavTriangle = -1;
+  g_selectionType = 4;
+  g_selectedIdx = 0;
+  ClearMixedSelection();
+  MarkEditorNavMeshDirty(volume.type == "area_cost"
+      ? "Area-cost volume created from selected source triangle. Click Re-generate."
+      : "Exclude volume created from selected source triangle. Click Re-generate.");
+  return true;
+}
+
+void EditorApp::DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, const XMATRIX44& vp) {
+  if (!m_editorNavMeshShowSourcePreview || !lines.IsReady()) {
+    return;
+  }
+  if (!UpdateEditorNavMeshClassification()) {
+    return;
+  }
+
+  bool hasCachedGeometry = false;
+  for (const GizmoCache& cache : g_navMeshClassificationGizmos) {
+    if (cache.vb && cache.ib && cache.count > 0) {
+      hasCachedGeometry = true;
+      break;
+    }
+  }
+
+  enum Bucket {
+    Included = 0,
+    AreaCost = 1,
+    ExcludedVolume = 2,
+    OutsideInclude = 3,
+    ExcludedSlope = 4,
+    Selected = 5,
+    Count = 6
+  };
+  struct BucketGeometry {
+    std::vector<float> vertices;
+    std::vector<unsigned int> indices;
+  };
+  if (!hasCachedGeometry) {
+    std::array<BucketGeometry, Bucket::Count> buckets;
+
+    auto appendTriangle = [&](Bucket bucket, const t850::navigation::NavTriangleClassification& tri) {
+      BucketGeometry& geometry = buckets[static_cast<std::size_t>(bucket)];
+      const unsigned int base = static_cast<unsigned int>(geometry.vertices.size() / 4u);
+      for (const XVECTOR3& point : tri.vertices) {
+        geometry.vertices.push_back(point.x);
+        geometry.vertices.push_back(point.y + m_editorNavMeshDebugOffset + 0.02f);
+        geometry.vertices.push_back(point.z);
+        geometry.vertices.push_back(1.0f);
+      }
+      geometry.indices.insert(geometry.indices.end(), {
+          base + 0u, base + 1u,
+          base + 1u, base + 2u,
+          base + 2u, base + 0u});
+    };
+
+    for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+      if (tri.triangleIndex == m_editorSelectedNavTriangle ||
+          m_editorSelectedNavTriangles.count(tri.triangleIndex) != 0) {
+        appendTriangle(Selected, tri);
+      }
+      if (tri.included) {
+        appendTriangle(tri.area == 0 ? Included : AreaCost, tri);
+        continue;
+      }
+      if (tri.reason == t850::navigation::NavTriangleClassificationReason::ExcludedByVolume) {
+        appendTriangle(ExcludedVolume, tri);
+      } else if (tri.reason == t850::navigation::NavTriangleClassificationReason::OutsideIncludeVolume) {
+        appendTriangle(OutsideInclude, tri);
+      } else {
+        appendTriangle(ExcludedSlope, tri);
+      }
+    }
+
+    for (std::size_t bucketIndex = 0; bucketIndex < buckets.size(); ++bucketIndex) {
+      const BucketGeometry& bucket = buckets[bucketIndex];
+      if (bucket.vertices.empty() || bucket.indices.empty()) {
+        continue;
+      }
+      GizmoCache& cache = g_navMeshClassificationGizmos[bucketIndex];
+      cache.vb = EditorLineRenderer::CreatePositionVB(
+          bucket.vertices.data(),
+          static_cast<unsigned>(bucket.vertices.size() / 4u));
+      cache.ib = EditorLineRenderer::CreateIndexBuffer32(
+          bucket.indices.data(),
+          static_cast<unsigned>(bucket.indices.size()));
+      cache.count = static_cast<unsigned>(bucket.indices.size());
+    }
+  }
+
+  const XVECTOR3 colors[Bucket::Count] = {
+      XVECTOR3(0.18f, 0.42f, 0.95f, 1.0f),
+      XVECTOR3(0.95f, 0.45f, 1.0f, 1.0f),
+      XVECTOR3(1.0f, 0.15f, 0.08f, 1.0f),
+      XVECTOR3(0.22f, 0.22f, 0.22f, 1.0f),
+      XVECTOR3(0.55f, 0.55f, 0.55f, 1.0f),
+      XVECTOR3(1.0f, 1.0f, 0.1f, 1.0f)
+  };
+  XMATRIX44 identity;
+  XMatIdentity(identity);
+  for (std::size_t bucketIndex = 0; bucketIndex < g_navMeshClassificationGizmos.size(); ++bucketIndex) {
+    GizmoCache& cache = g_navMeshClassificationGizmos[bucketIndex];
+    if (!cache.vb || !cache.ib || cache.count == 0) {
+      continue;
+    }
+    lines.DrawLines(identity,
+                    vp,
+                    colors[bucketIndex],
+                    cache.vb,
+                    cache.ib,
+                    cache.count,
+                    sizeof(float) * 4,
+                    t850::IndexBufferFormat::R32);
   }
 }
 
@@ -2332,10 +2777,11 @@ bool EditorApp::CreateEditorNavMesh() {
     source.entityId = object.litInst.GetEntityId();
     source.instance = &object.litInst;
     source.worldTransform = object.litInst.Final;
-    source.visible = object.visible;
     source.debugName = object.name;
+    const bool hasExplicitNavigation = object.navigation.has_value();
     const t850::scene::SceneObjectNavigationDesc navigation =
         object.navigation.value_or(t850::scene::SceneObjectNavigationDesc{});
+    source.visible = object.visible || (hasExplicitNavigation && navigation.include);
     source.includeInNavigation = navigation.include;
     source.navigationStatic = navigation.static_object;
     source.navigationWalkable = navigation.walkable;
@@ -2364,10 +2810,30 @@ bool EditorApp::CreateEditorNavMesh() {
     };
     geometry.offMeshHybridLinkValidator = geometry.offMeshLinkValidator;
   }
+  for (const t850::scene::SceneNavMeshVolumeDesc& volumeDesc : m_editorNavMeshVolumes) {
+    t850::navigation::NavMeshVolumeModifier modifier = NavVolumeModifierFromScene(volumeDesc);
+    if (!modifier.enabled) {
+      continue;
+    }
+    geometry.volumeModifiers.push_back(modifier);
+    if (modifier.mode == t850::navigation::NavMeshModifierMode::Area) {
+      geometry.areaCosts.push_back({modifier.area, modifier.cost});
+    }
+  }
   for (const t850::scene::SceneNavMeshLinkDesc& linkDesc : m_editorNavMeshLinks) {
     if (IsUsableAuthoredNavLink(linkDesc)) {
       geometry.offMeshLinks.push_back(NavOffMeshLinkFromScene(linkDesc));
     }
+  }
+
+  if (t850::navigation::ClassifyNavMeshTriangles(
+          geometry,
+          m_editorNavMeshBuildSettings,
+          m_editorNavMeshClassification,
+          &error)) {
+    m_editorNavMeshClassificationReady = true;
+    m_editorNavMeshClassificationDirty = false;
+    ReleaseNavMeshClassificationGizmos();
   }
 
   t850::navigation::NavMesh builtNavMesh;
@@ -2414,6 +2880,15 @@ void EditorApp::DestroyEditorNavMesh() {
   m_editorNavMeshAuthored = false;
   m_editorNavMeshLastBuildMs = 0.0f;
   m_editorNavMeshDirty = false;
+  ReleaseGizmoCaches(g_navMeshVolumeGizmos);
+  m_editorNavMeshVolumes.clear();
+  m_editorNavMeshLinks.clear();
+  m_editorNavMeshRuntimeMode = "build_cached";
+  m_editorNavMeshBakedAsset.clear();
+  m_editorSelectedNavVolume = -1;
+  m_editorSelectedNavLink = -1;
+  m_editorNavLinkPickMode = 0;
+  InvalidateEditorNavMeshClassification();
   m_editorNavMeshStatus = "NavMesh destroyed.";
   DumpEditorNavMeshWireGeometry("destroy");
   if (g_selectionType == 4) {
@@ -2429,7 +2904,14 @@ void EditorApp::RestoreEditorNavMeshFromScene(const t850::scene::SceneNavigation
   m_editorNavMeshShowWire = desc.show_wire;
   m_editorNavMeshDebugOffset = desc.debug_offset;
   m_editorNavMeshDebugShapeMode = std::clamp(desc.debug_shape_mode, 0, 1);
+  m_editorNavMeshRuntimeMode = desc.runtime_mode.empty() ? "build_cached" : desc.runtime_mode;
+  m_editorNavMeshBakedAsset = desc.baked_asset;
+  m_editorNavMeshVolumes = desc.volumes;
   m_editorNavMeshLinks = desc.authored_links;
+  if (m_editorSelectedNavVolume < 0 ||
+      m_editorSelectedNavVolume >= static_cast<int>(m_editorNavMeshVolumes.size())) {
+    m_editorSelectedNavVolume = -1;
+  }
   m_editorNavMeshDirty = false;
   m_editorSelectedNavLink = m_editorNavMeshLinks.empty() ? -1 : std::clamp(m_editorSelectedNavLink, 0, static_cast<int>(m_editorNavMeshLinks.size()) - 1);
   m_editorNavLinkPickMode = 0;
@@ -2453,7 +2935,10 @@ t850::scene::SceneNavigationMeshDesc EditorApp::BuildEditorNavMeshDesc() const {
   desc.show_wire = m_editorNavMeshShowWire;
   desc.debug_offset = m_editorNavMeshDebugOffset;
   desc.debug_shape_mode = m_editorNavMeshDebugShapeMode;
+  desc.runtime_mode = m_editorNavMeshRuntimeMode.empty() ? "build_cached" : m_editorNavMeshRuntimeMode;
+  desc.baked_asset = m_editorNavMeshBakedAsset;
   desc.build_settings = NavMeshBuildSettingsToScene(m_editorNavMeshBuildSettings);
+  desc.volumes = m_editorNavMeshVolumes;
   desc.authored_links = m_editorNavMeshLinks;
   return desc;
 }
@@ -2789,10 +3274,81 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   ImGui::Checkbox("Frozen", &m_editorNavMeshFrozen);
   ImGui::SameLine();
   ImGui::Checkbox("Wireframe", &m_editorNavMeshShowWire);
+  ImGui::Checkbox("NavMesh Authoring Mode", &m_editorNavMeshAuthoringMode);
+  const char* runtimeModes[] = { "build_cached", "build", "baked_asset" };
+  int runtimeModeIndex = 0;
+  for (int i = 0; i < static_cast<int>(sizeof(runtimeModes) / sizeof(runtimeModes[0])); ++i) {
+    if (m_editorNavMeshRuntimeMode == runtimeModes[i]) runtimeModeIndex = i;
+  }
+  if (ImGui::Combo("Runtime Mode", &runtimeModeIndex, runtimeModes, static_cast<int>(sizeof(runtimeModes) / sizeof(runtimeModes[0])))) {
+    m_editorNavMeshRuntimeMode = runtimeModes[runtimeModeIndex];
+    MarkEditorNavMeshDirty("NavMesh runtime mode changed. Save the scene to persist it.");
+  }
+  if (m_editorNavMeshRuntimeMode == "baked_asset") {
+    if (m_editorNavMeshBakedAsset.empty()) {
+      m_editorNavMeshBakedAsset = SuggestedNavMeshBakedAssetPath();
+    }
+    if (InputTextString("Baked Asset", m_editorNavMeshBakedAsset)) {
+      MarkEditorNavMeshDirty("NavMesh baked asset path changed. Save the scene to persist it.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Suggest Path")) {
+      m_editorNavMeshBakedAsset = SuggestedNavMeshBakedAssetPath();
+      MarkEditorNavMeshDirty("NavMesh baked asset path changed. Save the scene to persist it.");
+    }
+    const bool bakedExists = !m_editorNavMeshBakedAsset.empty() &&
+        t850::ResourceLocator::Instance().Exists(m_editorNavMeshBakedAsset);
+    ImGui::TextDisabled("Baked Asset Status: %s", bakedExists ? "Found" : "Missing / not baked yet");
+    if (!m_editorNavMesh.IsReady()) {
+      ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Bake NavMesh Asset")) {
+      std::string bakeError;
+      if (m_editorNavMesh.SaveBaked(m_editorNavMeshBakedAsset, &bakeError)) {
+        m_editorNavMeshStatus = "Baked NavMesh asset: " + m_editorNavMeshBakedAsset;
+      } else {
+        m_editorNavMeshStatus = "Bake failed: " + bakeError;
+      }
+    }
+    if (!m_editorNavMesh.IsReady()) {
+      ImGui::EndDisabled();
+      ImGui::TextDisabled("Build or Re-generate the NavMesh before baking.");
+    }
+    ImGui::SameLine();
+    if (!m_editorNavMesh.IsReady() || g_loadedScenePath.empty()) {
+      ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Bake + Save Scene")) {
+      std::string bakeError;
+      if (!m_editorNavMesh.SaveBaked(m_editorNavMeshBakedAsset, &bakeError)) {
+        m_editorNavMeshStatus = "Bake failed: " + bakeError;
+      } else if (!SaveEditorSceneSnapshot(g_loadedScenePath, true)) {
+        m_editorNavMeshStatus = "Baked asset written, but scene save failed.";
+      } else {
+        m_editorNavMeshStatus = "Baked NavMesh asset and saved scene: " + m_editorNavMeshBakedAsset;
+      }
+    }
+    if (!m_editorNavMesh.IsReady() || g_loadedScenePath.empty()) {
+      ImGui::EndDisabled();
+      if (g_loadedScenePath.empty()) {
+        ImGui::TextDisabled("Load or save a scene before using Bake + Save Scene.");
+      }
+    }
+  }
 
-  ImGui::SliderFloat("Debug Vertical Offset", &m_editorNavMeshDebugOffset, 0.0f, 0.25f, "%.3f");
+  if (ImGui::SliderFloat("Debug Vertical Offset", &m_editorNavMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
+    ReleaseNavMeshClassificationGizmos();
+  }
   const char* debugShapeOptions[] = { "Geometry", "Nodes" };
   ImGui::Combo("Debug Shape", &m_editorNavMeshDebugShapeMode, debugShapeOptions, 2);
+  if (ImGui::Checkbox("Source Preview Overlay", &m_editorNavMeshShowSourcePreview)) {
+    InvalidateEditorNavMeshClassification();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Refresh Source Preview")) {
+    InvalidateEditorNavMeshClassification();
+    UpdateEditorNavMeshClassification();
+  }
 
   if (m_editorNavMesh.IsReady()) {
     const t850::navigation::NavMeshBuildStats& stats = m_editorNavMesh.GetStats();
@@ -2812,6 +3368,127 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   if (!m_editorNavMeshStatus.empty()) {
     ImGui::TextWrapped("%s", m_editorNavMeshStatus.c_str());
   }
+  if (m_editorNavMeshClassificationReady) {
+    ImGui::TextDisabled("Source preview: included=%d excluded volume=%d outside bounds=%d slope=%d",
+                        m_editorNavMeshClassification.includedCount,
+                        m_editorNavMeshClassification.excludedByVolumeCount,
+                        m_editorNavMeshClassification.outsideIncludeVolumeCount,
+                        m_editorNavMeshClassification.excludedBySlopeCount);
+  }
+  if (!m_editorNavMeshVolumes.empty() && ImGui::CollapsingHeader("Validation Report", ImGuiTreeNodeFlags_DefaultOpen)) {
+    UpdateEditorNavMeshClassification();
+    std::vector<int> triangleHits(m_editorNavMeshVolumes.size(), 0);
+    std::vector<int> linkHits(m_editorNavMeshVolumes.size(), 0);
+    if (m_editorNavMeshClassificationReady) {
+      for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+        for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+          if (NavVolumeContainsPoint(m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)], tri.centroid)) {
+            ++triangleHits[static_cast<std::size_t>(volumeIndex)];
+          }
+        }
+      }
+    }
+    if (m_editorNavMesh.IsReady()) {
+      auto countLinksForType = [&](t850::navigation::NavTraversalType type) {
+        std::vector<XVECTOR3> vertices;
+        std::vector<unsigned int> indices;
+        if (!m_editorNavMesh.GetDebugOffMeshLinks(type, vertices, indices, 0.0f)) {
+          return;
+        }
+        for (std::size_t index = 0; index + 1 < indices.size(); index += 6) {
+          const XVECTOR3 start = vertices[indices[index + 0]];
+          const XVECTOR3 end = vertices[indices[index + 1]];
+          const XVECTOR3 mid((start.x + end.x) * 0.5f,
+                             (start.y + end.y) * 0.5f,
+                             (start.z + end.z) * 0.5f,
+                             1.0f);
+          for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+            const auto& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)];
+            if (NavVolumeContainsPoint(volume, start) ||
+                NavVolumeContainsPoint(volume, end) ||
+                NavVolumeContainsPoint(volume, mid)) {
+              ++linkHits[static_cast<std::size_t>(volumeIndex)];
+            }
+          }
+        }
+      };
+      countLinksForType(t850::navigation::NavTraversalType::Drop);
+      countLinksForType(t850::navigation::NavTraversalType::Jump);
+      countLinksForType(t850::navigation::NavTraversalType::JumpPad);
+      countLinksForType(t850::navigation::NavTraversalType::JumpIntent);
+    }
+
+    bool hasLinkIncludeVolume = false;
+    for (const auto& volume : m_editorNavMeshVolumes) {
+      if (volume.enabled && (volume.type == "link_include" || volume.type == "link_add" || volume.type == "add_links")) {
+        hasLinkIncludeVolume = true;
+        break;
+      }
+    }
+    if (hasLinkIncludeVolume && m_editorNavMesh.IsReady() && m_editorNavMesh.GetStats().offMeshLinkCount == 0) {
+      ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.1f, 1.0f),
+                         "Warning: link_include volumes are active but no off-mesh links survived generation.");
+    }
+
+    if (ImGui::BeginTable("NavVolumeValidation", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
+      ImGui::TableSetupColumn("Volume");
+      ImGui::TableSetupColumn("Type");
+      ImGui::TableSetupColumn("Triangles");
+      ImGui::TableSetupColumn("Links");
+      ImGui::TableHeadersRow();
+      for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+        const auto& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)];
+        const int triCount = triangleHits[static_cast<std::size_t>(volumeIndex)];
+        const int linkCount = linkHits[static_cast<std::size_t>(volumeIndex)];
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(volume.name.c_str());
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(volume.type.c_str());
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%d", triCount);
+        ImGui::TableSetColumnIndex(3);
+        ImGui::Text("%d", linkCount);
+        if (volume.enabled && triCount == 0 && linkCount == 0) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.1f, 1.0f), "Warning");
+          ImGui::TableSetColumnIndex(1);
+          ImGui::TextDisabled("No affected triangles or links.");
+        }
+      }
+      ImGui::EndTable();
+    }
+  }
+  if (m_editorNavMeshAuthoringMode) {
+    ImGui::TextColored(ImVec4(0.25f, 0.75f, 1.0f, 1.0f), "NavMesh Authoring Mode: click source preview triangles to select them.");
+    ImGui::Checkbox("Brush Select Triangles", &m_editorNavMeshBrushSelect);
+    ImGui::SameLine();
+    ImGui::DragFloat("Brush Radius", &m_editorNavMeshBrushRadius, 0.1f, 0.1f, 256.0f, "%.2f");
+  }
+  if (m_editorSelectedNavTriangle >= 0 || !m_editorSelectedNavTriangles.empty()) {
+    ImGui::Text("Selected Source Triangle: %d", m_editorSelectedNavTriangle);
+    ImGui::Text("Selected Source Triangles: %d", static_cast<int>(m_editorSelectedNavTriangles.size()));
+    if (ImGui::Button("Clear Triangle Selection")) {
+      m_editorSelectedNavTriangle = -1;
+      m_editorSelectedNavTriangles.clear();
+      ReleaseNavMeshClassificationGizmos();
+    }
+    if (ImGui::Button("Exclude Selected Triangle")) {
+      CreateNavVolumeFromSelectedTriangles("exclude");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Area Cost Selected Triangle")) {
+      CreateNavVolumeFromSelectedTriangles("area_cost");
+    }
+    if (ImGui::Button("Link Include Selected Triangle")) {
+      CreateNavVolumeFromSelectedTriangles("link_include");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Link Exclude Selected Triangle")) {
+      CreateNavVolumeFromSelectedTriangles("link_exclude");
+    }
+  }
   if (m_editorNavMeshDirty) {
     ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.1f, 1.0f), "Preview is stale. Click Re-generate.");
   }
@@ -2819,6 +3496,134 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   if (m_editorNavMesh.IsReady() && m_editorNavMeshNodes.empty()) {
     RefreshEditorNavMeshNodes();
   }
+  ImGui::SeparatorText("Authoring Volumes");
+  ImGui::TextDisabled("Volumes are saved in .t8scene as NavMesh build helpers, not game objects.");
+  auto makeDefaultVolume = [&](const char* type, const char* label) {
+    t850::scene::SceneNavMeshVolumeDesc volume;
+    volume.name = std::string(label) + " " + std::to_string(m_editorNavMeshVolumes.size() + 1);
+    volume.type = type;
+    volume.shape = "box";
+    volume.enabled = true;
+    volume.visible = true;
+    volume.show_wire = true;
+    if (std::strcmp(type, "include_bounds") == 0) {
+      t850::AABB bounds;
+      if (GetEditorNavMeshWorldAABB(bounds)) {
+        const XVECTOR3 center = bounds.Center();
+        const XVECTOR3 extents = bounds.Extents();
+        volume.position = {center.x, center.y, center.z};
+        volume.half_extents = {
+            (std::max)(1.0f, extents.x * 0.55f),
+            (std::max)(1.0f, extents.y * 0.55f),
+            (std::max)(1.0f, extents.z * 0.55f)};
+      } else {
+        volume.half_extents = {32.0f, 16.0f, 32.0f};
+      }
+    } else if (std::strcmp(type, "area_cost") == 0) {
+      volume.area = "mud";
+      volume.cost = 3.0f;
+    }
+    m_editorNavMeshVolumes.push_back(volume);
+    m_editorSelectedNavVolume = static_cast<int>(m_editorNavMeshVolumes.size()) - 1;
+    m_editorSelectedNavLink = -1;
+    g_selectionType = 4;
+    g_selectedIdx = 0;
+    ClearMixedSelection();
+    MarkEditorNavMeshDirty("NavMesh volume added. Click Re-generate.");
+  };
+  if (ImGui::Button("Add Include Bounds")) makeDefaultVolume("include_bounds", "Include Bounds");
+  ImGui::SameLine();
+  if (ImGui::Button("Add Exclude Volume")) makeDefaultVolume("exclude", "Exclude Volume");
+  if (ImGui::Button("Add Area Cost Volume")) makeDefaultVolume("area_cost", "Area Cost Volume");
+  if (ImGui::Button("Add Link Include Volume")) makeDefaultVolume("link_include", "Link Include Volume");
+  ImGui::SameLine();
+  if (ImGui::Button("Add Link Exclude Volume")) makeDefaultVolume("link_exclude", "Link Exclude Volume");
+
+  if (!m_editorNavMeshVolumes.empty()) {
+    if (m_editorSelectedNavVolume >= static_cast<int>(m_editorNavMeshVolumes.size())) {
+      m_editorSelectedNavVolume = -1;
+    }
+    const char* volumePreview = m_editorSelectedNavVolume >= 0
+        ? m_editorNavMeshVolumes[static_cast<std::size_t>(m_editorSelectedNavVolume)].name.c_str()
+        : "None";
+    if (ImGui::BeginCombo("Selected Volume", volumePreview)) {
+      for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+        const bool selected = volumeIndex == m_editorSelectedNavVolume;
+        if (ImGui::Selectable(m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)].name.c_str(), selected)) {
+          m_editorSelectedNavVolume = volumeIndex;
+          m_editorSelectedNavLink = -1;
+          g_selectionType = 4;
+          g_selectedIdx = 0;
+          ClearMixedSelection();
+        }
+        if (selected) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+
+    if (m_editorSelectedNavVolume < 0) {
+      ImGui::TextDisabled("Select or create a volume to edit it.");
+    } else {
+      t850::scene::SceneNavMeshVolumeDesc& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(m_editorSelectedNavVolume)];
+      bool volumeChanged = false;
+      volumeChanged |= InputTextString("Volume Name", volume.name);
+      const char* volumeTypes[] = { "include_bounds", "exclude", "area_cost", "link_include", "link_exclude" };
+      int typeIndex = 1;
+      for (int i = 0; i < static_cast<int>(sizeof(volumeTypes) / sizeof(volumeTypes[0])); ++i) {
+        if (volume.type == volumeTypes[i]) typeIndex = i;
+      }
+      if (ImGui::Combo("Volume Type", &typeIndex, volumeTypes, static_cast<int>(sizeof(volumeTypes) / sizeof(volumeTypes[0])))) {
+        volume.type = volumeTypes[typeIndex];
+        if (volume.type == "area_cost" && volume.area == "walkable") {
+          volume.area = "mud";
+          volume.cost = (std::max)(volume.cost, 3.0f);
+        }
+        volumeChanged = true;
+      }
+      volumeChanged |= ImGui::Checkbox("Volume Enabled", &volume.enabled);
+      volumeChanged |= ImGui::Checkbox("Volume Visible", &volume.visible);
+      volumeChanged |= ImGui::Checkbox("Volume Frozen", &volume.frozen);
+      volumeChanged |= ImGui::Checkbox("Volume Wireframe", &volume.show_wire);
+      float volumePosition[3] = {volume.position.x, volume.position.y, volume.position.z};
+      if (ImGui::DragFloat3("Volume Position", volumePosition, 0.1f, -100000.0f, 100000.0f, "%.3f")) {
+        volume.position = {volumePosition[0], volumePosition[1], volumePosition[2]};
+        volumeChanged = true;
+      }
+      float volumeRotation[3] = {volume.rotation.x, volume.rotation.y, volume.rotation.z};
+      if (ImGui::DragFloat3("Volume Rotation", volumeRotation, 0.01f, -1000.0f, 1000.0f, "%.3f")) {
+        volume.rotation = {volumeRotation[0], volumeRotation[1], volumeRotation[2]};
+        volumeChanged = true;
+      }
+      float volumeHalfExtents[3] = {volume.half_extents.x, volume.half_extents.y, volume.half_extents.z};
+      if (ImGui::DragFloat3("Volume Half Extents", volumeHalfExtents, 0.1f, 0.001f, 100000.0f, "%.3f")) {
+        volume.half_extents = {
+            (std::max)(0.001f, volumeHalfExtents[0]),
+            (std::max)(0.001f, volumeHalfExtents[1]),
+            (std::max)(0.001f, volumeHalfExtents[2])};
+        volumeChanged = true;
+      }
+      if (volume.type == "area_cost") {
+        const char* areaOptions[] = { "walkable", "drop", "jump", "jump_pad", "jump_intent", "water", "door", "mud", "custom" };
+        int areaIndex = 7;
+        for (int i = 0; i < static_cast<int>(sizeof(areaOptions) / sizeof(areaOptions[0])); ++i) {
+          if (volume.area == areaOptions[i]) areaIndex = i;
+        }
+        if (ImGui::Combo("Area", &areaIndex, areaOptions, static_cast<int>(sizeof(areaOptions) / sizeof(areaOptions[0])))) {
+          volume.area = areaOptions[areaIndex];
+          volumeChanged = true;
+        }
+        volumeChanged |= ImGui::DragFloat("Area Cost", &volume.cost, 0.05f, 0.01f, 100.0f, "%.2f");
+      }
+      if (ImGui::Button("Delete Volume")) {
+        DeleteSelectedNavAuthoringChild();
+      } else if (volumeChanged) {
+        MarkEditorNavMeshDirty("NavMesh volume changed. Click Re-generate.");
+      }
+    }
+  } else {
+    ImGui::TextDisabled("No authored volumes.");
+  }
+
   ImGui::SeparatorText("Authored Links");
   ImGui::TextDisabled("Links snap to Detour polygon-center nodes. Use Pick Start/Pick End, then click the viewport.");
   if (ImGui::Button("Refresh Nodes")) {
@@ -2850,6 +3655,7 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
     link.end = { end.x, end.y, end.z };
     m_editorNavMeshLinks.push_back(link);
     m_editorSelectedNavLink = static_cast<int>(m_editorNavMeshLinks.size()) - 1;
+    m_editorSelectedNavVolume = -1;
     markNavMeshDirty();
     m_editorNavMeshStatus = "Authored link added. Click Re-generate.";
   };
@@ -3547,7 +4353,11 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath, bool
   sf.splines = g_splines;
   sf.light_cameras = g_lightCameras;
   sf.camera_animations = g_cameraAnimations;
-  sf.god_rays_volume = g_godRaysVolume;
+  if (GodRaysVolumeIsAuthored(g_godRaysVolume)) {
+    sf.god_rays_volume = g_godRaysVolume;
+  } else {
+    sf.god_rays_volume.reset();
+  }
 
   sf.physics_entities.clear();
   for (const PhysicsSceneEntity& entity : g_physicsEntities) {
@@ -3630,6 +4440,7 @@ bool EditorApp::SaveEditorSceneSnapshot(const std::string& path, bool updateLoad
   if (updateLoadedScene) {
     g_loadedSceneFile = sf;
     g_hasLoadedSceneFile = true;
+    g_loadedScenePath = path;
     g_sceneCollisionResourcePath = sf.collision;
     g_sceneProfiles = sf.profiles;
   }
@@ -3645,6 +4456,8 @@ EditorUndoState EditorApp::CaptureEditorUndoState(std::string* outKey) {
   state.selectionType = g_selectionType;
   state.selectedIdx = g_selectedIdx;
   state.selectedSplinePoint = g_selectedSplinePoint;
+  state.selectedNavVolume = m_editorSelectedNavVolume;
+  state.selectedNavLink = m_editorSelectedNavLink;
   state.activeCameraIdx = g_activeCameraIdx;
   if (outKey) {
     *outKey = EditorUndoStateKey(state);
@@ -3790,6 +4603,10 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   g_lightCameras = sf.light_cameras;
   g_cameraAnimations = sf.camera_animations;
   g_godRaysVolume = sf.god_rays_volume.value_or(t850::scene::SceneGodRaysVolumeDesc{});
+  if (sf.god_rays_volume) {
+    g_godRaysVolume.authored = true;
+    ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+  }
   EnsureInferredGameEntities();
   if (sf.navigation_mesh) {
     RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
@@ -3862,6 +4679,8 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   g_selectionType = state.selectionType;
   g_selectedIdx = state.selectedIdx;
   g_selectedSplinePoint = state.selectedSplinePoint;
+  m_editorSelectedNavVolume = state.selectedNavVolume;
+  m_editorSelectedNavLink = state.selectedNavLink;
   if ((g_selectionType == 0 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_objects.size()))) ||
       (g_selectionType == 1 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_cameras.size()))) ||
       (g_selectionType == 2 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_lights.size()))) ||
@@ -3873,10 +4692,17 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
                                 g_selectedIdx >= static_cast<int>(g_splines.size()) ||
                                 g_selectedSplinePoint < 0 ||
                                 g_selectedSplinePoint >= static_cast<int>(g_splines[static_cast<std::size_t>(g_selectedIdx)].points.size()))) ||
-      (g_selectionType == 8 && g_selectedIdx != 0)) {
+      (g_selectionType == 8 && (g_selectedIdx != 0 ||
+                                !GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph)))) {
     g_selectedIdx = -1;
     g_selectedSplinePoint = -1;
     g_selectionType = 0;
+  }
+  if (m_editorSelectedNavVolume < -1 || m_editorSelectedNavVolume >= static_cast<int>(m_editorNavMeshVolumes.size())) {
+    m_editorSelectedNavVolume = -1;
+  }
+  if (m_editorSelectedNavLink < -1 || m_editorSelectedNavLink >= static_cast<int>(m_editorNavMeshLinks.size())) {
+    m_editorSelectedNavLink = -1;
   }
   if (g_multiEntitySelect.empty() && (g_selectionType == 0 || g_selectionType == 3)) {
     AddMixedSelection(g_selectionType, g_selectedIdx);
@@ -4576,17 +5402,94 @@ void EditorApp::DrawEditorRenderingPanel() {
   intSlider("Far Samples", m_sceneProps.DOF_Far_Samples_squared, 0, 16);
 
   ImGui::SeparatorText("God Rays");
-  bool godRaysEnabled = m_sceneProps.ToogleGodRays != 0;
+  const bool renderGraphHasGodRays = RenderGraphSupportsGodRays(g_renderGraph);
+  const int firstEnabledGodRaysLightCamera = FirstEnabledGodRaysLightCamera();
+  const bool hasEnabledGodRaysLightCamera = firstEnabledGodRaysLightCamera >= 0;
+  bool godRaysEnabled = renderGraphHasGodRays && m_sceneProps.ToogleGodRays != 0;
+  if (!renderGraphHasGodRays) {
+    ImGui::BeginDisabled();
+  }
   if (ImGui::Checkbox("God Rays", &godRaysEnabled)) {
     m_sceneProps.ToogleGodRays = godRaysEnabled ? 1 : 0;
+  }
+  if (!renderGraphHasGodRays) {
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("The active render graph has no God Rays pass.");
   }
   intSlider("Ray March Steps", m_sceneProps.LightVolumeSteps, 2, 512);
   ImGui::SliderFloat("God Rays Factor", &m_sceneProps.GodRaysFactor, 0.0f, 5.0f, "%.3f");
   if (intSlider("God Rays Resolution", m_sceneProps.GoodRaysResolution, 0, 4096)) {
     recreateRenderTargets = true;
   }
-  ImGui::Checkbox("Clip to authored volume", &g_godRaysVolume.clip_enabled);
-  ImGui::TextDisabled("Select Rendering Volumes > God Rays Volume to place and resize the volume.");
+  const bool hasGodRaysVolume = GodRaysVolumeIsAuthored(g_godRaysVolume);
+  const bool canCreateGodRaysVolume = renderGraphHasGodRays &&
+                                      hasEnabledGodRaysLightCamera &&
+                                      !hasGodRaysVolume;
+  if (!canCreateGodRaysVolume) {
+    ImGui::BeginDisabled();
+  }
+  if (ImGui::Button("Create God Rays Volume")) {
+    g_godRaysVolume = t850::scene::SceneGodRaysVolumeDesc{};
+    g_godRaysVolume.authored = true;
+    g_godRaysVolume.enabled = true;
+    g_godRaysVolume.visible = true;
+    g_godRaysVolume.clip_enabled = true;
+    g_godRaysVolume.show_wire = true;
+    g_godRaysVolume.light_camera = firstEnabledGodRaysLightCamera;
+    g_selectionType = 8;
+    g_selectedIdx = 0;
+    g_selectedSplinePoint = -1;
+    ClearMixedSelection();
+  }
+  if (!canCreateGodRaysVolume) {
+    ImGui::EndDisabled();
+  }
+  if (hasGodRaysVolume) {
+    ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+    if (g_lightCameras.size() > 1) {
+      const int selectedLightCamera = std::clamp(
+          g_godRaysVolume.light_camera,
+          0,
+          static_cast<int>(g_lightCameras.size()) - 1);
+      const std::string preview = g_lightCameras[static_cast<std::size_t>(selectedLightCamera)].name;
+      if (ImGui::BeginCombo("Volume Light Camera", preview.c_str())) {
+        for (int i = 0; i < static_cast<int>(g_lightCameras.size()); ++i) {
+          const auto& lightCamera = g_lightCameras[static_cast<std::size_t>(i)];
+          std::string label = lightCamera.name;
+          if (!lightCamera.enabled) {
+            label += " (disabled)";
+          }
+          const bool selected = i == g_godRaysVolume.light_camera;
+          if (ImGui::Selectable(label.c_str(), selected)) {
+            g_godRaysVolume.light_camera = i;
+          }
+          if (selected) {
+            ImGui::SetItemDefaultFocus();
+          }
+        }
+        ImGui::EndCombo();
+      }
+    } else if (!g_lightCameras.empty()) {
+      ImGui::TextDisabled("Volume Light Camera: %s", g_lightCameras.front().name.c_str());
+      g_godRaysVolume.light_camera = 0;
+    }
+    const bool volumeCanBeActive = GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph);
+    if (!volumeCanBeActive) {
+      ImGui::BeginDisabled();
+    }
+    ImGui::Checkbox("Volume Enabled", &g_godRaysVolume.enabled);
+    ImGui::Checkbox("Clip to authored volume", &g_godRaysVolume.clip_enabled);
+    ImGui::Checkbox("Show Volume Cube", &g_godRaysVolume.visible);
+    if (!volumeCanBeActive) {
+      ImGui::EndDisabled();
+    }
+    ImGui::TextDisabled("Select Rendering Volumes > God Rays Volume to place and resize the volume.");
+    if (!hasEnabledGodRaysLightCamera) {
+      ImGui::TextDisabled("A God Rays volume requires an enabled light camera.");
+    }
+  } else if (renderGraphHasGodRays && !hasEnabledGodRaysLightCamera) {
+    ImGui::TextDisabled("Create a light camera before creating a God Rays volume.");
+  }
 
   ImGui::SeparatorText("Advanced Scene Rendering");
   int activeLights = m_sceneProps.ActiveLights;
@@ -5552,6 +6455,7 @@ void EditorApp::DestroyAssets() {
   g_activeGroupIdx = -1;
   g_loadedSceneFile = SceneFile{};
   g_hasLoadedSceneFile = false;
+  g_loadedScenePath.clear();
   g_unloadedSceneObjects.clear();
   g_sceneCollisionResourcePath.clear();
   g_sceneProfiles.clear();
@@ -5854,6 +6758,7 @@ void EditorApp::LoadPendingScene() {
 
       g_loadedSceneFile = sf;
       g_hasLoadedSceneFile = true;
+      g_loadedScenePath = loadPath;
       g_sceneProfiles = sf.profiles;
       LoadEditorSceneProfiles();
 
@@ -6024,6 +6929,10 @@ void EditorApp::LoadPendingScene() {
       g_lightCameras = sf.light_cameras;
       g_cameraAnimations = sf.camera_animations;
       g_godRaysVolume = sf.god_rays_volume.value_or(t850::scene::SceneGodRaysVolumeDesc{});
+      if (sf.god_rays_volume) {
+        g_godRaysVolume.authored = true;
+        ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+      }
       EnsureInferredGameEntities();
       if (sf.navigation_mesh) {
         t850::LoadingProgress::ScopedStep navMeshStep("Loading scene", "NavMesh", 4.0f);
@@ -6305,6 +7214,7 @@ void EditorApp::OnInput() {
     }
     else if (g_selectionType == 6 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
       AdjustActiveLightCameraAfterErase(g_selectedIdx);
+      AdjustGodRaysLightCameraAfterErase(g_selectedIdx);
       if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameraGizmoCameras.size())) {
         if (t850::g_pBaseDriver) {
           t850::g_pBaseDriver->WaitForGPU();
@@ -6327,12 +7237,16 @@ void EditorApp::OnInput() {
       T8_LOG_INFO("[T8ditor] Physics entity deleted");
     }
     else if (g_selectionType == 4 && g_selectedIdx == 0) {
-      DestroyEditorNavMesh();
-      T8_LOG_INFO("[T8ditor] NavMesh deleted");
+      if (!DeleteSelectedNavAuthoringChild()) {
+        DestroyEditorNavMesh();
+        T8_LOG_INFO("[T8ditor] NavMesh deleted");
+      }
     }
     else if (g_selectionType == 8 && g_selectedIdx == 0) {
+      g_godRaysVolume.authored = false;
       g_godRaysVolume.enabled = false;
       g_godRaysVolume.visible = false;
+      g_godRaysVolume.clip_enabled = false;
       g_selectedIdx = -1;
       g_selectionType = 0;
       T8_LOG_INFO("[T8ditor] God Rays volume disabled");
@@ -6960,8 +7874,12 @@ static void SyncLightCameraFromRuntimeCamera(const ::Camera& runtimeCamera,
 }
 
 static void ApplyGodRaysVolumeToSceneProps(const t850::scene::SceneGodRaysVolumeDesc& volume,
-                                           SceneProps& sceneProps) {
-  sceneProps.GodRaysVolumeEnabled = (volume.enabled && volume.clip_enabled) ? 1 : 0;
+                                           SceneProps& sceneProps,
+                                           bool canBeActive) {
+  sceneProps.GodRaysVolumeEnabled = (canBeActive && volume.enabled && volume.clip_enabled) ? 1 : 0;
+  if (canBeActive) {
+    sceneProps.ActiveLightCamera = volume.light_camera;
+  }
   sceneProps.GodRaysVolumeCenter = XVECTOR3(volume.position.x, volume.position.y, volume.position.z, 1.0f);
   sceneProps.GodRaysVolumeHalfExtents = XVECTOR3((std::max)(0.001f, std::abs(volume.half_extents.x)),
                                                  (std::max)(0.001f, std::abs(volume.half_extents.y)),
@@ -7313,24 +8231,6 @@ static uint64_t HashEditorSplineDrawData(const t850::scene::SceneSplineDesc& des
   return hash;
 }
 
-static uint64_t HashGodRaysVolumeDrawData(const t850::scene::SceneGodRaysVolumeDesc& desc, bool selected) {
-  uint64_t hash = 1469598103934665603ull;
-  auto mix = [&](uint64_t value) {
-    hash ^= value;
-    hash *= 1099511628211ull;
-  };
-  mix(selected ? 1ull : 0ull);
-  mix(desc.enabled ? 1ull : 0ull);
-  mix(desc.clip_enabled ? 1ull : 0ull);
-  mix(HashSplineFloat(desc.position.x));
-  mix(HashSplineFloat(desc.position.y));
-  mix(HashSplineFloat(desc.position.z));
-  mix(HashSplineFloat(desc.half_extents.x));
-  mix(HashSplineFloat(desc.half_extents.y));
-  mix(HashSplineFloat(desc.half_extents.z));
-  return hash;
-}
-
 static void DrawGodRaysVolume(EditorLineRenderer& lines,
                               const XMATRIX44& vp,
                               const t850::scene::SceneGodRaysVolumeDesc& desc,
@@ -7339,28 +8239,13 @@ static void DrawGodRaysVolume(EditorLineRenderer& lines,
   if (!lines.IsReady() || !desc.enabled || !desc.visible || !desc.show_wire) {
     return;
   }
-  const uint64_t drawHash = HashGodRaysVolumeDrawData(desc, selected);
   const XVECTOR3 color = selected
       ? XVECTOR3(1.0f, 0.82f, 0.18f, 1.0f)
       : XVECTOR3(1.0f, 0.45f, 0.05f, 1.0f);
-  if (cache.vb && cache.ib && cache.hash == drawHash) {
-    XMATRIX44 identity;
-    identity.Identity();
-    lines.DrawLines(identity, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
-    return;
-  }
 
-  const auto& p = desc.position;
-  const t850::scene::Vec3f h{
-      (std::max)(0.001f, std::abs(desc.half_extents.x)),
-      (std::max)(0.001f, std::abs(desc.half_extents.y)),
-      (std::max)(0.001f, std::abs(desc.half_extents.z))};
-  const float x0 = p.x - h.x, x1 = p.x + h.x;
-  const float y0 = p.y - h.y, y1 = p.y + h.y;
-  const float z0 = p.z - h.z, z1 = p.z + h.z;
   const float verts[] = {
-      x0,y0,z0,1,  x1,y0,z0,1,  x1,y1,z0,1,  x0,y1,z0,1,
-      x0,y0,z1,1,  x1,y0,z1,1,  x1,y1,z1,1,  x0,y1,z1,1};
+      -1,-1,-1,1,  1,-1,-1,1,  1, 1,-1,1, -1, 1,-1,1,
+      -1,-1, 1,1,  1,-1, 1,1,  1, 1, 1,1, -1, 1, 1,1};
   const unsigned short indices[] = {
       0,1, 1,2, 2,3, 3,0,
       4,5, 5,6, 6,7, 7,4,
@@ -7373,17 +8258,97 @@ static void DrawGodRaysVolume(EditorLineRenderer& lines,
       }
       ReleaseGizmoCache(cache);
     }
-    cache.vb = EditorLineRenderer::CreatePositionVB(verts, 8, t850::BufferUsage::DINAMIC);
+    cache.vb = EditorLineRenderer::CreatePositionVB(verts, 8);
     cache.ib = EditorLineRenderer::CreateIndexBuffer16(indices, indexCount);
     cache.count = indexCount;
-  } else {
-    cache.vb->UpdateFromBuffer(*t850::T8DeviceContext, verts);
   }
-  cache.hash = drawHash;
   if (cache.vb && cache.ib) {
-    XMATRIX44 identity;
-    identity.Identity();
-    lines.DrawLines(identity, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
+    const t850::scene::Vec3f h{
+        (std::max)(0.001f, std::abs(desc.half_extents.x)),
+        (std::max)(0.001f, std::abs(desc.half_extents.y)),
+        (std::max)(0.001f, std::abs(desc.half_extents.z))};
+    XMATRIX44 world;
+    XMatScaling(world, h.x, h.y, h.z);
+    world.m[3][0] = desc.position.x;
+    world.m[3][1] = desc.position.y;
+    world.m[3][2] = desc.position.z;
+    lines.DrawLines(world, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
+  }
+}
+
+static XMATRIX44 BuildNavMeshVolumeWorld(const t850::scene::SceneNavMeshVolumeDesc& volume) {
+  XMATRIX44 S, Rx, Ry, Rz, T;
+  XMatScaling(S,
+              (std::max)(0.001f, std::abs(volume.half_extents.x)),
+              (std::max)(0.001f, std::abs(volume.half_extents.y)),
+              (std::max)(0.001f, std::abs(volume.half_extents.z)));
+  XMatRotationX(Rx, volume.rotation.x);
+  XMatRotationY(Ry, volume.rotation.y);
+  XMatRotationZ(Rz, volume.rotation.z);
+  XMatTranslation(T, volume.position.x, volume.position.y, volume.position.z);
+  return S * Rx * Ry * Rz * T;
+}
+
+static t850::AABB NavMeshVolumeWorldAABB(const t850::scene::SceneNavMeshVolumeDesc& volume) {
+  const t850::AABB local(XVECTOR3(-1.0f, -1.0f, -1.0f, 1.0f),
+                         XVECTOR3( 1.0f,  1.0f,  1.0f, 1.0f));
+  return local.Transformed(BuildNavMeshVolumeWorld(volume));
+}
+
+static XVECTOR3 NavMeshVolumeColor(const t850::scene::SceneNavMeshVolumeDesc& volume, bool selected) {
+  if (selected) {
+    return XVECTOR3(1.0f, 0.85f, 0.12f, 1.0f);
+  }
+  if (volume.type == "include_bounds" || volume.type == "include" || volume.type == "bounds") {
+    return XVECTOR3(0.2f, 0.55f, 1.0f, 1.0f);
+  }
+  if (volume.type == "area_cost" || volume.type == "area" || volume.type == "cost") {
+    return XVECTOR3(0.9f, 0.35f, 1.0f, 1.0f);
+  }
+  if (volume.type == "link_include" || volume.type == "link_add" || volume.type == "add_links") {
+    return XVECTOR3(0.0f, 0.95f, 0.55f, 1.0f);
+  }
+  if (volume.type == "link_exclude" || volume.type == "exclude_links") {
+    return XVECTOR3(1.0f, 0.55f, 0.0f, 1.0f);
+  }
+  return XVECTOR3(1.0f, 0.18f, 0.12f, 1.0f);
+}
+
+static void DrawNavMeshVolume(EditorLineRenderer& lines,
+                              const XMATRIX44& vp,
+                              const t850::scene::SceneNavMeshVolumeDesc& volume,
+                              bool selected,
+                              GizmoCache& cache) {
+  if (!lines.IsReady() || !volume.enabled || !volume.visible || !volume.show_wire) {
+    return;
+  }
+  const float verts[] = {
+      -1,-1,-1,1,  1,-1,-1,1,  1, 1,-1,1, -1, 1,-1,1,
+      -1,-1, 1,1,  1,-1, 1,1,  1, 1, 1,1, -1, 1, 1,1};
+  const unsigned short indices[] = {
+      0,1, 1,2, 2,3, 3,0,
+      4,5, 5,6, 6,7, 7,4,
+      0,4, 1,5, 2,6, 3,7};
+  const unsigned indexCount = static_cast<unsigned>(sizeof(indices) / sizeof(indices[0]));
+  if (!cache.vb || !cache.ib || cache.count != indexCount) {
+    if (cache.vb || cache.ib) {
+      if (t850::g_pBaseDriver) {
+        t850::g_pBaseDriver->WaitForGPU();
+      }
+      ReleaseGizmoCache(cache);
+    }
+    cache.vb = EditorLineRenderer::CreatePositionVB(verts, 8);
+    cache.ib = EditorLineRenderer::CreateIndexBuffer16(indices, indexCount);
+    cache.count = indexCount;
+  }
+  if (cache.vb && cache.ib) {
+    lines.DrawLines(BuildNavMeshVolumeWorld(volume),
+                    vp,
+                    NavMeshVolumeColor(volume, selected),
+                    cache.vb,
+                    cache.ib,
+                    cache.count,
+                    sizeof(float) * 4);
   }
 }
 
@@ -7689,10 +8654,55 @@ single_pick:
                                        m_lastW,
                                        m_lastH);
 
+  if (m_editorNavMeshAuthoringMode && m_editorNavMeshShowSourcePreview) {
+    UpdateEditorNavMeshClassification();
+    int triangleIndex = -1;
+    if (PickEditorNavMeshTriangleFromMouse(IManager.mouseX, IManager.mouseY, triangleIndex)) {
+      m_editorSelectedNavTriangle = triangleIndex;
+      const bool appendSelection = shiftDown || m_editorNavMeshBrushSelect;
+      if (!appendSelection) {
+        m_editorSelectedNavTriangles.clear();
+      }
+      auto selectedIt = std::find_if(
+          m_editorNavMeshClassification.triangles.begin(),
+          m_editorNavMeshClassification.triangles.end(),
+          [&](const t850::navigation::NavTriangleClassification& tri) {
+            return tri.triangleIndex == triangleIndex;
+          });
+      if (selectedIt != m_editorNavMeshClassification.triangles.end()) {
+        const float radiusSq = (std::max)(0.001f, m_editorNavMeshBrushRadius) *
+            (std::max)(0.001f, m_editorNavMeshBrushRadius);
+        for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+          const float dx = tri.centroid.x - selectedIt->centroid.x;
+          const float dy = tri.centroid.y - selectedIt->centroid.y;
+          const float dz = tri.centroid.z - selectedIt->centroid.z;
+          if (!m_editorNavMeshBrushSelect || (dx * dx + dy * dy + dz * dz) <= radiusSq) {
+            if (shiftDown && !m_editorNavMeshBrushSelect && m_editorSelectedNavTriangles.count(tri.triangleIndex)) {
+              m_editorSelectedNavTriangles.erase(tri.triangleIndex);
+            } else {
+              m_editorSelectedNavTriangles.insert(tri.triangleIndex);
+            }
+          }
+        }
+      } else {
+        m_editorSelectedNavTriangles.insert(triangleIndex);
+      }
+      m_editorSelectedNavVolume = -1;
+      m_editorSelectedNavLink = -1;
+      g_selectedIdx = 0;
+      g_selectionType = 4;
+      ClearMixedSelection();
+      ReleaseNavMeshClassificationGizmos();
+      m_editorNavMeshStatus = "Source triangle selection updated. Use selected-triangle volume tools.";
+      return;
+    }
+  }
+
   // Test all objects, pick the closest
   float bestT = FLT_MAX;
   int   bestIdx  = -1;
   int   bestType = 0;
+  int   bestNavVolume = -1;
 
   // Test meshes
   for (int i = 0; i < (int)g_objects.size(); ++i) {
@@ -7793,7 +8803,8 @@ single_pick:
   }
 
   // Test God Rays volume.
-  if (g_godRaysVolume.enabled && g_godRaysVolume.visible && !g_godRaysVolume.frozen) {
+  if (GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph) &&
+      g_godRaysVolume.enabled && g_godRaysVolume.visible && !g_godRaysVolume.frozen) {
     const auto& p = g_godRaysVolume.position;
     const auto& h = g_godRaysVolume.half_extents;
     t850::AABB box(
@@ -7804,6 +8815,21 @@ single_pick:
       bestT = t;
       bestIdx = 0;
       bestType = 8;
+    }
+  }
+
+  // Test NavMesh authoring volumes.
+  for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+    const auto& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)];
+    if (!volume.enabled || !volume.visible || volume.frozen) {
+      continue;
+    }
+    float t = 0.0f;
+    if (t850::RayIntersectsAABB(ray, NavMeshVolumeWorldAABB(volume), t) && t < bestT) {
+      bestT = t;
+      bestIdx = 0;
+      bestType = 4;
+      bestNavVolume = volumeIndex;
     }
   }
 
@@ -7843,6 +8869,13 @@ single_pick:
     g_selectedIdx   = bestIdx;
     g_selectionType = bestType;
     g_selectedSplinePoint = (bestType == 7) ? bestSplinePoint : -1;
+    if (bestType == 4) {
+      m_editorSelectedNavVolume = bestNavVolume;
+      m_editorSelectedNavLink = -1;
+    } else if (!shiftDown) {
+      m_editorSelectedNavVolume = -1;
+      m_editorSelectedNavLink = -1;
+    }
 
     if (bestType == 0 || bestType == 3) {
       if (shiftDown) {
@@ -7871,6 +8904,8 @@ single_pick:
   } else {
     g_selectedIdx = -1;
     g_selectedSplinePoint = -1;
+    m_editorSelectedNavVolume = -1;
+    m_editorSelectedNavLink = -1;
     // Auto-switch to Select mode when deselecting (hides orphaned gizmo)
     m_gizmo.SetMode(GizmoMode::Select);
     if (!shiftDown)
@@ -7915,20 +8950,29 @@ void EditorApp::SyncEditorSceneLights(const ::Camera& cam) {
       requestedActiveLights,
       0,
       static_cast<int>(m_sceneProps.Lights.size()));
-  bool appliedAuthoredLightCamera = false;
-  for (const auto& lightCamera : g_lightCameras) {
+  m_sceneProps.pLightCameras.clear();
+  m_editorRuntimeLightCameras.clear();
+  m_editorRuntimeLightCameras.resize(g_lightCameras.size());
+
+  int firstEnabledLightCamera = -1;
+  for (std::size_t lightCameraIndex = 0; lightCameraIndex < g_lightCameras.size(); ++lightCameraIndex) {
+    const auto& lightCamera = g_lightCameras[lightCameraIndex];
+    Camera& runtimeLightCamera = m_editorRuntimeLightCameras[lightCameraIndex];
+    ApplySceneLightCameraToRuntimeCamera(lightCamera, runtimeLightCamera, 1.0f);
+    m_sceneProps.AddLightCamera(&runtimeLightCamera);
     if (!lightCamera.enabled) continue;
-    ApplySceneLightCameraToRuntimeCamera(lightCamera, m_editorLightCamera, 1.0f);
+    if (firstEnabledLightCamera < 0) {
+      firstEnabledLightCamera = static_cast<int>(lightCameraIndex);
+      m_editorLightCamera = runtimeLightCamera;
+    }
     if (lightCamera.attached_light >= 0 &&
         lightCamera.attached_light < static_cast<int>(m_sceneProps.Lights.size())) {
       Light& attachedLight = m_sceneProps.Lights[static_cast<std::size_t>(lightCamera.attached_light)];
-      attachedLight.Position = m_editorLightCamera.Eye;
-      attachedLight.Direction = m_editorLightCamera.Look;
+      attachedLight.Position = runtimeLightCamera.Eye;
+      attachedLight.Direction = runtimeLightCamera.Look;
     }
-    appliedAuthoredLightCamera = true;
-    break;
   }
-  if (!appliedAuthoredLightCamera) {
+  if (firstEnabledLightCamera < 0) {
     for (const Light& light : m_sceneProps.Lights) {
       if (light.Type == LIGHT_DIRECTIONAL && light.Enabled) {
         XVECTOR3 direction = light.Direction;
@@ -7945,7 +8989,7 @@ void EditorApp::SyncEditorSceneLights(const ::Camera& cam) {
   if (m_sceneProps.pLightCameras.empty()) {
     m_sceneProps.AddLightCamera(&m_editorLightCamera);
   }
-  m_sceneProps.ActiveLightCamera = 0;
+  m_sceneProps.ActiveLightCamera = firstEnabledLightCamera >= 0 ? firstEnabledLightCamera : 0;
   m_sceneProps.pCullingCamera = m_sceneProps.GetPrimaryCamera();
 }
 
@@ -7983,7 +9027,9 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
   // Sync scene lights from editor lights.
   // Use real scene lights by default; keep the camera headlamp only as an explicit/fallback light.
   SyncEditorSceneLights(cam);
-  ApplyGodRaysVolumeToSceneProps(g_godRaysVolume, m_sceneProps);
+  ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+  const bool godRaysVolumeCanBeActive = GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph);
+  ApplyGodRaysVolumeToSceneProps(g_godRaysVolume, m_sceneProps, godRaysVolumeCanBeActive);
 
   // Update all mesh transforms
   SyncSceneObjectTransforms();
@@ -8186,7 +9232,8 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
 
   // Camera and light viewport gizmos (only if visible)
   if (m_lines.IsReady()) {
-    for (int i = 0; i < static_cast<int>(g_objects.size()); ++i) {
+    if (!m_editorNavMeshAuthoringMode) {
+      for (int i = 0; i < static_cast<int>(g_objects.size()); ++i) {
       SceneObject& obj = g_objects[static_cast<std::size_t>(i)];
       if (!obj.visible || !obj.showOrientation) {
         continue;
@@ -8234,23 +9281,47 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
       SyncLightCameraGizmoCamera(lightCameraDesc, lightCamera);
       DrawCameraGizmo(m_lines, cam.VP, lightCamera, g_selectionType == 6 && i == g_selectedIdx);
     }
-    DrawGodRaysVolume(
-        m_lines,
-        cam.VP,
-        g_godRaysVolume,
-        g_selectionType == 8,
-        g_godRaysVolumeGizmo);
-    if (g_splineGizmos.size() < g_splines.size()) {
-      g_splineGizmos.resize(g_splines.size());
+      if (godRaysVolumeCanBeActive) {
+        DrawGodRaysVolume(
+            m_lines,
+            cam.VP,
+            g_godRaysVolume,
+            g_selectionType == 8,
+            g_godRaysVolumeGizmo);
+      }
     }
-    for (int i = 0; i < static_cast<int>(g_splines.size()); ++i)
-      DrawEditorSpline(
+    if (m_editorNavMeshAuthored && m_editorNavMeshVisible) {
+      DrawNavMeshClassificationOverlay(m_lines, cam.VP);
+    }
+    if (g_navMeshVolumeGizmos.size() > m_editorNavMeshVolumes.size()) {
+      for (std::size_t i = m_editorNavMeshVolumes.size(); i < g_navMeshVolumeGizmos.size(); ++i) {
+        ReleaseGizmoCache(g_navMeshVolumeGizmos[i]);
+      }
+      g_navMeshVolumeGizmos.resize(m_editorNavMeshVolumes.size());
+    } else if (g_navMeshVolumeGizmos.size() < m_editorNavMeshVolumes.size()) {
+      g_navMeshVolumeGizmos.resize(m_editorNavMeshVolumes.size());
+    }
+    for (int i = 0; i < static_cast<int>(m_editorNavMeshVolumes.size()); ++i) {
+      DrawNavMeshVolume(
           m_lines,
           cam.VP,
-          g_splines[static_cast<std::size_t>(i)],
-          (g_selectionType == 5 || g_selectionType == 7) && i == g_selectedIdx,
-          g_selectionType == 7 && i == g_selectedIdx ? g_selectedSplinePoint : -1,
-          g_splineGizmos[static_cast<std::size_t>(i)]);
+          m_editorNavMeshVolumes[static_cast<std::size_t>(i)],
+          g_selectionType == 4 && g_selectedIdx == 0 && i == m_editorSelectedNavVolume,
+          g_navMeshVolumeGizmos[static_cast<std::size_t>(i)]);
+    }
+    if (!m_editorNavMeshAuthoringMode) {
+      if (g_splineGizmos.size() < g_splines.size()) {
+        g_splineGizmos.resize(g_splines.size());
+      }
+      for (int i = 0; i < static_cast<int>(g_splines.size()); ++i)
+        DrawEditorSpline(
+            m_lines,
+            cam.VP,
+            g_splines[static_cast<std::size_t>(i)],
+            (g_selectionType == 5 || g_selectionType == 7) && i == g_selectedIdx,
+            g_selectionType == 7 && i == g_selectedIdx ? g_selectedSplinePoint : -1,
+            g_splineGizmos[static_cast<std::size_t>(i)]);
+    }
   }
 
   // Grid
@@ -8383,17 +9454,32 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
     m_panels.showInspector = true;
     m_panels.showRendering = true;
     m_panels.showConsole = true;
+    m_panels.showNavMeshAuthoring = m_editorNavMeshAuthoringMode;
     m_panels.showRTDebug = false;
   }
 
   int addCamera = -1, addLight = -1;
   bool wantsClone = false, wantsGroup = false, wantsUngroup = false, wantsPlayScene = false;
   int toolbarCameraMode = static_cast<int>(m_editorCameraMode);
+  const bool wasNavMeshAuthoringMode = m_editorNavMeshAuthoringMode;
   int mode = ImGuiDrawToolbar((int)m_gizmo.Mode(), addCamera, addLight,
                                 wantsClone, wantsGroup, wantsUngroup, wantsPlayScene,
                                 g_selectedIdx >= 0, g_multiSelect.size() >= 2,
-                                toolbarCameraMode);
+                                toolbarCameraMode,
+                                m_editorNavMeshAuthoringMode);
   m_gizmo.SetMode((GizmoMode)mode);
+  if (m_editorNavMeshAuthoringMode) {
+    m_panels.showHierarchy = true;
+    m_panels.showInspector = true;
+    m_panels.showNavMeshAuthoring = true;
+    m_editorNavMeshShowSourcePreview = true;
+    if (!wasNavMeshAuthoringMode) {
+      g_selectionType = 4;
+      g_selectedIdx = 0;
+      g_selectedSplinePoint = -1;
+      ClearMixedSelection();
+    }
+  }
   toolbarCameraMode = std::clamp(toolbarCameraMode, 0, 1);
   const EditorCameraMode newCameraMode = static_cast<EditorCameraMode>(toolbarCameraMode);
   if (newCameraMode != m_editorCameraMode) {
@@ -8456,6 +9542,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         g_selectedIdx = -1;
       } else if (g_selectionType == 6 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
         AdjustActiveLightCameraAfterErase(g_selectedIdx);
+        AdjustGodRaysLightCameraAfterErase(g_selectedIdx);
         if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameraGizmoCameras.size())) {
           if (t850::g_pBaseDriver) {
             t850::g_pBaseDriver->WaitForGPU();
@@ -8468,10 +9555,14 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
       } else if (g_selectionType == 3 && g_selectedIdx < (int)g_physicsEntities.size()) {
         DestroyPhysicsEntity(m_physics, g_selectedIdx);
       } else if (g_selectionType == 4 && g_selectedIdx == 0) {
-        DestroyEditorNavMesh();
+        if (!DeleteSelectedNavAuthoringChild()) {
+          DestroyEditorNavMesh();
+        }
       } else if (g_selectionType == 8 && g_selectedIdx == 0) {
+        g_godRaysVolume.authored = false;
         g_godRaysVolume.enabled = false;
         g_godRaysVolume.visible = false;
+        g_godRaysVolume.clip_enabled = false;
         g_selectedIdx = -1;
         g_selectionType = 0;
       }
@@ -8917,6 +10008,32 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         float t[3], r[3], s[3];
         ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
         point.position = {t[0], t[1], t[2]};
+      }
+    }
+  }
+  else if (g_selectionType == 4 &&
+           g_selectedIdx == 0 &&
+           m_editorSelectedNavVolume >= 0 &&
+           m_editorSelectedNavVolume < static_cast<int>(m_editorNavMeshVolumes.size())) {
+    t850::scene::SceneNavMeshVolumeDesc& volume =
+        m_editorNavMeshVolumes[static_cast<std::size_t>(m_editorSelectedNavVolume)];
+    if (!volume.frozen) {
+      XMATRIX44 worldMat = BuildNavMeshVolumeWorld(volume);
+      const bool manipulated = ImGuizmoManipulate(
+          &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+          mode, &worldMat.m[0][0]);
+      if (manipulated) {
+        float t[3], r[3], s[3];
+        ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
+        volume.position = {t[0], t[1], t[2]};
+        volume.rotation = {r[0] * kDegToRad, r[1] * kDegToRad, r[2] * kDegToRad};
+        if (mode == 2) {
+          volume.half_extents = {
+              (std::max)(0.001f, std::abs(s[0])),
+              (std::max)(0.001f, std::abs(s[1])),
+              (std::max)(0.001f, std::abs(s[2]))};
+        }
+        MarkEditorNavMeshDirty("NavMesh volume transformed. Click Re-generate.");
       }
     }
   }
@@ -9429,30 +10546,63 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
             if (ImGui::IsItemClicked() && !m_editorNavMeshFrozen) {
               g_selectedIdx = 0;
               g_selectionType = 4;
+              m_editorSelectedNavVolume = -1;
+              m_editorSelectedNavLink = -1;
               ClearMixedSelection();
             }
             if (m_editorNavMeshFrozen) ImGui::PopStyleColor();
             if (nodeOpen) {
-              for (int linkIndex = 0; linkIndex < static_cast<int>(m_editorNavMeshLinks.size()); ++linkIndex) {
-                t850::scene::SceneNavMeshLinkDesc& link = m_editorNavMeshLinks[static_cast<std::size_t>(linkIndex)];
-                ImGui::PushID(linkIndex + 61000);
-                ImGui::Checkbox("##linkVis", &link.visible); ImGui::SameLine();
-                ImGui::Checkbox("##linkFrz", &link.frozen); ImGui::SameLine();
-                ImGui::Checkbox("##linkWir", &link.show_wire); ImGui::SameLine();
-                ImGuiTreeNodeFlags linkFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
-                if (linkIndex == m_editorSelectedNavLink) linkFlags |= ImGuiTreeNodeFlags_Selected;
-                if (link.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
-                const std::string linkLabel = "[L] " + link.name + " (" + link.type + ")";
-                const bool linkOpen = ImGui::TreeNodeEx(linkLabel.c_str(), linkFlags);
-                if (ImGui::IsItemClicked() && !link.frozen) {
-                  m_editorSelectedNavLink = linkIndex;
-                  g_selectedIdx = 0;
-                  g_selectionType = 4;
-                  ClearMixedSelection();
+              if (!m_editorNavMeshVolumes.empty() &&
+                  ImGui::TreeNodeEx("Volumes", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+                  t850::scene::SceneNavMeshVolumeDesc& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)];
+                  ImGui::PushID(volumeIndex + 60500);
+                  ImGui::Checkbox("##volumeVis", &volume.visible); ImGui::SameLine();
+                  ImGui::Checkbox("##volumeFrz", &volume.frozen); ImGui::SameLine();
+                  ImGui::Checkbox("##volumeWir", &volume.show_wire); ImGui::SameLine();
+                  ImGuiTreeNodeFlags volumeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+                  if (volumeIndex == m_editorSelectedNavVolume) volumeFlags |= ImGuiTreeNodeFlags_Selected;
+                  if (volume.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+                  const std::string volumeLabel = "[V] " + volume.name + " (" + volume.type + ")";
+                  const bool volumeOpen = ImGui::TreeNodeEx(volumeLabel.c_str(), volumeFlags);
+                  if (ImGui::IsItemClicked() && !volume.frozen) {
+                    m_editorSelectedNavVolume = volumeIndex;
+                    m_editorSelectedNavLink = -1;
+                    g_selectedIdx = 0;
+                    g_selectionType = 4;
+                    ClearMixedSelection();
+                  }
+                  if (volume.frozen) ImGui::PopStyleColor();
+                  if (volumeOpen) ImGui::TreePop();
+                  ImGui::PopID();
                 }
-                if (link.frozen) ImGui::PopStyleColor();
-                if (linkOpen) ImGui::TreePop();
-                ImGui::PopID();
+                ImGui::TreePop();
+              }
+              if (!m_editorNavMeshLinks.empty() &&
+                  ImGui::TreeNodeEx("Links", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (int linkIndex = 0; linkIndex < static_cast<int>(m_editorNavMeshLinks.size()); ++linkIndex) {
+                  t850::scene::SceneNavMeshLinkDesc& link = m_editorNavMeshLinks[static_cast<std::size_t>(linkIndex)];
+                  ImGui::PushID(linkIndex + 61000);
+                  ImGui::Checkbox("##linkVis", &link.visible); ImGui::SameLine();
+                  ImGui::Checkbox("##linkFrz", &link.frozen); ImGui::SameLine();
+                  ImGui::Checkbox("##linkWir", &link.show_wire); ImGui::SameLine();
+                  ImGuiTreeNodeFlags linkFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+                  if (linkIndex == m_editorSelectedNavLink) linkFlags |= ImGuiTreeNodeFlags_Selected;
+                  if (link.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+                  const std::string linkLabel = "[L] " + link.name + " (" + link.type + ")";
+                  const bool linkOpen = ImGui::TreeNodeEx(linkLabel.c_str(), linkFlags);
+                  if (ImGui::IsItemClicked() && !link.frozen) {
+                    m_editorSelectedNavLink = linkIndex;
+                    m_editorSelectedNavVolume = -1;
+                    g_selectedIdx = 0;
+                    g_selectionType = 4;
+                    ClearMixedSelection();
+                  }
+                  if (link.frozen) ImGui::PopStyleColor();
+                  if (linkOpen) ImGui::TreePop();
+                  ImGui::PopID();
+                }
+                ImGui::TreePop();
               }
               ImGui::TreePop();
             }
@@ -9628,15 +10778,19 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           ImGui::TreePop();
         }
         // Rendering Volumes
-        if (ImGui::TreeNodeEx("Rendering Volumes", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (RenderGraphSupportsGodRays(g_renderGraph) && GodRaysVolumeIsAuthored(g_godRaysVolume) &&
+            ImGui::TreeNodeEx("Rendering Volumes", ImGuiTreeNodeFlags_DefaultOpen)) {
+          const bool volumeCanBeActive = GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph);
+          if (!volumeCanBeActive) ImGui::BeginDisabled();
           ImGui::Checkbox("##godRaysVolumeEnabled", &g_godRaysVolume.enabled); ImGui::SameLine();
           ImGui::Checkbox("##godRaysVolumeVisible", &g_godRaysVolume.visible); ImGui::SameLine();
+          if (!volumeCanBeActive) ImGui::EndDisabled();
           ImGui::Checkbox("##godRaysVolumeFrozen", &g_godRaysVolume.frozen); ImGui::SameLine();
           ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
           if (g_selectionType == 8) flags |= ImGuiTreeNodeFlags_Selected;
           if (g_godRaysVolume.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
           const bool nodeOpen = ImGui::TreeNodeEx("[GR] God Rays Volume", flags);
-          if (ImGui::IsItemClicked() && !g_godRaysVolume.frozen) {
+          if (ImGui::IsItemClicked() && !g_godRaysVolume.frozen && volumeCanBeActive) {
             g_selectionType = 8;
             g_selectedIdx = 0;
             g_selectedSplinePoint = -1;
@@ -10036,7 +11190,18 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         }
       } else if (g_selectionType == 4 && g_selectedIdx == 0) {
         ImGui::SeparatorText("Navigation Mesh");
-        DrawNavMeshAuthoringPanel();
+        if (m_panels.showNavMeshAuthoring) {
+          ImGui::TextWrapped("NavMesh Authoring is open in its dedicated panel.");
+          if (ImGui::Button("Focus NavMesh Authoring")) {
+            m_panels.showNavMeshAuthoring = true;
+          }
+        } else {
+          if (ImGui::Button("Open NavMesh Authoring Panel")) {
+            m_panels.showNavMeshAuthoring = true;
+          }
+          ImGui::Separator();
+          DrawNavMeshAuthoringPanel();
+        }
       } else if (g_selectionType == 5 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splines.size())) {
         t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(g_selectedIdx)];
         ImGui::SeparatorText("Spline");
@@ -10225,6 +11390,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         ImGui::TextDisabled("SceneTemplate uses the first enabled light camera as the shadow camera source.");
         if (ImGui::Button("Delete Light Camera")) {
           AdjustActiveLightCameraAfterErase(g_selectedIdx);
+          AdjustGodRaysLightCameraAfterErase(g_selectedIdx);
           if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameraGizmoCameras.size())) {
             if (t850::g_pBaseDriver) {
               t850::g_pBaseDriver->WaitForGPU();
@@ -10238,14 +11404,46 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         }
       } else if (g_selectionType == 8 && g_selectedIdx == 0) {
         ImGui::SeparatorText("God Rays Volume");
+        const bool renderGraphHasGodRays = RenderGraphSupportsGodRays(g_renderGraph);
+        ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+        const bool volumeCanBeActive = GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph);
         char nameBuffer[256] = {};
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", g_godRaysVolume.name.c_str());
         if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer))) {
           g_godRaysVolume.name = nameBuffer;
         }
+        if (g_lightCameras.size() > 1) {
+          const int selectedLightCamera = std::clamp(
+              g_godRaysVolume.light_camera,
+              0,
+              static_cast<int>(g_lightCameras.size()) - 1);
+          const std::string preview = g_lightCameras[static_cast<std::size_t>(selectedLightCamera)].name;
+          if (ImGui::BeginCombo("Light Camera", preview.c_str())) {
+            for (int i = 0; i < static_cast<int>(g_lightCameras.size()); ++i) {
+              const auto& lightCamera = g_lightCameras[static_cast<std::size_t>(i)];
+              std::string label = lightCamera.name;
+              if (!lightCamera.enabled) label += " (disabled)";
+              const bool selected = i == g_godRaysVolume.light_camera;
+              if (ImGui::Selectable(label.c_str(), selected)) {
+                g_godRaysVolume.light_camera = i;
+              }
+              if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+          }
+        } else if (!g_lightCameras.empty()) {
+          ImGui::TextDisabled("Light Camera: %s", g_lightCameras.front().name.c_str());
+          g_godRaysVolume.light_camera = 0;
+        }
+        if (!volumeCanBeActive) {
+          ImGui::BeginDisabled();
+        }
         ImGui::Checkbox("Enabled", &g_godRaysVolume.enabled);
         ImGui::Checkbox("Clip God Rays to Volume", &g_godRaysVolume.clip_enabled);
         ImGui::Checkbox("Visible", &g_godRaysVolume.visible);
+        if (!volumeCanBeActive) {
+          ImGui::EndDisabled();
+        }
         ImGui::Checkbox("Frozen", &g_godRaysVolume.frozen);
         ImGui::Checkbox("Wireframe", &g_godRaysVolume.show_wire);
         float position[3] = {g_godRaysVolume.position.x, g_godRaysVolume.position.y, g_godRaysVolume.position.z};
@@ -10262,6 +11460,11 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
             t850::g_pBaseDriver->WaitForGPU();
           }
           ReleaseGizmoCache(g_godRaysVolumeGizmo);
+        }
+        if (!renderGraphHasGodRays) {
+          ImGui::TextDisabled("The active render graph has no God Rays pass.");
+        } else if (!IsValidGodRaysLightCamera(g_godRaysVolume.light_camera)) {
+          ImGui::TextDisabled("Enable and assign a light camera to activate this volume.");
         }
         ImGui::TextDisabled("DayScene's original shader has no spatial clip; clip is off by default to preserve parity.");
       } else if (g_selectionType == 7 &&
@@ -10297,6 +11500,26 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           }
         }
       }
+    }
+    ImGui::End();
+  }
+
+  if (m_panels.showNavMeshAuthoring) {
+    if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+      const float margin = 12.0f;
+      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+      const float rightPanelWidth = (std::min)(440.0f, (std::max)(360.0f, viewport->WorkSize.x * 0.27f));
+      const float width = (std::min)(520.0f, (std::max)(420.0f, viewport->WorkSize.x * 0.34f));
+      const float height = (std::max)(420.0f, viewport->WorkSize.y * 0.58f);
+      ImGui::SetNextWindowPos(
+          ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - rightPanelWidth - width - margin * 2.0f,
+                 viewport->WorkPos.y + margin),
+          layoutCond);
+      ImGui::SetNextWindowSize(ImVec2(width, height), layoutCond);
+    }
+    if (ImGui::Begin("NavMesh Authoring", &m_panels.showNavMeshAuthoring, ImGuiWindowFlags_NoCollapse)) {
+      ImGuiClampCurrentWindowToEditorWorkArea();
+      DrawNavMeshAuthoringPanel();
     }
     ImGui::End();
   }

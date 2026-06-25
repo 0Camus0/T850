@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <scene/TextRenderer.h>
+#include <scene/RenderQueue.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 #include <utils/Utils.h>
@@ -165,9 +166,9 @@ namespace t850 {
     //y = -m_textureSize - y;
     m_quad.Set();
     m_shader->Set(*T8DeviceContext);
+    MeshDrawStateTracker::Get().OnShaderChanged(m_shader);
     m_CB->UpdateFromBuffer(*T8DeviceContext, &color.x);
     m_CB->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     ftex->Set(*T8DeviceContext, 0, "tex0");
     //ftex->SetSampler(*T8DeviceContext);
     float tempDiv = 1.0f / (float)m_textureSize;
@@ -251,9 +252,9 @@ namespace t850 {
 
     m_quad.Set();
     m_shader->Set(*T8DeviceContext);
+    MeshDrawStateTracker::Get().OnShaderChanged(m_shader);
     m_CB->UpdateFromBuffer(*T8DeviceContext, &color.x);
     m_CB->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     ftex->Set(*T8DeviceContext, 0, "tex0");
 
     float sw = (float)screenW;
@@ -308,10 +309,15 @@ namespace t850 {
 
     unsigned int stride = sizeof(Quad::Vertex);
     unsigned int offset = 0;
-    m_batchVB->Set(*T8DeviceContext, stride, offset);
-    m_batchIB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
+    MeshDrawStateTracker::Get().BindIndexedGeometry(*T8DeviceContext,
+                                                    m_batchVB,
+                                                    stride,
+                                                    offset,
+                                                    m_batchIB,
+                                                    IndexBufferFormat::R16,
+                                                    Topology::TRIANLE_LIST);
     m_shader->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
+    MeshDrawStateTracker::Get().OnShaderChanged(m_shader);
     ftex->Set(*T8DeviceContext, 0, "tex0");
   }
 

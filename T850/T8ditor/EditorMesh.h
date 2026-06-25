@@ -18,6 +18,7 @@
 
 #include "EditorLineRenderer.h"
 
+#include <scene/WireframeGeometry.h>
 #include <utils/Picking.h>
 #include <string>
 #include <vector>
@@ -28,6 +29,10 @@ class EditorMesh {
 public:
   EditorMesh()  = default;
   ~EditorMesh() { Destroy(); }
+  EditorMesh(const EditorMesh&) = delete;
+  EditorMesh& operator=(const EditorMesh&) = delete;
+  EditorMesh(EditorMesh&&) noexcept = default;
+  EditorMesh& operator=(EditorMesh&&) noexcept = default;
 
   // Load a mesh file (.x, .glb, .gltf) and build the wireframe buffers.
   // Returns false on any parse/IO/buffer-creation failure.
@@ -38,7 +43,7 @@ public:
   bool CloneFrom(const EditorMesh& source);
   void Destroy();
 
-  bool IsLoaded() const { return m_vb != nullptr && m_ib != nullptr; }
+  bool IsLoaded() const { return m_geometry.IsReady(); }
   const std::string& Path() const { return m_path; }
 
   // Transform — owned by the mesh, mutated by the editor.
@@ -71,10 +76,7 @@ public:
 private:
   std::string m_path;
 
-  t850::VertexBuffer* m_vb = nullptr;
-  t850::IndexBuffer*  m_ib = nullptr;
-  unsigned m_indexCount = 0;
-  bool     m_use32BitIB = false;
+  t850::WireframeGeometry m_geometry;
   std::vector<XVECTOR3> m_pickVertices;
   std::vector<unsigned int> m_pickIndices;
 

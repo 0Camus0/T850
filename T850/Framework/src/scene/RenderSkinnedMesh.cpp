@@ -703,17 +703,7 @@ namespace t850 {
       if (lineIdx.empty()) continue;
 
       unsigned maxVert = (unsigned)geom.Positions.size();
-      if (maxVert <= 65535) {
-        std::vector<unsigned short> idx16(lineIdx.size());
-        for (std::size_t j = 0; j < lineIdx.size(); j++)
-          idx16[j] = (unsigned short)lineIdx[j];
-        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer16(idx16.data(), (unsigned)idx16.size());
-        m_wireGeo[gi].use32Bit = false;
-      } else {
-        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer32(lineIdx.data(), (unsigned)lineIdx.size());
-        m_wireGeo[gi].use32Bit = true;
-      }
-      m_wireGeo[gi].indexCount = (unsigned)lineIdx.size();
+      m_wireGeo[gi].CreateLineIndexBuffer(lineIdx, maxVert);
     }
   }
 
@@ -995,7 +985,7 @@ namespace t850 {
     ExtractMeshInstanceCB(wireInstanceCB, wireCB);
 
     for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
-      if (!m_wireGeo[i].IB || m_wireGeo[i].indexCount == 0) continue;
+      if (!m_wireGeo[i].HasIndexBuffer()) continue;
 
       MeshInfo* mi = &Info[i];
       VertexBuffer* vbToBind = mi->VB;
@@ -1012,14 +1002,17 @@ namespace t850 {
         T8_LOG_ERROR("[SkinnedMesh] Wireframe skipped geometry %zu: no vertex buffer", i);
         continue;
       }
-      vbToBind->Set(*T8DeviceContext, mi->VertexSize, 0);
-
-      auto ibFmt = m_wireGeo[i].use32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
-      m_wireGeo[i].IB->Set(*T8DeviceContext, 0, ibFmt);
-
-      T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
+      MeshDrawStateTracker& tracker = MeshDrawStateTracker::Get();
+      tracker.BindIndexedGeometry(*T8DeviceContext,
+                                  vbToBind,
+                                  mi->VertexSize,
+                                  0,
+                                  m_wireGeo[i].GetIndexBuffer(),
+                                  m_wireGeo[i].GetIndexFormat(),
+                                  Topology::LINE_LIST);
 
       m_wireShader->Set(*T8DeviceContext);
+      tracker.OnShaderChanged(m_wireShader);
       mi->CB->UpdateFromBuffer(*T8DeviceContext, &wireCB.WVP[0]);
       mi->CB->Set(*T8DeviceContext, 0);
       if (!g_pBaseDriver->UsesGLSL()) {
@@ -1039,9 +1032,7 @@ namespace t850 {
         secondaryDepth->Set(*T8DeviceContext, 1, "depthTex2");
       }
 
-      T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, baseVertex);
-
-      T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
+      T8DeviceContext->DrawIndexed(m_wireGeo[i].GetIndexCount(), 0, baseVertex);
     }
   }
 
@@ -1370,7 +1361,6 @@ namespace t850 {
         T8_LOG_ERROR("[SkinnedMesh] Skipped geometry %zu: no uploaded vertex buffer", i);
         continue;
       }
-      vbToBind->Set(*T8DeviceContext, stride, offset);
 
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
       std::vector<std::size_t> drawOrder(numSubsets);
@@ -1481,9 +1471,13 @@ namespace t850 {
           T8_LOG_ERROR("[SkinnedMesh] Skipped subset %zu: no uploaded index buffer", k);
           continue;
         }
-        ibToBind->Set(*T8DeviceContext, 0,
-                      sub_info->IB32Bit ? IndexBufferFormat::R32
-                                        : IndexBufferFormat::R16);
+        tracker.BindIndexedGeometry(*T8DeviceContext,
+                                    vbToBind,
+                                    stride,
+                                    offset,
+                                    ibToBind,
+                                    sub_info->IB32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16,
+                                    Topology::TRIANLE_LIST);
 
         ShaderKey finalKey(sub_info->key.bits);
         finalKey.setPass(gKey.getPass());
@@ -1627,7 +1621,6 @@ namespace t850 {
           sub_info->LightmapTex->SetSampler(*T8DeviceContext, LightmapSamplerSlot);
         }
 
-        T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         // Phase A.5 step 3: pool offsets steer the draw to this
         // submesh's allocation.
         if (sub_info->ibPoolAlloc.IsValid() && it_MeshInfo->vbPoolAlloc.IsValid()) {
@@ -1655,9 +1648,8 @@ namespace t850 {
     m_snapshotPoseActive = false;
 
     m_lineRenderer.Destroy();
-    for (auto& wg : m_wireGeo) {
-      if (wg.IB) { wg.IB->release(); wg.IB = nullptr; }
-    }
+    for (auto& wg : m_wireGeo)
+      wg.Destroy();
     m_wireGeo.clear();
     m_wireShader = nullptr;
     if (m_skelVB) { m_skelVB->release(); m_skelVB = nullptr; }

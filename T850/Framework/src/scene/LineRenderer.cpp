@@ -6,6 +6,7 @@
 #include <scene/LineRenderer.h>
 
 #include <Config.h>
+#include <scene/RenderQueue.h>
 #include <video/BaseDriver.h>
 #include <utils/Utils.h>
 #include <utils/Log.h>
@@ -134,19 +135,22 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
     m_farPlane,
     m_depthBias);
 
-  ib->Set(*T8DeviceContext, 0, ibFormat);
-  vb->Set(*T8DeviceContext, vertexStride, 0);
-
-  // Set topology BEFORE shader (Vulkan bakes topology into the pipeline at Set time)
-  T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
+  MeshDrawStateTracker& tracker = MeshDrawStateTracker::Get();
+  tracker.BindIndexedGeometry(*T8DeviceContext,
+                              vb,
+                              vertexStride,
+                              0,
+                              ib,
+                              ibFormat,
+                              Topology::LINE_LIST);
 
   shader->Set(*T8DeviceContext);
-  m_cb->UpdateFromBuffer(*T8DeviceContext, &cb);
-  m_cb->Set(*T8DeviceContext);
+  tracker.OnShaderChanged(shader);
+  tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, m_cb, 0, &cb, sizeof(cb));
 #if defined(USING_VULKAN) || defined(USING_VULKAN_ONLY)
   // Android offline SPIR-V can auto-map VS/FS cbuffers to different bindings
   // when the fragment shader also samples depth. Populate both logical slots.
-  m_cb->Set(*T8DeviceContext, 1);
+  tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, m_cb, 1, &cb, sizeof(cb));
 #endif
 
   // Bind depth texture AFTER shader is set (D3D12 needs active root signature)
@@ -158,9 +162,6 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
   }
 
   T8DeviceContext->DrawIndexed(indexCount, 0, startVertex);
-
-  // Reset topology back to triangle list for subsequent draws
-  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 }
 
 VertexBuffer* LineRenderer::CreatePositionVB(const float* positionsXYZW,

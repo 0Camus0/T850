@@ -175,6 +175,8 @@ namespace t8ditor {
     void InvalidateEditorNavMeshClassification();
     bool UpdateEditorNavMeshClassification();
     void DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, const XMATRIX44& vp);
+    bool PickEditorNavMeshTriangleFromMouse(int mouseX, int mouseY, int& outTriangleIndex) const;
+    bool CreateNavVolumeFromSelectedTriangle(const char* type);
     bool PickEditorNavMeshNodeFromMouse(int mouseX, int mouseY, int& outNodeIndex, XVECTOR3& outNodePosition) const;
     void DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Texture* secondaryDepthTexture, const Camera& cam);
     void UpdateEditorSplinePreview(float deltaSeconds);
@@ -238,6 +240,7 @@ namespace t8ditor {
     bool m_editorNavMeshFrozen = false;
     bool m_editorNavMeshShowWire = true;
     bool m_editorNavMeshShowSourcePreview = true;
+    bool m_editorNavMeshAuthoringMode = false;
     float m_editorNavMeshDebugOffset = 0.01f;
     int m_editorNavMeshDebugShapeMode = 0;
     float m_editorNavMeshLastBuildMs = 0.0f;
@@ -250,6 +253,7 @@ namespace t8ditor {
     std::vector<XVECTOR3> m_editorNavMeshNodes;
     int m_editorSelectedNavVolume = -1;
     int m_editorSelectedNavLink = -1;
+    int m_editorSelectedNavTriangle = -1;
     int m_editorNavLinkPickMode = 0; // 0=none, 1=start, 2=end
     t850::VertexBuffer* m_editorNavLinkOverlayVB = nullptr;
     t850::IndexBuffer* m_editorNavLinkOverlayIB = nullptr;

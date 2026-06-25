@@ -2383,6 +2383,7 @@ void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorNavMeshNodes.clear();
   m_editorSelectedNavVolume = -1;
   m_editorSelectedNavLink = -1;
+  m_editorSelectedNavTriangle = -1;
   m_editorNavLinkPickMode = 0;
   InvalidateEditorNavMeshClassification();
   if (!keepSettings) {
@@ -2403,6 +2404,7 @@ void EditorApp::InvalidateEditorNavMeshClassification() {
   m_editorNavMeshClassificationReady = false;
   m_editorNavMeshClassificationDirty = true;
   m_editorNavMeshClassification = t850::navigation::NavMeshClassificationResult{};
+  m_editorSelectedNavTriangle = -1;
   ReleaseNavMeshClassificationGizmos();
 }
 
@@ -2428,6 +2430,7 @@ bool EditorApp::DeleteSelectedNavAuthoringChild() {
         ? -1
         : std::clamp(m_editorSelectedNavLink, 0, static_cast<int>(m_editorNavMeshLinks.size()) - 1);
     m_editorSelectedNavVolume = -1;
+    m_editorSelectedNavTriangle = -1;
     MarkEditorNavMeshDirty("Authored link deleted. Click Re-generate.");
     return true;
   }
@@ -2499,6 +2502,83 @@ bool EditorApp::UpdateEditorNavMeshClassification() {
   return true;
 }
 
+bool EditorApp::PickEditorNavMeshTriangleFromMouse(int mouseX, int mouseY, int& outTriangleIndex) const {
+  outTriangleIndex = -1;
+  if (!m_editorNavMeshClassificationReady || !m_sceneProps.GetPrimaryCamera()) {
+    return false;
+  }
+  const Camera& cam = *m_sceneProps.GetPrimaryCamera();
+  const t850::Ray ray = BuildEditorCameraRay(cam,
+                                             static_cast<float>(mouseX),
+                                             static_cast<float>(mouseY),
+                                             m_lastW,
+                                             m_lastH);
+  float bestT = FLT_MAX;
+  for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+    float t = 0.0f;
+    float u = 0.0f;
+    float v = 0.0f;
+    if (t850::RayIntersectsTriangle(ray, tri.vertices[0], tri.vertices[1], tri.vertices[2], t, u, v) && t < bestT) {
+      bestT = t;
+      outTriangleIndex = tri.triangleIndex;
+    }
+  }
+  return outTriangleIndex >= 0;
+}
+
+bool EditorApp::CreateNavVolumeFromSelectedTriangle(const char* type) {
+  if (m_editorSelectedNavTriangle < 0) {
+    return false;
+  }
+  if (!UpdateEditorNavMeshClassification()) {
+    return false;
+  }
+  const auto it = std::find_if(
+      m_editorNavMeshClassification.triangles.begin(),
+      m_editorNavMeshClassification.triangles.end(),
+      [&](const t850::navigation::NavTriangleClassification& tri) {
+        return tri.triangleIndex == m_editorSelectedNavTriangle;
+      });
+  if (it == m_editorNavMeshClassification.triangles.end()) {
+    return false;
+  }
+
+  t850::AABB bounds;
+  for (const XVECTOR3& p : it->vertices) {
+    bounds.ExpandToInclude(p);
+  }
+  const XVECTOR3 center = bounds.Center();
+  const XVECTOR3 extents = bounds.Extents();
+  t850::scene::SceneNavMeshVolumeDesc volume;
+  volume.name = std::string(type && std::strcmp(type, "area_cost") == 0 ? "Area Cost From Triangle " : "Exclude From Triangle ") +
+      std::to_string(m_editorNavMeshVolumes.size() + 1);
+  volume.type = type && *type ? type : "exclude";
+  volume.shape = "box";
+  volume.position = {center.x, center.y, center.z};
+  volume.half_extents = {
+      (std::max)(1.0f, extents.x * 0.5f + 0.5f),
+      (std::max)(1.0f, extents.y * 0.5f + m_editorNavMeshBuildSettings.agentHeight * 0.5f),
+      (std::max)(1.0f, extents.z * 0.5f + 0.5f)};
+  volume.enabled = true;
+  volume.visible = true;
+  volume.show_wire = true;
+  if (volume.type == "area_cost") {
+    volume.area = "mud";
+    volume.cost = 3.0f;
+  }
+
+  m_editorNavMeshVolumes.push_back(volume);
+  m_editorSelectedNavVolume = static_cast<int>(m_editorNavMeshVolumes.size()) - 1;
+  m_editorSelectedNavLink = -1;
+  g_selectionType = 4;
+  g_selectedIdx = 0;
+  ClearMixedSelection();
+  MarkEditorNavMeshDirty(volume.type == "area_cost"
+      ? "Area-cost volume created from selected source triangle. Click Re-generate."
+      : "Exclude volume created from selected source triangle. Click Re-generate.");
+  return true;
+}
+
 void EditorApp::DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, const XMATRIX44& vp) {
   if (!m_editorNavMeshShowSourcePreview || !lines.IsReady()) {
     return;
@@ -2521,7 +2601,8 @@ void EditorApp::DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, cons
     ExcludedVolume = 2,
     OutsideInclude = 3,
     ExcludedSlope = 4,
-    Count = 5
+    Selected = 5,
+    Count = 6
   };
   struct BucketGeometry {
     std::vector<float> vertices;
@@ -2546,6 +2627,9 @@ void EditorApp::DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, cons
     };
 
     for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+      if (tri.triangleIndex == m_editorSelectedNavTriangle) {
+        appendTriangle(Selected, tri);
+      }
       if (tri.included) {
         appendTriangle(tri.area == 0 ? Included : AreaCost, tri);
         continue;
@@ -2580,7 +2664,8 @@ void EditorApp::DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, cons
       XVECTOR3(0.95f, 0.45f, 1.0f, 1.0f),
       XVECTOR3(1.0f, 0.15f, 0.08f, 1.0f),
       XVECTOR3(0.22f, 0.22f, 0.22f, 1.0f),
-      XVECTOR3(0.55f, 0.55f, 0.55f, 1.0f)
+      XVECTOR3(0.55f, 0.55f, 0.55f, 1.0f),
+      XVECTOR3(1.0f, 1.0f, 0.1f, 1.0f)
   };
   XMATRIX44 identity;
   XMatIdentity(identity);
@@ -3111,6 +3196,7 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   ImGui::Checkbox("Frozen", &m_editorNavMeshFrozen);
   ImGui::SameLine();
   ImGui::Checkbox("Wireframe", &m_editorNavMeshShowWire);
+  ImGui::Checkbox("NavMesh Authoring Mode", &m_editorNavMeshAuthoringMode);
 
   if (ImGui::SliderFloat("Debug Vertical Offset", &m_editorNavMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
     ReleaseNavMeshClassificationGizmos();
@@ -3150,6 +3236,19 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
                         m_editorNavMeshClassification.excludedByVolumeCount,
                         m_editorNavMeshClassification.outsideIncludeVolumeCount,
                         m_editorNavMeshClassification.excludedBySlopeCount);
+  }
+  if (m_editorNavMeshAuthoringMode) {
+    ImGui::TextColored(ImVec4(0.25f, 0.75f, 1.0f, 1.0f), "NavMesh Authoring Mode: click source preview triangles to select them.");
+  }
+  if (m_editorSelectedNavTriangle >= 0) {
+    ImGui::Text("Selected Source Triangle: %d", m_editorSelectedNavTriangle);
+    if (ImGui::Button("Exclude Selected Triangle")) {
+      CreateNavVolumeFromSelectedTriangle("exclude");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Area Cost Selected Triangle")) {
+      CreateNavVolumeFromSelectedTriangle("area_cost");
+    }
   }
   if (m_editorNavMeshDirty) {
     ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.1f, 1.0f), "Preview is stale. Click Re-generate.");
@@ -8304,6 +8403,22 @@ single_pick:
                                        m_lastW,
                                        m_lastH);
 
+  if (m_editorNavMeshAuthoringMode && m_editorNavMeshShowSourcePreview) {
+    UpdateEditorNavMeshClassification();
+    int triangleIndex = -1;
+    if (PickEditorNavMeshTriangleFromMouse(IManager.mouseX, IManager.mouseY, triangleIndex)) {
+      m_editorSelectedNavTriangle = triangleIndex;
+      m_editorSelectedNavVolume = -1;
+      m_editorSelectedNavLink = -1;
+      g_selectedIdx = 0;
+      g_selectionType = 4;
+      ClearMixedSelection();
+      ReleaseNavMeshClassificationGizmos();
+      m_editorNavMeshStatus = "Source triangle selected. Use Exclude Selected Triangle or Area Cost Selected Triangle.";
+      return;
+    }
+  }
+
   // Test all objects, pick the closest
   float bestT = FLT_MAX;
   int   bestIdx  = -1;
@@ -9062,11 +9177,24 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   int addCamera = -1, addLight = -1;
   bool wantsClone = false, wantsGroup = false, wantsUngroup = false, wantsPlayScene = false;
   int toolbarCameraMode = static_cast<int>(m_editorCameraMode);
+  const bool wasNavMeshAuthoringMode = m_editorNavMeshAuthoringMode;
   int mode = ImGuiDrawToolbar((int)m_gizmo.Mode(), addCamera, addLight,
                                 wantsClone, wantsGroup, wantsUngroup, wantsPlayScene,
                                 g_selectedIdx >= 0, g_multiSelect.size() >= 2,
-                                toolbarCameraMode);
+                                toolbarCameraMode,
+                                m_editorNavMeshAuthoringMode);
   m_gizmo.SetMode((GizmoMode)mode);
+  if (m_editorNavMeshAuthoringMode) {
+    m_panels.showHierarchy = true;
+    m_panels.showInspector = true;
+    m_editorNavMeshShowSourcePreview = true;
+    if (!wasNavMeshAuthoringMode) {
+      g_selectionType = 4;
+      g_selectedIdx = 0;
+      g_selectedSplinePoint = -1;
+      ClearMixedSelection();
+    }
+  }
   toolbarCameraMode = std::clamp(toolbarCameraMode, 0, 1);
   const EditorCameraMode newCameraMode = static_cast<EditorCameraMode>(toolbarCameraMode);
   if (newCameraMode != m_editorCameraMode) {

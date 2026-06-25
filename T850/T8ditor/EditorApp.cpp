@@ -9015,7 +9015,8 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
 
   // Camera and light viewport gizmos (only if visible)
   if (m_lines.IsReady()) {
-    for (int i = 0; i < static_cast<int>(g_objects.size()); ++i) {
+    if (!m_editorNavMeshAuthoringMode) {
+      for (int i = 0; i < static_cast<int>(g_objects.size()); ++i) {
       SceneObject& obj = g_objects[static_cast<std::size_t>(i)];
       if (!obj.visible || !obj.showOrientation) {
         continue;
@@ -9063,13 +9064,14 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
       SyncLightCameraGizmoCamera(lightCameraDesc, lightCamera);
       DrawCameraGizmo(m_lines, cam.VP, lightCamera, g_selectionType == 6 && i == g_selectedIdx);
     }
-    if (godRaysVolumeCanBeActive) {
-      DrawGodRaysVolume(
-          m_lines,
-          cam.VP,
-          g_godRaysVolume,
-          g_selectionType == 8,
-          g_godRaysVolumeGizmo);
+      if (godRaysVolumeCanBeActive) {
+        DrawGodRaysVolume(
+            m_lines,
+            cam.VP,
+            g_godRaysVolume,
+            g_selectionType == 8,
+            g_godRaysVolumeGizmo);
+      }
     }
     if (m_editorNavMeshAuthored && m_editorNavMeshVisible) {
       DrawNavMeshClassificationOverlay(m_lines, cam.VP);
@@ -9090,17 +9092,19 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
           g_selectionType == 4 && g_selectedIdx == 0 && i == m_editorSelectedNavVolume,
           g_navMeshVolumeGizmos[static_cast<std::size_t>(i)]);
     }
-    if (g_splineGizmos.size() < g_splines.size()) {
-      g_splineGizmos.resize(g_splines.size());
+    if (!m_editorNavMeshAuthoringMode) {
+      if (g_splineGizmos.size() < g_splines.size()) {
+        g_splineGizmos.resize(g_splines.size());
+      }
+      for (int i = 0; i < static_cast<int>(g_splines.size()); ++i)
+        DrawEditorSpline(
+            m_lines,
+            cam.VP,
+            g_splines[static_cast<std::size_t>(i)],
+            (g_selectionType == 5 || g_selectionType == 7) && i == g_selectedIdx,
+            g_selectionType == 7 && i == g_selectedIdx ? g_selectedSplinePoint : -1,
+            g_splineGizmos[static_cast<std::size_t>(i)]);
     }
-    for (int i = 0; i < static_cast<int>(g_splines.size()); ++i)
-      DrawEditorSpline(
-          m_lines,
-          cam.VP,
-          g_splines[static_cast<std::size_t>(i)],
-          (g_selectionType == 5 || g_selectionType == 7) && i == g_selectedIdx,
-          g_selectionType == 7 && i == g_selectedIdx ? g_selectedSplinePoint : -1,
-          g_splineGizmos[static_cast<std::size_t>(i)]);
   }
 
   // Grid
@@ -9233,6 +9237,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
     m_panels.showInspector = true;
     m_panels.showRendering = true;
     m_panels.showConsole = true;
+    m_panels.showNavMeshAuthoring = m_editorNavMeshAuthoringMode;
     m_panels.showRTDebug = false;
   }
 
@@ -9249,6 +9254,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   if (m_editorNavMeshAuthoringMode) {
     m_panels.showHierarchy = true;
     m_panels.showInspector = true;
+    m_panels.showNavMeshAuthoring = true;
     m_editorNavMeshShowSourcePreview = true;
     if (!wasNavMeshAuthoringMode) {
       g_selectionType = 4;
@@ -10967,7 +10973,18 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         }
       } else if (g_selectionType == 4 && g_selectedIdx == 0) {
         ImGui::SeparatorText("Navigation Mesh");
-        DrawNavMeshAuthoringPanel();
+        if (m_panels.showNavMeshAuthoring) {
+          ImGui::TextWrapped("NavMesh Authoring is open in its dedicated panel.");
+          if (ImGui::Button("Focus NavMesh Authoring")) {
+            m_panels.showNavMeshAuthoring = true;
+          }
+        } else {
+          if (ImGui::Button("Open NavMesh Authoring Panel")) {
+            m_panels.showNavMeshAuthoring = true;
+          }
+          ImGui::Separator();
+          DrawNavMeshAuthoringPanel();
+        }
       } else if (g_selectionType == 5 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splines.size())) {
         t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(g_selectedIdx)];
         ImGui::SeparatorText("Spline");
@@ -11266,6 +11283,26 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           }
         }
       }
+    }
+    ImGui::End();
+  }
+
+  if (m_panels.showNavMeshAuthoring) {
+    if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+      const float margin = 12.0f;
+      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+      const float rightPanelWidth = (std::min)(440.0f, (std::max)(360.0f, viewport->WorkSize.x * 0.27f));
+      const float width = (std::min)(520.0f, (std::max)(420.0f, viewport->WorkSize.x * 0.34f));
+      const float height = (std::max)(420.0f, viewport->WorkSize.y * 0.58f);
+      ImGui::SetNextWindowPos(
+          ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - rightPanelWidth - width - margin * 2.0f,
+                 viewport->WorkPos.y + margin),
+          layoutCond);
+      ImGui::SetNextWindowSize(ImVec2(width, height), layoutCond);
+    }
+    if (ImGui::Begin("NavMesh Authoring", &m_panels.showNavMeshAuthoring, ImGuiWindowFlags_NoCollapse)) {
+      ImGuiClampCurrentWindowToEditorWorkArea();
+      DrawNavMeshAuthoringPanel();
     }
     ImGui::End();
   }

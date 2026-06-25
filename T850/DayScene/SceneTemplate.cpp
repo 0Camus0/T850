@@ -3963,7 +3963,11 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
     instance.Update();
 
     t850::scene::SceneObjectPhysicsDesc physicsMeta = object.physics.value_or(t850::scene::SceneObjectPhysicsDesc{});
+    const bool hasExplicitNavigation = object.navigation.has_value();
     t850::scene::SceneObjectNavigationDesc navigationMeta = object.navigation.value_or(t850::scene::SceneObjectNavigationDesc{});
+    if (!hasExplicitNavigation && !object.visible) {
+      navigationMeta.include = false;
+    }
     t850::scene::SceneObjectRagdollDesc ragdollMeta = object.ragdoll_authoring.value_or(t850::scene::SceneObjectRagdollDesc{});
     const std::string legacyRagdollPath = NormalizeSceneResourcePath(object.ragdoll);
     if (ragdollMeta.asset.empty()) {
@@ -4244,6 +4248,7 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
     if (meshIndex < static_cast<int>(m_sceneNavigationAuthoring.size())) {
       const t850::scene::SceneObjectNavigationDesc& nav = m_sceneNavigationAuthoring[static_cast<std::size_t>(meshIndex)];
       source.includeInNavigation = nav.include;
+      source.visible = source.visible || nav.include;
       source.navigationStatic = nav.static_object;
       source.navigationWalkable = nav.walkable;
       source.area = nav.walkable ? 0 : -1;

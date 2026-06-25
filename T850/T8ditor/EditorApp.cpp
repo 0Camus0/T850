@@ -2463,10 +2463,11 @@ bool EditorApp::UpdateEditorNavMeshClassification() {
     source.entityId = object.litInst.GetEntityId();
     source.instance = &object.litInst;
     source.worldTransform = object.litInst.Final;
-    source.visible = object.visible;
     source.debugName = object.name;
+    const bool hasExplicitNavigation = object.navigation.has_value();
     const t850::scene::SceneObjectNavigationDesc navigation =
         object.navigation.value_or(t850::scene::SceneObjectNavigationDesc{});
+    source.visible = object.visible || (hasExplicitNavigation && navigation.include);
     source.includeInNavigation = navigation.include;
     source.navigationStatic = navigation.static_object;
     source.navigationWalkable = navigation.walkable;
@@ -2714,10 +2715,11 @@ bool EditorApp::CreateEditorNavMesh() {
     source.entityId = object.litInst.GetEntityId();
     source.instance = &object.litInst;
     source.worldTransform = object.litInst.Final;
-    source.visible = object.visible;
     source.debugName = object.name;
+    const bool hasExplicitNavigation = object.navigation.has_value();
     const t850::scene::SceneObjectNavigationDesc navigation =
         object.navigation.value_or(t850::scene::SceneObjectNavigationDesc{});
+    source.visible = object.visible || (hasExplicitNavigation && navigation.include);
     source.includeInNavigation = navigation.include;
     source.navigationStatic = navigation.static_object;
     source.navigationWalkable = navigation.walkable;

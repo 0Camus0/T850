@@ -1433,7 +1433,7 @@ bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
 
   for (const NavSourceInstance& source : sources) {
     if (stats) ++stats->considered;
-    if (!source.includeInNavigation || !source.visible || !source.navigationStatic) {
+    if (!source.includeInNavigation || !source.navigationStatic) {
       if (stats) ++stats->skippedInvisible;
       continue;
     }
@@ -1441,7 +1441,7 @@ bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
     const xF::XDataBase* database = source.database;
     XMATRIX44 worldTransform = source.worldTransform;
     if (source.instance) {
-      if (!source.instance->Visible || !source.instance->pBase) {
+      if (!source.instance->pBase) {
         if (stats) ++stats->skippedInvisible;
         continue;
       }
@@ -2685,7 +2685,7 @@ bool NavigationWorld::Rebuild(std::string* error) {
 
   for (const NavSourceInstance& source : m_sources) {
     ++m_lastSourceStats.considered;
-    if (!source.includeInNavigation || !source.visible || !source.navigationStatic) {
+    if (!source.includeInNavigation || !source.navigationStatic) {
       ++m_lastSourceStats.skippedInvisible;
       continue;
     }
@@ -2694,7 +2694,7 @@ bool NavigationWorld::Rebuild(std::string* error) {
     XMATRIX44 worldTransform = source.worldTransform;
 
     if (source.instance) {
-      if (!source.instance->Visible || !source.instance->pBase) {
+      if (!source.instance->pBase) {
         ++m_lastSourceStats.skippedInvisible;
         continue;
       }

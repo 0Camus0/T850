@@ -125,9 +125,11 @@ struct SceneGodRaysVolumeDesc {
   std::string name = "God Rays Volume";
   Vec3f position = {0.0f, 50.0f, 0.0f};
   Vec3f half_extents = {65.0f, 65.0f, 65.0f};
-  bool enabled = true;
+  int light_camera = 0;
+  bool authored = false;
+  bool enabled = false;
   bool clip_enabled = false;
-  bool visible = true;
+  bool visible = false;
   bool frozen = false;
   bool show_wire = true;
 };

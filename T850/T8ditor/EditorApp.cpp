@@ -195,6 +195,7 @@ namespace {
   auto& g_lightCameraGizmoCameras = g_world.lightCameraGizmoCameras;
   auto& g_godRaysVolume = g_world.godRaysVolume;
   auto& g_godRaysVolumeGizmo = g_world.godRaysVolumeGizmo;
+  std::vector<GizmoCache> g_navMeshVolumeGizmos;
   auto& g_splines = g_world.splines;
   auto& g_splineGizmos = g_world.splineGizmos;
   auto& g_selectedSplinePoint = g_world.selectedSplinePoint;
@@ -2368,6 +2369,7 @@ void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorNavMeshDebugShapeMode = 0;
   m_editorNavMeshLastBuildMs = 0.0f;
   m_editorNavMeshDirty = false;
+  ReleaseGizmoCaches(g_navMeshVolumeGizmos);
   m_editorNavMeshVolumes.clear();
   m_editorNavMeshLinks.clear();
   m_editorNavMeshNodes.clear();
@@ -2390,6 +2392,10 @@ void EditorApp::MarkEditorNavMeshDirty(const std::string& status) {
 bool EditorApp::DeleteSelectedNavAuthoringChild() {
   if (m_editorSelectedNavVolume >= 0 &&
       m_editorSelectedNavVolume < static_cast<int>(m_editorNavMeshVolumes.size())) {
+    if (m_editorSelectedNavVolume < static_cast<int>(g_navMeshVolumeGizmos.size())) {
+      ReleaseGizmoCache(g_navMeshVolumeGizmos[static_cast<std::size_t>(m_editorSelectedNavVolume)]);
+      g_navMeshVolumeGizmos.erase(g_navMeshVolumeGizmos.begin() + m_editorSelectedNavVolume);
+    }
     m_editorNavMeshVolumes.erase(m_editorNavMeshVolumes.begin() + m_editorSelectedNavVolume);
     m_editorSelectedNavVolume = m_editorNavMeshVolumes.empty()
         ? -1
@@ -2524,6 +2530,7 @@ void EditorApp::DestroyEditorNavMesh() {
   m_editorNavMeshAuthored = false;
   m_editorNavMeshLastBuildMs = 0.0f;
   m_editorNavMeshDirty = false;
+  ReleaseGizmoCaches(g_navMeshVolumeGizmos);
   m_editorNavMeshVolumes.clear();
   m_editorNavMeshLinks.clear();
   m_editorSelectedNavVolume = -1;
@@ -7714,6 +7721,76 @@ static void DrawGodRaysVolume(EditorLineRenderer& lines,
   }
 }
 
+static XMATRIX44 BuildNavMeshVolumeWorld(const t850::scene::SceneNavMeshVolumeDesc& volume) {
+  XMATRIX44 S, Rx, Ry, Rz, T;
+  XMatScaling(S,
+              (std::max)(0.001f, std::abs(volume.half_extents.x)),
+              (std::max)(0.001f, std::abs(volume.half_extents.y)),
+              (std::max)(0.001f, std::abs(volume.half_extents.z)));
+  XMatRotationX(Rx, volume.rotation.x);
+  XMatRotationY(Ry, volume.rotation.y);
+  XMatRotationZ(Rz, volume.rotation.z);
+  XMatTranslation(T, volume.position.x, volume.position.y, volume.position.z);
+  return S * Rx * Ry * Rz * T;
+}
+
+static t850::AABB NavMeshVolumeWorldAABB(const t850::scene::SceneNavMeshVolumeDesc& volume) {
+  const t850::AABB local(XVECTOR3(-1.0f, -1.0f, -1.0f, 1.0f),
+                         XVECTOR3( 1.0f,  1.0f,  1.0f, 1.0f));
+  return local.Transformed(BuildNavMeshVolumeWorld(volume));
+}
+
+static XVECTOR3 NavMeshVolumeColor(const t850::scene::SceneNavMeshVolumeDesc& volume, bool selected) {
+  if (selected) {
+    return XVECTOR3(1.0f, 0.85f, 0.12f, 1.0f);
+  }
+  if (volume.type == "include_bounds" || volume.type == "include" || volume.type == "bounds") {
+    return XVECTOR3(0.2f, 0.55f, 1.0f, 1.0f);
+  }
+  if (volume.type == "area_cost" || volume.type == "area" || volume.type == "cost") {
+    return XVECTOR3(0.9f, 0.35f, 1.0f, 1.0f);
+  }
+  return XVECTOR3(1.0f, 0.18f, 0.12f, 1.0f);
+}
+
+static void DrawNavMeshVolume(EditorLineRenderer& lines,
+                              const XMATRIX44& vp,
+                              const t850::scene::SceneNavMeshVolumeDesc& volume,
+                              bool selected,
+                              GizmoCache& cache) {
+  if (!lines.IsReady() || !volume.enabled || !volume.visible || !volume.show_wire) {
+    return;
+  }
+  const float verts[] = {
+      -1,-1,-1,1,  1,-1,-1,1,  1, 1,-1,1, -1, 1,-1,1,
+      -1,-1, 1,1,  1,-1, 1,1,  1, 1, 1,1, -1, 1, 1,1};
+  const unsigned short indices[] = {
+      0,1, 1,2, 2,3, 3,0,
+      4,5, 5,6, 6,7, 7,4,
+      0,4, 1,5, 2,6, 3,7};
+  const unsigned indexCount = static_cast<unsigned>(sizeof(indices) / sizeof(indices[0]));
+  if (!cache.vb || !cache.ib || cache.count != indexCount) {
+    if (cache.vb || cache.ib) {
+      if (t850::g_pBaseDriver) {
+        t850::g_pBaseDriver->WaitForGPU();
+      }
+      ReleaseGizmoCache(cache);
+    }
+    cache.vb = EditorLineRenderer::CreatePositionVB(verts, 8);
+    cache.ib = EditorLineRenderer::CreateIndexBuffer16(indices, indexCount);
+    cache.count = indexCount;
+  }
+  if (cache.vb && cache.ib) {
+    lines.DrawLines(BuildNavMeshVolumeWorld(volume),
+                    vp,
+                    NavMeshVolumeColor(volume, selected),
+                    cache.vb,
+                    cache.ib,
+                    cache.count,
+                    sizeof(float) * 4);
+  }
+}
+
 static void DrawEditorSpline(EditorLineRenderer& lines,
                              const XMATRIX44& vp,
                              const t850::scene::SceneSplineDesc& desc,
@@ -8020,6 +8097,7 @@ single_pick:
   float bestT = FLT_MAX;
   int   bestIdx  = -1;
   int   bestType = 0;
+  int   bestNavVolume = -1;
 
   // Test meshes
   for (int i = 0; i < (int)g_objects.size(); ++i) {
@@ -8135,6 +8213,21 @@ single_pick:
     }
   }
 
+  // Test NavMesh authoring volumes.
+  for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+    const auto& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)];
+    if (!volume.enabled || !volume.visible || volume.frozen) {
+      continue;
+    }
+    float t = 0.0f;
+    if (t850::RayIntersectsAABB(ray, NavMeshVolumeWorldAABB(volume), t) && t < bestT) {
+      bestT = t;
+      bestIdx = 0;
+      bestType = 4;
+      bestNavVolume = volumeIndex;
+    }
+  }
+
   // Test spline control points with a screen-space threshold so the small markers are easy to select.
   const float pointPickRadiusPx = 14.0f;
   float bestPointScreenDist2 = pointPickRadiusPx * pointPickRadiusPx;
@@ -8171,6 +8264,13 @@ single_pick:
     g_selectedIdx   = bestIdx;
     g_selectionType = bestType;
     g_selectedSplinePoint = (bestType == 7) ? bestSplinePoint : -1;
+    if (bestType == 4) {
+      m_editorSelectedNavVolume = bestNavVolume;
+      m_editorSelectedNavLink = -1;
+    } else if (!shiftDown) {
+      m_editorSelectedNavVolume = -1;
+      m_editorSelectedNavLink = -1;
+    }
 
     if (bestType == 0 || bestType == 3) {
       if (shiftDown) {
@@ -8199,6 +8299,8 @@ single_pick:
   } else {
     g_selectedIdx = -1;
     g_selectedSplinePoint = -1;
+    m_editorSelectedNavVolume = -1;
+    m_editorSelectedNavLink = -1;
     // Auto-switch to Select mode when deselecting (hides orphaned gizmo)
     m_gizmo.SetMode(GizmoMode::Select);
     if (!shiftDown)
@@ -8580,6 +8682,22 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
           g_godRaysVolume,
           g_selectionType == 8,
           g_godRaysVolumeGizmo);
+    }
+    if (g_navMeshVolumeGizmos.size() > m_editorNavMeshVolumes.size()) {
+      for (std::size_t i = m_editorNavMeshVolumes.size(); i < g_navMeshVolumeGizmos.size(); ++i) {
+        ReleaseGizmoCache(g_navMeshVolumeGizmos[i]);
+      }
+      g_navMeshVolumeGizmos.resize(m_editorNavMeshVolumes.size());
+    } else if (g_navMeshVolumeGizmos.size() < m_editorNavMeshVolumes.size()) {
+      g_navMeshVolumeGizmos.resize(m_editorNavMeshVolumes.size());
+    }
+    for (int i = 0; i < static_cast<int>(m_editorNavMeshVolumes.size()); ++i) {
+      DrawNavMeshVolume(
+          m_lines,
+          cam.VP,
+          m_editorNavMeshVolumes[static_cast<std::size_t>(i)],
+          g_selectionType == 4 && g_selectedIdx == 0 && i == m_editorSelectedNavVolume,
+          g_navMeshVolumeGizmos[static_cast<std::size_t>(i)]);
     }
     if (g_splineGizmos.size() < g_splines.size()) {
       g_splineGizmos.resize(g_splines.size());
@@ -9263,6 +9381,32 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         float t[3], r[3], s[3];
         ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
         point.position = {t[0], t[1], t[2]};
+      }
+    }
+  }
+  else if (g_selectionType == 4 &&
+           g_selectedIdx == 0 &&
+           m_editorSelectedNavVolume >= 0 &&
+           m_editorSelectedNavVolume < static_cast<int>(m_editorNavMeshVolumes.size())) {
+    t850::scene::SceneNavMeshVolumeDesc& volume =
+        m_editorNavMeshVolumes[static_cast<std::size_t>(m_editorSelectedNavVolume)];
+    if (!volume.frozen) {
+      XMATRIX44 worldMat = BuildNavMeshVolumeWorld(volume);
+      const bool manipulated = ImGuizmoManipulate(
+          &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+          mode, &worldMat.m[0][0]);
+      if (manipulated) {
+        float t[3], r[3], s[3];
+        ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
+        volume.position = {t[0], t[1], t[2]};
+        volume.rotation = {r[0] * kDegToRad, r[1] * kDegToRad, r[2] * kDegToRad};
+        if (mode == 2) {
+          volume.half_extents = {
+              (std::max)(0.001f, std::abs(s[0])),
+              (std::max)(0.001f, std::abs(s[1])),
+              (std::max)(0.001f, std::abs(s[2]))};
+        }
+        MarkEditorNavMeshDirty("NavMesh volume transformed. Click Re-generate.");
       }
     }
   }

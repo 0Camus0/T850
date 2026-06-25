@@ -1,0 +1,495 @@
+{
+   "version": 1,
+   "collision": "",
+   "render_graph": "",
+   "editor": {
+      "camera_target": {
+         "x": 15.6976595,
+         "y": -30.373623,
+         "z": -37.704468
+      },
+      "camera_yaw": -1.150002,
+      "camera_pitch": 0.49000016,
+      "camera_distance": 201.82504,
+      "show_skybox": true,
+      "show_wireframe": false,
+      "allow_custom_layout": false,
+      "imgui_layout": ""
+   },
+   "objects": [
+      {
+         "name": "D:/Code/Game/SC2Extract/NexusWarsOneLane/map_terrain/nexus_wars_terrain.glb",
+         "mesh": "D:/Code/Game/SC2Extract/NexusWarsOneLane/map_terrain/nexus_wars_terrain.glb",
+         "ragdoll": "",
+         "position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+         },
+         "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+         },
+         "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+         },
+         "visible": false,
+         "frozen": false,
+         "show_wire": false,
+         "show_orientation": false,
+         "nav_agent_target_mode": "direct",
+         "nav_agent_follow_distance": 0,
+         "nav_agent_side_offset": 0,
+         "nav_agent_formation_depth_step": 0,
+         "nav_agent_slot": -1,
+         "navigation": {
+            "include": true,
+            "walkable": true,
+            "static_object": true,
+            "area": "walkable",
+            "cost": 1
+         }
+      }
+   ],
+   "game_entities": [],
+   "physics_entities": [
+      {
+         "name": "D:/Code/Game/SC2Extract/NexusWarsOneLane/map_terrain/nexus_wars_terrain.glb Static Triangle Mesh",
+         "type": "static_triangle_mesh",
+         "source_object": "D:/Code/Game/SC2Extract/NexusWarsOneLane/map_terrain/nexus_wars_terrain.glb",
+         "position": {
+            "x": 0,
+            "y": 64,
+            "z": 0
+         },
+         "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+         },
+         "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+         },
+         "visible": false,
+         "frozen": false,
+         "show_wire": true,
+         "show_orientation": false,
+         "shape": "box",
+         "half_extents": {
+            "x": 16,
+            "y": 32,
+            "z": 16
+         },
+         "radius": 16,
+         "half_height": 24,
+         "friction": 0.6,
+         "restitution": 0,
+         "sensor": false,
+         "cook_settings": {
+            "max_triangles_per_leaf": 8,
+            "build_quality": "runtime_performance",
+            "active_edge_cos_threshold_angle": 0.996195,
+            "per_triangle_user_data": false,
+            "use_disk_cache": true
+         },
+         "character": {
+            "runtime_path": "kinematic",
+            "implementation": "virtual",
+            "bot_radius": 2,
+            "mass": 70,
+            "max_strength": 100,
+            "max_slope_angle_deg": 50,
+            "enhanced_internal_edge_removal": true,
+            "supporting_volume_offset": -1.0E10,
+            "shape_offset": {
+               "x": 0,
+               "y": 0,
+               "z": 0
+            },
+            "back_face_mode": "collide",
+            "predictive_contact_distance": 0.1,
+            "max_collision_iterations": 5,
+            "max_constraint_iterations": 15,
+            "min_time_remaining": 0.0001,
+            "collision_tolerance": 0.001,
+            "character_padding": 0.02,
+            "max_num_hits": 256,
+            "hit_reduction_cos_max_angle": 0.999,
+            "penetration_recovery_speed": 1,
+            "gravity_factor": 1,
+            "allow_translation_x": true,
+            "allow_translation_y": true,
+            "allow_translation_z": true,
+            "inner_body": false
+         }
+      }
+   ],
+   "navigation_mesh": {
+      "name": "NavMesh",
+      "enabled": true,
+      "visible": true,
+      "frozen": false,
+      "show_wire": true,
+      "debug_offset": 0.01,
+      "debug_shape_mode": 0,
+      "runtime_mode": "build_cached",
+      "baked_asset": "",
+      "build_settings": {
+         "cell_size": 0.3,
+         "cell_height": 0.2,
+         "agent_height": 2,
+         "agent_radius": 0.6,
+         "agent_max_climb": 0.9,
+         "agent_max_slope": 45,
+         "region_min_size": 8,
+         "region_merge_size": 20,
+         "edge_max_len": 12,
+         "edge_max_error": 1.3,
+         "verts_per_poly": 6,
+         "detail_sample_dist": 6,
+         "detail_sample_max_error": 1,
+         "query_extents": {
+            "x": 2,
+            "y": 4,
+            "z": 2
+         },
+         "auto_drop_links": true,
+         "drop_min_height": 1,
+         "drop_max_height": 24,
+         "drop_max_horizontal": 2.4,
+         "drop_sample_spacing": 1.2,
+         "drop_link_radius": 0.75,
+         "auto_jump_links": true,
+         "jump_max_horizontal": 7,
+         "jump_sample_spacing": 1.2,
+         "jump_link_radius": 0.75,
+         "hybrid_jump_links": true,
+         "hybrid_max_links": 192,
+         "off_mesh_link_validation_key": 0
+      },
+      "volumes": [
+         {
+            "name": "Include Bounds 1",
+            "type": "include_bounds",
+            "shape": "box",
+            "position": {
+               "x": 0,
+               "y": 0,
+               "z": 0
+            },
+            "rotation": {
+               "x": 0,
+               "y": -0,
+               "z": 0
+            },
+            "half_extents": {
+               "x": 132.82854,
+               "y": 16,
+               "z": 32
+            },
+            "area": "walkable",
+            "cost": 1,
+            "enabled": true,
+            "visible": true,
+            "frozen": false,
+            "show_wire": true
+         },
+         {
+            "name": "Exclude Volume 2",
+            "type": "exclude",
+            "shape": "box",
+            "position": {
+               "x": 0,
+               "y": 0,
+               "z": -0.17920113
+            },
+            "rotation": {
+               "x": 0,
+               "y": -0,
+               "z": 0
+            },
+            "half_extents": {
+               "x": 51.331047,
+               "y": 4,
+               "z": 35.783607
+            },
+            "area": "walkable",
+            "cost": 1,
+            "enabled": true,
+            "visible": true,
+            "frozen": false,
+            "show_wire": true
+         }
+      ],
+      "authored_links": []
+   },
+   "splines": [],
+   "cameras": [],
+   "light_cameras": [],
+   "camera_animations": [],
+   "lights": [],
+   "profiles": [
+      {
+         "name": "pc/x64",
+         "platform": "windows",
+         "architecture": "x64",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 1
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.35
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 0.7
+            },
+            {
+               "name": "light_radius_scale",
+               "value": 1
+            },
+            {
+               "name": "light_intensity_scale",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            },
+            {
+               "name": "tm_white_level",
+               "value": 4
+            },
+            {
+               "name": "tm_adapt_tau",
+               "value": 1.1
+            },
+            {
+               "name": "shadow_map_resolution",
+               "value": 1024
+            },
+            {
+               "name": "god_rays_resolution",
+               "value": 0
+            },
+            {
+               "name": "pcf_radius",
+               "value": 1.7
+            },
+            {
+               "name": "pcf_samples",
+               "value": 1
+            },
+            {
+               "name": "ssao_kernel_size",
+               "value": 8
+            },
+            {
+               "name": "ssao_radius",
+               "value": 1.5
+            },
+            {
+               "name": "dof_aperture",
+               "value": 120
+            },
+            {
+               "name": "dof_focal_length",
+               "value": 50
+            },
+            {
+               "name": "dof_focus_depth",
+               "value": 0
+            },
+            {
+               "name": "dof_max_coc",
+               "value": 2.5
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 2
+            },
+            {
+               "name": "dof_near_samples",
+               "value": 1
+            },
+            {
+               "name": "parallax_low_samples",
+               "value": 2
+            },
+            {
+               "name": "parallax_high_samples",
+               "value": 8
+            },
+            {
+               "name": "parallax_height",
+               "value": 0.01
+            },
+            {
+               "name": "parallax_shadow_min_layers",
+               "value": 8
+            },
+            {
+               "name": "parallax_shadow_max_layers",
+               "value": 32
+            },
+            {
+               "name": "parallax_shadow_softness",
+               "value": 0.5
+            },
+            {
+               "name": "parallax_shadow_strength",
+               "value": 1
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 32
+            },
+            {
+               "name": "godrays_factor",
+               "value": 1
+            },
+            {
+               "name": "active_lights",
+               "value": 1
+            },
+            {
+               "name": "gauss_kernel_radius",
+               "value": 2.5
+            },
+            {
+               "name": "gauss_kernel_deviation",
+               "value": 4.5
+            },
+            {
+               "name": "fov",
+               "value": 49.999992
+            },
+            {
+               "name": "shadow_bias",
+               "value": 0.000005
+            },
+            {
+               "name": "shadow_min",
+               "value": 0.2
+            },
+            {
+               "name": "env_factor",
+               "value": 0.3
+            },
+            {
+               "name": "ibl_factor",
+               "value": 1
+            },
+            {
+               "name": "ibl_mip_count",
+               "value": 4
+            },
+            {
+               "name": "ibl_diffuse_mip_level",
+               "value": 4
+            },
+            {
+               "name": "ibl_brdf_lut_enabled",
+               "value": 0
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 1
+            },
+            {
+               "name": "material_transmission_multiplier",
+               "value": 1
+            },
+            {
+               "name": "material_refraction_strength",
+               "value": 0.03
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "ssao_toggle",
+               "value": false
+            },
+            {
+               "name": "dof_toggle",
+               "value": true
+            },
+            {
+               "name": "dof_auto_focus",
+               "value": true
+            },
+            {
+               "name": "parallax_toggle",
+               "value": true
+            },
+            {
+               "name": "parallax_shadow_toggle",
+               "value": true
+            },
+            {
+               "name": "godrays_toggle",
+               "value": true
+            },
+            {
+               "name": "show_wireframe",
+               "value": false
+            },
+            {
+               "name": "show_skeleton",
+               "value": false
+            },
+            {
+               "name": "show_physics",
+               "value": false
+            },
+            {
+               "name": "show_light_volumes",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "debug_render_target",
+               "value": 0
+            },
+            {
+               "name": "cubemap",
+               "value": 8
+            },
+            {
+               "name": "gauss_kernel_sample_count",
+               "value": 11
+            },
+            {
+               "name": "active_gauss_kernel",
+               "value": 1
+            },
+            {
+               "name": "luminance_mode",
+               "value": 0
+            }
+         ],
+         "lights": [],
+         "animations": [],
+         "cubemap_path": "sky/CubeMap_SkyWater.dds"
+      }
+   ]
+}

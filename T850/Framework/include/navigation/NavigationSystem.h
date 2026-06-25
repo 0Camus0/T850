@@ -75,10 +75,34 @@ struct NavOffMeshLink {
   uint32_t userId = 0;
 };
 
+enum class NavMeshModifierMode : uint8_t {
+  Include = 0,
+  Exclude = 1,
+  Area = 2
+};
+
+struct NavMeshVolumeModifier {
+  std::string name;
+  NavMeshModifierMode mode = NavMeshModifierMode::Exclude;
+  XVECTOR3 position = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 rotation = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 halfExtents = XVECTOR3(1.0f, 1.0f, 1.0f, 0.0f);
+  int area = 0;
+  float cost = 1.0f;
+  bool enabled = true;
+};
+
+struct NavAreaCost {
+  int area = 0;
+  float cost = 1.0f;
+};
+
 struct NavMeshGeometry {
   std::vector<XVECTOR3> vertices;
   std::vector<int> indices;
   std::vector<NavOffMeshLink> offMeshLinks;
+  std::vector<NavMeshVolumeModifier> volumeModifiers;
+  std::vector<NavAreaCost> areaCosts;
   std::function<bool(const NavOffMeshLink&)> offMeshLinkValidator;
   std::function<bool(const NavOffMeshLink&)> offMeshHybridLinkValidator;
 };

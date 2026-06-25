@@ -240,6 +240,21 @@ struct SceneNavMeshLinkDesc {
   bool show_wire = true;
 };
 
+struct SceneNavMeshVolumeDesc {
+  std::string name = "Nav Volume";
+  std::string type = "exclude"; // include_bounds, exclude, area_cost
+  std::string shape = "box";
+  Vec3f position = {0.0f, 0.0f, 0.0f};
+  Vec3f rotation = {0.0f, 0.0f, 0.0f};
+  Vec3f half_extents = {8.0f, 4.0f, 8.0f};
+  std::string area = "walkable";
+  float cost = 1.0f;
+  bool enabled = true;
+  bool visible = true;
+  bool frozen = false;
+  bool show_wire = true;
+};
+
 struct SceneNavigationMeshDesc {
   std::string name = "NavMesh";
   bool enabled = false;
@@ -249,6 +264,7 @@ struct SceneNavigationMeshDesc {
   float debug_offset = 0.01f;
   int debug_shape_mode = 0;
   SceneNavMeshBuildSettingsDesc build_settings;
+  std::vector<SceneNavMeshVolumeDesc> volumes;
   std::vector<SceneNavMeshLinkDesc> authored_links;
 };
 

@@ -29,6 +29,7 @@ t850::navigation::NavMeshBuildSettings NavMeshBuildSettingsFromScene(
 const char* NavLinkTypeName(t850::navigation::NavTraversalType type);
 t850::navigation::NavTraversalType NavLinkTypeFromName(const std::string& name);
 t850::navigation::NavOffMeshLink NavOffMeshLinkFromScene(const t850::scene::SceneNavMeshLinkDesc& desc);
+t850::navigation::NavMeshVolumeModifier NavVolumeModifierFromScene(const t850::scene::SceneNavMeshVolumeDesc& desc);
 bool IsFiniteNavPoint(const t850::scene::Vec3f& point);
 bool IsUsableAuthoredNavLink(const t850::scene::SceneNavMeshLinkDesc& link);
 

@@ -89,6 +89,7 @@ constexpr unsigned char kNavAreaDrop = 1;
 constexpr unsigned char kNavAreaJump = 2;
 constexpr unsigned char kNavAreaJumpPad = 3;
 constexpr unsigned char kNavAreaJumpIntent = 4;
+constexpr int kNavMaxAreas = 64;
 constexpr int kMaxPathPolys = 256;
 constexpr int kMaxStraightPath = 256;
 constexpr std::array<char, 8> kNavMeshCacheMagic = { 'T', '8', 'N', 'A', 'V', 'C', 'H', 'E' };
@@ -110,6 +111,44 @@ void HashData(uint64_t& hash, const void* data, std::size_t byteCount) {
     hash ^= bytes[i];
     hash *= 0x100000001b3ull;
   }
+}
+
+std::array<float, kNavMaxAreas> DefaultNavAreaCosts() {
+  std::array<float, kNavMaxAreas> costs{};
+  costs.fill(1.0f);
+  costs[kNavAreaWalk] = 1.0f;
+  costs[kNavAreaDrop] = 0.35f;
+  costs[kNavAreaJump] = 0.20f;
+  costs[kNavAreaJumpPad] = 0.15f;
+  costs[kNavAreaJumpIntent] = 1.75f;
+  return costs;
+}
+
+uint64_t ComputeNavModifierCacheKey(const NavMeshGeometry& geometry) {
+  uint64_t hash = 0xcbf29ce484222325ull;
+  HashBytes(hash, static_cast<uint64_t>(geometry.volumeModifiers.size()));
+  for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
+    const uint8_t mode = static_cast<uint8_t>(modifier.mode);
+    HashBytes(hash, mode);
+    HashBytes(hash, modifier.enabled);
+    HashBytes(hash, modifier.position.x);
+    HashBytes(hash, modifier.position.y);
+    HashBytes(hash, modifier.position.z);
+    HashBytes(hash, modifier.rotation.x);
+    HashBytes(hash, modifier.rotation.y);
+    HashBytes(hash, modifier.rotation.z);
+    HashBytes(hash, modifier.halfExtents.x);
+    HashBytes(hash, modifier.halfExtents.y);
+    HashBytes(hash, modifier.halfExtents.z);
+    HashBytes(hash, modifier.area);
+    HashBytes(hash, modifier.cost);
+  }
+  HashBytes(hash, static_cast<uint64_t>(geometry.areaCosts.size()));
+  for (const NavAreaCost& areaCost : geometry.areaCosts) {
+    HashBytes(hash, areaCost.area);
+    HashBytes(hash, areaCost.cost);
+  }
+  return hash;
 }
 
 uint64_t ComputeNavMeshCacheKey(const NavMeshGeometry& geometry,
@@ -173,6 +212,8 @@ uint64_t ComputeNavMeshCacheKey(const NavMeshGeometry& geometry,
     HashBytes(hash, type);
     HashBytes(hash, link.userId);
   }
+  const uint64_t modifierHash = ComputeNavModifierCacheKey(geometry);
+  HashBytes(hash, modifierHash);
   return hash;
 }
 
@@ -243,20 +284,131 @@ unsigned char PolyAreaForTraversal(NavTraversalType type) {
   }
 }
 
-void ConfigureTraversalFilter(dtQueryFilter& filter) {
+void ApplyNavAreaCosts(dtQueryFilter& filter, const std::array<float, kNavMaxAreas>* areaCosts) {
+  if (!areaCosts) {
+    filter.setAreaCost(kNavAreaWalk, 1.0f);
+    filter.setAreaCost(kNavAreaDrop, 0.35f);
+    filter.setAreaCost(kNavAreaJump, 0.20f);
+    filter.setAreaCost(kNavAreaJumpPad, 0.15f);
+    filter.setAreaCost(kNavAreaJumpIntent, 1.75f);
+    return;
+  }
+  for (int area = 0; area < kNavMaxAreas; ++area) {
+    filter.setAreaCost(area, (*areaCosts)[static_cast<std::size_t>(area)]);
+  }
+}
+
+void ConfigureTraversalFilter(dtQueryFilter& filter, const std::array<float, kNavMaxAreas>* areaCosts = nullptr) {
   filter.setIncludeFlags(kNavPolyFlagAllTraversal);
   filter.setExcludeFlags(0);
-  filter.setAreaCost(kNavAreaWalk, 1.0f);
-  filter.setAreaCost(kNavAreaDrop, 0.35f);
-  filter.setAreaCost(kNavAreaJump, 0.20f);
-  filter.setAreaCost(kNavAreaJumpPad, 0.15f);
-  filter.setAreaCost(kNavAreaJumpIntent, 1.75f);
+  ApplyNavAreaCosts(filter, areaCosts);
 }
 
 void ConfigureWalkFilter(dtQueryFilter& filter) {
   filter.setIncludeFlags(kNavPolyFlagWalk);
   filter.setExcludeFlags(0);
   filter.setAreaCost(kNavAreaWalk, 1.0f);
+}
+
+XVECTOR3 NavRotateInverseEulerXYZ(const XVECTOR3& point, const XVECTOR3& rotation) {
+  XVECTOR3 p = point;
+  auto rotateZ = [](XVECTOR3 v, float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return XVECTOR3(v.x * c - v.y * s, v.x * s + v.y * c, v.z, 0.0f);
+  };
+  auto rotateY = [](XVECTOR3 v, float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return XVECTOR3(v.x * c + v.z * s, v.y, -v.x * s + v.z * c, 0.0f);
+  };
+  auto rotateX = [](XVECTOR3 v, float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return XVECTOR3(v.x, v.y * c - v.z * s, v.y * s + v.z * c, 0.0f);
+  };
+  p = rotateZ(p, -rotation.z);
+  p = rotateY(p, -rotation.y);
+  p = rotateX(p, -rotation.x);
+  return p;
+}
+
+bool PointInsideNavModifierBox(const XVECTOR3& point, const NavMeshVolumeModifier& modifier) {
+  if (!modifier.enabled) {
+    return false;
+  }
+  const XVECTOR3 halfExtents(
+      (std::max)(0.001f, std::abs(modifier.halfExtents.x)),
+      (std::max)(0.001f, std::abs(modifier.halfExtents.y)),
+      (std::max)(0.001f, std::abs(modifier.halfExtents.z)),
+      0.0f);
+  XVECTOR3 local(point.x - modifier.position.x,
+                 point.y - modifier.position.y,
+                 point.z - modifier.position.z,
+                 0.0f);
+  local = NavRotateInverseEulerXYZ(local, modifier.rotation);
+  return std::abs(local.x) <= halfExtents.x &&
+         std::abs(local.y) <= halfExtents.y &&
+         std::abs(local.z) <= halfExtents.z;
+}
+
+XVECTOR3 TriangleCentroid(const std::vector<float>& verts, const std::vector<int>& tris, int triangleIndex) {
+  const int i0 = tris[triangleIndex * 3 + 0] * 3;
+  const int i1 = tris[triangleIndex * 3 + 1] * 3;
+  const int i2 = tris[triangleIndex * 3 + 2] * 3;
+  return XVECTOR3(
+      (verts[i0 + 0] + verts[i1 + 0] + verts[i2 + 0]) / 3.0f,
+      (verts[i0 + 1] + verts[i1 + 1] + verts[i2 + 1]) / 3.0f,
+      (verts[i0 + 2] + verts[i1 + 2] + verts[i2 + 2]) / 3.0f,
+      1.0f);
+}
+
+void ApplyNavVolumeModifiers(const NavMeshGeometry& geometry,
+                             const std::vector<float>& verts,
+                             const std::vector<int>& tris,
+                             std::vector<unsigned char>& areas) {
+  bool hasIncludeVolume = false;
+  for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
+    if (modifier.enabled && modifier.mode == NavMeshModifierMode::Include) {
+      hasIncludeVolume = true;
+      break;
+    }
+  }
+
+  const int triangleCount = static_cast<int>(areas.size());
+  for (int tri = 0; tri < triangleCount; ++tri) {
+    if (areas[static_cast<std::size_t>(tri)] == RC_NULL_AREA) {
+      continue;
+    }
+    const XVECTOR3 centroid = TriangleCentroid(verts, tris, tri);
+    bool insideInclude = !hasIncludeVolume;
+    int areaOverride = -1;
+
+    for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
+      if (!modifier.enabled || !PointInsideNavModifierBox(centroid, modifier)) {
+        continue;
+      }
+      if (modifier.mode == NavMeshModifierMode::Include) {
+        insideInclude = true;
+      } else if (modifier.mode == NavMeshModifierMode::Exclude) {
+        areas[static_cast<std::size_t>(tri)] = RC_NULL_AREA;
+        areaOverride = -1;
+        break;
+      } else if (modifier.mode == NavMeshModifierMode::Area &&
+                 modifier.area >= 0 && modifier.area < kNavMaxAreas) {
+        areaOverride = modifier.area;
+      }
+    }
+
+    if (areas[static_cast<std::size_t>(tri)] == RC_NULL_AREA) {
+      continue;
+    }
+    if (!insideInclude) {
+      areas[static_cast<std::size_t>(tri)] = RC_NULL_AREA;
+    } else if (areaOverride >= 0) {
+      areas[static_cast<std::size_t>(tri)] = static_cast<unsigned char>(areaOverride);
+    }
+  }
 }
 
 float DistanceSq3(const XVECTOR3& a, const XVECTOR3& b) {
@@ -821,6 +973,7 @@ void SaveNavMeshCache(const std::filesystem::path& path,
 
 NavPathResult FindPathWithQuery(dtNavMeshQuery* query,
                                 const NavMeshBuildSettings& settings,
+                                const std::array<float, kNavMaxAreas>* areaCosts,
                                 const NavPathRequest& request) {
   T8_TELEMETRY_SCOPE("navigation.detour.find_path");
   if (RuntimeTelemetry::IsFrameActive()) {
@@ -842,7 +995,7 @@ NavPathResult FindPathWithQuery(dtNavMeshQuery* query,
   };
 
   dtQueryFilter filter;
-  ConfigureTraversalFilter(filter);
+  ConfigureTraversalFilter(filter, areaCosts);
 
   dtPolyRef startRef = 0;
   dtPolyRef endRef = 0;
@@ -966,6 +1119,7 @@ struct NavMesh::Impl {
   std::unique_ptr<dtNavMesh, NavMeshDeleter> navMesh;
   std::unique_ptr<dtNavMeshQuery, NavMeshQueryDeleter> query;
   NavMeshBuildSettings settings;
+  std::array<float, kNavMaxAreas> areaCosts = DefaultNavAreaCosts();
 #endif
 };
 
@@ -1222,6 +1376,7 @@ bool NavMesh::LoadCached(uint64_t cacheKey,
 #else
   Clear();
   m_impl->settings = settings;
+  m_impl->areaCosts = DefaultNavAreaCosts();
   if (cacheKey == 0) {
     if (error) *error = "Navigation cache key is zero";
     return false;
@@ -1252,6 +1407,7 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
 #else
   Clear();
   m_impl->settings = settings;
+  m_impl->areaCosts = DefaultNavAreaCosts();
 
   if (geometry.vertices.size() < 3 || geometry.indices.size() < 3) {
     SetError(error, "Navigation geometry must contain vertices and triangle indices");
@@ -1291,7 +1447,27 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
     }
   }
 
-  const uint64_t effectiveCacheKey = cacheKey != 0 ? cacheKey : ComputeNavMeshCacheKey(geometry, settings);
+  for (const NavAreaCost& areaCost : geometry.areaCosts) {
+    if (areaCost.area >= 0 && areaCost.area < kNavMaxAreas && std::isfinite(areaCost.cost) && areaCost.cost > 0.0f) {
+      m_impl->areaCosts[static_cast<std::size_t>(areaCost.area)] = areaCost.cost;
+    }
+  }
+  for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
+    if (modifier.enabled &&
+        modifier.mode == NavMeshModifierMode::Area &&
+        modifier.area >= 0 &&
+        modifier.area < kNavMaxAreas &&
+        std::isfinite(modifier.cost) &&
+        modifier.cost > 0.0f) {
+      m_impl->areaCosts[static_cast<std::size_t>(modifier.area)] = modifier.cost;
+    }
+  }
+
+  uint64_t effectiveCacheKey = cacheKey != 0 ? cacheKey : ComputeNavMeshCacheKey(geometry, settings);
+  if (cacheKey != 0 && (!geometry.volumeModifiers.empty() || !geometry.areaCosts.empty())) {
+    const uint64_t modifierHash = ComputeNavModifierCacheKey(geometry);
+    HashBytes(effectiveCacheKey, modifierHash);
+  }
   const std::filesystem::path cachePath = NavMeshCachePath(effectiveCacheKey);
   NavMeshBuildStats cachedStats;
   std::unique_ptr<dtNavMesh, NavMeshDeleter> cachedNavMesh;
@@ -1341,6 +1517,7 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
   std::vector<unsigned char> areas(static_cast<std::size_t>(triangleCount), RC_NULL_AREA);
   rcMarkWalkableTriangles(&context, config.walkableSlopeAngle, verts.data(),
                           static_cast<int>(geometry.vertices.size()), tris.data(), triangleCount, areas.data());
+  ApplyNavVolumeModifiers(geometry, verts, tris, areas);
   if (!rcRasterizeTriangles(&context, verts.data(), static_cast<int>(geometry.vertices.size()),
                             tris.data(), areas.data(), triangleCount, *heightfield, config.walkableClimb)) {
     SetError(error, "Failed to rasterize navigation triangles");
@@ -1599,7 +1776,7 @@ bool NavMesh::FindPath(const XVECTOR3& start,
   const float extents[3] = { m_impl->settings.queryExtents.x, m_impl->settings.queryExtents.y, m_impl->settings.queryExtents.z };
 
   dtQueryFilter filter;
-  ConfigureTraversalFilter(filter);
+  ConfigureTraversalFilter(filter, &m_impl->areaCosts);
 
   dtPolyRef startRef = 0;
   dtPolyRef endRef = 0;
@@ -1713,7 +1890,7 @@ NavPathResult NavMesh::FindPath(const NavPathRequest& request) const {
     return result;
   }
 
-  NavPathResult result = FindPathWithQuery(m_impl->query.get(), m_impl->settings, request);
+  NavPathResult result = FindPathWithQuery(m_impl->query.get(), m_impl->settings, &m_impl->areaCosts, request);
   if (!result.success && !result.error.empty()) {
     SetError(nullptr, result.error);
   }
@@ -1763,7 +1940,7 @@ void NavMesh::FindPaths(const std::vector<NavPathRequest>& requests,
     }
 
     outResults[static_cast<std::size_t>(requestIndex)] =
-        FindPathWithQuery(query.get(), m_impl->settings, requests[static_cast<std::size_t>(requestIndex)]);
+        FindPathWithQuery(query.get(), m_impl->settings, &m_impl->areaCosts, requests[static_cast<std::size_t>(requestIndex)]);
   };
 
   if (g_threadPool &&

@@ -78,7 +78,9 @@ struct NavOffMeshLink {
 enum class NavMeshModifierMode : uint8_t {
   Include = 0,
   Exclude = 1,
-  Area = 2
+  Area = 2,
+  LinkInclude = 3,
+  LinkExclude = 4
 };
 
 struct NavMeshVolumeModifier {

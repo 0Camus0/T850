@@ -413,6 +413,62 @@ bool NavGeometryHasIncludeVolume(const NavMeshGeometry& geometry) {
   return false;
 }
 
+bool NavGeometryHasLinkIncludeVolume(const NavMeshGeometry& geometry) {
+  for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
+    if (modifier.enabled && modifier.mode == NavMeshModifierMode::LinkInclude) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool NavLinkTouchesModifier(const NavOffMeshLink& link, const NavMeshVolumeModifier& modifier) {
+  const XVECTOR3 midpoint((link.start.x + link.end.x) * 0.5f,
+                          (link.start.y + link.end.y) * 0.5f,
+                          (link.start.z + link.end.z) * 0.5f,
+                          1.0f);
+  return PointInsideNavModifierBox(link.start, modifier) ||
+         PointInsideNavModifierBox(link.end, modifier) ||
+         PointInsideNavModifierBox(midpoint, modifier);
+}
+
+std::vector<NavOffMeshLink> ApplyNavLinkVolumeModifiers(const NavMeshGeometry& geometry,
+                                                        const std::vector<NavOffMeshLink>& links,
+                                                        int explicitLinkCount) {
+  const bool hasLinkIncludeVolume = NavGeometryHasLinkIncludeVolume(geometry);
+  std::vector<NavOffMeshLink> filtered;
+  filtered.reserve(links.size());
+  for (int linkIndex = 0; linkIndex < static_cast<int>(links.size()); ++linkIndex) {
+    const NavOffMeshLink& link = links[static_cast<std::size_t>(linkIndex)];
+    const bool explicitLink = linkIndex < explicitLinkCount;
+    bool excluded = false;
+    bool includedByVolume = !hasLinkIncludeVolume || explicitLink;
+
+    for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
+      if (!modifier.enabled ||
+          (modifier.mode != NavMeshModifierMode::LinkInclude &&
+           modifier.mode != NavMeshModifierMode::LinkExclude)) {
+        continue;
+      }
+      if (!NavLinkTouchesModifier(link, modifier)) {
+        continue;
+      }
+      if (modifier.mode == NavMeshModifierMode::LinkExclude) {
+        excluded = true;
+        break;
+      }
+      if (modifier.mode == NavMeshModifierMode::LinkInclude) {
+        includedByVolume = true;
+      }
+    }
+
+    if (!excluded && includedByVolume) {
+      filtered.push_back(link);
+    }
+  }
+  return filtered;
+}
+
 NavModifierTriangleResult ApplyNavVolumeModifiersToTriangle(const NavMeshGeometry& geometry,
                                                             const XVECTOR3& centroid,
                                                             unsigned char initialArea,
@@ -1793,6 +1849,7 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
                 geometry.offMeshLinkValidator,
                 skippedExplicitLinks,
                 rejectedByValidatorLinks);
+            const int explicitLinkCount = static_cast<int>(offMeshLinks.size());
             const int generatedTraversalLinks = GenerateAutoDropLinks(
                 *polyMesh,
                 *tempQuery,
@@ -1802,6 +1859,7 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
                 rejectedByValidatorLinks,
                 generatedJumpLinks,
                 offMeshLinks);
+            offMeshLinks = ApplyNavLinkVolumeModifiers(geometry, offMeshLinks, explicitLinkCount);
             generatedDropLinks = (std::max)(0, generatedTraversalLinks - generatedJumpLinks);
           }
         }

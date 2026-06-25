@@ -188,6 +188,10 @@ namespace {
       return t850::navigation::NavMeshModifierMode::Include;
     if (name == "area" || name == "area_cost" || name == "cost")
       return t850::navigation::NavMeshModifierMode::Area;
+    if (name == "link_include" || name == "link_add" || name == "add_links")
+      return t850::navigation::NavMeshModifierMode::LinkInclude;
+    if (name == "link_exclude" || name == "exclude_links")
+      return t850::navigation::NavMeshModifierMode::LinkExclude;
     return t850::navigation::NavMeshModifierMode::Exclude;
   }
 

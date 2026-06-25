@@ -263,6 +263,8 @@ struct SceneNavigationMeshDesc {
   bool show_wire = true;
   float debug_offset = 0.01f;
   int debug_shape_mode = 0;
+  std::string runtime_mode = "build_cached"; // build_cached, build, baked_asset
+  std::string baked_asset;
   SceneNavMeshBuildSettingsDesc build_settings;
   std::vector<SceneNavMeshVolumeDesc> volumes;
   std::vector<SceneNavMeshLinkDesc> authored_links;

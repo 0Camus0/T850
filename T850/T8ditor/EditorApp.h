@@ -241,6 +241,8 @@ namespace t8ditor {
     bool m_editorNavMeshShowWire = true;
     bool m_editorNavMeshShowSourcePreview = true;
     bool m_editorNavMeshAuthoringMode = false;
+    std::string m_editorNavMeshRuntimeMode = "build_cached";
+    std::string m_editorNavMeshBakedAsset;
     float m_editorNavMeshDebugOffset = 0.01f;
     int m_editorNavMeshDebugShapeMode = 0;
     float m_editorNavMeshLastBuildMs = 0.0f;

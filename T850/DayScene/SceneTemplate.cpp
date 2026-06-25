@@ -4190,8 +4190,15 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
           m_loadedEditorScenePath,
           navBuildSettings);
   const auto navBuildStart = std::chrono::steady_clock::now();
-  const bool hasAuthoredNavVolumes = !m_authoredNavMesh.volumes.empty();
-  if (!hasAuthoredNavVolumes && navCacheKey != 0 && m_navMesh.LoadCached(navCacheKey, navBuildSettings, nullptr)) {
+  const std::string runtimeMode = m_authoredNavMesh.runtime_mode.empty()
+      ? "build_cached"
+      : m_authoredNavMesh.runtime_mode;
+  if (runtimeMode == "baked_asset") {
+    T8_LOG_INFO("[Navigation] Baked NavMesh asset '%s' requested but export/load is not implemented yet; falling back to cached build.",
+                m_authoredNavMesh.baked_asset.c_str());
+  }
+  const bool allowCache = runtimeMode != "build";
+  if (allowCache && navCacheKey != 0 && m_navMesh.LoadCached(navCacheKey, navBuildSettings, nullptr)) {
     m_navMeshLastBuildMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - navBuildStart).count();
     m_navMeshLastBuildFromCache = true;
     m_navMeshDebugRenderer.Invalidate();
@@ -4254,7 +4261,8 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
       geometry.offMeshLinks.push_back(NavOffMeshLinkFromScene(linkDesc));
     }
   }
-  if (!m_navMesh.BuildCached(geometry, navBuildSettings, navCacheKey, &error)) {
+  const uint64_t buildCacheKey = allowCache ? navCacheKey : 0;
+  if (!m_navMesh.BuildCached(geometry, navBuildSettings, buildCacheKey, &error)) {
     T8_LOG_ERROR("[Navigation] Sandbox navmesh build failed: %s", error.c_str());
     return false;
   }

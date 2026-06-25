@@ -136,6 +136,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderMesh.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderSkinnedMesh.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/LineRenderer.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/WireframeGeometry.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/MeshAssetCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/MaterialAssetCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/MeshPool.cpp

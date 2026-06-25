@@ -3314,7 +3314,18 @@ void SceneTemplate::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSce
     }
     if (scene.god_rays_volume) {
       const auto& volume = *scene.god_rays_volume;
-      SceneProp.GodRaysVolumeEnabled = (volume.enabled && volume.clip_enabled) ? 1 : 0;
+      const bool volumeAuthored = volume.authored || volume.enabled || volume.visible || volume.clip_enabled;
+      const int volumeLightCamera = std::clamp(
+          volume.light_camera,
+          0,
+          SceneProp.pLightCameras.empty() ? 0 : static_cast<int>(SceneProp.pLightCameras.size()) - 1);
+      const bool validVolumeLightCamera = !SceneProp.pLightCameras.empty() &&
+          volumeLightCamera >= 0 &&
+          volumeLightCamera < static_cast<int>(SceneProp.pLightCameras.size());
+      SceneProp.GodRaysVolumeEnabled = (volumeAuthored && validVolumeLightCamera && volume.enabled && volume.clip_enabled) ? 1 : 0;
+      if (validVolumeLightCamera) {
+        SceneProp.ActiveLightCamera = volumeLightCamera;
+      }
       SceneProp.GodRaysVolumeCenter = XVECTOR3(volume.position.x, volume.position.y, volume.position.z, 1.0f);
       SceneProp.GodRaysVolumeHalfExtents = XVECTOR3((std::max)(0.001f, std::abs(volume.half_extents.x)),
                                                     (std::max)(0.001f, std::abs(volume.half_extents.y)),

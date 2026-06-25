@@ -216,6 +216,7 @@ namespace t8ditor {
     int                   m_meshPrimId = -1;  // -1 = no lit mesh loaded
     XMATRIX44             m_vp;               // VP matrix for the prim mgr
     Camera                m_editorLightCamera;
+    std::vector<Camera>   m_editorRuntimeLightCameras;
     t850::SceneSetup      m_editorSceneSetup;
     GaussFilter           m_editorShadowFilter;
     GaussFilter           m_editorBloomFilter;

@@ -228,6 +228,57 @@ namespace {
   t850::RenderGraph   g_renderGraph;
   t850::PrimitiveInst g_quads[8];
   bool                g_deferredReady = false;
+
+  bool RenderGraphSupportsGodRays(const t850::RenderGraph& graph) {
+    const t850::RenderGraphDesc& desc = graph.GetDescriptor();
+    for (const t850::RenderPassDesc& pass : desc.passes) {
+      for (const t850::DrawCmd& draw : pass.draws) {
+        if (draw.signature == "LIGHT_RAY_MARCHING" || draw.signature == "LIGHT_ADD") {
+          return true;
+        }
+        for (const std::string& extra : draw.extra_signatures) {
+          if (extra == "LIGHT_RAY_MARCHING" || extra == "LIGHT_ADD") {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  bool GodRaysVolumeIsAuthored(const t850::scene::SceneGodRaysVolumeDesc& volume) {
+    return volume.authored || volume.enabled || volume.visible || volume.clip_enabled;
+  }
+
+  bool IsValidGodRaysLightCamera(int index) {
+    return index >= 0 &&
+           index < static_cast<int>(g_lightCameras.size()) &&
+           g_lightCameras[static_cast<std::size_t>(index)].enabled;
+  }
+
+  int FirstEnabledGodRaysLightCamera() {
+    for (int i = 0; i < static_cast<int>(g_lightCameras.size()); ++i) {
+      if (g_lightCameras[static_cast<std::size_t>(i)].enabled) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  void ClampGodRaysVolumeLightCamera(t850::scene::SceneGodRaysVolumeDesc& volume) {
+    if (g_lightCameras.empty()) {
+      volume.light_camera = -1;
+      return;
+    }
+    volume.light_camera = std::clamp(volume.light_camera, 0, static_cast<int>(g_lightCameras.size()) - 1);
+  }
+
+  bool GodRaysVolumeCanBeActive(const t850::scene::SceneGodRaysVolumeDesc& volume,
+                                const t850::RenderGraph& graph) {
+    return GodRaysVolumeIsAuthored(volume) &&
+           RenderGraphSupportsGodRays(graph) &&
+           IsValidGodRaysLightCamera(volume.light_camera);
+  }
   XMATRIX44           g_quadVP;  // persistent identity matrix for screen-space quads
 
   // RT debug: which RT attachment to display (-1 = backbuffer)
@@ -422,6 +473,19 @@ static void AdjustActiveLightCameraAfterErase(int erasedIndex) {
     g_activeCameraIdx = -1;
   } else if (activeLightCameraIndex > erasedIndex) {
     g_activeCameraIdx = EncodeActiveLightCameraIndex(activeLightCameraIndex - 1);
+  }
+}
+
+static void AdjustGodRaysLightCameraAfterErase(int erasedIndex) {
+  if (!GodRaysVolumeIsAuthored(g_godRaysVolume)) {
+    return;
+  }
+  if (g_godRaysVolume.light_camera == erasedIndex) {
+    g_godRaysVolume.enabled = false;
+    g_godRaysVolume.visible = false;
+    g_godRaysVolume.light_camera = -1;
+  } else if (g_godRaysVolume.light_camera > erasedIndex) {
+    --g_godRaysVolume.light_camera;
   }
 }
 
@@ -3547,7 +3611,11 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath, bool
   sf.splines = g_splines;
   sf.light_cameras = g_lightCameras;
   sf.camera_animations = g_cameraAnimations;
-  sf.god_rays_volume = g_godRaysVolume;
+  if (GodRaysVolumeIsAuthored(g_godRaysVolume)) {
+    sf.god_rays_volume = g_godRaysVolume;
+  } else {
+    sf.god_rays_volume.reset();
+  }
 
   sf.physics_entities.clear();
   for (const PhysicsSceneEntity& entity : g_physicsEntities) {
@@ -3790,6 +3858,10 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   g_lightCameras = sf.light_cameras;
   g_cameraAnimations = sf.camera_animations;
   g_godRaysVolume = sf.god_rays_volume.value_or(t850::scene::SceneGodRaysVolumeDesc{});
+  if (sf.god_rays_volume) {
+    g_godRaysVolume.authored = true;
+    ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+  }
   EnsureInferredGameEntities();
   if (sf.navigation_mesh) {
     RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
@@ -3873,7 +3945,8 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
                                 g_selectedIdx >= static_cast<int>(g_splines.size()) ||
                                 g_selectedSplinePoint < 0 ||
                                 g_selectedSplinePoint >= static_cast<int>(g_splines[static_cast<std::size_t>(g_selectedIdx)].points.size()))) ||
-      (g_selectionType == 8 && g_selectedIdx != 0)) {
+      (g_selectionType == 8 && (g_selectedIdx != 0 ||
+                                !GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph)))) {
     g_selectedIdx = -1;
     g_selectedSplinePoint = -1;
     g_selectionType = 0;
@@ -4576,17 +4649,94 @@ void EditorApp::DrawEditorRenderingPanel() {
   intSlider("Far Samples", m_sceneProps.DOF_Far_Samples_squared, 0, 16);
 
   ImGui::SeparatorText("God Rays");
-  bool godRaysEnabled = m_sceneProps.ToogleGodRays != 0;
+  const bool renderGraphHasGodRays = RenderGraphSupportsGodRays(g_renderGraph);
+  const int firstEnabledGodRaysLightCamera = FirstEnabledGodRaysLightCamera();
+  const bool hasEnabledGodRaysLightCamera = firstEnabledGodRaysLightCamera >= 0;
+  bool godRaysEnabled = renderGraphHasGodRays && m_sceneProps.ToogleGodRays != 0;
+  if (!renderGraphHasGodRays) {
+    ImGui::BeginDisabled();
+  }
   if (ImGui::Checkbox("God Rays", &godRaysEnabled)) {
     m_sceneProps.ToogleGodRays = godRaysEnabled ? 1 : 0;
+  }
+  if (!renderGraphHasGodRays) {
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("The active render graph has no God Rays pass.");
   }
   intSlider("Ray March Steps", m_sceneProps.LightVolumeSteps, 2, 512);
   ImGui::SliderFloat("God Rays Factor", &m_sceneProps.GodRaysFactor, 0.0f, 5.0f, "%.3f");
   if (intSlider("God Rays Resolution", m_sceneProps.GoodRaysResolution, 0, 4096)) {
     recreateRenderTargets = true;
   }
-  ImGui::Checkbox("Clip to authored volume", &g_godRaysVolume.clip_enabled);
-  ImGui::TextDisabled("Select Rendering Volumes > God Rays Volume to place and resize the volume.");
+  const bool hasGodRaysVolume = GodRaysVolumeIsAuthored(g_godRaysVolume);
+  const bool canCreateGodRaysVolume = renderGraphHasGodRays &&
+                                      hasEnabledGodRaysLightCamera &&
+                                      !hasGodRaysVolume;
+  if (!canCreateGodRaysVolume) {
+    ImGui::BeginDisabled();
+  }
+  if (ImGui::Button("Create God Rays Volume")) {
+    g_godRaysVolume = t850::scene::SceneGodRaysVolumeDesc{};
+    g_godRaysVolume.authored = true;
+    g_godRaysVolume.enabled = true;
+    g_godRaysVolume.visible = true;
+    g_godRaysVolume.clip_enabled = true;
+    g_godRaysVolume.show_wire = true;
+    g_godRaysVolume.light_camera = firstEnabledGodRaysLightCamera;
+    g_selectionType = 8;
+    g_selectedIdx = 0;
+    g_selectedSplinePoint = -1;
+    ClearMixedSelection();
+  }
+  if (!canCreateGodRaysVolume) {
+    ImGui::EndDisabled();
+  }
+  if (hasGodRaysVolume) {
+    ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+    if (g_lightCameras.size() > 1) {
+      const int selectedLightCamera = std::clamp(
+          g_godRaysVolume.light_camera,
+          0,
+          static_cast<int>(g_lightCameras.size()) - 1);
+      const std::string preview = g_lightCameras[static_cast<std::size_t>(selectedLightCamera)].name;
+      if (ImGui::BeginCombo("Volume Light Camera", preview.c_str())) {
+        for (int i = 0; i < static_cast<int>(g_lightCameras.size()); ++i) {
+          const auto& lightCamera = g_lightCameras[static_cast<std::size_t>(i)];
+          std::string label = lightCamera.name;
+          if (!lightCamera.enabled) {
+            label += " (disabled)";
+          }
+          const bool selected = i == g_godRaysVolume.light_camera;
+          if (ImGui::Selectable(label.c_str(), selected)) {
+            g_godRaysVolume.light_camera = i;
+          }
+          if (selected) {
+            ImGui::SetItemDefaultFocus();
+          }
+        }
+        ImGui::EndCombo();
+      }
+    } else if (!g_lightCameras.empty()) {
+      ImGui::TextDisabled("Volume Light Camera: %s", g_lightCameras.front().name.c_str());
+      g_godRaysVolume.light_camera = 0;
+    }
+    const bool volumeCanBeActive = GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph);
+    if (!volumeCanBeActive) {
+      ImGui::BeginDisabled();
+    }
+    ImGui::Checkbox("Volume Enabled", &g_godRaysVolume.enabled);
+    ImGui::Checkbox("Clip to authored volume", &g_godRaysVolume.clip_enabled);
+    ImGui::Checkbox("Show Volume Cube", &g_godRaysVolume.visible);
+    if (!volumeCanBeActive) {
+      ImGui::EndDisabled();
+    }
+    ImGui::TextDisabled("Select Rendering Volumes > God Rays Volume to place and resize the volume.");
+    if (!hasEnabledGodRaysLightCamera) {
+      ImGui::TextDisabled("A God Rays volume requires an enabled light camera.");
+    }
+  } else if (renderGraphHasGodRays && !hasEnabledGodRaysLightCamera) {
+    ImGui::TextDisabled("Create a light camera before creating a God Rays volume.");
+  }
 
   ImGui::SeparatorText("Advanced Scene Rendering");
   int activeLights = m_sceneProps.ActiveLights;
@@ -6024,6 +6174,10 @@ void EditorApp::LoadPendingScene() {
       g_lightCameras = sf.light_cameras;
       g_cameraAnimations = sf.camera_animations;
       g_godRaysVolume = sf.god_rays_volume.value_or(t850::scene::SceneGodRaysVolumeDesc{});
+      if (sf.god_rays_volume) {
+        g_godRaysVolume.authored = true;
+        ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+      }
       EnsureInferredGameEntities();
       if (sf.navigation_mesh) {
         t850::LoadingProgress::ScopedStep navMeshStep("Loading scene", "NavMesh", 4.0f);
@@ -6305,6 +6459,7 @@ void EditorApp::OnInput() {
     }
     else if (g_selectionType == 6 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
       AdjustActiveLightCameraAfterErase(g_selectedIdx);
+      AdjustGodRaysLightCameraAfterErase(g_selectedIdx);
       if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameraGizmoCameras.size())) {
         if (t850::g_pBaseDriver) {
           t850::g_pBaseDriver->WaitForGPU();
@@ -6331,8 +6486,10 @@ void EditorApp::OnInput() {
       T8_LOG_INFO("[T8ditor] NavMesh deleted");
     }
     else if (g_selectionType == 8 && g_selectedIdx == 0) {
+      g_godRaysVolume.authored = false;
       g_godRaysVolume.enabled = false;
       g_godRaysVolume.visible = false;
+      g_godRaysVolume.clip_enabled = false;
       g_selectedIdx = -1;
       g_selectionType = 0;
       T8_LOG_INFO("[T8ditor] God Rays volume disabled");
@@ -6960,8 +7117,12 @@ static void SyncLightCameraFromRuntimeCamera(const ::Camera& runtimeCamera,
 }
 
 static void ApplyGodRaysVolumeToSceneProps(const t850::scene::SceneGodRaysVolumeDesc& volume,
-                                           SceneProps& sceneProps) {
-  sceneProps.GodRaysVolumeEnabled = (volume.enabled && volume.clip_enabled) ? 1 : 0;
+                                           SceneProps& sceneProps,
+                                           bool canBeActive) {
+  sceneProps.GodRaysVolumeEnabled = (canBeActive && volume.enabled && volume.clip_enabled) ? 1 : 0;
+  if (canBeActive) {
+    sceneProps.ActiveLightCamera = volume.light_camera;
+  }
   sceneProps.GodRaysVolumeCenter = XVECTOR3(volume.position.x, volume.position.y, volume.position.z, 1.0f);
   sceneProps.GodRaysVolumeHalfExtents = XVECTOR3((std::max)(0.001f, std::abs(volume.half_extents.x)),
                                                  (std::max)(0.001f, std::abs(volume.half_extents.y)),
@@ -7764,7 +7925,8 @@ single_pick:
   }
 
   // Test God Rays volume.
-  if (g_godRaysVolume.enabled && g_godRaysVolume.visible && !g_godRaysVolume.frozen) {
+  if (GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph) &&
+      g_godRaysVolume.enabled && g_godRaysVolume.visible && !g_godRaysVolume.frozen) {
     const auto& p = g_godRaysVolume.position;
     const auto& h = g_godRaysVolume.half_extents;
     t850::AABB box(
@@ -7886,20 +8048,29 @@ void EditorApp::SyncEditorSceneLights(const ::Camera& cam) {
       requestedActiveLights,
       0,
       static_cast<int>(m_sceneProps.Lights.size()));
-  bool appliedAuthoredLightCamera = false;
-  for (const auto& lightCamera : g_lightCameras) {
+  m_sceneProps.pLightCameras.clear();
+  m_editorRuntimeLightCameras.clear();
+  m_editorRuntimeLightCameras.resize(g_lightCameras.size());
+
+  int firstEnabledLightCamera = -1;
+  for (std::size_t lightCameraIndex = 0; lightCameraIndex < g_lightCameras.size(); ++lightCameraIndex) {
+    const auto& lightCamera = g_lightCameras[lightCameraIndex];
+    Camera& runtimeLightCamera = m_editorRuntimeLightCameras[lightCameraIndex];
+    ApplySceneLightCameraToRuntimeCamera(lightCamera, runtimeLightCamera, 1.0f);
+    m_sceneProps.AddLightCamera(&runtimeLightCamera);
     if (!lightCamera.enabled) continue;
-    ApplySceneLightCameraToRuntimeCamera(lightCamera, m_editorLightCamera, 1.0f);
+    if (firstEnabledLightCamera < 0) {
+      firstEnabledLightCamera = static_cast<int>(lightCameraIndex);
+      m_editorLightCamera = runtimeLightCamera;
+    }
     if (lightCamera.attached_light >= 0 &&
         lightCamera.attached_light < static_cast<int>(m_sceneProps.Lights.size())) {
       Light& attachedLight = m_sceneProps.Lights[static_cast<std::size_t>(lightCamera.attached_light)];
-      attachedLight.Position = m_editorLightCamera.Eye;
-      attachedLight.Direction = m_editorLightCamera.Look;
+      attachedLight.Position = runtimeLightCamera.Eye;
+      attachedLight.Direction = runtimeLightCamera.Look;
     }
-    appliedAuthoredLightCamera = true;
-    break;
   }
-  if (!appliedAuthoredLightCamera) {
+  if (firstEnabledLightCamera < 0) {
     for (const Light& light : m_sceneProps.Lights) {
       if (light.Type == LIGHT_DIRECTIONAL && light.Enabled) {
         XVECTOR3 direction = light.Direction;
@@ -7916,7 +8087,7 @@ void EditorApp::SyncEditorSceneLights(const ::Camera& cam) {
   if (m_sceneProps.pLightCameras.empty()) {
     m_sceneProps.AddLightCamera(&m_editorLightCamera);
   }
-  m_sceneProps.ActiveLightCamera = 0;
+  m_sceneProps.ActiveLightCamera = firstEnabledLightCamera >= 0 ? firstEnabledLightCamera : 0;
   m_sceneProps.pCullingCamera = m_sceneProps.GetPrimaryCamera();
 }
 
@@ -7954,7 +8125,9 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
   // Sync scene lights from editor lights.
   // Use real scene lights by default; keep the camera headlamp only as an explicit/fallback light.
   SyncEditorSceneLights(cam);
-  ApplyGodRaysVolumeToSceneProps(g_godRaysVolume, m_sceneProps);
+  ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+  const bool godRaysVolumeCanBeActive = GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph);
+  ApplyGodRaysVolumeToSceneProps(g_godRaysVolume, m_sceneProps, godRaysVolumeCanBeActive);
 
   // Update all mesh transforms
   SyncSceneObjectTransforms();
@@ -8205,12 +8378,14 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
       SyncLightCameraGizmoCamera(lightCameraDesc, lightCamera);
       DrawCameraGizmo(m_lines, cam.VP, lightCamera, g_selectionType == 6 && i == g_selectedIdx);
     }
-    DrawGodRaysVolume(
-        m_lines,
-        cam.VP,
-        g_godRaysVolume,
-        g_selectionType == 8,
-        g_godRaysVolumeGizmo);
+    if (godRaysVolumeCanBeActive) {
+      DrawGodRaysVolume(
+          m_lines,
+          cam.VP,
+          g_godRaysVolume,
+          g_selectionType == 8,
+          g_godRaysVolumeGizmo);
+    }
     if (g_splineGizmos.size() < g_splines.size()) {
       g_splineGizmos.resize(g_splines.size());
     }
@@ -8427,6 +8602,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         g_selectedIdx = -1;
       } else if (g_selectionType == 6 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
         AdjustActiveLightCameraAfterErase(g_selectedIdx);
+        AdjustGodRaysLightCameraAfterErase(g_selectedIdx);
         if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameraGizmoCameras.size())) {
           if (t850::g_pBaseDriver) {
             t850::g_pBaseDriver->WaitForGPU();
@@ -8441,8 +8617,10 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
       } else if (g_selectionType == 4 && g_selectedIdx == 0) {
         DestroyEditorNavMesh();
       } else if (g_selectionType == 8 && g_selectedIdx == 0) {
+        g_godRaysVolume.authored = false;
         g_godRaysVolume.enabled = false;
         g_godRaysVolume.visible = false;
+        g_godRaysVolume.clip_enabled = false;
         g_selectedIdx = -1;
         g_selectionType = 0;
       }
@@ -9599,15 +9777,19 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           ImGui::TreePop();
         }
         // Rendering Volumes
-        if (ImGui::TreeNodeEx("Rendering Volumes", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (RenderGraphSupportsGodRays(g_renderGraph) && GodRaysVolumeIsAuthored(g_godRaysVolume) &&
+            ImGui::TreeNodeEx("Rendering Volumes", ImGuiTreeNodeFlags_DefaultOpen)) {
+          const bool volumeCanBeActive = GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph);
+          if (!volumeCanBeActive) ImGui::BeginDisabled();
           ImGui::Checkbox("##godRaysVolumeEnabled", &g_godRaysVolume.enabled); ImGui::SameLine();
           ImGui::Checkbox("##godRaysVolumeVisible", &g_godRaysVolume.visible); ImGui::SameLine();
+          if (!volumeCanBeActive) ImGui::EndDisabled();
           ImGui::Checkbox("##godRaysVolumeFrozen", &g_godRaysVolume.frozen); ImGui::SameLine();
           ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
           if (g_selectionType == 8) flags |= ImGuiTreeNodeFlags_Selected;
           if (g_godRaysVolume.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
           const bool nodeOpen = ImGui::TreeNodeEx("[GR] God Rays Volume", flags);
-          if (ImGui::IsItemClicked() && !g_godRaysVolume.frozen) {
+          if (ImGui::IsItemClicked() && !g_godRaysVolume.frozen && volumeCanBeActive) {
             g_selectionType = 8;
             g_selectedIdx = 0;
             g_selectedSplinePoint = -1;
@@ -10196,6 +10378,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         ImGui::TextDisabled("SceneTemplate uses the first enabled light camera as the shadow camera source.");
         if (ImGui::Button("Delete Light Camera")) {
           AdjustActiveLightCameraAfterErase(g_selectedIdx);
+          AdjustGodRaysLightCameraAfterErase(g_selectedIdx);
           if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameraGizmoCameras.size())) {
             if (t850::g_pBaseDriver) {
               t850::g_pBaseDriver->WaitForGPU();
@@ -10209,14 +10392,46 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         }
       } else if (g_selectionType == 8 && g_selectedIdx == 0) {
         ImGui::SeparatorText("God Rays Volume");
+        const bool renderGraphHasGodRays = RenderGraphSupportsGodRays(g_renderGraph);
+        ClampGodRaysVolumeLightCamera(g_godRaysVolume);
+        const bool volumeCanBeActive = GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph);
         char nameBuffer[256] = {};
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", g_godRaysVolume.name.c_str());
         if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer))) {
           g_godRaysVolume.name = nameBuffer;
         }
+        if (g_lightCameras.size() > 1) {
+          const int selectedLightCamera = std::clamp(
+              g_godRaysVolume.light_camera,
+              0,
+              static_cast<int>(g_lightCameras.size()) - 1);
+          const std::string preview = g_lightCameras[static_cast<std::size_t>(selectedLightCamera)].name;
+          if (ImGui::BeginCombo("Light Camera", preview.c_str())) {
+            for (int i = 0; i < static_cast<int>(g_lightCameras.size()); ++i) {
+              const auto& lightCamera = g_lightCameras[static_cast<std::size_t>(i)];
+              std::string label = lightCamera.name;
+              if (!lightCamera.enabled) label += " (disabled)";
+              const bool selected = i == g_godRaysVolume.light_camera;
+              if (ImGui::Selectable(label.c_str(), selected)) {
+                g_godRaysVolume.light_camera = i;
+              }
+              if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+          }
+        } else if (!g_lightCameras.empty()) {
+          ImGui::TextDisabled("Light Camera: %s", g_lightCameras.front().name.c_str());
+          g_godRaysVolume.light_camera = 0;
+        }
+        if (!volumeCanBeActive) {
+          ImGui::BeginDisabled();
+        }
         ImGui::Checkbox("Enabled", &g_godRaysVolume.enabled);
         ImGui::Checkbox("Clip God Rays to Volume", &g_godRaysVolume.clip_enabled);
         ImGui::Checkbox("Visible", &g_godRaysVolume.visible);
+        if (!volumeCanBeActive) {
+          ImGui::EndDisabled();
+        }
         ImGui::Checkbox("Frozen", &g_godRaysVolume.frozen);
         ImGui::Checkbox("Wireframe", &g_godRaysVolume.show_wire);
         float position[3] = {g_godRaysVolume.position.x, g_godRaysVolume.position.y, g_godRaysVolume.position.z};
@@ -10233,6 +10448,11 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
             t850::g_pBaseDriver->WaitForGPU();
           }
           ReleaseGizmoCache(g_godRaysVolumeGizmo);
+        }
+        if (!renderGraphHasGodRays) {
+          ImGui::TextDisabled("The active render graph has no God Rays pass.");
+        } else if (!IsValidGodRaysLightCamera(g_godRaysVolume.light_camera)) {
+          ImGui::TextDisabled("Enable and assign a light camera to activate this volume.");
         }
         ImGui::TextDisabled("DayScene's original shader has no spatial clip; clip is off by default to preserve parity.");
       } else if (g_selectionType == 7 &&

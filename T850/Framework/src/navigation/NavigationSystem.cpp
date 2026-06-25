@@ -124,6 +124,41 @@ std::array<float, kNavMaxAreas> DefaultNavAreaCosts() {
   return costs;
 }
 
+std::array<float, kNavMaxAreas> BuildNavAreaCosts(const NavMeshGeometry& geometry) {
+  std::array<float, kNavMaxAreas> costs = DefaultNavAreaCosts();
+  for (const NavAreaCost& areaCost : geometry.areaCosts) {
+    if (areaCost.area >= 0 && areaCost.area < kNavMaxAreas &&
+        std::isfinite(areaCost.cost) && areaCost.cost > 0.0f) {
+      costs[static_cast<std::size_t>(areaCost.area)] = areaCost.cost;
+    }
+  }
+  for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
+    if (modifier.enabled &&
+        modifier.mode == NavMeshModifierMode::Area &&
+        modifier.area >= 0 &&
+        modifier.area < kNavMaxAreas &&
+        std::isfinite(modifier.cost) &&
+        modifier.cost > 0.0f) {
+      costs[static_cast<std::size_t>(modifier.area)] = modifier.cost;
+    }
+  }
+  return costs;
+}
+
+unsigned char RecastAreaForNavArea(int area) {
+  if (area <= 0) {
+    return RC_WALKABLE_AREA;
+  }
+  if (area >= kNavMaxAreas) {
+    return RC_WALKABLE_AREA;
+  }
+  return static_cast<unsigned char>(area);
+}
+
+int NavAreaFromRecastArea(unsigned char area) {
+  return area == RC_WALKABLE_AREA ? kNavAreaWalk : static_cast<int>(area);
+}
+
 uint64_t ComputeNavModifierCacheKey(const NavMeshGeometry& geometry) {
   uint64_t hash = 0xcbf29ce484222325ull;
   HashBytes(hash, static_cast<uint64_t>(geometry.volumeModifiers.size()));
@@ -363,51 +398,80 @@ XVECTOR3 TriangleCentroid(const std::vector<float>& verts, const std::vector<int
       1.0f);
 }
 
+struct NavModifierTriangleResult {
+  unsigned char area = RC_NULL_AREA;
+  NavTriangleClassificationReason reason = NavTriangleClassificationReason::InvalidGeometry;
+  int modifierIndex = -1;
+};
+
+bool NavGeometryHasIncludeVolume(const NavMeshGeometry& geometry) {
+  for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
+    if (modifier.enabled && modifier.mode == NavMeshModifierMode::Include) {
+      return true;
+    }
+  }
+  return false;
+}
+
+NavModifierTriangleResult ApplyNavVolumeModifiersToTriangle(const NavMeshGeometry& geometry,
+                                                            const XVECTOR3& centroid,
+                                                            unsigned char initialArea,
+                                                            bool hasIncludeVolume) {
+  NavModifierTriangleResult result;
+  result.area = initialArea;
+  if (initialArea == RC_NULL_AREA) {
+    result.reason = NavTriangleClassificationReason::ExcludedBySlope;
+    return result;
+  }
+
+  bool insideInclude = !hasIncludeVolume;
+  int areaOverride = -1;
+  int areaModifierIndex = -1;
+
+  for (int modifierIndex = 0; modifierIndex < static_cast<int>(geometry.volumeModifiers.size()); ++modifierIndex) {
+    const NavMeshVolumeModifier& modifier = geometry.volumeModifiers[static_cast<std::size_t>(modifierIndex)];
+    if (!modifier.enabled || !PointInsideNavModifierBox(centroid, modifier)) {
+      continue;
+    }
+    if (modifier.mode == NavMeshModifierMode::Include) {
+      insideInclude = true;
+    } else if (modifier.mode == NavMeshModifierMode::Exclude) {
+      result.area = RC_NULL_AREA;
+      result.reason = NavTriangleClassificationReason::ExcludedByVolume;
+      result.modifierIndex = modifierIndex;
+      return result;
+    } else if (modifier.mode == NavMeshModifierMode::Area &&
+               modifier.area >= 0 && modifier.area < kNavMaxAreas) {
+      areaOverride = modifier.area;
+      areaModifierIndex = modifierIndex;
+    }
+  }
+
+  if (!insideInclude) {
+    result.area = RC_NULL_AREA;
+    result.reason = NavTriangleClassificationReason::OutsideIncludeVolume;
+    return result;
+  }
+
+  if (areaOverride >= 0) {
+    result.area = RecastAreaForNavArea(areaOverride);
+    result.modifierIndex = areaModifierIndex;
+  }
+  result.reason = NavTriangleClassificationReason::Included;
+  return result;
+}
+
 void ApplyNavVolumeModifiers(const NavMeshGeometry& geometry,
                              const std::vector<float>& verts,
                              const std::vector<int>& tris,
                              std::vector<unsigned char>& areas) {
-  bool hasIncludeVolume = false;
-  for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
-    if (modifier.enabled && modifier.mode == NavMeshModifierMode::Include) {
-      hasIncludeVolume = true;
-      break;
-    }
-  }
-
+  const bool hasIncludeVolume = NavGeometryHasIncludeVolume(geometry);
   const int triangleCount = static_cast<int>(areas.size());
   for (int tri = 0; tri < triangleCount; ++tri) {
-    if (areas[static_cast<std::size_t>(tri)] == RC_NULL_AREA) {
-      continue;
-    }
     const XVECTOR3 centroid = TriangleCentroid(verts, tris, tri);
-    bool insideInclude = !hasIncludeVolume;
-    int areaOverride = -1;
-
-    for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
-      if (!modifier.enabled || !PointInsideNavModifierBox(centroid, modifier)) {
-        continue;
-      }
-      if (modifier.mode == NavMeshModifierMode::Include) {
-        insideInclude = true;
-      } else if (modifier.mode == NavMeshModifierMode::Exclude) {
-        areas[static_cast<std::size_t>(tri)] = RC_NULL_AREA;
-        areaOverride = -1;
-        break;
-      } else if (modifier.mode == NavMeshModifierMode::Area &&
-                 modifier.area >= 0 && modifier.area < kNavMaxAreas) {
-        areaOverride = modifier.area;
-      }
-    }
-
-    if (areas[static_cast<std::size_t>(tri)] == RC_NULL_AREA) {
-      continue;
-    }
-    if (!insideInclude) {
-      areas[static_cast<std::size_t>(tri)] = RC_NULL_AREA;
-    } else if (areaOverride >= 0) {
-      areas[static_cast<std::size_t>(tri)] = static_cast<unsigned char>(areaOverride);
-    }
+    const NavModifierTriangleResult result = ApplyNavVolumeModifiersToTriangle(
+        geometry, centroid, areas[static_cast<std::size_t>(tri)], hasIncludeVolume);
+    areas[static_cast<std::size_t>(tri)] = result.area;
   }
 }
 
@@ -1351,6 +1415,104 @@ bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
   return true;
 }
 
+bool ClassifyNavMeshTriangles(const NavMeshGeometry& geometry,
+                              const NavMeshBuildSettings& settings,
+                              NavMeshClassificationResult& outResult,
+                              std::string* error) {
+  outResult = NavMeshClassificationResult{};
+#if !defined(T850_ENABLE_RECAST)
+  SetError(error, "RecastNavigation is not enabled in this build");
+  return false;
+#else
+  if (geometry.vertices.size() < 3 || geometry.indices.size() < 3) {
+    SetError(error, "Navigation geometry must contain vertices and triangle indices");
+    return false;
+  }
+  if ((geometry.indices.size() % 3) != 0) {
+    SetError(error, "Navigation geometry indices must be a triangle list");
+    return false;
+  }
+  if (settings.cellSize <= 0.0f || settings.cellHeight <= 0.0f || settings.agentMaxSlope < 0.0f) {
+    SetError(error, "Invalid navigation classification settings");
+    return false;
+  }
+
+  std::vector<float> verts;
+  verts.reserve(geometry.vertices.size() * 3);
+  for (const XVECTOR3& v : geometry.vertices) {
+    if (!IsFiniteVec3(v)) {
+      SetError(error, "Navigation geometry contains non-finite vertex");
+      return false;
+    }
+    verts.push_back(v.x);
+    verts.push_back(v.y);
+    verts.push_back(v.z);
+  }
+
+  std::vector<int> tris = geometry.indices;
+  for (int idx : tris) {
+    if (idx < 0 || idx >= static_cast<int>(geometry.vertices.size())) {
+      SetError(error, "Navigation geometry contains out-of-range index");
+      return false;
+    }
+  }
+
+  rcContext context;
+  const int triangleCount = static_cast<int>(tris.size() / 3);
+  std::vector<unsigned char> areas(static_cast<std::size_t>(triangleCount), RC_NULL_AREA);
+  rcMarkWalkableTriangles(&context,
+                          settings.agentMaxSlope,
+                          verts.data(),
+                          static_cast<int>(geometry.vertices.size()),
+                          tris.data(),
+                          triangleCount,
+                          areas.data());
+
+  const bool hasIncludeVolume = NavGeometryHasIncludeVolume(geometry);
+  const std::array<float, kNavMaxAreas> areaCosts = BuildNavAreaCosts(geometry);
+  outResult.triangles.reserve(static_cast<std::size_t>(triangleCount));
+  for (int tri = 0; tri < triangleCount; ++tri) {
+    const int vi0 = tris[tri * 3 + 0];
+    const int vi1 = tris[tri * 3 + 1];
+    const int vi2 = tris[tri * 3 + 2];
+    NavTriangleClassification classified;
+    classified.triangleIndex = tri;
+    classified.vertices[0] = geometry.vertices[static_cast<std::size_t>(vi0)];
+    classified.vertices[1] = geometry.vertices[static_cast<std::size_t>(vi1)];
+    classified.vertices[2] = geometry.vertices[static_cast<std::size_t>(vi2)];
+    classified.centroid = TriangleCentroid(verts, tris, tri);
+
+    const NavModifierTriangleResult modifierResult = ApplyNavVolumeModifiersToTriangle(
+        geometry,
+        classified.centroid,
+        areas[static_cast<std::size_t>(tri)],
+        hasIncludeVolume);
+    classified.included = modifierResult.area != RC_NULL_AREA;
+    classified.reason = modifierResult.reason;
+    classified.modifierIndex = modifierResult.modifierIndex;
+    if (classified.included) {
+      classified.area = NavAreaFromRecastArea(modifierResult.area);
+      if (classified.area >= 0 && classified.area < kNavMaxAreas) {
+        classified.cost = areaCosts[static_cast<std::size_t>(classified.area)];
+      }
+      ++outResult.includedCount;
+    } else {
+      classified.area = -1;
+      classified.cost = 0.0f;
+      if (classified.reason == NavTriangleClassificationReason::ExcludedBySlope) {
+        ++outResult.excludedBySlopeCount;
+      } else if (classified.reason == NavTriangleClassificationReason::OutsideIncludeVolume) {
+        ++outResult.outsideIncludeVolumeCount;
+      } else if (classified.reason == NavTriangleClassificationReason::ExcludedByVolume) {
+        ++outResult.excludedByVolumeCount;
+      }
+    }
+    outResult.triangles.push_back(classified);
+  }
+  return true;
+#endif
+}
+
 bool NavMesh::BuildFromXDataBase(const xF::XDataBase& database,
                                  const NavMeshBuildSettings& settings,
                                  std::string* error) {
@@ -1447,21 +1609,7 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
     }
   }
 
-  for (const NavAreaCost& areaCost : geometry.areaCosts) {
-    if (areaCost.area >= 0 && areaCost.area < kNavMaxAreas && std::isfinite(areaCost.cost) && areaCost.cost > 0.0f) {
-      m_impl->areaCosts[static_cast<std::size_t>(areaCost.area)] = areaCost.cost;
-    }
-  }
-  for (const NavMeshVolumeModifier& modifier : geometry.volumeModifiers) {
-    if (modifier.enabled &&
-        modifier.mode == NavMeshModifierMode::Area &&
-        modifier.area >= 0 &&
-        modifier.area < kNavMaxAreas &&
-        std::isfinite(modifier.cost) &&
-        modifier.cost > 0.0f) {
-      m_impl->areaCosts[static_cast<std::size_t>(modifier.area)] = modifier.cost;
-    }
-  }
+  m_impl->areaCosts = BuildNavAreaCosts(geometry);
 
   uint64_t effectiveCacheKey = cacheKey != 0 ? cacheKey : ComputeNavMeshCacheKey(geometry, settings);
   if (cacheKey != 0 && (!geometry.volumeModifiers.empty() || !geometry.areaCosts.empty())) {

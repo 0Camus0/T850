@@ -236,6 +236,7 @@ namespace t8ditor {
     int m_editorNavMeshDebugShapeMode = 0;
     float m_editorNavMeshLastBuildMs = 0.0f;
     bool m_editorNavMeshDirty = false;
+    std::vector<t850::scene::SceneNavMeshVolumeDesc> m_editorNavMeshVolumes;
     std::vector<t850::scene::SceneNavMeshLinkDesc> m_editorNavMeshLinks;
     std::vector<XVECTOR3> m_editorNavMeshNodes;
     int m_editorSelectedNavLink = -1;

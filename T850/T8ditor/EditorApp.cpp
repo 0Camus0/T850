@@ -2366,6 +2366,7 @@ void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorNavMeshDebugShapeMode = 0;
   m_editorNavMeshLastBuildMs = 0.0f;
   m_editorNavMeshDirty = false;
+  m_editorNavMeshVolumes.clear();
   m_editorNavMeshLinks.clear();
   m_editorNavMeshNodes.clear();
   m_editorSelectedNavLink = -1;
@@ -2427,6 +2428,16 @@ bool EditorApp::CreateEditorNavMesh() {
       return t850::ValidateNavOffMeshLinkWithPhysics(m_physics, m_editorNavMeshBuildSettings, link);
     };
     geometry.offMeshHybridLinkValidator = geometry.offMeshLinkValidator;
+  }
+  for (const t850::scene::SceneNavMeshVolumeDesc& volumeDesc : m_editorNavMeshVolumes) {
+    t850::navigation::NavMeshVolumeModifier modifier = NavVolumeModifierFromScene(volumeDesc);
+    if (!modifier.enabled) {
+      continue;
+    }
+    geometry.volumeModifiers.push_back(modifier);
+    if (modifier.mode == t850::navigation::NavMeshModifierMode::Area) {
+      geometry.areaCosts.push_back({modifier.area, modifier.cost});
+    }
   }
   for (const t850::scene::SceneNavMeshLinkDesc& linkDesc : m_editorNavMeshLinks) {
     if (IsUsableAuthoredNavLink(linkDesc)) {
@@ -2493,6 +2504,7 @@ void EditorApp::RestoreEditorNavMeshFromScene(const t850::scene::SceneNavigation
   m_editorNavMeshShowWire = desc.show_wire;
   m_editorNavMeshDebugOffset = desc.debug_offset;
   m_editorNavMeshDebugShapeMode = std::clamp(desc.debug_shape_mode, 0, 1);
+  m_editorNavMeshVolumes = desc.volumes;
   m_editorNavMeshLinks = desc.authored_links;
   m_editorNavMeshDirty = false;
   m_editorSelectedNavLink = m_editorNavMeshLinks.empty() ? -1 : std::clamp(m_editorSelectedNavLink, 0, static_cast<int>(m_editorNavMeshLinks.size()) - 1);
@@ -2518,6 +2530,7 @@ t850::scene::SceneNavigationMeshDesc EditorApp::BuildEditorNavMeshDesc() const {
   desc.debug_offset = m_editorNavMeshDebugOffset;
   desc.debug_shape_mode = m_editorNavMeshDebugShapeMode;
   desc.build_settings = NavMeshBuildSettingsToScene(m_editorNavMeshBuildSettings);
+  desc.volumes = m_editorNavMeshVolumes;
   desc.authored_links = m_editorNavMeshLinks;
   return desc;
 }

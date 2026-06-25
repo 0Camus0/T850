@@ -2364,6 +2364,43 @@ static bool ShouldDrawPhysicsDebug() {
   return false;
 }
 
+static XVECTOR3 RotateInverseEulerXYZ(const XVECTOR3& point, const t850::scene::Vec3f& rotation) {
+  XVECTOR3 p = point;
+  auto rotateZ = [](XVECTOR3 v, float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return XVECTOR3(v.x * c - v.y * s, v.x * s + v.y * c, v.z, 0.0f);
+  };
+  auto rotateY = [](XVECTOR3 v, float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return XVECTOR3(v.x * c + v.z * s, v.y, -v.x * s + v.z * c, 0.0f);
+  };
+  auto rotateX = [](XVECTOR3 v, float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return XVECTOR3(v.x, v.y * c - v.z * s, v.y * s + v.z * c, 0.0f);
+  };
+  p = rotateZ(p, -rotation.z);
+  p = rotateY(p, -rotation.y);
+  p = rotateX(p, -rotation.x);
+  return p;
+}
+
+static bool NavVolumeContainsPoint(const t850::scene::SceneNavMeshVolumeDesc& volume, const XVECTOR3& point) {
+  if (!volume.enabled || volume.shape != "box") {
+    return false;
+  }
+  XVECTOR3 local(point.x - volume.position.x,
+                 point.y - volume.position.y,
+                 point.z - volume.position.z,
+                 0.0f);
+  local = RotateInverseEulerXYZ(local, volume.rotation);
+  return std::abs(local.x) <= (std::max)(0.001f, std::abs(volume.half_extents.x)) &&
+         std::abs(local.y) <= (std::max)(0.001f, std::abs(volume.half_extents.y)) &&
+         std::abs(local.z) <= (std::max)(0.001f, std::abs(volume.half_extents.z));
+}
+
 void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorNavMesh.Clear();
   m_editorNavMeshDebugRenderer.ReleaseCachedGeometry();
@@ -3284,6 +3321,91 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
                         m_editorNavMeshClassification.excludedByVolumeCount,
                         m_editorNavMeshClassification.outsideIncludeVolumeCount,
                         m_editorNavMeshClassification.excludedBySlopeCount);
+  }
+  if (!m_editorNavMeshVolumes.empty() && ImGui::CollapsingHeader("Validation Report", ImGuiTreeNodeFlags_DefaultOpen)) {
+    UpdateEditorNavMeshClassification();
+    std::vector<int> triangleHits(m_editorNavMeshVolumes.size(), 0);
+    std::vector<int> linkHits(m_editorNavMeshVolumes.size(), 0);
+    if (m_editorNavMeshClassificationReady) {
+      for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+        for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+          if (NavVolumeContainsPoint(m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)], tri.centroid)) {
+            ++triangleHits[static_cast<std::size_t>(volumeIndex)];
+          }
+        }
+      }
+    }
+    if (m_editorNavMesh.IsReady()) {
+      auto countLinksForType = [&](t850::navigation::NavTraversalType type) {
+        std::vector<XVECTOR3> vertices;
+        std::vector<unsigned int> indices;
+        if (!m_editorNavMesh.GetDebugOffMeshLinks(type, vertices, indices, 0.0f)) {
+          return;
+        }
+        for (std::size_t index = 0; index + 1 < indices.size(); index += 6) {
+          const XVECTOR3 start = vertices[indices[index + 0]];
+          const XVECTOR3 end = vertices[indices[index + 1]];
+          const XVECTOR3 mid((start.x + end.x) * 0.5f,
+                             (start.y + end.y) * 0.5f,
+                             (start.z + end.z) * 0.5f,
+                             1.0f);
+          for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+            const auto& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)];
+            if (NavVolumeContainsPoint(volume, start) ||
+                NavVolumeContainsPoint(volume, end) ||
+                NavVolumeContainsPoint(volume, mid)) {
+              ++linkHits[static_cast<std::size_t>(volumeIndex)];
+            }
+          }
+        }
+      };
+      countLinksForType(t850::navigation::NavTraversalType::Drop);
+      countLinksForType(t850::navigation::NavTraversalType::Jump);
+      countLinksForType(t850::navigation::NavTraversalType::JumpPad);
+      countLinksForType(t850::navigation::NavTraversalType::JumpIntent);
+    }
+
+    bool hasLinkIncludeVolume = false;
+    for (const auto& volume : m_editorNavMeshVolumes) {
+      if (volume.enabled && (volume.type == "link_include" || volume.type == "link_add" || volume.type == "add_links")) {
+        hasLinkIncludeVolume = true;
+        break;
+      }
+    }
+    if (hasLinkIncludeVolume && m_editorNavMesh.IsReady() && m_editorNavMesh.GetStats().offMeshLinkCount == 0) {
+      ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.1f, 1.0f),
+                         "Warning: link_include volumes are active but no off-mesh links survived generation.");
+    }
+
+    if (ImGui::BeginTable("NavVolumeValidation", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
+      ImGui::TableSetupColumn("Volume");
+      ImGui::TableSetupColumn("Type");
+      ImGui::TableSetupColumn("Triangles");
+      ImGui::TableSetupColumn("Links");
+      ImGui::TableHeadersRow();
+      for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+        const auto& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)];
+        const int triCount = triangleHits[static_cast<std::size_t>(volumeIndex)];
+        const int linkCount = linkHits[static_cast<std::size_t>(volumeIndex)];
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(volume.name.c_str());
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(volume.type.c_str());
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%d", triCount);
+        ImGui::TableSetColumnIndex(3);
+        ImGui::Text("%d", linkCount);
+        if (volume.enabled && triCount == 0 && linkCount == 0) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.1f, 1.0f), "Warning");
+          ImGui::TableSetColumnIndex(1);
+          ImGui::TextDisabled("No affected triangles or links.");
+        }
+      }
+      ImGui::EndTable();
+    }
   }
   if (m_editorNavMeshAuthoringMode) {
     ImGui::TextColored(ImVec4(0.25f, 0.75f, 1.0f, 1.0f), "NavMesh Authoring Mode: click source preview triangles to select them.");

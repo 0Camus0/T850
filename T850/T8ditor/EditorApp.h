@@ -165,6 +165,8 @@ namespace t8ditor {
     bool CreateEditorNavMesh();
     void DestroyEditorNavMesh();
     void ResetEditorNavMeshState(bool keepSettings = false);
+    void MarkEditorNavMeshDirty(const std::string& status);
+    bool DeleteSelectedNavAuthoringChild();
     void RestoreEditorNavMeshFromScene(const t850::scene::SceneNavigationMeshDesc& desc);
     t850::scene::SceneNavigationMeshDesc BuildEditorNavMeshDesc() const;
     bool GetEditorNavMeshWorldAABB(t850::AABB& outBounds) const;
@@ -239,6 +241,7 @@ namespace t8ditor {
     std::vector<t850::scene::SceneNavMeshVolumeDesc> m_editorNavMeshVolumes;
     std::vector<t850::scene::SceneNavMeshLinkDesc> m_editorNavMeshLinks;
     std::vector<XVECTOR3> m_editorNavMeshNodes;
+    int m_editorSelectedNavVolume = -1;
     int m_editorSelectedNavLink = -1;
     int m_editorNavLinkPickMode = 0; // 0=none, 1=start, 2=end
     t850::VertexBuffer* m_editorNavLinkOverlayVB = nullptr;

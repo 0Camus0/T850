@@ -143,6 +143,8 @@ struct EditorUndoState {
   int selectionType = 0;
   int selectedIdx = -1;
   int selectedSplinePoint = -1;
+  int selectedNavVolume = -1;
+  int selectedNavLink = -1;
   int activeCameraIdx = -1;
 };
 
@@ -2369,11 +2371,44 @@ void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorNavMeshVolumes.clear();
   m_editorNavMeshLinks.clear();
   m_editorNavMeshNodes.clear();
+  m_editorSelectedNavVolume = -1;
   m_editorSelectedNavLink = -1;
   m_editorNavLinkPickMode = 0;
   if (!keepSettings) {
     m_editorNavMeshBuildSettings = DefaultEditorNavMeshBuildSettings();
   }
+}
+
+void EditorApp::MarkEditorNavMeshDirty(const std::string& status) {
+  m_editorNavMeshDirty = true;
+  m_editorNavMeshAuthored = true;
+  m_editorNavMeshStatus = status.empty()
+      ? "NavMesh authoring changed. Click Re-generate to update the preview."
+      : status;
+}
+
+bool EditorApp::DeleteSelectedNavAuthoringChild() {
+  if (m_editorSelectedNavVolume >= 0 &&
+      m_editorSelectedNavVolume < static_cast<int>(m_editorNavMeshVolumes.size())) {
+    m_editorNavMeshVolumes.erase(m_editorNavMeshVolumes.begin() + m_editorSelectedNavVolume);
+    m_editorSelectedNavVolume = m_editorNavMeshVolumes.empty()
+        ? -1
+        : std::clamp(m_editorSelectedNavVolume, 0, static_cast<int>(m_editorNavMeshVolumes.size()) - 1);
+    m_editorSelectedNavLink = -1;
+    MarkEditorNavMeshDirty("NavMesh volume deleted. Click Re-generate.");
+    return true;
+  }
+  if (m_editorSelectedNavLink >= 0 &&
+      m_editorSelectedNavLink < static_cast<int>(m_editorNavMeshLinks.size())) {
+    m_editorNavMeshLinks.erase(m_editorNavMeshLinks.begin() + m_editorSelectedNavLink);
+    m_editorSelectedNavLink = m_editorNavMeshLinks.empty()
+        ? -1
+        : std::clamp(m_editorSelectedNavLink, 0, static_cast<int>(m_editorNavMeshLinks.size()) - 1);
+    m_editorSelectedNavVolume = -1;
+    MarkEditorNavMeshDirty("Authored link deleted. Click Re-generate.");
+    return true;
+  }
+  return false;
 }
 
 bool EditorApp::CreateEditorNavMesh() {
@@ -2489,6 +2524,11 @@ void EditorApp::DestroyEditorNavMesh() {
   m_editorNavMeshAuthored = false;
   m_editorNavMeshLastBuildMs = 0.0f;
   m_editorNavMeshDirty = false;
+  m_editorNavMeshVolumes.clear();
+  m_editorNavMeshLinks.clear();
+  m_editorSelectedNavVolume = -1;
+  m_editorSelectedNavLink = -1;
+  m_editorNavLinkPickMode = 0;
   m_editorNavMeshStatus = "NavMesh destroyed.";
   DumpEditorNavMeshWireGeometry("destroy");
   if (g_selectionType == 4) {
@@ -2506,6 +2546,10 @@ void EditorApp::RestoreEditorNavMeshFromScene(const t850::scene::SceneNavigation
   m_editorNavMeshDebugShapeMode = std::clamp(desc.debug_shape_mode, 0, 1);
   m_editorNavMeshVolumes = desc.volumes;
   m_editorNavMeshLinks = desc.authored_links;
+  if (m_editorSelectedNavVolume < 0 ||
+      m_editorSelectedNavVolume >= static_cast<int>(m_editorNavMeshVolumes.size())) {
+    m_editorSelectedNavVolume = -1;
+  }
   m_editorNavMeshDirty = false;
   m_editorSelectedNavLink = m_editorNavMeshLinks.empty() ? -1 : std::clamp(m_editorSelectedNavLink, 0, static_cast<int>(m_editorNavMeshLinks.size()) - 1);
   m_editorNavLinkPickMode = 0;
@@ -2896,6 +2940,131 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   if (m_editorNavMesh.IsReady() && m_editorNavMeshNodes.empty()) {
     RefreshEditorNavMeshNodes();
   }
+  ImGui::SeparatorText("Authoring Volumes");
+  ImGui::TextDisabled("Volumes are saved in .t8scene as NavMesh build helpers, not game objects.");
+  auto makeDefaultVolume = [&](const char* type, const char* label) {
+    t850::scene::SceneNavMeshVolumeDesc volume;
+    volume.name = std::string(label) + " " + std::to_string(m_editorNavMeshVolumes.size() + 1);
+    volume.type = type;
+    volume.shape = "box";
+    volume.enabled = true;
+    volume.visible = true;
+    volume.show_wire = true;
+    if (std::strcmp(type, "include_bounds") == 0) {
+      t850::AABB bounds;
+      if (GetEditorNavMeshWorldAABB(bounds)) {
+        const XVECTOR3 center = bounds.Center();
+        const XVECTOR3 extents = bounds.Extents();
+        volume.position = {center.x, center.y, center.z};
+        volume.half_extents = {
+            (std::max)(1.0f, extents.x * 0.55f),
+            (std::max)(1.0f, extents.y * 0.55f),
+            (std::max)(1.0f, extents.z * 0.55f)};
+      } else {
+        volume.half_extents = {32.0f, 16.0f, 32.0f};
+      }
+    } else if (std::strcmp(type, "area_cost") == 0) {
+      volume.area = "mud";
+      volume.cost = 3.0f;
+    }
+    m_editorNavMeshVolumes.push_back(volume);
+    m_editorSelectedNavVolume = static_cast<int>(m_editorNavMeshVolumes.size()) - 1;
+    m_editorSelectedNavLink = -1;
+    g_selectionType = 4;
+    g_selectedIdx = 0;
+    ClearMixedSelection();
+    MarkEditorNavMeshDirty("NavMesh volume added. Click Re-generate.");
+  };
+  if (ImGui::Button("Add Include Bounds")) makeDefaultVolume("include_bounds", "Include Bounds");
+  ImGui::SameLine();
+  if (ImGui::Button("Add Exclude Volume")) makeDefaultVolume("exclude", "Exclude Volume");
+  if (ImGui::Button("Add Area Cost Volume")) makeDefaultVolume("area_cost", "Area Cost Volume");
+
+  if (!m_editorNavMeshVolumes.empty()) {
+    if (m_editorSelectedNavVolume >= static_cast<int>(m_editorNavMeshVolumes.size())) {
+      m_editorSelectedNavVolume = -1;
+    }
+    const char* volumePreview = m_editorSelectedNavVolume >= 0
+        ? m_editorNavMeshVolumes[static_cast<std::size_t>(m_editorSelectedNavVolume)].name.c_str()
+        : "None";
+    if (ImGui::BeginCombo("Selected Volume", volumePreview)) {
+      for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+        const bool selected = volumeIndex == m_editorSelectedNavVolume;
+        if (ImGui::Selectable(m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)].name.c_str(), selected)) {
+          m_editorSelectedNavVolume = volumeIndex;
+          m_editorSelectedNavLink = -1;
+          g_selectionType = 4;
+          g_selectedIdx = 0;
+          ClearMixedSelection();
+        }
+        if (selected) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+
+    if (m_editorSelectedNavVolume < 0) {
+      ImGui::TextDisabled("Select or create a volume to edit it.");
+    } else {
+      t850::scene::SceneNavMeshVolumeDesc& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(m_editorSelectedNavVolume)];
+      bool volumeChanged = false;
+      volumeChanged |= InputTextString("Volume Name", volume.name);
+      const char* volumeTypes[] = { "include_bounds", "exclude", "area_cost" };
+      int typeIndex = 1;
+      for (int i = 0; i < 3; ++i) {
+        if (volume.type == volumeTypes[i]) typeIndex = i;
+      }
+      if (ImGui::Combo("Volume Type", &typeIndex, volumeTypes, 3)) {
+        volume.type = volumeTypes[typeIndex];
+        if (volume.type == "area_cost" && volume.area == "walkable") {
+          volume.area = "mud";
+          volume.cost = (std::max)(volume.cost, 3.0f);
+        }
+        volumeChanged = true;
+      }
+      volumeChanged |= ImGui::Checkbox("Volume Enabled", &volume.enabled);
+      volumeChanged |= ImGui::Checkbox("Volume Visible", &volume.visible);
+      volumeChanged |= ImGui::Checkbox("Volume Frozen", &volume.frozen);
+      volumeChanged |= ImGui::Checkbox("Volume Wireframe", &volume.show_wire);
+      float volumePosition[3] = {volume.position.x, volume.position.y, volume.position.z};
+      if (ImGui::DragFloat3("Volume Position", volumePosition, 0.1f, -100000.0f, 100000.0f, "%.3f")) {
+        volume.position = {volumePosition[0], volumePosition[1], volumePosition[2]};
+        volumeChanged = true;
+      }
+      float volumeRotation[3] = {volume.rotation.x, volume.rotation.y, volume.rotation.z};
+      if (ImGui::DragFloat3("Volume Rotation", volumeRotation, 0.01f, -1000.0f, 1000.0f, "%.3f")) {
+        volume.rotation = {volumeRotation[0], volumeRotation[1], volumeRotation[2]};
+        volumeChanged = true;
+      }
+      float volumeHalfExtents[3] = {volume.half_extents.x, volume.half_extents.y, volume.half_extents.z};
+      if (ImGui::DragFloat3("Volume Half Extents", volumeHalfExtents, 0.1f, 0.001f, 100000.0f, "%.3f")) {
+        volume.half_extents = {
+            (std::max)(0.001f, volumeHalfExtents[0]),
+            (std::max)(0.001f, volumeHalfExtents[1]),
+            (std::max)(0.001f, volumeHalfExtents[2])};
+        volumeChanged = true;
+      }
+      if (volume.type == "area_cost") {
+        const char* areaOptions[] = { "walkable", "drop", "jump", "jump_pad", "jump_intent", "water", "door", "mud", "custom" };
+        int areaIndex = 7;
+        for (int i = 0; i < static_cast<int>(sizeof(areaOptions) / sizeof(areaOptions[0])); ++i) {
+          if (volume.area == areaOptions[i]) areaIndex = i;
+        }
+        if (ImGui::Combo("Area", &areaIndex, areaOptions, static_cast<int>(sizeof(areaOptions) / sizeof(areaOptions[0])))) {
+          volume.area = areaOptions[areaIndex];
+          volumeChanged = true;
+        }
+        volumeChanged |= ImGui::DragFloat("Area Cost", &volume.cost, 0.05f, 0.01f, 100.0f, "%.2f");
+      }
+      if (ImGui::Button("Delete Volume")) {
+        DeleteSelectedNavAuthoringChild();
+      } else if (volumeChanged) {
+        MarkEditorNavMeshDirty("NavMesh volume changed. Click Re-generate.");
+      }
+    }
+  } else {
+    ImGui::TextDisabled("No authored volumes.");
+  }
+
   ImGui::SeparatorText("Authored Links");
   ImGui::TextDisabled("Links snap to Detour polygon-center nodes. Use Pick Start/Pick End, then click the viewport.");
   if (ImGui::Button("Refresh Nodes")) {
@@ -2927,6 +3096,7 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
     link.end = { end.x, end.y, end.z };
     m_editorNavMeshLinks.push_back(link);
     m_editorSelectedNavLink = static_cast<int>(m_editorNavMeshLinks.size()) - 1;
+    m_editorSelectedNavVolume = -1;
     markNavMeshDirty();
     m_editorNavMeshStatus = "Authored link added. Click Re-generate.";
   };
@@ -3726,6 +3896,8 @@ EditorUndoState EditorApp::CaptureEditorUndoState(std::string* outKey) {
   state.selectionType = g_selectionType;
   state.selectedIdx = g_selectedIdx;
   state.selectedSplinePoint = g_selectedSplinePoint;
+  state.selectedNavVolume = m_editorSelectedNavVolume;
+  state.selectedNavLink = m_editorSelectedNavLink;
   state.activeCameraIdx = g_activeCameraIdx;
   if (outKey) {
     *outKey = EditorUndoStateKey(state);
@@ -3947,6 +4119,8 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   g_selectionType = state.selectionType;
   g_selectedIdx = state.selectedIdx;
   g_selectedSplinePoint = state.selectedSplinePoint;
+  m_editorSelectedNavVolume = state.selectedNavVolume;
+  m_editorSelectedNavLink = state.selectedNavLink;
   if ((g_selectionType == 0 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_objects.size()))) ||
       (g_selectionType == 1 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_cameras.size()))) ||
       (g_selectionType == 2 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_lights.size()))) ||
@@ -3963,6 +4137,12 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
     g_selectedIdx = -1;
     g_selectedSplinePoint = -1;
     g_selectionType = 0;
+  }
+  if (m_editorSelectedNavVolume < -1 || m_editorSelectedNavVolume >= static_cast<int>(m_editorNavMeshVolumes.size())) {
+    m_editorSelectedNavVolume = -1;
+  }
+  if (m_editorSelectedNavLink < -1 || m_editorSelectedNavLink >= static_cast<int>(m_editorNavMeshLinks.size())) {
+    m_editorSelectedNavLink = -1;
   }
   if (g_multiEntitySelect.empty() && (g_selectionType == 0 || g_selectionType == 3)) {
     AddMixedSelection(g_selectionType, g_selectedIdx);
@@ -6495,8 +6675,10 @@ void EditorApp::OnInput() {
       T8_LOG_INFO("[T8ditor] Physics entity deleted");
     }
     else if (g_selectionType == 4 && g_selectedIdx == 0) {
-      DestroyEditorNavMesh();
-      T8_LOG_INFO("[T8ditor] NavMesh deleted");
+      if (!DeleteSelectedNavAuthoringChild()) {
+        DestroyEditorNavMesh();
+        T8_LOG_INFO("[T8ditor] NavMesh deleted");
+      }
     }
     else if (g_selectionType == 8 && g_selectedIdx == 0) {
       g_godRaysVolume.authored = false;
@@ -8628,7 +8810,9 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
       } else if (g_selectionType == 3 && g_selectedIdx < (int)g_physicsEntities.size()) {
         DestroyPhysicsEntity(m_physics, g_selectedIdx);
       } else if (g_selectionType == 4 && g_selectedIdx == 0) {
-        DestroyEditorNavMesh();
+        if (!DeleteSelectedNavAuthoringChild()) {
+          DestroyEditorNavMesh();
+        }
       } else if (g_selectionType == 8 && g_selectedIdx == 0) {
         g_godRaysVolume.authored = false;
         g_godRaysVolume.enabled = false;
@@ -9591,30 +9775,63 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
             if (ImGui::IsItemClicked() && !m_editorNavMeshFrozen) {
               g_selectedIdx = 0;
               g_selectionType = 4;
+              m_editorSelectedNavVolume = -1;
+              m_editorSelectedNavLink = -1;
               ClearMixedSelection();
             }
             if (m_editorNavMeshFrozen) ImGui::PopStyleColor();
             if (nodeOpen) {
-              for (int linkIndex = 0; linkIndex < static_cast<int>(m_editorNavMeshLinks.size()); ++linkIndex) {
-                t850::scene::SceneNavMeshLinkDesc& link = m_editorNavMeshLinks[static_cast<std::size_t>(linkIndex)];
-                ImGui::PushID(linkIndex + 61000);
-                ImGui::Checkbox("##linkVis", &link.visible); ImGui::SameLine();
-                ImGui::Checkbox("##linkFrz", &link.frozen); ImGui::SameLine();
-                ImGui::Checkbox("##linkWir", &link.show_wire); ImGui::SameLine();
-                ImGuiTreeNodeFlags linkFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
-                if (linkIndex == m_editorSelectedNavLink) linkFlags |= ImGuiTreeNodeFlags_Selected;
-                if (link.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
-                const std::string linkLabel = "[L] " + link.name + " (" + link.type + ")";
-                const bool linkOpen = ImGui::TreeNodeEx(linkLabel.c_str(), linkFlags);
-                if (ImGui::IsItemClicked() && !link.frozen) {
-                  m_editorSelectedNavLink = linkIndex;
-                  g_selectedIdx = 0;
-                  g_selectionType = 4;
-                  ClearMixedSelection();
+              if (!m_editorNavMeshVolumes.empty() &&
+                  ImGui::TreeNodeEx("Volumes", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (int volumeIndex = 0; volumeIndex < static_cast<int>(m_editorNavMeshVolumes.size()); ++volumeIndex) {
+                  t850::scene::SceneNavMeshVolumeDesc& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(volumeIndex)];
+                  ImGui::PushID(volumeIndex + 60500);
+                  ImGui::Checkbox("##volumeVis", &volume.visible); ImGui::SameLine();
+                  ImGui::Checkbox("##volumeFrz", &volume.frozen); ImGui::SameLine();
+                  ImGui::Checkbox("##volumeWir", &volume.show_wire); ImGui::SameLine();
+                  ImGuiTreeNodeFlags volumeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+                  if (volumeIndex == m_editorSelectedNavVolume) volumeFlags |= ImGuiTreeNodeFlags_Selected;
+                  if (volume.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+                  const std::string volumeLabel = "[V] " + volume.name + " (" + volume.type + ")";
+                  const bool volumeOpen = ImGui::TreeNodeEx(volumeLabel.c_str(), volumeFlags);
+                  if (ImGui::IsItemClicked() && !volume.frozen) {
+                    m_editorSelectedNavVolume = volumeIndex;
+                    m_editorSelectedNavLink = -1;
+                    g_selectedIdx = 0;
+                    g_selectionType = 4;
+                    ClearMixedSelection();
+                  }
+                  if (volume.frozen) ImGui::PopStyleColor();
+                  if (volumeOpen) ImGui::TreePop();
+                  ImGui::PopID();
                 }
-                if (link.frozen) ImGui::PopStyleColor();
-                if (linkOpen) ImGui::TreePop();
-                ImGui::PopID();
+                ImGui::TreePop();
+              }
+              if (!m_editorNavMeshLinks.empty() &&
+                  ImGui::TreeNodeEx("Links", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (int linkIndex = 0; linkIndex < static_cast<int>(m_editorNavMeshLinks.size()); ++linkIndex) {
+                  t850::scene::SceneNavMeshLinkDesc& link = m_editorNavMeshLinks[static_cast<std::size_t>(linkIndex)];
+                  ImGui::PushID(linkIndex + 61000);
+                  ImGui::Checkbox("##linkVis", &link.visible); ImGui::SameLine();
+                  ImGui::Checkbox("##linkFrz", &link.frozen); ImGui::SameLine();
+                  ImGui::Checkbox("##linkWir", &link.show_wire); ImGui::SameLine();
+                  ImGuiTreeNodeFlags linkFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+                  if (linkIndex == m_editorSelectedNavLink) linkFlags |= ImGuiTreeNodeFlags_Selected;
+                  if (link.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+                  const std::string linkLabel = "[L] " + link.name + " (" + link.type + ")";
+                  const bool linkOpen = ImGui::TreeNodeEx(linkLabel.c_str(), linkFlags);
+                  if (ImGui::IsItemClicked() && !link.frozen) {
+                    m_editorSelectedNavLink = linkIndex;
+                    m_editorSelectedNavVolume = -1;
+                    g_selectedIdx = 0;
+                    g_selectionType = 4;
+                    ClearMixedSelection();
+                  }
+                  if (link.frozen) ImGui::PopStyleColor();
+                  if (linkOpen) ImGui::TreePop();
+                  ImGui::PopID();
+                }
+                ImGui::TreePop();
               }
               ImGui::TreePop();
             }

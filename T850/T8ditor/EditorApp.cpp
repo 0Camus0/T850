@@ -42,6 +42,7 @@
 #include <Descriptors.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cctype>
@@ -196,6 +197,7 @@ namespace {
   auto& g_godRaysVolume = g_world.godRaysVolume;
   auto& g_godRaysVolumeGizmo = g_world.godRaysVolumeGizmo;
   std::vector<GizmoCache> g_navMeshVolumeGizmos;
+  std::array<GizmoCache, 5> g_navMeshClassificationGizmos;
   auto& g_splines = g_world.splines;
   auto& g_splineGizmos = g_world.splineGizmos;
   auto& g_selectedSplinePoint = g_world.selectedSplinePoint;
@@ -374,6 +376,12 @@ namespace {
       ReleaseGizmoCache(cache);
     }
     caches.clear();
+  }
+
+  void ReleaseNavMeshClassificationGizmos() {
+    for (GizmoCache& cache : g_navMeshClassificationGizmos) {
+      ReleaseGizmoCache(cache);
+    }
   }
 
   void ReleaseCameraGizmoCaches(std::vector<SceneCamera>& cameras) {
@@ -2376,6 +2384,7 @@ void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorSelectedNavVolume = -1;
   m_editorSelectedNavLink = -1;
   m_editorNavLinkPickMode = 0;
+  InvalidateEditorNavMeshClassification();
   if (!keepSettings) {
     m_editorNavMeshBuildSettings = DefaultEditorNavMeshBuildSettings();
   }
@@ -2384,9 +2393,17 @@ void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
 void EditorApp::MarkEditorNavMeshDirty(const std::string& status) {
   m_editorNavMeshDirty = true;
   m_editorNavMeshAuthored = true;
+  InvalidateEditorNavMeshClassification();
   m_editorNavMeshStatus = status.empty()
       ? "NavMesh authoring changed. Click Re-generate to update the preview."
       : status;
+}
+
+void EditorApp::InvalidateEditorNavMeshClassification() {
+  m_editorNavMeshClassificationReady = false;
+  m_editorNavMeshClassificationDirty = true;
+  m_editorNavMeshClassification = t850::navigation::NavMeshClassificationResult{};
+  ReleaseNavMeshClassificationGizmos();
 }
 
 bool EditorApp::DeleteSelectedNavAuthoringChild() {
@@ -2415,6 +2432,172 @@ bool EditorApp::DeleteSelectedNavAuthoringChild() {
     return true;
   }
   return false;
+}
+
+bool EditorApp::UpdateEditorNavMeshClassification() {
+  if (!m_editorNavMeshClassificationDirty) {
+    return m_editorNavMeshClassificationReady;
+  }
+  m_editorNavMeshClassificationDirty = false;
+  m_editorNavMeshClassificationReady = false;
+  m_editorNavMeshClassification = t850::navigation::NavMeshClassificationResult{};
+  ReleaseNavMeshClassificationGizmos();
+
+  if (g_objects.empty()) {
+    return false;
+  }
+
+  SyncSceneObjectTransforms();
+  std::vector<t850::navigation::NavSourceInstance> navSources;
+  navSources.reserve(g_objects.size());
+  for (const SceneObject& object : g_objects) {
+    if (object.transient) {
+      continue;
+    }
+    t850::navigation::NavSourceInstance source;
+    source.entityId = object.litInst.GetEntityId();
+    source.instance = &object.litInst;
+    source.worldTransform = object.litInst.Final;
+    source.visible = object.visible;
+    source.debugName = object.name;
+    const t850::scene::SceneObjectNavigationDesc navigation =
+        object.navigation.value_or(t850::scene::SceneObjectNavigationDesc{});
+    source.includeInNavigation = navigation.include;
+    source.navigationStatic = navigation.static_object;
+    source.navigationWalkable = navigation.walkable;
+    source.area = navigation.walkable ? 0 : -1;
+    navSources.push_back(source);
+  }
+
+  t850::navigation::NavMeshGeometry geometry;
+  t850::navigation::NavSourceBuildStats sourceStats;
+  std::string error;
+  if (!t850::navigation::BuildGeometryFromNavSources(navSources, geometry, &sourceStats, &error)) {
+    m_editorNavMeshStatus = "Source preview skipped: " + error;
+    return false;
+  }
+  for (const t850::scene::SceneNavMeshVolumeDesc& volumeDesc : m_editorNavMeshVolumes) {
+    t850::navigation::NavMeshVolumeModifier modifier = NavVolumeModifierFromScene(volumeDesc);
+    if (!modifier.enabled) {
+      continue;
+    }
+    geometry.volumeModifiers.push_back(modifier);
+    if (modifier.mode == t850::navigation::NavMeshModifierMode::Area) {
+      geometry.areaCosts.push_back({modifier.area, modifier.cost});
+    }
+  }
+
+  if (!t850::navigation::ClassifyNavMeshTriangles(
+          geometry,
+          m_editorNavMeshBuildSettings,
+          m_editorNavMeshClassification,
+          &error)) {
+    m_editorNavMeshStatus = "Source preview failed: " + error;
+    return false;
+  }
+  m_editorNavMeshClassificationReady = true;
+  return true;
+}
+
+void EditorApp::DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, const XMATRIX44& vp) {
+  if (!m_editorNavMeshShowSourcePreview || !lines.IsReady()) {
+    return;
+  }
+  if (!UpdateEditorNavMeshClassification()) {
+    return;
+  }
+
+  bool hasCachedGeometry = false;
+  for (const GizmoCache& cache : g_navMeshClassificationGizmos) {
+    if (cache.vb && cache.ib && cache.count > 0) {
+      hasCachedGeometry = true;
+      break;
+    }
+  }
+
+  enum Bucket {
+    Included = 0,
+    AreaCost = 1,
+    ExcludedVolume = 2,
+    OutsideInclude = 3,
+    ExcludedSlope = 4,
+    Count = 5
+  };
+  struct BucketGeometry {
+    std::vector<float> vertices;
+    std::vector<unsigned int> indices;
+  };
+  if (!hasCachedGeometry) {
+    std::array<BucketGeometry, Bucket::Count> buckets;
+
+    auto appendTriangle = [&](Bucket bucket, const t850::navigation::NavTriangleClassification& tri) {
+      BucketGeometry& geometry = buckets[static_cast<std::size_t>(bucket)];
+      const unsigned int base = static_cast<unsigned int>(geometry.vertices.size() / 4u);
+      for (const XVECTOR3& point : tri.vertices) {
+        geometry.vertices.push_back(point.x);
+        geometry.vertices.push_back(point.y + m_editorNavMeshDebugOffset + 0.02f);
+        geometry.vertices.push_back(point.z);
+        geometry.vertices.push_back(1.0f);
+      }
+      geometry.indices.insert(geometry.indices.end(), {
+          base + 0u, base + 1u,
+          base + 1u, base + 2u,
+          base + 2u, base + 0u});
+    };
+
+    for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+      if (tri.included) {
+        appendTriangle(tri.area == 0 ? Included : AreaCost, tri);
+        continue;
+      }
+      if (tri.reason == t850::navigation::NavTriangleClassificationReason::ExcludedByVolume) {
+        appendTriangle(ExcludedVolume, tri);
+      } else if (tri.reason == t850::navigation::NavTriangleClassificationReason::OutsideIncludeVolume) {
+        appendTriangle(OutsideInclude, tri);
+      } else {
+        appendTriangle(ExcludedSlope, tri);
+      }
+    }
+
+    for (std::size_t bucketIndex = 0; bucketIndex < buckets.size(); ++bucketIndex) {
+      const BucketGeometry& bucket = buckets[bucketIndex];
+      if (bucket.vertices.empty() || bucket.indices.empty()) {
+        continue;
+      }
+      GizmoCache& cache = g_navMeshClassificationGizmos[bucketIndex];
+      cache.vb = EditorLineRenderer::CreatePositionVB(
+          bucket.vertices.data(),
+          static_cast<unsigned>(bucket.vertices.size() / 4u));
+      cache.ib = EditorLineRenderer::CreateIndexBuffer32(
+          bucket.indices.data(),
+          static_cast<unsigned>(bucket.indices.size()));
+      cache.count = static_cast<unsigned>(bucket.indices.size());
+    }
+  }
+
+  const XVECTOR3 colors[Bucket::Count] = {
+      XVECTOR3(0.18f, 0.42f, 0.95f, 1.0f),
+      XVECTOR3(0.95f, 0.45f, 1.0f, 1.0f),
+      XVECTOR3(1.0f, 0.15f, 0.08f, 1.0f),
+      XVECTOR3(0.22f, 0.22f, 0.22f, 1.0f),
+      XVECTOR3(0.55f, 0.55f, 0.55f, 1.0f)
+  };
+  XMATRIX44 identity;
+  XMatIdentity(identity);
+  for (std::size_t bucketIndex = 0; bucketIndex < g_navMeshClassificationGizmos.size(); ++bucketIndex) {
+    GizmoCache& cache = g_navMeshClassificationGizmos[bucketIndex];
+    if (!cache.vb || !cache.ib || cache.count == 0) {
+      continue;
+    }
+    lines.DrawLines(identity,
+                    vp,
+                    colors[bucketIndex],
+                    cache.vb,
+                    cache.ib,
+                    cache.count,
+                    sizeof(float) * 4,
+                    t850::IndexBufferFormat::R32);
+  }
 }
 
 bool EditorApp::CreateEditorNavMesh() {
@@ -2486,6 +2669,16 @@ bool EditorApp::CreateEditorNavMesh() {
     }
   }
 
+  if (t850::navigation::ClassifyNavMeshTriangles(
+          geometry,
+          m_editorNavMeshBuildSettings,
+          m_editorNavMeshClassification,
+          &error)) {
+    m_editorNavMeshClassificationReady = true;
+    m_editorNavMeshClassificationDirty = false;
+    ReleaseNavMeshClassificationGizmos();
+  }
+
   t850::navigation::NavMesh builtNavMesh;
   if (!builtNavMesh.Build(geometry, m_editorNavMeshBuildSettings, &error)) {
     m_editorNavMeshStatus = "Build failed: " + error;
@@ -2536,6 +2729,7 @@ void EditorApp::DestroyEditorNavMesh() {
   m_editorSelectedNavVolume = -1;
   m_editorSelectedNavLink = -1;
   m_editorNavLinkPickMode = 0;
+  InvalidateEditorNavMeshClassification();
   m_editorNavMeshStatus = "NavMesh destroyed.";
   DumpEditorNavMeshWireGeometry("destroy");
   if (g_selectionType == 4) {
@@ -2918,9 +3112,19 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   ImGui::SameLine();
   ImGui::Checkbox("Wireframe", &m_editorNavMeshShowWire);
 
-  ImGui::SliderFloat("Debug Vertical Offset", &m_editorNavMeshDebugOffset, 0.0f, 0.25f, "%.3f");
+  if (ImGui::SliderFloat("Debug Vertical Offset", &m_editorNavMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
+    ReleaseNavMeshClassificationGizmos();
+  }
   const char* debugShapeOptions[] = { "Geometry", "Nodes" };
   ImGui::Combo("Debug Shape", &m_editorNavMeshDebugShapeMode, debugShapeOptions, 2);
+  if (ImGui::Checkbox("Source Preview Overlay", &m_editorNavMeshShowSourcePreview)) {
+    InvalidateEditorNavMeshClassification();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Refresh Source Preview")) {
+    InvalidateEditorNavMeshClassification();
+    UpdateEditorNavMeshClassification();
+  }
 
   if (m_editorNavMesh.IsReady()) {
     const t850::navigation::NavMeshBuildStats& stats = m_editorNavMesh.GetStats();
@@ -2939,6 +3143,13 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   }
   if (!m_editorNavMeshStatus.empty()) {
     ImGui::TextWrapped("%s", m_editorNavMeshStatus.c_str());
+  }
+  if (m_editorNavMeshClassificationReady) {
+    ImGui::TextDisabled("Source preview: included=%d excluded volume=%d outside bounds=%d slope=%d",
+                        m_editorNavMeshClassification.includedCount,
+                        m_editorNavMeshClassification.excludedByVolumeCount,
+                        m_editorNavMeshClassification.outsideIncludeVolumeCount,
+                        m_editorNavMeshClassification.excludedBySlopeCount);
   }
   if (m_editorNavMeshDirty) {
     ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.1f, 1.0f), "Preview is stale. Click Re-generate.");
@@ -8682,6 +8893,9 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
           g_godRaysVolume,
           g_selectionType == 8,
           g_godRaysVolumeGizmo);
+    }
+    if (m_editorNavMeshAuthored && m_editorNavMeshVisible) {
+      DrawNavMeshClassificationOverlay(m_lines, cam.VP);
     }
     if (g_navMeshVolumeGizmos.size() > m_editorNavMeshVolumes.size()) {
       for (std::size_t i = m_editorNavMeshVolumes.size(); i < g_navMeshVolumeGizmos.size(); ++i) {

@@ -242,7 +242,7 @@ struct SceneNavMeshLinkDesc {
 
 struct SceneNavMeshVolumeDesc {
   std::string name = "Nav Volume";
-  std::string type = "exclude"; // include_bounds, exclude, area_cost
+  std::string type = "exclude"; // include_bounds, exclude, area_cost, link_include, link_exclude
   std::string shape = "box";
   Vec3f position = {0.0f, 0.0f, 0.0f};
   Vec3f rotation = {0.0f, 0.0f, 0.0f};

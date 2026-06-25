@@ -2552,9 +2552,15 @@ bool EditorApp::CreateNavVolumeFromSelectedTriangle(const char* type) {
   const XVECTOR3 center = bounds.Center();
   const XVECTOR3 extents = bounds.Extents();
   t850::scene::SceneNavMeshVolumeDesc volume;
-  volume.name = std::string(type && std::strcmp(type, "area_cost") == 0 ? "Area Cost From Triangle " : "Exclude From Triangle ") +
-      std::to_string(m_editorNavMeshVolumes.size() + 1);
   volume.type = type && *type ? type : "exclude";
+  const bool areaVolume = volume.type == "area_cost";
+  const bool linkIncludeVolume = volume.type == "link_include";
+  const bool linkExcludeVolume = volume.type == "link_exclude";
+  const char* namePrefix = areaVolume
+      ? "Area Cost From Triangle "
+      : (linkIncludeVolume ? "Link Include From Triangle "
+                           : (linkExcludeVolume ? "Link Exclude From Triangle " : "Exclude From Triangle "));
+  volume.name = std::string(namePrefix) + std::to_string(m_editorNavMeshVolumes.size() + 1);
   volume.shape = "box";
   volume.position = {center.x, center.y, center.z};
   volume.half_extents = {
@@ -2564,7 +2570,7 @@ bool EditorApp::CreateNavVolumeFromSelectedTriangle(const char* type) {
   volume.enabled = true;
   volume.visible = true;
   volume.show_wire = true;
-  if (volume.type == "area_cost") {
+  if (areaVolume) {
     volume.area = "mud";
     volume.cost = 3.0f;
   }
@@ -3272,6 +3278,13 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
     if (ImGui::Button("Area Cost Selected Triangle")) {
       CreateNavVolumeFromSelectedTriangle("area_cost");
     }
+    if (ImGui::Button("Link Include Selected Triangle")) {
+      CreateNavVolumeFromSelectedTriangle("link_include");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Link Exclude Selected Triangle")) {
+      CreateNavVolumeFromSelectedTriangle("link_exclude");
+    }
   }
   if (m_editorNavMeshDirty) {
     ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.1f, 1.0f), "Preview is stale. Click Re-generate.");
@@ -3319,6 +3332,9 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   ImGui::SameLine();
   if (ImGui::Button("Add Exclude Volume")) makeDefaultVolume("exclude", "Exclude Volume");
   if (ImGui::Button("Add Area Cost Volume")) makeDefaultVolume("area_cost", "Area Cost Volume");
+  if (ImGui::Button("Add Link Include Volume")) makeDefaultVolume("link_include", "Link Include Volume");
+  ImGui::SameLine();
+  if (ImGui::Button("Add Link Exclude Volume")) makeDefaultVolume("link_exclude", "Link Exclude Volume");
 
   if (!m_editorNavMeshVolumes.empty()) {
     if (m_editorSelectedNavVolume >= static_cast<int>(m_editorNavMeshVolumes.size())) {
@@ -3348,12 +3364,12 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
       t850::scene::SceneNavMeshVolumeDesc& volume = m_editorNavMeshVolumes[static_cast<std::size_t>(m_editorSelectedNavVolume)];
       bool volumeChanged = false;
       volumeChanged |= InputTextString("Volume Name", volume.name);
-      const char* volumeTypes[] = { "include_bounds", "exclude", "area_cost" };
+      const char* volumeTypes[] = { "include_bounds", "exclude", "area_cost", "link_include", "link_exclude" };
       int typeIndex = 1;
-      for (int i = 0; i < 3; ++i) {
+      for (int i = 0; i < static_cast<int>(sizeof(volumeTypes) / sizeof(volumeTypes[0])); ++i) {
         if (volume.type == volumeTypes[i]) typeIndex = i;
       }
-      if (ImGui::Combo("Volume Type", &typeIndex, volumeTypes, 3)) {
+      if (ImGui::Combo("Volume Type", &typeIndex, volumeTypes, static_cast<int>(sizeof(volumeTypes) / sizeof(volumeTypes[0])))) {
         volume.type = volumeTypes[typeIndex];
         if (volume.type == "area_cost" && volume.area == "walkable") {
           volume.area = "mud";
@@ -8082,6 +8098,12 @@ static XVECTOR3 NavMeshVolumeColor(const t850::scene::SceneNavMeshVolumeDesc& vo
   }
   if (volume.type == "area_cost" || volume.type == "area" || volume.type == "cost") {
     return XVECTOR3(0.9f, 0.35f, 1.0f, 1.0f);
+  }
+  if (volume.type == "link_include" || volume.type == "link_add" || volume.type == "add_links") {
+    return XVECTOR3(0.0f, 0.95f, 0.55f, 1.0f);
+  }
+  if (volume.type == "link_exclude" || volume.type == "exclude_links") {
+    return XVECTOR3(1.0f, 0.55f, 0.0f, 1.0f);
   }
   return XVECTOR3(1.0f, 0.18f, 0.12f, 1.0f);
 }

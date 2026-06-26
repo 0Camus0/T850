@@ -3339,8 +3339,12 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   if (ImGui::SliderFloat("Debug Vertical Offset", &m_editorNavMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
     ReleaseNavMeshClassificationGizmos();
   }
-  const char* debugShapeOptions[] = { "Geometry", "Nodes" };
-  ImGui::Combo("Debug Shape", &m_editorNavMeshDebugShapeMode, debugShapeOptions, 2);
+  bool showAsNodes = m_editorNavMeshDebugShapeMode == 1;
+  if (ImGui::Checkbox("Show as Nodes", &showAsNodes)) {
+    m_editorNavMeshDebugShapeMode = showAsNodes ? 1 : 0;
+    ReleaseNavMeshClassificationGizmos();
+  }
+  ImGui::SameLine();
   if (ImGui::Checkbox("Source Preview Overlay", &m_editorNavMeshShowSourcePreview)) {
     InvalidateEditorNavMeshClassification();
   }
@@ -10539,6 +10543,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
             ImGui::Checkbox("##navvis", &m_editorNavMeshVisible); ImGui::SameLine();
             ImGui::Checkbox("##navfrz", &m_editorNavMeshFrozen);  ImGui::SameLine();
             ImGui::Checkbox("##navwir", &m_editorNavMeshShowWire); ImGui::SameLine();
+            { bool showNodes = m_editorNavMeshDebugShapeMode == 1; if (ImGui::Checkbox("##navnodes", &showNodes)) m_editorNavMeshDebugShapeMode = showNodes ? 1 : 0; } ImGui::SameLine(); // toggle: false=geometry (magenta), true=nodes (green)
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
             if (g_selectionType == 4 && g_selectedIdx == 0) flags |= ImGuiTreeNodeFlags_Selected;
             if (m_editorNavMeshFrozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));

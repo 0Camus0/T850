@@ -7,6 +7,7 @@ This document explains T850's skeletal animation path: glTF skin/animation impor
 Related documents:
 
 - [Loading geometry](../geometry/loading-geometry.md)
+- [Dependency map](../dependency-map.md)
 - [Shader management](../rendering/shader-management.md)
 - [Geometry rendering flow](../rendering/geometry-rendering-flow.md)
 - [Jolt physics](../physics/jolt-physics.md)
@@ -383,4 +384,3 @@ To extend animation:
 9. Check that `BoneTexture`/`u_BoneTex` is bound to slot 24.
 10. Use `DrawSkeleton()` to validate hierarchy and `DrawWireframe()` to validate GPU-skinned vertex motion.
 11. For snapshot/replay issues, compare `ExportBoneMatrices()` output with the uploaded bone texture data.
-

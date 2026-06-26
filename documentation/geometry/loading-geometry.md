@@ -7,7 +7,10 @@ This document explains how T850 loads mesh assets, converts them into the engine
 Related documents:
 
 - [Main architecture](../architecture/main-architecture.md)
+- [Resource locator and cache paths](../architecture/resource-locator.md)
+- [Dependency map](../dependency-map.md)
 - [Shader management](../rendering/shader-management.md)
+- [Textures, samplers, and IBL](../rendering/textures-and-ibl.md)
 - [Geometry rendering flow](../rendering/geometry-rendering-flow.md)
 - [Animation system](../animation/animation-system.md)
 - [Scene format and runtime](../scenes/scene-format-and-runtime.md)
@@ -453,4 +456,3 @@ When a mesh does not appear or renders incorrectly:
 8. For missing textures, check whether the engine is stripping paths and resolving the basename from the expected asset directory.
 9. For static/skinned mismatch, inspect `HAS_SKINWEIGHTS0`, `HAS_SKININDEXES0`, and `xMeshContainer::Animation`.
 10. For culling/pop-in, temporarily disable fine culling or rebuild the mesh preprocess cache.
-

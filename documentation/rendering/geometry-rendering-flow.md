@@ -7,7 +7,9 @@ This document follows a mesh from scene/editor ownership through `PrimitiveInst`
 Related documents:
 
 - [Loading geometry](../geometry/loading-geometry.md)
+- [Dependency map](../dependency-map.md)
 - [Shader management](shader-management.md)
+- [Textures, samplers, and IBL](textures-and-ibl.md)
 - [Render graph](render-graph.md)
 - [Animation system](../animation/animation-system.md)
 
@@ -414,4 +416,3 @@ When extending geometry rendering:
 10. For texture issues, verify feature bits in `s->key` match the texture slots actually bound.
 11. For culling issues, temporarily disable frustum culling or check geometry/subset/cluster bounds.
 12. For skinned meshes disappearing, remember bind-pose bounds are not conservative for GPU skinning and the current skinned path avoids subset AABB culling.
-

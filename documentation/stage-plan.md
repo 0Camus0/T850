@@ -78,7 +78,7 @@ Must cover:
 
 Target files:
 
-- `T850/Framework/include/Descriptors.h`
+- `T850/Framework/Descriptors.h`
 - shader key definitions.
 - `T850/Framework/src/utils/ShaderDiskCache.cpp`
 - `T850/Framework/src/utils/SPIRVReflection.cpp`
@@ -198,6 +198,8 @@ Output:
 
 - [physics/jolt-physics.md](physics/jolt-physics.md)
 
+Status: draft complete.
+
 Must cover:
 
 - Jolt setup.
@@ -222,6 +224,8 @@ Output:
 
 - [navigation/navmesh-detour.md](navigation/navmesh-detour.md)
 
+Status: draft complete.
+
 Must cover:
 
 - Recast build.
@@ -245,6 +249,8 @@ Target files:
 Output:
 
 - [editor/editor-overview.md](editor/editor-overview.md)
+
+Status: draft complete.
 
 Must cover:
 
@@ -276,6 +282,8 @@ Output:
 
 - [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md)
 
+Status: draft complete.
+
 Must cover:
 
 - `.t8scene` schema.
@@ -291,15 +299,177 @@ Must cover:
 
 Outputs:
 
+- [dependency-map.md](dependency-map.md)
 - Updated links in every document.
 - Class dependency diagrams.
 - End-to-end flows across subsystems.
+
+Status: draft complete.
 
 ## Stage 12 — Review and gap pass
 
 Outputs:
 
+- [review-and-gaps.md](review-and-gaps.md)
 - TODO/gap list.
 - Troubleshooting index.
 - Known limitations.
 - Validation of class names and file paths.
+
+Status: draft complete.
+
+## Stage 13 — Debug and diagnostics
+
+Target files:
+
+- `T850/Framework/include/debug/LoadingProgress.h`
+- `T850/Framework/include/debug/RuntimeTelemetry.h`
+- `T850/Framework/include/debug/FrameDumper.h`
+- `T850/Framework/include/debug/RenderTrace.h`
+- `T850/Framework/include/debug/Profiler.h`
+- `T850/Framework/src/debug/*`
+- call sites in `DayScene`, `SceneTemplate`, `T8ditor`, render graph, shader, physics, and navigation code.
+
+Output:
+
+- [debug/diagnostics.md](debug/diagnostics.md)
+
+Status: draft complete.
+
+Must cover:
+
+- Loading progress snapshots and loading-frame rendering.
+- Runtime telemetry scopes, counters, output JSON, and benchmark usage.
+- Frame dump/replay snapshot flow and render target dump entries.
+- Render trace events for shaders, PSOs, buffers, render targets, textures, and draw calls.
+- Profiler scopes, draw-call counting, and runtime diagnostics workflow.
+- Debugging checklist for stalled loads, missing dumps, bad telemetry, or trace mismatch.
+
+## Stage 14 — Resource lookup and cache paths
+
+Target files:
+
+- `T850/Framework/include/utils/ResourceLocator.h`
+- `T850/Framework/src/utils/ResourceLocator.cpp`
+- `T850/Framework/src/utils/ResourceManager.cpp`
+- path users in shader cache, mesh preprocess cache, Jolt mesh cache, NavMesh cache, scene loading, texture loading, glTF buffers, and Android asset lookup.
+
+Output:
+
+- [architecture/resource-locator.md](architecture/resource-locator.md)
+
+Status: draft complete.
+
+Must cover:
+
+- Resource path normalization and `Assets/` stripping.
+- Base path, cache path, and resolved file path rules.
+- Desktop filesystem lookup versus Android asset manager lookup.
+- Case-insensitive Android packaged-asset fallback.
+- `ReadText`, `ReadBinary`, `Exists`, `ResolveFilePath`, `ResolveCachePath`, and recursive fallback APIs.
+- How cache-producing subsystems choose paths and invalidation keys.
+
+## Stage 15 — Input, controllers, and camera profiles
+
+Target files:
+
+- `T850/Framework/include/utils/InputManager.h`
+- platform input code under `T850/Framework/src/core/*`
+- `T850/Framework/include/utils/CameraProfiles.h`
+- `T850/Framework/src/utils/CameraProfiles.cpp`
+- `T850/Framework/include/utils/HandheldControllerOverlay.h`
+- scene/editor camera controller call sites in `SceneTemplate`, `DayScene`, `Quake3Mock`, and `T8ditor`.
+
+Output:
+
+- [input/camera-and-controls.md](input/camera-and-controls.md)
+
+Status: draft complete.
+
+Must cover:
+
+- Keyboard, mouse, controller, touch, and gamepad state flow.
+- Platform input translation into `InputManager`.
+- Camera profile set: Orbit, Free Fly, Colliding Fly, Grounded FPS, COD FPS, Quake 3 FPS.
+- Runtime profile selection and camera controller behavior.
+- Handheld/controller overlay behavior.
+- Editor versus runtime input routing, including hosted Play Scene/Mesh/Ragdoll windows.
+- Android and handheld-specific differences.
+
+## Stage 16 — FrameworkImGui runtime UI layer
+
+Target files:
+
+- `T850/FrameworkImGui/include/imgui/ImGuiSystem.h`
+- `T850/FrameworkImGui/src/ImGuiSystem.cpp`
+- `T850/FrameworkImGui/include/imgui/DevGuiContext.h`
+- `T850/FrameworkImGui/src/DevGuiContext.cpp`
+- T8ditor hosted viewport code and scene dev GUI call sites.
+
+Output:
+
+- [editor/imgui-system.md](editor/imgui-system.md)
+
+Status: draft complete.
+
+Must cover:
+
+- ImGui platform/backend initialization per API and platform.
+- Docking and viewport enablement.
+- Android native window binding/rebinding.
+- `DevGuiContext` and embedded panel helpers.
+- Relationship between runtime debug UI and T8ditor-specific panels.
+- Shutdown/reload hazards and hosted viewport integration.
+
+## Stage 17 — Textures, samplers, and IBL resources
+
+Target files:
+
+- API texture implementations under `T850/Framework/src/video/*/*Texture.cpp`
+- `T850/Framework/src/video/BaseDriver.cpp`
+- `T850/Framework/include/scene/IBLResources.h`
+- render graph environment slots in `T850/Framework/include/scene/RenderGraph.h`
+- material texture slots in `MaterialAsset` / `RenderMesh`
+- scene descriptor environment fields and editor cubemap/profile code.
+
+Output:
+
+- [rendering/textures-and-ibl.md](rendering/textures-and-ibl.md)
+
+Status: draft complete.
+
+Must cover:
+
+- Texture creation/loading from files and memory.
+- DDS/cubemap/float texture paths.
+- API-specific texture resource and sampler handling.
+- Mips, wrapping/filtering, SRV/sampler slots, and GL/D3D/Vulkan differences.
+- IBL resource slots: diffuse/specular/BRDF/Charlie/sheen resources.
+- Scene/profile/editor cubemap override workflow.
+- Texture debugging and common failure modes.
+
+## Stage 18 — SceneSetup and runtime control descriptors
+
+Target files:
+
+- `T850/Framework/include/scene/SceneDescriptor.h`
+- `T850/Framework/src/scene/SceneDescriptor.cpp`
+- `T850/Framework/include/scene/SceneSetup.h`
+- `T850/Framework/src/scene/SceneSetup.cpp`
+- JSON descriptor files under `T850/Assets/Scenes/*.json`
+- call sites in `DayScene`, `Quake3Mock`, `SandboxScene`, `RagdollEditor`, `SceneTemplate`, and `T8ditor`.
+
+Output:
+
+- [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md)
+
+Status: draft complete.
+
+Must cover:
+
+- Exact mapping from `SceneDescriptor::quality` and `settings` to `SceneProps`.
+- Runtime UI slider/checkbox/selector metadata and how panels consume it.
+- Cameras, light cameras, lights, Gauss filters, splines, agents, environment maps, and IBL fields.
+- How SceneTemplate combines `.t8scene` profiles with `SceneSetup`.
+- How DayScene/Quake3Mock/Sandbox/RagdollEditor still depend on this older descriptor path.
+- SaveState behavior and limitations.

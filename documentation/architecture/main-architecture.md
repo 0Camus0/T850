@@ -2,6 +2,15 @@
 
 This document describes the top-level architecture of T850: the Framework layer, scene applications, editor application, dev layer, and shared runtime context. It focuses on ownership and lifecycle rather than subsystem internals.
 
+Related documents:
+
+- [Dependency map](../dependency-map.md)
+- [Platform event loop](platform-event-loop.md)
+- [Resource locator and cache paths](resource-locator.md)
+- [Input, camera, and controls](../input/camera-and-controls.md)
+- [FrameworkImGui runtime UI](../editor/imgui-system.md)
+- [Scene format and runtime](../scenes/scene-format-and-runtime.md)
+
 ## Purpose
 
 T850 is organized around a reusable **Framework** plus executable **applications/scenes**:

@@ -7,8 +7,10 @@ This document explains T850's data-driven render graph: JSON descriptors, render
 Related documents:
 
 - [Main architecture](../architecture/main-architecture.md)
+- [Dependency map](../dependency-map.md)
 - [Loading geometry](../geometry/loading-geometry.md)
 - [Shader management](shader-management.md)
+- [Textures, samplers, and IBL](textures-and-ibl.md)
 - [Geometry rendering flow](geometry-rendering-flow.md)
 
 ## Purpose and responsibilities
@@ -456,4 +458,3 @@ To add a new render graph feature:
 8. For wrong blending or culling, check both `state` and `post_state`.
 9. For D3D12/Vulkan issues, inspect RT format/depth format changes because they create distinct PSO/pipeline entries.
 10. For editor output issues, confirm the editor passed a contiguous mesh array and the intended final-output RT.
-

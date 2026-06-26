@@ -7,7 +7,10 @@ This document explains how T850 selects shader source files, builds `ShaderKey` 
 Related documents:
 
 - [Main architecture](../architecture/main-architecture.md)
+- [Resource locator and cache paths](../architecture/resource-locator.md)
+- [Dependency map](../dependency-map.md)
 - [Loading geometry](../geometry/loading-geometry.md)
+- [Textures, samplers, and IBL](textures-and-ibl.md)
 - [Render graph](render-graph.md)
 - [Geometry rendering flow](geometry-rendering-flow.md)
 
@@ -385,4 +388,3 @@ When adding shader features:
 8. For D3D12 PSO failures, inspect the logged blend/depth/cull/topology/RT formats and root signature resources.
 9. For OpenGL issues, check shader link logs, active attribute locations, and stale attribute disable behavior.
 10. Regenerate or inspect `shader_permutations.json` if a runtime path is missing a prewarmed key.
-

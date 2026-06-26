@@ -76,9 +76,10 @@ Example:
 ```md
 ## Related documents
 
-- [Geometry loading](../geometry/loading-geometry.md)
-- [Shader management](shader-management.md)
-- [Render graph](render-graph.md)
+- [Dependency map](dependency-map.md)
+- [Geometry loading](geometry/loading-geometry.md)
+- [Shader management](rendering/shader-management.md)
+- [Render graph](rendering/render-graph.md)
 ```
 
 ## Agent workflow for future stages
@@ -91,4 +92,3 @@ Each agent should report:
 - Classes/functions documented.
 - Gaps or uncertainties.
 - Follow-up links needed.
-

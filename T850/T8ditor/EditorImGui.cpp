@@ -1123,7 +1123,8 @@ float ImGuiConsumeWheelDelta() {
 #include <windows.h>
 #endif
 
-std::string OpenFileDialog(const wchar_t* filter, const wchar_t* title) {
+std::string OpenFileDialog(const wchar_t* filter, const wchar_t* title,
+                           const wchar_t* initialDir) {
 #ifdef OS_WINDOWS
   wchar_t path[MAX_PATH] = {};
   OPENFILENAMEW ofn = {};
@@ -1133,6 +1134,7 @@ std::string OpenFileDialog(const wchar_t* filter, const wchar_t* title) {
   ofn.lpstrFile   = path;
   ofn.nMaxFile    = MAX_PATH;
   ofn.lpstrTitle  = title;
+  ofn.lpstrInitialDir = initialDir;
   ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
 
   if (GetOpenFileNameW(&ofn)) {

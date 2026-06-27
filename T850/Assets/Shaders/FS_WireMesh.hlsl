@@ -49,7 +49,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
     float2 screenUV = input.hposition.xy * float2(1.0/CameraInfo.z, 1.0/CameraInfo.w);
     float sceneDepth = max(depthTex.Sample(depthSampler, screenUV).r,
                            depthTex2.Sample(depthSampler, screenUV).r);
-	float wireDepth = input.Pos.z / input.Pos.w;
+	float wireDepth = input.hposition.z;
 	if (sceneDepth > 0.0001 && wireDepth < sceneDepth * 0.995)
         discard;
     return DiffuseColor;

@@ -13,7 +13,6 @@ SamplerState SS : register(s0);
 
 struct VS_OUTPUT{
     float4 hposition  : SV_POSITION;
-    float  clipDepth : TEXCOORD0;
 };
 
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
@@ -21,7 +20,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
     float sceneDepth = max(depthTex.Sample(SS, screenUV).r,
                            depthTex2.Sample(SS, screenUV).r);
 
-    float wireDepth = input.clipDepth;
+    float wireDepth = input.hposition.z;
 
     // Discard if wireframe is behind scene geometry
     if (wireDepth < sceneDepth * (1.0 - DepthParams.w) && sceneDepth > 0.0001)

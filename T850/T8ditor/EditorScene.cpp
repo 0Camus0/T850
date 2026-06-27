@@ -31,7 +31,8 @@ bool LoadSceneFromFile(const std::string& path, SceneFile& scene) {
 // ── Save file dialog ──────────────────────────────────
 
 std::string SaveFileDialog(const wchar_t* filter, const wchar_t* title,
-                           const wchar_t* defaultExt) {
+                           const wchar_t* defaultExt,
+                           const wchar_t* initialDir) {
 #ifdef OS_WINDOWS
   wchar_t path[MAX_PATH] = {};
   OPENFILENAMEW ofn = {};
@@ -42,6 +43,7 @@ std::string SaveFileDialog(const wchar_t* filter, const wchar_t* title,
   ofn.nMaxFile     = MAX_PATH;
   ofn.lpstrTitle   = title;
   ofn.lpstrDefExt  = defaultExt;
+  ofn.lpstrInitialDir = initialDir;
   ofn.Flags        = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
 
   if (GetSaveFileNameW(&ofn)) {

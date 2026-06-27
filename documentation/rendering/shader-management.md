@@ -162,6 +162,10 @@ For OpenGL, `ShaderBase::CreateShader()` also prepends `#version 330` or `#versi
 | Vulkan | HLSL | glslang with `EShSourceHlsl` to SPIR-V, entry points `VS` and `FS`. |
 | OpenGL | GLSL, e.g. `Shaders/VS_Mesh.glsl`, `Shaders/FS_Mesh.glsl` | GL shader compile/link or program-binary cache. |
 
+Although D3D12 and Vulkan share the same HLSL source files, they do not share the same compiler or final shader representation. D3D12 compiles HLSL to DXBC through `D3DCompile()`, while Vulkan compiles HLSL to SPIR-V through glslang with automatic binding/location mapping and SPIR-V reflection. Treat shared HLSL as shared intent, not proof of identical raster/depth behavior.
+
+Depth-sensitive shaders need extra care across these two backends. Prefer API-rasterized fragment depth (`SV_POSITION.z` in the pixel shader, or `gl_FragCoord.z` in GLSL) when comparing against sampled depth textures. Avoid manually passing clip depth through a regular interpolated varying and recomputing `z / w` for overlay depth tests; tiny meshes can expose Vulkan/D3D differences as shell-like wireframe artifacts.
+
 Important shader assets:
 
 - `VS_Mesh.hlsl` / `FS_Mesh.hlsl`
@@ -370,6 +374,7 @@ When adding shader features:
 - `EMISSIVE_MAP` aliases `REFLECT_MAP`, so emissive/reflect behavior shares one bit and define path.
 - `ShaderKey::VERTEX_ATTRIB_MASK` covers UV0-UV3 only; adding more UV channels requires new bits and layout handling.
 - D3D11/D3D12 shader model targets are hard-coded to `vs_5_0` and `ps_5_0`.
+- D3D12 and Vulkan share HLSL sources, but Vulkan's HLSL-to-SPIR-V path can expose differences in interpolation, semantics, resource mapping, and depth behavior.
 - Vulkan desktop can compile HLSL at runtime when the SPIR-V cache misses. Android tries precompiled SPIR-V names first, then falls back to runtime compile.
 - OpenGL program binary caching only works if the driver reports program-binary support.
 - D3D12 and Vulkan PSO caches are keyed by shader pointer, not just `ShaderKey` bits, so destroying/recreating shaders invalidates PSO reuse.
@@ -388,3 +393,4 @@ When adding shader features:
 8. For D3D12 PSO failures, inspect the logged blend/depth/cull/topology/RT formats and root signature resources.
 9. For OpenGL issues, check shader link logs, active attribute locations, and stale attribute disable behavior.
 10. Regenerate or inspect `shader_permutations.json` if a runtime path is missing a prewarmed key.
+11. For Vulkan-only overlay or wireframe depth artifacts, check for manually interpolated clip-depth varyings and compare sampled depth against pixel-stage `SV_POSITION.z`/`gl_FragCoord.z` instead.

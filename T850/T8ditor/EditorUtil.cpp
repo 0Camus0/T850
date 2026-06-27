@@ -6,6 +6,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+
+#ifdef OS_WINDOWS
+#include <windows.h>
+#endif
 
 namespace t8ditor {
 
@@ -114,6 +119,36 @@ const t850::IntOverrideDesc* FindEditorIntOverride(const std::vector<t850::IntOv
     }
   }
   return nullptr;
+}
+
+std::string GetSolutionDir() {
+  // Derive solution directory from the executable path.
+  // Expected layout:  <solution>/bin/<arch>/<config>/T8ditor.exe
+  // We walk up until we find a "bin" segment, then return its parent.
+  auto exeDir = []() -> std::filesystem::path {
+#ifdef OS_WINDOWS
+    wchar_t buf[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, buf, ARRAYSIZE(buf))) {
+      std::error_code ec;
+      std::filesystem::path p(buf, ec);
+      if (!ec) return p.parent_path();
+    }
+#endif
+    std::error_code ec;
+    return std::filesystem::current_path(ec);
+  };
+
+  std::filesystem::path dir = exeDir();
+  // Walk up until we find a "bin" folder
+  for (int iterations = 0; iterations < 8; ++iterations) {
+    std::string stem = dir.stem().string();
+    if (ToLowerCopy(stem) == "bin") {
+      return dir.parent_path().string();
+    }
+    dir = dir.parent_path();
+  }
+  // Fallback: return the original exe directory's parent
+  return exeDir().parent_path().string();
 }
 
 } // namespace t8ditor

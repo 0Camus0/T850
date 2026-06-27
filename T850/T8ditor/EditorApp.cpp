@@ -299,6 +299,9 @@ namespace {
   // Pending scene load — deferred to execute before next frame's BeginFrame
   std::string g_pendingLoadPath;
   std::string g_pendingDeleteAfterLoadPath;
+
+  // Pending mesh import — deferred to show loading progress dialog
+  std::string g_pendingImportMeshPath;
   std::string g_loadedScenePath;
   auto& g_loadedSceneFile = g_world.loadedSceneFile;
   auto& g_hasLoadedSceneFile = g_world.hasLoadedSceneFile;
@@ -5503,13 +5506,13 @@ void EditorApp::DrawEditorRenderingPanel() {
   if (intSlider("Shadow Map Resolution", m_sceneProps.ShadowMapResolution, 256, 8192)) {
     recreateRenderTargets = true;
   }
-  ImGui::SliderFloat("Shadow Bias", &m_sceneProps.ShadowBias, 0.0f, 0.01f, "%.7f");
-  ImGui::SliderFloat("Shadow Min", &m_sceneProps.ShadowMin, 0.0f, 1.0f, "%.3f");
-  ImGui::SliderFloat("Environment Factor", &m_sceneProps.EnvFactor, 0.0f, 5.0f, "%.3f");
-  ImGui::SliderFloat("IBL Factor", &m_sceneProps.IBLFactor, 0.0f, 5.0f, "%.3f");
-  ImGui::SliderFloat("IBL Max Mip", &m_sceneProps.IBLMipCount, 0.0f, 16.0f, "%.3f");
-  ImGui::SliderFloat("Diffuse IBL Mip", &m_sceneProps.IBLDiffuseMipLevel, 0.0f, 16.0f, "%.3f");
-  ImGui::SliderFloat("BRDF LUT Enabled", &m_sceneProps.IBLBRDFLUTEnabled, 0.0f, 1.0f, "%.0f");
+  ImGui::SliderFloat("Shadow Bias##advShadowBias", &m_sceneProps.ShadowBias, 0.0f, 0.01f, "%.7f");
+  ImGui::SliderFloat("Shadow Min##advShadowMin", &m_sceneProps.ShadowMin, 0.0f, 1.0f, "%.3f");
+  ImGui::SliderFloat("Environment Factor##advEnvFactor", &m_sceneProps.EnvFactor, 0.0f, 5.0f, "%.3f");
+  ImGui::SliderFloat("IBL Factor##advIBLFactor", &m_sceneProps.IBLFactor, 0.0f, 5.0f, "%.3f");
+  ImGui::SliderFloat("IBL Max Mip##advIBLMip", &m_sceneProps.IBLMipCount, 0.0f, 16.0f, "%.3f");
+  ImGui::SliderFloat("Diffuse IBL Mip##advIBLDiffuse", &m_sceneProps.IBLDiffuseMipLevel, 0.0f, 16.0f, "%.3f");
+  ImGui::SliderFloat("BRDF LUT Enabled##advIBLBRDF", &m_sceneProps.IBLBRDFLUTEnabled, 0.0f, 1.0f, "%.0f");
   bool parallaxEnabled = m_sceneProps.ToogleParallax != 0;
   if (ImGui::Checkbox("Parallax", &parallaxEnabled)) m_sceneProps.ToogleParallax = parallaxEnabled ? 1 : 0;
   bool parallaxShadowEnabled = m_sceneProps.ToogleParallaxShadow != 0;
@@ -7009,6 +7012,41 @@ void EditorApp::LoadPendingScene() {
   }
 }
 
+void EditorApp::ImportPendingMesh() {
+  // Execute deferred mesh import with loading progress dialog
+  if (!g_pendingImportMeshPath.empty()) {
+    const std::string meshPath = g_pendingImportMeshPath;
+    auto lastLoadingLine = std::make_shared<std::string>();
+    auto loadingCallback = [this, lastLoadingLine]() {
+      const t850::LoadingProgress::Snapshot snapshot = t850::LoadingProgress::GetSnapshot();
+      const std::string line = FormatLoadingProgressForConsole(snapshot);
+      if (!line.empty() && line != *lastLoadingLine) {
+        *lastLoadingLine = line;
+        T8_LOG_INFO("%s", line.c_str());
+      }
+      RenderLoadingProgressFrame();
+    };
+
+    t850::LoadingProgress::Reset(100.0f, "Importing mesh", meshPath, "Loading model");
+    t850::LoadingProgress::SetFrameCallback(loadingCallback);
+    t850::LoadingProgress::RequestFrame(true);
+
+    {
+      t850::LoadingProgress::ScopedStep importStep("Importing mesh", meshPath, 80.0f);
+      ImportMesh(meshPath);
+    }
+
+    {
+      t850::LoadingProgress::ScopedStep finishStep("Import complete", meshPath, 20.0f);
+      t850::LoadingProgress::Complete("Import complete", meshPath);
+    }
+
+    t850::LoadingProgress::ClearFrameCallback();
+    t850::LoadingProgress::Clear();
+    g_pendingImportMeshPath.clear();
+  }
+}
+
 void EditorApp::OnUpdate() {
   ThrottleMainEditorFrameIfNeeded();
 
@@ -7027,6 +7065,7 @@ void EditorApp::OnUpdate() {
   ApplyPendingEditorCubemap();
 
   LoadPendingScene();
+  ImportPendingMesh();
 
   CheckResize();
   UpdateEditorSplinePreview(m_dtSecs);
@@ -10118,23 +10157,52 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
 #endif
   }
   if (menuAction.wantsImportX) {
+    auto toWstr = [](const std::string& s) {
+      int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+      std::wstring ws(len - 1, L'\0');
+      MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
+      return ws;
+    };
+    std::string solDir = GetSolutionDir();
+    std::string modelDir = (std::filesystem::path(solDir) / "Assets" / "Models").string();
     std::string path = OpenFileDialog(
       L"3D Models (*.glb;*.gltf)\0*.glb;*.gltf\0glTF Binary (*.glb)\0*.glb\0glTF (*.gltf)\0*.gltf\0All Files (*.*)\0*.*\0",
-      L"Import Mesh");
-    if (!path.empty()) ImportMesh(path);
+      L"Import Mesh",
+      toWstr(modelDir).c_str());
+    if (!path.empty()) {
+      // Defer the actual import to the start of the next frame to show loading progress
+      g_pendingImportMeshPath = path;
+    }
   }
   if (menuAction.wantsSaveScene) {
+    auto toWstr = [](const std::string& s) {
+      int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+      std::wstring ws(len - 1, L'\0');
+      MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
+      return ws;
+    };
+    std::string solDir = GetSolutionDir();
+    std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();
     std::string path = SaveFileDialog(
       L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
-      L"Save Scene", L"t8scene");
+      L"Save Scene", L"t8scene", toWstr(scenesDir).c_str());
     if (!path.empty()) {
       SaveEditorSceneSnapshot(path, true);
     }
   }
   if (menuAction.wantsLoadScene) {
+    auto toWstr = [](const std::string& s) {
+      int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+      std::wstring ws(len - 1, L'\0');
+      MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
+      return ws;
+    };
+    std::string solDir = GetSolutionDir();
+    std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();
     std::string path = OpenFileDialog(
       L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
-      L"Load Scene");
+      L"Load Scene",
+      toWstr(scenesDir).c_str());
     if (!path.empty()) {
       // Defer the actual load to the start of the next frame (before BeginFrame)
       // to avoid destroying GPU resources mid-command-list on D3D12.

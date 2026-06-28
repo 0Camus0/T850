@@ -1,6 +1,6 @@
 # T850 Engine Documentation
 
-This folder is the long-form technical documentation for T850. It is separate from the root `docs/` folder and is intended to explain the engine deeply enough that a new developer can continue work without losing architectural context.
+This folder is the long-form technical documentation for T850. Legacy documentation (original Stage 0 skeletons) lives in `legacy/` and is intended to explain the engine deeply enough that a new developer can continue work without losing architectural context.
 
 ## Documentation map
 

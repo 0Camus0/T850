@@ -185,7 +185,7 @@ jobs:
 
       - name: Build Android Release APK
         shell: cmd
-        run: Scripts\Bat\BuildAndroid.bat Release --allow-unsigned-release --sdk "%RUNNER_TEMP%\AndroidSdk" --abi ${{ matrix.abi }}
+        run: T850\scripts\android\BuildAndroid.bat Release --allow-unsigned-release --sdk "%RUNNER_TEMP%\AndroidSdk" --abi ${{ matrix.abi }}
 
       - name: Stage Android APK
         shell: pwsh

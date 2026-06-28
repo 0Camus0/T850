@@ -1,5 +1,5 @@
 {
-  "targetPlatform": "windows",
+  "targetPlatform": "android",
   "dump": {
     "frame": -1,
     "enabled": false,
@@ -7,8 +7,8 @@
     "seconds": -1
   },
   "keepRunning": false,
-  "architecture": "x64",
-  "androidDeviceSerial": "",
+  "architecture": "arm64",
+  "androidDeviceSerial": "R52XC058WKA",
   "benchmark": false,
   "cullingMode": "full",
   "devTools": {

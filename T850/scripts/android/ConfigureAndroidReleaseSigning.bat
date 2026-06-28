@@ -1,3 +1,3 @@
 @echo off
-set "ROOT=%~dp0..\..\"
+for %%I in ("%~dp0..\..\..") do set "ROOT=%%~fI\"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%ConfigureAndroidReleaseSigning.ps1" %*

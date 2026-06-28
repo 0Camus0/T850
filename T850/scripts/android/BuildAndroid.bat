@@ -4,17 +4,17 @@ setlocal enabledelayedexpansion
 :: T850 Engine - Android APK build wrapper for local development.
 :: Default build is incremental Debug. Use --clean to force a full rebuild.
 :: Usage:
-::   Scripts\Bat\BuildAndroid.bat
-::   Scripts\Bat\BuildAndroid.bat Release
-::   Scripts\Bat\BuildAndroid.bat --configuration Release --clean
-::   Scripts\Bat\BuildAndroid.bat Debug --install --launch
-::   Scripts\Bat\BuildAndroid.bat --sdk C:\Android\Sdk
-::   Scripts\Bat\BuildAndroid.bat Debug --emulator
-::   Scripts\Bat\BuildAndroid.bat Debug --vulkan-validation
-::   Scripts\Bat\BuildAndroid.bat Release --allow-unsigned-release
+::   T850\scripts\android\BuildAndroid.bat
+::   T850\scripts\android\BuildAndroid.bat Release
+::   T850\scripts\android\BuildAndroid.bat --configuration Release --clean
+::   T850\scripts\android\BuildAndroid.bat Debug --install --launch
+::   T850\scripts\android\BuildAndroid.bat --sdk C:\Android\Sdk
+::   T850\scripts\android\BuildAndroid.bat Debug --emulator
+::   T850\scripts\android\BuildAndroid.bat Debug --vulkan-validation
+::   T850\scripts\android\BuildAndroid.bat Release --allow-unsigned-release
 
-set "ROOT=%~dp0..\..\"
-set "ANDROID_PROJECT=%ROOT%T850\android"
+for %%I in ("%~dp0..\..") do set "ROOT=%%~fI"
+set "ANDROID_PROJECT=%ROOT%\android"
 set "CONFIG=Debug"
 set "CLEAN=0"
 set "INSTALL=0"
@@ -278,5 +278,5 @@ if errorlevel 1 (
 exit /b 0
 
 :usage
-echo Usage: Scripts\Bat\BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--asset-profile physics-demo^|doom-porsche^|q3-sandbox^|models-full^|full] [--emulator] [--vulkan-validation] [--allow-unsigned-release] [--clean] [--install] [--launch]
+echo Usage: T850\scripts\android\BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--asset-profile physics-demo^|doom-porsche^|q3-sandbox^|models-full^|full] [--emulator] [--vulkan-validation] [--allow-unsigned-release] [--clean] [--install] [--launch]
 exit /b 1

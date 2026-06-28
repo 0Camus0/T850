@@ -1,6 +1,6 @@
 @echo off
 setlocal
 
-set "ROOT=%~dp0..\..\"
+for %%I in ("%~dp0..\..\..") do set "ROOT=%%~fI\"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%BuildAndroidFastApk.ps1" %*
 exit /b %ERRORLEVEL%

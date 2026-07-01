@@ -10,6 +10,42 @@ This proposal details how T8ditor will consume the shared framework scene types 
 
 The editor does **not** duplicate scene schema types — it uses the types defined in the Framework layer, following the established pattern where `EditorWorld` owns `std::vector<t850::scene::SceneGameEntityDesc>` just as it owns `std::vector<t850::scene::SceneObjectDesc>`.
 
+## Implementation Revision
+
+This revision is source-grounded against the current T850 editor/runtime code. T8ditor already has `EditorWorld::gameEntities`, saves `sf.game_entities`, restores it during undo/load, and displays a basic Game Entities hierarchy section. That current UI is a relationship view, not full gameplay authoring yet.
+
+Implementation must proceed in small layers:
+
+1. Make game entities explicitly selectable and editable.
+2. Add stable IDs and validation/migration.
+3. Add generic component editing.
+4. Verify SceneTemplate runtime loading through `GameLogicSystem`.
+5. Add state-machine list editing.
+6. Add game groups and visual graph tooling later.
+
+The visual graph, RTS group UI, formation/flocking controls, and component-specific rich editors are not first-slice requirements.
+
+### Editor-Side Class And File Targets
+
+Use current files first. Split later only when the code becomes too large.
+
+| Area | First implementation location | Later split |
+|---|---|---|
+| Game entity selection/hierarchy | `T8ditor/EditorApp.cpp` existing hierarchy code | `T8ditor/HierarchyPanel.cpp` |
+| Game entity inspector | `T8ditor/EditorApp.cpp` Properties panel | `T8ditor/GameLogicEditorPanel.cpp` or `InspectorPanel.cpp` |
+| Save/load snapshot | `T8ditor/EditorApp.cpp::BuildEditorSceneSnapshot` and `ApplyEditorUndoState` | unchanged unless editor is refactored |
+| Scene schema | `Framework/include/scene/EditorSceneFile.h` | unchanged |
+| Validation/migration | `Framework/include/game/GameValidation.h`, `Framework/src/game/GameValidation.cpp` | shared editor/runtime |
+| Runtime loading | `Framework/include/game/GameLogicSystem.h`, `DayScene/SceneTemplate.cpp` | unchanged |
+
+### C++ Rules For Editor Code
+
+- Use current C++23 project settings, but keep code simple: `std::optional`, `std::string`, `std::vector`, `std::set`, `std::unordered_map`, `std::unique_ptr`.
+- T8ditor stores authored data in `EditorWorld`; runtime-only state must not be stored there.
+- Editor UI mutates scene descriptors, not runtime `GameObject` instances.
+- Runtime Play Scene receives a copy/snapshot of `EditorSceneFile` data.
+- ImGui edits must be covered by existing before/after scene-state undo snapshots first; granular commands can follow once controls stabilize.
+
 ---
 
 ## Architecture Reference
@@ -82,17 +118,23 @@ struct EditorWorld {
 struct EditorWorld {
     // ... existing fields ...
 
-    std::vector<t850::scene::SceneGroupDesc> gameGroups;  // NEW: Group authoring data
-    std::optional<t850::scene::SceneGameLogicSettingsDesc> gameLogicSettings;  // NEW: Global settings
+    // Already exists today:
+    std::vector<t850::scene::SceneGameEntityDesc> gameEntities;
+
+    // Add only after stable game entity IDs and runtime loading are proven:
+    std::vector<t850::scene::SceneGroupDesc> gameGroups;
+    std::optional<t850::scene::SceneGameLogicSettingsDesc> gameLogicSettings;
 
     // Selection extensions (SelectionRef.type values)
     // type 9 = gameEntity (select a SceneGameEntityDesc by index)
-    // type 10 = gameGroup (select a SceneGroupDesc by index)
+    // type 10 = gameGroup (select a SceneGroupDesc by index, later phase)
 
-    // Multi-selection support for game entities (existing multiEntitySelect extended)
-    // std::set<uint32_t> multiEntitySelect;  // Already exists, extended to support type 9, 10
+    // Existing mixed selection is std::set<SelectionRef> multiEntitySelect.
+    // Do not use uint32_t here; it must keep typed refs so mesh/physics/game entity selection can coexist.
 };
 ```
+
+`SceneGameEntityDesc` must gain a stable serialized `id`. Selection may still use vector index for the active editor selection, but durable references, group membership, copy/paste, and validation use the stable ID.
 
 ### Selection Type Enum Extension
 
@@ -103,12 +145,40 @@ struct EditorWorld {
 
 // New selection types:
 // 9 = gameEntity
-// 10 = gameGroup
+// 10 = gameGroup (later phase after SceneGroupDesc is implemented)
 ```
+
+Selection behavior for type 9:
+
+- Clicking the game entity row selects the entity itself (`selectionType = 9`, `selectedIdx = entityIndex`).
+- Clicking child mesh/physics/ragdoll rows keeps current behavior and selects the linked child object.
+- Shift-click uses `ToggleMixedSelection(9, entityIndex)`.
+- Delete on a selected game entity removes the entity descriptor only; it does not delete the linked mesh or physics entity unless a future dialog explicitly asks for that.
 
 ---
 
 ## Hierarchy Panel Integration
+
+### First-Slice Hierarchy Behavior
+
+The current hierarchy already has a `Game Entities` tree. First-slice work should make it explicitly selectable and editable before adding component subtrees or runtime state badges.
+
+Minimum entity row:
+
+```text
+[vis] [frz] [wire] [E] <name>  kind=<kind>  components=<count>
+```
+
+Minimum child rows:
+
+```text
+[M] Mesh: <mesh_object>
+[P] Physics: <primary/additional physics entity>
+[R] Ragdoll: <ragdoll_object>
+[C] Camera: <camera>
+```
+
+Component child rows are added after `SceneComponentDesc` serialization is working. Runtime state labels such as `[Idle]` are added only after `GameLogicSystem` exposes current state through SceneTemplate/Play Scene.
 
 ### Tree Structure
 
@@ -397,6 +467,31 @@ A dedicated panel for visual state machine design, accessible via a button in th
 
 ## Save/Load Integration
 
+### Stable ID And Migration Requirements
+
+Before saving, T8ditor must ensure every game entity and component has a stable ID:
+
+```cpp
+void EnsureGameEntityIds(t850::scene::EditorSceneFile& scene);
+```
+
+Rules:
+
+- Preserve existing IDs.
+- Generate missing IDs for old scenes during migration/load.
+- Generate new IDs when duplicating game entities or components.
+- Do not change ID when renaming.
+- Mark the scene dirty if migration added IDs.
+
+Validation/migration functions live in Framework game code so editor and runtime agree:
+
+```cpp
+namespace t850::scene {
+    bool MigrateEditorSceneGameLogic(EditorSceneFile& scene, std::string* log = nullptr);
+    SceneValidationReport ValidateEditorSceneGameLogic(const EditorSceneFile& scene);
+}
+```
+
 ### BuildEditorSceneSnapshot Extensions
 
 ```cpp
@@ -406,10 +501,11 @@ t850::scene::EditorSceneFile BuildEditorSceneSnapshot(const EditorWorld& world) 
 
     // ... existing: objects, cameras, lights, physicsEntities, etc. ...
 
-    // Game entities (already exists — extended with new fields)
-    sf.game_entities = world.gameEntities;  // Includes components, behavior, group_id
+    // Game entities (already exists, extended with IDs/components/optional behavior)
+    sf.game_entities = world.gameEntities;
+    EnsureGameEntityIds(sf);
 
-    // Game groups (NEW)
+    // Game groups (later phase; references use stable game entity IDs)
     sf.game_groups = world.gameGroups;
 
     // Game logic global settings (NEW)
@@ -431,6 +527,8 @@ void LoadSceneIntoEditorWorld(const t850::scene::EditorSceneFile& sf) {
     g_gameGroups = sf.game_groups;
     g_gameLogicSettings = sf.game_logic_settings;
 
+    t850::scene::MigrateEditorSceneGameLogic(g_loadedSceneFile, nullptr);
+
     // Auto-infer game entities for meshes/physics without one (existing)
     EnsureInferredGameEntities();
 
@@ -445,6 +543,19 @@ void LoadSceneIntoEditorWorld(const t850::scene::EditorSceneFile& sf) {
 ---
 
 ## Undo/Redo System
+
+### First-Slice Undo Policy
+
+T8ditor already captures before/after `EditorUndoState` snapshots around ImGui edits. Use that existing path for the first component/entity UI. Add granular commands after the UI model stabilizes or when snapshot size becomes a measured problem.
+
+Required for first slice:
+
+- entity name/kind/link edits are captured by scene-state undo;
+- add/remove component is captured by scene-state undo;
+- validation-only actions do not push undo;
+- runtime Play Scene state never enters the editor undo stack.
+
+Granular commands below are phase-two editor polish, not a blocker for runtime slice 0.
 
 ### New Undo Commands
 
@@ -496,10 +607,9 @@ struct AddTransitionCommand {
 // Group commands
 struct AddToGroupCommand {
     std::string groupId;
-    uint32_t entityId;
-    std::string entityName;
-    void Redo() { FindGroup(groupId)->member_entity_ids.push_back(entityName); }
-    void Undo() { RemoveFromGroup(groupId, entityName); }
+    std::string entityId;
+    void Redo() { FindGroup(groupId)->member_entity_ids.push_back(entityId); }
+    void Undo() { RemoveFromGroup(groupId, entityId); }
 };
 
 struct CreateGroupCommand {
@@ -601,6 +711,14 @@ private:
 
 ## Viewport Overlay Rendering
 
+### Overlay Implementation Rules
+
+- Overlay toggles are editor settings, not component data.
+- Overlay drawing reads `EditorWorld` descriptors and linked mesh transforms; it must not mutate runtime gameplay state.
+- Use existing editor/debug rendering paths: `LineRenderer`, wireframe helper geometry, physics debug renderer, nav debug renderer, and `TextRenderer` where available.
+- Do not add render graph passes for first-slice overlays.
+- Parse component params only through validation/helpers; never call `std::stof` in an overlay loop without error handling.
+
 ### Component Visualization Overlays
 
 Rendered in `RenderEditorSceneFrame()` or the viewport's overlay pass:
@@ -617,22 +735,22 @@ void RenderGameLogicOverlays(const EditorWorld& world, const EditorCamera& cam) 
         // Sensor component visualization (wireframe sphere + FOV cone)
         for (const auto& comp : entity.components) {
             if (comp.type == "sensor" && comp.enabled) {
-                float radius = comp.params.value("detectionRadius", "20.0").stof();
-                float fov = comp.params.value("fovAngle", "180.0").stof();
+                float radius = ReadComponentFloat(comp, "detectionRadius", 20.0f);
+                float fov = ReadComponentFloat(comp, "fovAngle", 180.0f);
                 DrawWireframeSphere(transform.translation, radius, Colors::SensorBlue);
                 DrawFOVCone(transform, radius, fov, Colors::SensorBlue);
             }
 
             // Combat range visualization
             if (comp.type == "combat" && comp.enabled) {
-                float range = comp.params.value("range", "12.0").stof();
+                float range = ReadComponentFloat(comp, "range", 12.0f);
                 DrawWireframeSphere(transform.translation, range, Colors::CombatRed);
             }
 
             // Health bar above entity
             if (comp.type == "health" && comp.enabled) {
-                float maxHp = std::stof(comp.params.value("maxHp", "100"));
-                float curHp = std::stof(comp.params.value("currentHp", "100"));
+                float maxHp = ReadComponentFloat(comp, "maxHp", 100.0f);
+                float curHp = ReadComponentFloat(comp, "currentHp", maxHp);
                 DrawHealthBar(transform.translation, curHp / maxHp, 1.0f, 0.1f);
             }
         }
@@ -675,6 +793,19 @@ View → Overlays → Game Logic
 ---
 
 ## Play Scene Runtime Lifecycle
+
+### Play Scene Modes
+
+Keep the existing fidelity path and add a fast path later.
+
+| Mode | Behavior | Purpose |
+|---|---|---|
+| Fidelity Play | Current temporary `.t8scene` export and SceneTemplate file load | Validates real serialization/runtime loader. |
+| Fast Play | Pass an in-memory copied `EditorSceneFile` to SceneTemplate/GameLogicSystem | Faster iteration after runtime loader is stable. |
+
+Fast Play must pass a copy. Runtime components must never hold references into `EditorWorld`.
+
+Thread-safety rule: Play Scene runtime updates and editor UI edits stay on the main editor thread unless a future worker job copies all input data and returns through a result queue. Do not mutate `EditorWorld` from worker threads or runtime component callbacks.
 
 ### Play Scene Flow
 
@@ -809,27 +940,70 @@ Game Logic Menu:
 
 ## Validation & Error Reporting
 
+### Shared Validation Contract
+
+Validation is shared Framework logic, with T8ditor as a UI consumer. The editor panel should call the same validation function that SceneTemplate can call before runtime load.
+
+```cpp
+namespace t850::scene {
+    enum class SceneValidationSeverity { Info, Warning, Error };
+
+    struct SceneValidationIssue {
+        SceneValidationSeverity severity = SceneValidationSeverity::Info;
+        std::string code;
+        std::string message;
+        std::string entityId;
+        std::string componentId;
+        int entityIndex = -1;
+    };
+
+    struct SceneValidationReport {
+        std::vector<SceneValidationIssue> issues;
+        bool HasErrors() const;
+    };
+}
+```
+
+Minimum checks:
+
+- missing or duplicate game entity ID;
+- duplicate component ID inside one entity;
+- empty component type;
+- unknown component type warning;
+- missing mesh/physics/camera/ragdoll link warning;
+- invalid state-machine initial state;
+- invalid transition source/target;
+- group member ID missing once groups are enabled.
+
+The validation UI stores issue targets by stable ID, not only by index. Indices can be used as a fallback after load but are not durable.
+
 ### Scene Validation Checks
 
 ```cpp
 // T8ditor/EditorScene.cpp — validation
-struct ValidationIssue {
-    enum class Severity { Error, Warning, Info };
-    Severity severity;
-    std::string message;
-    std::string entityName;
-    int entityIndex;
-};
+std::vector<t850::scene::SceneValidationIssue> ValidateGameLogic(const EditorWorld& world) {
+    t850::scene::EditorSceneFile scene;
+    scene.game_entities = world.gameEntities;
+    scene.game_groups = world.gameGroups;
+    auto report = t850::scene::ValidateEditorSceneGameLogic(scene);
+    return report.issues;
+}
+```
 
-std::vector<ValidationIssue> ValidateGameLogic(const EditorWorld& world) {
-    std::vector<ValidationIssue> issues;
+The detailed validation loops live in `Framework/src/game/GameValidation.cpp`, not directly in T8ditor panel code.
+
+Legacy example of checks that the shared validator performs:
+
+```cpp
+std::vector<t850::scene::SceneValidationIssue> ValidateGameLogicLegacySketch(const EditorWorld& world) {
+    std::vector<t850::scene::SceneValidationIssue> issues;
 
     for (size_t i = 0; i < world.gameEntities.size(); ++i) {
         const auto& entity = world.gameEntities[i];
 
         // Check mesh link
         if (entity.mesh_object.empty())
-            issues.push_back({Severity::Warning, "No mesh linked", entity.name, static_cast<int>(i)});
+            issues.push_back({t850::scene::SceneValidationSeverity::Warning, "game.no_mesh", "No mesh linked", entity.id, {}, static_cast<int>(i)});
 
         // Check state machine validity
         if (entity.behavior.has_value()) {
@@ -843,14 +1017,14 @@ std::vector<ValidationIssue> ValidateGameLogic(const EditorWorld& world) {
                 }
             }
             if (!initialExists)
-                issues.push_back({Severity::Error, "Initial state '" + behavior.initial_state + "' not found", entity.name, static_cast<int>(i)});
+                issues.push_back({t850::scene::SceneValidationSeverity::Error, "game.behavior.initial_missing", "Initial state '" + behavior.initial_state + "' not found", entity.id, {}, static_cast<int>(i)});
 
             // Transition references must be valid
             for (const auto& trans : behavior.transitions) {
                 if (trans.from_state != "*" && !StateExists(behavior.states, trans.from_state))
-                    issues.push_back({Severity::Error, "Transition from non-existent state '" + trans.from_state + "'", entity.name, static_cast<int>(i)});
+                    issues.push_back({t850::scene::SceneValidationSeverity::Error, "game.behavior.from_missing", "Transition from non-existent state '" + trans.from_state + "'", entity.id, {}, static_cast<int>(i)});
                 if (!StateExists(behavior.states, trans.to_state))
-                    issues.push_back({Severity::Error, "Transition to non-existent state '" + trans.to_state + "'", entity.name, static_cast<int>(i)});
+                    issues.push_back({t850::scene::SceneValidationSeverity::Error, "game.behavior.to_missing", "Transition to non-existent state '" + trans.to_state + "'", entity.id, {}, static_cast<int>(i)});
             }
         }
 
@@ -863,7 +1037,7 @@ std::vector<ValidationIssue> ValidateGameLogic(const EditorWorld& world) {
                 }
             }
             if (!groupFound)
-                issues.push_back({Severity::Error, "Referenced group '" + entity.group_id + "' not found", entity.name, static_cast<int>(i)});
+                issues.push_back({t850::scene::SceneValidationSeverity::Error, "game.group.missing", "Referenced group '" + entity.group_id + "' not found", entity.id, {}, static_cast<int>(i)});
         }
     }
 
@@ -872,12 +1046,12 @@ std::vector<ValidationIssue> ValidateGameLogic(const EditorWorld& world) {
         for (const auto& memberName : group.member_entity_ids) {
             bool entityFound = false;
             for (const auto& entity : world.gameEntities) {
-                if (entity.name == memberName) {
+                if (entity.id == memberName) {
                     entityFound = true; break;
                 }
             }
             if (!entityFound)
-                issues.push_back({Severity::Error, "Group '" + group.id + "' references non-existent entity '" + memberName + "'", group.id, -1});
+                issues.push_back({t850::scene::SceneValidationSeverity::Error, "game.group.member_missing", "Group '" + group.id + "' references non-existent entity '" + memberName + "'", memberName, {}, -1});
         }
     }
 
@@ -910,6 +1084,74 @@ std::vector<ValidationIssue> ValidateGameLogic(const EditorWorld& world) {
 ---
 
 ## Implementation Phases (Editor-Specific)
+
+The original 40-day editor plan is still useful as a long-term UX target, but implementation must start smaller. Use these source-grounded phases first.
+
+### Phase E0: Editor Entity Selection And IDs
+
+| # | Task | Dependencies | Effort |
+|---|---|---|---|
+| 1 | Add stable `id` to `SceneGameEntityDesc` and migration helper | Framework schema | 0.5 day |
+| 2 | Make Game Entity rows selectable as `selectionType = 9` | Existing hierarchy | 0.5 day |
+| 3 | Add minimal Properties panel for selected game entity | Selection type 9 | 1 day |
+| 4 | Ensure save/load/undo preserves IDs | Snapshot path | 0.5 day |
+
+**Deliverable:** Game entities can be selected, renamed, linked, saved, loaded, and undone without components or groups.
+
+### Phase E1: Generic Component Authoring
+
+| # | Task | Dependencies | Effort |
+|---|---|---|---|
+| 5 | Add `SceneComponentDesc` to Framework schema | E0 | 0.5 day |
+| 6 | Add generic component list editor | E0 | 1.5 days |
+| 7 | Add add/remove component actions using scene-state undo | Component schema | 1 day |
+| 8 | Add shared validation panel for entity/component IDs and links | Validation API | 1 day |
+
+**Deliverable:** Generic components round-trip through `.t8scene` and are visible in editor and Play Scene runtime DevGui.
+
+### Phase E2: Runtime Feedback In Play Scene
+
+| # | Task | Dependencies | Effort |
+|---|---|---|---|
+| 9 | Surface `GameLogicSystem` runtime object/component counts in Play Scene | Runtime slice | 0.5 day |
+| 10 | Show selected runtime game object in DevGui embedded panel | Runtime slice | 1 day |
+| 11 | Add event log panel after EventBus exists | EventBus | 1 day |
+
+**Deliverable:** Editor-authored game data can be inspected while running in Play Scene.
+
+### Phase E3: State Machine List Editor
+
+| # | Task | Dependencies | Effort |
+|---|---|---|---|
+| 12 | Add optional `SceneStateMachineDesc` UI | Component/runtime validation | 1.5 days |
+| 13 | Add state and transition tables | State schema | 2 days |
+| 14 | Add force transition command in Play Scene DevGui | Runtime StateMachine | 0.5 day |
+
+**Deliverable:** State machines can be authored without visual graph UI.
+
+### Phase E4: Game Groups And Example Systems
+
+| # | Task | Dependencies | Effort |
+|---|---|---|---|
+| 15 | Add `SceneGroupDesc` with stable member IDs | Entity IDs | 1 day |
+| 16 | Add group inspector and validation | Group schema | 1.5 days |
+| 17 | Add formation/flock controls only for example RTS module | Runtime groups | 2 days |
+
+**Deliverable:** Gameplay groups are stable across rename/save/load and are separate from editor mesh groups.
+
+### Phase E5: Visual Graph And Overlay Polish
+
+| # | Task | Dependencies | Effort |
+|---|---|---|---|
+| 18 | Add graph layout data and visual state graph | State list editor proven | 4 days |
+| 19 | Add sensor/range/health/state overlays with safe parsers | Components proven | 3 days |
+| 20 | Add fast in-memory Play Scene mode | Fidelity path stable | 2 days |
+
+**Deliverable:** Polished authoring and iteration workflow.
+
+---
+
+## Original Long-Term Editor Target
 
 ### Phase E1: EditorWorld & Schema Extensions
 
@@ -1023,7 +1265,7 @@ std::vector<ValidationIssue> ValidateGameLogic(const EditorWorld& world) {
 - **Does not create a new scene format** — extends existing `EditorSceneFile.h` in Framework layer.
 - **Does not duplicate scene types** — uses shared `t850::scene::` namespace types.
 - **Does not replace EditorWorld** — extends existing data model.
-- **Does not require new build system changes** — uses existing MSBuild `.vcxproj` structure.
+- **Does require project-file updates when new `.cpp` files are added** — update `Framework.vcxproj` first, and `Framework/CMakeLists.txt` while the secondary CMake build remains in the repo.
 - **Does not create a visual script editor** — state machines use structured data, not node-based scripting.
 - **Does not implement multiplayer editing** — single-user editor.
 

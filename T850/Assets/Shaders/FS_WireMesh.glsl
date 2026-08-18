@@ -63,7 +63,7 @@ void main(){
 	vec2 screenUV = gl_FragCoord.xy * vec2(1.0/CameraInfo.z, 1.0/CameraInfo.w);
 	float sceneDepth = max(texture(depthTex, screenUV).r,
 	                       texture(depthTex2, screenUV).r);
-	float wireDepth = Pos.z / Pos.w;
+	float wireDepth = gl_FragCoord.z;
 	if (sceneDepth > 0.0001 && wireDepth < sceneDepth * 0.995)
 		discard;
 #ifdef ES_30

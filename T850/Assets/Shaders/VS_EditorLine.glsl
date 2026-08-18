@@ -12,11 +12,9 @@
 #ifdef ES_30
 	in highp vec4 MyVertex;
 	out highp vec4 vColor;
-	out highp float vClipDepth;
 #else
 	attribute highp vec4 MyVertex;
 	varying highp vec4 vColor;
-	varying highp float vClipDepth;
 #endif
 
 uniform highp mat4 WVP;
@@ -25,5 +23,4 @@ uniform highp vec4 LineColor;
 void main(){
 	gl_Position = WVP * MyVertex;
 	vColor = LineColor;
-	vClipDepth = gl_Position.z / gl_Position.w;
 }

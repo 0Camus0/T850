@@ -130,7 +130,8 @@ namespace t8ditor {
 
   // ── File dialogs ───────────────────────────────────
   // Opens a native Windows file dialog. Returns empty string on cancel.
-  std::string OpenFileDialog(const wchar_t* filter, const wchar_t* title);
+  std::string OpenFileDialog(const wchar_t* filter, const wchar_t* title,
+                             const wchar_t* initialDir = nullptr);
 
 } // namespace t8ditor
 

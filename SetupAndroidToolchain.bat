@@ -289,12 +289,12 @@ echo   ANDROID_NDK_ROOT=%ANDROID_NDK_ROOT%
 if defined VULKAN_SDK echo   VULKAN_SDK=%VULKAN_SDK%
 echo.
 echo Build Android package with:
-echo   Scripts\Bat\BuildAndroid.bat Debug
-echo   Scripts\Bat\BuildAndroid.bat Release
-echo   Scripts\Bat\BuildAndroidDebug.bat
-echo   Scripts\Bat\BuildAndroidRelease.bat
+echo   T850\scripts\android\BuildAndroid.bat Debug
+echo   T850\scripts\android\BuildAndroid.bat Release
+echo   T850\scripts\android\BuildAndroidDebug.bat
+echo   T850\scripts\android\BuildAndroidRelease.bat
 echo Add --clean for a full rebuild, or --install --launch for local device testing.
-echo Add --emulator to Scripts\Bat\BuildAndroid.bat after running this setup with --with-emulator.
+echo Add --emulator to T850\scripts\android\BuildAndroid.bat after running this setup with --with-emulator.
 echo Add --android-abis arm64-v8a,x86_64 to install dependencies for multiple Android APK targets.
 echo.
 exit /b 0

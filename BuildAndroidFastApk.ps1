@@ -25,7 +25,7 @@ if ($env:T850_BUILD_WORKERS) {
 $env:CMAKE_BUILD_PARALLEL_LEVEL = $BuildWorkers.ToString()
 
 function Show-Usage {
-  Write-Host 'Usage: Scripts\Bat\BuildAndroidFastApk.bat [Debug|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--template APK] [--out APK] [--install] [--launch] [--skip-native-build] [--vulkan-validation]'
+  Write-Host 'Usage: T850\scripts\android\BuildAndroidFastApk.bat [Debug|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--template APK] [--out APK] [--install] [--launch] [--skip-native-build] [--vulkan-validation]'
   Write-Host ''
   Write-Host 'Builds/strips the native .so, copies an existing APK as a template, replaces only lib/<abi>/libT850Android.so, zipaligns, and signs it.'
 }
@@ -160,7 +160,7 @@ if (-not $TemplateApk) {
   $TemplateApk = $candidate
 }
 if (-not (Test-Path $TemplateApk)) {
-  throw "Template APK was not found at '$TemplateApk'. Run a full Scripts\Bat\BuildAndroid.bat once, or pass --template."
+  throw "Template APK was not found at '$TemplateApk'. Run a full T850\scripts\android\BuildAndroid.bat once, or pass --template."
 }
 
 $defaultOutDir = Join-Path $AndroidProject "app\build\outputs\apk\$variant"

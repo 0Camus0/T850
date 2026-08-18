@@ -36,7 +36,8 @@ bool LoadSceneFromFile(const std::string& path, SceneFile& scene);
 
 // Opens a native Windows save-file dialog. Returns empty string on cancel.
 std::string SaveFileDialog(const wchar_t* filter, const wchar_t* title,
-                           const wchar_t* defaultExt = nullptr);
+                           const wchar_t* defaultExt = nullptr,
+                           const wchar_t* initialDir = nullptr);
 
 } // namespace t8ditor
 

@@ -27,6 +27,9 @@ std::string MeshEditorProfileModelKey(const std::string& path);
 bool EditorResourcePathEquals(const std::string& lhs, const std::string& rhs);
 // File stem (no directory, no extension) of a forward-slash path.
 std::string FileStemFromResourcePath(const std::string& path);
+// Returns the solution directory (parent of the bin/ output folder) derived
+// from the executable path. Falls back to current working directory.
+std::string GetSolutionDir();
 
 // ── Profile override descriptors (upsert / lookup) ────
 void SetFloatOverride(std::vector<t850::FloatOverrideDesc>& values, std::string name, float value);

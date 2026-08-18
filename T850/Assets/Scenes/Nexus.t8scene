@@ -4,13 +4,13 @@
    "render_graph": "",
    "editor": {
       "camera_target": {
-         "x": 15.6976595,
-         "y": -30.373623,
-         "z": -37.704468
+         "x": 0.1193685,
+         "y": 7.557127,
+         "z": 1.4804691
       },
-      "camera_yaw": -1.150002,
-      "camera_pitch": 0.49000016,
-      "camera_distance": 201.82504,
+      "camera_yaw": 2.084998,
+      "camera_pitch": 0.34500024,
+      "camera_distance": 11.566291,
       "show_skybox": true,
       "show_wireframe": false,
       "allow_custom_layout": false,
@@ -36,7 +36,7 @@
             "y": 1,
             "z": 1
          },
-         "visible": false,
+         "visible": true,
          "frozen": false,
          "show_wire": false,
          "show_orientation": false,
@@ -52,9 +52,59 @@
             "area": "walkable",
             "cost": 1
          }
+      },
+      {
+         "name": "D:/Code/Game/SC2Extract/NexusWarsOneLane/glb_animated_full_pbr/marine.glb",
+         "mesh": "D:/Code/Game/SC2Extract/NexusWarsOneLane/glb_animated_full_pbr/marine.glb",
+         "ragdoll": "Models/RagdollEdits/marine.glb.json",
+         "position": {
+            "x": 0,
+            "y": 8.414847,
+            "z": 0
+         },
+         "rotation": {
+            "x": 0,
+            "y": -0,
+            "z": 0
+         },
+         "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+         },
+         "visible": true,
+         "frozen": false,
+         "show_wire": false,
+         "show_orientation": false,
+         "nav_agent_target_mode": "direct",
+         "nav_agent_follow_distance": 0,
+         "nav_agent_side_offset": 0,
+         "nav_agent_formation_depth_step": 0,
+         "nav_agent_slot": -1,
+         "ragdoll_authoring": {
+            "enabled": false,
+            "asset": "Models/RagdollEdits/marine.glb.json",
+            "preview": false,
+            "drive_from_animation": false,
+            "runtime_motion": "disabled"
+         }
       }
    ],
-   "game_entities": [],
+   "game_entities": [
+      {
+         "name": "marine",
+         "kind": "mesh",
+         "mesh_object": "D:/Code/Game/SC2Extract/NexusWarsOneLane/glb_animated_full_pbr/marine.glb",
+         "primary_physics_entity": "",
+         "physics_entities": [],
+         "camera": "",
+         "ragdoll_object": "D:/Code/Game/SC2Extract/NexusWarsOneLane/glb_animated_full_pbr/marine.glb",
+         "ai": "",
+         "visible": true,
+         "frozen": false,
+         "show_wire": true
+      }
+   ],
    "physics_entities": [
       {
          "name": "D:/Code/Game/SC2Extract/NexusWarsOneLane/map_terrain/nexus_wars_terrain.glb Static Triangle Mesh",
@@ -132,7 +182,7 @@
    "navigation_mesh": {
       "name": "NavMesh",
       "enabled": true,
-      "visible": true,
+      "visible": false,
       "frozen": false,
       "show_wire": true,
       "debug_offset": 0.01,
@@ -195,7 +245,7 @@
             "area": "walkable",
             "cost": 1,
             "enabled": true,
-            "visible": true,
+            "visible": false,
             "frozen": false,
             "show_wire": true
          },
@@ -221,7 +271,7 @@
             "area": "walkable",
             "cost": 1,
             "enabled": true,
-            "visible": true,
+            "visible": false,
             "frozen": false,
             "show_wire": true
          }
@@ -488,7 +538,15 @@
             }
          ],
          "lights": [],
-         "animations": [],
+         "animations": [
+            {
+               "index": 1,
+               "mesh": "D:/Code/Game/SC2Extract/NexusWarsOneLane/glb_animated_full_pbr/marine.glb",
+               "anim_speed": 1,
+               "anim_select": 0,
+               "anim_mode": 0
+            }
+         ],
          "cubemap_path": "sky/CubeMap_SkyWater.dds"
       }
    ]

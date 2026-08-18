@@ -848,7 +848,7 @@ function Get-AndroidProjectRoot {
 }
 
 function Get-AndroidBuildScript {
-    return (Join-Path (Get-AndroidRepoRoot) "Scripts\Bat\BuildAndroid.bat")
+    return (Join-Path (Get-AndroidRepoRoot) "T850\scripts\android\BuildAndroid.bat")
 }
 
 function Get-AndroidGradleWrapperPath {

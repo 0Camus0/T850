@@ -1,8 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set "ROOT=%~dp0..\..\"
-set "PROJECT=%ROOT%T850"
+for %%I in ("%~dp0..\..\..") do set "ROOT=%%~fI"
+set "PROJECT=%ROOT%"
 set "EXE_DIR=%PROJECT%\bin\x64\Debug"
 set "EXE=%EXE_DIR%\DayScene.exe"
 set "MODELS=%PROJECT%\Assets\Models"

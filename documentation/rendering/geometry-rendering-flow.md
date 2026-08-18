@@ -358,6 +358,8 @@ It is process-wide and pass-scoped by `Begin()` / `End()`. D3D12 invariants are 
 - draws through `LineRenderer::DrawLines()`,
 - can bind primary/secondary depth textures for overlay depth testing.
 
+Static editor mesh overlays in T8ditor use `EditorLineRenderer`, while Framework wire/debug overlays use `LineRenderer`. Both paths rely on `VS_EditorLine`/`FS_EditorLine`-style shaders for manual overlay depth tests when scene depth textures are bound.
+
 ### Skinned mesh wireframe
 
 `RenderSkinnedMesh::DrawWireframe()`:
@@ -368,6 +370,20 @@ It is process-wide and pass-scoped by `Begin()` / `End()`. D3D12 invariants are 
 - binds constant buffers and bone texture,
 - optionally binds GBuffer depth textures for manual depth comparison,
 - calls `DrawIndexed()` with the wire index count and base vertex.
+
+### Wireframe depth comparison
+
+Wireframe overlays are usually drawn after the deferred scene has been resolved, with hardware depth testing disabled and sampled GBuffer/deferred depth textures bound for a manual depth test. T850 uses reversed-Z depth for D3D12 and Vulkan: depth clears to `0.0`, depth states compare with `GREATER_EQUAL`, and larger normalized depth values are closer to the camera.
+
+For depth-tested wireframe shaders (`FS_WireMesh.*` and `FS_EditorLine.*`), compare sampled scene depth against the rasterized fragment depth from the pixel/fragment stage. On HLSL this is `SV_POSITION.z` as seen by the pixel shader; on GLSL this is `gl_FragCoord.z`. Do not pass clip depth through a regular interpolated varying and recompute `z / w` for the comparison. D3D12 and Vulkan share HLSL source, but Vulkan's HLSL-to-SPIR-V path can expose small interpolation/depth differences, especially on tiny models, as an outline or shell around picked meshes.
+
+The current reversed-Z discard shape is:
+
+```text
+discard when sceneDepth > epsilon and wireDepth < sceneDepth * (1.0 - bias)
+```
+
+where `wireDepth` must be rasterized fragment depth, not manually reconstructed clip depth.
 
 ### Skeleton debug
 

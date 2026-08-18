@@ -1,6 +1,6 @@
 # T850 Engine Documentation
 
-This folder is the long-form technical documentation for T850. It is separate from the root `docs/` folder and is intended to explain the engine deeply enough that a new developer can continue work without losing architectural context.
+This folder is the long-form technical documentation for T850. Legacy documentation (original Stage 0 skeletons) lives in `legacy/` and is intended to explain the engine deeply enough that a new developer can continue work without losing architectural context.
 
 ## Documentation map
 
@@ -41,6 +41,8 @@ This folder is the long-form technical documentation for T850. It is separate fr
 | Animation | [animation/animation-system.md](animation/animation-system.md) | Stage 6 draft |
 | Physics | [physics/jolt-physics.md](physics/jolt-physics.md) | Stage 7 draft |
 | Navigation | [navigation/navmesh-detour.md](navigation/navmesh-detour.md) | Stage 8 draft |
+| Game entity & logic system | [game/game-entity-system-spec.md](game/game-entity-system-spec.md) | Spec (implementation-ready) |
+| Game entity — implementation prompts | [game/game-entity-system-implementation-prompts.md](game/game-entity-system-implementation-prompts.md) | Prompts for local agents |
 
 ### Editor, UI, and scene formats
 

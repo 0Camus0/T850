@@ -185,6 +185,7 @@ namespace t8ditor {
     void DumpEditorNavMeshWireGeometry(const char* reason) const;
     void RenderLoadingProgressFrame();
     void LoadPendingScene();
+    void ImportPendingMesh();
     void SyncEditorSceneLights(const ::Camera& cam);
     void RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozenEditorFrame, bool& didCaptureFrozenEditorFrame);
     void DrawEditorUI(t850::BaseDriver* drv);

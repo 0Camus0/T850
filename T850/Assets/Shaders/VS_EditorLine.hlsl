@@ -1,5 +1,5 @@
 // Editor line vertex shader — depth-tested wireframe overlay.
-// Outputs screen UV and clip depth for comparison with GBuffer depth.
+// Fragment shader uses SV_POSITION depth for comparison with GBuffer depth.
 cbuffer ConstantBuffer : register(b0) {
     float4x4 WVP;
     float4   LineColor;
@@ -12,12 +12,10 @@ struct VS_INPUT{
 
 struct VS_OUTPUT{
     float4 hposition  : SV_POSITION;
-    float  clipDepth : TEXCOORD0;
 };
 
 VS_OUTPUT VS( VS_INPUT input ){
     VS_OUTPUT OUT;
     OUT.hposition = mul(WVP, input.position);
-    OUT.clipDepth = OUT.hposition.z / OUT.hposition.w;
     return OUT;
 }

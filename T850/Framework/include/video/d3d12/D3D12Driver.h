@@ -83,6 +83,7 @@ namespace t850 {
     void BeginResourceUploadBatch() override;
     void EndResourceUploadBatch() override;
     bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
+    void RetireBuffer(Buffer* buffer) override;
     void BuildPipelineObjects() override;
     void SetViewport(float x, float y, float w, float h) override;
     void SetScissorRect(int x, int y, int w, int h) override;
@@ -217,6 +218,11 @@ namespace t850 {
     ComPtr<ID3D12GraphicsCommandList> m_uploadBatchList;
     std::vector<ComPtr<ID3D12Resource>> m_uploadBatchKeepAlive;
     UINT m_uploadBatchCommandCount = 0;
+    struct RetiredBuffer {
+      Buffer* buffer = nullptr;
+      UINT framesRemaining = kBackBufferCount;
+    };
+    std::vector<RetiredBuffer> m_retiredBuffers;
 
     // PSO cache: lazy-created per (shader × blend × depth × cull × RT config)
     std::unordered_map<D3D12PipelineKey, ComPtr<ID3D12PipelineState>, D3D12PipelineKeyHash> m_psoCache;

@@ -605,7 +605,9 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
       ImGui::MenuItem("Rendering", nullptr, &panels.showRendering);
       ImGui::MenuItem("Timeline",  nullptr, &panels.showTimeline);
       ImGui::MenuItem("NavMesh Authoring", nullptr, &panels.showNavMeshAuthoring);
+      ImGui::MenuItem("Game Validation", nullptr, &panels.showGameValidation);
       ImGui::Separator();
+      ImGui::MenuItem("Game Overlays", nullptr, &panels.showGameOverlays);
       ImGui::MenuItem("Wireframe Overlay", nullptr, &panels.showWireframe);
       ImGui::MenuItem("Show Skybox",       nullptr, &panels.showSkybox);
       ImGui::Separator();

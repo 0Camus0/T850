@@ -19,7 +19,10 @@ add_executable(T8ditor
 	PlayScenePanel.cpp
 	MeshEditorPanel.cpp
 	RagdollEditorPanel.cpp
-	EditorImGui.cpp)
+	EditorImGui.cpp
+	../DayScene/RagdollEditor.cpp
+	../DayScene/Quake3Mock.cpp
+	../DayScene/SceneTemplate.cpp)
 
 t850_apply_app(T8ditor)
 t850_stage_runtime(T8ditor)

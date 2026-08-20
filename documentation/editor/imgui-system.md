@@ -1,6 +1,6 @@
 # FrameworkImGui Runtime UI Layer
 
-Status: Stage 16 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains the reusable FrameworkImGui layer used by runtime scenes and wrapped by T8ditor: platform/backend initialization, frame lifecycle, docking and platform windows, Android native-window rebinding, loading-screen rendering, `DevGuiContext`, and hosted viewport integration.
 

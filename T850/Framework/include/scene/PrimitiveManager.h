@@ -22,6 +22,7 @@
 namespace t850 {
   struct EngineContext;
   class Spline;
+  class MutableMesh;
   class PrimitiveManager {
   private:
     int  CreateQuad();
@@ -37,6 +38,7 @@ namespace t850 {
     int  CreateTriangle();
     int	 CreateCube();
     int	 CreateMesh(const char *fname);
+    int  CreateMutableMesh();
     int  CreateSpline(Spline& spline);
 
     void SetEngineContext(EngineContext* context);

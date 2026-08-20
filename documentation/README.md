@@ -1,98 +1,110 @@
 # T850 Engine Documentation
 
-This folder is the long-form technical documentation for T850. Legacy documentation (original Stage 0 skeletons) lives in `legacy/` and is intended to explain the engine deeply enough that a new developer can continue work without losing architectural context.
+Status: index verified on 2026-08-19.
 
-## Documentation map
+This tree documents the current T850 rendering/game engine, runtime hosts, editor, build/deploy workflows, diagnostics, and acceptance gates. Superseded documents are removed and remain available through Git history.
 
-### Index, conventions, and audit
+## Start Here
 
-| Area | File | Status |
+| Need | Read |
+|---|---|
+| current implementation and verified gates | [Current status](current-status-and-roadmap.md) |
+| first Windows setup/build/run | [Windows setup, build, and run](development/windows-build-and-run.md) |
+| CLI/config fields | [Runtime configuration](development/runtime-configuration.md) |
+| choose Sandbox/Day/Q3/Ragdoll/SceneTemplate/VoxelScene | [Runtime hosts](runtime/runtime-hosts.md) |
+| tests and merge/release gates | [Verification](testing/verification.md) |
+| make or compare image dumps | [Visual regression](debug/visual-regression.md) |
+| Android build/install/deploy | [Android](platform/android.md) |
+| Steam Deck build/run/package/deploy | [Steam Deck](platform/steam-deck.md) |
+| find a subsystem owner | [Dependency map](dependency-map.md) |
+| local-agent workflow | [T850 engine router](../.github/skills/t850-engine/SKILL.md) |
+| build/run/test skill | [T850 build/run skill](../.github/skills/t850-build-run/SKILL.md) |
+| native crash/CDB skill | [T850 crash-debugging skill](../.github/skills/t850-crash-debugging/SKILL.md) |
+| voxel terrain/streaming skill | [T850 voxel-terrain skill](../.github/skills/t850-voxel-terrain/SKILL.md) |
+| image dump/compare skill | [T850 visual regression skill](../.github/skills/t850-visual-regression/SKILL.md) |
+| platform deploy/package skill | [T850 platform deploy skill](../.github/skills/t850-platform-deploy/SKILL.md) |
+
+## Operations
+
+| Area | Document | Status |
 |---|---|---|
-| Documentation conventions | [doc-conventions.md](doc-conventions.md) | Stage 0 skeleton |
-| Glossary | [glossary.md](glossary.md) | Stage 0 skeleton |
-| Full documentation plan | [stage-plan.md](stage-plan.md) | Stage 0 skeleton |
-| Dependency map | [dependency-map.md](dependency-map.md) | Stage 11 draft |
-| Review and gaps | [review-and-gaps.md](review-and-gaps.md) | Stage 12 draft |
+| Windows setup/build/run/release packaging | [development/windows-build-and-run.md](development/windows-build-and-run.md) | Verified 2026-08-19 |
+| Runtime JSON and CLI | [development/runtime-configuration.md](development/runtime-configuration.md) | Verified 2026-08-19 |
+| Cloud models/textures | [development/cloud-assets.md](development/cloud-assets.md) | Verified 2026-08-19 |
+| Verification, CI, self-tests, smoke gates | [testing/verification.md](testing/verification.md) | Verified 2026-08-19 |
+| Raw dumps and visual baselines | [debug/visual-regression.md](debug/visual-regression.md) | Verified 2026-08-19 |
+| Android | [platform/android.md](platform/android.md) | Verified 2026-08-19 |
+| Steam Deck | [platform/steam-deck.md](platform/steam-deck.md) | Verified 2026-08-19 |
+| Runtime host selection | [runtime/runtime-hosts.md](runtime/runtime-hosts.md) | Verified 2026-08-19 |
 
-### Core architecture and platform
+## Architecture and Shared Systems
 
-| Area | File | Status |
+| Area | Document | Status |
 |---|---|---|
-| Main architecture | [architecture/main-architecture.md](architecture/main-architecture.md) | Stage 1 draft |
-| Platform event loop and windows | [architecture/platform-event-loop.md](architecture/platform-event-loop.md) | Stage 1 draft |
-| Resource lookup and cache paths | [architecture/resource-locator.md](architecture/resource-locator.md) | Stage 14 draft |
-| Input, camera, and controls | [input/camera-and-controls.md](input/camera-and-controls.md) | Stage 15 draft |
-| Debug and diagnostics | [debug/diagnostics.md](debug/diagnostics.md) | Stage 13 draft |
+| Main architecture and ownership | [architecture/main-architecture.md](architecture/main-architecture.md) | Verified 2026-08-19 |
+| Platform event loops/windows | [architecture/platform-event-loop.md](architecture/platform-event-loop.md) | Verified 2026-08-19 |
+| Resource lookup/cache paths | [architecture/resource-locator.md](architecture/resource-locator.md) | Verified 2026-08-19 |
+| Input/controllers/camera profiles | [input/camera-and-controls.md](input/camera-and-controls.md) | Verified 2026-08-19 |
+| FrameworkImGui/runtime UI | [editor/imgui-system.md](editor/imgui-system.md) | Verified 2026-08-19 |
+| Diagnostics/telemetry/profiler/dumps | [debug/diagnostics.md](debug/diagnostics.md) | Verified 2026-08-19 |
+| Cross-system dependencies | [dependency-map.md](dependency-map.md) | Verified 2026-08-19 |
 
-### Rendering and assets
+## Rendering and Assets
 
-| Area | File | Status |
+| Area | Document | Status |
 |---|---|---|
-| Geometry loading | [geometry/loading-geometry.md](geometry/loading-geometry.md) | Stage 2 draft |
-| Shader management | [rendering/shader-management.md](rendering/shader-management.md) | Stage 3 draft |
-| Render graph | [rendering/render-graph.md](rendering/render-graph.md) | Stage 4 draft |
-| Geometry rendering flow | [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md) | Stage 5 draft |
-| Textures, samplers, and IBL | [rendering/textures-and-ibl.md](rendering/textures-and-ibl.md) | Stage 17 draft |
+| Geometry/glTF/.x loading | [geometry/loading-geometry.md](geometry/loading-geometry.md) | Verified 2026-08-19 |
+| Shader keys/cache/reflection/PSOs | [rendering/shader-management.md](rendering/shader-management.md) | Verified 2026-08-19 |
+| JSON render graph | [rendering/render-graph.md](rendering/render-graph.md) | Verified 2026-08-19 |
+| Mesh draw path/state tracking | [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md) | Verified 2026-08-19 |
+| Textures/samplers/IBL/material slots | [rendering/textures-and-ibl.md](rendering/textures-and-ibl.md) | Verified 2026-08-19 |
+| Animation/skinning/bone textures | [animation/animation-system.md](animation/animation-system.md) | Verified 2026-08-19 |
 
-### Runtime systems
+## Simulation, Gameplay, Editor, and Scenes
 
-| Area | File | Status |
+| Area | Document | Status |
 |---|---|---|
-| Animation | [animation/animation-system.md](animation/animation-system.md) | Stage 6 draft |
-| Physics | [physics/jolt-physics.md](physics/jolt-physics.md) | Stage 7 draft |
-| Navigation | [navigation/navmesh-detour.md](navigation/navmesh-detour.md) | Stage 8 draft |
-| Game entity & logic system | [game/game-entity-system-spec.md](game/game-entity-system-spec.md) | Spec (implementation-ready) |
-| Game entity — implementation prompts | [game/game-entity-system-implementation-prompts.md](game/game-entity-system-implementation-prompts.md) | Prompts for local agents |
+| Jolt physics/gameplay layers/ragdolls | [physics/jolt-physics.md](physics/jolt-physics.md) | Verified 2026-08-19 |
+| Recast/Detour/game navigation | [navigation/navmesh-detour.md](navigation/navmesh-detour.md) | Verified 2026-08-19 |
+| Game entities/components/control/events | [game/game-entity-system-spec.md](game/game-entity-system-spec.md) | Implemented v1, verified 2026-08-19 |
+| Mutable voxel terrain/chunk streaming | [terrain/voxel-terrain.md](terrain/voxel-terrain.md) | Implemented reference, verified 2026-08-19 |
+| P0-P14 maintenance contracts | [game/game-entity-system-implementation-prompts.md](game/game-entity-system-implementation-prompts.md) | Executed; reference only |
+| T8ditor | [editor/editor-overview.md](editor/editor-overview.md) | Verified 2026-08-19 |
+| `.t8scene` and runtime loading | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Verified 2026-08-19 |
+| SceneDescriptor/SceneSetup | [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md) | Verified 2026-08-19 |
 
-### Editor, UI, and scene formats
+## Governance
 
-| Area | File | Status |
-|---|---|---|
-| Editor overview | [editor/editor-overview.md](editor/editor-overview.md) | Stage 9 draft |
-| FrameworkImGui runtime UI | [editor/imgui-system.md](editor/imgui-system.md) | Stage 16 draft |
-| Scenes and formats | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Stage 10 draft |
-| SceneSetup descriptors | [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md) | Stage 18 draft |
+| Document | Purpose |
+|---|---|
+| [current-status-and-roadmap.md](current-status-and-roadmap.md) | implemented state, verification evidence, open work |
+| [review-and-gaps.md](review-and-gaps.md) | current known gaps and troubleshooting routes |
+| [stage-plan.md](stage-plan.md) | ongoing documentation maintenance plan |
+| [doc-conventions.md](doc-conventions.md) | writing/freshness requirements |
+| [glossary.md](glossary.md) | engine terminology |
 
-## Reading path
+## Small-Model Reading Rule
 
-1. Start with [glossary.md](glossary.md) for naming and subsystem terms.
-2. Read [architecture/main-architecture.md](architecture/main-architecture.md) to understand the high-level engine layers.
-3. Read [architecture/platform-event-loop.md](architecture/platform-event-loop.md) to understand platform/window/API ownership.
-4. Use [architecture/resource-locator.md](architecture/resource-locator.md) when a change touches asset paths, Android packaged assets, or generated caches.
-5. Use [input/camera-and-controls.md](input/camera-and-controls.md) when a change touches input, controllers, camera profiles, hosted viewport input, or Android virtual controls.
-6. Use [editor/imgui-system.md](editor/imgui-system.md) when a change touches runtime/editor ImGui, docking, platform windows, or hosted scene panels.
-7. Continue through geometry, shaders, render graph, geometry rendering flow, and [textures/IBL](rendering/textures-and-ibl.md).
-8. Read animation, physics, and navigation when a feature touches runtime simulation or pathing.
-9. Read editor/UI and scene-format docs when a feature touches authoring, Play Scene, or runtime descriptor controls.
-10. Use [dependency-map.md](dependency-map.md) when a change crosses subsystem boundaries.
-11. Check [review-and-gaps.md](review-and-gaps.md) for known missing docs and troubleshooting entry points.
-12. Use [debug/diagnostics.md](debug/diagnostics.md) when diagnosing load stalls, frame differences, telemetry, dumps, or profiling.
+Do not load every document. Use this sequence:
 
-## Expectations for each document
+1. read [Current status](current-status-and-roadmap.md);
+2. read one operational guide or one subsystem owner document;
+3. inspect the exact script/function named there;
+4. execute the smallest listed gate;
+5. update the owning document if behavior changed.
 
-Every subsystem document should include:
+Do not infer current status from implementation prompts; they are completed maintenance contracts.
 
-- Purpose and responsibilities.
-- Key classes/files.
-- Ownership and lifetime rules.
-- Data flow and frame/update flow.
-- Mermaid diagrams for flowcharts, sequence diagrams, or dependencies.
-- Runtime/editor differences.
-- Extension points.
-- Known limitations.
-- Debugging and common failure modes.
-- Links to related documents.
+## Documentation Contract
 
-## Mermaid diagram policy
+A current guide must state:
 
-Use Mermaid diagrams directly in Markdown. Prefer small diagrams that explain one flow clearly over one large diagram that tries to cover everything.
+- working directory;
+- exact command and prerequisites;
+- expected output/artifact;
+- success and failure conditions;
+- ownership/lifetime or phase when relevant;
+- what is implemented versus optional/planned;
+- related documents.
 
-Example:
-
-```mermaid
-flowchart LR
-  SceneFile[".t8scene"] --> Editor["T8ditor"]
-  SceneFile --> SceneTemplate["SceneTemplate runtime"]
-  Editor --> Framework["Framework systems"]
-  SceneTemplate --> Framework
-```
+See [Documentation conventions](doc-conventions.md) and [Documentation maintenance plan](stage-plan.md).

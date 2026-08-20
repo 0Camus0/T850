@@ -1,12 +1,12 @@
 # T850 Game Entity & Logic System — Technical Specification
 
-> **Status:** Implementation-ready specification (v1)
-> **Date:** 2026-07-01
+Status: implemented v1; verified against source and final gates on 2026-08-19.
+
+> **Specification date:** 2026-07-01
 > **Build system:** MSBuild (`.vcxproj`) primary, CMake secondary
 > **Language:** C++23 (`stdcpp23`)
-> **Supersedes:** `legacy/proposals/game-logic-and-ai-integration.md`, `legacy/proposals/editor-game-logic-integration.md`, `legacy/proposals/assessment.md`, `legacy/proposals/assessment-gpt.md`, `legacy/proposals/gap-remediation-gpt.md`
 
-This document consolidates the two original proposals, both assessments, and the gap-remediation notes into a single spec. It is source-grounded against the current T850 tree, resolves the gaps those documents identified, and adds the one missing abstraction none of them covered: a **control/possession layer** that lets one engine drive both RTS units (commanded, AI-controlled) and FPS pawns (possessed, input-controlled).
+This document consolidates the two original proposals, both assessments, and the gap-remediation notes into the v1 contract now implemented in T850. It adds a **control/possession layer** that lets one engine drive both RTS units (commanded, AI-controlled) and FPS pawns (possessed, input-controlled).
 
 ---
 
@@ -14,7 +14,7 @@ This document consolidates the two original proposals, both assessments, and the
 
 1. [Purpose and scope](#1-purpose-and-scope)
 2. [Design principles](#2-design-principles)
-3. [Current engine state (verified)](#3-current-engine-state-verified)
+3. [Implemented engine state (verified)](#3-implemented-engine-state-verified)
 4. [Architecture overview](#4-architecture-overview)
 5. [Core model](#5-core-model)
 6. [Schema specification](#6-schema-specification)
@@ -26,7 +26,7 @@ This document consolidates the two original proposals, both assessments, and the
 12. [Telemetry and performance](#12-telemetry-and-performance)
 13. [Testing specification](#13-testing-specification)
 14. [Build integration](#14-build-integration)
-15. [Implementation roadmap](#15-implementation-roadmap)
+15. [Implementation record](#15-implementation-record)
 16. [Risk register](#16-risk-register)
 17. [Appendix A: full `.t8scene` example](#appendix-a-full-t8scene-example)
 18. [Appendix B: file manifest](#appendix-b-file-manifest)
@@ -56,6 +56,8 @@ Add a runtime gameplay simulation layer to T850 so that authored scenes can prod
 
 - Full ECS / data-oriented storage (revisit only when profiling requires it).
 - Visual node-graph state-machine editor (list/table editor first).
+- Gameplay config hot reload and general live component/event editing during Play.
+- Cross-scene persistent entities, entity transfer, and gameplay-driven scene transitions.
 - Networking / replication / lockstep determinism (see [§16](#16-risk-register)).
 - RTS-specific systems (flocking, formations, combat, resources) ship as an **examples** module, not core.
 
@@ -83,22 +85,23 @@ The architecture below treats "who produces movement/aim intent" as pluggable. T
 
 ---
 
-## 3. Current engine state (verified)
+## 3. Implemented engine state (verified)
 
-All rows verified against the current source tree on 2026-07-01.
+All rows reverified against the implementation worktree on 2026-08-19.
 
 | Concern | State | Evidence |
 |---|---|---|
-| `SceneGameEntityDesc` | Metadata only (no `id`, `components`, `behavior`, `group_id`) | [EditorSceneFile.h#L315](../../T850/Framework/include/scene/EditorSceneFile.h) |
-| Top-level game data | `game_entities` vector; `version = 1`, never checked | [EditorSceneFile.h#L341](../../T850/Framework/include/scene/EditorSceneFile.h) |
-| Runtime consumption | `SceneTemplate` does **not** read `game_entities` | [SceneTemplate.cpp](../../T850/DayScene/SceneTemplate.cpp) |
-| Runtime game module | Does not exist | no `Framework/*/game/` path |
+| `SceneGameEntityDesc` | Stable id, team, control, components, behavior, and group link | [EditorSceneFile.h](../../T850/Framework/include/scene/EditorSceneFile.h) |
+| Top-level game data | Schema v2 `game_entities`, `game_groups`, and optional settings with migration/validation | [GameValidation.cpp](../../T850/Framework/src/game/GameValidation.cpp) |
+| Runtime consumption | `SceneTemplate` owns and loads `GameLogicSystem` | [SceneTemplate.cpp](../../T850/DayScene/SceneTemplate.cpp) |
+| Runtime game module | Core plus optional examples under `Framework/include/game` and `Framework/src/game` | [GameLogicSystem.h](../../T850/Framework/include/game/GameLogicSystem.h) |
 | Serialization | Glaze pure reflection; unknown keys ignored on load | [EditorSceneFile.cpp#L134](../../T850/Framework/src/scene/EditorSceneFile.cpp) |
-| Selection types | `0..8`, no game entity/group type | [EditorWorld.h#L129](../../T850/T8ditor/EditorWorld.h) |
-| Physics collision layers | Only `NonMoving` / `Moving` | [JoltPhysicsSystem.cpp#L67](../../T850/Framework/src/physics/JoltPhysicsSystem.cpp) |
-| Physics queries | `CastCapsule` / `CastBox` only; **no overlap/sphere, no layer filter, no hit→entity** | [JoltPhysicsSystem.h#L38](../../T850/Framework/include/physics/JoltPhysicsSystem.h) |
+| Selection types | `0..10`, including game entity and game group | [EditorWorld.h](../../T850/T8ditor/EditorWorld.h) |
+| Physics collision layers | Nine gameplay object layers over static/moving broadphase buckets | [GameplayLayers.h](../../T850/Framework/include/physics/GameplayLayers.h) |
+| Physics queries | Filtered casts and sphere overlap with stable hit-to-entity mapping | [JoltPhysicsSystem.h](../../T850/Framework/include/physics/JoltPhysicsSystem.h) |
 | Navigation API | `NavMesh::FindPath(NavPathRequest)` + batch `FindPaths` | [NavigationSystem.h#L203](../../T850/Framework/include/navigation/NavigationSystem.h) |
-| DetourCrowd | Linked but not the active runtime path | docs + navmesh runtime |
+| Gameplay navigation | Batched `GameNavigationService` plus `PathFollowComponent`; DetourCrowd remains inactive | [GameNavigationService.h](../../T850/Framework/include/game/GameNavigationService.h) |
+| Tests | `DayScene --game-selftest`, 39 tests across gameplay, physics, mutable mesh, terrain, and navigation | [GameSelfTest.cpp](../../T850/Framework/src/game/GameSelfTest.cpp) |
 
 ### 3.1 Footholds to reuse (not rebuild)
 
@@ -109,7 +112,7 @@ These already exist and shorten the work substantially:
 - **`EngineContext`** is a global service locator holding `physics` (`JoltPhysicsSystem*`), `threadPool`, `config`. A scene-owned `GameLogicSystem` reaches shared services without becoming a global.
 - **Legacy `ai` field already encodes roles.** Inference sets `entity.ai = "player"` / `"nav_agent"` ([EditorApp.cpp#L1667](../../T850/T8ditor/EditorApp.cpp)); it is display-only today. This is the seed of the control model in [§8](#8-input-control-and-possession).
 - **`SceneObjectDesc` already has `nav_agent_*` fields** (follow distance, side offset, formation depth step, slot, target mode, yaw offset) — a proto follow/formation system that the movement layer should consume rather than duplicate.
-- **`SceneObjectPhysicsDesc.collision_layer`** is already a string (`"world"`), giving an authoring hook to map onto the new gameplay layer enum in [§9](#9-physics-gameplay-layers-and-queries).
+- **`SceneObjectPhysicsDesc.collision_layer`** is a string (`"world"`) mapped onto the implemented gameplay layer enum in [§9](#9-physics-gameplay-layers-and-queries).
 
 ---
 
@@ -122,7 +125,7 @@ flowchart TB
   subgraph Schema["Framework · scene schema (shared)"]
     ESF["EditorSceneFile.h / .cpp<br/>+ game types + validation + migration"]
   end
-  subgraph GameCore["Framework · game core (new, genre-neutral)"]
+  subgraph GameCore["Framework · game core (genre-neutral)"]
     IDS["GameIds"]
     REG["GameObjectRegistry"]
     COMP["Component + ComponentFactory"]
@@ -282,16 +285,21 @@ public:
   void ApplyDeferredDestroys();                     // called in tick phase 11
 
   GameObject* Get(RuntimeGameObjectId id);
+  const GameObject* Get(RuntimeGameObjectId id) const;
   GameObject* FindBySceneId(std::string_view sceneId);
-  std::span<GameObject> Objects();
-  std::span<const GameObject> Objects() const;
+  const GameObject* FindBySceneId(std::string_view sceneId) const;
+  std::list<GameObject>& Objects();
+  const std::list<GameObject>& Objects() const;
   std::size_t Count() const;
+  void Clear();
 
 private:
+  void RebuildIndexes();
+
   RuntimeGameObjectId nextRuntimeId_ = 1;
-  std::vector<GameObject> objects_;
-  std::unordered_map<RuntimeGameObjectId, std::size_t> runtimeIndex_;
-  std::unordered_map<std::string, RuntimeGameObjectId> sceneIdToRuntime_;
+  std::list<GameObject> objects_;
+  std::unordered_map<RuntimeGameObjectId, GameObject*> runtimeIndex_;
+  std::unordered_map<std::string, GameObject*> sceneIdIndex_;
   std::vector<RuntimeGameObjectId> pendingDestroy_;
 };
 ```
@@ -530,7 +538,7 @@ flowchart TD
 
 All types are added to `Framework/include/scene/EditorSceneFile.h` in namespace `t850::scene`. Glaze serializes by reflection — no macros — so adding fields is source-compatible. Because load uses `error_on_unknown_keys = false`, older and newer readers interoperate, which makes **explicit validation and migration mandatory** (typos are silent otherwise).
 
-### 6.1 New descriptors
+### 6.1 Game descriptors
 
 ```cpp
 // ── Component authoring ──
@@ -635,8 +643,8 @@ struct EditorSceneFile {
   int version = 1;                             // bumped to 2 on first game-logic save
   // ... existing members ...
   std::vector<SceneGameEntityDesc> game_entities;
-  std::vector<SceneGroupDesc> game_groups;                       // NEW
-  std::optional<SceneGameLogicSettingsDesc> game_logic_settings; // NEW
+  std::vector<SceneGroupDesc> game_groups;
+  std::optional<SceneGameLogicSettingsDesc> game_logic_settings;
 };
 ```
 
@@ -856,14 +864,14 @@ The only difference between the two genres at the core level is **which controll
 
 ## 9. Physics gameplay layers and queries
 
-### 9.1 Current vs required
+### 9.1 Implemented gameplay physics
 
-Today `JoltPhysicsSystem` defines exactly two object layers (`NonMoving`, `Moving`) and exposes only `CastCapsule`/`CastBox` (single hit, no filtering, no entity resolution). Gameplay needs categorized layers, an overlap query, and hit→entity mapping. **These are new engine additions, not just gameplay glue.**
+`JoltPhysicsSystem` now exposes categorized gameplay layers, include/exclude filtering on casts, `OverlapSphere()`, and retained body entity IDs. Two broadphase buckets (`NonMoving` and `Moving`) remain an internal acceleration detail; they are not the public gameplay layer model.
 
-### 9.2 Proposed gameplay layers
+### 9.2 Gameplay layers
 
 ```cpp
-// Framework/include/physics/GameplayLayers.h  (new)
+// Framework/include/physics/GameplayLayers.h
 namespace t850 {
 enum class GameplayLayer : uint16_t {
   WorldStatic, WorldDynamic, Player, NPC, Projectile, Trigger, Ragdoll, Debris, CameraBlocker, Count
@@ -907,7 +915,7 @@ public:
   void Bind(t850::JoltPhysicsSystem* physics, GameObjectRegistry* registry);
   // Query (read-only, callable in PostPhysics/Logic phases):
   bool LineOfSight(const XVECTOR3& from, const XVECTOR3& to, const GameQueryFilter&, GameHit& out) const; // uses CastCapsule
-  int  OverlapSphere(const XVECTOR3& center, float radius, const GameQueryFilter&, std::vector<GameHit>& out) const; // NEW engine API
+  int  OverlapSphere(const XVECTOR3& center, float radius, const GameQueryFilter&, std::vector<GameHit>& out) const;
   // Commands (buffered; applied in FlushPhysicsCommands):
   void EnqueueSetVelocity(RuntimeGameObjectId, const XVECTOR3& linear, const XVECTOR3& angular);
   void EnqueueKinematicMove(RuntimeGameObjectId, const XMATRIX44& worldXform);
@@ -916,7 +924,7 @@ public:
 };
 ```
 
-**Engine work required in `JoltPhysicsSystem`:** add `OverlapSphere` (broad+narrow phase), add gameplay-layer filtering parameters to casts, and add a stable body→`entityId` mapping (Jolt body user data already can carry `entityId`; `CreateBoxBodyFromBounds` takes one). If Jolt is unavailable, all queries return empty/false and commands no-op.
+`JoltPhysicsSystem` implements `OverlapSphere`, gameplay-layer masks on casts, and body `entityId` retention. `GamePhysicsService` maps primitive entity IDs back to runtime objects and applies team/ignore filtering. If Jolt is unavailable, queries return empty/false and buffered commands no-op.
 
 ---
 
@@ -948,16 +956,16 @@ public:
 
 ### 11.1 Selection types
 
-Extend the selection enum documented at [EditorWorld.h#L129](../../T850/T8ditor/EditorWorld.h):
+The selection enum documented in [EditorWorld.h](../../T850/T8ditor/EditorWorld.h) is:
 
 ```
 0 mesh  1 camera  2 light  3 physics  4 nav  5 spline
 6 lightCamera  7 splinePoint  8 godRays
-9 gameEntity   (NEW)
-10 gameGroup    (NEW, later phase)
+9 gameEntity
+10 gameGroup
 ```
 
-`EditorWorld` gains `std::vector<t850::scene::SceneGroupDesc> gameGroups;` and `std::optional<SceneGameLogicSettingsDesc> gameLogicSettings;`. The existing mesh-index `SceneGroup groups` is **unrelated** and stays as-is (see [Appendix D](#appendix-d-naming-decisions)).
+`EditorWorld` owns `std::vector<t850::scene::SceneGroupDesc> gameGroups;` and `std::optional<SceneGameLogicSettingsDesc> gameLogicSettings;`. The existing mesh-index `SceneGroup groups` is **unrelated** and stays as-is (see [Appendix D](#appendix-d-naming-decisions)).
 
 ### 11.2 Save/load/undo
 
@@ -973,14 +981,13 @@ Sections: Identity (`id` read-only, name, kind, team, visible/frozen/wire); **Co
 
 Renders `SceneValidationReport` with severity, code, message, and Jump-to-entity/component/group. Runs on demand and automatically before Play Scene.
 
-### 11.5 Play Scene modes
+### 11.5 Play Scene mode
 
 | Mode | Path | Purpose |
 |---|---|---|
 | **Fidelity** | export temp `.t8scene` → `SceneTemplate` file load | verifies the real serializer/loader |
-| **Fast** | clone `EditorSceneFile` in memory → `SceneTemplate::LoadSceneFromEditorSceneFile(copy)` | fast iteration |
 
-Fast Play must pass a **copy**; runtime never references `EditorWorld`. A debug command cross-checks both paths (entity/component counts, validation report) so they cannot diverge silently.
+Fidelity Play is the implemented v1 path. Runtime never references live `EditorWorld` data. Fast in-memory Play remains optional future work and must pass an owned copy if added.
 
 ### 11.6 Overlays
 
@@ -996,14 +1003,16 @@ Use existing `RuntimeTelemetry` + `Profiler` from slice 0.
 
 **Scopes:** `game.update`, `game.events.dispatch`, `game.components.pre_physics`, `game.components.logic`, `game.state_machines`, `game.groups`, `game.spatial_queries`.
 
-**Budgets (desktop Release x64):**
+**Unverified target budgets (desktop Release x64):**
 
 | Target | Entities | Components | `game.update` |
 |---|---:|---:|---:|
 | v1 | 100 active | 300 | < 0.5 ms |
 | v2 | 1,000 lightweight | 3,000 | < 1.5 ms |
 
-Storage path: `vector<GameObject>` + `unique_ptr<Component>` (v1) → per-type contiguous arrays for hot built-ins (v2) → sparse-set only if profiling proves it. ECS is not a v1 requirement.
+Storage path: stable `std::list<GameObject>` nodes + `unique_ptr<Component>` (v1) → profile-guided per-type contiguous arrays for hot built-ins (v2) → sparse-set only if profiling proves it. Stable nodes preserve component/controller owner pointers across insertion and unrelated deletion; ECS is not a v1 requirement.
+
+The 100/1,000-entity benchmark scenes have not been added, so these values are targets rather than measured acceptance claims.
 
 ---
 
@@ -1017,11 +1026,14 @@ Run: `DayScene.exe --game-selftest` (exit code `0` = all pass).
 |---|---|---|
 | T-SCHEMA-01 | Schema | `SceneComponentDesc` + extended entity round-trip byte-stable |
 | T-SCHEMA-02 | Migration | v1 scene without ids gains stable ids; re-save/reload preserves them |
+| T-SCHEMA-02B | Authoring IDs | v2 missing entity/component/group IDs are assigned once and remain stable |
 | T-SCHEMA-03 | Migration | legacy `ai` maps to `control.mode` per §6.4 |
 | T-VALID-01 | Validation | duplicate entity id → Error |
 | T-VALID-02 | Validation | duplicate component id within entity → Error |
 | T-VALID-03 | Validation | unknown component type → Warning + preserved |
 | T-VALID-04 | Validation | behavior initial state missing → Error |
+| T-GROUP-01 | Groups | stable-id membership and leader survive entity rename/save/reload |
+| T-GROUP-02 | Groups | missing member and non-member leader report errors |
 | T-REG-01 | Registry | create/find by scene id and runtime id; destroy clears both |
 | T-REG-02 | Registry | broken mesh link keeps object + emits warning (no crash) |
 | T-COMP-01 | Lifecycle | OnAttach→OnCreate→Update→OnDestroy→OnDetach order |
@@ -1038,23 +1050,24 @@ Run: `DayScene.exe --game-selftest` (exit code `0` = all pass).
 | T-NAV-01 | Nav | RequestPath with no navmesh fails gracefully |
 | T-LIFE-01 | Integration | load 1-entity scene → registry=1; unload → registry=0 |
 | T-TICK-01 | Tick | large dt runs ≤ `maxStepsPerFrame` ticks |
+| T-TICK-02 | Tick | pause does not advance/accumulate ticks; resume advances normally |
 
 ---
 
 ## 14. Build integration
 
-New files must be added to **both** build systems. Verify all configs: Win32/x64/ARM64 × Debug/Release.
+Framework files must be present in **both** build systems. Verify all applicable configs: Win32/x64/ARM64 × Debug/Release.
 
 - `Framework.vcxproj`: `<ClInclude Include="include\game\*.h" />`, `<ClCompile Include="src\game\*.cpp" />` (mirrors the existing `include\scene\*` / `src\scene\*` entries).
 - `Framework/CMakeLists.txt`: add the same sources while CMake remains maintained.
-- New physics files (`GameplayLayers.h`, overlap query impl) go under existing `physics/` filters.
+- Physics gameplay files (`GameplayLayers.h/.cpp`, overlap implementation) use existing `physics/` filters.
 - No source may exist in only one build system.
 
 ---
 
-## 15. Implementation roadmap
+## 15. Implementation record
 
-Dependency-ordered. Each milestone lists its gate (acceptance) and the tests that must pass.
+P0-P14/M0-M10 were implemented dependency-first. This records delivered slices; it is not a future roadmap.
 
 ```mermaid
 flowchart LR
@@ -1067,41 +1080,41 @@ flowchart LR
   M6 --> M7[M7 Navigation + path follow]
   M7 --> M8[M8 Groups + RTS/FPS examples]
   M8 --> M9[M9 Editor authoring + overlays]
-  M9 --> M10[M10 Visual graph + fast play + polish]
+  M9 --> M10[M10 Pause + telemetry + final gates]
 ```
 
-### M0 — Decisions (doc only)
-Record: id format; schema v2; `behavior` is `std::optional`; fixed tick 1/60 with max 4 catch-up; queued events; unknown components = warning+preserve; validation in `game/GameValidation`; MSBuild+CMake update policy. **Gate:** this spec accepted.
+### M0 — Decisions (complete)
+Recorded id format, schema v2, optional behavior, fixed tick/catch-up, queued events, unknown-component preservation, validation ownership, and build parity.
 
-### M1 — Schema + validation
-Add all §6 descriptors; migration; validation; keep `game_groups`/settings optional. **Gate:** T-SCHEMA-01..03, T-VALID-01..04. No runtime behavior yet.
+### M1 — Schema + validation (complete)
+Added §6 descriptors, stable ID assignment, migration, validation, optional groups/settings, and schema/group tests.
 
-### M2 — Runtime registry + DevGui
-`GameIds`, `GameObject`, `GameObjectRegistry`, `GameLogicSystem` (fixed tick, empty phases), `ComponentFactoryRegistry`, `GameSceneRuntimeLinks`; `SceneTemplate` loads `game_entities`, links to `PrimitiveInst`/physics; DevGui object list. **Gate:** T-REG-01/02, T-LIFE-01, T-TICK-01.
+### M2 — Runtime registry + DevGui (complete)
+Added stable IDs, registry, factory, fixed phases, runtime links, SceneTemplate loading, stats, and DevGui object view.
 
-### M3 — Control + movement (genre seam)
-`InputFrame`, `IController`, `PlayerController`, `AIController` stub, `MovementComponent`; possession; camera attach for FPS pawn. **Gate:** T-CTRL-01; a possessed pawn moves from input and an AI pawn moves from a scripted goal in the same scene.
+### M3 — Control + movement (complete)
+Added `InputFrame`, player/AI controllers, intents, possession, and movement. Camera interpolation remains a scene/camera concern.
 
-### M4 — Components + events
-`Component` lifecycle, `UnknownComponent`, first example `HealthComponent`; queued `EventBus` + ring buffer + DevGui event log. **Gate:** T-COMP-01/02, T-EVENT-01..03.
+### M4 — Components + events (complete)
+Added lifecycle/deferred mutation, unknown-component preservation, Health example, queued EventBus, recent-event view, and tests.
 
-### M5 — State machines
-Compiled `StateMachine`; list/table editor; DevGui force-transition. **Gate:** T-SM-01..04.
+### M5 — State machines (complete)
+Added compiled transitions, priority/tie/cooldown/event semantics, editor tables, force-transition UI, and tests.
 
-### M6 — Physics layers + queries
-Extend Jolt layers + matrix; add `OverlapSphere`, layer filtering, body→entity; `GamePhysicsService` command buffer. **Gate:** T-PHYS-01; a `SensorComponent` example detects entities in radius.
+### M6 — Physics layers + queries (complete)
+Added Jolt gameplay layers/matrix, filtered casts, overlap, body entity IDs, and the physics service. `sensor` remains a known component type/overlay convention but has no dedicated example translation unit.
 
-### M7 — Navigation + path follow
-`GameNavigationService`; `PathFollowComponent`; consume `nav_agent_*`. **Gate:** T-NAV-01; an AI pawn paths on an authored navmesh and falls back gracefully without one.
+### M7 — Navigation + path follow (complete)
+Added worker-backed batched navigation, result phase, NavMesh mutation barrier, path following, existing nav-agent fields, and direct-steering fallback.
 
-### M8 — Groups + examples
-`SceneGroupDesc` + `GroupManager`; RTS example (command controller, formation/flock) and FPS example (weapon/hitscan) under `game/examples`. **Gate:** group membership survives rename/save/load; core still builds/runs without examples.
+### M8 — Groups + examples (complete)
+Added `GroupManager`, inline formation/flock target generation, `RtsCommandController`, `WeaponComponent`, and stable group tests under `game/examples`.
 
-### M9 — Editor authoring + overlays
-Selection type 9; full inspector (identity/control/links/components/behavior); validation panel; overlays. **Gate:** author → save → Play → inspect round-trip.
+### M9 — Editor authoring + overlays (complete)
+Added selection types 9/10, entity/group inspectors, params/config editing, behavior tables, settings, validation/jump, overlays, and Fidelity Play validation.
 
-### M10 — Polish
-Visual state graph (editor-only layout data), fast in-memory Play, hot reload/pause, benchmark scene (100 & 1,000 entities). **Gate:** v2 performance budget met.
+### M10 — Polish/final gates (partial optional scope; required gates complete)
+Added fixed-tick pause, complete `game.*` telemetry, deterministic visual tooling, and final build/test/editor/visual gates. Fast in-memory Play, visual state graph, hot reload, and 100/1,000-entity benchmark scenes were deliberately deferred; performance targets are not claimed as met.
 
 ---
 
@@ -1109,16 +1122,16 @@ Visual state graph (editor-only layout data), fast in-memory Play, hot reload/pa
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Editor UI built before runtime semantics stabilize | High | Roadmap gates runtime (M2–M7) before authoring polish (M9–M10) |
-| Name-based references break on rename/duplicate | High | Stable IDs in M1; names are display-only |
-| Physics query API assumed to exist | High | §9 makes `OverlapSphere`/filtering explicit engine work in M6 |
-| Genre lock-in to RTS unit-AI model | High | Control/possession seam is M3, not deferred |
+| Editor/runtime schema diverges | High | Shared `EditorSceneFile`, Fidelity Play, migration/validation, whole-scene undo |
+| Name-based references break on rename/duplicate | High | Stable IDs; names are display-only |
+| Physics/nav asset mutates during async work | High | Service facades, buffered writes, `PrepareForNavMeshMutation()` barrier |
+| Genre lock-in to RTS unit-AI model | High | Shared control/possession and MovementIntent seam |
 | Per-frame string condition evaluation | Medium | Compile transitions at load (§5.7) |
-| Fast Play diverges from file load | Medium | Keep fidelity path; cross-check command (§11.5) |
-| Worker-thread races (known ParallelFor history) | Medium | Main-thread tick; buffered physics; read-only jobs only |
+| Future Fast Play diverges from file load | Medium | Fidelity remains authoritative; any fast path must consume an owned copy and be cross-checked (§11.5) |
+| Worker-thread races | Medium | Main-thread tick; buffered physics; per-request Detour queries; mutation barrier |
 | Silent schema typos (`error_on_unknown_keys=false`) | Medium | Mandatory validation (§6.5) |
 | Two "group" concepts confuse authors | Low | Gameplay groups named Squad/Team (Appendix D) |
-| Build drift between `.vcxproj` and CMake | Low | §14 requires both, all configs |
+| Build drift between `.vcxproj` and CMake | Medium | §14 requires both; use the registration audit in the verification guide |
 | Networking not addressed | Deferred | Out of scope v1; fixed tick is a compatible foundation |
 
 ---
@@ -1194,17 +1207,17 @@ Framework/include/game/
   Controller.h  InputFrame.h  MovementComponent.h  EventBus.h  StateMachine.h
   GamePhysicsService.h  GameNavigationService.h  GameLogicSystem.h  GameValidation.h
 Framework/include/game/examples/
-  HealthComponent.h  SensorComponent.h  CombatComponent.h  WeaponComponent.h
-  PathFollowComponent.h  GroupManager.h  Formations.h  Flocking.h  RtsCommandController.h
+  HealthComponent.h  WeaponComponent.h  PathFollowComponent.h
+  GroupManager.h  RtsCommandController.h
 Framework/include/physics/
-  GameplayLayers.h                      (new)
+  GameplayLayers.h
 Framework/src/game/  (+ examples/)      (matching .cpp)
-Framework/src/scene/EditorSceneFile.cpp (extend: validation/migration)
-Framework/src/game/GameSelfTest.cpp     (v1 CLI test bodies + registry)
-DayScene/App.cpp                        (dispatch --game-selftest)
-DayScene/SceneTemplate.{h,cpp}          (own GameLogicSystem; build links; DevGui)
-T8ditor/EditorWorld.h                   (gameGroups, gameLogicSettings, selection 9/10)
-T8ditor/EditorApp.cpp                   (inspector, validation, overlays, play modes)
+Framework/src/physics/GameplayLayers.cpp
+Framework/src/game/GameSelfTest.cpp
+DayScene/App.cpp
+DayScene/SceneTemplate.{h,cpp}
+T8ditor/EditorWorld.h
+T8ditor/EditorApp.cpp
 ```
 
 ## Appendix C: API quick reference
@@ -1213,19 +1226,22 @@ T8ditor/EditorApp.cpp                   (inspector, validation, overlays, play m
 |---|---|
 | Create runtime objects | `GameLogicSystem::LoadFromScene(scene, links, &report)` |
 | Per-frame update | `GameLogicSystem::Update(dt)` → fixed `Tick(fixedDt)` |
+| Pause fixed tick | `GameLogicSystem::SetPaused(bool)` |
 | Lookup | `Registry().FindBySceneId("ge_...")` / `Get(runtimeId)` |
 | Intent | `IController::SampleIntent(InputFrame, dt) → MovementIntent` |
 | Physics query | `Physics().LineOfSight(...)`, `Physics().OverlapSphere(...)` |
 | Physics write | `Physics().EnqueueSetVelocity/EnqueueKinematicMove` → `Flush` |
 | Path | `Navigation().RequestPath(...)` → `TryGetResult(...)` |
+| NavMesh rebuild barrier | `Navigation().PrepareForNavMeshMutation()` |
 | Events | `Events().Publish(GameEvent)`; dispatch next tick |
 | Validate | `t850::scene::ValidateEditorSceneGameLogic(scene)` |
+| Assign missing IDs | `t850::scene::EnsureGameEntityIds(scene)` |
 | Migrate | `t850::scene::MigrateEditorSceneGameLogic(scene)` |
 
 ## Appendix D: naming decisions
 
 - **Gameplay groups are "Squad"/"Team" in UI**, serialized as `game_groups` / `SceneGroupDesc`, to avoid confusion with the existing editor mesh-index `SceneGroup groups`.
-- **`control` replaces the legacy `ai` string.** `ai` is kept read-only for one release for migration, then removed.
+- **`control` replaces the legacy `ai` string.** `ai` remains in the schema for legacy migration; no removal release is currently scheduled.
 - **Runtime class is `NavMesh`/`NavigationSystem`**, not `NavigationWorld` (the older proposals used the wrong name).
 - **`OnDestoryScene`** is the existing (misspelled) `SceneBase` hook name; code must match it exactly.
 
@@ -1264,9 +1280,9 @@ pwsh -File scripts\build.ps1 -Config Release -Platform ARM64
 DayScene.exe --game-selftest    # exit code 0 = all pass
 ```
 
-### Steam Deck (Linux/Vulkan, sanity check — final prompt)
+### Steam Deck (Linux/Vulkan)
 
-Runs in the Valve SteamRT `sniper` SDK container (Docker/Podman image `registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest`). From `T850/T850/`:
+Runs in the Valve SteamRT `sniper` SDK container through Podman. From the source root:
 
 ```bash
 ./steamdeck/BuildSteamRuntime.sh --configuration Release
@@ -1274,23 +1290,23 @@ Runs in the Valve SteamRT `sniper` SDK container (Docker/Podman image `registry.
 ./steamdeck/BuildSteamRuntime.sh --configuration Release --configure-only
 ```
 
-Output binary: `T850/bin/SteamDeck/Release/DayScene`. This path is CMake-driven (`T850/T850/CMakeLists.txt`, `-DT850_PLATFORM_STEAM_DECK=ON`, triplet `x64-linux`), so **new `.cpp` files must already be in `Framework/CMakeLists.txt` or this build fails to link.**
+Output binary: `bin/SteamDeck/Release/DayScene`. See [Steam Deck build and deployment](../platform/steam-deck.md) for run, package, and SSH deployment.
 
-### Android (arm64-v8a native, sanity check — final prompt)
+### Android (arm64-v8a native)
 
-From the repo root `T850/`:
-
-```powershell
-pwsh -File BuildAndroidFastApk.ps1 Release            # builds native arm64-v8a .so via CMake externalNativeBuild
-```
-
-Or drive Gradle directly from `T850/T850/android/`:
+From the repository root:
 
 ```powershell
-.\gradlew.bat :app:externalNativeBuildRelease         # native compile only
+.\T850\scripts\android\BuildAndroid.bat Release --abi arm64-v8a
 ```
 
-Android is also CMake-driven, so the same `Framework/CMakeLists.txt` update is required.
+For compile-only unsigned validation:
+
+```powershell
+.\T850\scripts\android\BuildAndroid.bat Release --allow-unsigned-release --abi arm64-v8a
+```
+
+Android is CMake-driven and local signed Release requires signing configuration. `BuildAndroidFastApk.ps1` is a debug-keystore development repack, not the production Release path. See [Android build and deployment](../platform/android.md).
 
 ## Appendix F: adding a source file to both build systems
 
@@ -1313,5 +1329,4 @@ Every new `.h`/`.cpp` under `Framework/` **must** be registered in **both** buil
 
 4. For files under `DayScene/` or `T8ditor/`, update `DayScene.vcxproj` / `T8ditor.vcxproj` and the corresponding `CMakeLists.txt` the same way.
 
-**Verification:** after editing build files, a clean incremental build must still succeed on **x64 and ARM64** (Appendix E). If a symbol links on x64 but not ARM64/Steam Deck/Android, the file is missing from `CMakeLists.txt`.
-```
+**Verification:** after editing build files, rebuild x64 and ARM64 and run the registration audit in [Verification and release gates](../testing/verification.md). A platform-only unresolved game symbol usually means a missing CMake source entry, but inspect the actual linker output before concluding.

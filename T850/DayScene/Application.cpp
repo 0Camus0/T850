@@ -12,6 +12,7 @@
 
 #include <Application.h>
 #include <video/BaseDriver.h>
+#include <thread>
 #if defined(USING_GL_COMMON)
 #include <video/gl/GLTexture.h>
 #endif
@@ -521,6 +522,7 @@ namespace {
 #include <Quake3Mock.h>
 #include <SceneTemplate.h>
 #include <RagdollEditor.h>
+#include <VoxelScene.h>
 
 #ifdef OS_ANDROID
 namespace {
@@ -535,7 +537,10 @@ void App::InitVars() {
   //t850::Technique tech("Techniques/test_technique.xml");
 	DtTimer.Init();
 	DtTimer.Update();
-	srand((unsigned int)DtTimer.GetDTSecs());
+  const unsigned int randomSeed = g_config.regressionFixedDt > 0.0f
+    ? 0u
+    : static_cast<unsigned int>(DtTimer.GetDTSecs());
+  srand(randomSeed);
   FirstFrame = true;
 
   m_scenes.emplace_back(std::make_unique<SandboxScene>());
@@ -543,6 +548,7 @@ void App::InitVars() {
   m_scenes.emplace_back(std::make_unique<Quake3Mock>());
   m_scenes.emplace_back(std::make_unique<RagdollEditor>());
   m_scenes.emplace_back(std::make_unique<SceneTemplate>());
+  m_scenes.emplace_back(std::make_unique<VoxelScene>());
   t850::EngineContext& engineContext = t850::GetEngineContext();
   engineContext.physics = &m_physics;
   if (!m_physics.Initialize() && m_physics.IsAvailable()) {
@@ -715,8 +721,24 @@ void App::DestroyAssets() {
 }
 
 void App::OnUpdate() {
-   DtTimer.Update();
-   DtSecs = DtTimer.GetDTSecs();
+   if (g_config.regressionFixedDt > 0.0f) {
+     using Clock = std::chrono::steady_clock;
+     static Clock::time_point nextRegressionFrame = Clock::now();
+     const auto frameDuration = std::chrono::duration_cast<Clock::duration>(
+         std::chrono::duration<float>(g_config.regressionFixedDt));
+     nextRegressionFrame += frameDuration;
+     const auto now = Clock::now();
+     if (nextRegressionFrame > now) {
+       std::this_thread::sleep_until(nextRegressionFrame);
+     } else if (now - nextRegressionFrame > frameDuration * 4) {
+       nextRegressionFrame = now;
+     }
+     DtTimer.Update();
+     DtSecs = g_config.regressionFixedDt;
+   } else {
+     DtTimer.Update();
+     DtSecs = DtTimer.GetDTSecs();
+   }
    if (FirstFrame) {
      DtSecs = 1.0f / 60.0f;
    }
@@ -1041,6 +1063,12 @@ void App::HandleRuntimeGuiPanelFocusSwitch() {
 void App::OnInput() {
 	if (FirstFrame)
 		return;
+  if (g_config.regressionFixedDt > 0.0f) {
+    IManager.xDelta = 0;
+    IManager.yDelta = 0;
+    IManager.scrollDelta = 0.0f;
+    return;
+  }
 #ifndef OS_ANDROID
   const bool imguiConsumesKeyboard =
       m_imguiReady && m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
@@ -1120,7 +1148,8 @@ bool App::WantsRelativeMouseMode() const {
 #ifdef OS_ANDROID
   return false;
 #else
-  return m_imguiReady && !m_imguiVisible && !IsModalActive();
+  return g_config.regressionFixedDt <= 0.0f &&
+      m_imguiReady && !m_imguiVisible && !IsModalActive();
 #endif
 }
 

@@ -1,6 +1,6 @@
 # Jolt Physics
 
-Status: Stage 7 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains T850's physics system: Jolt lifecycle, body and shape creation, collision layers, triangle mesh cooking, scene/editor authoring metadata, kinematic character movement, ragdoll generation and authoring, animation-to-ragdoll handoff, Play Scene integration, debug rendering, limitations, and debugging workflows.
 
@@ -103,19 +103,15 @@ sequenceDiagram
 
 ## Collision layers
 
-The current layer model is intentionally simple:
+`GameplayLayer` defines nine Jolt object layers:
 
-| Engine/Jolt layer | Meaning |
-|---|---|
-| `Layers::NonMoving` | Static bodies. |
-| `Layers::Moving` | Kinematic/dynamic bodies. |
+- `WorldStatic`, `WorldDynamic`
+- `Player`, `NPC`, `Projectile`
+- `Trigger`, `Ragdoll`, `Debris`, `CameraBlocker`
 
-Layer filtering:
+They map to two broadphase buckets (`NonMoving` for static/camera blockers, `Moving` otherwise) and an explicit symmetric gameplay collision matrix. `GameplayLayerFromString()` maps scene values such as `world`, `player`, `npc`, `trigger`, and `camera_blocker`; legacy body creation still derives a world layer from motion when no explicit layer is supplied.
 
-- static/non-moving collides only with moving,
-- moving collides with everything.
-
-There is no per-gameplay-category collision matrix yet. Scene metadata has string fields such as `collision_layer`, but the runtime Jolt filter currently uses only static vs moving object layers.
+Cast descriptors and `OverlapSphere()` accept include/exclude bit masks built with `GameplayLayerBit()`. `GamePhysicsService` adds team/ignore filtering and maps retained primitive entity IDs back to runtime game-object IDs.
 
 ## Bodies and shapes
 
@@ -147,7 +143,7 @@ Supported motion modes:
 - optional collision group,
 - mass override for non-static bodies.
 
-`PhysicsBodyHandle` is an index into the system's body slot array. `PrimitiveInst` stores the handle through `AttachPhysicsBody()`.
+`PhysicsBodyHandle` contains a slot index and generation. Destroyed slots are reused, but stale handles cannot resolve or destroy a replacement body. `PrimitiveInst` stores the handle through `AttachPhysicsBody()`.
 
 ## Static triangle mesh cooking
 
@@ -396,7 +392,7 @@ SceneTemplate draws physics debug overlays when the `show_physics` editor/runtim
 To extend physics:
 
 1. Add new shape metadata to `PhysicsTypes.h`, conversion to Jolt in `CreateJoltShape()`, debug rendering, and `.t8scene` schema fields.
-2. Add richer collision layers by extending object layers, broadphase layers, and scene metadata mapping.
+2. Extend the gameplay collision matrix and string mapping together when adding a category.
 3. Add true Jolt `CharacterVirtual` support by creating a runtime wrapper instead of only using the current kinematic controller/casts.
 4. Extend triangle mesh cook settings carefully; update cache hash/version when serialized Jolt output compatibility changes.
 5. Add ragdoll joint profiles by extending `PhysicsRagdollBoneDesc`, authoring JSON, loader/saver, and Jolt constraint creation.
@@ -405,8 +401,7 @@ To extend physics:
 ## Known limitations and gotchas
 
 - The physics step is either frame-delta driven or one fixed 1/60 step per frame; there is no accumulator/substep scheduler yet.
-- Collision layers are currently only static/non-moving vs moving.
-- Scene `collision_layer` strings are metadata; Jolt filtering currently does not consume a full named layer matrix.
+- Gameplay layers share two broadphase buckets; adding an object layer requires auditing both mappings and the full collision matrix.
 - The "virtual" character metadata does not mean the runtime uses Jolt `CharacterVirtual`; current movement uses T850's kinematic sweep controller.
 - Jolt rejects non-finite or extremely large coordinates; T850 validates against a broadphase coordinate limit.
 - Triangle mesh cache files are sensitive to geometry, source path, platform, Jolt version/features, and cook settings.

@@ -22,6 +22,7 @@
 #include <utils/xMaths.h>
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -126,7 +127,7 @@ struct EditorWorld {
   std::vector<t850::scene::SceneSplineDesc> splines;
   std::vector<GizmoCache> splineGizmos;
 
-  // Selection type: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh, 5=spline, 6=light camera, 7=spline point, 8=God Rays volume.
+  // Selection type: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh, 5=spline, 6=light camera, 7=spline point, 8=God Rays volume, 9=game entity, 10=game group.
   int selectionType = 0;
   int activeCameraIdx = -1;  // -1 = default editor camera, >=0 = scene camera, <=-2 = light camera (-2-index)
   int selectedSplinePoint = -1;
@@ -141,6 +142,8 @@ struct EditorWorld {
   std::string sceneCollisionResourcePath;
   std::vector<t850::SandboxProfileDesc> sceneProfiles;
   std::vector<t850::scene::SceneGameEntityDesc> gameEntities;
+  std::vector<t850::scene::SceneGroupDesc> gameGroups;
+  std::optional<t850::scene::SceneGameLogicSettingsDesc> gameLogicSettings;
   std::unique_ptr<t850::Q3BspCollisionWorld> q3CollisionWorld;
 };
 

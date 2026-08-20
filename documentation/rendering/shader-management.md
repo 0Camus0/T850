@@ -1,6 +1,6 @@
 # Shader Management
 
-Status: Stage 3 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains how T850 selects shader source files, builds `ShaderKey` permutations, prepends compile-time defines, compiles/caches shaders for D3D11, D3D12, OpenGL, and Vulkan, reflects resource/input layouts, and resolves explicit PSO objects on D3D12 and Vulkan.
 

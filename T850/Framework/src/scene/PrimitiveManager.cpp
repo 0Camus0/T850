@@ -15,6 +15,7 @@
 
 #include <scene/RenderMesh.h>
 #include <scene/RenderSkinnedMesh.h>
+#include <scene/MutableMesh.h>
 #include <scene/RenderQuad.h>
 #include <scene/SplineWireframe.h>
 #include <core/EngineContext.h>
@@ -100,6 +101,14 @@ namespace t850 {
     primitives.push_back(primitive);
     T8_LOG_INFO("Mesh '%s' ready (primitive %d)", fname, (int)(primitives.size()-1));
     return (int)(primitives.size() - 1);
+  }
+
+  int PrimitiveManager::CreateMutableMesh() {
+    MutableMesh* primitive = new MutableMesh();
+    primitive->SetEngineContext(m_engineContext);
+    primitive->Create();
+    primitives.push_back(primitive);
+    return static_cast<int>(primitives.size() - 1);
   }
 
   int PrimitiveManager::CreateQuad() {

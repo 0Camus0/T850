@@ -40,7 +40,9 @@
 #include <scene/RenderViewport.h>
 #include <scene/SceneSetup.h>
 #include <scene/SceneProp.h>
+#include <scene/TextRenderer.h>
 #include <core/Config.h>
+#include <game/GameValidation.h>
 #include <physics/JoltPhysicsSystem.h>
 #include <physics/PhysicsDebugRenderer.h>
 #include <physics/RagdollEditorTool.h>
@@ -149,6 +151,8 @@ namespace t8ditor {
     SceneFile BuildEditorSceneSnapshot(const std::string& scenePath, bool captureImGuiLayout = false);
     SceneFile RefreshVirtualEditorScene(const std::string& scenePath);
     bool SaveEditorSceneSnapshot(const std::string& path, bool updateLoadedScene);
+    bool RunGameValidation(const SceneFile& scene, bool showPanel);
+    void DrawGameValidationPanel();
     t850::SandboxProfileDesc BuildEditorSceneProfile() const;
     void UpsertEditorSceneProfile(std::vector<t850::SandboxProfileDesc>& profiles) const;
     void ApplyEditorSceneProfile(const t850::SandboxProfileDesc& profile);
@@ -212,6 +216,7 @@ namespace t8ditor {
     EditorCamera        m_camera;
     EditorLineRenderer  m_lines;
     EditorLineRenderer  m_navLinkOverlayLines;
+    t850::TextRenderer  m_gameOverlayText;
     EditorGrid          m_grid;
     EditorGizmo         m_gizmo;
     EditorMesh          m_mesh;      // wireframe overlay (kept for toggle)
@@ -283,6 +288,8 @@ namespace t8ditor {
     std::string m_pendingEditorCubemapPath;
     uint32_t m_editorAnimationInspectorEntityId = 0;
     int m_editorAnimationInspectorAnimSet = -1;
+    t850::scene::SceneValidationReport m_gameValidationReport;
+    bool m_gameValidationHasRun = false;
 
     bool m_assetsCreated = false;
     bool m_imguiReady   = false;

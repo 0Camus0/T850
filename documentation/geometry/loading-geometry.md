@@ -1,6 +1,6 @@
 # Loading Geometry
 
-Status: Stage 2 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains how T850 loads mesh assets, converts them into the engine's internal geometry format, creates material/shader metadata, uploads vertex/index data, and decides whether a mesh is rendered by `RenderMesh` or `RenderSkinnedMesh`.
 
@@ -330,7 +330,17 @@ Common mappings include:
 | `alphaMode` / `alphaCutoff` | `alphaMode` / `alphaCutoff` |
 | `doubleSided` | `doubleSided` |
 | `KHR_texture_transform` | per-slot UV transform defaults |
-| material extensions such as sheen, clearcoat, transmission, specular, ior | corresponding material defaults and texture slots where supported |
+| `KHR_materials_pbrSpecularGlossiness` | legacy specular/glossiness workflow defaults |
+| `KHR_materials_sheen` | sheen factors and color/roughness texture slots |
+| `KHR_materials_clearcoat` | clearcoat factors and clearcoat texture slots |
+| `KHR_materials_transmission`, `KHR_materials_diffuse_transmission` | transmission factors/textures |
+| `KHR_materials_specular` | specular factor/color defaults and texture slots |
+| `KHR_materials_ior` | index-of-refraction/default specular behavior |
+| `KHR_materials_emissive_strength` | emissive intensity |
+| `KHR_materials_unlit` | no-light material mode |
+| `MOZ_lightmap` | lightmap binding and UV set |
+
+The required-extension allowlist also accepts and parses `KHR_draco_mesh_compression`, `KHR_materials_anisotropy`, `KHR_materials_dispersion`, `KHR_materials_iridescence`, `KHR_materials_volume`, and `KHR_materials_volume_scatter`. Except for Draco geometry decode, those accepted extension records are not currently converted into active renderer material defaults in `GLTFMaterial.cpp`; acceptance means the document can load without an unsupported-required-extension failure, not that every visual term is rendered.
 
 `RenderMesh::GatherInfo()` converts material/attribute defaults into `ShaderKey` bits. For example, diffuse/specular/gloss/normal/height/metallic/emissive/occlusion/specular/transmission/lightmap maps set feature bits. It then pre-creates shader variants for forward, GBuffer, shadow map, and radial-depth passes, plus parallax variants when a height map is present.
 

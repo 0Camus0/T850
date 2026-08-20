@@ -1,6 +1,6 @@
 # NavMesh and Detour
 
-Status: Stage 8 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains T850's navigation system: Recast build, Detour queries, navigation source geometry, authored volumes and links, area costs, automatic drop/jump links, `.t8nav` cache and baked assets, runtime SceneTemplate integration, editor authoring workflows, debug rendering, physics validation, limitations, and debugging.
 
@@ -365,6 +365,20 @@ T8ditor UI supports:
 10. Invalidates debug renderer and logs stats.
 
 Runtime debug drawing uses `NavMeshDebugRenderer` when `showNavMesh` is enabled and `EnsureNavMeshBuilt()` succeeds.
+
+## Gameplay navigation facade
+
+The scene-owned `GameLogicSystem` binds `GameNavigationService` to SceneTemplate's `NavMesh` and engine thread pool. Components do not call Detour directly.
+
+- `RequestPath()` queues a stable request id and batches `NavPathRequest` values.
+- Worker-backed batches call `NavMesh::FindPaths()` over the ready, immutable query mesh.
+- `ResolveCompleted()` runs after post-physics components in the fixed-tick phase order.
+- `TryGetResult()` transfers a completed result to `PathFollowComponent`.
+- `ProjectToNavmesh()` and `Available()` fail cleanly when no authored/baked mesh is ready.
+- `PathFollowComponent` steers AI controllers through returned corners and keeps direct steering as the unavailable/failed-path fallback.
+- `PrepareForNavMeshMutation()` waits for worker batches and invalidates queued, running, and unconsumed results before editor/runtime NavMesh rebuilds or asset destruction.
+
+The service drains pending futures before unbinding, and SceneTemplate shuts game logic down before destroying navigation assets. DetourCrowd remains linked but is not used by this path.
 
 ## Editor authoring workflow
 

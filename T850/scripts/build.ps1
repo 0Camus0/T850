@@ -1,6 +1,6 @@
 # T850 Build Script
-# Usage: .\build.ps1 -Config <Release|Debug> -Platform <x64|x86|ARM64>
-# Example: .\build.ps1 -Config Release -Platform x64
+# Usage: .\build.ps1 -Config <Release|Debug> -Platform <x64|x86|Win32|ARM64> [-Action <Build|Rebuild>]
+# Example: .\build.ps1 -Config Release -Platform x64 -Action Build
 
 param(
     [Parameter(Mandatory = $true)]
@@ -8,8 +8,11 @@ param(
     [string]$Config,
 
     [Parameter(Mandatory = $true)]
-    [ValidateSet("x64", "x86", "ARM64", IgnoreCase = $true)]
-    [string]$Platform
+    [ValidateSet("x64", "x86", "Win32", "ARM64", IgnoreCase = $true)]
+    [string]$Platform,
+
+    [ValidateSet("Build", "Rebuild", IgnoreCase = $true)]
+    [string]$Action = "Rebuild"
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,10 +37,11 @@ if (-not (Test-Path $slnPath)) {
 
 # Normalize config casing
 $Config = $Config.Substring(0,1).ToUpper() + $Config.Substring(1).ToLower()
+$Action = $Action.Substring(0,1).ToUpper() + $Action.Substring(1).ToLower()
 
 # Map platform to MSBuild platform name (x86 -> Win32 in .sln)
 $msbuildPlatform = switch ($Platform.ToLower()) {
-    "x86"   { "Win32" }
+    { $_ -in @("x86", "win32") } { "Win32" }
     "x64"   { "x64" }
     "arm64" { "ARM64" }
 }
@@ -115,7 +119,7 @@ if (-not $msbuild) {
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host " T850 Rebuild" -ForegroundColor Cyan
+Write-Host " T850 $Action" -ForegroundColor Cyan
 Write-Host " Config:   $Config" -ForegroundColor Cyan
 Write-Host " Platform: $Platform ($msbuildPlatform)" -ForegroundColor Cyan
 Write-Host " Workers:  $buildWorkers (cores - 1)" -ForegroundColor Cyan
@@ -127,7 +131,7 @@ Write-Host ""
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
 # Run MSBuild
-& $msbuild $slnPath /p:Configuration=$Config /p:Platform=$msbuildPlatform /t:Rebuild /v:minimal /m:$buildWorkers 2>&1 | ForEach-Object {
+& $msbuild $slnPath /p:Configuration=$Config /p:Platform=$msbuildPlatform /t:$Action /nologo /v:minimal /m:$buildWorkers 2>&1 | ForEach-Object {
     $line = $_.ToString()
     # Color errors red, warnings yellow
     if ($line -match ": error ") {

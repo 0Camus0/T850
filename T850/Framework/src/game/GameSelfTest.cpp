@@ -10,7 +10,7 @@
 #include <game/GamePhysicsService.h>
 #include <game/StateMachine.h>
 #include <game/GameValidation.h>
-#include <physics\JoltPhysicsSystem.h>
+#include <physics/JoltPhysicsSystem.h>
 #include <scene/EditorSceneFile.h>
 #include <scene/MutableMeshData.h>
 #include <scene/RenderContainer.h>

@@ -485,9 +485,9 @@ t850::terrain::VoxelChunkBuildResult MinecraftScene::BuildStreamedChunk(
         }
         result.chunk->Set(x, y, z, block);
       }
-      // Place a tree on grass occasionally.
+      // Place a tree on grass with a higher density for a Minecraft look.
       if (!beach && height > kWaterLevel + 2 &&
-          HashNoise(worldX * 31 + 17, worldZ * 31 + 23) > 0.985f) {
+          HashNoise(worldX * 31 + 17, worldZ * 31 + 23) > 0.96f) {
         PlaceTree(worldX, height, worldZ, *result.chunk);
       }
     }
@@ -525,11 +525,11 @@ void MinecraftScene::InitVars() {
   // the upper part of the frame, like a Minecraft screenshot.
   const float spawnX = 16.0f;
   const float spawnZ = -40.0f;
-  const float spawnY = static_cast<float>(TerrainHeight(static_cast<int>(spawnX), static_cast<int>(spawnZ))) + 18.0f;
+  const float spawnY = static_cast<float>(TerrainHeight(static_cast<int>(spawnX), static_cast<int>(spawnZ))) + 12.0f;
   m_camera.InitPerspective(XVECTOR3(spawnX, spawnY, spawnZ), Deg2Rad(70.0f), 1280.0f / 720.0f, 0.05f, 1000.0f);
   m_camera.Eye = XVECTOR3(spawnX, spawnY, spawnZ, 1.0f);
   m_camera.Yaw = 0.0f;
-  m_camera.Pitch = -0.25f;
+  m_camera.Pitch = -0.2f;
   m_camera.Update(0.0f);
   m_cameraController.SetActiveProfile(t850::CameraProfileType::FreeFly);
   m_cameraController.AttachCamera(&m_camera);
@@ -546,6 +546,7 @@ void MinecraftScene::InitVars() {
   SceneProp.AddDirectionalLight(m_lightCamera.Look, XVECTOR3(1.0f, 0.98f, 0.92f, 1.0f), 8.0f, true);
   SceneProp.ActiveLights = 1;
   SceneProp.AmbientColor = XVECTOR3(0.6f, 0.65f, 0.7f, 1.0f);
+  SceneProp.Exposure = 0.5f;
   SceneProp.ToogleDOF = 0;
   SceneProp.ToogleParallax = 0;
   SceneProp.IBLFactor = 0.8f;

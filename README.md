@@ -96,7 +96,7 @@ Full guide: [Windows setup, build, and run](documentation/development/windows-bu
 
 ## Runtime Hosts
 
-`DayScene.exe` contains six selectable hosts:
+`DayScene.exe` contains seven selectable hosts:
 
 | Index | Host | Typical use |
 |---:|---|---|
@@ -106,6 +106,7 @@ Full guide: [Windows setup, build, and run](documentation/development/windows-bu
 | 3 | RagdollEditor | animated model and runtime ragdoll work |
 | 4 | SceneTemplate | authored `.t8scene`, gameplay, physics, navigation |
 | 5 | VoxelScene | generated mutable chunks, grounded FPS, streaming and block edits |
+| 6 | MinecraftScene | Minecraft-like voxel world: noise terrain, trees, water, hotbar block place/break |
 
 Use `DayScene.exe --help` for the current CLI. See [Runtime hosts](documentation/runtime/runtime-hosts.md) and [Runtime configuration](documentation/development/runtime-configuration.md).
 

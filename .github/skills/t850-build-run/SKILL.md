@@ -106,7 +106,7 @@ Set-Location (Join-Path $SourceRoot 'bin\x64\Release')
 .\DayScene.exe --api d3d11 --scene 4 --sceneFile Scenes/DayScene.t8scene
 ```
 
-Scene indices: 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTemplate, 5 VoxelScene.
+Scene indices: 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTemplate, 5 VoxelScene, 6 MinecraftScene.
 
 Use `--help` instead of guessing a flag:
 

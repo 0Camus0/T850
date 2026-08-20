@@ -230,6 +230,7 @@ $xaml = @"
                             <ComboBoxItem Content="Ragdoll Editor" Tag="3"/>
                             <ComboBoxItem Content="Scene Template" Tag="4"/>
                             <ComboBoxItem Content="Voxel Streaming" Tag="5"/>
+                            <ComboBoxItem Content="Minecraft" Tag="6"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
@@ -1219,7 +1220,12 @@ function Update-Preview {
     $editorOk = Test-Path $editorCmd.ExePath
     $sceneDeps = Get-CachedSceneDependencyResult
     $assetStatus = $script:CloudAssetStatus
-    $assetsMissing = ($assetStatus -and $assetStatus.Configured -and $assetStatus.Ok -and $assetStatus.Missing -gt 0)
+    # Scenes that generate their own content (voxel/Minecraft) or use a local
+    # model do not require the cloud asset set. Only gate Run on cloud assets
+    # for scenes that actually reference them.
+    $sceneTag = if ($cmbScene -and $cmbScene.SelectedItem) { $cmbScene.SelectedItem.Tag.ToString() } else { "0" }
+    $requiresCloudAssets = ($sceneTag -in @("1", "2", "3", "4"))
+    $assetsMissing = ($requiresCloudAssets -and $assetStatus -and $assetStatus.Configured -and $assetStatus.Ok -and $assetStatus.Missing -gt 0)
 
     if (-not $sceneDeps.Ok) {
         $txtStatus.Text = "Scene missing: $($sceneDeps.Missing -join ', ')"

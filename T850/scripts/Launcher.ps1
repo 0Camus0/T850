@@ -284,6 +284,7 @@ $xaml = @"
                             <ComboBoxItem Content="Ragdoll Editor" Tag="3"/>
                             <ComboBoxItem Content="Scene Template" Tag="4"/>
                             <ComboBoxItem Content="Voxel Streaming" Tag="5"/>
+                            <ComboBoxItem Content="Minecraft" Tag="6"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
@@ -379,7 +380,7 @@ $xaml = @"
                      Cursor="IBeam"/>
             <!-- Build output log -->
             <Border Name="pnlBuildOutput" Background="#0D1117" CornerRadius="4"
-                    Margin="0,8,0,0" Padding="2" MaxHeight="200"
+                    Margin="0,8,0,0" Padding="2" Height="160"
                     Visibility="Collapsed">
                 <ScrollViewer Name="svBuildOutput" VerticalScrollBarVisibility="Auto">
                     <TextBlock Name="txtBuildOutput" FontFamily="Consolas" FontSize="11"
@@ -2169,7 +2170,12 @@ function Update-Preview {
     if ($script:LauncherBusy) { return }
     $sceneDeps = Get-CachedSceneDependencyResult
     $assetStatus = $script:CloudAssetStatus
-    $assetsMissing = ($assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok))
+    # Scenes that generate their own content (voxel/Minecraft) or use a local
+    # model do not require the cloud asset set. Only gate Run on cloud assets
+    # for scenes that actually reference them.
+    $sceneTag = if ($cmbScene -and $cmbScene.SelectedItem) { $cmbScene.SelectedItem.Tag.ToString() } else { "0" }
+    $requiresCloudAssets = ($sceneTag -in @("1", "2", "3", "4"))
+    $assetsMissing = ($requiresCloudAssets -and $assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok))
     if (Test-AndroidTarget) {
         $apkPath = Get-AndroidApkPath
         $abiFilters = Get-AndroidAbiFilters
@@ -2248,7 +2254,9 @@ function Update-SceneOptionVisibility {
     $pnlSceneFileSelect.Visibility = if (($sandboxVisible -and ($sandboxMode -eq "scene")) -or ($sceneTag -eq "2") -or ($sceneTag -eq "4")) { "Visible" } else { "Collapsed" }
     $chkBenchmark.Visibility = if ($sceneTag -eq "1") { "Visible" } else { "Collapsed" }
     $pnlBenchmarkMode.Visibility = if ($sceneTag -eq "1" -and $chkBenchmark.IsChecked) { "Visible" } else { "Collapsed" }
-    if ($btnBenchmarkMatrix) { $btnBenchmarkMatrix.Visibility = "Collapsed" }
+    if ($btnBenchmarkMatrix) {
+        $btnBenchmarkMatrix.Visibility = if ($sceneTag -eq "1" -and $chkBenchmark.IsChecked -and $rbBenchmarkMatrix.IsChecked) { "Visible" } else { "Collapsed" }
+    }
     if ($sceneTag -ne "1") { $chkBenchmark.IsChecked = $false }
 }
 
@@ -2650,6 +2658,8 @@ function Invoke-Build {
         $btnBuild.Content = "BUILD"
         $btnBuild.IsEnabled = $true
         $btnRebuild.IsEnabled = $true
+        # Ensure the busy flag is cleared so Update-Preview can re-enable Run.
+        $script:LauncherBusy = $false
         Update-Preview
     }
 }
@@ -2681,7 +2691,9 @@ $btnRun.Add_Click({
     Update-LauncherCloudAssetStatus | Out-Null
     Update-Preview
     $assetStatus = $script:CloudAssetStatus
-    if ($assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok)) {
+    $sceneTag = if ($cmbScene -and $cmbScene.SelectedItem) { $cmbScene.SelectedItem.Tag.ToString() } else { "0" }
+    $requiresCloudAssets = ($sceneTag -in @("1", "2", "3", "4"))
+    if ($requiresCloudAssets -and $assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok)) {
         [System.Windows.MessageBox]::Show(
             ("Cloud assets are missing or invalid. Click Download Assets before running." + "`n`n" + $assetStatus.Message),
             "T850 Launcher", "OK", "Warning") | Out-Null
@@ -2716,6 +2728,19 @@ $btnRun.Add_Click({
 
     $txtStatus.Text = "Process running"
     $txtStatus.Foreground = $window.FindResource("GreenBrush")
+})
+
+# BENCHMARK MATRIX button — quick-launch the Day scene benchmark matrix.
+$btnBenchmarkMatrix.Add_Click({
+    # Ensure the Day scene + benchmark matrix options are selected.
+    foreach ($item in $cmbScene.Items) {
+        if ($item.Tag -eq "1") { $cmbScene.SelectedItem = $item; break }
+    }
+    $chkBenchmark.IsChecked = $true
+    $rbBenchmarkMatrix.IsChecked = $true
+    Update-SceneOptionVisibility
+    Update-Preview
+    $btnRun.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
 })
 
 # EDITOR button — launch T8ditor with current graphics/resolution/log settings

@@ -22,6 +22,32 @@ struct Bucket {
   std::vector<uint32_t> indices;
 };
 
+// Select the atlas rectangle for a face based on its normal. When a block
+// defines per-face textures, top faces use the top rect, bottom faces use the
+// bottom rect, and all side faces use the side rect. Otherwise the single
+// atlas rect is used for every face.
+void SelectFaceUv(const BlockDefinition& definition,
+                  const XVECTOR3& normal,
+                  float& u0, float& v0, float& u1, float& v1) {
+  if (!definition.hasPerFaceTextures) {
+    u0 = definition.atlasU0;
+    v0 = definition.atlasV0;
+    u1 = definition.atlasU1;
+    v1 = definition.atlasV1;
+    return;
+  }
+  if (normal.y > 0.5f) {
+    u0 = definition.topU0; v0 = definition.topV0;
+    u1 = definition.topU1; v1 = definition.topV1;
+  } else if (normal.y < -0.5f) {
+    u0 = definition.bottomU0; v0 = definition.bottomV0;
+    u1 = definition.bottomU1; v1 = definition.bottomV1;
+  } else {
+    u0 = definition.sideU0; v0 = definition.sideV0;
+    u1 = definition.sideU1; v1 = definition.sideV1;
+  }
+}
+
 } // namespace
 
 bool BuildGreedyVoxelMesh(const VoxelChunk& chunk,
@@ -123,10 +149,10 @@ bool BuildGreedyVoxelMesh(const VoxelChunk& chunk,
 
           Bucket& bucket = bucketFor(cell.block);
           const uint32_t base = static_cast<uint32_t>(bucket.vertices.size());
-          const float u0 = definition.usesBaseColorTexture ? definition.atlasU0 : 0.0f;
-          const float v0 = definition.usesBaseColorTexture ? definition.atlasV0 : 0.0f;
-          const float u1 = definition.usesBaseColorTexture ? definition.atlasU1 : static_cast<float>(width);
-          const float v1 = definition.usesBaseColorTexture ? definition.atlasV1 : static_cast<float>(height);
+          float u0 = 0.0f, v0 = 0.0f, u1 = static_cast<float>(width), v1 = static_cast<float>(height);
+          if (definition.usesBaseColorTexture) {
+            SelectFaceUv(definition, normal, u0, v0, u1, v1);
+          }
           bucket.vertices.push_back(MutableMeshVertex{p0, normal, u0, v0});
           bucket.vertices.push_back(MutableMeshVertex{p1, normal, u1, v0});
           bucket.vertices.push_back(MutableMeshVertex{p2, normal, u1, v1});

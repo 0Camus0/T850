@@ -2,13 +2,13 @@
 
 Status: verified against DayScene and T8ditor entry points on 2026-08-19.
 
-The executable is named `DayScene.exe`, but it hosts six different runtime scene classes. Choose the host before changing code or selecting a regression case.
+The executable is named `DayScene.exe`, but it hosts seven different runtime scene classes. Choose the host before changing code or selecting a regression case.
 
 ## Executables
 
 | Executable | Purpose |
 |---|---|
-| `DayScene.exe` | Runtime shell containing Sandbox, DayScene, Quake3Mock, RagdollEditor, SceneTemplate, and VoxelScene |
+| `DayScene.exe` | Runtime shell containing Sandbox, DayScene, Quake3Mock, RagdollEditor, SceneTemplate, VoxelScene, and MinecraftScene |
 | `T8ditor.exe` | Authored scene editor and hosted Play/Mesh/Ragdoll tools |
 
 Framework libraries are not standalone applications.
@@ -23,6 +23,7 @@ Framework libraries are not standalone applications.
 | 3 | `RagdollEditor` | animated `--model` | runtime ragdoll/animation authoring behavior |
 | 4 | `SceneTemplate` | authored `--sceneFile` | long-term `.t8scene` runtime, gameplay, physics, navigation, profiles |
 | 5 | `VoxelScene` | generated chunks + persisted deltas | mutable block terrain, FPS traversal, streaming, place/remove reference |
+| 6 | `MinecraftScene` | generated chunks + persisted deltas | Minecraft-like voxel world: noise terrain, trees, water, hotbar block place/break |
 
 ## Which Host to Change
 
@@ -34,6 +35,7 @@ Framework libraries are not standalone applications.
 - Full-skeleton runtime ragdoll tooling: `RagdollEditor` and shared ragdoll Framework code.
 - Authoring UI, undo, validation, overlays, or Play Scene: T8ditor.
 - Mutable/procedural block worlds: Framework terrain module plus `VoxelScene` reference integration.
+- Minecraft-like gameplay: `MinecraftScene` (noise terrain, trees, water, hotbar block selection).
 
 Do not add new general runtime behavior to all legacy scene copies when `SceneTemplate` is the owning path. Audit duplicates only when a shared input/camera/rendering change requires parity.
 

@@ -1161,6 +1161,9 @@ namespace t850 {
 
   void VulkanDriver::DestroyDriver() {
     FlushGPUResources();
+    for (const RetiredEngineBuffer& retired : m_retiredBuffers)
+      if (retired.buffer) retired.buffer->release();
+    m_retiredBuffers.clear();
     if (m_allocator) {
       for (auto& cleanupList : m_deferredCleanup) {
         for (auto& db : cleanupList)
@@ -1318,6 +1321,16 @@ namespace t850 {
       vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
     }
 
+    for (auto iterator = m_retiredBuffers.begin(); iterator != m_retiredBuffers.end();) {
+      if (iterator->framesRemaining > 0) --iterator->framesRemaining;
+      if (iterator->framesRemaining == 0) {
+        if (iterator->buffer) iterator->buffer->release();
+        iterator = m_retiredBuffers.erase(iterator);
+      } else {
+        ++iterator;
+      }
+    }
+
     if (useSwapchain) {
       VkResult res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
                                             m_imageAvailableSemaphores[m_currentFrame],
@@ -1399,6 +1412,10 @@ namespace t850 {
   }
 
   void VulkanDriver::EndFrame() {}
+
+  void VulkanDriver::RetireBuffer(Buffer* buffer) {
+    if (buffer) m_retiredBuffers.push_back(RetiredEngineBuffer{buffer, kBackBufferCount});
+  }
 
   VkCommandBuffer VulkanDriver::GetTransientCommandBuffer() {
     VkCommandBufferAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };

@@ -36,6 +36,8 @@
 #include <utils/Picking.h>
 #include <debug/FrameDumper.h>
 #include <debug/LoadingProgress.h>
+#include <game/GameIds.h>
+#include <game/GameValidation.h>
 #include <imgui/DevGuiContext.h>
 #include <imgui/RagdollEditorGui.h>
 
@@ -46,6 +48,7 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <fstream>
@@ -198,11 +201,14 @@ namespace {
   auto& g_godRaysVolumeGizmo = g_world.godRaysVolumeGizmo;
   std::vector<GizmoCache> g_navMeshVolumeGizmos;
   std::array<GizmoCache, 5> g_navMeshClassificationGizmos;
+  GizmoCache g_gameOverlayCircleGizmo;
+  GizmoCache g_gameOverlayGroupLinesGizmo;
+  GizmoCache g_gameOverlayHealthLinesGizmo;
   auto& g_splines = g_world.splines;
   auto& g_splineGizmos = g_world.splineGizmos;
   auto& g_selectedSplinePoint = g_world.selectedSplinePoint;
 
-  // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh, 5=spline, 6=light camera, 7=spline point, 8=God Rays volume.
+  // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh, 5=spline, 6=light camera, 7=spline point, 8=God Rays volume, 9=game entity, 10=game group.
   auto& g_selectionType = g_world.selectionType;
 
   // Marquee box selection state
@@ -309,6 +315,8 @@ namespace {
   auto& g_sceneCollisionResourcePath = g_world.sceneCollisionResourcePath;
   auto& g_sceneProfiles = g_world.sceneProfiles;
   auto& g_gameEntities = g_world.gameEntities;
+  auto& g_gameGroups = g_world.gameGroups;
+  auto& g_gameLogicSettings = g_world.gameLogicSettings;
   auto& g_q3CollisionWorld = g_world.q3CollisionWorld;
 
   // Frame dumper for RT snapshot debugging (space key)
@@ -1709,6 +1717,292 @@ static void EnsureInferredGameEntities() {
     }
     g_gameEntities.push_back(std::move(entity));
   }
+}
+
+static bool DrawGameStringField(const char* label, std::string& value, bool multiline = false) {
+  std::array<char, 4096> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "%s", value.c_str());
+  const bool changed = multiline
+      ? ImGui::InputTextMultiline(label, buffer.data(), buffer.size(), ImVec2(-1.0f, 90.0f))
+      : ImGui::InputText(label, buffer.data(), buffer.size());
+  if (changed) value = buffer.data();
+  return changed;
+}
+
+static bool DrawGameStringChoice(
+    const char* label, std::string& value, const std::vector<std::string>& choices, bool allowNone = true) {
+  const char* preview = value.empty() ? "None" : value.c_str();
+  bool changed = false;
+  if (ImGui::BeginCombo(label, preview)) {
+    if (allowNone && ImGui::Selectable("None", value.empty())) {
+      value.clear();
+      changed = true;
+    }
+    for (const std::string& choice : choices) {
+      const bool selected = value == choice;
+      if (ImGui::Selectable(choice.c_str(), selected)) {
+        value = choice;
+        changed = true;
+      }
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+  return changed;
+}
+
+static std::string UniqueMapKey(const std::map<std::string, std::string>& params) {
+  std::string key = "param";
+  for (int suffix = 2; params.contains(key); ++suffix) key = "param" + std::to_string(suffix);
+  return key;
+}
+
+static void DrawGameParamsTable(const char* id, std::map<std::string, std::string>& params) {
+  std::string removeKey;
+  std::string renameKey;
+  std::string renameValue;
+  if (ImGui::BeginTable(id, 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp)) {
+    ImGui::TableSetupColumn("Key");
+    ImGui::TableSetupColumn("Value");
+    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 28.0f);
+    ImGui::TableHeadersRow();
+    int row = 0;
+    for (auto& [key, value] : params) {
+      ImGui::PushID(row++);
+      ImGui::TableNextRow();
+      ImGui::TableSetColumnIndex(0);
+      std::array<char, 256> keyBuffer{};
+      std::snprintf(keyBuffer.data(), keyBuffer.size(), "%s", key.c_str());
+      if (ImGui::InputText("##key", keyBuffer.data(), keyBuffer.size()) && keyBuffer[0] != '\0') {
+        renameKey = key;
+        renameValue = keyBuffer.data();
+      }
+      ImGui::TableSetColumnIndex(1);
+      std::array<char, 1024> valueBuffer{};
+      std::snprintf(valueBuffer.data(), valueBuffer.size(), "%s", value.c_str());
+      if (ImGui::InputText("##value", valueBuffer.data(), valueBuffer.size())) value = valueBuffer.data();
+      ImGui::TableSetColumnIndex(2);
+      if (ImGui::SmallButton("X")) removeKey = key;
+      ImGui::PopID();
+    }
+    ImGui::EndTable();
+  }
+  if (!removeKey.empty()) params.erase(removeKey);
+  if (!renameKey.empty() && renameKey != renameValue && !params.contains(renameValue)) {
+    auto node = params.extract(renameKey);
+    if (!node.empty()) {
+      node.key() = renameValue;
+      params.insert(std::move(node));
+    }
+  }
+  if (ImGui::SmallButton("Add Parameter")) params.emplace(UniqueMapKey(params), std::string{});
+}
+
+static std::vector<std::string> GameMeshChoices() {
+  std::vector<std::string> choices;
+  choices.reserve(g_objects.size());
+  for (const SceneObject& object : g_objects) choices.push_back(object.name);
+  return choices;
+}
+
+static std::vector<std::string> GamePhysicsChoices() {
+  std::vector<std::string> choices;
+  choices.reserve(g_physicsEntities.size());
+  for (const PhysicsSceneEntity& entity : g_physicsEntities) choices.push_back(entity.name);
+  return choices;
+}
+
+static std::vector<std::string> GameCameraChoices() {
+  std::vector<std::string> choices;
+  choices.reserve(g_cameras.size());
+  for (const SceneCamera& camera : g_cameras) choices.push_back(camera.name);
+  return choices;
+}
+
+static bool DrawGameEntityInspector(t850::scene::SceneGameEntityDesc& entity) {
+  ImGui::SeparatorText("Identity");
+  ImGui::TextDisabled("ID");
+  ImGui::SameLine();
+  ImGui::TextWrapped("%s", entity.id.empty() ? "Assigned on save" : entity.id.c_str());
+  DrawGameStringField("Name", entity.name);
+  DrawGameStringField("Kind", entity.kind);
+  ImGui::DragInt("Team", &entity.team, 1.0f, -1, 1024);
+  ImGui::Checkbox("Visible", &entity.visible);
+  ImGui::SameLine();
+  ImGui::Checkbox("Frozen", &entity.frozen);
+  ImGui::SameLine();
+  ImGui::Checkbox("Wire", &entity.show_wire);
+
+  ImGui::SeparatorText("Control");
+  const char* modes[] = {"none", "player", "ai"};
+  int mode = entity.control.mode == "player" ? 1 : entity.control.mode == "ai" ? 2 : 0;
+  if (ImGui::Combo("Mode", &mode, modes, 3)) entity.control.mode = modes[mode];
+  DrawGameStringField("Controller", entity.control.controller);
+  if (entity.control.mode == "player") ImGui::DragInt("Player Slot", &entity.control.player_slot, 1.0f, 0, 15);
+
+  ImGui::SeparatorText("Links");
+  const std::vector<std::string> meshChoices = GameMeshChoices();
+  const std::vector<std::string> physicsChoices = GamePhysicsChoices();
+  const std::vector<std::string> cameraChoices = GameCameraChoices();
+  DrawGameStringChoice("Mesh Object", entity.mesh_object, meshChoices);
+  DrawGameStringChoice("Primary Physics", entity.primary_physics_entity, physicsChoices);
+  DrawGameStringChoice("Camera", entity.camera, cameraChoices);
+  DrawGameStringChoice("Ragdoll Object", entity.ragdoll_object, meshChoices);
+  if (ImGui::TreeNodeEx("Additional Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+    for (const std::string& physicsName : physicsChoices) {
+      bool linked = std::find(entity.physics_entities.begin(), entity.physics_entities.end(), physicsName) !=
+          entity.physics_entities.end();
+      if (ImGui::Checkbox(physicsName.c_str(), &linked)) {
+        if (linked) entity.physics_entities.push_back(physicsName);
+        else entity.physics_entities.erase(
+            std::remove(entity.physics_entities.begin(), entity.physics_entities.end(), physicsName),
+            entity.physics_entities.end());
+      }
+    }
+    ImGui::TreePop();
+  }
+
+  ImGui::SeparatorText("Components");
+  constexpr const char* componentTypes[] = {
+      "health", "movement", "path_follow", "weapon", "sensor", "combat",
+      "debug_name", "formation_slot", "resource", "state_machine", "status_effect", "transform"};
+  static int newComponentType = 0;
+  ImGui::Combo("New Component", &newComponentType, componentTypes, static_cast<int>(std::size(componentTypes)));
+  ImGui::SameLine();
+  if (ImGui::Button("Add##component")) {
+    t850::scene::SceneComponentDesc component;
+    component.id = t850::game::MakeStableId("comp_");
+    component.type = componentTypes[newComponentType];
+    entity.components.push_back(std::move(component));
+  }
+  int removeComponent = -1;
+  for (int index = 0; index < static_cast<int>(entity.components.size()); ++index) {
+    t850::scene::SceneComponentDesc& component = entity.components[static_cast<std::size_t>(index)];
+    ImGui::PushID(index + 120000);
+    const std::string header = component.type.empty() ? "Component" : component.type;
+    if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::TextDisabled("%s", component.id.c_str());
+      ImGui::Checkbox("Enabled", &component.enabled);
+      DrawGameStringField("Type", component.type);
+      DrawGameParamsTable("ComponentParams", component.params);
+      DrawGameStringField("Config JSON", component.config_json, true);
+      if (ImGui::Button("Remove Component")) removeComponent = index;
+    }
+    ImGui::PopID();
+  }
+  if (removeComponent >= 0) entity.components.erase(entity.components.begin() + removeComponent);
+
+  ImGui::SeparatorText("Behavior");
+  bool hasBehavior = entity.behavior.has_value();
+  if (ImGui::Checkbox("State Machine", &hasBehavior)) {
+    if (hasBehavior) {
+      t850::scene::SceneStateMachineDesc behavior;
+      behavior.states.push_back(t850::scene::SceneStateDesc{.name = "idle"});
+      entity.behavior = std::move(behavior);
+    } else {
+      entity.behavior.reset();
+    }
+  }
+  if (entity.behavior.has_value()) {
+    auto& behavior = *entity.behavior;
+    std::vector<std::string> stateNames;
+    for (const auto& state : behavior.states) stateNames.push_back(state.name);
+    DrawGameStringChoice("Initial State", behavior.initial_state, stateNames, false);
+    int removeState = -1;
+    for (int index = 0; index < static_cast<int>(behavior.states.size()); ++index) {
+      auto& state = behavior.states[static_cast<std::size_t>(index)];
+      ImGui::PushID(index + 130000);
+      if (ImGui::TreeNodeEx(state.name.empty() ? "State" : state.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        DrawGameStringField("State Name", state.name);
+        ImGui::DragFloat("Default Duration", &state.default_duration, 0.05f, -1.0f, 3600.0f);
+        DrawGameParamsTable("StateParams", state.params);
+        if (behavior.states.size() > 1 && ImGui::Button("Remove State")) removeState = index;
+        ImGui::TreePop();
+      }
+      ImGui::PopID();
+    }
+    if (removeState >= 0) behavior.states.erase(behavior.states.begin() + removeState);
+    if (ImGui::Button("Add State")) {
+      std::string name = "state";
+      for (int suffix = 2; std::find(stateNames.begin(), stateNames.end(), name) != stateNames.end(); ++suffix) {
+        name = "state" + std::to_string(suffix);
+      }
+      behavior.states.push_back(t850::scene::SceneStateDesc{.name = name});
+    }
+
+    ImGui::SeparatorText("Transitions");
+    int removeTransition = -1;
+    for (int index = 0; index < static_cast<int>(behavior.transitions.size()); ++index) {
+      auto& transition = behavior.transitions[static_cast<std::size_t>(index)];
+      ImGui::PushID(index + 140000);
+      ImGui::Text("Transition %d", index + 1);
+      DrawGameStringField("From", transition.from_state);
+      DrawGameStringField("To", transition.to_state);
+      DrawGameStringField("Condition", transition.condition);
+      ImGui::DragFloat("Priority", &transition.priority, 0.1f);
+      ImGui::DragFloat("Cooldown", &transition.cooldown, 0.05f, 0.0f, 3600.0f);
+      if (ImGui::Button("Remove Transition")) removeTransition = index;
+      ImGui::Separator();
+      ImGui::PopID();
+    }
+    if (removeTransition >= 0) behavior.transitions.erase(behavior.transitions.begin() + removeTransition);
+    if (ImGui::Button("Add Transition")) {
+      t850::scene::SceneTransitionDesc transition;
+      transition.from_state = behavior.initial_state;
+      transition.to_state = behavior.initial_state;
+      transition.condition = "always";
+      behavior.transitions.push_back(std::move(transition));
+    }
+  }
+
+  ImGui::Separator();
+  return ImGui::Button("Delete Game Entity");
+}
+
+static bool DrawGameGroupInspector(t850::scene::SceneGroupDesc& group) {
+  ImGui::SeparatorText("Squad / Team");
+  ImGui::TextDisabled("ID");
+  ImGui::SameLine();
+  ImGui::TextWrapped("%s", group.id.empty() ? "Assigned on save" : group.id.c_str());
+  DrawGameStringField("Name", group.name);
+  const char* strategies[] = {"formation", "flock", "custom"};
+  int strategy = group.strategy == "flock" ? 1 : group.strategy == "custom" ? 2 : 0;
+  if (ImGui::Combo("Strategy", &strategy, strategies, 3)) group.strategy = strategies[strategy];
+
+  ImGui::SeparatorText("Members");
+  for (const auto& entity : g_gameEntities) {
+    bool member = std::find(group.member_entity_ids.begin(), group.member_entity_ids.end(), entity.id) !=
+        group.member_entity_ids.end();
+    if (ImGui::Checkbox(entity.name.c_str(), &member)) {
+      if (member) group.member_entity_ids.push_back(entity.id);
+      else group.member_entity_ids.erase(
+          std::remove(group.member_entity_ids.begin(), group.member_entity_ids.end(), entity.id),
+          group.member_entity_ids.end());
+    }
+  }
+
+  if (group.strategy == "formation") {
+    ImGui::SeparatorText("Formation");
+    const char* types[] = {"wedge", "line", "column", "box", "circle"};
+    int type = 0;
+    for (int index = 0; index < 5; ++index) if (group.formation.type == types[index]) type = index;
+    if (ImGui::Combo("Type", &type, types, 5)) group.formation.type = types[type];
+    ImGui::DragFloat("Spacing", &group.formation.spacing, 0.05f, 0.01f, 1000.0f);
+    ImGui::DragFloat("Depth Step", &group.formation.depth_step, 0.05f, 0.01f, 1000.0f);
+    std::vector<std::string> memberIds = group.member_entity_ids;
+    DrawGameStringChoice("Leader", group.formation.leader_entity_id, memberIds);
+  } else if (group.strategy == "flock") {
+    ImGui::SeparatorText("Flock");
+    ImGui::DragFloat("Separation Weight", &group.flock.separation_weight, 0.05f, 0.0f, 100.0f);
+    ImGui::DragFloat("Alignment Weight", &group.flock.alignment_weight, 0.05f, 0.0f, 100.0f);
+    ImGui::DragFloat("Cohesion Weight", &group.flock.cohesion_weight, 0.05f, 0.0f, 100.0f);
+    ImGui::DragFloat("Separation Radius", &group.flock.separation_radius, 0.05f, 0.0f, 1000.0f);
+    ImGui::DragFloat("Neighbor Radius", &group.flock.neighbor_radius, 0.05f, 0.0f, 1000.0f);
+    ImGui::DragFloat("Max Speed", &group.flock.max_speed, 0.05f, 0.0f, 1000.0f);
+  }
+
+  ImGui::Separator();
+  return ImGui::Button("Delete Game Group");
 }
 
 static void DestroyPhysicsEntitiesForSourceObject(t850::JoltPhysicsSystem& physics, int sourceObjectIndex) {
@@ -4357,6 +4651,13 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath, bool
   }
 
   sf.game_entities = g_gameEntities;
+  sf.game_groups = g_gameGroups;
+  sf.game_logic_settings = g_gameLogicSettings;
+  t850::scene::EnsureGameEntityIds(sf);
+  t850::scene::MigrateEditorSceneGameLogic(sf);
+  g_gameEntities = sf.game_entities;
+  g_gameGroups = sf.game_groups;
+  g_gameLogicSettings = sf.game_logic_settings;
   sf.splines = g_splines;
   sf.light_cameras = g_lightCameras;
   sf.camera_animations = g_cameraAnimations;
@@ -4454,6 +4755,129 @@ bool EditorApp::SaveEditorSceneSnapshot(const std::string& path, bool updateLoad
   return true;
 }
 
+bool EditorApp::RunGameValidation(const SceneFile& scene, bool showPanel) {
+  m_gameValidationReport = t850::scene::ValidateEditorSceneGameLogic(scene);
+  m_gameValidationHasRun = true;
+  if (showPanel || !m_gameValidationReport.issues.empty()) m_panels.showGameValidation = true;
+
+  int errors = 0;
+  int warnings = 0;
+  for (const t850::scene::SceneValidationIssue& issue : m_gameValidationReport.issues) {
+    if (issue.severity == t850::scene::SceneValidationSeverity::Error) ++errors;
+    else if (issue.severity == t850::scene::SceneValidationSeverity::Warning) ++warnings;
+  }
+  T8_LOG_INFO("[GameValidation] entities=%zu groups=%zu errors=%d warnings=%d",
+              scene.game_entities.size(), scene.game_groups.size(), errors, warnings);
+  return errors == 0;
+}
+
+void EditorApp::DrawGameValidationPanel() {
+  if (!m_panels.showGameValidation) return;
+  if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+    const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+    ImGui::SetNextWindowPos(
+        ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.28f, viewport->WorkPos.y + 48.0f),
+        layoutCond);
+    ImGui::SetNextWindowSize(ImVec2(620.0f, 360.0f), layoutCond);
+  }
+  if (ImGui::Begin("Game Validation", &m_panels.showGameValidation, ImGuiWindowFlags_NoCollapse)) {
+    ImGuiClampCurrentWindowToEditorWorkArea();
+    if (ImGui::Button("Run Validation")) {
+      RunGameValidation(BuildEditorSceneSnapshot(g_loadedScenePath), false);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Runs automatically after scene load and before Play.");
+    ImGui::Separator();
+
+    if (ImGui::CollapsingHeader("Simulation Settings")) {
+      bool authored = g_gameLogicSettings.has_value();
+      if (ImGui::Checkbox("Author Game Logic Settings", &authored)) {
+        if (authored) g_gameLogicSettings = t850::scene::SceneGameLogicSettingsDesc{};
+        else g_gameLogicSettings.reset();
+      }
+      if (g_gameLogicSettings.has_value()) {
+        auto& settings = *g_gameLogicSettings;
+        ImGui::DragFloat("Fixed Delta", &settings.fixed_delta_seconds, 0.0001f, 0.0001f, 1.0f, "%.6f");
+        ImGui::DragInt("Max Steps / Frame", &settings.max_steps_per_frame, 1.0f, 1, 32);
+        ImGui::Checkbox("Spatial Grid", &settings.spatial_grid.enabled);
+        if (settings.spatial_grid.enabled) {
+          ImGui::DragFloat("Cell Size", &settings.spatial_grid.cell_size, 0.1f, 0.1f, 1000.0f);
+          ImGui::DragInt("Grid Width", &settings.spatial_grid.grid_width, 1.0f, 1, 8192);
+          ImGui::DragInt("Grid Depth", &settings.spatial_grid.grid_depth, 1.0f, 1, 8192);
+        }
+      }
+      ImGui::Separator();
+    }
+
+    if (!m_gameValidationHasRun) {
+      ImGui::TextDisabled("Validation has not run yet.");
+    } else if (m_gameValidationReport.issues.empty()) {
+      ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.45f, 1.0f), "No game-logic issues.");
+    } else if (ImGui::BeginTable(
+                   "GameValidationIssues", 4,
+                   ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable |
+                       ImGuiTableFlags_ScrollY,
+                   ImVec2(0.0f, -1.0f))) {
+      ImGui::TableSetupColumn("Severity", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+      ImGui::TableSetupColumn("Code", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+      ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 58.0f);
+      ImGui::TableHeadersRow();
+      for (int issueIndex = 0; issueIndex < static_cast<int>(m_gameValidationReport.issues.size()); ++issueIndex) {
+        const auto& issue = m_gameValidationReport.issues[static_cast<std::size_t>(issueIndex)];
+        const char* severity = issue.severity == t850::scene::SceneValidationSeverity::Error
+            ? "Error"
+            : issue.severity == t850::scene::SceneValidationSeverity::Warning ? "Warning" : "Info";
+        const ImVec4 color = issue.severity == t850::scene::SceneValidationSeverity::Error
+            ? ImVec4(1.0f, 0.3f, 0.25f, 1.0f)
+            : issue.severity == t850::scene::SceneValidationSeverity::Warning
+                ? ImVec4(1.0f, 0.75f, 0.2f, 1.0f)
+                : ImVec4(0.6f, 0.75f, 1.0f, 1.0f);
+        ImGui::PushID(issueIndex + 160000);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(color, "%s", severity);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(issue.code.c_str());
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextWrapped("%s", issue.message.c_str());
+        ImGui::TableSetColumnIndex(3);
+        const bool hasTarget = !issue.entityId.empty() || !issue.groupId.empty() || issue.entityIndex >= 0;
+        if (hasTarget && ImGui::SmallButton("Jump")) {
+          if (!issue.groupId.empty()) {
+            for (int index = 0; index < static_cast<int>(g_gameGroups.size()); ++index) {
+              if (g_gameGroups[static_cast<std::size_t>(index)].id == issue.groupId) {
+                g_selectionType = 10;
+                g_selectedIdx = index;
+                break;
+              }
+            }
+          } else {
+            int targetIndex = issue.entityIndex;
+            if (targetIndex < 0 && !issue.entityId.empty()) {
+              for (int index = 0; index < static_cast<int>(g_gameEntities.size()); ++index) {
+                if (g_gameEntities[static_cast<std::size_t>(index)].id == issue.entityId) {
+                  targetIndex = index;
+                  break;
+                }
+              }
+            }
+            if (targetIndex >= 0 && targetIndex < static_cast<int>(g_gameEntities.size())) {
+              g_selectionType = 9;
+              g_selectedIdx = targetIndex;
+            }
+          }
+          m_panels.showInspector = true;
+          ClearMixedSelection();
+        }
+        ImGui::PopID();
+      }
+      ImGui::EndTable();
+    }
+  }
+  ImGui::End();
+}
+
 EditorUndoState EditorApp::CaptureEditorUndoState(std::string* outKey) {
   EditorUndoState state;
   state.scene = BuildEditorSceneSnapshot({});
@@ -4511,6 +4935,8 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   g_activeGroupIdx = -1;
   g_unloadedSceneObjects.clear();
   g_gameEntities.clear();
+  g_gameGroups.clear();
+  g_gameLogicSettings.reset();
   g_meshCharacterAuthoringInitialized = false;
   g_meshCharacterAuthoringSourceIndex = -1;
   g_meshCharacterAuthoringTemplate.visual.reset();
@@ -4605,6 +5031,8 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
     RestorePhysicsEntityFromScene(m_physics, entityDesc);
   }
   g_gameEntities = sf.game_entities;
+  g_gameGroups = sf.game_groups;
+  g_gameLogicSettings = sf.game_logic_settings;
   g_splines = sf.splines;
   ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
   g_lightCameras = sf.light_cameras;
@@ -4700,7 +5128,9 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
                                 g_selectedSplinePoint < 0 ||
                                 g_selectedSplinePoint >= static_cast<int>(g_splines[static_cast<std::size_t>(g_selectedIdx)].points.size()))) ||
       (g_selectionType == 8 && (g_selectedIdx != 0 ||
-                                !GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph)))) {
+                                !GodRaysVolumeCanBeActive(g_godRaysVolume, g_renderGraph))) ||
+      (g_selectionType == 9 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_gameEntities.size()))) ||
+      (g_selectionType == 10 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_gameGroups.size())))) {
     g_selectedIdx = -1;
     g_selectedSplinePoint = -1;
     g_selectionType = 0;
@@ -5829,6 +6259,7 @@ void EditorApp::CreateAssets() {
       T8_LOG_ERROR("[T8ditor] EditorLineRenderer::Create failed");
     if (!m_navLinkOverlayLines.Create())
       T8_LOG_ERROR("[T8ditor] Nav link overlay line renderer failed to initialize");
+    m_gameOverlayText.LoadFromFile(16.0f, "Fonts/Martius-LV9L4.ttf", 512.0f);
     m_grid.Create(10, 1.0f);
     m_gizmo.Create();
   }
@@ -6440,6 +6871,10 @@ void EditorApp::DestroyAssets() {
   m_editorNavMeshDebugRenderer.Destroy();
   if (m_editorNavLinkOverlayVB) { m_editorNavLinkOverlayVB->release(); m_editorNavLinkOverlayVB = nullptr; }
   if (m_editorNavLinkOverlayIB) { m_editorNavLinkOverlayIB->release(); m_editorNavLinkOverlayIB = nullptr; }
+  ReleaseGizmoCache(g_gameOverlayCircleGizmo);
+  ReleaseGizmoCache(g_gameOverlayGroupLinesGizmo);
+  ReleaseGizmoCache(g_gameOverlayHealthLinesGizmo);
+  m_gameOverlayText.Destroy();
   m_physicsDebug.Destroy();
   m_primMgr.DestroyPrimitives();
   g_objects.clear();
@@ -6467,6 +6902,8 @@ void EditorApp::DestroyAssets() {
   g_sceneCollisionResourcePath.clear();
   g_sceneProfiles.clear();
   g_gameEntities.clear();
+  g_gameGroups.clear();
+  g_gameLogicSettings.reset();
   g_undoStack.Clear();
   if (g_skyboxReady) {
     g_skyboxMgr.DestroyPrimitives();
@@ -6803,6 +7240,8 @@ void EditorApp::LoadPendingScene() {
         g_undoStack.Clear();
         g_unloadedSceneObjects.clear();
         g_gameEntities.clear();
+        g_gameGroups.clear();
+        g_gameLogicSettings.reset();
       }
 
       g_sceneCollisionResourcePath = ResolveSceneCollisionPath(sf, loadPath);
@@ -6931,6 +7370,8 @@ void EditorApp::LoadPendingScene() {
         }
       }
       g_gameEntities = sf.game_entities;
+      g_gameGroups = sf.game_groups;
+      g_gameLogicSettings = sf.game_logic_settings;
       g_splines = sf.splines;
       ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
       g_lightCameras = sf.light_cameras;
@@ -6995,6 +7436,8 @@ void EditorApp::LoadPendingScene() {
         LoadEditorSceneProfiles();
       }
       ImGuiApplySceneLayout(sf.editor.allow_custom_layout, sf.editor.imgui_layout);
+
+      RunGameValidation(BuildEditorSceneSnapshot(loadPath), false);
 
       t850::LoadingProgress::Complete("Scene loaded", loadPath);
     } else {
@@ -8255,6 +8698,199 @@ static uint64_t HashSplineFloat(float value) {
   return static_cast<uint64_t>(bits);
 }
 
+static bool TryParseGameFloat(const t850::scene::SceneComponentDesc& component,
+                              std::string_view key,
+                              float& outValue) {
+  const auto found = component.params.find(std::string(key));
+  if (found == component.params.end() || found->second.empty()) return false;
+  char* end = nullptr;
+  const float parsed = std::strtof(found->second.c_str(), &end);
+  if (end != found->second.c_str() + found->second.size() || !std::isfinite(parsed)) return false;
+  outValue = parsed;
+  return true;
+}
+
+static bool GameEntityWorldPosition(const t850::scene::SceneGameEntityDesc& entity,
+                                    XVECTOR3& outPosition,
+                                    float* outTop = nullptr) {
+  const int objectIndex = FindSceneObjectIndexByName(entity.mesh_object);
+  if (objectIndex < 0 || objectIndex >= static_cast<int>(g_objects.size())) return false;
+  SceneObject& object = g_objects[static_cast<std::size_t>(objectIndex)];
+  outPosition = SceneObjectWorldPosition(object);
+  if (outTop) {
+    t850::AABB bounds;
+    *outTop = GetEditorObjectWorldAABB(object, bounds) && bounds.IsValid()
+        ? bounds.vMax.y
+        : outPosition.y + 2.0f;
+  }
+  return true;
+}
+
+static const t850::scene::SceneGameEntityDesc* FindGameEntityById(std::string_view id) {
+  for (const auto& entity : g_gameEntities) if (entity.id == id) return &entity;
+  return nullptr;
+}
+
+static void DrawGameRadiusOverlay(EditorLineRenderer& lines,
+                                  const XMATRIX44& vp,
+                                  const XVECTOR3& center,
+                                  float radius,
+                                  const XVECTOR3& color) {
+  if (!lines.IsReady() || radius <= 0.0f) return;
+  constexpr int segments = 48;
+  if (!g_gameOverlayCircleGizmo.vb || !g_gameOverlayCircleGizmo.ib) {
+    std::array<float, segments * 4> vertices{};
+    std::array<unsigned short, segments * 2> indices{};
+    for (int index = 0; index < segments; ++index) {
+      const float angle = 2.0f * 3.14159265358979323846f * static_cast<float>(index) /
+          static_cast<float>(segments);
+      vertices[static_cast<std::size_t>(index) * 4 + 0] = std::cos(angle);
+      vertices[static_cast<std::size_t>(index) * 4 + 2] = std::sin(angle);
+      vertices[static_cast<std::size_t>(index) * 4 + 3] = 1.0f;
+      indices[static_cast<std::size_t>(index) * 2 + 0] = static_cast<unsigned short>(index);
+      indices[static_cast<std::size_t>(index) * 2 + 1] = static_cast<unsigned short>((index + 1) % segments);
+    }
+    g_gameOverlayCircleGizmo.vb = EditorLineRenderer::CreatePositionVB(vertices.data(), segments);
+    g_gameOverlayCircleGizmo.ib = EditorLineRenderer::CreateIndexBuffer16(indices.data(), segments * 2);
+    g_gameOverlayCircleGizmo.count = segments * 2;
+  }
+  if (!g_gameOverlayCircleGizmo.vb || !g_gameOverlayCircleGizmo.ib) return;
+
+  XMATRIX44 world;
+  XMatScaling(world, radius, 1.0f, radius);
+  world.m[3][0] = center.x;
+  world.m[3][1] = center.y + 0.03f;
+  world.m[3][2] = center.z;
+  lines.DrawLines(
+      world, vp, color,
+      g_gameOverlayCircleGizmo.vb, g_gameOverlayCircleGizmo.ib,
+      g_gameOverlayCircleGizmo.count, sizeof(float) * 4);
+}
+
+static uint64_t HashGameLineVertices(const std::vector<float>& vertices) {
+  uint64_t hash = 1469598103934665603ull;
+  for (float value : vertices) {
+    hash ^= HashSplineFloat(value);
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+static void DrawGameDynamicLines(EditorLineRenderer& lines,
+                                 const XMATRIX44& vp,
+                                 const std::vector<float>& vertices,
+                                 const XVECTOR3& color,
+                                 GizmoCache& cache) {
+  if (!lines.IsReady() || vertices.empty()) return;
+  const unsigned vertexCount = static_cast<unsigned>(vertices.size() / 4);
+  const uint64_t hash = HashGameLineVertices(vertices);
+  if (!cache.vb || !cache.ib || cache.hash != hash || cache.count != vertexCount) {
+    if (cache.vb || cache.ib) {
+      if (t850::g_pBaseDriver) t850::g_pBaseDriver->WaitForGPU();
+      ReleaseGizmoCache(cache);
+    }
+    std::vector<unsigned int> indices(vertexCount);
+    for (unsigned index = 0; index < vertexCount; ++index) indices[index] = index;
+    cache.vb = EditorLineRenderer::CreatePositionVB(vertices.data(), vertexCount);
+    cache.ib = EditorLineRenderer::CreateIndexBuffer32(indices.data(), vertexCount);
+    cache.count = vertexCount;
+    cache.hash = hash;
+  }
+  if (!cache.vb || !cache.ib) return;
+  XMATRIX44 identity;
+  identity.Identity();
+  lines.DrawLines(
+      identity, vp, color, cache.vb, cache.ib, cache.count,
+      sizeof(float) * 4, t850::IndexBufferFormat::R32);
+}
+
+static void AppendGameLine(std::vector<float>& vertices, const XVECTOR3& from, const XVECTOR3& to) {
+  vertices.insert(vertices.end(), {from.x, from.y, from.z, 1.0f, to.x, to.y, to.z, 1.0f});
+}
+
+static void DrawGameAuthoringOverlays(EditorLineRenderer& lines,
+                                      t850::TextRenderer& text,
+                                      const Camera& camera,
+                                      int width,
+                                      int height) {
+  std::vector<float> groupLines;
+  for (const auto& group : g_gameGroups) {
+    const auto* leader = FindGameEntityById(group.formation.leader_entity_id);
+    if (!leader && !group.member_entity_ids.empty()) leader = FindGameEntityById(group.member_entity_ids.front());
+    XVECTOR3 leaderPosition;
+    if (!leader || !GameEntityWorldPosition(*leader, leaderPosition)) continue;
+    for (const std::string& memberId : group.member_entity_ids) {
+      const auto* member = FindGameEntityById(memberId);
+      XVECTOR3 memberPosition;
+      if (member && member != leader && GameEntityWorldPosition(*member, memberPosition)) {
+        AppendGameLine(groupLines, leaderPosition, memberPosition);
+      }
+    }
+  }
+  DrawGameDynamicLines(
+      lines, camera.VP, groupLines, XVECTOR3(0.2f, 0.85f, 1.0f, 1.0f),
+      g_gameOverlayGroupLinesGizmo);
+
+  std::vector<float> healthLines;
+  for (int entityIndex = 0; entityIndex < static_cast<int>(g_gameEntities.size()); ++entityIndex) {
+    const auto& entity = g_gameEntities[static_cast<std::size_t>(entityIndex)];
+    if (!entity.visible) continue;
+    XVECTOR3 position;
+    float top = 0.0f;
+    if (!GameEntityWorldPosition(entity, position, &top)) continue;
+
+    for (const auto& component : entity.components) {
+      if (!component.enabled) continue;
+      float radius = 0.0f;
+      if (component.type == "sensor" &&
+          (TryParseGameFloat(component, "detectionRadius", radius) ||
+           TryParseGameFloat(component, "radius", radius))) {
+        DrawGameRadiusOverlay(
+            lines, camera.VP, position, (std::max)(0.0f, radius),
+            XVECTOR3(0.2f, 0.9f, 0.45f, 1.0f));
+      } else if (component.type == "combat" &&
+                 (TryParseGameFloat(component, "range", radius) ||
+                  TryParseGameFloat(component, "attackRange", radius))) {
+        DrawGameRadiusOverlay(
+            lines, camera.VP, position, (std::max)(0.0f, radius),
+            XVECTOR3(1.0f, 0.35f, 0.2f, 1.0f));
+      } else if (component.type == "health") {
+        float maximum = 100.0f;
+        float current = maximum;
+        TryParseGameFloat(component, "maxHp", maximum);
+        current = maximum;
+        TryParseGameFloat(component, "currentHp", current);
+        const float ratio = maximum > 0.0f ? std::clamp(current / maximum, 0.0f, 1.0f) : 0.0f;
+        const XVECTOR3 start(position.x - 0.75f, top + 0.25f, position.z, 1.0f);
+        const XVECTOR3 end(start.x + 1.5f * ratio, start.y, start.z, 1.0f);
+        AppendGameLine(healthLines, start, end);
+      }
+    }
+  }
+  DrawGameDynamicLines(
+      lines, camera.VP, healthLines, XVECTOR3(0.25f, 1.0f, 0.35f, 1.0f),
+      g_gameOverlayHealthLinesGizmo);
+
+  if (!text.ftex || width <= 0 || height <= 0) return;
+  text.BeginBatch();
+  for (int entityIndex = 0; entityIndex < static_cast<int>(g_gameEntities.size()); ++entityIndex) {
+    const auto& entity = g_gameEntities[static_cast<std::size_t>(entityIndex)];
+    if (!entity.visible) continue;
+    XVECTOR3 position;
+    float top = 0.0f;
+    if (!GameEntityWorldPosition(entity, position, &top)) continue;
+    const ImVec2 screen = WorldToScreen(XVECTOR3(position.x, top + 0.4f, position.z, 1.0f), camera.VP, width, height);
+    if (screen.x < 0.0f || screen.y < 0.0f || screen.x >= width || screen.y >= height) continue;
+    std::string label = entity.name;
+    if (entity.behavior.has_value()) label += " [" + entity.behavior->initial_state + "]";
+    const XVECTOR3 color = g_selectionType == 9 && g_selectedIdx == entityIndex
+        ? XVECTOR3(1.0f, 0.85f, 0.2f, 1.0f)
+        : XVECTOR3(0.9f, 0.95f, 1.0f, 1.0f);
+    text.DrawPixelScaledBatched(screen.x, screen.y, 0.75f, 0.75f, width, height, color, label);
+  }
+  text.EndBatch();
+}
+
 static uint64_t HashEditorSplineDrawData(const t850::scene::SceneSplineDesc& desc, bool selected, int selectedPoint) {
   uint64_t hash = 1469598103934665603ull;
   auto mix = [&](uint64_t value) {
@@ -9426,7 +10062,7 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
             g_physicsEntities.begin(),
             g_physicsEntities.end(),
             [&](const PhysicsSceneEntity& entity) {
-              return entity.body.IsValid() && entity.body.value == body.state.handle.value;
+              return entity.body == body.state.handle;
             });
         if (authoredBody != g_physicsEntities.end()) {
           continue;
@@ -9453,6 +10089,12 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
     if (!selectedPhysicsWireBodies.empty()) {
       m_physicsDebug.DrawBodies(selectedPhysicsWireBodies, cam.VP, XVECTOR3(0.2f, 0.55f, 1.0f, 1.0f));
     }
+    drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
+  }
+
+  if (m_panels.showGameOverlays && m_lines.IsReady()) {
+    drv->SetDepthStencilState(t850::BaseDriver::NONE);
+    DrawGameAuthoringOverlays(m_lines, m_gameOverlayText, cam, m_lastW, m_lastH);
     drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
   }
 }
@@ -10225,6 +10867,15 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
       if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
         EnsureInferredGameEntities();
         if (ImGui::TreeNodeEx("Game Entities", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (ImGui::SmallButton("Add Game Entity")) {
+            t850::scene::SceneGameEntityDesc entity;
+            entity.id = t850::game::MakeStableId("ge_");
+            entity.name = UniqueGameEntityName("Game Entity");
+            g_gameEntities.push_back(std::move(entity));
+            g_selectionType = 9;
+            g_selectedIdx = static_cast<int>(g_gameEntities.size()) - 1;
+            ClearMixedSelection();
+          }
           for (int entityIndex = 0; entityIndex < static_cast<int>(g_gameEntities.size()); ++entityIndex) {
             t850::scene::SceneGameEntityDesc& entity = g_gameEntities[static_cast<std::size_t>(entityIndex)];
             ImGui::PushID(entityIndex + 90000);
@@ -10232,9 +10883,17 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
             ImGui::Checkbox("##entityFrz", &entity.frozen); ImGui::SameLine();
             ImGui::Checkbox("##entityWire", &entity.show_wire); ImGui::SameLine();
             if (entity.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+            ImGuiTreeNodeFlags entityFlags =
+              ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (g_selectionType == 9 && g_selectedIdx == entityIndex) entityFlags |= ImGuiTreeNodeFlags_Selected;
             const bool entityOpen = ImGui::TreeNodeEx(("[E] " + entity.name).c_str(),
-                ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+              entityFlags);
             if (entity.frozen) ImGui::PopStyleColor();
+            if (ImGui::IsItemClicked()) {
+              g_selectionType = 9;
+              g_selectedIdx = entityIndex;
+              ClearMixedSelection();
+            }
             if (entityOpen) {
               char nameBuffer[256] = {};
               std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", entity.name.c_str());
@@ -10340,6 +10999,32 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
               }
               ImGui::TreePop();
             }
+            ImGui::PopID();
+          }
+          ImGui::TreePop();
+        }
+        if (ImGui::TreeNodeEx("Game Groups", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (ImGui::SmallButton("Add Game Group")) {
+            t850::scene::SceneGroupDesc group;
+            group.id = t850::game::MakeStableId("grp_");
+            group.name = "Squad " + std::to_string(g_gameGroups.size() + 1);
+            g_gameGroups.push_back(std::move(group));
+            g_selectionType = 10;
+            g_selectedIdx = static_cast<int>(g_gameGroups.size()) - 1;
+            ClearMixedSelection();
+          }
+          for (int groupIndex = 0; groupIndex < static_cast<int>(g_gameGroups.size()); ++groupIndex) {
+            const auto& group = g_gameGroups[static_cast<std::size_t>(groupIndex)];
+            ImGui::PushID(groupIndex + 95000);
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (g_selectionType == 10 && g_selectedIdx == groupIndex) flags |= ImGuiTreeNodeFlags_Selected;
+            const bool open = ImGui::TreeNodeEx(("[S] " + group.name).c_str(), flags);
+            if (ImGui::IsItemClicked()) {
+              g_selectionType = 10;
+              g_selectedIdx = groupIndex;
+              ClearMixedSelection();
+            }
+            if (open) ImGui::TreePop();
             ImGui::PopID();
           }
           ImGui::TreePop();
@@ -10946,7 +11631,28 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
     }
     if (ImGui::Begin("Properties", &m_panels.showInspector, ImGuiWindowFlags_NoCollapse)) {
       ImGuiClampCurrentWindowToEditorWorkArea();
-      if (g_selectionType == 0 && sel) {
+      if (g_selectionType == 9 && g_selectedIdx < static_cast<int>(g_gameEntities.size())) {
+        const std::string entityId = g_gameEntities[static_cast<std::size_t>(g_selectedIdx)].id;
+        if (DrawGameEntityInspector(g_gameEntities[static_cast<std::size_t>(g_selectedIdx)])) {
+          g_gameEntities.erase(g_gameEntities.begin() + g_selectedIdx);
+          for (auto& group : g_gameGroups) {
+            group.member_entity_ids.erase(
+                std::remove(group.member_entity_ids.begin(), group.member_entity_ids.end(), entityId),
+                group.member_entity_ids.end());
+            if (group.formation.leader_entity_id == entityId) group.formation.leader_entity_id.clear();
+          }
+          g_selectedIdx = -1;
+          g_selectionType = 0;
+        }
+      }
+      else if (g_selectionType == 10 && g_selectedIdx < static_cast<int>(g_gameGroups.size())) {
+        if (DrawGameGroupInspector(g_gameGroups[static_cast<std::size_t>(g_selectedIdx)])) {
+          g_gameGroups.erase(g_gameGroups.begin() + g_selectedIdx);
+          g_selectedIdx = -1;
+          g_selectionType = 0;
+        }
+      }
+      else if (g_selectionType == 0 && sel) {
         const bool selectedIsSkinned = sel->litInst.GetSkinnedMesh() != nullptr &&
             sel->litInst.GetSkinnedMesh()->HasSkinData();
         const int selectedMeshIndex = static_cast<int>(sel - g_objects.data());
@@ -11596,6 +12302,8 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
     }
     ImGui::End();
   }
+
+  DrawGameValidationPanel();
 
   if (m_panels.showTimeline) {
     if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {

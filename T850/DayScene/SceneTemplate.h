@@ -19,6 +19,9 @@
 #include <physics/PhysicsTypes.h>
 #include <physics/RagdollEditorTool.h>
 #include <debug/FrameDumper.h>
+#include <game/GameLogicSystem.h>
+#include <game/examples/GroupManager.h>
+#include <game/examples/RtsCommandController.h>
 #include <Config.h>
 
 #include <array>
@@ -144,6 +147,11 @@ public:
   SceneTemplateLaunchDesc m_launchDesc;
 
   t850::RenderGraph m_renderGraph;
+  t850::game::examples::GroupManager m_groupManager;
+  t850::game::examples::RtsCommandController m_rtsCommandController;
+  t850::game::GameLogicSystem m_gameLogic;
+  int m_gameLogicSelectedObject = 0;
+  int m_gameLogicForceState = 0;
   t850::SceneSetup m_controlSetup;
   t850::FrameDumper m_dumper;
   int ChangeActiveGaussSelection = 1; // 0=Shadow, 1=Bloom, 2=DOF

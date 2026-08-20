@@ -30,6 +30,7 @@
 /T850/Shaders/
 /T850/Textures/GeneratedIBLCache/
 /T850/dumps_*/
+/T850/VisualBaselines/
 /T850/imgui_runtime_layout.ini
 /T850/anim_debug_bindpose.txt
 

@@ -23,6 +23,7 @@
 
 #include <Descriptors.h>
 #include <core/Config.h>
+#include <debug/CrashDiagnostics.h>
 #include <utils/Log.h>
 
 #include <string>
@@ -46,6 +47,7 @@ static t850::AppBase*       g_pApp       = nullptr;
 static t850::RootFramework* g_pFramework = nullptr;
 
 int main(int argc, char** argv) {
+  t850::InstallUnattendedCrtReportHook();
   g_args.clear();
   for (int i = 0; i < argc; ++i) {
     g_args.emplace_back(argv[i]);

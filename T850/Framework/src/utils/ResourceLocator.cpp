@@ -415,6 +415,60 @@ bool ResourceLocator::WriteText(const std::string& path, const std::string& text
   return file.good();
 }
 
+bool ResourceLocator::WriteBinaryAtomic(
+    const std::string& path, std::span<const unsigned char> bytes) const {
+  const std::filesystem::path requested(path);
+  std::filesystem::path target;
+  if (requested.is_absolute()) {
+    target = requested;
+  } else {
+    const std::string normalized = NormalizePath(path);
+    target = ResolveCachePath(normalized);
+  }
+
+  std::error_code error;
+  const std::filesystem::path parent = target.parent_path();
+  if (!parent.empty()) {
+    std::filesystem::create_directories(parent, error);
+    if (error) return false;
+  }
+
+  const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+  std::filesystem::path temporary = target;
+  temporary += ".tmp." + std::to_string(nonce);
+  {
+    std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) return false;
+    if (!bytes.empty()) {
+      file.write(
+          reinterpret_cast<const char*>(bytes.data()),
+          static_cast<std::streamsize>(bytes.size()));
+    }
+    file.flush();
+    if (!file.good()) {
+      file.close();
+      std::filesystem::remove(temporary, error);
+      return false;
+    }
+  }
+
+#ifdef OS_WINDOWS
+  if (!MoveFileExW(
+          temporary.c_str(), target.c_str(),
+          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    std::filesystem::remove(temporary, error);
+    return false;
+  }
+#else
+  std::filesystem::rename(temporary, target, error);
+  if (error) {
+    std::filesystem::remove(temporary, error);
+    return false;
+  }
+#endif
+  return true;
+}
+
 std::vector<std::string> ResourceLocator::List(const std::string& directory, bool recursive) const {
   std::vector<std::string> out;
   const std::string normalized = NormalizePath(directory);

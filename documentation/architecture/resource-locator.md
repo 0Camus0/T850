@@ -1,6 +1,6 @@
 # Resource Locator and Cache Paths
 
-Status: Stage 14 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains how T850 resolves asset paths, reads files on desktop and Android, chooses writable cache locations, and keeps generated cache files portable across editor, runtime scenes, and packaged builds.
 
@@ -37,15 +37,15 @@ flowchart LR
   ReadOrWrite -->|write/cache| Cache["ResolveCachePath"]
   Desktop --> Result["Exists / ReadBinary / ReadText / ResolveFilePath"]
   Android --> Result
-  Cache --> CacheFile["generated cache or writable JSON"]
+  Cache --> CacheFile["generated cache / writable JSON / atomic binary state"]
 ```
 
 ## Key files and classes
 
 | File/class | Role |
 |---|---|
-| `Framework/include/utils/ResourceLocator.h` | Public singleton API for normalization, reads, lists, recursive lookup, file-path resolution, cache-path resolution, and Android asset-manager binding. |
-| `Framework/src/utils/ResourceLocator.cpp` | Desktop candidate search, Android packaged-asset read/list/fallback logic, cache path resolution, and text/binary helpers. |
+| `Framework/include/utils/ResourceLocator.h` | Public singleton API for normalization, reads, atomic binary writes, lists, recursive lookup, file-path resolution, cache-path resolution, and Android asset-manager binding. |
+| `Framework/src/utils/ResourceLocator.cpp` | Desktop candidate search, Android packaged-asset read/list/fallback logic, cache path resolution, and text/binary write helpers. |
 | `Framework/include/utils/AndroidAssets.h` / `Framework/src/utils/AndroidAssets.cpp` | Android wrapper functions that forward asset-manager setup and reads to `ResourceLocator`. |
 | `DayScene/AndroidEntry.cpp` | Installs the Android `AAssetManager`, sets base/cache paths to app data storage, and changes the working directory on Android. |
 | `Framework/src/utils/ResourceManager.cpp` | In-memory mesh database loader/reuser; dispatches `.gltf`/`.glb` to glTF and other paths to legacy `.x`. |
@@ -154,6 +154,7 @@ This helps when desktop development succeeds on a case-insensitive filesystem bu
 | `ReadBinary(path, out)` | Clears `out`, normalizes the path, reads the first readable disk candidate, then falls back to Android packaged assets on Android. |
 | `ReadText(path, out)` | Uses `ReadBinary`; clears `out` on failure. |
 | `WriteText(path, text)` | Writes absolute paths directly. For relative paths, writes to an existing resolved file when found; otherwise writes under `ResolveCachePath`. |
+| `WriteBinaryAtomic(path, bytes)` | Resolves relative paths under `ResolveCachePath`, creates parent directories, writes and flushes a unique temporary file, then atomically replaces the destination. Failed temporary files are removed. |
 | `List(directory, recursive)` | Lists files from Android assets and/or desktop disk, returns engine resource paths, sorts and de-duplicates results. |
 | `ResolveFilePath(path)` | Returns the first regular desktop filesystem candidate; if nothing exists, returns the original requested path. |
 | `ResolveCachePath(path)` | Returns absolute paths unchanged; otherwise normalizes and appends to `m_cachePath`, or returns the normalized relative path if no cache root exists. |
@@ -338,7 +339,7 @@ When loading a float cache, IBL first tries the resolved path and then falls bac
 
 ## Writable authoring paths
 
-`WriteText()` is safe for portable relative writes because unresolved relative paths fall back to `ResolveCachePath()`.
+`WriteText()` is safe for portable relative writes because unresolved relative paths fall back to `ResolveCachePath()`. Use `WriteBinaryAtomic()` for generated binary state that must not expose a partially written destination; `VoxelDeltaStore` uses it for `.t8vox` edit files.
 
 Some authoring paths have custom behavior:
 
@@ -364,7 +365,7 @@ When adding a new generated cache:
 3. Include all settings that change generated output.
 4. Include source identity and source content/signature, not only source filename.
 5. Include platform or third-party library versions when serialized data is not portable.
-6. Write to a temporary file and rename when practical.
+6. Use `WriteBinaryAtomic()` for binary state that requires temporary-write, flush, and atomic-replace semantics.
 7. Log cache hits, stale cache ignores, and cache write failures with the final resolved path.
 
 ## Known limitations and gotchas

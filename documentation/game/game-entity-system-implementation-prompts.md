@@ -1,16 +1,21 @@
 # T850 Game Entity System — Implementation Prompts (for local coding agents)
 
+Status: completed implementation archive; audited on 2026-08-19.
+
+P0-P14 have been executed. Use these blocks as acceptance contracts for maintenance, not as evidence that a task is still unimplemented. Current results are recorded in [Current status and roadmap](../current-status-and-roadmap.md).
+
 ## How to use this document
 
-1. **Attach the spec** `game-entity-system-spec.md` to every session (it is the source of truth for all code bodies, signatures, and diagrams).
-2. **Paste exactly one `PROMPT Pn` block per session.** Each block already contains the shared preamble at the top, so there is nothing else to paste. Do them in order (P0 → P14); each depends on the previous.
-3. Do not paste more than one prompt per session — it keeps the context small and the diff reviewable.
+Do not execute P0-P14 as an implementation roadmap: all blocks have already been completed. They are preserved as historical acceptance contracts that explain the intended dependency order and original gates.
 
-The preamble at the top of every prompt is byte-for-byte identical, so the provider can **prompt-cache** it (together with the attached spec) across sessions. Do not modify it between prompts.
+For maintenance:
 
-Token budget guide (rough): spec ≈ 20k, embedded preamble ≈ 1.5k, task ≈ 0.5–1k. Stays well under 100k.
+1. Start from the current [game entity system specification](game-entity-system-spec.md), owning source, and nearest self-test.
+2. Consult only the prompt covering the affected slice when its original acceptance criteria are useful.
+3. Treat current source, the specification's implementation record, and the operational skills as authoritative when a historical prompt differs.
+4. Run the focused current gate from [Verification](../testing/verification.md); do not recreate files or rerun completed milestones merely because a block says `CREATE` or `EDIT`.
 
-Prompt map (each maps to a spec milestone in [§15](game-entity-system-spec.md#15-implementation-roadmap)):
+Original prompt map (each maps to the delivered record in [§15](game-entity-system-spec.md#15-implementation-record)):
 
 | Prompt | Spec milestone | Adds files? | Build gate |
 |---|---|---|---|

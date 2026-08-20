@@ -58,6 +58,8 @@ namespace t8ditor {
     bool showRendering  = true;
     bool showTimeline   = true;
     bool showNavMeshAuthoring = false;
+    bool showGameValidation = false;
+    bool showGameOverlays = true;
     bool showWireframe  = false;
     bool showSkybox     = true;
     bool showRTDebug    = false;

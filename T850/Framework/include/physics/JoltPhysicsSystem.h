@@ -37,6 +37,11 @@ public:
   bool GetDebugBody(PhysicsBodyHandle handle, PhysicsDebugBody& outBody) const;
   bool CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsCastHit& outHit) const;
   bool CastBox(const PhysicsBoxCastDesc& desc, PhysicsCastHit& outHit) const;
+  int OverlapSphere(const XVECTOR3& center,
+                    float radius,
+                    uint32_t includeLayers,
+                    uint32_t excludeLayers,
+                    std::vector<PhysicsOverlapHit>& outHits) const;
 
   PhysicsRagdollHandle CreateRagdoll(const PhysicsRagdollDesc& desc, PhysicsBodyMotion initialMotion);
   bool DestroyRagdoll(PhysicsRagdollHandle handle);

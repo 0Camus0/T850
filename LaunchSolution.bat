@@ -30,6 +30,12 @@ set "MODEL_MANIFEST_URL=%RUNTIME_MODEL_MANIFEST_URL%"
 set "MODEL_DOWNLOAD_SCRIPT=%ROOT%T850\scripts\DownloadModels.ps1"
 set "TEXTURE_DOWNLOAD_SCRIPT=%ROOT%T850\scripts\DownloadTextures.ps1"
 set "CLOUD_DOWNLOAD_THREADS=7"
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+
+if not defined VCPKG_MAX_CONCURRENCY (
+    set /a VCPKG_MAX_CONCURRENCY=%NUMBER_OF_PROCESSORS%-1
+    if !VCPKG_MAX_CONCURRENCY! LSS 1 set "VCPKG_MAX_CONCURRENCY=1"
+)
 
 set BUILD_X86=0
 set BUILD_ARM64=0
@@ -59,6 +65,22 @@ if %SKIP_VCPKG%==1 (
     echo [T850] Skipping vcpkg setup...
     goto launch
 )
+
+:: Keep vcpkg-built libraries ABI-compatible with the v143 projects.
+:: Without this pin, vcpkg selects the newest installed Visual Studio instance.
+set "VCPKG_VISUAL_STUDIO_PATH="
+if exist "%VSWHERE%" (
+    "%VSWHERE%" -latest -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath > "%TEMP%\t850-vs2022-path.txt"
+    if not errorlevel 1 set /p VCPKG_VISUAL_STUDIO_PATH=<"%TEMP%\t850-vs2022-path.txt"
+    del /q "%TEMP%\t850-vs2022-path.txt" >nul 2>nul
+)
+if not defined VCPKG_VISUAL_STUDIO_PATH (
+    echo [ERROR] Visual Studio 2022 C++ tools were not found.
+    echo [ERROR] T850 targets v143; install the VS 2022 Desktop development with C++ workload.
+    exit /b 1
+)
+echo [T850] vcpkg compiler: %VCPKG_VISUAL_STUDIO_PATH% ^(v143^)
+echo [T850] vcpkg workers:  %VCPKG_MAX_CONCURRENCY%
 
 :: ── Clone vcpkg if not present ──
 if not exist "%VCPKG_DIR%\bootstrap-vcpkg.bat" (
@@ -96,11 +118,19 @@ echo.
 echo [T850] Installing x64 packages...
 for %%p in (%PACKAGES%) do (
     echo   %%p:x64-windows-static
-    "%VCPKG_EXE%" install %%p:x64-windows-static --no-print-usage 2>nul
+    "%VCPKG_EXE%" install %%p:x64-windows-static --no-print-usage
+    if errorlevel 1 (
+        echo [ERROR] Failed to install %%p:x64-windows-static.
+        exit /b 1
+    )
 )
 for %%p in (%PACKAGES_DYNAMIC%) do (
     echo   %%p:x64-windows
-    "%VCPKG_EXE%" install %%p:x64-windows --no-print-usage 2>nul
+    "%VCPKG_EXE%" install %%p:x64-windows --no-print-usage
+    if errorlevel 1 (
+        echo [ERROR] Failed to install %%p:x64-windows.
+        exit /b 1
+    )
 )
 call :install_imgui x64-windows-static dx12
 
@@ -112,11 +142,19 @@ if %BUILD_X86%==1 (
     echo [T850] Installing x86 packages...
     for %%p in (%PACKAGES%) do (
         echo   %%p:x86-windows-static
-        "%VCPKG_EXE%" install %%p:x86-windows-static --no-print-usage 2>nul
+        "%VCPKG_EXE%" install %%p:x86-windows-static --no-print-usage
+        if errorlevel 1 (
+            echo [ERROR] Failed to install %%p:x86-windows-static.
+            exit /b 1
+        )
     )
     for %%p in (%PACKAGES_DYNAMIC%) do (
         echo   %%p:x86-windows
-        "%VCPKG_EXE%" install %%p:x86-windows --no-print-usage 2>nul
+        "%VCPKG_EXE%" install %%p:x86-windows --no-print-usage
+        if errorlevel 1 (
+            echo [ERROR] Failed to install %%p:x86-windows.
+            exit /b 1
+        )
     )
         call :install_imgui x86-windows-static nodx12
 
@@ -129,11 +167,19 @@ if %BUILD_ARM64%==1 (
     echo [T850] Installing ARM64 packages...
     for %%p in (%PACKAGES%) do (
         echo   %%p:arm64-windows-static
-        "%VCPKG_EXE%" install %%p:arm64-windows-static --no-print-usage 2>nul
+        "%VCPKG_EXE%" install %%p:arm64-windows-static --no-print-usage
+        if errorlevel 1 (
+            echo [ERROR] Failed to install %%p:arm64-windows-static.
+            exit /b 1
+        )
     )
     for %%p in (%PACKAGES_DYNAMIC%) do (
         echo   %%p:arm64-windows
-        "%VCPKG_EXE%" install %%p:arm64-windows --no-print-usage 2>nul
+        "%VCPKG_EXE%" install %%p:arm64-windows --no-print-usage
+        if errorlevel 1 (
+            echo [ERROR] Failed to install %%p:arm64-windows.
+            exit /b 1
+        )
     )
         call :install_imgui arm64-windows-static dx12
 

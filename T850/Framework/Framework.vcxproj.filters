@@ -30,6 +30,12 @@
     <Filter Include="Source Files\scene">
       <UniqueIdentifier>{974026cb-3e15-4f12-ba8e-6feadd0aba19}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\terrain">
+      <UniqueIdentifier>{b7845f75-59dc-4f75-bf4f-10c5596a66b4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\terrain">
+      <UniqueIdentifier>{4ac72b99-20e4-44d0-a290-8f81a49da22a}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source Files\utils">
       <UniqueIdentifier>{63e053be-8260-4813-ae01-bc3f06590eb0}</UniqueIdentifier>
     </Filter>
@@ -87,8 +93,83 @@
     <Filter Include="Source Files\navigation">
       <UniqueIdentifier>{f15980be-8b52-4411-bfad-e309f6e4a7f0}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\game">
+      <UniqueIdentifier>{267855b7-b153-4190-a1a7-8bf30f6d89bd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\game">
+      <UniqueIdentifier>{d8c97a06-7cd7-48ab-88d0-09b13c190b83}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\game\examples">
+      <UniqueIdentifier>{0cf90245-2a3e-4687-bbc2-a152edaa171e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\game\examples">
+      <UniqueIdentifier>{a25c62fe-f501-43aa-b536-c53d8fd2c1f5}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\game\Component.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\ComponentFactory.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\Controller.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\EventBus.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\GameIds.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\GameLogicSystem.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\GameNavigationService.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\GameObject.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\GameObjectRegistry.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\GamePhysicsService.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\GameSelfTest.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\GameValidation.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\InputFrame.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\MovementComponent.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\StateMachine.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\examples\HealthComponent.h">
+      <Filter>Header Files\game\examples</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\examples\GroupManager.h">
+      <Filter>Header Files\game\examples</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\examples\PathFollowComponent.h">
+      <Filter>Header Files\game\examples</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\examples\RtsCommandController.h">
+      <Filter>Header Files\game\examples</Filter>
+    </ClInclude>
+    <ClInclude Include="include\game\examples\WeaponComponent.h">
+      <Filter>Header Files\game\examples</Filter>
+    </ClInclude>
+    <ClInclude Include="include\physics\GameplayLayers.h">
+      <Filter>Header Files\physics</Filter>
+    </ClInclude>
     <ClInclude Include="include\core\Core.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
@@ -371,6 +452,9 @@
     <ClInclude Include="include\debug\FrameDumper.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\debug\CrashDiagnostics.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
     <ClInclude Include="include\debug\LoadingProgress.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
@@ -385,6 +469,30 @@
     </ClInclude>
     <ClInclude Include="include\scene\RenderContainer.h">
       <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\MutableMeshData.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\MutableMesh.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\BlockRegistry.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\VoxelChunk.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\VoxelMesher.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\VoxelWorld.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\VoxelStreaming.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\VoxelPersistence.h">
+      <Filter>Header Files\terrain</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\RenderViewport.h">
       <Filter>Header Files\scene</Filter>
@@ -440,6 +548,60 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\core\Core.cpp">
+    <ClCompile Include="src\game\ComponentFactory.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\Controller.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\EventBus.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\GameIds.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\GameLogicSystem.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\GameNavigationService.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\GameObjectRegistry.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\GamePhysicsService.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\GameSelfTest.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\GameValidation.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\MovementComponent.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\StateMachine.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\examples\HealthComponent.cpp">
+      <Filter>Source Files\game\examples</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\examples\GroupManager.cpp">
+      <Filter>Source Files\game\examples</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\examples\PathFollowComponent.cpp">
+      <Filter>Source Files\game\examples</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\examples\RtsCommandController.cpp">
+      <Filter>Source Files\game\examples</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\examples\WeaponComponent.cpp">
+      <Filter>Source Files\game\examples</Filter>
+    </ClCompile>
+    <ClCompile Include="src\physics\GameplayLayers.cpp">
+      <Filter>Source Files\physics</Filter>
+    </ClCompile>
       <Filter>Source Files\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\Config.cpp">
@@ -610,6 +772,30 @@
     <ClCompile Include="src\scene\RenderContainer.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
+    <ClCompile Include="src\scene\MutableMeshData.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\MutableMesh.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\BlockRegistry.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\VoxelChunk.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\VoxelMesher.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\VoxelWorld.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\VoxelStreaming.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\VoxelPersistence.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
     <ClCompile Include="src\scene\RenderViewport.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
@@ -710,6 +896,9 @@
       <Filter>Source Files\video\d3d11</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\FrameDumper.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\CrashDiagnostics.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\FrameDumperIO.cpp">

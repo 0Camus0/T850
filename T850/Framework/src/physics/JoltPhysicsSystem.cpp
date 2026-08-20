@@ -20,6 +20,7 @@
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/CollisionGroup.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
@@ -62,12 +63,20 @@ using t850::PhysicsShapeDesc;
 using t850::PhysicsShapeType;
 using t850::PhysicsTriangleMeshCookSettings;
 using t850::PhysicsTriangleMeshDesc;
+using t850::GameplayLayer;
 using t850::ResourceLocator;
 
 namespace Layers {
-static constexpr JPH::ObjectLayer NonMoving = 0;
-static constexpr JPH::ObjectLayer Moving = 1;
-static constexpr JPH::ObjectLayer Count = 2;
+static constexpr JPH::ObjectLayer WorldStatic = static_cast<JPH::ObjectLayer>(GameplayLayer::WorldStatic);
+static constexpr JPH::ObjectLayer WorldDynamic = static_cast<JPH::ObjectLayer>(GameplayLayer::WorldDynamic);
+static constexpr JPH::ObjectLayer Player = static_cast<JPH::ObjectLayer>(GameplayLayer::Player);
+static constexpr JPH::ObjectLayer NPC = static_cast<JPH::ObjectLayer>(GameplayLayer::NPC);
+static constexpr JPH::ObjectLayer Projectile = static_cast<JPH::ObjectLayer>(GameplayLayer::Projectile);
+static constexpr JPH::ObjectLayer Trigger = static_cast<JPH::ObjectLayer>(GameplayLayer::Trigger);
+static constexpr JPH::ObjectLayer Ragdoll = static_cast<JPH::ObjectLayer>(GameplayLayer::Ragdoll);
+static constexpr JPH::ObjectLayer Debris = static_cast<JPH::ObjectLayer>(GameplayLayer::Debris);
+static constexpr JPH::ObjectLayer CameraBlocker = static_cast<JPH::ObjectLayer>(GameplayLayer::CameraBlocker);
+static constexpr JPH::ObjectLayer Count = static_cast<JPH::ObjectLayer>(GameplayLayer::Count);
 }
 
 static constexpr float kFixedPhysicsStepSeconds = 1.0f / 60.0f;
@@ -122,23 +131,35 @@ static constexpr JPH::uint Count = 2;
 class ObjectLayerPairFilterImpl final : public JPH::ObjectLayerPairFilter {
 public:
   bool ShouldCollide(JPH::ObjectLayer object1, JPH::ObjectLayer object2) const override {
-    switch (object1) {
-    case Layers::NonMoving:
-      return object2 == Layers::Moving;
-    case Layers::Moving:
-      return true;
-    default:
+    static constexpr bool kCollisionMatrix[Layers::Count][Layers::Count] = {
+        // WS     WD     Player NPC    Proj   Trigger Rag    Debris Camera
+        {false,  true,  true,  true,  true,  false,  true,  true,  false}, // WorldStatic
+        {true,   true,  true,  true,  true,  false,  true,  true,  true }, // WorldDynamic
+        {true,   true,  false, true,  true,  true,   false, false, true }, // Player
+        {true,   true,  true,  true,  true,  true,   false, false, true }, // NPC
+        {true,   true,  true,  true,  false, false,  true,  false, true }, // Projectile
+        {false,  false, true,  true,  false, false,  false, false, false}, // Trigger
+        {true,   true,  false, false, true,  false,  true,  true,  true }, // Ragdoll
+        {true,   true,  false, false, false, false,  true,  true,  false}, // Debris
+        {false,  true,  true,  true,  true,  false,  true,  false, false}, // CameraBlocker
+    };
+    if (object1 >= Layers::Count || object2 >= Layers::Count) {
       JPH_ASSERT(false);
       return false;
     }
+    return kCollisionMatrix[object1][object2];
   }
 };
 
 class BroadPhaseLayerInterfaceImpl final : public JPH::BroadPhaseLayerInterface {
 public:
   BroadPhaseLayerInterfaceImpl() {
-    m_objectToBroadPhase[Layers::NonMoving] = BroadPhaseLayers::NonMoving;
-    m_objectToBroadPhase[Layers::Moving] = BroadPhaseLayers::Moving;
+    for (JPH::ObjectLayer layer = 0; layer < Layers::Count; ++layer) {
+      m_objectToBroadPhase[layer] =
+          (layer == Layers::WorldStatic || layer == Layers::CameraBlocker)
+              ? BroadPhaseLayers::NonMoving
+              : BroadPhaseLayers::Moving;
+    }
   }
 
   JPH::uint GetNumBroadPhaseLayers() const override {
@@ -171,16 +192,26 @@ private:
 class ObjectVsBroadPhaseLayerFilterImpl final : public JPH::ObjectVsBroadPhaseLayerFilter {
 public:
   bool ShouldCollide(JPH::ObjectLayer objectLayer, JPH::BroadPhaseLayer broadPhaseLayer) const override {
-    switch (objectLayer) {
-    case Layers::NonMoving:
-      return broadPhaseLayer == BroadPhaseLayers::Moving;
-    case Layers::Moving:
-      return true;
-    default:
-      JPH_ASSERT(false);
-      return false;
-    }
+    if (objectLayer >= Layers::Count) return false;
+    const bool nonMoving = objectLayer == Layers::WorldStatic || objectLayer == Layers::CameraBlocker;
+    return !nonMoving || broadPhaseLayer == BroadPhaseLayers::Moving;
   }
+};
+
+class GameplayLayerMaskFilter final : public JPH::ObjectLayerFilter {
+public:
+  GameplayLayerMaskFilter(uint32_t includeLayers, uint32_t excludeLayers)
+      : includeLayers_(includeLayers), excludeLayers_(excludeLayers) {}
+
+  bool ShouldCollide(JPH::ObjectLayer layer) const override {
+    if (layer >= Layers::Count) return false;
+    const uint32_t bit = 1u << static_cast<uint32_t>(layer);
+    return (includeLayers_ & bit) != 0 && (excludeLayers_ & bit) == 0;
+  }
+
+private:
+  uint32_t includeLayers_;
+  uint32_t excludeLayers_;
 };
 
 static int g_joltInstanceCount = 0;
@@ -350,8 +381,13 @@ static PhysicsBodyMotion FromJoltMotion(JPH::EMotionType motion) {
   }
 }
 
-static JPH::ObjectLayer ToJoltObjectLayer(PhysicsBodyMotion motion) {
-  return motion == PhysicsBodyMotion::Static ? Layers::NonMoving : Layers::Moving;
+static GameplayLayer ResolveGameplayLayer(PhysicsBodyMotion motion, GameplayLayer layer) {
+  if (layer != GameplayLayer::Count) return layer;
+  return motion == PhysicsBodyMotion::Static ? GameplayLayer::WorldStatic : GameplayLayer::WorldDynamic;
+}
+
+static JPH::ObjectLayer ToJoltObjectLayer(GameplayLayer layer) {
+  return static_cast<JPH::ObjectLayer>(layer);
 }
 
 static JPH::RefConst<JPH::Shape> CreateJoltShape(const PhysicsShapeDesc& desc) {
@@ -835,6 +871,7 @@ namespace t850 {
 struct JoltPhysicsSystem::Impl {
   struct BodySlot {
     JPH::BodyID id;
+    uint32_t generation = 0;
     uint32_t entityId = 0;
     int boneIndex = -1;
     PhysicsShapeDesc shape;
@@ -842,6 +879,8 @@ struct JoltPhysicsSystem::Impl {
     std::shared_ptr<const std::vector<XVECTOR3>> debugVertices;
     std::shared_ptr<const std::vector<uint32_t>> debugLineIndices;
     PhysicsBodyMotion motion = PhysicsBodyMotion::Static;
+    GameplayLayer gameplayLayer = GameplayLayer::WorldStatic;
+    bool gameplayLayerExplicit = false;
     bool alive = false;
   };
 
@@ -860,6 +899,7 @@ struct JoltPhysicsSystem::Impl {
   JPH::JobSystemThreadPool jobSystem;
   JPH::PhysicsSystem physicsSystem;
   std::vector<BodySlot> bodies;
+  std::vector<uint32_t> freeBodySlots;
   std::vector<RagdollSlot> ragdolls;
   float simulationSpeedScale = 1.0f;
   bool useFixedSimulationDelta = false;
@@ -870,6 +910,7 @@ struct JoltPhysicsSystem::Impl {
   uint32_t updateStatsMaxMovingMovingContacts = 0;
   double updateStatsTotalMs = 0.0;
   double updateStatsMaxMs = 0.0;
+  uint32_t contactStatsSampleCounter = 0;
 
   Impl()
       : tempAllocator(10 * 1024 * 1024),
@@ -881,7 +922,7 @@ struct JoltPhysicsSystem::Impl {
     }
 
     BodySlot& slot = bodies[handle.value];
-    return slot.alive ? &slot : nullptr;
+    return slot.alive && slot.generation == handle.generation ? &slot : nullptr;
   }
 
   const BodySlot* Resolve(PhysicsBodyHandle handle) const {
@@ -890,7 +931,24 @@ struct JoltPhysicsSystem::Impl {
     }
 
     const BodySlot& slot = bodies[handle.value];
-    return slot.alive ? &slot : nullptr;
+    return slot.alive && slot.generation == handle.generation ? &slot : nullptr;
+  }
+
+  PhysicsBodyHandle StoreBody(BodySlot slot) {
+    uint32_t index = 0;
+    if (!freeBodySlots.empty()) {
+      index = freeBodySlots.back();
+      freeBodySlots.pop_back();
+      uint32_t generation = bodies[index].generation + 1;
+      if (generation == 0) generation = 1;
+      slot.generation = generation;
+      bodies[index] = std::move(slot);
+    } else {
+      index = static_cast<uint32_t>(bodies.size());
+      slot.generation = 1;
+      bodies.push_back(std::move(slot));
+    }
+    return PhysicsBodyHandle{index, bodies[index].generation};
   }
 
   RagdollSlot* Resolve(PhysicsRagdollHandle handle) {
@@ -959,8 +1017,7 @@ void JoltPhysicsSystem::Shutdown() {
     DestroyRagdoll(handle);
   }
   for (uint32_t i = 0; i < m_impl->bodies.size(); ++i) {
-    PhysicsBodyHandle handle;
-    handle.value = i;
+    const PhysicsBodyHandle handle{i, m_impl->bodies[i].generation};
     DestroyBody(handle);
   }
 
@@ -1007,7 +1064,9 @@ void JoltPhysicsSystem::Update(float deltaSeconds) {
   uint32_t movingStaticContacts = 0;
   uint32_t movingMovingContacts = 0;
   uint64_t contactPairsChecked = 0;
-  {
+  const bool collectContactStats = RuntimeTelemetry::IsFrameActive() &&
+      ((m_impl->contactStatsSampleCounter++ % 120u) == 0u);
+  if (collectContactStats) {
     T8_TELEMETRY_SCOPE("physics.jolt.contact_stats");
     for (std::size_t i = 0; i < m_impl->bodies.size(); ++i) {
       const auto& bodyA = m_impl->bodies[i];
@@ -1131,7 +1190,7 @@ PhysicsBodyHandle JoltPhysicsSystem::CreateBodyInternal(const PhysicsBodyDesc& d
       ToJoltPosition(desc.worldTransform),
       ToJoltRotation(desc.worldTransform),
       ToJoltMotion(desc.motion),
-      ToJoltObjectLayer(desc.motion));
+      ToJoltObjectLayer(ResolveGameplayLayer(desc.motion, desc.gameplayLayer)));
   settings.mUserData = MakeBodyUserData(desc.entityId, desc.boneIndex);
   settings.mFriction = desc.friction;
   settings.mRestitution = desc.restitution;
@@ -1161,12 +1220,11 @@ PhysicsBodyHandle JoltPhysicsSystem::CreateBodyInternal(const PhysicsBodyDesc& d
   slot.shape = desc.shape;
   slot.debugName = desc.debugName;
   slot.motion = desc.motion;
+  slot.gameplayLayer = ResolveGameplayLayer(desc.motion, desc.gameplayLayer);
+  slot.gameplayLayerExplicit = desc.gameplayLayer != GameplayLayer::Count;
   slot.alive = true;
 
-  PhysicsBodyHandle handle;
-  handle.value = static_cast<uint32_t>(m_impl->bodies.size());
-  m_impl->bodies.push_back(slot);
-  return handle;
+  return m_impl->StoreBody(std::move(slot));
 }
 
 PhysicsBodyHandle JoltPhysicsSystem::CreateTriangleMeshBody(const PhysicsTriangleMeshBodyDesc& desc,
@@ -1194,7 +1252,7 @@ PhysicsBodyHandle JoltPhysicsSystem::CreateTriangleMeshBody(const PhysicsTriangl
       ToJoltPosition(desc.worldTransform),
       ToJoltRotation(desc.worldTransform),
       JPH::EMotionType::Static,
-      Layers::NonMoving);
+      ToJoltObjectLayer(ResolveGameplayLayer(PhysicsBodyMotion::Static, desc.gameplayLayer)));
   settings.mUserData = MakeBodyUserData(desc.entityId, -1);
   settings.mFriction = desc.friction;
   settings.mRestitution = desc.restitution;
@@ -1219,11 +1277,11 @@ PhysicsBodyHandle JoltPhysicsSystem::CreateTriangleMeshBody(const PhysicsTriangl
   slot.debugVertices = std::make_shared<std::vector<XVECTOR3>>(desc.mesh.vertices);
   slot.debugLineIndices = BuildTriangleMeshDebugLineIndices(desc.mesh.indices, static_cast<uint32_t>(desc.mesh.vertices.size()));
   slot.motion = PhysicsBodyMotion::Static;
+  slot.gameplayLayer = ResolveGameplayLayer(PhysicsBodyMotion::Static, desc.gameplayLayer);
+  slot.gameplayLayerExplicit = desc.gameplayLayer != GameplayLayer::Count;
   slot.alive = true;
 
-  PhysicsBodyHandle handle;
-  handle.value = static_cast<uint32_t>(m_impl->bodies.size());
-  m_impl->bodies.push_back(slot);
+  const PhysicsBodyHandle handle = m_impl->StoreBody(std::move(slot));
 
   const auto totalEnd = std::chrono::steady_clock::now();
   stats.totalMs = std::chrono::duration<double, std::milli>(totalEnd - totalStart).count();
@@ -1281,6 +1339,9 @@ bool JoltPhysicsSystem::DestroyBody(PhysicsBodyHandle handle) {
   }
   bodyInterface.DestroyBody(slot->id);
   slot->alive = false;
+  slot->debugVertices.reset();
+  slot->debugLineIndices.reset();
+  m_impl->freeBodySlots.push_back(handle.value);
   return true;
 }
 
@@ -1295,7 +1356,10 @@ bool JoltPhysicsSystem::SetBodyMotion(PhysicsBodyHandle handle, PhysicsBodyMotio
   }
 
   JPH::BodyInterface& bodyInterface = m_impl->physicsSystem.GetBodyInterface();
-  const JPH::ObjectLayer objectLayer = ToJoltObjectLayer(motion);
+  if (!slot->gameplayLayerExplicit) {
+    slot->gameplayLayer = ResolveGameplayLayer(motion, GameplayLayer::Count);
+  }
+  const JPH::ObjectLayer objectLayer = ToJoltObjectLayer(slot->gameplayLayer);
   if (bodyInterface.GetObjectLayer(slot->id) != objectLayer) {
     bodyInterface.SetObjectLayer(slot->id, objectLayer);
   }
@@ -1489,7 +1553,7 @@ bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsC
       baseOffset,
       collector,
       JPH::BroadPhaseLayerFilter(),
-      JPH::ObjectLayerFilter(),
+      GameplayLayerMaskFilter(desc.includeLayers, desc.excludeLayers),
       ignoredBodies);
 
   if (!collector.HadHit()) {
@@ -1516,7 +1580,7 @@ bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsC
   for (uint32_t index = 0; index < static_cast<uint32_t>(m_impl->bodies.size()); ++index) {
     const Impl::BodySlot& slot = m_impl->bodies[index];
     if (slot.alive && slot.id == hit.mBodyID2) {
-      outHit.body.value = index;
+      outHit.body = PhysicsBodyHandle{index, slot.generation};
       outHit.entityId = slot.entityId;
       break;
     }
@@ -1592,7 +1656,7 @@ bool JoltPhysicsSystem::CastBox(const PhysicsBoxCastDesc& desc, PhysicsCastHit& 
       baseOffset,
       collector,
       JPH::BroadPhaseLayerFilter(),
-      JPH::ObjectLayerFilter(),
+      GameplayLayerMaskFilter(desc.includeLayers, desc.excludeLayers),
       ignoredBodies);
 
   if (!collector.HadHit()) {
@@ -1619,13 +1683,67 @@ bool JoltPhysicsSystem::CastBox(const PhysicsBoxCastDesc& desc, PhysicsCastHit& 
   for (uint32_t index = 0; index < static_cast<uint32_t>(m_impl->bodies.size()); ++index) {
     const Impl::BodySlot& slot = m_impl->bodies[index];
     if (slot.alive && slot.id == hit.mBodyID2) {
-      outHit.body.value = index;
+      outHit.body = PhysicsBodyHandle{index, slot.generation};
       outHit.entityId = slot.entityId;
       break;
     }
   }
 
   return true;
+}
+
+int JoltPhysicsSystem::OverlapSphere(
+    const XVECTOR3& center,
+    float radius,
+    uint32_t includeLayers,
+    uint32_t excludeLayers,
+    std::vector<PhysicsOverlapHit>& outHits) const {
+  T8_TELEMETRY_SCOPE("physics.jolt.overlap_sphere");
+  RuntimeTelemetry::AddCounter("physics.jolt.overlapSphere.count", 1.0);
+  outHits.clear();
+  if (!m_initialized || !m_impl) return 0;
+  if (!IsUsablePhysicsCoordinate(center.x) ||
+      !IsUsablePhysicsCoordinate(center.y) ||
+      !IsUsablePhysicsCoordinate(center.z) ||
+      !IsBoundedPhysicsExtent(radius) ||
+      radius <= 0.0f) {
+    return 0;
+  }
+
+  JPH::SphereShape sphere((std::max)(0.001f, radius));
+  JPH::CollideShapeSettings settings;
+  settings.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces;
+  JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+  m_impl->physicsSystem.GetNarrowPhaseQuery().CollideShape(
+      &sphere,
+      JPH::Vec3::sOne(),
+      JPH::RMat44::sTranslation(JPH::RVec3(center.x, center.y, center.z)),
+      settings,
+      JPH::RVec3::sZero(),
+      collector,
+      JPH::BroadPhaseLayerFilter(),
+      GameplayLayerMaskFilter(includeLayers, excludeLayers));
+
+  std::unordered_set<uint32_t> emittedHandles;
+  for (const JPH::CollideShapeResult& result : collector.mHits) {
+    for (uint32_t index = 0; index < static_cast<uint32_t>(m_impl->bodies.size()); ++index) {
+      const Impl::BodySlot& slot = m_impl->bodies[index];
+      if (!slot.alive || slot.id != result.mBodyID2 || !emittedHandles.insert(index).second) continue;
+
+      PhysicsOverlapHit hit;
+      hit.body = PhysicsBodyHandle{index, slot.generation};
+      hit.entityId = slot.entityId;
+      hit.gameplayLayer = slot.gameplayLayer;
+      hit.position = XVECTOR3(
+          result.mContactPointOn2.GetX(),
+          result.mContactPointOn2.GetY(),
+          result.mContactPointOn2.GetZ(),
+          1.0f);
+      outHits.push_back(hit);
+      break;
+    }
+  }
+  return static_cast<int>(outHits.size());
 }
 
 PhysicsRagdollHandle JoltPhysicsSystem::CreateRagdoll(const PhysicsRagdollDesc& desc, PhysicsBodyMotion initialMotion) {
@@ -1862,8 +1980,7 @@ bool JoltPhysicsSystem::GetDebugBodies(std::vector<PhysicsDebugBody>& outBodies)
       continue;
     }
 
-    PhysicsBodyHandle handle;
-    handle.value = i;
+    const PhysicsBodyHandle handle{i, slot.generation};
     PhysicsDebugBody debugBody;
     if (GetBodyState(handle, debugBody.state)) {
       debugBody.shape = slot.shape;
@@ -1965,6 +2082,12 @@ bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc&, PhysicsCastHi
 
 bool JoltPhysicsSystem::CastBox(const PhysicsBoxCastDesc&, PhysicsCastHit&) const {
   return false;
+}
+
+int JoltPhysicsSystem::OverlapSphere(
+    const XVECTOR3&, float, uint32_t, uint32_t, std::vector<PhysicsOverlapHit>& outHits) const {
+  outHits.clear();
+  return 0;
 }
 
 PhysicsRagdollHandle JoltPhysicsSystem::CreateRagdoll(const PhysicsRagdollDesc&, PhysicsBodyMotion) {

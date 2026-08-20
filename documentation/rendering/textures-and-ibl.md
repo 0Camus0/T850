@@ -1,6 +1,6 @@
 # Textures, Samplers, and IBL Resources
 
-Status: Stage 17 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains T850's texture loading and binding path, API-specific texture resources and samplers, material/environment texture slots, generated image-based lighting resources, and the scene/editor cubemap override workflow.
 

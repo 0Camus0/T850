@@ -1,6 +1,6 @@
 # Animation System
 
-Status: Stage 6 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains T850's skeletal animation path: glTF skin/animation import, internal skeleton and clip data, `AnimationController` playback, interpolation and keyframe stepping, pose snapshots, bone texture upload, GPU skinning, debug visualization, and current limitations.
 

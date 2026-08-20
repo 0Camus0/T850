@@ -1,6 +1,6 @@
 # Scene Format and Runtime
 
-Status: Stage 10 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains T850's scene formats and runtime scene loaders: `.t8scene`, editor serialization, `SceneTemplate`, legacy/runtime JSON descriptors, render graph references, profiles, cameras/lights/splines, physics, ragdolls, navigation, Quake3 scene variants, and the differences between DayScene, Quake3Mock, SceneTemplate, and editor Play Scene.
 
@@ -68,12 +68,14 @@ The `.t8scene` root maps to `EditorSceneFile`.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `version` | int | Scene format version. Current default is `1`. |
+| `version` | int | Scene format version. Game-logic schema v2 is migrated explicitly. |
 | `collision` | string | Optional legacy/Q3 collision resource, e.g. `.t8q3clip`. |
 | `render_graph` | string | Optional render graph override path. |
 | `editor` | `EditorStateDesc` | Editor camera, view toggles, layout mode/data. |
 | `objects` | array | Mesh scene objects. |
-| `game_entities` | array | Higher-level entity links between mesh, physics, camera, AI, ragdoll. |
+| `game_entities` | array | Stable gameplay entities, links, control, components, and optional behavior. |
+| `game_groups` | array | Stable-id gameplay group membership plus formation/flock settings. |
+| `game_logic_settings` | optional object | Fixed tick, catch-up cap, and optional spatial-grid settings. |
 | `physics_entities` | array | Authored runtime physics/player/character/static collision entities. |
 | `navigation_mesh` | optional object | Authored NavMesh settings, volumes, links, baked asset path. |
 | `splines` | array | Camera/agent path splines. |
@@ -84,7 +86,7 @@ The `.t8scene` root maps to `EditorSceneFile`.
 | `lights` | array | Directional/omni lights, including optional Q3 source metadata. |
 | `profiles` | array | Runtime/profile overrides using `SandboxProfileDesc`. |
 
-Unknown JSON keys are ignored by Glaze on load, so older/newer scene files can carry extra metadata without failing immediately.
+Unknown JSON keys are ignored by Glaze on load, so game schema changes require `MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()` rather than relying on parser errors.
 
 ## Object records
 
@@ -293,6 +295,7 @@ Runtime object load:
 7. Store scene mesh paths, object names, navigation metadata, ragdoll metadata, nav agent metadata.
 8. Create top-level physics entities.
 9. Apply cameras/lights/profiles/navigation/player setup.
+10. Initialize `GameLogicSystem`, register example factories, resolve render/physics/camera/nav links, and load game entities/groups.
 
 SceneTemplate then drives:
 
@@ -300,10 +303,13 @@ SceneTemplate then drives:
 - physics update integration from app context,
 - NavMesh build/cache/baked load,
 - nav agents,
+- fixed-tick gameplay objects, components, events, state machines, groups, and service facades,
 - splines,
 - ragdoll animation/physics handoff,
 - camera/profile controls,
 - debug overlays.
+
+The runtime Game Logic DevGui shows objects, components, recent events, forced state transitions, and a fixed-tick pause control. Gameplay telemetry uses the `game.*` counter/scope namespace.
 
 `Quake3Mock` and `SandboxScene` also contain embedded editor-scene loading paths for compatibility and experiments. Both can load `.t8scene` through `LoadEditorSceneFile()`, infer or use Q3 collision clips from the scene `collision` field or mesh data, and then apply their own scene-specific runtime behavior. `RagdollEditor` is primarily profile/model-centric and normally loads `Scenes/RagdollEditor.json`, but it can pre-read embedded scene profiles when launched in an embedded-scene mode.
 

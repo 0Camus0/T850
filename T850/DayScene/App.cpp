@@ -36,6 +36,8 @@
 #include <debug/Profiler.h>
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
+#include <game/GameSelfTest.h>
+#include <debug/CrashDiagnostics.h>
 
 std::vector<std::string> g_args;
 
@@ -43,12 +45,20 @@ t850::AppBase		  *pApp = 0;
 t850::RootFramework *pFrameWork = 0;
 
 int main(int arg,char ** args){
+  t850::InstallUnattendedCrtReportHook();
   t850::Config defaultConfig;
   t850::g_config = defaultConfig;
 
     for(int i=0;i<arg;i++){
         g_args.push_back( std::string( args[i] ) );
     }
+
+  for (int i = 1; i < arg; ++i) {
+    if (std::string_view(args[i]) == "--game-selftest") {
+      const int failures = t850::game::RunGameSelfTests();
+      return failures == 0 ? 0 : 1;
+    }
+  }
 
   if (t850::config::HasHelpArgument(arg, args)) {
     t850::config::PrintHelp();

@@ -1,266 +1,163 @@
-# Review and Gap Pass
+# Current Review and Gaps
 
-Status: Stage 12 draft.
+Status: full source/documentation freshness pass completed on 2026-08-19.
 
-This document is the final documentation review pass for Stages 0-11. It records validation performed, coverage that looks solid, high-confidence gaps that remain, a troubleshooting index, and cross-subsystem limitations to keep visible for future agents.
+This file lists current gaps and troubleshooting routes. Historical findings that were already resolved were removed; use Git history for old assessments.
 
-## Validation performed
+## Audit Performed
 
-Validation completed in this pass:
+The pass covered:
 
-- Re-read current documentation map and stage plan.
-- Ran a Markdown relative-link audit across `documentation/**/*.md`; all relative links resolve.
-- Ran a code/file path reference audit for inline paths; corrected stale path references and re-ran successfully.
-- Reviewed completed subsystem docs against source inventories for architecture, geometry, shaders, render graph, geometry rendering, animation, physics, navigation, editor, scenes, and cross-system dependency map.
-- Ran two independent source-coverage review agents:
-  - one focused on documentation coverage;
-  - one focused on runtime subsystems that might be missing.
-- Directly checked flagged gap areas in source:
-  - `Framework/include/debug/*`
-  - `Framework/src/debug/*`
-  - `Framework/src/utils/ResourceLocator.cpp`
-  - `Framework/include/utils/InputManager.h`
-  - `Framework/include/utils/CameraProfiles.h`
-  - `Framework/include/utils/HandheldControllerOverlay.h`
-  - `FrameworkImGui/src/ImGuiSystem.cpp`
-  - `FrameworkImGui/src/DevGuiContext.cpp`
+- all current subsystem documents;
+- Windows setup/build/launcher/config/assets;
+- Android setup/build/sign/install/deploy;
+- Steam Deck SteamRT/SSH/run/package workflows;
+- gameplay P0-P14 runtime/editor source;
+- FrameDumper and visual comparison scripts;
+- CI/release workflow;
+- root README, documentation index, glossary, and skill routing.
 
-## Coverage that looks strong
+Validation evidence is summarized in [Current status](current-status-and-roadmap.md).
 
-These areas have enough detail for future agents to continue work confidently:
+## Documentation Coverage
 
-| Area | Coverage |
+Current authoritative coverage exists for:
+
+- architecture and platform lifecycle;
+- resources and cloud assets;
+- runtime CLI/config;
+- rendering, geometry, shaders, textures, animation;
+- physics, navigation, gameplay;
+- scenes, runtime hosts, T8ditor, FrameworkImGui;
+- diagnostics, tests, image dumps, visual comparison;
+- Windows, Android, Steam Deck, CI/release packaging.
+
+The remaining gaps are engineering/automation/equipped-host evidence and advanced product features, not missing basic guides or mutable-terrain foundations.
+
+## Remaining Gaps
+
+### Remaining CI Documentation Enforcement
+
+CI now fails on the maintained gameplay/terrain/mutable-mesh source-registration contract across MSBuild, filters, desktop/Steam CMake, and Android CMake. It also builds all six Windows cells and runs Win32/x64 self-tests. CI does not yet fail on:
+
+- broken Markdown relative links;
+- stale command snippets.
+
+Add a repository Markdown validation script and invoke it from `.github/workflows/build.yml`.
+
+### Equipped-Host Local Platform Evidence
+
+The audit host lacked Podman and Android SDK/NDK, so local platform commands stopped at prerequisite checks. CI defines both platform builds, but an equipped local validation record should still capture:
+
+- exact Podman/SteamRT build and package result;
+- Android SDK/NDK/JDK/Vulkan versions;
+- signed ARM64 APK install/launch on device;
+- runtime logs and artifact hashes.
+
+### Gameplay Performance Budgets
+
+The gameplay spec defines 100/1,000-entity targets, but benchmark scenes and measured Release data are absent. Do not claim those budgets are met until reproducible scenes and telemetry reports exist.
+
+### Test Depth
+
+The 39-test suite is strong for deterministic core and terrain semantics, including generated Jolt triangle-body creation, but still lacks broad success-path integration for:
+
+- real initialized Jolt overlap/hitscan with entity mapping;
+- built NavMesh asynchronous path completion and mutation cancellation;
+- GroupManager formation/flock output against live primitives;
+- T8ditor save/reload/undo through a headless harness;
+- extracted release package startup.
+
+### Advanced Voxel Terrain
+
+The Framework now supports a finite streamed mutable block world with greedy meshes, bounded jobs, voxel FPS collision, DDA, block edits, atomic sparse persistence, and four-backend rendering. Remaining advanced features are:
+
+- named persisted block palettes and migration when registration order changes;
+- production atlas assets, named tile metadata, mip-safe padding, and cutout/transparent reference materials;
+- sunlight/emissive propagation, voxel ambient occlusion, water, and fluids;
+- asynchronous/off-thread chunk collision cooking and incremental collision updates;
+- voxel/grid NPC navigation or true tiled Detour integration;
+- targeted changed-chunk plus boundary-neighbor remeshing instead of conservative all-loaded edit remeshing;
+- device-local asynchronous D3D12/Vulkan mutable geometry uploads;
+- LOD, occlusion culling, indirect draws, memory budgets, and floating origin;
+- T8ditor voxel tools, inventory/crafting/drops, scripting, and multiplayer;
+- Android and Steam Deck runtime performance evidence.
+
+Implement these from measured project requirements. The current `VoxelScene` is the reference integration, not a complete game.
+
+### Deferred Gameplay and Editor Capabilities
+
+These suggestions from the pre-v1 assessments remain deliberately unimplemented:
+
+- Fast in-memory Play; Fidelity Play remains authoritative and validates the serializer/loader.
+- Gameplay config hot reload and general live component/event editing during Play. Runtime DevGui supports pause, inspection, recent events, and forced state transitions, but not arbitrary hot reload.
+- A visual state-machine graph. The table editor is the supported v1 authoring path.
+- Granular gameplay undo commands. Existing whole-scene snapshots provide undo/redo coverage.
+- Cross-scene persistent entities, entity transfer, and gameplay-driven scene transitions. `GameLogicSystem` remains scene-owned.
+
+These are product capabilities rather than missing P0-P14 foundations. Implement them from a concrete project requirement, not solely because they appeared in an old proposal.
+
+### Root-Level Product Documentation
+
+The root README is a concise project entry point, not a replacement for subsystem docs. New feature claims must link to an owning verified document and should not duplicate volatile implementation detail.
+
+## Current Technical Limits
+
+- `RenderQueue` is not the active mesh executor; `RenderMesh::Draw()` still owns the draw walk.
+- D3D12/Vulkan PSOs depend on draw state and render-target formats, not just shader keys.
+- Skinned bounds are conservative and not fully animation-aware.
+- Recast builds whole meshes rather than streamed tiles.
+- DetourCrowd is linked/detected but not the gameplay navigation path.
+- Gameplay objects use stable `std::list` nodes and components use `unique_ptr`; profile before adding per-type arrays or an ECS/sparse set.
+- Runtime JSON readers ignore unknown keys.
+- Android packaged asset access differs from desktop filesystem access.
+- Hosted editor windows require careful API resource/state isolation.
+- Telemetry requires normal shutdown to flush.
+- OpenGL voxel GBuffer albedo is byte-identical to D3D11 and normals are nearly identical, proving mutable mesh/atlas parity; deferred lighting produces a materially darker final image and needs renderer-level parity work before shared exact baselines.
+
+## Troubleshooting Index
+
+| Symptom/task | Start here |
 |---|---|
-| Architecture/platform lifecycle | [Main architecture](architecture/main-architecture.md), [Platform event loop](architecture/platform-event-loop.md) |
-| Geometry import to render-ready data | [Loading geometry](geometry/loading-geometry.md) |
-| Shader keys, shader cache, reflection, API-specific compilation | [Shader management](rendering/shader-management.md) |
-| Render graph schema and execution | [Render graph](rendering/render-graph.md) |
-| `PrimitiveInst`/mesh draw flow | [Geometry rendering flow](rendering/geometry-rendering-flow.md) |
-| Animation/skinning/bone texture | [Animation system](animation/animation-system.md) |
-| Jolt physics, ragdolls, static collision, character sweep controller | [Jolt physics](physics/jolt-physics.md) |
-| Recast/Detour navigation, volumes, links, `.t8nav` | [NavMesh and Detour](navigation/navmesh-detour.md) |
-| T8ditor authoring workflow | [Editor overview](editor/editor-overview.md) |
-| `.t8scene`, SceneTemplate, profiles, scene variants | [Scene format and runtime](scenes/scene-format-and-runtime.md) |
-| Cross-subsystem flows | [Dependency map](dependency-map.md) |
-| Resource lookup, Android packaged assets, generated cache paths | [Resource locator and cache paths](architecture/resource-locator.md) |
-| Input, controllers, camera profiles, and hosted viewport routing | [Input, camera, and controls](input/camera-and-controls.md) |
-| FrameworkImGui backend, runtime UI, and hosted scene panels | [FrameworkImGui runtime UI](editor/imgui-system.md) |
-| Texture loading, sampler state, IBL resources, and cubemap profiles | [Textures, samplers, and IBL](rendering/textures-and-ibl.md) |
-| SceneSetup descriptors, runtime control metadata, and `SceneProps` mapping | [SceneSetup descriptors](scenes/scene-setup-descriptors.md) |
-
-## High-confidence documentation gaps
-
-These are real gaps discovered by reviewing source coverage. They do not invalidate Stages 1-11, but they should become future documentation stages or appendix sections.
-
-### 1. Debug and diagnostics subsystem
-
-Addressed by [Debug and diagnostics](debug/diagnostics.md) in Stage 13. The notes below are retained as review history and as a checklist for future diagnostics changes.
-
-No dedicated document currently covers the diagnostic stack.
-
-Relevant code:
-
-- `Framework/include/debug/LoadingProgress.h`
-- `Framework/include/debug/RuntimeTelemetry.h`
-- `Framework/include/debug/FrameDumper.h`
-- `Framework/include/debug/RenderTrace.h`
-- `Framework/include/debug/Profiler.h`
-- `Framework/src/debug/RuntimeTelemetry.cpp`
-- `Framework/src/debug/FrameDumper.cpp`
-- `Framework/src/debug/FrameDumperIO.cpp`
-- `Framework/src/debug/RenderTrace.cpp`
-- `Framework/src/debug/Profiler.cpp`
-
-What to document:
-
-- loading progress snapshots and render callback,
-- runtime telemetry counters/timers/output JSON,
-- frame dump and replay snapshot format,
-- render trace events and PSO/shader/buffer/RT capture,
-- profiler scopes and draw-call counting,
-- how these systems are used from DayScene, SceneTemplate, T8ditor, render graph, physics, navigation, and shaders.
-
-Suggested future file:
-
-- `documentation/debug/diagnostics.md`
-
-### 2. Resource lookup and path resolution
-
-Addressed by [Resource locator and cache paths](architecture/resource-locator.md) in Stage 14. The notes below are retained as review history and as a checklist for future path/cache changes.
-
-Geometry docs mention `ResourceManager`, but there is no focused explanation of resource path normalization, lookup roots, Android packaged assets, cache path resolution, and recursive fallback behavior.
-
-Relevant code:
-
-- `Framework/include/utils/ResourceLocator.h`
-- `Framework/src/utils/ResourceLocator.cpp`
-- `Framework/src/utils/ResourceManager.cpp`
-- `Framework/src/scene/EditorSceneFile.cpp`
-
-What to document:
-
-- `Assets/` stripping and path normalization,
-- base path and cache path resolution,
-- desktop file lookup vs Android asset manager lookup,
-- case-insensitive Android asset fallback,
-- `ReadText`, `ReadBinary`, `Exists`, `ResolveFilePath`, `ResolveCachePath`,
-- how `.t8scene`, shader cache, mesh preprocess cache, `.t8jolt`, `.t8nav`, textures, and glTF buffers depend on this layer.
-
-Suggested future section/file:
-
-- add a "Resource lookup and cache paths" section to [Main architecture](architecture/main-architecture.md), or create `documentation/architecture/resource-locator.md`.
-
-### 3. Input, controller mapping, and camera profiles
-
-Addressed by [Input, camera, and controls](input/camera-and-controls.md) in Stage 15. The notes below are retained as review history and as a checklist for future input/camera changes.
-
-Input is mentioned in platform docs, but camera profile behavior and controller/handheld overlay paths are underdocumented.
-
-Relevant code:
-
-- `Framework/include/utils/InputManager.h`
-- `Framework/include/utils/CameraProfiles.h`
-- `Framework/src/utils/CameraProfiles.cpp`
-- `Framework/include/utils/HandheldControllerOverlay.h`
-- framework platform input paths in Windows/Linux/Android framework files.
-
-What to document:
-
-- keyboard/mouse/gamepad state model in `InputManager`,
-- active camera profiles: Orbit, Free Fly, Colliding Fly, Grounded FPS, COD FPS, Quake 3 FPS,
-- how SceneTemplate and editor select/use camera profiles,
-- handheld/controller overlay behavior,
-- Android/touch/controller differences.
-
-Suggested future file:
-
-- `documentation/input/camera-and-controls.md`
-
-### 4. FrameworkImGui runtime UI layer
-
-Addressed by [FrameworkImGui runtime UI](editor/imgui-system.md) in Stage 16. The notes below are retained as review history and as a checklist for future ImGui/backend changes.
-
-Stage 9 covers T8ditor's editor UI, but the reusable FrameworkImGui layer deserves explicit coverage.
-
-Relevant code:
-
-- `FrameworkImGui/include/imgui/ImGuiSystem.h`
-- `FrameworkImGui/src/ImGuiSystem.cpp`
-- `FrameworkImGui/include/imgui/DevGuiContext.h`
-- `FrameworkImGui/src/DevGuiContext.cpp`
-- editor hosted viewport code in `T8ditor/HostedViewportPanel.*`
-
-What to document:
-
-- SDL/Android platform backend setup,
-- renderer backend setup for D3D11/D3D12/GL/Vulkan,
-- docking and viewport enablement,
-- Android native window rebind,
-- `DevGuiContext`,
-- relationship between runtime debug UI and T8ditor panels.
-
-Suggested future file:
-
-- `documentation/editor/imgui-system.md` or `documentation/architecture/imgui-runtime.md`
-
-### 5. Texture, IBL, and material asset loading beyond mesh materials
-
-Addressed by [Textures, samplers, and IBL](rendering/textures-and-ibl.md) in Stage 17. The notes below are retained as review history and as a checklist for future texture/IBL changes.
-
-The geometry/shader/render docs cover material slots and texture binding, but not the broader texture and IBL loading path as a standalone topic.
-
-Relevant code:
-
-- API texture implementations under `Framework/src/video/*/*Texture.cpp`
-- texture creation in `BaseDriver.cpp`
-- IBL/environment slots in `RenderGraph.h`
-- SceneSetup environment map fields in `SceneDescriptor.h`
-- editor cubemap/profile selection in `EditorApp.cpp`
-
-What to document:
-
-- texture file formats and loader behavior,
-- cubemap/float texture paths,
-- IBL diffuse/specular/BRDF/Charlie/sheen LUT slots,
-- API-specific sampler behavior,
-- editor/runtime cubemap profile overrides.
-
-Suggested future section:
-
-- extend [Shader management](rendering/shader-management.md) or create `documentation/rendering/textures-and-ibl.md`.
-
-### 6. SceneSetup bridge details
-
-Addressed by [SceneSetup descriptors](scenes/scene-setup-descriptors.md) in Stage 18. The notes below are retained as review history and as a checklist for future descriptor changes.
-
-Stage 10 covers `SceneDescriptor` and `SceneSetup`, but future readers would benefit from a short deeper appendix because this is the old runtime descriptor path still used by DayScene/Quake3Mock/T8ditor render controls.
-
-Relevant code:
-
-- `Framework/include/scene/SceneDescriptor.h`
-- `Framework/src/scene/SceneDescriptor.cpp`
-- `Framework/include/scene/SceneSetup.h`
-- `Framework/src/scene/SceneSetup.cpp`
-
-What to add:
-
-- exact mapping from descriptor quality/settings to `SceneProps`,
-- how runtime UI sliders/checkboxes/selectors are defined by descriptor JSON,
-- how SceneTemplate combines `.t8scene` profiles with `SceneSetup`.
-
-Suggested location:
-
-- add a deeper appendix to [Scene format and runtime](scenes/scene-format-and-runtime.md).
-
-## Things checked that are not missing
-
-- No engine-owned audio subsystem was found under `Framework` or `DayScene`; only vendored/SDL audio references appear. There is no meaningful T850 audio system to document right now.
-- The physics documentation correctly states that current character movement is T850's kinematic sweep controller, not a direct Jolt `CharacterVirtual` wrapper.
-- The render docs correctly separate shader compilation/cache from D3D12/Vulkan PSO creation.
-- The navigation docs correctly distinguish baked `.t8nav` assets from generated cache files.
-
-## Troubleshooting index
-
-| Symptom | Start here |
-|---|---|
-| App does not create a window, input stalls, resize breaks | [Platform event loop](architecture/platform-event-loop.md) |
-| Mesh fails to load or has no geometry | [Loading geometry](geometry/loading-geometry.md) |
-| Mesh renders with wrong material/shader | [Shader management](rendering/shader-management.md), [Geometry rendering flow](rendering/geometry-rendering-flow.md) |
-| Render target or post-process pass is wrong | [Render graph](rendering/render-graph.md) |
-| Draw call exists but nothing appears | [Geometry rendering flow](rendering/geometry-rendering-flow.md) |
-| Skinned mesh does not animate | [Animation system](animation/animation-system.md) |
-| Ragdoll/physics body is missing | [Jolt physics](physics/jolt-physics.md) |
-| Character movement collides incorrectly | [Jolt physics](physics/jolt-physics.md), [Input, camera, and controls](input/camera-and-controls.md) |
-| NavMesh has no polygons or links | [NavMesh and Detour](navigation/navmesh-detour.md) |
-| T8ditor panel/action behaves incorrectly | [Editor overview](editor/editor-overview.md) |
-| Play Scene differs from editor | [Scene format and runtime](scenes/scene-format-and-runtime.md), [Editor overview](editor/editor-overview.md) |
-| Asset loads on desktop but not Android, or generated cache paths are confusing | [Resource locator and cache paths](architecture/resource-locator.md) |
-| Keyboard/gamepad/touch/camera profile behavior is wrong | [Input, camera, and controls](input/camera-and-controls.md), [Platform event loop](architecture/platform-event-loop.md) |
-| Runtime/editor ImGui, docking, platform-window, or hosted panel behavior is wrong | [FrameworkImGui runtime UI](editor/imgui-system.md), [Editor overview](editor/editor-overview.md) |
-| Texture, sampler, cubemap, or IBL output differs by backend/platform | [Textures, samplers, and IBL](rendering/textures-and-ibl.md), [Render graph](rendering/render-graph.md) |
-| Runtime UI descriptor control or profile override is ignored | [SceneSetup descriptors](scenes/scene-setup-descriptors.md), [Scene format and runtime](scenes/scene-format-and-runtime.md) |
-| Cross-subsystem change touches many files | [Dependency map](dependency-map.md) |
-
-## Cross-subsystem limitations summary
-
-These limitations appear in subsystem docs, but are worth keeping together:
-
-- `RenderQueue` is not the active mesh executor yet; `RenderMesh::Draw` still owns the draw walk.
-- D3D12/Vulkan PSO creation is draw-state dependent even when shader keys match.
-- Physics has no fixed-step accumulator/substep scheduler yet.
-- Physics layers are static/non-moving vs moving only.
-- Current character movement is a kinematic sweep controller, not direct Jolt `CharacterVirtual`.
-- Skinned mesh culling is conservative/limited because bind-pose bounds are not animation-aware.
-- Recast build is whole-mesh, not tiled streaming.
-- `.t8scene` unknown keys are ignored, so schema typos can be silent.
-- Hosted editor windows share some API resources and must be audited carefully for render-state isolation.
-- Resource path behavior differs between desktop filesystem lookup and Android packaged assets.
-
-## Recommended follow-up documentation stages
-
-1. **Stage 13** — Debug and diagnostics: loading progress, telemetry, frame dump/replay, render trace, profiler. Completed as [debug/diagnostics.md](debug/diagnostics.md).
-2. **Stage 14** — Resource locator and cache path architecture. Completed as [architecture/resource-locator.md](architecture/resource-locator.md).
-3. **Stage 15** — Input, controllers, handheld overlay, and camera profiles. Completed as [input/camera-and-controls.md](input/camera-and-controls.md).
-4. **Stage 16** — FrameworkImGui runtime UI and platform backend behavior. Completed as [editor/imgui-system.md](editor/imgui-system.md).
-5. **Stage 17** — Texture/IBL loading and sampler behavior. Completed as [rendering/textures-and-ibl.md](rendering/textures-and-ibl.md).
-6. **Stage 18** — SceneSetup/SceneDescriptor appendix with exact `SceneProps` mappings. Completed as [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md).
+| first build, MSBuild, outputs | [Windows build and run](development/windows-build-and-run.md) |
+| launcher/config/CLI confusion | [Runtime configuration](development/runtime-configuration.md) |
+| missing models/textures | [Cloud assets](development/cloud-assets.md) |
+| Android setup/sign/install | [Android](platform/android.md) |
+| Steam Deck setup/build/run/package | [Steam Deck](platform/steam-deck.md) |
+| choose runtime scene owner | [Runtime hosts](runtime/runtime-hosts.md) |
+| test or release gate | [Verification](testing/verification.md) |
+| create/compare image dumps | [Visual regression](debug/visual-regression.md) |
+| app/window/input/resize | [Platform event loop](architecture/platform-event-loop.md) |
+| path/cache works on desktop only | [Resource locator](architecture/resource-locator.md) |
+| mesh import/material | [Loading geometry](geometry/loading-geometry.md) |
+| shader/permutation/PSO | [Shader management](rendering/shader-management.md) |
+| pass/RT/post process | [Render graph](rendering/render-graph.md) |
+| draw/binding/culling | [Geometry rendering](rendering/geometry-rendering-flow.md) |
+| texture/sampler/IBL | [Textures and IBL](rendering/textures-and-ibl.md) |
+| animation/skinning | [Animation](animation/animation-system.md) |
+| body/cast/ragdoll/gameplay layer | [Jolt physics](physics/jolt-physics.md) |
+| NavMesh/path/off-mesh links | [Navigation](navigation/navmesh-detour.md) |
+| gameplay object/event/state/control | [Game entity system](game/game-entity-system-spec.md) |
+| editor hierarchy/undo/Play | [Editor](editor/editor-overview.md) |
+| `.t8scene` fields/runtime load | [Scene format](scenes/scene-format-and-runtime.md) |
+| telemetry/profile/raw dump | [Diagnostics](debug/diagnostics.md) |
+
+## Change Review Checklist
+
+Before merging a cross-system change:
+
+1. identify the owning document and source abstraction;
+2. update both MSBuild and CMake for new Framework sources;
+3. run the minimum gate from [Verification](testing/verification.md);
+4. run a focused visual case when rendering can change;
+5. keep `VisualBaselines/reference` unchanged unless a reviewed visual change requires rebaseline;
+6. update known limits and commands in the same change;
+7. run link audit and `git diff --check`;
+8. report unrun platform gates explicitly.
+
+## Related Documents
+
+- [Documentation index](README.md)
+- [Current status](current-status-and-roadmap.md)
+- [Maintenance plan](stage-plan.md)
+- [Dependency map](dependency-map.md)

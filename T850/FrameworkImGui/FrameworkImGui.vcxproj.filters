@@ -17,12 +17,18 @@
     <ClCompile Include="src\DevGuiContext.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\RagdollEditorGui.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\imgui\ImGuiSystem.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\imgui\DevGuiContext.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\imgui\RagdollEditorGui.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

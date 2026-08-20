@@ -1,5 +1,7 @@
 # Documentation Conventions
 
+Status: verified and extended for operational documentation on 2026-08-19.
+
 This file defines how the `documentation/` tree should be written so every stage is consistent.
 
 ## File organization
@@ -30,6 +32,23 @@ Each subsystem document should follow this structure unless there is a good reas
 ## Extension points
 ## Known limitations
 ## Debugging checklist
+## Related documents
+```
+
+Operational guides should instead use:
+
+```md
+# Workflow Name
+
+Status: verified against <scripts/source> on YYYY-MM-DD.
+
+## Roots and prerequisites
+## Exact commands
+## Inputs/options
+## Outputs/artifacts
+## Success criteria
+## Stop conditions and failure classification
+## Cleanup
 ## Related documents
 ```
 
@@ -66,6 +85,32 @@ Each document should make it possible to answer:
 - How does it reach the GPU/physics/navigation/runtime system?
 - What is editor-only versus runtime?
 - What breaks when this subsystem is misconfigured?
+
+For commands, also answer:
+
+- What directory must the shell use?
+- Which script is authoritative?
+- What exit code/text/artifact proves success?
+- Is a result passed, skipped, unsupported, or environment-blocked?
+- Which generated files are safe to remove?
+
+## Freshness Rules
+
+- Put a source-verification date near the top of every current document.
+- Do not promote a command to Verified unless its script and options were read and, when the host supports it, executed.
+- Keep future design in an explicit Planned/Optional section; do not mix it into implemented API prose.
+- When a specification becomes implemented, replace “new/proposed/required” language with current behavior and retain deferred items explicitly.
+- Remove superseded documents instead of keeping a parallel legacy tree; Git history is the archive.
+- Run a relative-link audit and `git diff --check` after documentation edits.
+
+## Small-Model Writing Rules
+
+- Use one canonical command first, then variants.
+- State repository root versus source root before commands.
+- Prefer tables for flags/outputs and short numbered workflows.
+- Include expected output and a stop condition.
+- Link to detail instead of duplicating volatile implementation.
+- Avoid unexplained historical stage names in current docs.
 
 ## Cross-linking conventions
 

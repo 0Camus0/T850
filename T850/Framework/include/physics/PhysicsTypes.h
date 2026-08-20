@@ -2,6 +2,7 @@
 
 #include <utils/Picking.h>
 #include <utils/xMaths.h>
+#include <physics/GameplayLayers.h>
 
 #include <cstdint>
 #include <memory>
@@ -14,9 +15,15 @@ static constexpr uint32_t kInvalidPhysicsHandle = 0xffffffffu;
 
 struct PhysicsBodyHandle {
   uint32_t value = kInvalidPhysicsHandle;
+  uint32_t generation = 0;
 
-  bool IsValid() const { return value != kInvalidPhysicsHandle; }
-  void Reset() { value = kInvalidPhysicsHandle; }
+  bool IsValid() const { return value != kInvalidPhysicsHandle && generation != 0; }
+  void Reset() {
+    value = kInvalidPhysicsHandle;
+    generation = 0;
+  }
+
+  friend bool operator==(const PhysicsBodyHandle&, const PhysicsBodyHandle&) = default;
 };
 
 struct PhysicsRagdollHandle {
@@ -135,6 +142,7 @@ struct PhysicsBodyDesc {
   float friction = 0.4f;
   float restitution = 0.0f;
   bool sensor = false;
+  GameplayLayer gameplayLayer = GameplayLayer::Count;
 };
 
 struct PhysicsTriangleMeshBodyDesc {
@@ -145,6 +153,14 @@ struct PhysicsTriangleMeshBodyDesc {
   float friction = 0.6f;
   float restitution = 0.0f;
   bool sensor = false;
+  GameplayLayer gameplayLayer = GameplayLayer::Count;
+};
+
+struct PhysicsOverlapHit {
+  PhysicsBodyHandle body;
+  uint32_t entityId = 0;
+  GameplayLayer gameplayLayer = GameplayLayer::WorldStatic;
+  XVECTOR3 position = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
 };
 
 struct PhysicsCapsuleCastDesc {
@@ -154,6 +170,8 @@ struct PhysicsCapsuleCastDesc {
   float halfHeight = 0.55f;
   std::vector<uint32_t> ignoredEntityIds;
   bool triangleMeshesOnly = false;
+  uint32_t includeLayers = 0xFFFFFFFFu;
+  uint32_t excludeLayers = 0;
 };
 
 struct PhysicsBoxCastDesc {
@@ -162,6 +180,8 @@ struct PhysicsBoxCastDesc {
   XVECTOR3 halfExtents = XVECTOR3(0.35f, 0.90f, 0.35f, 0.0f);
   std::vector<uint32_t> ignoredEntityIds;
   bool triangleMeshesOnly = false;
+  uint32_t includeLayers = 0xFFFFFFFFu;
+  uint32_t excludeLayers = 0;
 };
 
 struct PhysicsCastHit {

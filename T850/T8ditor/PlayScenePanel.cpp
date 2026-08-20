@@ -74,6 +74,11 @@ bool EditorApp::ExportTemporaryPlayScene(std::string& outPath) {
   std::filesystem::path tempPath = tempDir / ("play_scene_" + std::to_string(stamp) + ".t8scene");
   outPath = tempPath.string();
   m_playSceneEditorSnapshot = RefreshVirtualEditorScene(outPath);
+  if (!RunGameValidation(m_playSceneEditorSnapshot, true)) {
+    m_playSceneStatus = "Game-logic validation failed. Review Game Validation before Play.";
+    T8_LOG_ERROR("[T8ditor] Play Scene blocked by game-logic validation errors");
+    return false;
+  }
   T8_LOG_INFO("[T8ditor] Play Scene virtual scene refreshed: objects=%zu physics=%zu cameras=%zu lights=%zu",
               m_playSceneEditorSnapshot.objects.size(),
               m_playSceneEditorSnapshot.physics_entities.size(),

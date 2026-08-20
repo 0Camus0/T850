@@ -1,5 +1,7 @@
 # Glossary
 
+Status: verified and expanded on 2026-08-19.
+
 This glossary captures engine terms used across the documentation.
 
 ## Core terms
@@ -9,10 +11,10 @@ This glossary captures engine terms used across the documentation.
 | Framework | Core engine library containing rendering, resources, physics, navigation, scene setup, utilities, and API backends. |
 | Dependency map | Cross-subsystem documentation map linking class dependencies and end-to-end runtime/editor flows. |
 | Review and gap pass | Final documentation audit listing validation results, missing subsystem docs, troubleshooting links, and cross-system limitations. |
-| Scene | Runtime application/demo built on the Framework. Examples include DayScene, Quake3Mock, SandboxScene, RagdollEditor, and SceneTemplate. |
+| Scene | Runtime application/demo built on the Framework. Examples include DayScene, Quake3Mock, SandboxScene, RagdollEditor, SceneTemplate, and VoxelScene. |
 | T8ditor | The editor executable used to author `.t8scene` files. |
 | `.t8scene` | JSON scene-authoring file saved by T8ditor and loaded by SceneTemplate. |
-| `EditorSceneFile` | Framework schema struct for `.t8scene`, including objects, physics, navigation, ragdolls, cameras, lights, profiles, and editor state. |
+| `EditorSceneFile` | Framework schema for `.t8scene`, including objects, physics, navigation, ragdolls, gameplay entities/groups/settings, cameras, lights, profiles, and editor state. |
 | `SceneDescriptor` | Runtime JSON descriptor for scene controls, cameras, lights, quality settings, UI metadata, and profiles. |
 | `SceneSetup` | Loader/applier that converts `SceneDescriptor` JSON into cameras, lights, filters, splines, and `SceneProps`. |
 | Runtime control descriptor | `SceneDescriptor` slider/checkbox/selector metadata consumed by runtime scenes and T8ditor rendering panels through name-based mapping tables. |
@@ -78,7 +80,7 @@ This glossary captures engine terms used across the documentation.
 | `EnvironmentMapSet` | Texture-index bundle for sky, diffuse/specular IBL, BRDF LUT, Charlie IBL/LUT, and sheen E LUT. |
 | `IBLResources` | Framework helpers that load explicit IBL assets, generate/cache filtered IBL cubemaps/LUTs, and update `SceneProps` IBL settings. |
 | `EnvironmentTextureSlot` | Reserved render texture slots 10-15 for diffuse/specular/BRDF/Charlie/sheen IBL resources. |
-| `MaterialTextureSlot` | Reserved render texture slots 16-25 for extended material maps such as sheen, clearcoat, occlusion, specular, transmission, and lightmap. |
+| `MaterialTextureSlot` | Extended material slots 16-23 and 25; slot 24 is reserved for skinned bone textures. |
 | Generated IBL cache | Derived `.t8ibl` float cache files stored under `Textures/GeneratedIBLCache`. |
 
 ## Geometry and asset terms
@@ -94,6 +96,23 @@ This glossary captures engine terms used across the documentation.
 | `Submesh` | Shared mesh-cache metadata for one drawable subset, including index range, material slot, bounds, and mesh-pool allocations. |
 | Mesh pool | Shared GPU buffer allocation path for mesh VB/IB data. |
 | Mesh preprocess cache | Disk cache for mesh bounds/culling cluster metadata keyed by source signature and clustering settings. |
+
+## Terrain terms
+
+| Term | Meaning |
+|---|---|
+| `MutableMeshSnapshot` | CPU-owned validated vertex/index/section/material/bounds replacement unit produced by workers and committed on the render thread. |
+| `MutableMesh` | Backend-neutral procedural render primitive that swaps complete snapshots and retires old buffers safely. |
+| `BlockRegistry` | Runtime block-definition table; block ID 0 is air. |
+| Block atlas | Shared base-color texture whose normalized tile rectangles are stored on block definitions and emitted as voxel face UVs. |
+| `VoxelChunk` | Versioned dense block storage for one integer chunk key. |
+| `VoxelWorld` | Loaded-chunk owner with negative-safe world/local mapping and DDA block raycasts. |
+| Greedy meshing | Merging adjacent coplanar voxel faces with identical block material/orientation into larger quads. |
+| `VoxelStreamingManager` | Distance-prioritized, budgeted chunk job scheduler with cancellation and per-key epochs. |
+| `VoxelDeltaStore` | Mutex-protected sparse authored edits persisted atomically as versioned `.t8vox` data. |
+| `RenderInstanceHandle` | Generational handle used by `RenderContainer` to add/remove streamed render instances without stale-slot reuse. |
+| Chunk collision body | One static generated Jolt triangle body owned by each active voxel chunk; replaced after remeshing and destroyed on unload. |
+| `VoxelScene` | Runtime host at scene index 5 demonstrating generated atlas-textured streaming terrain, grounded FPS and chunk Jolt collision, DDA, and persisted place/remove edits. |
 
 ## Animation terms
 
@@ -115,7 +134,7 @@ This glossary captures engine terms used across the documentation.
 |---|---|
 | Jolt | Physics library integrated into the Framework. |
 | `JoltPhysicsSystem` | Framework wrapper around Jolt for lifecycle, body creation, casts, ragdolls, simulation update, and debug body queries. |
-| `PhysicsBodyHandle` | Runtime handle to a Jolt body slot stored on `PrimitiveInst` for authored physics bodies. |
+| `PhysicsBodyHandle` | Generational runtime handle to a reusable Jolt body slot; stale handles cannot resolve a replacement body. |
 | `PhysicsRagdollHandle` | Runtime handle to a Jolt ragdoll slot containing multiple body handles and constraints. |
 | Static triangle mesh | Collision mesh generated from render geometry and used as static world collision. |
 | `.t8jolt` | Cached cooked Jolt triangle mesh shape stored under a source asset `.t8cache` directory. |
@@ -140,6 +159,23 @@ This glossary captures engine terms used across the documentation.
 | `.t8nav` | Baked NavMesh asset format using the engine’s serialized Detour data. |
 | `NavMeshDebugRenderer` | Line-renderer based debug view for navmesh geometry, nodes, graph edges, and off-mesh links. |
 
+## Gameplay terms
+
+| Term | Meaning |
+|---|---|
+| `GameLogicSystem` | Scene-owned fixed-tick gameplay orchestrator with explicit update phases and bounded catch-up. |
+| `GameObject` | Runtime gameplay object with stable scene ID, runtime ID, links, components, behavior, and controller. |
+| Stable ID | Serialized `ge_`, `comp_`, or `grp_` identifier used for references; names remain editable display text. |
+| `Component` | Lifecycle-managed gameplay behavior updated in a declared fixed-tick phase. |
+| `MovementIntent` | Genre-neutral move/look/action/nav intent produced by a controller and consumed by movement/examples. |
+| `EventBus` | Queued gameplay event system; handler-published events dispatch on a later cycle rather than recursively. |
+| `StateMachine` | Load-compiled state/transition runtime with priority, descriptor-order ties, cooldown, and event conditions. |
+| `GamePhysicsService` | Gameplay-facing filtered query and buffered write facade over Jolt. |
+| `GameNavigationService` | Batched path request/result facade over NavMesh/Detour with async completion and mutation barrier. |
+| `PathFollowComponent` | Example component that consumes path results and steers AI through waypoints with direct fallback. |
+| Gameplay group | Stable-ID Squad/Team record with formation/flock settings; unrelated to editor mesh-index groups. |
+| Fidelity Play | T8ditor Play path that exports a temporary `.t8scene`, validates it, and uses the real SceneTemplate file loader. |
+
 ## Editor terms
 
 | Term | Meaning |
@@ -153,3 +189,17 @@ This glossary captures engine terms used across the documentation.
 | `EditorWorld` | Shared T8ditor authoring data model containing objects, cameras, lights, physics entities, selection, groups, undo, and loaded scene state. |
 | Hosted viewport | Editor-hosted render target and ImGui image/input rectangle used by Mesh Edit, Ragdoll Edit, and Play Scene windows. |
 | `UndoStack` | T8ditor command stack supporting undo/redo through transform commands and scene-state snapshots. |
+
+## Build and verification terms
+
+| Term | Meaning |
+|---|---|
+| Repository root | Checkout directory containing `documentation/` and `LaunchSolution.bat`. |
+| Source root | Inner `T850/` directory containing `T850.sln`, `Framework/`, `Assets/`, and `scripts/`. |
+| MSBuild primary | Windows `.sln`/`.vcxproj` is the supported Windows build source; CMake parity remains required for platforms. |
+| SteamRT | Valve Steam Runtime SDK container used for reproducible Steam Deck/Linux builds. |
+| Visual baseline | Manifest-backed accepted reference or candidate image set, not merely a raw screenshot. |
+| Raw frame dump | One FrameDumper output directory containing backbuffer, render targets, and snapshot; requires validation before acceptance. |
+| Comparable capture | Reference/candidate pair with matching case/API and captured status. |
+| Environment-blocked | Gate could not start because required host tooling was absent; neither source pass nor source failure. |
+| Hardware skip | Explicitly recorded case not run because hardware is below a declared requirement. |

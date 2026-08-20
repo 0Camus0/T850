@@ -3,6 +3,7 @@
 #include <Config.h>
 
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,7 @@ public:
   bool ReadBinary(const std::string& path, std::vector<unsigned char>& out) const;
   bool ReadText(const std::string& path, std::string& out) const;
   bool WriteText(const std::string& path, const std::string& text) const;
+  bool WriteBinaryAtomic(const std::string& path, std::span<const unsigned char> bytes) const;
   std::vector<std::string> List(const std::string& directory, bool recursive = false) const;
   bool FindFileByNameRecursive(const std::string& requestedPath,
                                std::string& outPath,

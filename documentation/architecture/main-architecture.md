@@ -1,5 +1,7 @@
 # Main Architecture
 
+Status: verified against source on 2026-08-19.
+
 This document describes the top-level architecture of T850: the Framework layer, scene applications, editor application, dev layer, and shared runtime context. It focuses on ownership and lifecycle rather than subsystem internals.
 
 Related documents:
@@ -163,7 +165,7 @@ Platform implementations:
 - `SandboxScene`
 - `RagdollEditor`
 
-Each scene owns a `SceneProps` object. `SceneProps` is the main bundle of camera, light, rendering feature toggles, culling, God Rays, material parameters, and global scene render settings.
+Each scene owns the `SceneBase::SceneProp` member, whose type is `SceneProps`. The `SceneProps` struct bundles cameras, lights, rendering feature toggles, culling, God Rays, material parameters, and global scene render settings.
 
 ### `EngineContext`
 

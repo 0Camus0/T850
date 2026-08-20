@@ -16,6 +16,10 @@
 #include <utils/Picking.h>
 #include <utils/ResourceLocator.h>
 #include <debug/RuntimeTelemetry.h>
+#include <game/examples/HealthComponent.h>
+#include <game/examples/PathFollowComponent.h>
+#include <game/examples/WeaponComponent.h>
+#include <game/StateMachine.h>
 
 #ifdef OS_ANDROID
 #include <android/input.h>
@@ -3877,6 +3881,12 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
     return false;
   }
 
+  std::string migrationLog;
+  if (t850::scene::MigrateEditorSceneGameLogic(scene, &migrationLog)) {
+    T8_LOG_INFO("[GameLogic] Migrated runtime scene copy '%s': %s",
+                scenePath.c_str(), migrationLog.c_str());
+  }
+
   m_loadedEditorScene = true;
   m_loadedEditorScenePath = scenePath;
   m_meshCount = 0;
@@ -3918,6 +3928,7 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
     m_navMeshDebugOffset = m_authoredNavMesh.debug_offset;
     m_navMeshDebugShapeMode = std::clamp(m_authoredNavMesh.debug_shape_mode, 0, 1);
     m_navMeshBuildAttempted = false;
+    m_gameLogic.Navigation().PrepareForNavMeshMutation();
     m_navMesh.Clear();
   }
   m_hasAuthoredPlayer = false;
@@ -3998,7 +4009,12 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
         const bool wantsStaticTriangle =
             physicsMeta.body_type == "static_triangle_mesh" && physicsMeta.motion == "static";
         if (wantsStaticTriangle && renderMesh && t850::AttachStaticTriangleMeshBody(
-            *engineContext->physics, instance, *renderMesh, cookSettings, &cookStats)) {
+          *engineContext->physics,
+          instance,
+          *renderMesh,
+          cookSettings,
+          &cookStats,
+          t850::GameplayLayerFromString(physicsMeta.collision_layer, t850::GameplayLayer::WorldStatic))) {
           T8_LOG_INFO("[SceneTemplate] Scene collision mesh ready for '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
                       object.name.c_str(),
                       cookStats.cacheHit ? "hit" : "miss",
@@ -4139,6 +4155,91 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
                 playerSettings.capsuleHalfHeight);
   }
   InitializeSceneSplinePlayback(scene);
+
+  t850::game::GameLogicSettings gameSettings;
+  if (scene.game_logic_settings.has_value()) {
+    gameSettings.fixedDeltaSeconds = scene.game_logic_settings->fixed_delta_seconds;
+    gameSettings.maxStepsPerFrame = scene.game_logic_settings->max_steps_per_frame;
+  }
+  t850::EngineContext* gameContext = GetEngineContext();
+  if (!gameContext) gameContext = &t850::GetEngineContext();
+  m_gameLogic.Initialize(*gameContext, gameSettings);
+  m_gameLogic.SetGroupSystem(&m_groupManager);
+  t850::game::examples::RegisterHealthComponent(m_gameLogic.Factories());
+  t850::game::examples::RegisterPathFollowComponent(m_gameLogic.Factories());
+  t850::game::examples::RegisterWeaponComponent(m_gameLogic.Factories());
+
+  t850::game::GameSceneRuntimeLinks gameLinks;
+  gameLinks.resolveMeshSlot = [this](std::string_view objectName) {
+    for (int meshIndex = 0; meshIndex < static_cast<int>(m_sceneObjectNames.size()); ++meshIndex) {
+      if (m_sceneObjectNames[static_cast<std::size_t>(meshIndex)] == objectName) return meshIndex;
+    }
+    return -1;
+  };
+  gameLinks.primitiveForSlot = [this](int meshSlot) -> t850::PrimitiveInst* {
+    return meshSlot >= 0 && meshSlot < m_meshCount ? &Meshes[meshSlot] : nullptr;
+  };
+  gameLinks.resolveBody = [this](std::string_view physicsEntityName) {
+    for (const t850::scene::ScenePhysicsEntityDesc& physicsEntity : m_scenePhysicsEntities) {
+      if (physicsEntity.name != physicsEntityName) continue;
+      for (int meshIndex = 0; meshIndex < static_cast<int>(m_sceneObjectNames.size()); ++meshIndex) {
+        if (m_sceneObjectNames[static_cast<std::size_t>(meshIndex)] == physicsEntity.source_object) {
+          return Meshes[meshIndex].GetPhysicsBody();
+        }
+      }
+      break;
+    }
+    return t850::PhysicsBodyHandle{};
+  };
+  gameLinks.resolveCamera = [&scene](std::string_view cameraName) {
+    for (int cameraIndex = 0; cameraIndex < static_cast<int>(scene.cameras.size()); ++cameraIndex) {
+      if (scene.cameras[static_cast<std::size_t>(cameraIndex)].name == cameraName) return cameraIndex;
+    }
+    return -1;
+  };
+  gameLinks.navigationAgentForSlot = [this](int meshSlot) {
+    t850::game::GameNavigationAgentSettings settings;
+    if (meshSlot < 0 || meshSlot >= static_cast<int>(m_sceneObjectNames.size())) return settings;
+    const std::size_t index = static_cast<std::size_t>(meshSlot);
+    if (index < m_sceneNavAgentTargetModes.size()) settings.targetMode = m_sceneNavAgentTargetModes[index];
+    if (index < m_sceneNavAgentFollowDistances.size()) settings.followDistance = m_sceneNavAgentFollowDistances[index];
+    if (index < m_sceneNavAgentSideOffsets.size()) settings.sideOffset = m_sceneNavAgentSideOffsets[index];
+    if (index < m_sceneNavAgentFormationDepthSteps.size()) settings.formationDepthStep = m_sceneNavAgentFormationDepthSteps[index];
+    if (index < m_sceneNavAgentSlots.size()) settings.formationSlot = m_sceneNavAgentSlots[index];
+    return settings;
+  };
+  gameLinks.navMesh = &m_navMesh;
+
+  t850::scene::SceneValidationReport gameReport;
+  if (!m_gameLogic.LoadFromScene(scene, gameLinks, &gameReport)) {
+    T8_LOG_ERROR("[GameLogic] Scene '%s' contains game-logic validation errors", scenePath.c_str());
+  }
+  m_rtsCommandController.Bind(&m_groupManager, &m_gameLogic);
+  for (const t850::scene::SceneValidationIssue& issue : gameReport.issues) {
+    if (issue.severity == t850::scene::SceneValidationSeverity::Error) {
+      T8_LOG_ERROR("[GameLogic] %s: %s", issue.code.c_str(), issue.message.c_str());
+    } else {
+      T8_LOG_INFO("[GameLogic] %s: %s", issue.code.c_str(), issue.message.c_str());
+    }
+  }
+  auto runtimeObject = m_gameLogic.Registry().Objects().begin();
+  for (std::size_t entityIndex = 0;
+       entityIndex < scene.game_entities.size() && runtimeObject != m_gameLogic.Registry().Objects().end();
+       ++entityIndex, ++runtimeObject) {
+    const std::string& ragdollObject = scene.game_entities[entityIndex].ragdoll_object;
+    if (ragdollObject.empty()) continue;
+    t850::game::GameObject& object = *runtimeObject;
+    for (int ragdollIndex = 0; ragdollIndex < static_cast<int>(m_sceneRagdolls.size()); ++ragdollIndex) {
+      const int meshIndex = m_sceneRagdolls[static_cast<std::size_t>(ragdollIndex)].meshIndex;
+      if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneObjectNames.size()) &&
+          m_sceneObjectNames[static_cast<std::size_t>(meshIndex)] == ragdollObject) {
+        object.links.ragdollIndex = ragdollIndex;
+        break;
+      }
+    }
+  }
+  T8_LOG_INFO("[GameLogic] Loaded %zu runtime object(s) from '%s'",
+              m_gameLogic.Registry().Count(), scenePath.c_str());
   T8_LOG_INFO("[SceneTemplate] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
   return true;
 }
@@ -5550,6 +5651,7 @@ void SceneTemplate::CreateAssets() {
   m_lightArrowRenderer.Create();
   m_physicsDebugRenderer.Create();
   m_navMeshDebugRenderer.Create();
+  m_gameLogic.Navigation().PrepareForNavMeshMutation();
   m_navMesh.Clear();
   m_navMeshBuildAttempted = false;
   float arrowVerts[10 * 4] = {};
@@ -5655,6 +5757,7 @@ void SceneTemplate::ResetViewInput() {
 }
 
 void SceneTemplate::DestroyAssets() {
+  m_gameLogic.Shutdown();
   SceneProp.SSAOKernel.Destroy();
   bool hasPhysicsLinks = m_floorBody.IsValid();
   const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
@@ -5969,6 +6072,7 @@ void SceneTemplate::OnUpdate(float _DtSecs) {
       skinned->UpdateAnimationPose();
     }
   }
+  m_gameLogic.Update(DtSecs);
 }
 
 void SceneTemplate::DriveRagdollFromAnimation(float deltaSeconds) {
@@ -13568,6 +13672,32 @@ void SceneTemplate::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
 #endif
 
 void SceneTemplate::OnInput(InputManager* IManager) {
+  t850::game::InputFrame gameInput;
+  const float keyboardRight = (IManager->PressedKey(T800K_d) ? 1.0f : 0.0f) -
+      (IManager->PressedKey(T800K_a) ? 1.0f : 0.0f);
+  const float keyboardForward = (IManager->PressedKey(T800K_w) ? 1.0f : 0.0f) -
+      (IManager->PressedKey(T800K_s) ? 1.0f : 0.0f);
+  const float moveRight = std::clamp(keyboardRight + IManager->Gamepad.leftX, -1.0f, 1.0f);
+  const float moveForward = std::clamp(keyboardForward - IManager->Gamepad.leftY, -1.0f, 1.0f);
+  XVECTOR3 cameraRight = Cam.Right;
+  cameraRight.y = 0.0f;
+  cameraRight.w = 0.0f;
+  if (cameraRight.Length() > 0.000001f) cameraRight.Normalize();
+  XVECTOR3 cameraForward = Cam.Look;
+  cameraForward.y = 0.0f;
+  cameraForward.w = 0.0f;
+  if (cameraForward.Length() > 0.000001f) cameraForward.Normalize();
+  gameInput.moveAxis = cameraRight * moveRight + cameraForward * moveForward;
+  gameInput.lookDelta = XVECTOR3(
+      static_cast<float>(IManager->xDelta) * 0.002f + IManager->Gamepad.rightX * 0.04f,
+      static_cast<float>(-IManager->yDelta) * 0.002f - IManager->Gamepad.rightY * 0.04f,
+      0.0f,
+      0.0f);
+  gameInput.buttonsDown = IManager->PressedMouseButton(0) || IManager->Gamepad.rightTrigger > 0.5f ? 1u : 0u;
+  gameInput.buttonsPressed = IManager->PressedOnceMouseButton(0) ? 1u : 0u;
+  gameInput.dtSeconds = DtSecs;
+  m_gameLogic.SetInputFrame(std::move(gameInput));
+
   // Skip mouse-driven camera when replay snapshot is active
   if (m_dumper.IsReplayActive()) return;
 
@@ -15990,6 +16120,7 @@ void SceneTemplate::DrawDevGui(t850::DevGuiContext& gui) {
       navRebuildRequested = true;
     };
     auto rebuildNavMeshNow = [&](bool resetAgentsToSceneStart) {
+      m_gameLogic.Navigation().PrepareForNavMeshMutation();
       m_navMesh.Clear();
       m_navMeshBuildAttempted = false;
       m_navMeshDebugRenderer.Invalidate();
@@ -16358,6 +16489,84 @@ void SceneTemplate::DrawDevGui(t850::DevGuiContext& gui) {
   }
 
   DrawRagdollPhysicsSimulationPanel(gui);
+
+  if (gui.BeginPanel("Game Logic")) {
+    const t850::game::GameLogicStats& stats = m_gameLogic.Stats();
+    char summary[256];
+    std::snprintf(summary, sizeof(summary),
+                  "Objects: %zu  Components: %zu  Tick: %llu",
+                  stats.objectCount,
+                  stats.componentCount,
+                  static_cast<unsigned long long>(stats.tickIndex));
+    gui.Text(summary);
+    t850::CheckboxDesc pauseDesc;
+    pauseDesc.name = "game_logic_paused";
+    pauseDesc.label = "Pause fixed tick";
+    bool gamePaused = m_gameLogic.Paused();
+    if (gui.Checkbox(pauseDesc, gamePaused)) m_gameLogic.SetPaused(gamePaused);
+    gui.Separator();
+    for (const t850::game::GameObject& object : m_gameLogic.Registry().Objects()) {
+      char line[512];
+      std::snprintf(line, sizeof(line),
+                    "#%u  %s [%s] id=%s components=%zu mesh=%d physics=%s",
+                    object.runtimeId,
+                    object.name.c_str(),
+                    object.kind.c_str(),
+                    object.sceneId.c_str(),
+                    object.components.size(),
+                    object.links.meshSlot,
+                    object.links.primaryBody.IsValid() ? "resolved" : "none");
+      gui.Text(line);
+    }
+    if (gui.BeginSection("Recent Events", false)) {
+      const std::span<const t850::game::GameEvent> events = m_gameLogic.Events().RecentEvents();
+      if (events.empty()) {
+        gui.Text("No events dispatched.");
+      } else {
+        for (const t850::game::GameEvent& event : events) {
+          char eventLine[512];
+          std::snprintf(eventLine, sizeof(eventLine),
+                        "tick=%llu seq=%llu %s source=%s target=%s",
+                        static_cast<unsigned long long>(event.tick),
+                        static_cast<unsigned long long>(event.sequence),
+                        event.type.c_str(),
+                        event.sourceEntityId.c_str(),
+                        event.targetEntityId.c_str());
+          gui.Text(eventLine);
+        }
+      }
+    }
+    std::vector<std::string> behaviorObjects;
+    std::vector<t850::game::GameObject*> behaviorObjectPointers;
+    for (t850::game::GameObject& object : m_gameLogic.Registry().Objects()) {
+      if (!object.behavior) continue;
+      behaviorObjects.push_back(object.name.empty() ? object.sceneId : object.name);
+      behaviorObjectPointers.push_back(&object);
+    }
+    if (!behaviorObjects.empty() && gui.BeginSection("Force Transition", false)) {
+      m_gameLogicSelectedObject = std::clamp(
+          m_gameLogicSelectedObject, 0, static_cast<int>(behaviorObjects.size()) - 1);
+      t850::SelectorDesc objectSelector;
+      objectSelector.name = "game_logic_object";
+      objectSelector.label = "Object";
+      gui.Combo(objectSelector, m_gameLogicSelectedObject, &behaviorObjects);
+
+      t850::game::GameObject* selected = behaviorObjectPointers[static_cast<std::size_t>(m_gameLogicSelectedObject)];
+      std::vector<std::string> states(
+          selected->behavior->StateNames().begin(), selected->behavior->StateNames().end());
+      if (!states.empty()) {
+        m_gameLogicForceState = std::clamp(m_gameLogicForceState, 0, static_cast<int>(states.size()) - 1);
+        t850::SelectorDesc stateSelector;
+        stateSelector.name = "game_logic_force_state";
+        stateSelector.label = "State";
+        gui.Combo(stateSelector, m_gameLogicForceState, &states);
+        if (gui.Button("Force Transition")) {
+          selected->behavior->ForceTransition(states[static_cast<std::size_t>(m_gameLogicForceState)]);
+        }
+      }
+    }
+  }
+  gui.EndPanel();
 
   const RenderMesh* consoleCullMesh = Meshes[0].pBase ? static_cast<const RenderMesh*>(Meshes[0].pBase) : nullptr;
   DrawSandboxConsolePanel(m_cameraController.GetActiveProfileType(), Cam.Eye, SceneProp, consoleCullMesh);

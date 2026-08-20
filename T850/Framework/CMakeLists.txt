@@ -8,6 +8,24 @@ set(FRAMEWORK_SOURCES
   src/core/DevLayer.cpp
   src/core/Config.cpp
   src/core/EngineContext.cpp
+  src/game/ComponentFactory.cpp
+  src/game/Controller.cpp
+  src/game/EventBus.cpp
+  src/game/GameIds.cpp
+  src/game/GameLogicSystem.cpp
+  src/game/GameNavigationService.cpp
+  src/game/GameSelfTest.cpp
+  src/game/GameValidation.cpp
+  src/game/GameObjectRegistry.cpp
+  src/game/GamePhysicsService.cpp
+  src/game/MovementComponent.cpp
+  src/game/StateMachine.cpp
+  src/game/examples/HealthComponent.cpp
+  src/game/examples/GroupManager.cpp
+  src/game/examples/PathFollowComponent.cpp
+  src/game/examples/RtsCommandController.cpp
+  src/game/examples/WeaponComponent.cpp
+  src/physics/GameplayLayers.cpp
   src/physics/CharacterController.cpp
   src/physics/JoltPhysicsSystem.cpp
   src/physics/PhysicsDebugRenderer.cpp
@@ -28,12 +46,15 @@ set(FRAMEWORK_SOURCES
   src/scene/MeshAssetCache.cpp
   src/scene/MaterialAssetCache.cpp
   src/scene/MeshPool.cpp
+  src/scene/MutableMeshData.cpp
+  src/scene/MutableMesh.cpp
   src/scene/RenderQueue.cpp
   src/scene/RenderContainer.cpp
   src/scene/RenderResourceRegistry.cpp
   src/scene/IBLResources.cpp
   src/scene/RenderViewport.cpp
   src/debug/FrameDumper.cpp
+  src/debug/CrashDiagnostics.cpp
   src/debug/FrameDumperIO.cpp
   src/debug/Profiler.cpp
   src/debug/RuntimeTelemetry.cpp
@@ -48,6 +69,12 @@ set(FRAMEWORK_SOURCES
   src/scene/WireframeArrow.cpp
   src/scene/Quad.cpp
   src/scene/TextRenderer.cpp
+  src/terrain/BlockRegistry.cpp
+  src/terrain/VoxelChunk.cpp
+  src/terrain/VoxelMesher.cpp
+  src/terrain/VoxelWorld.cpp
+  src/terrain/VoxelStreaming.cpp
+  src/terrain/VoxelPersistence.cpp
   src/utils/cil.cpp
   src/utils/Log.cpp
   src/utils/InputManager.cpp

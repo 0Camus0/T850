@@ -1,475 +1,158 @@
-# Engine Documentation Stage Plan
+# Documentation Maintenance Plan
 
-This plan breaks the full engine documentation effort into focused stages. Each stage should be small enough for a local agent to inspect a narrow set of files and produce one high-quality Markdown document.
+Status: verified and reset for ongoing maintenance on 2026-08-19.
 
-## Stage 0 — Documentation skeleton
+The original Stages 0-24 created the subsystem documentation and implemented the game entity plan. Those stages are complete. This file now tracks current maintenance work instead of preserving an obsolete implementation checklist.
 
-Outputs:
+## Verified Baseline
 
-- [README.md](README.md)
-- [doc-conventions.md](doc-conventions.md)
-- [glossary.md](glossary.md)
-- `documentation/` folder structure.
+The current documentation set covers:
 
-Status: complete.
+- architecture, platform loops, resources, input, and runtime hosts;
+- geometry, shaders, render graph, geometry rendering, textures, and IBL;
+- animation, Jolt physics, Recast/Detour navigation, and gameplay;
+- T8ditor, FrameworkImGui, `.t8scene`, and SceneSetup;
+- Windows setup/build/run and runtime configuration;
+- cloud asset acquisition;
+- Android build/sign/install/deploy;
+- Steam Deck build/run/package/deploy;
+- diagnostics, raw frame dumps, visual regression, tests, and release gates.
 
-## Stage 1 — Main architecture
+All subsystem and operational guides were source-audited on 2026-08-19. Relative links and build-file registration passed their documented audits.
 
-Target files:
+## Current Verification Evidence
 
-- `T850/Framework/include/core/*`
-- `T850/Framework/src/core/*`
-- `T850/Framework/include/scene/SceneProp.h`
-- `T850/Framework/src/scene/SceneProp.cpp`
-- `T850/Framework/include/scene/Primitive*.h`
-- `T850/Framework/src/scene/Primitive*.cpp`
-- scene app entry points under `T850/DayScene/`
+| Gate | State |
+|---|---|
+| x64 Debug and Release | passed |
+| ARM64 Debug and Release | passed |
+| Gameplay/terrain Debug and Release self-tests | 39/39 passed |
+| T8ditor authored Q3 smoke | passed with 0 errors and 1 expected runtime-camera warning |
+| Visual matrix | 26 reference-comparable captures plus 4 voxel candidate captures, 0 failures, 6 documented skips |
+| Build registration | all 28 new Framework/DayScene C++ sources registered in MSBuild, filters, and CMake |
+| Documentation links | passed |
+| SteamRT local configure | environment-blocked by missing Podman on the audit host |
+| Android local Release | environment-blocked by missing Android SDK/NDK on the audit host |
 
-Output:
+CI separately defines Windows, Android, Steam Deck, and tagged-release jobs in `.github/workflows/build.yml`.
 
-- [architecture/main-architecture.md](architecture/main-architecture.md)
-- [architecture/platform-event-loop.md](architecture/platform-event-loop.md)
+## Maintenance Rule
 
-Status: draft complete.
+Every behavior change must update the owning document in the same change when it affects:
 
-Must cover:
+- public/runtime API;
+- ownership or lifecycle;
+- frame/tick phase ordering;
+- scene or configuration schema;
+- command-line flags;
+- build, package, deploy, or signing commands;
+- asset paths/manifests;
+- test, dump, comparison, or acceptance behavior;
+- known limits and supported platforms.
 
-- Engine layers.
-- App lifecycle.
-- Scene versus Framework responsibilities.
-- Dev layer and debug UI.
-- Event loop.
-- Window ownership.
-- API/platform switching.
-- Windows, Android, Steam Deck differences.
+Remove superseded documentation instead of maintaining parallel historical copies. Git history preserves prior versions.
 
-## Stage 2 — Loading Geometry
+## Required Freshness Gate
 
-Target files:
+Before declaring documentation current:
 
-- `T850/Framework/src/utils/gltf/*`
-- `T850/Framework/include/utils/gltf/*`
-- `T850/Framework/src/utils/XDataBase.cpp`
-- `T850/Framework/include/utils/XDataBase.h`
-- `T850/Framework/src/scene/RenderMesh.cpp`
-- `T850/Framework/include/scene/MeshAsset*.h`
-- `T850/Framework/src/scene/MeshAssetCache.cpp`
-- mesh pool and material cache files.
+1. inspect the owning source and nearest call site;
+2. run the command shown in the document when the host supports it;
+3. check every relative Markdown link;
+4. run `git diff --check`;
+5. classify unrun platform commands as environment/toolchain gaps, not passes;
+6. update the verification date only after those checks.
 
-Output:
+The executable commands are in [Verification and release gates](testing/verification.md).
 
-- [geometry/loading-geometry.md](geometry/loading-geometry.md)
+## Ongoing Workstreams
 
-Status: draft complete.
+### 1. CI Enforcement
 
-Must cover:
+Goal: turn manual freshness checks into repeatable CI failures.
 
-- glTF / GLB path.
-- `.x` legacy path.
-- `XDataBase` as intermediate.
-- Vertex attributes.
-- Index buffer selection.
-- Material extraction.
-- Texture loading.
-- Static versus skinned detection.
-- Mesh cache and GPU upload.
+Planned work:
 
-## Stage 3 — Shader management
+- add a repository script for Markdown link validation;
+- retain visual manifests/reports as CI artifacts on GPU-equipped runners;
+- report configured versus skipped platform gates explicitly.
 
-Target files:
+Implemented on 2026-08-19:
 
-- `T850/Framework/Descriptors.h`
-- shader key definitions.
-- `T850/Framework/src/utils/ShaderDiskCache.cpp`
-- `T850/Framework/src/utils/SPIRVReflection.cpp`
-- API shader classes under `T850/Framework/src/video/*/*Shader.cpp`
-- shader assets under `T850/Assets/Shaders/`
+- `ValidateBuildRegistration.ps1` enforces MSBuild/filter/desktop-CMake/Android-CMake parity before platform jobs;
+- `RunWindowsBuildMatrix.ps1` mirrors all six Windows CI build cells locally;
+- CI builds the full solution for Win32/x64/ARM64 and runs Win32/x64 Debug/Release self-tests.
 
-Output:
+### 2. Equipped-Host Platform Revalidation
 
-- [rendering/shader-management.md](rendering/shader-management.md)
+Goal: close local environment gaps without changing source merely to satisfy unavailable tools.
 
-Status: draft complete.
+Required hosts:
 
-Must cover:
+- Podman-capable Linux/Steam Deck host for SteamRT Release build/package/run;
+- Windows Android host with SDK 35, NDK 27.2.12479018, JDK 17, Vulkan SDK, and device/emulator.
 
-- `ShaderKey`.
-- Defines/permutations.
-- Pass keys.
-- HLSL sharing between D3D/Vulkan.
-- GLSL for GL.
-- Offline compilation/cache.
-- Reflection and resource binding.
-- Vulkan/D3D12 PSO considerations.
+On those hosts, execute the commands in:
 
-## Stage 4 — Render graph
+- [Android build and deployment](platform/android.md)
+- [Steam Deck build and deployment](platform/steam-deck.md)
 
-Target files:
+Record exact tool versions, outputs, and artifact hashes.
 
-- `T850/Framework/include/scene/RenderGraph*.h`
-- `T850/Framework/src/scene/RenderGraph*.cpp`
-- render graph JSON files in `T850/Assets/Scenes/`
-- `RenderQuad` / fullscreen pass code.
+### 3. Gameplay Performance Characterization
 
-Output:
+Goal: measure rather than assume the v1 gameplay budgets.
 
-- [rendering/render-graph.md](rendering/render-graph.md)
+Planned work:
 
-Status: draft complete.
+- create reviewed 100-entity and 1,000-entity benchmark scenes;
+- capture `game.update` and component/nav/physics counters in Release;
+- document hardware, scene composition, warmup, and sample distribution;
+- change storage strategy only if profiling demonstrates a bottleneck.
 
-Must cover:
+Fast in-memory Play remains optional; serializer-backed Fidelity Play is the implemented path.
 
-- JSON schema.
-- Render targets.
-- Passes.
-- Inputs/outputs.
-- Push/pop RT.
-- State overrides.
-- Mesh versus quad draws.
-- Post-processing.
-- Final backbuffer pass.
+### 4. Runtime and Release Hardening
 
-## Stage 5 — Rendering geometry flow
+Potential work:
 
-Target files:
+- render-graph resource lifetime validation;
+- shader permutation/cache operations and invalidation tooling;
+- richer gameplay component validation and examples;
+- broader headless tests for physics/navigation success paths;
+- automated release-package smoke tests after extraction/install.
 
-- `PrimitiveInstance.*`
-- `RenderMesh.*`
-- `RenderSkinnedMesh.*`
-- `RenderQueue.*`
-- `MeshPool.*`
-- API buffer classes.
+These are targeted improvements, not a mandate for a renderer or ECS rewrite.
 
-Output:
+## Documentation Ownership Map
 
-- [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md)
+| Change area | Update first |
+|---|---|
+| setup, MSBuild, launcher, Windows output | [Windows build and run](development/windows-build-and-run.md) |
+| config or CLI | [Runtime configuration](development/runtime-configuration.md) |
+| cloud manifests/downloads | [Cloud assets](development/cloud-assets.md) |
+| Android | [Android build and deployment](platform/android.md) |
+| Steam Deck/Linux | [Steam Deck build and deployment](platform/steam-deck.md) |
+| runtime scene choice | [Runtime hosts](runtime/runtime-hosts.md) |
+| tests/CI/release gates | [Verification](testing/verification.md) |
+| frame/image dumps and comparisons | [Visual regression](debug/visual-regression.md) |
+| gameplay | [Game entity system](game/game-entity-system-spec.md) |
+| subsystem internals | owning document linked from [README](README.md) |
 
-Status: draft complete.
+## Completion Definition
 
-Must cover:
+Documentation is current when:
 
-- `PrimitiveInst` to draw call.
-- Transform composition.
-- VB/IB binding.
-- Material selection.
-- Shader selection.
-- State tracker.
-- PSO resolution.
-- DrawIndexed flow.
-- Wireframe/debug geometry path.
+- indexed current docs have a source-verification date;
+- commands match current script parameters;
+- examples use valid working directories and resource-relative paths;
+- implemented, optional, planned, skipped, and environment-blocked states are distinct;
+- a small local model can choose a workflow, execute it, recognize success, and stop safely without reconstructing source behavior.
 
-## Stage 6 — Animation
+## Related Documents
 
-Target files:
-
-- `AnimationController.*`
-- `RenderSkinnedMesh.*`
-- glTF animation loading.
-- shader skinning paths.
-
-Output:
-
-- [animation/animation-system.md](animation/animation-system.md)
-
-Status: draft complete.
-
-Must cover:
-
-- Skeleton import.
-- Animation clips.
-- Interpolation.
-- Pose update.
-- Bone texture / constant data.
-- GPU skinning.
-- Snapshot/replay path.
-- Limitations and debug workflows.
-
-## Stage 7 — Physics
-
-Target files:
-
-- `T850/Framework/include/physics/*`
-- `T850/Framework/src/physics/*`
-- `RagdollEditorTool.*`
-- editor ragdoll panels.
-- SceneTemplate physics runtime sections.
-
-Output:
-
-- [physics/jolt-physics.md](physics/jolt-physics.md)
-
-Status: draft complete.
-
-Must cover:
-
-- Jolt setup.
-- Static triangle mesh cooking.
-- Physics authoring metadata.
-- Characters and CharacterVirtual.
-- Ragdoll binding.
-- Animation-to-ragdoll transition.
-- Collision layers.
-- Play Scene export.
-
-## Stage 8 — NavMesh and Detour
-
-Target files:
-
-- `NavigationSystem.*`
-- `NavigationDebugRenderer.*`
-- editor NavMesh authoring code.
-- SceneTemplate navigation runtime sections.
-
-Output:
-
-- [navigation/navmesh-detour.md](navigation/navmesh-detour.md)
-
-Status: draft complete.
-
-Must cover:
-
-- Recast build.
-- Detour query.
-- Source geometry.
-- Volumes/modifiers.
-- Area costs.
-- Link generation.
-- `.t8nav` bake/load.
-- Editor authoring workflow.
-
-## Stage 9 — Editor
-
-Target files:
-
-- `T850/T8ditor/*`
-- editor panel classes.
-- editor gizmo/camera/grid/scene files.
-- undo/redo.
-
-Output:
-
-- [editor/editor-overview.md](editor/editor-overview.md)
-
-Status: draft complete.
-
-Must cover:
-
-- Editor app lifecycle.
-- Panels.
-- Hierarchy.
-- Inspector.
-- Rendering panel.
-- Timeline.
-- Play Scene.
-- Mesh editor.
-- Ragdoll editor.
-- NavMesh authoring.
-- Undo/redo expectations.
-
-## Stage 10 — Scenes and formats
-
-Target files:
-
-- `EditorSceneFile.*`
-- `SceneSetup.*`
-- `SceneDescriptor.*`
-- `SceneTemplate.cpp`
-- `DayScene.cpp`
-- `Quake3Mock.cpp`
-- `.t8scene` examples.
-
-Output:
-
-- [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md)
-
-Status: draft complete.
-
-Must cover:
-
-- `.t8scene` schema.
-- Editor save path.
-- Runtime load path.
-- SceneTemplate.
-- DayScene differences.
-- Quake3Mock/Jolt differences.
-- Profiles and render graph references.
-- Navigation/physics/animation/camera metadata.
-
-## Stage 11 — Cross-link and dependency pass
-
-Outputs:
-
-- [dependency-map.md](dependency-map.md)
-- Updated links in every document.
-- Class dependency diagrams.
-- End-to-end flows across subsystems.
-
-Status: draft complete.
-
-## Stage 12 — Review and gap pass
-
-Outputs:
-
-- [review-and-gaps.md](review-and-gaps.md)
-- TODO/gap list.
-- Troubleshooting index.
-- Known limitations.
-- Validation of class names and file paths.
-
-Status: draft complete.
-
-## Stage 13 — Debug and diagnostics
-
-Target files:
-
-- `T850/Framework/include/debug/LoadingProgress.h`
-- `T850/Framework/include/debug/RuntimeTelemetry.h`
-- `T850/Framework/include/debug/FrameDumper.h`
-- `T850/Framework/include/debug/RenderTrace.h`
-- `T850/Framework/include/debug/Profiler.h`
-- `T850/Framework/src/debug/*`
-- call sites in `DayScene`, `SceneTemplate`, `T8ditor`, render graph, shader, physics, and navigation code.
-
-Output:
-
-- [debug/diagnostics.md](debug/diagnostics.md)
-
-Status: draft complete.
-
-Must cover:
-
-- Loading progress snapshots and loading-frame rendering.
-- Runtime telemetry scopes, counters, output JSON, and benchmark usage.
-- Frame dump/replay snapshot flow and render target dump entries.
-- Render trace events for shaders, PSOs, buffers, render targets, textures, and draw calls.
-- Profiler scopes, draw-call counting, and runtime diagnostics workflow.
-- Debugging checklist for stalled loads, missing dumps, bad telemetry, or trace mismatch.
-
-## Stage 14 — Resource lookup and cache paths
-
-Target files:
-
-- `T850/Framework/include/utils/ResourceLocator.h`
-- `T850/Framework/src/utils/ResourceLocator.cpp`
-- `T850/Framework/src/utils/ResourceManager.cpp`
-- path users in shader cache, mesh preprocess cache, Jolt mesh cache, NavMesh cache, scene loading, texture loading, glTF buffers, and Android asset lookup.
-
-Output:
-
-- [architecture/resource-locator.md](architecture/resource-locator.md)
-
-Status: draft complete.
-
-Must cover:
-
-- Resource path normalization and `Assets/` stripping.
-- Base path, cache path, and resolved file path rules.
-- Desktop filesystem lookup versus Android asset manager lookup.
-- Case-insensitive Android packaged-asset fallback.
-- `ReadText`, `ReadBinary`, `Exists`, `ResolveFilePath`, `ResolveCachePath`, and recursive fallback APIs.
-- How cache-producing subsystems choose paths and invalidation keys.
-
-## Stage 15 — Input, controllers, and camera profiles
-
-Target files:
-
-- `T850/Framework/include/utils/InputManager.h`
-- platform input code under `T850/Framework/src/core/*`
-- `T850/Framework/include/utils/CameraProfiles.h`
-- `T850/Framework/src/utils/CameraProfiles.cpp`
-- `T850/Framework/include/utils/HandheldControllerOverlay.h`
-- scene/editor camera controller call sites in `SceneTemplate`, `DayScene`, `Quake3Mock`, and `T8ditor`.
-
-Output:
-
-- [input/camera-and-controls.md](input/camera-and-controls.md)
-
-Status: draft complete.
-
-Must cover:
-
-- Keyboard, mouse, controller, touch, and gamepad state flow.
-- Platform input translation into `InputManager`.
-- Camera profile set: Orbit, Free Fly, Colliding Fly, Grounded FPS, COD FPS, Quake 3 FPS.
-- Runtime profile selection and camera controller behavior.
-- Handheld/controller overlay behavior.
-- Editor versus runtime input routing, including hosted Play Scene/Mesh/Ragdoll windows.
-- Android and handheld-specific differences.
-
-## Stage 16 — FrameworkImGui runtime UI layer
-
-Target files:
-
-- `T850/FrameworkImGui/include/imgui/ImGuiSystem.h`
-- `T850/FrameworkImGui/src/ImGuiSystem.cpp`
-- `T850/FrameworkImGui/include/imgui/DevGuiContext.h`
-- `T850/FrameworkImGui/src/DevGuiContext.cpp`
-- T8ditor hosted viewport code and scene dev GUI call sites.
-
-Output:
-
-- [editor/imgui-system.md](editor/imgui-system.md)
-
-Status: draft complete.
-
-Must cover:
-
-- ImGui platform/backend initialization per API and platform.
-- Docking and viewport enablement.
-- Android native window binding/rebinding.
-- `DevGuiContext` and embedded panel helpers.
-- Relationship between runtime debug UI and T8ditor-specific panels.
-- Shutdown/reload hazards and hosted viewport integration.
-
-## Stage 17 — Textures, samplers, and IBL resources
-
-Target files:
-
-- API texture implementations under `T850/Framework/src/video/*/*Texture.cpp`
-- `T850/Framework/src/video/BaseDriver.cpp`
-- `T850/Framework/include/scene/IBLResources.h`
-- render graph environment slots in `T850/Framework/include/scene/RenderGraph.h`
-- material texture slots in `MaterialAsset` / `RenderMesh`
-- scene descriptor environment fields and editor cubemap/profile code.
-
-Output:
-
-- [rendering/textures-and-ibl.md](rendering/textures-and-ibl.md)
-
-Status: draft complete.
-
-Must cover:
-
-- Texture creation/loading from files and memory.
-- DDS/cubemap/float texture paths.
-- API-specific texture resource and sampler handling.
-- Mips, wrapping/filtering, SRV/sampler slots, and GL/D3D/Vulkan differences.
-- IBL resource slots: diffuse/specular/BRDF/Charlie/sheen resources.
-- Scene/profile/editor cubemap override workflow.
-- Texture debugging and common failure modes.
-
-## Stage 18 — SceneSetup and runtime control descriptors
-
-Target files:
-
-- `T850/Framework/include/scene/SceneDescriptor.h`
-- `T850/Framework/src/scene/SceneDescriptor.cpp`
-- `T850/Framework/include/scene/SceneSetup.h`
-- `T850/Framework/src/scene/SceneSetup.cpp`
-- JSON descriptor files under `T850/Assets/Scenes/*.json`
-- call sites in `DayScene`, `Quake3Mock`, `SandboxScene`, `RagdollEditor`, `SceneTemplate`, and `T8ditor`.
-
-Output:
-
-- [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md)
-
-Status: draft complete.
-
-Must cover:
-
-- Exact mapping from `SceneDescriptor::quality` and `settings` to `SceneProps`.
-- Runtime UI slider/checkbox/selector metadata and how panels consume it.
-- Cameras, light cameras, lights, Gauss filters, splines, agents, environment maps, and IBL fields.
-- How SceneTemplate combines `.t8scene` profiles with `SceneSetup`.
-- How DayScene/Quake3Mock/Sandbox/RagdollEditor still depend on this older descriptor path.
-- SaveState behavior and limitations.
+- [Documentation index](README.md)
+- [Current status](current-status-and-roadmap.md)
+- [Documentation conventions](doc-conventions.md)
+- [Review and remaining gaps](review-and-gaps.md)
+- [T850 engine skill](../.github/skills/t850-engine/SKILL.md)

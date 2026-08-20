@@ -4043,7 +4043,12 @@ bool Quake3Mock::LoadEditorSceneAssets(const std::string& scenePath) {
             !object.physics.has_value() ||
             (physicsMeta.enabled && physicsMeta.body_type == "static_triangle_mesh" && physicsMeta.motion == "static");
         if (wantsStaticTriangle && renderMesh && t850::AttachStaticTriangleMeshBody(
-            *engineContext->physics, instance, *renderMesh, cookSettings, &cookStats)) {
+          *engineContext->physics,
+          instance,
+          *renderMesh,
+          cookSettings,
+          &cookStats,
+          t850::GameplayLayerFromString(physicsMeta.collision_layer, t850::GameplayLayer::WorldStatic))) {
           if (m_q3CollisionWorld && meshMatchesQ3Clip) {
             m_q3StaticCollisionEntityIds.push_back(instance.GetEntityId());
             T8_LOG_INFO("[Quake3Mock] Q3 map Jolt body ignored by Q3 camera: object='%s' entity=%u clip='%s'",

@@ -710,6 +710,9 @@ namespace t850 {
   void D3D12Driver::DestroyDriver() {
     StopDebugMessageThread();
     WaitForGPU();
+    for (const RetiredBuffer& retired : m_retiredBuffers)
+      if (retired.buffer) retired.buffer->release();
+    m_retiredBuffers.clear();
     DestroyShaders(); DestroyRTs(); DestroyTextures();
     m_psoCache.clear();
     for (UINT i = 0; i < kBackBufferCount; i++) {
@@ -770,6 +773,15 @@ namespace t850 {
         m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);
         WaitForSingleObject(m_fenceEvent, INFINITE);
       }
+      for (auto iterator = m_retiredBuffers.begin(); iterator != m_retiredBuffers.end();) {
+        if (iterator->framesRemaining > 0) --iterator->framesRemaining;
+        if (iterator->framesRemaining == 0) {
+          if (iterator->buffer) iterator->buffer->release();
+          iterator = m_retiredBuffers.erase(iterator);
+        } else {
+          ++iterator;
+        }
+      }
     }
 
     {
@@ -794,6 +806,10 @@ namespace t850 {
   }
 
   void D3D12Driver::EndFrame() {}
+
+  void D3D12Driver::RetireBuffer(Buffer* buffer) {
+    if (buffer) m_retiredBuffers.push_back(RetiredBuffer{buffer, kBackBufferCount});
+  }
 
   void D3D12Driver::BuildPipelineObjects() {
     m_dynamicDescriptorBase = m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetCurrentIndex();

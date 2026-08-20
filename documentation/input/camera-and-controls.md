@@ -1,6 +1,6 @@
 # Camera and Controls
 
-Status: Stage 15 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains T850's input state, platform input translation, gamepad and handheld paths, runtime camera profiles, editor camera routing, hosted window input behavior, and Android virtual controls.
 

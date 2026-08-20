@@ -97,6 +97,11 @@ namespace t850 {
 
   void RenderContainer::Destroy(BaseDriver* driver) {
     m_meshes.clear();
+    m_meshGenerations.clear();
+    m_meshActive.clear();
+    m_freeMeshSlots.clear();
+    m_activeMeshes.clear();
+    m_activeMeshCount = 0;
     m_quadManager.DestroyPrimitives();
     if (driver) {
       m_renderGraph.DestroyRenderTargets(driver);
@@ -139,49 +144,106 @@ namespace t850 {
   }
 
   void RenderContainer::ClearMeshes() {
-    m_meshes.clear();
+    m_freeMeshSlots.clear();
+    for (uint32_t index = 0; index < m_meshes.size(); ++index) {
+      if (m_meshActive[index]) {
+        m_meshActive[index] = 0;
+        ++m_meshGenerations[index];
+        if (m_meshGenerations[index] == 0) m_meshGenerations[index] = 1;
+      }
+      m_meshes[index] = PrimitiveInst{};
+      m_freeMeshSlots.push_back(index);
+    }
+    m_activeMeshes.clear();
+    m_activeMeshCount = 0;
   }
 
-  int RenderContainer::AddMeshInstance(const PrimitiveInst& instance) {
+  RenderInstanceHandle RenderContainer::AddMeshInstance(const PrimitiveInst& instance) {
     if (!instance.pBase) {
-      return -1;
+      return {};
     }
     PrimitiveInst copy = instance;
     copy.pViewProj = &m_meshVP;
     copy.ClearPhysicsLinks();
     copy.SetVisible(true);
     copy.Update();
-    m_meshes.push_back(copy);
-    return static_cast<int>(m_meshes.size()) - 1;
+    uint32_t index = 0;
+    if (!m_freeMeshSlots.empty()) {
+      index = m_freeMeshSlots.back();
+      m_freeMeshSlots.pop_back();
+      m_meshes[index] = copy;
+      m_meshActive[index] = 1;
+    } else {
+      index = static_cast<uint32_t>(m_meshes.size());
+      m_meshes.push_back(copy);
+      m_meshGenerations.push_back(1);
+      m_meshActive.push_back(1);
+    }
+    ++m_activeMeshCount;
+    return RenderInstanceHandle{index, m_meshGenerations[index]};
   }
 
-  int RenderContainer::AddMeshHandle(const RenderMeshHandle& handle) {
+  RenderInstanceHandle RenderContainer::AddMeshHandle(const RenderMeshHandle& handle) {
     if (!handle.primitive) {
-      return -1;
+      return {};
     }
     PrimitiveInst instance;
     instance.CreateInstance(handle.primitive, &m_meshVP);
     instance.Update();
-    m_meshes.push_back(instance);
-    return static_cast<int>(m_meshes.size()) - 1;
+    return AddMeshInstance(instance);
+  }
+
+  bool RenderContainer::RemoveMesh(RenderInstanceHandle handle) {
+    if (!handle.IsValid() || handle.index >= m_meshes.size() ||
+        !m_meshActive[handle.index] || m_meshGenerations[handle.index] != handle.generation) {
+      return false;
+    }
+    m_meshActive[handle.index] = 0;
+    ++m_meshGenerations[handle.index];
+    if (m_meshGenerations[handle.index] == 0) m_meshGenerations[handle.index] = 1;
+    m_meshes[handle.index] = PrimitiveInst{};
+    m_freeMeshSlots.push_back(handle.index);
+    --m_activeMeshCount;
+    return true;
+  }
+
+  PrimitiveInst* RenderContainer::GetMesh(RenderInstanceHandle handle) {
+    if (!handle.IsValid() || handle.index >= m_meshes.size() ||
+        !m_meshActive[handle.index] || m_meshGenerations[handle.index] != handle.generation) {
+      return nullptr;
+    }
+    return &m_meshes[handle.index];
+  }
+
+  const PrimitiveInst* RenderContainer::GetMesh(RenderInstanceHandle handle) const {
+    if (!handle.IsValid() || handle.index >= m_meshes.size() ||
+        !m_meshActive[handle.index] || m_meshGenerations[handle.index] != handle.generation) {
+      return nullptr;
+    }
+    return &m_meshes[handle.index];
   }
 
   bool RenderContainer::Execute(BaseDriver* driver, float deltaSeconds) {
-    if (!driver || !m_initialized || !m_mainCamera || m_meshes.empty()) {
+    if (!driver || !m_initialized || !m_mainCamera || m_activeMeshCount == 0) {
       return false;
     }
     Props().FrameDeltaSec = deltaSeconds;
     m_meshVP = m_mainCamera->VP;
+    m_activeMeshes.clear();
+    m_activeMeshes.reserve(m_activeMeshCount);
+    for (std::size_t index = 0; index < m_meshes.size(); ++index) {
+      if (m_meshActive[index]) m_activeMeshes.push_back(m_meshes[index]);
+    }
     PrimitiveBindingGuard bindingGuard;
-    for (PrimitiveInst& mesh : m_meshes) {
+    for (PrimitiveInst& mesh : m_activeMeshes) {
       bindingGuard.Bind(mesh, Props(), m_meshVP);
     }
 
     m_renderGraph.Execute(
         driver,
         Props(),
-        m_meshes.data(),
-        static_cast<int>(m_meshes.size()),
+        m_activeMeshes.data(),
+        static_cast<int>(m_activeMeshes.size()),
         m_quads.data(),
         m_mainCamera,
         m_lightCamera,

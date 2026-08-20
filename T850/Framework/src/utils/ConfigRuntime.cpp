@@ -419,6 +419,12 @@ bool ValidateConfig(Config& cfg) {
     valid = false;
   }
 
+  if (cfg.regressionFixedDt < 0.0f || cfg.regressionFixedDt > 1.0f || !std::isfinite(cfg.regressionFixedDt)) {
+    WarnConfigAdjusted("regressionFixedDt", "must be finite and between 0 and 1 second, using 0");
+    cfg.regressionFixedDt = 0.0f;
+    valid = false;
+  }
+
   if (cfg.flags.dumpEnabled && cfg.flags.dumpByFrame && cfg.dumpFrame < 0) {
     cfg.flags.dumpEnabled = false;
     valid = false;
@@ -637,6 +643,12 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
         cfg.benchmarkFixedDt = value;
       }
     }
+    else if (arg == "--regressionFixedDt") {
+      float value = 0.0f;
+      if (ReadFloatArgument(arg, argc, argv, i, value)) {
+        cfg.regressionFixedDt = value;
+      }
+    }
     else if (arg == "--cullDisabled") {
       cfg.cullingLoadMode = Config::CullingLoadMode::Disabled;
       cfg.flags.cullDisabled = true;
@@ -706,6 +718,7 @@ void PrintHelp() {
     << "  --benchmarkSeconds <seconds>        Run benchmark unthrottled for this many seconds\n"
     << "  --benchmarkFrames <N>               End benchmark after N update frames instead of duration\n"
     << "  --benchmarkFixedDt <seconds>        Use a fixed dt for benchmark updates\n"
+    << "  --regressionFixedDt <seconds>       Fixed dt with real-time pacing for deterministic captures\n"
     << "  --culling <full|lazy|disabled>      Culling metadata load policy\n"
     << "  --cullDisabled                      Legacy alias for --culling disabled\n"
     << "  --offscreen                         Render the default target to rotating offscreen RTs instead of presenting\n"

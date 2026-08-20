@@ -1,6 +1,6 @@
 # SceneSetup and Runtime Control Descriptors
 
-Status: Stage 18 draft.
+Status: verified against source on 2026-08-19.
 
 This document is the deeper appendix for T850's legacy/runtime `SceneDescriptor` and `SceneSetup` path. It explains the exact mapping from descriptor JSON into `SceneProps`, how runtime UI metadata is consumed, how cameras/lights/splines/environment fields are built, how SceneTemplate combines `.t8scene` content with descriptor-driven controls, and where older scene variants still depend on this path.
 

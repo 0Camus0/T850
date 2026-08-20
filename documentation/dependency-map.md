@@ -1,6 +1,6 @@
 # Dependency Map
 
-Status: Stage 11 draft.
+Status: verified against source on 2026-08-19.
 
 This document cross-links the subsystem documentation and shows the major class/data dependencies between architecture, assets, rendering, animation, physics, navigation, editor authoring, and scene runtime.
 
@@ -20,6 +20,7 @@ This document cross-links the subsystem documentation and shows the major class/
 - [Animation system](animation/animation-system.md)
 - [Jolt physics](physics/jolt-physics.md)
 - [NavMesh and Detour](navigation/navmesh-detour.md)
+- [Mutable voxel terrain](terrain/voxel-terrain.md)
 - [Editor overview](editor/editor-overview.md)
 - [Scene format and runtime](scenes/scene-format-and-runtime.md)
 - [SceneSetup descriptors](scenes/scene-setup-descriptors.md)
@@ -41,6 +42,7 @@ This document cross-links the subsystem documentation and shows the major class/
 | Skeletal animation | [Animation system](animation/animation-system.md) | [Geometry rendering flow](rendering/geometry-rendering-flow.md), [Jolt physics](physics/jolt-physics.md) |
 | Ragdoll or character physics | [Jolt physics](physics/jolt-physics.md) | [Animation system](animation/animation-system.md), [Scene format and runtime](scenes/scene-format-and-runtime.md), [Editor overview](editor/editor-overview.md) |
 | NavMesh authoring/runtime pathing | [NavMesh and Detour](navigation/navmesh-detour.md) | [Jolt physics](physics/jolt-physics.md), [Scene format and runtime](scenes/scene-format-and-runtime.md), [Editor overview](editor/editor-overview.md) |
+| Mutable meshes, voxels, chunks, streaming, or terrain persistence | [Mutable voxel terrain](terrain/voxel-terrain.md) | [Geometry rendering flow](rendering/geometry-rendering-flow.md), [Resource locator](architecture/resource-locator.md), [Input and camera](input/camera-and-controls.md) |
 | Editor panels or authoring workflow | [Editor overview](editor/editor-overview.md) | [Scene format and runtime](scenes/scene-format-and-runtime.md), subsystem doc for the authored feature |
 | `.t8scene` schema or runtime loading | [Scene format and runtime](scenes/scene-format-and-runtime.md) | [SceneSetup descriptors](scenes/scene-setup-descriptors.md), [Editor overview](editor/editor-overview.md), [Render graph](rendering/render-graph.md), [Jolt physics](physics/jolt-physics.md), [NavMesh and Detour](navigation/navmesh-detour.md) |
 | Runtime control descriptors, `SceneProps` mappings, or profiles | [SceneSetup descriptors](scenes/scene-setup-descriptors.md) | [Scene format and runtime](scenes/scene-format-and-runtime.md), [FrameworkImGui runtime UI](editor/imgui-system.md), [Textures, samplers, and IBL](rendering/textures-and-ibl.md) |
@@ -313,6 +315,12 @@ flowchart LR
   SceneTemplate --> RenderGraph["RenderGraph"]
   SceneTemplate --> Physics["JoltPhysicsSystem"]
   SceneTemplate --> Navigation["NavMesh"]
+  SceneTemplate --> GameLogic["GameLogicSystem"]
+  GameLogic --> Registry["GameObjectRegistry + components"]
+  GameLogic --> GamePhysics["GamePhysicsService"]
+  GameLogic --> GameNavigation["GameNavigationService"]
+  GamePhysics --> Physics
+  GameNavigation --> Navigation
   SceneTemplate --> Ragdoll["RenderSkinnedMesh + ragdoll"]
   SceneDescriptor["SceneDescriptor JSON"] --> SceneSetup["SceneSetup"]
   SceneSetup --> SceneProps["SceneProps controls"]

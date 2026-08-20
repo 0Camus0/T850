@@ -326,6 +326,7 @@ namespace t850 {
     virtual void BeginResourceUploadBatch() {}
     virtual void EndResourceUploadBatch() {}
     virtual bool IsResourceUploadBatchActive() const { return false; }
+    virtual void RetireBuffer(Buffer* buffer) { if (buffer) buffer->release(); }
     virtual void SetViewport(float x, float y, float w, float h) {}
     virtual void SetScissorRect(int x, int y, int w, int h) {}
     virtual void ClearPendingTextureBinding(int slot) { (void)slot; }

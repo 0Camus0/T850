@@ -135,6 +135,7 @@ void FillTile(std::vector<unsigned char>& pixels, int tileX, int tileY,
       SetPixel(pixels, tileX * kTileSize + x, tileY * kTileSize + y, c);
     }
   }
+
 }
 
 // Grass side: dirt base with a green top strip.
@@ -1035,6 +1036,38 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
     bool godRays = SceneProp.ToogleGodRays != 0;
     checkbox("godrays_toggle", "God rays", godRays);
     SceneProp.ToogleGodRays = godRays ? 1 : 0;
+  }
+
+  if (gui.BeginSection("Sky")) {
+    static const char* kSkyOptions[] = {
+        "Minecraft Blue", "SkyWater", "SkyDawn", "Mountains", "Ennis", "Glacier"};
+    static int skySelection = 0;
+    t850::SelectorDesc skyDesc;
+    skyDesc.name = "cubemap";
+    skyDesc.label = "Sky cubemap";
+    for (const char* opt : kSkyOptions) skyDesc.options.push_back(opt);
+    if (gui.Combo(skyDesc, skySelection)) {
+      if (skySelection == 0) {
+        BuildSkyCubemap();
+      } else {
+        const char* path = nullptr;
+        switch (skySelection) {
+          case 1: path = "sky/CubeMap_SkyWater.dds"; break;
+          case 2: path = "sky/CubeMap_SkyDawn.dds"; break;
+          case 3: path = "sky/CubeMap_Mountains.dds"; break;
+          case 4: path = "sky/Ennis.dds"; break;
+          case 5: path = "sky/Glacier.dds"; break;
+        }
+        if (path && pFramework && pFramework->pVideoDriver) {
+          if (m_envMapTexIndex >= 0) pFramework->pVideoDriver->DestroyTexture(m_envMapTexIndex);
+          m_envMapTexIndex = pFramework->pVideoDriver->CreateTexture(path);
+          if (m_envMapTexIndex >= 0) {
+            m_envMaps.SetFallback(m_envMapTexIndex);
+            m_renderContainer.SetEnvironmentMaps(m_envMaps);
+          }
+        }
+      }
+    }
   }
 }
 

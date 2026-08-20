@@ -2,7 +2,8 @@ project(FrameworkImGui LANGUAGES CXX)
 
 add_library(FrameworkImGui STATIC
   src/ImGuiSystem.cpp
-  src/DevGuiContext.cpp)
+  src/DevGuiContext.cpp
+  src/RagdollEditorGui.cpp)
 
 t850_apply_common(FrameworkImGui)
 t850_apply_library_output(FrameworkImGui)

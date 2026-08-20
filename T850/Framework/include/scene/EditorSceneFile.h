@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <scene/SceneDescriptor.h>
 #include <string>
@@ -312,6 +313,79 @@ struct ScenePhysicsEntityDesc {
   ScenePhysicsCharacterDesc character;
 };
 
+struct SceneComponentDesc {
+  std::string id;
+  std::string type;
+  bool enabled = true;
+  std::map<std::string, std::string> params;
+  std::string config_json;
+};
+
+struct SceneControlDesc {
+  std::string mode = "none";
+  std::string controller;
+  int player_slot = 0;
+};
+
+struct SceneStateDesc {
+  std::string name;
+  std::map<std::string, std::string> params;
+  float default_duration = -1.0f;
+};
+
+struct SceneTransitionDesc {
+  std::string from_state;
+  std::string to_state;
+  std::string condition;
+  float priority = 0.0f;
+  float cooldown = 0.0f;
+};
+
+struct SceneStateMachineDesc {
+  std::string initial_state = "idle";
+  std::vector<SceneStateDesc> states;
+  std::vector<SceneTransitionDesc> transitions;
+};
+
+struct SceneFlockConfigDesc {
+  float separation_weight = 1.0f;
+  float alignment_weight = 0.8f;
+  float cohesion_weight = 0.6f;
+  float separation_radius = 2.0f;
+  float neighbor_radius = 5.0f;
+  float max_speed = 10.0f;
+};
+
+struct SceneFormationConfigDesc {
+  std::string type = "wedge";
+  float spacing = 3.0f;
+  float depth_step = 3.0f;
+  std::string leader_entity_id;
+};
+
+struct SceneGroupDesc {
+  std::string id;
+  std::string name;
+  std::string strategy = "formation";
+  std::vector<std::string> member_entity_ids;
+  SceneFlockConfigDesc flock;
+  SceneFormationConfigDesc formation;
+};
+
+struct SceneSpatialGridSettingsDesc {
+  bool enabled = false;
+  float cell_size = 4.0f;
+  int grid_width = 256;
+  int grid_depth = 256;
+};
+
+struct SceneGameLogicSettingsDesc {
+  int schema_version = 2;
+  float fixed_delta_seconds = 1.0f / 60.0f;
+  int max_steps_per_frame = 4;
+  SceneSpatialGridSettingsDesc spatial_grid;
+};
+
 struct SceneGameEntityDesc {
   std::string name = "Game Entity";
   std::string kind = "generic";
@@ -324,6 +398,12 @@ struct SceneGameEntityDesc {
   bool visible = true;
   bool frozen = false;
   bool show_wire = true;
+  std::string id;
+  int team = -1;
+  SceneControlDesc control;
+  std::string group_id;
+  std::vector<SceneComponentDesc> components;
+  std::optional<SceneStateMachineDesc> behavior;
 };
 
 struct EditorStateDesc {
@@ -344,6 +424,8 @@ struct EditorSceneFile {
   EditorStateDesc editor;
   std::vector<SceneObjectDesc> objects;
   std::vector<SceneGameEntityDesc> game_entities;
+  std::vector<SceneGroupDesc> game_groups;
+  std::optional<SceneGameLogicSettingsDesc> game_logic_settings;
   std::vector<ScenePhysicsEntityDesc> physics_entities;
   std::optional<SceneNavigationMeshDesc> navigation_mesh;
   std::vector<SceneSplineDesc> splines;

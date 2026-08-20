@@ -1,6 +1,19 @@
 # Debug and Diagnostics
 
-Status: Stage 13 draft.
+Status: verified against source on 2026-08-19.
+
+For native Windows assertions, exception stacks, and dump analysis, use the
+[CDB crash-debugging skill](../../.github/skills/t850-crash-debugging/SKILL.md).
+Windows Debug entry points install `InstallUnattendedCrtReportHook()` before
+engine initialization, which suppresses Abort/Retry/Ignore and sends the
+assertion breakpoint directly to an attached debugger.
+
+The 2026-08-19 VoxelScene bring-up demonstrated this workflow: CDB identified
+`RenderQuad::Draw()` indexing an empty `SceneProps::pGaussKernels` vector from a
+blur pass. `VoxelScene` now registers all three graph-selected kernels, and
+`RenderQuad` rejects missing/empty kernels instead of indexing them. The same
+unattended CDB command subsequently completed timed captures on D3D11, D3D12,
+OpenGL, and Vulkan without application exception markers.
 
 This document explains T850's diagnostic stack: loading progress, runtime telemetry, frame dumps and replay snapshots, render tracing, profiler scopes, and how these systems are used by runtime scenes, editor, render graph, shaders, physics, and navigation.
 
@@ -14,6 +27,7 @@ Related documents:
 - [Render graph](../rendering/render-graph.md)
 - [Geometry rendering flow](../rendering/geometry-rendering-flow.md)
 - [Scene format and runtime](../scenes/scene-format-and-runtime.md)
+- [Visual regression baselines](visual-regression.md)
 
 ## Purpose and responsibilities
 
@@ -118,6 +132,17 @@ Output:
 - JSON contains sampled frames, scopes, and counters.
 
 Telemetry is used throughout render, physics, navigation, animation, benchmark, projection/path queries, mesh drawing, and loading-sensitive paths.
+
+Gameplay publishes stable counters on sampled frames:
+
+- `game.entities.total`, `game.entities.active`
+- `game.components.total`, `game.components.updated`
+- `game.events.queued`, `game.events.dispatched`
+- `game.state_machines.transitions`
+- `game.physics.queries`, `game.nav.requests`, `game.nav.completed`
+- `game.validation.errors`, `game.validation.warnings`
+
+Gameplay scopes include `game.update`, component phases, event dispatch, state machines, groups, and `game.spatial_queries`. Telemetry flushes only on normal framework shutdown; direct `exit()` paths such as timed frame dumps do not write the JSON unless capture uses `--keepRunning` and the window closes normally.
 
 ## FrameDumper and replay snapshots
 
@@ -299,6 +324,10 @@ Because editor hosted windows can freeze the main editor viewport, frame dumps m
 2. Enable runtime telemetry for sampled counters/scopes.
 3. Use benchmark output where available for aggregate frame timings.
 4. Correlate telemetry scope names with render graph pass names and physics/navigation counters.
+
+### Guarding a large implementation against visual regressions
+
+Use [Visual regression baselines](visual-regression.md) to capture deterministic five-second, 1280x720 backbuffers for every supported scene/API pair before the implementation and compare same-API candidates afterward.
 
 ## Extension points
 

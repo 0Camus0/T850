@@ -1,5 +1,7 @@
 # Platform Event Loop and Window Management
 
+Status: verified against source on 2026-08-19.
+
 This document describes how T850 runs on Windows, Linux/Steam Deck, and Android: event loops, window/surface ownership, graphics API creation, resize handling, and frame lifecycle.
 
 For the high-level application/scene architecture, see [main-architecture.md](main-architecture.md). For input and camera routing details, see [Input, camera, and controls](../input/camera-and-controls.md). For runtime/editor ImGui backend details, see [FrameworkImGui runtime UI](../editor/imgui-system.md). For cross-subsystem ownership, see [dependency-map.md](../dependency-map.md).

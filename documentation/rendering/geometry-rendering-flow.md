@@ -1,6 +1,6 @@
 # Geometry Rendering Flow
 
-Status: Stage 5 draft.
+Status: verified against source on 2026-08-19.
 
 This document follows a mesh from scene/editor ownership through `PrimitiveInst`, `RenderGraph`, `RenderMesh` / `RenderSkinnedMesh`, state tracking, shader and PSO selection, vertex/index buffer binding, and the final API `DrawIndexed` call.
 
@@ -26,8 +26,10 @@ flowchart LR
   Inst --> Base["PrimitiveBase"]
   Base --> Static["RenderMesh::Draw"]
   Base --> Skin["RenderSkinnedMesh::Draw"]
+  Base --> Mutable["MutableMesh::Draw"]
   Static --> Tracker["MeshDrawStateTracker"]
   Skin --> Tracker
+  Mutable --> Tracker
   Tracker --> API["DeviceContext + buffers"]
   Static --> Shader["BaseDriver::GetShader"]
   Skin --> Shader
@@ -42,13 +44,17 @@ flowchart LR
 | `Framework/include/scene/PrimitiveInstance.h` | Per-scene instance wrapper: transform, visibility, global key, override textures, environment map, physics links. |
 | `Framework/src/scene/PrimitiveInstance.cpp` | Composes transforms and bridges instance state into `PrimitiveBase::Draw()`. |
 | `Framework/include/scene/PrimitiveBase.h` | Abstract render primitive interface and shared per-draw state fields. |
+| `Framework/include/scene/PrimitiveManager.h` / `Framework/src/scene/PrimitiveManager.cpp` | Owns primitive allocations and factory entry points for imported meshes, mutable meshes, quads, and splines. |
 | `Framework/src/scene/RenderGraph.cpp` | Sets per-pass `ShaderKey` signatures and brackets multi-mesh pass scopes. |
 | `Framework/src/scene/RenderMesh.cpp` | Static mesh draw path: culling, sorting, material CBs, shader selection, VB/IB binding, texture binding, draw calls. |
 | `Framework/src/scene/RenderSkinnedMesh.cpp` | Skinned mesh draw path: bone texture, skinned shader variants, skinned wireframe/skeleton debug. |
+| `Framework/include/scene/MutableMeshData.h` / `Framework/src/scene/MutableMeshData.cpp` | Validated CPU-owned procedural vertex/index/section/material snapshots and bounds. |
+| `Framework/include/scene/MutableMesh.h` / `Framework/src/scene/MutableMesh.cpp` | Backend-neutral procedural primitive: complete snapshot replacement, culling, material sections, shader/texture binding, and buffer retirement. |
+| `Framework/include/scene/RenderContainer.h` / `Framework/src/scene/RenderContainer.cpp` | Generational render-instance slots, active-instance compaction, cameras/resources, and render-graph execution. |
 | `Framework/include/scene/RenderQueue.h` | Future flat draw-list structures plus current `MeshDrawStateTracker` declaration. |
 | `Framework/src/scene/RenderQueue.cpp` | State tracker implementation for deduping binds across a pass. |
 | `Framework/include/scene/MeshPool.h` and `Framework/src/scene/MeshPool.cpp` | Shared vertex/index pool buffers used by mesh assets. |
-| `Framework/include/video/BaseDriver.h` | `DeviceContext`, `VertexBuffer`, `IndexBuffer`, `ConstantBuffer`, `ShaderBase`, and driver interfaces. |
+| `Framework/include/video/BaseDriver.h` | `DeviceContext`, buffers, shaders, driver interfaces, and `RetireBuffer()` lifetime contract. |
 | API buffer/context files under `Framework/src/video/*` | Backend mappings for VB/IB bind, topology, constant buffers, and `DrawIndexed`. |
 
 ## High-level runtime flow
@@ -105,6 +111,18 @@ Final = Scale * RotationX * RotationY * RotationZ * Position
 5. Restores the previous `pBase` state.
 
 The save/restore behavior allows several `PrimitiveInst` objects to reference the same primitive resource while still supplying per-instance draw state.
+
+## Mutable procedural geometry and stable instances
+
+`MutableMesh` is the procedural `PrimitiveBase` implementation. A worker or gameplay system builds a complete `MutableMeshSnapshot`, but `ReplaceSnapshot()` validates and commits it only on the render/main thread. The primitive reuses mesh shader permutations for forward, GBuffer, shadow-map, and radial-depth passes; it supports material sections, optional slot-0 `DiffuseTex`, and AABB frustum culling.
+
+`PrimitiveManager::CreateMutableMesh()` allocates and creates the primitive with the manager's `EngineContext`, stores it with the other owned primitives, and returns its index for `GetPrimitive()` access.
+
+Replacement creates the new vertex/index buffers before retiring the old pair. D3D11 and OpenGL use the default immediate `BaseDriver::RetireBuffer()` behavior. D3D12 and Vulkan override it to retain replaced buffers until every in-flight frame has advanced, preventing command buffers from referencing released resources.
+
+`RenderContainer` stores instances in reusable slots addressed by `RenderInstanceHandle {index,generation}`. Removal invalidates the old generation, and stale handles cannot access a replacement instance. Before `RenderGraph::Execute()`, the container compacts active slots into a contiguous scratch array because the graph still consumes `PrimitiveInst* + count`.
+
+Voxel chunk construction, streaming, and edit policy are documented in [Mutable voxel terrain](../terrain/voxel-terrain.md).
 
 ## RenderGraph bridge
 

@@ -78,6 +78,24 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/core/Core.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/EngineContext.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/android/AndroidFramework.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/ComponentFactory.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/Controller.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/EventBus.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/GameIds.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/GameLogicSystem.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/GameNavigationService.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/GameObjectRegistry.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/GamePhysicsService.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/GameSelfTest.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/GameValidation.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/MovementComponent.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/StateMachine.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/examples/GroupManager.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/examples/HealthComponent.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/examples/PathFollowComponent.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/examples/RtsCommandController.cpp
+  ${T850_SOURCE_DIR}/Framework/src/game/examples/WeaponComponent.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/GameplayLayers.cpp
   ${T850_SOURCE_DIR}/Framework/src/physics/CharacterController.cpp
   ${T850_SOURCE_DIR}/Framework/src/physics/JoltPhysicsSystem.cpp
   ${T850_SOURCE_DIR}/Framework/src/physics/PhysicsDebugRenderer.cpp
@@ -140,6 +158,8 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/MeshAssetCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/MaterialAssetCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/MeshPool.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/MutableMeshData.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/MutableMesh.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderQueue.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderContainer.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderResourceRegistry.cpp
@@ -153,6 +173,13 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/TextRenderer.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/Quad.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/LensFlare.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/BlockRegistry.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelChunk.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelMesher.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelWorld.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelStreaming.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelPersistence.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/CrashDiagnostics.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/Profiler.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/RuntimeTelemetry.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumper.cpp
@@ -178,6 +205,7 @@ add_library(T850Android SHARED
   ${T850_SOURCE_DIR}/DayScene/Quake3Mock.cpp
   ${T850_SOURCE_DIR}/DayScene/RagdollEditor.cpp
   ${T850_SOURCE_DIR}/DayScene/SandboxScene.cpp
+  ${T850_SOURCE_DIR}/DayScene/VoxelScene.cpp
   ${T850_ANDROID_FRAMEWORK_SOURCES})
 
 target_compile_definitions(T850Android PRIVATE

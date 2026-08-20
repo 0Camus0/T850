@@ -8,7 +8,21 @@ on:
     branches: [ master ]
 
 jobs:
+  validate-build-registration:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Validate MSBuild and CMake source registration
+        shell: pwsh
+        run: |
+          & T850/scripts/ValidateBuildRegistration.ps1
+
   build:
+    needs: validate-build-registration
     runs-on: windows-2022
     strategy:
       fail-fast: false
@@ -24,6 +38,19 @@ jobs:
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
+
+      - name: Pin vcpkg compiler to Visual Studio 2022
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs2022 = & $vswhere -latest -products * -version "[17.0,18.0)" `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vs2022)) {
+            throw 'Visual Studio 2022 C++ tools were not found.'
+          }
+          "VCPKG_VISUAL_STUDIO_PATH=$vs2022" >> $env:GITHUB_ENV
+          Write-Host "vcpkg compiler: $vs2022"
 
       - name: Clone vcpkg
         shell: pwsh
@@ -49,7 +76,7 @@ jobs:
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install --recurse glew:x86-windows-static angle:x86-windows draco:x86-windows draco:x86-windows-static vulkan-headers:x86-windows-static vulkan-loader:x86-windows-static vulkan-memory-allocator:x86-windows-static glslang:x86-windows-static joltphysics:x86-windows-static recastnavigation:x86-windows-static "imgui[docking-experimental,dx11-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x86-windows-static"
+          ./vcpkg.exe install --recurse glew:x86-windows-static angle:x86-windows draco:x86-windows draco:x86-windows-static vulkan-headers:x86-windows-static vulkan-loader:x86-windows-static vulkan-memory-allocator:x86-windows-static glslang:x86-windows-static joltphysics:x86-windows-static recastnavigation:x86-windows-static "imgui[docking-experimental,dx11-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x86-windows-static" imguizmo:x86-windows-static
 
       - name: Install vcpkg packages (x64)
         if: matrix.platform == 'x64'
@@ -63,25 +90,15 @@ jobs:
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install --recurse glew:arm64-windows-static angle:arm64-windows draco:arm64-windows draco:arm64-windows-static vulkan-headers:arm64-windows-static vulkan-loader:arm64-windows-static vulkan-memory-allocator:arm64-windows-static glslang:arm64-windows-static joltphysics:arm64-windows-static recastnavigation:arm64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:arm64-windows-static"
+          ./vcpkg.exe install --recurse glew:arm64-windows-static angle:arm64-windows draco:arm64-windows draco:arm64-windows-static vulkan-headers:arm64-windows-static vulkan-loader:arm64-windows-static vulkan-memory-allocator:arm64-windows-static glslang:arm64-windows-static joltphysics:arm64-windows-static recastnavigation:arm64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:arm64-windows-static" imguizmo:arm64-windows-static
 
       - name: Build
         shell: pwsh
         run: |
-          if ("${{ matrix.platform }}" -eq "x64") {
-            msbuild T850/T850.sln `
-              /t:Build `
-              /p:Configuration=${{ matrix.configuration }} `
-              /p:Platform=${{ matrix.platform }} `
-              /m /nologo /v:minimal
-          } else {
-            # T8ditor only targets x64; build Framework + DayScene for other platforms
-            msbuild T850/T850.sln `
-              /t:Framework`;DayScene `
-              /p:Configuration=${{ matrix.configuration }} `
-              /p:Platform=${{ matrix.platform }} `
-              /m /nologo /v:minimal
-          }
+          & T850/scripts/build.ps1 `
+            -Config ${{ matrix.configuration }} `
+            -Platform ${{ matrix.platform }} `
+            -Action Build
 
       - name: Set arch name
         id: arch
@@ -98,7 +115,19 @@ jobs:
           if (-not (Test-Path $exe)) { throw "Build output not found: $exe" }
           Write-Host "Build succeeded: $exe"
           $editor = "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/T8ditor.exe"
-          if (Test-Path $editor) { Write-Host "Editor built: $editor" }
+          if (-not (Test-Path $editor)) { throw "Editor output not found: $editor" }
+          Write-Host "Editor built: $editor"
+
+      # Gameplay/terrain self-tests cannot run on GitHub-hosted runners (no
+      # display/GPU and no interactive session). They are exercised locally via
+      # T850/scripts/RunWindowsBuildMatrix.ps1, which runs the same six-cell
+      # matrix plus the Win32/x64 self-tests. Keep this step disabled in CI.
+      - name: Run gameplay and terrain self-tests
+        if: false
+        shell: pwsh
+        run: |
+          & "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe" --game-selftest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload build artifacts
         if: matrix.configuration == 'Release'
@@ -111,6 +140,7 @@ jobs:
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/*.dll
 
   android:
+    needs: validate-build-registration
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -257,6 +287,7 @@ jobs:
           path: artifacts/android/*.apk
 
   steamdeck:
+    needs: validate-build-registration
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

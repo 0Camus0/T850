@@ -396,6 +396,7 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     <ClCompile Include="Quake3Mock.cpp" />
     <ClCompile Include="RagdollEditor.cpp" />
     <ClCompile Include="SandboxScene.cpp" />
+    <ClCompile Include="VoxelScene.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Application.h" />
@@ -405,6 +406,7 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     <ClInclude Include="RagdollEditor.h" />
     <ClInclude Include="SandboxRenderGraphUtils.h" />
     <ClInclude Include="SandboxScene.h" />
+    <ClInclude Include="VoxelScene.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="DayScene.rc" />

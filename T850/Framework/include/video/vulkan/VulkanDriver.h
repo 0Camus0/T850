@@ -86,6 +86,7 @@ namespace t850 {
     void BeginResourceUploadBatch() override;
     void EndResourceUploadBatch() override;
     bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
+    void RetireBuffer(Buffer* buffer) override;
     void BuildPipelineObjects() override;
     void SetViewport(float x, float y, float w, float h) override;
     void SetScissorRect(int x, int y, int w, int h) override;
@@ -299,6 +300,11 @@ namespace t850 {
     // Deferred staging buffer cleanup (destroyed after frame completes)
     struct DeferredBuffer { VkBuffer buffer; VmaAllocation alloc; };
     std::vector<DeferredBuffer> m_deferredCleanup[kBackBufferCount];
+    struct RetiredEngineBuffer {
+      Buffer* buffer = nullptr;
+      uint32_t framesRemaining = kBackBufferCount;
+    };
+    std::vector<RetiredEngineBuffer> m_retiredBuffers;
 
     int m_uploadBatchDepth = 0;
     VkCommandBuffer m_uploadBatchCmd = VK_NULL_HANDLE;

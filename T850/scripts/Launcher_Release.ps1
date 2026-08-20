@@ -229,6 +229,7 @@ $xaml = @"
                             <ComboBoxItem Content="Quake3 Mock" Tag="2"/>
                             <ComboBoxItem Content="Ragdoll Editor" Tag="3"/>
                             <ComboBoxItem Content="Scene Template" Tag="4"/>
+                            <ComboBoxItem Content="Voxel Streaming" Tag="5"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
@@ -1178,11 +1179,13 @@ function Get-EditorLaunchCommand {
     $exePath = Join-Path $rootDir "T8ditor.exe"
     $argList = @()
 
-    # Editor supports D3D12 and Vulkan only: D3D11/D3D12 -> D3D12, GL/Vulkan -> Vulkan
-    $editorApi = if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d12" }
-    if ($editorApi -eq "vulkan") {
-        $argList += @("--api", "vulkan")
+    # Win32 ImGui is provisioned without the D3D12 backend; use D3D11 there.
+    $editorApi = if (-not [Environment]::Is64BitProcess) {
+        if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d11" }
+    } else {
+        if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d12" }
     }
+    $argList += @("--api", $editorApi)
 
     $w = $txtWidth.Text
     $h = $txtHeight.Text

@@ -1969,7 +1969,8 @@ bool BuildMeshBoxBodyDesc(const RenderMesh& mesh,
                           const XMATRIX44& worldFromMesh,
                           uint32_t entityId,
                           PhysicsBodyMotion motion,
-                          PhysicsBodyDesc& outDesc) {
+                          PhysicsBodyDesc& outDesc,
+                          GameplayLayer gameplayLayer) {
   AABB combined;
   for (const RenderMesh::MeshInfo& info : mesh.Info) {
     if (IsValidRenderBounds(info.bounds)) {
@@ -1989,15 +1990,17 @@ bool BuildMeshBoxBodyDesc(const RenderMesh& mesh,
   outDesc.worldTransform = MakeCenteredBoxWorldTransform(combined, worldFromMesh, halfExtents);
   outDesc.shape = PhysicsShapeDesc::Box(halfExtents);
   outDesc.motion = motion;
+  outDesc.gameplayLayer = gameplayLayer;
   return true;
 }
 
 bool AttachMeshBoxBody(JoltPhysicsSystem& physics,
                        PrimitiveInst& instance,
                        const RenderMesh& mesh,
-                       PhysicsBodyMotion motion) {
+                       PhysicsBodyMotion motion,
+                       GameplayLayer gameplayLayer) {
   PhysicsBodyDesc desc;
-  if (!BuildMeshBoxBodyDesc(mesh, instance.Final, instance.GetEntityId(), motion, desc)) {
+  if (!BuildMeshBoxBodyDesc(mesh, instance.Final, instance.GetEntityId(), motion, desc, gameplayLayer)) {
     return false;
   }
 
@@ -2015,7 +2018,8 @@ bool BuildStaticTriangleMeshBodyDesc(const RenderMesh& mesh,
                                      uint32_t entityId,
                                      const PhysicsTriangleMeshCookSettings& settings,
                                      PhysicsTriangleMeshBodyDesc& outDesc,
-                                     PhysicsCookStats* outStats) {
+                                     PhysicsCookStats* outStats,
+                                     GameplayLayer gameplayLayer) {
   const auto start = std::chrono::steady_clock::now();
   if (outStats) {
     *outStats = PhysicsCookStats{};
@@ -2102,6 +2106,7 @@ bool BuildStaticTriangleMeshBodyDesc(const RenderMesh& mesh,
   outDesc.mesh.localBounds = localBounds;
   outDesc.mesh.settings = settings;
   outDesc.worldTransform = bodyTransform;
+  outDesc.gameplayLayer = gameplayLayer;
 
   if (outStats) {
     const auto end = std::chrono::steady_clock::now();
@@ -2116,11 +2121,13 @@ bool AttachStaticTriangleMeshBody(JoltPhysicsSystem& physics,
                                   PrimitiveInst& instance,
                                   const RenderMesh& mesh,
                                   const PhysicsTriangleMeshCookSettings& settings,
-                                  PhysicsCookStats* outStats) {
+                                  PhysicsCookStats* outStats,
+                                  GameplayLayer gameplayLayer) {
   PhysicsTriangleMeshBodyDesc desc;
   PhysicsCookStats localStats;
   PhysicsCookStats* stats = outStats ? outStats : &localStats;
-  if (!BuildStaticTriangleMeshBodyDesc(mesh, instance.Final, instance.GetEntityId(), settings, desc, stats)) {
+    if (!BuildStaticTriangleMeshBodyDesc(
+      mesh, instance.Final, instance.GetEntityId(), settings, desc, stats, gameplayLayer)) {
     return false;
   }
 

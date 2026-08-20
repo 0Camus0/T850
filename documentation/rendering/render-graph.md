@@ -1,6 +1,6 @@
 # Render Graph
 
-Status: Stage 4 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains T850's data-driven render graph: JSON descriptors, render target creation, pass execution, input/output edges, render-target push/pop behavior, state overrides, mesh and fullscreen-quad draws, post-processing, and final output routing.
 
@@ -246,6 +246,8 @@ Supported pass signatures include:
 - `DEFERRED_LIGHT_VOLUME_PASS`
 
 Unknown signatures log an error and resolve to an empty valid key.
+
+`PassType::E` is broader than the JSON signature map. The enum currently contains `NONE`, `FORWARD`, `GBUFFER`, `SHADOW_MAP`, the three standard fullscreen-quad passes, `FSQUAD_TESTING`, `DEFERRED`, `SHADOW_COMP`, vertical/horizontal/one-pass blur, `BRIGHT`, `HDR_COMP`, `LUMINANCE_MAP`, `ADAPT_LUMINANCE`, `COC`, `COMBINE_COC`, `DOF`, `DOF_2`, `BACKBUFFER`, God Rays calculation/blend, `SSAO`, `RAY_MARCH`, `RADIAL_DEPTH`, `LIGHT_RAY_MARCHING`, `LIGHT_ADD`, `FADE`, `DEFERRED_LDR`, `DEFERRED_LIGHT_VOLUME`, lens-flare sun/ghost, and `COUNT`. Enum values without an entry in `RenderGraph.cpp`'s `s_passMap` cannot be selected by a render-graph `signature` string until an explicit mapping is added.
 
 ## Graph construction
 

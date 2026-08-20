@@ -27,6 +27,13 @@ namespace t850 {
     SceneProps* sceneProps = nullptr;
   };
 
+  struct RenderInstanceHandle {
+    uint32_t index = UINT32_MAX;
+    uint32_t generation = 0;
+    bool IsValid() const { return index != UINT32_MAX && generation != 0; }
+    friend bool operator==(const RenderInstanceHandle&, const RenderInstanceHandle&) = default;
+  };
+
   class RenderContainer {
   public:
     RenderContainer() = default;
@@ -56,8 +63,12 @@ namespace t850 {
     EnvironmentMapSet& EnvironmentMaps() { return m_envMaps; }
 
     void ClearMeshes();
-    int AddMeshInstance(const PrimitiveInst& instance);
-    int AddMeshHandle(const RenderMeshHandle& handle);
+    RenderInstanceHandle AddMeshInstance(const PrimitiveInst& instance);
+    RenderInstanceHandle AddMeshHandle(const RenderMeshHandle& handle);
+    bool RemoveMesh(RenderInstanceHandle handle);
+    PrimitiveInst* GetMesh(RenderInstanceHandle handle);
+    const PrimitiveInst* GetMesh(RenderInstanceHandle handle) const;
+    std::size_t ActiveMeshCount() const { return m_activeMeshCount; }
     std::vector<PrimitiveInst>& Meshes() { return m_meshes; }
     const std::vector<PrimitiveInst>& Meshes() const { return m_meshes; }
 
@@ -82,6 +93,11 @@ namespace t850 {
     PrimitiveManager m_quadManager;
     std::array<PrimitiveInst, 10> m_quads{};
     std::vector<PrimitiveInst> m_meshes;
+    std::vector<uint32_t> m_meshGenerations;
+    std::vector<uint8_t> m_meshActive;
+    std::vector<uint32_t> m_freeMeshSlots;
+    std::vector<PrimitiveInst> m_activeMeshes;
+    std::size_t m_activeMeshCount = 0;
     EnvironmentMapSet m_envMaps;
     Camera* m_mainCamera = nullptr;
     Camera* m_lightCamera = nullptr;

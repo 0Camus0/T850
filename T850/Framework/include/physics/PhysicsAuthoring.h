@@ -17,22 +17,26 @@ bool BuildMeshBoxBodyDesc(const RenderMesh& mesh,
                           const XMATRIX44& worldFromMesh,
                           uint32_t entityId,
                           PhysicsBodyMotion motion,
-                          PhysicsBodyDesc& outDesc);
+                          PhysicsBodyDesc& outDesc,
+                          GameplayLayer gameplayLayer = GameplayLayer::Count);
 bool AttachMeshBoxBody(JoltPhysicsSystem& physics,
                        PrimitiveInst& instance,
                        const RenderMesh& mesh,
-                       PhysicsBodyMotion motion);
+                       PhysicsBodyMotion motion,
+                       GameplayLayer gameplayLayer = GameplayLayer::Count);
 bool BuildStaticTriangleMeshBodyDesc(const RenderMesh& mesh,
                                      const XMATRIX44& worldFromMesh,
                                      uint32_t entityId,
                                      const PhysicsTriangleMeshCookSettings& settings,
                                      PhysicsTriangleMeshBodyDesc& outDesc,
-                                     PhysicsCookStats* outStats = nullptr);
+                                     PhysicsCookStats* outStats = nullptr,
+                                     GameplayLayer gameplayLayer = GameplayLayer::Count);
 bool AttachStaticTriangleMeshBody(JoltPhysicsSystem& physics,
                                   PrimitiveInst& instance,
                                   const RenderMesh& mesh,
                                   const PhysicsTriangleMeshCookSettings& settings,
-                                  PhysicsCookStats* outStats = nullptr);
+                                  PhysicsCookStats* outStats = nullptr,
+                                  GameplayLayer gameplayLayer = GameplayLayer::Count);
 bool ValidateNavOffMeshLinkWithPhysics(const JoltPhysicsSystem& physics,
                                       const navigation::NavMeshBuildSettings& settings,
                                       const navigation::NavOffMeshLink& link);

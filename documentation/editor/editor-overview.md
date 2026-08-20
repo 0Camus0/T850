@@ -1,6 +1,6 @@
 # Editor Overview
 
-Status: Stage 9 draft.
+Status: verified against source on 2026-08-19.
 
 This document explains T850's editor, T8ditor: app lifecycle, editor-world data model, scene save/load, panels, hierarchy/inspector/rendering/timeline controls, viewport and gizmo behavior, Play Scene, Mesh Editor, Ragdoll Editor, NavMesh authoring, undo/redo, hosted windows, render-graph integration, limitations, and debugging workflows.
 
@@ -167,6 +167,7 @@ It owns:
 - God Rays volume,
 - physics entities,
 - game entities,
+- game groups and optional game-logic settings,
 - groups,
 - mixed selection state,
 - undo stack,
@@ -189,6 +190,8 @@ Selection type values:
 | `6` | light camera |
 | `7` | spline point |
 | `8` | God Rays volume |
+| `9` | game entity |
+| `10` | game group |
 
 `multiSelect` is legacy mesh-only selection. `multiEntitySelect` stores typed `SelectionRef` values for mixed mesh/physics/etc. selection.
 
@@ -210,6 +213,7 @@ T8ditor saves and loads `.t8scene` through:
 - physics/navigation/ragdoll metadata,
 - unloaded scene objects that failed to load,
 - game entities,
+- game groups and game-logic settings,
 - splines,
 - light cameras,
 - camera animations,
@@ -219,6 +223,8 @@ T8ditor saves and loads `.t8scene` through:
 - cameras and lights,
 - collision resource path,
 - profiles.
+
+Before returning, it assigns any missing stable entity/component/group IDs, migrates legacy game records to schema v2, and writes `game_entities`, `game_groups`, and `game_logic_settings`. Whole-scene undo snapshots therefore include all game authoring data without separate granular commands.
 
 Transient editor objects are excluded.
 
@@ -278,6 +284,10 @@ The hierarchy panel is the main scene tree. It includes:
 - splines and spline points,
 - light cameras,
 - God Rays volume.
+- game entity identity/control/links/components/behavior,
+- game group membership and formation/flock settings.
+
+The View menu also exposes Game Validation and Game Overlays. Validation runs after load, on demand, and before Play; errors block Play and rows can jump to entity/group inspectors. Overlays use safe parameter parsing for sensor/combat radii and health bars, plus entity/state labels and group lines.
 
 Selecting from the hierarchy updates `g_selectionType`, `g_selectedIdx`, `g_multiSelect`, and `g_multiEntitySelect`.
 

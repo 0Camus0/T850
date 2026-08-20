@@ -185,7 +185,8 @@ bool SamePhysicsBodyDesc(const PhysicsBodyDesc& a, const PhysicsBodyDesc& b) {
          a.mass == b.mass &&
          a.friction == b.friction &&
          a.restitution == b.restitution &&
-         a.sensor == b.sensor;
+         a.sensor == b.sensor &&
+         a.gameplayLayer == b.gameplayLayer;
 }
 
 bool SamePhysicsRagdollDesc(const PhysicsRagdollDesc& a, const PhysicsRagdollDesc& b) {

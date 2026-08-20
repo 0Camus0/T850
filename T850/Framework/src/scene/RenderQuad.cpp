@@ -650,21 +650,41 @@ namespace t850 {
 		}
 	}
     else if (pass == PassType::ONE_PASS_BLUR) {
-      CnstBuffer.LightPositions[0].x = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[0].x;
-      CnstBuffer.LightPositions[0].y = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[0].y;
+      const bool validKernel = pScProp->ActiveGaussKernel >= 0 &&
+          pScProp->ActiveGaussKernel < static_cast<int>(pScProp->pGaussKernels.size()) &&
+          pScProp->pGaussKernels[pScProp->ActiveGaussKernel] &&
+          !pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel.empty();
+      if (!validKernel) {
+        T8_LOG_ERROR("[RenderQuad] Blur pass requested missing Gaussian kernel %d (available=%zu)",
+                     pScProp->ActiveGaussKernel, pScProp->pGaussKernels.size());
+        return;
+      }
+      GaussFilter* kernel = pScProp->pGaussKernels[pScProp->ActiveGaussKernel];
+      CnstBuffer.LightPositions[0].x = kernel->vGaussKernel[0].x;
+      CnstBuffer.LightPositions[0].y = kernel->vGaussKernel[0].y;
       CnstBuffer.LightPositions[0].z = (float)Textures[0]->x;
       CnstBuffer.LightPositions[0].w = (float)Textures[0]->y;
-      for (unsigned int i = 1; i < pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel.size(); i++) {
-        CnstBuffer.LightPositions[i] = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[i];
+      for (unsigned int i = 1; i < kernel->vGaussKernel.size(); i++) {
+        CnstBuffer.LightPositions[i] = kernel->vGaussKernel[i];
       }
     }
     else if (pass == PassType::VERTICAL_BLUR || pass == PassType::HORIZONTAL_BLUR) {
-      CnstBuffer.LightPositions[0].x = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[0].x;
-      CnstBuffer.LightPositions[0].y = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[0].y;
+      const bool validKernel = pScProp->ActiveGaussKernel >= 0 &&
+          pScProp->ActiveGaussKernel < static_cast<int>(pScProp->pGaussKernels.size()) &&
+          pScProp->pGaussKernels[pScProp->ActiveGaussKernel] &&
+          !pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel.empty();
+      if (!validKernel) {
+        T8_LOG_ERROR("[RenderQuad] Blur pass requested missing Gaussian kernel %d (available=%zu)",
+                     pScProp->ActiveGaussKernel, pScProp->pGaussKernels.size());
+        return;
+      }
+      GaussFilter* kernel = pScProp->pGaussKernels[pScProp->ActiveGaussKernel];
+      CnstBuffer.LightPositions[0].x = kernel->vGaussKernel[0].x;
+      CnstBuffer.LightPositions[0].y = kernel->vGaussKernel[0].y;
       CnstBuffer.LightPositions[0].z = (float)Textures[0]->x;
       CnstBuffer.LightPositions[0].w = (float)Textures[0]->y;
-      for (unsigned int i = 1; i < pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel.size(); i++) {
-        CnstBuffer.LightPositions[i].x = roundTo(pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[i].x, 6.0f);
+      for (unsigned int i = 1; i < kernel->vGaussKernel.size(); i++) {
+        CnstBuffer.LightPositions[i].x = roundTo(kernel->vGaussKernel[i].x, 6.0f);
       }
     }
     else if (pass == PassType::HDR_COMP || pass == PassType::BRIGHT || pass == PassType::FSQUAD_3_TEX || pass == PassType::ADAPT_LUMINANCE) {

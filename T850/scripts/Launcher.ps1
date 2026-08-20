@@ -283,6 +283,7 @@ $xaml = @"
                             <ComboBoxItem Content="Quake3 Mock" Tag="2"/>
                             <ComboBoxItem Content="Ragdoll Editor" Tag="3"/>
                             <ComboBoxItem Content="Scene Template" Tag="4"/>
+                            <ComboBoxItem Content="Voxel Streaming" Tag="5"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
@@ -390,6 +391,8 @@ $xaml = @"
         <!-- Buttons -->
         <Grid Grid.Row="5" Grid.ColumnSpan="3">
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
@@ -572,8 +575,8 @@ function Get-SandboxInputMode {
 function Get-ArchFolder {
     $arch = ($cmbArch.SelectedItem).Content.ToString().ToLower()
     switch ($arch) {
-        "arm64" { "arm64" }
-        "x86"   { "x86" }
+        "arm64" { "ARM64" }
+        "x86"   { "Win32" }
         default { "x64" }
     }
 }
@@ -1912,11 +1915,7 @@ function Get-LaunchCommand {
     $config = ($cmbConfig.SelectedItem).Content.ToString()
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
 
-    $archFolder = switch ($arch) {
-        "arm64" { "arm64" }
-        "x86"   { "x86"   }
-        default { "x64"   }
-    }
+    $archFolder = Get-ArchFolder
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\DayScene.exe"
     $argList = @("--api", $apiTag)
@@ -2017,20 +2016,18 @@ function Get-EditorLaunchCommand {
     $config = ($cmbConfig.SelectedItem).Content.ToString()
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
 
-    $archFolder = switch ($arch) {
-        "arm64" { "arm64" }
-        "x86"   { "x86"   }
-        default { "x64"   }
-    }
+    $archFolder = Get-ArchFolder
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\T8ditor.exe"
     $argList = @()
 
-    # Editor supports D3D12 and Vulkan only: D3D11/D3D12 -> D3D12, GL/Vulkan -> Vulkan
-    $editorApi = if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d12" }
-    if ($editorApi -eq "vulkan") {
-        $argList += @("--api", "vulkan")
+    # Win32 ImGui is provisioned without the D3D12 backend; use D3D11 there.
+    $editorApi = if ($arch -eq "x86") {
+        if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d11" }
+    } else {
+        if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d12" }
     }
+    $argList += @("--api", $editorApi)
 
     if ($chkFullscreen.IsChecked) {
         $argList += "--fullscreen"
@@ -2571,12 +2568,11 @@ function Invoke-Build {
         return
     }
 
-    # Start MSBuild as a process and read output asynchronously
-    $slnPath = Join-Path $rootDir "T850.sln"
+    # Run the same build entry point used by GitHub Actions.
+    $powerShellExe = (Get-Process -Id $PID).Path
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $msbuild
-    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:{3} /v:minimal /m:{4}' -f $slnPath, $config, $platform, $buildTarget, $buildWorkers
-    $psi.Arguments = $msbArgs
+    $psi.FileName = $powerShellExe
+    $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Config {1} -Platform {2} -Action {3}' -f $buildScript, $config, $platform, $buildTarget
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError  = $true

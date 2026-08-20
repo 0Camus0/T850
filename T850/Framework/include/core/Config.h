@@ -63,6 +63,7 @@ public:
   int benchmarkDurationSeconds = 0;
   int benchmarkFrameLimit = 0;
   float benchmarkFixedDt = 0.0f;
+  float regressionFixedDt = 0.0f;
   std::string modelPath = "Models/DamagedHelmet.glb";
   std::string sceneFilePath;
   std::string sceneProfile;

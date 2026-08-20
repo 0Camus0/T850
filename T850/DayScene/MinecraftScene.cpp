@@ -381,9 +381,9 @@ void MinecraftScene::BuildSkyCubemap() {
   for (int face = 0; face < 6; ++face) {
     for (int y = 0; y < kSkySize; ++y) {
       const float t = static_cast<float>(y) / static_cast<float>(kSkySize - 1);
-      // Top: bright Minecraft blue (90, 160, 255). Horizon: pale blue/white (200, 225, 255).
-      const int r = static_cast<int>(90 + (200 - 90) * t);
-      const int g = static_cast<int>(160 + (225 - 160) * t);
+      // Top: bright Minecraft blue (100, 180, 255). Horizon: pale blue/white (210, 235, 255).
+      const int r = static_cast<int>(100 + (210 - 100) * t);
+      const int g = static_cast<int>(180 + (235 - 180) * t);
       const int b = static_cast<int>(255 + (255 - 255) * t);
       for (int x = 0; x < kSkySize; ++x) {
         const std::size_t offset =
@@ -408,7 +408,14 @@ int MinecraftScene::TerrainHeight(int worldX, int worldZ) const {
   const float detail = ValueNoise2D(static_cast<float>(worldX) * 0.1f,
                                     static_cast<float>(worldZ) * 0.1f);
   const int base = 12;
-  const int height = base + static_cast<int>(hills * 24.0f) + static_cast<int>(detail * 3.0f);
+  int height = base + static_cast<int>(hills * 24.0f) + static_cast<int>(detail * 3.0f);
+  // Create lakes: in some areas, carve the terrain down to the water level so
+  // water fills the depression (a Minecraft lake).
+  const float lakeNoise = ValueNoise2D(static_cast<float>(worldX) * 0.01f,
+                                       static_cast<float>(worldZ) * 0.01f);
+  if (lakeNoise > 0.62f) {
+    height = static_cast<int>(height * 0.4f);
+  }
   return std::clamp(height, 4, 48);
 }
 

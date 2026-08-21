@@ -72,9 +72,21 @@ private:
   int TerrainHeight(int worldX, int worldZ) const;
   void SelectHotbarBlock(int index);
   void SyncLightCameraFromDirectionalLight();
+  void CreateSword();
+  void CreateEnemies();
+  void UpdateSword(float deltaSeconds);
+  void UpdateEnemies(float deltaSeconds);
+  void DestroyDynamicMeshes();
 
   static constexpr int kSceneIndex = 6;
   static constexpr int kHotbarSize = 9;
+
+  struct Enemy {
+    XVECTOR3 position;
+    float yaw = 0.0f;
+    std::unique_ptr<t850::MutableMesh> mesh;
+    t850::RenderInstanceHandle instance;
+  };
 
   t850::terrain::BlockRegistry m_blockRegistry;
   t850::terrain::VoxelWorld m_world;
@@ -114,4 +126,14 @@ private:
   float m_deltaSeconds = 0.0f;
   bool m_remeshRequested = false;
   bool m_assetsCreated = false;
+
+  // First-person sword.
+  std::unique_ptr<t850::MutableMesh> m_swordMesh;
+  t850::RenderInstanceHandle m_swordInstance;
+  float m_swingTime = -1.0f;  // -1 = not swinging, else seconds since swing start
+  bool m_swordCreated = false;
+
+  // Enemies that follow the player.
+  std::vector<Enemy> m_enemies;
+  bool m_enemiesCreated = false;
 };

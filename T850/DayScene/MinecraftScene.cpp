@@ -469,7 +469,7 @@ int MinecraftScene::TerrainHeight(int worldX, int worldZ) const {
   // water fills the depression (a Minecraft lake).
   const float lakeNoise = ValueNoise2D(static_cast<float>(worldX) * 0.01f,
                                        static_cast<float>(worldZ) * 0.01f);
-  if (lakeNoise > 0.62f) {
+  if (lakeNoise > 0.55f) {
     height = static_cast<int>(height * 0.4f);
   }
   return std::clamp(height, 4, 48);
@@ -550,7 +550,7 @@ t850::terrain::VoxelChunkBuildResult MinecraftScene::BuildStreamedChunk(
       }
       // Place a tree on grass with a higher density for a Minecraft look.
       if (!beach && height > kWaterLevel + 2 &&
-          HashNoise(worldX * 31 + 17, worldZ * 31 + 23) > 0.96f) {
+          HashNoise(worldX * 31 + 17, worldZ * 31 + 23) > 0.90f) {
         PlaceTree(worldX, height, worldZ, *result.chunk);
       }
     }
@@ -588,11 +588,11 @@ void MinecraftScene::InitVars() {
   // the upper part of the frame, like a Minecraft screenshot.
   const float spawnX = 16.0f;
   const float spawnZ = -40.0f;
-  const float spawnY = static_cast<float>(TerrainHeight(static_cast<int>(spawnX), static_cast<int>(spawnZ))) + 24.0f;
+  const float spawnY = static_cast<float>(TerrainHeight(static_cast<int>(spawnX), static_cast<int>(spawnZ))) + 8.0f;
   m_camera.InitPerspective(XVECTOR3(spawnX, spawnY, spawnZ), Deg2Rad(70.0f), 1280.0f / 720.0f, 0.05f, 1000.0f);
   m_camera.Eye = XVECTOR3(spawnX, spawnY, spawnZ, 1.0f);
   m_camera.Yaw = 0.0f;
-  m_camera.Pitch = -0.05f;
+  m_camera.Pitch = -0.1f;
   m_camera.Update(0.0f);
   m_cameraController.SetActiveProfile(t850::CameraProfileType::FreeFly);
   m_cameraController.AttachCamera(&m_camera);
@@ -1087,10 +1087,17 @@ void MinecraftScene::CreateEnemies() {
   const float spacing = 3.0f;
   const XVECTOR3 forward = m_camera.Look;
   const XVECTOR3 right = m_camera.Right;
+  // Use the camera's ground position (ignore vertical look) so enemies spawn
+  // on the terrain in front of the player.
+  XVECTOR3 groundEye = m_camera.Eye;
+  groundEye.y = 0.0f;
+  XVECTOR3 groundForward = forward;
+  groundForward.y = 0.0f;
+  if (groundForward.Length() > 0.0001f) groundForward.Normalize();
   for (int i = 0; i < count; ++i) {
-    const float depth = 6.0f + static_cast<float>(i) * spacing;
-    const float side = (i % 2 == 0 ? 1.0f : -1.0f) * 1.5f;
-    XVECTOR3 spawn = m_camera.Eye + forward * depth + right * side;
+    const float depth = 4.0f + static_cast<float>(i) * spacing;
+    const float side = (i % 2 == 0 ? 1.0f : -1.0f) * 1.2f;
+    XVECTOR3 spawn = groundEye + groundForward * depth + right * side;
     spawn.y = 0.0f;
     const int wx = static_cast<int>(std::floor(spawn.x));
     const int wz = static_cast<int>(std::floor(spawn.z));
@@ -1101,19 +1108,20 @@ void MinecraftScene::CreateEnemies() {
     enemy.yaw = 0.0f;
 
     t850::MutableMeshSnapshot snapshot;
-    // Zombie-like enemy: teal shirt, green head, dark legs.
-    AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 0.8f, 0.0f, 1.0f),
-              XVECTOR3(0.45f, 0.55f, 0.35f, 1.0f),
-              XVECTOR3(0.1f, 0.55f, 0.55f, 1.0f), 0.0f, 0.8f);
-    AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 1.6f, 0.0f, 1.0f),
-              XVECTOR3(0.4f, 0.4f, 0.4f, 1.0f),
-              XVECTOR3(0.25f, 0.7f, 0.25f, 1.0f), 0.0f, 0.8f);
-    AppendBoxToSnapshot(snapshot, XVECTOR3(-0.22f, 0.1f, 0.0f, 1.0f),
-              XVECTOR3(0.22f, 0.1f, 0.28f, 1.0f),
-              XVECTOR3(0.1f, 0.3f, 0.1f, 1.0f), 0.0f, 0.9f);
-    AppendBoxToSnapshot(snapshot, XVECTOR3(0.22f, 0.1f, 0.0f, 1.0f),
-              XVECTOR3(0.22f, 0.1f, 0.28f, 1.0f),
-              XVECTOR3(0.1f, 0.3f, 0.1f, 1.0f), 0.0f, 0.9f);
+    // Zombie-like enemy: teal shirt, green head, dark legs. Larger and
+    // brighter so they stand out against the terrain.
+    AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 0.9f, 0.0f, 1.0f),
+              XVECTOR3(0.5f, 0.6f, 0.4f, 1.0f),
+              XVECTOR3(0.1f, 0.6f, 0.6f, 1.0f), 0.0f, 0.6f);
+    AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 1.8f, 0.0f, 1.0f),
+              XVECTOR3(0.45f, 0.45f, 0.45f, 1.0f),
+              XVECTOR3(0.3f, 0.8f, 0.3f, 1.0f), 0.0f, 0.6f);
+    AppendBoxToSnapshot(snapshot, XVECTOR3(-0.25f, 0.1f, 0.0f, 1.0f),
+              XVECTOR3(0.25f, 0.1f, 0.3f, 1.0f),
+              XVECTOR3(0.1f, 0.35f, 0.1f, 1.0f), 0.0f, 0.8f);
+    AppendBoxToSnapshot(snapshot, XVECTOR3(0.25f, 0.1f, 0.0f, 1.0f),
+              XVECTOR3(0.25f, 0.1f, 0.3f, 1.0f),
+              XVECTOR3(0.1f, 0.35f, 0.1f, 1.0f), 0.0f, 0.8f);
     t850::RecalculateMutableMeshBounds(snapshot);
 
     enemy.mesh = std::make_unique<t850::MutableMesh>();

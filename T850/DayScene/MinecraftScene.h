@@ -7,6 +7,7 @@
 #include <scene/IBLResources.h>
 #include <scene/MutableMesh.h>
 #include <scene/RenderContainer.h>
+#include <scene/SceneSetup.h>
 #include <terrain/BlockRegistry.h>
 #include <terrain/VoxelMesher.h>
 #include <terrain/VoxelPersistence.h>
@@ -77,6 +78,7 @@ private:
   void UpdateSword(float deltaSeconds);
   void UpdateEnemies(float deltaSeconds);
   void DestroyDynamicMeshes();
+  void ApplySkySelection(int index);
 
   static constexpr int kSceneIndex = 6;
   static constexpr int kHotbarSize = 9;
@@ -136,4 +138,13 @@ private:
   // Enemies that follow the player.
   std::vector<Enemy> m_enemies;
   bool m_enemiesCreated = false;
+
+  // Debug render target selector (0 = final output, >0 = a specific pass).
+  int m_debugRTSelection = 0;
+  // Active gauss kernel for the "Gauss" section (0=shadow, 1=bloom, 2=dof).
+  int m_activeGaussKernel = 0;
+  // Sky cubemap selection (0 = procedural Minecraft blue, >0 = a .dds file).
+  int m_skySelection = 0;
+  // Descriptor-driven scene controls (loaded from MinecraftScene.json).
+  t850::SceneSetup m_controlSetup;
 };

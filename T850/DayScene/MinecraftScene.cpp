@@ -437,9 +437,9 @@ void MinecraftScene::BuildSkyCubemap() {
   for (int face = 0; face < 6; ++face) {
     for (int y = 0; y < kSkySize; ++y) {
       const float t = static_cast<float>(y) / static_cast<float>(kSkySize - 1);
-      // Top: bright Minecraft blue (100, 180, 255). Horizon: pale blue/white (210, 235, 255).
-      const int r = static_cast<int>(100 + (210 - 100) * t);
-      const int g = static_cast<int>(180 + (235 - 180) * t);
+      // Top: bright Minecraft blue (80, 160, 255). Horizon: pale blue/white (200, 230, 255).
+      const int r = static_cast<int>(80 + (200 - 80) * t);
+      const int g = static_cast<int>(160 + (230 - 160) * t);
       const int b = static_cast<int>(255 + (255 - 255) * t);
       for (int x = 0; x < kSkySize; ++x) {
         const std::size_t offset =
@@ -588,11 +588,11 @@ void MinecraftScene::InitVars() {
   // the upper part of the frame, like a Minecraft screenshot.
   const float spawnX = 16.0f;
   const float spawnZ = -40.0f;
-  const float spawnY = static_cast<float>(TerrainHeight(static_cast<int>(spawnX), static_cast<int>(spawnZ))) + 12.0f;
+  const float spawnY = static_cast<float>(TerrainHeight(static_cast<int>(spawnX), static_cast<int>(spawnZ))) + 24.0f;
   m_camera.InitPerspective(XVECTOR3(spawnX, spawnY, spawnZ), Deg2Rad(70.0f), 1280.0f / 720.0f, 0.05f, 1000.0f);
   m_camera.Eye = XVECTOR3(spawnX, spawnY, spawnZ, 1.0f);
   m_camera.Yaw = 0.0f;
-  m_camera.Pitch = -0.2f;
+  m_camera.Pitch = -0.05f;
   m_camera.Update(0.0f);
   m_cameraController.SetActiveProfile(t850::CameraProfileType::FreeFly);
   m_cameraController.AttachCamera(&m_camera);
@@ -606,10 +606,10 @@ void MinecraftScene::InitVars() {
   SceneProp = SceneProps{};
   SceneProp.AddCamera(&m_camera);
   SceneProp.AddLightCamera(&m_lightCamera);
-  SceneProp.AddDirectionalLight(m_lightCamera.Look, XVECTOR3(1.0f, 0.98f, 0.92f, 1.0f), 8.0f, true);
+  SceneProp.AddDirectionalLight(m_lightCamera.Look, XVECTOR3(1.0f, 0.98f, 0.92f, 1.0f), 20.0f, true);
   SceneProp.ActiveLights = 1;
   SceneProp.AmbientColor = XVECTOR3(0.6f, 0.65f, 0.7f, 1.0f);
-  SceneProp.Exposure = 0.5f;
+  SceneProp.Exposure = 3.0f;
   SceneProp.ToogleDOF = 0;
   SceneProp.ToogleParallax = 0;
   SceneProp.IBLFactor = 0.8f;

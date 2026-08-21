@@ -111,6 +111,62 @@ constexpr int kAtlasHeight = kTileSize * kAtlasRows;  // 128
 
 struct Rgba { unsigned char r, g, b, a; };
 
+// Build a unit box (1x1x1, centered at origin) mesh snapshot with a solid
+// base color. Used for the first-person sword and the enemy bodies.
+void BuildBoxMesh(t850::MutableMeshSnapshot& snapshot,
+                  const XVECTOR3& color,
+                  float metallic = 0.0f,
+                  float roughness = 0.6f) {
+  snapshot = t850::MutableMeshSnapshot{};
+  snapshot.version = 1;
+  const float h = 0.5f;
+  // 6 faces, 4 verts each, 2 triangles per face.
+  const XVECTOR3 positions[6][4] = {
+      // +X
+      {{h, -h, -h, 1.0f}, {h, -h, h, 1.0f}, {h, h, h, 1.0f}, {h, h, -h, 1.0f}},
+      // -X
+      {{-h, -h, h, 1.0f}, {-h, -h, -h, 1.0f}, {-h, h, -h, 1.0f}, {-h, h, h, 1.0f}},
+      // +Y
+      {{-h, h, -h, 1.0f}, {h, h, -h, 1.0f}, {h, h, h, 1.0f}, {-h, h, h, 1.0f}},
+      // -Y
+      {{-h, -h, h, 1.0f}, {h, -h, h, 1.0f}, {h, -h, -h, 1.0f}, {-h, -h, -h, 1.0f}},
+      // +Z
+      {{-h, -h, h, 1.0f}, {h, -h, h, 1.0f}, {h, h, h, 1.0f}, {-h, h, h, 1.0f}},
+      // -Z
+      {{h, -h, -h, 1.0f}, {-h, -h, -h, 1.0f}, {-h, h, -h, 1.0f}, {h, h, -h, 1.0f}},
+  };
+  const XVECTOR3 normals[6] = {
+      {1.0f, 0.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f, 0.0f},
+      {0.0f, 0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, -1.0f, 0.0f},
+  };
+  for (int face = 0; face < 6; ++face) {
+    const uint32_t base = static_cast<uint32_t>(snapshot.vertices.size());
+    for (int v = 0; v < 4; ++v) {
+      t850::MutableMeshVertex vertex;
+      vertex.position = positions[face][v];
+      vertex.normal = normals[face];
+      vertex.u = (v == 1 || v == 2) ? 1.0f : 0.0f;
+      vertex.v = (v == 2 || v == 3) ? 1.0f : 0.0f;
+      snapshot.vertices.push_back(vertex);
+    }
+    snapshot.indices.insert(snapshot.indices.end(),
+                            {base, base + 1, base + 2, base, base + 2, base + 3});
+  }
+  t850::MutableMeshMaterial material;
+  material.baseColor = color;
+  material.metallic = metallic;
+  material.roughness = roughness;
+  material.alphaMode = t850::MutableMeshAlphaMode::Opaque;
+  material.usesBaseColorTexture = false;
+  snapshot.materials.push_back(material);
+  snapshot.sections.push_back(t850::MutableMeshSection{
+      .firstIndex = 0,
+      .indexCount = static_cast<uint32_t>(snapshot.indices.size()),
+      .materialIndex = 0});
+  t850::RecalculateMutableMeshBounds(snapshot);
+}
+
 void SetPixel(std::vector<unsigned char>& pixels, int x, int y, Rgba color) {
   if (x < 0 || x >= kAtlasWidth || y < 0 || y >= kAtlasHeight) return;
   const int index = (y * kAtlasWidth + x) * 4;
@@ -645,11 +701,14 @@ void MinecraftScene::CreateAssets() {
 
   BuildAtlas();
   m_assetsCreated = true;
+  CreateSword();
+  CreateEnemies();
   UpdateStreaming();
 }
 
 void MinecraftScene::DestroyAssets() {
   if (!m_assetsCreated) return;
+  DestroyDynamicMeshes();
   m_streaming.Reset();
   if (t850::g_config.regressionFixedDt <= 0.0f && !m_deltaPath.empty() && m_deltas.Count() > 0) {
     std::string error;
@@ -904,6 +963,8 @@ void MinecraftScene::OnUpdate(float deltaSeconds) {
   m_dumper.UpdateReplayState();
   UpdateStreaming();
   if (m_remeshRequested) RebuildChunkMeshes();
+  UpdateSword(deltaSeconds);
+  UpdateEnemies(deltaSeconds);
 }
 
 void MinecraftScene::SelectHotbarBlock(int index) {
@@ -921,6 +982,252 @@ void MinecraftScene::SyncLightCameraFromDirectionalLight() {
     m_lightCamera.Update(0.0f);
     return;
   }
+}
+
+namespace {
+// Append an axis-aligned box (centered at `center`, half extents `half`) to a
+// mesh snapshot with the given material color. Used to compose the sword and
+// enemy bodies from multiple boxes.
+void AppendBoxToSnapshot(t850::MutableMeshSnapshot& snapshot,
+                         const XVECTOR3& center,
+                         const XVECTOR3& half,
+                         const XVECTOR3& color,
+                         float metallic = 0.0f,
+                         float roughness = 0.6f) {
+  const XVECTOR3 positions[6][4] = {
+      {{half.x, -half.y, -half.z, 1.0f}, {half.x, -half.y, half.z, 1.0f},
+       {half.x, half.y, half.z, 1.0f}, {half.x, half.y, -half.z, 1.0f}},
+      {{-half.x, -half.y, half.z, 1.0f}, {-half.x, -half.y, -half.z, 1.0f},
+       {-half.x, half.y, -half.z, 1.0f}, {-half.x, half.y, half.z, 1.0f}},
+      {{-half.x, half.y, -half.z, 1.0f}, {half.x, half.y, -half.z, 1.0f},
+       {half.x, half.y, half.z, 1.0f}, {-half.x, half.y, half.z, 1.0f}},
+      {{-half.x, -half.y, half.z, 1.0f}, {half.x, -half.y, half.z, 1.0f},
+       {half.x, -half.y, -half.z, 1.0f}, {-half.x, -half.y, -half.z, 1.0f}},
+      {{-half.x, -half.y, half.z, 1.0f}, {half.x, -half.y, half.z, 1.0f},
+       {half.x, half.y, half.z, 1.0f}, {-half.x, half.y, half.z, 1.0f}},
+      {{half.x, -half.y, -half.z, 1.0f}, {-half.x, -half.y, -half.z, 1.0f},
+       {-half.x, half.y, -half.z, 1.0f}, {half.x, half.y, -half.z, 1.0f}},
+  };
+  const XVECTOR3 normals[6] = {
+      {1.0f, 0.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f, 0.0f},
+      {0.0f, 0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, -1.0f, 0.0f},
+  };
+  const uint32_t base = static_cast<uint32_t>(snapshot.vertices.size());
+  const uint32_t indexBase = static_cast<uint32_t>(snapshot.indices.size());
+  for (int face = 0; face < 6; ++face) {
+    for (int v = 0; v < 4; ++v) {
+      t850::MutableMeshVertex vertex;
+      vertex.position = positions[face][v] + center;
+      vertex.normal = normals[face];
+      vertex.u = (v == 1 || v == 2) ? 1.0f : 0.0f;
+      vertex.v = (v == 2 || v == 3) ? 1.0f : 0.0f;
+      snapshot.vertices.push_back(vertex);
+    }
+    snapshot.indices.insert(snapshot.indices.end(),
+                            {base + face * 4, base + face * 4 + 1,
+                             base + face * 4 + 2, base + face * 4,
+                             base + face * 4 + 2, base + face * 4 + 3});
+  }
+  t850::MutableMeshMaterial material;
+  material.baseColor = color;
+  material.metallic = metallic;
+  material.roughness = roughness;
+  material.alphaMode = t850::MutableMeshAlphaMode::Opaque;
+  material.usesBaseColorTexture = false;
+  snapshot.materials.push_back(material);
+  snapshot.sections.push_back(t850::MutableMeshSection{
+      .firstIndex = indexBase,
+      .indexCount = 36,
+      .materialIndex = static_cast<uint32_t>(snapshot.materials.size() - 1)});
+}
+}  // namespace
+
+void MinecraftScene::CreateSword() {
+  if (m_swordCreated || !pEngineContext) return;
+  t850::MutableMeshSnapshot snapshot;
+  // Blade (silver), crossguard (brown), handle (brown), pommel (dark).
+  AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 0.0f, 0.55f, 1.0f),
+                      XVECTOR3(0.06f, 0.06f, 0.55f, 1.0f),
+                      XVECTOR3(0.85f, 0.87f, 0.9f, 1.0f), 0.9f, 0.2f);
+  AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 0.0f, -0.05f, 1.0f),
+                      XVECTOR3(0.16f, 0.05f, 0.05f, 1.0f),
+                      XVECTOR3(0.45f, 0.3f, 0.15f, 1.0f), 0.0f, 0.7f);
+  AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 0.0f, -0.3f, 1.0f),
+                      XVECTOR3(0.05f, 0.05f, 0.2f, 1.0f),
+                      XVECTOR3(0.4f, 0.25f, 0.1f, 1.0f), 0.0f, 0.7f);
+  AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 0.0f, -0.5f, 1.0f),
+                      XVECTOR3(0.07f, 0.07f, 0.07f, 1.0f),
+                      XVECTOR3(0.3f, 0.2f, 0.08f, 1.0f), 0.0f, 0.7f);
+  t850::RecalculateMutableMeshBounds(snapshot);
+
+  m_swordMesh = std::make_unique<t850::MutableMesh>();
+  m_swordMesh->SetEngineContext(pEngineContext);
+  m_swordMesh->Create();
+  std::string error;
+  if (!m_swordMesh->ReplaceSnapshot(std::move(snapshot), &error)) {
+    T8_LOG_ERROR("[MinecraftScene] Sword mesh failed: %s", error.c_str());
+    m_swordMesh->Destroy();
+    m_swordMesh.reset();
+    return;
+  }
+  t850::PrimitiveInst instance;
+  instance.CreateInstance(m_swordMesh.get(), &m_camera.VP);
+  instance.SetVisible(true);
+  instance.Update();
+  m_swordInstance = m_renderContainer.AddMeshInstance(instance);
+  m_swordCreated = true;
+}
+
+void MinecraftScene::CreateEnemies() {
+  if (m_enemiesCreated || !pEngineContext) return;
+  // Spawn a handful of enemies in front of the camera at ground level so they
+  // are clearly visible in the initial screenshot.
+  const int count = 6;
+  const float spacing = 3.0f;
+  const XVECTOR3 forward = m_camera.Look;
+  const XVECTOR3 right = m_camera.Right;
+  for (int i = 0; i < count; ++i) {
+    const float depth = 6.0f + static_cast<float>(i) * spacing;
+    const float side = (i % 2 == 0 ? 1.0f : -1.0f) * 1.5f;
+    XVECTOR3 spawn = m_camera.Eye + forward * depth + right * side;
+    spawn.y = 0.0f;
+    const int wx = static_cast<int>(std::floor(spawn.x));
+    const int wz = static_cast<int>(std::floor(spawn.z));
+    const float groundY = static_cast<float>(TerrainHeight(wx, wz)) + 1.0f;
+
+    Enemy enemy;
+    enemy.position = XVECTOR3(spawn.x, groundY, spawn.z, 1.0f);
+    enemy.yaw = 0.0f;
+
+    t850::MutableMeshSnapshot snapshot;
+    // Zombie-like enemy: teal shirt, green head, dark legs.
+    AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 0.8f, 0.0f, 1.0f),
+              XVECTOR3(0.45f, 0.55f, 0.35f, 1.0f),
+              XVECTOR3(0.1f, 0.55f, 0.55f, 1.0f), 0.0f, 0.8f);
+    AppendBoxToSnapshot(snapshot, XVECTOR3(0.0f, 1.6f, 0.0f, 1.0f),
+              XVECTOR3(0.4f, 0.4f, 0.4f, 1.0f),
+              XVECTOR3(0.25f, 0.7f, 0.25f, 1.0f), 0.0f, 0.8f);
+    AppendBoxToSnapshot(snapshot, XVECTOR3(-0.22f, 0.1f, 0.0f, 1.0f),
+              XVECTOR3(0.22f, 0.1f, 0.28f, 1.0f),
+              XVECTOR3(0.1f, 0.3f, 0.1f, 1.0f), 0.0f, 0.9f);
+    AppendBoxToSnapshot(snapshot, XVECTOR3(0.22f, 0.1f, 0.0f, 1.0f),
+              XVECTOR3(0.22f, 0.1f, 0.28f, 1.0f),
+              XVECTOR3(0.1f, 0.3f, 0.1f, 1.0f), 0.0f, 0.9f);
+    t850::RecalculateMutableMeshBounds(snapshot);
+
+    enemy.mesh = std::make_unique<t850::MutableMesh>();
+    enemy.mesh->SetEngineContext(pEngineContext);
+    enemy.mesh->Create();
+    std::string error;
+    if (!enemy.mesh->ReplaceSnapshot(std::move(snapshot), &error)) {
+      T8_LOG_ERROR("[MinecraftScene] Enemy mesh failed: %s", error.c_str());
+      enemy.mesh->Destroy();
+      continue;
+    }
+    t850::PrimitiveInst instance;
+    instance.CreateInstance(enemy.mesh.get(), &m_camera.VP);
+    instance.TranslateAbsolute(enemy.position.x, enemy.position.y, enemy.position.z);
+    instance.SetVisible(true);
+    instance.Update();
+    enemy.instance = m_renderContainer.AddMeshInstance(instance);
+    m_enemies.push_back(std::move(enemy));
+  }
+  m_enemiesCreated = true;
+  T8_LOG_INFO("[MinecraftScene] Created %d enemies. Camera eye=(%.1f,%.1f,%.1f) look=(%.2f,%.2f,%.2f)",
+              static_cast<int>(m_enemies.size()),
+              m_camera.Eye.x, m_camera.Eye.y, m_camera.Eye.z,
+              m_camera.Look.x, m_camera.Look.y, m_camera.Look.z);
+  for (const Enemy& enemy : m_enemies) {
+    T8_LOG_INFO("[MinecraftScene]   enemy at (%.1f,%.1f,%.1f) valid=%d",
+                enemy.position.x, enemy.position.y, enemy.position.z,
+                enemy.instance.IsValid() ? 1 : 0);
+  }
+}
+
+void MinecraftScene::UpdateSword(float deltaSeconds) {
+  if (!m_swordCreated || !m_swordInstance.IsValid()) return;
+  t850::PrimitiveInst* sword = m_renderContainer.GetMesh(m_swordInstance);
+  if (!sword) return;
+
+  // Position the sword in the lower-right of the view, attached to the camera.
+  const XVECTOR3 eye = m_camera.Eye;
+  const XVECTOR3 look = m_camera.Look;
+  const XVECTOR3 right = m_camera.Right;
+  const XVECTOR3 up = m_camera.Up;
+  XVECTOR3 base = eye + look * 0.7f + right * 0.35f - up * 0.35f;
+  base.w = 1.0f;
+
+  // Swing animation: rotate the sword down and back up over ~0.4s.
+  float pitchOffset = 0.0f;
+  float rollOffset = 0.0f;
+  if (m_swingTime >= 0.0f) {
+    const float t = m_swingTime / 0.4f;
+    if (t >= 1.0f) {
+      m_swingTime = -1.0f;
+    } else {
+      const float swing = std::sin(t * 3.14159265f);
+      pitchOffset = -0.9f * swing;
+      rollOffset = 0.5f * swing;
+    }
+  }
+
+  sword->TranslateAbsolute(base.x, base.y, base.z);
+  // Face the camera forward, then apply the swing pitch/roll.
+  sword->RotateYAbsolute(Rad2Deg(std::atan2(look.x, look.z)));
+  sword->RotateXAbsolute(Rad2Deg(std::asin(-look.y)) + Rad2Deg(pitchOffset));
+  sword->RotateZAbsolute(Rad2Deg(rollOffset));
+  sword->Update();
+}
+
+void MinecraftScene::UpdateEnemies(float deltaSeconds) {
+  if (!m_enemiesCreated) return;
+  const float speed = 2.2f;
+  for (Enemy& enemy : m_enemies) {
+    if (!enemy.instance.IsValid()) continue;
+    t850::PrimitiveInst* inst = m_renderContainer.GetMesh(enemy.instance);
+    if (!inst) continue;
+
+    XVECTOR3 toPlayer = m_camera.Eye - enemy.position;
+    toPlayer.y = 0.0f;
+    const float dist = toPlayer.Length();
+    if (dist > 0.01f) {
+      XVECTOR3 dir = toPlayer;
+      dir.Normalize();
+      enemy.position += dir * speed * deltaSeconds;
+      enemy.yaw = std::atan2(dir.x, dir.z);
+    }
+
+    // Keep the enemy on the terrain surface.
+    const int wx = static_cast<int>(std::floor(enemy.position.x));
+    const int wz = static_cast<int>(std::floor(enemy.position.z));
+    const float groundY = static_cast<float>(TerrainHeight(wx, wz)) + 1.0f;
+    enemy.position.y = groundY;
+    enemy.position.w = 1.0f;
+
+    inst->TranslateAbsolute(enemy.position.x, enemy.position.y, enemy.position.z);
+    inst->RotateYAbsolute(Rad2Deg(enemy.yaw));
+    inst->Update();
+  }
+}
+
+void MinecraftScene::DestroyDynamicMeshes() {
+  if (m_swordCreated && m_swordInstance.IsValid()) {
+    m_renderContainer.RemoveMesh(m_swordInstance);
+    m_swordInstance = {};
+  }
+  if (m_swordMesh) {
+    m_swordMesh->Destroy();
+    m_swordMesh.reset();
+  }
+  m_swordCreated = false;
+
+  for (Enemy& enemy : m_enemies) {
+    if (enemy.instance.IsValid()) m_renderContainer.RemoveMesh(enemy.instance);
+    if (enemy.mesh) enemy.mesh->Destroy();
+  }
+  m_enemies.clear();
+  m_enemiesCreated = false;
 }
 
 void MinecraftScene::OnInput(InputManager* input) {
@@ -950,6 +1257,10 @@ void MinecraftScene::OnInput(InputManager* input) {
   }
 
   if (input->PressedOnceMouseButton(0) || input->PressedOnceMouseButton(1)) {
+    // Left click also swings the sword.
+    if (input->PressedOnceMouseButton(0)) {
+      m_swingTime = 0.0f;
+    }
     t850::terrain::VoxelRayHit hit;
     if (m_world.Raycast(m_camera.Eye, m_camera.Look, 8.0f, m_blockRegistry, hit)) {
       bool changed = false;

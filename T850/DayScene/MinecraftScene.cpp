@@ -651,17 +651,19 @@ void MinecraftScene::InitVars() {
   m_cameraController.SetActiveProfile(t850::CameraProfileType::GroundedFps);
   m_cameraController.AttachCamera(&m_camera);
 
-  // Minecraft-like movement: near-instant acceleration AND near-instant
-  // stopping. The default GroundedFps settings (groundAcceleration=30,
-  // friction=8) accelerate fast but decelerate slowly, so the player keeps
-  // sliding after releasing the keys. Minecraft uses high friction so you
-  // stop almost immediately, with a snappy but bounded acceleration.
+  // Minecraft-like movement: instant acceleration AND instant stopping.
+  // The friction model decays velocity as `v *= (1 - friction*dt)`, so with
+  // friction=20 and dt=1/60 the player keeps 0.667 of its speed each frame and
+  // visibly glides after releasing the key. Setting friction >= 1/dt (>=60)
+  // kills the horizontal velocity in a single frame, so the player stops the
+  // instant the key is released. groundAcceleration is likewise set high so
+  // the player reaches full speed immediately (no ramp-up).
   t850::KinematicCharacterSettings mcSettings;
   mcSettings.walkSpeed = 4.3f;
   mcSettings.sprintSpeed = 5.6f;
-  mcSettings.groundAcceleration = 60.0f;
+  mcSettings.groundAcceleration = 200.0f;
   mcSettings.airAcceleration = 3.0f;
-  mcSettings.friction = 20.0f;
+  mcSettings.friction = 200.0f;
   mcSettings.stopSpeed = 0.5f;
   mcSettings.gravity = 24.0f;
   mcSettings.jumpSpeed = 8.0f;

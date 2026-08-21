@@ -457,6 +457,31 @@ void MinecraftScene::BuildSkyCubemap() {
   }
 }
 
+void MinecraftScene::ApplySkySelection(int index) {
+  m_skySelection = index;
+  if (index == 0) {
+    BuildSkyCubemap();
+    return;
+  }
+  const char* path = nullptr;
+  switch (index) {
+    case 1: path = "sky/CubeMap_SkyWater.dds"; break;
+    case 2: path = "sky/CubeMap_SkyDawn.dds"; break;
+    case 3: path = "sky/CubeMap_Mountains.dds"; break;
+    case 4: path = "sky/Ennis.dds"; break;
+    case 5: path = "sky/Glacier.dds"; break;
+    default: return;
+  }
+  if (pFramework && pFramework->pVideoDriver) {
+    if (m_envMapTexIndex >= 0) pFramework->pVideoDriver->DestroyTexture(m_envMapTexIndex);
+    m_envMapTexIndex = pFramework->pVideoDriver->CreateTexture(path);
+    if (m_envMapTexIndex >= 0) {
+      m_envMaps.SetFallback(m_envMapTexIndex);
+      m_renderContainer.SetEnvironmentMaps(m_envMaps);
+    }
+  }
+}
+
 int MinecraftScene::TerrainHeight(int worldX, int worldZ) const {
   // Rolling hills between ~8 and ~40 blocks, plus a base floor.
   const float hills = FractalNoise(static_cast<float>(worldX) * 0.02f,
@@ -477,32 +502,59 @@ int MinecraftScene::TerrainHeight(int worldX, int worldZ) const {
 
 void MinecraftScene::PlaceTree(int worldX, int worldY, int worldZ,
                                t850::terrain::VoxelChunk& chunk) const {
-  const int trunkHeight = 4 + static_cast<int>(HashNoise(worldX, worldZ) * 2.0f);
-  // Trunk.
+  // VoxelChunk::Set expects LOCAL coordinates within the chunk. Convert the
+  // world-space tree position to chunk-local space so the trunk and canopy
+  // are actually written (previously world coords were passed, which were out
+  // of bounds and silently dropped, so no trees ever appeared).
+  const auto dims = chunk.Dimensions();
+  const auto key = chunk.Key();
+  auto toLocal = [&](int wx, int wy, int wz, int& lx, int& ly, int& lz) {
+    lx = wx - key.x * dims.x;
+    ly = wy - key.y * dims.y;
+    lz = wz - key.z * dims.z;
+  };
+  int lx = 0, ly = 0, lz = 0;
+  // Tall oak-style tree: 6-8 block trunk, 2x2 trunk cross-section, and a
+  // large bushy canopy, matching the reference screenshot.
+  const int trunkHeight = 6 + static_cast<int>(HashNoise(worldX, worldZ) * 3.0f);
+  // Trunk (2x2 cross-section for a thick, Minecraft oak look).
   for (int i = 1; i <= trunkHeight; ++i) {
     const int y = worldY + i;
-    if (y >= 0 && y < 256) chunk.Set(worldX, y, worldZ, m_log);
+    for (int dx = 0; dx <= 1; ++dx) {
+      for (int dz = 0; dz <= 1; ++dz) {
+        toLocal(worldX + dx, y, worldZ + dz, lx, ly, lz);
+        if (chunk.InBounds(lx, ly, lz)) chunk.Set(lx, ly, lz, m_log);
+      }
+    }
   }
-  // Leaves canopy.
+  // Leaves canopy: a large, irregular, bushy blob around the top of the trunk.
   const int topY = worldY + trunkHeight;
-  for (int dy = -2; dy <= 1; ++dy) {
+  for (int dy = -3; dy <= 2; ++dy) {
     const int y = topY + dy;
-    if (y < 0 || y >= 256) continue;
-    const int radius = (dy >= 0) ? 1 : 2;
+    const int radius = (dy >= 1) ? 2 : 3;
     for (int dx = -radius; dx <= radius; ++dx) {
       for (int dz = -radius; dz <= radius; ++dz) {
-        if (dx == 0 && dz == 0 && dy >= 0) continue;  // keep trunk top clear
-        if (std::abs(dx) == radius && std::abs(dz) == radius && (dx * dz) > 0) continue;
+        // Keep the trunk column clear so the trunk pokes through the canopy.
+        if (dx >= 0 && dx <= 1 && dz >= 0 && dz <= 1 && dy >= 0) continue;
+        // Round the corners for a natural, bushy silhouette.
+        const int distSq = dx * dx + dz * dz;
+        if (distSq > radius * radius) continue;
+        if (distSq > (radius - 1) * (radius - 1) && (dx * dz) > 0) continue;
         const int x = worldX + dx;
         const int z = worldZ + dz;
-        if (chunk.Get(x, y, z) == t850::terrain::kAirBlock) {
-          chunk.Set(x, y, z, m_leaves);
+        toLocal(x, y, z, lx, ly, lz);
+        if (chunk.InBounds(lx, ly, lz) &&
+            chunk.Get(lx, ly, lz) == t850::terrain::kAirBlock) {
+          chunk.Set(lx, ly, lz, m_leaves);
         }
       }
     }
   }
-  // Top leaf.
-  if (topY + 1 < 256) chunk.Set(worldX, topY + 1, worldZ, m_leaves);
+  // Top leaf cap.
+  toLocal(worldX, topY + 2, worldZ, lx, ly, lz);
+  if (chunk.InBounds(lx, ly, lz)) chunk.Set(lx, ly, lz, m_leaves);
+  toLocal(worldX + 1, topY + 2, worldZ + 1, lx, ly, lz);
+  if (chunk.InBounds(lx, ly, lz)) chunk.Set(lx, ly, lz, m_leaves);
 }
 
 t850::terrain::VoxelChunkBuildResult MinecraftScene::BuildStreamedChunk(
@@ -550,7 +602,7 @@ t850::terrain::VoxelChunkBuildResult MinecraftScene::BuildStreamedChunk(
       }
       // Place a tree on grass with a higher density for a Minecraft look.
       if (!beach && height > kWaterLevel + 2 &&
-          HashNoise(worldX * 31 + 17, worldZ * 31 + 23) > 0.90f) {
+          HashNoise(worldX * 31 + 17, worldZ * 31 + 23) > 0.93f) {
         PlaceTree(worldX, height, worldZ, *result.chunk);
       }
     }
@@ -584,18 +636,38 @@ void MinecraftScene::InitVars() {
     }
   }
 
-  // Position the camera to view the terrain from a distance with the sky in
-  // the upper part of the frame, like a Minecraft screenshot.
-  const float spawnX = 16.0f;
-  const float spawnZ = -40.0f;
-  const float spawnY = static_cast<float>(TerrainHeight(static_cast<int>(spawnX), static_cast<int>(spawnZ))) + 8.0f;
+  // Spawn the player standing on the terrain surface. The GroundedFps profile
+  // applies gravity and capsule collision against the voxel world, so the
+  // camera rests at eye height above the ground instead of flying. The spawn
+  // is chosen to have a clear view forward with trees visible around it.
+  const float spawnX = 6.0f;
+  const float spawnZ = -14.0f;
+  const float spawnY = static_cast<float>(TerrainHeight(static_cast<int>(spawnX), static_cast<int>(spawnZ))) + 1.6f;
   m_camera.InitPerspective(XVECTOR3(spawnX, spawnY, spawnZ), Deg2Rad(70.0f), 1280.0f / 720.0f, 0.05f, 1000.0f);
   m_camera.Eye = XVECTOR3(spawnX, spawnY, spawnZ, 1.0f);
   m_camera.Yaw = 0.0f;
   m_camera.Pitch = -0.1f;
   m_camera.Update(0.0f);
-  m_cameraController.SetActiveProfile(t850::CameraProfileType::FreeFly);
+  m_cameraController.SetActiveProfile(t850::CameraProfileType::GroundedFps);
   m_cameraController.AttachCamera(&m_camera);
+
+  // Minecraft-like movement: near-instant acceleration AND near-instant
+  // stopping. The default GroundedFps settings (groundAcceleration=30,
+  // friction=8) accelerate fast but decelerate slowly, so the player keeps
+  // sliding after releasing the keys. Minecraft uses high friction so you
+  // stop almost immediately, with a snappy but bounded acceleration.
+  t850::KinematicCharacterSettings mcSettings;
+  mcSettings.walkSpeed = 4.3f;
+  mcSettings.sprintSpeed = 5.6f;
+  mcSettings.groundAcceleration = 60.0f;
+  mcSettings.airAcceleration = 3.0f;
+  mcSettings.friction = 20.0f;
+  mcSettings.stopSpeed = 0.5f;
+  mcSettings.gravity = 24.0f;
+  mcSettings.jumpSpeed = 8.0f;
+  mcSettings.allowSprint = true;
+  mcSettings.airControl = true;
+  m_cameraController.SetKinematicProfileSettings(t850::CameraProfileType::GroundedFps, mcSettings);
 
   m_lightCamera.InitPerspective(XVECTOR3(0.0f, 100.0f, 10.0f), Deg2Rad(45.0f), 1.0f, 10.0f, 500.0f);
   m_lightCamera.Eye = XVECTOR3(50.0f, 150.0f, -50.0f, 1.0f);
@@ -639,6 +711,14 @@ void MinecraftScene::InitVars() {
   SceneProp.AddGaussKernel(&m_shadowFilter);
   SceneProp.AddGaussKernel(&m_bloomFilter);
   SceneProp.AddGaussKernel(&m_dofFilter);
+
+  // Load the descriptor-driven scene controls (sliders/checkboxes/selectors)
+  // from JSON, mirroring how DayScene drives its ImGui panel. The render
+  // graph is already loaded from SceneTemplate_RenderGraph.json in
+  // CreateAssets, so this only wires up the control descriptors.
+  if (!m_controlSetup.Load("Scenes/MinecraftScene.json")) {
+    T8_LOG_ERROR("[MinecraftScene] Failed to load Scenes/MinecraftScene.json");
+  }
 
   t850::terrain::VoxelStreamingSettings streamingSettings;
   streamingSettings.horizontalRadius = 3;
@@ -1264,15 +1344,21 @@ void MinecraftScene::OnInput(InputManager* input) {
     SelectHotbarBlock((m_selectedHotbar + delta + kHotbarSize) % kHotbarSize);
   }
 
-  if (input->PressedOnceMouseButton(0) || input->PressedOnceMouseButton(1)) {
+  // Capture the once-pressed state exactly once. Calling
+  // PressedOnceMouseButton(0) twice would consume the edge on the first call
+  // and return false on the second, so left-click would fall through to the
+  // place branch instead of deleting.
+  const bool leftPressed = input->PressedOnceMouseButton(0);
+  const bool rightPressed = input->PressedOnceMouseButton(1);
+  if (leftPressed || rightPressed) {
     // Left click also swings the sword.
-    if (input->PressedOnceMouseButton(0)) {
+    if (leftPressed) {
       m_swingTime = 0.0f;
     }
     t850::terrain::VoxelRayHit hit;
     if (m_world.Raycast(m_camera.Eye, m_camera.Look, 8.0f, m_blockRegistry, hit)) {
       bool changed = false;
-      if (input->PressedOnceMouseButton(0)) {
+      if (leftPressed) {
         changed = m_world.SetBlock(hit.blockX, hit.blockY, hit.blockZ, t850::terrain::kAirBlock);
         if (changed) m_deltas.Record(hit.blockX, hit.blockY, hit.blockZ, t850::terrain::kAirBlock);
       } else {
@@ -1292,107 +1378,302 @@ void MinecraftScene::OnInput(InputManager* input) {
 }
 
 void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
-  auto slider = [&](const char* name, const char* label, float& value,
-                    float minVal, float maxVal, float step, float defVal) {
-    t850::SliderDesc desc;
-    desc.name = name;
-    desc.label = label;
-    desc.min_val = minVal;
-    desc.max_val = maxVal;
-    desc.step = step;
-    desc.default_val = defVal;
-    gui.Slider(desc, value);
+  // Descriptor-driven controls, mirroring DayScene. The sliders/checkboxes/
+  // selectors are declared in Scenes/MinecraftScene.json and bound to
+  // SceneProp fields via the mapping tables below, so the panel is data-driven
+  // rather than hardcoded per-control.
+  enum Setting {
+    S_EXPOSURE, S_BLOOM_FACTOR, S_BLOOM_THRESHOLD, S_TM_WHITE_LEVEL, S_TM_ADAPT_TAU,
+    S_PCF_RADIUS, S_PCF_SAMPLES, S_SSAO_KERNEL_SIZE, S_SSAO_RADIUS,
+    S_DOF_APERTURE, S_DOF_FOCAL_LENGTH, S_DOF_MAX_COC, S_DOF_FAR_SAMPLES, S_DOF_NEAR_SAMPLES,
+    S_LIGHT_VOLUME_STEPS, S_GODRAYS_FACTOR, S_GAUSS_KERNEL_RADIUS, S_GAUSS_KERNEL_DEVIATION,
+    S_FOV, S_LIGHT_INTENSITY, S_LIGHT_RADIUS_SCALE, S_LIGHT_INTENSITY_SCALE, S_LIGHTMAP_INTENSITY,
+    S_SHADOW_BIAS, S_SHADOW_MIN, S_ENV_FACTOR, S_IBL_FACTOR,
+    S_MATERIAL_EMISSIVE_INTENSITY, S_MATERIAL_TRANSMISSION_MULTIPLIER, S_MATERIAL_REFRACTION_STRENGTH,
+    S_PARALLAX_LOW_SAMPLES, S_PARALLAX_HIGH_SAMPLES, S_PARALLAX_HEIGHT,
+    S_PARALLAX_SHADOW_MIN_LAYERS, S_PARALLAX_SHADOW_MAX_LAYERS, S_PARALLAX_SHADOW_SOFTNESS, S_PARALLAX_SHADOW_STRENGTH,
+    S_COUNT
   };
-  auto checkbox = [&](const char* name, const char* label, bool& value) {
-    t850::CheckboxDesc desc;
-    desc.name = name;
-    desc.label = label;
-    desc.default_val = value;
-    gui.Checkbox(desc, value);
+  struct Mapping { const char* name; int setting; };
+  static const Mapping kSliderMappings[] = {
+    {"exposure", S_EXPOSURE}, {"bloom_factor", S_BLOOM_FACTOR}, {"bloom_threshold", S_BLOOM_THRESHOLD},
+    {"tm_white_level", S_TM_WHITE_LEVEL}, {"tm_adapt_tau", S_TM_ADAPT_TAU},
+    {"pcf_radius", S_PCF_RADIUS}, {"pcf_samples", S_PCF_SAMPLES},
+    {"ssao_kernel_size", S_SSAO_KERNEL_SIZE}, {"ssao_radius", S_SSAO_RADIUS},
+    {"dof_aperture", S_DOF_APERTURE}, {"dof_focal_length", S_DOF_FOCAL_LENGTH}, {"dof_max_coc", S_DOF_MAX_COC},
+    {"dof_far_samples", S_DOF_FAR_SAMPLES}, {"dof_near_samples", S_DOF_NEAR_SAMPLES},
+    {"light_volume_steps", S_LIGHT_VOLUME_STEPS}, {"godrays_factor", S_GODRAYS_FACTOR},
+    {"gauss_kernel_radius", S_GAUSS_KERNEL_RADIUS}, {"gauss_kernel_deviation", S_GAUSS_KERNEL_DEVIATION},
+    {"fov", S_FOV}, {"light_intensity", S_LIGHT_INTENSITY},
+    {"light_radius_scale", S_LIGHT_RADIUS_SCALE}, {"light_intensity_scale", S_LIGHT_INTENSITY_SCALE},
+    {"lightmap_intensity", S_LIGHTMAP_INTENSITY}, {"shadow_bias", S_SHADOW_BIAS}, {"shadow_min", S_SHADOW_MIN},
+    {"env_factor", S_ENV_FACTOR}, {"ibl_factor", S_IBL_FACTOR},
+    {"material_emissive_intensity", S_MATERIAL_EMISSIVE_INTENSITY},
+    {"material_transmission_multiplier", S_MATERIAL_TRANSMISSION_MULTIPLIER},
+    {"material_refraction_strength", S_MATERIAL_REFRACTION_STRENGTH},
+    {"parallax_low_samples", S_PARALLAX_LOW_SAMPLES}, {"parallax_high_samples", S_PARALLAX_HIGH_SAMPLES},
+    {"parallax_height", S_PARALLAX_HEIGHT}, {"parallax_shadow_min_layers", S_PARALLAX_SHADOW_MIN_LAYERS},
+    {"parallax_shadow_max_layers", S_PARALLAX_SHADOW_MAX_LAYERS}, {"parallax_shadow_softness", S_PARALLAX_SHADOW_SOFTNESS},
+    {"parallax_shadow_strength", S_PARALLAX_SHADOW_STRENGTH},
+  };
+  enum CheckboxSetting {
+    C_SHADOW, C_SSAO, C_DOF_AUTOFOCUS, C_DOF, C_PARALLAX, C_PARALLAX_SHADOW, C_GODRAYS, C_DEBUG_LUMINANCE,
+    C_COUNT
+  };
+  struct CheckboxMapping { const char* name; int setting; };
+  static const CheckboxMapping kCheckboxMappings[] = {
+    {"shadow_toggle", C_SHADOW}, {"ssao_toggle", C_SSAO}, {"dof_auto_focus", C_DOF_AUTOFOCUS},
+    {"dof_toggle", C_DOF}, {"parallax_toggle", C_PARALLAX}, {"parallax_shadow_toggle", C_PARALLAX_SHADOW},
+    {"godrays_toggle", C_GODRAYS}, {"debug_luminance", C_DEBUG_LUMINANCE},
+  };
+  enum SelectorSetting {
+    SEL_GAUSS_KERNEL, SEL_GAUSS_SAMPLES, SEL_DEBUG_RT, SEL_LUMINANCE_MODE, SEL_CUBEMAP,
+    SEL_COUNT
+  };
+  struct SelectorMapping { const char* name; int setting; };
+  static const SelectorMapping kSelectorMappings[] = {
+    {"active_gauss_kernel", SEL_GAUSS_KERNEL}, {"gauss_kernel_sample_count", SEL_GAUSS_SAMPLES},
+    {"debug_render_target", SEL_DEBUG_RT}, {"luminance_mode", SEL_LUMINANCE_MODE}, {"cubemap", SEL_CUBEMAP},
   };
 
-  if (gui.BeginSection("HDR")) {
-    slider("exposure", "Exposure", SceneProp.Exposure, 0.0f, 2.0f, 0.01f, 0.0f);
-    slider("bloom_factor", "Bloom factor", SceneProp.BloomFactor, 0.0f, 2.0f, 0.01f, 0.35f);
-    slider("bloom_threshold", "Bloom threshold", SceneProp.BloomThreshold, 0.0f, 4.0f, 0.01f, 2.0f);
-    slider("tm_white_level", "Tone map white level", SceneProp.ToneMapWhiteLevel, 0.0f, 8.0f, 0.1f, 4.0f);
-    slider("tm_adapt_tau", "Luminance tau", SceneProp.LuminanceTau, 0.0f, 4.0f, 0.01f, 1.1f);
-  }
-
-  if (gui.BeginSection("Shadows")) {
-    bool shadowEnabled = SceneProp.ToogleShadow != 0;
-    checkbox("shadow_toggle", "Shadows", shadowEnabled);
-    SceneProp.ToogleShadow = shadowEnabled ? 1 : 0;
-    slider("shadow_bias", "Shadow bias", SceneProp.ShadowBias, 0.0f, 0.001f, 0.000001f, 0.000005f);
-    slider("shadow_min", "Shadow min", SceneProp.ShadowMin, 0.0f, 1.0f, 0.01f, 0.75f);
-    slider("pcf_radius", "PCF radius", SceneProp.PCFScale, 0.0f, 8.0f, 0.1f, 1.7f);
-    slider("pcf_samples", "PCF samples", SceneProp.PCFSamples, 1.0f, 16.0f, 1.0f, 1.0f);
-    slider("shadow_resolution", "Shadow map res", SceneProp.ShadowMapResolution, 256.0f, 4096.0f, 256.0f, 1024.0f);
-  }
-
-  if (gui.BeginSection("SSAO")) {
-    bool ssaoEnabled = SceneProp.ToogleSSAO != 0;
-    checkbox("ssao_toggle", "SSAO", ssaoEnabled);
-    SceneProp.ToogleSSAO = ssaoEnabled ? 1 : 0;
-    float kernelSize = static_cast<float>(SceneProp.SSAOKernel.KernelSize);
-    slider("ssao_kernel_size", "SSAO kernel size", kernelSize, 4.0f, 32.0f, 2.0f, 10.0f);
-    SceneProp.SSAOKernel.KernelSize = static_cast<int>(kernelSize);
-    SceneProp.SSAOKernel.Update();
-    slider("ssao_radius", "SSAO radius", SceneProp.SSAOKernel.Radius, 0.0f, 4.0f, 0.1f, 1.0f);
-  }
-
-  if (gui.BeginSection("Lighting")) {
-    if (!SceneProp.Lights.empty()) {
-      slider("light_intensity", "Light intensity", SceneProp.Lights[0].Intensity, 0.0f, 20.0f, 0.1f, 4.5f);
+  auto findSetting = [](const std::string& name, const auto* mappings, int count) {
+    for (int i = 0; i < count; ++i) {
+      if (name == mappings[i].name) return mappings[i].setting;
     }
-    slider("ibl_factor", "IBL factor", SceneProp.IBLFactor, 0.0f, 2.0f, 0.01f, 0.6f);
-    slider("env_factor", "Env factor", SceneProp.EnvFactor, 0.0f, 2.0f, 0.01f, 1.0f);
-    slider("lightmap_intensity", "Lightmap intensity", SceneProp.LightmapIntensity, 0.0f, 2.0f, 0.01f, 1.0f);
-    float ambient = SceneProp.AmbientColor.x;
-    slider("ambient", "Ambient", ambient, 0.0f, 1.0f, 0.01f, 0.5f);
-    SceneProp.AmbientColor = XVECTOR3(ambient, ambient, ambient, 1.0f);
+    return -1;
+  };
+  auto activeKernel = [&]() -> GaussFilter* {
+    if (m_activeGaussKernel < 0 || m_activeGaussKernel >= (int)SceneProp.pGaussKernels.size()) {
+      return nullptr;
+    }
+    return SceneProp.pGaussKernels[m_activeGaussKernel];
+  };
+
+  auto getSliderValue = [&](int setting, float& value) -> bool {
+    GaussFilter* kernel = activeKernel();
+    switch (setting) {
+      case S_EXPOSURE: value = SceneProp.Exposure; return true;
+      case S_BLOOM_FACTOR: value = SceneProp.BloomFactor; return true;
+      case S_BLOOM_THRESHOLD: value = SceneProp.BloomThreshold; return true;
+      case S_TM_WHITE_LEVEL: value = SceneProp.ToneMapWhiteLevel; return true;
+      case S_TM_ADAPT_TAU: value = SceneProp.LuminanceTau; return true;
+      case S_PCF_RADIUS: value = SceneProp.PCFScale; return true;
+      case S_PCF_SAMPLES: value = SceneProp.PCFSamples; return true;
+      case S_SSAO_KERNEL_SIZE: value = (float)SceneProp.SSAOKernel.KernelSize; return true;
+      case S_SSAO_RADIUS: value = SceneProp.SSAOKernel.Radius; return true;
+      case S_DOF_APERTURE: value = SceneProp.Aperture; return true;
+      case S_DOF_FOCAL_LENGTH: value = SceneProp.FocalLength; return true;
+      case S_DOF_MAX_COC: value = SceneProp.MaxCoc; return true;
+      case S_DOF_FAR_SAMPLES: value = SceneProp.DOF_Far_Samples_squared; return true;
+      case S_DOF_NEAR_SAMPLES: value = SceneProp.DOF_Near_Samples_squared; return true;
+      case S_LIGHT_VOLUME_STEPS: value = SceneProp.LightVolumeSteps; return true;
+      case S_GODRAYS_FACTOR: value = SceneProp.GodRaysFactor; return true;
+      case S_GAUSS_KERNEL_RADIUS: if (!kernel) return false; value = kernel->radius; return true;
+      case S_GAUSS_KERNEL_DEVIATION: if (!kernel) return false; value = kernel->sigma; return true;
+      case S_FOV: value = Rad2Deg(m_camera.Fov); return true;
+      case S_LIGHT_INTENSITY: if (SceneProp.Lights.empty()) return false; value = SceneProp.Lights[0].Intensity; return true;
+      case S_LIGHT_RADIUS_SCALE: value = SceneProp.LightRadiusScale; return true;
+      case S_LIGHT_INTENSITY_SCALE: value = SceneProp.LightIntensityScale; return true;
+      case S_LIGHTMAP_INTENSITY: value = SceneProp.LightmapIntensity; return true;
+      case S_SHADOW_BIAS: value = SceneProp.ShadowBias; return true;
+      case S_SHADOW_MIN: value = SceneProp.ShadowMin; return true;
+      case S_ENV_FACTOR: value = SceneProp.EnvFactor; return true;
+      case S_IBL_FACTOR: value = SceneProp.IBLFactor; return true;
+      case S_MATERIAL_EMISSIVE_INTENSITY: value = SceneProp.MaterialEmissiveIntensity; return true;
+      case S_MATERIAL_TRANSMISSION_MULTIPLIER: value = SceneProp.MaterialTransmissionMultiplier; return true;
+      case S_MATERIAL_REFRACTION_STRENGTH: value = SceneProp.MaterialRefractionStrength; return true;
+      case S_PARALLAX_LOW_SAMPLES: value = SceneProp.ParallaxLowSamples; return true;
+      case S_PARALLAX_HIGH_SAMPLES: value = SceneProp.ParallaxHighSamples; return true;
+      case S_PARALLAX_HEIGHT: value = SceneProp.ParallaxHeight; return true;
+      case S_PARALLAX_SHADOW_MIN_LAYERS: value = SceneProp.ParallaxShadowMinLayers; return true;
+      case S_PARALLAX_SHADOW_MAX_LAYERS: value = SceneProp.ParallaxShadowMaxLayers; return true;
+      case S_PARALLAX_SHADOW_SOFTNESS: value = SceneProp.ParallaxShadowSoftness; return true;
+      case S_PARALLAX_SHADOW_STRENGTH: value = SceneProp.ParallaxShadowStrength; return true;
+    }
+    return false;
+  };
+  auto setSliderValue = [&](int setting, float value) {
+    GaussFilter* kernel = activeKernel();
+    switch (setting) {
+      case S_EXPOSURE: SceneProp.Exposure = value; break;
+      case S_BLOOM_FACTOR: SceneProp.BloomFactor = value; break;
+      case S_BLOOM_THRESHOLD: SceneProp.BloomThreshold = value; break;
+      case S_TM_WHITE_LEVEL: SceneProp.ToneMapWhiteLevel = value; break;
+      case S_TM_ADAPT_TAU: SceneProp.LuminanceTau = value; break;
+      case S_PCF_RADIUS: SceneProp.PCFScale = value; break;
+      case S_PCF_SAMPLES: SceneProp.PCFSamples = value; break;
+      case S_SSAO_KERNEL_SIZE: SceneProp.SSAOKernel.KernelSize = (int)value; SceneProp.SSAOKernel.Update(); break;
+      case S_SSAO_RADIUS: SceneProp.SSAOKernel.Radius = value; break;
+      case S_DOF_APERTURE: SceneProp.Aperture = value; break;
+      case S_DOF_FOCAL_LENGTH: SceneProp.FocalLength = value; break;
+      case S_DOF_MAX_COC: SceneProp.MaxCoc = value; break;
+      case S_DOF_FAR_SAMPLES: SceneProp.DOF_Far_Samples_squared = value; break;
+      case S_DOF_NEAR_SAMPLES: SceneProp.DOF_Near_Samples_squared = value; break;
+      case S_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = value; break;
+      case S_GODRAYS_FACTOR: SceneProp.GodRaysFactor = value; break;
+      case S_GAUSS_KERNEL_RADIUS: if (kernel) { kernel->radius = value; kernel->Update(); } break;
+      case S_GAUSS_KERNEL_DEVIATION: if (kernel) { kernel->sigma = value; kernel->Update(); } break;
+      case S_FOV: m_camera.SetFov(Deg2Rad(value)); m_camera.Update(0.0f); break;
+      case S_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value; break;
+      case S_LIGHT_RADIUS_SCALE: SceneProp.LightRadiusScale = value; break;
+      case S_LIGHT_INTENSITY_SCALE: SceneProp.LightIntensityScale = value; break;
+      case S_LIGHTMAP_INTENSITY: SceneProp.LightmapIntensity = value; break;
+      case S_SHADOW_BIAS: SceneProp.ShadowBias = value; break;
+      case S_SHADOW_MIN: SceneProp.ShadowMin = value; break;
+      case S_ENV_FACTOR: SceneProp.EnvFactor = value; break;
+      case S_IBL_FACTOR: SceneProp.IBLFactor = value; break;
+      case S_MATERIAL_EMISSIVE_INTENSITY: SceneProp.MaterialEmissiveIntensity = value; break;
+      case S_MATERIAL_TRANSMISSION_MULTIPLIER: SceneProp.MaterialTransmissionMultiplier = value; break;
+      case S_MATERIAL_REFRACTION_STRENGTH: SceneProp.MaterialRefractionStrength = value; break;
+      case S_PARALLAX_LOW_SAMPLES: SceneProp.ParallaxLowSamples = value; break;
+      case S_PARALLAX_HIGH_SAMPLES: SceneProp.ParallaxHighSamples = value; break;
+      case S_PARALLAX_HEIGHT: SceneProp.ParallaxHeight = value; break;
+      case S_PARALLAX_SHADOW_MIN_LAYERS: SceneProp.ParallaxShadowMinLayers = value; break;
+      case S_PARALLAX_SHADOW_MAX_LAYERS: SceneProp.ParallaxShadowMaxLayers = value; break;
+      case S_PARALLAX_SHADOW_SOFTNESS: SceneProp.ParallaxShadowSoftness = value; break;
+      case S_PARALLAX_SHADOW_STRENGTH: SceneProp.ParallaxShadowStrength = value; break;
+    }
+  };
+  auto getCheckboxValue = [&](int setting, bool& value) -> bool {
+    switch (setting) {
+      case C_SHADOW: value = SceneProp.ToogleShadow != 0; return true;
+      case C_SSAO: value = SceneProp.ToogleSSAO != 0; return true;
+      case C_DOF_AUTOFOCUS: value = SceneProp.AutoFocus; return true;
+      case C_DOF: value = SceneProp.ToogleDOF != 0; return true;
+      case C_PARALLAX: value = SceneProp.ToogleParallax != 0; return true;
+      case C_PARALLAX_SHADOW: value = SceneProp.ToogleParallaxShadow != 0; return true;
+      case C_GODRAYS: value = SceneProp.ToogleGodRays != 0; return true;
+      case C_DEBUG_LUMINANCE: value = SceneProp.DebugLuminanceEnabled; return true;
+    }
+    return false;
+  };
+  auto setCheckboxValue = [&](int setting, bool value) {
+    switch (setting) {
+      case C_SHADOW: SceneProp.ToogleShadow = value ? 1 : 0; break;
+      case C_SSAO: SceneProp.ToogleSSAO = value ? 1 : 0; break;
+      case C_DOF_AUTOFOCUS: SceneProp.AutoFocus = value; break;
+      case C_DOF: SceneProp.ToogleDOF = value ? 1 : 0; break;
+      case C_PARALLAX: SceneProp.ToogleParallax = value ? 1 : 0; break;
+      case C_PARALLAX_SHADOW: SceneProp.ToogleParallaxShadow = value ? 1 : 0; break;
+      case C_GODRAYS: SceneProp.ToogleGodRays = value ? 1 : 0; break;
+      case C_DEBUG_LUMINANCE: SceneProp.DebugLuminanceEnabled = value; break;
+    }
+  };
+  auto getSelectorIndex = [&](int setting, int& index) -> bool {
+    switch (setting) {
+      case SEL_GAUSS_KERNEL: index = m_activeGaussKernel; return true;
+      case SEL_GAUSS_SAMPLES: {
+        GaussFilter* kernel = activeKernel();
+        if (!kernel) return false;
+        const std::vector<std::string>& opts = m_controlSetup.descriptor.selectors[1].options;
+        for (int i = 0; i < (int)opts.size(); ++i) {
+          if (std::atoi(opts[i].c_str()) == kernel->kernelSize) { index = i; return true; }
+        }
+        return false;
+      }
+      case SEL_DEBUG_RT: index = m_debugRTSelection; return true;
+      case SEL_LUMINANCE_MODE: index = SceneProp.LuminanceMode; return true;
+      case SEL_CUBEMAP: index = m_skySelection; return true;
+    }
+    return false;
+  };
+  auto setSelectorIndex = [&](int setting, int index) {
+    switch (setting) {
+      case SEL_GAUSS_KERNEL: m_activeGaussKernel = index; break;
+      case SEL_GAUSS_SAMPLES: {
+        GaussFilter* kernel = activeKernel();
+        if (!kernel) return;
+        const std::vector<std::string>& opts = m_controlSetup.descriptor.selectors[1].options;
+        if (index >= 0 && index < (int)opts.size()) {
+          kernel->kernelSize = std::atoi(opts[index].c_str());
+          kernel->Update();
+        }
+        break;
+      }
+      case SEL_DEBUG_RT: m_debugRTSelection = index; break;
+      case SEL_LUMINANCE_MODE: SceneProp.LuminanceMode = index; break;
+      case SEL_CUBEMAP: ApplySkySelection(index); break;
+    }
+  };
+
+  auto drawSliderByName = [&](const char* name) -> bool {
+    for (const auto& desc : m_controlSetup.descriptor.sliders) {
+      if (desc.name != name) continue;
+      int setting = findSetting(desc.name, kSliderMappings, (int)(sizeof(kSliderMappings) / sizeof(kSliderMappings[0])));
+      if (setting < 0) return false;
+      float value = 0.0f;
+      if (getSliderValue(setting, value) && gui.Slider(desc, value)) {
+        setSliderValue(setting, value);
+      }
+      return true;
+    }
+    return false;
+  };
+  auto drawCheckboxByName = [&](const char* name) -> bool {
+    for (const auto& desc : m_controlSetup.descriptor.checkboxes) {
+      if (desc.name != name) continue;
+      int setting = findSetting(desc.name, kCheckboxMappings, (int)(sizeof(kCheckboxMappings) / sizeof(kCheckboxMappings[0])));
+      if (setting < 0) return false;
+      bool value = false;
+      if (getCheckboxValue(setting, value) && gui.Checkbox(desc, value)) {
+        setCheckboxValue(setting, value);
+      }
+      return true;
+    }
+    return false;
+  };
+  auto drawSelectorByName = [&](const char* name) -> bool {
+    for (const auto& desc : m_controlSetup.descriptor.selectors) {
+      if (desc.name != name) continue;
+      int setting = findSetting(desc.name, kSelectorMappings, (int)(sizeof(kSelectorMappings) / sizeof(kSelectorMappings[0])));
+      if (setting < 0) return false;
+      int index = 0;
+      if (getSelectorIndex(setting, index) && gui.Combo(desc, index)) {
+        setSelectorIndex(setting, index);
+      }
+      return true;
+    }
+    return false;
+  };
+
+  if (gui.BeginSection("Camera")) {
+    std::vector<std::string> cameraOptions = t850::CameraProfileNames();
+    int selectedProfile = t850::CameraProfileIndex(m_cameraController.GetActiveProfileType());
+    t850::SelectorDesc cameraSelector;
+    cameraSelector.name = "camera_profile";
+    cameraSelector.label = "Camera Profile";
+    cameraSelector.options = cameraOptions;
+    cameraSelector.default_index = selectedProfile;
+    if (gui.Combo(cameraSelector, selectedProfile, &cameraOptions)) {
+      m_cameraController.SetActiveProfile(t850::CameraProfileTypeFromIndex(selectedProfile));
+    }
+    std::string activeText = std::string("Active: ") +
+        t850::CameraProfileName(m_cameraController.GetActiveProfileType()) +
+        " (F9 cycles profiles)";
+    gui.Text(activeText.c_str());
+    drawSliderByName("fov");
   }
 
-  if (gui.BeginSection("Toggles")) {
-    bool dof = SceneProp.ToogleDOF != 0;
-    checkbox("dof_toggle", "DOF", dof);
-    SceneProp.ToogleDOF = dof ? 1 : 0;
-    bool parallax = SceneProp.ToogleParallax != 0;
-    checkbox("parallax_toggle", "Parallax", parallax);
-    SceneProp.ToogleParallax = parallax ? 1 : 0;
-    bool godRays = SceneProp.ToogleGodRays != 0;
-    checkbox("godrays_toggle", "God rays", godRays);
-    SceneProp.ToogleGodRays = godRays ? 1 : 0;
-  }
-
-  if (gui.BeginSection("Sky")) {
-    static const char* kSkyOptions[] = {
-        "Minecraft Blue", "SkyWater", "SkyDawn", "Mountains", "Ennis", "Glacier"};
-    static int skySelection = 0;
-    t850::SelectorDesc skyDesc;
-    skyDesc.name = "cubemap";
-    skyDesc.label = "Sky cubemap";
-    for (const char* opt : kSkyOptions) skyDesc.options.push_back(opt);
-    if (gui.Combo(skyDesc, skySelection)) {
-      if (skySelection == 0) {
-        BuildSkyCubemap();
-      } else {
-        const char* path = nullptr;
-        switch (skySelection) {
-          case 1: path = "sky/CubeMap_SkyWater.dds"; break;
-          case 2: path = "sky/CubeMap_SkyDawn.dds"; break;
-          case 3: path = "sky/CubeMap_Mountains.dds"; break;
-          case 4: path = "sky/Ennis.dds"; break;
-          case 5: path = "sky/Glacier.dds"; break;
-        }
-        if (path && pFramework && pFramework->pVideoDriver) {
-          if (m_envMapTexIndex >= 0) pFramework->pVideoDriver->DestroyTexture(m_envMapTexIndex);
-          m_envMapTexIndex = pFramework->pVideoDriver->CreateTexture(path);
-          if (m_envMapTexIndex >= 0) {
-            m_envMaps.SetFallback(m_envMapTexIndex);
-            m_renderContainer.SetEnvironmentMaps(m_envMaps);
-          }
-        }
+  if (gui.BeginSection("Rendering")) {
+    drawSelectorByName("cubemap");
+    drawSelectorByName("active_gauss_kernel");
+    drawSelectorByName("gauss_kernel_sample_count");
+    drawSelectorByName("luminance_mode");
+    drawCheckboxByName("debug_luminance");
+    drawSelectorByName("debug_render_target");
+    drawCheckboxByName("shadow_toggle");
+    drawCheckboxByName("ssao_toggle");
+    drawCheckboxByName("dof_toggle");
+    drawCheckboxByName("dof_auto_focus");
+    drawCheckboxByName("parallax_toggle");
+    drawCheckboxByName("parallax_shadow_toggle");
+    drawCheckboxByName("godrays_toggle");
+    for (const auto& desc : m_controlSetup.descriptor.sliders) {
+      int setting = findSetting(desc.name, kSliderMappings, (int)(sizeof(kSliderMappings) / sizeof(kSliderMappings[0])));
+      if (setting < 0) continue;
+      float value = 0.0f;
+      if (getSliderValue(setting, value) && gui.Slider(desc, value)) {
+        setSliderValue(setting, value);
       }
     }
   }
@@ -1401,6 +1682,40 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
 void MinecraftScene::OnDraw() {
   if (!m_assetsCreated) return;
   m_renderContainer.Execute(pFramework->pVideoDriver, m_deltaSeconds);
+
+  // Debug render target overlay: draw a selected pass's texture over the
+  // final output so the user can inspect GBuffer/Deferred/Shadow/etc.
+  if (m_debugRTSelection > 0 && pFramework && pFramework->pVideoDriver) {
+    t850::RenderGraph& graph = m_renderContainer.Graph();
+    int selected = graph.GetRTHandle("ExtraHelper");
+    int attachment = t850::BaseDriver::COLOR0_ATTACHMENT;
+    switch (m_debugRTSelection) {
+      case 1:  selected = graph.GetRTHandle("GBuffer");     attachment = t850::BaseDriver::COLOR0_ATTACHMENT; break;
+      case 2:  selected = graph.GetRTHandle("GBuffer");     attachment = t850::BaseDriver::COLOR1_ATTACHMENT; break;
+      case 3:  selected = graph.GetRTHandle("GBuffer");     attachment = t850::BaseDriver::COLOR2_ATTACHMENT; break;
+      case 4:  selected = graph.GetRTHandle("GBuffer");     attachment = t850::BaseDriver::COLOR3_ATTACHMENT; break;
+      case 5:  selected = graph.GetRTHandle("GBuffer");     attachment = t850::BaseDriver::DEPTH_ATTACHMENT;  break;
+      case 6:  selected = graph.GetRTHandle("DepthPass");   attachment = t850::BaseDriver::DEPTH_ATTACHMENT;  break;
+      case 7:  selected = graph.GetRTHandle("ShadowAccum"); attachment = t850::BaseDriver::COLOR0_ATTACHMENT; break;
+      case 8:  selected = graph.GetRTHandle("Deferred");    attachment = t850::BaseDriver::COLOR0_ATTACHMENT; break;
+      case 9:  selected = graph.GetRTHandle("Extra16F");    attachment = t850::BaseDriver::COLOR0_ATTACHMENT; break;
+      case 10: selected = graph.GetRTHandle("ExtraHelper"); attachment = t850::BaseDriver::COLOR0_ATTACHMENT; break;
+      case 11: selected = graph.GetRTHandle("BloomAccum");  attachment = t850::BaseDriver::COLOR0_ATTACHMENT; break;
+      case 12: selected = graph.GetRTHandle("AdaptedLumCurrent"); attachment = t850::BaseDriver::COLOR0_ATTACHMENT; break;
+    }
+    if (selected >= 0) {
+      t850::PrimitiveInst* quads = m_renderContainer.Quads();
+      pFramework->pVideoDriver->SetBlendState(t850::BaseDriver::BLEND_DEFAULT);
+      pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::NONE);
+      quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
+      t850::ShaderKey finalKey(0);
+      finalKey.setPass(t850::PassType::FSQUAD_1_TEX);
+      finalKey.bits |= t850::ShaderKey::HAS_TEXCOORD0;
+      quads[0].SetGlobalKey(finalKey);
+      quads[0].Draw();
+    }
+  }
+
   if (m_dumper.ShouldDump(m_deltaSeconds)) {
     std::vector<t850::RTDumpEntry> targets = {
         {m_renderContainer.Graph().GetRTHandle("GBuffer"), t850::BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Albedo"},

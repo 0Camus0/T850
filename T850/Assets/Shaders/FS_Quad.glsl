@@ -315,7 +315,7 @@ void main(){
 
 	highp vec4 geoData = SampleTexture2DLod(tex3, coords, 0.0);
 	highp float packedMaterial = geoData.a;
-	bool unlitMaterial = packedMaterial >= 0.5;
+	bool unlitMaterial = packedMaterial > 0.4;
 	if (unlitMaterial) {
 		discard;
 	}
@@ -510,7 +510,7 @@ void main(){
 		highp vec3 geoNormal = DecodeOctahedralNormal(geoData.xy);
 		highp float lightmap = clamp(geoData.b, 0.0, 1.0);
 		highp float packedMaterial = geoData.a;
-		bool unlitMaterial = packedMaterial >= 0.5;
+		bool unlitMaterial = packedMaterial > 0.4;
 		highp float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5) * 2.0 : packedMaterial * 2.0;
 		clearcoatRoughness = clamp(clearcoatRoughness, 0.04, 1.0);
 		highp float clearcoatFactor = clamp(PBRData.b, 0.0, 1.0);
@@ -658,7 +658,7 @@ void main(){
 			}
 			Final.xyz += emissive;
 			if (unlitMaterial) {
-				Final.xyz = Albedo.xyz + emissive;
+				Final.xyz = Albedo.xyz * 2.2 + emissive;
 			}
 
 			//Final.xyz = vec3(rough, rough, rough);

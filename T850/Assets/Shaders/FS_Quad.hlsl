@@ -305,7 +305,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float3 geoNormal = DecodeOctahedralNormal(geoData.xy);
 		float lightmap = saturate(geoData.b);
 		float packedMaterial = geoData.a;
-		bool unlitMaterial = packedMaterial >= 0.5f;
+		bool unlitMaterial = packedMaterial > 0.4f;
 		float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5f) * 2.0f : packedMaterial * 2.0f;
 		clearcoatRoughness = clamp(clearcoatRoughness, 0.04f, 1.0f);
 		float clearcoatFactor = saturate(PBRData.b);
@@ -431,7 +431,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		}
 		Final.xyz += emissive;
 		if (unlitMaterial) {
-			Final.xyz = Albedo.xyz + emissive;
+			Final.xyz = Albedo.xyz * 2.2f + emissive;
 		}
 	}
 
@@ -516,7 +516,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		float3 geoNormal = DecodeOctahedralNormal(geoData.xy);
 		float lightmap = saturate(geoData.b);
 		float packedMaterial = geoData.a;
-		bool unlitMaterial = packedMaterial >= 0.5f;
+		bool unlitMaterial = packedMaterial > 0.4f;
 		float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5f) * 2.0f : packedMaterial * 2.0f;
 		clearcoatRoughness = clamp(clearcoatRoughness, 0.04f, 1.0f);
 		float clearcoatFactor = saturate(PBRData.b);
@@ -627,7 +627,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		Final.xyz = directLight * Shadow * selfShadow + indirectAccum;
 		Final.xyz += emissive;
 		if (unlitMaterial) {
-			Final.xyz = Albedo.xyz + emissive;
+			Final.xyz = Albedo.xyz * 2.2f + emissive;
 		}
 	}
 
@@ -687,7 +687,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 
 	float4 geoData = tex3.SampleLevel(SS3, coords, 0.0f);
 	float packedMaterial = geoData.a;
-	bool unlitMaterial = packedMaterial >= 0.5f;
+	bool unlitMaterial = packedMaterial > 0.4f;
 	if (unlitMaterial) {
 		discard;
 		return Final;

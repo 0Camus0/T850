@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <random>
 
 namespace {
 
@@ -36,6 +37,14 @@ float SmoothStep(float t) { return t * t * (3.0f - 2.0f * t); }
 float SrgbToLinear(int v) {
   const float c = static_cast<float>(v) / 255.0f;
   return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+// Small uniform random in [0,1) for mob spawn placement (thread-unsafe is fine:
+// only called from the main update thread).
+static std::mt19937 s_rng(0x51ed270bu);
+float RandF() {
+  static std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+  return dist(s_rng);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,10 +170,77 @@ void PaintTile(unsigned char* px, int tile) {
         for (int u = 0; u < 16; ++u)
           if (CellRandom(u, v, tile) < 0.4f) put(u, v, 70, 120, 210);
       break;
+    case 10:  // Creeper face (baked colors; white baseColor so the tex shows true)
+      for (int v = 0; v < 16; ++v)
+        for (int u = 0; u < 16; ++u) {
+          int j = static_cast<int>((CellRandom(u, v, tile) * 2.0f - 1.0f) * 16);
+          put(u, v, 92 + j, 170 + j, 78 + j);
+        }
+      for (int e = 0; e < 2; ++e) {
+        int u0 = e == 0 ? 2 : 10;
+        for (int v = 3; v <= 6; ++v)
+          for (int u = u0; u <= u0 + 3; ++u) put(u, v, 12, 12, 12);
+      }
+      for (int v = 7; v <= 11; ++v)
+        for (int u = 6; u <= 9; ++u) put(u, v, 12, 12, 12);
+      for (int v = 12; v <= 15; ++v) {
+        for (int u = 5; u <= 10; ++u) put(u, v, 12, 12, 12);
+        if (v >= 13) { put(4, v, 12, 12, 12); put(11, v, 12, 12, 12); }
+      }
+      break;
+    case 11:  // Creeper skin (mottled green)
+      for (int v = 0; v < 16; ++v)
+        for (int u = 0; u < 16; ++u) {
+          int j = static_cast<int>((CellRandom(u, v, tile) * 2.0f - 1.0f) * 22);
+          put(u, v, 78 + j, 150 + j, 70 + j);
+        }
+      for (int i = 0; i < 30; ++i) {
+        int u = static_cast<int>(CellRandom(i, tile * 3, 1) * 16);
+        int v = static_cast<int>(CellRandom(i, tile * 3, 2) * 16);
+        put(u, v, 130, 205, 120);
+      }
+      for (int i = 0; i < 30; ++i) {
+        int u = static_cast<int>(CellRandom(i, tile * 3, 3) * 16);
+        int v = static_cast<int>(CellRandom(i, tile * 3, 4) * 16);
+        put(u, v, 38, 82, 34);
+      }
+      break;
     default:
       jitter(0, 0, 16, 16, 200, 40, 200, 20);
       break;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Box-face helpers for the creeper mesh: one flat quad per face, UVs span the
+// whole 16x16 tile (NEAREST filtering gives the pixelated look).  The front
+// face (+z) is routed to a separate index list so head/body can use different
+// tiles; the material is doubleSided so winding can never cull a face.
+// ---------------------------------------------------------------------------
+void PushBoxFace(std::vector<t850::MutableMeshVertex>& verts, std::vector<uint32_t>& idx,
+                 const XVECTOR3& a, const XVECTOR3& b, const XVECTOR3& c, const XVECTOR3& d,
+                 const XVECTOR3& n, const t850::terrain::BlockDefinition& m) {
+  const uint32_t base = static_cast<uint32_t>(verts.size());
+  verts.push_back(t850::MutableMeshVertex{a, n, m.atlasU0, m.atlasV0});
+  verts.push_back(t850::MutableMeshVertex{b, n, m.atlasU1, m.atlasV0});
+  verts.push_back(t850::MutableMeshVertex{c, n, m.atlasU1, m.atlasV1});
+  verts.push_back(t850::MutableMeshVertex{d, n, m.atlasU0, m.atlasV1});
+  idx.insert(idx.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+}
+
+void PushBox(std::vector<t850::MutableMeshVertex>& verts, std::vector<uint32_t>& sideIdx,
+             std::vector<uint32_t>& frontIdx, float x0, float y0, float z0, float x1,
+             float y1, float z1, const t850::terrain::BlockDefinition& skin,
+             const t850::terrain::BlockDefinition& front) {
+  auto P = [](float x, float y, float z) { return XVECTOR3(x, y, z, 1.0f); };
+  XVECTOR3 up(0, 1, 0, 0), dn(0, -1, 0, 0), lf(-1, 0, 0, 0), rt(1, 0, 0, 0),
+      bk(0, 0, -1, 0), pf(0, 0, 1, 0);
+  PushBoxFace(verts, sideIdx, P(x0, y1, z1), P(x1, y1, z1), P(x1, y1, z0), P(x0, y1, z0), up, skin);
+  PushBoxFace(verts, sideIdx, P(x0, y0, z0), P(x1, y0, z0), P(x1, y0, z1), P(x0, y0, z1), dn, skin);
+  PushBoxFace(verts, sideIdx, P(x0, y0, z1), P(x0, y1, z1), P(x1, y1, z1), P(x1, y0, z1), lf, skin);
+  PushBoxFace(verts, sideIdx, P(x1, y0, z0), P(x1, y1, z0), P(x0, y1, z0), P(x0, y0, z0), rt, skin);
+  PushBoxFace(verts, sideIdx, P(x0, y0, z0), P(x1, y0, z0), P(x1, y1, z0), P(x0, y1, z0), bk, skin);
+  PushBoxFace(verts, frontIdx, P(x1, y0, z1), P(x0, y0, z1), P(x0, y1, z1), P(x1, y1, z1), pf, front);
 }
 
 bool SweepPointAgainstExpandedBlock(const XVECTOR3& start,
@@ -321,6 +397,12 @@ void MinecraftScene::InitVars() {
   m_selectedSlot = 0;
   m_skyCubeIndex = -1;
   m_chunkRenders.clear();
+  m_creepers.clear();
+  m_explosions.clear();
+  m_creeperMesh.reset();
+  m_health = m_maxHealth;
+  m_damageFlash = 0.0f;
+  m_creeperSpawnTimer = 3.0f;
   m_world.Clear();
   m_streaming.Reset();
   m_deltas.Clear();
@@ -496,11 +578,12 @@ void MinecraftScene::InitVars() {
     }
   }
   const int spawnY = spawnH + 3;
+  m_spawnX = spawnX; m_spawnZ = spawnZ; m_spawnY = spawnY;
   m_camera.InitPerspective(XVECTOR3(static_cast<float>(spawnX), static_cast<float>(spawnY), static_cast<float>(spawnZ)),
                            Deg2Rad(70.0f), 1280.0f / 720.0f, 0.05f, 1000.0f);
   m_camera.Eye = XVECTOR3(static_cast<float>(spawnX), static_cast<float>(spawnY), static_cast<float>(spawnZ), 1.0f);
   m_camera.Yaw = 0.0f;
-  m_camera.Pitch = -0.03f;
+  m_camera.Pitch = 0.0f;  // level view: creeper at eye-1 sits just below center
   m_camera.Update(0.0f);
   m_cameraController.SetActiveProfile(t850::CameraProfileType::GroundedFps);
   m_cameraController.AttachCamera(&m_camera);
@@ -641,15 +724,15 @@ void MinecraftScene::CreateAssets() {
   m_renderContainer.SetLightCamera(&m_lightCamera);
   m_renderContainer.Graph().DisablePass("Light Add");
 
-  // --- Block atlas (10 procedural 16x16 tiles in a 4x4 layout) ---
+  // --- Block atlas (12 procedural 16x16 tiles in a 4x4 layout, 64x64 px) ---
   if (pEngineContext && pEngineContext->device) {
-    std::vector<unsigned char> atlas(64 * 16 * 4, 0);
+    std::vector<unsigned char> atlas(64 * 64 * 4, 0);
     for (int t = 0; t < static_cast<int>(Tile::Count); ++t) {
       unsigned char* px = atlas.data() + (t / kAtlasColumns) * 16 * 64 + (t % kAtlasColumns) * 4;
       PaintTile(px, t);
     }
     m_blockAtlas = pEngineContext->device->CreateTextureFromMemory(
-        atlas.data(), 64, 16, 4, "minecraft_block_atlas");
+        atlas.data(), 64, 64, 4, "minecraft_block_atlas");
     if (m_blockAtlas) {
       m_blockAtlas->params = t850::TextBasicParams::CLAMP_TO_EDGE |
           t850::TextBasicParams::NEAREST_FILTER;
@@ -678,6 +761,21 @@ void MinecraftScene::CreateAssets() {
     m_renderContainer.SetEnvironmentMaps(envMaps);
   }
 
+  // --- Creeper mesh: boxy head + body sharing one unlit material that samples
+  //     the creeper tiles from the block atlas. ---
+  if (pEngineContext && m_blockAtlas && !m_creeperMesh) {
+    m_creeperMesh = std::make_unique<t850::MutableMesh>();
+    m_creeperMesh->SetEngineContext(pEngineContext);
+    m_creeperMesh->Create();
+    std::string error;
+    t850::MutableMeshSnapshot snapshot = BuildCreeperMesh();
+    if (!m_creeperMesh->ReplaceSnapshot(std::move(snapshot), &error)) {
+      T8_LOG_ERROR("[MinecraftScene] Creeper mesh commit failed: %s", error.c_str());
+      m_creeperMesh->Destroy();
+      m_creeperMesh.reset();
+    }
+  }
+
   m_debugText.LoadFromFile(22.0f, "Fonts/Martius-LV9L4.ttf", 512.0f);
 
   m_assetsCreated = true;
@@ -704,6 +802,13 @@ void MinecraftScene::DestroyAssets() {
   }
   m_chunkRenders.clear();
   m_debugText.Destroy();
+  if (m_creeperMesh) {
+    if (pFramework && pFramework->pVideoDriver) pFramework->pVideoDriver->WaitForGPU();
+    m_creeperMesh->Destroy();
+    m_creeperMesh.reset();
+  }
+  m_creepers.clear();
+  m_explosions.clear();
   if (m_blockAtlas) {
     if (pFramework && pFramework->pVideoDriver) pFramework->pVideoDriver->WaitForGPU();
     m_blockAtlas->release();
@@ -929,6 +1034,302 @@ void MinecraftScene::RebuildChunkMeshes() {
   t850::RuntimeTelemetry::SetCounter("terrain.voxel.loaded_chunks", static_cast<double>(m_world.ChunkCount()));
 }
 
+t850::MutableMeshSnapshot MinecraftScene::BuildCreeperMesh() const {
+  // Solid colors (no atlas): the deferred/GBuffer pass in this render graph does
+  // not apply the block atlas to MutableMesh, so we bake the creeper's flat
+  // Minecraft colors directly. Green skin + black face + black face features.
+  auto makeMat = [](float r, float g, float b) {
+    t850::MutableMeshMaterial m;
+    m.baseColor = XVECTOR3(r, g, b, 1.0f);
+    m.usesBaseColorTexture = false;
+    m.unlit = true;
+    m.doubleSided = true;
+    return m;
+  };
+  auto makeDef = [](float r, float g, float b) {
+    t850::terrain::BlockDefinition d;
+    d.color = XVECTOR3(r, g, b, 1.0f);
+    d.usesBaseColorTexture = false;
+    d.unlit = true;
+    d.doubleSided = true;
+    return d;
+  };
+  const auto skinDef = makeDef(0.42f, 0.66f, 0.36f);  // creeper green
+  const auto blackDef = makeDef(0.05f, 0.05f, 0.05f); // face + features
+
+  t850::MutableMeshSnapshot snapshot;
+  std::vector<uint32_t> sideIdx, faceIdx, featIdx;
+  // Body: 0.5 x 0.7 x 0.25, feet at y=0 (all green).
+  PushBox(snapshot.vertices, sideIdx, faceIdx, -0.25f, 0.0f, -0.125f, 0.25f, 0.7f, 0.125f,
+          skinDef, skinDef);
+  // Head: 0.5 x 0.5 x 0.5, black face on +z.
+  PushBox(snapshot.vertices, sideIdx, faceIdx, -0.25f, 0.7f, -0.25f, 0.25f, 1.2f, 0.25f,
+          skinDef, blackDef);
+
+  // Face features (black quads just in front of the face plane, z = 0.252):
+  // eyes, nose/mouth, chin.  Face spans x[-0.25,0.25], y[0.7,1.2].
+  auto feat = [&](float x0, float y0, float x1, float y1) {
+    const float z = 0.252f;
+    const uint32_t base = static_cast<uint32_t>(snapshot.vertices.size());
+    XVECTOR3 n(0, 0, 1, 0);
+    snapshot.vertices.push_back(t850::MutableMeshVertex{XVECTOR3(x0, y0, z, 1.0f), n, 0.0f, 0.0f});
+    snapshot.vertices.push_back(t850::MutableMeshVertex{XVECTOR3(x1, y0, z, 1.0f), n, 1.0f, 0.0f});
+    snapshot.vertices.push_back(t850::MutableMeshVertex{XVECTOR3(x1, y1, z, 1.0f), n, 1.0f, 1.0f});
+    snapshot.vertices.push_back(t850::MutableMeshVertex{XVECTOR3(x0, y1, z, 1.0f), n, 0.0f, 1.0f});
+    featIdx.insert(featIdx.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+  };
+  feat(-0.18f, 0.98f, -0.05f, 1.12f);  // left eye
+  feat(0.05f, 0.98f, 0.18f, 1.12f);    // right eye
+  feat(-0.06f, 0.78f, 0.06f, 0.98f);   // nose
+  feat(-0.11f, 0.74f, -0.03f, 0.78f);  // mouth left
+  feat(0.03f, 0.74f, 0.11f, 0.78f);    // mouth right
+
+  snapshot.materials.push_back(makeMat(0.42f, 0.66f, 0.36f)); // 0: green skin
+  snapshot.materials.push_back(makeMat(0.05f, 0.05f, 0.05f)); // 1: black face
+  snapshot.materials.push_back(makeMat(0.05f, 0.05f, 0.05f)); // 2: black features
+
+  uint32_t first = 0;
+  snapshot.sections.push_back({first, (uint32_t)sideIdx.size(), 0});
+  first += (uint32_t)sideIdx.size();
+  snapshot.sections.push_back({first, (uint32_t)faceIdx.size(), 1});
+  first += (uint32_t)faceIdx.size();
+  snapshot.sections.push_back({first, (uint32_t)featIdx.size(), 2});
+
+  snapshot.indices.insert(snapshot.indices.end(), sideIdx.begin(), sideIdx.end());
+  snapshot.indices.insert(snapshot.indices.end(), faceIdx.begin(), faceIdx.end());
+  snapshot.indices.insert(snapshot.indices.end(), featIdx.begin(), featIdx.end());
+  t850::RecalculateMutableMeshBounds(snapshot);
+  return snapshot;
+}
+
+void MinecraftScene::SpawnCreepers(int count) {
+  if (!m_creeperMesh || !m_blockAtlas) return;
+  for (int n = 0; n < count; ++n) {
+    if (static_cast<int>(m_creepers.size()) >= kMaxCreepers) break;
+    // Try up to 12 rings around the player for a dry, tree-free, flat spawn 15-30m away.
+    for (int attempt = 0; attempt < 12; ++attempt) {
+      const float ang = RandF() * 6.2831853f;
+      const float dist = 15.0f + RandF() * 15.0f;
+      const float px = m_camera.Eye.x + std::cos(ang) * dist;
+      const float pz = m_camera.Eye.z + std::sin(ang) * dist;
+      const int bx = static_cast<int>(std::floor(px));
+      const int bz = static_cast<int>(std::floor(pz));
+      const int h = TerrainHeight(bx, bz);
+      if (h <= kWaterLevel || TreeAt(bx, bz)) continue;
+      // Flat enough: max height delta within +/-2.
+      bool flat = true;
+      for (int dz = -2; dz <= 2 && flat; ++dz)
+        for (int dx = -2; dx <= 2 && flat; ++dx) {
+          if (std::abs(TerrainHeight(bx + dx, bz + dz) - h) > 2) flat = false;
+        }
+      if (!flat) continue;
+      Mob mob;
+      mob.pos = XVECTOR3(px, static_cast<float>(h) + 1.0f, pz, 1.0f);
+      mob.yaw = std::atan2(m_camera.Eye.x - px, m_camera.Eye.z - pz);
+      t850::PrimitiveInst instance;
+      instance.CreateInstance(m_creeperMesh.get(), &m_camera.VP);
+      instance.SetTexture(m_blockAtlas, 0);
+      instance.TranslateAbsolute(px, mob.pos.y, pz);
+      instance.RotateYAbsolute(mob.yaw);
+      instance.Update();
+      mob.handle = m_renderContainer.AddMeshInstance(instance);
+      if (!mob.handle.IsValid()) continue;
+      m_creepers.push_back(std::move(mob));
+      break;
+    }
+  }
+}
+
+void MinecraftScene::UpdateMobs(float dt) {
+  const XVECTOR3 eye = m_camera.Eye;
+  for (auto it = m_creepers.begin(); it != m_creepers.end();) {
+    Mob& mob = *it;
+    const float dx = eye.x - mob.pos.x;
+    const float dz = eye.z - mob.pos.z;
+    const float dist = std::sqrt(dx * dx + dz * dz);
+    mob.yaw = std::atan2(dx, dz);
+
+    if (mob.fuse < 0.0f) {
+      // Approach the player; stop and start the fuse inside ~2.5m.
+      if (dist > 2.5f) {
+        const float speed = 2.5f;
+        const float nx = dx / (dist + 1e-6f), nz = dz / (dist + 1e-6f);
+        const int bx = static_cast<int>(std::floor(mob.pos.x + nx * 0.5f));
+        const int bz = static_cast<int>(std::floor(mob.pos.z + nz * 0.5f));
+        const int groundY = TerrainHeight(bx, bz);
+        // Follow the heightmap; only step up 1 block at a time (simple hill climb).
+        float targetY = static_cast<float>(groundY) + 1.0f;
+        if (targetY > mob.pos.y + 1.1f) targetY = mob.pos.y + 1.1f;
+        if (targetY < mob.pos.y - 1.5f) targetY = mob.pos.y;  // no falling off cliffs
+        mob.pos.x += nx * speed * dt;
+        mob.pos.z += nz * speed * dt;
+        mob.pos.y += (targetY - mob.pos.y) * std::min(1.0f, 8.0f * dt);
+        mob.walkPhase += dt * 8.0f;
+      } else {
+        mob.fuse = 0.0f;
+      }
+    } else {
+      // Fuse wind-up: swell, then explode.
+      mob.fuse += dt;
+      mob.scale = 1.0f + 0.5f * (mob.fuse / kFuseDuration);
+      if (mob.fuse >= kFuseDuration) {
+        HandleExplosion(mob.pos + XVECTOR3(0.0f, 0.5f, 0.0f, 0.0f), kExplodeRadius);
+        m_renderContainer.RemoveMesh(mob.handle);
+        it = m_creepers.erase(it);
+        continue;
+      }
+    }
+
+    if (auto* prim = m_renderContainer.GetMesh(mob.handle)) {
+      prim->TranslateAbsolute(mob.pos.x, mob.pos.y, mob.pos.z);
+      prim->RotateYAbsolute(mob.yaw);
+      prim->ScaleAbsolute(mob.scale, mob.scale * (1.0f - 0.3f * (std::sin(mob.walkPhase) * 0.5f + 0.5f)),
+                          mob.scale);
+      prim->Update();
+    }
+  }
+
+  m_creeperSpawnTimer -= dt;
+  if (m_creeperSpawnTimer <= 0.0f) {
+    m_creeperSpawnTimer = 4.0f + RandF() * 4.0f;
+    SpawnCreepers(1 + static_cast<int>(RandF() * 2.0f));
+  }
+}
+
+void MinecraftScene::UpdateExplosions(float dt) {
+  for (auto it = m_explosions.begin(); it != m_explosions.end();) {
+    it->age += dt;
+    if (it->age >= it->duration) it = m_explosions.erase(it);
+    else ++it;
+  }
+  m_damageFlash = std::max(0.0f, m_damageFlash - dt * 2.0f);
+}
+
+void MinecraftScene::HandleExplosion(const XVECTOR3& origin, float radius) {
+  m_explosions.push_back(Explosion{origin, 0.0f, 0.4f, radius});
+
+  const int r = static_cast<int>(std::ceil(radius));
+  const int cx = static_cast<int>(std::floor(origin.x));
+  const int cy = static_cast<int>(std::floor(origin.y));
+  const int cz = static_cast<int>(std::floor(origin.z));
+  for (int dz = -r; dz <= r; ++dz)
+    for (int dy = -r; dy <= r; ++dy)
+      for (int dx = -r; dx <= r; ++dx) {
+        const float d2 = (static_cast<float>(dx) + 0.5f) * (static_cast<float>(dx) + 0.5f) +
+            (static_cast<float>(dy) + 0.5f) * (static_cast<float>(dy) + 0.5f) +
+            (static_cast<float>(dz) + 0.5f) * (static_cast<float>(dz) + 0.5f);
+        if (d2 > radius * radius) continue;
+        const int x = cx + dx, y = cy + dy, z = cz + dz;
+        if (y <= 0) continue;  // never carve bedrock
+        const t850::terrain::BlockId cur = m_world.GetBlock(x, y, z);
+        if (cur == t850::terrain::kAirBlock) continue;
+        if (!m_world.SetBlock(x, y, z, t850::terrain::kAirBlock)) continue;
+        m_deltas.Record(x, y, z, t850::terrain::kAirBlock);
+      }
+  m_remeshRequested = true;
+
+  // Damage the player by distance.
+  const XVECTOR3 toPlayer = m_camera.Eye - origin;
+  const float d = std::sqrt(toPlayer.x * toPlayer.x + toPlayer.y * toPlayer.y +
+                            toPlayer.z * toPlayer.z);
+  if (d < radius + 3.0f) {
+    const float t = std::max(0.0f, 1.0f - d / (radius + 3.0f));
+    ApplyPlayerDamage(2.0f + 8.0f * t);  // 2..10 health (1..5 hearts)
+  }
+}
+
+void MinecraftScene::ApplyPlayerDamage(float amount) {
+  m_health = std::max(0, m_health - static_cast<int>(std::lround(amount)));
+  m_damageFlash = std::min(1.0f, m_damageFlash + 0.5f);
+  if (m_health <= 0) RespawnPlayer();
+}
+
+void MinecraftScene::RespawnPlayer() {
+  // Clear every creeper (they all die with the player) and the pending blasts.
+  for (Mob& mob : m_creepers) m_renderContainer.RemoveMesh(mob.handle);
+  m_creepers.clear();
+  m_explosions.clear();
+  m_health = m_maxHealth;
+  m_damageFlash = 1.0f;
+  m_creeperSpawnTimer = 8.0f;  // brief spawn protection
+  // The FPS profile re-reads camera.Eye every frame, so resetting the camera
+  // is a complete respawn.
+  m_camera.Eye = XVECTOR3(static_cast<float>(m_spawnX), static_cast<float>(m_spawnY),
+                          static_cast<float>(m_spawnZ), 1.0f);
+  m_camera.Yaw = 0.0f;
+  m_camera.Pitch = -0.03f;
+  m_camera.Update(0.0f);
+}
+
+void MinecraftScene::DrawExplosions() {
+  if (!pFramework || !pFramework->pVideoDriver || !t850::g_pBaseDriver) return;
+  const int w = t850::g_pBaseDriver->width;
+  const int h = t850::g_pBaseDriver->height;
+  if (m_explosions.empty()) return;
+  pFramework->pVideoDriver->SetBlendState(t850::BaseDriver::ALPHA_BLEND);
+  pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::NONE);
+  for (const Explosion& ex : m_explosions) {
+    const float t = ex.age / ex.duration;
+    XVECTOR3 clip = ex.origin;
+    XVecTransform(clip, ex.origin, m_camera.VP);
+    if (clip.w <= 0.0f) continue;
+    const float sx = (clip.x / clip.w * 0.5f + 0.5f) * w;
+    const float sy = (1.0f - (clip.y / clip.w * 0.5f + 0.5f)) * h;
+    const float rad = ex.radius * (0.4f + t * 1.2f) * (h / 720.0f) * 8.0f;
+    char label[8];
+    snprintf(label, sizeof(label), "o");
+    const float s = rad * 0.06f;
+    XVECTOR3 hot(1.0f, 0.75f - 0.5f * t, 0.2f - 0.15f * t, 1.0f);
+    for (int i = 0; i < 14; ++i) {
+      const float a = (static_cast<float>(i) / 14.0f) * 6.2831853f + t * 3.0f;
+      const float rr = rad * (0.4f + 0.6f * t) * (0.5f + 0.5f * std::sin(a * 3.0f + 1.0f));
+      m_debugText.DrawPixelScaled(sx + std::cos(a) * rr + 1.0f, sy + std::sin(a) * rr + 1.0f,
+                                  s, s, w, h, XVECTOR3(0.1f, 0.05f, 0.0f, 1.0f), label);
+      m_debugText.DrawPixelScaled(sx + std::cos(a) * rr, sy + std::sin(a) * rr, s, s, w, h, hot,
+                                  label);
+    }
+  }
+  pFramework->pVideoDriver->SetBlendState(t850::BaseDriver::BLEND_DEFAULT);
+  pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
+}
+
+void MinecraftScene::DrawHealthHud() {
+  if (!pFramework || !pFramework->pVideoDriver || !t850::g_pBaseDriver) return;
+  const int w = t850::g_pBaseDriver->width;
+  const int h = t850::g_pBaseDriver->height;
+  pFramework->pVideoDriver->SetBlendState(t850::BaseDriver::ALPHA_BLEND);
+  pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::NONE);
+  const float s = 0.5f * ((float)h / 720.0f);
+  const int fullHearts = m_health / 2;
+  const bool halfHeart = (m_health % 2) != 0;
+  const int hearts = (std::min)(10, (fullHearts + (halfHeart ? 1 : 0)));
+  const float gap = 18.0f * s;
+  const float x0 = 14.0f * s;
+  const float y = (float)h - gap - 12.0f * s;
+  XVECTOR3 shadow(0.0f, 0.0f, 0.0f, 1.0f);
+  for (int i = 0; i < hearts; ++i) {
+    const bool full = (i < fullHearts);
+    const XVECTOR3 col = full ? XVECTOR3(0.9f, 0.15f, 0.15f, 1.0f)
+                              : XVECTOR3(0.55f, 0.12f, 0.12f, 1.0f);
+    const char* glyph = "\xe2\x99\xa5";  // heart; half hearts are drawn dimmer
+    float tw = m_debugText.MeasurePixel(glyph, w, h) * s;
+    float x = x0 + i * gap - tw * 0.5f + gap * 0.5f;
+    m_debugText.DrawPixelScaled(x + 1.0f, y + 1.0f, s, s, w, h, shadow, glyph);
+    m_debugText.DrawPixelScaled(x, y, s, s, w, h, col, glyph);
+  }
+  if (m_damageFlash > 0.0f) {
+    char msg[32];
+    snprintf(msg, sizeof(msg), "You were hurt by a creeper explosion!");
+    float tw = m_debugText.MeasurePixel(msg, w, h) * s;
+    XVECTOR3 red(1.0f, 0.3f, 0.3f, 1.0f);
+    m_debugText.DrawPixelScaled(((float)w - tw) * 0.5f + 1.0f, 40.0f * s + 1.0f, s, s, w, h, shadow,
+                                msg);
+    m_debugText.DrawPixelScaled(((float)w - tw) * 0.5f, 40.0f * s, s, s, w, h, red, msg);
+  }
+  pFramework->pVideoDriver->SetBlendState(t850::BaseDriver::BLEND_DEFAULT);
+  pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
+}
+
 void MinecraftScene::OnUpdate(float deltaSeconds) {
   m_deltaSeconds = deltaSeconds;
   if (!m_dumper.SkipCameraUpdates()) {
@@ -937,6 +1338,8 @@ void MinecraftScene::OnUpdate(float deltaSeconds) {
   m_dumper.UpdateReplayState();
   UpdateStreaming();
   if (m_remeshRequested) RebuildChunkMeshes();
+  UpdateMobs(deltaSeconds);
+  UpdateExplosions(deltaSeconds);
 }
 
 void MinecraftScene::OnInput(InputManager* input) {
@@ -1052,6 +1455,8 @@ void MinecraftScene::DrawHud() {
 void MinecraftScene::OnDraw() {
   if (!m_assetsCreated) return;
   m_renderContainer.Execute(pFramework->pVideoDriver, m_deltaSeconds);
+  DrawExplosions();
+  DrawHealthHud();
   DrawHud();
   if (m_dumper.ShouldDump(m_deltaSeconds)) {
     std::vector<t850::RTDumpEntry> targets = {

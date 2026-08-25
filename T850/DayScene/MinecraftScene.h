@@ -13,6 +13,7 @@
 #include <terrain/VoxelStreaming.h>
 #include <terrain/VoxelWorld.h>
 #include <utils/CameraProfiles.h>
+#include <utils/xMaths.h>  // complete XVECTOR3 definition (in-class initializers)
 
 #include <memory>
 #include <string_view>
@@ -56,6 +57,23 @@ private:
     t850::PhysicsBodyHandle body;
   };
 
+  struct Mob {
+    XVECTOR3 pos = {};  // feet position (default ctor gives w=1)
+    float yaw = 0.0f;
+    float walkPhase = 0.0f;
+    float hopTimer = 0.0f;
+    float fuse = -1.0f;            // >= 0 while in the explosion wind-up
+    float scale = 1.0f;
+    t850::RenderInstanceHandle handle;
+  };
+
+  struct Explosion {
+    XVECTOR3 origin = {};
+    float age = 0.0f;
+    float duration = 0.4f;
+    float radius = 2.6f;
+  };
+
   // --- Terrain helpers (deterministic, thread-safe: pure functions of the key) ---
   static int Hash2D(int x, int z);
   static int Hash3D(int x, int y, int z);
@@ -70,6 +88,7 @@ private:
   // Procedural pixel-art tile index for a block (used to lay out the atlas).
   enum class Tile : int {
     Bedrock = 0, Stone, Dirt, Grass, Sand, Cobble, Planks, Log, Leaves, Water,
+    CreeperFace, CreeperSkin,
     Count
   };
 
@@ -87,12 +106,28 @@ private:
   void RebuildChunkMeshes();
   t850::terrain::BlockId SampleNeighbor(
       const t850::terrain::ChunkKey& key, int localX, int localY, int localZ) const;
+
+  // Builds the shared creeper box mesh (head + body) as a single unlit snapshot
+  // whose UVs point at the creeper tiles in the block atlas.
+  t850::MutableMeshSnapshot BuildCreeperMesh() const;
+
+  void SpawnCreepers(int count);
+  void UpdateMobs(float dt);
+  void UpdateExplosions(float dt);
+  void HandleExplosion(const XVECTOR3& origin, float radius);
+  void ApplyPlayerDamage(float amount);
+  void RespawnPlayer();
+  void DrawExplosions();
+  void DrawHealthHud();
   void DrawHud();
 
   static constexpr int kSceneIndex = 6;
   static constexpr int kAtlasColumns = 4;
   static constexpr int kAtlasRows = 4;
   static constexpr int kWaterLevel = 4;
+  static constexpr float kFuseDuration = 1.5f;   // creeper wind-up before exploding
+  static constexpr float kExplodeRadius = 2.6f;
+  static constexpr int kMaxCreepers = 8;
 
   t850::terrain::BlockRegistry m_blockRegistry;
   t850::terrain::VoxelWorld m_world;
@@ -125,6 +160,17 @@ private:
   GaussFilter m_bloomFilter;
   GaussFilter m_dofFilter;
   int m_selectedSlot = 0;
+
+  // --- Enemies / combat ---
+  std::vector<Mob> m_creepers;
+  std::vector<Explosion> m_explosions;
+  std::unique_ptr<t850::MutableMesh> m_creeperMesh;
+  int m_health = 20;
+  int m_maxHealth = 20;
+  float m_damageFlash = 0.0f;
+  float m_creeperSpawnTimer = 3.0f;
+  int m_spawnX = 8, m_spawnZ = 8, m_spawnY = 10;
+
   float m_deltaSeconds = 0.0f;
   bool m_remeshRequested = false;
   bool m_assetsCreated = false;

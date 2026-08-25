@@ -84,6 +84,33 @@ def quote_cmd(args):
     return " ".join(q(x) for x in args)
 
 
+def vulkan_loader_dirs():
+    """Directories that contain a usable (surface-capable) system Vulkan loader.
+
+    The engine is linked with a RUNPATH into the vcpkg lib dir, whose
+    libvulkan was built without the VK_KHR_*_surface extensions, so creating an
+    SDL/Vulkan window fails. LD_LIBRARY_PATH is searched before RUNPATH, so
+    prepending these dirs makes the engine resolve the working driver loader.
+    """
+    dirs = []
+    try:
+        import ctypes.util
+
+        found = ctypes.util.find_library("vulkan")
+        if found:
+            p = Path(found)
+            if not p.is_absolute():
+                p = Path("/usr/lib/x86_64-linux-gnu") / p
+            if p.exists():
+                dirs.append(str(p.parent))
+    except Exception:
+        pass
+    for d in ("/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/usr/lib"):
+        if (Path(d) / "libvulkan.so.1").exists() and d not in dirs:
+            dirs.append(d)
+    return dirs
+
+
 class Launcher(Gtk.Window):
     def __init__(self):
         super().__init__(title="T850 Engine Launcher")
@@ -758,7 +785,12 @@ class Launcher(Gtk.Window):
     def launch_process(self, executable, args):
         ensure_runtime_links()
         env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = f"{RUNTIME_DIR}:{env.get('LD_LIBRARY_PATH', '')}"
+        # Prepend the system Vulkan loader dirs (they are searched before the
+        # engine's RUNPATH into the vcpkg lib dir, whose libvulkan lacks the
+        # surface extensions needed for window creation).
+        loader_dirs = ":".join(vulkan_loader_dirs())
+        parts = [d for d in (loader_dirs, str(RUNTIME_DIR), env.get("LD_LIBRARY_PATH", "")) if d]
+        env["LD_LIBRARY_PATH"] = ":".join(parts)
         env["SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS"] = "0"
         env["SDL_GAMECONTROLLER_USE_BUTTON_LABELS"] = "1"
         subprocess.Popen([str(executable)] + args, cwd=str(T850_ROOT), env=env, start_new_session=True)

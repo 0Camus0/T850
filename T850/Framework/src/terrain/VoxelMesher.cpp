@@ -163,6 +163,7 @@ bool BuildGreedyVoxelMesh(const VoxelChunk& chunk,
     material.alphaCutoff = definition.alphaCutoff;
     material.doubleSided = definition.doubleSided;
     material.usesBaseColorTexture = definition.usesBaseColorTexture;
+    material.unlit = definition.unlit;
     output.materials.push_back(material);
     output.sections.push_back(MutableMeshSection{
         .firstIndex = firstIndex,

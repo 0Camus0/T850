@@ -29,6 +29,8 @@ struct BlockDefinition {
   bool occludes = true;
   bool collidable = true;
   bool doubleSided = false;
+  // Draw this block as flat base color with no PBR lighting (Minecraft look).
+  bool unlit = false;
 };
 
 class BlockRegistry {

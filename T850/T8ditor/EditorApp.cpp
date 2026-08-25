@@ -10800,10 +10800,14 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   }
   if (menuAction.wantsImportX) {
     auto toWstr = [](const std::string& s) {
+#ifdef OS_WINDOWS
       int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
       std::wstring ws(len - 1, L'\0');
       MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
       return ws;
+#else
+      return std::wstring(s.begin(), s.end());
+#endif
     };
     std::string solDir = GetSolutionDir();
     std::string modelDir = (std::filesystem::path(solDir) / "Assets" / "Models").string();
@@ -10818,10 +10822,14 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   }
   if (menuAction.wantsSaveScene) {
     auto toWstr = [](const std::string& s) {
+#ifdef OS_WINDOWS
       int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
       std::wstring ws(len - 1, L'\0');
       MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
       return ws;
+#else
+      return std::wstring(s.begin(), s.end());
+#endif
     };
     std::string solDir = GetSolutionDir();
     std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();
@@ -10834,10 +10842,14 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   }
   if (menuAction.wantsLoadScene) {
     auto toWstr = [](const std::string& s) {
+#ifdef OS_WINDOWS
       int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
       std::wstring ws(len - 1, L'\0');
       MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
       return ws;
+#else
+      return std::wstring(s.begin(), s.end());
+#endif
     };
     std::string solDir = GetSolutionDir();
     std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();

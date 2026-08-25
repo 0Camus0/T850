@@ -302,7 +302,9 @@ void MutableMesh::FillMaterialConstants(
       context.driver ? static_cast<float>(context.driver->width) : 1.0f,
       context.driver ? static_cast<float>(context.driver->height) : 1.0f,
       Textures[7] ? 1.0f : 0.0f, 1.5f);
-  constants.MaterialParams = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  // .z is the unlit flag read by the GBuffer/deferred pass (packedMaterial >= 0.5
+  // => flat base color, no PBR lighting/shadows).
+  constants.MaterialParams = XVECTOR3(0.0f, 0.0f, material.unlit ? 1.0f : 0.0f, 1.0f);
   constants.MaterialParams2 = XVECTOR3(0.0f, 0.0f, Textures[9] ? 1.0f : 0.0f, 0.0f);
   constants.MaterialParams9 = XVECTOR3(0.0f, 1.0f, 0.0f, 1.0f);
   SetIdentityUVTransforms(constants);

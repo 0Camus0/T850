@@ -30,6 +30,9 @@ struct MutableMeshMaterial {
   MutableMeshAlphaMode alphaMode = MutableMeshAlphaMode::Opaque;
   bool doubleSided = false;
   bool usesBaseColorTexture = false;
+  // When true the surface is drawn as flat base color (no PBR lighting / shadows),
+  // giving the classic pixel-art look used by the Minecraft scene.
+  bool unlit = false;
 };
 
 struct MutableMeshSection {

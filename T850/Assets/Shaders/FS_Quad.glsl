@@ -664,14 +664,76 @@ void main(){
 			//Final.xyz = vec3(rough, rough, rough);
 	}
 	
-#ifdef ES_30
-	colorOut = Final;
-#else
-	gl_FragColor = Final;
-#endif
+	#ifdef ES_30
+		colorOut = Final;
+	#else
+		gl_FragColor = Final;
+	#endif
 	
 }
 #endif
+#elif defined(CASCADE_DEBUG_PASS)
+uniform mediump sampler2D tex0;
+uniform highp mat4 ShadowViewProjection[6];
+uniform highp vec4 ShadowSplitDepths[2];
+uniform highp vec4 ShadowAtlasScaleBias[6];
+uniform highp vec4 ShadowParams0;
+uniform highp vec4 ShadowParams1;
+
+highp float GetCascadeDebugSplit(int boundary) {
+	if (boundary < 4) return ShadowSplitDepths[0][boundary];
+	return ShadowSplitDepths[1][boundary - 4];
+}
+
+int GetCascadeDebugIndex(highp float viewDepth) {
+	int viewCount = clamp(int(ShadowParams0.x), 1, 6);
+	int result = 0;
+	for (int boundary = 0; boundary < 5; ++boundary) {
+		if (boundary < viewCount - 1 && viewDepth > GetCascadeDebugSplit(boundary))
+			++result;
+	}
+	return min(result, viewCount - 1);
+}
+
+highp vec3 GetCascadeDebugColor(int cascade) {
+	if (cascade == 0) return vec3(1.0, 0.2, 0.2);
+	if (cascade == 1) return vec3(0.2, 1.0, 0.2);
+	if (cascade == 2) return vec3(0.2, 0.4, 1.0);
+	if (cascade == 3) return vec3(1.0, 1.0, 0.2);
+	if (cascade == 4) return vec3(1.0, 0.4, 1.0);
+	return vec3(0.2, 1.0, 1.0);
+}
+
+void main() {
+	highp vec4 result = vec4(0.0);
+	if (toogles.x >= 0.5) {
+		highp vec2 coords = vecUVCoords;
+		coords.y = 1.0 - coords.y;
+		#ifdef ES_30
+			highp float depth = texture(tex0, coords).r;
+		#else
+			highp float depth = texture2D(tex0, coords).r;
+		#endif
+		if (IsSceneDepthValid(depth)) {
+			highp vec4 position = ReconstructPosition(ClipPos, depth);
+			highp vec4 playerClip = WVPLight * position;
+			if (playerClip.w > 0.0) {
+				playerClip.xyz /= playerClip.w;
+				if (abs(playerClip.x) <= 1.0 && abs(playerClip.y) <= 1.0 &&
+					playerClip.z >= 0.0 && playerClip.z <= 1.0) {
+					highp float viewDepth = (World * position).z;
+					int cascade = GetCascadeDebugIndex(viewDepth);
+					result = vec4(GetCascadeDebugColor(cascade), clamp(toogles.y, 0.0, 1.0));
+				}
+			}
+		}
+	}
+	#ifdef ES_30
+		colorOut = result;
+	#else
+		gl_FragColor = result;
+	#endif
+}
 #elif defined(SHADOW_COMP_PASS)
 uniform highp sampler2D tex0;
 #ifdef ENABLE_SHADOWS
@@ -739,6 +801,14 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		shadowVal = 1.0 - shadowVal * (1.0 - toogles.x);
 		FShadow = shadowVal*vec4(1.0,1.0,1.0,1.0);//texture(tex1, fragToLight ).rrrr;
 	#else
+	highp vec4 playerClip = WVPLight * position;
+	if (playerClip.w <= 0.0)
+		return FShadow;
+	playerClip.xyz /= playerClip.w;
+	if (abs(playerClip.x) > 1.0 || abs(playerClip.y) > 1.0 ||
+		playerClip.z < 0.0 || playerClip.z > 1.0)
+		return FShadow;
+
 	int cascade = GetCascadeIndex(viewDepth);
 	highp vec4 LightPos = ShadowViewProjection[cascade]*position;
 	LightPos.xyz /= LightPos.w;
@@ -889,7 +959,7 @@ void main(){
 	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
 	#ifdef ENABLE_SHADOWS
-		highp float viewDepth = LinearizeDepth(depth);
+		highp float viewDepth = (World * position).z;
 		Fcolor = CalculateShadow(position, viewDepth);
 	#endif
 

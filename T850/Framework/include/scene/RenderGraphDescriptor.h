@@ -41,10 +41,11 @@ namespace t850 {
   // ---- Draw command within a pass ----
 
   struct DrawCmd {
-    std::string type = "fullscreen_quad";   // "fullscreen_quad", "mesh", "final_quad"
+    std::string type = "fullscreen_quad";   // "fullscreen_quad", "mesh", "final_quad", "callback"
     std::vector<int> mesh_indices;          // for "mesh" type
     std::string signature;                  // Signature enum name
     std::vector<std::string> extra_signatures;  // OR'd with main (e.g. "USE_OMNIDIRECTIONAL_SHADOWS")
+    std::string callback;                   // callback name when type == "callback"
   };
 
   // ---- Pass kind (replaces exact-name checks) ----

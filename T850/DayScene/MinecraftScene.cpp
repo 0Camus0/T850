@@ -202,6 +202,7 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_showChunkBounds = m_voxelSettings.show_chunk_bounds;
   m_showCascadeFrustums = m_voxelSettings.show_cascade_debug;
   m_cascadeDebugMode = (std::max)(0, (std::min)(2, m_voxelSettings.cascade_debug_mode));
+  m_cascadeDebugOpacity = (std::max)(0.01f, (std::min)(0.75f, m_voxelSettings.cascade_debug_opacity));
   m_cameraMode = (std::max)(0, (std::min)(2, m_voxelSettings.camera_mode));
   m_debugCascadeIndex = (std::max)(0, m_voxelSettings.debug_cascade_index);
   m_timeOfDay = m_voxelSettings.day_night.time_of_day;
@@ -2026,11 +2027,23 @@ void MinecraftScene::InitVars() {
     T8_LOG_ERROR("[Minecraft] Authored scene requires a main camera and debug light camera");
     return;
   }
+  if (m_sceneFile.cameras.size() < 2) {
+    auto spectator = m_sceneFile.cameras[0];
+    spectator.name = "Minecraft Free Camera";
+    spectator.position.y += 20.0f;
+    spectator.position.z -= 30.0f;
+    spectator.target.y += 10.0f;
+    m_sceneFile.cameras.push_back(spectator);
+    T8_LOG_INFO("[Minecraft] Scene has no free camera; created a spectator fallback");
+  }
   initCamera(m_sceneFile.cameras[0], Cam);
+  initCamera(m_sceneFile.cameras[1], SpectatorCam);
   initLightCamera(m_sceneFile.light_cameras[0], LightCam);
   m_debugCameraOrtho = m_sceneFile.light_cameras[0].type == 1;
 
   // Sync shadow panel state from the loaded descriptor.
+  m_spectatorYaw = SpectatorCam.Yaw;
+  m_spectatorPitch = SpectatorCam.Pitch;
   m_lightYaw = LightCam.Yaw;
   m_lightPitch = LightCam.Pitch;
   m_shadowResolution = SceneProp.ShadowMapResolution;
@@ -2040,6 +2053,7 @@ void MinecraftScene::InitVars() {
 
   ActiveCam = &Cam;
   SceneProp.AddCamera(ActiveCam);
+  SceneProp.pCullingCamera = &Cam;
   SceneProp.AddLightCamera(&LightCam);
 
   for (const auto& source : m_sceneFile.lights) {
@@ -2094,8 +2108,8 @@ void MinecraftScene::InitVars() {
 
   m_playerEye = XVECTOR3(player.spawn.x, player.spawn.y, player.spawn.z, 1.0f);
   m_player.SetPosition(m_playerEye - XVECTOR3(0.0f, m_playerSettings.eyeHeight, 0.0f, 0.0f));
-  m_playerYaw = 0.0f;
-  m_playerPitch = 0.0f;
+  m_playerYaw = Cam.Yaw;
+  m_playerPitch = Cam.Pitch;
 
   m_centerChunkX = WorldToChunk((int)std::floor(player.spawn.x));
   m_centerChunkZ = WorldToChunk((int)std::floor(player.spawn.z));
@@ -2210,6 +2224,7 @@ void MinecraftScene::DestroyAssets() {
   m_lineRenderer.Destroy();
   if (m_cascadeDebugVB) { m_cascadeDebugVB->release(); m_cascadeDebugVB = nullptr; }
   if (m_cascadeDebugIB) { m_cascadeDebugIB->release(); m_cascadeDebugIB = nullptr; }
+  if (m_cascadeDebugSolidIB) { m_cascadeDebugSolidIB->release(); m_cascadeDebugSolidIB = nullptr; }
   PrimitiveMgr.DestroyPrimitives();
   if (pFramework && pFramework->pVideoDriver) {
     m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
@@ -2220,6 +2235,9 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
   T8_TELEMETRY_SCOPE("minecraft.update");
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
+
+  if (m_cameraMode != 0)
+    m_playerInput = {};
 
   // Update player (input was captured in OnInput)
   UpdatePlayer(DtSecs);
@@ -2272,16 +2290,20 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
     }
   }
 
-  VP = Cam.VP;
+  VP = ActiveCam ? ActiveCam->VP : Cam.VP;
 }
 
 void MinecraftScene::OnInput(InputManager* IManager) {
   // Mouse look
   if (m_mouseCaptured) {
-    if (m_cameraMode == 1) {
+    if (m_cameraMode == 2) {
       m_lightYaw += IManager->xDelta * m_mouseSensitivity;
       m_lightPitch += IManager->yDelta * m_mouseSensitivity;
       m_lightPitch = (std::max)(-1.55f, (std::min)(1.55f, m_lightPitch));
+    } else if (m_cameraMode == 1) {
+      m_spectatorYaw += IManager->xDelta * m_mouseSensitivity;
+      m_spectatorPitch += IManager->yDelta * m_mouseSensitivity;
+      m_spectatorPitch = (std::max)(-1.55f, (std::min)(1.55f, m_spectatorPitch));
     } else if (m_cameraMode == 0) {
       // Moving the mouse right (xDelta positive) should turn right (yaw up).
       m_playerYaw += IManager->xDelta * m_mouseSensitivity;
@@ -2293,23 +2315,26 @@ void MinecraftScene::OnInput(InputManager* IManager) {
     }
   }
 
-  if (m_cameraMode == 1) {
+  if (m_cameraMode == 1 || m_cameraMode == 2) {
+    Camera& movableCamera = (m_cameraMode == 1) ? SpectatorCam : LightCam;
+    float& yaw = (m_cameraMode == 1) ? m_spectatorYaw : m_lightYaw;
+    float& pitch = (m_cameraMode == 1) ? m_spectatorPitch : m_lightPitch;
     const float speed = m_debugCameraSpeed * DtSecs;
     const float fwd = (IManager->PressedKey(T800K_w) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_s) ? 1.0f : 0.0f);
     const float strafe = (IManager->PressedKey(T800K_d) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_a) ? 1.0f : 0.0f);
     const float upInput = (IManager->PressedKey(T800K_SPACE) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_LSHIFT) ? 1.0f : 0.0f);
-    // Build light camera basis from yaw/pitch.
-    XVECTOR3 look(std::sin(m_lightYaw) * std::cos(m_lightPitch),
-                  -std::sin(m_lightPitch),
-                  std::cos(m_lightYaw) * std::cos(m_lightPitch));
+    XVECTOR3 look(std::sin(yaw) * std::cos(pitch),
+                  -std::sin(pitch),
+                  std::cos(yaw) * std::cos(pitch));
     look.Normalize();
-    XVECTOR3 right(std::cos(m_lightYaw), 0.0f, -std::sin(m_lightYaw));
+    XVECTOR3 right(std::cos(yaw), 0.0f, -std::sin(yaw));
     right.Normalize();
     XVECTOR3 upVec(0.0f, 1.0f, 0.0f, 0.0f);
-    LightCam.Eye += look * (fwd * speed) + right * (strafe * speed) + upVec * (upInput * speed);
-    LightCam.Yaw = m_lightYaw;
-    LightCam.Pitch = m_lightPitch;
-    LightCam.Update(0.0f);
+    movableCamera.Eye += look * (fwd * speed) + right * (strafe * speed) + upVec * (upInput * speed);
+    movableCamera.Yaw = yaw;
+    movableCamera.Pitch = pitch;
+    movableCamera.Update(0.0f);
+    m_playerInput = {};
   } else if (m_cameraMode == 0) {
     // Movement input (player)
     m_playerInput.forward = XVECTOR3(std::sin(m_playerYaw), 0.0f, std::cos(m_playerYaw), 0.0f);
@@ -2351,8 +2376,8 @@ void MinecraftScene::OnInput(InputManager* IManager) {
 }
 
 void MinecraftScene::OnDraw() {
-  // Update generated shadow views from the active main camera + light transform.
-  const Camera& csmViewCamera = (m_cameraMode == 1) ? LightCam : Cam;
+  // Cascade selection always follows the actual player, never a debug view.
+  const Camera& csmViewCamera = Cam;
   for (auto& projection : SceneProp.Shadows.projections) {
     int tileRes = projection.resolvedDesc.resolution > 0
       ? projection.resolvedDesc.resolution
@@ -2364,6 +2389,9 @@ void MinecraftScene::OnDraw() {
   }
 
   // Execute the render graph
+  SceneProp.CascadeDebugRegionsEnabled =
+    m_showCascadeFrustums && (m_cascadeDebugMode == 0 || m_cascadeDebugMode == 2);
+  SceneProp.CascadeDebugOpacity = m_cascadeDebugOpacity;
   m_renderGraph.Execute(
     pFramework->pVideoDriver,
     SceneProp,
@@ -2372,12 +2400,13 @@ void MinecraftScene::OnDraw() {
     ActiveCam ? ActiveCam : &Cam,
     &LightCam,
     nullptr,
-    EnvMaps
+    EnvMaps,
+    -1,
+    [this](const std::string& callback) {
+      if (callback == "cascade_debug_volumes" && m_showCascadeFrustums && m_cascadeDebugMode != 0)
+        DrawCascadeLightBounds();
+    }
   );
-
-  // Debug: draw cascade frustums as wireframe boxes (light-color volumes).
-  if (m_showCascadeFrustums)
-    DrawCascadeFrustums();
 
   // Frame dump
   if (m_dumper.ShouldDump(DtSecs)) {
@@ -2398,7 +2427,7 @@ void MinecraftScene::OnDraw() {
   // HUD text (drawn in DrawDevGui via ImGui so it scales with resolution)
 }
 
-void MinecraftScene::DrawCascadeFrustums() {
+void MinecraftScene::DrawCascadeLightBounds() {
   // Only draw when shadows are enabled and a projection exists.
   if (SceneProp.ToogleShadow == 0)
     return;
@@ -2428,26 +2457,33 @@ void MinecraftScene::DrawCascadeFrustums() {
 
   XMATRIX44 identity;
   identity.Identity();
-  m_lineRenderer.SetDepthTestEnabled(false);  // always visible
+  m_lineRenderer.SetDepthTestEnabled(false);  // flat shader; graph pass owns depth testing
   m_lineRenderer.SetViewport(pFramework->pVideoDriver->width,
                              pFramework->pVideoDriver->height);
 
   // Lazily create the shared VB/IB once (never per-frame — that causes device
-  // removal). Capacity includes receiver slices and fitted light volumes.
+  // removal). One fitted light-space box is stored per cascade.
   const int kMaxCascades = 6;
-  const int kMaxDebugBoxes = kMaxCascades * 2;
+  const int kMaxDebugBoxes = kMaxCascades;
   const int kMaxVertices = kMaxDebugBoxes * 8;
-  if (!m_cascadeDebugVB || !m_cascadeDebugIB) {
+  if (!m_cascadeDebugVB || !m_cascadeDebugIB || !m_cascadeDebugSolidIB) {
     float dummy[kMaxVertices * 4] = {};
     m_cascadeDebugVB = t850::LineRenderer::CreatePositionVB(dummy, kMaxVertices, BufferUsage::DINAMIC);
     m_cascadeDebugIB = t850::LineRenderer::CreateIndexBuffer16(kBoxEdges, 24);
+    static const unsigned short kBoxTriangles[36] = {
+      0,2,1, 0,3,2,
+      4,5,6, 4,6,7,
+      0,1,5, 0,5,4,
+      1,2,6, 1,6,5,
+      2,3,7, 2,7,6,
+      3,0,4, 3,4,7
+    };
+    m_cascadeDebugSolidIB = t850::LineRenderer::CreateIndexBuffer16(kBoxTriangles, 36);
     m_cascadeDebugVBCapacity = kMaxVertices;
   }
-  if (!m_cascadeDebugVB || !m_cascadeDebugIB)
+  if (!m_cascadeDebugVB || !m_cascadeDebugIB || !m_cascadeDebugSolidIB)
     return;
 
-  // Receiver slices are contiguous by construction. Fitted light volumes may
-  // overlap because each includes a rotated slice plus caster depth padding.
   float positions[kMaxVertices * 4] = {};
   int count = (projection.viewCount < kMaxCascades) ? projection.viewCount : kMaxCascades;
   int boxCount = 0;
@@ -2464,36 +2500,47 @@ void MinecraftScene::DrawCascadeFrustums() {
       ++boxCount;
     };
 
-    if (m_cascadeDebugMode == 0 || m_cascadeDebugMode == 2)
-      appendBox(view.frustumCorners);
-
-    if (m_cascadeDebugMode == 1 || m_cascadeDebugMode == 2) {
-      const Camera& shadowCamera = view.camera;
-      const float halfW = shadowCamera.Width * 0.5f;
-      const float halfH = shadowCamera.Height * 0.5f;
-      const XVECTOR3 nearCenter = shadowCamera.Eye + shadowCamera.Look * shadowCamera.NPlane;
-      const XVECTOR3 farCenter = shadowCamera.Eye + shadowCamera.Look * shadowCamera.FPlane;
-      const XVECTOR3 volumeCorners[8] = {
-        nearCenter - shadowCamera.Right * halfW - shadowCamera.Up * halfH,
-        nearCenter + shadowCamera.Right * halfW - shadowCamera.Up * halfH,
-        nearCenter + shadowCamera.Right * halfW + shadowCamera.Up * halfH,
-        nearCenter - shadowCamera.Right * halfW + shadowCamera.Up * halfH,
-        farCenter - shadowCamera.Right * halfW - shadowCamera.Up * halfH,
-        farCenter + shadowCamera.Right * halfW - shadowCamera.Up * halfH,
-        farCenter + shadowCamera.Right * halfW + shadowCamera.Up * halfH,
-        farCenter - shadowCamera.Right * halfW + shadowCamera.Up * halfH,
-      };
-      appendBox(volumeCorners);
-    }
+    const Camera& shadowCamera = view.camera;
+    const float halfW = shadowCamera.Width * 0.5f;
+    const float halfH = shadowCamera.Height * 0.5f;
+    const XVECTOR3 nearCenter = shadowCamera.Eye + shadowCamera.Look * shadowCamera.NPlane;
+    const XVECTOR3 farCenter = shadowCamera.Eye + shadowCamera.Look * shadowCamera.FPlane;
+    const XVECTOR3 volumeCorners[8] = {
+      nearCenter - shadowCamera.Right * halfW - shadowCamera.Up * halfH,
+      nearCenter + shadowCamera.Right * halfW - shadowCamera.Up * halfH,
+      nearCenter + shadowCamera.Right * halfW + shadowCamera.Up * halfH,
+      nearCenter - shadowCamera.Right * halfW + shadowCamera.Up * halfH,
+      farCenter - shadowCamera.Right * halfW - shadowCamera.Up * halfH,
+      farCenter + shadowCamera.Right * halfW - shadowCamera.Up * halfH,
+      farCenter + shadowCamera.Right * halfW + shadowCamera.Up * halfH,
+      farCenter - shadowCamera.Right * halfW + shadowCamera.Up * halfH,
+    };
+    appendBox(volumeCorners);
   }
   if (t850::T8DeviceContext)
     m_cascadeDebugVB->UpdateFromBuffer(*t850::T8DeviceContext, positions);
 
-  // Draw each cascade as a separate line list with its own color.
+  // Blend filled volumes far-to-near, then add a stronger outline. The render
+  // graph callback supplies alpha blend + depth-read/no-write state.
   const Camera* debugCamera = ActiveCam ? ActiveCam : &Cam;
-  for (int box = 0; box < boxCount; ++box) {
-    const int cascade = (m_cascadeDebugMode == 2) ? box / 2 : box;
-    m_lineRenderer.DrawLines(identity, debugCamera->VP, kCascadeColors[cascade],
+  for (int box = boxCount - 1; box >= 0; --box) {
+    const int cascade = box;
+    const XVECTOR3 fillColor(kCascadeColors[cascade].x,
+                             kCascadeColors[cascade].y,
+                             kCascadeColors[cascade].z,
+                             m_cascadeDebugOpacity);
+    m_lineRenderer.DrawTriangles(identity, debugCamera->VP, fillColor,
+                                 m_cascadeDebugVB, m_cascadeDebugSolidIB, 36,
+                                 sizeof(float) * 4, IndexBufferFormat::R16,
+                                 box * 8);
+  }
+  for (int box = boxCount - 1; box >= 0; --box) {
+    const int cascade = box;
+    const XVECTOR3 outlineColor(kCascadeColors[cascade].x,
+                                kCascadeColors[cascade].y,
+                                kCascadeColors[cascade].z,
+                                (std::min)(1.0f, m_cascadeDebugOpacity * 4.0f));
+    m_lineRenderer.DrawLines(identity, debugCamera->VP, outlineColor,
                              m_cascadeDebugVB, m_cascadeDebugIB, 24,
                              sizeof(float) * 4, IndexBufferFormat::R16,
                              box * 8);
@@ -2543,26 +2590,33 @@ void MinecraftScene::ApplyShadowSettings() {
     }
   }
 
-  if (m_cameraMode == 1) {
+  if (m_cameraMode == 2) {
     LightCam.Ortho = m_debugCameraOrtho;
+    LightCam.Yaw = m_lightYaw;
+    LightCam.Pitch = m_lightPitch;
     LightCam.AspectRatio = (float)pFramework->pVideoDriver->width /
                            (float)(std::max)(1, pFramework->pVideoDriver->height);
     LightCam.CreatePojection();
     LightCam.Update(0.0f);
     ActiveCam = &LightCam;
     SceneProp.SetPrimaryCamera(ActiveCam);
-  } else if (m_cameraMode == 2 && !SceneProp.Shadows.projections.empty()) {
-    auto& projection = SceneProp.Shadows.projections[0];
-    m_debugCascadeIndex = (std::max)(0, (std::min)(m_debugCascadeIndex, projection.viewCount - 1));
-    ActiveCam = &projection.views[m_debugCascadeIndex].camera;
+  } else if (m_cameraMode == 1) {
+    SpectatorCam.Yaw = m_spectatorYaw;
+    SpectatorCam.Pitch = m_spectatorPitch;
+    SpectatorCam.AspectRatio = (float)pFramework->pVideoDriver->width /
+                               (float)(std::max)(1, pFramework->pVideoDriver->height);
+    SpectatorCam.CreatePojection();
+    SpectatorCam.Update(0.0f);
+    ActiveCam = &SpectatorCam;
     SceneProp.SetPrimaryCamera(ActiveCam);
   } else {
     ActiveCam = &Cam;
     SceneProp.SetPrimaryCamera(&Cam);
   }
+  SceneProp.pCullingCamera = &Cam;
 }
 
-void MinecraftScene::SaveShadowSettings() {
+void MinecraftScene::SaveSceneSettings() {
   if (!m_sceneFile.cameras.empty()) {
     auto& camera = m_sceneFile.cameras[0];
     camera.type = Cam.Ortho ? 1 : 0;
@@ -2573,6 +2627,19 @@ void MinecraftScene::SaveShadowSettings() {
     camera.ortho_h = Cam.Height;
     camera.near_plane = Cam.NPlane;
     camera.far_plane = Cam.FPlane;
+  }
+  if (m_sceneFile.cameras.size() >= 2) {
+    auto& camera = m_sceneFile.cameras[1];
+    camera.type = SpectatorCam.Ortho ? 1 : 0;
+    camera.position = {SpectatorCam.Eye.x, SpectatorCam.Eye.y, SpectatorCam.Eye.z};
+    camera.target = {SpectatorCam.Eye.x + SpectatorCam.Look.x,
+                     SpectatorCam.Eye.y + SpectatorCam.Look.y,
+                     SpectatorCam.Eye.z + SpectatorCam.Look.z};
+    camera.fov_deg = Rad2Deg(SpectatorCam.Fov);
+    camera.ortho_w = SpectatorCam.Width;
+    camera.ortho_h = SpectatorCam.Height;
+    camera.near_plane = SpectatorCam.NPlane;
+    camera.far_plane = SpectatorCam.FPlane;
   }
   if (!m_sceneFile.light_cameras.empty()) {
     auto& camera = m_sceneFile.light_cameras[0];
@@ -2600,10 +2667,12 @@ void MinecraftScene::SaveShadowSettings() {
   }
 
   m_voxelSettings.environment_map = m_currentCubemapPath;
+  m_voxelSettings.player.spawn = {Cam.Eye.x, Cam.Eye.y, Cam.Eye.z};
   m_voxelSettings.show_physics = m_showPhysics;
   m_voxelSettings.show_chunk_bounds = m_showChunkBounds;
   m_voxelSettings.show_cascade_debug = m_showCascadeFrustums;
   m_voxelSettings.cascade_debug_mode = m_cascadeDebugMode;
+  m_voxelSettings.cascade_debug_opacity = m_cascadeDebugOpacity;
   m_voxelSettings.camera_mode = m_cameraMode;
   m_voxelSettings.debug_cascade_index = m_debugCascadeIndex;
   m_voxelSettings.day_night.enabled = m_dayNightEnabled;
@@ -2923,17 +2992,25 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
       t850::SelectorDesc cascadeDebugMode;
       cascadeDebugMode.name = "cascade_debug_mode";
       cascadeDebugMode.label = "Cascade debug geometry";
-      cascadeDebugMode.options = {"Receiver slices", "Light volumes", "Both"};
+      cascadeDebugMode.options = {"Cascade regions", "Light bounds (overlap expected)", "Both"};
       cascadeDebugMode.default_index = 0;
       gui.Combo(cascadeDebugMode, m_cascadeDebugMode);
+
+      t850::SliderDesc cascadeOpacity;
+      cascadeOpacity.name = "cascade_debug_opacity";
+      cascadeOpacity.label = "Cascade volume opacity";
+      cascadeOpacity.min_val = 0.01f;
+      cascadeOpacity.max_val = 0.75f;
+      cascadeOpacity.step = 0.01f;
+      gui.Slider(cascadeOpacity, m_cascadeDebugOpacity);
     }
 
-    gui.BeginSection("Light camera");
+    gui.BeginSection("Cameras");
     {
       t850::SelectorDesc cameraMode;
       cameraMode.name = "camera_mode";
       cameraMode.label = "View camera";
-      cameraMode.options = {"Main camera", "Movable light camera", "Generated cascade"};
+      cameraMode.options = {"Player", "Free spectator", "Light"};
       cameraMode.default_index = 0;
       gui.Combo(cameraMode, m_cameraMode);
 
@@ -2941,16 +3018,6 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
       debugOrtho.name = "debug_camera_ortho";
       debugOrtho.label = "Movable camera orthographic";
       gui.Checkbox(debugOrtho, m_debugCameraOrtho);
-
-      t850::SliderDesc cascadeView;
-      cascadeView.name = "debug_cascade";
-      cascadeView.label = "Cascade to inspect";
-      cascadeView.min_val = 0.0f;
-      cascadeView.max_val = (float)(std::max)(0, m_cascadeCount - 1);
-      cascadeView.step = 1.0f;
-      float selectedCascade = (float)m_debugCascadeIndex;
-      if (gui.Slider(cascadeView, selectedCascade))
-        m_debugCascadeIndex = (int)selectedCascade;
 
       t850::SliderDesc yaw;
       yaw.name = "light_yaw";
@@ -2971,8 +3038,8 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
     }
 
     gui.Separator();
-    if (gui.Button("Save Minecraft scene")) {
-      SaveShadowSettings();
+    if (gui.Button("Save scene and cameras")) {
+      SaveSceneSettings();
     }
   }
 }

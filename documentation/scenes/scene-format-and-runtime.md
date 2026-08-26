@@ -104,12 +104,45 @@ Minecraft uses three data files with non-overlapping ownership:
   checkbox, selector, and Gaussian-filter metadata. It does not own cameras or lights.
 - `Scenes/MinecraftScene_RenderGraph.json`: rendering targets, CSM projection, and passes.
 
-MinecraftScene accepts an explicit `--sceneFile`/`--t8scene` path when scene 5 is selected.
+MinecraftScene accepts an explicit `--sceneFile`/`--t8scene` path when scene 6 is selected.
 Authored dimensions are validated against engine safety capacities and rejected when invalid;
 they are not silently clamped. T8ditor scene snapshots preserve the optional component even
 though a dedicated voxel-authoring panel is not yet present.
 
-Unknown JSON keys are ignored by Glaze on load, so game schema changes require `MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()` rather than relying on parser errors.
+Minecraft has three runtime camera roles selected from the ImGui `Cameras` section:
+
+- **Player** is the character-owned first-person camera. It is always the source for CSM
+  split generation and render-mesh frustum culling.
+- **Free spectator** is an independently authored perspective camera. It receives free-fly
+  WASD/Space/Shift and mouse-look input when selected, but never changes CSM or culling. This
+  intentionally exposes geometry rejected by the player frustum when viewed from outside it.
+- **Light** is the authored light/debug camera. It receives the same free movement input and
+  can switch between perspective and orthographic projection, but also remains a spectator
+  with respect to player-owned CSM and culling.
+
+`ActiveCam` controls rendering only; `SceneProps::pCullingCamera` and
+`ShadowSystem::UpdateProjection` remain bound to the player camera. The `Save scene and
+cameras` button writes player and spectator camera position/orientation to `cameras`, writes
+the light camera to `light_cameras`, synchronizes the player eye to
+`voxel_world.player.spawn`, and persists the selected `camera_mode`. Orientation is stored as
+the authored `target = position + runtime look` convention. Older Minecraft scenes with only
+one camera receive a deterministic spectator fallback that is included on the next save.
+
+Fullscreen shadow composition reconstructs the visible world position using `ActiveCam`, but
+it must transform that world position through the player camera before selecting a cascade.
+Using active-camera linear depth directly makes spectator movement choose different cascade
+tiles even though atlas generation is correctly player-owned. Both production shadow
+sampling and cascade-region debug coloring therefore use the player camera view matrix for
+split depth and its view-projection matrix for frustum containment. Points outside the player
+frustum receive no cascade debug tint and no CSM sample.
+
+Fitted light bounds still depend on directional-light orientation. With authored day/night
+enabled, those bounds can rotate over time even while both player and spectator are stationary;
+that is light movement, not spectator ownership of the cascades.
+
+Unknown JSON keys are ignored by Glaze on load, so game schema changes require
+`MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()` rather than relying on
+parser errors.
 
 ## Object records
 

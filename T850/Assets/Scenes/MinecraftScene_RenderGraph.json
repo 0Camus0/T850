@@ -154,6 +154,29 @@
       "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
     },
     {
+      "name": "Debug Cascade Regions",
+      "target": "Deferred",
+      "push": false,
+      "state": { "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
+      "inputs": [
+        { "source": "GBuffer:DEPTH", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "CASCADE_DEBUG_PASS" }
+      ],
+      "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
+    },
+    {
+      "name": "Debug Cascade Volumes",
+      "target": "Deferred",
+      "push": false,
+      "state": { "depth_stencil": "READ", "cull_face": "FRONT_FACES", "blend": "ALPHA_BLEND" },
+      "draws": [
+        { "type": "callback", "callback": "cascade_debug_volumes" }
+      ],
+      "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
+    },
+    {
       "name": "Light Add",
       "target": "Extra16F",
       "inputs": [

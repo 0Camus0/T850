@@ -777,6 +777,65 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 	return Final;
 }
 
+#elif defined(CASCADE_DEBUG_PASS)
+Texture2D tex0 : register(t0);
+
+#define MAX_CASCADE_DEBUG_VIEWS 6
+cbuffer ShadowSamplingCB : register(b2) {
+	float4x4 ShadowViewProjection[MAX_CASCADE_DEBUG_VIEWS];
+	float4 ShadowSplitDepths[2];
+	float4 ShadowAtlasScaleBias[MAX_CASCADE_DEBUG_VIEWS];
+	float4 ShadowParams0;
+	float4 ShadowParams1;
+}
+
+float GetCascadeDebugSplit(int boundary) {
+	if (boundary < 4) return ShadowSplitDepths[0][boundary];
+	return ShadowSplitDepths[1][boundary - 4];
+}
+
+int GetCascadeDebugIndex(float viewDepth) {
+	int viewCount = clamp((int)ShadowParams0.x, 1, MAX_CASCADE_DEBUG_VIEWS);
+	int result = 0;
+	[unroll]
+	for (int boundary = 0; boundary < MAX_CASCADE_DEBUG_VIEWS - 1; ++boundary) {
+		if (boundary < viewCount - 1 && viewDepth > GetCascadeDebugSplit(boundary))
+			++result;
+	}
+	return min(result, viewCount - 1);
+}
+
+float3 GetCascadeDebugColor(int cascade) {
+	if (cascade == 0) return float3(1.0, 0.2, 0.2);
+	if (cascade == 1) return float3(0.2, 1.0, 0.2);
+	if (cascade == 2) return float3(0.2, 0.4, 1.0);
+	if (cascade == 3) return float3(1.0, 1.0, 0.2);
+	if (cascade == 4) return float3(1.0, 0.4, 1.0);
+	return float3(0.2, 1.0, 1.0);
+}
+
+float4 FS(VS_OUTPUT input) : SV_TARGET {
+	if (toogles.x < 0.5)
+		return float4(0.0, 0.0, 0.0, 0.0);
+
+	float depth = tex0.Sample(SS, input.texture0).r;
+	if (!IsSceneDepthValid(depth))
+		return float4(0.0, 0.0, 0.0, 0.0);
+
+	float4 position = ReconstructPosition(input.ClipPos, depth);
+	float4 playerClip = mul(WVPLight, position);
+	if (playerClip.w <= 0.0)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	playerClip.xyz /= playerClip.w;
+	if (abs(playerClip.x) > 1.0 || abs(playerClip.y) > 1.0 ||
+		playerClip.z < 0.0 || playerClip.z > 1.0)
+		return float4(0.0, 0.0, 0.0, 0.0);
+
+	float viewDepth = mul(World, position).z;
+	int cascade = GetCascadeDebugIndex(viewDepth);
+	return float4(GetCascadeDebugColor(cascade), saturate(toogles.y));
+}
+
 #elif defined(SHADOW_COMP_PASS)
 Texture2D tex0 : register(t0);
 #ifdef ENABLE_SHADOWS
@@ -816,6 +875,14 @@ int GetCascadeIndex(float viewDepth) {
 
 float4 CalculateShadow(float4 position, float viewDepth) {
 	float4 FShadow = float4(1.0,1.0,1.0,1.0);
+
+	float4 playerClip = mul(WVPLight, position);
+	if (playerClip.w <= 0.0)
+		return FShadow;
+	playerClip.xyz /= playerClip.w;
+	if (abs(playerClip.x) > 1.0 || abs(playerClip.y) > 1.0 ||
+		playerClip.z < 0.0 || playerClip.z > 1.0)
+		return FShadow;
 
 	int cascade = GetCascadeIndex(viewDepth);
 	float4 LightPos = mul(ShadowViewProjection[cascade], position);
@@ -922,7 +989,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 position = ReconstructPosition(input.ClipPos, depth);
 
 	#ifdef ENABLE_SHADOWS
-		float viewDepth = LinearizeDepth(depth);
+		float viewDepth = mul(World, position).z;
 		Fcolor = CalculateShadow(position, viewDepth);
 	#endif
 

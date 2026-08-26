@@ -76,9 +76,9 @@ public:
   void DestroyAssets() override;
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
-  void DrawCascadeFrustums();
+  void DrawCascadeLightBounds();
   void ApplyShadowSettings();
-  void SaveShadowSettings();
+  void SaveSceneSettings();
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override;
 
@@ -101,6 +101,7 @@ public:
   std::string m_sceneFilePath = "Scenes/Minecraft.t8scene";
 
   Camera Cam;
+  Camera SpectatorCam;
   Camera LightCam;
   Camera* ActiveCam = nullptr;
   XMATRIX44 VP;
@@ -132,14 +133,18 @@ public:
   t850::LineRenderer m_lineRenderer;
   t850::VertexBuffer* m_cascadeDebugVB = nullptr;
   t850::IndexBuffer*  m_cascadeDebugIB = nullptr;
+  t850::IndexBuffer*  m_cascadeDebugSolidIB = nullptr;
   int m_cascadeDebugVBCapacity = 0;
 
   // ── Shadow debug / control state (ImGui panel) ──
   bool  m_showCascadeFrustums = true;
-  int   m_cascadeDebugMode = 0;       // 0=receiver slices, 1=light volumes, 2=both
-  int   m_cameraMode = 0;             // 0=main, 1=debug light, 2=generated cascade
+  int   m_cascadeDebugMode = 0;       // 0=cascade regions, 1=light bounds, 2=both
+  float m_cascadeDebugOpacity = 0.12f;
+  int   m_cameraMode = 0;             // 0=player, 1=free spectator, 2=light
   int   m_debugCascadeIndex = 0;
   bool  m_debugCameraOrtho = false;
+  float m_spectatorYaw = 0.0f;
+  float m_spectatorPitch = 0.0f;
   float m_lightYaw = 0.0f;
   float m_lightPitch = 0.0f;
   float m_shadowResolution = 0.0f;

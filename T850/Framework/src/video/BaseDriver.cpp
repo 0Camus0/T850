@@ -523,6 +523,7 @@ namespace t850 {
       case PassType::LENS_FLARE_GHOST:   Defines += "#define LENS_FLARE_GHOST\n\n"; break;
       case PassType::DEFERRED_LDR:       Defines += "#define DEFERRED_LDR_PASS\n\n"; break;
       case PassType::DEFERRED_LIGHT_VOLUME: Defines += "#define DEFERRED_LIGHT_VOLUME_PASS\n\n"; break;
+      case PassType::CASCADE_DEBUG:      Defines += "#define CASCADE_DEBUG_PASS\n\n"; break;
       default: break;
       }
 

@@ -781,6 +781,15 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 Texture2D tex0 : register(t0);
 #ifdef ENABLE_SHADOWS
 Texture2D tex1 : register(t1);
+
+#define MAX_SHADOW_VIEWS 6
+cbuffer ShadowSamplingCB : register(b2) {
+	float4x4 ShadowViewProjection[MAX_SHADOW_VIEWS];
+	float4 ShadowSplitDepths[2];
+	float4 ShadowAtlasScaleBias[MAX_SHADOW_VIEWS];
+	float4 ShadowParams0;  // x=viewCount, y=atlasWidth, z=atlasHeight, w=technique
+	float4 ShadowParams1;  // x=farDistance, y=blendFraction, z=shadowBias, w=shadowMin
+}
 #endif
 #ifdef ENABLE_SSAO
 Texture2D tex2 : register(t2); // Packed geometric normals
@@ -788,32 +797,61 @@ Texture2D tex3 : register(t3); // Noise
 #endif
 
 #ifdef ENABLE_SHADOWS
-float4 CalculateShadow(float4 position) {
+float GetShadowSplit(int boundary) {
+	// Only components 0..4 are valid boundaries.
+	if (boundary < 4) return ShadowSplitDepths[0][boundary];
+	return ShadowSplitDepths[1][boundary - 4];
+}
+
+int GetCascadeIndex(float viewDepth) {
+	int viewCount = clamp((int)ShadowParams0.x, 1, MAX_SHADOW_VIEWS);
+	int result = 0;
+	[unroll]
+	for (int boundary = 0; boundary < MAX_SHADOW_VIEWS - 1; ++boundary) {
+		if (boundary < viewCount - 1 && viewDepth > GetShadowSplit(boundary))
+			++result;
+	}
+	return min(result, viewCount - 1);
+}
+
+float4 CalculateShadow(float4 position, float viewDepth) {
 	float4 FShadow = float4(1.0,1.0,1.0,1.0);
 
-	float4 LightPos = mul(WVPLight, position);
+	int cascade = GetCascadeIndex(viewDepth);
+	float4 LightPos = mul(ShadowViewProjection[cascade], position);
 	LightPos.xyz /= LightPos.w;
 	float2 SHTC = LightPos.xy*0.5 + 0.5;
 	SHTC.y = 1.0 - SHTC.y;
 
 	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0) {
+		// Apply per-view atlas scale/bias.
+		float2 atlasScale = ShadowAtlasScaleBias[cascade].xy;
+		float2 atlasBias = ShadowAtlasScaleBias[cascade].zw;
+		float2 atlasUV = SHTC * atlasScale + atlasBias;
+
+		// Texel size from full atlas dimensions.
+		float2 atlasTexel = float2(1.0 / ShadowParams0.y, 1.0 / ShadowParams0.z);
+		// Clamp PCF taps to the selected tile interior (half-texel margin).
+		float2 tileMin = atlasBias + 0.5 * atlasTexel;
+		float2 tileMax = atlasBias + atlasScale - 0.5 * atlasTexel;
 		float sum = 0.0;
 		float x, y;
 		float Total = 0.0;
 		float Origin = brightness.x;
 		[loop] for (y = -Origin; y <= Origin; y += 1.0) {
 			[loop] for (x = -Origin; x <= Origin; x += 1.0) {
-				float2 offset = (brightness.z / brightness.y) * float2(x, y);
-				float2 sampleUV = SHTC.xy + offset;
+				float2 offset = brightness.z * atlasTexel * float2(x, y);
+				float2 sampleUV = atlasUV + offset;
 				float Val_1;
-				if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+				if (sampleUV.x < tileMin.x || sampleUV.x > tileMax.x ||
+				    sampleUV.y < tileMin.y || sampleUV.y > tileMax.y) {
 					Val_1 = 0.0;
 				} else {
 					float depthSM = tex1.Sample(SS1, sampleUV);
-					depthSM -= toogles.w;
+					depthSM -= ShadowParams1.z;  // shadowBias
 					Val_1 = (LightPos.z < depthSM) ? 0.0 : 1.0;
 				}
-        Val_1 = Val_1 * (1.0 - toogles.x) + toogles.x;
+				Val_1 = Val_1 * (1.0 - ShadowParams1.w) + ShadowParams1.w;  // shadowMin
 				sum += Val_1;
 				Total++;
 			}
@@ -821,7 +859,7 @@ float4 CalculateShadow(float4 position) {
 		float shadowCoeff = sum / Total;
 		FShadow = shadowCoeff * float4(1.0,1.0,1.0,1.0);
 	} else {
-    FShadow = toogles.x * float4(1.0,1.0,1.0,1.0);
+		FShadow = ShadowParams1.w * float4(1.0,1.0,1.0,1.0);
 	}
 
 	return FShadow;
@@ -884,7 +922,8 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 position = ReconstructPosition(input.ClipPos, depth);
 
 	#ifdef ENABLE_SHADOWS
-		Fcolor = CalculateShadow(position);
+		float viewDepth = LinearizeDepth(depth);
+		Fcolor = CalculateShadow(position, viewDepth);
 	#endif
 
 	#ifdef ENABLE_SSAO

@@ -15,6 +15,7 @@
 #include <scene/RenderGraph.h>
 #include <scene/RenderMesh.h>
 #include <scene/RenderQueue.h>
+#include <scene/ShadowSystem.h>
 #include <utils/Utils.h>
 
 #if defined(USING_GL_COMMON)
@@ -273,6 +274,9 @@ namespace t850 {
     FrameCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
     bdesc.byteWidth = sizeof(PassCBuffer);
     PassCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+    bdesc.byteWidth = sizeof(ShadowSamplingCBuffer);
+    ShadowSamplingCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+    std::memset(&ShadowSamplingCB, 0, sizeof(ShadowSamplingCBuffer));
 
     /*D3D11_SAMPLER_DESC sdesc;
     sdesc.Filter = D3D11_FILTER_ANISOTROPIC;
@@ -645,6 +649,12 @@ namespace t850 {
     CnstBuffer.toogles.x = pScProp->ShadowMin;
     CnstBuffer.toogles.z = (float)pScProp->DebugMode;
     CnstBuffer.toogles.w = pScProp->ShadowBias;
+    // SHADOW_COMP reconstructs main-camera depth, so CameraInfo must be the
+    // main camera's near/far/fov (used by LinearizeDepth for cascade selection).
+    CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane,
+                                     pActualCamera->Fov, 1.0f);
+    // Upload the effective shadow projection runtime data to slot b2.
+    UploadShadowSamplingCB(*pScProp);
 		for (unsigned int i = 1; i < pScProp->SSAOKernel.vSSAOKernel.size(); i++) {
 			CnstBuffer.LightPositions[i] = pScProp->SSAOKernel.vSSAOKernel[i-1];
 		}
@@ -782,6 +792,9 @@ namespace t850 {
       }
     };
     updateQuadConstants();
+    if (!g_pBaseDriver->UsesGLSL() && pass == PassType::SHADOW_COMP && ShadowSamplingCBGPU) {
+      ShadowSamplingCBGPU->Set(*T8DeviceContext, 2);
+    }
 
     auto textureNameForSlot = [](int slot) -> const char* {
       switch (slot) {
@@ -859,5 +872,66 @@ namespace t850 {
     if (pd3dConstantBuffer) { pd3dConstantBuffer->release(); pd3dConstantBuffer = nullptr; }
     if (FrameCBGPU) { FrameCBGPU->release(); FrameCBGPU = nullptr; }
     if (PassCBGPU) { PassCBGPU->release(); PassCBGPU = nullptr; }
+    if (ShadowSamplingCBGPU) { ShadowSamplingCBGPU->release(); ShadowSamplingCBGPU = nullptr; }
+  }
+
+  void RenderQuad::UploadShadowSamplingCB(const SceneProps& props) {
+    // Zero all entries so count reductions cannot expose stale data.
+    std::memset(&ShadowSamplingCB, 0, sizeof(ShadowSamplingCBuffer));
+
+    if (props.Shadows.projections.empty())
+      return;
+
+    // Use the first enabled directional/CSM projection for the composition pass.
+    const auto& projection = props.Shadows.projections[0];
+    const int viewCount = projection.viewCount;
+    if (viewCount < 1 || viewCount > 6)
+      return;
+
+    CnstBuffer.WVPLight = projection.views[0].viewProjection;
+
+    for (int v = 0; v < viewCount; ++v) {
+      ShadowSamplingCB.ViewProjection[v] = projection.views[v].viewProjection;
+      const auto& atlas = projection.views[v].atlasScaleBias;
+      ShadowSamplingCB.AtlasScaleBias[v].x = atlas.scaleX;
+      ShadowSamplingCB.AtlasScaleBias[v].y = atlas.scaleY;
+      ShadowSamplingCB.AtlasScaleBias[v].z = atlas.biasX;
+      ShadowSamplingCB.AtlasScaleBias[v].w = atlas.biasY;
+    }
+    // Split boundaries: up to 5 boundaries packed into 2 float4s.
+    for (int b = 0; b < kMaxCascadeBoundaries; ++b) {
+      int slot = b / 4;
+      int comp = b % 4;
+      ShadowSamplingCB.SplitDepths[slot].v[comp] = projection.splitBoundaries[b];
+    }
+
+    ShadowSamplingCB.Params0 = XVECTOR3(
+      (float)viewCount,
+      (float)projection.atlasWidth,
+      (float)projection.atlasHeight,
+      (float)t850::ShadowSystem::ResolveTechnique(projection.resolvedDesc.technique));
+    ShadowSamplingCB.Params1 = XVECTOR3(
+      projection.resolvedDesc.far_distance,
+      projection.resolvedDesc.blend_fraction,
+      props.ShadowBias,
+      props.ShadowMin);
+
+    if (g_pBaseDriver->UsesGLSL()) {
+      std::memcpy(CnstBuffer.ShadowViewProjection,
+                  ShadowSamplingCB.ViewProjection,
+                  sizeof(CnstBuffer.ShadowViewProjection));
+      std::memcpy(CnstBuffer.ShadowSplitDepths,
+                  ShadowSamplingCB.SplitDepths,
+                  sizeof(CnstBuffer.ShadowSplitDepths));
+      std::memcpy(CnstBuffer.ShadowAtlasScaleBias,
+                  ShadowSamplingCB.AtlasScaleBias,
+                  sizeof(CnstBuffer.ShadowAtlasScaleBias));
+      CnstBuffer.ShadowParams0 = ShadowSamplingCB.Params0;
+      CnstBuffer.ShadowParams1 = ShadowSamplingCB.Params1;
+    }
+
+    if (ShadowSamplingCBGPU) {
+      ShadowSamplingCBGPU->UpdateFromBuffer(*T8DeviceContext, &ShadowSamplingCB);
+    }
   }
 }

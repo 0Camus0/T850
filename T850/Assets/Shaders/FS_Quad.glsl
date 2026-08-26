@@ -680,6 +680,11 @@ uniform mediump samplerCube tex1;
 #else
 uniform mediump sampler2D tex1;
 #endif
+uniform highp mat4 ShadowViewProjection[6];
+uniform highp vec4 ShadowSplitDepths[2];
+uniform highp vec4 ShadowAtlasScaleBias[6];
+uniform highp vec4 ShadowParams0;  // x=viewCount, y=atlasWidth, z=atlasHeight, w=technique
+uniform highp vec4 ShadowParams1;  // x=farDistance, y=blendFraction, z=shadowBias, w=shadowMin
 #endif
 #ifdef ENABLE_SSAO
 uniform mediump sampler2D tex2; // Normals (geometric)
@@ -687,7 +692,22 @@ uniform mediump sampler2D tex3; // Noise
 #endif
 
 #ifdef ENABLE_SHADOWS
-highp vec4 CalculateShadow(highp vec4 position){
+highp float GetShadowSplit(int boundary) {
+	if (boundary < 4) return ShadowSplitDepths[0][boundary];
+	return ShadowSplitDepths[1][boundary - 4];
+}
+
+int GetCascadeIndex(highp float viewDepth) {
+	int viewCount = clamp(int(ShadowParams0.x), 1, 6);
+	int result = 0;
+	for (int boundary = 0; boundary < 5; ++boundary) {
+		if (boundary < viewCount - 1 && viewDepth > GetShadowSplit(boundary))
+			++result;
+	}
+	return min(result, viewCount - 1);
+}
+
+highp vec4 CalculateShadow(highp vec4 position, highp float viewDepth){
 highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 
 	#if defined OMNIDIRECTIONAL_SH
@@ -719,11 +739,18 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		shadowVal = 1.0 - shadowVal * (1.0 - toogles.x);
 		FShadow = shadowVal*vec4(1.0,1.0,1.0,1.0);//texture(tex1, fragToLight ).rrrr;
 	#else
-	highp vec4 LightPos = WVPLight*position;
+	int cascade = GetCascadeIndex(viewDepth);
+	highp vec4 LightPos = ShadowViewProjection[cascade]*position;
 	LightPos.xyz /= LightPos.w;
 	highp vec2 SHTC = LightPos.xy*0.5 + 0.5;
 	
 	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0 ){
+		highp vec2 atlasScale = ShadowAtlasScaleBias[cascade].xy;
+		highp vec2 atlasBias = ShadowAtlasScaleBias[cascade].zw;
+		highp vec2 atlasUV = SHTC * atlasScale + atlasBias;
+		highp vec2 atlasTexel = vec2(1.0 / ShadowParams0.y, 1.0 / ShadowParams0.z);
+		highp vec2 tileMin = atlasBias + 0.5 * atlasTexel;
+		highp vec2 tileMax = atlasBias + atlasScale - 0.5 * atlasTexel;
 		#if ENABLE_PCF
 			highp float sum = 0.0;
 			highp float x, y;
@@ -732,8 +759,9 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 			for (y = -Origin; y <= Origin; y += 1.0){
 				for (x = -Origin; x <= Origin; x += 1.0){
 					highp float Val_1;
-					highp vec2 sampleUV = SHTC.xy + (brightness.z / brightness.y)*vec2(x, y);
-					if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+					highp vec2 sampleUV = atlasUV + brightness.z * atlasTexel * vec2(x, y);
+					if (sampleUV.x < tileMin.x || sampleUV.x > tileMax.x ||
+					    sampleUV.y < tileMin.y || sampleUV.y > tileMax.y) {
 						Val_1 = 0.0;
 					} else {
 						#ifdef ES_30
@@ -741,10 +769,10 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 						#else
 							highp float depthSM = texture2D(tex1, sampleUV).r;
 						#endif
-						depthSM -= toogles.w;
+						depthSM -= ShadowParams1.z;
 						Val_1 = (LightPos.z < depthSM) ? 0.0 : 1.0;
 					}
-					Val_1 = Val_1 * (1.0 - toogles.x) + toogles.x;
+					Val_1 = Val_1 * (1.0 - ShadowParams1.w) + ShadowParams1.w;
 					sum += Val_1;
 					Total++;
 				}
@@ -753,26 +781,22 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 			highp float shadowCoeff = sum / Total;
 			FShadow = shadowCoeff*vec4(1.0,1.0,1.0,1.0);
 			
-		#else	
+		#else
 			highp float depthSM;
 			#ifdef ES_30
-				highp float depthSM_1 = texture(tex1,SHTC).r;
-				//highp float depthSM_2 = texture(tex4,SHTC).r;
-				depthSM = (depthSM_1+depthSM_2)/2.0;
+				highp float depthSM_1 = texture(tex1, atlasUV).r;
+				depthSM = depthSM_1;
 			#else
-				highp float depthSM_1 = texture2D(tex1,SHTC).r;
-				highp float depthSM_2 = texture2D(tex4,SHTC).r;
-				depthSM = (depthSM_1+depthSM_2)/2.0;
+				highp float depthSM_1 = texture2D(tex1, atlasUV).r;
+				depthSM = depthSM_1;
 			#endif
-		
 			highp float depthPos = LightPos.z;
-
-			if( depthPos < depthSM)
-				FShadow = toogles.x*vec4(1.0,1.0,1.0,1.0);
+			if (depthPos < depthSM)
+				FShadow = ShadowParams1.w*vec4(1.0,1.0,1.0,1.0);
 		#endif
 		
 	}else{
-		FShadow = toogles.x*vec4(1.0,1.0,1.0,1.0);
+		FShadow = ShadowParams1.w*vec4(1.0,1.0,1.0,1.0);
 	}
 	#endif
 	return FShadow;
@@ -865,7 +889,8 @@ void main(){
 	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
 	#ifdef ENABLE_SHADOWS
-		Fcolor = CalculateShadow(position);
+		highp float viewDepth = LinearizeDepth(depth);
+		Fcolor = CalculateShadow(position, viewDepth);
 	#endif
 
 	#ifdef ENABLE_SSAO

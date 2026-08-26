@@ -495,6 +495,13 @@ float4 SampleBaseColor(float2 uv)
 {
 #if defined(DIFFUSE_MAP) && (defined(USE_TEXCOORD0) || defined(USE_TEXCOORD1) || defined(USE_TEXCOORD2) || defined(USE_TEXCOORD3))
     float4 color = TextureRGB.Sample(MaterialSS, ApplyUVTransform(uv, BaseColorUVTransform0, BaseColorUVTransform1));
+    #ifdef SRGB_ALBEDO
+    // GPU already decoded the sRGB texture to linear. Re-encode back to the
+    // stored-sRGB convention the rest of the pipeline expects, so GBuffer albedo
+    // stays byte-identical to a non-sRGB upload and the forward path's own
+    // pow(·,2.2) linearizes it back to true linear for PBR lighting.
+    color.rgb = LinearToStoredAlbedo(color.rgb);
+    #endif
     #ifdef GLTF_TANGENT_SPACE
     color.rgb *= LinearToStoredAlbedo(DiffuseColor.rgb);
     color.a *= DiffuseColor.a;

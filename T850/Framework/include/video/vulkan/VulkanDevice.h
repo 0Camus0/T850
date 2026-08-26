@@ -39,7 +39,9 @@ namespace t850 {
     ShaderBase* CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(),
                              const std::string& vs_name = "", const std::string& fs_name = "") override;
     Texture*    CreateTexture(std::string path) override;
+    Texture*    CreateTextureSrgb(std::string path) override;
     Texture*    CreateTextureFromMemory(const unsigned char* buff, int w, int h, int channels, std::string name) override;
+    Texture*    CreateTextureFromMemorySrgb(const unsigned char* buff, int w, int h, int channels, std::string name) override;
     Texture*    CreateCubeMap(const unsigned char* buff, int w, int h) override;
     Texture*    CreateFloatTexture(int w, int h, const float* data = nullptr) override;
     Texture*    CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr) override;

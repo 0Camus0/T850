@@ -132,10 +132,10 @@ namespace t850 {
       glInternalFormat = GL_ALPHA;
     } else if (this->props&TextBasicFormat::CH_RGB) {
       glFormat = GL_RGB;
-      glInternalFormat = GL_RGB;
+      glInternalFormat = (this->srgb) ? GL_SRGB8 : GL_RGB;
     } else if (this->props&TextBasicFormat::CH_RGBA) {
       glFormat = GL_RGBA;
-      glInternalFormat = GL_RGBA;
+      glInternalFormat = (this->srgb) ? GL_SRGB8_ALPHA8 : GL_RGBA;
     }
 
     glGenTextures(1, &id);

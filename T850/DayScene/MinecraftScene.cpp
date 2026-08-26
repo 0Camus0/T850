@@ -408,12 +408,20 @@ void MinecraftScene::InitVars() {
   m_deltas.Clear();
   m_blockRegistry = t850::terrain::BlockRegistry{};
 
-  const float inv = 1.0f / 4.0f;
-  auto tile = [inv](MinecraftScene::Tile t) {
-    const int i = static_cast<int>(t);
-    return std::pair<float, float>(
-        (static_cast<float>(i % kAtlasColumns)) * inv,
-        (static_cast<float>(i / kAtlasColumns)) * inv);
+  // Real 1024x1024 Minecraft texture atlas: a 64x64 grid of 16x16 tiles.
+  // NOTE: the engine downscales textures by FORCED_FACTOR (Config.h, =2) so the
+  // atlas uploads as 512x512. We therefore address tiles by their grid cell
+  // (col,row) in the 1024 grid and derive UVs from the cell index — this is
+  // resolution-independent and lands on the correct tile at any upload size.
+  // A 0.5-px inset (in the 1024 space) keeps NEAREST sampling from bleeding.
+  auto tileRect = [](int col, int row, t850::terrain::BlockDefinition& d) {
+    constexpr float kInv = 1.0f / 1024.0f;
+    const float in = 0.5f * kInv;
+    const float x = col * 16.0f, y = row * 16.0f;
+    d.atlasU0 = (x + in) * kInv;
+    d.atlasV0 = (y + in) * kInv;
+    d.atlasU1 = (x + 16.0f - in) * kInv;
+    d.atlasV1 = (y + 16.0f - in) * kInv;
   };
 
   t850::terrain::BlockDefinition def;
@@ -423,8 +431,7 @@ void MinecraftScene::InitVars() {
   def.unlit = true;
   def.color = XVECTOR3(0.16f, 0.16f, 0.17f, 1.0f);
   def.usesBaseColorTexture = true;
-  auto [tu, tv] = tile(Tile::Bedrock);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  tileRect(20, 13, def);
   m_bedrock = m_blockRegistry.Register(std::move(def));
 
   def = t850::terrain::BlockDefinition{};
@@ -433,8 +440,7 @@ void MinecraftScene::InitVars() {
   def.color = XVECTOR3(0.49f, 0.49f, 0.50f, 1.0f);
   def.roughness = 0.95f;
   def.usesBaseColorTexture = true;
-  std::tie(tu, tv) = tile(Tile::Stone);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  tileRect(30, 18, def);
   m_stone = m_blockRegistry.Register(std::move(def));
 
   def = t850::terrain::BlockDefinition{};
@@ -443,8 +449,7 @@ void MinecraftScene::InitVars() {
   def.color = XVECTOR3(0.53f, 0.38f, 0.26f, 1.0f);
   def.roughness = 1.0f;
   def.usesBaseColorTexture = true;
-  std::tie(tu, tv) = tile(Tile::Dirt);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  tileRect(17, 10, def);
   m_dirt = m_blockRegistry.Register(std::move(def));
 
   def = t850::terrain::BlockDefinition{};
@@ -453,8 +458,15 @@ void MinecraftScene::InitVars() {
   def.color = XVECTOR3(0.35f, 0.59f, 0.24f, 1.0f);
   def.roughness = 1.0f;
   def.usesBaseColorTexture = true;
-  std::tie(tu, tv) = tile(Tile::Grass);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  // Sides = grass_side (main rect); top = grass_top; bottom = dirt.
+  def.faceTiles = true;
+  tileRect(21, 4, def);                          // top = grass_top
+  def.atlasTopU0 = def.atlasU0; def.atlasTopV0 = def.atlasV0;
+  def.atlasTopU1 = def.atlasU1; def.atlasTopV1 = def.atlasV1;
+  tileRect(17, 10, def);                         // bottom = dirt
+  def.atlasBottomU0 = def.atlasU0; def.atlasBottomV0 = def.atlasV0;
+  def.atlasBottomU1 = def.atlasU1; def.atlasBottomV1 = def.atlasV1;
+  tileRect(20, 6, def);                          // main (all sides) = grass_side
   m_grass = m_blockRegistry.Register(std::move(def));
 
   def = t850::terrain::BlockDefinition{};
@@ -463,8 +475,7 @@ void MinecraftScene::InitVars() {
   def.color = XVECTOR3(0.86f, 0.81f, 0.64f, 1.0f);
   def.roughness = 1.0f;
   def.usesBaseColorTexture = true;
-  std::tie(tu, tv) = tile(Tile::Sand);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  tileRect(28, 17, def);
   m_sand = m_blockRegistry.Register(std::move(def));
 
   def = t850::terrain::BlockDefinition{};
@@ -473,8 +484,7 @@ void MinecraftScene::InitVars() {
   def.color = XVECTOR3(0.44f, 0.44f, 0.45f, 1.0f);
   def.roughness = 0.95f;
   def.usesBaseColorTexture = true;
-  std::tie(tu, tv) = tile(Tile::Cobble);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  tileRect(30, 5, def);
   m_cobble = m_blockRegistry.Register(std::move(def));
 
   def = t850::terrain::BlockDefinition{};
@@ -483,8 +493,7 @@ void MinecraftScene::InitVars() {
   def.color = XVECTOR3(0.67f, 0.50f, 0.31f, 1.0f);
   def.roughness = 0.9f;
   def.usesBaseColorTexture = true;
-  std::tie(tu, tv) = tile(Tile::Planks);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  tileRect(12, 8, def);
   m_planks = m_blockRegistry.Register(std::move(def));
 
   def = t850::terrain::BlockDefinition{};
@@ -493,8 +502,7 @@ void MinecraftScene::InitVars() {
   def.color = XVECTOR3(0.41f, 0.31f, 0.17f, 1.0f);
   def.roughness = 0.9f;
   def.usesBaseColorTexture = true;
-  std::tie(tu, tv) = tile(Tile::Log);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  tileRect(12, 13, def);
   m_log = m_blockRegistry.Register(std::move(def));
 
   def = t850::terrain::BlockDefinition{};
@@ -503,8 +511,7 @@ void MinecraftScene::InitVars() {
   def.color = XVECTOR3(0.23f, 0.45f, 0.18f, 1.0f);
   def.roughness = 1.0f;
   def.usesBaseColorTexture = true;
-  std::tie(tu, tv) = tile(Tile::Leaves);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  tileRect(21, 7, def);
   m_leaves = m_blockRegistry.Register(std::move(def));
 
   def = t850::terrain::BlockDefinition{};
@@ -519,8 +526,7 @@ void MinecraftScene::InitVars() {
   def.occludes = false;   // see-through: neighbours draw their faces through it
   def.collidable = false;
   def.doubleSided = true;
-  std::tie(tu, tv) = tile(Tile::Water);
-  def.atlasU0 = tu; def.atlasV0 = tv; def.atlasU1 = tu + inv; def.atlasV1 = tv + inv;
+  tileRect(3, 9, def);
   m_water = m_blockRegistry.Register(std::move(def));
 
   m_hotbar = {m_grass, m_dirt, m_stone, m_cobble, m_planks, m_log, m_leaves, m_sand, m_water};
@@ -577,13 +583,15 @@ void MinecraftScene::InitVars() {
       }
     }
   }
-  const int spawnY = spawnH + 3;
+  const int spawnY = spawnH + 4;
   m_spawnX = spawnX; m_spawnZ = spawnZ; m_spawnY = spawnY;
   m_camera.InitPerspective(XVECTOR3(static_cast<float>(spawnX), static_cast<float>(spawnY), static_cast<float>(spawnZ)),
                            Deg2Rad(70.0f), 1280.0f / 720.0f, 0.05f, 1000.0f);
   m_camera.Eye = XVECTOR3(static_cast<float>(spawnX), static_cast<float>(spawnY), static_cast<float>(spawnZ), 1.0f);
   m_camera.Yaw = 0.0f;
-  m_camera.Pitch = 0.0f;  // level view: creeper at eye-1 sits just below center
+  // Gentle downward tilt (Pitch>0 looks down: Pitch=asin(-Look.y)) reveals the
+  // textured ground (grass tops, dirt, trees) instead of nearby hill walls.
+  m_camera.Pitch = 0.25f;
   m_camera.Update(0.0f);
   m_cameraController.SetActiveProfile(t850::CameraProfileType::GroundedFps);
   m_cameraController.AttachCamera(&m_camera);
@@ -724,19 +732,19 @@ void MinecraftScene::CreateAssets() {
   m_renderContainer.SetLightCamera(&m_lightCamera);
   m_renderContainer.Graph().DisablePass("Light Add");
 
-  // --- Block atlas (12 procedural 16x16 tiles in a 4x4 layout, 64x64 px) ---
+  // --- Block atlas: the real 1024x1024 Minecraft texture atlas, uploaded as an
+  //     sRGB texture so the GPU decodes samples to linear. NEAREST + CLAMP keeps
+  //     the crisp pixel-art look. (Resolves to Textures/minecraft_atlas.png.) ---
   if (pEngineContext && pEngineContext->device) {
-    std::vector<unsigned char> atlas(64 * 64 * 4, 0);
-    for (int t = 0; t < static_cast<int>(Tile::Count); ++t) {
-      unsigned char* px = atlas.data() + (t / kAtlasColumns) * 16 * 64 + (t % kAtlasColumns) * 4;
-      PaintTile(px, t);
-    }
-    m_blockAtlas = pEngineContext->device->CreateTextureFromMemory(
-        atlas.data(), 64, 64, 4, "minecraft_block_atlas");
+    m_blockAtlas = pEngineContext->device->CreateTextureSrgb("minecraft_atlas.png");
     if (m_blockAtlas) {
       m_blockAtlas->params = t850::TextBasicParams::CLAMP_TO_EDGE |
           t850::TextBasicParams::NEAREST_FILTER;
       m_blockAtlas->SetTextureParams();
+      T8_LOG_INFO("[MinecraftScene] Loaded real atlas %dx%d srgb=1",
+                  m_blockAtlas->x, m_blockAtlas->y);
+    } else {
+      T8_LOG_ERROR("[MinecraftScene] Failed to load minecraft_atlas.png");
     }
   }
 
@@ -767,6 +775,7 @@ void MinecraftScene::CreateAssets() {
     m_creeperMesh = std::make_unique<t850::MutableMesh>();
     m_creeperMesh->SetEngineContext(pEngineContext);
     m_creeperMesh->Create();
+    m_creeperMesh->SetBaseColorTexture(m_blockAtlas);
     std::string error;
     t850::MutableMeshSnapshot snapshot = BuildCreeperMesh();
     if (!m_creeperMesh->ReplaceSnapshot(std::move(snapshot), &error)) {
@@ -869,6 +878,7 @@ void MinecraftScene::CommitStreamedChunk(t850::terrain::VoxelChunkBuildResult re
   render.mesh = std::make_unique<t850::MutableMesh>();
   render.mesh->SetEngineContext(pEngineContext);
   render.mesh->Create();
+  render.mesh->SetBaseColorTexture(m_blockAtlas);
   std::string error;
   if (!render.mesh->ReplaceSnapshot(std::move(result.mesh), &error)) {
     T8_LOG_ERROR("[MinecraftScene] Streamed chunk GPU commit failed: %s", error.c_str());
@@ -990,6 +1000,7 @@ void MinecraftScene::RebuildChunkMeshes() {
       render.mesh = std::make_unique<t850::MutableMesh>();
       render.mesh->SetEngineContext(pEngineContext);
       render.mesh->Create();
+      render.mesh->SetBaseColorTexture(m_blockAtlas);
       if (!render.mesh->ReplaceSnapshot(std::move(snapshot), &error)) {
         T8_LOG_ERROR("[MinecraftScene] Chunk GPU commit failed: %s", error.c_str());
         if (replacementBody.IsValid() && pEngineContext && pEngineContext->physics) {
@@ -1035,69 +1046,53 @@ void MinecraftScene::RebuildChunkMeshes() {
 }
 
 t850::MutableMeshSnapshot MinecraftScene::BuildCreeperMesh() const {
-  // Solid colors (no atlas): the deferred/GBuffer pass in this render graph does
-  // not apply the block atlas to MutableMesh, so we bake the creeper's flat
-  // Minecraft colors directly. Green skin + black face + black face features.
-  auto makeMat = [](float r, float g, float b) {
-    t850::MutableMeshMaterial m;
-    m.baseColor = XVECTOR3(r, g, b, 1.0f);
-    m.usesBaseColorTexture = false;
-    m.unlit = true;
-    m.doubleSided = true;
-    return m;
-  };
-  auto makeDef = [](float r, float g, float b) {
-    t850::terrain::BlockDefinition d;
-    d.color = XVECTOR3(r, g, b, 1.0f);
-    d.usesBaseColorTexture = false;
+  // The creeper now samples the real atlas: a mottled-green skin tile for the
+  // body/sides and the classic creeper face tile for the head's front. The face
+  // tile already contains the painted eyes/nose/mouth, so no extra feature quads
+  // are needed. Everything is unlit for the flat Minecraft look.
+  // Grid-cell based tile rect (see InitVars for explanation).
+  auto tileRect = [](int col, int row, t850::terrain::BlockDefinition& d) {
+    constexpr float kInv = 1.0f / 1024.0f;
+    const float in = 0.5f * kInv;
+    const float x = col * 16.0f, y = row * 16.0f;
+    d.atlasU0 = (x + in) * kInv;
+    d.atlasV0 = (y + in) * kInv;
+    d.atlasU1 = (x + 16.0f - in) * kInv;
+    d.atlasV1 = (y + 16.0f - in) * kInv;
+    d.usesBaseColorTexture = true;
     d.unlit = true;
     d.doubleSided = true;
-    return d;
+    d.color = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);
   };
-  const auto skinDef = makeDef(0.42f, 0.66f, 0.36f);  // creeper green
-  const auto blackDef = makeDef(0.05f, 0.05f, 0.05f); // face + features
+  t850::terrain::BlockDefinition skinDef;
+  tileRect(19, 2, skinDef);            // solid mottled-green creeper skin
+  t850::terrain::BlockDefinition faceDef;
+  tileRect(18, 0, faceDef);            // classic creeper face
 
   t850::MutableMeshSnapshot snapshot;
-  std::vector<uint32_t> sideIdx, faceIdx, featIdx;
+  std::vector<uint32_t> sideIdx, faceIdx;
   // Body: 0.5 x 0.7 x 0.25, feet at y=0 (all green).
   PushBox(snapshot.vertices, sideIdx, faceIdx, -0.25f, 0.0f, -0.125f, 0.25f, 0.7f, 0.125f,
           skinDef, skinDef);
-  // Head: 0.5 x 0.5 x 0.5, black face on +z.
+  // Head: 0.5 x 0.5 x 0.5, creeper face on +z.
   PushBox(snapshot.vertices, sideIdx, faceIdx, -0.25f, 0.7f, -0.25f, 0.25f, 1.2f, 0.25f,
-          skinDef, blackDef);
+          skinDef, faceDef);
 
-  // Face features (black quads just in front of the face plane, z = 0.252):
-  // eyes, nose/mouth, chin.  Face spans x[-0.25,0.25], y[0.7,1.2].
-  auto feat = [&](float x0, float y0, float x1, float y1) {
-    const float z = 0.252f;
-    const uint32_t base = static_cast<uint32_t>(snapshot.vertices.size());
-    XVECTOR3 n(0, 0, 1, 0);
-    snapshot.vertices.push_back(t850::MutableMeshVertex{XVECTOR3(x0, y0, z, 1.0f), n, 0.0f, 0.0f});
-    snapshot.vertices.push_back(t850::MutableMeshVertex{XVECTOR3(x1, y0, z, 1.0f), n, 1.0f, 0.0f});
-    snapshot.vertices.push_back(t850::MutableMeshVertex{XVECTOR3(x1, y1, z, 1.0f), n, 1.0f, 1.0f});
-    snapshot.vertices.push_back(t850::MutableMeshVertex{XVECTOR3(x0, y1, z, 1.0f), n, 0.0f, 1.0f});
-    featIdx.insert(featIdx.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
-  };
-  feat(-0.18f, 0.98f, -0.05f, 1.12f);  // left eye
-  feat(0.05f, 0.98f, 0.18f, 1.12f);    // right eye
-  feat(-0.06f, 0.78f, 0.06f, 0.98f);   // nose
-  feat(-0.11f, 0.74f, -0.03f, 0.78f);  // mouth left
-  feat(0.03f, 0.74f, 0.11f, 0.78f);    // mouth right
-
-  snapshot.materials.push_back(makeMat(0.42f, 0.66f, 0.36f)); // 0: green skin
-  snapshot.materials.push_back(makeMat(0.05f, 0.05f, 0.05f)); // 1: black face
-  snapshot.materials.push_back(makeMat(0.05f, 0.05f, 0.05f)); // 2: black features
+  t850::MutableMeshMaterial mat;
+  mat.baseColor = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);
+  mat.usesBaseColorTexture = true;
+  mat.unlit = true;
+  mat.doubleSided = true;
+  mat.roughness = 1.0f;
+  snapshot.materials.push_back(mat);
 
   uint32_t first = 0;
   snapshot.sections.push_back({first, (uint32_t)sideIdx.size(), 0});
   first += (uint32_t)sideIdx.size();
-  snapshot.sections.push_back({first, (uint32_t)faceIdx.size(), 1});
-  first += (uint32_t)faceIdx.size();
-  snapshot.sections.push_back({first, (uint32_t)featIdx.size(), 2});
+  snapshot.sections.push_back({first, (uint32_t)faceIdx.size(), 0});
 
   snapshot.indices.insert(snapshot.indices.end(), sideIdx.begin(), sideIdx.end());
   snapshot.indices.insert(snapshot.indices.end(), faceIdx.begin(), faceIdx.end());
-  snapshot.indices.insert(snapshot.indices.end(), featIdx.begin(), featIdx.end());
   t850::RecalculateMutableMeshBounds(snapshot);
   return snapshot;
 }

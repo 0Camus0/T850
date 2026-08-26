@@ -108,8 +108,25 @@ namespace t850 {
     return tex;
   }
 
+  Texture* VulkanDevice::CreateTextureSrgb(std::string path) {
+    VulkanTexture* tex = new VulkanTexture;
+    tex->srgb = true;
+    if (!tex->LoadTexture(path.c_str())) {
+      delete tex;
+      return nullptr;
+    }
+    return tex;
+  }
+
   Texture* VulkanDevice::CreateTextureFromMemory(const unsigned char* buff, int w, int h, int channels, std::string name) {
     VulkanTexture* tex = new VulkanTexture;
+    tex->LoadFromMemory(buff, w, h, channels, name.c_str());
+    return tex;
+  }
+
+  Texture* VulkanDevice::CreateTextureFromMemorySrgb(const unsigned char* buff, int w, int h, int channels, std::string name) {
+    VulkanTexture* tex = new VulkanTexture;
+    tex->srgb = true;
     tex->LoadFromMemory(buff, w, h, channels, name.c_str());
     return tex;
   }

@@ -57,7 +57,16 @@ namespace t850 {
     virtual Buffer* CreateBuffer(BufferType::E bufferType, BufferDesc desc, void* initialData = nullptr) = 0;
     virtual ShaderBase* CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "") = 0;
     virtual Texture* CreateTexture(std::string path) = 0;
+    // File-based sRGB texture (e.g. "atlas.png" -> Textures/atlas.png). The GPU
+    // decodes samples to linear; the returned texture has ->srgb set.
+    virtual Texture* CreateTextureSrgb(std::string path) = 0;
     virtual Texture* CreateTextureFromMemory(const unsigned char *buff, int w, int h, int channels, std::string name) = 0;
+    // Create an 8-bit UNORM color texture whose samples are decoded from sRGB to
+    // linear by the hardware. The returned texture has ->srgb set, so shaders can
+    // detect it (ShaderKey::SRGB_ALBEDO) and skip their own gamma linearization.
+    // Every backend must pick the platform sRGB format (R8G8B8A8_SRGB / GL_SRGB8_ALPHA8 /
+    // DXGI R8G8B8A8_UNORM_SRGB) so the GPU does the decode.
+    virtual Texture* CreateTextureFromMemorySrgb(const unsigned char *buff, int w, int h, int channels, std::string name) = 0;
     virtual Texture* CreateCubeMap(const unsigned char * buff, int w, int h) = 0;
     // Create an RGBA32F texture for raw float data (e.g., bone matrices).
     // No mips, NEAREST filtering. Can be updated per-frame via Texture::UpdateFloatData.
@@ -154,6 +163,9 @@ namespace t850 {
     unsigned int	mipmaps;
     unsigned int	m_channels;
     std::string m_shaderTextureName;
+    // True when the GPU stores this texture in an sRGB format and decodes samples
+    // to linear automatically (see Device::CreateTextureFromMemorySrgb).
+    bool          srgb = false;
   };
 
   class BaseRT {

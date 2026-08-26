@@ -24,6 +24,12 @@ struct BlockDefinition {
   float atlasV0 = 0.0f;
   float atlasU1 = 1.0f;
   float atlasV1 = 1.0f;
+  // Optional per-face tiles (Minecraft-style): when faceTiles is set, the top
+  // face uses atlasTop*, the bottom face uses atlasBottom*, and every side face
+  // uses the main atlasU0..atlasV1 rect. When false, all faces use the main rect.
+  bool faceTiles = false;
+  float atlasTopU0 = 0.0f, atlasTopV0 = 0.0f, atlasTopU1 = 1.0f, atlasTopV1 = 1.0f;
+  float atlasBottomU0 = 0.0f, atlasBottomV0 = 0.0f, atlasBottomU1 = 1.0f, atlasBottomV1 = 1.0f;
   bool usesBaseColorTexture = false;
   bool renderable = true;
   bool occludes = true;

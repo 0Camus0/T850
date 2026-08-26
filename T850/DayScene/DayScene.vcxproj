@@ -397,6 +397,7 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     <ClCompile Include="RagdollEditor.cpp" />
     <ClCompile Include="SandboxScene.cpp" />
     <ClCompile Include="VoxelScene.cpp" />
+    <ClCompile Include="MinecraftScene.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Application.h" />
@@ -407,6 +408,7 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     <ClInclude Include="SandboxRenderGraphUtils.h" />
     <ClInclude Include="SandboxScene.h" />
     <ClInclude Include="VoxelScene.h" />
+    <ClInclude Include="MinecraftScene.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="DayScene.rc" />

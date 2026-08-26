@@ -1,0 +1,3012 @@
+/*********************************************************
+* MinecraftScene — a voxel world built on the T850 engine.
+* Procedural chunk meshes, Perlin terrain, trees, player
+* FPS controller with Jolt physics, block breaking/placing.
+*********************************************************/
+
+#include <MinecraftScene.h>
+#include <SandboxRenderGraphUtils.h>
+#include <video/BaseDriver.h>
+#include <utils/Log.h>
+#include <utils/RuntimeProfile.h>
+#include <scene/PrimitiveManager.h>
+#include <scene/PrimitiveInstance.h>
+#include <scene/RenderMesh.h>
+#include <scene/MeshAssetCache.h>
+#include <scene/IBLResources.h>
+#include <scene/ShadowSystem.h>
+#include <core/Config.h>
+#include <core/EngineContext.h>
+#include <physics/CharacterController.h>
+#include <utils/ResourceLocator.h>
+#include <utils/ThreadPool.h>
+#include <debug/RuntimeTelemetry.h>
+#include <imgui/DevGuiContext.h>
+
+#include <array>
+#include <iostream>
+#include <fstream>
+#include <filesystem>
+#include <iomanip>
+#include <string>
+#include <cstdint>
+#include <cmath>
+#include <vector>
+#include <algorithm>
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
+#include <utility>
+#include <functional>
+#include <limits>
+#include <mutex>
+#include <chrono>
+
+using namespace t850;
+using std::string;
+
+extern std::vector<std::string> g_args;
+
+namespace t850 {
+  extern Device* T8Device;
+  extern DeviceContext* T8DeviceContext;
+}
+
+namespace {
+
+  // ── Block definitions ──────────────────────────────────────────────
+  // Atlas: 16x16 tiles in a 256x256 texture. Tile (u,v) with u,v in [0,15].
+  // Face order: 0=+X, 1=-X, 2=+Y(top), 3=-Y(bottom), 4=+Z, 5=-Z
+  // ── Math helpers (local, matching engine conventions) ──────────────
+  float Dot3(const XVECTOR3& a, const XVECTOR3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+  }
+  XVECTOR3 Cross3(const XVECTOR3& a, const XVECTOR3& b) {
+    return XVECTOR3(
+      a.y * b.z - a.z * b.y,
+      a.z * b.x - a.x * b.z,
+      a.x * b.y - a.y * b.x, 0.0f);
+  }
+  XVECTOR3 Normalize3(const XVECTOR3& v, const XVECTOR3& fallback = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f)) {
+    const float len = std::sqrt(Dot3(v, v));
+    if (len <= 0.000001f) return fallback;
+    return XVECTOR3(v.x / len, v.y / len, v.z / len, 0.0f);
+  }
+  float Length3(const XVECTOR3& v) { return std::sqrt(Dot3(v, v)); }
+
+  // ── Deterministic hash-based noise (Perlin-ish) ────────────────────
+  inline float Hash2D(int x, int z) {
+    unsigned int h = (unsigned int)(x * 374761393 + z * 668265263) ^ 0x85ebca6bu;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    h = h ^ (h >> 16);
+    return (float)(h & 0xFFFF) / 65535.0f; // [0,1]
+  }
+
+  inline float SmoothStep(float t) { return t * t * (3.0f - 2.0f * t); }
+
+  float ValueNoise2D(float x, float z) {
+    const int ix = (int)std::floor(x);
+    const int iz = (int)std::floor(z);
+    const float fx = x - ix;
+    const float fz = z - iz;
+    const float sx = SmoothStep(fx);
+    const float sz = SmoothStep(fz);
+    const float v00 = Hash2D(ix, iz);
+    const float v10 = Hash2D(ix + 1, iz);
+    const float v01 = Hash2D(ix, iz + 1);
+    const float v11 = Hash2D(ix + 1, iz + 1);
+    const float a = v00 + (v10 - v00) * sx;
+    const float b = v01 + (v11 - v01) * sx;
+    return a + (b - a) * sz; // [0,1]
+  }
+
+  float Fbm2D(float x, float z, int octaves, float lacunarity, float gain) {
+    float amp = 1.0f;
+    float freq = 1.0f;
+    float sum = 0.0f;
+    float norm = 0.0f;
+    for (int o = 0; o < octaves; ++o) {
+      sum += amp * ValueNoise2D(x * freq, z * freq);
+      norm += amp;
+      amp *= gain;
+      freq *= lacunarity;
+    }
+    return sum / norm; // [0,1]
+  }
+
+  float ValueNoise3D(int x, int y, int z) {
+    // Simple 3D hash noise for cave carving
+    unsigned int h = (unsigned int)(x * 374761393 + y * 668265263 + z * 1442695041) ^ 0x85ebca6bu;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    h = h ^ (h >> 16);
+    return (float)(h & 0xFFFF) / 65535.0f;
+  }
+
+  // ── Face geometry tables ───────────────────────────────────────────
+  // Each face: 4 corners (CCW when viewed from outside), normal, and
+  // the UV mapping. Block-local coords in [0,1].
+  struct FaceDef {
+    XVECTOR3 corners[4];
+    XVECTOR3 normal;
+  };
+
+  const FaceDef kFaces[6] = {
+    // +X
+    { { XVECTOR3(1,0,0), XVECTOR3(1,1,0), XVECTOR3(1,1,1), XVECTOR3(1,0,1) }, XVECTOR3(1,0,0,0) },
+    // -X
+    { { XVECTOR3(0,0,1), XVECTOR3(0,1,1), XVECTOR3(0,1,0), XVECTOR3(0,0,0) }, XVECTOR3(-1,0,0,0) },
+    // +Y (top)
+    { { XVECTOR3(0,1,0), XVECTOR3(0,1,1), XVECTOR3(1,1,1), XVECTOR3(1,1,0) }, XVECTOR3(0,1,0,0) },
+    // -Y (bottom)
+    { { XVECTOR3(0,0,1), XVECTOR3(0,0,0), XVECTOR3(1,0,0), XVECTOR3(1,0,1) }, XVECTOR3(0,-1,0,0) },
+    // +Z (CCW when viewed from +Z)
+    { { XVECTOR3(0,0,1), XVECTOR3(1,0,1), XVECTOR3(1,1,1), XVECTOR3(0,1,1) }, XVECTOR3(0,0,1,0) },
+    // -Z (CCW when viewed from -Z)
+    { { XVECTOR3(1,0,0), XVECTOR3(0,0,0), XVECTOR3(0,1,0), XVECTOR3(1,1,0) }, XVECTOR3(0,0,-1,0) },
+  };
+
+  // UV corners for a face (u0,v0) bottom-left .. (u1,v1) top-right
+  struct UVQuad { float u0, v0, u1, v1; };
+
+  UVQuad TileUV(int tileU, int tileV, int atlasTiles) {
+    const float inv = 1.0f / (float)atlasTiles;
+    return { tileU * inv, tileV * inv, (tileU + 1) * inv, (tileV + 1) * inv };
+  }
+
+} // namespace
+
+bool MinecraftScene::LoadAuthoredScene() {
+  std::string error;
+  if (!t850::scene::LoadEditorSceneFile(m_sceneFilePath, m_sceneFile, &error)) {
+    T8_LOG_ERROR("[Minecraft] Failed to load authored scene '%s': %s",
+                 m_sceneFilePath.c_str(), error.c_str());
+    return false;
+  }
+  if (!m_sceneFile.voxel_world.has_value()) {
+    T8_LOG_ERROR("[Minecraft] Scene '%s' has no voxel_world component", m_sceneFilePath.c_str());
+    return false;
+  }
+  m_voxelSettings = *m_sceneFile.voxel_world;
+  if (m_voxelSettings.chunk_size < 1 || m_voxelSettings.chunk_size > kMaxChunkSize ||
+      m_voxelSettings.world_height < 8 || m_voxelSettings.world_height > kMaxWorldHeight ||
+      m_voxelSettings.render_distance < 1 || m_voxelSettings.render_distance > kMaxRenderDistance ||
+      m_voxelSettings.water_level < 1 || m_voxelSettings.water_level >= m_voxelSettings.world_height - 1 ||
+      m_voxelSettings.atlas_size < 16 || m_voxelSettings.atlas_tiles_per_axis < 1 ||
+      m_voxelSettings.atlas_size % m_voxelSettings.atlas_tiles_per_axis != 0) {
+    T8_LOG_ERROR("[Minecraft] Invalid voxel_world dimensions in '%s'", m_sceneFilePath.c_str());
+    return false;
+  }
+  ApplyVoxelSettings();
+  if (m_blockDefs.empty()) return false;
+  return true;
+}
+
+void MinecraftScene::ApplyVoxelSettings() {
+  m_chunkSize = m_voxelSettings.chunk_size;
+  m_worldHeight = m_voxelSettings.world_height;
+  m_waterLevel = m_voxelSettings.water_level;
+  m_renderDistance = m_voxelSettings.render_distance;
+  m_chunkCountX = m_renderDistance * 2 + 1;
+  m_chunkCountZ = m_chunkCountX;
+  m_maxChunks = m_chunkCountX * m_chunkCountZ;
+  m_mobMeshIndex = m_maxChunks;
+  m_weaponMeshIndex = m_maxChunks + 1;
+  m_renderMeshCount = m_maxChunks + 2;
+  m_seed = m_voxelSettings.seed;
+  m_maxUploadsPerFrame = (std::max)(1, m_voxelSettings.max_uploads_per_frame);
+  m_asyncStreaming = m_voxelSettings.async_streaming;
+  m_atlasSize = m_voxelSettings.atlas_size;
+  m_atlasTiles = m_voxelSettings.atlas_tiles_per_axis;
+  m_currentCubemapPath = m_voxelSettings.environment_map;
+  m_showPhysics = m_voxelSettings.show_physics;
+  m_showChunkBounds = m_voxelSettings.show_chunk_bounds;
+  m_showCascadeFrustums = m_voxelSettings.show_cascade_debug;
+  m_cascadeDebugMode = (std::max)(0, (std::min)(2, m_voxelSettings.cascade_debug_mode));
+  m_cameraMode = (std::max)(0, (std::min)(2, m_voxelSettings.camera_mode));
+  m_debugCascadeIndex = (std::max)(0, m_voxelSettings.debug_cascade_index);
+  m_timeOfDay = m_voxelSettings.day_night.time_of_day;
+  m_dayLengthSecs = (std::max)(1.0f, m_voxelSettings.day_night.day_length_seconds);
+  m_dayNightEnabled = m_voxelSettings.day_night.enabled;
+  m_mouseSensitivity = (std::max)(0.00001f, m_voxelSettings.player.mouse_sensitivity);
+  m_debugCameraSpeed = (std::max)(0.1f, m_voxelSettings.player.debug_camera_speed);
+  m_mob.position = XVECTOR3(m_voxelSettings.mob.spawn.x,
+                            m_voxelSettings.mob.spawn.y,
+                            m_voxelSettings.mob.spawn.z, 1.0f);
+
+  m_blockDefs.clear();
+  m_blockDefs.reserve(m_voxelSettings.blocks.size());
+  for (const auto& source : m_voxelSettings.blocks) {
+    BlockDef block;
+    block.name = source.name;
+    block.opaque = source.opaque;
+    block.solid = source.solid;
+    for (int face = 0; face < 6; ++face) {
+      block.tiles[face] = {source.tiles[face * 2], source.tiles[face * 2 + 1]};
+    }
+    for (int component = 0; component < 4; ++component) {
+      block.color[component] = static_cast<unsigned char>(
+        (std::max)(0, (std::min)(255, source.color[component])));
+    }
+    m_blockDefs.push_back(std::move(block));
+  }
+  if (m_blockDefs.empty() || m_blockDefs.size() > 256) {
+    T8_LOG_ERROR("[Minecraft] voxel_world.blocks must contain 1..256 entries");
+    return;
+  }
+  m_blockIds.clear();
+  for (std::size_t index = 0; index < m_blockDefs.size(); ++index)
+    m_blockIds[m_blockDefs[index].name] = static_cast<uint8_t>(index);
+  m_hotbar.clear();
+  for (const std::string& name : m_voxelSettings.hotbar) {
+    auto found = m_blockIds.find(name);
+    if (found != m_blockIds.end()) m_hotbar.push_back(found->second);
+  }
+  if (!m_hotbar.empty()) m_selectedBlock = m_hotbar.front();
+}
+
+uint8_t MinecraftScene::BlockId(const std::string& name, uint8_t fallback) const {
+  const auto found = m_blockIds.find(name);
+  return found != m_blockIds.end() ? found->second : fallback;
+}
+
+int MinecraftScene::WorldToChunk(int wx) const {
+  return (int)std::floor((float)wx / (float)m_chunkSize);
+}
+
+int MinecraftScene::WorldToLocal(int wx) const {
+  int local = wx % m_chunkSize;
+  if (local < 0) local += m_chunkSize;
+  return local;
+}
+
+// ── Chunk index (relative to current center) ────────────────────────
+int MinecraftScene::ChunkIndex(int cx, int cz) const {
+  const int ox = cx - m_centerChunkX + m_renderDistance;
+  const int oz = cz - m_centerChunkZ + m_renderDistance;
+  if (ox < 0 || ox >= m_chunkCountX || oz < 0 || oz >= m_chunkCountZ) return -1;
+  return oz * m_chunkCountX + ox;
+}
+
+// ── Noise accessors (member, use seed) ───────────────────────────────
+float MinecraftScene::Noise2D(float x, float z) const {
+  const auto& terrain = m_voxelSettings.terrain;
+  return Fbm2D(x * terrain.base_frequency + m_seed * 0.001f,
+               z * terrain.base_frequency + m_seed * 0.001f,
+               terrain.base_octaves, terrain.base_lacunarity, terrain.base_gain);
+}
+
+float MinecraftScene::Noise3D(float x, float y, float z) const {
+  return ValueNoise3D((int)x, (int)y, (int)z);
+}
+
+int MinecraftScene::HeightAt(int wx, int wz) const {
+  const auto& terrain = m_voxelSettings.terrain;
+  const float n = Noise2D((float)wx, (float)wz);
+  const int base = terrain.base_height + (int)(n * terrain.base_amplitude);
+  const float mountainNoise = Fbm2D(
+    (float)wx * terrain.mountain_frequency + m_seed * 0.002f,
+    (float)wz * terrain.mountain_frequency + m_seed * 0.002f,
+    terrain.mountain_octaves, terrain.mountain_lacunarity, terrain.mountain_gain);
+  return (std::min)(m_worldHeight - 2,
+    base + (int)(mountainNoise * mountainNoise * terrain.mountain_amplitude));
+}
+
+// ── Block access ─────────────────────────────────────────────────────
+uint8_t MinecraftScene::GetBlock(int wx, int wy, int wz) const {
+  if (wy < 0 || wy >= m_worldHeight) return BlockId("air", 0);
+  const int cx = WorldToChunk(wx);
+  const int cz = WorldToChunk(wz);
+  const int idx = ChunkIndex(cx, cz);
+  if (idx < 0) return BlockId("air", 0);
+  const int lx = WorldToLocal(wx);
+  const int lz = WorldToLocal(wz);
+  return m_blocks[idx % m_chunkCountX][wy][idx / m_chunkCountX][lx][lz];
+}
+
+void MinecraftScene::SetBlock(int wx, int wy, int wz, uint8_t block) {
+  if (wy < 0 || wy >= m_worldHeight) return;
+  const int cx = WorldToChunk(wx);
+  const int cz = WorldToChunk(wz);
+  const int idx = ChunkIndex(cx, cz);
+  if (idx < 0) return;
+  const int lx = WorldToLocal(wx);
+  const int lz = WorldToLocal(wz);
+  m_blocks[idx % m_chunkCountX][wy][idx / m_chunkCountX][lx][lz] = block;
+  m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX] = true;
+  // The world changed, so the navmesh is stale. Rebuild it (throttled in
+  // OnUpdate) so enemies re-path around the new/removed block.
+  m_navMeshDirty = true;
+  // Cancel any stale async build for this chunk so the synchronous
+  // RebuildDirtyChunks path is the only one that rebuilds it (avoids a
+  // race with ProcessPendingChunks uploading a stale snapshot mesh).
+  CancelPendingChunk(cx, cz);
+  // Mark neighbor chunks dirty if on a border
+  const int n1 = ChunkIndex(cx - 1, cz);
+  if (lx == 0 && n1 >= 0) { m_chunkDirty[n1 / m_chunkCountX][n1 % m_chunkCountX] = true; CancelPendingChunk(cx - 1, cz); }
+  const int n2 = ChunkIndex(cx + 1, cz);
+  if (lx == m_chunkSize - 1 && n2 >= 0) { m_chunkDirty[n2 / m_chunkCountX][n2 % m_chunkCountX] = true; CancelPendingChunk(cx + 1, cz); }
+  const int n3 = ChunkIndex(cx, cz - 1);
+  if (lz == 0 && n3 >= 0) { m_chunkDirty[n3 / m_chunkCountX][n3 % m_chunkCountX] = true; CancelPendingChunk(cx, cz - 1); }
+  const int n4 = ChunkIndex(cx, cz + 1);
+  if (lz == m_chunkSize - 1 && n4 >= 0) { m_chunkDirty[n4 / m_chunkCountX][n4 % m_chunkCountX] = true; CancelPendingChunk(cx, cz + 1); }
+}
+
+bool MinecraftScene::IsBlockOpaque(uint8_t block) const {
+  if (block >= m_blockDefs.size()) return false;
+  return m_blockDefs[block].opaque;
+}
+
+bool MinecraftScene::IsBlockSolid(uint8_t block) const {
+  if (block >= m_blockDefs.size()) return false;
+  return m_blockDefs[block].solid;
+}
+
+// Simple AABB box-vs-voxel collision. All world geometry is axis-aligned
+// boxes, so a box-to-box overlap test against the solid blocks is enough.
+bool MinecraftScene::MobBoxCollides(float minX, float minY, float minZ,
+                                    float maxX, float maxY, float maxZ) const {
+  const int bx0 = (int)std::floor(minX);
+  const int bx1 = (int)std::floor(maxX);
+  const int by0 = (int)std::floor(minY);
+  const int by1 = (int)std::floor(maxY);
+  const int bz0 = (int)std::floor(minZ);
+  const int bz1 = (int)std::floor(maxZ);
+  for (int by = by0; by <= by1; ++by) {
+    for (int bz = bz0; bz <= bz1; ++bz) {
+      for (int bx = bx0; bx <= bx1; ++bx) {
+        if (IsBlockSolid(GetBlock(bx, by, bz))) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ── World generation ─────────────────────────────────────────────────
+void MinecraftScene::GenerateChunk(int cx, int cz) {
+  const int idx = ChunkIndex(cx, cz);
+  if (idx < 0) return;
+  const int gx = idx % m_chunkCountX;
+  const int gz = idx / m_chunkCountX;
+  const int baseX = cx * m_chunkSize;
+  const int baseZ = cz * m_chunkSize;
+  const auto& terrain = m_voxelSettings.terrain;
+  const uint8_t air = BlockId(terrain.air_block, 0);
+  const uint8_t bedrock = BlockId(terrain.bedrock_block, air);
+  const uint8_t stone = BlockId(terrain.stone_block, air);
+  const uint8_t dirt = BlockId(terrain.dirt_block, stone);
+  const uint8_t grass = BlockId(terrain.grass_block, dirt);
+  const uint8_t sand = BlockId(terrain.sand_block, dirt);
+  const uint8_t water = BlockId(terrain.water_block, air);
+  const uint8_t log = BlockId(terrain.log_block, stone);
+  const uint8_t leaves = BlockId(terrain.leaves_block, grass);
+
+  for (int lx = 0; lx < m_chunkSize; ++lx) {
+    for (int lz = 0; lz < m_chunkSize; ++lz) {
+      const int wx = baseX + lx;
+      const int wz = baseZ + lz;
+      const int height = HeightAt(wx, wz);
+
+      for (int wy = 0; wy < m_worldHeight; ++wy) {
+        uint8_t block = air;
+        if (wy == 0) {
+          block = bedrock;
+        } else if (wy < height - terrain.surface_depth) {
+          block = stone;
+        } else if (wy < height) {
+          block = dirt;
+        } else if (wy == height) {
+          block = (height <= m_waterLevel) ? sand : grass;
+        }
+
+        if (block != air && wy > terrain.cave_min_y && wy < height - 1) {
+          const float cave = Noise3D(wx * terrain.cave_frequency,
+                                     wy * terrain.cave_frequency,
+                                     wz * terrain.cave_frequency);
+          if (cave > terrain.cave_threshold) block = air;
+        }
+
+        if (block == stone) {
+          const float oreNoise = Hash2D(wx * 31 + wy * 17, wz * 31 + wy * 13);
+          const int depthBelowSurface = height - wy;
+          for (const auto& ore : terrain.ores) {
+            if (oreNoise > ore.threshold && depthBelowSurface > ore.min_depth) {
+              block = BlockId(ore.block, stone);
+              break;
+            }
+          }
+        }
+
+        m_blocks[gx][wy][gz][lx][lz] = block;
+      }
+
+      // Fill water in low areas up to the water level
+      if (height < m_waterLevel) {
+        for (int wy = height + 1; wy <= m_waterLevel; ++wy) {
+          if (wy < m_worldHeight) {
+            m_blocks[gx][wy][gz][lx][lz] = water;
+          }
+        }
+      }
+
+      // Trees (deterministic per column)
+      if (height > m_waterLevel && height < terrain.tree_max_surface_height) {
+        const float treeNoise = Hash2D(wx * 7 + 13, wz * 7 + 29);
+        if (treeNoise > terrain.tree_threshold) {
+          const int treeHeight = terrain.tree_min_height +
+            (int)(Hash2D(wx * 3, wz * 3) * terrain.tree_height_variation);
+          for (int t = 1; t <= treeHeight; ++t) {
+            const int ty = height + t;
+            if (ty < m_worldHeight) m_blocks[gx][ty][gz][lx][lz] = log;
+          }
+          // Leaves
+          const int topY = height + treeHeight;
+          for (int dy = -2; dy <= 1; ++dy) {
+            const int ly = topY + dy;
+            if (ly < 0 || ly >= m_worldHeight) continue;
+            const int radius = (dy >= 0) ? 1 : 2;
+            for (int dx = -radius; dx <= radius; ++dx) {
+              for (int dz = -radius; dz <= radius; ++dz) {
+                if (dx == 0 && dz == 0 && dy < 0) continue; // keep trunk
+                const int lwx = wx + dx;
+                const int lwz = wz + dz;
+                const int lcx = WorldToChunk(lwx);
+                const int lcz = WorldToChunk(lwz);
+                const int lidx = ChunkIndex(lcx, lcz);
+                if (lidx < 0) continue;
+                const int llx = WorldToLocal(lwx);
+                const int llz = WorldToLocal(lwz);
+                if (m_blocks[lidx % m_chunkCountX][ly][lidx / m_chunkCountX][llx][llz] == air) {
+                  m_blocks[lidx % m_chunkCountX][ly][lidx / m_chunkCountX][llx][llz] = leaves;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX] = true;
+  m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX] = true;
+}
+
+void MinecraftScene::GenerateWorld() {
+  std::memset(m_blocks, 0, sizeof(m_blocks));
+  std::memset(m_chunkDirty, 0, sizeof(m_chunkDirty));
+  std::memset(m_chunkBuilt, 0, sizeof(m_chunkBuilt));
+  m_navMeshReady = false;
+  m_mob.pathReady = false;
+  for (int cz = -m_renderDistance; cz <= m_renderDistance; ++cz) {
+    for (int cx = -m_renderDistance; cx <= m_renderDistance; ++cx) {
+      GenerateChunk(cx, cz);
+    }
+  }
+  // Count blocks for verification
+  int waterCount = 0, coalCount = 0, ironCount = 0, goldCount = 0, diamondCount = 0;
+  for (int cz = 0; cz < m_chunkCountZ; ++cz)
+    for (int cx = 0; cx < m_chunkCountX; ++cx)
+      for (int wy = 0; wy < m_worldHeight; ++wy)
+        for (int lz = 0; lz < m_chunkSize; ++lz)
+          for (int lx = 0; lx < m_chunkSize; ++lx) {
+            const uint8_t b = m_blocks[cx][wy][cz][lx][lz];
+            if (b == BlockId("water", 0)) ++waterCount;
+            else if (b == BlockId("coal_ore", 0)) ++coalCount;
+            else if (b == BlockId("iron_ore", 0)) ++ironCount;
+            else if (b == BlockId("gold_ore", 0)) ++goldCount;
+            else if (b == BlockId("diamond_ore", 0)) ++diamondCount;
+          }
+  T8_LOG_INFO("[Minecraft] World generated: water=%d coal=%d iron=%d gold=%d diamond=%d",
+              waterCount, coalCount, ironCount, goldCount, diamondCount);
+}
+
+void MinecraftScene::BuildNavigationMesh() {
+  t850::navigation::NavMeshGeometry geometry;
+  const int worldMin = -m_renderDistance * m_chunkSize;
+  const int worldMax = (m_renderDistance + 1) * m_chunkSize;
+  geometry.vertices.reserve(static_cast<std::size_t>((worldMax - worldMin) * (worldMax - worldMin) * 4));
+  geometry.indices.reserve(static_cast<std::size_t>((worldMax - worldMin) * (worldMax - worldMin) * 6));
+
+  for (int wz = worldMin; wz < worldMax; ++wz) {
+    for (int wx = worldMin; wx < worldMax; ++wx) {
+      int groundY = -1;
+      for (int wy = m_worldHeight - 1; wy >= 0; --wy) {
+        const uint8_t block = GetBlock(wx, wy, wz);
+        if (IsBlockSolid(block) &&
+          block != BlockId(m_voxelSettings.terrain.leaves_block, 0) &&
+          block != BlockId(m_voxelSettings.terrain.log_block, 0)) {
+          groundY = wy;
+          break;
+        }
+      }
+      if (groundY < 0) continue;
+
+      const int base = static_cast<int>(geometry.vertices.size());
+      const float y = static_cast<float>(groundY + 1);
+      geometry.vertices.emplace_back(static_cast<float>(wx), y, static_cast<float>(wz));
+      geometry.vertices.emplace_back(static_cast<float>(wx), y, static_cast<float>(wz + 1));
+      geometry.vertices.emplace_back(static_cast<float>(wx + 1), y, static_cast<float>(wz + 1));
+      geometry.vertices.emplace_back(static_cast<float>(wx + 1), y, static_cast<float>(wz));
+      geometry.indices.push_back(base + 0);
+      geometry.indices.push_back(base + 1);
+      geometry.indices.push_back(base + 2);
+      geometry.indices.push_back(base + 0);
+      geometry.indices.push_back(base + 2);
+      geometry.indices.push_back(base + 3);
+    }
+  }
+
+  m_navMeshSettings = t850::navigation::NavMeshBuildSettings{};
+  if (m_sceneFile.navigation_mesh) {
+    const auto& authored = m_sceneFile.navigation_mesh->build_settings;
+    m_navMeshSettings.cellSize = authored.cell_size;
+    m_navMeshSettings.cellHeight = authored.cell_height;
+    m_navMeshSettings.agentHeight = authored.agent_height;
+    m_navMeshSettings.agentRadius = authored.agent_radius;
+    m_navMeshSettings.agentMaxClimb = authored.agent_max_climb;
+    m_navMeshSettings.agentMaxSlope = authored.agent_max_slope;
+    m_navMeshSettings.regionMinSize = authored.region_min_size;
+    m_navMeshSettings.regionMergeSize = authored.region_merge_size;
+    m_navMeshSettings.edgeMaxLen = authored.edge_max_len;
+    m_navMeshSettings.edgeMaxError = authored.edge_max_error;
+    m_navMeshSettings.vertsPerPoly = authored.verts_per_poly;
+    m_navMeshSettings.detailSampleDist = authored.detail_sample_dist;
+    m_navMeshSettings.detailSampleMaxError = authored.detail_sample_max_error;
+    m_navMeshSettings.queryExtents = XVECTOR3(authored.query_extents.x,
+                                               authored.query_extents.y,
+                                               authored.query_extents.z, 0.0f);
+  }
+
+  const auto buildStart = std::chrono::steady_clock::now();
+  std::string error;
+  m_navMesh.Clear();
+  m_navMeshReady = !geometry.indices.empty() && m_navMesh.Build(geometry, m_navMeshSettings, &error);
+  m_navMeshBuildMs = std::chrono::duration<float, std::milli>(
+      std::chrono::steady_clock::now() - buildStart).count();
+  if (!m_navMeshReady) {
+    T8_LOG_ERROR("[Minecraft] NavMesh build failed: %s", error.c_str());
+    return;
+  }
+
+  const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
+  T8_LOG_INFO("[Minecraft] NavMesh ready: %.2fms verts=%d tris=%d polys=%d",
+              m_navMeshBuildMs, stats.vertexCount, stats.triangleCount, stats.polygonCount);
+  m_mob.repathTimer = 0.0f;
+  m_mob.pathReady = false;
+}
+
+void MinecraftScene::UpdateMob(float dt) {
+  if (!m_navMeshReady) return;
+
+  m_mob.repathTimer -= dt;
+  if (m_mob.repathTimer <= 0.0f) {
+    t850::navigation::NavPathRequest request;
+    request.start = m_mob.position;
+    request.end = m_player.GetPosition();
+    request.queryExtents = m_navMeshSettings.queryExtents;
+    const t850::navigation::NavPathResult result = m_navMesh.FindPath(request);
+    m_mob.path = result.points;
+    m_mob.pathCursor = m_mob.path.size() > 1 ? 1 : 0;
+    m_mob.pathReady = result.success && m_mob.path.size() > 1;
+    m_mob.repathTimer = m_voxelSettings.mob.repath_seconds;
+    if (!m_mob.pathReady && !result.error.empty()) {
+      T8_LOG_VERBOSE("[Minecraft] Mob path unavailable: %s", result.error.c_str());
+    }
+  }
+
+  if (m_mob.pathReady && m_mob.pathCursor < m_mob.path.size()) {
+    const XVECTOR3 target = m_mob.path[m_mob.pathCursor];
+    const XVECTOR3 delta(target.x - m_mob.position.x, 0.0f, target.z - m_mob.position.z, 0.0f);
+    const float distance = Length3(delta);
+    if (distance < m_voxelSettings.mob.waypoint_distance) {
+      ++m_mob.pathCursor;
+    } else {
+      const float step = (std::min)(distance, m_voxelSettings.mob.move_speed * dt);
+      const XVECTOR3 direction = Normalize3(delta, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+
+      // Simple AABB collision for the mob. m_mob.position is the FEET
+      // position (ground surface Y from the navmesh). The mob's body is a
+      // box ~0.5 wide and ~1.4 tall, centered on the feet.
+      const float halfW = m_voxelSettings.mob.half_width;
+      const float height = m_voxelSettings.mob.height;
+      auto boxFree = [&](float px, float pz) -> bool {
+        return !MobBoxCollides(px - halfW, m_mob.position.y, pz - halfW,
+                               px + halfW, m_mob.position.y + height, pz + halfW);
+      };
+
+      // Move along X and Z separately so the mob slides around obstacles.
+      const float mx = direction.x * step;
+      const float mz = direction.z * step;
+      if (boxFree(m_mob.position.x + mx, m_mob.position.z)) {
+        m_mob.position.x += mx;
+      }
+      if (boxFree(m_mob.position.x, m_mob.position.z + mz)) {
+        m_mob.position.z += mz;
+      }
+
+      m_mob.position.y += (target.y - m_mob.position.y) * (std::min)(1.0f, dt * 8.0f);
+    }
+  }
+  UpdateMobInstance();
+
+  // Periodic mob position log (every ~2 seconds)
+  static float s_mobLogTimer = 0.0f;
+  s_mobLogTimer += dt;
+  if (s_mobLogTimer > 2.0f) {
+    s_mobLogTimer = 0.0f;
+    T8_LOG_INFO("[Minecraft] Mob pos=(%.1f, %.1f, %.1f) pathReady=%d pathPts=%d",
+                m_mob.position.x, m_mob.position.y, m_mob.position.z,
+                m_mob.pathReady ? 1 : 0, (int)m_mob.path.size());
+  }
+}
+
+void MinecraftScene::UpdateDayNight(float dt) {
+  if (!m_dayNightEnabled) return;
+
+  // Advance time of day (0..1). 0.0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset
+  m_timeOfDay += dt / m_dayLengthSecs;
+  if (m_timeOfDay >= 1.0f) m_timeOfDay -= 1.0f;
+
+  // Sun elevation angle: peaks at noon (0.5), below horizon at night
+  // angle = 0 at midnight, pi at noon. Sun height = sin(angle).
+  const float angle = m_timeOfDay * 2.0f * 3.14159265f;
+  const float sunHeight = std::sin(angle); // -1 (midnight) .. 1 (noon)
+
+  // Sun direction: rises in +X (east), sets in -X (west), arcs over +Y
+  const float sunDirX = std::cos(angle);
+  const float sunDirY = sunHeight;
+  const float sunDirZ = 0.0f;
+
+  // Day factor: 0 at night, 1 at noon (smooth transition)
+  float dayFactor = (sunHeight + 0.15f) / 1.15f;
+  dayFactor = (std::max)(0.0f, (std::min)(1.0f, dayFactor));
+
+  // Sun color: white at day, orange at sunrise/sunset, dim blue at night
+  XVECTOR3 sunColor(1.0f, 1.0f, 1.0f);
+  const float horizonGlow = (std::max)(0.0f, 1.0f - std::fabs(sunHeight) * 4.0f);
+  sunColor.x = 1.0f;
+  sunColor.y = 0.6f + 0.4f * dayFactor;
+  sunColor.z = 0.4f + 0.6f * dayFactor;
+
+  // Ambient: bright blue-ish at day, dark blue at night
+  const auto& dayNight = m_voxelSettings.day_night;
+  const float ambient = dayNight.ambient_night +
+                        (dayNight.ambient_day - dayNight.ambient_night) * dayFactor;
+  XVECTOR3 ambientColor(ambient * 0.6f, ambient * 0.7f, ambient * 1.0f);
+
+  if (!SceneProp.Lights.empty() && SceneProp.Lights[0].Type == LIGHT_DIRECTIONAL) {
+    SceneProp.Lights[0].Direction = XVECTOR3(sunDirX, sunDirY, sunDirZ, 0.0f);
+    SceneProp.Lights[0].Color = sunColor;
+    SceneProp.Lights[0].Intensity = dayNight.sun_intensity_night +
+      (dayNight.sun_intensity_day - dayNight.sun_intensity_night) * dayFactor;
+    SceneProp.Lights[0].Direction = Normalize3(
+      XVECTOR3(-sunDirX, -sunDirY, -sunDirZ, 0.0f),
+      SceneProp.Lights[0].Direction);
+  }
+  SceneProp.AmbientColor = ambientColor;
+
+  // Periodic day/night log (every ~5 seconds)
+  static float s_dayLogTimer = 0.0f;
+  s_dayLogTimer += dt;
+  if (s_dayLogTimer > 5.0f) {
+    s_dayLogTimer = 0.0f;
+    T8_LOG_INFO("[Minecraft] Time=%.2f dayFactor=%.2f sun=(%.2f,%.2f,%.2f) intensity=%.1f",
+                m_timeOfDay, dayFactor, sunColor.x, sunColor.y, sunColor.z,
+                SceneProp.Lights.empty() ? 0.0f : SceneProp.Lights[0].Intensity);
+  }
+}
+
+void MinecraftScene::CreateMobMesh() {
+  xF::XDataBase db;
+  xF::xMeshContainer* mc = new xF::xMeshContainer;
+  mc->FileName = "MinecraftMob";
+  db.XMeshDataBase.push_back(mc);
+  mc->Geometry.resize(1);
+  xF::xMeshGeometry& geom = mc->Geometry[0];
+  geom.VertexAttributes = xF::xMeshGeometry::HAS_POSITION | xF::xMeshGeometry::HAS_NORMAL | xF::xMeshGeometry::HAS_TEXCOORD0;
+  geom.NumChannelsTexCoords = 1;
+
+  // Build a humanoid zombie-like figure from boxes (real dimensions, not
+  // unit cubes). Uses the same addBox helper as the weapon.
+  auto addBox = [&](float x0, float y0, float z0, float x1, float y1, float z1, uint8_t block) {
+    const BlockDef& def = m_blockDefs[block];
+    const XVECTOR3 c[8] = {
+      XVECTOR3(x0, y0, z0), XVECTOR3(x1, y0, z0), XVECTOR3(x1, y1, z0), XVECTOR3(x0, y1, z0),
+      XVECTOR3(x0, y0, z1), XVECTOR3(x1, y0, z1), XVECTOR3(x1, y1, z1), XVECTOR3(x0, y1, z1),
+    };
+    auto faceUV = [&](int face) {
+      const BlockTile& tile = def.tiles[face];
+      return TileUV(tile.u, tile.v, m_atlasTiles);
+    };
+    { UVQuad uv = faceUV(0); AddQuad(geom, c[1], c[5], c[6], c[2], XVECTOR3(1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(1); AddQuad(geom, c[4], c[0], c[3], c[7], XVECTOR3(-1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(2); AddQuad(geom, c[3], c[2], c[6], c[7], XVECTOR3(0,1,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(3); AddQuad(geom, c[0], c[4], c[5], c[1], XVECTOR3(0,-1,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(4); AddQuad(geom, c[5], c[4], c[7], c[6], XVECTOR3(0,0,1), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(5); AddQuad(geom, c[0], c[1], c[2], c[3], XVECTOR3(0,0,-1), uv.u0, uv.v0, uv.u1, uv.v1); }
+  };
+
+  for (const auto& part : m_voxelSettings.mob.parts) {
+    addBox(part.min.x, part.min.y, part.min.z,
+           part.max.x, part.max.y, part.max.z,
+           BlockId(part.block, 0));
+  }
+
+  geom.NumVertices = static_cast<xDWORD>(geom.Positions.size());
+  geom.NumTriangles = static_cast<xDWORD>(geom.Triangles.size() / 3);
+  geom.NumIndices = static_cast<xDWORD>(geom.Triangles.size());
+  geom.VertexSize = 40;
+  geom.MaterialList.Materials.resize(1);
+  xF::xMaterial& mat = geom.MaterialList.Materials[0];
+  mat.Name = "minecraft_mob";
+  mat.bEffects = true;
+  mat.EffectInstance.pDefaults.resize(2);
+  mat.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
+  mat.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
+  mat.EffectInstance.pDefaults[0].CaseString = "lens1.png";
+  mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
+  mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
+  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(0.9f);
+  geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
+  geom.MaterialList.NumMatProcess = 1;
+
+  xF::xFinalGeometry finalGeometry;
+  finalGeometry.VertexSize = 40;
+  finalGeometry.NumVertex = geom.NumVertices;
+  finalGeometry.pData = new float[10 * geom.NumVertices];
+  finalGeometry.pDataDest = new float[10 * geom.NumVertices];
+  unsigned int cursor = 0;
+  for (unsigned int i = 0; i < geom.NumVertices; ++i) {
+    finalGeometry.pData[cursor++] = geom.Positions[i].x;
+    finalGeometry.pData[cursor++] = geom.Positions[i].y;
+    finalGeometry.pData[cursor++] = geom.Positions[i].z;
+    finalGeometry.pData[cursor++] = 1.0f;
+    finalGeometry.pData[cursor++] = geom.Normals[i].x;
+    finalGeometry.pData[cursor++] = geom.Normals[i].y;
+    finalGeometry.pData[cursor++] = geom.Normals[i].z;
+    finalGeometry.pData[cursor++] = 0.0f;
+    finalGeometry.pData[cursor++] = geom.TexCoordinates[0][i].x;
+    finalGeometry.pData[cursor++] = geom.TexCoordinates[0][i].y;
+  }
+  std::copy(finalGeometry.pData, finalGeometry.pData + cursor, finalGeometry.pDataDest);
+  xF::xSubsetInfo subset;
+  subset.NumTris = geom.NumTriangles;
+  subset.NumVertex = geom.NumVertices;
+  subset.VertexSize = 40;
+  subset.VertexAttrib = geom.VertexAttributes;
+  subset.bAlignedVertex = true;
+  finalGeometry.Subsets.push_back(subset);
+  db.MeshInfo.push_back(std::move(finalGeometry));
+
+  RenderMesh* mesh = new RenderMesh();
+  mesh->SetEngineContext(pEngineContext);
+  mesh->SetSceneProps(&SceneProp);
+  mesh->xFile = new xF::XDataBase(std::move(db));
+  mesh->m_sourcePath = "MinecraftMob";
+  bool created = false;
+  mesh->m_asset = MeshAssetCache::Get().Acquire(mesh->m_sourcePath, &created);
+  mesh->Create();
+  if (mesh->Info.empty()) {
+    delete mesh;
+    return;
+  }
+  for (auto& info : mesh->Info) {
+    for (auto& subsetInfo : info.SubSets) {
+      subsetInfo.DiffuseTex = m_atlasTexture;
+      subsetInfo.DiffuseId = m_atlasTexIndex;
+      if (subsetInfo.matAsset) {
+        subsetInfo.matAsset->textures[(int)MatTexSlot::BaseColor] = m_atlasTexture;
+        subsetInfo.matAsset->textureIds[(int)MatTexSlot::BaseColor] = m_atlasTexIndex;
+      }
+    }
+  }
+  Meshes[m_mobMeshIndex].CreateInstance(mesh, &VP);
+  UpdateMobInstance();
+}
+
+void MinecraftScene::UpdateMobInstance() {
+  if (!Meshes[m_mobMeshIndex].pBase) return;
+  Meshes[m_mobMeshIndex].TranslateAbsolute(m_mob.position.x, m_mob.position.y, m_mob.position.z);
+  Meshes[m_mobMeshIndex].Update();
+}
+
+// ── First-person weapon (sword) ──────────────────────────────────────
+// Build a simple sword from box primitives: blade, crossguard, handle.
+// The sword is modeled pointing up (+Y); UpdateWeapon positions it in
+// front of the camera.
+void MinecraftScene::CreateWeaponMesh() {
+  xF::XDataBase db;
+  xF::xMeshContainer* mc = new xF::xMeshContainer;
+  mc->FileName = "MinecraftWeapon";
+  db.XMeshDataBase.push_back(mc);
+  mc->Geometry.resize(1);
+  xF::xMeshGeometry& geom = mc->Geometry[0];
+  geom.VertexAttributes = xF::xMeshGeometry::HAS_POSITION | xF::xMeshGeometry::HAS_NORMAL | xF::xMeshGeometry::HAS_TEXCOORD0;
+  geom.NumChannelsTexCoords = 1;
+
+  // Helper to add an axis-aligned box with arbitrary dimensions (in world
+  // units, not block units). Each face uses the block's tile for that face.
+  auto addBox = [&](float x0, float y0, float z0, float x1, float y1, float z1, uint8_t block) {
+    const BlockDef& def = m_blockDefs[block];
+    const XVECTOR3 c[8] = {
+      XVECTOR3(x0, y0, z0), XVECTOR3(x1, y0, z0), XVECTOR3(x1, y1, z0), XVECTOR3(x0, y1, z0), // -Z ring
+      XVECTOR3(x0, y0, z1), XVECTOR3(x1, y0, z1), XVECTOR3(x1, y1, z1), XVECTOR3(x0, y1, z1), // +Z ring
+    };
+    auto faceUV = [&](int face) {
+      const BlockTile& tile = def.tiles[face];
+      return TileUV(tile.u, tile.v, m_atlasTiles);
+    };
+    // +X
+    { UVQuad uv = faceUV(0); AddQuad(geom, c[1], c[5], c[6], c[2], XVECTOR3(1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    // -X
+    { UVQuad uv = faceUV(1); AddQuad(geom, c[4], c[0], c[3], c[7], XVECTOR3(-1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    // +Y
+    { UVQuad uv = faceUV(2); AddQuad(geom, c[3], c[2], c[6], c[7], XVECTOR3(0,1,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    // -Y
+    { UVQuad uv = faceUV(3); AddQuad(geom, c[0], c[4], c[5], c[1], XVECTOR3(0,-1,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    // +Z
+    { UVQuad uv = faceUV(4); AddQuad(geom, c[5], c[4], c[7], c[6], XVECTOR3(0,0,1), uv.u0, uv.v0, uv.u1, uv.v1); }
+    // -Z
+    { UVQuad uv = faceUV(5); AddQuad(geom, c[0], c[1], c[2], c[3], XVECTOR3(0,0,-1), uv.u0, uv.v0, uv.u1, uv.v1); }
+  };
+
+  for (const auto& part : m_voxelSettings.weapon.parts) {
+    addBox(part.min.x, part.min.y, part.min.z,
+           part.max.x, part.max.y, part.max.z,
+           BlockId(part.block, 0));
+  }
+
+  geom.NumVertices = static_cast<xDWORD>(geom.Positions.size());
+  geom.NumTriangles = static_cast<xDWORD>(geom.Triangles.size() / 3);
+  geom.NumIndices = static_cast<xDWORD>(geom.Triangles.size());
+  geom.VertexSize = 40;
+  geom.MaterialList.Materials.resize(1);
+  xF::xMaterial& mat = geom.MaterialList.Materials[0];
+  mat.Name = "minecraft_weapon";
+  mat.bEffects = true;
+  mat.EffectInstance.pDefaults.resize(2);
+  mat.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
+  mat.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
+  mat.EffectInstance.pDefaults[0].CaseString = "lens1.png";
+  mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
+  mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
+  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(0.9f);
+  geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
+  geom.MaterialList.NumMatProcess = 1;
+
+  xF::xFinalGeometry finalGeometry;
+  finalGeometry.VertexSize = 40;
+  finalGeometry.NumVertex = geom.NumVertices;
+  finalGeometry.pData = new float[10 * geom.NumVertices];
+  finalGeometry.pDataDest = new float[10 * geom.NumVertices];
+  unsigned int cursor = 0;
+  for (unsigned int i = 0; i < geom.NumVertices; ++i) {
+    finalGeometry.pData[cursor++] = geom.Positions[i].x;
+    finalGeometry.pData[cursor++] = geom.Positions[i].y;
+    finalGeometry.pData[cursor++] = geom.Positions[i].z;
+    finalGeometry.pData[cursor++] = 1.0f;
+    finalGeometry.pData[cursor++] = geom.Normals[i].x;
+    finalGeometry.pData[cursor++] = geom.Normals[i].y;
+    finalGeometry.pData[cursor++] = geom.Normals[i].z;
+    finalGeometry.pData[cursor++] = 0.0f;
+    finalGeometry.pData[cursor++] = geom.TexCoordinates[0][i].x;
+    finalGeometry.pData[cursor++] = geom.TexCoordinates[0][i].y;
+  }
+  std::copy(finalGeometry.pData, finalGeometry.pData + cursor, finalGeometry.pDataDest);
+  xF::xSubsetInfo subset;
+  subset.NumTris = geom.NumTriangles;
+  subset.NumVertex = geom.NumVertices;
+  subset.VertexSize = 40;
+  subset.VertexAttrib = geom.VertexAttributes;
+  subset.bAlignedVertex = true;
+  finalGeometry.Subsets.push_back(subset);
+  db.MeshInfo.push_back(std::move(finalGeometry));
+
+  RenderMesh* mesh = new RenderMesh();
+  mesh->SetEngineContext(pEngineContext);
+  mesh->SetSceneProps(&SceneProp);
+  mesh->xFile = new xF::XDataBase(std::move(db));
+  mesh->m_sourcePath = "MinecraftWeapon";
+  bool created = false;
+  mesh->m_asset = MeshAssetCache::Get().Acquire(mesh->m_sourcePath, &created);
+  mesh->Create();
+  if (mesh->Info.empty()) {
+    delete mesh;
+    return;
+  }
+  for (auto& info : mesh->Info) {
+    for (auto& subsetInfo : info.SubSets) {
+      subsetInfo.DiffuseTex = m_atlasTexture;
+      subsetInfo.DiffuseId = m_atlasTexIndex;
+      if (subsetInfo.matAsset) {
+        subsetInfo.matAsset->textures[(int)MatTexSlot::BaseColor] = m_atlasTexture;
+        subsetInfo.matAsset->textureIds[(int)MatTexSlot::BaseColor] = m_atlasTexIndex;
+      }
+    }
+  }
+  Meshes[m_weaponMeshIndex].CreateInstance(mesh, &VP);
+  Meshes[m_weaponMeshIndex].SetVisible(false);
+}
+
+// Position the weapon in front of the camera (first-person view) and
+// animate a swing when the player attacks.
+void MinecraftScene::UpdateWeapon(float dt) {
+  if (!Meshes[m_weaponMeshIndex].pBase) return;
+
+  // Walk bob phase advances when the player is moving.
+  const bool moving = m_playerInput.moveForward || m_playerInput.moveBackward ||
+                      m_playerInput.moveLeft || m_playerInput.moveRight;
+  if (moving && m_player.IsGrounded()) {
+    m_weaponBob += dt * m_voxelSettings.weapon.bob_speed;
+  }
+
+  // Swing animation: triggered by attack, eases back to rest.
+  if (m_weaponSwinging) {
+    m_weaponSwing += dt * m_voxelSettings.weapon.swing_speed;
+    if (m_weaponSwing >= 1.0f) {
+      m_weaponSwing = 0.0f;
+      m_weaponSwinging = false;
+    }
+  }
+
+  // Base position: bottom-right of the view, in front of the camera.
+  // We place it relative to the camera eye + look/right/up vectors.
+  const XVECTOR3 eye = m_playerEye;
+  const XVECTOR3 look = Cam.Look;
+  const XVECTOR3 right = Cam.Right;
+  const XVECTOR3 up = Cam.Up;
+
+  // Scale the sword down to a proper first-person size (model is ~1.9 units tall).
+  const float weaponScale = m_voxelSettings.weapon.scale;
+
+  // Rest offset: to the right and down, slightly forward.
+  float offsetRight = m_voxelSettings.weapon.offset_right;
+  float offsetDown = -m_voxelSettings.weapon.offset_down;
+  float offsetForward = m_voxelSettings.weapon.offset_forward;
+
+  // Walk bob: small vertical + horizontal sway.
+  const float bob = std::sin(m_weaponBob) * m_voxelSettings.weapon.bob_vertical;
+  offsetDown += bob;
+  offsetRight += std::cos(m_weaponBob) * m_voxelSettings.weapon.bob_horizontal;
+
+  // Swing: rotate the sword forward/down during the attack.
+  float swingPitch = 0.0f;
+  if (m_weaponSwinging) {
+    const float t = m_weaponSwing;
+    // Swing down then back up.
+    swingPitch = -m_voxelSettings.weapon.swing_angle * std::sin(t * 3.14159265f);
+  }
+
+  const XVECTOR3 pos = eye + look * offsetForward + right * offsetRight + up * offsetDown;
+
+  Meshes[m_weaponMeshIndex].SetVisible(true);
+  Meshes[m_weaponMeshIndex].TranslateAbsolute(pos.x, pos.y, pos.z);
+  Meshes[m_weaponMeshIndex].ScaleAbsolute(weaponScale, weaponScale, weaponScale);
+
+  // Orient the sword from the camera basis so it ALWAYS faces the player
+  // the same way, regardless of the player's yaw/pitch. The sword is
+  // modeled pointing up (+Y); we map its local axes to the camera's:
+  //   local +Y (blade) -> camera Look (points forward into the screen)
+  //   local +X (crossguard) -> camera Right
+  //   local +Z -> -camera Up  (to keep a proper right-handed rotation)
+  // This avoids the sword spinning around its own vertical axis when the
+  // player turns (which RotateYAbsolute(m_playerYaw) caused).
+  {
+    XMATRIX44 rot; // row-major: m[row][col]
+    rot.Identity();
+    // Column 0 = Right (local X)
+    rot.m[0][0] = right.x; rot.m[1][0] = right.y; rot.m[2][0] = right.z;
+    // Column 1 = Look (local Y)
+    rot.m[0][1] = look.x;  rot.m[1][1] = look.y;  rot.m[2][1] = look.z;
+    // Column 2 = -Up (local Z)
+    rot.m[0][2] = -up.x;   rot.m[1][2] = -up.y;   rot.m[2][2] = -up.z;
+
+    // Apply the swing as a rotation around the sword's local X (crossguard)
+    // axis so the blade swings forward/down.
+    XMATRIX44 swing;
+    swing.Identity();
+    const float sa = Deg2Rad(swingPitch);
+    swing.m[1][1] = std::cos(sa); swing.m[1][2] = -std::sin(sa);
+    swing.m[2][1] = std::sin(sa); swing.m[2][2] =  std::cos(sa);
+
+    Meshes[m_weaponMeshIndex].RotationX = rot * swing;
+    Meshes[m_weaponMeshIndex].RotationY.Identity();
+    Meshes[m_weaponMeshIndex].RotationZ.Identity();
+  }
+  Meshes[m_weaponMeshIndex].Update();
+}
+
+// ── Mesh building ────────────────────────────────────────────────────
+void MinecraftScene::AddVertex(xF::xMeshGeometry& geom, float x, float y, float z,
+                               float nx, float ny, float nz, float u, float v) {
+  geom.Positions.push_back(XVECTOR3(x, y, z));
+  geom.Normals.push_back(XVECTOR3(nx, ny, nz));
+  geom.TexCoordinates[0].push_back(XVECTOR2(u, v));
+}
+
+void MinecraftScene::AddQuad(xF::xMeshGeometry& geom,
+                             const XVECTOR3& a, const XVECTOR3& b, const XVECTOR3& c, const XVECTOR3& d,
+                             const XVECTOR3& n, float u0, float v0, float u1, float v1) {
+  const unsigned int base = (unsigned int)geom.Positions.size();
+  AddVertex(geom, a.x, a.y, a.z, n.x, n.y, n.z, u0, v0);
+  AddVertex(geom, b.x, b.y, b.z, n.x, n.y, n.z, u0, v1);
+  AddVertex(geom, c.x, c.y, c.z, n.x, n.y, n.z, u1, v1);
+  AddVertex(geom, d.x, d.y, d.z, n.x, n.y, n.z, u1, v0);
+  // Two triangles (CCW)
+  geom.Triangles.push_back((xWORD)base);
+  geom.Triangles.push_back((xWORD)(base + 1));
+  geom.Triangles.push_back((xWORD)(base + 2));
+  geom.Triangles.push_back((xWORD)base);
+  geom.Triangles.push_back((xWORD)(base + 2));
+  geom.Triangles.push_back((xWORD)(base + 3));
+}
+
+void MinecraftScene::AddFace(xF::xMeshGeometry& geom, int x, int y, int z, int face, uint8_t block) {
+  const BlockDef& def = m_blockDefs[block];
+  const BlockTile& tile = def.tiles[face];
+  const UVQuad uv = TileUV(tile.u, tile.v, m_atlasTiles);
+  const FaceDef& f = kFaces[face];
+
+  XVECTOR3 corners[4];
+  for (int i = 0; i < 4; ++i) {
+    corners[i] = XVECTOR3(x + f.corners[i].x, y + f.corners[i].y, z + f.corners[i].z);
+  }
+  // UV mapping: corners[0]=(u0,v0), [1]=(u0,v1), [2]=(u1,v1), [3]=(u1,v0)
+  AddQuad(geom, corners[0], corners[1], corners[2], corners[3], f.normal, uv.u0, uv.v0, uv.u1, uv.v1);
+}
+
+void MinecraftScene::CreateChunkMesh(int cx, int cz, xF::XDataBase& outDb) {
+  static int s_waterFaces = 0;
+  const int idx = ChunkIndex(cx, cz);
+  if (idx < 0) return;
+  const int gx = idx % m_chunkCountX;
+  const int gz = idx / m_chunkCountX;
+  const int baseX = cx * m_chunkSize;
+  const int baseZ = cz * m_chunkSize;
+
+  xF::xMeshContainer* mc = new xF::xMeshContainer;
+  mc->FileName = "MinecraftChunk";
+  outDb.XMeshDataBase.push_back(mc);
+  mc->Geometry.resize(1);
+  xF::xMeshGeometry& geom = mc->Geometry[0];
+
+  geom.VertexAttributes = xF::xMeshGeometry::HAS_POSITION | xF::xMeshGeometry::HAS_NORMAL | xF::xMeshGeometry::HAS_TEXCOORD0;
+  geom.NumChannelsTexCoords = 1;
+
+  for (int lx = 0; lx < m_chunkSize; ++lx) {
+    for (int lz = 0; lz < m_chunkSize; ++lz) {
+      for (int wy = 0; wy < m_worldHeight; ++wy) {
+        const uint8_t block = m_blocks[gx][wy][gz][lx][lz];
+        if (block == BlockId(m_voxelSettings.terrain.air_block, 0)) continue;
+        const int wx = baseX + lx;
+        const int wz = baseZ + lz;
+
+        // Water: render only the top surface (flat translucent plane)
+        if (block == BlockId(m_voxelSettings.terrain.water_block, 0)) {
+          const uint8_t above = GetBlock(wx, wy + 1, wz);
+          if (above != BlockId(m_voxelSettings.terrain.water_block, 0)) {
+            AddFace(geom, wx, wy, wz, 2, block); // +Y top face
+            ++s_waterFaces;
+          }
+          continue;
+        }
+
+        // Check each face; only emit if neighbor is non-opaque
+        const uint8_t px = GetBlock(wx + 1, wy, wz);
+        const uint8_t nx = GetBlock(wx - 1, wy, wz);
+        const uint8_t py = GetBlock(wx, wy + 1, wz);
+        const uint8_t ny = GetBlock(wx, wy - 1, wz);
+        const uint8_t pz = GetBlock(wx, wy, wz + 1);
+        const uint8_t nz = GetBlock(wx, wy, wz - 1);
+
+        if (!IsBlockOpaque(px)) AddFace(geom, wx, wy, wz, 0, block);
+        if (!IsBlockOpaque(nx)) AddFace(geom, wx, wy, wz, 1, block);
+        if (!IsBlockOpaque(py)) AddFace(geom, wx, wy, wz, 2, block);
+        if (!IsBlockOpaque(ny)) AddFace(geom, wx, wy, wz, 3, block);
+        if (!IsBlockOpaque(pz)) AddFace(geom, wx, wy, wz, 4, block);
+        if (!IsBlockOpaque(nz)) AddFace(geom, wx, wy, wz, 5, block);
+      }
+    }
+  }
+
+  geom.NumVertices = (xDWORD)geom.Positions.size();
+  geom.NumTriangles = (xDWORD)(geom.Triangles.size() / 3);
+  geom.NumIndices = (xDWORD)geom.Triangles.size();
+
+  // Material
+  geom.MaterialList.Materials.resize(1);
+  xF::xMaterial& mat = geom.MaterialList.Materials[0];
+  mat.Name = "minecraft_block";
+  mat.FaceColor = xF::STDRGBAColor(1.0f, 1.0f, 1.0f, 1.0f);
+  mat.Power = 0.0f;
+  mat.Specular = xF::STDRGBAColor(0.04f, 0.04f, 0.04f, 1.0f);
+  mat.Emissive = xF::STDRGBAColor(0.0f, 0.0f, 0.0f, 1.0f);
+  mat.bEffects = true;
+  mat.EffectInstance.NumDefaults = 2;
+  mat.EffectInstance.pDefaults.resize(2);
+  // diffuseMap (string) — sets DIFFUSE_MAP in shader key
+  mat.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
+  mat.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
+  mat.EffectInstance.pDefaults[0].CaseString = "lens1.png";
+  // pbrRoughness (float)
+  mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
+  mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
+  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(0.9f);
+
+  geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
+  geom.MaterialList.NumMatProcess = 1;
+
+  // Build xFinalGeometry (interleaved)
+  xF::xFinalGeometry fg;
+  const unsigned int v4 = 16;
+  unsigned int vsz = v4 + v4 + 8; // pos + normal + uv
+  geom.VertexSize = vsz;
+  fg.VertexSize = vsz;
+  fg.NumVertex = geom.NumVertices;
+  const unsigned int floatsPerVertex = vsz / 4;
+  const unsigned int totalFloats = floatsPerVertex * geom.NumVertices;
+  fg.pData = new float[totalFloats];
+  fg.pDataDest = new float[totalFloats];
+  unsigned int c = 0;
+  for (unsigned int j = 0; j < geom.NumVertices; ++j) {
+    fg.pData[c++] = geom.Positions[j].x;
+    fg.pData[c++] = geom.Positions[j].y;
+    fg.pData[c++] = geom.Positions[j].z;
+    fg.pData[c++] = 1.0f;
+    fg.pData[c++] = geom.Normals[j].x;
+    fg.pData[c++] = geom.Normals[j].y;
+    fg.pData[c++] = geom.Normals[j].z;
+    fg.pData[c++] = 0.0f;
+    fg.pData[c++] = geom.TexCoordinates[0][j].x;
+    fg.pData[c++] = geom.TexCoordinates[0][j].y;
+  }
+  for (unsigned int j = 0; j < c; ++j) fg.pDataDest[j] = fg.pData[j];
+
+  xF::xSubsetInfo si;
+  si.NumTris = geom.NumTriangles;
+  si.NumVertex = geom.NumVertices;
+  si.VertexSize = vsz;
+  si.VertexAttrib = geom.VertexAttributes;
+  si.bAlignedVertex = true;
+  fg.Subsets.push_back(si);
+
+  outDb.MeshInfo.push_back(std::move(fg));
+
+  // Log water face count once per full world build
+  static int s_buildCount = 0;
+  ++s_buildCount;
+  if (s_buildCount == m_maxChunks) {
+    T8_LOG_INFO("[Minecraft] Chunk meshes built: water faces=%d", s_waterFaces);
+    s_waterFaces = 0;
+    s_buildCount = 0;
+  }
+}
+
+// ── Chunk mesh rebuild ───────────────────────────────────────────────
+void MinecraftScene::BuildChunkMesh(int cx, int cz) {
+  const int idx = ChunkIndex(cx, cz);
+  if (idx < 0) return;
+
+  // Destroy existing primitive
+  if (Meshes[idx].pBase) {
+    Meshes[idx].pBase->Destroy();
+    delete Meshes[idx].pBase;
+    Meshes[idx].pBase = nullptr;
+  }
+
+  xF::XDataBase db;
+  CreateChunkMesh(cx, cz, db);
+
+  if (db.MeshInfo.empty() || db.MeshInfo[0].NumVertex == 0) {
+    m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX] = true;
+    m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX] = false;
+    return;
+  }
+
+  // Build a RenderMesh from the procedural XDataBase
+  RenderMesh* mesh = new RenderMesh();
+  mesh->SetEngineContext(pEngineContext);
+  mesh->SetSceneProps(&SceneProp);
+  mesh->xFile = new xF::XDataBase(std::move(db));
+  mesh->m_sourcePath = "MinecraftChunk_" + std::to_string(cx) + "_" + std::to_string(cz);
+  bool created = false;
+  mesh->m_asset = MeshAssetCache::Get().Acquire(mesh->m_sourcePath, &created);
+  mesh->Create();
+
+  if (mesh->Info.empty()) {
+    T8_LOG_ERROR("[Minecraft] Chunk (%d,%d) produced no drawable geometry", cx, cz);
+    delete mesh;
+    m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX] = true;
+    m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX] = false;
+    return;
+  }
+
+  // Override the diffuse texture with our atlas
+  if (m_atlasTexture) {
+    for (auto& info : mesh->Info) {
+      for (auto& sub : info.SubSets) {
+        sub.DiffuseTex = m_atlasTexture;
+        sub.DiffuseId = m_atlasTexIndex;
+        if (sub.matAsset) {
+          sub.matAsset->textures[(int)MatTexSlot::BaseColor] = m_atlasTexture;
+          sub.matAsset->textureIds[(int)MatTexSlot::BaseColor] = m_atlasTexIndex;
+        }
+      }
+    }
+  }
+
+  Meshes[idx].CreateInstance(mesh, &VP);
+  Meshes[idx].Update();
+  m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX] = true;
+  m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX] = false;
+}
+
+void MinecraftScene::RebuildDirtyChunks() {
+  for (int cz = m_centerChunkZ - m_renderDistance; cz <= m_centerChunkZ + m_renderDistance; ++cz) {
+    for (int cx = m_centerChunkX - m_renderDistance; cx <= m_centerChunkX + m_renderDistance; ++cx) {
+      const int idx = ChunkIndex(cx, cz);
+      if (idx < 0) continue;
+      if (m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX]) {
+        BuildChunkMesh(cx, cz);
+      }
+    }
+  }
+}
+
+void MinecraftScene::UpdateChunkStreaming() {
+  // Rebuild chunks around the player as they move between chunk centers
+  const int pcx = WorldToChunk((int)std::floor(m_playerEye.x));
+  const int pcz = WorldToChunk((int)std::floor(m_playerEye.z));
+  if (pcx != m_centerChunkX || pcz != m_centerChunkZ) {
+    const int oldCx = m_centerChunkX;
+    const int oldCz = m_centerChunkZ;
+    m_centerChunkX = pcx;
+    m_centerChunkZ = pcz;
+    ShiftWorldAndStream(oldCx, oldCz);
+  }
+}
+
+// Incremental chunk streaming: when the player crosses a chunk boundary,
+// shift the existing world data + meshes by the delta and only generate
+// + mesh the newly-entered edge chunks. This avoids rebuilding all 81
+// chunks (and re-uploading all GPU buffers) on every boundary crossing,
+// which caused a long freeze.
+void MinecraftScene::ShiftWorldAndStream(int oldCx, int oldCz) {
+  const int dx = m_centerChunkX - oldCx; // chunk delta
+  const int dz = m_centerChunkZ - oldCz;
+
+  // 1) Shift block data so existing chunks land in their new grid slots.
+  //    A world chunk at absolute (cx,cz) moves from slot (cx-oldCx+RD) to
+  //    slot (cx-newCx+RD) = (cx-oldCx+RD) - dx. So shift by -dx,-dz.
+  {
+    // Heap-allocate the temporary to avoid a large stack array (1.3MB).
+    constexpr std::size_t kBlockBytes = sizeof(m_blocks);
+    std::vector<uint8_t> shifted(kBlockBytes, 0);
+    uint8_t (*dst)[kMaxWorldHeight][kMaxChunkCount][kMaxChunkSize][kMaxChunkSize] =
+        reinterpret_cast<uint8_t(*)[kMaxWorldHeight][kMaxChunkCount][kMaxChunkSize][kMaxChunkSize]>(shifted.data());
+    for (int gx = 0; gx < m_chunkCountX; ++gx) {
+      for (int gz = 0; gz < m_chunkCountZ; ++gz) {
+        const int ngx = gx - dx;
+        const int ngz = gz - dz;
+        if (ngx < 0 || ngx >= m_chunkCountX || ngz < 0 || ngz >= m_chunkCountZ) continue;
+        for (int wy = 0; wy < m_worldHeight; ++wy)
+          for (int lz = 0; lz < m_chunkSize; ++lz)
+            for (int lx = 0; lx < m_chunkSize; ++lx)
+              dst[ngx][wy][ngz][lx][lz] = m_blocks[gx][wy][gz][lx][lz];
+      }
+    }
+    std::memcpy(m_blocks, shifted.data(), kBlockBytes);
+  }
+
+  // 2) Shift mesh instances to their new grid slots (move the pointers).
+  {
+    std::vector<t850::PrimitiveInst> shiftedMeshes(m_renderMeshCount);
+    for (int gx = 0; gx < m_chunkCountX; ++gx) {
+      for (int gz = 0; gz < m_chunkCountZ; ++gz) {
+        const int ngx = gx - dx;
+        const int ngz = gz - dz;
+        if (ngx < 0 || ngx >= m_chunkCountX || ngz < 0 || ngz >= m_chunkCountZ) continue;
+        const int srcIdx = gz * m_chunkCountX + gx;
+        const int dstIdx = ngz * m_chunkCountX + ngx;
+        shiftedMeshes[dstIdx] = Meshes[srcIdx];
+        Meshes[srcIdx] = t850::PrimitiveInst();
+      }
+    }
+    // Preserve the mob and weapon meshes (non-chunk slots)
+    shiftedMeshes[m_mobMeshIndex] = Meshes[m_mobMeshIndex];
+    shiftedMeshes[m_weaponMeshIndex] = Meshes[m_weaponMeshIndex];
+    for (int i = 0; i < m_renderMeshCount; ++i) Meshes[i] = shiftedMeshes[i];
+  }
+
+  // 3) Mark all chunks dirty so the new edge chunks get meshed; the
+  //    overlapping chunks keep their (already correct) meshes.
+  std::memset(m_chunkDirty, 0, sizeof(m_chunkDirty));
+  std::memset(m_chunkBuilt, 0, sizeof(m_chunkBuilt));
+  int newChunkCount = 0;
+  for (int cz = m_centerChunkZ - m_renderDistance; cz <= m_centerChunkZ + m_renderDistance; ++cz) {
+    for (int cx = m_centerChunkX - m_renderDistance; cx <= m_centerChunkX + m_renderDistance; ++cx) {
+      const int idx = ChunkIndex(cx, cz);
+      if (idx < 0) continue;
+      const int gx = idx % m_chunkCountX;
+      const int gz = idx / m_chunkCountX;
+      // A chunk is newly entered if it was NOT in the old center's range.
+      const bool wasInRange =
+          (cx >= oldCx - m_renderDistance && cx <= oldCx + m_renderDistance &&
+           cz >= oldCz - m_renderDistance && cz <= oldCz + m_renderDistance);
+      if (!wasInRange) {
+        GenerateChunk(cx, cz);
+        // In async mode the new chunks are handled by the pending queue
+        // (not by RebuildDirtyChunks), so leave them not-built/not-dirty.
+        if (m_asyncStreaming) {
+          m_chunkBuilt[gz][gx] = false;
+        } else {
+          m_chunkDirty[gz][gx] = true;
+        }
+        ++newChunkCount;
+      } else {
+        m_chunkBuilt[gz][gx] = true;
+      }
+    }
+  }
+
+  // 4) Enqueue the new edge chunks for async geometry build + GPU upload.
+  //    The render thread uploads a few per frame so no single frame freezes.
+  if (m_asyncStreaming) {
+    for (int cz = m_centerChunkZ - m_renderDistance; cz <= m_centerChunkZ + m_renderDistance; ++cz) {
+      for (int cx = m_centerChunkX - m_renderDistance; cx <= m_centerChunkX + m_renderDistance; ++cx) {
+        const int idx = ChunkIndex(cx, cz);
+        if (idx < 0) continue;
+        if (!m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX]) {
+          EnqueueChunkBuild(cx, cz);
+        }
+      }
+    }
+  } else {
+    RebuildDirtyChunks();
+  }
+
+  T8_LOG_INFO("[Minecraft] Streamed center (%d,%d)->(%d,%d) dx=%d dz=%d newChunks=%d",
+              oldCx, oldCz, m_centerChunkX, m_centerChunkZ, dx, dz, newChunkCount);
+}
+
+// ── Async chunk streaming ────────────────────────────────────────────
+// Snapshot the chunk's block data (with a 1-block border) so the
+// background thread can build geometry without racing the render thread
+// (which may shift m_blocks when the player moves).
+void MinecraftScene::EnqueueChunkBuild(int cx, int cz) {
+  const int idx = ChunkIndex(cx, cz);
+  if (idx < 0) return;
+  const int gx = idx % m_chunkCountX;
+  const int gz = idx / m_chunkCountX;
+  const int baseX = cx * m_chunkSize;
+  const int baseZ = cz * m_chunkSize;
+
+  PendingChunk pc;
+  pc.cx = cx;
+  pc.cz = cz;
+  pc.gx = gx;
+  pc.gz = gz;
+  const uint8_t airBlock = BlockId(m_voxelSettings.terrain.air_block, 0);
+  pc.blockSnapshot.resize(static_cast<std::size_t>(m_worldHeight) * (m_chunkSize + 2) * (m_chunkSize + 2), airBlock);
+
+  // Copy the chunk + 1-block border into the snapshot.
+  for (int wy = 0; wy < m_worldHeight; ++wy) {
+    for (int lz = -1; lz <= m_chunkSize; ++lz) {
+      for (int lx = -1; lx <= m_chunkSize; ++lx) {
+        const int wx = baseX + lx;
+        const int wz = baseZ + lz;
+        uint8_t b = airBlock;
+        if (wy >= 0 && wy < m_worldHeight) {
+          const int ncx = WorldToChunk(wx);
+          const int ncz = WorldToChunk(wz);
+          const int nidx = ChunkIndex(ncx, ncz);
+          if (nidx >= 0) {
+            const int llx = WorldToLocal(wx);
+            const int llz = WorldToLocal(wz);
+            b = m_blocks[nidx % m_chunkCountX][wy][nidx / m_chunkCountX][llx][llz];
+          }
+        }
+        const std::size_t si = static_cast<std::size_t>(wy) * (m_chunkSize + 2) * (m_chunkSize + 2)
+                 + static_cast<std::size_t>(lz + 1) * (m_chunkSize + 2)
+                             + static_cast<std::size_t>(lx + 1);
+        pc.blockSnapshot[si] = b;
+      }
+    }
+  }
+
+  // Submit the geometry build to the background thread pool.
+  pc.db = std::make_shared<xF::XDataBase>();
+  if (t850::g_threadPool && t850::g_threadPool->NumWorkers() > 0) {
+    // Capture the snapshot + shared db by value so the worker never
+    // touches the render thread's m_blocks.
+    const int buildCx = pc.cx;
+    const int buildCz = pc.cz;
+    const std::vector<uint8_t> snapshot = pc.blockSnapshot;
+    const std::shared_ptr<xF::XDataBase> db = pc.db;
+    pc.future = t850::g_threadPool->Submit([this, buildCx, buildCz, snapshot, db]() {
+      BuildChunkGeometryFromSnapshot(buildCx, buildCz, snapshot, *db);
+    });
+  } else {
+    // No thread pool available: build synchronously.
+    BuildChunkGeometryFromSnapshot(pc.cx, pc.cz, pc.blockSnapshot, *pc.db);
+    pc.geometryReady = true;
+  }
+
+  {
+    std::lock_guard<std::mutex> lk(m_pendingMutex);
+    m_pendingChunks.push_back(std::move(pc));
+  }
+}
+
+// Build the chunk's XDataBase geometry from the snapshot (background thread).
+void MinecraftScene::BuildChunkGeometryFromSnapshot(int cx, int cz,
+                                                    const std::vector<uint8_t>& snapshot,
+                                                    xF::XDataBase& outDb) {
+  const int baseX = cx * m_chunkSize;
+  const int baseZ = cz * m_chunkSize;
+  const uint8_t airBlock = BlockId(m_voxelSettings.terrain.air_block, 0);
+
+  auto snapBlock = [&](int wx, int wy, int wz) -> uint8_t {
+    if (wy < 0 || wy >= m_worldHeight) return airBlock;
+    const int lx = wx - baseX;
+    const int lz = wz - baseZ;
+    if (lx < -1 || lx > m_chunkSize || lz < -1 || lz > m_chunkSize) return airBlock;
+    const std::size_t si = static_cast<std::size_t>(wy) * (m_chunkSize + 2) * (m_chunkSize + 2)
+               + static_cast<std::size_t>(lz + 1) * (m_chunkSize + 2)
+                         + static_cast<std::size_t>(lx + 1);
+    return snapshot[si];
+  };
+
+  xF::XDataBase& db = outDb;
+  xF::xMeshContainer* mc = new xF::xMeshContainer;
+  mc->FileName = "MinecraftChunk";
+  db.XMeshDataBase.push_back(mc);
+  mc->Geometry.resize(1);
+  xF::xMeshGeometry& geom = mc->Geometry[0];
+  geom.VertexAttributes = xF::xMeshGeometry::HAS_POSITION | xF::xMeshGeometry::HAS_NORMAL | xF::xMeshGeometry::HAS_TEXCOORD0;
+  geom.NumChannelsTexCoords = 1;
+
+  for (int lx = 0; lx < m_chunkSize; ++lx) {
+    for (int lz = 0; lz < m_chunkSize; ++lz) {
+      for (int wy = 0; wy < m_worldHeight; ++wy) {
+        const int wx = baseX + lx;
+        const int wz = baseZ + lz;
+        const uint8_t block = snapBlock(wx, wy, wz);
+        if (block == airBlock) continue;
+
+        if (block == BlockId(m_voxelSettings.terrain.water_block, 0)) {
+          if (snapBlock(wx, wy + 1, wz) != BlockId(m_voxelSettings.terrain.water_block, 0)) {
+            AddFace(geom, wx, wy, wz, 2, block);
+          }
+          continue;
+        }
+
+        const uint8_t px = snapBlock(wx + 1, wy, wz);
+        const uint8_t nx = snapBlock(wx - 1, wy, wz);
+        const uint8_t py = snapBlock(wx, wy + 1, wz);
+        const uint8_t ny = snapBlock(wx, wy - 1, wz);
+        const uint8_t pz = snapBlock(wx, wy, wz + 1);
+        const uint8_t nz = snapBlock(wx, wy, wz - 1);
+
+        if (!IsBlockOpaque(px)) AddFace(geom, wx, wy, wz, 0, block);
+        if (!IsBlockOpaque(nx)) AddFace(geom, wx, wy, wz, 1, block);
+        if (!IsBlockOpaque(py)) AddFace(geom, wx, wy, wz, 2, block);
+        if (!IsBlockOpaque(ny)) AddFace(geom, wx, wy, wz, 3, block);
+        if (!IsBlockOpaque(pz)) AddFace(geom, wx, wy, wz, 4, block);
+        if (!IsBlockOpaque(nz)) AddFace(geom, wx, wy, wz, 5, block);
+      }
+    }
+  }
+
+  geom.NumVertices = (xDWORD)geom.Positions.size();
+  geom.NumTriangles = (xDWORD)(geom.Triangles.size() / 3);
+  geom.NumIndices = (xDWORD)geom.Triangles.size();
+
+  geom.MaterialList.Materials.resize(1);
+  xF::xMaterial& mat = geom.MaterialList.Materials[0];
+  mat.Name = "minecraft_block";
+  mat.FaceColor = xF::STDRGBAColor(1.0f, 1.0f, 1.0f, 1.0f);
+  mat.Power = 0.0f;
+  mat.Specular = xF::STDRGBAColor(0.04f, 0.04f, 0.04f, 1.0f);
+  mat.Emissive = xF::STDRGBAColor(0.0f, 0.0f, 0.0f, 1.0f);
+  mat.bEffects = true;
+  mat.EffectInstance.NumDefaults = 2;
+  mat.EffectInstance.pDefaults.resize(2);
+  mat.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
+  mat.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
+  mat.EffectInstance.pDefaults[0].CaseString = "lens1.png";
+  mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
+  mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
+  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(0.9f);
+  geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
+  geom.MaterialList.NumMatProcess = 1;
+
+  xF::xFinalGeometry fg;
+  const unsigned int v4 = 16;
+  unsigned int vsz = v4 + v4 + 8;
+  geom.VertexSize = vsz;
+  fg.VertexSize = vsz;
+  fg.NumVertex = geom.NumVertices;
+  const unsigned int floatsPerVertex = vsz / 4;
+  const unsigned int totalFloats = floatsPerVertex * geom.NumVertices;
+  fg.pData = new float[totalFloats];
+  fg.pDataDest = new float[totalFloats];
+  unsigned int c = 0;
+  for (unsigned int j = 0; j < geom.NumVertices; ++j) {
+    fg.pData[c++] = geom.Positions[j].x;
+    fg.pData[c++] = geom.Positions[j].y;
+    fg.pData[c++] = geom.Positions[j].z;
+    fg.pData[c++] = 1.0f;
+    fg.pData[c++] = geom.Normals[j].x;
+    fg.pData[c++] = geom.Normals[j].y;
+    fg.pData[c++] = geom.Normals[j].z;
+    fg.pData[c++] = 0.0f;
+    fg.pData[c++] = geom.TexCoordinates[0][j].x;
+    fg.pData[c++] = geom.TexCoordinates[0][j].y;
+  }
+  for (unsigned int j = 0; j < c; ++j) fg.pDataDest[j] = fg.pData[j];
+
+  xF::xSubsetInfo si;
+  si.NumTris = geom.NumTriangles;
+  si.NumVertex = geom.NumVertices;
+  si.VertexSize = vsz;
+  si.VertexAttrib = geom.VertexAttributes;
+  si.bAlignedVertex = true;
+  fg.Subsets.push_back(si);
+  db.MeshInfo.push_back(std::move(fg));
+}
+
+// Upload a ready chunk's mesh to the GPU and create the instance (render thread).
+void MinecraftScene::UploadChunkMesh(PendingChunk& pc) {
+  const int idx = ChunkIndex(pc.cx, pc.cz);
+  if (idx < 0) return;
+
+  if (Meshes[idx].pBase) {
+    Meshes[idx].pBase->Destroy();
+    delete Meshes[idx].pBase;
+    Meshes[idx].pBase = nullptr;
+  }
+
+  if (!pc.db || pc.db->MeshInfo.empty() || pc.db->MeshInfo[0].NumVertex == 0) {
+    m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX] = true;
+    m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX] = false;
+    return;
+  }
+
+  RenderMesh* mesh = new RenderMesh();
+  mesh->SetEngineContext(pEngineContext);
+  mesh->SetSceneProps(&SceneProp);
+  mesh->xFile = new xF::XDataBase(std::move(*pc.db));
+  mesh->m_sourcePath = "MinecraftChunk_" + std::to_string(pc.cx) + "_" + std::to_string(pc.cz);
+  bool created = false;
+  mesh->m_asset = MeshAssetCache::Get().Acquire(mesh->m_sourcePath, &created);
+  mesh->Create();
+
+  if (mesh->Info.empty()) {
+    T8_LOG_ERROR("[Minecraft] Chunk (%d,%d) produced no drawable geometry", pc.cx, pc.cz);
+    delete mesh;
+    m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX] = true;
+    m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX] = false;
+    return;
+  }
+
+  if (m_atlasTexture) {
+    for (auto& info : mesh->Info) {
+      for (auto& sub : info.SubSets) {
+        sub.DiffuseTex = m_atlasTexture;
+        sub.DiffuseId = m_atlasTexIndex;
+        if (sub.matAsset) {
+          sub.matAsset->textures[(int)MatTexSlot::BaseColor] = m_atlasTexture;
+          sub.matAsset->textureIds[(int)MatTexSlot::BaseColor] = m_atlasTexIndex;
+        }
+      }
+    }
+  }
+
+  Meshes[idx].CreateInstance(mesh, &VP);
+  Meshes[idx].Update();
+  m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX] = true;
+  m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX] = false;
+}
+
+// Called each frame: upload a limited number of ready chunks to the GPU.
+void MinecraftScene::ProcessPendingChunks() {
+  int uploaded = 0;
+  std::deque<PendingChunk> notReady;
+  for (;;) {
+    PendingChunk pc;
+    {
+      std::lock_guard<std::mutex> lk(m_pendingMutex);
+      if (m_pendingChunks.empty()) break;
+      pc = std::move(m_pendingChunks.front());
+      m_pendingChunks.pop_front();
+    }
+    // Only upload chunks whose background geometry build has finished.
+    // Non-blocking check so the render thread is never stalled.
+    if (pc.future.valid() && pc.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+      notReady.push_back(std::move(pc));
+      continue;
+    }
+    // The background build finished; the geometry is ready to upload.
+    pc.geometryReady = true;
+    if (pc.geometryReady) {
+      UploadChunkMesh(pc);
+      ++uploaded;
+      if (uploaded >= m_maxUploadsPerFrame) {
+        // Put the rest back for later frames.
+        {
+          std::lock_guard<std::mutex> lk(m_pendingMutex);
+          while (!m_pendingChunks.empty()) {
+            notReady.push_back(std::move(m_pendingChunks.front()));
+            m_pendingChunks.pop_front();
+          }
+        }
+        break;
+      }
+    }
+  }
+  // Re-queue anything not yet uploaded.
+  if (!notReady.empty()) {
+    std::lock_guard<std::mutex> lk(m_pendingMutex);
+    while (!notReady.empty()) {
+      m_pendingChunks.push_front(std::move(notReady.back()));
+      notReady.pop_back();
+    }
+  }
+}
+
+// Remove a chunk from the async pending queue. Called when a block is
+// edited in that chunk so the synchronous RebuildDirtyChunks path (which
+// has the up-to-date block data) is the ONLY path that rebuilds/upload
+// the chunk's mesh. Without this, ProcessPendingChunks could upload a
+// STALE snapshot mesh for the same chunk in the same frame, racing with
+// BuildChunkMesh (both destroy+recreate Meshes[idx].pBase) -> double
+// free / use-after-free of GPU resources -> DXGI_ERROR_DEVICE_REMOVED.
+void MinecraftScene::CancelPendingChunk(int cx, int cz) {
+  std::lock_guard<std::mutex> lk(m_pendingMutex);
+  for (auto it = m_pendingChunks.begin(); it != m_pendingChunks.end();) {
+    if (it->cx == cx && it->cz == cz) {
+      it = m_pendingChunks.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+// ── Texture atlas ────────────────────────────────────────────────────
+void MinecraftScene::BuildTextureAtlas() {
+  const int tilePx = m_atlasSize / m_atlasTiles;
+  std::vector<unsigned char> pixels(m_atlasSize * m_atlasSize * 4, 0);
+
+  for (const BlockDef& block : m_blockDefs) {
+    for (const BlockTile& tile : block.tiles) {
+      if (tile.u < 0 || tile.u >= m_atlasTiles || tile.v < 0 || tile.v >= m_atlasTiles)
+        continue;
+      const int px0 = tile.u * tilePx;
+      const int py0 = tile.v * tilePx;
+      for (int y = 0; y < tilePx; ++y) {
+        for (int x = 0; x < tilePx; ++x) {
+          const int idx = ((py0 + y) * m_atlasSize + (px0 + x)) * 4;
+          pixels[idx + 0] = block.color[0];
+          pixels[idx + 1] = block.color[1];
+          pixels[idx + 2] = block.color[2];
+          pixels[idx + 3] = block.color[3];
+        }
+      }
+    }
+  }
+
+  // Create the texture via the device
+  const t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (engineContext && engineContext->device) {
+    m_atlasTexture = engineContext->device->CreateTextureFromMemory(
+      pixels.data(), m_atlasSize, m_atlasSize, 4, "minecraft_atlas");
+    m_atlasTexIndex = 0; // not a driver-managed index; used as a marker
+    T8_LOG_INFO("[Minecraft] Built texture atlas %dx%d", m_atlasSize, m_atlasSize);
+  }
+}
+
+// ── Player ───────────────────────────────────────────────────────────
+void MinecraftScene::UpdatePlayer(float dt) {
+  // Use the input captured in OnInput
+  t850::CharacterControllerContext ctx;
+  ctx.collisionWorld = this;
+  m_player.UpdateFps(dt, m_playerInput, ctx);
+
+  // Stabilize the Y position when grounded: snap the feet to rest exactly
+  // on the ground block so the capsule doesn't oscillate (vibrate) between
+  // the collision resolution and gravity each frame.
+  if (m_player.IsGrounded()) {
+    const XVECTOR3 center = m_player.GetPosition();
+    const float feetY = center.y - (m_playerSettings.capsuleHalfHeight + m_playerSettings.capsuleRadius);
+    const int groundBlockY = (int)std::floor(feetY - 0.001f);
+    if (groundBlockY >= 0 && groundBlockY < m_worldHeight) {
+      const int bx = (int)std::floor(center.x);
+      const int bz = (int)std::floor(center.z);
+      if (IsBlockSolid(GetBlock(bx, groundBlockY, bz))) {
+        const float targetFeetY = (float)(groundBlockY + 1);
+        const float targetCenterY = targetFeetY + (m_playerSettings.capsuleHalfHeight + m_playerSettings.capsuleRadius);
+        if (std::fabs(targetCenterY - center.y) < 0.5f) {
+          m_player.SetPosition(XVECTOR3(center.x, targetCenterY, center.z, 1.0f));
+        }
+      }
+    }
+  }
+
+  // Update camera from player
+  const XVECTOR3 eye = m_player.GetEyePosition();
+  m_playerEye = eye;
+  Cam.Eye = eye;
+  Cam.Yaw = m_playerYaw;
+  Cam.Pitch = m_playerPitch;
+  Cam.Roll = 0.0f;
+  Cam.Update(dt);
+  VP = Cam.VP;
+}
+
+// ── Raycast for block interaction ────────────────────────────────────
+void MinecraftScene::RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, float maxDist,
+                                   int& outX, int& outY, int& outZ,
+                                   int& outPrevX, int& outPrevY, int& outPrevZ) const {
+  // DDA voxel traversal
+  int x = (int)std::floor(origin.x);
+  int y = (int)std::floor(origin.y);
+  int z = (int)std::floor(origin.z);
+  const int stepX = (dir.x > 0) ? 1 : (dir.x < 0 ? -1 : 0);
+  const int stepY = (dir.y > 0) ? 1 : (dir.y < 0 ? -1 : 0);
+  const int stepZ = (dir.z > 0) ? 1 : (dir.z < 0 ? -1 : 0);
+  const float tDeltaX = (dir.x != 0) ? std::fabs(1.0f / dir.x) : 1e30f;
+  const float tDeltaY = (dir.y != 0) ? std::fabs(1.0f / dir.y) : 1e30f;
+  const float tDeltaZ = (dir.z != 0) ? std::fabs(1.0f / dir.z) : 1e30f;
+  float tMaxX = (dir.x != 0) ? ((stepX > 0 ? (x + 1 - origin.x) : (origin.x - x)) * tDeltaX) : 1e30f;
+  float tMaxY = (dir.y != 0) ? ((stepY > 0 ? (y + 1 - origin.y) : (origin.y - y)) * tDeltaY) : 1e30f;
+  float tMaxZ = (dir.z != 0) ? ((stepZ > 0 ? (z + 1 - origin.z) : (origin.z - z)) * tDeltaZ) : 1e30f;
+
+  int prevX = x, prevY = y, prevZ = z;
+  float t = 0.0f;
+  while (t <= maxDist) {
+    if (GetBlock(x, y, z) != BlockId(m_voxelSettings.terrain.air_block, 0)) {
+      outX = x; outY = y; outZ = z;
+      outPrevX = prevX; outPrevY = prevY; outPrevZ = prevZ;
+      return;
+    }
+    prevX = x; prevY = y; prevZ = z;
+    if (tMaxX < tMaxY && tMaxX < tMaxZ) {
+      x += stepX; t = tMaxX; tMaxX += tDeltaX;
+    } else if (tMaxY < tMaxZ) {
+      y += stepY; t = tMaxY; tMaxY += tDeltaY;
+    } else {
+      z += stepZ; t = tMaxZ; tMaxZ += tDeltaZ;
+    }
+  }
+  outX = outY = outZ = -1;
+  outPrevX = outPrevY = outPrevZ = -1;
+}
+
+void MinecraftScene::HandleBlockInteraction(InputManager* IManager) {
+  // Raycast from eye along look direction
+  const XVECTOR3 dir = Cam.Look;
+  int bx, by, bz, px, py, pz;
+  RaycastBlocks(m_playerEye, dir, m_voxelSettings.interaction.reach, bx, by, bz, px, py, pz);
+
+  m_highlightVisible = (bx >= 0);
+  if (m_highlightVisible) {
+    m_highlightX = bx; m_highlightY = by; m_highlightZ = bz;
+  }
+
+  m_breakCooldown -= DtSecs;
+  m_placeCooldown -= DtSecs;
+
+  // Left click: break block (SDL button 1 -> index 0)
+  if (IManager->PressedMouseButton(0) && m_breakCooldown <= 0.0f && m_highlightVisible) {
+    SetBlock(bx, by, bz, BlockId(m_voxelSettings.terrain.air_block, 0));
+    m_breakCooldown = m_voxelSettings.interaction.break_cooldown;
+    if (!m_weaponSwinging) { m_weaponSwinging = true; m_weaponSwing = 0.0f; }
+  }
+  // Right click: place block (SDL button 3 -> index 2)
+  if (IManager->PressedMouseButton(2) && m_placeCooldown <= 0.0f && m_highlightVisible) {
+    // Don't place inside the player
+    const int ex = (int)std::floor(m_playerEye.x);
+    const int ey = (int)std::floor(m_playerEye.y);
+    const int ez = (int)std::floor(m_playerEye.z);
+    if (!(px == ex && py == ey && pz == ez) &&
+        !(px == ex && py == ey - 1 && pz == ez)) {
+      SetBlock(px, py, pz, (uint8_t)m_selectedBlock);
+      m_placeCooldown = m_voxelSettings.interaction.place_cooldown;
+      if (!m_weaponSwinging) { m_weaponSwinging = true; m_weaponSwing = 0.0f; }
+      T8_LOG_INFO("[Minecraft] Placed %s at (%d,%d,%d) (hit %d,%d,%d)",
+                  m_blockDefs[m_selectedBlock].name.c_str(), px, py, pz, bx, by, bz);
+    } else {
+      T8_LOG_INFO("[Minecraft] Place rejected: cell (%d,%d,%d) inside player (eye %d,%d,%d)",
+                  px, py, pz, ex, ey, ez);
+    }
+  }
+}
+
+// Draw a wireframe box around the currently targeted block so the player
+// can see where they are aiming (break/place feedback).
+// ── Collision world (CharacterCollisionWorld) ────────────────────────
+bool MinecraftScene::SweepCapsule(const t850::CharacterCollisionSweep& sweep, t850::CharacterCollisionHit& outHit) const {
+  outHit = t850::CharacterCollisionHit{};
+  // Voxel-based capsule sweep: sample the AABB of the capsule along the
+  // displacement and find the first solid block.
+  const float radius = sweep.radius;
+  const float halfH = sweep.halfHeight;
+  const XVECTOR3 start = sweep.startCenter;
+  const XVECTOR3 disp = sweep.displacement;
+  const float dist = Length3(disp);
+  if (dist < 0.0001f) return false;
+
+  const XVECTOR3 dir = disp / dist;
+  // Fine sampling for precise collision (reduces Y-axis jitter when the
+  // capsule rests on the ground).
+  const int steps = (int)std::ceil(dist / 0.1f) + 1;
+  float bestFraction = 1.0f;
+  bool hit = false;
+  XVECTOR3 hitNormal(0, 1, 0, 0);
+
+  for (int s = 0; s <= steps; ++s) {
+    const float t = (float)s / (float)steps;
+    const XVECTOR3 center = start + dir * (dist * t);
+    // Capsule AABB: center +/- (radius, halfH+radius, radius)
+    const int minX = (int)std::floor(center.x - radius);
+    const int maxX = (int)std::floor(center.x + radius);
+    const int minY = (int)std::floor(center.y - halfH - radius);
+    const int maxY = (int)std::floor(center.y + halfH + radius);
+    const int minZ = (int)std::floor(center.z - radius);
+    const int maxZ = (int)std::floor(center.z + radius);
+
+    for (int by = minY; by <= maxY; ++by) {
+      for (int bz = minZ; bz <= maxZ; ++bz) {
+        for (int bx = minX; bx <= maxX; ++bx) {
+          if (IsBlockSolid(GetBlock(bx, by, bz))) {
+            // Found a hit at this sample; compute fraction
+            const float frac = t;
+            if (frac < bestFraction) {
+              bestFraction = frac;
+              hit = true;
+              // Approximate normal from the block face the center is closest to
+              const float cx = center.x - (bx + 0.5f);
+              const float cy = center.y - (by + 0.5f);
+              const float cz = center.z - (bz + 0.5f);
+              const float ax = std::fabs(cx), ay = std::fabs(cy), az = std::fabs(cz);
+              if (ax >= ay && ax >= az) hitNormal = XVECTOR3(cx > 0 ? 1 : -1, 0, 0, 0);
+              else if (ay >= az) hitNormal = XVECTOR3(0, cy > 0 ? 1 : -1, 0, 0);
+              else hitNormal = XVECTOR3(0, 0, cz > 0 ? 1 : -1, 0);
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (hit) {
+    outHit.hit = true;
+    outHit.fraction = bestFraction;
+    outHit.position = start + dir * (dist * bestFraction);
+    outHit.normal = hitNormal;
+  }
+  return hit;
+}
+
+bool MinecraftScene::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CharacterCollisionHit& outHit) const {
+  outHit = t850::CharacterCollisionHit{};
+  const XVECTOR3 half = sweep.halfExtents;
+  const XVECTOR3 start = sweep.startCenter;
+  const XVECTOR3 disp = sweep.displacement;
+  const float dist = Length3(disp);
+  if (dist < 0.0001f) return false;
+  const XVECTOR3 dir = disp / dist;
+  const int steps = (int)std::ceil(dist / 0.25f) + 1;
+  float bestFraction = 1.0f;
+  bool hit = false;
+  XVECTOR3 hitNormal(0, 1, 0, 0);
+
+  for (int s = 0; s <= steps; ++s) {
+    const float t = (float)s / (float)steps;
+    const XVECTOR3 center = start + dir * (dist * t);
+    const int minX = (int)std::floor(center.x - half.x);
+    const int maxX = (int)std::floor(center.x + half.x);
+    const int minY = (int)std::floor(center.y - half.y);
+    const int maxY = (int)std::floor(center.y + half.y);
+    const int minZ = (int)std::floor(center.z - half.z);
+    const int maxZ = (int)std::floor(center.z + half.z);
+
+    for (int by = minY; by <= maxY; ++by) {
+      for (int bz = minZ; bz <= maxZ; ++bz) {
+        for (int bx = minX; bx <= maxX; ++bx) {
+          if (IsBlockSolid(GetBlock(bx, by, bz))) {
+            if (t < bestFraction) {
+              bestFraction = t;
+              hit = true;
+              const float cx = center.x - (bx + 0.5f);
+              const float cy = center.y - (by + 0.5f);
+              const float cz = center.z - (bz + 0.5f);
+              const float ax = std::fabs(cx), ay = std::fabs(cy), az = std::fabs(cz);
+              if (ax >= ay && ax >= az) hitNormal = XVECTOR3(cx > 0 ? 1 : -1, 0, 0, 0);
+              else if (ay >= az) hitNormal = XVECTOR3(0, cy > 0 ? 1 : -1, 0, 0);
+              else hitNormal = XVECTOR3(0, 0, cz > 0 ? 1 : -1, 0);
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (hit) {
+    outHit.hit = true;
+    outHit.fraction = bestFraction;
+    outHit.position = start + dir * (dist * bestFraction);
+    outHit.normal = hitNormal;
+  }
+  return hit;
+}
+
+bool MinecraftScene::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
+  (void)query;
+  outTouch = t850::CharacterTriggerTouch{};
+  return false;
+}
+
+// ── Scene lifecycle ──────────────────────────────────────────────────
+void MinecraftScene::InitVars() {
+  if (!g_config.sceneFilePath.empty())
+    m_sceneFilePath = g_config.sceneFilePath;
+  if (!LoadAuthoredScene())
+    return;
+
+  T8_LOG_INFO("[Minecraft] Authored scene '%s': chunk=%d height=%d water=%d renderDistance=%d blocks=%zu",
+              m_sceneFilePath.c_str(), m_chunkSize, m_worldHeight, m_waterLevel,
+              m_renderDistance, m_blockDefs.size());
+
+  if (!m_sceneFile.control_descriptor.empty() && m_controlSetup.Load(m_sceneFile.control_descriptor)) {
+    m_controlSetup.ApplyQualityAndSettings(SceneProp);
+  } else {
+    T8_LOG_ERROR("[Minecraft] Failed to load control descriptor '%s'",
+                 m_sceneFile.control_descriptor.c_str());
+    return;
+  }
+
+  if (!m_sceneFile.profiles.empty()) {
+    const auto& profile = m_sceneFile.profiles.front();
+    for (const auto& entry : profile.sliders) {
+      if (entry.name == "exposure") SceneProp.Exposure = entry.value;
+      else if (entry.name == "bloom_factor") SceneProp.BloomFactor = entry.value;
+      else if (entry.name == "bloom_threshold") SceneProp.BloomThreshold = entry.value;
+      else if (entry.name == "tm_white_level") SceneProp.ToneMapWhiteLevel = entry.value;
+      else if (entry.name == "tm_adapt_tau") SceneProp.LuminanceTau = entry.value;
+      else if (entry.name == "pcf_radius") SceneProp.PCFScale = entry.value;
+      else if (entry.name == "pcf_samples") SceneProp.PCFSamples = entry.value;
+      else if (entry.name == "ssao_radius") SceneProp.SSAOKernel.Radius = entry.value;
+      else if (entry.name == "shadow_bias") SceneProp.ShadowBias = entry.value;
+      else if (entry.name == "shadow_min") SceneProp.ShadowMin = entry.value;
+      else if (entry.name == "env_factor") SceneProp.EnvFactor = entry.value;
+      else if (entry.name == "ibl_factor") SceneProp.IBLFactor = entry.value;
+      else if (entry.name == "lightmap_intensity") SceneProp.LightmapIntensity = entry.value;
+      else if (entry.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = entry.value;
+      else if (entry.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = entry.value;
+      else if (entry.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = entry.value;
+    }
+    for (const auto& entry : profile.checkboxes) {
+      if (entry.name == "shadow_toggle") SceneProp.ToogleShadow = entry.value;
+      else if (entry.name == "ssao_toggle") SceneProp.ToogleSSAO = entry.value;
+      else if (entry.name == "dof_toggle") SceneProp.ToogleDOF = entry.value;
+      else if (entry.name == "parallax_toggle") SceneProp.ToogleParallax = entry.value;
+      else if (entry.name == "godrays_toggle") SceneProp.ToogleGodRays = entry.value;
+    }
+    for (const auto& entry : profile.selectors) {
+      if (entry.name == "luminance_mode") SceneProp.LuminanceMode = entry.value;
+      else if (entry.name == "active_gauss_kernel") SceneProp.ActiveGaussKernel = entry.value;
+    }
+  }
+
+  auto initCamera = [](const t850::scene::SceneCameraDesc& source, Camera& camera) {
+    const XVECTOR3 eye(source.position.x, source.position.y, source.position.z, 1.0f);
+    if (source.type == 1)
+      camera.InitOrtho(eye, source.ortho_w, source.ortho_h,
+                       source.near_plane, source.far_plane, true);
+    else
+      camera.InitPerspective(eye, Deg2Rad(source.fov_deg), 16.0f / 9.0f,
+                             source.near_plane, source.far_plane, true);
+    camera.SetLookAt(XVECTOR3(source.target.x, source.target.y, source.target.z, 1.0f));
+  };
+  auto initLightCamera = [](const t850::scene::SceneLightCameraDesc& source, Camera& camera) {
+    const XVECTOR3 eye(source.position.x, source.position.y, source.position.z, 1.0f);
+    if (source.type == 1)
+      camera.InitOrtho(eye, source.ortho_w, source.ortho_h,
+                       source.near_plane, source.far_plane, true);
+    else
+      camera.InitPerspective(eye, Deg2Rad(source.fov_deg), 16.0f / 9.0f,
+                             source.near_plane, source.far_plane, true);
+    camera.SetLookAt(XVECTOR3(source.target.x, source.target.y, source.target.z, 1.0f));
+  };
+
+  if (m_sceneFile.cameras.empty() || m_sceneFile.light_cameras.empty()) {
+    T8_LOG_ERROR("[Minecraft] Authored scene requires a main camera and debug light camera");
+    return;
+  }
+  initCamera(m_sceneFile.cameras[0], Cam);
+  initLightCamera(m_sceneFile.light_cameras[0], LightCam);
+  m_debugCameraOrtho = m_sceneFile.light_cameras[0].type == 1;
+
+  // Sync shadow panel state from the loaded descriptor.
+  m_lightYaw = LightCam.Yaw;
+  m_lightPitch = LightCam.Pitch;
+  m_shadowResolution = SceneProp.ShadowMapResolution;
+  m_shadowBias = SceneProp.ShadowBias;
+  m_shadowMin = SceneProp.ShadowMin;
+  m_shadowsEnabled = SceneProp.ToogleShadow != 0;
+
+  ActiveCam = &Cam;
+  SceneProp.AddCamera(ActiveCam);
+  SceneProp.AddLightCamera(&LightCam);
+
+  for (const auto& source : m_sceneFile.lights) {
+    const XVECTOR3 position(source.position.x, source.position.y, source.position.z, 1.0f);
+    const XVECTOR3 direction(source.direction.x, source.direction.y, source.direction.z, 0.0f);
+    const XVECTOR3 color(source.color.x, source.color.y, source.color.z, 1.0f);
+    if (source.type == 0)
+      SceneProp.AddDirectionalLight(direction, color, source.intensity, source.enabled);
+    else
+      SceneProp.AddLight(position, color, source.radius, source.intensity, LIGHT_POINT, source.enabled);
+    Light& light = SceneProp.Lights.back();
+    light.Id = source.id;
+    light.Name = source.name;
+    light.Position = position;
+  }
+  SceneProp.ActiveLights = static_cast<int>(SceneProp.Lights.size());
+
+  auto configureFilter = [&](GaussFilter& filter, std::size_t index) {
+    if (index >= m_controlSetup.gaussFilters.size()) return false;
+    filter = m_controlSetup.gaussFilters[index];
+    filter.Update();
+    return true;
+  };
+  if (!configureFilter(ShadowFilter, 0) || !configureFilter(BloomFilter, 1) ||
+      !configureFilter(NearDOFFilter, 2)) {
+    T8_LOG_ERROR("[Minecraft] Control descriptor requires three gauss_filters");
+    return;
+  }
+  SceneProp.AddGaussKernel(&ShadowFilter);
+  SceneProp.AddGaussKernel(&BloomFilter);
+  SceneProp.AddGaussKernel(&NearDOFFilter);
+
+  const auto& player = m_voxelSettings.player;
+  m_playerSettings.collisionShape = t850::KinematicCharacterSettings::CollisionShape::Capsule;
+  m_playerSettings.walkSpeed = player.walk_speed;
+  m_playerSettings.sprintSpeed = player.sprint_speed;
+  m_playerSettings.groundAcceleration = player.ground_acceleration;
+  m_playerSettings.airAcceleration = player.air_acceleration;
+  m_playerSettings.friction = player.friction;
+  m_playerSettings.stopSpeed = player.stop_speed;
+  m_playerSettings.gravity = player.gravity;
+  m_playerSettings.jumpSpeed = player.jump_speed;
+  m_playerSettings.capsuleRadius = player.capsule_radius;
+  m_playerSettings.capsuleHalfHeight = player.capsule_half_height;
+  m_playerSettings.eyeHeight = player.eye_height;
+  m_playerSettings.groundProbeDistance = player.ground_probe_distance;
+  m_playerSettings.stepHeight = player.step_height;
+  m_playerSettings.minWalkNormalY = player.min_walk_normal_y;
+  m_playerSettings.allowSprint = player.allow_sprint;
+  m_playerSettings.airControl = player.air_control;
+  m_player.SetSettings(m_playerSettings);
+
+  m_playerEye = XVECTOR3(player.spawn.x, player.spawn.y, player.spawn.z, 1.0f);
+  m_player.SetPosition(m_playerEye - XVECTOR3(0.0f, m_playerSettings.eyeHeight, 0.0f, 0.0f));
+  m_playerYaw = 0.0f;
+  m_playerPitch = 0.0f;
+
+  m_centerChunkX = WorldToChunk((int)std::floor(player.spawn.x));
+  m_centerChunkZ = WorldToChunk((int)std::floor(player.spawn.z));
+
+  t850::FrameDumperConfig dumpCfg;
+  dumpCfg.dumpEnabled        = g_config.flags.dumpEnabled;
+  dumpCfg.dumpByFrame        = g_config.flags.dumpByFrame;
+  dumpCfg.dumpFrame          = g_config.dumpFrame;
+  dumpCfg.dumpSeconds        = g_config.dumpSeconds;
+  dumpCfg.debugFrames        = g_config.flags.debugFrames;
+  dumpCfg.keepRunning        = g_config.flags.keepRunning;
+  dumpCfg.replaySnapshotPath = g_config.replaySnapshotPath;
+  dumpCfg.sceneIndex         = g_config.startScene;
+  m_dumper.Init(dumpCfg);
+}
+
+void MinecraftScene::CreateAssets() {
+  if (!m_renderGraph.Load(m_sceneFile.render_graph)) {
+    T8_LOG_ERROR("[Minecraft] Failed to load render graph");
+    return;
+  }
+  std::string cfgError;
+  std::vector<t850::ShadowProjectionOverrideDesc> shadowOverrides;
+  if (!m_sceneFile.profiles.empty())
+    shadowOverrides = m_sceneFile.profiles.front().shadow_projections;
+  if (!shadowOverrides.empty()) {
+    const auto& shadow = shadowOverrides.front();
+    if (shadow.resolution) m_shadowResolution = (float)*shadow.resolution;
+    if (shadow.cascade_count) m_cascadeCount = *shadow.cascade_count;
+    if (shadow.split_lambda) m_splitLambda = *shadow.split_lambda;
+  }
+  if (!m_renderGraph.Configure(SceneProp, shadowOverrides, {}, &cfgError)) {
+    T8_LOG_ERROR("[Minecraft] Render graph configure failed: %s", cfgError.c_str());
+    return;
+  }
+  m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
+
+  t850::sandbox::RefreshDeferredPassHandles(
+      m_renderGraph,
+      GBufferPass, DeferredPass, Extra16FPass, DepthPass,
+      ShadowAccumPass, ExtraHelperPass, BloomAccumPass,
+      AdaptedLumCurrentPass, AdaptedLumPrevPass);
+
+  PrimitiveMgr.SetEngineContext(pEngineContext);
+  PrimitiveMgr.Init();
+  PrimitiveMgr.SetVP(&VP);
+
+  SceneProp.SSAOKernel.InitTexture();
+
+  EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_currentCubemapPath);
+  EnvMaps.SetFallback(EnvMapTexIndex);
+  t850::EnvironmentResourcePaths envPaths;
+  LoadEnvironmentIBLResources(
+    g_pBaseDriver, envPaths, EnvMaps,
+    DiffuseIBLTexIndex, SpecularIBLTexIndex, BrdfLUTTexIndex,
+    SheenIBLTexIndex, CharlieLUTTexIndex, SheenELUTTexIndex);
+  UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
+
+  // Fullscreen quad
+  m.Identity();
+  Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
+  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[0], 0);
+  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[1], 1);
+  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[2], 2);
+  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[3], 3);
+  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->pDepthTexture, 4);
+  Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+  for (int i = 1; i <= 7; i++)
+    Quads[i].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
+  PrimitiveMgr.SetSceneProps(&SceneProp);
+  Quads[0].TranslateAbsolute(0.0f, 0.0f, 0.0f);
+  Quads[0].Update();
+
+  // Debug text
+  m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
+  m_lineRenderer.Create();
+
+  // Build the texture atlas
+  BuildTextureAtlas();
+
+  // Generate the world and build chunk meshes
+  GenerateWorld();
+  RebuildDirtyChunks();
+
+  // Build the navigation mesh and spawn the mob
+  BuildNavigationMesh();
+  CreateMobMesh();
+
+  // Create the first-person weapon (sword)
+  CreateWeaponMesh();
+}
+
+void MinecraftScene::OnLoadScene() {
+  InitVars();
+  CreateAssets();
+}
+
+void MinecraftScene::OnDestoryScene() {
+  DestroyAssets();
+}
+
+void MinecraftScene::DestroyAssets() {
+  SceneProp.SSAOKernel.Destroy();
+  for (int i = 0; i < m_renderMeshCount; ++i) {
+    if (Meshes[i].pBase) {
+      Meshes[i].pBase->Destroy();
+      delete Meshes[i].pBase;
+      Meshes[i].pBase = nullptr;
+    }
+  }
+  m_debugText.Destroy();
+  m_lineRenderer.Destroy();
+  if (m_cascadeDebugVB) { m_cascadeDebugVB->release(); m_cascadeDebugVB = nullptr; }
+  if (m_cascadeDebugIB) { m_cascadeDebugIB->release(); m_cascadeDebugIB = nullptr; }
+  PrimitiveMgr.DestroyPrimitives();
+  if (pFramework && pFramework->pVideoDriver) {
+    m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
+  }
+}
+
+void MinecraftScene::OnUpdate(float _DtSecs) {
+  T8_TELEMETRY_SCOPE("minecraft.update");
+  DtSecs = _DtSecs;
+  SceneProp.FrameDeltaSec = DtSecs;
+
+  // Update player (input was captured in OnInput)
+  UpdatePlayer(DtSecs);
+
+  // Update the first-person weapon (sword) position + swing
+  UpdateWeapon(DtSecs);
+
+  // Update the path-following mob
+  UpdateMob(DtSecs);
+
+  // Update the day/night cycle (sun position, light color, ambient)
+  UpdateDayNight(DtSecs);
+
+  // Apply shadow panel settings (bias, min, lambda, cascade count, light cam)
+  ApplyShadowSettings();
+
+  // Apply any queued skybox change before rendering
+  ApplyPendingCubemap();
+
+  // Periodic player position log (every ~2 seconds)
+  static float s_posLogTimer = 0.0f;
+  s_posLogTimer += DtSecs;
+  if (s_posLogTimer > 2.0f) {
+    s_posLogTimer = 0.0f;
+    T8_LOG_INFO("[Minecraft] Player pos=(%.1f, %.1f, %.1f) grounded=%d",
+                m_playerEye.x, m_playerEye.y, m_playerEye.z, m_player.IsGrounded() ? 1 : 0);
+  }
+
+  // Stream chunks around the player
+  UpdateChunkStreaming();
+
+  // Upload ready async chunks to the GPU (a few per frame)
+  ProcessPendingChunks();
+
+  // Rebuild any dirty chunks (block edits)
+  RebuildDirtyChunks();
+
+  // Rebuild the navmesh (throttled) when blocks changed, so enemies
+  // re-path around newly placed/removed blocks.
+  if (m_navMeshDirty) {
+    m_navMeshRebuildTimer += DtSecs;
+    if (m_navMeshRebuildTimer >= 0.5f) {
+      m_navMeshRebuildTimer = 0.0f;
+      m_navMeshDirty = false;
+      BuildNavigationMesh();
+      // Force the mob to recompute its path on the next update.
+      m_mob.repathTimer = 0.0f;
+      m_mob.pathReady = false;
+      T8_LOG_INFO("[Minecraft] NavMesh rebuilt after block edit");
+    }
+  }
+
+  VP = Cam.VP;
+}
+
+void MinecraftScene::OnInput(InputManager* IManager) {
+  // Mouse look
+  if (m_mouseCaptured) {
+    if (m_cameraMode == 1) {
+      m_lightYaw += IManager->xDelta * m_mouseSensitivity;
+      m_lightPitch += IManager->yDelta * m_mouseSensitivity;
+      m_lightPitch = (std::max)(-1.55f, (std::min)(1.55f, m_lightPitch));
+    } else if (m_cameraMode == 0) {
+      // Moving the mouse right (xDelta positive) should turn right (yaw up).
+      m_playerYaw += IManager->xDelta * m_mouseSensitivity;
+      // Engine convention: positive pitch = look down, negative = look up.
+      // Moving the mouse up (yDelta negative) should look up (pitch negative),
+      // so we ADD yDelta (inverted from the naive -=).
+      m_playerPitch += IManager->yDelta * m_mouseSensitivity;
+      m_playerPitch = (std::max)(-1.55f, (std::min)(1.55f, m_playerPitch));
+    }
+  }
+
+  if (m_cameraMode == 1) {
+    const float speed = m_debugCameraSpeed * DtSecs;
+    const float fwd = (IManager->PressedKey(T800K_w) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_s) ? 1.0f : 0.0f);
+    const float strafe = (IManager->PressedKey(T800K_d) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_a) ? 1.0f : 0.0f);
+    const float upInput = (IManager->PressedKey(T800K_SPACE) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_LSHIFT) ? 1.0f : 0.0f);
+    // Build light camera basis from yaw/pitch.
+    XVECTOR3 look(std::sin(m_lightYaw) * std::cos(m_lightPitch),
+                  -std::sin(m_lightPitch),
+                  std::cos(m_lightYaw) * std::cos(m_lightPitch));
+    look.Normalize();
+    XVECTOR3 right(std::cos(m_lightYaw), 0.0f, -std::sin(m_lightYaw));
+    right.Normalize();
+    XVECTOR3 upVec(0.0f, 1.0f, 0.0f, 0.0f);
+    LightCam.Eye += look * (fwd * speed) + right * (strafe * speed) + upVec * (upInput * speed);
+    LightCam.Yaw = m_lightYaw;
+    LightCam.Pitch = m_lightPitch;
+    LightCam.Update(0.0f);
+  } else if (m_cameraMode == 0) {
+    // Movement input (player)
+    m_playerInput.forward = XVECTOR3(std::sin(m_playerYaw), 0.0f, std::cos(m_playerYaw), 0.0f);
+    m_playerInput.right = XVECTOR3(std::cos(m_playerYaw), 0.0f, -std::sin(m_playerYaw), 0.0f);
+    m_playerInput.moveForward = IManager->PressedKey(T800K_w);
+    m_playerInput.moveBackward = IManager->PressedKey(T800K_s);
+    m_playerInput.moveLeft = IManager->PressedKey(T800K_a);
+    m_playerInput.moveRight = IManager->PressedKey(T800K_d);
+    m_playerInput.jump = IManager->PressedKey(T800K_SPACE);
+    m_playerInput.sprint = IManager->PressedKey(T800K_LSHIFT);
+    m_playerInput.moveForwardAmount = (m_playerInput.moveForward ? 1.0f : 0.0f) - (m_playerInput.moveBackward ? 1.0f : 0.0f);
+    m_playerInput.moveRightAmount = (m_playerInput.moveRight ? 1.0f : 0.0f) - (m_playerInput.moveLeft ? 1.0f : 0.0f);
+  }
+
+  if (m_cameraMode == 0)
+    HandleBlockInteraction(IManager);
+
+  // Block selection (number keys 1-9)
+  if (IManager->PressedOnceKey(T800K_1) && m_hotbar.size() > 0) m_selectedBlock = m_hotbar[0];
+  if (IManager->PressedOnceKey(T800K_2) && m_hotbar.size() > 1) m_selectedBlock = m_hotbar[1];
+  if (IManager->PressedOnceKey(T800K_3) && m_hotbar.size() > 2) m_selectedBlock = m_hotbar[2];
+  if (IManager->PressedOnceKey(T800K_4) && m_hotbar.size() > 3) m_selectedBlock = m_hotbar[3];
+  if (IManager->PressedOnceKey(T800K_5) && m_hotbar.size() > 4) m_selectedBlock = m_hotbar[4];
+  if (IManager->PressedOnceKey(T800K_6) && m_hotbar.size() > 5) m_selectedBlock = m_hotbar[5];
+  if (IManager->PressedOnceKey(T800K_7) && m_hotbar.size() > 6) m_selectedBlock = m_hotbar[6];
+  if (IManager->PressedOnceKey(T800K_8) && m_hotbar.size() > 7) m_selectedBlock = m_hotbar[7];
+  if (IManager->PressedOnceKey(T800K_9) && m_hotbar.size() > 8) m_selectedBlock = m_hotbar[8];
+  // Extra blocks via Q/E cycle (Q = previous, E toggles cursor, so use R/F)
+  if (IManager->PressedOnceKey(T800K_r)) m_selectedBlock = BlockId("brick", m_selectedBlock);
+  if (IManager->PressedOnceKey(T800K_f)) m_selectedBlock = BlockId("glass", m_selectedBlock);
+  if (IManager->PressedOnceKey(T800K_v)) m_selectedBlock = BlockId("stone_bricks", m_selectedBlock);
+  if (IManager->PressedOnceKey(T800K_b)) m_selectedBlock = BlockId("snow", m_selectedBlock);
+  if (IManager->PressedOnceKey(T800K_n)) m_selectedBlock = BlockId("gravel", m_selectedBlock);
+
+  // Toggle mouse capture with E
+  if (IManager->PressedOnceKey(T800K_e)) {
+    m_mouseCaptured = !m_mouseCaptured;
+  }
+}
+
+void MinecraftScene::OnDraw() {
+  // Update generated shadow views from the active main camera + light transform.
+  const Camera& csmViewCamera = (m_cameraMode == 1) ? LightCam : Cam;
+  for (auto& projection : SceneProp.Shadows.projections) {
+    int tileRes = projection.resolvedDesc.resolution > 0
+      ? projection.resolvedDesc.resolution
+      : (int)SceneProp.ShadowMapResolution;
+    std::string err;
+    if (!t850::ShadowSystem::UpdateProjection(projection, SceneProp, csmViewCamera, tileRes, &err)) {
+      T8_LOG_ERROR("[Minecraft][CSM] Projection update failed: %s", err.c_str());
+    }
+  }
+
+  // Execute the render graph
+  m_renderGraph.Execute(
+    pFramework->pVideoDriver,
+    SceneProp,
+    Meshes, m_renderMeshCount,
+    Quads,
+    ActiveCam ? ActiveCam : &Cam,
+    &LightCam,
+    nullptr,
+    EnvMaps
+  );
+
+  // Debug: draw cascade frustums as wireframe boxes (light-color volumes).
+  if (m_showCascadeFrustums)
+    DrawCascadeFrustums();
+
+  // Frame dump
+  if (m_dumper.ShouldDump(DtSecs)) {
+    std::vector<t850::RTDumpEntry> rts = {
+      {GBufferPass, BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Albedo"},
+      {GBufferPass, BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
+      {GBufferPass, BaseDriver::COLOR2_ATTACHMENT, "GBuffer_PBR"},
+      {GBufferPass, BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_Depth"},
+      {DepthPass,   BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
+      {ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
+      {DeferredPass,BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
+    };
+    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs,
+                       nullptr, nullptr, nullptr);
+    if (m_dumper.ShouldExit()) exit(0);
+  }
+
+  // HUD text (drawn in DrawDevGui via ImGui so it scales with resolution)
+}
+
+void MinecraftScene::DrawCascadeFrustums() {
+  // Only draw when shadows are enabled and a projection exists.
+  if (SceneProp.ToogleShadow == 0)
+    return;
+  if (SceneProp.Shadows.projections.empty())
+    return;
+
+  const auto& projection = SceneProp.Shadows.projections[0];
+  if (projection.viewCount <= 0)
+    return;
+
+  // Per-cascade colors (light-color volumes for easy identification).
+  static const XVECTOR3 kCascadeColors[6] = {
+    XVECTOR3(1.0f, 0.2f, 0.2f, 1.0f),  // red
+    XVECTOR3(0.2f, 1.0f, 0.2f, 1.0f),  // green
+    XVECTOR3(0.2f, 0.4f, 1.0f, 1.0f),  // blue
+    XVECTOR3(1.0f, 1.0f, 0.2f, 1.0f),  // yellow
+    XVECTOR3(1.0f, 0.4f, 1.0f, 1.0f),  // magenta
+    XVECTOR3(0.2f, 1.0f, 1.0f, 1.0f),  // cyan
+  };
+
+  // Box edges: 12 edges connecting the 8 corners.
+  static const unsigned short kBoxEdges[24] = {
+    0,1, 1,2, 2,3, 3,0,   // near face
+    4,5, 5,6, 6,7, 7,4,   // far face
+    0,4, 1,5, 2,6, 3,7    // connecting edges
+  };
+
+  XMATRIX44 identity;
+  identity.Identity();
+  m_lineRenderer.SetDepthTestEnabled(false);  // always visible
+  m_lineRenderer.SetViewport(pFramework->pVideoDriver->width,
+                             pFramework->pVideoDriver->height);
+
+  // Lazily create the shared VB/IB once (never per-frame — that causes device
+  // removal). Capacity includes receiver slices and fitted light volumes.
+  const int kMaxCascades = 6;
+  const int kMaxDebugBoxes = kMaxCascades * 2;
+  const int kMaxVertices = kMaxDebugBoxes * 8;
+  if (!m_cascadeDebugVB || !m_cascadeDebugIB) {
+    float dummy[kMaxVertices * 4] = {};
+    m_cascadeDebugVB = t850::LineRenderer::CreatePositionVB(dummy, kMaxVertices, BufferUsage::DINAMIC);
+    m_cascadeDebugIB = t850::LineRenderer::CreateIndexBuffer16(kBoxEdges, 24);
+    m_cascadeDebugVBCapacity = kMaxVertices;
+  }
+  if (!m_cascadeDebugVB || !m_cascadeDebugIB)
+    return;
+
+  // Receiver slices are contiguous by construction. Fitted light volumes may
+  // overlap because each includes a rotated slice plus caster depth padding.
+  float positions[kMaxVertices * 4] = {};
+  int count = (projection.viewCount < kMaxCascades) ? projection.viewCount : kMaxCascades;
+  int boxCount = 0;
+  for (int c = 0; c < count; ++c) {
+    const auto& view = projection.views[c];
+    auto appendBox = [&](const XVECTOR3 corners[8]) {
+      for (int k = 0; k < 8; ++k) {
+        const int idx = (boxCount * 8 + k) * 4;
+        positions[idx + 0] = corners[k].x;
+        positions[idx + 1] = corners[k].y;
+        positions[idx + 2] = corners[k].z;
+        positions[idx + 3] = 1.0f;
+      }
+      ++boxCount;
+    };
+
+    if (m_cascadeDebugMode == 0 || m_cascadeDebugMode == 2)
+      appendBox(view.frustumCorners);
+
+    if (m_cascadeDebugMode == 1 || m_cascadeDebugMode == 2) {
+      const Camera& shadowCamera = view.camera;
+      const float halfW = shadowCamera.Width * 0.5f;
+      const float halfH = shadowCamera.Height * 0.5f;
+      const XVECTOR3 nearCenter = shadowCamera.Eye + shadowCamera.Look * shadowCamera.NPlane;
+      const XVECTOR3 farCenter = shadowCamera.Eye + shadowCamera.Look * shadowCamera.FPlane;
+      const XVECTOR3 volumeCorners[8] = {
+        nearCenter - shadowCamera.Right * halfW - shadowCamera.Up * halfH,
+        nearCenter + shadowCamera.Right * halfW - shadowCamera.Up * halfH,
+        nearCenter + shadowCamera.Right * halfW + shadowCamera.Up * halfH,
+        nearCenter - shadowCamera.Right * halfW + shadowCamera.Up * halfH,
+        farCenter - shadowCamera.Right * halfW - shadowCamera.Up * halfH,
+        farCenter + shadowCamera.Right * halfW - shadowCamera.Up * halfH,
+        farCenter + shadowCamera.Right * halfW + shadowCamera.Up * halfH,
+        farCenter - shadowCamera.Right * halfW + shadowCamera.Up * halfH,
+      };
+      appendBox(volumeCorners);
+    }
+  }
+  if (t850::T8DeviceContext)
+    m_cascadeDebugVB->UpdateFromBuffer(*t850::T8DeviceContext, positions);
+
+  // Draw each cascade as a separate line list with its own color.
+  const Camera* debugCamera = ActiveCam ? ActiveCam : &Cam;
+  for (int box = 0; box < boxCount; ++box) {
+    const int cascade = (m_cascadeDebugMode == 2) ? box / 2 : box;
+    m_lineRenderer.DrawLines(identity, debugCamera->VP, kCascadeColors[cascade],
+                             m_cascadeDebugVB, m_cascadeDebugIB, 24,
+                             sizeof(float) * 4, IndexBufferFormat::R16,
+                             box * 8);
+  }
+}
+
+void MinecraftScene::ApplyShadowSettings() {
+  // Master toggle
+  SceneProp.ToogleShadow = m_shadowsEnabled ? 1 : 0;
+
+  // Bias / min
+  SceneProp.ShadowBias = m_shadowBias;
+  SceneProp.ShadowMin = m_shadowMin;
+
+  // Apply to the active projection's resolved descriptor.
+  if (!SceneProp.Shadows.projections.empty()) {
+    auto& proj = SceneProp.Shadows.projections[0];
+    proj.resolvedDesc.split_lambda = m_splitLambda;
+    proj.resolvedDesc.cascade_count = m_cascadeCount;
+    proj.resolvedDesc.blend_fraction = 0.0f;
+  }
+
+  // If resolution or cascade count changed, recreate the render targets.
+  if (m_shadowConfigDirty) {
+    m_shadowConfigDirty = false;
+    SceneProp.ShadowMapResolution = m_shadowResolution;
+    if (pFramework && pFramework->pVideoDriver) {
+      pFramework->pVideoDriver->WaitForGPU();
+      m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
+      std::string cfgError;
+      const std::string projectionId = SceneProp.Shadows.projections.empty()
+        ? std::string{} : SceneProp.Shadows.projections[0].resolvedDesc.id;
+      t850::ShadowProjectionOverrideDesc shadowOverride;
+      shadowOverride.projection_id = projectionId;
+      shadowOverride.resolution = static_cast<int>(m_shadowResolution);
+      shadowOverride.cascade_count = m_cascadeCount;
+      shadowOverride.split_lambda = m_splitLambda;
+      if (!m_renderGraph.Configure(SceneProp, {shadowOverride}, {}, &cfgError)) {
+        T8_LOG_ERROR("[Minecraft] Reconfigure failed: %s", cfgError.c_str());
+        return;
+      }
+      m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
+      t850::sandbox::RefreshDeferredPassHandles(
+        m_renderGraph, GBufferPass, DeferredPass, Extra16FPass, DepthPass,
+        ShadowAccumPass, ExtraHelperPass, BloomAccumPass,
+        AdaptedLumCurrentPass, AdaptedLumPrevPass);
+    }
+  }
+
+  if (m_cameraMode == 1) {
+    LightCam.Ortho = m_debugCameraOrtho;
+    LightCam.AspectRatio = (float)pFramework->pVideoDriver->width /
+                           (float)(std::max)(1, pFramework->pVideoDriver->height);
+    LightCam.CreatePojection();
+    LightCam.Update(0.0f);
+    ActiveCam = &LightCam;
+    SceneProp.SetPrimaryCamera(ActiveCam);
+  } else if (m_cameraMode == 2 && !SceneProp.Shadows.projections.empty()) {
+    auto& projection = SceneProp.Shadows.projections[0];
+    m_debugCascadeIndex = (std::max)(0, (std::min)(m_debugCascadeIndex, projection.viewCount - 1));
+    ActiveCam = &projection.views[m_debugCascadeIndex].camera;
+    SceneProp.SetPrimaryCamera(ActiveCam);
+  } else {
+    ActiveCam = &Cam;
+    SceneProp.SetPrimaryCamera(&Cam);
+  }
+}
+
+void MinecraftScene::SaveShadowSettings() {
+  if (!m_sceneFile.cameras.empty()) {
+    auto& camera = m_sceneFile.cameras[0];
+    camera.type = Cam.Ortho ? 1 : 0;
+    camera.position = {Cam.Eye.x, Cam.Eye.y, Cam.Eye.z};
+    camera.target = {Cam.Eye.x + Cam.Look.x, Cam.Eye.y + Cam.Look.y, Cam.Eye.z + Cam.Look.z};
+    camera.fov_deg = Rad2Deg(Cam.Fov);
+    camera.ortho_w = Cam.Width;
+    camera.ortho_h = Cam.Height;
+    camera.near_plane = Cam.NPlane;
+    camera.far_plane = Cam.FPlane;
+  }
+  if (!m_sceneFile.light_cameras.empty()) {
+    auto& camera = m_sceneFile.light_cameras[0];
+    camera.type = LightCam.Ortho ? 1 : 0;
+    camera.position = {LightCam.Eye.x, LightCam.Eye.y, LightCam.Eye.z};
+    camera.target = {LightCam.Eye.x + LightCam.Look.x,
+                     LightCam.Eye.y + LightCam.Look.y,
+                     LightCam.Eye.z + LightCam.Look.z};
+    camera.fov_deg = Rad2Deg(LightCam.Fov);
+    camera.ortho_w = LightCam.Width;
+    camera.ortho_h = LightCam.Height;
+    camera.near_plane = LightCam.NPlane;
+    camera.far_plane = LightCam.FPlane;
+  }
+  for (auto& authored : m_sceneFile.lights) {
+    auto runtime = std::find_if(SceneProp.Lights.begin(), SceneProp.Lights.end(),
+      [&](const Light& light) { return light.Id == authored.id; });
+    if (runtime == SceneProp.Lights.end()) continue;
+    authored.position = {runtime->Position.x, runtime->Position.y, runtime->Position.z};
+    authored.direction = {runtime->Direction.x, runtime->Direction.y, runtime->Direction.z};
+    authored.color = {runtime->Color.x, runtime->Color.y, runtime->Color.z};
+    authored.intensity = runtime->Intensity;
+    authored.radius = runtime->radius;
+    authored.enabled = runtime->Enabled;
+  }
+
+  m_voxelSettings.environment_map = m_currentCubemapPath;
+  m_voxelSettings.show_physics = m_showPhysics;
+  m_voxelSettings.show_chunk_bounds = m_showChunkBounds;
+  m_voxelSettings.show_cascade_debug = m_showCascadeFrustums;
+  m_voxelSettings.cascade_debug_mode = m_cascadeDebugMode;
+  m_voxelSettings.camera_mode = m_cameraMode;
+  m_voxelSettings.debug_cascade_index = m_debugCascadeIndex;
+  m_voxelSettings.day_night.enabled = m_dayNightEnabled;
+  m_voxelSettings.day_night.time_of_day = m_timeOfDay;
+  m_voxelSettings.day_night.day_length_seconds = m_dayLengthSecs;
+  m_sceneFile.voxel_world = m_voxelSettings;
+
+  if (m_sceneFile.profiles.empty()) m_sceneFile.profiles.push_back({});
+  auto& profile = m_sceneFile.profiles[0];
+  if (profile.name.empty()) profile.name = "shared";
+  auto setFloat = [&](const char* name, float value) {
+    auto found = std::find_if(profile.sliders.begin(), profile.sliders.end(),
+      [&](const t850::FloatOverrideDesc& entry) { return entry.name == name; });
+    if (found == profile.sliders.end()) profile.sliders.push_back({name, value});
+    else found->value = value;
+  };
+  auto setBool = [&](const char* name, bool value) {
+    auto found = std::find_if(profile.checkboxes.begin(), profile.checkboxes.end(),
+      [&](const t850::BoolOverrideDesc& entry) { return entry.name == name; });
+    if (found == profile.checkboxes.end()) profile.checkboxes.push_back({name, value});
+    else found->value = value;
+  };
+  auto setInt = [&](const char* name, int value) {
+    auto found = std::find_if(profile.selectors.begin(), profile.selectors.end(),
+      [&](const t850::IntOverrideDesc& entry) { return entry.name == name; });
+    if (found == profile.selectors.end()) profile.selectors.push_back({name, value});
+    else found->value = value;
+  };
+  setFloat("exposure", SceneProp.Exposure);
+  setFloat("bloom_factor", SceneProp.BloomFactor);
+  setFloat("bloom_threshold", SceneProp.BloomThreshold);
+  setFloat("tm_white_level", SceneProp.ToneMapWhiteLevel);
+  setFloat("tm_adapt_tau", SceneProp.LuminanceTau);
+  setFloat("pcf_radius", SceneProp.PCFScale);
+  setFloat("pcf_samples", SceneProp.PCFSamples);
+  setFloat("ssao_radius", SceneProp.SSAOKernel.Radius);
+  setFloat("shadow_bias", m_shadowBias);
+  setFloat("shadow_min", m_shadowMin);
+  setFloat("env_factor", SceneProp.EnvFactor);
+  setFloat("ibl_factor", SceneProp.IBLFactor);
+  setFloat("lightmap_intensity", SceneProp.LightmapIntensity);
+  setFloat("material_emissive_intensity", SceneProp.MaterialEmissiveIntensity);
+  setFloat("material_transmission_multiplier", SceneProp.MaterialTransmissionMultiplier);
+  setFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
+  setBool("shadow_toggle", m_shadowsEnabled);
+  setBool("ssao_toggle", SceneProp.ToogleSSAO != 0);
+  setBool("dof_toggle", SceneProp.ToogleDOF != 0);
+  setBool("parallax_toggle", SceneProp.ToogleParallax != 0);
+  setBool("godrays_toggle", SceneProp.ToogleGodRays != 0);
+  setInt("luminance_mode", SceneProp.LuminanceMode);
+  setInt("active_gauss_kernel", SceneProp.ActiveGaussKernel);
+
+  if (profile.shadow_projections.empty()) profile.shadow_projections.push_back({});
+  auto& shadow = profile.shadow_projections[0];
+  if (shadow.projection_id.empty() && !SceneProp.Shadows.projections.empty())
+    shadow.projection_id = SceneProp.Shadows.projections[0].resolvedDesc.id;
+  shadow.enabled = m_shadowsEnabled;
+  shadow.resolution = (int)m_shadowResolution;
+  shadow.cascade_count = m_cascadeCount;
+  shadow.split_lambda = m_splitLambda;
+
+  std::string error;
+  if (t850::scene::SaveEditorSceneFile(m_sceneFile, m_sceneFilePath, &error)) {
+    T8_LOG_INFO("[Minecraft] Saved authored scene to %s", m_sceneFilePath.c_str());
+  } else {
+    T8_LOG_ERROR("[Minecraft] Failed to save authored scene: %s", error.c_str());
+  }
+}
+
+void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
+  // HUD overlay (ImGui font, scales with resolution)
+  {
+    char hud[512];
+    snprintf(hud, sizeof(hud),
+             "Minecraft  |  Pos: %.1f %.1f %.1f  |  Block: %s\n"
+             "WASD: move   Space: jump   Shift: sprint   E: cursor\n"
+             "LMB: break   RMB: place   1-9/R/F/V/B/N: select block",
+             m_playerEye.x, m_playerEye.y, m_playerEye.z,
+             m_blockDefs[m_selectedBlock].name.c_str());
+    gui.DrawFrameStatsOverlay(hud);
+  }
+
+  if (gui.BeginSection("Minecraft")) {
+    gui.Text("Voxel world demo");
+    gui.Separator();
+    char pos[128];
+    snprintf(pos, sizeof(pos), "Player: %.1f, %.1f, %.1f", m_playerEye.x, m_playerEye.y, m_playerEye.z);
+    gui.Text(pos);
+    char chunk[128];
+    snprintf(chunk, sizeof(chunk), "Chunk: %d, %d", m_centerChunkX, m_centerChunkZ);
+    gui.Text(chunk);
+    gui.Separator();
+
+    static int s_skyIndex = 0;
+    for (int i = 0; i < (int)m_voxelSettings.environment_options.size(); ++i)
+      if (m_voxelSettings.environment_options[i] == m_currentCubemapPath) s_skyIndex = i;
+    t850::SelectorDesc skyDesc;
+    skyDesc.name = "skybox";
+    skyDesc.label = "Skybox";
+    skyDesc.options = m_voxelSettings.environment_options;
+    skyDesc.default_index = s_skyIndex;
+    if (gui.Combo(skyDesc, s_skyIndex)) {
+      const std::string newPath = m_voxelSettings.environment_options[s_skyIndex];
+      if (newPath != m_currentCubemapPath) {
+        m_pendingCubemap = newPath;
+        T8_LOG_INFO("[Minecraft] Skybox change queued: '%s'", m_pendingCubemap.c_str());
+      }
+    }
+
+    gui.Separator();
+    t850::CheckboxDesc showPhysics;
+    showPhysics.name = "show_physics";
+    showPhysics.label = "Show physics";
+    gui.Checkbox(showPhysics, m_showPhysics);
+    t850::CheckboxDesc showBounds;
+    showBounds.name = "show_bounds";
+    showBounds.label = "Show chunk bounds";
+    gui.Checkbox(showBounds, m_showChunkBounds);
+  }
+
+  if (gui.BeginSection("Rendering")) {
+    auto sliderValue = [&](const std::string& name, float& value) -> bool {
+      if (name == "exposure") value = SceneProp.Exposure;
+      else if (name == "bloom_factor") value = SceneProp.BloomFactor;
+      else if (name == "bloom_threshold") value = SceneProp.BloomThreshold;
+      else if (name == "tm_white_level") value = SceneProp.ToneMapWhiteLevel;
+      else if (name == "tm_adapt_tau") value = SceneProp.LuminanceTau;
+      else if (name == "pcf_radius") value = SceneProp.PCFScale;
+      else if (name == "pcf_samples") value = SceneProp.PCFSamples;
+      else if (name == "ssao_kernel_size") value = (float)SceneProp.SSAOKernel.KernelSize;
+      else if (name == "ssao_radius") value = SceneProp.SSAOKernel.Radius;
+      else if (name == "dof_aperture") value = SceneProp.Aperture;
+      else if (name == "dof_focal_length") value = SceneProp.FocalLength;
+      else if (name == "dof_max_coc") value = SceneProp.MaxCoc;
+      else if (name == "dof_far_samples") value = SceneProp.DOF_Far_Samples_squared;
+      else if (name == "dof_near_samples") value = SceneProp.DOF_Near_Samples_squared;
+      else if (name == "parallax_low_samples") value = SceneProp.ParallaxLowSamples;
+      else if (name == "parallax_high_samples") value = SceneProp.ParallaxHighSamples;
+      else if (name == "parallax_height") value = SceneProp.ParallaxHeight;
+      else if (name == "light_volume_steps") value = SceneProp.LightVolumeSteps;
+      else if (name == "godrays_factor") value = SceneProp.GodRaysFactor;
+      else if (name == "fov") value = Rad2Deg(Cam.Fov);
+      else if (name == "light_intensity" && !SceneProp.Lights.empty()) value = SceneProp.Lights[0].Intensity;
+      else if (name == "light_radius_scale") value = SceneProp.LightRadiusScale;
+      else if (name == "light_intensity_scale") value = SceneProp.LightIntensityScale;
+      else if (name == "shadow_bias") value = m_shadowBias;
+      else if (name == "shadow_min") value = m_shadowMin;
+      else if (name == "env_factor") value = SceneProp.EnvFactor;
+      else if (name == "ibl_factor") value = SceneProp.IBLFactor;
+      else if (name == "lightmap_intensity") value = SceneProp.LightmapIntensity;
+      else if (name == "material_emissive_intensity") value = SceneProp.MaterialEmissiveIntensity;
+      else if (name == "material_transmission_multiplier") value = SceneProp.MaterialTransmissionMultiplier;
+      else if (name == "material_refraction_strength") value = SceneProp.MaterialRefractionStrength;
+      else return false;
+      return true;
+    };
+    auto setSliderValue = [&](const std::string& name, float value) {
+      if (name == "exposure") SceneProp.Exposure = value;
+      else if (name == "bloom_factor") SceneProp.BloomFactor = value;
+      else if (name == "bloom_threshold") SceneProp.BloomThreshold = value;
+      else if (name == "tm_white_level") SceneProp.ToneMapWhiteLevel = value;
+      else if (name == "tm_adapt_tau") SceneProp.LuminanceTau = value;
+      else if (name == "pcf_radius") SceneProp.PCFScale = value;
+      else if (name == "pcf_samples") SceneProp.PCFSamples = value;
+      else if (name == "ssao_kernel_size") { SceneProp.SSAOKernel.KernelSize = (int)value; SceneProp.SSAOKernel.Update(); }
+      else if (name == "ssao_radius") SceneProp.SSAOKernel.Radius = value;
+      else if (name == "dof_aperture") SceneProp.Aperture = value;
+      else if (name == "dof_focal_length") SceneProp.FocalLength = value;
+      else if (name == "dof_max_coc") SceneProp.MaxCoc = value;
+      else if (name == "dof_far_samples") SceneProp.DOF_Far_Samples_squared = value;
+      else if (name == "dof_near_samples") SceneProp.DOF_Near_Samples_squared = value;
+      else if (name == "parallax_low_samples") SceneProp.ParallaxLowSamples = value;
+      else if (name == "parallax_high_samples") SceneProp.ParallaxHighSamples = value;
+      else if (name == "parallax_height") SceneProp.ParallaxHeight = value;
+      else if (name == "light_volume_steps") SceneProp.LightVolumeSteps = value;
+      else if (name == "godrays_factor") SceneProp.GodRaysFactor = value;
+      else if (name == "fov") Cam.SetFov(Deg2Rad(value));
+      else if (name == "light_intensity" && !SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value;
+      else if (name == "light_radius_scale") SceneProp.LightRadiusScale = value;
+      else if (name == "light_intensity_scale") SceneProp.LightIntensityScale = value;
+      else if (name == "shadow_bias") m_shadowBias = value;
+      else if (name == "shadow_min") m_shadowMin = value;
+      else if (name == "env_factor") SceneProp.EnvFactor = value;
+      else if (name == "ibl_factor") SceneProp.IBLFactor = value;
+      else if (name == "lightmap_intensity") SceneProp.LightmapIntensity = value;
+      else if (name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = value;
+      else if (name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = value;
+      else if (name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value;
+    };
+    for (const auto& desc : m_controlSetup.descriptor.sliders) {
+      float value = 0.0f;
+      if (sliderValue(desc.name, value) && gui.Slider(desc, value))
+        setSliderValue(desc.name, value);
+    }
+
+    auto checkboxValue = [&](const std::string& name, bool& value) -> bool {
+      if (name == "shadow_toggle") value = SceneProp.ToogleShadow != 0;
+      else if (name == "ssao_toggle") value = SceneProp.ToogleSSAO != 0;
+      else if (name == "dof_toggle") value = SceneProp.ToogleDOF != 0;
+      else if (name == "dof_auto_focus") value = SceneProp.AutoFocus;
+      else if (name == "parallax_toggle") value = SceneProp.ToogleParallax != 0;
+      else if (name == "parallax_shadow_toggle") value = SceneProp.ToogleParallaxShadow != 0;
+      else if (name == "godrays_toggle") value = SceneProp.ToogleGodRays != 0;
+      else if (name == "point_lights_enabled") value = SceneProp.PointLightsEnabled;
+      else return false;
+      return true;
+    };
+    for (const auto& desc : m_controlSetup.descriptor.checkboxes) {
+      bool value = false;
+      if (!checkboxValue(desc.name, value) || !gui.Checkbox(desc, value)) continue;
+      if (desc.name == "shadow_toggle") { SceneProp.ToogleShadow = value; m_shadowsEnabled = value; }
+      else if (desc.name == "ssao_toggle") SceneProp.ToogleSSAO = value;
+      else if (desc.name == "dof_toggle") SceneProp.ToogleDOF = value;
+      else if (desc.name == "dof_auto_focus") SceneProp.AutoFocus = value;
+      else if (desc.name == "parallax_toggle") SceneProp.ToogleParallax = value;
+      else if (desc.name == "parallax_shadow_toggle") SceneProp.ToogleParallaxShadow = value;
+      else if (desc.name == "godrays_toggle") SceneProp.ToogleGodRays = value;
+      else if (desc.name == "point_lights_enabled") SceneProp.PointLightsEnabled = value;
+    }
+
+    for (const auto& desc : m_controlSetup.descriptor.selectors) {
+      int selected = desc.default_index;
+      if (desc.name == "active_gauss_kernel") selected = SceneProp.ActiveGaussKernel;
+      else if (desc.name == "luminance_mode") selected = SceneProp.LuminanceMode;
+      else if (desc.name == "gauss_kernel_sample_count") {
+        GaussFilter* kernel = SceneProp.ActiveGaussKernel >= 0 &&
+          SceneProp.ActiveGaussKernel < (int)SceneProp.pGaussKernels.size()
+          ? SceneProp.pGaussKernels[SceneProp.ActiveGaussKernel] : nullptr;
+        if (kernel) {
+          for (int option = 0; option < (int)desc.options.size(); ++option)
+            if (std::atoi(desc.options[option].c_str()) == kernel->kernelSize) selected = option;
+        }
+      } else continue;
+      if (!gui.Combo(desc, selected)) continue;
+      if (desc.name == "active_gauss_kernel") SceneProp.ActiveGaussKernel = selected;
+      else if (desc.name == "luminance_mode") SceneProp.LuminanceMode = selected;
+      else if (desc.name == "gauss_kernel_sample_count" && selected >= 0 && selected < (int)desc.options.size()) {
+        GaussFilter* kernel = SceneProp.ActiveGaussKernel >= 0 &&
+          SceneProp.ActiveGaussKernel < (int)SceneProp.pGaussKernels.size()
+          ? SceneProp.pGaussKernels[SceneProp.ActiveGaussKernel] : nullptr;
+        if (kernel) { kernel->kernelSize = std::atoi(desc.options[selected].c_str()); kernel->Update(); }
+      }
+    }
+  }
+
+  // Shadow controls live in the shared Scene Controls panel, matching DayScene.
+  if (gui.BeginSection("Shadows")) {
+    gui.Text("Directional CSM controls");
+    gui.Separator();
+
+    t850::CheckboxDesc shadowEnable;
+    shadowEnable.name = "shadow_enable";
+    shadowEnable.label = "Enable shadows";
+    if (gui.Checkbox(shadowEnable, m_shadowsEnabled)) {
+      SceneProp.ToogleShadow = m_shadowsEnabled ? 1 : 0;
+    }
+
+    gui.BeginSection("Cascades");
+    {
+      t850::SliderDesc cascadeCount;
+      cascadeCount.name = "cascade_count";
+      cascadeCount.label = "Cascade count";
+      cascadeCount.min_val = 1.0f;
+      cascadeCount.max_val = 6.0f;
+      cascadeCount.step = 1.0f;
+      float cc = (float)m_cascadeCount;
+      if (gui.Slider(cascadeCount, cc)) {
+        m_cascadeCount = (int)cc;
+        m_shadowConfigDirty = true;
+      }
+
+      t850::SliderDesc splitLambda;
+      splitLambda.name = "split_lambda";
+      splitLambda.label = "Split lambda";
+      splitLambda.min_val = 0.0f;
+      splitLambda.max_val = 1.0f;
+      splitLambda.step = 0.01f;
+      gui.Slider(splitLambda, m_splitLambda);
+
+      t850::SliderDesc shadowBias;
+      shadowBias.name = "shadow_bias";
+      shadowBias.label = "Shadow bias";
+      shadowBias.min_val = 0.0f;
+      shadowBias.max_val = 0.01f;
+      shadowBias.step = 0.0001f;
+      gui.Slider(shadowBias, m_shadowBias);
+
+      t850::SliderDesc shadowMin;
+      shadowMin.name = "shadow_min";
+      shadowMin.label = "Shadow min";
+      shadowMin.min_val = 0.0f;
+      shadowMin.max_val = 1.0f;
+      shadowMin.step = 0.01f;
+      gui.Slider(shadowMin, m_shadowMin);
+    }
+
+    gui.BeginSection("Resolution");
+    {
+      t850::SliderDesc res;
+      res.name = "shadow_resolution";
+      res.label = "Shadow map resolution";
+      res.min_val = 256.0f;
+      res.max_val = 4096.0f;
+      res.step = 256.0f;
+      if (gui.Slider(res, m_shadowResolution)) {
+        m_shadowConfigDirty = true;
+      }
+    }
+
+    gui.BeginSection("Debug");
+    {
+      t850::CheckboxDesc showFrustums;
+      showFrustums.name = "show_frustums";
+      showFrustums.label = "Show cascade debug";
+      gui.Checkbox(showFrustums, m_showCascadeFrustums);
+
+      t850::SelectorDesc cascadeDebugMode;
+      cascadeDebugMode.name = "cascade_debug_mode";
+      cascadeDebugMode.label = "Cascade debug geometry";
+      cascadeDebugMode.options = {"Receiver slices", "Light volumes", "Both"};
+      cascadeDebugMode.default_index = 0;
+      gui.Combo(cascadeDebugMode, m_cascadeDebugMode);
+    }
+
+    gui.BeginSection("Light camera");
+    {
+      t850::SelectorDesc cameraMode;
+      cameraMode.name = "camera_mode";
+      cameraMode.label = "View camera";
+      cameraMode.options = {"Main camera", "Movable light camera", "Generated cascade"};
+      cameraMode.default_index = 0;
+      gui.Combo(cameraMode, m_cameraMode);
+
+      t850::CheckboxDesc debugOrtho;
+      debugOrtho.name = "debug_camera_ortho";
+      debugOrtho.label = "Movable camera orthographic";
+      gui.Checkbox(debugOrtho, m_debugCameraOrtho);
+
+      t850::SliderDesc cascadeView;
+      cascadeView.name = "debug_cascade";
+      cascadeView.label = "Cascade to inspect";
+      cascadeView.min_val = 0.0f;
+      cascadeView.max_val = (float)(std::max)(0, m_cascadeCount - 1);
+      cascadeView.step = 1.0f;
+      float selectedCascade = (float)m_debugCascadeIndex;
+      if (gui.Slider(cascadeView, selectedCascade))
+        m_debugCascadeIndex = (int)selectedCascade;
+
+      t850::SliderDesc yaw;
+      yaw.name = "light_yaw";
+      yaw.label = "Light yaw";
+      yaw.min_val = -3.14159f;
+      yaw.max_val = 3.14159f;
+      yaw.step = 0.01f;
+      gui.Slider(yaw, m_lightYaw);
+
+      t850::SliderDesc pitch;
+      pitch.name = "light_pitch";
+      pitch.label = "Light pitch";
+      pitch.min_val = -1.5f;
+      pitch.max_val = 1.5f;
+      pitch.step = 0.01f;
+      gui.Slider(pitch, m_lightPitch);
+
+    }
+
+    gui.Separator();
+    if (gui.Button("Save Minecraft scene")) {
+      SaveShadowSettings();
+    }
+  }
+}
+
+// Apply a queued skybox change. Must run on the render thread before
+// rendering (D3D12 texture upload submits a temp command list + fence).
+void MinecraftScene::ApplyPendingCubemap() {
+  if (m_pendingCubemap.empty()) return;
+  T8_LOG_INFO("[Minecraft] Loading cubemap '%s' (old slot=%d)", m_pendingCubemap.c_str(), EnvMapTexIndex);
+  g_pBaseDriver->WaitForGPU();
+  int newEnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
+  if (newEnvMapTexIndex >= 0) {
+    if (EnvMapTexIndex >= 0 && EnvMapTexIndex != newEnvMapTexIndex)
+      g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
+    EnvMapTexIndex = newEnvMapTexIndex;
+    m_currentCubemapPath = m_pendingCubemap;
+    EnvMaps.SetFallback(EnvMapTexIndex);
+    LoadEnvironmentIBLResources(
+      g_pBaseDriver, {}, EnvMaps,
+      DiffuseIBLTexIndex, SpecularIBLTexIndex, BrdfLUTTexIndex,
+      SheenIBLTexIndex, CharlieLUTTexIndex, SheenELUTTexIndex);
+    UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
+    Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
+    T8_LOG_INFO("[Minecraft] Cubemap loaded: slot=%d tex=%p", EnvMapTexIndex, newTex);
+    Quads[0].SetEnvironmentMap(newTex);
+    for (int i = 0; i < m_maxChunks; ++i) {
+      if (Meshes[i].pBase) Meshes[i].SetEnvironmentMap(newTex);
+    }
+  } else {
+    T8_LOG_ERROR("[Minecraft] Failed to load cubemap '%s'; keeping previous", m_pendingCubemap.c_str());
+  }
+  m_pendingCubemap.clear();
+}
+
+void MinecraftScene::ResetViewInput() {
+  // Nothing to reset (input is read directly)
+}

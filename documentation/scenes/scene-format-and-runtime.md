@@ -71,6 +71,7 @@ The `.t8scene` root maps to `EditorSceneFile`.
 | `version` | int | Scene format version. Game-logic schema v2 is migrated explicitly. |
 | `collision` | string | Optional legacy/Q3 collision resource, e.g. `.t8q3clip`. |
 | `render_graph` | string | Optional render graph override path. |
+| `control_descriptor` | string | Optional `SceneDescriptor` path providing rendering defaults and UI control metadata. |
 | `editor` | `EditorStateDesc` | Editor camera, view toggles, layout mode/data. |
 | `objects` | array | Mesh scene objects. |
 | `game_entities` | array | Stable gameplay entities, links, control, components, and optional behavior. |
@@ -85,6 +86,28 @@ The `.t8scene` root maps to `EditorSceneFile`.
 | `god_rays_volume` | optional object | Authored God Rays clipping volume. |
 | `lights` | array | Directional/omni lights, including optional Q3 source metadata. |
 | `profiles` | array | Runtime/profile overrides using `SandboxProfileDesc`. |
+| `voxel_world` | optional object | Procedural voxel-world content and runtime settings used by MinecraftScene. |
+
+### Voxel world component
+
+`voxel_world` makes procedural voxel content authored scene data rather than C++ scene
+constants. It contains bounded runtime dimensions, terrain/noise parameters, named block
+roles, ore rules, block face tiles/colors, hotbar entries, player movement/collision,
+streaming limits, day/night behavior, environment choices, mob/weapon box parts, interaction
+reach/cooldowns, and debug defaults.
+
+Minecraft uses three data files with non-overlapping ownership:
+
+- `Scenes/Minecraft.t8scene`: authoritative content, cameras, stable light IDs, voxel world,
+  navigation settings, rendering profile values, and render-graph/control-descriptor paths.
+- `Scenes/MinecraftScene.json`: reusable rendering defaults plus DayScene-style slider,
+  checkbox, selector, and Gaussian-filter metadata. It does not own cameras or lights.
+- `Scenes/MinecraftScene_RenderGraph.json`: rendering targets, CSM projection, and passes.
+
+MinecraftScene accepts an explicit `--sceneFile`/`--t8scene` path when scene 5 is selected.
+Authored dimensions are validated against engine safety capacities and rejected when invalid;
+they are not silently clamped. T8ditor scene snapshots preserve the optional component even
+though a dedicated voxel-authoring panel is not yet present.
 
 Unknown JSON keys are ignored by Glaze on load, so game schema changes require `MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()` rather than relying on parser errors.
 

@@ -17,6 +17,7 @@
 #include <video/BaseDriver.h>
 #include <utils/xMaths.h>
 #include <utils/Camera.h>
+#include <scene/ShadowSystem.h>
 #include <vector>
 
 enum LightType {
@@ -25,6 +26,8 @@ enum LightType {
 };
 
 struct Light{
+	std::string Id;
+	std::string Name;
 	XVECTOR3 Position;
 	XVECTOR3 Direction = XVECTOR3(0.0f, -1.0f, 0.0f);  // normalized, for directional lights
 	XVECTOR3 Color;
@@ -82,6 +85,7 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	bool ShowCullingDebug = false;
 
 	std::vector<Camera*> pLightCameras;
+	t850::ShadowRuntimeState Shadows;
 
 	std::vector<GaussFilter*> pGaussKernels;
 	SSAOFilter				  SSAOKernel;

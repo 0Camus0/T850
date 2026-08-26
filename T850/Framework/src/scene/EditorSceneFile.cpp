@@ -19,6 +19,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <unordered_map>
 
 namespace t850::scene {
 
@@ -140,6 +141,39 @@ bool LoadEditorSceneFile(const std::string& path, EditorSceneFile& scene, std::s
   }
 
   ResolveSceneMeshFallbacks(path, scene);
+
+  // Deterministic stable-light-ID migration (v1 -> v2).
+  // Assign a deterministic ID from the normalized name + occurrence number, or
+  // from the original index when the name is empty. Never generate a random UUID.
+  {
+    std::unordered_map<std::string, int> idCounts;
+    for (auto& light : scene.lights) {
+      if (light.id.empty()) {
+        std::string base = light.name;
+        if (base.empty()) {
+          base = "light";
+        }
+        std::string normalized = ToLowerAsciiCopy(base);
+        // Sanitize to a valid identifier-ish token
+        std::string token;
+        for (char c : normalized) {
+          if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-')
+            token.push_back(c);
+        }
+        if (token.empty())
+          token = "light";
+        int occurrence = idCounts[token]++;
+        light.id = (occurrence == 0) ? token : (token + "-" + std::to_string(occurrence + 1));
+      }
+    }
+    // Migrate light-camera attached_light index to attached_light_id when possible.
+    for (auto& lc : scene.light_cameras) {
+      if (lc.attached_light_id.empty() && lc.attached_light >= 0 &&
+          lc.attached_light < static_cast<int>(scene.lights.size())) {
+        lc.attached_light_id = scene.lights[lc.attached_light].id;
+      }
+    }
+  }
 
   T8_LOG_INFO("[SceneFile] Loaded %s (%zu objects, %zu cameras, %zu lights)",
               path.c_str(), scene.objects.size(), scene.cameras.size(), scene.lights.size());

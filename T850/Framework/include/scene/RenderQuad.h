@@ -48,6 +48,11 @@ namespace t850 {
       XVECTOR3  LightCameraInfo;
       XVECTOR3 brightness;
 	  XVECTOR3 toogles;
+      XMATRIX44 ShadowViewProjection[6];
+      XVECTOR3  ShadowSplitDepths[2];
+      XVECTOR3  ShadowAtlasScaleBias[6];
+      XVECTOR3  ShadowParams0;
+      XVECTOR3  ShadowParams1;
       CBuffer() {
         brightness.x = 1;
       }
@@ -74,6 +79,18 @@ namespace t850 {
       XVECTOR3  toogles;
     };
 
+    // Fixed max-six shadow sampling payload (slot b2). XVECTOR3 carries 4 floats.
+    struct ShadowSamplingCBuffer {
+      XMATRIX44 ViewProjection[6];
+      XVECTOR3  SplitDepths[2];
+      XVECTOR3  AtlasScaleBias[6];
+      XVECTOR3  Params0; // x=viewCount, y=atlasWidth, z=atlasHeight, w=technique
+      XVECTOR3  Params1; // x=farDistance, y=blendFraction, z=shadowBias, w=shadowMin
+    };
+    static_assert(sizeof(XMATRIX44) == 64, "XMATRIX44 must be 64 bytes");
+    static_assert(sizeof(XVECTOR3) == 16, "XVECTOR3 must be 16 bytes");
+    static_assert(sizeof(ShadowSamplingCBuffer) == 544, "ShadowSamplingCBuffer must be 544 bytes");
+
     RenderQuad() {
     }
     void Load(const char *) {};
@@ -81,11 +98,14 @@ namespace t850 {
     void Transform(float *t);
     void Draw(float *t, float *vp);
     void Destroy();
+    void UploadShadowSamplingCB(const SceneProps& props);
 
     ShaderKey	sigBase;
     ConstantBuffer* pd3dConstantBuffer = nullptr;
     ConstantBuffer* FrameCBGPU = nullptr;
     ConstantBuffer* PassCBGPU = nullptr;
+    ConstantBuffer* ShadowSamplingCBGPU = nullptr;
+    ShadowSamplingCBuffer ShadowSamplingCB;
     int m_tiledLightHeaderTex = -1;
     int m_tiledLightIndexTex = -1;
     int m_tiledLightTilesX = 0;

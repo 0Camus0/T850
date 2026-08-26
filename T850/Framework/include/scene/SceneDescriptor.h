@@ -5,6 +5,7 @@
 #include <vector>
 #include <array>
 #include <optional>
+#include <scene/ShadowDescriptor.h>
 
 namespace t850 {
 
@@ -34,6 +35,8 @@ namespace t850 {
   };
 
   struct LightDesc {
+    std::string id;
+    std::string name;
     std::string type = "point";  // "directional" or "point"
     std::array<float, 3> position = {0, 0, 0};
     std::array<float, 3> direction = {0, -1, 0};  // for directional lights
@@ -183,6 +186,7 @@ namespace t850 {
   };
 
   struct SandboxLightOverrideDesc {
+    std::string light_id;
     int index = 0;
     std::optional<std::array<float, 3>> position;
     std::optional<std::array<float, 3>> direction;
@@ -215,6 +219,7 @@ namespace t850 {
     std::vector<IntOverrideDesc> selectors;
     std::vector<SandboxLightOverrideDesc> lights;
     std::vector<SandboxAnimationOverrideDesc> animations;
+    std::vector<ShadowProjectionOverrideDesc> shadow_projections;
     std::optional<std::string> cubemap_path;
     std::optional<SandboxCameraDesc> camera;
     std::optional<SandboxOrbitCameraDesc> orbit_camera;

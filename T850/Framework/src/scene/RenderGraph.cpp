@@ -115,6 +115,7 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
   {"SSAO_PASS",             PassType::SSAO},
   {"DEFERRED_LDR_PASS",     PassType::DEFERRED_LDR},
   {"DEFERRED_LIGHT_VOLUME_PASS", PassType::DEFERRED_LIGHT_VOLUME},
+  {"CASCADE_DEBUG_PASS",    PassType::CASCADE_DEBUG},
 };
 
 // Feature name -> ShaderKey feature bit
@@ -664,7 +665,8 @@ void RenderGraph::Execute(
   ::Camera* lightCam,
   ::Camera* omniCams,
   const EnvironmentMapSet& envMaps,
-  int finalOutputRT)
+  int finalOutputRT,
+  CustomDrawCallback customDraw)
 {
   const bool shadowsEnabled = props.ToogleShadow != 0;
   const bool ssaoEnabled = props.ToogleSSAO != 0;
@@ -690,7 +692,7 @@ void RenderGraph::Execute(
       continue;
     }
     ExecutePass(node, driver, props, meshes, meshCount, quads,
-                mainCam, lightCam, omniCams, envMaps, finalOutputRT);
+                mainCam, lightCam, omniCams, envMaps, finalOutputRT, customDraw);
   }
   if (mainCam && !props.pCameras.empty()) {
     props.SetPrimaryCamera(mainCam);
@@ -707,7 +709,8 @@ void RenderGraph::ExecutePass(
   ::Camera* lightCam,
   ::Camera* omniCams,
   const EnvironmentMapSet& envMaps,
-  int finalOutputRT)
+  int finalOutputRT,
+  const CustomDrawCallback& customDraw)
 {
   const auto& pass = *node.desc;
   ScopedPrimaryCameraOverride cameraScope(props);
@@ -958,6 +961,13 @@ void RenderGraph::ExecutePass(
       }
     };
     for (const auto& draw : pass.draws) {
+      if (draw.type == "callback") {
+        if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
+        if (customDraw && !draw.callback.empty())
+          customDraw(draw.callback);
+        continue;
+      }
+
       ShaderKey sig = ResolveSignature(draw.signature);
       for (const auto& extraSig : draw.extra_signatures) {
         ShaderKey extra = ResolveSignature(extraSig);

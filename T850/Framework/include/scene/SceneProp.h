@@ -104,9 +104,11 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	int ToogleParallaxShadow = 1;
 	int ToogleGodRays = 1;
 	int DebugMode;
+	int CascadeDebugRegionsEnabled = 0;
 
 	float ShadowBias = 0.000005f;
 	float ShadowMin = 0.25f;
+	float CascadeDebugOpacity = 0.12f;
 	float EnvFactor = 1.0f;
 	float IBLFactor = 1.0f;
 	float IBLMipCount = 4.0f;

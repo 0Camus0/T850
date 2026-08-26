@@ -213,7 +213,7 @@ namespace t850 {
       PassType::DOF, PassType::DOF_2, PassType::BACKBUFFER,
       PassType::GOD_RAY_CALCULATION, PassType::GOD_RAY_BLEND,
       PassType::SSAO, PassType::RAY_MARCH, PassType::LIGHT_ADD, PassType::FADE,
-      PassType::LENS_FLARE_SUN, PassType::LENS_FLARE_GHOST
+      PassType::LENS_FLARE_SUN, PassType::LENS_FLARE_GHOST, PassType::CASCADE_DEBUG
     };
     for (uint8_t p : simplePasses) {
       ShaderKey k(sigBase.bits);
@@ -649,16 +649,32 @@ namespace t850 {
     CnstBuffer.toogles.x = pScProp->ShadowMin;
     CnstBuffer.toogles.z = (float)pScProp->DebugMode;
     CnstBuffer.toogles.w = pScProp->ShadowBias;
-    // SHADOW_COMP reconstructs main-camera depth, so CameraInfo must be the
-    // main camera's near/far/fov (used by LinearizeDepth for cascade selection).
+    // Keep active-camera data for depth reconstruction and SSAO. Cascade
+    // selection uses the stable player/culling camera matrices instead.
     CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane,
                                      pActualCamera->Fov, 1.0f);
     // Upload the effective shadow projection runtime data to slot b2.
     UploadShadowSamplingCB(*pScProp);
+    Camera* cascadeCamera = pScProp->pCullingCamera ? pScProp->pCullingCamera : pActualCamera;
+    CnstBuffer.World = cascadeCamera->View;
+    CnstBuffer.WVPLight = cascadeCamera->VP;
 		for (unsigned int i = 1; i < pScProp->SSAOKernel.vSSAOKernel.size(); i++) {
 			CnstBuffer.LightPositions[i] = pScProp->SSAOKernel.vSSAOKernel[i-1];
 		}
 	}
+    else if (pass == PassType::CASCADE_DEBUG) {
+      CnstBuffer.toogles = XVECTOR3(
+        pScProp->CascadeDebugRegionsEnabled ? 1.0f : 0.0f,
+        pScProp->CascadeDebugOpacity,
+        0.0f,
+        0.0f);
+      CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane,
+                                       pActualCamera->Fov, 1.0f);
+      UploadShadowSamplingCB(*pScProp);
+      Camera* cascadeCamera = pScProp->pCullingCamera ? pScProp->pCullingCamera : pActualCamera;
+      CnstBuffer.World = cascadeCamera->View;
+      CnstBuffer.WVPLight = cascadeCamera->VP;
+    }
     else if (pass == PassType::ONE_PASS_BLUR) {
       const bool validKernel = pScProp->ActiveGaussKernel >= 0 &&
           pScProp->ActiveGaussKernel < static_cast<int>(pScProp->pGaussKernels.size()) &&
@@ -792,7 +808,9 @@ namespace t850 {
       }
     };
     updateQuadConstants();
-    if (!g_pBaseDriver->UsesGLSL() && pass == PassType::SHADOW_COMP && ShadowSamplingCBGPU) {
+    if (!g_pBaseDriver->UsesGLSL() &&
+        (pass == PassType::SHADOW_COMP || pass == PassType::CASCADE_DEBUG) &&
+        ShadowSamplingCBGPU) {
       ShadowSamplingCBGPU->Set(*T8DeviceContext, 2);
     }
 

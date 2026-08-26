@@ -71,6 +71,18 @@ public:
                  IndexBufferFormat::E ibFormat = IndexBufferFormat::R16,
                  unsigned startVertex = 0);
 
+  // Draw flat-color indexed triangle geometry. Blend/depth/cull state is
+  // supplied by the caller or render graph pass.
+  void DrawTriangles(const XMATRIX44& world,
+                     const XMATRIX44& vp,
+                     const XVECTOR3& rgba,
+                     VertexBuffer* vb,
+                     IndexBuffer* ib,
+                     unsigned indexCount,
+                     unsigned vertexStride,
+                     IndexBufferFormat::E ibFormat = IndexBufferFormat::R16,
+                     unsigned startVertex = 0);
+
   // Helper for callers that want to build a VB of float4 line endpoints (xyzw, w=1).
   // Use BufferUsage::DINAMIC for buffers updated every frame.
   static VertexBuffer* CreatePositionVB(const float* positionsXYZW,

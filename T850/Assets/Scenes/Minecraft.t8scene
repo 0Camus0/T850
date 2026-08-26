@@ -55,6 +55,19 @@
       "far_plane": 1000,
       "visible": true,
       "frozen": false
+    },
+    {
+      "name": "Minecraft Free Camera",
+      "type": 0,
+      "position": { "x": -24, "y": 58, "z": -36 },
+      "target": { "x": 0.5, "y": 38, "z": 0.5 },
+      "fov_deg": 70,
+      "ortho_w": 80,
+      "ortho_h": 45,
+      "near_plane": 0.1,
+      "far_plane": 1000,
+      "visible": true,
+      "frozen": false
     }
   ],
   "light_cameras": [
@@ -114,6 +127,7 @@
     "show_chunk_bounds": false,
     "show_cascade_debug": true,
     "cascade_debug_mode": 0,
+    "cascade_debug_opacity": 0.12,
     "camera_mode": 0,
     "debug_cascade_index": 0,
     "terrain": {

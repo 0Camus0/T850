@@ -551,6 +551,7 @@ struct SceneVoxelWorldDesc {
   bool show_chunk_bounds = false;
   bool show_cascade_debug = true;
   int cascade_debug_mode = 0;
+  float cascade_debug_opacity = 0.12f;
   int camera_mode = 0;
   int debug_cascade_index = 0;
   SceneVoxelTerrainDesc terrain;

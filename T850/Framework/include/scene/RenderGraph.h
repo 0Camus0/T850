@@ -7,6 +7,7 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
+#include <functional>
 
 class Camera;
 
@@ -81,6 +82,7 @@ namespace t850 {
   // The graph can be loaded from JSON and executed against the engine.
   class RenderGraph {
   public:
+    using CustomDrawCallback = std::function<void(const std::string&)>;
     RenderGraph() = default;
 
     // Load the graph descriptor from JSON and build the DAG.
@@ -116,7 +118,8 @@ namespace t850 {
       ::Camera* lightCam,
       ::Camera* omniCams,
       const EnvironmentMapSet& envMaps,
-      int finalOutputRT = -1
+      int finalOutputRT = -1,
+      CustomDrawCallback customDraw = {}
     );
 
     // ---- Graph inspection (for future GUI) ----
@@ -198,7 +201,8 @@ namespace t850 {
       ::Camera* lightCam,
       ::Camera* omniCams,
       const EnvironmentMapSet& envMaps,
-      int finalOutputRT
+      int finalOutputRT,
+      const CustomDrawCallback& customDraw
     );
   };
 

@@ -1499,17 +1499,52 @@ Debug rendering includes atlas occupancy, cascade index color, receiver frustums
 light volumes, and split readout. Use editor controls rather than adding an unreviewed global
 key binding.
 
-Keep the two wireframe modes distinct:
+Keep the two debug concepts distinct:
 
-- **Receiver slices** use `frustumCorners[view][8]`. Adjacent slices share the previous far
-  plane and next near plane, so they are contiguous and do not overlap in main-camera depth.
-- **Fitted light volumes** use each generated orthographic camera's width, height, and
+- **Cascade regions** reconstruct each visible scene position from GBuffer depth and use the
+  production split boundaries to select exactly one cascade. This view cannot overlap and is
+  the authoritative visualization for cascade selection and split continuity. Sky pixels
+  have zero alpha and remain untouched.
+- **Fitted light bounds** use each generated orthographic camera's width, height, and
   near/far range. They can overlap substantially because each encloses a rotated receiver
   slice and includes caster padding. This is correct and does not imply overlapping cascade
   selection.
 
-Minecraft exposes `Receiver slices`, `Light volumes`, and `Both`; receiver slices are the
-default for checking split continuity.
+Minecraft exposes `Cascade regions`, `Light bounds (overlap expected)`, and `Both`. Cascade
+regions are the authored default. Do not draw transparent receiver-frustum shells through
+the generating camera: even disjoint frustum slices project as nested viewport rectangles
+and visually resemble overlapping overlays.
+
+Render cascade regions through `CASCADE_DEBUG_PASS`, a fullscreen pass immediately after
+`Forward Transparent`. It reads `GBuffer:DEPTH`, reuses the fixed six-view shadow sampling
+buffer at slot `b2`, and traverses the same split boundaries as `SHADOW_COMP_PASS`. Blend its
+single selected color into `Deferred` using authored opacity. The pass remains in the graph
+and returns zero alpha when disabled, avoiding runtime graph mutation.
+
+When rendering from a spectator or light camera, reconstruct the world position with that
+active camera, then transform it through the player/culling camera. Use player-view `z` for
+split selection and player clip coordinates for frustum containment. Do not linearize the
+active camera's depth and compare it to player-camera split distances; that incorrectly makes
+both production shadow tile selection and debug colors move with the spectator.
+
+Render fitted light-bound geometry through a named render-graph callback, not as a post-graph
+overlay. `RenderGraph::Execute` accepts an optional callback dispatcher, and a draw entry
+with `type: "callback"` invokes it before shader-signature resolution. The Minecraft graph
+dispatches `cascade_debug_volumes` into the existing `Deferred` target with `push: false`.
+Use alpha blending, depth read with no depth write, and single-sided rasterization. This makes
+opaque scene depth occlude debug geometry and leaves later light-add and post-processing
+passes unchanged. Dispatch this callback only for `Light bounds` and `Both` modes.
+
+Build filled boxes from one dynamic position buffer and shared 16-bit line and triangle
+index buffers. Allocate them lazily and update only the vertex contents each frame; creating
+GPU buffers per frame can cause device removal. Draw translucent boxes far-to-near, then
+draw their outlines with stronger alpha. The flat RGBA shader is shared by line-list and
+triangle-list draws; blend, depth, and cull state belong to the render-graph pass.
+
+Store `show_cascade_debug`, `cascade_debug_mode`, and `cascade_debug_opacity` in the
+`.t8scene` voxel settings. Clamp loaded mode to 0 through 2 and opacity to 0.01 through 0.75,
+and write edited values back through scene serialization. Do not hide these defaults in
+Minecraft runtime code or bind the visualization to an unowned global key.
 
 ### 24.4 Pure-logic tests
 

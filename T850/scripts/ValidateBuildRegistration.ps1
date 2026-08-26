@@ -54,6 +54,7 @@ $frameworkSources = @(
     Get-Item (Join-Path $frameworkRoot "src\physics\GameplayLayers.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMesh.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMeshData.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\scene\ShadowSystem.cpp")
 ) | Sort-Object FullName -Unique
 
 $frameworkHeaders = @(

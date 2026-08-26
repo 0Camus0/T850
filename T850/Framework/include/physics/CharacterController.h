@@ -66,6 +66,9 @@ struct KinematicCharacterSettings {
   float groundAcceleration = 30.0f;
   float airAcceleration = 3.0f;
   float friction = 8.0f;
+  // Horizontal drag applied while airborne (0 = no drag, Quake-style). Minecraft
+  // stops almost instantly even in the air, so it sets this > 0.
+  float airFriction = 0.0f;
   float stopSpeed = 2.0f;
   float gravity = 18.0f;
   float jumpSpeed = 5.0f;

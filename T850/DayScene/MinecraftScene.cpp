@@ -601,7 +601,15 @@ void MinecraftScene::InitVars() {
   settings.sprintSpeed = 8.0f;
   settings.jumpSpeed = 8.0f;
   settings.gravity = 24.0f;
-  settings.mouseSensitivity = 0.0022f;
+  // 0.0022 felt sluggish; 0.005 is the engine default and tracks the mouse more
+  // responsively, matching a normal Minecraft-like look speed.
+  settings.mouseSensitivity = 0.005f;
+  // Minecraft stops almost instantly when you release a key. High ground
+  // friction + low stop threshold remove the Quake-style coasting; high ground
+  // acceleration makes you reach walk speed in ~1-2 frames.
+  settings.groundAcceleration = 40.0f;
+  settings.friction = 40.0f;
+  settings.stopSpeed = 1.0f;
   settings.capsuleRadius = 0.30f;
   settings.capsuleHalfHeight = 0.55f;
   settings.eyeHeight = 1.62f;
@@ -1347,8 +1355,12 @@ void MinecraftScene::OnInput(InputManager* input) {
   state.crouch = input->PressedKey(T800K_LCTRL);
   state.sprint = input->PressedKey(T800K_LSHIFT);
   state.mouseLook = true;
+  // Match the other FPS scenes in this codebase (Quake3/Sandbox/etc.): they all
+  // feed input->yDelta through directly. Negating it here inverted the vertical
+  // look axis relative to the rest of the engine (mouse up looked down). No
+  // negation = mouse-up looks up, the standard convention.
   state.mouseDeltaX = static_cast<float>(input->xDelta);
-  state.mouseDeltaY = static_cast<float>(-input->yDelta);
+  state.mouseDeltaY = static_cast<float>(input->yDelta);
   t850::ApplyGamepadToCameraInput(state, *input, m_deltaSeconds, true);
   m_cameraController.HandleInput(state);
 

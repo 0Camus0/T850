@@ -116,9 +116,28 @@ namespace t850 {
     return txture;
   }
 
+  Texture * GLDevice::CreateTextureSrgb(std::string path)
+  {
+    GLTexture* txture = new GLTexture;
+    txture->srgb = true;
+    if (!txture->LoadTexture(path.c_str())) {
+      delete txture;
+      return nullptr;
+    }
+    return txture;
+  }
+
   Texture * GLDevice::CreateTextureFromMemory(const unsigned char * buff, int w, int h, int channels, std::string name)
   {
     GLTexture* txture = new GLTexture;
+    txture->LoadFromMemory(buff, w, h, channels, name.c_str());
+    return txture;
+  }
+
+  Texture * GLDevice::CreateTextureFromMemorySrgb(const unsigned char * buff, int w, int h, int channels, std::string name)
+  {
+    GLTexture* txture = new GLTexture;
+    txture->srgb = true;
     txture->LoadFromMemory(buff, w, h, channels, name.c_str());
     return txture;
   }

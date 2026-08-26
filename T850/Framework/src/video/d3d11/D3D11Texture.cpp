@@ -103,7 +103,7 @@ namespace t850 {
     else if (cil_props & CIL_HALF_FLOAT)
       desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     else
-      desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      desc.Format = (this->srgb) ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
 
     const bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
     const int mipCount = (mipmaps > 0) ? mipmaps : 1;

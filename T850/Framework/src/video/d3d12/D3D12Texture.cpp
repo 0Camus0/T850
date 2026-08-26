@@ -124,7 +124,7 @@ namespace t850 {
     ID3D12Device* device = GetNativeDevice();
     auto* driver = GetD3D12Driver();
 
-    DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+    DXGI_FORMAT fmt = (this->srgb) ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
     int bytesPerPixel = 4;
     if (this->props & TextBasicFormat::CH_ALPHA) { fmt = DXGI_FORMAT_R8_UNORM; bytesPerPixel = 1; }
     if (cil_props & CIL_HALF_FLOAT) { fmt = DXGI_FORMAT_R16G16B16A16_FLOAT; bytesPerPixel = 8; }

@@ -305,7 +305,7 @@ namespace t850 {
       switch (uploadChannels) {
         case 1:  m_format = VK_FORMAT_R8_UNORM;        break;
         case 4:
-        default: m_format = VK_FORMAT_R8G8B8A8_UNORM;  break;
+        default: m_format = (this->srgb) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;  break;
       }
     }
 

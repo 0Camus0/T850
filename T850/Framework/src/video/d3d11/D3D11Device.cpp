@@ -78,9 +78,28 @@ namespace t850 {
     return txture;
   }
 
+  Texture * D3DXDevice::CreateTextureSrgb(std::string path)
+  {
+    D3DXTexture* txture = new D3DXTexture;
+    txture->srgb = true;
+    if (!txture->LoadTexture(path.c_str())) {
+      delete txture;
+      return nullptr;
+    }
+    return txture;
+  }
+
   Texture * D3DXDevice::CreateTextureFromMemory(const unsigned char * buff, int w, int h, int channels, std::string name)
   {
     D3DXTexture* txture = new D3DXTexture;
+    txture->LoadFromMemory(buff,w,h,channels,name.c_str());
+    return txture;
+  }
+
+  Texture * D3DXDevice::CreateTextureFromMemorySrgb(const unsigned char * buff, int w, int h, int channels, std::string name)
+  {
+    D3DXTexture* txture = new D3DXTexture;
+    txture->srgb = true;
     txture->LoadFromMemory(buff,w,h,channels,name.c_str());
     return txture;
   }

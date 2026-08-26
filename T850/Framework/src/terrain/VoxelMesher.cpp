@@ -123,10 +123,23 @@ bool BuildGreedyVoxelMesh(const VoxelChunk& chunk,
 
           Bucket& bucket = bucketFor(cell.block);
           const uint32_t base = static_cast<uint32_t>(bucket.vertices.size());
-          const float u0 = definition.usesBaseColorTexture ? definition.atlasU0 : 0.0f;
-          const float v0 = definition.usesBaseColorTexture ? definition.atlasV0 : 0.0f;
-          const float u1 = definition.usesBaseColorTexture ? definition.atlasU1 : static_cast<float>(width);
-          const float v1 = definition.usesBaseColorTexture ? definition.atlasV1 : static_cast<float>(height);
+          // Pick the atlas rect for this face. When the block declares per-face
+          // tiles, top faces use atlasTop*, bottom faces atlasBottom*, and the
+          // four side faces use the main atlasU0..atlasV1 rect.
+          const float* fU0 = &definition.atlasU0;
+          const float* fV0 = &definition.atlasV0;
+          const float* fU1 = &definition.atlasU1;
+          const float* fV1 = &definition.atlasV1;
+          if (definition.faceTiles && definition.usesBaseColorTexture) {
+            if (axis == 1) {
+              if (cell.backFace) { fU0 = &definition.atlasBottomU0; fV0 = &definition.atlasBottomV0; fU1 = &definition.atlasBottomU1; fV1 = &definition.atlasBottomV1; }
+              else { fU0 = &definition.atlasTopU0; fV0 = &definition.atlasTopV0; fU1 = &definition.atlasTopU1; fV1 = &definition.atlasTopV1; }
+            }
+          }
+          const float u0 = definition.usesBaseColorTexture ? *fU0 : 0.0f;
+          const float v0 = definition.usesBaseColorTexture ? *fV0 : 0.0f;
+          const float u1 = definition.usesBaseColorTexture ? *fU1 : static_cast<float>(width);
+          const float v1 = definition.usesBaseColorTexture ? *fV1 : static_cast<float>(height);
           bucket.vertices.push_back(MutableMeshVertex{p0, normal, u0, v0});
           bucket.vertices.push_back(MutableMeshVertex{p1, normal, u1, v0});
           bucket.vertices.push_back(MutableMeshVertex{p2, normal, u1, v1});

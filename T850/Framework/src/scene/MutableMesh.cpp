@@ -187,7 +187,8 @@ bool MutableMesh::CompileShaders() {
 
   const uint64_t layouts[] = {
       ShaderKey::HAS_NORMALS | ShaderKey::HAS_TEXCOORD0,
-      ShaderKey::HAS_NORMALS | ShaderKey::HAS_TEXCOORD0 | ShaderKey::DIFFUSE_MAP};
+      ShaderKey::HAS_NORMALS | ShaderKey::HAS_TEXCOORD0 | ShaderKey::DIFFUSE_MAP,
+      ShaderKey::HAS_NORMALS | ShaderKey::HAS_TEXCOORD0 | ShaderKey::DIFFUSE_MAP | ShaderKey::SRGB_ALBEDO};
   const uint8_t passes[] = {PassType::FORWARD, PassType::GBUFFER, PassType::SHADOW_MAP, PassType::RADIAL_DEPTH};
   for (uint64_t layout : layouts) {
     for (uint8_t pass : passes) {
@@ -351,7 +352,13 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
     const MutableMeshMaterial& material = m_snapshot.materials[section.materialIndex];
     if (!DrawsInPass(material.alphaMode, pass)) continue;
     ShaderKey key(ShaderKey::HAS_NORMALS | ShaderKey::HAS_TEXCOORD0);
-    if (material.usesBaseColorTexture && Textures[0]) key.bits |= ShaderKey::DIFFUSE_MAP;
+    // Use the persistent member, not Textures[0]: the instance slot is cleared
+    // by bindMeshPassResources before each pass, so it is unreliable here.
+    Texture* baseTex = m_baseColorTexture;
+    if (material.usesBaseColorTexture && baseTex) {
+      key.bits |= ShaderKey::DIFFUSE_MAP;
+      if (baseTex->srgb) key.bits |= ShaderKey::SRGB_ALBEDO;
+    }
     key.setPass(pass == PassType::NONE ? PassType::FORWARD : pass);
     ShaderBase* shader = context.driver->GetShader(key);
     if (!shader) continue;
@@ -379,8 +386,8 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
           *context.deviceContext, m_materialCB, 2, &materialConstants, sizeof(materialConstants));
     }
     if (key.has(ShaderKey::DIFFUSE_MAP)) {
-      if (tracker.ShouldBindTexture(0, Textures[0])) Textures[0]->Set(*context.deviceContext, 0, "DiffuseTex");
-      Textures[0]->SetSampler(*context.deviceContext, 0);
+      if (tracker.ShouldBindTexture(0, baseTex)) baseTex->Set(*context.deviceContext, 0, "DiffuseTex");
+      baseTex->SetSampler(*context.deviceContext, 0);
     }
     context.deviceContext->DrawIndexed(section.indexCount, section.firstIndex, 0);
     if (changedCull) context.driver->SetCullFace(previousCull);

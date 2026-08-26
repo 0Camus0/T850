@@ -24,6 +24,14 @@ public:
   const AABB& LocalBounds() const { return m_snapshot.localBounds; }
   const MutableMeshSnapshot& Snapshot() const { return m_snapshot; }
 
+  // Assign the mesh's persistent base-color (diffuse) texture. Unlike the
+  // PrimitiveBase::Textures[] instance slots, this member is NOT cleared by
+  // bindMeshPassResources, so it survives the GBuffer/deferred pass boundaries.
+  // It is bound internally in Draw() whenever a material uses a base-color
+  // texture. The texture's ->srgb flag drives ShaderKey::SRGB_ALBEDO.
+  void SetBaseColorTexture(Texture* tex) { m_baseColorTexture = tex; }
+  Texture* BaseColorTexture() const { return m_baseColorTexture; }
+
   void Load(const char* path) override;
   void Create() override;
   void Transform(float* transform) override;
@@ -44,6 +52,7 @@ private:
   ConstantBuffer* m_frameCB = nullptr;
   ConstantBuffer* m_instanceCB = nullptr;
   ConstantBuffer* m_materialCB = nullptr;
+  Texture* m_baseColorTexture = nullptr;
   XMATRIX44 m_transform;
   std::string m_vertexShaderSource;
   std::string m_fragmentShaderSource;

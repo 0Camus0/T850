@@ -880,6 +880,17 @@ void KinematicCharacterController::UpdateFps(float deltaSeconds,
     Accelerate(m_velocity, wish, wishSpeed, m_settings.airAcceleration, deltaSeconds);
   }
 
+  // Optional air drag: without it an airborne player keeps their horizontal
+  // velocity forever (Accelerate only adds, never removes), so releasing the
+  // keys mid-air slides indefinitely. Only applied when there is no move input:
+  // applying it while air-control is accelerating would fight the acceleration
+  // (drag 15 vs airAccel 3) and the player could never build speed.
+  // ApplyGroundFriction only touches the horizontal components, so vertical
+  // fall/jump velocity is unaffected.
+  if (!m_grounded && m_settings.airFriction > 0.0f && wishSpeed <= 0.0001f) {
+    ApplyGroundFriction(m_velocity, m_settings.airFriction, m_settings.stopSpeed, deltaSeconds);
+  }
+
   if (input.jump && !m_jumpHeld && m_grounded) {
     m_velocity.y = m_settings.jumpSpeed;
     m_grounded = false;

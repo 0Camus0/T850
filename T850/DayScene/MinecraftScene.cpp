@@ -610,6 +610,10 @@ void MinecraftScene::InitVars() {
   settings.groundAcceleration = 40.0f;
   settings.friction = 40.0f;
   settings.stopSpeed = 1.0f;
+  // The player frequently ends up airborne (jumping, canopies, steps), and the
+  // old code never applied horizontal drag in the air, so releasing the keys
+  // kept sliding until landing. Air drag makes it stop promptly everywhere.
+  settings.airFriction = 15.0f;
   settings.capsuleRadius = 0.30f;
   settings.capsuleHalfHeight = 0.55f;
   settings.eyeHeight = 1.62f;
@@ -1176,9 +1180,15 @@ void MinecraftScene::UpdateMobs(float dt) {
       mob.fuse += dt;
       mob.scale = 1.0f + 0.5f * (mob.fuse / kFuseDuration);
       if (mob.fuse >= kFuseDuration) {
-        HandleExplosion(mob.pos + XVECTOR3(0.0f, 0.5f, 0.0f, 0.0f), kExplodeRadius);
+        // Detach the mob BEFORE HandleExplosion: the blast can kill the player,
+        // and RespawnPlayer clears m_creepers, which would free `mob` and
+        // invalidate `it` and crash this loop (SIGSEGV in UpdateMobs).
         m_renderContainer.RemoveMesh(mob.handle);
+        const XVECTOR3 boomOrigin = mob.pos + XVECTOR3(0.0f, 0.5f, 0.0f, 0.0f);
         it = m_creepers.erase(it);
+        const std::size_t sizeBefore = m_creepers.size();
+        HandleExplosion(boomOrigin, kExplodeRadius);
+        if (m_creepers.size() != sizeBefore) break;  // respawn cleared the list; `it` is stale
         continue;
       }
     }

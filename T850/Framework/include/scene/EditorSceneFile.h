@@ -487,16 +487,29 @@ struct SceneVoxelPlayerDesc {
   bool air_control = true;
   float mouse_sensitivity = 0.0025f;
   float debug_camera_speed = 50.0f;
+  float look_pitch_limit = 1.55f;
+  float collision_sweep_step = 0.25f;
 };
 
 struct SceneVoxelDayNightDesc {
   bool enabled = true;
+  bool trajectory_paused = false;
   float time_of_day = 0.25f;
   float day_length_seconds = 120.0f;
+  float orbit_phase = 0.0f;
+  float orbit_radius = 140.0f;
+  Vec3f orbit_center = {0.0f, 40.0f, 0.0f};
+  Vec3f orbit_horizontal = {1.0f, 0.0f, 0.0f};
+  Vec3f orbit_vertical = {0.0f, 1.0f, 0.0f};
+  float horizon_offset = 0.15f;
   float ambient_night = 0.12f;
   float ambient_day = 0.47f;
+  Vec3f ambient_tint = {0.6f, 0.7f, 1.0f};
+  Vec3f manual_ambient = {0.282f, 0.329f, 0.47f};
   float sun_intensity_night = 2.0f;
   float sun_intensity_day = 6.0f;
+  Vec3f sun_color_low = {1.0f, 0.6f, 0.4f};
+  Vec3f sun_color_high = {1.0f, 1.0f, 1.0f};
 };
 
 struct SceneVoxelBoxPartDesc {
@@ -512,7 +525,14 @@ struct SceneVoxelMobDesc {
   float waypoint_distance = 0.2f;
   float half_width = 0.25f;
   float height = 1.4f;
+  float vertical_follow_speed = 8.0f;
   std::vector<SceneVoxelBoxPartDesc> parts;
+};
+
+struct SceneVoxelMaterialDesc {
+  std::string diffuse_texture = "lens1.png";
+  float roughness = 0.9f;
+  float specular = 0.04f;
 };
 
 struct SceneVoxelWeaponDesc {
@@ -545,6 +565,7 @@ struct SceneVoxelWorldDesc {
   bool async_streaming = true;
   int atlas_size = 256;
   int atlas_tiles_per_axis = 16;
+  float navmesh_rebuild_seconds = 0.5f;
   std::string environment_map = "sky/CubeMap_SkyWater.dds";
   std::vector<std::string> environment_options;
   bool show_physics = false;
@@ -552,11 +573,16 @@ struct SceneVoxelWorldDesc {
   bool show_cascade_debug = true;
   int cascade_debug_mode = 0;
   float cascade_debug_opacity = 0.12f;
+  std::vector<Vec3f> cascade_debug_colors = {
+    {1.0f, 0.2f, 0.2f}, {0.2f, 1.0f, 0.2f}, {0.2f, 0.4f, 1.0f},
+    {1.0f, 1.0f, 0.2f}, {1.0f, 0.4f, 1.0f}, {0.2f, 1.0f, 1.0f}
+  };
   int camera_mode = 0;
   int debug_cascade_index = 0;
   SceneVoxelTerrainDesc terrain;
   SceneVoxelPlayerDesc player;
   SceneVoxelDayNightDesc day_night;
+  SceneVoxelMaterialDesc material;
   SceneVoxelMobDesc mob;
   SceneVoxelWeaponDesc weapon;
   SceneVoxelInteractionDesc interaction;

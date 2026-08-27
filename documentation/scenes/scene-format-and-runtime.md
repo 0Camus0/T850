@@ -116,9 +116,15 @@ Minecraft has three runtime camera roles selected from the ImGui `Cameras` secti
 - **Free spectator** is an independently authored perspective camera. It receives free-fly
   WASD/Space/Shift and mouse-look input when selected, but never changes CSM or culling. This
   intentionally exposes geometry rejected by the player frustum when viewed from outside it.
-- **Light** is the authored light/debug camera. It receives the same free movement input and
-  can switch between perspective and orthographic projection, but also remains a spectator
-  with respect to player-owned CSM and culling.
+- **Light** is a passive view through the authored Sun camera. Selecting it does not grant
+  movement input. During automatic day/night simulation, its position and orientation follow
+  the directional Sun, while CSM receiver slices and culling remain player-owned.
+
+`Move light camera` is the explicit ownership transition for manual Sun authoring. It selects
+the Light view, pauses the trajectory, and enables free-fly input. While editing, the light
+camera writes the attached directional light's position and direction, so generated CSM views
+update from the manual orientation. `Finish moving light camera` disables input but leaves the
+trajectory paused. `Resume sun trajectory` returns ownership to the automatic orbit.
 
 `ActiveCam` controls rendering only; `SceneProps::pCullingCamera` and
 `ShadowSystem::UpdateProjection` remain bound to the player camera. The `Save scene and
@@ -127,6 +133,10 @@ the light camera to `light_cameras`, synchronizes the player eye to
 `voxel_world.player.spawn`, and persists the selected `camera_mode`. Orientation is stored as
 the authored `target = position + runtime look` convention. Older Minecraft scenes with only
 one camera receive a deterministic spectator fallback that is included on the next save.
+
+Saving also persists `day_night.trajectory_paused`, current orbit time, manual ambient color,
+and the attached Sun light. A saved paused trajectory therefore reloads at the edited camera
+and Sun transform without one frame of simulation overwriting it.
 
 Fullscreen shadow composition reconstructs the visible world position using `ActiveCam`, but
 it must transform that world position through the player camera before selecting a cascade.
@@ -139,6 +149,14 @@ frustum receive no cascade debug tint and no CSM sample.
 Fitted light bounds still depend on directional-light orientation. With authored day/night
 enabled, those bounds can rotate over time even while both player and spectator are stationary;
 that is light movement, not spectator ownership of the cascades.
+
+Minecraft runtime tuning belongs to `voxel_world`: Sun orbit basis/center/radius/phase,
+horizon blend, day/night colors and intensities, ambient tint, cascade debug palette, camera
+pitch limit and speed, collision sweep resolution, navmesh rebuild throttle, mob smoothing,
+and voxel material parameters are authored there. Mathematical constants, fixed vertex/index
+formats, array capacities, and topology remain code invariants. Keyboard bindings remain in
+the shared input layer until the engine has a cross-scene keymap schema; do not add a
+Minecraft-only string-to-key parser.
 
 Unknown JSON keys are ignored by Glaze on load, so game schema changes require
 `MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()` rather than relying on

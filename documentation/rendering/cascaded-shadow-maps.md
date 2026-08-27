@@ -1546,6 +1546,16 @@ Store `show_cascade_debug`, `cascade_debug_mode`, and `cascade_debug_opacity` in
 and write edited values back through scene serialization. Do not hide these defaults in
 Minecraft runtime code or bind the visualization to an unowned global key.
 
+Store the six cascade colors in `cascade_debug_colors`. Upload one authored palette through
+the quad pass constants so fullscreen cascade regions and callback-drawn fitted bounds cannot
+drift to different hardcoded color tables.
+
+The generated orthographic cascade cameras follow the attached directional light every frame.
+Minecraft's passive Light view follows the automatic Sun trajectory, but only the explicit
+`Move light camera` edit state may write the authored light camera. Manual editing pauses the
+trajectory and drives the directional light from that camera; saving a paused trajectory
+preserves the manual light direction used to regenerate CSM views on the next launch.
+
 ### 24.4 Pure-logic tests
 
 Add tests for code that does not need a GPU:

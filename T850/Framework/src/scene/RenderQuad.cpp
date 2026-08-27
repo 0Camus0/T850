@@ -668,6 +668,8 @@ namespace t850 {
         pScProp->CascadeDebugOpacity,
         0.0f,
         0.0f);
+      for (int cascade = 0; cascade < 6; ++cascade)
+        CnstBuffer.LightColors[cascade] = pScProp->CascadeDebugColors[cascade];
       CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane,
                                        pActualCamera->Fov, 1.0f);
       UploadShadowSamplingCB(*pScProp);

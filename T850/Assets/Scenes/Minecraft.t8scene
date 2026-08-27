@@ -116,6 +116,7 @@
     "async_streaming": true,
     "atlas_size": 256,
     "atlas_tiles_per_axis": 16,
+    "navmesh_rebuild_seconds": 0.5,
     "environment_map": "sky/CubeMap_SkyWater.dds",
     "environment_options": [
       "sky/Ennis.dds", "sky/Glacier.dds", "sky/Pisa.dds", "sky/Uffizi.dds",
@@ -128,6 +129,14 @@
     "show_cascade_debug": true,
     "cascade_debug_mode": 0,
     "cascade_debug_opacity": 0.12,
+    "cascade_debug_colors": [
+      { "x": 1.0, "y": 0.2, "z": 0.2 },
+      { "x": 0.2, "y": 1.0, "z": 0.2 },
+      { "x": 0.2, "y": 0.4, "z": 1.0 },
+      { "x": 1.0, "y": 1.0, "z": 0.2 },
+      { "x": 1.0, "y": 0.4, "z": 1.0 },
+      { "x": 0.2, "y": 1.0, "z": 1.0 }
+    ],
     "camera_mode": 0,
     "debug_cascade_index": 0,
     "terrain": {
@@ -185,16 +194,34 @@
       "allow_sprint": true,
       "air_control": true,
       "mouse_sensitivity": 0.0025,
-      "debug_camera_speed": 50
+      "debug_camera_speed": 50,
+      "look_pitch_limit": 1.55,
+      "collision_sweep_step": 0.25
     },
     "day_night": {
       "enabled": true,
+      "trajectory_paused": false,
       "time_of_day": 0.25,
       "day_length_seconds": 120,
+      "orbit_phase": 0,
+      "orbit_radius": 140,
+      "orbit_center": { "x": 0.5, "y": 40, "z": 0.5 },
+      "orbit_horizontal": { "x": 1, "y": 0, "z": 0 },
+      "orbit_vertical": { "x": 0, "y": 1, "z": 0 },
+      "horizon_offset": 0.15,
       "ambient_night": 0.12,
       "ambient_day": 0.47,
+      "ambient_tint": { "x": 0.6, "y": 0.7, "z": 1 },
+      "manual_ambient": { "x": 0.282, "y": 0.329, "z": 0.47 },
       "sun_intensity_night": 2,
-      "sun_intensity_day": 6
+      "sun_intensity_day": 6,
+      "sun_color_low": { "x": 1, "y": 0.6, "z": 0.4 },
+      "sun_color_high": { "x": 1, "y": 1, "z": 1 }
+    },
+    "material": {
+      "diffuse_texture": "lens1.png",
+      "roughness": 0.9,
+      "specular": 0.04
     },
     "mob": {
       "spawn": { "x": 24.5, "y": 40, "z": 24.5 },
@@ -203,6 +230,7 @@
       "waypoint_distance": 0.2,
       "half_width": 0.25,
       "height": 1.4,
+      "vertical_follow_speed": 8,
       "parts": [
         { "min": {"x":-0.25,"y":1.3,"z":-0.25}, "max": {"x":0.25,"y":1.8,"z":0.25}, "block":"leaves" },
         { "min": {"x":-0.3,"y":0.6,"z":-0.15}, "max": {"x":0.3,"y":1.3,"z":0.15}, "block":"stone" },

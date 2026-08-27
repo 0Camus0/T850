@@ -140,9 +140,13 @@ public:
   bool  m_showCascadeFrustums = true;
   int   m_cascadeDebugMode = 0;       // 0=cascade regions, 1=light bounds, 2=both
   float m_cascadeDebugOpacity = 0.12f;
+  std::array<XVECTOR3, 6> m_cascadeDebugColors;
   int   m_cameraMode = 0;             // 0=player, 1=free spectator, 2=light
   int   m_debugCascadeIndex = 0;
   bool  m_debugCameraOrtho = false;
+  bool  m_lightCameraEditMode = false;
+  bool  m_sunTrajectoryPaused = false;
+  int   m_sunLightIndex = -1;
   float m_spectatorYaw = 0.0f;
   float m_spectatorPitch = 0.0f;
   float m_lightYaw = 0.0f;
@@ -241,6 +245,9 @@ public:
   void CreateWeaponMesh();
   void UpdateWeapon(float dt);
   void UpdateDayNight(float dt);
+  void SyncLightCameraFromSun();
+  void SyncSunFromLightCamera();
+  void SetLightCameraEditMode(bool enabled);
   void GenerateChunk(int cx, int cz);
   void BuildChunkMesh(int cx, int cz);
   void RebuildDirtyChunks();

@@ -695,15 +695,6 @@ int GetCascadeDebugIndex(highp float viewDepth) {
 	return min(result, viewCount - 1);
 }
 
-highp vec3 GetCascadeDebugColor(int cascade) {
-	if (cascade == 0) return vec3(1.0, 0.2, 0.2);
-	if (cascade == 1) return vec3(0.2, 1.0, 0.2);
-	if (cascade == 2) return vec3(0.2, 0.4, 1.0);
-	if (cascade == 3) return vec3(1.0, 1.0, 0.2);
-	if (cascade == 4) return vec3(1.0, 0.4, 1.0);
-	return vec3(0.2, 1.0, 1.0);
-}
-
 void main() {
 	highp vec4 result = vec4(0.0);
 	if (toogles.x >= 0.5) {
@@ -723,7 +714,7 @@ void main() {
 					playerClip.z >= 0.0 && playerClip.z <= 1.0) {
 					highp float viewDepth = (World * position).z;
 					int cascade = GetCascadeDebugIndex(viewDepth);
-					result = vec4(GetCascadeDebugColor(cascade), clamp(toogles.y, 0.0, 1.0));
+					result = vec4(LightColors[cascade].xyz, clamp(toogles.y, 0.0, 1.0));
 				}
 			}
 		}

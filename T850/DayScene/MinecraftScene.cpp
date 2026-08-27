@@ -172,7 +172,15 @@ bool MinecraftScene::LoadAuthoredScene() {
       m_voxelSettings.render_distance < 1 || m_voxelSettings.render_distance > kMaxRenderDistance ||
       m_voxelSettings.water_level < 1 || m_voxelSettings.water_level >= m_voxelSettings.world_height - 1 ||
       m_voxelSettings.atlas_size < 16 || m_voxelSettings.atlas_tiles_per_axis < 1 ||
-      m_voxelSettings.atlas_size % m_voxelSettings.atlas_tiles_per_axis != 0) {
+      m_voxelSettings.atlas_size % m_voxelSettings.atlas_tiles_per_axis != 0 ||
+      m_voxelSettings.cascade_debug_colors.size() != 6 ||
+      m_voxelSettings.player.look_pitch_limit <= 0.0f ||
+      m_voxelSettings.player.collision_sweep_step <= 0.0f ||
+      m_voxelSettings.mob.vertical_follow_speed <= 0.0f ||
+      m_voxelSettings.navmesh_rebuild_seconds <= 0.0f ||
+      m_voxelSettings.day_night.day_length_seconds <= 0.0f ||
+      m_voxelSettings.day_night.orbit_radius < 0.0f ||
+      m_voxelSettings.day_night.horizon_offset <= -1.0f) {
     T8_LOG_ERROR("[Minecraft] Invalid voxel_world dimensions in '%s'", m_sceneFilePath.c_str());
     return false;
   }
@@ -203,11 +211,17 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_showCascadeFrustums = m_voxelSettings.show_cascade_debug;
   m_cascadeDebugMode = (std::max)(0, (std::min)(2, m_voxelSettings.cascade_debug_mode));
   m_cascadeDebugOpacity = (std::max)(0.01f, (std::min)(0.75f, m_voxelSettings.cascade_debug_opacity));
+  for (std::size_t i = 0; i < m_cascadeDebugColors.size(); ++i) {
+    const auto& color = m_voxelSettings.cascade_debug_colors[i];
+    m_cascadeDebugColors[i] = XVECTOR3(color.x, color.y, color.z, 1.0f);
+    SceneProp.CascadeDebugColors[i] = m_cascadeDebugColors[i];
+  }
   m_cameraMode = (std::max)(0, (std::min)(2, m_voxelSettings.camera_mode));
   m_debugCascadeIndex = (std::max)(0, m_voxelSettings.debug_cascade_index);
   m_timeOfDay = m_voxelSettings.day_night.time_of_day;
   m_dayLengthSecs = (std::max)(1.0f, m_voxelSettings.day_night.day_length_seconds);
   m_dayNightEnabled = m_voxelSettings.day_night.enabled;
+  m_sunTrajectoryPaused = m_voxelSettings.day_night.trajectory_paused;
   m_mouseSensitivity = (std::max)(0.00001f, m_voxelSettings.player.mouse_sensitivity);
   m_debugCameraSpeed = (std::max)(0.1f, m_voxelSettings.player.debug_camera_speed);
   m_mob.position = XVECTOR3(m_voxelSettings.mob.spawn.x,
@@ -623,7 +637,8 @@ void MinecraftScene::UpdateMob(float dt) {
         m_mob.position.z += mz;
       }
 
-      m_mob.position.y += (target.y - m_mob.position.y) * (std::min)(1.0f, dt * 8.0f);
+      m_mob.position.y += (target.y - m_mob.position.y) *
+              (std::min)(1.0f, dt * m_voxelSettings.mob.vertical_follow_speed);
     }
   }
   UpdateMobInstance();
@@ -640,47 +655,57 @@ void MinecraftScene::UpdateMob(float dt) {
 }
 
 void MinecraftScene::UpdateDayNight(float dt) {
-  if (!m_dayNightEnabled) return;
+  if (!m_dayNightEnabled || m_sunTrajectoryPaused) return;
 
-  // Advance time of day (0..1). 0.0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset
+  const auto& dayNight = m_voxelSettings.day_night;
+  constexpr float kTwoPi = 6.28318530717958647692f;
+
+  // Advance normalized orbit time. The authored phase controls where 0 lands.
   m_timeOfDay += dt / m_dayLengthSecs;
   if (m_timeOfDay >= 1.0f) m_timeOfDay -= 1.0f;
 
-  // Sun elevation angle: peaks at noon (0.5), below horizon at night
-  // angle = 0 at midnight, pi at noon. Sun height = sin(angle).
-  const float angle = m_timeOfDay * 2.0f * 3.14159265f;
-  const float sunHeight = std::sin(angle); // -1 (midnight) .. 1 (noon)
-
-  // Sun direction: rises in +X (east), sets in -X (west), arcs over +Y
-  const float sunDirX = std::cos(angle);
-  const float sunDirY = sunHeight;
-  const float sunDirZ = 0.0f;
+  const float angle = (m_timeOfDay + dayNight.orbit_phase) * kTwoPi;
+  const XVECTOR3 horizontal = Normalize3(XVECTOR3(
+    dayNight.orbit_horizontal.x, dayNight.orbit_horizontal.y,
+    dayNight.orbit_horizontal.z, 0.0f), XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+  const XVECTOR3 verticalSource(
+    dayNight.orbit_vertical.x, dayNight.orbit_vertical.y,
+    dayNight.orbit_vertical.z, 0.0f);
+  const XVECTOR3 vertical = Normalize3(
+    verticalSource - horizontal * Dot3(verticalSource, horizontal),
+    XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+  const XVECTOR3 sunVector = Normalize3(
+    horizontal * std::cos(angle) + vertical * std::sin(angle));
+  const float sunHeight = Dot3(sunVector, vertical);
 
   // Day factor: 0 at night, 1 at noon (smooth transition)
-  float dayFactor = (sunHeight + 0.15f) / 1.15f;
+  float dayFactor = (sunHeight + dayNight.horizon_offset) /
+                    (1.0f + dayNight.horizon_offset);
   dayFactor = (std::max)(0.0f, (std::min)(1.0f, dayFactor));
 
-  // Sun color: white at day, orange at sunrise/sunset, dim blue at night
-  XVECTOR3 sunColor(1.0f, 1.0f, 1.0f);
-  const float horizonGlow = (std::max)(0.0f, 1.0f - std::fabs(sunHeight) * 4.0f);
-  sunColor.x = 1.0f;
-  sunColor.y = 0.6f + 0.4f * dayFactor;
-  sunColor.z = 0.4f + 0.6f * dayFactor;
+  const XVECTOR3 lowColor(dayNight.sun_color_low.x, dayNight.sun_color_low.y,
+                          dayNight.sun_color_low.z, 1.0f);
+  const XVECTOR3 highColor(dayNight.sun_color_high.x, dayNight.sun_color_high.y,
+                           dayNight.sun_color_high.z, 1.0f);
+  const XVECTOR3 sunColor = lowColor + (highColor - lowColor) * dayFactor;
 
-  // Ambient: bright blue-ish at day, dark blue at night
-  const auto& dayNight = m_voxelSettings.day_night;
   const float ambient = dayNight.ambient_night +
                         (dayNight.ambient_day - dayNight.ambient_night) * dayFactor;
-  XVECTOR3 ambientColor(ambient * 0.6f, ambient * 0.7f, ambient * 1.0f);
+  const XVECTOR3 ambientColor(
+    ambient * dayNight.ambient_tint.x,
+    ambient * dayNight.ambient_tint.y,
+    ambient * dayNight.ambient_tint.z, 1.0f);
 
-  if (!SceneProp.Lights.empty() && SceneProp.Lights[0].Type == LIGHT_DIRECTIONAL) {
-    SceneProp.Lights[0].Direction = XVECTOR3(sunDirX, sunDirY, sunDirZ, 0.0f);
-    SceneProp.Lights[0].Color = sunColor;
-    SceneProp.Lights[0].Intensity = dayNight.sun_intensity_night +
+  if (m_sunLightIndex >= 0 && m_sunLightIndex < (int)SceneProp.Lights.size()) {
+    Light& sun = SceneProp.Lights[m_sunLightIndex];
+    const XVECTOR3 center(dayNight.orbit_center.x, dayNight.orbit_center.y,
+                          dayNight.orbit_center.z, 1.0f);
+    sun.Position = center + sunVector * dayNight.orbit_radius;
+    sun.Direction = XVECTOR3(-sunVector.x, -sunVector.y, -sunVector.z, 0.0f);
+    sun.Color = sunColor;
+    sun.Intensity = dayNight.sun_intensity_night +
       (dayNight.sun_intensity_day - dayNight.sun_intensity_night) * dayFactor;
-    SceneProp.Lights[0].Direction = Normalize3(
-      XVECTOR3(-sunDirX, -sunDirY, -sunDirZ, 0.0f),
-      SceneProp.Lights[0].Direction);
+    SyncLightCameraFromSun();
   }
   SceneProp.AmbientColor = ambientColor;
 
@@ -691,7 +716,35 @@ void MinecraftScene::UpdateDayNight(float dt) {
     s_dayLogTimer = 0.0f;
     T8_LOG_INFO("[Minecraft] Time=%.2f dayFactor=%.2f sun=(%.2f,%.2f,%.2f) intensity=%.1f",
                 m_timeOfDay, dayFactor, sunColor.x, sunColor.y, sunColor.z,
-                SceneProp.Lights.empty() ? 0.0f : SceneProp.Lights[0].Intensity);
+                m_sunLightIndex >= 0 ? SceneProp.Lights[m_sunLightIndex].Intensity : 0.0f);
+  }
+}
+
+void MinecraftScene::SyncLightCameraFromSun() {
+  if (m_sunLightIndex < 0 || m_sunLightIndex >= (int)SceneProp.Lights.size()) return;
+  const Light& sun = SceneProp.Lights[m_sunLightIndex];
+  LightCam.Eye = sun.Position;
+  LightCam.SetLookAt(LightCam.Eye + Normalize3(sun.Direction));
+  m_lightYaw = LightCam.Yaw;
+  m_lightPitch = LightCam.Pitch;
+}
+
+void MinecraftScene::SyncSunFromLightCamera() {
+  if (m_sunLightIndex < 0 || m_sunLightIndex >= (int)SceneProp.Lights.size()) return;
+  Light& sun = SceneProp.Lights[m_sunLightIndex];
+  sun.Position = LightCam.Eye;
+  sun.Direction = Normalize3(LightCam.Look, sun.Direction);
+}
+
+void MinecraftScene::SetLightCameraEditMode(bool enabled) {
+  m_lightCameraEditMode = enabled;
+  if (enabled) {
+    m_cameraMode = 2;
+    m_sunTrajectoryPaused = true;
+    SyncSunFromLightCamera();
+    T8_LOG_INFO("[Minecraft] Light camera editing enabled; Sun trajectory paused");
+  } else {
+    T8_LOG_INFO("[Minecraft] Light camera editing finished; Sun remains paused");
   }
 }
 
@@ -742,10 +795,10 @@ void MinecraftScene::CreateMobMesh() {
   mat.EffectInstance.pDefaults.resize(2);
   mat.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
   mat.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
-  mat.EffectInstance.pDefaults[0].CaseString = "lens1.png";
+  mat.EffectInstance.pDefaults[0].CaseString = m_voxelSettings.material.diffuse_texture;
   mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
   mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
-  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(0.9f);
+  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(m_voxelSettings.material.roughness);
   geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
   geom.MaterialList.NumMatProcess = 1;
 
@@ -866,10 +919,10 @@ void MinecraftScene::CreateWeaponMesh() {
   mat.EffectInstance.pDefaults.resize(2);
   mat.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
   mat.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
-  mat.EffectInstance.pDefaults[0].CaseString = "lens1.png";
+  mat.EffectInstance.pDefaults[0].CaseString = m_voxelSettings.material.diffuse_texture;
   mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
   mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
-  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(0.9f);
+  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(m_voxelSettings.material.roughness);
   geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
   geom.MaterialList.NumMatProcess = 1;
 
@@ -1118,7 +1171,8 @@ void MinecraftScene::CreateChunkMesh(int cx, int cz, xF::XDataBase& outDb) {
   mat.Name = "minecraft_block";
   mat.FaceColor = xF::STDRGBAColor(1.0f, 1.0f, 1.0f, 1.0f);
   mat.Power = 0.0f;
-  mat.Specular = xF::STDRGBAColor(0.04f, 0.04f, 0.04f, 1.0f);
+  const float materialSpecular = m_voxelSettings.material.specular;
+  mat.Specular = xF::STDRGBAColor(materialSpecular, materialSpecular, materialSpecular, 1.0f);
   mat.Emissive = xF::STDRGBAColor(0.0f, 0.0f, 0.0f, 1.0f);
   mat.bEffects = true;
   mat.EffectInstance.NumDefaults = 2;
@@ -1126,11 +1180,11 @@ void MinecraftScene::CreateChunkMesh(int cx, int cz, xF::XDataBase& outDb) {
   // diffuseMap (string) — sets DIFFUSE_MAP in shader key
   mat.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
   mat.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
-  mat.EffectInstance.pDefaults[0].CaseString = "lens1.png";
+  mat.EffectInstance.pDefaults[0].CaseString = m_voxelSettings.material.diffuse_texture;
   // pbrRoughness (float)
   mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
   mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
-  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(0.9f);
+  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(m_voxelSettings.material.roughness);
 
   geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
   geom.MaterialList.NumMatProcess = 1;
@@ -1506,17 +1560,18 @@ void MinecraftScene::BuildChunkGeometryFromSnapshot(int cx, int cz,
   mat.Name = "minecraft_block";
   mat.FaceColor = xF::STDRGBAColor(1.0f, 1.0f, 1.0f, 1.0f);
   mat.Power = 0.0f;
-  mat.Specular = xF::STDRGBAColor(0.04f, 0.04f, 0.04f, 1.0f);
+  const float materialSpecular = m_voxelSettings.material.specular;
+  mat.Specular = xF::STDRGBAColor(materialSpecular, materialSpecular, materialSpecular, 1.0f);
   mat.Emissive = xF::STDRGBAColor(0.0f, 0.0f, 0.0f, 1.0f);
   mat.bEffects = true;
   mat.EffectInstance.NumDefaults = 2;
   mat.EffectInstance.pDefaults.resize(2);
   mat.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
   mat.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
-  mat.EffectInstance.pDefaults[0].CaseString = "lens1.png";
+  mat.EffectInstance.pDefaults[0].CaseString = m_voxelSettings.material.diffuse_texture;
   mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
   mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
-  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(0.9f);
+  mat.EffectInstance.pDefaults[1].CaseFloat.push_back(m_voxelSettings.material.roughness);
   geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
   geom.MaterialList.NumMatProcess = 1;
 
@@ -1898,7 +1953,7 @@ bool MinecraftScene::SweepBox(const t850::CharacterBoxSweep& sweep, t850::Charac
   const float dist = Length3(disp);
   if (dist < 0.0001f) return false;
   const XVECTOR3 dir = disp / dist;
-  const int steps = (int)std::ceil(dist / 0.25f) + 1;
+  const int steps = (int)std::ceil(dist / m_voxelSettings.player.collision_sweep_step) + 1;
   float bestFraction = 1.0f;
   bool hit = false;
   XVECTOR3 hitNormal(0, 1, 0, 0);
@@ -2070,6 +2125,26 @@ void MinecraftScene::InitVars() {
     light.Position = position;
   }
   SceneProp.ActiveLights = static_cast<int>(SceneProp.Lights.size());
+
+  const std::string sunId = m_sceneFile.light_cameras[0].attached_light_id;
+  for (int i = 0; i < (int)SceneProp.Lights.size(); ++i) {
+    if ((!sunId.empty() && SceneProp.Lights[i].Id == sunId) ||
+        (sunId.empty() && SceneProp.Lights[i].Type == LIGHT_DIRECTIONAL)) {
+      m_sunLightIndex = i;
+      break;
+    }
+  }
+  if (m_sunLightIndex < 0) {
+    T8_LOG_ERROR("[Minecraft] Light camera has no matching directional Sun light");
+    return;
+  }
+  if (m_sunTrajectoryPaused) {
+    const auto& ambient = m_voxelSettings.day_night.manual_ambient;
+    SceneProp.AmbientColor = XVECTOR3(ambient.x, ambient.y, ambient.z, 1.0f);
+    SyncSunFromLightCamera();
+  } else {
+    UpdateDayNight(0.0f);
+  }
 
   auto configureFilter = [&](GaussFilter& filter, std::size_t index) {
     if (index >= m_controlSetup.gaussFilters.size()) return false;
@@ -2279,7 +2354,7 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
   // re-path around newly placed/removed blocks.
   if (m_navMeshDirty) {
     m_navMeshRebuildTimer += DtSecs;
-    if (m_navMeshRebuildTimer >= 0.5f) {
+    if (m_navMeshRebuildTimer >= m_voxelSettings.navmesh_rebuild_seconds) {
       m_navMeshRebuildTimer = 0.0f;
       m_navMeshDirty = false;
       BuildNavigationMesh();
@@ -2296,14 +2371,16 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
 void MinecraftScene::OnInput(InputManager* IManager) {
   // Mouse look
   if (m_mouseCaptured) {
-    if (m_cameraMode == 2) {
+    if (m_cameraMode == 2 && m_lightCameraEditMode) {
       m_lightYaw += IManager->xDelta * m_mouseSensitivity;
       m_lightPitch += IManager->yDelta * m_mouseSensitivity;
-      m_lightPitch = (std::max)(-1.55f, (std::min)(1.55f, m_lightPitch));
+      const float pitchLimit = m_voxelSettings.player.look_pitch_limit;
+      m_lightPitch = (std::max)(-pitchLimit, (std::min)(pitchLimit, m_lightPitch));
     } else if (m_cameraMode == 1) {
       m_spectatorYaw += IManager->xDelta * m_mouseSensitivity;
       m_spectatorPitch += IManager->yDelta * m_mouseSensitivity;
-      m_spectatorPitch = (std::max)(-1.55f, (std::min)(1.55f, m_spectatorPitch));
+      const float pitchLimit = m_voxelSettings.player.look_pitch_limit;
+      m_spectatorPitch = (std::max)(-pitchLimit, (std::min)(pitchLimit, m_spectatorPitch));
     } else if (m_cameraMode == 0) {
       // Moving the mouse right (xDelta positive) should turn right (yaw up).
       m_playerYaw += IManager->xDelta * m_mouseSensitivity;
@@ -2311,11 +2388,12 @@ void MinecraftScene::OnInput(InputManager* IManager) {
       // Moving the mouse up (yDelta negative) should look up (pitch negative),
       // so we ADD yDelta (inverted from the naive -=).
       m_playerPitch += IManager->yDelta * m_mouseSensitivity;
-      m_playerPitch = (std::max)(-1.55f, (std::min)(1.55f, m_playerPitch));
+      const float pitchLimit = m_voxelSettings.player.look_pitch_limit;
+      m_playerPitch = (std::max)(-pitchLimit, (std::min)(pitchLimit, m_playerPitch));
     }
   }
 
-  if (m_cameraMode == 1 || m_cameraMode == 2) {
+  if (m_cameraMode == 1 || (m_cameraMode == 2 && m_lightCameraEditMode)) {
     Camera& movableCamera = (m_cameraMode == 1) ? SpectatorCam : LightCam;
     float& yaw = (m_cameraMode == 1) ? m_spectatorYaw : m_lightYaw;
     float& pitch = (m_cameraMode == 1) ? m_spectatorPitch : m_lightPitch;
@@ -2334,6 +2412,8 @@ void MinecraftScene::OnInput(InputManager* IManager) {
     movableCamera.Yaw = yaw;
     movableCamera.Pitch = pitch;
     movableCamera.Update(0.0f);
+    if (m_cameraMode == 2)
+      SyncSunFromLightCamera();
     m_playerInput = {};
   } else if (m_cameraMode == 0) {
     // Movement input (player)
@@ -2438,16 +2518,6 @@ void MinecraftScene::DrawCascadeLightBounds() {
   if (projection.viewCount <= 0)
     return;
 
-  // Per-cascade colors (light-color volumes for easy identification).
-  static const XVECTOR3 kCascadeColors[6] = {
-    XVECTOR3(1.0f, 0.2f, 0.2f, 1.0f),  // red
-    XVECTOR3(0.2f, 1.0f, 0.2f, 1.0f),  // green
-    XVECTOR3(0.2f, 0.4f, 1.0f, 1.0f),  // blue
-    XVECTOR3(1.0f, 1.0f, 0.2f, 1.0f),  // yellow
-    XVECTOR3(1.0f, 0.4f, 1.0f, 1.0f),  // magenta
-    XVECTOR3(0.2f, 1.0f, 1.0f, 1.0f),  // cyan
-  };
-
   // Box edges: 12 edges connecting the 8 corners.
   static const unsigned short kBoxEdges[24] = {
     0,1, 1,2, 2,3, 3,0,   // near face
@@ -2525,9 +2595,9 @@ void MinecraftScene::DrawCascadeLightBounds() {
   const Camera* debugCamera = ActiveCam ? ActiveCam : &Cam;
   for (int box = boxCount - 1; box >= 0; --box) {
     const int cascade = box;
-    const XVECTOR3 fillColor(kCascadeColors[cascade].x,
-                             kCascadeColors[cascade].y,
-                             kCascadeColors[cascade].z,
+    const XVECTOR3 fillColor(m_cascadeDebugColors[cascade].x,
+                 m_cascadeDebugColors[cascade].y,
+                 m_cascadeDebugColors[cascade].z,
                              m_cascadeDebugOpacity);
     m_lineRenderer.DrawTriangles(identity, debugCamera->VP, fillColor,
                                  m_cascadeDebugVB, m_cascadeDebugSolidIB, 36,
@@ -2536,9 +2606,9 @@ void MinecraftScene::DrawCascadeLightBounds() {
   }
   for (int box = boxCount - 1; box >= 0; --box) {
     const int cascade = box;
-    const XVECTOR3 outlineColor(kCascadeColors[cascade].x,
-                                kCascadeColors[cascade].y,
-                                kCascadeColors[cascade].z,
+    const XVECTOR3 outlineColor(m_cascadeDebugColors[cascade].x,
+                  m_cascadeDebugColors[cascade].y,
+                  m_cascadeDebugColors[cascade].z,
                                 (std::min)(1.0f, m_cascadeDebugOpacity * 4.0f));
     m_lineRenderer.DrawLines(identity, debugCamera->VP, outlineColor,
                              m_cascadeDebugVB, m_cascadeDebugIB, 24,
@@ -2560,7 +2630,6 @@ void MinecraftScene::ApplyShadowSettings() {
     auto& proj = SceneProp.Shadows.projections[0];
     proj.resolvedDesc.split_lambda = m_splitLambda;
     proj.resolvedDesc.cascade_count = m_cascadeCount;
-    proj.resolvedDesc.blend_fraction = 0.0f;
   }
 
   // If resolution or cascade count changed, recreate the render targets.
@@ -2592,12 +2661,16 @@ void MinecraftScene::ApplyShadowSettings() {
 
   if (m_cameraMode == 2) {
     LightCam.Ortho = m_debugCameraOrtho;
-    LightCam.Yaw = m_lightYaw;
-    LightCam.Pitch = m_lightPitch;
+    if (m_lightCameraEditMode) {
+      LightCam.Yaw = m_lightYaw;
+      LightCam.Pitch = m_lightPitch;
+    }
     LightCam.AspectRatio = (float)pFramework->pVideoDriver->width /
                            (float)(std::max)(1, pFramework->pVideoDriver->height);
     LightCam.CreatePojection();
     LightCam.Update(0.0f);
+    if (m_lightCameraEditMode)
+      SyncSunFromLightCamera();
     ActiveCam = &LightCam;
     SceneProp.SetPrimaryCamera(ActiveCam);
   } else if (m_cameraMode == 1) {
@@ -2676,8 +2749,11 @@ void MinecraftScene::SaveSceneSettings() {
   m_voxelSettings.camera_mode = m_cameraMode;
   m_voxelSettings.debug_cascade_index = m_debugCascadeIndex;
   m_voxelSettings.day_night.enabled = m_dayNightEnabled;
+  m_voxelSettings.day_night.trajectory_paused = m_sunTrajectoryPaused;
   m_voxelSettings.day_night.time_of_day = m_timeOfDay;
   m_voxelSettings.day_night.day_length_seconds = m_dayLengthSecs;
+  m_voxelSettings.day_night.manual_ambient = {
+    SceneProp.AmbientColor.x, SceneProp.AmbientColor.y, SceneProp.AmbientColor.z};
   m_sceneFile.voxel_world = m_voxelSettings;
 
   if (m_sceneFile.profiles.empty()) m_sceneFile.profiles.push_back({});
@@ -3012,28 +3088,46 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
       cameraMode.label = "View camera";
       cameraMode.options = {"Player", "Free spectator", "Light"};
       cameraMode.default_index = 0;
-      gui.Combo(cameraMode, m_cameraMode);
+      if (gui.Combo(cameraMode, m_cameraMode) && m_cameraMode != 2 && m_lightCameraEditMode)
+        SetLightCameraEditMode(false);
+
+      if (gui.Button(m_lightCameraEditMode ? "Finish moving light camera" : "Move light camera"))
+        SetLightCameraEditMode(!m_lightCameraEditMode);
+
+      if (gui.Button("Resume sun trajectory", m_sunTrajectoryPaused)) {
+        m_lightCameraEditMode = false;
+        m_sunTrajectoryPaused = false;
+        UpdateDayNight(0.0f);
+        T8_LOG_INFO("[Minecraft] Sun trajectory resumed");
+      }
+
+      t850::CheckboxDesc animateSun;
+      animateSun.name = "animate_sun";
+      animateSun.label = "Animate sun trajectory";
+      gui.Checkbox(animateSun, m_dayNightEnabled);
 
       t850::CheckboxDesc debugOrtho;
       debugOrtho.name = "debug_camera_ortho";
-      debugOrtho.label = "Movable camera orthographic";
+      debugOrtho.label = "Light camera orthographic";
       gui.Checkbox(debugOrtho, m_debugCameraOrtho);
 
-      t850::SliderDesc yaw;
-      yaw.name = "light_yaw";
-      yaw.label = "Light yaw";
-      yaw.min_val = -3.14159f;
-      yaw.max_val = 3.14159f;
-      yaw.step = 0.01f;
-      gui.Slider(yaw, m_lightYaw);
+      if (m_lightCameraEditMode) {
+        t850::SliderDesc yaw;
+        yaw.name = "light_yaw";
+        yaw.label = "Light yaw";
+        yaw.min_val = -3.14159f;
+        yaw.max_val = 3.14159f;
+        yaw.step = 0.01f;
+        gui.Slider(yaw, m_lightYaw);
 
-      t850::SliderDesc pitch;
-      pitch.name = "light_pitch";
-      pitch.label = "Light pitch";
-      pitch.min_val = -1.5f;
-      pitch.max_val = 1.5f;
-      pitch.step = 0.01f;
-      gui.Slider(pitch, m_lightPitch);
+        t850::SliderDesc pitch;
+        pitch.name = "light_pitch";
+        pitch.label = "Light pitch";
+        pitch.min_val = -1.5f;
+        pitch.max_val = 1.5f;
+        pitch.step = 0.01f;
+        gui.Slider(pitch, m_lightPitch);
+      }
 
     }
 

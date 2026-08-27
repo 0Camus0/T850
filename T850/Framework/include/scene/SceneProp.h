@@ -105,6 +105,11 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	int ToogleGodRays = 1;
 	int DebugMode;
 	int CascadeDebugRegionsEnabled = 0;
+	XVECTOR3 CascadeDebugColors[6] = {
+		XVECTOR3(1.0f, 0.2f, 0.2f, 1.0f), XVECTOR3(0.2f, 1.0f, 0.2f, 1.0f),
+		XVECTOR3(0.2f, 0.4f, 1.0f, 1.0f), XVECTOR3(1.0f, 1.0f, 0.2f, 1.0f),
+		XVECTOR3(1.0f, 0.4f, 1.0f, 1.0f), XVECTOR3(0.2f, 1.0f, 1.0f, 1.0f)
+	};
 
 	float ShadowBias = 0.000005f;
 	float ShadowMin = 0.25f;

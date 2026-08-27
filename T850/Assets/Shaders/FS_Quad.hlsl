@@ -805,15 +805,6 @@ int GetCascadeDebugIndex(float viewDepth) {
 	return min(result, viewCount - 1);
 }
 
-float3 GetCascadeDebugColor(int cascade) {
-	if (cascade == 0) return float3(1.0, 0.2, 0.2);
-	if (cascade == 1) return float3(0.2, 1.0, 0.2);
-	if (cascade == 2) return float3(0.2, 0.4, 1.0);
-	if (cascade == 3) return float3(1.0, 1.0, 0.2);
-	if (cascade == 4) return float3(1.0, 0.4, 1.0);
-	return float3(0.2, 1.0, 1.0);
-}
-
 float4 FS(VS_OUTPUT input) : SV_TARGET {
 	if (toogles.x < 0.5)
 		return float4(0.0, 0.0, 0.0, 0.0);
@@ -833,7 +824,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 
 	float viewDepth = mul(World, position).z;
 	int cascade = GetCascadeDebugIndex(viewDepth);
-	return float4(GetCascadeDebugColor(cascade), saturate(toogles.y));
+	return float4(LightColors[cascade].xyz, saturate(toogles.y));
 }
 
 #elif defined(SHADOW_COMP_PASS)

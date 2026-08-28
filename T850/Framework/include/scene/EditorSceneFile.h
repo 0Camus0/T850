@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <map>
 #include <optional>
 #include <scene/SceneDescriptor.h>
@@ -92,6 +93,7 @@ struct SceneQ3LightDesc {
 };
 
 struct SceneLightDesc {
+  std::string id;
   std::string name = "Light";
   int type = 0; // 0=directional, 1=omni/point
   Vec3f position = {0.0f, 10.0f, 0.0f};
@@ -107,6 +109,7 @@ struct SceneLightDesc {
 
 struct SceneLightCameraDesc {
   std::string name = "Light Camera";
+  std::string attached_light_id;
   int type = 1; // 0=perspective, 1=ortho
   Vec3f position = {25.0f, 100.0f, 0.0f};
   Vec3f target = {0.0f, 0.0f, 0.0f};
@@ -116,7 +119,7 @@ struct SceneLightCameraDesc {
   float near_plane = 0.1f;
   float far_plane = 600.0f;
   float yaw_rate = 0.0f;
-  int attached_light = 0;
+  int attached_light = 0; // legacy fallback
   bool enabled = true;
   bool visible = true;
   bool frozen = false;
@@ -417,10 +420,206 @@ struct EditorStateDesc {
   std::string imgui_layout;
 };
 
+struct SceneVoxelBlockDesc {
+  std::string name;
+  bool opaque = true;
+  bool solid = true;
+  // Face order: +X, -X, +Y, -Y, +Z, -Z. Each pair is atlas tile u,v.
+  std::array<int, 12> tiles = {};
+  std::array<int, 4> color = {255, 255, 255, 255};
+};
+
+struct SceneVoxelOreDesc {
+  std::string block;
+  float threshold = 1.0f;
+  int min_depth = 0;
+};
+
+struct SceneVoxelTerrainDesc {
+  float base_frequency = 0.01f;
+  int base_octaves = 4;
+  float base_lacunarity = 2.0f;
+  float base_gain = 0.5f;
+  int base_height = 20;
+  float base_amplitude = 20.0f;
+  float mountain_frequency = 0.005f;
+  int mountain_octaves = 3;
+  float mountain_lacunarity = 2.0f;
+  float mountain_gain = 0.5f;
+  float mountain_amplitude = 20.0f;
+  float cave_frequency = 0.08f;
+  float cave_threshold = 0.72f;
+  float tree_threshold = 0.985f;
+  int tree_min_height = 4;
+  int tree_height_variation = 3;
+  int tree_max_surface_height = 50;
+  int surface_depth = 3;
+  int cave_min_y = 2;
+  std::string air_block = "air";
+  std::string bedrock_block = "bedrock";
+  std::string stone_block = "stone";
+  std::string dirt_block = "dirt";
+  std::string grass_block = "grass";
+  std::string sand_block = "sand";
+  std::string water_block = "water";
+  std::string log_block = "log";
+  std::string leaves_block = "leaves";
+  std::vector<SceneVoxelOreDesc> ores;
+};
+
+struct SceneVoxelPlayerDesc {
+  Vec3f spawn = {0.5f, 40.0f, 0.5f};
+  float walk_speed = 4.3f;
+  float sprint_speed = 5.6f;
+  float ground_acceleration = 30.0f;
+  float air_acceleration = 3.0f;
+  float friction = 8.0f;
+  float stop_speed = 2.0f;
+  float gravity = 24.0f;
+  float jump_speed = 8.0f;
+  float capsule_radius = 0.3f;
+  float capsule_half_height = 0.9f;
+  float eye_height = 1.62f;
+  float ground_probe_distance = 0.25f;
+  float step_height = 0.5f;
+  float min_walk_normal_y = 0.70f;
+  bool allow_sprint = true;
+  bool air_control = true;
+  float mouse_sensitivity = 0.0025f;
+  float debug_camera_speed = 50.0f;
+  float look_pitch_limit = 1.55f;
+  float collision_sweep_step = 0.25f;
+};
+
+struct SceneVoxelDayNightDesc {
+  bool enabled = true;
+  bool trajectory_paused = false;
+  float time_of_day = 0.25f;
+  float day_length_seconds = 120.0f;
+  float animation_speed = 0.1f;
+  float orbit_phase = 0.0f;
+  float orbit_radius = 140.0f;
+  Vec3f orbit_center = {0.0f, 40.0f, 0.0f};
+  Vec3f orbit_horizontal = {1.0f, 0.0f, 0.0f};
+  Vec3f orbit_vertical = {0.0f, 1.0f, 0.0f};
+  float horizon_offset = 0.15f;
+  float ambient_night = 0.12f;
+  float ambient_day = 0.47f;
+  Vec3f ambient_tint = {0.6f, 0.7f, 1.0f};
+  Vec3f manual_ambient = {0.282f, 0.329f, 0.47f};
+  float sun_intensity_night = 2.0f;
+  float sun_intensity_day = 6.0f;
+  Vec3f sun_color_low = {1.0f, 0.6f, 0.4f};
+  Vec3f sun_color_high = {1.0f, 1.0f, 1.0f};
+};
+
+struct SceneVoxelBoxPartDesc {
+  Vec3f min;
+  Vec3f max;
+  std::string block;
+};
+
+struct SceneVoxelMobDesc {
+  Vec3f spawn = {24.5f, 40.0f, 24.5f};
+  float move_speed = 1.8f;
+  float repath_seconds = 1.0f;
+  float waypoint_distance = 0.2f;
+  float half_width = 0.25f;
+  float height = 1.4f;
+  float vertical_follow_speed = 8.0f;
+  std::vector<SceneVoxelBoxPartDesc> parts;
+};
+
+struct SceneVoxelMaterialDesc {
+  std::string diffuse_texture = "lens1.png";
+  float roughness = 0.9f;
+  float specular = 0.04f;
+};
+
+struct SceneVoxelDofDesc {
+  bool normalized_focus = true;
+  float focus_range = 0.5f;
+  float focus_falloff = 8.0f;
+  float auto_focus_radius = 0.05f;
+};
+
+struct SceneVoxelDebugTargetDesc {
+  std::string label;
+  std::string source;
+};
+
+struct SceneVoxelWeaponDesc {
+  float scale = 0.30f;
+  float offset_right = 0.45f;
+  float offset_down = 0.45f;
+  float offset_forward = 0.55f;
+  float bob_speed = 8.0f;
+  float bob_vertical = 0.03f;
+  float bob_horizontal = 0.02f;
+  float swing_speed = 6.0f;
+  float swing_angle = 1.2f;
+  std::vector<SceneVoxelBoxPartDesc> parts;
+};
+
+struct SceneVoxelInteractionDesc {
+  float reach = 8.0f;
+  float break_cooldown = 0.25f;
+  float place_cooldown = 0.25f;
+};
+
+struct SceneVoxelWorldDesc {
+  int schema_version = 1;
+  int seed = 1337;
+  int chunk_size = 16;
+  int world_height = 64;
+  int water_level = 32;
+  int render_distance = 4;
+  int streaming_recenter_threshold = 2;
+  int max_uploads_per_frame = 2;
+  bool async_streaming = true;
+  int atlas_size = 256;
+  int atlas_tiles_per_axis = 16;
+  float navmesh_rebuild_seconds = 0.5f;
+  std::string environment_map = "sky/CubeMap_SkyWater.dds";
+  std::vector<std::string> environment_options;
+  bool show_physics = false;
+  bool show_chunk_bounds = false;
+  bool show_lights = false;
+  float sun_debug_size = 2.0f;
+  Vec3f collision_debug_color = {1.0f, 0.85f, 0.1f};
+  Vec3f chunk_debug_color = {0.1f, 0.85f, 1.0f};
+  bool show_navmesh = false;
+  bool frustum_culling = true;
+  bool show_culling_debug = false;
+  bool show_cascade_debug = true;
+  int cascade_debug_mode = 0;
+  float cascade_debug_opacity = 0.12f;
+  std::vector<Vec3f> cascade_debug_colors = {
+    {1.0f, 0.2f, 0.2f}, {0.2f, 1.0f, 0.2f}, {0.2f, 0.4f, 1.0f},
+    {1.0f, 1.0f, 0.2f}, {1.0f, 0.4f, 1.0f}, {0.2f, 1.0f, 1.0f}
+  };
+  int camera_mode = 0;
+  int debug_cascade_index = 0;
+  int debug_render_target = 0;
+  std::vector<SceneVoxelDebugTargetDesc> debug_render_targets;
+  int active_lights = 1;
+  SceneVoxelTerrainDesc terrain;
+  SceneVoxelPlayerDesc player;
+  SceneVoxelDayNightDesc day_night;
+  SceneVoxelMaterialDesc material;
+  SceneVoxelDofDesc dof;
+  SceneVoxelMobDesc mob;
+  SceneVoxelWeaponDesc weapon;
+  SceneVoxelInteractionDesc interaction;
+  std::vector<SceneVoxelBlockDesc> blocks;
+  std::vector<std::string> hotbar;
+};
+
 struct EditorSceneFile {
-  int version = 1;
+  int version = 2;  // v2 adds stable light IDs; v1 still loads (migrated in memory)
   std::string collision;
   std::string render_graph;
+  std::string control_descriptor;
   EditorStateDesc editor;
   std::vector<SceneObjectDesc> objects;
   std::vector<SceneGameEntityDesc> game_entities;
@@ -433,6 +632,7 @@ struct EditorSceneFile {
   std::vector<SceneLightCameraDesc> light_cameras;
   std::vector<SceneCameraAnimationDesc> camera_animations;
   std::optional<SceneGodRaysVolumeDesc> god_rays_volume;
+  std::optional<SceneVoxelWorldDesc> voxel_world;
   std::vector<SceneLightDesc> lights;
   std::vector<::t850::SandboxProfileDesc> profiles;
 };

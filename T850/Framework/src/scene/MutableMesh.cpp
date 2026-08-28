@@ -221,16 +221,18 @@ bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* err
   }
 
   EngineContext& context = pEngineContext ? *pEngineContext : t850::GetEngineContext();
+  context.driver->BeginResourceUploadBatch();
   BufferDesc vertexDesc;
   vertexDesc.byteWidth = static_cast<int>(snapshot.vertices.size() * sizeof(MutableMeshVertex));
-  vertexDesc.usage = BufferUsage::DINAMIC;
+  vertexDesc.usage = BufferUsage::DEFAULT;
   VertexBuffer* newVertexBuffer = static_cast<VertexBuffer*>(context.device->CreateBuffer(
       BufferType::VERTEX, vertexDesc, snapshot.vertices.data()));
   BufferDesc indexDesc;
   indexDesc.byteWidth = static_cast<int>(snapshot.indices.size() * sizeof(uint32_t));
-  indexDesc.usage = BufferUsage::DINAMIC;
+  indexDesc.usage = BufferUsage::DEFAULT;
   IndexBuffer* newIndexBuffer = static_cast<IndexBuffer*>(context.device->CreateBuffer(
       BufferType::INDEX, indexDesc, snapshot.indices.data()));
+  context.driver->EndResourceUploadBatch();
   if (!newVertexBuffer || !newIndexBuffer) {
     if (newVertexBuffer) context.driver->RetireBuffer(newVertexBuffer);
     if (newIndexBuffer) context.driver->RetireBuffer(newIndexBuffer);

@@ -14,7 +14,10 @@ namespace t850 {
   }
 
   VertexPool::~VertexPool() {
-    if (m_gpuVB && g_pBaseDriver) m_gpuVB->release();
+    if (m_gpuVB) {
+      if (g_pBaseDriver) g_pBaseDriver->RetireBuffer(m_gpuVB);
+      else m_gpuVB->release();
+    }
     m_gpuVB = nullptr;
   }
 
@@ -31,7 +34,8 @@ namespace t850 {
   void VertexPool::EnsureUploaded() {
     if (!m_dirty) return;
     if (m_gpuVB) {
-      m_gpuVB->release();
+      if (g_pBaseDriver) g_pBaseDriver->RetireBuffer(m_gpuVB);
+      else m_gpuVB->release();
       m_gpuVB = nullptr;
     }
     if (m_cpuStaging.empty()) {
@@ -69,7 +73,10 @@ namespace t850 {
   IndexPool::IndexPool(bool ib32Bit) : m_ib32Bit(ib32Bit) {}
 
   IndexPool::~IndexPool() {
-    if (m_gpuIB && g_pBaseDriver) m_gpuIB->release();
+    if (m_gpuIB) {
+      if (g_pBaseDriver) g_pBaseDriver->RetireBuffer(m_gpuIB);
+      else m_gpuIB->release();
+    }
     m_gpuIB = nullptr;
   }
 
@@ -87,7 +94,8 @@ namespace t850 {
   void IndexPool::EnsureUploaded() {
     if (!m_dirty) return;
     if (m_gpuIB) {
-      m_gpuIB->release();
+      if (g_pBaseDriver) g_pBaseDriver->RetireBuffer(m_gpuIB);
+      else m_gpuIB->release();
       m_gpuIB = nullptr;
     }
     if (m_cpuStaging.empty()) {

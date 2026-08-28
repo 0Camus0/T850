@@ -664,14 +664,67 @@ void main(){
 			//Final.xyz = vec3(rough, rough, rough);
 	}
 	
-#ifdef ES_30
-	colorOut = Final;
-#else
-	gl_FragColor = Final;
-#endif
+	#ifdef ES_30
+		colorOut = Final;
+	#else
+		gl_FragColor = Final;
+	#endif
 	
 }
 #endif
+#elif defined(CASCADE_DEBUG_PASS)
+uniform mediump sampler2D tex0;
+uniform highp mat4 ShadowViewProjection[6];
+uniform highp vec4 ShadowSplitDepths[2];
+uniform highp vec4 ShadowAtlasScaleBias[6];
+uniform highp vec4 ShadowParams0;
+uniform highp vec4 ShadowParams1;
+
+highp float GetCascadeDebugSplit(int boundary) {
+	if (boundary < 4) return ShadowSplitDepths[0][boundary];
+	return ShadowSplitDepths[1][boundary - 4];
+}
+
+int GetCascadeDebugIndex(highp float viewDepth) {
+	int viewCount = clamp(int(ShadowParams0.x), 1, 6);
+	int result = 0;
+	for (int boundary = 0; boundary < 5; ++boundary) {
+		if (boundary < viewCount - 1 && viewDepth > GetCascadeDebugSplit(boundary))
+			++result;
+	}
+	return min(result, viewCount - 1);
+}
+
+void main() {
+	highp vec4 result = vec4(0.0);
+	if (toogles.x >= 0.5) {
+		highp vec2 coords = vecUVCoords;
+		coords.y = 1.0 - coords.y;
+		#ifdef ES_30
+			highp float depth = texture(tex0, coords).r;
+		#else
+			highp float depth = texture2D(tex0, coords).r;
+		#endif
+		if (IsSceneDepthValid(depth)) {
+			highp vec4 position = ReconstructPosition(ClipPos, depth);
+			highp vec4 playerClip = WVPLight * position;
+			if (playerClip.w > 0.0) {
+				playerClip.xyz /= playerClip.w;
+				if (abs(playerClip.x) <= 1.0 && abs(playerClip.y) <= 1.0 &&
+					playerClip.z >= 0.0 && playerClip.z <= 1.0) {
+					highp float viewDepth = (World * position).z;
+					int cascade = GetCascadeDebugIndex(viewDepth);
+					result = vec4(LightColors[cascade].xyz, clamp(toogles.y, 0.0, 1.0));
+				}
+			}
+		}
+	}
+	#ifdef ES_30
+		colorOut = result;
+	#else
+		gl_FragColor = result;
+	#endif
+}
 #elif defined(SHADOW_COMP_PASS)
 uniform highp sampler2D tex0;
 #ifdef ENABLE_SHADOWS
@@ -680,6 +733,11 @@ uniform mediump samplerCube tex1;
 #else
 uniform mediump sampler2D tex1;
 #endif
+uniform highp mat4 ShadowViewProjection[6];
+uniform highp vec4 ShadowSplitDepths[2];
+uniform highp vec4 ShadowAtlasScaleBias[6];
+uniform highp vec4 ShadowParams0;  // x=viewCount, y=atlasWidth, z=atlasHeight, w=technique
+uniform highp vec4 ShadowParams1;  // x=farDistance, y=blendFraction, z=shadowBias, w=shadowMin
 #endif
 #ifdef ENABLE_SSAO
 uniform mediump sampler2D tex2; // Normals (geometric)
@@ -687,7 +745,22 @@ uniform mediump sampler2D tex3; // Noise
 #endif
 
 #ifdef ENABLE_SHADOWS
-highp vec4 CalculateShadow(highp vec4 position){
+highp float GetShadowSplit(int boundary) {
+	if (boundary < 4) return ShadowSplitDepths[0][boundary];
+	return ShadowSplitDepths[1][boundary - 4];
+}
+
+int GetCascadeIndex(highp float viewDepth) {
+	int viewCount = clamp(int(ShadowParams0.x), 1, 6);
+	int result = 0;
+	for (int boundary = 0; boundary < 5; ++boundary) {
+		if (boundary < viewCount - 1 && viewDepth > GetShadowSplit(boundary))
+			++result;
+	}
+	return min(result, viewCount - 1);
+}
+
+highp vec4 CalculateShadow(highp vec4 position, highp float viewDepth){
 highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 
 	#if defined OMNIDIRECTIONAL_SH
@@ -719,11 +792,27 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		shadowVal = 1.0 - shadowVal * (1.0 - toogles.x);
 		FShadow = shadowVal*vec4(1.0,1.0,1.0,1.0);//texture(tex1, fragToLight ).rrrr;
 	#else
-	highp vec4 LightPos = WVPLight*position;
+	highp vec4 playerClip = WVPLight * position;
+	if (playerClip.w <= 0.0)
+		return FShadow;
+	playerClip.xyz /= playerClip.w;
+	if (abs(playerClip.x) > 1.0 || abs(playerClip.y) > 1.0 ||
+		playerClip.z < 0.0 || playerClip.z > 1.0)
+		return FShadow;
+
+	int cascade = GetCascadeIndex(viewDepth);
+	highp vec4 LightPos = ShadowViewProjection[cascade]*position;
 	LightPos.xyz /= LightPos.w;
 	highp vec2 SHTC = LightPos.xy*0.5 + 0.5;
 	
 	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0 ){
+		highp vec2 atlasScale = ShadowAtlasScaleBias[cascade].xy;
+		highp vec2 atlasBias = ShadowAtlasScaleBias[cascade].zw;
+		atlasBias.y = 1.0 - atlasBias.y - atlasScale.y;
+		highp vec2 atlasUV = SHTC * atlasScale + atlasBias;
+		highp vec2 atlasTexel = vec2(1.0 / ShadowParams0.y, 1.0 / ShadowParams0.z);
+		highp vec2 tileMin = atlasBias + 0.5 * atlasTexel;
+		highp vec2 tileMax = atlasBias + atlasScale - 0.5 * atlasTexel;
 		#if ENABLE_PCF
 			highp float sum = 0.0;
 			highp float x, y;
@@ -732,8 +821,9 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 			for (y = -Origin; y <= Origin; y += 1.0){
 				for (x = -Origin; x <= Origin; x += 1.0){
 					highp float Val_1;
-					highp vec2 sampleUV = SHTC.xy + (brightness.z / brightness.y)*vec2(x, y);
-					if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+					highp vec2 sampleUV = atlasUV + brightness.z * atlasTexel * vec2(x, y);
+					if (sampleUV.x < tileMin.x || sampleUV.x > tileMax.x ||
+					    sampleUV.y < tileMin.y || sampleUV.y > tileMax.y) {
 						Val_1 = 0.0;
 					} else {
 						#ifdef ES_30
@@ -741,10 +831,10 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 						#else
 							highp float depthSM = texture2D(tex1, sampleUV).r;
 						#endif
-						depthSM -= toogles.w;
+						depthSM -= ShadowParams1.z;
 						Val_1 = (LightPos.z < depthSM) ? 0.0 : 1.0;
 					}
-					Val_1 = Val_1 * (1.0 - toogles.x) + toogles.x;
+					Val_1 = Val_1 * (1.0 - ShadowParams1.w) + ShadowParams1.w;
 					sum += Val_1;
 					Total++;
 				}
@@ -753,26 +843,22 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 			highp float shadowCoeff = sum / Total;
 			FShadow = shadowCoeff*vec4(1.0,1.0,1.0,1.0);
 			
-		#else	
+		#else
 			highp float depthSM;
 			#ifdef ES_30
-				highp float depthSM_1 = texture(tex1,SHTC).r;
-				//highp float depthSM_2 = texture(tex4,SHTC).r;
-				depthSM = (depthSM_1+depthSM_2)/2.0;
+				highp float depthSM_1 = texture(tex1, atlasUV).r;
+				depthSM = depthSM_1;
 			#else
-				highp float depthSM_1 = texture2D(tex1,SHTC).r;
-				highp float depthSM_2 = texture2D(tex4,SHTC).r;
-				depthSM = (depthSM_1+depthSM_2)/2.0;
+				highp float depthSM_1 = texture2D(tex1, atlasUV).r;
+				depthSM = depthSM_1;
 			#endif
-		
 			highp float depthPos = LightPos.z;
-
-			if( depthPos < depthSM)
-				FShadow = toogles.x*vec4(1.0,1.0,1.0,1.0);
+			if (depthPos < depthSM)
+				FShadow = ShadowParams1.w*vec4(1.0,1.0,1.0,1.0);
 		#endif
 		
 	}else{
-		FShadow = toogles.x*vec4(1.0,1.0,1.0,1.0);
+		FShadow = ShadowParams1.w*vec4(1.0,1.0,1.0,1.0);
 	}
 	#endif
 	return FShadow;
@@ -865,7 +951,8 @@ void main(){
 	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
 	#ifdef ENABLE_SHADOWS
-		Fcolor = CalculateShadow(position);
+		highp float viewDepth = (World * position).z;
+		Fcolor = CalculateShadow(position, viewDepth);
 	#endif
 
 	#ifdef ENABLE_SSAO
@@ -891,17 +978,16 @@ void main(){
 	mediump vec4 Sum = vec4(0.0,0.0,0.0,1.0);
 	highp vec2 U = LightPositions[0].y / vec2(textureSize(tex0, 0));
 	highp int KernelSize = int(LightPositions[0].x);
-	highp float Origin = -(float(KernelSize)-3.0)/2.0;
-	mediump float V = (Origin);
+	highp float Origin = -(float(KernelSize)-1.0)/2.0;
 	mediump vec2 Texcoords;
-	for(mediump int i=1;i<(KernelSize-1);i++){	
+	for(mediump int i=0;i<KernelSize;i++){
+		mediump float V = Origin + float(i);
 		Texcoords.xy = vec2(coords.x ,coords.y + V*U.y);
 		#ifdef ES_30
 			Sum.xyz += LightPositions[i+1].x * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 		#else
 			Sum.xyz += LightPositions[i+1].x * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 		#endif
-		V++;
 	}
 
 	#ifdef ES_30
@@ -919,17 +1005,16 @@ void main(){
 	mediump vec4 Sum = vec4(0.0,0.0,0.0,1.0);
 	highp vec2 U = LightPositions[0].y / vec2(textureSize(tex0, 0));
 	highp int KernelSize = int(LightPositions[0].x);
-	highp float Origin = -(float(KernelSize)-3.0)/2.0;
-	mediump float H = Origin;
+	highp float Origin = -(float(KernelSize)-1.0)/2.0;
 	mediump vec2 Texcoords;
-	for(mediump int i=1;i<(KernelSize-1);i++){	
+	for(mediump int i=0;i<KernelSize;i++){
+		mediump float H = Origin + float(i);
 		Texcoords.xy = vec2(coords.x + H*U.x ,coords.y );
 		#ifdef ES_30
 			Sum.xyz += LightPositions[i+1].x * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 		#else
 			Sum.xyz += LightPositions[i+1].x * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 		#endif
-		H++;
 	}
 	
 	#ifdef ES_30
@@ -1250,16 +1335,29 @@ void main() {
 	#else
 	depthFocus = texture2D(tex0, vec2(0.5, 0.5)).r;// Auto Focus center
 	#endif
+	if (LightPositions[1].z > 0.5 && !IsSceneDepthValid(depthFocus) && LightPositions[1].w > 0.0) {
+		highp float bestDepth = 0.0;
+		for (int focusY = -2; focusY <= 2; ++focusY) {
+			for (int focusX = -2; focusX <= 2; ++focusX) {
+				highp vec2 focusUV = clamp(vec2(0.5) +
+					vec2(float(focusX), float(focusY)) * (LightPositions[1].w * 0.5), 0.0, 1.0);
+				#ifdef ES_30
+					highp float candidate = textureLod(tex0, focusUV, 0.0).r;
+				#else
+					highp float candidate = texture2D(tex0, focusUV).r;
+				#endif
+				if (IsSceneDepthValid(candidate))
+					bestDepth = max(bestDepth, candidate);
+			}
+		}
+		depthFocus = bestDepth;
+	}
   #else
     depthFocus = LightPositions[0].z;
   #endif
-	if (!IsSceneDepthValid(depthFocus))
+	if (!IsSceneDepthValid(depthFocus) && LightPositions[1].z <= 0.5)
 		depthFocus = z;
-	bool near = (z > depthFocus);
-	highp float objectdistance = LinearizeDepth(z);
-    highp float FocusPlane = LinearizeDepth(depthFocus);
-	highp float denominator = objectdistance * (FocusPlane - focalLength);
-	if (abs(denominator) <= 0.00001) {
+	if (!IsSceneDepthValid(depthFocus)) {
 	#ifdef ES_30
 		colorOut = vec4(0.0);
 		colorOut_1 = vec4(0.0);
@@ -1269,7 +1367,28 @@ void main() {
 	#endif
 		return;
 	}
-	highp float CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) / denominator);
+	bool near = (z > depthFocus);
+	highp float objectdistance = LinearizeDepth(z);
+    highp float FocusPlane = LinearizeDepth(depthFocus);
+	highp float CoC;
+	if (LightPositions[1].z > 0.5) {
+		highp float focusRange = max(LightPositions[1].x, 0.0);
+		highp float focusFalloff = max(LightPositions[1].y, 0.0001);
+		CoC = clamp((abs(objectdistance - FocusPlane) - focusRange) / focusFalloff, 0.0, 1.0) * LightPositions[0].w;
+	} else {
+		highp float denominator = objectdistance * (FocusPlane - focalLength);
+		if (abs(denominator) <= 0.00001) {
+	#ifdef ES_30
+			colorOut = vec4(0.0);
+			colorOut_1 = vec4(0.0);
+	#else
+			gl_FragData[0] = vec4(0.0);
+			gl_FragData[1] = vec4(0.0);
+	#endif
+			return;
+		}
+		CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) / denominator);
+	}
 	if (near) {
 	#ifdef ES_30
 		colorOut.r = clamp(CoC, 0.0, LightPositions[0].w);
@@ -1304,7 +1423,9 @@ void main() {
   highp float CoC0 = texture2D(tex0, coords).r;
   highp float CoC1 = texture2D(tex1, coords).r;
   #endif
-  highp float CoC =  2.0*max(CoC0, CoC1) - CoC0;
+	  highp float CoC = LightPositions[1].z > 0.5
+		? max(CoC0, CoC1)
+		: 2.0*max(CoC0, CoC1) - CoC0;
 
 #ifdef ES_30
 	colorOut.r = CoC;
@@ -1334,6 +1455,7 @@ void main(){
 	#endif
 	return;
 	}
+	highp vec4 sum = vec4(0.0);
 
   highp vec2 Offset = vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
   highp float Tot = 0.0;
@@ -1342,14 +1464,16 @@ void main(){
     for (highp float j = -Samples_squared; j <= Samples_squared; j++) {
       lowp vec2  tcoord = coords + vec2(i,j) *Offset* dofblur;
 	  #ifdef ES_30
-		color+= texture(tex0, tcoord);
+		sum += texture(tex0, tcoord);
 	  #else
-		color+= texture2D(tex0, tcoord);
+		sum += texture2D(tex0, tcoord);
 	  #endif
 	  Tot++;
     }
   }
-  color /= Tot;
+	  color = LightPositions[1].z > 0.5
+		? sum / max(Tot, 1.0)
+		: (color + sum) / max(Tot, 1.0);
   color.a = 1.0;
 
 #ifdef ES_30
@@ -1380,6 +1504,7 @@ if (dofblur <= DEPTH_CLEAR_EPSILON) {
 	return;
 }
 
+highp vec4 sum = vec4(0.0);
 highp float Tot = 0.0;
 highp float Samples_squared = LightPositions[0].x;
 highp vec2 Offset = vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
@@ -1387,14 +1512,16 @@ for (highp float i = -Samples_squared; i <= Samples_squared; i++) {
   for (highp float j = -Samples_squared; j <= Samples_squared; j++) {
     lowp vec2  tcoord = coords + vec2(i,j) *Offset* dofblur;
 	#ifdef ES_30
-		color += texture(tex0, tcoord);
+		sum += texture(tex0, tcoord);
 	#else
-		color += texture2D(tex0, tcoord);
+		sum += texture2D(tex0, tcoord);
 	#endif
 	Tot++;
   }
 }
-color /= Tot;
+color = LightPositions[1].z > 0.5
+	? sum / max(Tot, 1.0)
+	: (color + sum) / max(Tot, 1.0);
 color.a = 1.0;
 #ifdef ES_30
 	colorOut = color;

@@ -64,6 +64,7 @@ set(FRAMEWORK_SOURCES
   src/scene/SceneDescriptor.cpp
   src/scene/SceneSetup.cpp
   src/scene/SceneProp.cpp
+  src/scene/ShadowSystem.cpp
   src/scene/SplineWireframe.cpp
   src/scene/WireframeSphere.cpp
   src/scene/WireframeArrow.cpp

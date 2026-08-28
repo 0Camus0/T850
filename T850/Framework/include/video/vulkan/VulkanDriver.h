@@ -310,6 +310,12 @@ namespace t850 {
     VkCommandBuffer m_uploadBatchCmd = VK_NULL_HANDLE;
     std::vector<DeferredBuffer> m_uploadBatchBuffers;
     uint32_t m_uploadBatchCommandCount = 0;
+    struct PendingUploadBatch {
+      VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+      VkFence fence = VK_NULL_HANDLE;
+      std::vector<DeferredBuffer> buffers;
+    };
+    std::vector<PendingUploadBatch> m_pendingUploadBatches;
 
     // Cached pipeline state for deferred pipeline lookup
     BlendStates           m_currentBlend = BLEND_DEFAULT;

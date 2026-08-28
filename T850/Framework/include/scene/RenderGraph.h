@@ -7,6 +7,7 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
+#include <functional>
 
 class Camera;
 
@@ -81,10 +82,21 @@ namespace t850 {
   // The graph can be loaded from JSON and executed against the engine.
   class RenderGraph {
   public:
+    using CustomDrawCallback = std::function<void(const std::string&)>;
     RenderGraph() = default;
 
     // Load the graph descriptor from JSON and build the DAG.
     bool Load(const std::string& path);
+
+    // Configure the graph: merge typed shadow overrides, validate structural
+    // data, expand generated shadow passes, and initialize unbound runtime
+    // projection records. Must be called before CreateRenderTargets for graphs
+    // that declare shadow_projections.
+    bool Configure(
+      SceneProps& props,
+      const std::vector<ShadowProjectionOverrideDesc>& baseOverrides,
+      const std::vector<ShadowProjectionOverrideDesc>& runtimeOverrides,
+      std::string* error);
 
     // Create all render targets declared in the graph.
     // Call after Load(), before Execute().
@@ -106,14 +118,17 @@ namespace t850 {
       ::Camera* lightCam,
       ::Camera* omniCams,
       const EnvironmentMapSet& envMaps,
-      int finalOutputRT = -1
+      int finalOutputRT = -1,
+      CustomDrawCallback customDraw = {}
     );
 
     // ---- Graph inspection (for future GUI) ----
 
     const std::vector<GraphNode>& GetNodes() const { return m_nodes; }
     const std::vector<GraphEdge>& GetEdges() const { return m_edges; }
-    const RenderGraphDesc& GetDescriptor() const { return m_desc; }
+    const RenderGraphDesc& GetSourceDescriptor() const { return m_sourceDesc; }
+    const RenderGraphDesc& GetEffectiveDescriptor() const { return m_effectiveDesc; }
+    const RenderGraphDesc& GetDescriptor() const { return m_effectiveDesc; }
 
     // Get the RT handle for a named render target.
     int GetRTHandle(const std::string& name) const;
@@ -130,7 +145,23 @@ namespace t850 {
 
   private:
     std::unordered_set<std::string> m_disabledPasses;
-    RenderGraphDesc m_desc;
+    RenderGraphDesc m_sourceDesc;     // exact parsed JSON
+    RenderGraphDesc m_effectiveDesc;  // overrides applied + passes expanded
+
+    // Merge typed shadow overrides into the effective projection baselines.
+    void MergeShadowOverrides(
+      const std::vector<ShadowProjectionOverrideDesc>& baseOverrides,
+      const std::vector<ShadowProjectionOverrideDesc>& runtimeOverrides);
+
+    // Expand one directional shadow projection into N internal depth passes.
+    bool ExpandDirectionalProjection(
+      SceneProps& props,
+      const ShadowProjectionDesc& projection,
+      int projectionIndex,
+      std::string* error);
+
+    // Size a shadow-referenced render target from its projection.
+    void SizeShadowTarget(RTDesc& rt, const SceneProps& props);
 
     // Resolved graph
     std::vector<GraphNode> m_nodes;
@@ -157,6 +188,7 @@ namespace t850 {
     static int ResolveDepthStencilState(const std::string& name);
     static int ResolveCullFace(const std::string& name);
     static int ResolveBlendState(const std::string& name);
+    static RenderPassKind ResolvePassKind(const std::string& name);
 
     // Execute a single pass.
     void ExecutePass(
@@ -169,7 +201,8 @@ namespace t850 {
       ::Camera* lightCam,
       ::Camera* omniCams,
       const EnvironmentMapSet& envMaps,
-      int finalOutputRT
+      int finalOutputRT,
+      const CustomDrawCallback& customDraw
     );
   };
 

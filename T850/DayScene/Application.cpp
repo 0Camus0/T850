@@ -523,6 +523,7 @@ namespace {
 #include <SceneTemplate.h>
 #include <RagdollEditor.h>
 #include <VoxelScene.h>
+#include <MinecraftScene.h>
 
 #ifdef OS_ANDROID
 namespace {
@@ -549,6 +550,7 @@ void App::InitVars() {
   m_scenes.emplace_back(std::make_unique<RagdollEditor>());
   m_scenes.emplace_back(std::make_unique<SceneTemplate>());
   m_scenes.emplace_back(std::make_unique<VoxelScene>());
+  m_scenes.emplace_back(std::make_unique<MinecraftScene>());
   t850::EngineContext& engineContext = t850::GetEngineContext();
   engineContext.physics = &m_physics;
   if (!m_physics.Initialize() && m_physics.IsAvailable()) {
@@ -1166,6 +1168,7 @@ void App::DrawRuntimeGui() {
 
   t850::DevGuiContext gui;
   gui.DrawFrameStatsOverlay(m_fpsString.c_str());
+  if (m_actualScene) m_actualScene->DrawGameplayGui(gui);
   if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
     dayScene->DrawBenchmarkMatrixGui(gui);
   }

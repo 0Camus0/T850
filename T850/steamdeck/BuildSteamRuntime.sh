@@ -83,7 +83,18 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 if [ ! -x /tmp/autoconf-install/bin/autoconf ]; then
   rm -rf /tmp/autoconf-2.72 /tmp/autoconf-install
   cd /tmp
-  curl -L -o autoconf-2.72.tar.gz https://ftp.gnu.org/gnu/autoconf/autoconf-2.72.tar.gz
+  rm -f autoconf-2.72.tar.gz
+  if ! curl --fail --location --retry 3 --retry-delay 2 --retry-all-errors \
+      --connect-timeout 20 --max-time 180 -o autoconf-2.72.tar.gz \
+      https://ftpmirror.gnu.org/autoconf/autoconf-2.72.tar.gz; then
+    if ! curl --fail --location --retry 3 --retry-delay 2 --retry-all-errors \
+        --connect-timeout 20 --max-time 180 -o autoconf-2.72.tar.gz \
+        https://mirrors.kernel.org/gnu/autoconf/autoconf-2.72.tar.gz; then
+      curl --fail --location --retry 3 --retry-delay 2 --retry-all-errors \
+        --connect-timeout 20 --max-time 180 -o autoconf-2.72.tar.gz \
+        https://ftp.gnu.org/gnu/autoconf/autoconf-2.72.tar.gz
+    fi
+  fi
   tar xf autoconf-2.72.tar.gz
   cd autoconf-2.72
   ./configure --prefix=/tmp/autoconf-install >/dev/null

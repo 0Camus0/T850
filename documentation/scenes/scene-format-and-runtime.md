@@ -167,6 +167,39 @@ formats, array capacities, and topology remain code invariants. Keyboard binding
 the shared input layer until the engine has a cross-scene keymap schema; do not add a
 Minecraft-only string-to-key parser.
 
+Minecraft chunk residency is controlled by `render_distance`; the shipped scene uses six
+chunks in every horizontal direction and the runtime supports up to eight. The resident grid
+uses world-coordinate ring slots, so recentering does not copy the full voxel array or mesh
+instance table. `streaming_recenter_threshold` keeps the player inside the preloaded area
+before requesting another ring update. Entering terrain is generated into private worker
+payloads, mesh snapshots are built on worker threads, and `max_uploads_per_frame` limits GPU
+commits on the render thread.
+
+Chunk geometry uses reusable `MutableMesh` buffers instead of appending each streamed chunk
+to the shared immutable mesh pool. D3D12 and Vulkan therefore retire only the replaced
+chunk's buffers; they do not rebuild an ever-growing global vertex/index pool. Graphics API
+calls remain on the render thread because the current driver command allocators and descriptor
+state are not thread-safe scene-worker interfaces. D3D12 and Vulkan upload each replacement
+through staging buffers into GPU-local vertex/index memory. Upload command buffers and staging
+allocations remain alive until backend fences complete, so each budgeted commit is submitted
+without a CPU wait and subsequent rendering is ordered on the same graphics queue.
+
+Minecraft block edits update the authoritative voxel grid immediately, then queue the edited
+chunk (and a boundary neighbor when required) through the same worker-mesh pipeline. The old
+chunk mesh remains visible until its GPU-local replacement is ready. Edits also debounce an
+asynchronous Recast/Detour rebuild built from an immutable voxel snapshot; the previous
+navigation mesh remains active until the replacement is published. Minecraft collision does
+not rebuild Jolt bodies for block edits: player and mob collision query voxel occupancy
+directly, so edit-time pauses should be diagnosed in remeshing or navigation rather than Jolt.
+
+Minecraft owns a gameplay HUD through the scene-level `DrawGameplayGui` hook, independently
+of the docked developer controls. It draws a target-aware crosshair, world/target status,
+desktop control hints, transient placement feedback, and a nine-slot hotbar using each
+authored block's display color. A live raycast target receives a bright block outline. When
+the ray has no block within reach, the last valid target remains as a dim amber outline and
+is labeled `Last target`; it is visual history only and cannot be edited until reacquired.
+Other scenes inherit the no-op hook and render no gameplay HUD.
+
 Minecraft's rendering panel mirrors the applicable DayScene controls: shared lighting,
 material, parallax and parallax-shadow settings; SSAO; DOF; active light count; Gaussian
 kernel selection, radius, sigma and tap support; luminance mode; and graph-resource debug

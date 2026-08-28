@@ -808,6 +808,7 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0 ){
 		highp vec2 atlasScale = ShadowAtlasScaleBias[cascade].xy;
 		highp vec2 atlasBias = ShadowAtlasScaleBias[cascade].zw;
+		atlasBias.y = 1.0 - atlasBias.y - atlasScale.y;
 		highp vec2 atlasUV = SHTC * atlasScale + atlasBias;
 		highp vec2 atlasTexel = vec2(1.0 / ShadowParams0.y, 1.0 / ShadowParams0.z);
 		highp vec2 tileMin = atlasBias + 0.5 * atlasTexel;

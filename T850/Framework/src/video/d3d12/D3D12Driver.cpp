@@ -753,6 +753,7 @@ namespace t850 {
     }
     for (UINT i = 0; i < kBackBufferCount; i++)
       m_frameFenceValues[i] = fenceToSignal;
+    m_pendingUploadBatches.clear();
   }
 
   // ══════════════════════════════════════════════════════
@@ -782,6 +783,13 @@ namespace t850 {
           ++iterator;
         }
       }
+      const UINT64 completedFence = m_fence->GetCompletedValue();
+      m_pendingUploadBatches.erase(
+        std::remove_if(m_pendingUploadBatches.begin(), m_pendingUploadBatches.end(),
+          [completedFence](const PendingUploadBatch& batch) {
+            return batch.fenceValue <= completedFence;
+          }),
+        m_pendingUploadBatches.end());
     }
 
     {
@@ -1445,12 +1453,16 @@ namespace t850 {
     m_uploadBatchList->Close();
     ID3D12CommandList* lists[] = { m_uploadBatchList.Get() };
     m_commandQueue->ExecuteCommandLists(1, lists);
-    WaitForQueuedUploadWork();
+    const UINT64 fenceValue = m_nextFenceValue++;
+    m_commandQueue->Signal(m_fence.Get(), fenceValue);
 
-    T8_LOG_INFO("[D3D12] Resource upload batch flushed: %u copy operation(s)", m_uploadBatchCommandCount);
-    m_uploadBatchKeepAlive.clear();
-    m_uploadBatchList.Reset();
-    m_uploadBatchAllocator.Reset();
+    T8_LOG_INFO("[D3D12] Resource upload batch submitted: %u copy operation(s)", m_uploadBatchCommandCount);
+    PendingUploadBatch pending;
+    pending.allocator = std::move(m_uploadBatchAllocator);
+    pending.commandList = std::move(m_uploadBatchList);
+    pending.resources = std::move(m_uploadBatchKeepAlive);
+    pending.fenceValue = fenceValue;
+    m_pendingUploadBatches.push_back(std::move(pending));
     m_uploadBatchCommandCount = 0;
   }
 

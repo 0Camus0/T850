@@ -2,6 +2,7 @@
 #include <core/Core.h>
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
+#include <scene/MutableMeshData.h>
 #include <utils/xMaths.h>
 #include <utils/Camera.h>
 #include <utils/Timer.h>
@@ -51,7 +52,7 @@ struct BlockDef {
 // ── Voxel world constants ────────────────────────────────────────────
 constexpr int kMaxChunkSize = 16;
 constexpr int kMaxWorldHeight = 64;
-constexpr int kMaxRenderDistance = 4;
+constexpr int kMaxRenderDistance = 8;
 constexpr int kMaxChunkCount = kMaxRenderDistance * 2 + 1;
 constexpr int kMaxChunks = kMaxChunkCount * kMaxChunkCount;
 constexpr int kMaxRenderMeshCount = kMaxChunks + 2;
@@ -77,6 +78,8 @@ public:
   void DestroyAssets() override;
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
+  void DrawGameplayGui(t850::DevGuiContext& /*gui*/) override { DrawGameplayHud(); }
+  void DrawGameplayHud();
   void DrawCascadeLightBounds();
   void DrawVoxelDebugBounds();
   void ApplyShadowSettings();
@@ -175,6 +178,7 @@ public:
   int m_worldHeight = 0;
   int m_waterLevel = 0;
   int m_renderDistance = 0;
+  int m_streamingRecenterThreshold = 0;
   int m_chunkCountX = 0;
   int m_chunkCountZ = 0;
   int m_maxChunks = 0;
@@ -185,6 +189,11 @@ public:
   int m_centerChunkZ = 0;
 
   // ── Async chunk streaming ──
+  struct GeneratedChunkData {
+    int cx = 0;
+    int cz = 0;
+    std::vector<uint8_t> blocks;
+  };
   // A chunk whose geometry is being built on a background thread. The
   // block data is snapshotted so the worker never races with the render
   // thread (which may shift m_blocks when the player moves).
@@ -194,13 +203,17 @@ public:
     int gx = 0;   // grid slot (relative to center at enqueue time)
     int gz = 0;
     std::vector<uint8_t> blockSnapshot; // (chunkSize+2)^2 * worldHeight
-    std::shared_ptr<xF::XDataBase> db;  // geometry built on background thread
+    std::shared_ptr<t850::MutableMeshSnapshot> meshSnapshot;
     std::future<void> future;           // background geometry build
     bool geometryReady = false;
     bool uploadDone = false;
   };
   std::deque<PendingChunk> m_pendingChunks;
   std::mutex m_pendingMutex;
+  std::vector<std::future<void>> m_retiredChunkBuilds;
+  std::future<void> m_chunkGenerationFuture;
+  std::shared_ptr<std::vector<GeneratedChunkData>> m_generatedChunkBatch;
+  std::deque<std::pair<int, int>> m_chunksAwaitingMesh;
   int m_maxUploadsPerFrame = 0;
   bool m_asyncStreaming = false;
 
@@ -212,6 +225,16 @@ public:
   bool m_navMeshReady = false;
   bool m_showNavMesh = false;
   float m_navMeshBuildMs = 0.0f;
+  struct PendingNavMeshBuild {
+    t850::navigation::NavMesh navMesh;
+    std::string error;
+    float buildMs = 0.0f;
+    bool success = false;
+    int centerChunkX = 0;
+    int centerChunkZ = 0;
+  };
+  std::future<void> m_navMeshBuildFuture;
+  std::shared_ptr<PendingNavMeshBuild> m_pendingNavMeshBuild;
   // Set when a block is placed/removed so the navmesh is rebuilt (throttled)
   // and the mob re-paths around the new obstacle.
   bool m_navMeshDirty = false;
@@ -250,6 +273,11 @@ public:
   // ── Internals ──
   void GenerateWorld();
   void BuildNavigationMesh();
+  void BuildNavigationGeometry(const std::vector<uint8_t>& blockSnapshot,
+                               int centerChunkX, int centerChunkZ,
+                               t850::navigation::NavMeshGeometry& geometry) const;
+  void StartNavigationMeshBuild();
+  void ProcessNavigationMeshBuild();
   void UpdateMob(float dt);
   void CreateMobMesh();
   void UpdateMobInstance();
@@ -259,17 +287,22 @@ public:
   void SyncLightCameraFromSun();
   void SyncSunFromLightCamera();
   void SetLightCameraEditMode(bool enabled);
-  void GenerateChunk(int cx, int cz);
+  void GenerateChunk(int cx, int cz, bool markState = true);
+  void GenerateChunkData(int cx, int cz, std::vector<uint8_t>& blocks) const;
+  void GenerateChunkTrees(int cx, int cz, bool markState = true);
   void BuildChunkMesh(int cx, int cz);
   void RebuildDirtyChunks();
   void UpdateChunkStreaming();
   void ShiftWorldAndStream(int newCx, int newCz);
+  void QueueChunkRemesh(int cx, int cz);
   void EnqueueChunkBuild(int cx, int cz);
   void ProcessPendingChunks();
   void CancelPendingChunk(int cx, int cz);
   void BuildChunkGeometryFromSnapshot(int cx, int cz,
                                       const std::vector<uint8_t>& snapshot,
                                       xF::XDataBase& outDb);
+  void ConvertChunkDatabase(const xF::XDataBase& db,
+                            t850::MutableMeshSnapshot& snapshot) const;
   void UploadChunkMesh(PendingChunk& pc);
   int  ChunkIndex(int cx, int cz) const;
   uint8_t GetBlock(int wx, int wy, int wz) const;
@@ -310,8 +343,12 @@ public:
   int m_highlightMeshIndex = -1;
   bool m_highlightVisible = false;
   int m_highlightX = 0, m_highlightY = 0, m_highlightZ = 0;
+  bool m_lastHighlightValid = false;
+  int m_lastHighlightX = 0, m_lastHighlightY = 0, m_lastHighlightZ = 0;
   int m_highlightFace = 0;
   int m_selectedBlock = 0;
+  std::string m_interactionMessage;
+  float m_interactionMessageTime = 0.0f;
   float m_breakCooldown = 0.0f;
   float m_placeCooldown = 0.0f;
 };

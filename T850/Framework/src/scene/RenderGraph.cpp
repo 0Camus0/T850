@@ -247,6 +247,23 @@ bool RenderGraph::Load(const std::string& path) {
 
   if (!LoadRenderGraphDescriptor(path, m_sourceDesc))
     return false;
+  for (const auto& pass : m_sourceDesc.passes) {
+    for (const auto& draw : pass.draws) {
+      if (draw.signature != "LIGHT_ADD") continue;
+      bool hasSlot0 = false;
+      bool hasSlot1 = false;
+      for (const auto& input : pass.inputs) {
+        hasSlot0 = hasSlot0 || input.slot == 0;
+        hasSlot1 = hasSlot1 || input.slot == 1;
+      }
+      if (!hasSlot0 || !hasSlot1) {
+        T8_LOG_ERROR(
+          "[RenderGraph] Pass '%s' uses LIGHT_ADD without texture slots 0 and 1; use FSQUAD_1_TEX for a copy",
+          pass.name.c_str());
+        return false;
+      }
+    }
+  }
   m_effectiveDesc = m_sourceDesc;
 
   // Graph is built after CreateRenderTargets (needs RT handle map)
@@ -927,9 +944,10 @@ void RenderGraph::ExecutePass(
     }
 
     auto bindMeshPassResources = [&](PrimitiveInst& mesh) {
-      for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
-        clearTextureSlot(mesh, slot);
-      }
+      // Material maps are persistent instance state (slots 0-6 and 8).
+      // Only clear the transient mesh-pass inputs before rebinding them.
+      clearTextureSlot(mesh, 7);  // scene depth
+      clearTextureSlot(mesh, 9);  // scene color
       mesh.SetEnvironmentMap(nullptr);
 
       for (const auto& input : pass.inputs) {

@@ -247,6 +247,12 @@ Supported pass signatures include:
 
 Unknown signatures log an error and resolve to an empty valid key.
 
+`LIGHT_ADD` is a strict two-texture operation: the additive source must be bound at slot 0
+and the base scene at slot 1. A pass that only copies one render target must bind it at slot
+0 and use `FSQUAD_1_TEX`. `RenderGraph::Load` rejects `LIGHT_ADD` passes missing either slot;
+without that guard, Vulkan's defined fallback image can turn the output uniformly white while
+other backends appear to work through undefined or stale bindings.
+
 `PassType::E` is broader than the JSON signature map. The enum currently contains `NONE`, `FORWARD`, `GBUFFER`, `SHADOW_MAP`, the three standard fullscreen-quad passes, `FSQUAD_TESTING`, `DEFERRED`, `SHADOW_COMP`, vertical/horizontal/one-pass blur, `BRIGHT`, `HDR_COMP`, `LUMINANCE_MAP`, `ADAPT_LUMINANCE`, `COC`, `COMBINE_COC`, `DOF`, `DOF_2`, `BACKBUFFER`, God Rays calculation/blend, `SSAO`, `RAY_MARCH`, `RADIAL_DEPTH`, `LIGHT_RAY_MARCHING`, `LIGHT_ADD`, `FADE`, `DEFERRED_LDR`, `DEFERRED_LIGHT_VOLUME`, lens-flare sun/ghost, and `COUNT`. Enum values without an entry in `RenderGraph.cpp`'s `s_passMap` cannot be selected by a render-graph `signature` string until an explicit mapping is added.
 
 ## Graph construction

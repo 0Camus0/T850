@@ -139,10 +139,10 @@
       "name": "Light Add",
       "target": "Extra16F",
       "inputs": [
-        { "source": "Deferred:COLOR0", "slot": 1 }
+        { "source": "Deferred:COLOR0", "slot": 0 }
       ],
       "draws": [
-        { "type": "fullscreen_quad", "signature": "LIGHT_ADD" }
+        { "type": "fullscreen_quad", "signature": "FSQUAD_1_TEX" }
       ]
     },
     {

@@ -73,14 +73,14 @@
          "name": "Minecraft Player Camera",
          "type": 0,
          "position": {
-            "x": 5.059436,
-            "y": 40.62,
-            "z": -4.08166
+            "x": 0.898631,
+            "y": 41.62,
+            "z": 2.3280194
          },
          "target": {
-            "x": 5.445192,
-            "y": 39.962494,
-            "z": -3.4344497
+            "x": -0.09497875,
+            "y": 41.555042,
+            "z": 2.4203253
          },
          "fov_deg": 69.99999,
          "ortho_w": 1280,
@@ -146,8 +146,9 @@
       "chunk_size": 16,
       "world_height": 64,
       "water_level": 32,
-      "render_distance": 4,
-      "max_uploads_per_frame": 2,
+      "render_distance": 6,
+      "streaming_recenter_threshold": 2,
+      "max_uploads_per_frame": 1,
       "async_streaming": true,
       "atlas_size": 256,
       "atlas_tiles_per_axis": 16,
@@ -183,7 +184,7 @@
       "show_navmesh": false,
       "frustum_culling": true,
       "show_culling_debug": false,
-      "show_cascade_debug": true,
+      "show_cascade_debug": false,
       "cascade_debug_mode": 0,
       "cascade_debug_opacity": 0.12,
       "cascade_debug_colors": [
@@ -220,7 +221,7 @@
       ],
       "camera_mode": 0,
       "debug_cascade_index": 0,
-      "debug_render_target": 10,
+      "debug_render_target": 0,
       "debug_render_targets": [
          {
             "label": "Final",
@@ -350,9 +351,9 @@
       },
       "player": {
          "spawn": {
-            "x": 5.059436,
-            "y": 40.62,
-            "z": -4.08166
+            "x": 0.898631,
+            "y": 41.62,
+            "z": 2.3280194
          },
          "walk_speed": 4.3,
          "sprint_speed": 5.6,
@@ -380,7 +381,7 @@
          "trajectory_paused": false,
          "time_of_day": 0.26244298,
          "day_length_seconds": 120,
-         "animation_speed": 0.1,
+         "animation_speed": 0.035,
          "orbit_phase": 0,
          "orbit_radius": 140,
          "orbit_center": {
@@ -407,9 +408,9 @@
             "z": 1
          },
          "manual_ambient": {
-            "x": 0.28144222,
-            "y": 0.32834923,
-            "z": 0.46907035
+            "x": 0.8,
+            "y": 0.8,
+            "z": 0.8
          },
          "sun_intensity_night": 2,
          "sun_intensity_day": 6,
@@ -1243,15 +1244,15 @@
             },
             {
                "name": "dof_max_coc",
-               "value": 2.5
+               "value": 0.89
             },
             {
                "name": "dof_far_samples",
-               "value": 3
+               "value": 2.612
             },
             {
                "name": "dof_near_samples",
-               "value": 1
+               "value": 2.068
             },
             {
                "name": "parallax_low_samples",
@@ -1325,7 +1326,7 @@
             },
             {
                "name": "dof_toggle",
-               "value": false
+               "value": true
             },
             {
                "name": "parallax_toggle",

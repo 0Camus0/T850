@@ -1168,6 +1168,7 @@ void App::DrawRuntimeGui() {
 
   t850::DevGuiContext gui;
   gui.DrawFrameStatsOverlay(m_fpsString.c_str());
+  if (m_actualScene) m_actualScene->DrawGameplayGui(gui);
   if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
     dayScene->DrawBenchmarkMatrixGui(gui);
   }

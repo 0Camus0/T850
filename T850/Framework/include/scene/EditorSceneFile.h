@@ -574,6 +574,7 @@ struct SceneVoxelWorldDesc {
   int world_height = 64;
   int water_level = 32;
   int render_distance = 4;
+  int streaming_recenter_threshold = 2;
   int max_uploads_per_frame = 2;
   bool async_streaming = true;
   int atlas_size = 256;

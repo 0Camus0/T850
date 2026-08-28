@@ -22,6 +22,9 @@
 #include <utils/ThreadPool.h>
 #include <debug/RuntimeTelemetry.h>
 #include <imgui/DevGuiContext.h>
+#if defined(USING_VULKAN) || defined(USING_VULKAN_ONLY)
+#include <video/vulkan/VulkanDriver.h>
+#endif
 
 #include <array>
 #include <iostream>
@@ -174,11 +177,20 @@ bool MinecraftScene::LoadAuthoredScene() {
       m_voxelSettings.atlas_size < 16 || m_voxelSettings.atlas_tiles_per_axis < 1 ||
       m_voxelSettings.atlas_size % m_voxelSettings.atlas_tiles_per_axis != 0 ||
       m_voxelSettings.cascade_debug_colors.size() != 6 ||
+      m_voxelSettings.debug_render_targets.empty() ||
+      !m_voxelSettings.debug_render_targets[0].source.empty() ||
       m_voxelSettings.player.look_pitch_limit <= 0.0f ||
       m_voxelSettings.player.collision_sweep_step <= 0.0f ||
       m_voxelSettings.mob.vertical_follow_speed <= 0.0f ||
       m_voxelSettings.navmesh_rebuild_seconds <= 0.0f ||
+      m_voxelSettings.sun_debug_size <= 0.0f ||
+      m_voxelSettings.dof.focus_range < 0.0f ||
+      m_voxelSettings.dof.focus_falloff <= 0.0f ||
+      m_voxelSettings.dof.auto_focus_radius < 0.0f ||
+      m_voxelSettings.dof.auto_focus_radius > 0.5f ||
       m_voxelSettings.day_night.day_length_seconds <= 0.0f ||
+      m_voxelSettings.day_night.animation_speed < 0.0f ||
+      m_voxelSettings.day_night.animation_speed > 10.0f ||
       m_voxelSettings.day_night.orbit_radius < 0.0f ||
       m_voxelSettings.day_night.horizon_offset <= -1.0f) {
     T8_LOG_ERROR("[Minecraft] Invalid voxel_world dimensions in '%s'", m_sceneFilePath.c_str());
@@ -208,6 +220,13 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_currentCubemapPath = m_voxelSettings.environment_map;
   m_showPhysics = m_voxelSettings.show_physics;
   m_showChunkBounds = m_voxelSettings.show_chunk_bounds;
+  m_showLights = m_voxelSettings.show_lights;
+  m_showNavMesh = m_voxelSettings.show_navmesh;
+  SceneProp.FrustumCullingToggleAllowed =
+    g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
+  SceneProp.FrustumCullingEnabled =
+    SceneProp.FrustumCullingToggleAllowed && m_voxelSettings.frustum_culling;
+  SceneProp.ShowCullingDebug = m_voxelSettings.show_culling_debug;
   m_showCascadeFrustums = m_voxelSettings.show_cascade_debug;
   m_cascadeDebugMode = (std::max)(0, (std::min)(2, m_voxelSettings.cascade_debug_mode));
   m_cascadeDebugOpacity = (std::max)(0.01f, (std::min)(0.75f, m_voxelSettings.cascade_debug_opacity));
@@ -218,10 +237,17 @@ void MinecraftScene::ApplyVoxelSettings() {
   }
   m_cameraMode = (std::max)(0, (std::min)(2, m_voxelSettings.camera_mode));
   m_debugCascadeIndex = (std::max)(0, m_voxelSettings.debug_cascade_index);
+  m_debugRTSelection = (std::max)(0, (std::min)(
+    (int)m_voxelSettings.debug_render_targets.size() - 1,
+    m_voxelSettings.debug_render_target));
   m_timeOfDay = m_voxelSettings.day_night.time_of_day;
   m_dayLengthSecs = (std::max)(1.0f, m_voxelSettings.day_night.day_length_seconds);
   m_dayNightEnabled = m_voxelSettings.day_night.enabled;
   m_sunTrajectoryPaused = m_voxelSettings.day_night.trajectory_paused;
+  SceneProp.DOFNormalizedFocus = m_voxelSettings.dof.normalized_focus;
+  SceneProp.DOFFocusRange = m_voxelSettings.dof.focus_range;
+  SceneProp.DOFFocusFalloff = m_voxelSettings.dof.focus_falloff;
+  SceneProp.DOFAutoFocusRadius = m_voxelSettings.dof.auto_focus_radius;
   m_mouseSensitivity = (std::max)(0.00001f, m_voxelSettings.player.mouse_sensitivity);
   m_debugCameraSpeed = (std::max)(0.1f, m_voxelSettings.player.debug_camera_speed);
   m_mob.position = XVECTOR3(m_voxelSettings.mob.spawn.x,
@@ -574,6 +600,7 @@ void MinecraftScene::BuildNavigationMesh() {
   std::string error;
   m_navMesh.Clear();
   m_navMeshReady = !geometry.indices.empty() && m_navMesh.Build(geometry, m_navMeshSettings, &error);
+  m_navMeshDebugRenderer.Invalidate();
   m_navMeshBuildMs = std::chrono::duration<float, std::milli>(
       std::chrono::steady_clock::now() - buildStart).count();
   if (!m_navMeshReady) {
@@ -661,7 +688,7 @@ void MinecraftScene::UpdateDayNight(float dt) {
   constexpr float kTwoPi = 6.28318530717958647692f;
 
   // Advance normalized orbit time. The authored phase controls where 0 lands.
-  m_timeOfDay += dt / m_dayLengthSecs;
+  m_timeOfDay += (dt / m_dayLengthSecs) * dayNight.animation_speed;
   if (m_timeOfDay >= 1.0f) m_timeOfDay -= 1.0f;
 
   const float angle = (m_timeOfDay + dayNight.orbit_phase) * kTwoPi;
@@ -2034,27 +2061,49 @@ void MinecraftScene::InitVars() {
       else if (entry.name == "tm_adapt_tau") SceneProp.LuminanceTau = entry.value;
       else if (entry.name == "pcf_radius") SceneProp.PCFScale = entry.value;
       else if (entry.name == "pcf_samples") SceneProp.PCFSamples = entry.value;
+      else if (entry.name == "ssao_kernel_size") SceneProp.SSAOKernel.KernelSize = (int)entry.value;
       else if (entry.name == "ssao_radius") SceneProp.SSAOKernel.Radius = entry.value;
+      else if (entry.name == "dof_focus_range") SceneProp.DOFFocusRange = entry.value;
+      else if (entry.name == "dof_focus_falloff") SceneProp.DOFFocusFalloff = entry.value;
+      else if (entry.name == "dof_auto_focus_radius") SceneProp.DOFAutoFocusRadius = entry.value;
+      else if (entry.name == "dof_max_coc") SceneProp.MaxCoc = entry.value;
+      else if (entry.name == "dof_far_samples") SceneProp.DOF_Far_Samples_squared = entry.value;
+      else if (entry.name == "dof_near_samples") SceneProp.DOF_Near_Samples_squared = entry.value;
+      else if (entry.name == "parallax_low_samples") SceneProp.ParallaxLowSamples = entry.value;
+      else if (entry.name == "parallax_high_samples") SceneProp.ParallaxHighSamples = entry.value;
+      else if (entry.name == "parallax_height") SceneProp.ParallaxHeight = entry.value;
       else if (entry.name == "shadow_bias") SceneProp.ShadowBias = entry.value;
       else if (entry.name == "shadow_min") SceneProp.ShadowMin = entry.value;
       else if (entry.name == "env_factor") SceneProp.EnvFactor = entry.value;
       else if (entry.name == "ibl_factor") SceneProp.IBLFactor = entry.value;
+      else if (entry.name == "light_radius_scale") SceneProp.LightRadiusScale = entry.value;
+      else if (entry.name == "light_intensity_scale") SceneProp.LightIntensityScale = entry.value;
       else if (entry.name == "lightmap_intensity") SceneProp.LightmapIntensity = entry.value;
       else if (entry.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = entry.value;
       else if (entry.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = entry.value;
       else if (entry.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = entry.value;
+      else if (entry.name == "parallax_shadow_min_layers") SceneProp.ParallaxShadowMinLayers = entry.value;
+      else if (entry.name == "parallax_shadow_max_layers") SceneProp.ParallaxShadowMaxLayers = entry.value;
+      else if (entry.name == "parallax_shadow_softness") SceneProp.ParallaxShadowSoftness = entry.value;
+      else if (entry.name == "parallax_shadow_strength") SceneProp.ParallaxShadowStrength = entry.value;
     }
     for (const auto& entry : profile.checkboxes) {
       if (entry.name == "shadow_toggle") SceneProp.ToogleShadow = entry.value;
       else if (entry.name == "ssao_toggle") SceneProp.ToogleSSAO = entry.value;
       else if (entry.name == "dof_toggle") SceneProp.ToogleDOF = entry.value;
+      else if (entry.name == "dof_auto_focus") SceneProp.AutoFocus = entry.value;
       else if (entry.name == "parallax_toggle") SceneProp.ToogleParallax = entry.value;
-      else if (entry.name == "godrays_toggle") SceneProp.ToogleGodRays = entry.value;
+      else if (entry.name == "parallax_shadow_toggle") SceneProp.ToogleParallaxShadow = entry.value;
+      else if (entry.name == "point_lights_enabled") SceneProp.PointLightsEnabled = entry.value;
     }
     for (const auto& entry : profile.selectors) {
       if (entry.name == "luminance_mode") SceneProp.LuminanceMode = entry.value;
-      else if (entry.name == "active_gauss_kernel") SceneProp.ActiveGaussKernel = entry.value;
+      else if (entry.name == "active_gauss_kernel") {
+        m_selectedGaussKernel = entry.value;
+        SceneProp.ActiveGaussKernel = entry.value;
+      }
     }
+    SceneProp.SSAOKernel.Update();
   }
 
   auto initCamera = [](const t850::scene::SceneCameraDesc& source, Camera& camera) {
@@ -2124,7 +2173,8 @@ void MinecraftScene::InitVars() {
     light.Name = source.name;
     light.Position = position;
   }
-  SceneProp.ActiveLights = static_cast<int>(SceneProp.Lights.size());
+  SceneProp.ActiveLights = (std::max)(0, (std::min)(
+    m_voxelSettings.active_lights, (int)SceneProp.Lights.size()));
 
   const std::string sunId = m_sceneFile.light_cameras[0].attached_light_id;
   for (int i = 0; i < (int)SceneProp.Lights.size(); ++i) {
@@ -2160,6 +2210,21 @@ void MinecraftScene::InitVars() {
   SceneProp.AddGaussKernel(&ShadowFilter);
   SceneProp.AddGaussKernel(&BloomFilter);
   SceneProp.AddGaussKernel(&NearDOFFilter);
+  if (!m_sceneFile.profiles.empty()) {
+    const auto& profile = m_sceneFile.profiles.front();
+    GaussFilter* filters[] = {&ShadowFilter, &BloomFilter, &NearDOFFilter};
+    for (int index = 0; index < 3; ++index) {
+      const std::string prefix = "gauss_" + std::to_string(index) + "_";
+      for (const auto& entry : profile.sliders) {
+        if (entry.name == prefix + "radius") filters[index]->radius = entry.value;
+        else if (entry.name == prefix + "sigma") filters[index]->sigma = entry.value;
+      }
+      for (const auto& entry : profile.selectors) {
+        if (entry.name == prefix + "kernel_size") filters[index]->kernelSize = entry.value;
+      }
+      filters[index]->Update();
+    }
+  }
 
   const auto& player = m_voxelSettings.player;
   m_playerSettings.collisionShape = t850::KinematicCharacterSettings::CollisionShape::Capsule;
@@ -2227,6 +2292,13 @@ void MinecraftScene::CreateAssets() {
       GBufferPass, DeferredPass, Extra16FPass, DepthPass,
       ShadowAccumPass, ExtraHelperPass, BloomAccumPass,
       AdaptedLumCurrentPass, AdaptedLumPrevPass);
+  BrightPass = m_renderGraph.GetRTHandle("BrightPass");
+  CoCPass = m_renderGraph.GetRTHandle("CoC");
+  const bool dofEnabled = SceneProp.ToogleDOF != 0;
+  m_renderGraph.SetPassEnabled("CoC", dofEnabled);
+  m_renderGraph.SetPassEnabled("Combine CoC", dofEnabled);
+  m_renderGraph.SetPassEnabled("DOF", dofEnabled);
+  m_renderGraph.SetPassEnabled("DOF 2", dofEnabled);
 
   PrimitiveMgr.SetEngineContext(pEngineContext);
   PrimitiveMgr.Init();
@@ -2261,6 +2333,7 @@ void MinecraftScene::CreateAssets() {
   // Debug text
   m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
   m_lineRenderer.Create();
+  m_navMeshDebugRenderer.Create();
 
   // Build the texture atlas
   BuildTextureAtlas();
@@ -2297,9 +2370,12 @@ void MinecraftScene::DestroyAssets() {
   }
   m_debugText.Destroy();
   m_lineRenderer.Destroy();
+  m_navMeshDebugRenderer.Destroy();
   if (m_cascadeDebugVB) { m_cascadeDebugVB->release(); m_cascadeDebugVB = nullptr; }
   if (m_cascadeDebugIB) { m_cascadeDebugIB->release(); m_cascadeDebugIB = nullptr; }
   if (m_cascadeDebugSolidIB) { m_cascadeDebugSolidIB->release(); m_cascadeDebugSolidIB = nullptr; }
+  if (m_voxelDebugVB) { m_voxelDebugVB->release(); m_voxelDebugVB = nullptr; }
+  if (m_voxelDebugIB) { m_voxelDebugIB->release(); m_voxelDebugIB = nullptr; }
   PrimitiveMgr.DestroyPrimitives();
   if (pFramework && pFramework->pVideoDriver) {
     m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
@@ -2328,6 +2404,16 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
 
   // Apply shadow panel settings (bias, min, lambda, cascade count, light cam)
   ApplyShadowSettings();
+
+  for (int mesh = 0; mesh < m_renderMeshCount; ++mesh) {
+    Meshes[mesh].SetParallaxEnabled(SceneProp.ToogleParallax != 0);
+    Meshes[mesh].SetParallaxSettings(
+      SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
+    Meshes[mesh].SetParallaxShadowEnabled(SceneProp.ToogleParallaxShadow != 0);
+    Meshes[mesh].SetParallaxShadowSettings(
+      SceneProp.ParallaxShadowMinLayers, SceneProp.ParallaxShadowMaxLayers,
+      SceneProp.ParallaxShadowSoftness, SceneProp.ParallaxShadowStrength);
+  }
 
   // Apply any queued skybox change before rendering
   ApplyPendingCubemap();
@@ -2485,8 +2571,72 @@ void MinecraftScene::OnDraw() {
     [this](const std::string& callback) {
       if (callback == "cascade_debug_volumes" && m_showCascadeFrustums && m_cascadeDebugMode != 0)
         DrawCascadeLightBounds();
+      else if (callback == "voxel_debug_bounds" &&
+               (m_showChunkBounds || m_showPhysics || m_showLights))
+        DrawVoxelDebugBounds();
     }
   );
+
+  if (m_debugRTSelection > 0) {
+    const auto& debugTarget = m_voxelSettings.debug_render_targets[m_debugRTSelection];
+    const std::size_t separator = debugTarget.source.find(':');
+    const std::string targetName = debugTarget.source.substr(0, separator);
+    const std::string attachmentName = separator == std::string::npos
+      ? std::string{} : debugTarget.source.substr(separator + 1);
+    const int selected = m_renderGraph.GetRTHandle(targetName);
+    int attachment = BaseDriver::COLOR0_ATTACHMENT;
+    if (attachmentName == "DEPTH") attachment = BaseDriver::DEPTH_ATTACHMENT;
+    else if (attachmentName.rfind("COLOR", 0) == 0)
+      attachment = BaseDriver::COLOR0_ATTACHMENT + std::atoi(attachmentName.c_str() + 5);
+    if (selected >= 0) {
+      Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
+      ShaderKey debugKey(0);
+      debugKey.setPass(PassType::FSQUAD_1_TEX);
+      debugKey.bits |= ShaderKey::HAS_TEXCOORD0;
+      Quads[7].SetGlobalKey(debugKey);
+      Quads[7].Draw();
+#ifdef OS_ANDROID
+      if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver))
+        vkDriver->SetLatePresentSource(selected, attachment);
+#endif
+    }
+  }
+
+  auto drawNavMeshOverlay = [this]() {
+    if (!m_showNavMesh || !m_navMeshReady || !m_navMeshDebugRenderer.IsReady()) return;
+    Texture* depthTexture = nullptr;
+    if (GBufferPass >= 0 && GBufferPass < (int)pFramework->pVideoDriver->RTs.size()) {
+      if (auto* gBuffer = pFramework->pVideoDriver->RTs[GBufferPass])
+        depthTexture = gBuffer->pDepthTexture;
+    }
+    if (!depthTexture) return;
+
+    float debugOffset = 0.01f;
+    int shapeMode = 0;
+    if (m_sceneFile.navigation_mesh) {
+      debugOffset = m_sceneFile.navigation_mesh->debug_offset;
+      shapeMode = m_sceneFile.navigation_mesh->debug_shape_mode;
+    }
+    const Camera* viewCamera = ActiveCam ? ActiveCam : &Cam;
+    m_navMeshDebugRenderer.SetVerticalOffset(debugOffset);
+    m_navMeshDebugRenderer.SetGraphVerticalOffset(debugOffset + 0.005f);
+    m_navMeshDebugRenderer.SetShapeMode(shapeMode == 1
+      ? t850::navigation::NavMeshDebugShapeMode::Nodes
+      : t850::navigation::NavMeshDebugShapeMode::Geometry);
+    m_navMeshDebugRenderer.SetDepthTexture(depthTexture);
+    m_navMeshDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+    m_navMeshDebugRenderer.SetFarPlane(viewCamera->FPlane);
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+    m_navMeshDebugRenderer.Draw(m_navMesh, viewCamera->VP);
+  };
+
+#ifdef OS_ANDROID
+  if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver))
+    vkDriver->SetPrePresentOverlayCallback(m_showNavMesh ? drawNavMeshOverlay : std::function<void()>{});
+#else
+  drawNavMeshOverlay();
+#endif
 
   // Frame dump
   if (m_dumper.ShouldDump(DtSecs)) {
@@ -2617,6 +2767,107 @@ void MinecraftScene::DrawCascadeLightBounds() {
   }
 }
 
+void MinecraftScene::DrawVoxelDebugBounds() {
+  static const unsigned short kBoxEdges[24] = {
+    0,1, 1,2, 2,3, 3,0,
+    4,5, 5,6, 6,7, 7,4,
+    0,4, 1,5, 2,6, 3,7
+  };
+  constexpr int kMaxBoxes = kMaxChunks + 3;
+  constexpr int kMaxVertices = kMaxBoxes * 8;
+
+  if (!m_voxelDebugVB || !m_voxelDebugIB) {
+    float dummy[kMaxVertices * 4] = {};
+    m_voxelDebugVB = t850::LineRenderer::CreatePositionVB(
+      dummy, kMaxVertices, BufferUsage::DINAMIC);
+    m_voxelDebugIB = t850::LineRenderer::CreateIndexBuffer16(kBoxEdges, 24);
+  }
+  if (!m_voxelDebugVB || !m_voxelDebugIB) return;
+
+  std::vector<float> positions(kMaxVertices * 4, 0.0f);
+  int boxCount = 0;
+  auto appendBox = [&](float minX, float minY, float minZ,
+                       float maxX, float maxY, float maxZ) {
+    if (boxCount >= kMaxBoxes) return;
+    const XVECTOR3 corners[8] = {
+      XVECTOR3(minX, minY, minZ, 1.0f), XVECTOR3(maxX, minY, minZ, 1.0f),
+      XVECTOR3(maxX, maxY, minZ, 1.0f), XVECTOR3(minX, maxY, minZ, 1.0f),
+      XVECTOR3(minX, minY, maxZ, 1.0f), XVECTOR3(maxX, minY, maxZ, 1.0f),
+      XVECTOR3(maxX, maxY, maxZ, 1.0f), XVECTOR3(minX, maxY, maxZ, 1.0f)
+    };
+    for (int corner = 0; corner < 8; ++corner) {
+      const int offset = (boxCount * 8 + corner) * 4;
+      positions[offset + 0] = corners[corner].x;
+      positions[offset + 1] = corners[corner].y;
+      positions[offset + 2] = corners[corner].z;
+      positions[offset + 3] = 1.0f;
+    }
+    ++boxCount;
+  };
+
+  int chunkBoxCount = 0;
+  if (m_showChunkBounds) {
+    for (int cz = m_centerChunkZ - m_renderDistance;
+         cz <= m_centerChunkZ + m_renderDistance; ++cz) {
+      for (int cx = m_centerChunkX - m_renderDistance;
+           cx <= m_centerChunkX + m_renderDistance; ++cx) {
+        const float minX = (float)(cx * m_chunkSize);
+        const float minZ = (float)(cz * m_chunkSize);
+        appendBox(minX, 0.0f, minZ,
+                  minX + m_chunkSize, (float)m_worldHeight, minZ + m_chunkSize);
+      }
+    }
+    chunkBoxCount = boxCount;
+  }
+
+  if (m_showPhysics) {
+    const XVECTOR3 playerCenter = m_player.GetPosition();
+    const float radius = m_playerSettings.capsuleRadius;
+    const float verticalExtent = m_playerSettings.capsuleHalfHeight + radius;
+    appendBox(playerCenter.x - radius, playerCenter.y - verticalExtent, playerCenter.z - radius,
+              playerCenter.x + radius, playerCenter.y + verticalExtent, playerCenter.z + radius);
+    const float mobHalfWidth = m_voxelSettings.mob.half_width;
+    appendBox(m_mob.position.x - mobHalfWidth, m_mob.position.y, m_mob.position.z - mobHalfWidth,
+              m_mob.position.x + mobHalfWidth, m_mob.position.y + m_voxelSettings.mob.height,
+              m_mob.position.z + mobHalfWidth);
+  }
+  const int collisionBoxEnd = boxCount;
+
+  if (m_showLights && m_sunLightIndex >= 0 && m_sunLightIndex < (int)SceneProp.Lights.size()) {
+    const XVECTOR3 sunPosition = SceneProp.Lights[m_sunLightIndex].Position;
+    const float halfSize = m_voxelSettings.sun_debug_size * 0.5f;
+    appendBox(sunPosition.x - halfSize, sunPosition.y - halfSize, sunPosition.z - halfSize,
+              sunPosition.x + halfSize, sunPosition.y + halfSize, sunPosition.z + halfSize);
+  }
+
+  if (boxCount == 0 || !t850::T8DeviceContext) return;
+  m_voxelDebugVB->UpdateFromBuffer(*t850::T8DeviceContext, positions.data());
+
+  XMATRIX44 identity;
+  identity.Identity();
+  const Camera* viewCamera = ActiveCam ? ActiveCam : &Cam;
+  m_lineRenderer.SetDepthTestEnabled(false);
+  m_lineRenderer.SetViewport(pFramework->pVideoDriver->width,
+                             pFramework->pVideoDriver->height);
+  const auto& chunkColor = m_voxelSettings.chunk_debug_color;
+  const auto& collisionColor = m_voxelSettings.collision_debug_color;
+  for (int box = 0; box < boxCount; ++box) {
+    const bool isChunk = box < chunkBoxCount;
+    const bool isCollision = box < collisionBoxEnd;
+    XVECTOR3 color;
+    if (isChunk)
+      color = XVECTOR3(chunkColor.x, chunkColor.y, chunkColor.z, 1.0f);
+    else if (isCollision)
+      color = XVECTOR3(collisionColor.x, collisionColor.y, collisionColor.z, 1.0f);
+    else
+      color = SceneProp.Lights[m_sunLightIndex].Color;
+    m_lineRenderer.DrawLines(identity, viewCamera->VP, color,
+                             m_voxelDebugVB, m_voxelDebugIB, 24,
+                             sizeof(float) * 4, IndexBufferFormat::R16,
+                             box * 8);
+  }
+}
+
 void MinecraftScene::ApplyShadowSettings() {
   // Master toggle
   SceneProp.ToogleShadow = m_shadowsEnabled ? 1 : 0;
@@ -2656,6 +2907,8 @@ void MinecraftScene::ApplyShadowSettings() {
         m_renderGraph, GBufferPass, DeferredPass, Extra16FPass, DepthPass,
         ShadowAccumPass, ExtraHelperPass, BloomAccumPass,
         AdaptedLumCurrentPass, AdaptedLumPrevPass);
+      BrightPass = m_renderGraph.GetRTHandle("BrightPass");
+      CoCPass = m_renderGraph.GetRTHandle("CoC");
     }
   }
 
@@ -2716,7 +2969,7 @@ void MinecraftScene::SaveSceneSettings() {
   }
   if (!m_sceneFile.light_cameras.empty()) {
     auto& camera = m_sceneFile.light_cameras[0];
-    camera.type = LightCam.Ortho ? 1 : 0;
+    camera.type = m_debugCameraOrtho ? 1 : 0;
     camera.position = {LightCam.Eye.x, LightCam.Eye.y, LightCam.Eye.z};
     camera.target = {LightCam.Eye.x + LightCam.Look.x,
                      LightCam.Eye.y + LightCam.Look.y,
@@ -2743,17 +2996,29 @@ void MinecraftScene::SaveSceneSettings() {
   m_voxelSettings.player.spawn = {Cam.Eye.x, Cam.Eye.y, Cam.Eye.z};
   m_voxelSettings.show_physics = m_showPhysics;
   m_voxelSettings.show_chunk_bounds = m_showChunkBounds;
+  m_voxelSettings.show_lights = m_showLights;
+  m_voxelSettings.show_navmesh = m_showNavMesh;
+  m_voxelSettings.frustum_culling = SceneProp.FrustumCullingEnabled;
+  m_voxelSettings.show_culling_debug = SceneProp.ShowCullingDebug;
   m_voxelSettings.show_cascade_debug = m_showCascadeFrustums;
   m_voxelSettings.cascade_debug_mode = m_cascadeDebugMode;
   m_voxelSettings.cascade_debug_opacity = m_cascadeDebugOpacity;
   m_voxelSettings.camera_mode = m_cameraMode;
   m_voxelSettings.debug_cascade_index = m_debugCascadeIndex;
+  m_voxelSettings.debug_render_target = m_debugRTSelection;
+  m_voxelSettings.active_lights = SceneProp.ActiveLights;
   m_voxelSettings.day_night.enabled = m_dayNightEnabled;
   m_voxelSettings.day_night.trajectory_paused = m_sunTrajectoryPaused;
   m_voxelSettings.day_night.time_of_day = m_timeOfDay;
   m_voxelSettings.day_night.day_length_seconds = m_dayLengthSecs;
   m_voxelSettings.day_night.manual_ambient = {
     SceneProp.AmbientColor.x, SceneProp.AmbientColor.y, SceneProp.AmbientColor.z};
+  m_voxelSettings.dof.normalized_focus = SceneProp.DOFNormalizedFocus;
+  m_voxelSettings.dof.focus_range = SceneProp.DOFFocusRange;
+  m_voxelSettings.dof.focus_falloff = SceneProp.DOFFocusFalloff;
+  m_voxelSettings.dof.auto_focus_radius = SceneProp.DOFAutoFocusRadius;
+  if (m_sceneFile.navigation_mesh)
+    m_sceneFile.navigation_mesh->visible = m_showNavMesh;
   m_sceneFile.voxel_world = m_voxelSettings;
 
   if (m_sceneFile.profiles.empty()) m_sceneFile.profiles.push_back({});
@@ -2784,22 +3049,47 @@ void MinecraftScene::SaveSceneSettings() {
   setFloat("tm_adapt_tau", SceneProp.LuminanceTau);
   setFloat("pcf_radius", SceneProp.PCFScale);
   setFloat("pcf_samples", SceneProp.PCFSamples);
+  setFloat("ssao_kernel_size", (float)SceneProp.SSAOKernel.KernelSize);
   setFloat("ssao_radius", SceneProp.SSAOKernel.Radius);
+  setFloat("dof_focus_range", SceneProp.DOFFocusRange);
+  setFloat("dof_focus_falloff", SceneProp.DOFFocusFalloff);
+  setFloat("dof_auto_focus_radius", SceneProp.DOFAutoFocusRadius);
+  setFloat("dof_max_coc", SceneProp.MaxCoc);
+  setFloat("dof_far_samples", SceneProp.DOF_Far_Samples_squared);
+  setFloat("dof_near_samples", SceneProp.DOF_Near_Samples_squared);
+  setFloat("parallax_low_samples", SceneProp.ParallaxLowSamples);
+  setFloat("parallax_high_samples", SceneProp.ParallaxHighSamples);
+  setFloat("parallax_height", SceneProp.ParallaxHeight);
   setFloat("shadow_bias", m_shadowBias);
   setFloat("shadow_min", m_shadowMin);
   setFloat("env_factor", SceneProp.EnvFactor);
   setFloat("ibl_factor", SceneProp.IBLFactor);
+  setFloat("light_radius_scale", SceneProp.LightRadiusScale);
+  setFloat("light_intensity_scale", SceneProp.LightIntensityScale);
   setFloat("lightmap_intensity", SceneProp.LightmapIntensity);
   setFloat("material_emissive_intensity", SceneProp.MaterialEmissiveIntensity);
   setFloat("material_transmission_multiplier", SceneProp.MaterialTransmissionMultiplier);
   setFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
+  setFloat("parallax_shadow_min_layers", SceneProp.ParallaxShadowMinLayers);
+  setFloat("parallax_shadow_max_layers", SceneProp.ParallaxShadowMaxLayers);
+  setFloat("parallax_shadow_softness", SceneProp.ParallaxShadowSoftness);
+  setFloat("parallax_shadow_strength", SceneProp.ParallaxShadowStrength);
   setBool("shadow_toggle", m_shadowsEnabled);
   setBool("ssao_toggle", SceneProp.ToogleSSAO != 0);
   setBool("dof_toggle", SceneProp.ToogleDOF != 0);
+  setBool("dof_auto_focus", SceneProp.AutoFocus);
   setBool("parallax_toggle", SceneProp.ToogleParallax != 0);
-  setBool("godrays_toggle", SceneProp.ToogleGodRays != 0);
+  setBool("parallax_shadow_toggle", SceneProp.ToogleParallaxShadow != 0);
+  setBool("point_lights_enabled", SceneProp.PointLightsEnabled);
   setInt("luminance_mode", SceneProp.LuminanceMode);
-  setInt("active_gauss_kernel", SceneProp.ActiveGaussKernel);
+  setInt("active_gauss_kernel", m_selectedGaussKernel);
+  GaussFilter* filters[] = {&ShadowFilter, &BloomFilter, &NearDOFFilter};
+  for (int index = 0; index < 3; ++index) {
+    const std::string prefix = "gauss_" + std::to_string(index) + "_";
+    setFloat((prefix + "radius").c_str(), filters[index]->radius);
+    setFloat((prefix + "sigma").c_str(), filters[index]->sigma);
+    setInt((prefix + "kernel_size").c_str(), filters[index]->kernelSize);
+  }
 
   if (profile.shadow_projections.empty()) profile.shadow_projections.push_back({});
   auto& shadow = profile.shadow_projections[0];
@@ -2861,15 +3151,28 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
     gui.Separator();
     t850::CheckboxDesc showPhysics;
     showPhysics.name = "show_physics";
-    showPhysics.label = "Show physics";
+    showPhysics.label = "Show collision bounds";
     gui.Checkbox(showPhysics, m_showPhysics);
     t850::CheckboxDesc showBounds;
     showBounds.name = "show_bounds";
     showBounds.label = "Show chunk bounds";
     gui.Checkbox(showBounds, m_showChunkBounds);
+    t850::CheckboxDesc showNavMesh;
+    showNavMesh.name = "show_navmesh";
+    showNavMesh.label = "Show navigation mesh";
+    gui.Checkbox(showNavMesh, m_showNavMesh);
+    t850::CheckboxDesc showLights;
+    showLights.name = "show_lights";
+    showLights.label = "Show Sun marker";
+    gui.Checkbox(showLights, m_showLights);
   }
 
   if (gui.BeginSection("Rendering")) {
+    auto activeKernel = [&]() -> GaussFilter* {
+       return m_selectedGaussKernel >= 0 &&
+           m_selectedGaussKernel < (int)SceneProp.pGaussKernels.size()
+         ? SceneProp.pGaussKernels[m_selectedGaussKernel] : nullptr;
+    };
     auto sliderValue = [&](const std::string& name, float& value) -> bool {
       if (name == "exposure") value = SceneProp.Exposure;
       else if (name == "bloom_factor") value = SceneProp.BloomFactor;
@@ -2880,18 +3183,26 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
       else if (name == "pcf_samples") value = SceneProp.PCFSamples;
       else if (name == "ssao_kernel_size") value = (float)SceneProp.SSAOKernel.KernelSize;
       else if (name == "ssao_radius") value = SceneProp.SSAOKernel.Radius;
-      else if (name == "dof_aperture") value = SceneProp.Aperture;
-      else if (name == "dof_focal_length") value = SceneProp.FocalLength;
+      else if (name == "dof_focus_range") value = SceneProp.DOFFocusRange;
+      else if (name == "dof_focus_falloff") value = SceneProp.DOFFocusFalloff;
+      else if (name == "dof_auto_focus_radius") value = SceneProp.DOFAutoFocusRadius;
       else if (name == "dof_max_coc") value = SceneProp.MaxCoc;
       else if (name == "dof_far_samples") value = SceneProp.DOF_Far_Samples_squared;
       else if (name == "dof_near_samples") value = SceneProp.DOF_Near_Samples_squared;
       else if (name == "parallax_low_samples") value = SceneProp.ParallaxLowSamples;
       else if (name == "parallax_high_samples") value = SceneProp.ParallaxHighSamples;
       else if (name == "parallax_height") value = SceneProp.ParallaxHeight;
+      else if (name == "parallax_shadow_min_layers") value = SceneProp.ParallaxShadowMinLayers;
+      else if (name == "parallax_shadow_max_layers") value = SceneProp.ParallaxShadowMaxLayers;
+      else if (name == "parallax_shadow_softness") value = SceneProp.ParallaxShadowSoftness;
+      else if (name == "parallax_shadow_strength") value = SceneProp.ParallaxShadowStrength;
       else if (name == "light_volume_steps") value = SceneProp.LightVolumeSteps;
       else if (name == "godrays_factor") value = SceneProp.GodRaysFactor;
+      else if (name == "gauss_kernel_radius" && activeKernel()) value = activeKernel()->radius;
+      else if (name == "gauss_kernel_deviation" && activeKernel()) value = activeKernel()->sigma;
       else if (name == "fov") value = Rad2Deg(Cam.Fov);
-      else if (name == "light_intensity" && !SceneProp.Lights.empty()) value = SceneProp.Lights[0].Intensity;
+      else if (name == "sun_intensity_night") value = m_voxelSettings.day_night.sun_intensity_night;
+      else if (name == "sun_intensity_day") value = m_voxelSettings.day_night.sun_intensity_day;
       else if (name == "light_radius_scale") value = SceneProp.LightRadiusScale;
       else if (name == "light_intensity_scale") value = SceneProp.LightIntensityScale;
       else if (name == "shadow_bias") value = m_shadowBias;
@@ -2915,18 +3226,38 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
       else if (name == "pcf_samples") SceneProp.PCFSamples = value;
       else if (name == "ssao_kernel_size") { SceneProp.SSAOKernel.KernelSize = (int)value; SceneProp.SSAOKernel.Update(); }
       else if (name == "ssao_radius") SceneProp.SSAOKernel.Radius = value;
-      else if (name == "dof_aperture") SceneProp.Aperture = value;
-      else if (name == "dof_focal_length") SceneProp.FocalLength = value;
+      else if (name == "dof_focus_range") SceneProp.DOFFocusRange = value;
+      else if (name == "dof_focus_falloff") SceneProp.DOFFocusFalloff = value;
+      else if (name == "dof_auto_focus_radius") SceneProp.DOFAutoFocusRadius = value;
       else if (name == "dof_max_coc") SceneProp.MaxCoc = value;
       else if (name == "dof_far_samples") SceneProp.DOF_Far_Samples_squared = value;
       else if (name == "dof_near_samples") SceneProp.DOF_Near_Samples_squared = value;
       else if (name == "parallax_low_samples") SceneProp.ParallaxLowSamples = value;
       else if (name == "parallax_high_samples") SceneProp.ParallaxHighSamples = value;
       else if (name == "parallax_height") SceneProp.ParallaxHeight = value;
+      else if (name == "parallax_shadow_min_layers") SceneProp.ParallaxShadowMinLayers = value;
+      else if (name == "parallax_shadow_max_layers") SceneProp.ParallaxShadowMaxLayers = value;
+      else if (name == "parallax_shadow_softness") SceneProp.ParallaxShadowSoftness = value;
+      else if (name == "parallax_shadow_strength") SceneProp.ParallaxShadowStrength = value;
       else if (name == "light_volume_steps") SceneProp.LightVolumeSteps = value;
       else if (name == "godrays_factor") SceneProp.GodRaysFactor = value;
+      else if (name == "gauss_kernel_radius" && activeKernel()) {
+        activeKernel()->radius = value;
+        activeKernel()->Update();
+      }
+      else if (name == "gauss_kernel_deviation" && activeKernel()) {
+        activeKernel()->sigma = value;
+        activeKernel()->Update();
+      }
       else if (name == "fov") Cam.SetFov(Deg2Rad(value));
-      else if (name == "light_intensity" && !SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value;
+      else if (name == "sun_intensity_night") {
+        m_voxelSettings.day_night.sun_intensity_night = value;
+        UpdateDayNight(0.0f);
+      }
+      else if (name == "sun_intensity_day") {
+        m_voxelSettings.day_night.sun_intensity_day = value;
+        UpdateDayNight(0.0f);
+      }
       else if (name == "light_radius_scale") SceneProp.LightRadiusScale = value;
       else if (name == "light_intensity_scale") SceneProp.LightIntensityScale = value;
       else if (name == "shadow_bias") m_shadowBias = value;
@@ -2961,7 +3292,13 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
       if (!checkboxValue(desc.name, value) || !gui.Checkbox(desc, value)) continue;
       if (desc.name == "shadow_toggle") { SceneProp.ToogleShadow = value; m_shadowsEnabled = value; }
       else if (desc.name == "ssao_toggle") SceneProp.ToogleSSAO = value;
-      else if (desc.name == "dof_toggle") SceneProp.ToogleDOF = value;
+      else if (desc.name == "dof_toggle") {
+        SceneProp.ToogleDOF = value;
+        m_renderGraph.SetPassEnabled("CoC", value);
+        m_renderGraph.SetPassEnabled("Combine CoC", value);
+        m_renderGraph.SetPassEnabled("DOF", value);
+        m_renderGraph.SetPassEnabled("DOF 2", value);
+      }
       else if (desc.name == "dof_auto_focus") SceneProp.AutoFocus = value;
       else if (desc.name == "parallax_toggle") SceneProp.ToogleParallax = value;
       else if (desc.name == "parallax_shadow_toggle") SceneProp.ToogleParallaxShadow = value;
@@ -2971,27 +3308,50 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
 
     for (const auto& desc : m_controlSetup.descriptor.selectors) {
       int selected = desc.default_index;
-      if (desc.name == "active_gauss_kernel") selected = SceneProp.ActiveGaussKernel;
+      if (desc.name == "num_lights") {
+        for (int option = 0; option < (int)desc.options.size(); ++option)
+          if (std::atoi(desc.options[option].c_str()) == SceneProp.ActiveLights) selected = option;
+      }
+      else if (desc.name == "active_gauss_kernel") selected = m_selectedGaussKernel;
       else if (desc.name == "luminance_mode") selected = SceneProp.LuminanceMode;
       else if (desc.name == "gauss_kernel_sample_count") {
-        GaussFilter* kernel = SceneProp.ActiveGaussKernel >= 0 &&
-          SceneProp.ActiveGaussKernel < (int)SceneProp.pGaussKernels.size()
-          ? SceneProp.pGaussKernels[SceneProp.ActiveGaussKernel] : nullptr;
+        GaussFilter* kernel = activeKernel();
         if (kernel) {
           for (int option = 0; option < (int)desc.options.size(); ++option)
             if (std::atoi(desc.options[option].c_str()) == kernel->kernelSize) selected = option;
         }
       } else continue;
       if (!gui.Combo(desc, selected)) continue;
-      if (desc.name == "active_gauss_kernel") SceneProp.ActiveGaussKernel = selected;
+      if (desc.name == "num_lights" && selected >= 0 && selected < (int)desc.options.size())
+        SceneProp.ActiveLights = std::atoi(desc.options[selected].c_str());
+      else if (desc.name == "active_gauss_kernel") m_selectedGaussKernel = selected;
       else if (desc.name == "luminance_mode") SceneProp.LuminanceMode = selected;
       else if (desc.name == "gauss_kernel_sample_count" && selected >= 0 && selected < (int)desc.options.size()) {
-        GaussFilter* kernel = SceneProp.ActiveGaussKernel >= 0 &&
-          SceneProp.ActiveGaussKernel < (int)SceneProp.pGaussKernels.size()
-          ? SceneProp.pGaussKernels[SceneProp.ActiveGaussKernel] : nullptr;
+        GaussFilter* kernel = activeKernel();
         if (kernel) { kernel->kernelSize = std::atoi(desc.options[selected].c_str()); kernel->Update(); }
       }
     }
+
+    t850::SelectorDesc debugTarget;
+    debugTarget.name = "debug_render_target";
+    debugTarget.label = "Debug RT";
+    debugTarget.default_index = 0;
+    for (const auto& target : m_voxelSettings.debug_render_targets)
+      debugTarget.options.push_back(target.label);
+    gui.Combo(debugTarget, m_debugRTSelection);
+  }
+
+  if (gui.BeginSection("Culling")) {
+    t850::CheckboxDesc enabled;
+    enabled.name = "frustum_culling";
+    enabled.label = "Player frustum culling";
+    enabled.enabled = SceneProp.FrustumCullingToggleAllowed;
+    gui.Checkbox(enabled, SceneProp.FrustumCullingEnabled);
+
+    t850::CheckboxDesc debug;
+    debug.name = "show_culling_debug";
+    debug.label = "Show culling debug";
+    gui.Checkbox(debug, SceneProp.ShowCullingDebug);
   }
 
   // Shadow controls live in the shared Scene Controls panel, matching DayScene.
@@ -3106,10 +3466,22 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
       animateSun.label = "Animate sun trajectory";
       gui.Checkbox(animateSun, m_dayNightEnabled);
 
+      t850::SliderDesc sunSpeed;
+      sunSpeed.name = "sun_animation_speed";
+      sunSpeed.label = "Sun animation speed";
+      sunSpeed.min_val = 0.0f;
+      sunSpeed.max_val = 2.0f;
+      sunSpeed.step = 0.01f;
+      gui.Slider(sunSpeed, m_voxelSettings.day_night.animation_speed);
+
       t850::CheckboxDesc debugOrtho;
       debugOrtho.name = "debug_camera_ortho";
       debugOrtho.label = "Light camera orthographic";
-      gui.Checkbox(debugOrtho, m_debugCameraOrtho);
+      if (gui.Checkbox(debugOrtho, m_debugCameraOrtho)) {
+        LightCam.Ortho = m_debugCameraOrtho;
+        LightCam.CreatePojection();
+        LightCam.Update(0.0f);
+      }
 
       if (m_lightCameraEditMode) {
         t850::SliderDesc yaw;
@@ -3118,7 +3490,12 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
         yaw.min_val = -3.14159f;
         yaw.max_val = 3.14159f;
         yaw.step = 0.01f;
-        gui.Slider(yaw, m_lightYaw);
+        if (gui.Slider(yaw, m_lightYaw)) {
+          LightCam.Yaw = m_lightYaw;
+          LightCam.Pitch = m_lightPitch;
+          LightCam.Update(0.0f);
+          SyncSunFromLightCamera();
+        }
 
         t850::SliderDesc pitch;
         pitch.name = "light_pitch";
@@ -3126,7 +3503,12 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
         pitch.min_val = -1.5f;
         pitch.max_val = 1.5f;
         pitch.step = 0.01f;
-        gui.Slider(pitch, m_lightPitch);
+        if (gui.Slider(pitch, m_lightPitch)) {
+          LightCam.Yaw = m_lightYaw;
+          LightCam.Pitch = m_lightPitch;
+          LightCam.Update(0.0f);
+          SyncSunFromLightCamera();
+        }
       }
 
     }

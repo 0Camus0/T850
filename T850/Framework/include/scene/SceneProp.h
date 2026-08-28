@@ -137,6 +137,10 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	float ParallaxShadowMaxLayers = 32.0f;
 	float ParallaxShadowSoftness = 0.5f;
 	float ParallaxShadowStrength = 1.0f;
+	bool DOFNormalizedFocus = false;
+	float DOFFocusRange = 0.5f;
+	float DOFFocusFalloff = 8.0f;
+	float DOFAutoFocusRadius = 0.05f;
 
 	float LightVolumeSteps = 0.0f;
 	float LightRadiusScale = 1.0f;

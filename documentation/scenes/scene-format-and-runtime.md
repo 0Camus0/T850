@@ -134,9 +134,18 @@ the light camera to `light_cameras`, synchronizes the player eye to
 the authored `target = position + runtime look` convention. Older Minecraft scenes with only
 one camera receive a deterministic spectator fallback that is included on the next save.
 
-Saving also persists `day_night.trajectory_paused`, current orbit time, manual ambient color,
-and the attached Sun light. A saved paused trajectory therefore reloads at the edited camera
-and Sun transform without one frame of simulation overwriting it.
+Saving also persists `day_night.trajectory_paused`, current orbit time, animation speed,
+manual ambient color, authored day/night Sun intensities, and the attached Sun light. The
+animation speed is a multiplier on `dt / day_length_seconds`; Minecraft defaults it to `0.1`.
+A saved paused trajectory therefore reloads at the edited camera and Sun transform without
+one frame of simulation overwriting it.
+
+The same action persists all user-editable Minecraft rendering controls. Scene-specific
+values are written to `voxel_world`, descriptor-driven sliders, selectors, and checkboxes are
+written to the first rendering `profile`, and shadow projection settings are written to that
+profile's first `shadow_projections` entry. Action buttons and the temporary light-camera
+edit mode are intentionally transient. Render-graph pass state such as DOF is reconstructed
+from its saved profile toggle during the next load.
 
 Fullscreen shadow composition reconstructs the visible world position using `ActiveCam`, but
 it must transform that world position through the player camera before selecting a cascade.
@@ -157,6 +166,62 @@ and voxel material parameters are authored there. Mathematical constants, fixed 
 formats, array capacities, and topology remain code invariants. Keyboard bindings remain in
 the shared input layer until the engine has a cross-scene keymap schema; do not add a
 Minecraft-only string-to-key parser.
+
+Minecraft's rendering panel mirrors the applicable DayScene controls: shared lighting,
+material, parallax and parallax-shadow settings; SSAO; DOF; active light count; Gaussian
+kernel selection, radius, sigma and tap support; luminance mode; and graph-resource debug
+views. Camera and cubemap selection remain in Minecraft-specific sections because their
+ownership differs from DayScene's spline scene.
+
+The `Debug RT` selector exposes only resources present in the Minecraft graph: all seven
+GBuffer attachments, GBuffer depth, the CSM atlas, blurred `ShadowAccum`, Deferred,
+pre-tonemap composite, HDR, raw Bright, Bloom, CoC, and adapted luminance. Minecraft now
+includes the CoC/DOF graph slice used by its existing DOF controls. God Rays are intentionally
+not exposed: DayScene's ray-march pass assumes a single light-depth projection and cannot
+sample Minecraft's CSM atlas correctly without a dedicated implementation.
+
+Minecraft debug controls are functional rather than state-only: chunk bounds and player/mob
+collision envelopes draw through a depth-read render-graph callback with authored colors;
+NavMesh draws through `NavMeshDebugRenderer`; and culling controls retain the player camera
+as the culling owner while the spectator remains an independent view.
+
+Runtime block edits synchronously replace one or more `RenderMesh` chunk instances. Destroying
+the old mesh must retire its constant buffers, line-renderer buffer, and optional wireframe
+buffers through `BaseDriver::RetireBuffer`; do not call `Buffer::release()` directly. D3D12
+and Vulkan defer those releases until in-flight frames complete, while D3D11/OpenGL use the
+immediate base implementation. Immediate explicit-API release can remove the device on the
+next block edit; later CB/VB/IB allocation failures with `DXGI_ERROR_DEVICE_REMOVED` are only
+aftermath, not the originating allocation problem.
+
+`MeshAssetCache::UploadDirtyPools()` recreates the shared vertex and index pool buffers after
+procedural geometry is appended. Pool replacement and pool destruction must retire the old
+GPU buffer through the same driver API. Releasing a shared pool immediately is especially
+unsafe because all visible chunks in the previous frame reference it, and was the direct
+device-removal hazard in the block-edit path.
+
+Block edits also cancel pending asynchronous geometry for the edited chunk and border
+neighbors before the synchronous rebuild. This avoids stale snapshot uploads racing the
+replacement mesh, but it does not replace GPU resource retirement; both protections are
+required.
+
+Minecraft DOF uses normalized world-space autofocus rather than DayScene's legacy lens-unit
+equation. `dof.focus_range` defines the sharp band around the focused distance,
+`dof.focus_falloff` defines how quickly CoC reaches `MaxCoc`, and
+`dof.auto_focus_radius` defines a screen-space center search radius. A valid center depth has
+priority. If the center is sky/clear depth, a 5x5 neighborhood chooses the nearest valid
+geometry; if none exists, CoC is zero for that frame.
+
+Near and far CoC channels combine with `max`, so the far channel is not doubled. DOF sample
+loops accumulate into a zero-initialized sum and divide by the actual sample count; do not
+seed the sum with the center color and then sample the center a second time. These rules keep
+a centered tree or voxel surface sharp while allowing a gradual authored transition into
+foreground/background blur.
+
+This behavior is opt-in through `SceneProps::DOFNormalizedFocus`. Its default is false, so
+DayScene and existing scenes retain their legacy lens equation, far-CoC boost, invalid-center
+fallback, and historical blur accumulation. Minecraft sets it from `voxel_world.dof` and uses
+the normalized path. Shared shaders receive the mode explicitly for CoC, CoC combination,
+and both DOF passes; do not infer compatibility mode from stale pass constants.
 
 Unknown JSON keys are ignored by Glaze on load, so game schema changes require
 `MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()` rather than relying on

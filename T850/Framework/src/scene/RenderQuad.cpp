@@ -758,12 +758,20 @@ namespace t850 {
       CnstBuffer.LightPositions[0].y = pScProp->FocalLength;
       CnstBuffer.LightPositions[0].z = pScProp->FocusDepth;
       CnstBuffer.LightPositions[0].w = pScProp->MaxCoc;
+      CnstBuffer.LightPositions[1].x = pScProp->DOFFocusRange;
+      CnstBuffer.LightPositions[1].y = pScProp->DOFFocusFalloff;
+      CnstBuffer.LightPositions[1].z = pScProp->DOFNormalizedFocus ? 1.0f : 0.0f;
+      CnstBuffer.LightPositions[1].w = pScProp->DOFAutoFocusRadius;
     }
+  else if (pass == PassType::COMBINE_COC) {
+    CnstBuffer.LightPositions[1].z = pScProp->DOFNormalizedFocus ? 1.0f : 0.0f;
+  }
 	else if (pass == PassType::DOF || pass == PassType::DOF_2) {
 	  CnstBuffer.LightPositions[0].x = pScProp->DOF_Near_Samples_squared;
 	  CnstBuffer.LightPositions[0].y = pScProp->DOF_Far_Samples_squared;
 	  CnstBuffer.LightPositions[0].z = (float)Textures[0]->x;
 	  CnstBuffer.LightPositions[0].w = (float)Textures[0]->y;
+    CnstBuffer.LightPositions[1].z = pScProp->DOFNormalizedFocus ? 1.0f : 0.0f;
 	}
     else if (pass == PassType::RAY_MARCH) {
       CnstBuffer.LightPositions[0].x = time;

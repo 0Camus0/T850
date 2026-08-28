@@ -1173,19 +1173,41 @@ FS_OUT FS( VS_OUTPUT input ) : SV_TARGET {
 	float depthFocus;
   #ifdef AUTO_FOCUS
     depthFocus = tex0.Sample(SS, float2(0.5, 0.5)).r;// Auto Focus center
+		if (LightPositions[1].z > 0.5f && !IsSceneDepthValid(depthFocus) && LightPositions[1].w > 0.0f) {
+			float bestDepth = 0.0f;
+			[unroll] for (int focusY = -2; focusY <= 2; ++focusY) {
+				[unroll] for (int focusX = -2; focusX <= 2; ++focusX) {
+					float2 focusUV = saturate(float2(0.5, 0.5) +
+						float2((float)focusX, (float)focusY) * (LightPositions[1].w * 0.5f));
+					float candidate = tex0.SampleLevel(SS, focusUV, 0.0f).r;
+					if (IsSceneDepthValid(candidate))
+						bestDepth = max(bestDepth, candidate);
+				}
+			}
+			depthFocus = bestDepth;
+		}
   #else
     depthFocus = LightPositions[0].z;
   #endif
 	if (!IsSceneDepthValid(depthFocus))
-		depthFocus = z;
+		depthFocus = LightPositions[1].z > 0.5f ? 0.0f : z;
+	if (!IsSceneDepthValid(depthFocus))
+		return OUT;
 
 	bool near = (z > depthFocus);
 	float objectdistance = LinearizeDepth(z);
   float FocusPlane = LinearizeDepth(depthFocus);
-	float denominator = objectdistance * (FocusPlane - focalLength);
-	if (abs(denominator) <= 0.00001f)
-		return OUT;
-	float CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) / denominator);
+	float CoC;
+	if (LightPositions[1].z > 0.5f) {
+		float focusRange = max(LightPositions[1].x, 0.0f);
+		float focusFalloff = max(LightPositions[1].y, 0.0001f);
+		CoC = saturate((abs(objectdistance - FocusPlane) - focusRange) / focusFalloff) * LightPositions[0].w;
+	} else {
+		float denominator = objectdistance * (FocusPlane - focalLength);
+		if (abs(denominator) <= 0.00001f)
+			return OUT;
+		CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) / denominator);
+	}
 	if (near) {
     OUT.color0 = clamp(CoC, 0, LightPositions[0].w);
     OUT.color1 = 0;
@@ -1202,7 +1224,9 @@ Texture2D tex1 : register(t1);
 float FS(VS_OUTPUT input) : SV_TARGET{
   float CoC0 = tex0.Sample(SS, input.texture0).r;
   float CoC1 = tex1.Sample(SS1, input.texture0).r;
-	float CoC =  2*max(CoC0, CoC1) - CoC0;
+	float CoC = LightPositions[1].z > 0.5f
+		? max(CoC0, CoC1)
+		: 2*max(CoC0, CoC1) - CoC0;
   return CoC;
 }
 
@@ -1214,6 +1238,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
   float4 color = tex0.Sample(SS, input.texture0);
 	if (dofblur <= DEPTH_CLEAR_EPSILON)
 		return color;
+	float4 sum = float4(0.0, 0.0, 0.0, 0.0);
 	float2 offset = float2(1.0 / LightPositions[0].z, 1.0 / LightPositions[0].w);
 	int samplesSquared = max((int)LightPositions[0].y, 0);
 	float total = 0.0;
@@ -1221,11 +1246,13 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
 	[loop] for (int i = -samplesSquared; i <= samplesSquared; i++) {
 		[loop] for (int j = -samplesSquared; j <= samplesSquared; j++) {
 			float2 tcoord = input.texture0 + float2(i, j) * offset * dofblur;
-      color+= tex0.Sample(SS, tcoord);
+			sum += tex0.Sample(SS, tcoord);
 			total++;
     }
   }
-	color /= max(total, 1.0);
+	color = LightPositions[1].z > 0.5f
+		? sum / max(total, 1.0)
+		: (color + sum) / max(total, 1.0);
   color.a = 1.0;
 
   return color;
@@ -1238,6 +1265,7 @@ float dofblur = tex1.Sample(SS1, input.texture0).r;
 float4 color = tex0.Sample(SS, input.texture0);
 if (dofblur <= DEPTH_CLEAR_EPSILON)
 	return color;
+float4 sum = float4(0.0, 0.0, 0.0, 0.0);
 float2 offset = float2(1.0 / LightPositions[0].z, 1.0 / LightPositions[0].w);
 int samplesSquared = max((int)LightPositions[0].x, 0);
 float total = 0.0;
@@ -1245,11 +1273,13 @@ float total = 0.0;
 	[loop] for (int i = -samplesSquared; i <= samplesSquared; i++) {
 	[loop] for (int j = -samplesSquared; j <= samplesSquared; j++) {
 		float2 tcoord = input.texture0 + float2(i, j) * offset * dofblur;
-    color += tex0.Sample(SS, tcoord);
+		sum += tex0.Sample(SS, tcoord);
 		total++;
   }
 }
-color /= max(total, 1.0);
+color = LightPositions[1].z > 0.5f
+	? sum / max(total, 1.0)
+	: (color + sum) / max(total, 1.0);
 color.a = 1.0;
 
 return color;

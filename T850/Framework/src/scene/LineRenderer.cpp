@@ -109,7 +109,10 @@ bool LineRenderer::Create() {
 void LineRenderer::Destroy() {
   m_shaderDepth = nullptr; // owned by the driver's shader cache
   m_shaderFlat  = nullptr;
-  if (m_cb) m_cb->release();
+  if (m_cb) {
+    if (g_pBaseDriver) g_pBaseDriver->RetireBuffer(m_cb);
+    else m_cb->release();
+  }
   m_cb = nullptr;
 }
 

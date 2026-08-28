@@ -1,337 +1,1390 @@
 {
-  "version": 2,
-  "render_graph": "Scenes/MinecraftScene_RenderGraph.json",
-  "control_descriptor": "Scenes/MinecraftScene.json",
-  "editor": {
-    "camera_target": { "x": 0, "y": 40, "z": 1 },
-    "camera_yaw": 0,
-    "camera_pitch": 0,
-    "camera_distance": 30,
-    "show_skybox": true,
-    "show_wireframe": false,
-    "allow_custom_layout": false,
-    "imgui_layout": ""
-  },
-  "objects": [],
-  "game_entities": [],
-  "physics_entities": [],
-  "navigation_mesh": {
-    "name": "Minecraft Runtime NavMesh",
-    "enabled": true,
-    "visible": false,
-    "frozen": false,
-    "show_wire": true,
-    "runtime_mode": "build",
-    "build_settings": {
-      "cell_size": 0.5,
-      "cell_height": 0.2,
-      "agent_height": 1.8,
-      "agent_radius": 0.3,
-      "agent_max_climb": 1.1,
-      "agent_max_slope": 50,
-      "region_min_size": 2,
-      "region_merge_size": 4,
-      "edge_max_len": 12,
-      "edge_max_error": 1.3,
-      "verts_per_poly": 6,
-      "detail_sample_dist": 6,
-      "detail_sample_max_error": 1,
-      "query_extents": { "x": 2, "y": 4, "z": 2 }
-    },
-    "volumes": [],
-    "authored_links": []
-  },
-  "splines": [],
-  "cameras": [
-    {
-      "name": "Minecraft Player Camera",
-      "type": 0,
-      "position": { "x": 0.5, "y": 40, "z": 0.5 },
-      "target": { "x": 0.5, "y": 40, "z": 1.5 },
-      "fov_deg": 70,
-      "ortho_w": 80,
-      "ortho_h": 45,
-      "near_plane": 0.1,
-      "far_plane": 1000,
-      "visible": true,
-      "frozen": false
-    },
-    {
-      "name": "Minecraft Free Camera",
-      "type": 0,
-      "position": { "x": -24, "y": 58, "z": -36 },
-      "target": { "x": 0.5, "y": 38, "z": 0.5 },
-      "fov_deg": 70,
-      "ortho_w": 80,
-      "ortho_h": 45,
-      "near_plane": 0.1,
-      "far_plane": 1000,
-      "visible": true,
-      "frozen": false
-    }
-  ],
-  "light_cameras": [
-    {
-      "name": "Minecraft Debug Light Camera",
-      "attached_light_id": "sun",
-      "type": 0,
-      "position": { "x": -77.34196, "y": 92.73806, "z": 77.08446 },
-      "target": { "x": -76.69732, "y": 92.12811, "z": 76.62359 },
-      "fov_deg": 60,
-      "ortho_w": 130,
-      "ortho_h": 130,
-      "near_plane": 0.1,
-      "far_plane": 2000,
-      "yaw_rate": 0,
-      "attached_light": 0,
+   "version": 2,
+   "collision": "",
+   "render_graph": "Scenes/MinecraftScene_RenderGraph.json",
+   "control_descriptor": "Scenes/MinecraftScene.json",
+   "editor": {
+      "camera_target": {
+         "x": 0,
+         "y": 40,
+         "z": 1
+      },
+      "camera_yaw": 0,
+      "camera_pitch": 0,
+      "camera_distance": 30,
+      "show_skybox": true,
+      "show_wireframe": false,
+      "allow_custom_layout": false,
+      "imgui_layout": ""
+   },
+   "objects": [],
+   "game_entities": [],
+   "game_groups": [],
+   "physics_entities": [],
+   "navigation_mesh": {
+      "name": "Minecraft Runtime NavMesh",
       "enabled": true,
-      "visible": true,
-      "frozen": false
-    }
-  ],
-  "camera_animations": [],
-  "lights": [
-    {
-      "id": "sun",
-      "name": "Sun",
-      "type": 0,
-      "position": { "x": -77.34196, "y": 92.73806, "z": 77.08446 },
-      "direction": { "x": 0.6446352, "y": -0.6099518, "z": -0.46087345 },
-      "color": { "x": 1, "y": 1, "z": 1 },
-      "intensity": 5,
-      "radius": 0,
-      "enabled": true,
-      "visible": true,
-      "frozen": false
-    }
-  ],
-  "voxel_world": {
-    "schema_version": 1,
-    "seed": 1337,
-    "chunk_size": 16,
-    "world_height": 64,
-    "water_level": 32,
-    "render_distance": 4,
-    "max_uploads_per_frame": 2,
-    "async_streaming": true,
-    "atlas_size": 256,
-    "atlas_tiles_per_axis": 16,
-    "navmesh_rebuild_seconds": 0.5,
-    "environment_map": "sky/CubeMap_SkyWater.dds",
-    "environment_options": [
-      "sky/Ennis.dds", "sky/Glacier.dds", "sky/Pisa.dds", "sky/Uffizi.dds",
-      "sky/Doge.dds", "sky/GraceCathedral.dds", "sky/CubeMap_Mountains.dds",
-      "sky/CubeMap_SkyDawn.dds", "sky/CubeMap_SkyWater.dds",
-      "sky/CubeMap_Granja_DXT1.dds", "sky/CubeMap_Granja_RAW.dds"
-    ],
-    "show_physics": false,
-    "show_chunk_bounds": false,
-    "show_cascade_debug": true,
-    "cascade_debug_mode": 0,
-    "cascade_debug_opacity": 0.12,
-    "cascade_debug_colors": [
-      { "x": 1.0, "y": 0.2, "z": 0.2 },
-      { "x": 0.2, "y": 1.0, "z": 0.2 },
-      { "x": 0.2, "y": 0.4, "z": 1.0 },
-      { "x": 1.0, "y": 1.0, "z": 0.2 },
-      { "x": 1.0, "y": 0.4, "z": 1.0 },
-      { "x": 0.2, "y": 1.0, "z": 1.0 }
-    ],
-    "camera_mode": 0,
-    "debug_cascade_index": 0,
-    "terrain": {
-      "base_frequency": 0.01,
-      "base_octaves": 4,
-      "base_lacunarity": 2,
-      "base_gain": 0.5,
-      "base_height": 20,
-      "base_amplitude": 20,
-      "mountain_frequency": 0.005,
-      "mountain_octaves": 3,
-      "mountain_lacunarity": 2,
-      "mountain_gain": 0.5,
-      "mountain_amplitude": 20,
-      "cave_frequency": 0.08,
-      "cave_threshold": 0.72,
-      "tree_threshold": 0.985,
-      "tree_min_height": 4,
-      "tree_height_variation": 3,
-      "tree_max_surface_height": 50,
-      "surface_depth": 3,
-      "cave_min_y": 2,
-      "air_block": "air",
-      "bedrock_block": "bedrock",
-      "stone_block": "stone",
-      "dirt_block": "dirt",
-      "grass_block": "grass",
-      "sand_block": "sand",
-      "water_block": "water",
-      "log_block": "log",
-      "leaves_block": "leaves",
-      "ores": [
-        { "block": "coal_ore", "threshold": 0.995, "min_depth": 4 },
-        { "block": "iron_ore", "threshold": 0.990, "min_depth": 8 },
-        { "block": "gold_ore", "threshold": 0.987, "min_depth": 14 },
-        { "block": "diamond_ore", "threshold": 0.984, "min_depth": 20 }
-      ]
-    },
-    "player": {
-      "spawn": { "x": 0.5, "y": 40, "z": 0.5 },
-      "walk_speed": 4.3,
-      "sprint_speed": 5.6,
-      "ground_acceleration": 30,
-      "air_acceleration": 3,
-      "friction": 8,
-      "stop_speed": 2,
-      "gravity": 24,
-      "jump_speed": 8,
-      "capsule_radius": 0.3,
-      "capsule_half_height": 0.9,
-      "eye_height": 1.62,
-      "ground_probe_distance": 0.25,
-      "step_height": 0.5,
-      "min_walk_normal_y": 0.7,
-      "allow_sprint": true,
-      "air_control": true,
-      "mouse_sensitivity": 0.0025,
-      "debug_camera_speed": 50,
-      "look_pitch_limit": 1.55,
-      "collision_sweep_step": 0.25
-    },
-    "day_night": {
-      "enabled": true,
-      "trajectory_paused": false,
-      "time_of_day": 0.25,
-      "day_length_seconds": 120,
-      "orbit_phase": 0,
-      "orbit_radius": 140,
-      "orbit_center": { "x": 0.5, "y": 40, "z": 0.5 },
-      "orbit_horizontal": { "x": 1, "y": 0, "z": 0 },
-      "orbit_vertical": { "x": 0, "y": 1, "z": 0 },
-      "horizon_offset": 0.15,
-      "ambient_night": 0.12,
-      "ambient_day": 0.47,
-      "ambient_tint": { "x": 0.6, "y": 0.7, "z": 1 },
-      "manual_ambient": { "x": 0.282, "y": 0.329, "z": 0.47 },
-      "sun_intensity_night": 2,
-      "sun_intensity_day": 6,
-      "sun_color_low": { "x": 1, "y": 0.6, "z": 0.4 },
-      "sun_color_high": { "x": 1, "y": 1, "z": 1 }
-    },
-    "material": {
-      "diffuse_texture": "lens1.png",
-      "roughness": 0.9,
-      "specular": 0.04
-    },
-    "mob": {
-      "spawn": { "x": 24.5, "y": 40, "z": 24.5 },
-      "move_speed": 1.8,
-      "repath_seconds": 1,
-      "waypoint_distance": 0.2,
-      "half_width": 0.25,
-      "height": 1.4,
-      "vertical_follow_speed": 8,
-      "parts": [
-        { "min": {"x":-0.25,"y":1.3,"z":-0.25}, "max": {"x":0.25,"y":1.8,"z":0.25}, "block":"leaves" },
-        { "min": {"x":-0.3,"y":0.6,"z":-0.15}, "max": {"x":0.3,"y":1.3,"z":0.15}, "block":"stone" },
-        { "min": {"x":-0.5,"y":0.6,"z":-0.15}, "max": {"x":-0.3,"y":1.3,"z":0.15}, "block":"leaves" },
-        { "min": {"x":0.3,"y":0.6,"z":-0.15}, "max": {"x":0.5,"y":1.3,"z":0.15}, "block":"leaves" },
-        { "min": {"x":-0.3,"y":0,"z":-0.15}, "max": {"x":-0.1,"y":0.6,"z":0.15}, "block":"stone" },
-        { "min": {"x":0.1,"y":0,"z":-0.15}, "max": {"x":0.3,"y":0.6,"z":0.15}, "block":"stone" }
-      ]
-    },
-    "weapon": {
-      "scale": 0.3,
-      "offset_right": 0.45,
-      "offset_down": 0.45,
-      "offset_forward": 0.55,
-      "bob_speed": 8,
-      "bob_vertical": 0.03,
-      "bob_horizontal": 0.02,
-      "swing_speed": 6,
-      "swing_angle": 1.2,
-      "parts": [
-        { "min": {"x":-0.09,"y":0,"z":-0.03}, "max": {"x":0.09,"y":1.6,"z":0.03}, "block":"stone" },
-        { "min": {"x":-0.05,"y":1.6,"z":-0.02}, "max": {"x":0.05,"y":1.9,"z":0.02}, "block":"stone" },
-        { "min": {"x":-0.35,"y":-0.05,"z":-0.08}, "max": {"x":0.35,"y":0.05,"z":0.08}, "block":"planks" },
-        { "min": {"x":-0.07,"y":-0.45,"z":-0.07}, "max": {"x":0.07,"y":-0.05,"z":0.07}, "block":"log" },
-        { "min": {"x":-0.09,"y":-0.55,"z":-0.09}, "max": {"x":0.09,"y":-0.45,"z":0.09}, "block":"stone" }
-      ]
-    },
-    "interaction": {
-      "reach": 8,
-      "break_cooldown": 0.25,
-      "place_cooldown": 0.25
-    },
-    "blocks": [
-      { "name": "air", "opaque": false, "solid": false, "tiles": [0,0, 0,0, 0,0, 0,0, 0,0, 0,0], "color": [0,0,0,0] },
-      { "name": "grass", "opaque": true, "solid": true, "tiles": [3,0, 3,0, 0,0, 2,0, 3,0, 3,0], "color": [106,170,64,255] },
-      { "name": "dirt", "opaque": true, "solid": true, "tiles": [2,0, 2,0, 2,0, 2,0, 2,0, 2,0], "color": [134,96,67,255] },
-      { "name": "stone", "opaque": true, "solid": true, "tiles": [1,0, 1,0, 1,0, 1,0, 1,0, 1,0], "color": [127,127,127,255] },
-      { "name": "sand", "opaque": true, "solid": true, "tiles": [2,1, 2,1, 2,1, 2,1, 2,1, 2,1], "color": [219,210,168,255] },
-      { "name": "water", "opaque": false, "solid": false, "tiles": [3,1, 3,1, 3,1, 3,1, 3,1, 3,1], "color": [60,100,200,180] },
-      { "name": "log", "opaque": true, "solid": true, "tiles": [4,0, 4,0, 5,0, 5,0, 4,0, 4,0], "color": [90,70,40,255] },
-      { "name": "leaves", "opaque": false, "solid": true, "tiles": [4,1, 4,1, 4,1, 4,1, 4,1, 4,1], "color": [40,90,30,255] },
-      { "name": "planks", "opaque": true, "solid": true, "tiles": [1,1, 1,1, 1,1, 1,1, 1,1, 1,1], "color": [160,130,90,255] },
-      { "name": "bedrock", "opaque": true, "solid": true, "tiles": [0,1, 0,1, 0,1, 0,1, 0,1, 0,1], "color": [40,40,40,255] },
-      { "name": "cobblestone", "opaque": true, "solid": true, "tiles": [0,2, 0,2, 0,2, 0,2, 0,2, 0,2], "color": [120,120,120,255] },
-      { "name": "gravel", "opaque": true, "solid": true, "tiles": [1,2, 1,2, 1,2, 1,2, 1,2, 1,2], "color": [130,125,120,255] },
-      { "name": "coal_ore", "opaque": true, "solid": true, "tiles": [2,2, 2,2, 2,2, 2,2, 2,2, 2,2], "color": [40,40,40,255] },
-      { "name": "iron_ore", "opaque": true, "solid": true, "tiles": [3,2, 3,2, 3,2, 3,2, 3,2, 3,2], "color": [200,180,160,255] },
-      { "name": "gold_ore", "opaque": true, "solid": true, "tiles": [4,2, 4,2, 4,2, 4,2, 4,2, 4,2], "color": [220,200,120,255] },
-      { "name": "diamond_ore", "opaque": true, "solid": true, "tiles": [5,2, 5,2, 5,2, 5,2, 5,2, 5,2], "color": [120,220,200,255] },
-      { "name": "brick", "opaque": true, "solid": true, "tiles": [0,3, 0,3, 0,3, 0,3, 0,3, 0,3], "color": [150,90,70,255] },
-      { "name": "glass", "opaque": false, "solid": false, "tiles": [1,3, 1,3, 1,3, 1,3, 1,3, 1,3], "color": [200,220,230,120] },
-      { "name": "snow", "opaque": true, "solid": true, "tiles": [2,3, 2,3, 3,3, 2,3, 2,3, 2,3], "color": [240,245,250,255] },
-      { "name": "stone_bricks", "opaque": true, "solid": true, "tiles": [4,3, 4,3, 4,3, 4,3, 4,3, 4,3], "color": [140,140,140,255] }
-    ],
-    "hotbar": ["stone", "dirt", "grass", "sand", "log", "planks", "leaves", "cobblestone", "bedrock"]
-  },
-  "profiles": [
-    {
-      "name": "shared",
-      "sliders": [
-        { "name": "exposure", "value": 0 },
-        { "name": "bloom_factor", "value": 0.35 },
-        { "name": "bloom_threshold", "value": 2 },
-        { "name": "tm_white_level", "value": 4 },
-        { "name": "tm_adapt_tau", "value": 1.1 },
-        { "name": "pcf_radius", "value": 1.5 },
-        { "name": "pcf_samples", "value": 3 },
-        { "name": "ssao_radius", "value": 1.5 },
-        { "name": "shadow_bias", "value": 0.000005 },
-        { "name": "shadow_min", "value": 0.25 },
-        { "name": "env_factor", "value": 1 },
-        { "name": "ibl_factor", "value": 1 },
-        { "name": "lightmap_intensity", "value": 1 },
-        { "name": "material_emissive_intensity", "value": 1 },
-        { "name": "material_transmission_multiplier", "value": 1 },
-        { "name": "material_refraction_strength", "value": 0.03 }
+      "visible": false,
+      "frozen": false,
+      "show_wire": true,
+      "debug_offset": 0.01,
+      "debug_shape_mode": 0,
+      "runtime_mode": "build",
+      "baked_asset": "",
+      "build_settings": {
+         "cell_size": 0.5,
+         "cell_height": 0.2,
+         "agent_height": 1.8,
+         "agent_radius": 0.3,
+         "agent_max_climb": 1.1,
+         "agent_max_slope": 50,
+         "region_min_size": 2,
+         "region_merge_size": 4,
+         "edge_max_len": 12,
+         "edge_max_error": 1.3,
+         "verts_per_poly": 6,
+         "detail_sample_dist": 6,
+         "detail_sample_max_error": 1,
+         "query_extents": {
+            "x": 2,
+            "y": 4,
+            "z": 2
+         },
+         "auto_drop_links": true,
+         "drop_min_height": 1,
+         "drop_max_height": 24,
+         "drop_max_horizontal": 2.4,
+         "drop_sample_spacing": 1.2,
+         "drop_link_radius": 0.75,
+         "auto_jump_links": true,
+         "jump_max_horizontal": 7,
+         "jump_sample_spacing": 1.2,
+         "jump_link_radius": 0.75,
+         "hybrid_jump_links": true,
+         "hybrid_max_links": 192,
+         "off_mesh_link_validation_key": 0
+      },
+      "volumes": [],
+      "authored_links": []
+   },
+   "splines": [],
+   "cameras": [
+      {
+         "name": "Minecraft Player Camera",
+         "type": 0,
+         "position": {
+            "x": 1.3920997,
+            "y": 41.62,
+            "z": 1.8275969
+         },
+         "target": {
+            "x": 1.5318265,
+            "y": 41.265385,
+            "z": 2.752111
+         },
+         "fov_deg": 69.99999,
+         "ortho_w": 1280,
+         "ortho_h": 720,
+         "near_plane": 0.1,
+         "far_plane": 1000,
+         "visible": true,
+         "frozen": false
+      },
+      {
+         "name": "Minecraft Free Camera",
+         "type": 0,
+         "position": {
+            "x": -24,
+            "y": 58,
+            "z": -36
+         },
+         "target": {
+            "x": -23.492712,
+            "y": 57.585888,
+            "z": -35.244244
+         },
+         "fov_deg": 69.99999,
+         "ortho_w": 1280,
+         "ortho_h": 720,
+         "near_plane": 0.1,
+         "far_plane": 1000,
+         "visible": true,
+         "frozen": false
+      }
+   ],
+   "light_cameras": [
+      {
+         "name": "Minecraft Debug Light Camera",
+         "attached_light_id": "sun",
+         "type": 0,
+         "position": {
+            "x": -5.988918,
+            "y": 179.84955,
+            "z": 0.5
+         },
+         "target": {
+            "x": -5.9425693,
+            "y": 178.85062,
+            "z": 0.5
+         },
+         "fov_deg": 60,
+         "ortho_w": 1280,
+         "ortho_h": 720,
+         "near_plane": 0.1,
+         "far_plane": 2000,
+         "yaw_rate": 0,
+         "attached_light": 0,
+         "enabled": true,
+         "visible": true,
+         "frozen": false
+      }
+   ],
+   "camera_animations": [],
+   "voxel_world": {
+      "schema_version": 1,
+      "seed": 1337,
+      "chunk_size": 16,
+      "world_height": 64,
+      "water_level": 32,
+      "render_distance": 4,
+      "max_uploads_per_frame": 2,
+      "async_streaming": true,
+      "atlas_size": 256,
+      "atlas_tiles_per_axis": 16,
+      "navmesh_rebuild_seconds": 0.5,
+      "environment_map": "sky/CubeMap_SkyWater.dds",
+      "environment_options": [
+         "sky/Ennis.dds",
+         "sky/Glacier.dds",
+         "sky/Pisa.dds",
+         "sky/Uffizi.dds",
+         "sky/Doge.dds",
+         "sky/GraceCathedral.dds",
+         "sky/CubeMap_Mountains.dds",
+         "sky/CubeMap_SkyDawn.dds",
+         "sky/CubeMap_SkyWater.dds",
+         "sky/CubeMap_Granja_DXT1.dds",
+         "sky/CubeMap_Granja_RAW.dds"
       ],
-      "checkboxes": [
-        { "name": "shadow_toggle", "value": true },
-        { "name": "ssao_toggle", "value": true },
-        { "name": "dof_toggle", "value": true },
-        { "name": "parallax_toggle", "value": true },
-        { "name": "godrays_toggle", "value": true }
+      "show_physics": false,
+      "show_chunk_bounds": false,
+      "show_lights": false,
+      "sun_debug_size": 2,
+      "collision_debug_color": {
+         "x": 1,
+         "y": 0.85,
+         "z": 0.1
+      },
+      "chunk_debug_color": {
+         "x": 0.1,
+         "y": 0.85,
+         "z": 1
+      },
+      "show_navmesh": false,
+      "frustum_culling": true,
+      "show_culling_debug": false,
+      "show_cascade_debug": true,
+      "cascade_debug_mode": 0,
+      "cascade_debug_opacity": 0.12,
+      "cascade_debug_colors": [
+         {
+            "x": 1,
+            "y": 0.2,
+            "z": 0.2
+         },
+         {
+            "x": 0.2,
+            "y": 1,
+            "z": 0.2
+         },
+         {
+            "x": 0.2,
+            "y": 0.4,
+            "z": 1
+         },
+         {
+            "x": 1,
+            "y": 1,
+            "z": 0.2
+         },
+         {
+            "x": 1,
+            "y": 0.4,
+            "z": 1
+         },
+         {
+            "x": 0.2,
+            "y": 1,
+            "z": 1
+         }
       ],
-      "selectors": [
-        { "name": "luminance_mode", "value": 0 },
-        { "name": "active_gauss_kernel", "value": 0 }
+      "camera_mode": 0,
+      "debug_cascade_index": 0,
+      "debug_render_target": 0,
+      "debug_render_targets": [
+         {
+            "label": "Final",
+            "source": ""
+         },
+         {
+            "label": "Albedo / Specular Weight",
+            "source": "GBuffer:COLOR0"
+         },
+         {
+            "label": "Normal / Roughness",
+            "source": "GBuffer:COLOR1"
+         },
+         {
+            "label": "PBR",
+            "source": "GBuffer:COLOR2"
+         },
+         {
+            "label": "Geo / Lightmap / Material",
+            "source": "GBuffer:COLOR3"
+         },
+         {
+            "label": "Emissive",
+            "source": "GBuffer:COLOR4"
+         },
+         {
+            "label": "Sheen",
+            "source": "GBuffer:COLOR5"
+         },
+         {
+            "label": "F0 / Occlusion",
+            "source": "GBuffer:COLOR6"
+         },
+         {
+            "label": "GBuffer Depth",
+            "source": "GBuffer:DEPTH"
+         },
+         {
+            "label": "Shadow Map",
+            "source": "DepthPass:DEPTH"
+         },
+         {
+            "label": "Shadow Accum",
+            "source": "ShadowAccum:COLOR0"
+         },
+         {
+            "label": "Deferred",
+            "source": "Deferred:COLOR0"
+         },
+         {
+            "label": "Composite HDR",
+            "source": "Extra16F:COLOR0"
+         },
+         {
+            "label": "HDR",
+            "source": "ExtraHelper:COLOR0"
+         },
+         {
+            "label": "Bloom",
+            "source": "BloomAccum:COLOR0"
+         },
+         {
+            "label": "Adapted Luminance",
+            "source": "AdaptedLumCurrent:COLOR0"
+         },
+         {
+            "label": "CoC",
+            "source": "CoC:COLOR0"
+         },
+         {
+            "label": "Bright",
+            "source": "BrightPass:COLOR0"
+         }
       ],
-      "shadow_projections": [
-        {
-          "projection_id": "sun-shadow",
-          "enabled": true,
-          "resolution": 1024,
-          "cascade_count": 4,
-          "split_lambda": 0.6,
-          "near_distance": 0.1,
-          "far_distance": 250,
-          "caster_depth_padding": 50,
-          "blend_fraction": 0
-        }
+      "active_lights": 1,
+      "terrain": {
+         "base_frequency": 0.01,
+         "base_octaves": 4,
+         "base_lacunarity": 2,
+         "base_gain": 0.5,
+         "base_height": 20,
+         "base_amplitude": 20,
+         "mountain_frequency": 0.005,
+         "mountain_octaves": 3,
+         "mountain_lacunarity": 2,
+         "mountain_gain": 0.5,
+         "mountain_amplitude": 20,
+         "cave_frequency": 0.08,
+         "cave_threshold": 0.72,
+         "tree_threshold": 0.985,
+         "tree_min_height": 4,
+         "tree_height_variation": 3,
+         "tree_max_surface_height": 50,
+         "surface_depth": 3,
+         "cave_min_y": 2,
+         "air_block": "air",
+         "bedrock_block": "bedrock",
+         "stone_block": "stone",
+         "dirt_block": "dirt",
+         "grass_block": "grass",
+         "sand_block": "sand",
+         "water_block": "water",
+         "log_block": "log",
+         "leaves_block": "leaves",
+         "ores": [
+            {
+               "block": "coal_ore",
+               "threshold": 0.995,
+               "min_depth": 4
+            },
+            {
+               "block": "iron_ore",
+               "threshold": 0.99,
+               "min_depth": 8
+            },
+            {
+               "block": "gold_ore",
+               "threshold": 0.987,
+               "min_depth": 14
+            },
+            {
+               "block": "diamond_ore",
+               "threshold": 0.984,
+               "min_depth": 20
+            }
+         ]
+      },
+      "player": {
+         "spawn": {
+            "x": 1.3920997,
+            "y": 41.62,
+            "z": 1.8275969
+         },
+         "walk_speed": 4.3,
+         "sprint_speed": 5.6,
+         "ground_acceleration": 30,
+         "air_acceleration": 3,
+         "friction": 8,
+         "stop_speed": 2,
+         "gravity": 24,
+         "jump_speed": 8,
+         "capsule_radius": 0.3,
+         "capsule_half_height": 0.9,
+         "eye_height": 1.62,
+         "ground_probe_distance": 0.25,
+         "step_height": 0.5,
+         "min_walk_normal_y": 0.7,
+         "allow_sprint": true,
+         "air_control": true,
+         "mouse_sensitivity": 0.0025,
+         "debug_camera_speed": 50,
+         "look_pitch_limit": 1.55,
+         "collision_sweep_step": 0.25
+      },
+      "day_night": {
+         "enabled": true,
+         "trajectory_paused": false,
+         "time_of_day": 0.25737938,
+         "day_length_seconds": 120,
+         "animation_speed": 0.1,
+         "orbit_phase": 0,
+         "orbit_radius": 140,
+         "orbit_center": {
+            "x": 0.5,
+            "y": 40,
+            "z": 0.5
+         },
+         "orbit_horizontal": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+         },
+         "orbit_vertical": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+         },
+         "horizon_offset": 0.15,
+         "ambient_night": 0.12,
+         "ambient_day": 0.47,
+         "ambient_tint": {
+            "x": 0.6,
+            "y": 0.7,
+            "z": 1
+         },
+         "manual_ambient": {
+            "x": 0.28180376,
+            "y": 0.32877102,
+            "z": 0.46967292
+         },
+         "sun_intensity_night": 2,
+         "sun_intensity_day": 6,
+         "sun_color_low": {
+            "x": 1,
+            "y": 0.6,
+            "z": 0.4
+         },
+         "sun_color_high": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+         }
+      },
+      "material": {
+         "diffuse_texture": "lens1.png",
+         "roughness": 0.9,
+         "specular": 0.04
+      },
+      "dof": {
+         "normalized_focus": true,
+         "focus_range": 0.5,
+         "focus_falloff": 8,
+         "auto_focus_radius": 0.05
+      },
+      "mob": {
+         "spawn": {
+            "x": 24.5,
+            "y": 40,
+            "z": 24.5
+         },
+         "move_speed": 1.8,
+         "repath_seconds": 1,
+         "waypoint_distance": 0.2,
+         "half_width": 0.25,
+         "height": 1.4,
+         "vertical_follow_speed": 8,
+         "parts": [
+            {
+               "min": {
+                  "x": -0.25,
+                  "y": 1.3,
+                  "z": -0.25
+               },
+               "max": {
+                  "x": 0.25,
+                  "y": 1.8,
+                  "z": 0.25
+               },
+               "block": "leaves"
+            },
+            {
+               "min": {
+                  "x": -0.3,
+                  "y": 0.6,
+                  "z": -0.15
+               },
+               "max": {
+                  "x": 0.3,
+                  "y": 1.3,
+                  "z": 0.15
+               },
+               "block": "stone"
+            },
+            {
+               "min": {
+                  "x": -0.5,
+                  "y": 0.6,
+                  "z": -0.15
+               },
+               "max": {
+                  "x": -0.3,
+                  "y": 1.3,
+                  "z": 0.15
+               },
+               "block": "leaves"
+            },
+            {
+               "min": {
+                  "x": 0.3,
+                  "y": 0.6,
+                  "z": -0.15
+               },
+               "max": {
+                  "x": 0.5,
+                  "y": 1.3,
+                  "z": 0.15
+               },
+               "block": "leaves"
+            },
+            {
+               "min": {
+                  "x": -0.3,
+                  "y": 0,
+                  "z": -0.15
+               },
+               "max": {
+                  "x": -0.1,
+                  "y": 0.6,
+                  "z": 0.15
+               },
+               "block": "stone"
+            },
+            {
+               "min": {
+                  "x": 0.1,
+                  "y": 0,
+                  "z": -0.15
+               },
+               "max": {
+                  "x": 0.3,
+                  "y": 0.6,
+                  "z": 0.15
+               },
+               "block": "stone"
+            }
+         ]
+      },
+      "weapon": {
+         "scale": 0.3,
+         "offset_right": 0.45,
+         "offset_down": 0.45,
+         "offset_forward": 0.55,
+         "bob_speed": 8,
+         "bob_vertical": 0.03,
+         "bob_horizontal": 0.02,
+         "swing_speed": 6,
+         "swing_angle": 1.2,
+         "parts": [
+            {
+               "min": {
+                  "x": -0.09,
+                  "y": 0,
+                  "z": -0.03
+               },
+               "max": {
+                  "x": 0.09,
+                  "y": 1.6,
+                  "z": 0.03
+               },
+               "block": "stone"
+            },
+            {
+               "min": {
+                  "x": -0.05,
+                  "y": 1.6,
+                  "z": -0.02
+               },
+               "max": {
+                  "x": 0.05,
+                  "y": 1.9,
+                  "z": 0.02
+               },
+               "block": "stone"
+            },
+            {
+               "min": {
+                  "x": -0.35,
+                  "y": -0.05,
+                  "z": -0.08
+               },
+               "max": {
+                  "x": 0.35,
+                  "y": 0.05,
+                  "z": 0.08
+               },
+               "block": "planks"
+            },
+            {
+               "min": {
+                  "x": -0.07,
+                  "y": -0.45,
+                  "z": -0.07
+               },
+               "max": {
+                  "x": 0.07,
+                  "y": -0.05,
+                  "z": 0.07
+               },
+               "block": "log"
+            },
+            {
+               "min": {
+                  "x": -0.09,
+                  "y": -0.55,
+                  "z": -0.09
+               },
+               "max": {
+                  "x": 0.09,
+                  "y": -0.45,
+                  "z": 0.09
+               },
+               "block": "stone"
+            }
+         ]
+      },
+      "interaction": {
+         "reach": 8,
+         "break_cooldown": 0.25,
+         "place_cooldown": 0.25
+      },
+      "blocks": [
+         {
+            "name": "air",
+            "opaque": false,
+            "solid": false,
+            "tiles": [
+               0,
+               0,
+               0,
+               0,
+               0,
+               0,
+               0,
+               0,
+               0,
+               0,
+               0,
+               0
+            ],
+            "color": [
+               0,
+               0,
+               0,
+               0
+            ]
+         },
+         {
+            "name": "grass",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               3,
+               0,
+               3,
+               0,
+               0,
+               0,
+               2,
+               0,
+               3,
+               0,
+               3,
+               0
+            ],
+            "color": [
+               106,
+               170,
+               64,
+               255
+            ]
+         },
+         {
+            "name": "dirt",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               2,
+               0,
+               2,
+               0,
+               2,
+               0,
+               2,
+               0,
+               2,
+               0,
+               2,
+               0
+            ],
+            "color": [
+               134,
+               96,
+               67,
+               255
+            ]
+         },
+         {
+            "name": "stone",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               1,
+               0,
+               1,
+               0,
+               1,
+               0,
+               1,
+               0,
+               1,
+               0,
+               1,
+               0
+            ],
+            "color": [
+               127,
+               127,
+               127,
+               255
+            ]
+         },
+         {
+            "name": "sand",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               2,
+               1,
+               2,
+               1,
+               2,
+               1,
+               2,
+               1,
+               2,
+               1,
+               2,
+               1
+            ],
+            "color": [
+               219,
+               210,
+               168,
+               255
+            ]
+         },
+         {
+            "name": "water",
+            "opaque": false,
+            "solid": false,
+            "tiles": [
+               3,
+               1,
+               3,
+               1,
+               3,
+               1,
+               3,
+               1,
+               3,
+               1,
+               3,
+               1
+            ],
+            "color": [
+               60,
+               100,
+               200,
+               180
+            ]
+         },
+         {
+            "name": "log",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               4,
+               0,
+               4,
+               0,
+               5,
+               0,
+               5,
+               0,
+               4,
+               0,
+               4,
+               0
+            ],
+            "color": [
+               90,
+               70,
+               40,
+               255
+            ]
+         },
+         {
+            "name": "leaves",
+            "opaque": false,
+            "solid": true,
+            "tiles": [
+               4,
+               1,
+               4,
+               1,
+               4,
+               1,
+               4,
+               1,
+               4,
+               1,
+               4,
+               1
+            ],
+            "color": [
+               40,
+               90,
+               30,
+               255
+            ]
+         },
+         {
+            "name": "planks",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               1,
+               1,
+               1,
+               1,
+               1,
+               1,
+               1,
+               1,
+               1,
+               1,
+               1,
+               1
+            ],
+            "color": [
+               160,
+               130,
+               90,
+               255
+            ]
+         },
+         {
+            "name": "bedrock",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               0,
+               1,
+               0,
+               1,
+               0,
+               1,
+               0,
+               1,
+               0,
+               1,
+               0,
+               1
+            ],
+            "color": [
+               40,
+               40,
+               40,
+               255
+            ]
+         },
+         {
+            "name": "cobblestone",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               0,
+               2,
+               0,
+               2,
+               0,
+               2,
+               0,
+               2,
+               0,
+               2,
+               0,
+               2
+            ],
+            "color": [
+               120,
+               120,
+               120,
+               255
+            ]
+         },
+         {
+            "name": "gravel",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               1,
+               2,
+               1,
+               2,
+               1,
+               2,
+               1,
+               2,
+               1,
+               2,
+               1,
+               2
+            ],
+            "color": [
+               130,
+               125,
+               120,
+               255
+            ]
+         },
+         {
+            "name": "coal_ore",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               2,
+               2,
+               2,
+               2,
+               2,
+               2,
+               2,
+               2,
+               2,
+               2,
+               2,
+               2
+            ],
+            "color": [
+               40,
+               40,
+               40,
+               255
+            ]
+         },
+         {
+            "name": "iron_ore",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               3,
+               2,
+               3,
+               2,
+               3,
+               2,
+               3,
+               2,
+               3,
+               2,
+               3,
+               2
+            ],
+            "color": [
+               200,
+               180,
+               160,
+               255
+            ]
+         },
+         {
+            "name": "gold_ore",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               4,
+               2,
+               4,
+               2,
+               4,
+               2,
+               4,
+               2,
+               4,
+               2,
+               4,
+               2
+            ],
+            "color": [
+               220,
+               200,
+               120,
+               255
+            ]
+         },
+         {
+            "name": "diamond_ore",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               5,
+               2,
+               5,
+               2,
+               5,
+               2,
+               5,
+               2,
+               5,
+               2,
+               5,
+               2
+            ],
+            "color": [
+               120,
+               220,
+               200,
+               255
+            ]
+         },
+         {
+            "name": "brick",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               0,
+               3,
+               0,
+               3,
+               0,
+               3,
+               0,
+               3,
+               0,
+               3,
+               0,
+               3
+            ],
+            "color": [
+               150,
+               90,
+               70,
+               255
+            ]
+         },
+         {
+            "name": "glass",
+            "opaque": false,
+            "solid": false,
+            "tiles": [
+               1,
+               3,
+               1,
+               3,
+               1,
+               3,
+               1,
+               3,
+               1,
+               3,
+               1,
+               3
+            ],
+            "color": [
+               200,
+               220,
+               230,
+               120
+            ]
+         },
+         {
+            "name": "snow",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               2,
+               3,
+               2,
+               3,
+               3,
+               3,
+               2,
+               3,
+               2,
+               3,
+               2,
+               3
+            ],
+            "color": [
+               240,
+               245,
+               250,
+               255
+            ]
+         },
+         {
+            "name": "stone_bricks",
+            "opaque": true,
+            "solid": true,
+            "tiles": [
+               4,
+               3,
+               4,
+               3,
+               4,
+               3,
+               4,
+               3,
+               4,
+               3,
+               4,
+               3
+            ],
+            "color": [
+               140,
+               140,
+               140,
+               255
+            ]
+         }
+      ],
+      "hotbar": [
+         "stone",
+         "dirt",
+         "grass",
+         "sand",
+         "log",
+         "planks",
+         "leaves",
+         "cobblestone",
+         "bedrock"
       ]
-    }
-  ]
+   },
+   "lights": [
+      {
+         "id": "sun",
+         "name": "Sun",
+         "type": 0,
+         "position": {
+            "x": -5.988918,
+            "y": 179.84955,
+            "z": 0.5
+         },
+         "direction": {
+            "x": 0.046349414,
+            "y": -0.9989253,
+            "z": -0
+         },
+         "color": {
+            "x": 1,
+            "y": 0.9996262,
+            "z": 0.99943936
+         },
+         "intensity": 5.996262,
+         "radius": 0,
+         "enabled": true,
+         "visible": true,
+         "frozen": false
+      }
+   ],
+   "profiles": [
+      {
+         "name": "shared",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 0
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.35
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 2
+            },
+            {
+               "name": "tm_white_level",
+               "value": 4
+            },
+            {
+               "name": "tm_adapt_tau",
+               "value": 1.1
+            },
+            {
+               "name": "pcf_radius",
+               "value": 1.5
+            },
+            {
+               "name": "pcf_samples",
+               "value": 3
+            },
+            {
+               "name": "ssao_radius",
+               "value": 1.5
+            },
+            {
+               "name": "shadow_bias",
+               "value": 0.000005
+            },
+            {
+               "name": "shadow_min",
+               "value": 0.25
+            },
+            {
+               "name": "env_factor",
+               "value": 1
+            },
+            {
+               "name": "ibl_factor",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 1
+            },
+            {
+               "name": "material_transmission_multiplier",
+               "value": 1
+            },
+            {
+               "name": "material_refraction_strength",
+               "value": 0.03
+            },
+            {
+               "name": "ssao_kernel_size",
+               "value": 32
+            },
+            {
+               "name": "dof_focus_range",
+               "value": 0.5
+            },
+            {
+               "name": "dof_focus_falloff",
+               "value": 8
+            },
+            {
+               "name": "dof_auto_focus_radius",
+               "value": 0.05
+            },
+            {
+               "name": "dof_max_coc",
+               "value": 2.5
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 3
+            },
+            {
+               "name": "dof_near_samples",
+               "value": 1
+            },
+            {
+               "name": "parallax_low_samples",
+               "value": 20
+            },
+            {
+               "name": "parallax_high_samples",
+               "value": 30
+            },
+            {
+               "name": "parallax_height",
+               "value": 0.02
+            },
+            {
+               "name": "light_radius_scale",
+               "value": 1
+            },
+            {
+               "name": "light_intensity_scale",
+               "value": 1
+            },
+            {
+               "name": "parallax_shadow_min_layers",
+               "value": 8
+            },
+            {
+               "name": "parallax_shadow_max_layers",
+               "value": 32
+            },
+            {
+               "name": "parallax_shadow_softness",
+               "value": 0.5
+            },
+            {
+               "name": "parallax_shadow_strength",
+               "value": 1
+            },
+            {
+               "name": "gauss_0_radius",
+               "value": 1
+            },
+            {
+               "name": "gauss_0_sigma",
+               "value": 1
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 2.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 4.5
+            },
+            {
+               "name": "gauss_2_radius",
+               "value": 3
+            },
+            {
+               "name": "gauss_2_sigma",
+               "value": 6
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": true
+            },
+            {
+               "name": "ssao_toggle",
+               "value": true
+            },
+            {
+               "name": "dof_toggle",
+               "value": false
+            },
+            {
+               "name": "parallax_toggle",
+               "value": true
+            },
+            {
+               "name": "godrays_toggle",
+               "value": true
+            },
+            {
+               "name": "dof_auto_focus",
+               "value": true
+            },
+            {
+               "name": "parallax_shadow_toggle",
+               "value": true
+            },
+            {
+               "name": "point_lights_enabled",
+               "value": true
+            }
+         ],
+         "selectors": [
+            {
+               "name": "luminance_mode",
+               "value": 0
+            },
+            {
+               "name": "active_gauss_kernel",
+               "value": 1
+            },
+            {
+               "name": "gauss_0_kernel_size",
+               "value": 3
+            },
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 11
+            },
+            {
+               "name": "gauss_2_kernel_size",
+               "value": 23
+            }
+         ],
+         "lights": [],
+         "animations": [],
+         "shadow_projections": [
+            {
+               "projection_id": "sun-shadow",
+               "enabled": true,
+               "resolution": 1024,
+               "cascade_count": 4,
+               "split_lambda": 0.6,
+               "near_distance": 0.1,
+               "far_distance": 250,
+               "caster_depth_padding": 50,
+               "blend_fraction": 0
+            }
+         ]
+      }
+   ]
 }

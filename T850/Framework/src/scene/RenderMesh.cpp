@@ -2555,14 +2555,24 @@ namespace t850 {
     // pools. Material data is shared via MaterialAssetCache. Only the
     // mesh CBs are released here; assets are dereferenced
     // through their respective caches.
+    auto retireBuffer = [](Buffer*& buffer) {
+      if (!buffer) return;
+      if (g_pBaseDriver) g_pBaseDriver->RetireBuffer(buffer);
+      else buffer->release();
+      buffer = nullptr;
+    };
     for (auto &mIt : Info) {
-      if (mIt.CB) mIt.CB->release();
+      Buffer* combined = mIt.CB;
+      Buffer* frame = mIt.FrameCBGPU;
+      Buffer* instance = mIt.InstanceCBGPU;
+      Buffer* material = mIt.MaterialCBGPU;
+      retireBuffer(combined);
+      retireBuffer(frame);
+      retireBuffer(instance);
+      retireBuffer(material);
       mIt.CB = nullptr;
-      if (mIt.FrameCBGPU) mIt.FrameCBGPU->release();
       mIt.FrameCBGPU = nullptr;
-      if (mIt.InstanceCBGPU) mIt.InstanceCBGPU->release();
       mIt.InstanceCBGPU = nullptr;
-      if (mIt.MaterialCBGPU) mIt.MaterialCBGPU->release();
       mIt.MaterialCBGPU = nullptr;
       for (auto &sIt : mIt.SubSets) {
         sIt.IB = nullptr;

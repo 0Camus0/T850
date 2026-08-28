@@ -496,6 +496,7 @@ struct SceneVoxelDayNightDesc {
   bool trajectory_paused = false;
   float time_of_day = 0.25f;
   float day_length_seconds = 120.0f;
+  float animation_speed = 0.1f;
   float orbit_phase = 0.0f;
   float orbit_radius = 140.0f;
   Vec3f orbit_center = {0.0f, 40.0f, 0.0f};
@@ -535,6 +536,18 @@ struct SceneVoxelMaterialDesc {
   float specular = 0.04f;
 };
 
+struct SceneVoxelDofDesc {
+  bool normalized_focus = true;
+  float focus_range = 0.5f;
+  float focus_falloff = 8.0f;
+  float auto_focus_radius = 0.05f;
+};
+
+struct SceneVoxelDebugTargetDesc {
+  std::string label;
+  std::string source;
+};
+
 struct SceneVoxelWeaponDesc {
   float scale = 0.30f;
   float offset_right = 0.45f;
@@ -570,6 +583,13 @@ struct SceneVoxelWorldDesc {
   std::vector<std::string> environment_options;
   bool show_physics = false;
   bool show_chunk_bounds = false;
+  bool show_lights = false;
+  float sun_debug_size = 2.0f;
+  Vec3f collision_debug_color = {1.0f, 0.85f, 0.1f};
+  Vec3f chunk_debug_color = {0.1f, 0.85f, 1.0f};
+  bool show_navmesh = false;
+  bool frustum_culling = true;
+  bool show_culling_debug = false;
   bool show_cascade_debug = true;
   int cascade_debug_mode = 0;
   float cascade_debug_opacity = 0.12f;
@@ -579,10 +599,14 @@ struct SceneVoxelWorldDesc {
   };
   int camera_mode = 0;
   int debug_cascade_index = 0;
+  int debug_render_target = 0;
+  std::vector<SceneVoxelDebugTargetDesc> debug_render_targets;
+  int active_lights = 1;
   SceneVoxelTerrainDesc terrain;
   SceneVoxelPlayerDesc player;
   SceneVoxelDayNightDesc day_night;
   SceneVoxelMaterialDesc material;
+  SceneVoxelDofDesc dof;
   SceneVoxelMobDesc mob;
   SceneVoxelWeaponDesc weapon;
   SceneVoxelInteractionDesc interaction;

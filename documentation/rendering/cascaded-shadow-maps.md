@@ -1421,6 +1421,37 @@ independently shadowed point lights because one scalar factor would shadow unrel
 - Reject a second enabled directional projection with a validation error.
 - Reject point techniques in the common projection path until per-light integration exists.
 
+### 23.1.1 Shadow accumulation and softness controls
+
+Minecraft uses `ShadowAccum`. `Shadow Accumulation` evaluates CSM PCF and SSAO into one R8
+screen-space factor, the vertical and horizontal passes blur that factor with Gaussian kernel
+0, and Deferred samples the resulting `ShadowAccum:COLOR0` from slot 5. The blur is not
+bypassed.
+
+The three Gaussian controls have different meanings:
+
+- **Gauss Kernel = Shadow** selects kernel 0, which is explicitly referenced by both shadow
+  blur passes.
+- **Gauss Radius** scales the screen-space texel offsets and therefore directly widens or
+  narrows the filtered edge.
+- **Gauss Sigma** controls weight distribution across that radius.
+- **Gauss Taps** controls sampled support. Increasing taps alone does not make a sigma-1,
+  radius-1 filter meaningfully softer because the additional outer weights approach zero.
+
+`PCF Radius` and `PCF Samples` control filtering while sampling each atlas tile. Gaussian
+controls filter the resulting screen-space factor. For an obvious soft-shadow test, disable
+SSAO, select `Shadow`, then increase Radius and Sigma before increasing Taps. A controlled
+comparison from radius/sigma/taps `1/1/3` to `3/8/45` increased intermediate shadow-edge
+pixels from 3,737 to 190,886 at 640x360.
+
+Shadow and SSAO currently share the scalar as `shadow * occlusion`. Consequently Gaussian
+kernel 0 filters both together; the stronger visible response on SSAO comes from its
+high-frequency noise, while PCF shadows are already low-frequency. Independent filtering
+would require separate shadow and AO targets/channels and is outside this one-factor contract.
+
+HLSL and GLSL must sample the same full tap range. Do not drop the first and last GLSL taps;
+doing so changes normalization and makes softness backend-dependent.
+
 ### 23.2 Future point-light contract
 
 Cube and dual-paraboloid shadows are associated with one point light. Preferred integration:

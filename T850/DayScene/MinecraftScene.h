@@ -13,6 +13,7 @@
 #include <physics/PhysicsTypes.h>
 #include <physics/CharacterController.h>
 #include <navigation/NavigationSystem.h>
+#include <navigation/NavigationDebugRenderer.h>
 #include <debug/FrameDumper.h>
 #include <utils/XDataBase.h>
 #include <Config.h>
@@ -77,6 +78,7 @@ public:
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
   void DrawCascadeLightBounds();
+  void DrawVoxelDebugBounds();
   void ApplyShadowSettings();
   void SaveSceneSettings();
   void RequestDump() override { m_dumper.RequestDump(); }
@@ -126,8 +128,12 @@ public:
   int ShadowAccumPass = -1;
   int ExtraHelperPass = -1;
   int BloomAccumPass = -1;
+  int BrightPass = -1;
+  int CoCPass = -1;
   int AdaptedLumCurrentPass = -1;
   int AdaptedLumPrevPass = -1;
+  int m_debugRTSelection = 0;
+  int m_selectedGaussKernel = 0;
 
   t850::TextRenderer m_debugText;
   t850::LineRenderer m_lineRenderer;
@@ -135,6 +141,8 @@ public:
   t850::IndexBuffer*  m_cascadeDebugIB = nullptr;
   t850::IndexBuffer*  m_cascadeDebugSolidIB = nullptr;
   int m_cascadeDebugVBCapacity = 0;
+  t850::VertexBuffer* m_voxelDebugVB = nullptr;
+  t850::IndexBuffer*  m_voxelDebugIB = nullptr;
 
   // ── Shadow debug / control state (ImGui panel) ──
   bool  m_showCascadeFrustums = true;
@@ -198,9 +206,11 @@ public:
 
   // Navigation and mob test agent
   t850::navigation::NavMesh m_navMesh;
+  t850::navigation::NavMeshDebugRenderer m_navMeshDebugRenderer;
   t850::navigation::NavMeshBuildSettings m_navMeshSettings;
   MinecraftMob m_mob;
   bool m_navMeshReady = false;
+  bool m_showNavMesh = false;
   float m_navMeshBuildMs = 0.0f;
   // Set when a block is placed/removed so the navmesh is rebuilt (throttled)
   // and the mob re-paths around the new obstacle.
@@ -222,6 +232,7 @@ public:
   bool m_mouseCaptured = true;
   bool m_showPhysics = false;
   bool m_showChunkBounds = false;
+  bool m_showLights = false;
   int m_seed = 0;
   float m_mouseSensitivity = 0.0f;
   float m_debugCameraSpeed = 0.0f;

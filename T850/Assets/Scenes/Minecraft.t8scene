@@ -73,14 +73,14 @@
          "name": "Minecraft Player Camera",
          "type": 0,
          "position": {
-            "x": 1.3920997,
-            "y": 41.62,
-            "z": 1.8275969
+            "x": 5.059436,
+            "y": 40.62,
+            "z": -4.08166
          },
          "target": {
-            "x": 1.5318265,
-            "y": 41.265385,
-            "z": 2.752111
+            "x": 5.445192,
+            "y": 39.962494,
+            "z": -3.4344497
          },
          "fov_deg": 69.99999,
          "ortho_w": 1280,
@@ -118,13 +118,13 @@
          "attached_light_id": "sun",
          "type": 0,
          "position": {
-            "x": -5.988918,
-            "y": 179.84955,
+            "x": -10.43427,
+            "y": 179.57236,
             "z": 0.5
          },
          "target": {
-            "x": -5.9425693,
-            "y": 178.85062,
+            "x": -10.356168,
+            "y": 178.57541,
             "z": 0.5
          },
          "fov_deg": 60,
@@ -220,7 +220,7 @@
       ],
       "camera_mode": 0,
       "debug_cascade_index": 0,
-      "debug_render_target": 0,
+      "debug_render_target": 10,
       "debug_render_targets": [
          {
             "label": "Final",
@@ -350,9 +350,9 @@
       },
       "player": {
          "spawn": {
-            "x": 1.3920997,
-            "y": 41.62,
-            "z": 1.8275969
+            "x": 5.059436,
+            "y": 40.62,
+            "z": -4.08166
          },
          "walk_speed": 4.3,
          "sprint_speed": 5.6,
@@ -376,9 +376,9 @@
          "collision_sweep_step": 0.25
       },
       "day_night": {
-         "enabled": true,
+         "enabled": false,
          "trajectory_paused": false,
-         "time_of_day": 0.25737938,
+         "time_of_day": 0.26244298,
          "day_length_seconds": 120,
          "animation_speed": 0.1,
          "orbit_phase": 0,
@@ -407,9 +407,9 @@
             "z": 1
          },
          "manual_ambient": {
-            "x": 0.28180376,
-            "y": 0.32877102,
-            "z": 0.46967292
+            "x": 0.28144222,
+            "y": 0.32834923,
+            "z": 0.46907035
          },
          "sun_intensity_night": 2,
          "sun_intensity_day": 6,
@@ -1131,21 +1131,21 @@
          "name": "Sun",
          "type": 0,
          "position": {
-            "x": -5.988918,
-            "y": 179.84955,
+            "x": -10.43427,
+            "y": 179.57236,
             "z": 0.5
          },
          "direction": {
-            "x": 0.046349414,
-            "y": -0.9989253,
+            "x": 0.078101926,
+            "y": -0.9969454,
             "z": -0
          },
          "color": {
             "x": 1,
-            "y": 0.9996262,
-            "z": 0.99943936
+            "y": 0.99893755,
+            "z": 0.9984063
          },
-         "intensity": 5.996262,
+         "intensity": 5.989375,
          "radius": 0,
          "enabled": true,
          "visible": true,
@@ -1183,11 +1183,11 @@
             },
             {
                "name": "pcf_radius",
-               "value": 1.5
+               "value": 0.411
             },
             {
                "name": "pcf_samples",
-               "value": 3
+               "value": 2.66
             },
             {
                "name": "ssao_radius",
@@ -1291,11 +1291,11 @@
             },
             {
                "name": "gauss_0_radius",
-               "value": 1
+               "value": 2.56
             },
             {
                "name": "gauss_0_sigma",
-               "value": 1
+               "value": 1.461
             },
             {
                "name": "gauss_1_radius",
@@ -1355,11 +1355,11 @@
             },
             {
                "name": "active_gauss_kernel",
-               "value": 1
+               "value": 0
             },
             {
                "name": "gauss_0_kernel_size",
-               "value": 3
+               "value": 21
             },
             {
                "name": "gauss_1_kernel_size",

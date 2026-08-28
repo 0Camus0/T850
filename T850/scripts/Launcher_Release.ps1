@@ -230,6 +230,7 @@ $xaml = @"
                             <ComboBoxItem Content="Ragdoll Editor" Tag="3"/>
                             <ComboBoxItem Content="Scene Template" Tag="4"/>
                             <ComboBoxItem Content="Voxel Streaming" Tag="5"/>
+                            <ComboBoxItem Content="Minecraft" Tag="6"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">

@@ -2,6 +2,7 @@
 
 #include <scene/WireframeGeometry.h>
 
+#include <video/BaseDriver.h>
 #include <utils/Log.h>
 
 #include <algorithm>
@@ -39,14 +40,16 @@ namespace t850 {
 
   void WireframeGeometry::ReleaseVertexBuffer() {
     if (m_vb) {
-      m_vb->release();
+      if (g_pBaseDriver) g_pBaseDriver->RetireBuffer(m_vb);
+      else m_vb->release();
       m_vb = nullptr;
     }
   }
 
   void WireframeGeometry::ReleaseIndexBuffer() {
     if (m_ib) {
-      m_ib->release();
+      if (g_pBaseDriver) g_pBaseDriver->RetireBuffer(m_ib);
+      else m_ib->release();
       m_ib = nullptr;
     }
     m_indexCount = 0;

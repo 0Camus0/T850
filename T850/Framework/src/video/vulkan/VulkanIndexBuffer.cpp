@@ -38,9 +38,12 @@ namespace t850 {
     bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VmaAllocationCreateInfo allocCI = {};
-    allocCI.usage = VMA_MEMORY_USAGE_AUTO;
-    allocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                    VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    const bool deviceLocal = initialData && desc.usage == BufferUsage::DEFAULT;
+    allocCI.usage = deviceLocal ? VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE : VMA_MEMORY_USAGE_AUTO;
+    if (!deviceLocal) {
+      allocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                      VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    }
 
     VmaAllocationInfo allocInfo = {};
     VkResult res = vmaCreateBuffer(allocator, &bufInfo, &allocCI, &m_buffer, &m_allocation, &allocInfo);
@@ -52,7 +55,10 @@ namespace t850 {
 
     if (initialData) {
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
-      if (m_mappedData) memcpy(m_mappedData, initialData, desc.byteWidth);
+      if (m_mappedData) {
+        memcpy(m_mappedData, initialData, desc.byteWidth);
+        vmaFlushAllocation(allocator, m_allocation, 0, desc.byteWidth);
+      } else GetVkDriver()->UploadBufferData(m_buffer, initialData, desc.byteWidth);
     }
     T8_LOG_DEBUG("[Vulkan] IB created: %d bytes", desc.byteWidth);
 #ifdef T850_RENDER_TRACE
@@ -77,8 +83,10 @@ namespace t850 {
   }
 
   void VulkanIndexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
-    if (m_mappedData && !sysMemCpy.empty())
+    if (m_mappedData && !sysMemCpy.empty()) {
       memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
+      vmaFlushAllocation(GetVkDriver()->GetAllocator(), m_allocation, 0, sysMemCpy.size());
+    }
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
       int bufId = g_renderTracer->EnsureBufferId(this, "ib");
@@ -89,7 +97,10 @@ namespace t850 {
 
   void VulkanIndexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
-    if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
+    if (m_mappedData) {
+      memcpy(m_mappedData, buffer, descriptor.byteWidth);
+      vmaFlushAllocation(GetVkDriver()->GetAllocator(), m_allocation, 0, descriptor.byteWidth);
+    }
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       int bufId = g_renderTracer->EnsureBufferId(this, "ib");

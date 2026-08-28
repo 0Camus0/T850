@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <scene/ShadowDescriptor.h>
 
 namespace t850 {
 
@@ -19,6 +20,7 @@ namespace t850 {
     bool linear_filter = true;
     bool generate_mips = false;
     std::string size_ref;                  // e.g. "$shadow_resolution", "$god_rays_resolution"
+    std::string shadow_projection;          // source JSON ID; empty for ordinary targets
   };
 
   // ---- Texture input (edge in the graph) ----
@@ -39,10 +41,17 @@ namespace t850 {
   // ---- Draw command within a pass ----
 
   struct DrawCmd {
-    std::string type = "fullscreen_quad";   // "fullscreen_quad", "mesh", "final_quad"
+    std::string type = "fullscreen_quad";   // "fullscreen_quad", "mesh", "final_quad", "callback"
     std::vector<int> mesh_indices;          // for "mesh" type
     std::string signature;                  // Signature enum name
     std::vector<std::string> extra_signatures;  // OR'd with main (e.g. "USE_OMNIDIRECTIONAL_SHADOWS")
+    std::string callback;                   // callback name when type == "callback"
+  };
+
+  // ---- Pass kind (replaces exact-name checks) ----
+  enum class RenderPassKind : uint8_t {
+    Normal,
+    ShadowDepth
   };
 
   // ---- Render Pass node ----
@@ -86,11 +95,21 @@ namespace t850 {
     // Cubemap loop: draw this pass once per cube face
     int cube_faces = 0;           // 0 = not a cubemap loop, 6 = cubemap
     std::string per_face_camera;  // "omni" = use omni light cameras 0..5
+
+    // Generated shadow metadata (filled by expansion; not authored in JSON)
+    std::string shadow_projection;      // source JSON ID; empty for ordinary passes
+    std::string kind;                   // "normal" (default) or "shadow_depth"
+    int shadow_projection_index = -1;
+    int shadow_view_index = -1;
+    ShadowViewKind shadow_view_kind = ShadowViewKind::WholeTexture2D;
+    int shadow_subresource = -1;
+    std::array<int, 4> viewport = {-1, -1, -1, -1};  // x,y,w,h; -1 = full target
   };
 
   // ---- The full render graph ----
 
   struct RenderGraphDesc {
+    std::vector<ShadowProjectionDesc> shadow_projections;
     std::vector<RTDesc> render_targets;
     std::vector<RenderPassDesc> passes;
   };

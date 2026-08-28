@@ -8,7 +8,8 @@ add_executable(DayScene
 	Quake3Mock.cpp
 	RagdollEditor.cpp
 	SandboxScene.cpp
-	VoxelScene.cpp)
+	VoxelScene.cpp
+	MinecraftScene.cpp)
 
 t850_apply_app(DayScene)
 t850_apply_profiler_defines(DayScene)

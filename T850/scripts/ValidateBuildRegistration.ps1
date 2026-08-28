@@ -54,6 +54,7 @@ $frameworkSources = @(
     Get-Item (Join-Path $frameworkRoot "src\physics\GameplayLayers.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMesh.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMeshData.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\scene\ShadowSystem.cpp")
 ) | Sort-Object FullName -Unique
 
 $frameworkHeaders = @(
@@ -80,13 +81,14 @@ foreach ($header in $frameworkHeaders) {
     Require-Entry $frameworkFilters $relative "Framework.vcxproj.filters"
 }
 
-foreach ($name in @("VoxelScene.cpp", "VoxelScene.h")) {
-    $msbuildPath = $name
-    Require-Entry $dayProject $msbuildPath "DayScene.vcxproj"
-    Require-Entry $dayFilters $msbuildPath "DayScene/App.vcxproj.filters"
-    if ($name.EndsWith(".cpp")) {
-        Require-Entry $dayCmake $name "DayScene/CMakeLists.txt"
-        Require-Entry $androidCmake "DayScene/$name" "cmake/AndroidBuild.cmake"
+foreach ($scene in @("VoxelScene", "MinecraftScene")) {
+    foreach ($name in @("$scene.cpp", "$scene.h")) {
+        Require-Entry $dayProject $name "DayScene.vcxproj"
+        Require-Entry $dayFilters $name "DayScene/App.vcxproj.filters"
+        if ($name.EndsWith(".cpp")) {
+            Require-Entry $dayCmake $name "DayScene/CMakeLists.txt"
+            Require-Entry $androidCmake "DayScene/$name" "cmake/AndroidBuild.cmake"
+        }
     }
 }
 
@@ -108,6 +110,6 @@ if ($errors.Count -gt 0) {
 Write-Host "Build registration PASS" -ForegroundColor Green
 Write-Host "  Framework sources: $($frameworkSources.Count)" -ForegroundColor Green
 Write-Host "  Framework headers: $($frameworkHeaders.Count)" -ForegroundColor Green
-Write-Host "  DayScene: VoxelScene.cpp/.h" -ForegroundColor Green
+Write-Host "  DayScene: VoxelScene.cpp/.h, MinecraftScene.cpp/.h" -ForegroundColor Green
 Write-Host "  FrameworkImGui: RagdollEditorGui.cpp" -ForegroundColor Green
 Write-Host "  T8ditor shared scenes: RagdollEditor, Quake3Mock, SceneTemplate" -ForegroundColor Green

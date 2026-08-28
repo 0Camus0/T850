@@ -1,19 +1,40 @@
 {
+  "shadow_projections": [
+    {
+      "id": "sun-shadow",
+      "light_id": "sun",
+      "legacy_light_index": 0,
+      "technique": "csm",
+      "target": "DepthPass",
+      "cascade_count": 4,
+      "resolution": 0,
+      "split_lambda": 0.6,
+      "near_distance": 0.1,
+      "far_distance": 250.0,
+      "caster_depth_padding": 50.0,
+      "blend_fraction": 0.0
+    }
+  ],
   "render_targets": [
     { "name": "GBuffer",           "color_count": 7, "color_formats": ["RGBA8", "RGBA16F", "RGBA8", "RGBA8", "RGBA16F", "RGBA8", "RGBA8"], "depth_format": "F32",  "size": [0,0], "linear_filter": true },
     { "name": "Deferred",          "color_count": 1, "color_format": "RGBA16F", "depth_format": "F32",  "size": [0,0], "linear_filter": true },
     { "name": "Extra16F",          "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
-    { "name": "DepthPass",         "color_count": 0, "color_format": "NONE",    "depth_format": "F32",  "size": [0,0], "linear_filter": false, "size_ref": "$shadow_resolution" },
+    { "name": "DepthPass",         "color_count": 0, "color_format": "NONE",    "depth_format": "F32",  "size": [0,0], "linear_filter": false, "size_ref": "$shadow_resolution", "shadow_projection": "sun-shadow" },
     { "name": "ShadowAccum",       "color_count": 1, "color_format": "R8",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "ExtraHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "BloomAccum",        "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "BloomHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
+    { "name": "BrightPass",        "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
+    { "name": "CoC",               "color_count": 2, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": true },
+    { "name": "CombineCoC",        "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "AdaptedLumCurrent", "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false },
     { "name": "AdaptedLumPrev",    "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false }
   ],
   "passes": [
     {
       "name": "Shadow Depth",
+      "kind": "shadow_depth",
+      "shadow_projection": "sun-shadow",
       "target": "DepthPass",
       "state": { "depth_stencil": "READ_WRITE", "cull_face": "BACK_FACES" },
       "camera": "light",
@@ -136,6 +157,30 @@
       "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
     },
     {
+      "name": "Debug Cascade Regions",
+      "target": "Deferred",
+      "push": false,
+      "state": { "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
+      "inputs": [
+        { "source": "GBuffer:DEPTH", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "CASCADE_DEBUG_PASS" }
+      ],
+      "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
+    },
+    {
+      "name": "Debug Cascade Volumes",
+      "target": "Deferred",
+      "push": false,
+      "state": { "depth_stencil": "READ", "cull_face": "FRONT_FACES", "blend": "ALPHA_BLEND" },
+      "draws": [
+        { "type": "callback", "callback": "cascade_debug_volumes" },
+        { "type": "callback", "callback": "voxel_debug_bounds" }
+      ],
+      "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
+    },
+    {
       "name": "Light Add",
       "target": "Extra16F",
       "inputs": [
@@ -168,7 +213,7 @@
     },
     {
       "name": "Bright",
-      "target": "BloomAccum",
+      "target": "BrightPass",
       "inputs": [
         { "source": "Extra16F:COLOR0",           "slot": 0 },
         { "source": "AdaptedLumCurrent:COLOR0",  "slot": 1 }
@@ -182,7 +227,7 @@
       "target": "BloomHelper",
       "gauss_kernel": 1,
       "inputs": [
-        { "source": "BloomAccum:COLOR0", "slot": 0 }
+        { "source": "BrightPass:COLOR0", "slot": 0 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "HORIZONTAL_BLUR_PASS" }
@@ -197,6 +242,49 @@
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "VERTICAL_BLUR_PASS" }
+      ]
+    },
+    {
+      "name": "CoC",
+      "target": "CoC",
+      "inputs": [
+        { "source": "GBuffer:DEPTH", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "COC_PASS" }
+      ]
+    },
+    {
+      "name": "Combine CoC",
+      "target": "CombineCoC",
+      "inputs": [
+        { "source": "CoC:COLOR0", "slot": 0 },
+        { "source": "CoC:COLOR1", "slot": 1 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "COMBINE_COC_PASS" }
+      ]
+    },
+    {
+      "name": "DOF",
+      "target": "Deferred",
+      "inputs": [
+        { "source": "Extra16F:COLOR0", "slot": 0 },
+        { "source": "CombineCoC:COLOR0", "slot": 1 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "DOF_PASS" }
+      ]
+    },
+    {
+      "name": "DOF 2",
+      "target": "Extra16F",
+      "inputs": [
+        { "source": "Deferred:COLOR0", "slot": 0 },
+        { "source": "CombineCoC:COLOR0", "slot": 1 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "DOF_PASS_2" }
       ]
     },
     {

@@ -17,6 +17,7 @@
 #include <video/BaseDriver.h>
 #include <utils/xMaths.h>
 #include <utils/Camera.h>
+#include <scene/ShadowSystem.h>
 #include <vector>
 
 enum LightType {
@@ -25,6 +26,8 @@ enum LightType {
 };
 
 struct Light{
+	std::string Id;
+	std::string Name;
 	XVECTOR3 Position;
 	XVECTOR3 Direction = XVECTOR3(0.0f, -1.0f, 0.0f);  // normalized, for directional lights
 	XVECTOR3 Color;
@@ -82,6 +85,7 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	bool ShowCullingDebug = false;
 
 	std::vector<Camera*> pLightCameras;
+	t850::ShadowRuntimeState Shadows;
 
 	std::vector<GaussFilter*> pGaussKernels;
 	SSAOFilter				  SSAOKernel;
@@ -100,9 +104,16 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	int ToogleParallaxShadow = 1;
 	int ToogleGodRays = 1;
 	int DebugMode;
+	int CascadeDebugRegionsEnabled = 0;
+	XVECTOR3 CascadeDebugColors[6] = {
+		XVECTOR3(1.0f, 0.2f, 0.2f, 1.0f), XVECTOR3(0.2f, 1.0f, 0.2f, 1.0f),
+		XVECTOR3(0.2f, 0.4f, 1.0f, 1.0f), XVECTOR3(1.0f, 1.0f, 0.2f, 1.0f),
+		XVECTOR3(1.0f, 0.4f, 1.0f, 1.0f), XVECTOR3(0.2f, 1.0f, 1.0f, 1.0f)
+	};
 
 	float ShadowBias = 0.000005f;
 	float ShadowMin = 0.25f;
+	float CascadeDebugOpacity = 0.12f;
 	float EnvFactor = 1.0f;
 	float IBLFactor = 1.0f;
 	float IBLMipCount = 4.0f;
@@ -126,6 +137,10 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	float ParallaxShadowMaxLayers = 32.0f;
 	float ParallaxShadowSoftness = 0.5f;
 	float ParallaxShadowStrength = 1.0f;
+	bool DOFNormalizedFocus = false;
+	float DOFFocusRange = 0.5f;
+	float DOFFocusFalloff = 8.0f;
+	float DOFAutoFocusRadius = 0.05f;
 
 	float LightVolumeSteps = 0.0f;
 	float LightRadiusScale = 1.0f;

@@ -109,7 +109,10 @@ bool LineRenderer::Create() {
 void LineRenderer::Destroy() {
   m_shaderDepth = nullptr; // owned by the driver's shader cache
   m_shaderFlat  = nullptr;
-  if (m_cb) m_cb->release();
+  if (m_cb) {
+    if (g_pBaseDriver) g_pBaseDriver->RetireBuffer(m_cb);
+    else m_cb->release();
+  }
   m_cb = nullptr;
 }
 
@@ -161,6 +164,44 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
     secondaryDepth->Set(*T8DeviceContext, 1, "depthTex2");
   }
 
+  T8DeviceContext->DrawIndexed(indexCount, 0, startVertex);
+}
+
+void LineRenderer::DrawTriangles(const XMATRIX44& world,
+                                 const XMATRIX44& vp,
+                                 const XVECTOR3& rgba,
+                                 VertexBuffer* vb,
+                                 IndexBuffer* ib,
+                                 unsigned indexCount,
+                                 unsigned vertexStride,
+                                 IndexBufferFormat::E ibFormat,
+                                 unsigned startVertex) {
+  if (!m_shaderFlat || !m_cb || !vb || !ib || indexCount == 0) return;
+
+  CBuffer cb;
+  cb.WVP = world * vp;
+  cb.LineColor = rgba;
+  cb.DepthParams = XVECTOR3(
+    (m_viewW > 0) ? 1.0f / (float)m_viewW : 1.0f / 1280.0f,
+    (m_viewH > 0) ? 1.0f / (float)m_viewH : 1.0f / 720.0f,
+    m_farPlane,
+    m_depthBias);
+
+  MeshDrawStateTracker& tracker = MeshDrawStateTracker::Get();
+  tracker.BindIndexedGeometry(*T8DeviceContext,
+                              vb,
+                              vertexStride,
+                              0,
+                              ib,
+                              ibFormat,
+                              Topology::TRIANLE_LIST);
+
+  m_shaderFlat->Set(*T8DeviceContext);
+  tracker.OnShaderChanged(m_shaderFlat);
+  tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, m_cb, 0, &cb, sizeof(cb));
+#if defined(USING_VULKAN) || defined(USING_VULKAN_ONLY)
+  tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, m_cb, 1, &cb, sizeof(cb));
+#endif
   T8DeviceContext->DrawIndexed(indexCount, 0, startVertex);
 }
 

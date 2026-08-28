@@ -218,6 +218,13 @@ namespace t850 {
     ComPtr<ID3D12GraphicsCommandList> m_uploadBatchList;
     std::vector<ComPtr<ID3D12Resource>> m_uploadBatchKeepAlive;
     UINT m_uploadBatchCommandCount = 0;
+    struct PendingUploadBatch {
+      ComPtr<ID3D12CommandAllocator> allocator;
+      ComPtr<ID3D12GraphicsCommandList> commandList;
+      std::vector<ComPtr<ID3D12Resource>> resources;
+      UINT64 fenceValue = 0;
+    };
+    std::vector<PendingUploadBatch> m_pendingUploadBatches;
     struct RetiredBuffer {
       Buffer* buffer = nullptr;
       UINT framesRemaining = kBackBufferCount;

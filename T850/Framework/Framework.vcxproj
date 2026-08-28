@@ -88,6 +88,8 @@
     <ClInclude Include="include\scene\SceneDescriptor.h" />
     <ClInclude Include="include\scene\SceneSetup.h" />
     <ClInclude Include="include\scene\SceneProp.h" />
+    <ClInclude Include="include\scene\ShadowDescriptor.h" />
+    <ClInclude Include="include\scene\ShadowSystem.h" />
     <ClInclude Include="include\scene\SplineWireframe.h" />
     <ClInclude Include="include\scene\WireframeSphere.h" />
     <ClInclude Include="include\scene\WireframeArrow.h" />
@@ -258,6 +260,7 @@
     <ClCompile Include="src\scene\SceneDescriptor.cpp" />
     <ClCompile Include="src\scene\SceneSetup.cpp" />
     <ClCompile Include="src\scene\SceneProp.cpp" />
+    <ClCompile Include="src\scene\ShadowSystem.cpp" />
     <ClCompile Include="src\scene\SplineWireframe.cpp" />
     <ClCompile Include="src\scene\WireframeSphere.cpp" />
     <ClCompile Include="src\scene\WireframeArrow.cpp" />

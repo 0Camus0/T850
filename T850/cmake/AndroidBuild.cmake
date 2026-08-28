@@ -167,6 +167,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/IBLResources.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/EditorSceneFile.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderGraph.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/ShadowSystem.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneDescriptor.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneSetup.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneProp.cpp
@@ -206,6 +207,7 @@ add_library(T850Android SHARED
   ${T850_SOURCE_DIR}/DayScene/RagdollEditor.cpp
   ${T850_SOURCE_DIR}/DayScene/SandboxScene.cpp
   ${T850_SOURCE_DIR}/DayScene/VoxelScene.cpp
+  ${T850_SOURCE_DIR}/DayScene/MinecraftScene.cpp
   ${T850_ANDROID_FRAMEWORK_SOURCES})
 
 target_compile_definitions(T850Android PRIVATE

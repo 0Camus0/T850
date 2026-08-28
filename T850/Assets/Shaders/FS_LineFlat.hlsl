@@ -8,7 +8,6 @@ cbuffer ConstantBuffer : register(b0) {
 
 struct VS_OUTPUT{
     float4 hposition  : SV_POSITION;
-    float  linearDepth : TEXCOORD0;
 };
 
 float4 FS( VS_OUTPUT input ) : SV_TARGET {

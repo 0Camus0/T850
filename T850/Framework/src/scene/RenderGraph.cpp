@@ -2,6 +2,7 @@
 #include <scene/RenderGraph.h>
 #include <scene/RenderGraphDescriptor.h>
 #include <scene/SceneProp.h>
+#include <scene/ShadowSystem.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderQueue.h>     // MeshDrawStateTracker
 #include <utils/Camera.h>
@@ -114,6 +115,7 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
   {"SSAO_PASS",             PassType::SSAO},
   {"DEFERRED_LDR_PASS",     PassType::DEFERRED_LDR},
   {"DEFERRED_LIGHT_VOLUME_PASS", PassType::DEFERRED_LIGHT_VOLUME},
+  {"CASCADE_DEBUG_PASS",    PassType::CASCADE_DEBUG},
 };
 
 // Feature name -> ShaderKey feature bit
@@ -190,6 +192,11 @@ int RenderGraph::ResolveBlendState(const std::string& name) {
   return (it != s_blendMap.end()) ? it->second : -1;
 }
 
+RenderPassKind RenderGraph::ResolvePassKind(const std::string& name) {
+  if (name == "shadow_depth") return RenderPassKind::ShadowDepth;
+  return RenderPassKind::Normal;
+}
+
 // ---- Parse "RTName:ATTACHMENT" ----
 
 RenderGraph::ResolvedTexture RenderGraph::ResolveTextureInput(const std::string& source) const {
@@ -232,15 +239,203 @@ RenderGraph::ResolvedTexture RenderGraph::ResolveTextureInput(const std::string&
 
 bool RenderGraph::Load(const std::string& path) {
   m_disabledPasses.clear();
-  m_desc = RenderGraphDesc{};
+  m_sourceDesc = RenderGraphDesc{};
+  m_effectiveDesc = RenderGraphDesc{};
   m_nodes.clear();
   m_edges.clear();
   m_rtHandles.clear();
 
-  if (!LoadRenderGraphDescriptor(path, m_desc))
+  if (!LoadRenderGraphDescriptor(path, m_sourceDesc))
     return false;
+  for (const auto& pass : m_sourceDesc.passes) {
+    for (const auto& draw : pass.draws) {
+      if (draw.signature != "LIGHT_ADD") continue;
+      bool hasSlot0 = false;
+      bool hasSlot1 = false;
+      for (const auto& input : pass.inputs) {
+        hasSlot0 = hasSlot0 || input.slot == 0;
+        hasSlot1 = hasSlot1 || input.slot == 1;
+      }
+      if (!hasSlot0 || !hasSlot1) {
+        T8_LOG_ERROR(
+          "[RenderGraph] Pass '%s' uses LIGHT_ADD without texture slots 0 and 1; use FSQUAD_1_TEX for a copy",
+          pass.name.c_str());
+        return false;
+      }
+    }
+  }
+  m_effectiveDesc = m_sourceDesc;
 
   // Graph is built after CreateRenderTargets (needs RT handle map)
+  return true;
+}
+
+// ---- Shadow configuration & pass expansion ----
+
+void RenderGraph::MergeShadowOverrides(
+  const std::vector<ShadowProjectionOverrideDesc>& baseOverrides,
+  const std::vector<ShadowProjectionOverrideDesc>& runtimeOverrides) {
+  // Apply base overrides first, then runtime overrides (runtime wins).
+  auto apply = [&](const std::vector<ShadowProjectionOverrideDesc>& overrides) {
+    for (const auto& ov : overrides) {
+      for (auto& proj : m_effectiveDesc.shadow_projections) {
+        if (proj.id != ov.projection_id)
+          continue;
+        if (ov.enabled.has_value()) proj.enabled = *ov.enabled;
+        if (ov.resolution.has_value()) proj.resolution = *ov.resolution;
+        if (ov.cascade_count.has_value()) proj.cascade_count = *ov.cascade_count;
+        if (ov.split_lambda.has_value()) proj.split_lambda = *ov.split_lambda;
+        if (ov.near_distance.has_value()) proj.near_distance = *ov.near_distance;
+        if (ov.far_distance.has_value()) proj.far_distance = *ov.far_distance;
+        if (ov.caster_depth_padding.has_value()) proj.caster_depth_padding = *ov.caster_depth_padding;
+        if (ov.blend_fraction.has_value()) proj.blend_fraction = *ov.blend_fraction;
+      }
+    }
+  };
+  apply(baseOverrides);
+  apply(runtimeOverrides);
+}
+
+void RenderGraph::SizeShadowTarget(RTDesc& rt, const SceneProps& props) {
+  // Find the effective projection by ID.
+  for (const auto& proj : m_effectiveDesc.shadow_projections) {
+    if (proj.id != rt.shadow_projection)
+      continue;
+    int tileRes = proj.resolution > 0 ? proj.resolution : static_cast<int>(props.ShadowMapResolution);
+    int viewCount = 1;
+    ShadowTechnique technique = ShadowSystem::ResolveTechnique(proj.technique);
+    switch (technique) {
+      case ShadowTechnique::DirectionalSingle: viewCount = 1; break;
+      case ShadowTechnique::DirectionalCascaded: viewCount = proj.cascade_count; break;
+      case ShadowTechnique::PointCube: viewCount = 6; break;
+      case ShadowTechnique::PointDualParaboloid: viewCount = 2; break;
+    }
+    int columns = 1, rows = 1;
+    ShadowSystem::ComputeAtlasLayout(viewCount, columns, rows);
+    if (technique == ShadowTechnique::PointCube) {
+      rt.size = { tileRes, tileRes };
+    } else if (technique == ShadowTechnique::PointDualParaboloid) {
+      rt.size = { 2 * tileRes, tileRes };
+    } else {
+      rt.size = { columns * tileRes, rows * tileRes };
+    }
+    return;
+  }
+}
+
+bool RenderGraph::ExpandDirectionalProjection(
+  SceneProps& props,
+  const ShadowProjectionDesc& projection,
+  int projectionIndex,
+  std::string* error) {
+  if (!projection.enabled)
+    return true;
+
+  ShadowTechnique technique = ShadowSystem::ResolveTechnique(projection.technique);
+  const int N = (technique == ShadowTechnique::DirectionalCascaded)
+    ? projection.cascade_count : 1;
+  if (N < 1 || N > 6) {
+    if (error) *error = "Shadow projection '" + projection.id + "' cascade_count out of range 1..6";
+    return false;
+  }
+
+  // Find the authored shadow-depth template pass for this projection, or the
+  // first legacy "Shadow Depth" pass for compatibility.
+  int templateIndex = -1;
+  for (int i = 0; i < static_cast<int>(m_effectiveDesc.passes.size()); ++i) {
+    const auto& p = m_effectiveDesc.passes[i];
+    if (ResolvePassKind(p.kind) == RenderPassKind::ShadowDepth && p.shadow_projection == projection.id) {
+      templateIndex = i;
+      break;
+    }
+  }
+  if (templateIndex < 0) {
+    for (int i = 0; i < static_cast<int>(m_effectiveDesc.passes.size()); ++i) {
+      if (m_effectiveDesc.passes[i].name == "Shadow Depth") {
+        templateIndex = i;
+        break;
+      }
+    }
+  }
+  if (templateIndex < 0) {
+    if (error) *error = "Shadow projection '" + projection.id + "' has no shadow-depth template pass";
+    return false;
+  }
+
+  const RenderPassDesc templatePass = m_effectiveDesc.passes[templateIndex];
+
+  // Compute atlas layout for viewports.
+  int columns = 1, rows = 1;
+  ShadowSystem::ComputeAtlasLayout(N, columns, rows);
+  int tileRes = projection.resolution > 0 ? projection.resolution : static_cast<int>(props.ShadowMapResolution);
+
+  // Build N generated passes.
+  std::vector<RenderPassDesc> generated;
+  generated.reserve(N);
+  for (int v = 0; v < N; ++v) {
+    RenderPassDesc p = templatePass;
+    p.name = "Shadow Depth " + std::to_string(v);
+    p.kind = "shadow_depth";
+    p.shadow_projection = projection.id;
+    p.shadow_projection_index = projectionIndex;
+    p.shadow_view_index = v;
+    p.shadow_view_kind = (N > 1) ? ShadowViewKind::AtlasTile : ShadowViewKind::WholeTexture2D;
+    p.shadow_subresource = -1;
+
+    int tileX = v % columns;
+    int tileY = v / columns;
+    p.viewport = { tileX * tileRes, tileY * tileRes, tileRes, tileRes };
+
+    // Grouped push/pop/clear policy:
+    //   pass 0: push true, pop false (clears)
+    //   middle: push false, pop false
+    //   last:   push false, pop true
+    p.push = (v == 0);
+    p.pop = (v == N - 1);
+    p.clear = (v == 0);
+
+    generated.push_back(p);
+  }
+
+  // Replace the template pass with the generated passes.
+  m_effectiveDesc.passes.erase(m_effectiveDesc.passes.begin() + templateIndex);
+  m_effectiveDesc.passes.insert(m_effectiveDesc.passes.begin() + templateIndex,
+                                generated.begin(), generated.end());
+  return true;
+}
+
+bool RenderGraph::Configure(
+  SceneProps& props,
+  const std::vector<ShadowProjectionOverrideDesc>& baseOverrides,
+  const std::vector<ShadowProjectionOverrideDesc>& runtimeOverrides,
+  std::string* error) {
+  // Always restart from the source descriptor.
+  m_effectiveDesc = m_sourceDesc;
+
+  // Merge typed shadow overrides into projection baselines.
+  MergeShadowOverrides(baseOverrides, runtimeOverrides);
+
+  // Validate + initialize runtime projection records.
+  if (!ShadowSystem::ResolveDescriptors(m_effectiveDesc, props, props.Shadows, error))
+    return false;
+
+  // Expand each enabled directional projection into generated passes.
+  // Iterate over a copy of the projection list (indices shift as passes expand).
+  const auto projections = m_effectiveDesc.shadow_projections;
+  for (int pi = 0; pi < static_cast<int>(projections.size()); ++pi) {
+    const auto& proj = projections[pi];
+    if (!proj.enabled)
+      continue;
+    ShadowTechnique technique = ShadowSystem::ResolveTechnique(proj.technique);
+    if (technique != ShadowTechnique::DirectionalSingle &&
+        technique != ShadowTechnique::DirectionalCascaded) {
+      if (error) *error = "Shadow projection '" + proj.id + "' uses an unsupported technique";
+      return false;
+    }
+    if (!ExpandDirectionalProjection(props, proj, pi, error))
+      return false;
+  }
+
   return true;
 }
 
@@ -256,14 +451,21 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
   bool loggedAndroidRenderScale = false;
 #endif
 
-  for (const auto& rt : m_desc.render_targets) {
+  for (auto& rt : m_effectiveDesc.render_targets) {
     int cf = ResolveColorFormat(rt.color_format);
     int df = ResolveDepthFormat(rt.depth_format);
 
     int w = rt.size[0];
     int h = rt.size[1];
 
-    if (!rt.size_ref.empty()) {
+    // Shadow-referenced targets are sized from their projection.
+    if (!rt.shadow_projection.empty()) {
+      SizeShadowTarget(rt, props);
+      w = rt.size[0];
+      h = rt.size[1];
+    }
+
+    if (rt.shadow_projection.empty() && !rt.size_ref.empty()) {
       if (rt.size_ref == "$shadow_resolution") {
         w = h = static_cast<int>(props.ShadowMapResolution);
       } else if (rt.size_ref == "$god_rays_resolution") {
@@ -364,21 +566,21 @@ void RenderGraph::BuildGraph() {
 
   // Map pass names to indices for dependency tracking
   std::unordered_map<std::string, int> passIndex;
-  for (int i = 0; i < static_cast<int>(m_desc.passes.size()); i++) {
-    passIndex[m_desc.passes[i].name] = i;
+  for (int i = 0; i < static_cast<int>(m_effectiveDesc.passes.size()); i++) {
+    passIndex[m_effectiveDesc.passes[i].name] = i;
   }
 
   // Build a map: RT name -> index of the last pass that wrote to it
   // (updated as we scan passes in order)
   std::unordered_map<std::string, int> lastWriter;
 
-  m_nodes.resize(m_desc.passes.size());
+  m_nodes.resize(m_effectiveDesc.passes.size());
 
-  for (int i = 0; i < static_cast<int>(m_desc.passes.size()); i++) {
-    const auto& passDesc = m_desc.passes[i];
+  for (int i = 0; i < static_cast<int>(m_effectiveDesc.passes.size()); i++) {
+    const auto& passDesc = m_effectiveDesc.passes[i];
     auto& node = m_nodes[i];
     node.index = i;
-    node.desc = &m_desc.passes[i];
+    node.desc = &m_effectiveDesc.passes[i];
 
     // Resolve RT handle for this pass's target
     if (!passDesc.target.empty()) {
@@ -480,7 +682,8 @@ void RenderGraph::Execute(
   ::Camera* lightCam,
   ::Camera* omniCams,
   const EnvironmentMapSet& envMaps,
-  int finalOutputRT)
+  int finalOutputRT,
+  CustomDrawCallback customDraw)
 {
   const bool shadowsEnabled = props.ToogleShadow != 0;
   const bool ssaoEnabled = props.ToogleSSAO != 0;
@@ -498,7 +701,7 @@ void RenderGraph::Execute(
 
   for (const auto& node : m_nodes) {
     if (m_disabledPasses.count(node.desc->name)) continue;
-    if (!shadowsEnabled && node.desc->name == "Shadow Depth") continue;
+    if (!shadowsEnabled && ResolvePassKind(node.desc->kind) == RenderPassKind::ShadowDepth) continue;
     if (!shadowsEnabled && !ssaoEnabled &&
         (node.desc->name == "Shadow Accumulation" ||
          node.desc->name == "Shadow Blur V" ||
@@ -506,7 +709,7 @@ void RenderGraph::Execute(
       continue;
     }
     ExecutePass(node, driver, props, meshes, meshCount, quads,
-                mainCam, lightCam, omniCams, envMaps, finalOutputRT);
+                mainCam, lightCam, omniCams, envMaps, finalOutputRT, customDraw);
   }
   if (mainCam && !props.pCameras.empty()) {
     props.SetPrimaryCamera(mainCam);
@@ -523,7 +726,8 @@ void RenderGraph::ExecutePass(
   ::Camera* lightCam,
   ::Camera* omniCams,
   const EnvironmentMapSet& envMaps,
-  int finalOutputRT)
+  int finalOutputRT,
+  const CustomDrawCallback& customDraw)
 {
   const auto& pass = *node.desc;
   ScopedPrimaryCameraOverride cameraScope(props);
@@ -565,8 +769,16 @@ void RenderGraph::ExecutePass(
   int bs = ResolveBlendState(pass.state.blend);
   if (bs >= 0) driver->SetBlendState(static_cast<BaseDriver::BlendStates>(bs));
 
-  // Camera selection
-  if (pass.camera == "light" && lightCam) {
+  // Camera selection: generated shadow passes use their dedicated cascade camera.
+  if (ResolvePassKind(pass.kind) == RenderPassKind::ShadowDepth &&
+      pass.shadow_projection_index >= 0 &&
+      pass.shadow_view_index >= 0 &&
+      pass.shadow_projection_index < static_cast<int>(props.Shadows.projections.size())) {
+    auto& projection = props.Shadows.projections[pass.shadow_projection_index];
+    if (pass.shadow_view_index < projection.viewCount) {
+      props.SetPrimaryCamera(&projection.views[pass.shadow_view_index].camera);
+    }
+  } else if (pass.camera == "light" && lightCam) {
     props.SetPrimaryCamera(lightCam);
   } else if (pass.camera == "main" && mainCam) {
     props.SetPrimaryCamera(mainCam);
@@ -649,6 +861,25 @@ void RenderGraph::ExecutePass(
                              pass.clear_color[2], pass.clear_color[3]);
     }
 
+    // Per-pass viewport/scissor (generated shadow tiles).
+    if (pass.viewport[2] > 0 && pass.viewport[3] > 0) {
+      driver->SetViewport((float)pass.viewport[0], (float)pass.viewport[1],
+                          (float)pass.viewport[2], (float)pass.viewport[3]);
+      driver->SetScissorRect(pass.viewport[0], pass.viewport[1],
+                             pass.viewport[2], pass.viewport[3]);
+    } else if (node.rt_handle >= 0) {
+      // Reset to the full target viewport for non-tile passes.
+      const int tw = driver->RTs[node.rt_handle]->w;
+      const int th = driver->RTs[node.rt_handle]->h;
+      driver->SetViewport(0.0f, 0.0f, (float)tw, (float)th);
+      driver->SetScissorRect(0, 0, tw, th);
+    } else if (finalOutputPass && finalOutputRT >= 0) {
+      const int tw = driver->RTs[finalOutputRT]->w;
+      const int th = driver->RTs[finalOutputRT]->h;
+      driver->SetViewport(0.0f, 0.0f, (float)tw, (float)th);
+      driver->SetScissorRect(0, 0, tw, th);
+    }
+
     for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
       clearTextureSlot(quads[0], slot);
     }
@@ -713,9 +944,10 @@ void RenderGraph::ExecutePass(
     }
 
     auto bindMeshPassResources = [&](PrimitiveInst& mesh) {
-      for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
-        clearTextureSlot(mesh, slot);
-      }
+      // Material maps are persistent instance state (slots 0-6 and 8).
+      // Only clear the transient mesh-pass inputs before rebinding them.
+      clearTextureSlot(mesh, 7);  // scene depth
+      clearTextureSlot(mesh, 9);  // scene color
       mesh.SetEnvironmentMap(nullptr);
 
       for (const auto& input : pass.inputs) {
@@ -747,6 +979,13 @@ void RenderGraph::ExecutePass(
       }
     };
     for (const auto& draw : pass.draws) {
+      if (draw.type == "callback") {
+        if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
+        if (customDraw && !draw.callback.empty())
+          customDraw(draw.callback);
+        continue;
+      }
+
       ShaderKey sig = ResolveSignature(draw.signature);
       for (const auto& extraSig : draw.extra_signatures) {
         ShaderKey extra = ResolveSignature(extraSig);

@@ -42,6 +42,7 @@ namespace PassType {
     DEFERRED_LIGHT_VOLUME,
     LENS_FLARE_SUN,
     LENS_FLARE_GHOST,
+    CASCADE_DEBUG,
     COUNT
   };
 }

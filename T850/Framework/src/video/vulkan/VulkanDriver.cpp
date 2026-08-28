@@ -1161,6 +1161,14 @@ namespace t850 {
 
   void VulkanDriver::DestroyDriver() {
     FlushGPUResources();
+    for (PendingUploadBatch& batch : m_pendingUploadBatches) {
+      if (batch.commandBuffer)
+        vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &batch.commandBuffer);
+      if (batch.fence) vkDestroyFence(m_device, batch.fence, nullptr);
+      for (const DeferredBuffer& buffer : batch.buffers)
+        vmaDestroyBuffer(m_allocator, buffer.buffer, buffer.alloc);
+    }
+    m_pendingUploadBatches.clear();
     for (const RetiredEngineBuffer& retired : m_retiredBuffers)
       if (retired.buffer) retired.buffer->release();
     m_retiredBuffers.clear();
@@ -1364,6 +1372,19 @@ namespace t850 {
       }
     }
 
+    for (auto iterator = m_pendingUploadBatches.begin();
+         iterator != m_pendingUploadBatches.end();) {
+      if (vkGetFenceStatus(m_device, iterator->fence) != VK_SUCCESS) {
+        ++iterator;
+        continue;
+      }
+      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &iterator->commandBuffer);
+      vkDestroyFence(m_device, iterator->fence, nullptr);
+      for (const DeferredBuffer& buffer : iterator->buffers)
+        vmaDestroyBuffer(m_allocator, buffer.buffer, buffer.alloc);
+      iterator = m_pendingUploadBatches.erase(iterator);
+    }
+
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
     vkResetCommandBuffer(cmd, 0);
 
@@ -1462,15 +1483,14 @@ namespace t850 {
       submitInfo.commandBufferCount = 1;
       submitInfo.pCommandBuffers = &m_uploadBatchCmd;
       vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
-      vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
-      vkDestroyFence(m_device, fence, nullptr);
-      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &m_uploadBatchCmd);
-      T8_LOG_INFO("[Vulkan] Resource upload batch flushed: %u copy operation(s)", m_uploadBatchCommandCount);
+      PendingUploadBatch pending;
+      pending.commandBuffer = m_uploadBatchCmd;
+      pending.fence = fence;
+      pending.buffers = std::move(m_uploadBatchBuffers);
+      m_pendingUploadBatches.push_back(std::move(pending));
+      T8_LOG_INFO("[Vulkan] Resource upload batch submitted: %u copy operation(s)", m_uploadBatchCommandCount);
       m_uploadBatchCmd = VK_NULL_HANDLE;
     }
-
-    for (auto& buffer : m_uploadBatchBuffers)
-      vmaDestroyBuffer(m_allocator, buffer.buffer, buffer.alloc);
     m_uploadBatchBuffers.clear();
     m_uploadBatchCommandCount = 0;
   }
@@ -2521,6 +2541,31 @@ reopen:
     VmaAllocationInfo stagingAllocInfo;
     vmaCreateBuffer(m_allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
     memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(dataSize));
+    vmaFlushAllocation(m_allocator, stagingAlloc, 0, dataSize);
+
+    auto recordCopy = [&](VkCommandBuffer cmd) {
+      VkBufferCopy copyRegion = {};
+      copyRegion.size = dataSize;
+      vkCmdCopyBuffer(cmd, stagingBuffer, dest, 1, &copyRegion);
+      VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+      barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.buffer = dest;
+      barrier.offset = 0;
+      barrier.size = dataSize;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                           0, 0, nullptr, 1, &barrier, 0, nullptr);
+    };
+
+    if (IsResourceUploadBatchActive()) {
+      VkCommandBuffer cmd = GetResourceUploadCommandBuffer();
+      recordCopy(cmd);
+      KeepResourceUploadBuffer(stagingBuffer, stagingAlloc);
+      ++m_uploadBatchCommandCount;
+      return;
+    }
 
     // Record and submit copy command
     VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
@@ -2535,9 +2580,7 @@ reopen:
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    VkBufferCopy copyRegion = {};
-    copyRegion.size = dataSize;
-    vkCmdCopyBuffer(cmd, stagingBuffer, dest, 1, &copyRegion);
+    recordCopy(cmd);
 
     vkEndCommandBuffer(cmd);
 

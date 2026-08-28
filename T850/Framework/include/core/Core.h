@@ -78,6 +78,7 @@ namespace t850 {
     virtual void DestroyAssets() = 0;
 
     virtual void DrawDevGui(DevGuiContext& /*gui*/) {}
+    virtual void DrawGameplayGui(DevGuiContext& /*gui*/) {}
 
     // Dump current scene state back to its JSON file
     virtual void SaveSceneState() {}

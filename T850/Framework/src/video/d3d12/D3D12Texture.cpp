@@ -401,6 +401,16 @@ namespace t850 {
     if (it != shader->srvSlots.end()) {
       cmdList->SetGraphicsRootDescriptorTable(it->second, srvGPU);
     }
+    // Bind this texture's sampler with its SRV so the pair is always
+    // consistent regardless of when Shader::Set runs relative to material
+    // setup. (Shader::Set no longer force-binds the aniso default, which
+    // used to clobber per-texture samplers like the voxel atlas NEAREST.)
+    if (hasSampler) {
+      auto sit = shader->samplerSlots.find(slot);
+      if (sit != shader->samplerSlots.end()) {
+        cmdList->SetGraphicsRootDescriptorTable(sit->second, samplerGPU);
+      }
+    }
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       int texId = g_renderTracer->LookupTextureId(this);
@@ -432,6 +442,12 @@ namespace t850 {
     auto it = shader->srvSlots.find(slot);
     if (it != shader->srvSlots.end()) {
       cmdList->SetGraphicsRootDescriptorTable(it->second, srvGPU);
+    }
+    if (hasSampler) {
+      auto sit = shader->samplerSlots.find(slot);
+      if (sit != shader->samplerSlots.end()) {
+        cmdList->SetGraphicsRootDescriptorTable(sit->second, samplerGPU);
+      }
     }
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {

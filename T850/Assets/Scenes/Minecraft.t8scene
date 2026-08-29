@@ -150,6 +150,8 @@
       "streaming_recenter_threshold": 2,
       "max_uploads_per_frame": 1,
       "async_streaming": true,
+      "atlas_texture": "terrain.png",
+      "atlas_tile_px": 16,
       "atlas_size": 256,
       "atlas_tiles_per_axis": 16,
       "navmesh_rebuild_seconds": 0.5,

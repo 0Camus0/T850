@@ -96,6 +96,7 @@
     <ClInclude Include="include\scene\Quad.h" />
     <ClInclude Include="include\scene\TextRenderer.h" />
     <ClInclude Include="include\terrain\BlockRegistry.h" />
+    <ClInclude Include="include\terrain\VoxelAtlas.h" />
     <ClInclude Include="include\terrain\VoxelChunk.h" />
     <ClInclude Include="include\terrain\VoxelMesher.h" />
     <ClInclude Include="include\terrain\VoxelWorld.h" />
@@ -267,6 +268,7 @@
     <ClCompile Include="src\scene\Quad.cpp" />
     <ClCompile Include="src\scene\TextRenderer.cpp" />
     <ClCompile Include="src\terrain\BlockRegistry.cpp" />
+    <ClCompile Include="src\terrain\VoxelAtlas.cpp" />
     <ClCompile Include="src\terrain\VoxelChunk.cpp" />
     <ClCompile Include="src\terrain\VoxelMesher.cpp" />
     <ClCompile Include="src\terrain\VoxelWorld.cpp" />

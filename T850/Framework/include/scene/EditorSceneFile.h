@@ -579,6 +579,11 @@ struct SceneVoxelWorldDesc {
   bool async_streaming = true;
   int atlas_size = 256;
   int atlas_tiles_per_axis = 16;
+  // When non-empty, the voxel renderer samples this image file (under
+  // Assets/Textures/) as the block atlas instead of generating a solid-color
+  // one. atlas_tile_px is the size in pixels of one tile in that image.
+  std::string atlas_texture;
+  int atlas_tile_px = 16;
   float navmesh_rebuild_seconds = 0.5f;
   std::string environment_map = "sky/CubeMap_SkyWater.dds";
   std::vector<std::string> environment_options;

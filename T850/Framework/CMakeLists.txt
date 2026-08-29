@@ -71,6 +71,7 @@ set(FRAMEWORK_SOURCES
   src/scene/Quad.cpp
   src/scene/TextRenderer.cpp
   src/terrain/BlockRegistry.cpp
+  src/terrain/VoxelAtlas.cpp
   src/terrain/VoxelChunk.cpp
   src/terrain/VoxelMesher.cpp
   src/terrain/VoxelWorld.cpp

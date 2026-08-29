@@ -565,7 +565,9 @@ void App::InitVars() {
   if (!g_config.sceneFilePath.empty() && g_config.startScene < 0) {
     sceneIdx = 0;
   }
-  if (g_config.flags.benchmark && m_scenes.size() > 1) {
+  // Benchmark defaults to the DayScene benchmark scene, but an explicit
+  // --scene <index> on the command line must win over that default.
+  if (g_config.flags.benchmark && m_scenes.size() > 1 && !g_config.startSceneExplicit) {
     sceneIdx = 1;
   }
   m_actualScene = m_scenes[sceneIdx].get();

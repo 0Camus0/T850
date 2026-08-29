@@ -87,6 +87,11 @@ public:
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override;
 
+    // Benchmark final-frame capture: dumps the backbuffer once the benchmark
+    // duration elapses, then exits. (DayScene has its own capture path; other
+    // scenes reuse the FrameDumper with a timed dump instead.)
+    float m_benchmarkElapsedSecs = 0.0f;
+    bool m_benchmarkFinalDumpDone = false;
   // CharacterCollisionWorld
   bool SweepCapsule(const t850::CharacterCollisionSweep& sweep, t850::CharacterCollisionHit& outHit) const override;
   bool SweepBox(const t850::CharacterBoxSweep& sweep, t850::CharacterCollisionHit& outHit) const override;
@@ -269,6 +274,8 @@ public:
   std::vector<uint8_t> m_hotbar;
   int m_atlasSize = 0;
   int m_atlasTiles = 0;
+  std::string m_atlasTexturePath; // empty => procedural solid-color atlas
+  int m_atlasTilePx = 16;
 
   // ── Internals ──
   void GenerateWorld();
@@ -324,6 +331,13 @@ public:
   float Noise2D(float x, float z) const;
   float Noise3D(float x, float y, float z) const;
   void BuildTextureAtlas();
+  bool BuildRealTextureAtlas();
+  // Offscreen benchmark capture: blits the active offscreen RT into a private
+  // RT via a fullscreen quad every frame (the swapchain backbuffer stays
+  // black in offscreen mode, and reading a just-completed offscreen RT
+  // directly can crash on resource-state mismatch). The dump saves the copy.
+  void BlitOffscreenToCaptureRT(t850::BaseDriver* driver);
+  int m_offscreenCaptureRT = -1;
   void CreateChunkMesh(int cx, int cz, xF::XDataBase& outDb);
   void AddFace(xF::xMeshGeometry& geom, int x, int y, int z, int face, uint8_t block);
   void AddVertex(xF::xMeshGeometry& geom, float x, float y, float z, float nx, float ny, float nz, float u, float v);

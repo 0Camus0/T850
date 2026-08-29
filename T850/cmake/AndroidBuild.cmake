@@ -175,6 +175,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/Quad.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/LensFlare.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/BlockRegistry.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelAtlas.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelChunk.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelMesher.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelWorld.cpp

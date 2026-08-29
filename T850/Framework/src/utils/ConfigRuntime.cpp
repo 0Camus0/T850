@@ -180,7 +180,10 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.width) cfg.width = *json.width;
   if (json.height) cfg.height = *json.height;
   if (json.fullscreen) cfg.flags.fullscreen = *json.fullscreen;
-  if (json.scene) cfg.startScene = *json.scene;
+  if (json.scene) {
+    cfg.startScene = *json.scene;
+    cfg.startSceneExplicit = true;
+  }
   if (json.title) cfg.title = *json.title;
   if (json.model) cfg.modelPath = *json.model;
   if (json.sceneFile) cfg.sceneFilePath = StripQuotes(*json.sceneFile);
@@ -236,7 +239,10 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (display.width) cfg.width = *display.width;
     if (display.height) cfg.height = *display.height;
     if (display.fullscreen) cfg.flags.fullscreen = *display.fullscreen;
-    if (display.scene) cfg.startScene = *display.scene;
+    if (display.scene) {
+      cfg.startScene = *display.scene;
+      cfg.startSceneExplicit = true;
+    }
     if (display.model) cfg.modelPath = *display.model;
     if (display.sceneFile) cfg.sceneFilePath = StripQuotes(*display.sceneFile);
     if (display.sceneProfile) cfg.sceneProfile = StripQuotes(*display.sceneProfile);
@@ -535,7 +541,10 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     }
     else if (arg == "--scene") {
       int value = 0;
-      if (ReadIntArgument(arg, argc, argv, i, value)) cfg.startScene = value;
+      if (ReadIntArgument(arg, argc, argv, i, value)) {
+        cfg.startScene = value;
+        cfg.startSceneExplicit = true;
+      }
     }
     else if (arg == "--fullscreen") {
       cfg.flags.fullscreen = true;

@@ -16,6 +16,7 @@
 #include <scene/MeshAssetCache.h>
 #include <scene/IBLResources.h>
 #include <scene/ShadowSystem.h>
+#include <terrain/VoxelAtlas.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
 #include <physics/CharacterController.h>
@@ -147,9 +148,14 @@ namespace {
   // UV corners for a face (u0,v0) bottom-left .. (u1,v1) top-right
   struct UVQuad { float u0, v0, u1, v1; };
 
+  // Half-texel inset: with NEAREST sampling this keeps face UVs strictly
+  // inside their tile, so atlas bleed is impossible even if a backend
+  // rounds a coordinate onto the tile boundary.
   UVQuad TileUV(int tileU, int tileV, int atlasTiles) {
     const float inv = 1.0f / (float)atlasTiles;
-    return { tileU * inv, tileV * inv, (tileU + 1) * inv, (tileV + 1) * inv };
+    const float inset = 0.5f * inv / 16.0f;
+    return { tileU * inv + inset, tileV * inv + inset,
+             (tileU + 1) * inv - inset, (tileV + 1) * inv - inset };
   }
 
 } // namespace
@@ -216,6 +222,8 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_asyncStreaming = m_voxelSettings.async_streaming;
   m_atlasSize = m_voxelSettings.atlas_size;
   m_atlasTiles = m_voxelSettings.atlas_tiles_per_axis;
+  m_atlasTexturePath = m_voxelSettings.atlas_texture;
+  m_atlasTilePx = (std::max)(1, m_voxelSettings.atlas_tile_px);
   m_currentCubemapPath = m_voxelSettings.environment_map;
   m_showPhysics = m_voxelSettings.show_physics;
   m_showChunkBounds = m_voxelSettings.show_chunk_bounds;
@@ -1910,7 +1918,39 @@ void MinecraftScene::CancelPendingChunk(int cx, int cz) {
 }
 
 // ── Texture atlas ────────────────────────────────────────────────────
+// When voxel_world.atlas_texture names an image file, load the real tile
+// atlas through the backend-neutral Framework loader (works on every API).
+// Otherwise fall back to the procedural solid-color atlas so scenes and
+// selftests without a texture file keep working unchanged.
+bool MinecraftScene::BuildRealTextureAtlas() {
+  const t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->device) return false;
+
+  const t850::terrain::VoxelAtlas atlas = t850::terrain::LoadVoxelAtlas(
+    engineContext->device, m_atlasTexturePath, m_atlasTilePx);
+  if (!atlas.IsValid()) {
+    T8_LOG_ERROR("[Minecraft] Could not load atlas texture '%s'; using solid-color fallback",
+                 m_atlasTexturePath.c_str());
+    return false;
+  }
+
+  m_atlasTexture = atlas.texture;
+  m_atlasTexIndex = 0; // not a driver-managed index; used as a marker
+  m_atlasSize = atlas.widthPx;
+  m_atlasTiles = atlas.tilesPerAxisX;
+  if (atlas.tilesPerAxisX != atlas.tilesPerAxisY) {
+    T8_LOG_ERROR("[Minecraft] Atlas '%s' is not a square tile grid (%dx%d tiles); "
+                 "using %d tiles per axis",
+                 m_atlasTexturePath.c_str(), atlas.tilesPerAxisX, atlas.tilesPerAxisY,
+                 atlas.tilesPerAxisX);
+  }
+  return true;
+}
+
 void MinecraftScene::BuildTextureAtlas() {
+  if (!m_atlasTexturePath.empty() && BuildRealTextureAtlas()) return;
+
   const int tilePx = m_atlasSize / m_atlasTiles;
   std::vector<unsigned char> pixels(m_atlasSize * m_atlasSize * 4, 0);
 
@@ -2437,6 +2477,16 @@ void MinecraftScene::InitVars() {
   dumpCfg.keepRunning        = g_config.flags.keepRunning;
   dumpCfg.replaySnapshotPath = g_config.replaySnapshotPath;
   dumpCfg.sceneIndex         = g_config.startScene;
+  // In benchmark mode with --benchmarkFinalFrameDump, capture one frame when
+  // the benchmark duration elapses, then exit. (DayScene has a dedicated
+  // final-frame capture path; other scenes reuse the FrameDumper timed dump.)
+  if (g_config.flags.benchmark && g_config.flags.benchmarkFinalFrameDump &&
+      g_config.benchmarkDurationSeconds > 0) {
+    dumpCfg.dumpEnabled = true;
+    dumpCfg.dumpByFrame = false;
+    dumpCfg.dumpSeconds = static_cast<float>(g_config.benchmarkDurationSeconds);
+    dumpCfg.keepRunning = false;
+  }
   m_dumper.Init(dumpCfg);
 }
 
@@ -2565,6 +2615,11 @@ void MinecraftScene::DestroyAssets() {
   PrimitiveMgr.DestroyPrimitives();
   if (pFramework && pFramework->pVideoDriver) {
     m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
+  }
+  if (m_atlasTexture) {
+    if (pFramework && pFramework->pVideoDriver) pFramework->pVideoDriver->WaitForGPU();
+    m_atlasTexture->release();
+    m_atlasTexture = nullptr;
   }
 }
 
@@ -2764,6 +2819,12 @@ void MinecraftScene::OnDraw() {
     }
   );
 
+  // Keep a private copy of the offscreen final image every frame so the
+  // benchmark dump can save it safely (see BlitOffscreenToCaptureRT).
+  if (pFramework->pVideoDriver->IsOffscreenEnabled()) {
+    BlitOffscreenToCaptureRT(pFramework->pVideoDriver);
+  }
+
   if (m_debugRTSelection > 0) {
     const auto& debugTarget = m_voxelSettings.debug_render_targets[m_debugRTSelection];
     const std::size_t separator = debugTarget.source.find(':');
@@ -2824,7 +2885,6 @@ void MinecraftScene::OnDraw() {
 #else
   drawNavMeshOverlay();
 #endif
-
   // Frame dump
   if (m_dumper.ShouldDump(DtSecs)) {
     std::vector<t850::RTDumpEntry> rts = {
@@ -2842,10 +2902,53 @@ void MinecraftScene::OnDraw() {
     };
     m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs,
                        nullptr, nullptr, nullptr);
+    // In offscreen mode the final image lands in the driver's offscreen RT,
+    // not the swapchain backbuffer (which stays black). Save the private
+    // per-frame copy (kept current by BlitOffscreenToCaptureRT above).
+    auto* driver = pFramework->pVideoDriver;
+    if (driver->IsOffscreenEnabled() && m_offscreenCaptureRT >= 0) {
+      driver->SaveRTToFile(m_offscreenCaptureRT, BaseDriver::COLOR0_ATTACHMENT, "offscreen_final");
+      T8_LOG_INFO("[Minecraft] Offscreen final frame captured from private RT %d -> offscreen_final.ppm",
+                  m_offscreenCaptureRT);
+    }
     if (m_dumper.ShouldExit()) exit(0);
   }
 
   // HUD text (drawn in DrawDevGui via ImGui so it scales with resolution)
+}
+
+// Offscreen benchmark capture: the swapchain backbuffer stays black in
+// offscreen mode, so the final image lives in the driver's offscreen RT.
+// Reading a just-completed offscreen RT directly can crash (shader-resource
+// state while the frame's command list is still open), so every frame we
+// blit the active offscreen RT into a private RT with a fullscreen quad
+// (safe: the RT is bound and its texture was already sampled this frame),
+// and the dump saves the private copy instead.
+void MinecraftScene::BlitOffscreenToCaptureRT(t850::BaseDriver* driver) {
+  const int srcRT = driver->GetActiveOffscreenRT();
+  if (srcRT < 0 || srcRT >= (int)driver->RTs.size() || !driver->RTs[srcRT])
+    return;
+
+  auto* src = static_cast<BaseRT*>(driver->RTs[srcRT]);
+  if (m_offscreenCaptureRT < 0) {
+    m_offscreenCaptureRT = driver->CreateRT(1, BaseRT::RGBA8, BaseRT::F32, src->w, src->h, false);
+  }
+  if (m_offscreenCaptureRT < 0 || m_offscreenCaptureRT >= (int)driver->RTs.size() ||
+      !driver->RTs[m_offscreenCaptureRT])
+    return;
+
+  driver->PushRT(m_offscreenCaptureRT);
+  driver->SetViewport(0.0f, 0.0f, (float)src->w, (float)src->h);
+  driver->SetScissorRect(0, 0, src->w, src->h);
+  driver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+  driver->SetDepthStencilState(BaseDriver::NONE);
+
+  Quads[8].SetTexture(driver->GetRTTexture(srcRT, BaseDriver::COLOR0_ATTACHMENT), 0);
+  ShaderKey debugKey(0);
+  debugKey.setPass(PassType::FSQUAD_1_TEX);
+  debugKey.bits |= ShaderKey::HAS_TEXCOORD0;
+  Quads[8].SetGlobalKey(debugKey);
+  Quads[8].Draw();
 }
 
 void MinecraftScene::DrawCascadeLightBounds() {

@@ -1051,8 +1051,8 @@ float ImGuiConsumeWheelDelta() {
 
 // ── File dialog (Win32) ───────────────────────────────
 #ifdef OS_WINDOWS
-#include <commdlg.h>
 #include <windows.h>
+#include <commdlg.h>
 #endif
 
 std::string OpenFileDialog(const wchar_t* filter, const wchar_t* title,

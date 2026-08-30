@@ -1,6 +1,6 @@
 # Debug and Diagnostics
 
-Status: verified against source on 2026-08-19.
+Status: verified against source and four profiler-backend runtime tests on 2026-08-30.
 
 For native Windows assertions, exception stacks, and dump analysis, use the
 [CDB crash-debugging skill](../../.github/skills/t850-crash-debugging/SKILL.md).
@@ -59,7 +59,8 @@ flowchart LR
 | `Framework/include/debug/FrameDumper.h` / `Framework/src/debug/FrameDumper.cpp` | Render-target dump, snapshot capture, snapshot replay, frame-dump triggers. |
 | `Framework/src/debug/FrameDumperIO.cpp` | Glaze JSON snapshot load/save plus legacy text snapshot parser. |
 | `Framework/include/debug/RenderTrace.h` / `Framework/src/debug/RenderTrace.cpp` | Optional compile-time render event/resource tracer, guarded by `T850_RENDER_TRACE`. |
-| `Framework/include/debug/Profiler.h` / `Framework/src/debug/Profiler.cpp` | CPU/GPU scope profiler and draw-call counting. |
+| `Framework/include/debug/Profiler.h` / `Framework/src/debug/Profiler.cpp` | API-neutral CPU timing, scope accounting, draw-call counting, and reporting. |
+| `Framework/src/debug/ProfilerGpuBackend.cpp` | D3D11, D3D12, OpenGL, and Vulkan timestamp-query strategies selected by one factory. |
 | `DayScene/Application.cpp` | Runtime frame lifecycle, render tracer init, telemetry frame boundaries, profiler frame boundaries. |
 | `T8ditor/EditorApp.cpp` | Loading progress console/render frame, editor frame dumps, hosted window diagnostics. |
 | `FrameworkImGui/src/ImGuiSystem.cpp` | Installs `LoadingProgress` frame callback and renders loading frames. |
@@ -226,7 +227,7 @@ Runtime initialization happens through `EnsureRenderTracer()` in the app draw pa
 
 ## Profiler
 
-`Profiler` measures named CPU/GPU scopes and draw-call counts.
+`Profiler` measures named CPU/GPU scopes and draw-call counts. It contains no graphics-API dispatch: `CreateProfilerGpuBackend()` selects one `ProfilerGpuBackend`, which owns API-specific query resources and operations.
 
 Enablement:
 
@@ -238,7 +239,7 @@ Key APIs:
 
 | API | Meaning |
 |---|---|
-| `Init(driver, maxScopes)` | Creates API-specific GPU timestamp backend. |
+| `Init(driver, maxScopes)` | Creates the matching GPU strategy; CPU-only profiling remains available if no strategy is supported. |
 | `BeginFrame()` / `EndFrame()` | Frame profiler boundary. |
 | `BeginScope()` / `EndScope()` | CPU + GPU scoped timing. |
 | `BeginCPUScope()` / `EndCPUScope()` | CPU-only scoped timing. |
@@ -246,12 +247,14 @@ Key APIs:
 | `Report()` | Logs timing breakdown. |
 | `Reset()` | Clears accumulated results. |
 
-Backends:
+Backend strategies:
 
 - D3D12 timestamp query heap + readback buffer.
 - D3D11 timestamp/disjoint queries.
 - OpenGL timestamp queries.
-- Vulkan query pool/readback allocation with deferred reset support.
+- Vulkan query pool with deferred command-buffer reset support.
+
+Each strategy owns initialization, query begin/end, frame mapping, result resolution, and destruction. Typed D3D/Vulkan casts are confined to the matching strategy implementation. Adding an API requires a new strategy and one factory entry, not branches throughout `Profiler`.
 
 Macros:
 
@@ -349,7 +352,7 @@ When adding a new diagnostic:
 - Replay snapshots are not full scene serialization; they restore render/camera/light/props state for reproducibility, not arbitrary gameplay state.
 - RenderTrace only exists in trace-enabled builds.
 - RenderTrace schema intentionally writes many sentinel/default fields for mechanical diffability.
-- GPU profiler results are asynchronous and may represent earlier frames depending on backend.
+- GPU profiler results are asynchronous and may represent earlier frames depending on backend (three-frame rings for D3D12/Vulkan; alternating query sets for D3D11/OpenGL).
 - Some diagnostics are runtime-only or editor-only depending on call sites.
 
 ## Debugging checklist
@@ -361,5 +364,5 @@ When adding a new diagnostic:
 5. For frame dumps, check `FrameDumperConfig`, dump trigger, `keepRunning`, and RT dump entry list.
 6. For replay, verify `snapshot.json` parsed and warmup completed.
 7. For render trace, ensure `g_renderTracer` is initialized and `FrameDumper` saved trace output.
-8. For profiler, check driver API support and that `BeginFrame()` / `EndFrame()` bracket the frame.
+8. For profiler, check the `Profiler initialized (API=..., GPU=...)` log and that `BeginFrame()` / `EndFrame()` bracket the frame.
 9. For cross-API mismatches, compare render target outputs first, then shader/PSO/resource/draw snapshots.

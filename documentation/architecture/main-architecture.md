@@ -1,6 +1,6 @@
 # Main Architecture
 
-Status: verified against source on 2026-08-19.
+Status: verified against source on 2026-08-30.
 
 This document describes the top-level architecture of T850: the Framework layer, scene applications, editor application, dev layer, and shared runtime context. It focuses on ownership and lifecycle rather than subsystem internals.
 

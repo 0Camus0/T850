@@ -1,6 +1,6 @@
 # T850 Engine Documentation
 
-Status: index verified on 2026-08-19.
+Status: index verified on 2026-08-30.
 
 This tree documents the current T850 rendering/game engine, runtime hosts, editor, build/deploy workflows, diagnostics, and acceptance gates. Superseded documents are removed and remain available through Git history.
 
@@ -31,9 +31,9 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Windows setup/build/run/release packaging | [development/windows-build-and-run.md](development/windows-build-and-run.md) | Verified 2026-08-19 |
 | Runtime JSON and CLI | [development/runtime-configuration.md](development/runtime-configuration.md) | Verified 2026-08-19 |
 | Cloud models/textures | [development/cloud-assets.md](development/cloud-assets.md) | Verified 2026-08-19 |
-| Verification, CI, self-tests, smoke gates | [testing/verification.md](testing/verification.md) | Verified 2026-08-19 |
+| Verification, CI, self-tests, smoke gates | [testing/verification.md](testing/verification.md) | Verified 2026-08-30 |
 | Raw dumps and visual baselines | [debug/visual-regression.md](debug/visual-regression.md) | Verified 2026-08-19 |
-| Android | [platform/android.md](platform/android.md) | Verified 2026-08-19 |
+| Android | [platform/android.md](platform/android.md) | Verified 2026-08-30 |
 | Steam Deck | [platform/steam-deck.md](platform/steam-deck.md) | Verified 2026-08-19 |
 | Runtime host selection | [runtime/runtime-hosts.md](runtime/runtime-hosts.md) | Verified 2026-08-19 |
 
@@ -41,13 +41,13 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 
 | Area | Document | Status |
 |---|---|---|
-| Main architecture and ownership | [architecture/main-architecture.md](architecture/main-architecture.md) | Verified 2026-08-19 |
+| Main architecture and ownership | [architecture/main-architecture.md](architecture/main-architecture.md) | Verified 2026-08-30 |
 | Platform event loops/windows | [architecture/platform-event-loop.md](architecture/platform-event-loop.md) | Verified 2026-08-19 |
 | Resource lookup/cache paths | [architecture/resource-locator.md](architecture/resource-locator.md) | Verified 2026-08-19 |
 | Input/controllers/camera profiles | [input/camera-and-controls.md](input/camera-and-controls.md) | Verified 2026-08-19 |
-| FrameworkImGui/runtime UI | [editor/imgui-system.md](editor/imgui-system.md) | Verified 2026-08-19 |
-| Diagnostics/telemetry/profiler/dumps | [debug/diagnostics.md](debug/diagnostics.md) | Verified 2026-08-19 |
-| Cross-system dependencies | [dependency-map.md](dependency-map.md) | Verified 2026-08-19 |
+| FrameworkImGui/runtime UI | [editor/imgui-system.md](editor/imgui-system.md) | Verified 2026-08-30 |
+| Diagnostics/telemetry/profiler/dumps | [debug/diagnostics.md](debug/diagnostics.md) | Verified 2026-08-30 |
+| Cross-system dependencies | [dependency-map.md](dependency-map.md) | Verified 2026-08-30 |
 
 ## Rendering and Assets
 
@@ -57,7 +57,7 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Shader keys/cache/reflection/PSOs | [rendering/shader-management.md](rendering/shader-management.md) | Verified 2026-08-19 |
 | JSON render graph | [rendering/render-graph.md](rendering/render-graph.md) | Verified 2026-08-19 |
 | Mesh draw path/state tracking | [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md) | Verified 2026-08-19 |
-| Textures/samplers/IBL/material slots | [rendering/textures-and-ibl.md](rendering/textures-and-ibl.md) | Verified 2026-08-19 |
+| Textures/samplers/IBL/material slots | [rendering/textures-and-ibl.md](rendering/textures-and-ibl.md) | Verified 2026-08-30 |
 | Animation/skinning/bone textures | [animation/animation-system.md](animation/animation-system.md) | Verified 2026-08-19 |
 
 ## Simulation, Gameplay, Editor, and Scenes
@@ -67,10 +67,10 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Jolt physics/gameplay layers/ragdolls | [physics/jolt-physics.md](physics/jolt-physics.md) | Verified 2026-08-19 |
 | Recast/Detour/game navigation | [navigation/navmesh-detour.md](navigation/navmesh-detour.md) | Verified 2026-08-19 |
 | Game entities/components/control/events | [game/game-entity-system-spec.md](game/game-entity-system-spec.md) | Implemented v1, verified 2026-08-19 |
-| Mutable voxel terrain/chunk streaming | [terrain/voxel-terrain.md](terrain/voxel-terrain.md) | Implemented reference, verified 2026-08-19 |
+| Mutable voxel terrain/chunk streaming | [terrain/voxel-terrain.md](terrain/voxel-terrain.md) | Implemented reference, verified 2026-08-30 |
 | P0-P14 maintenance contracts | [game/game-entity-system-implementation-prompts.md](game/game-entity-system-implementation-prompts.md) | Executed; reference only |
 | T8ditor | [editor/editor-overview.md](editor/editor-overview.md) | Verified 2026-08-19 |
-| `.t8scene` and runtime loading | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Verified 2026-08-19 |
+| `.t8scene` and runtime loading | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Verified 2026-08-30 |
 | SceneDescriptor/SceneSetup | [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md) | Verified 2026-08-19 |
 
 ## Governance
@@ -78,8 +78,6 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Document | Purpose |
 |---|---|
 | [current-status-and-roadmap.md](current-status-and-roadmap.md) | implemented state, verification evidence, open work |
-| [review-and-gaps.md](review-and-gaps.md) | current known gaps and troubleshooting routes |
-| [stage-plan.md](stage-plan.md) | ongoing documentation maintenance plan |
 | [doc-conventions.md](doc-conventions.md) | writing/freshness requirements |
 | [glossary.md](glossary.md) | engine terminology |
 
@@ -107,4 +105,4 @@ A current guide must state:
 - what is implemented versus optional/planned;
 - related documents.
 
-See [Documentation conventions](doc-conventions.md) and [Documentation maintenance plan](stage-plan.md).
+See [Documentation conventions](doc-conventions.md). Current implementation, verified gates, and remaining work are maintained in [Current status](current-status-and-roadmap.md).

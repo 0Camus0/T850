@@ -1,6 +1,6 @@
 # Mutable Voxel Terrain and Streaming
 
-Status: implemented and verified against source, tests, CDB runs, and four-backend captures on 2026-08-19.
+Status: implemented and verified against source, 41 self-tests, and four-backend captures on 2026-08-30.
 
 This subsystem provides backend-neutral mutable geometry, voxel chunks, atlas-aware greedy meshing, bounded asynchronous streaming, voxel selection/player collision, per-chunk Jolt collision, and sparse persistent edits. `VoxelScene` is the executable reference integration.
 
@@ -17,7 +17,9 @@ This subsystem provides backend-neutral mutable geometry, voxel chunks, atlas-aw
 | greedy meshing | `Framework/include/terrain/VoxelMesher.h`, `src/terrain/VoxelMesher.cpp` |
 | streaming scheduler | `Framework/include/terrain/VoxelStreaming.h`, `src/terrain/VoxelStreaming.cpp` |
 | persisted edits | `Framework/include/terrain/VoxelPersistence.h`, `src/terrain/VoxelPersistence.cpp` |
+| general atlas asset | `Framework/include/video/TextureAtlas.h`, `src/video/TextureAtlas.cpp` |
 | reference runtime | `DayScene/VoxelScene.h`, `DayScene/VoxelScene.cpp` |
+| authored block-world runtime | `DayScene/MinecraftScene.h`, `DayScene/MinecraftScene.cpp`, `Assets/Scenes/Minecraft.t8scene` |
 | crash handling | `Framework/include/debug/CrashDiagnostics.h`, `src/debug/CrashDiagnostics.cpp` |
 
 Every Framework source is registered in MSBuild, filters, and CMake.
@@ -99,7 +101,9 @@ It reuses existing mesh shader permutations for:
 - radial depth;
 - optional base-color texture.
 
-The primitive performs AABB frustum culling and honors material alpha/double-sided state. Base-color textures use the established `DiffuseTex` binding. The reference scene creates one shared 6x2 RGBA atlas in memory, assigns one 2x2 nearest-filtered tile to stone, dirt, and grass, and binds it through `PrimitiveInst::SetTexture(0)`.
+The primitive performs AABB frustum culling and honors material alpha/double-sided state. Base-color textures use the established `DiffuseTex` binding. The generic VoxelScene creates a small generated atlas for its reference blocks. Minecraft loads `terrain.png` through the Framework `TextureAtlas`, receives a managed texture ID, validates every authored face tile, and acquires immutable material variants for atlas-bound mob/weapon materials.
+
+Minecraft authors `atlas_tile_px: 16` and `atlas_pixelation_factor: 2`. Its water block maps all faces to the first translucent blue water frame at grid tile `(13,12)`. This is a static visual tile; animated water frames and fluid simulation are separate future features.
 
 ### Backend Behavior
 
@@ -207,7 +211,7 @@ Do not rebuild the current whole-world Recast mesh after every block edit. Prefe
 
 ## Diagnostics and Gates
 
-Self-tests currently include:
+The 41-test suite currently includes:
 
 - stable gameplay owner pointers;
 - stale physics-handle rejection and slot reuse;
@@ -219,6 +223,8 @@ Self-tests currently include:
 - negative coordinates and DDA;
 - asynchronous streaming budgets/unloads;
 - atomic delta round trip.
+- rectangular atlas bounds/half-texel UVs;
+- immutable material texture variants.
 
 Focused visual gate:
 
@@ -232,14 +238,14 @@ Focused visual gate:
   -Force -ContinueOnError
 ```
 
-Verified 2026-08-19: four captures, zero engine errors, zero invalid captures. D3D11/D3D12 backbuffers were byte-identical; Vulkan differed only slightly. A retained-target probe proved D3D11/OpenGL GBuffer albedo byte-identical and normals nearly identical. The darker OpenGL final image begins in deferred lighting, not mutable geometry or atlas sampling.
+Verified 2026-08-30: Minecraft frame 61 captured on D3D11, D3D12, Vulkan, and OpenGL with zero engine errors. The atlas redesign and graphics-backend polymorphism refactor preserve the accepted D3D12 output exactly across all 12 dumped targets; cross-API variance remains unchanged.
 
 For native crashes use [CDB crash debugging](../../.github/skills/t850-crash-debugging/SKILL.md). Debug entry points suppress CRT assertion dialogs and break directly into CDB.
 
 ## Current Limits
 
-- reference atlas is generated in memory; production atlas assets, named tile metadata, mip-safe padding, cutout foliage, and transparent reference blocks are not implemented;
-- no sunlight propagation, emissive block lighting, ambient occlusion, water, or transparent sorting policy beyond material sections;
+- generic VoxelScene uses a generated atlas; Minecraft has a production file-backed grid atlas, but named region descriptors and mip-safe edge extrusion are not implemented;
+- Minecraft has a static translucent blue water tile, but no fluid simulation/animation; sunlight propagation, emissive block lighting, voxel ambient occlusion, and a general transparent sorting policy are not implemented;
 - no LOD, occlusion culling, indirect draw, or device-local streaming uploads;
 - no inventory, crafting, drops, block scripts, or multiplayer;
 - no T8ditor voxel authoring tools;
@@ -247,7 +253,7 @@ For native crashes use [CDB crash debugging](../../.github/skills/t850-crash-deb
 - block IDs are registration-order IDs rather than a persisted named palette;
 - edit remeshing currently rebuilds every loaded chunk synchronously;
 - chunk triangle-body cooking and replacement currently run synchronously on the owning thread;
-- Android and Steam Deck runtime performance remain unverified on equipped hardware.
+- Android/Steam Deck builds pass; runtime performance remains unverified on equipped devices.
 
 These are follow-up features, not prerequisites for the current finite streamed block-world reference.
 

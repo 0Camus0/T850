@@ -152,6 +152,7 @@
       "async_streaming": true,
       "atlas_texture": "terrain.png",
       "atlas_tile_px": 16,
+      "atlas_pixelation_factor": 2,
       "atlas_size": 256,
       "atlas_tiles_per_axis": 16,
       "navmesh_rebuild_seconds": 0.5,

@@ -16,7 +16,7 @@
 #include <scene/MeshAssetCache.h>
 #include <scene/IBLResources.h>
 #include <scene/ShadowSystem.h>
-#include <terrain/VoxelAtlas.h>
+#include <video/TextureAtlas.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
 #include <physics/CharacterController.h>
@@ -151,11 +151,10 @@ namespace {
   // Half-texel inset: with NEAREST sampling this keeps face UVs strictly
   // inside their tile, so atlas bleed is impossible even if a backend
   // rounds a coordinate onto the tile boundary.
-  UVQuad TileUV(int tileU, int tileV, int atlasTiles) {
-    const float inv = 1.0f / (float)atlasTiles;
-    const float inset = 0.5f * inv / 16.0f;
-    return { tileU * inv + inset, tileV * inv + inset,
-             (tileU + 1) * inv - inset, (tileV + 1) * inv - inset };
+  UVQuad TileUV(const t850::TextureAtlas& atlas, int tileU, int tileV) {
+    t850::TextureAtlasRegion region;
+    if (!atlas.TryGetGridRegion(tileU, tileV, region)) return {};
+    return { region.u0, region.v0, region.u1, region.v1 };
   }
 
 } // namespace
@@ -180,6 +179,8 @@ bool MinecraftScene::LoadAuthoredScene() {
       m_voxelSettings.water_level < 1 || m_voxelSettings.water_level >= m_voxelSettings.world_height - 1 ||
       m_voxelSettings.atlas_size < 16 || m_voxelSettings.atlas_tiles_per_axis < 1 ||
       m_voxelSettings.atlas_size % m_voxelSettings.atlas_tiles_per_axis != 0 ||
+      m_voxelSettings.atlas_tile_px < 1 || m_voxelSettings.atlas_pixelation_factor < 1 ||
+      m_voxelSettings.atlas_pixelation_factor > 16 ||
       m_voxelSettings.cascade_debug_colors.size() != 6 ||
       m_voxelSettings.debug_render_targets.empty() ||
       !m_voxelSettings.debug_render_targets[0].source.empty() ||
@@ -223,7 +224,8 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_atlasSize = m_voxelSettings.atlas_size;
   m_atlasTiles = m_voxelSettings.atlas_tiles_per_axis;
   m_atlasTexturePath = m_voxelSettings.atlas_texture;
-  m_atlasTilePx = (std::max)(1, m_voxelSettings.atlas_tile_px);
+  m_atlasTilePx = m_voxelSettings.atlas_tile_px;
+  m_atlasPixelationFactor = m_voxelSettings.atlas_pixelation_factor;
   m_currentCubemapPath = m_voxelSettings.environment_map;
   m_showPhysics = m_voxelSettings.show_physics;
   m_showChunkBounds = m_voxelSettings.show_chunk_bounds;
@@ -925,7 +927,7 @@ void MinecraftScene::CreateMobMesh() {
     };
     auto faceUV = [&](int face) {
       const BlockTile& tile = def.tiles[face];
-      return TileUV(tile.u, tile.v, m_atlasTiles);
+      return TileUV(m_textureAtlas, tile.u, tile.v);
     };
     { UVQuad uv = faceUV(0); AddQuad(geom, c[1], c[5], c[6], c[2], XVECTOR3(1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
     { UVQuad uv = faceUV(1); AddQuad(geom, c[4], c[0], c[3], c[7], XVECTOR3(-1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
@@ -1004,8 +1006,10 @@ void MinecraftScene::CreateMobMesh() {
       subsetInfo.DiffuseTex = m_atlasTexture;
       subsetInfo.DiffuseId = m_atlasTexIndex;
       if (subsetInfo.matAsset) {
-        subsetInfo.matAsset->textures[(int)MatTexSlot::BaseColor] = m_atlasTexture;
-        subsetInfo.matAsset->textureIds[(int)MatTexSlot::BaseColor] = m_atlasTexIndex;
+        MaterialAsset* previous = subsetInfo.matAsset;
+        subsetInfo.matAsset = MaterialAssetCache::Get().AcquireTextureVariant(
+          *previous, MatTexSlot::BaseColor, m_atlasTexture, m_atlasTexIndex);
+        MaterialAssetCache::Get().Release(previous);
       }
     }
   }
@@ -1043,7 +1047,7 @@ void MinecraftScene::CreateWeaponMesh() {
     };
     auto faceUV = [&](int face) {
       const BlockTile& tile = def.tiles[face];
-      return TileUV(tile.u, tile.v, m_atlasTiles);
+      return TileUV(m_textureAtlas, tile.u, tile.v);
     };
     // +X
     { UVQuad uv = faceUV(0); AddQuad(geom, c[1], c[5], c[6], c[2], XVECTOR3(1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
@@ -1128,8 +1132,10 @@ void MinecraftScene::CreateWeaponMesh() {
       subsetInfo.DiffuseTex = m_atlasTexture;
       subsetInfo.DiffuseId = m_atlasTexIndex;
       if (subsetInfo.matAsset) {
-        subsetInfo.matAsset->textures[(int)MatTexSlot::BaseColor] = m_atlasTexture;
-        subsetInfo.matAsset->textureIds[(int)MatTexSlot::BaseColor] = m_atlasTexIndex;
+        MaterialAsset* previous = subsetInfo.matAsset;
+        subsetInfo.matAsset = MaterialAssetCache::Get().AcquireTextureVariant(
+          *previous, MatTexSlot::BaseColor, m_atlasTexture, m_atlasTexIndex);
+        MaterialAssetCache::Get().Release(previous);
       }
     }
   }
@@ -1245,7 +1251,7 @@ void MinecraftScene::AddQuad(xF::xMeshGeometry& geom,
 void MinecraftScene::AddFace(xF::xMeshGeometry& geom, int x, int y, int z, int face, uint8_t block) {
   const BlockDef& def = m_blockDefs[block];
   const BlockTile& tile = def.tiles[face];
-  const UVQuad uv = TileUV(tile.u, tile.v, m_atlasTiles);
+  const UVQuad uv = TileUV(m_textureAtlas, tile.u, tile.v);
   const FaceDef& f = kFaces[face];
 
   XVECTOR3 corners[4];
@@ -1925,39 +1931,64 @@ void MinecraftScene::CancelPendingChunk(int cx, int cz) {
 bool MinecraftScene::BuildRealTextureAtlas() {
   const t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
-  if (!engineContext || !engineContext->device) return false;
+  if (!engineContext || !engineContext->driver) return false;
 
-  const t850::terrain::VoxelAtlas atlas = t850::terrain::LoadVoxelAtlas(
-    engineContext->device, m_atlasTexturePath, m_atlasTilePx);
+  t850::TextureAtlasDesc desc;
+  desc.texturePath = m_atlasTexturePath;
+  desc.tileWidthPx = m_atlasTilePx;
+  desc.tileHeightPx = m_atlasTilePx;
+  desc.pixelationFactor = m_atlasPixelationFactor;
+  std::string error;
+  t850::TextureAtlas atlas = t850::LoadTextureAtlas(engineContext->driver, desc, &error);
   if (!atlas.IsValid()) {
-    T8_LOG_ERROR("[Minecraft] Could not load atlas texture '%s'; using solid-color fallback",
-                 m_atlasTexturePath.c_str());
+    T8_LOG_ERROR("[Minecraft] Could not load atlas texture '%s': %s; using procedural fallback",
+                 m_atlasTexturePath.c_str(), error.c_str());
     return false;
   }
 
-  m_atlasTexture = atlas.texture;
-  m_atlasTexIndex = 0; // not a driver-managed index; used as a marker
-  m_atlasSize = atlas.widthPx;
-  m_atlasTiles = atlas.tilesPerAxisX;
-  if (atlas.tilesPerAxisX != atlas.tilesPerAxisY) {
-    T8_LOG_ERROR("[Minecraft] Atlas '%s' is not a square tile grid (%dx%d tiles); "
-                 "using %d tiles per axis",
-                 m_atlasTexturePath.c_str(), atlas.tilesPerAxisX, atlas.tilesPerAxisY,
-                 atlas.tilesPerAxisX);
-  }
-  return true;
+  m_textureAtlas = std::move(atlas);
+  m_atlasTexIndex = m_textureAtlas.textureId;
+  m_atlasTexture = engineContext->driver->GetTexture(m_atlasTexIndex);
+  m_atlasSize = m_textureAtlas.widthPx;
+  m_atlasTiles = m_textureAtlas.columns;
+  return m_atlasTexture != nullptr;
 }
 
-void MinecraftScene::BuildTextureAtlas() {
-  if (!m_atlasTexturePath.empty() && BuildRealTextureAtlas()) return;
+bool MinecraftScene::BuildTextureAtlas() {
+  if (!m_atlasTexturePath.empty() && BuildRealTextureAtlas()) {
+    for (const BlockDef& block : m_blockDefs) {
+      for (const BlockTile& tile : block.tiles) {
+        t850::TextureAtlasRegion region;
+        if (!m_textureAtlas.TryGetGridRegion(tile.u, tile.v, region)) {
+          T8_LOG_ERROR("[Minecraft] Block '%s' references atlas tile (%d,%d) outside %dx%d grid",
+                       block.name.c_str(), tile.u, tile.v,
+                       m_textureAtlas.columns, m_textureAtlas.rows);
+          return false;
+        }
+      }
+    }
+    return true;
+  }
 
+  if (m_atlasTiles <= 0 || m_atlasSize <= 0 || m_atlasSize % m_atlasTiles != 0) {
+    T8_LOG_ERROR("[Minecraft] Invalid procedural atlas layout size=%d tiles=%d",
+                 m_atlasSize, m_atlasTiles);
+    return false;
+  }
   const int tilePx = m_atlasSize / m_atlasTiles;
+  for (const BlockDef& block : m_blockDefs) {
+    for (const BlockTile& tile : block.tiles) {
+      if (tile.u < 0 || tile.u >= m_atlasTiles || tile.v < 0 || tile.v >= m_atlasTiles) {
+        T8_LOG_ERROR("[Minecraft] Block '%s' references fallback atlas tile (%d,%d) outside %dx%d grid",
+                     block.name.c_str(), tile.u, tile.v, m_atlasTiles, m_atlasTiles);
+        return false;
+      }
+    }
+  }
   std::vector<unsigned char> pixels(m_atlasSize * m_atlasSize * 4, 0);
 
   for (const BlockDef& block : m_blockDefs) {
     for (const BlockTile& tile : block.tiles) {
-      if (tile.u < 0 || tile.u >= m_atlasTiles || tile.v < 0 || tile.v >= m_atlasTiles)
-        continue;
       const int px0 = tile.u * tilePx;
       const int py0 = tile.v * tilePx;
       for (int y = 0; y < tilePx; ++y) {
@@ -1972,15 +2003,23 @@ void MinecraftScene::BuildTextureAtlas() {
     }
   }
 
-  // Create the texture via the device
+  // Register the fallback through the same Framework ownership path.
   const t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
-  if (engineContext && engineContext->device) {
-    m_atlasTexture = engineContext->device->CreateTextureFromMemory(
-      pixels.data(), m_atlasSize, m_atlasSize, 4, "minecraft_atlas");
-    m_atlasTexIndex = 0; // not a driver-managed index; used as a marker
-    T8_LOG_INFO("[Minecraft] Built texture atlas %dx%d", m_atlasSize, m_atlasSize);
+  if (!engineContext || !engineContext->driver) return false;
+
+  std::string error;
+  m_textureAtlas = t850::CreateTextureAtlas(
+    engineContext->driver, "minecraft_procedural", pixels.data(),
+    m_atlasSize, m_atlasSize, tilePx, tilePx, 0, &error);
+  if (!m_textureAtlas.IsValid()) {
+    T8_LOG_ERROR("[Minecraft] Could not create procedural atlas: %s", error.c_str());
+    return false;
   }
+  m_atlasTexIndex = m_textureAtlas.textureId;
+  m_atlasTexture = engineContext->driver->GetTexture(m_atlasTexIndex);
+  T8_LOG_INFO("[Minecraft] Built procedural texture atlas %dx%d", m_atlasSize, m_atlasSize);
+  return m_atlasTexture != nullptr;
 }
 
 // ── Player ───────────────────────────────────────────────────────────
@@ -2560,7 +2599,10 @@ void MinecraftScene::CreateAssets() {
   m_navMeshDebugRenderer.Create();
 
   // Build the texture atlas
-  BuildTextureAtlas();
+  if (!BuildTextureAtlas()) {
+    T8_LOG_ERROR("[Minecraft] Texture atlas creation failed");
+    return;
+  }
 
   // Generate the world and build chunk meshes
   GenerateWorld();
@@ -2616,11 +2658,9 @@ void MinecraftScene::DestroyAssets() {
   if (pFramework && pFramework->pVideoDriver) {
     m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
   }
-  if (m_atlasTexture) {
-    if (pFramework && pFramework->pVideoDriver) pFramework->pVideoDriver->WaitForGPU();
-    m_atlasTexture->release();
-    m_atlasTexture = nullptr;
-  }
+  m_atlasTexture = nullptr;
+  m_atlasTexIndex = -1;
+  m_textureAtlas = {};
 }
 
 void MinecraftScene::OnUpdate(float _DtSecs) {

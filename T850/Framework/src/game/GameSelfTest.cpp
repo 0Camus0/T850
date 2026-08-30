@@ -14,6 +14,7 @@
 #include <scene/EditorSceneFile.h>
 #include <scene/MutableMeshData.h>
 #include <scene/RenderContainer.h>
+#include <scene/MaterialAsset.h>
 #include <terrain/BlockRegistry.h>
 #include <terrain/VoxelChunk.h>
 #include <terrain/VoxelMesher.h>
@@ -21,6 +22,7 @@
 #include <terrain/VoxelStreaming.h>
 #include <terrain/VoxelPersistence.h>
 #include <utils/ThreadPool.h>
+#include <video/TextureAtlas.h>
 
 #include <filesystem>
 #include <fstream>
@@ -905,6 +907,49 @@ void TestRenderContainerStableHandles() {
   Require(!container.RemoveMesh(first), "stale render handle removed a replacement instance");
 }
 
+  void TestTextureAtlasGridRegions() {
+    TextureAtlas atlas;
+    atlas.textureId = 7;
+    atlas.widthPx = 64;
+    atlas.heightPx = 32;
+    atlas.tileWidthPx = 16;
+    atlas.tileHeightPx = 8;
+    atlas.columns = 4;
+    atlas.rows = 4;
+
+    TextureAtlasRegion region;
+    Require(atlas.TryGetGridRegion(2, 1, region), "atlas rejected a valid grid region");
+    Require(region.xPx == 32 && region.yPx == 8 && region.widthPx == 16 && region.heightPx == 8,
+      "atlas returned incorrect pixel bounds");
+    Require(std::abs(region.u0 - (32.5f / 64.0f)) < 0.000001f &&
+      std::abs(region.v0 - (8.5f / 32.0f)) < 0.000001f &&
+      std::abs(region.u1 - (47.5f / 64.0f)) < 0.000001f &&
+      std::abs(region.v1 - (15.5f / 32.0f)) < 0.000001f,
+      "atlas half-texel UVs were incorrect");
+    Require(!atlas.TryGetGridRegion(4, 1, region) && !atlas.TryGetGridRegion(2, 4, region),
+      "atlas accepted an out-of-range grid region");
+  }
+
+  void TestMaterialTextureVariantIsImmutable() {
+    MaterialAsset base;
+    base.name = "selftest_material";
+    base.textureIds[(int)MatTexSlot::BaseColor] = 3;
+    base.textures[(int)MatTexSlot::BaseColor] = reinterpret_cast<Texture*>(1);
+    MaterialAsset* cachedBase = MaterialAssetCache::Get().Acquire(base);
+    MaterialAsset* variant = MaterialAssetCache::Get().AcquireTextureVariant(
+      *cachedBase, MatTexSlot::BaseColor, reinterpret_cast<Texture*>(2), 9);
+
+    Require(cachedBase->textureIds[(int)MatTexSlot::BaseColor] == 3 &&
+      cachedBase->textures[(int)MatTexSlot::BaseColor] == reinterpret_cast<Texture*>(1),
+      "material texture variant mutated the cached base asset");
+    Require(variant != cachedBase && variant->textureIds[(int)MatTexSlot::BaseColor] == 9 &&
+      variant->textures[(int)MatTexSlot::BaseColor] == reinterpret_cast<Texture*>(2),
+      "material texture variant did not contain the requested binding");
+
+    MaterialAssetCache::Get().Release(variant);
+    MaterialAssetCache::Get().Release(cachedBase);
+  }
+
 terrain::BlockId RegisterTestStone(terrain::BlockRegistry& registry) {
   terrain::BlockDefinition stone;
   stone.name = "test_stone";
@@ -1100,6 +1145,8 @@ constexpr TestCase kTests[] = {
     {"T-MESH-01", TestMutableMeshValidationAndBounds},
     {"T-MESH-02", TestMutableMeshSectionValidation},
     {"T-MESH-03", TestRenderContainerStableHandles},
+    {"T-ATLAS-01", TestTextureAtlasGridRegions},
+    {"T-MAT-01", TestMaterialTextureVariantIsImmutable},
     {"T-VOXEL-01", TestVoxelChunkMutation},
     {"T-VOXEL-02", TestGreedyVoxelMesher},
     {"T-VOXEL-03", TestVoxelMesherUsesNeighborBoundary},

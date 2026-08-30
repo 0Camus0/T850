@@ -184,6 +184,14 @@ struct EngineContext {
 
 `RefreshEngineContextFromGlobals()` pulls current globals (`g_pBaseDriver`, `T8Device`, `T8DeviceContext`, `g_threadPool`, `g_config`) into `EngineContext`. This is called after graphics API creation. It lets subsystems avoid passing the driver/device/thread pool through every call.
 
+### Managed textures and atlases
+
+`BaseDriver` owns file-backed and memory-backed GPU textures in the same registry. `CreateTextureFromMemory(key, ...)` assigns a stable texture ID, deduplicates by the caller's content key, and releases the texture with the rest of the driver resources. Scenes must not release a managed texture directly.
+
+`TextureAtlas` in `Framework/include/video/TextureAtlas.h` is immutable metadata over one managed texture ID. It validates exact tile divisibility, supports rectangular images and tiles, and computes half-texel-inset UV regions from pixel dimensions. File loading preserves source resolution by default; `TextureAtlasDesc::pixelationFactor` is an explicit opt-in for pixel-art downsampling followed by nearest expansion.
+
+Materials that need a different texture use `MaterialAssetCache::AcquireTextureVariant()` before drawing. Cached `MaterialAsset` objects are immutable after acquisition; changing their texture pointers or IDs in place invalidates content hashing and deduplication.
+
 ## Application startup flow
 
 Runtime and editor entry points are similar:

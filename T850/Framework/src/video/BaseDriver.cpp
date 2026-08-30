@@ -753,6 +753,45 @@ namespace t850 {
     T8_TRACE_REGISTER_TEXTURE(pTex, "tex2d");
     return retIdx;
   }
+
+  int BaseDriver::CreateTextureFromMemory(const std::string& key, const unsigned char* data,
+                                          int width, int height, int channels)
+  {
+    if (key.empty() || !data || width <= 0 || height <= 0 || channels <= 0) {
+      T8_LOG_ERROR("CreateTextureFromMemory: invalid request key='%s' size=%dx%d channels=%d",
+                   key.c_str(), width, height, channels);
+      return -1;
+    }
+
+    int firstFreeSlot = -1;
+    for (unsigned int i = 0; i < Textures.size(); ++i) {
+      if (!Textures[i]) {
+        if (firstFreeSlot < 0) firstFreeSlot = static_cast<int>(i);
+        continue;
+      }
+      if (Textures[i]->filepath == key) return static_cast<int>(i);
+    }
+
+    Texture* texture = T8Device->CreateTextureFromMemory(
+      data, width, height, channels, key);
+    if (!texture) {
+      T8_LOG_ERROR("Memory texture creation failed: '%s'", key.c_str());
+      return -1;
+    }
+    texture->filepath = key;
+
+    const int textureId = firstFreeSlot >= 0
+      ? firstFreeSlot
+      : static_cast<int>(Textures.size());
+    if (firstFreeSlot >= 0) Textures[firstFreeSlot] = texture;
+    else Textures.push_back(texture);
+
+    T8_LOG_DEBUG("Memory texture created: '%s' -> slot %d (%dx%d)",
+                 key.c_str(), textureId, width, height);
+    T8_TRACE_REGISTER_TEXTURE(texture, "tex2d");
+    return textureId;
+  }
+
   int BaseDriver::CreateCubeMap(const unsigned char * buff, int w, int h)
   {
     Texture *pTex = T8Device->CreateCubeMap(buff,w,h);

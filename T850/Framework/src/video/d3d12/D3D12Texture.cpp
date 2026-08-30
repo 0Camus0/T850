@@ -401,10 +401,9 @@ namespace t850 {
     if (it != shader->srvSlots.end()) {
       cmdList->SetGraphicsRootDescriptorTable(it->second, srvGPU);
     }
-    // Bind this texture's sampler with its SRV so the pair is always
-    // consistent regardless of when Shader::Set runs relative to material
-    // setup. (Shader::Set no longer force-binds the aniso default, which
-    // used to clobber per-texture samplers like the voxel atlas NEAREST.)
+    // Bind this texture's sampler with its SRV. Draw paths establish the
+    // shader/root signature first, then texture bindings replace its default
+    // sampler with the texture-specific state (for example atlas NEAREST).
     if (hasSampler) {
       auto sit = shader->samplerSlots.find(slot);
       if (sit != shader->samplerSlots.end()) {

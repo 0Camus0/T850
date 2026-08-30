@@ -953,15 +953,10 @@ void App::OnDraw() {
     }
   }
 
-  // Skip presenting the first frame (black with only text)
-  if (frameCount > 1) {
-    T8_LOG_TRACE("[Frame %d] === SwapBuffers ===" , frameCount);
-    {
-      T8_TELEMETRY_SCOPE("frame.swap_buffers");
-      pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::Present);
-    }
-  } else {
-    T8_LOG_TRACE("[Frame %d] === SKIPPED SwapBuffers (first frame) ===" , frameCount);
+  T8_LOG_TRACE("[Frame %d] === SwapBuffers ===" , frameCount);
+  {
+    T8_TELEMETRY_SCOPE("frame.swap_buffers");
+    pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::Present);
   }
 }
 

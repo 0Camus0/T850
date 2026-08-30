@@ -1,6 +1,6 @@
 # Android Build and Deployment
 
-Status: verified against Android setup, Gradle, build, launcher, fast-repack, and signing scripts on 2026-08-19.
+Status: verified against local Debug APK builds and arm64-v8a/x86_64 PR CI on 2026-08-30.
 
 T850 Android is a Vulkan NativeActivity application built through Gradle externalNativeBuild/CMake. The maintained ABIs are `arm64-v8a` and `x86_64`.
 
@@ -62,7 +62,7 @@ The authoritative local build wrapper is:
 .\T850\scripts\android\BuildAndroid.bat Release
 ```
 
-Android uses the separate native source list in `T850/cmake/AndroidBuild.cmake` rather than `Framework/CMakeLists.txt`. Before an APK build, validate gameplay, mutable-mesh, terrain, and `VoxelScene` registration from the source root:
+Android uses the separate native source list in `T850/cmake/AndroidBuild.cmake` rather than `Framework/CMakeLists.txt`. It explicitly registers Framework sources plus `ImGuiRendererBackend` implementations and `ProfilerGpuBackend`. Before an APK build, validate source registration from the source root:
 
 ```powershell
 .\scripts\ValidateBuildRegistration.ps1
@@ -118,6 +118,22 @@ Debug | Release
 ```
 
 `--launch` implies `--install`, force-stops `com.t850.engine`, then launches `com.t850.engine/.LauncherActivity`.
+
+## Native Window and UI Lifecycle
+
+Android still selects Vulkan at the platform composition boundary, but shared framework code does not downcast the active driver. `AndroidFramework` calls virtual `BaseDriver::SuspendWindowSurface()` and `ResumeWindowSurface(nativeWindow,w,h)` hooks; `VulkanDriver` owns swapchain/surface teardown and recreation.
+
+`ImGuiSystem` creates `ImGuiVulkanBackend`, which pairs `ImGui_ImplAndroid` with `ImGui_ImplVulkan`. The backend owns native-window rebinding, Android event/stylus forwarding, renderer frame hooks, draw submission, and descriptor cleanup. Runtime UI installs a virtual `BaseDriver::SetPrePresentOverlayCallback()` instead of casting to Vulkan.
+
+Surface resume order is:
+
+1. update `ANativeWindow` dimensions;
+2. set the driver's tagged native window;
+3. call `ResumeWindowSurface()`;
+4. rebuild pipeline objects;
+5. rebind the ImGui backend to the current native window.
+
+Verified in PR CI: both `arm64-v8a` and `x86_64` Release APK jobs pass. Local development and production Debug APK builds also pass; install/launch and performance still require a connected device or emulator.
 
 ## Asset Profiles
 

@@ -1,6 +1,6 @@
 # Scene Format and Runtime
 
-Status: verified against source on 2026-08-19.
+Status: verified against source and Minecraft atlas captures on 2026-08-30.
 
 This document explains T850's scene formats and runtime scene loaders: `.t8scene`, editor serialization, `SceneTemplate`, legacy/runtime JSON descriptors, render graph references, profiles, cameras/lights/splines, physics, ragdolls, navigation, Quake3 scene variants, and the differences between DayScene, Quake3Mock, SceneTemplate, and editor Play Scene.
 
@@ -95,6 +95,18 @@ constants. It contains bounded runtime dimensions, terrain/noise parameters, nam
 roles, ore rules, block face tiles/colors, hotbar entries, player movement/collision,
 streaming limits, day/night behavior, environment choices, mob/weapon box parts, interaction
 reach/cooldowns, and debug defaults.
+
+Atlas fields:
+
+| Field | Meaning |
+|---|---|
+| `atlas_texture` | Asset path resolved under `Textures/`; empty selects the procedural fallback. |
+| `atlas_tile_px` | Logical square tile size in source pixels; must be positive. |
+| `atlas_pixelation_factor` | Explicit downsample/nearest-expand factor (1-16); Minecraft uses 2 to preserve its accepted pixel-art look. |
+| `atlas_size` / `atlas_tiles_per_axis` | Procedural-fallback layout only. |
+| `blocks[].tiles` | Twelve integers: `(column,row)` for `+X,-X,+Y,-Y,+Z,-Z`. |
+
+The file-backed path uses Framework `TextureAtlas`: dimensions must be exact tile multiples, every block tile is bounds-checked, and the GPU texture receives a stable `BaseDriver` registry ID. Minecraft's water maps to the static translucent blue tile `(13,12)`; animated atlas frames and fluid simulation are not implied by this mapping.
 
 Minecraft uses three data files with non-overlapping ownership:
 

@@ -19,6 +19,7 @@
 #include <vector>
 #include <unordered_map>
 #include <chrono>
+#include <functional>
 #include <Descriptors.h>
 #include <utils/Technique.h>
 #include <video/WindowHandle.h>
@@ -272,10 +273,11 @@ namespace t850 {
 
     BaseDriver() : CurrentRT(-1) , m_FaceCulling(FRONT_FACES) {  }
 
-    // Returns true if this API uses GLSL shaders (OpenGL only; Vulkan uses HLSL→SPIR-V)
-    bool UsesGLSL() const { return m_currentAPI == GraphicsApi::OPENGL; }
-    // Returns true if GL-style V-flip is needed (OpenGL only; Vulkan uses top-left like D3D)
-    bool NeedsVFlip() const { return m_currentAPI == GraphicsApi::OPENGL; }
+    virtual bool UsesGLSL() const { return false; }
+    virtual bool NeedsVFlip() const { return false; }
+    virtual bool SupportsRenderTargetMipGeneration() const { return false; }
+    virtual bool SupportsDeferredRendering() const { return true; }
+    virtual const char* ApiTag() const { return "unknown"; }
     virtual	void	 InitDriver() = 0;
     virtual void	 CreateSurfaces() = 0;
     virtual void	 DestroySurfaces() = 0;
@@ -330,6 +332,12 @@ namespace t850 {
     virtual void SetViewport(float x, float y, float w, float h) {}
     virtual void SetScissorRect(int x, int y, int w, int h) {}
     virtual void ClearPendingTextureBinding(int slot) { (void)slot; }
+    virtual void SetPrePresentOverlayCallback(std::function<void()> callback) { (void)callback; }
+    virtual void SetLatePresentSource(int rtID, int attachment) { (void)rtID; (void)attachment; }
+    virtual bool SuspendWindowSurface() { return false; }
+    virtual bool ResumeWindowSurface(void* nativeWindow, int newW, int newH) {
+      (void)nativeWindow; (void)newW; (void)newH; return false;
+    }
 
     // Resize the swapchain, back-buffer RTVs, and depth buffer to the new
     // pixel dimensions. Returns true on success. Implementations must flush
@@ -395,7 +403,6 @@ namespace t850 {
   private:
     std::string BuildOffscreenDebugDirectory();
     std::string BuildOffscreenDebugPath(unsigned long long frameNumber);
-    const char* OffscreenApiTag() const;
 
     std::vector<int> m_offscreenRTs;
     int m_offscreenWidth = 0;

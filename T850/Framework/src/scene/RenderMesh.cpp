@@ -2355,7 +2355,7 @@ namespace t850 {
           s->Set(*deviceContext);
           tracker.OnShaderChanged(s);
 
-          if (driver->m_currentAPI == GraphicsApi::OPENGL) {
+          if (driver->UsesGLSL()) {
             if (tracker.UpdateAndBindConstantBuffer(*deviceContext, it_MeshInfo->CB, 0,
                                                     &it_MeshInfo->CnstBuffer,
                                                     sizeof(RenderMesh::CBuffer)) && trackCullStats)

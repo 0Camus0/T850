@@ -124,6 +124,16 @@ classDiagram
   SceneBase --> BaseDriver
 ```
 
+### Graphics backend dispatch
+
+Shared runtime, scene, editor, and debug code must not downcast `BaseDriver` or branch on `GraphicsApi` to perform backend work. Backend-owned behavior is exposed through virtual capabilities and lifecycle hooks on `BaseDriver`; substantial cross-API subsystems use strategy objects:
+
+- `ImGuiRendererBackend` owns ImGui platform/renderer initialization, frame setup, draw submission, texture descriptors, viewport behavior, and shutdown for one API.
+- `ProfilerGpuBackend` owns timestamp queries, frame rings, resolves, and cleanup for one API; `Profiler` owns only API-neutral CPU timing and reporting.
+- `BaseDriver` capabilities describe shader dialect, texture origin, deferred rendering, render-target mip generation, native-surface lifecycle, late present, and pre-present overlays.
+
+Graphics API switches remain only at composition boundaries where an implementation is selected: driver factories, ImGui/profiler backend factories, CLI/config parsing, API-switching UI, and benchmark scheduling. Typed casts are valid inside the selected backend implementation, not in shared callers.
+
 ## Runtime ownership
 
 ### `RootFramework`

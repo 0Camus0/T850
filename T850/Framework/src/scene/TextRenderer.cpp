@@ -110,13 +110,6 @@ namespace t850 {
 	vstr = Defines + vstr;
 	fstr = Defines + fstr;
 #endif
-      if (g_pBaseDriver->m_currentAPI == GraphicsApi::VULKAN) {
-        std::string Defines;
-        Defines += "#version 450\n\n";
-        Defines += "#define ES_30\n\n";
-        vstr = Defines + vstr;
-        fstr = Defines + fstr;
-      }
     }
 
     free(vsSourceP);

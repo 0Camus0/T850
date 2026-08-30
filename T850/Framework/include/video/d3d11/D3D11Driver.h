@@ -35,6 +35,8 @@ namespace t850 {
   class D3DXDriver : public BaseDriver {
   public:
     D3DXDriver() { m_currentAPI = GraphicsApi::D3D11; }
+    const char* ApiTag() const override { return "d3d11"; }
+    bool SupportsRenderTargetMipGeneration() const override { return true; }
     void	InitDriver();
     void	CreateSurfaces();
     void	DestroySurfaces();

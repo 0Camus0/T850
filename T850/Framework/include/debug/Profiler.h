@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <memory>
 
 #ifdef OS_WINDOWS
 #include <windows.h>
@@ -36,6 +37,29 @@ namespace t850 {
     double GpuAvgMs() const { return sampleCount > 0 ? gpuTotalMs / sampleCount : 0.0; }
     double CpuAvgMs() const { return sampleCount > 0 ? cpuTotalMs / sampleCount : 0.0; }
   };
+
+  struct ProfileFrameQuery {
+    int scopeIndex = -1;
+    int64_t cpuBegin = 0;
+    int64_t cpuEnd = 0;
+    bool cpuOnly = false;
+  };
+
+  class ProfilerGpuBackend {
+  public:
+    virtual ~ProfilerGpuBackend() = default;
+    virtual bool Init(BaseDriver* driver, int maxScopes) = 0;
+    virtual const char* Name() const = 0;
+    virtual void Resolve(std::vector<ProfileScope>& scopes) = 0;
+    virtual void BeginFrame() = 0;
+    virtual void EndFrame(int activeQueryCount,
+                          const std::vector<ProfileFrameQuery>& frameQueries) = 0;
+    virtual void BeginScope(int queryIndex) = 0;
+    virtual void EndScope(int queryIndex) = 0;
+    virtual void FlushQueryReset(void* commandBuffer) { (void)commandBuffer; }
+  };
+
+  std::unique_ptr<ProfilerGpuBackend> CreateProfilerGpuBackend(BaseDriver* driver);
 
   // ── Profiler interface ──
   class Profiler {
@@ -75,46 +99,25 @@ namespace t850 {
     void Reset();                      // clear accumulated data
 
   private:
-    // ── Per-frame query data ──
-    struct FrameQuery {
-      int    scopeIndex = -1;
-      int64_t cpuBegin = 0;
-      int64_t cpuEnd   = 0;
-      bool   cpuOnly   = false;  // true = no GPU timestamp for this scope
-    };
-
     int FindOrCreateScope(const char* name);
-
-    // ── API-specific GPU timestamp backend ──
-    void InitGPU_D3D12();
-    void InitGPU_D3D11();
-    void InitGPU_GL();
-    void InitGPU_Vulkan();
-    void DestroyGPU();
-
-    void BeginGPUScope(int queryIndex);
-    void EndGPUScope(int queryIndex);
-    void ResolveGPUFrame();  // collect results from completed frame
 
     // ── State ──
     bool         m_initialized = false;
     BaseDriver*  m_driver      = nullptr;
     int          m_maxScopes   = 64;
     int          m_frameCount  = 0;
-    int          m_apiType     = 0;  // 0=unknown, 1=D3D12, 2=D3D11, 3=GL, 4=Vulkan
 
     // CPU timing
     int64_t      m_cpuFreq     = 0;
 
     // Per-frame active queries
     int          m_activeQueryCount = 0;
-    std::vector<FrameQuery> m_frameQueries;  // [maxScopes] per frame
+    std::vector<ProfileFrameQuery> m_frameQueries;  // [maxScopes] per frame
 
     // Accumulated results
     std::vector<ProfileScope> m_scopes;
 
-    // GPU backend opaque state (cast per API)
-    void*        m_gpuState    = nullptr;
+    std::unique_ptr<ProfilerGpuBackend> m_gpuBackend;
   };
 
   // ── RAII scoped timer (GPU + CPU) ──

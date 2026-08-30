@@ -15,21 +15,10 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
-#ifndef OS_ANDROID
-#include <imgui_impl_vulkan.h>
-#endif
-
-#ifdef OS_WINDOWS
-#  include <video/d3d11/D3D11Texture.h>
-#  include <video/d3d12/D3D12Texture.h>
-#  include <video/vulkan/VulkanTexture.h>
-#endif
-
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
-#include <unordered_map>
 #include <vector>
 
 #include <ImGuizmo.h>
@@ -42,8 +31,6 @@ namespace t8ditor {
 // ── Module state ──────────────────────────────────────
 static t850::ImGuiSystem      s_imguiSystem;
 static bool                   s_inited = false;
-static t850::GraphicsApi::E   s_api = t850::GraphicsApi::D3D11;
-static std::unordered_map<void*, uint64_t> s_imguiVkTextureDescriptors;
 static bool                   s_showAppearanceDialog = false;
 static int                    s_editorTheme = 0;
 static float                  s_editorFontScale = 1.04f;
@@ -419,7 +406,6 @@ void ImGuiLogCaptureStop() {
 bool ImGuiInit(t850::RootFramework* fw, bool enablePlatformWindows) {
   if (s_inited) return true;
   if (!fw || !fw->pVideoDriver) return false;
-  s_api = fw->pVideoDriver->m_currentAPI;
   s_globalLayoutPath = BuildGlobalLayoutPath();
   s_inited = s_imguiSystem.Init(fw, s_globalLayoutPath.c_str(), true, enablePlatformWindows);
   if (s_inited) {
@@ -433,7 +419,6 @@ bool ImGuiInit(t850::RootFramework* fw, bool enablePlatformWindows) {
 void ImGuiShutdown() {
   if (!s_inited) return;
   s_imguiSystem.Shutdown();
-  s_imguiVkTextureDescriptors.clear();
   s_inited = false;
 }
 
@@ -466,50 +451,7 @@ void ImGuiSetNextNativeEditorWindow(float offsetX, float offsetY, float width, f
 }
 
 ImTextureID ImGuiTextureID(t850::BaseDriver* driver, t850::Texture* texture) {
-  if (!driver || !texture) {
-    return (ImTextureID)nullptr;
-  }
-
-#ifdef OS_WINDOWS
-  if (driver->m_currentAPI == t850::GraphicsApi::D3D11) {
-    auto* d3dTexture = static_cast<t850::D3DXTexture*>(texture);
-    return (ImTextureID)d3dTexture->pSRVTex.Get();
-  }
-  if (driver->m_currentAPI == t850::GraphicsApi::D3D12) {
-    auto* d3dTexture = static_cast<t850::D3D12Texture*>(texture);
-    return (ImTextureID)d3dTexture->srvGPU.ptr;
-  }
-  if (driver->m_currentAPI == t850::GraphicsApi::VULKAN) {
-    auto* vkTexture = static_cast<t850::VulkanTexture*>(texture);
-    if (!vkTexture->m_sampler || !vkTexture->m_imageView) {
-      return (ImTextureID)nullptr;
-    }
-    auto found = s_imguiVkTextureDescriptors.find(texture);
-    if (found != s_imguiVkTextureDescriptors.end()) {
-#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
-      return (ImTextureID)reinterpret_cast<VkDescriptorSet>((uintptr_t)found->second);
-#else
-      return (ImTextureID)(VkDescriptorSet)found->second;
-#endif
-    }
-    VkDescriptorSet descriptor = ImGui_ImplVulkan_AddTexture(
-        vkTexture->m_sampler,
-        vkTexture->m_imageView,
-        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
-    s_imguiVkTextureDescriptors[texture] = (uint64_t)(uintptr_t)descriptor;
-#else
-    s_imguiVkTextureDescriptors[texture] = (uint64_t)descriptor;
-#endif
-    return (ImTextureID)descriptor;
-  }
-#endif
-
-  if (driver->m_currentAPI == t850::GraphicsApi::OPENGL) {
-    return (ImTextureID)(intptr_t)texture->id;
-  }
-
-  return (ImTextureID)nullptr;
+  return driver ? s_imguiSystem.GetTextureID(texture) : (ImTextureID)nullptr;
 }
 
 static float ToolbarButtonWidth(const char* label, float minWidth) {
@@ -1012,18 +954,6 @@ int ImGuiDrawRTDebugPanel(int selectedRT) {
   t850::BaseDriver* drv = t850::g_pBaseDriver;
   if (!drv) { ImGui::End(); return selectedRT; }
 
-  // Helper to get SRV for ImGui::Image (D3D11 only)
-  auto GetSRV = [&](t850::Texture* tex) -> ImTextureID {
-#ifdef OS_WINDOWS
-    if (s_api == t850::GraphicsApi::D3D11 && tex) {
-      // D3DXTexture has pSRVTex as a public ComPtr
-      auto* d3dTex = static_cast<t850::D3DXTexture*>(tex);
-      return (ImTextureID)d3dTex->pSRVTex.Get();
-    }
-#endif
-    return (ImTextureID)nullptr;
-  };
-
   int globalIdx = 0;
   for (int rtIdx = 0; rtIdx < (int)drv->RTs.size(); ++rtIdx) {
     t850::BaseRT* rt = drv->RTs[rtIdx];
@@ -1041,7 +971,7 @@ int ImGuiDrawRTDebugPanel(int selectedRT) {
       bool isSel = (selectedRT == globalIdx);
       if (isSel) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));
 
-      ImTextureID srv = GetSRV(tex);
+      ImTextureID srv = s_imguiSystem.GetTextureID(tex);
       if (srv) {
         ImGui::Image(srv, ImVec2(140, 79));
         if (ImGui::IsItemClicked()) selectedRT = globalIdx;
@@ -1060,7 +990,7 @@ int ImGuiDrawRTDebugPanel(int selectedRT) {
       bool isSel = (selectedRT == globalIdx);
       if (isSel) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));
 
-      ImTextureID srv = GetSRV(rt->pDepthTexture);
+      ImTextureID srv = s_imguiSystem.GetTextureID(rt->pDepthTexture);
       if (srv) {
         ImGui::Image(srv, ImVec2(140, 79));
         if (ImGui::IsItemClicked()) selectedRT = globalIdx;

@@ -427,12 +427,12 @@ namespace t850 {
     if (key.isValid()) {
 
 #if defined(USING_OPENGL)
-      if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
+      if (g_pBaseDriver->UsesGLSL()) {
         Defines += "#version 330\n\n";
         Defines += "#define ES_30\n\n";
       }
 #elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
-      if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
+      if (g_pBaseDriver->UsesGLSL()) {
         Defines += "#version 300 es\n\n";
         Defines += "#define ES_30\n\n";
       }
@@ -1034,13 +1034,6 @@ namespace t850 {
       m_offscreenFrameIndex = (m_offscreenFrameIndex + 1) % static_cast<int>(m_offscreenRTs.size());
   }
 
-  const char* BaseDriver::OffscreenApiTag() const {
-    return (m_currentAPI == GraphicsApi::OPENGL) ? "gl"
-         : (m_currentAPI == GraphicsApi::D3D12)  ? "d3d12"
-         : (m_currentAPI == GraphicsApi::VULKAN) ? "vulkan"
-         : "d3d11";
-  }
-
   std::string BaseDriver::BuildOffscreenDebugDirectory() {
     if (!m_offscreenDebugDir.empty())
       return m_offscreenDebugDir;
@@ -1055,7 +1048,7 @@ namespace t850 {
 #endif
 
     std::ostringstream out;
-    out << "dumps_" << OffscreenApiTag()
+    out << "dumps_" << ApiTag()
         << "_offscreen_f" << m_offscreenFrameCounter << "_"
         << std::put_time(&localTime, "%Y%m%d_%H%M%S");
     m_offscreenDebugDir = out.str();

@@ -79,13 +79,6 @@ bool DevLayer::EnsureCullingDebugResources() {
     vertexSource = defines + vertexSource;
     fragmentSource = defines + fragmentSource;
 #endif
-    if (g_pBaseDriver->m_currentAPI == GraphicsApi::VULKAN) {
-      std::string defines;
-      defines += "#version 450\n\n";
-      defines += "#define ES_30\n\n";
-      vertexSource = defines + vertexSource;
-      fragmentSource = defines + fragmentSource;
-    }
   }
 
   int shaderID = g_pBaseDriver->CreateShader(vertexSource, fragmentSource);

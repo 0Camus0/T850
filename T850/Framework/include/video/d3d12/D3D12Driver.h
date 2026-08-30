@@ -49,6 +49,7 @@ namespace t850 {
     static const UINT kBackBufferCount = 3;  // triple-buffer for full CPU-GPU overlap
 
     D3D12Driver() { m_currentAPI = GraphicsApi::D3D12; }
+    const char* ApiTag() const override { return "d3d12"; }
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;

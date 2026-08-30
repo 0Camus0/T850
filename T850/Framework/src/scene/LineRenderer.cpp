@@ -31,7 +31,7 @@ bool LineRenderer::Create() {
     return false;
   }
 
-  const bool useGL = (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL);
+  const bool useGL = g_pBaseDriver->UsesGLSL();
   const std::string vsName = useGL ? "VS_EditorLine.glsl" : "VS_EditorLine.hlsl";
   const std::string fsDepthName = useGL ? "FS_EditorLine.glsl" : "FS_EditorLine.hlsl";
   const std::string fsFlatName = useGL ? "FS_LineFlat.glsl" : "FS_LineFlat.hlsl";

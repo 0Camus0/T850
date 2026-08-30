@@ -254,6 +254,7 @@
     <ClCompile Include="src\debug\CrashDiagnostics.cpp" />
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />
     <ClCompile Include="src\debug\Profiler.cpp" />
+    <ClCompile Include="src\debug\ProfilerGpuBackend.cpp" />
     <ClCompile Include="src\debug\RuntimeTelemetry.cpp" />
     <ClCompile Include="src\debug\RenderTrace.cpp" />
     <ClCompile Include="src\scene\EditorSceneFile.cpp" />

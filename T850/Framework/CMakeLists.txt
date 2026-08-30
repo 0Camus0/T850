@@ -57,6 +57,7 @@ set(FRAMEWORK_SOURCES
   src/debug/CrashDiagnostics.cpp
   src/debug/FrameDumperIO.cpp
   src/debug/Profiler.cpp
+  src/debug/ProfilerGpuBackend.cpp
   src/debug/RuntimeTelemetry.cpp
   src/debug/RenderTrace.cpp
   src/scene/EditorSceneFile.cpp

@@ -292,10 +292,7 @@ namespace t850 {
 
     // Copy the API name from the driver so the trace is self-describing.
     if (m_driver) {
-      m_frame.api = (m_driver->m_currentAPI == GraphicsApi::D3D12)  ? "d3d12"
-                  : (m_driver->m_currentAPI == GraphicsApi::D3D11)  ? "d3d11"
-                  : (m_driver->m_currentAPI == GraphicsApi::VULKAN) ? "vulkan"
-                  : "gl";
+      m_frame.api = m_driver->ApiTag();
     }
 
     auto now = std::chrono::system_clock::now();

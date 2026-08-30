@@ -19,7 +19,6 @@
 
 #ifdef OS_ANDROID
 #include <android/input.h>
-#include <video/vulkan/VulkanDriver.h>
 #endif
 #include <imgui/DevGuiContext.h>
 #include <array>
@@ -15875,9 +15874,7 @@ void SandboxScene::OnDraw() {
 
 #ifdef OS_ANDROID
   if (m_showWireframe || m_showSkeleton || m_showPhysics || m_showNavMesh || m_showLightVolumes) {
-    if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
-      vkDriver->SetPrePresentOverlayCallback(drawMeshDebugOverlays);
-    }
+    pFramework->pVideoDriver->SetPrePresentOverlayCallback(drawMeshDebugOverlays);
   }
 #else
   drawMeshDebugOverlays();

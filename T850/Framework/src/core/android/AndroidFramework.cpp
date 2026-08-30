@@ -392,7 +392,7 @@ namespace t850 {
 
   void AndroidFramework::SuspendVulkanWindow() {
     if (!m_surfaceActive || !pVideoDriver) return;
-    static_cast<VulkanDriver*>(pVideoDriver)->SuspendWindowSurface();
+    pVideoDriver->SuspendWindowSurface();
     m_surfaceActive = false;
   }
 
@@ -401,7 +401,7 @@ namespace t850 {
     UpdateWindowSize();
     pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
     pVideoDriver->SetWindowHandle(WindowHandle::FromAndroidNativeWindow(m_window));
-    if (static_cast<VulkanDriver*>(pVideoDriver)->ResumeWindowSurface(
+        if (pVideoDriver->ResumeWindowSurface(
           m_window, aplicationDescriptor.width, aplicationDescriptor.height)) {
       pVideoDriver->BuildPipelineObjects();
       m_surfaceActive = true;

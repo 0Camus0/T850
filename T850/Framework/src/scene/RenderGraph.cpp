@@ -515,8 +515,7 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
       if (Texture* tex = driver->GetRTTexture(handle, attachment)) {
         applyFilter(tex);
         tex->mipmaps = 1;
-        if (generateMips &&
-            (driver->m_currentAPI == GraphicsApi::D3D11 || driver->m_currentAPI == GraphicsApi::OPENGL)) {
+        if (generateMips && driver->SupportsRenderTargetMipGeneration()) {
           unsigned int maxDim = (tex->x > tex->y) ? tex->x : tex->y;
           unsigned int levels = 1;
           while (maxDim > 1) { maxDim >>= 1; ++levels; }

@@ -9716,7 +9716,7 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
 
   // Render meshes: deferred via render graph on D3D11/D3D12, forward on GL
   bool useDeferred = g_deferredReady
-                  && drv->m_currentAPI != t850::GraphicsApi::OPENGL;
+                  && drv->SupportsDeferredRendering();
 
   if (useDeferred) {
     // Build mesh array: skybox first (index 0), then scene meshes

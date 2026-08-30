@@ -934,6 +934,9 @@
     <ClCompile Include="src\debug\Profiler.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
+    <ClCompile Include="src\debug\ProfilerGpuBackend.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
     <ClCompile Include="src\debug\RuntimeTelemetry.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>

@@ -25,7 +25,6 @@
 #include <debug/RuntimeTelemetry.h>
 #include <imgui/DevGuiContext.h>
 #if defined(USING_VULKAN) || defined(USING_VULKAN_ONLY)
-#include <video/vulkan/VulkanDriver.h>
 #endif
 
 #include <array>
@@ -2884,8 +2883,7 @@ void MinecraftScene::OnDraw() {
       Quads[7].SetGlobalKey(debugKey);
       Quads[7].Draw();
 #ifdef OS_ANDROID
-      if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver))
-        vkDriver->SetLatePresentSource(selected, attachment);
+  pFramework->pVideoDriver->SetLatePresentSource(selected, attachment);
 #endif
     }
   }
@@ -2920,8 +2918,8 @@ void MinecraftScene::OnDraw() {
   };
 
 #ifdef OS_ANDROID
-  if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver))
-    vkDriver->SetPrePresentOverlayCallback(m_showNavMesh ? drawNavMeshOverlay : std::function<void()>{});
+  pFramework->pVideoDriver->SetPrePresentOverlayCallback(
+    m_showNavMesh ? drawNavMeshOverlay : std::function<void()>{});
 #else
   drawNavMeshOverlay();
 #endif

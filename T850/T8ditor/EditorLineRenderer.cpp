@@ -35,7 +35,7 @@ bool EditorLineRenderer::Create() {
 
   // Load source. The Assets/Shaders dir is junctioned into the editor's
   // working directory by the same post-build step DayScene uses.
-  const bool useGL = (t850::g_pBaseDriver->m_currentAPI == t850::GraphicsApi::OPENGL);
+  const bool useGL = t850::g_pBaseDriver->UsesGLSL();
   char* vsSrc = file2string(useGL ? "Shaders/VS_EditorLine.glsl"
                                   : "Shaders/VS_EditorLine.hlsl");
   char* fsSrc = file2string(useGL ? "Shaders/FS_EditorLine.glsl"

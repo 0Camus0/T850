@@ -337,6 +337,8 @@ namespace t850 {
     virtual bool ResizeSwapchain(int newW, int newH) { return false; }
 
     int 	 CreateTexture(std::string);
+    int    CreateTextureFromMemory(const std::string& key, const unsigned char* data,
+                     int width, int height, int channels);
     int    CreateCubeMap(const unsigned char * buff, int w, int h);
     int    CreateFloatTexture(int w, int h, const float* data = nullptr);
     int    CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr);

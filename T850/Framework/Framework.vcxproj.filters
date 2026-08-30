@@ -479,8 +479,8 @@
     <ClInclude Include="include\terrain\BlockRegistry.h">
       <Filter>Header Files\terrain</Filter>
     </ClInclude>
-    <ClInclude Include="include\terrain\VoxelAtlas.h">
-      <Filter>Header Files\terrain</Filter>
+    <ClInclude Include="include\video\TextureAtlas.h">
+      <Filter>Header Files\video</Filter>
     </ClInclude>
     <ClInclude Include="include\terrain\VoxelChunk.h">
       <Filter>Header Files\terrain</Filter>
@@ -784,8 +784,8 @@
     <ClCompile Include="src\terrain\BlockRegistry.cpp">
       <Filter>Source Files\terrain</Filter>
     </ClCompile>
-    <ClCompile Include="src\terrain\VoxelAtlas.cpp">
-      <Filter>Source Files\terrain</Filter>
+    <ClCompile Include="src\video\TextureAtlas.cpp">
+      <Filter>Source Files\video</Filter>
     </ClCompile>
     <ClCompile Include="src\terrain\VoxelChunk.cpp">
       <Filter>Source Files\terrain</Filter>

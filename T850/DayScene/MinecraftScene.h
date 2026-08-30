@@ -17,6 +17,7 @@
 #include <navigation/NavigationDebugRenderer.h>
 #include <debug/FrameDumper.h>
 #include <utils/XDataBase.h>
+#include <video/TextureAtlas.h>
 #include <Config.h>
 
 #include <array>
@@ -34,7 +35,7 @@ namespace t850 {
 class JoltPhysicsSystem;
 }
 
-// Atlas tile coordinates (16x16 tiles in a 256x256 atlas)
+// Grid coordinates in the configured texture atlas.
 struct BlockTile {
   int u; // tile column
   int v; // tile row
@@ -276,6 +277,7 @@ public:
   int m_atlasTiles = 0;
   std::string m_atlasTexturePath; // empty => procedural solid-color atlas
   int m_atlasTilePx = 16;
+  int m_atlasPixelationFactor = 1;
 
   // ── Internals ──
   void GenerateWorld();
@@ -330,7 +332,7 @@ public:
   uint8_t BlockId(const std::string& name, uint8_t fallback) const;
   float Noise2D(float x, float z) const;
   float Noise3D(float x, float y, float z) const;
-  void BuildTextureAtlas();
+  bool BuildTextureAtlas();
   bool BuildRealTextureAtlas();
   // Offscreen benchmark capture: blits the active offscreen RT into a private
   // RT via a fullscreen quad every frame (the swapchain backbuffer stays
@@ -350,6 +352,7 @@ public:
                      int& outX, int& outY, int& outZ, int& outPrevX, int& outPrevY, int& outPrevZ) const;
 
   t850::Texture* m_atlasTexture = nullptr;
+  t850::TextureAtlas m_textureAtlas;
   int m_atlasTexIndex = -1;
   // Skybox selection (ImGui)
   std::string m_currentCubemapPath;

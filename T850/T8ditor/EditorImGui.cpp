@@ -25,6 +25,10 @@
 #ifndef OS_ANDROID
 #include <SDL3/SDL.h>
 #endif
+#ifdef OS_WINDOWS
+#include <windows.h>
+#include <commdlg.h>
+#endif
 
 namespace t8ditor {
 
@@ -1050,11 +1054,6 @@ float ImGuiConsumeWheelDelta() {
 }
 
 // ── File dialog (Win32) ───────────────────────────────
-#ifdef OS_WINDOWS
-#include <windows.h>
-#include <commdlg.h>
-#endif
-
 std::string OpenFileDialog(const wchar_t* filter, const wchar_t* title,
                            const wchar_t* initialDir) {
 #ifdef OS_WINDOWS

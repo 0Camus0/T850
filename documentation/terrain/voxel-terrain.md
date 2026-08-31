@@ -103,7 +103,35 @@ It reuses existing mesh shader permutations for:
 
 The primitive performs AABB frustum culling and honors material alpha/double-sided state. Base-color textures use the established `DiffuseTex` binding. The generic VoxelScene creates a small generated atlas for its reference blocks. Minecraft loads `terrain.png` through the Framework `TextureAtlas`, receives a managed texture ID, validates every authored face tile, and acquires immutable material variants for atlas-bound mob/weapon materials.
 
-Minecraft authors `atlas_tile_px: 16` and `atlas_pixelation_factor: 2`. Its water block maps all faces to the first translucent blue water frame at grid tile `(13,12)`. This is a static visual tile; animated water frames and fluid simulation are separate future features.
+Minecraft authors `atlas_tile_px: 16` and `atlas_pixelation_factor: 2`. Its water block maps all faces to the first blue water frame at grid tile `(13,12)`. The PNG tile itself is fully opaque; the block is authored as non-opaque for voxel face-neighbor behavior. This is a static visual tile; animated water frames, translucent water rendering, and fluid simulation are separate future features.
+
+The canonical `terrain.png` mapping uses face order `+X, -X, +Y, -Y, +Z, -Z`:
+
+| Block | Side | Top | Bottom |
+|---|---|---|---|
+| grass | `(3,0)` | `(1,0)` | `(2,0)` |
+| dirt | `(2,0)` | `(2,0)` | `(2,0)` |
+| stone | `(0,0)` | `(0,0)` | `(0,0)` |
+| sand | `(2,1)` | `(2,1)` | `(2,1)` |
+| water | `(13,12)` | `(13,12)` | `(13,12)` |
+| log | `(4,1)` | `(5,1)` | `(5,1)` |
+| leaves | `(4,3)` | `(4,3)` | `(4,3)` |
+| planks | `(4,0)` | `(4,0)` | `(4,0)` |
+| bedrock | `(1,1)` | `(1,1)` | `(1,1)` |
+| cobblestone | `(0,1)` | `(0,1)` | `(0,1)` |
+| gravel | `(3,1)` | `(3,1)` | `(3,1)` |
+| coal ore | `(2,2)` | `(2,2)` | `(2,2)` |
+| iron ore | `(1,2)` | `(1,2)` | `(1,2)` |
+| gold ore | `(0,2)` | `(0,2)` | `(0,2)` |
+| diamond ore | `(2,3)` | `(2,3)` | `(2,3)` |
+| brick | `(7,0)` | `(7,0)` | `(7,0)` |
+| glass | `(1,3)` | `(1,3)` | `(1,3)` |
+| snow | `(2,4)` | `(2,4)` | `(2,4)` |
+| stone bricks | `(6,3)` | `(6,3)` | `(6,3)` |
+
+Cube UVs are face-aware rather than assigning one corner order to all six faces. On `+X/-X` and `+Z/-Z`, the top edge of an atlas tile always follows world `+Y`; `+Z/-Z` also map atlas U horizontally instead of rotating the image onto its side. Top and bottom faces retain their planar X/Z orientation. This keeps the grass side strip at the top of every wall and log bark vertical on every side while preserving grass/log top and bottom tiles.
+
+`scripts/verify_minecraft_atlas.py` locks all 120 authored face assignments to this table and fingerprints the audited atlas. Run it whenever either the scene mapping or `terrain.png` changes.
 
 ### Backend Behavior
 

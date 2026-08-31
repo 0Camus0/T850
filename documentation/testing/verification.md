@@ -56,6 +56,14 @@ Expected result: every line begins with `PASS` and process exit code is 0. Any `
 
 The suite currently has 41 checks covering schema/migration/IDs, validation, groups, stable registry ownership, fixed tick/pause, controllers, components, events, state machines, physics handle reuse, generated triangle-mesh body creation, mutable mesh validation, stable render handles, chunks, greedy meshing, negative coordinates, DDA, streaming budgets, atomic voxel persistence, atlas UV/bounds behavior, immutable material variants, and unavailable navigation.
 
+Validate the authored Minecraft block-to-atlas contract without creating a graphics device:
+
+```powershell
+python .\scripts\verify_minecraft_atlas.py
+```
+
+Expected: the audited `terrain.png` SHA-256, 20 block definitions, and all 120 face mappings pass.
+
 For graphics-backend strategy changes, also exercise ImGui and GPU profiling on every desktop API:
 
 ```powershell

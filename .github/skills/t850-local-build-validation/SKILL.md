@@ -223,7 +223,7 @@ Require:
 
 - registration passed;
 - all six Windows cells passed;
-- 42/42 tests passed on supported hosts;
+- 41/41 tests passed on supported hosts;
 - Android arm64-v8a and x86_64 passed sequentially;
 - SteamRT passed locally or is explicitly blocked;
 - requested runtime/visual checks passed;

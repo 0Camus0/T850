@@ -191,7 +191,7 @@ Build and self-tests:
 .\bin\x64\Debug\DayScene.exe --game-selftest
 ```
 
-Expected: 42 PASS lines, exit 0.
+Expected: 41 PASS lines, exit 0.
 
 Focused Release visuals:
 
@@ -207,6 +207,14 @@ Focused Release visuals:
 ```
 
 Expected: four `captured`, zero engine errors, image standard deviation >=1.
+
+After changing Minecraft block definitions, face tiles, or `terrain.png`, run the exact asset contract gate:
+
+```powershell
+python .\scripts\verify_minecraft_atlas.py
+```
+
+Require the audited atlas fingerprint plus 20 blocks and 120 face mappings to pass before rendering.
 
 For renderer/lifetime crashes, use `t850-crash-debugging` and run Debug under CDB. Debug CRT assertions do not show Abort/Retry/Ignore because entry points install `InstallUnattendedCrtReportHook()`.
 

@@ -21,6 +21,11 @@ jobs:
         run: |
           & T850/scripts/ValidateBuildRegistration.ps1
 
+      - name: Validate Minecraft terrain atlas mappings
+        shell: pwsh
+        run: |
+          python T850/scripts/verify_minecraft_atlas.py
+
   build:
     needs: validate-build-registration
     runs-on: windows-2022

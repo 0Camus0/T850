@@ -350,7 +350,7 @@ public:
   void AddFace(xF::xMeshGeometry& geom, int x, int y, int z, int face, uint8_t block);
   void AddVertex(xF::xMeshGeometry& geom, float x, float y, float z, float nx, float ny, float nz, float u, float v);
   void AddQuad(xF::xMeshGeometry& geom, const XVECTOR3& a, const XVECTOR3& b, const XVECTOR3& c, const XVECTOR3& d,
-               const XVECTOR3& n, float u0, float v0, float u1, float v1);
+               const XVECTOR3& n, int face, float u0, float v0, float u1, float v1);
   void UpdatePlayer(float dt);
   void HandleBlockInteraction(InputManager* IManager);
   void ApplyPendingCubemap();

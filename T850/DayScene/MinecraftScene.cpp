@@ -144,7 +144,8 @@ namespace {
     { { XVECTOR3(1,0,0), XVECTOR3(0,0,0), XVECTOR3(0,1,0), XVECTOR3(1,1,0) }, XVECTOR3(0,0,-1,0) },
   };
 
-  // UV corners for a face (u0,v0) bottom-left .. (u1,v1) top-right
+  // Atlas regions use image coordinates: (u0,v0) is top-left and
+  // (u1,v1) is bottom-right.
   struct UVQuad { float u0, v0, u1, v1; };
 
   // Half-texel inset: with NEAREST sampling this keeps face UVs strictly
@@ -984,12 +985,12 @@ void MinecraftScene::CreateMobMesh() {
       const BlockTile& tile = def.tiles[face];
       return TileUV(m_textureAtlas, tile.u, tile.v);
     };
-    { UVQuad uv = faceUV(0); AddQuad(geom, c[1], c[5], c[6], c[2], XVECTOR3(1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(1); AddQuad(geom, c[4], c[0], c[3], c[7], XVECTOR3(-1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(2); AddQuad(geom, c[3], c[2], c[6], c[7], XVECTOR3(0,1,0), uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(3); AddQuad(geom, c[0], c[4], c[5], c[1], XVECTOR3(0,-1,0), uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(4); AddQuad(geom, c[5], c[4], c[7], c[6], XVECTOR3(0,0,1), uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(5); AddQuad(geom, c[0], c[1], c[2], c[3], XVECTOR3(0,0,-1), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(0); AddQuad(geom, c[1], c[5], c[6], c[2], XVECTOR3(1,0,0), 0, uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(1); AddQuad(geom, c[4], c[0], c[3], c[7], XVECTOR3(-1,0,0), 1, uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(2); AddQuad(geom, c[3], c[2], c[6], c[7], XVECTOR3(0,1,0), 2, uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(3); AddQuad(geom, c[0], c[4], c[5], c[1], XVECTOR3(0,-1,0), 3, uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(4); AddQuad(geom, c[5], c[4], c[7], c[6], XVECTOR3(0,0,1), 4, uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(5); AddQuad(geom, c[0], c[1], c[2], c[3], XVECTOR3(0,0,-1), 5, uv.u0, uv.v0, uv.u1, uv.v1); }
   };
 
   for (const auto& part : m_voxelSettings.mob.parts) {
@@ -1105,17 +1106,17 @@ void MinecraftScene::CreateWeaponMesh() {
       return TileUV(m_textureAtlas, tile.u, tile.v);
     };
     // +X
-    { UVQuad uv = faceUV(0); AddQuad(geom, c[1], c[5], c[6], c[2], XVECTOR3(1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(0); AddQuad(geom, c[1], c[5], c[6], c[2], XVECTOR3(1,0,0), 0, uv.u0, uv.v0, uv.u1, uv.v1); }
     // -X
-    { UVQuad uv = faceUV(1); AddQuad(geom, c[4], c[0], c[3], c[7], XVECTOR3(-1,0,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(1); AddQuad(geom, c[4], c[0], c[3], c[7], XVECTOR3(-1,0,0), 1, uv.u0, uv.v0, uv.u1, uv.v1); }
     // +Y
-    { UVQuad uv = faceUV(2); AddQuad(geom, c[3], c[2], c[6], c[7], XVECTOR3(0,1,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(2); AddQuad(geom, c[3], c[2], c[6], c[7], XVECTOR3(0,1,0), 2, uv.u0, uv.v0, uv.u1, uv.v1); }
     // -Y
-    { UVQuad uv = faceUV(3); AddQuad(geom, c[0], c[4], c[5], c[1], XVECTOR3(0,-1,0), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(3); AddQuad(geom, c[0], c[4], c[5], c[1], XVECTOR3(0,-1,0), 3, uv.u0, uv.v0, uv.u1, uv.v1); }
     // +Z
-    { UVQuad uv = faceUV(4); AddQuad(geom, c[5], c[4], c[7], c[6], XVECTOR3(0,0,1), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(4); AddQuad(geom, c[5], c[4], c[7], c[6], XVECTOR3(0,0,1), 4, uv.u0, uv.v0, uv.u1, uv.v1); }
     // -Z
-    { UVQuad uv = faceUV(5); AddQuad(geom, c[0], c[1], c[2], c[3], XVECTOR3(0,0,-1), uv.u0, uv.v0, uv.u1, uv.v1); }
+    { UVQuad uv = faceUV(5); AddQuad(geom, c[0], c[1], c[2], c[3], XVECTOR3(0,0,-1), 5, uv.u0, uv.v0, uv.u1, uv.v1); }
   };
 
   for (const auto& part : m_voxelSettings.weapon.parts) {
@@ -1288,12 +1289,32 @@ void MinecraftScene::AddVertex(xF::xMeshGeometry& geom, float x, float y, float 
 
 void MinecraftScene::AddQuad(xF::xMeshGeometry& geom,
                              const XVECTOR3& a, const XVECTOR3& b, const XVECTOR3& c, const XVECTOR3& d,
-                             const XVECTOR3& n, float u0, float v0, float u1, float v1) {
+                             const XVECTOR3& n, int face, float u0, float v0, float u1, float v1) {
   const unsigned int base = (unsigned int)geom.Positions.size();
-  AddVertex(geom, a.x, a.y, a.z, n.x, n.y, n.z, u0, v0);
-  AddVertex(geom, b.x, b.y, b.z, n.x, n.y, n.z, u0, v1);
-  AddVertex(geom, c.x, c.y, c.z, n.x, n.y, n.z, u1, v1);
-  AddVertex(geom, d.x, d.y, d.z, n.x, n.y, n.z, u1, v0);
+  XVECTOR2 uv[4];
+  // Keep image-up aligned with world +Y on every vertical face. The X faces
+  // are wound vertically first, while the Z faces are wound horizontally
+  // first, so they require different corner assignments.
+  if (face == 0 || face == 1) {
+    uv[0] = XVECTOR2(u0, v1);
+    uv[1] = XVECTOR2(u0, v0);
+    uv[2] = XVECTOR2(u1, v0);
+    uv[3] = XVECTOR2(u1, v1);
+  } else if (face == 4 || face == 5) {
+    uv[0] = XVECTOR2(u0, v1);
+    uv[1] = XVECTOR2(u1, v1);
+    uv[2] = XVECTOR2(u1, v0);
+    uv[3] = XVECTOR2(u0, v0);
+  } else {
+    uv[0] = XVECTOR2(u0, v0);
+    uv[1] = XVECTOR2(u0, v1);
+    uv[2] = XVECTOR2(u1, v1);
+    uv[3] = XVECTOR2(u1, v0);
+  }
+  AddVertex(geom, a.x, a.y, a.z, n.x, n.y, n.z, uv[0].x, uv[0].y);
+  AddVertex(geom, b.x, b.y, b.z, n.x, n.y, n.z, uv[1].x, uv[1].y);
+  AddVertex(geom, c.x, c.y, c.z, n.x, n.y, n.z, uv[2].x, uv[2].y);
+  AddVertex(geom, d.x, d.y, d.z, n.x, n.y, n.z, uv[3].x, uv[3].y);
   // Two triangles (CCW)
   geom.Triangles.push_back((xWORD)base);
   geom.Triangles.push_back((xWORD)(base + 1));
@@ -1313,8 +1334,8 @@ void MinecraftScene::AddFace(xF::xMeshGeometry& geom, int x, int y, int z, int f
   for (int i = 0; i < 4; ++i) {
     corners[i] = XVECTOR3(x + f.corners[i].x, y + f.corners[i].y, z + f.corners[i].z);
   }
-  // UV mapping: corners[0]=(u0,v0), [1]=(u0,v1), [2]=(u1,v1), [3]=(u1,v0)
-  AddQuad(geom, corners[0], corners[1], corners[2], corners[3], f.normal, uv.u0, uv.v0, uv.u1, uv.v1);
+  AddQuad(geom, corners[0], corners[1], corners[2], corners[3],
+          f.normal, face, uv.u0, uv.v0, uv.u1, uv.v1);
 }
 
 void MinecraftScene::CreateChunkMesh(int cx, int cz, xF::XDataBase& outDb) {

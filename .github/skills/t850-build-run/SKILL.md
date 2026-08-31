@@ -140,7 +140,7 @@ Use it for interactive build/run/config/device selection. For automated evidence
 & (Join-Path $SourceRoot 'bin\x64\Debug\DayScene.exe') --game-selftest
 ```
 
-Expected: all 42 lines pass, exit 0. Any fail blocks completion.
+Expected: all 41 lines pass, exit 0. Any fail blocks completion.
 
 ### Offline glTF
 

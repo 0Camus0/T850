@@ -189,6 +189,12 @@ Controls:
 | left click | remove targeted block |
 | right click | place grass in the previous DDA cell |
 
+Minecraft exposes **Draw distance (chunks)** in the runtime ImGui Minecraft section. The value can be changed from 1 through 32 while the scene is running. The scene keeps a fixed-capacity 65x65 chunk ring so changing the active radius does not remap existing storage or mesh slots. A requested change waits for outstanding chunk and navigation jobs, hides chunks leaving the radius, generates only newly entering chunks, remeshes the new boundary, and schedules a navigation rebuild.
+
+`--minecraftDrawDistance N` queues the same live transition after the authored world loads, which is useful for automated validation. Expansion is progressive and obeys `max_uploads_per_frame`; the panel shows `(streaming)` until completion, and the log reports `Draw distance ready: radius=N chunkMeshes=X expected=X`. With the current one-upload-per-frame Minecraft setting, a 6-to-32 transition can take tens of seconds before all 4,225 chunk meshes are visible.
+
+Minecraft commits mutable chunk buffers with metadata-only CPU retention: bounds, materials, sections, version, and vertex/index counts remain available, while uploaded CPU vertex/index arrays and backend system copies are released. Completed D3D12/Vulkan staging batches are also reclaimed during startup uploads instead of waiting for the first rendered frame. A Release D3D12 radius-32 frame-3 validation peaked at about 2.1 GB after these changes (down from about 9.4 GB before retention cleanup). The equivalent Steam Deck Vulkan run completed in 31.2 seconds with a 716.9 MB cgroup memory peak and no swap. Generating and meshing all 4,225 chunks still makes radius 32 a deliberately expensive setting.
+
 The scene uses `CharacterCollisionWorld` swept AABBs against loaded collidable voxels for player traversal. It never creates one Jolt body per block. Instead, each active rendered chunk owns one static generated Jolt triangle body so arbitrary Jolt objects can collide with terrain. Stream commits and synchronous edit remeshes create a replacement body before swapping the generational handle; unload and teardown destroy it.
 
 ## Physics and Navigation

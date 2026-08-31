@@ -6,8 +6,10 @@ T850_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 DESKTOP_DIR="${HOME}/.local/share/applications"
 USER_DESKTOP="${HOME}/Desktop"
 DESKTOP_FILE="${DESKTOP_DIR}/t850-steamdeck.desktop"
+MINECRAFT_DESKTOP_FILE="${DESKTOP_DIR}/t850-minecraft-steamdeck.desktop"
 LAUNCHER_DESKTOP_FILE="${DESKTOP_DIR}/t850-steamdeck-launcher.desktop"
 DESKTOP_ICON_FILE="${USER_DESKTOP}/T850.desktop"
+DESKTOP_MINECRAFT_ICON_FILE="${USER_DESKTOP}/T850 Minecraft.desktop"
 DESKTOP_LAUNCHER_ICON_FILE="${USER_DESKTOP}/T850 Launcher.desktop"
 ICON_PATH="${T850_ROOT}/Resources/logo.png"
 LAUNCHER="${SCRIPT_DIR}/T850.sh"
@@ -45,12 +47,29 @@ Categories=Game;
 StartupNotify=false
 EOF
 
+cat > "${MINECRAFT_DESKTOP_FILE}" <<EOF
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=T850 Minecraft
+Comment=T850 Minecraft voxel scene
+Exec=${LAUNCHER} --game-mode --scene 6
+Path=${T850_ROOT}
+Icon=${ICON_PATH}
+Terminal=false
+Categories=Game;
+StartupNotify=false
+EOF
+
 cp "${DESKTOP_FILE}" "${DESKTOP_ICON_FILE}"
+cp "${MINECRAFT_DESKTOP_FILE}" "${DESKTOP_MINECRAFT_ICON_FILE}"
 cp "${LAUNCHER_DESKTOP_FILE}" "${DESKTOP_LAUNCHER_ICON_FILE}"
-chmod +x "${DESKTOP_FILE}" "${LAUNCHER_DESKTOP_FILE}" "${DESKTOP_ICON_FILE}" "${DESKTOP_LAUNCHER_ICON_FILE}"
+chmod +x "${DESKTOP_FILE}" "${MINECRAFT_DESKTOP_FILE}" "${LAUNCHER_DESKTOP_FILE}" \
+    "${DESKTOP_ICON_FILE}" "${DESKTOP_MINECRAFT_ICON_FILE}" "${DESKTOP_LAUNCHER_ICON_FILE}"
 
 if command -v gio >/dev/null 2>&1; then
   gio set "${DESKTOP_ICON_FILE}" metadata::trusted true >/dev/null 2>&1 || true
+    gio set "${DESKTOP_MINECRAFT_ICON_FILE}" metadata::trusted true >/dev/null 2>&1 || true
   gio set "${DESKTOP_LAUNCHER_ICON_FILE}" metadata::trusted true >/dev/null 2>&1 || true
 fi
 
@@ -58,7 +77,7 @@ if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "${DESKTOP_DIR}" >/dev/null 2>&1 || true
 fi
 
-python3 - "$DESKTOP_FILE" "$LAUNCHER_DESKTOP_FILE" "$ICON_PATH" <<'PY'
+python3 - "$DESKTOP_FILE" "$LAUNCHER_DESKTOP_FILE" "$ICON_PATH" "$LAUNCHER" "$T850_ROOT" <<'PY'
 import binascii
 import os
 import struct
@@ -69,6 +88,8 @@ from pathlib import Path
 runtime_desktop = Path(sys.argv[1])
 launcher_desktop = Path(sys.argv[2])
 icon = Path(sys.argv[3])
+runtime_launcher = Path(sys.argv[4])
+t850_root = Path(sys.argv[5])
 steam_userdata = Path.home() / ".local/share/Steam/userdata"
 config_dirs = sorted(steam_userdata.glob("*/config"))
 if config_dirs:
@@ -181,6 +202,12 @@ def install_shortcuts():
     entries = shortcuts_obj[2]
     wanted = {
         "T850": make_shortcut("T850", str(runtime_desktop), str(runtime_desktop.parent)),
+        "T850 Minecraft": make_shortcut(
+            "T850 Minecraft",
+            str(runtime_launcher),
+            str(t850_root),
+            "--game-mode --scene 6",
+        ),
         "T850 Launcher": make_shortcut("T850 Launcher", str(launcher_desktop), str(launcher_desktop.parent)),
     }
     existing_by_name = {}
@@ -216,15 +243,17 @@ PY
 cat <<EOF
 [T850] Steam Deck launcher installed:
   ${DESKTOP_FILE}
+    ${MINECRAFT_DESKTOP_FILE}
   ${LAUNCHER_DESKTOP_FILE}
   ${DESKTOP_ICON_FILE}
+    ${DESKTOP_MINECRAFT_ICON_FILE}
   ${DESKTOP_LAUNCHER_ICON_FILE}
 
 Desktop Mode:
-  Double-click T850 or T850 Launcher on the Desktop.
-  Start Menu > Games > T850 / T850 Launcher
+    Double-click T850, T850 Minecraft, or T850 Launcher on the Desktop.
+    Start Menu > Games > T850 / T850 Minecraft / T850 Launcher
 
 Game Mode:
-  T850 and T850 Launcher were added to Steam shortcuts.
+    T850, T850 Minecraft, and T850 Launcher were added to Steam shortcuts.
   Restart Steam or switch back to Game Mode if they do not appear immediately.
 EOF

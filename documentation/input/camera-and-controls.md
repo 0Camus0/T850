@@ -175,7 +175,7 @@ Desktop runtime behavior:
 - `WantsRelativeMouseMode()` returns true when ImGui is ready, the runtime GUI is hidden, and no modal text/keyboard input is active.
 - Runtime GUI calls `SubmitRuntimeGamepadGuiInput()` before drawing panels.
 - When GUI is visible, `DrawHandheldGuiFooter()` draws controller hints.
-- `DrawHandheldControllerHelpOverlay()` draws the hold-RT mapping overlay whenever a gamepad is connected and enabled.
+- `DrawHandheldControllerHelpOverlay()` draws the hold-R3 mapping overlay whenever a gamepad is connected and enabled.
 
 Android runtime behavior:
 
@@ -192,7 +192,7 @@ Android runtime behavior:
 |---|---|
 | `SubmitGamepadGuiNavigation(gamepad, guiVisible)` | Submits full ImGui gamepad key/analog events: start/back/face buttons/triggers/sticks/d-pad. |
 | `SubmitGamepadGuiDirectionalNavigation(gamepad, guiVisible)` | Submits a smaller navigation set: A, d-pad, and left-stick direction. |
-| `DrawHandheldControllerHelpOverlay(gamepad)` | Draws a centered controller mapping overlay while RT is held. |
+| `DrawHandheldControllerHelpOverlay(gamepad)` | Draws a centered controller mapping overlay while R3 is held. |
 | `DrawHandheldGuiFooter(gamepad)` | Draws footer hints while runtime GUI is visible. |
 
 Both submit helpers set `ImGuiConfigFlags_NavEnableGamepad`. They set or clear `ImGuiBackendFlags_HasGamepad` based on whether the gamepad is connected and enabled. They only submit active input when `guiVisible` is true.
@@ -218,6 +218,26 @@ Scenes and editor free-fly mode convert `InputManager` into `CameraInputState`.
 - right stick becomes look deltas when look is allowed.
 
 The right-stick look mapping is expressed as mouse-like deltas scaled by frame time, so existing mouse look paths are reused.
+
+### Minecraft gamepad controls
+
+Minecraft consumes the normalized `InputManager::Gamepad` state directly for its voxel-specific actions:
+
+| Control | Action |
+|---|---|
+| left stick | analog movement |
+| right stick | camera look |
+| A / south button | jump |
+| left-stick click | sprint |
+| right trigger | remove targeted block |
+| left trigger | place the selected block |
+| D-pad left/right | previous/next hotbar block |
+| left/right shoulder | previous/next hotbar block |
+| right-stick click | show the handheld control overlay |
+| Start or Steam menu button | open runtime ImGui |
+| B / east button | close runtime ImGui |
+
+When runtime ImGui is visible, application-level input routing blocks Minecraft gameplay input. The same D-pad, sticks, shoulders, and face buttons can therefore navigate the panel without moving the player or editing blocks.
 
 ## CameraController and profiles
 
@@ -500,7 +520,7 @@ When adding a hosted editor viewport:
 2. If mouse look jumps after resize/focus change, check `ResetInputAfterWindowStateChange()` or `ResetMouseDeltaBaseline()`.
 3. If desktop runtime mouse look does not work, check `WantsRelativeMouseMode()` and whether the runtime GUI is visible.
 4. If gamepad input is ignored, check `Gamepad.connected`, `Gamepad.enabled`, deadzone thresholds, and whether a gamepad was opened by SDL.
-5. If handheld hints do not appear, check `DrawHandheldControllerHelpOverlay()` and `Gamepad.rightTrigger`.
+5. If handheld hints do not appear, check `DrawHandheldControllerHelpOverlay()` and `Gamepad.rightStick`.
 6. If Android touch controls also move the mouse/camera, verify the app consumed the scene virtual-control event before framework fallback handling.
 7. If a camera profile does not collide, confirm `CameraUpdateContext.collisionWorld` is supplied and the scene implements the sweep functions.
 8. If hosted Play Scene/Mesh Edit input uses wrong coordinates, inspect `HostedRenderViewport` image rect and local coordinate conversion.

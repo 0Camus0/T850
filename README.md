@@ -192,6 +192,8 @@ The official build uses Valve SteamRT `sniper`, Clang 16, and libc++. A Windows 
 
 See [Steam Deck build and deployment](documentation/platform/steam-deck.md).
 
+For a local Windows-to-Deck development update, configure ignored `deckConfig.json` and run `./UpdateSteamDeck.ps1`. Add `-Run` to launch the updated Minecraft scene after the SteamRT build.
+
 ## Cloud Assets
 
 Download runtime assets:

@@ -1450,6 +1450,14 @@ namespace t850 {
   }
 
   void D3D12Driver::FlushResourceUploadBatch() {
+    const UINT64 completedFence = m_fence ? m_fence->GetCompletedValue() : 0;
+    m_pendingUploadBatches.erase(
+      std::remove_if(m_pendingUploadBatches.begin(), m_pendingUploadBatches.end(),
+        [completedFence](const PendingUploadBatch& batch) {
+          return batch.fenceValue <= completedFence;
+        }),
+      m_pendingUploadBatches.end());
+
     if (!m_uploadBatchList) {
       m_uploadBatchKeepAlive.clear();
       m_uploadBatchCommandCount = 0;

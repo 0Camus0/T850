@@ -363,6 +363,12 @@ bool ValidateConfig(Config& cfg) {
     valid = false;
   }
 
+  if (cfg.minecraftDrawDistance < 0 || cfg.minecraftDrawDistance > 32) {
+    WarnConfigAdjusted("minecraftDrawDistance", "must be 0 or 1..32, disabling override");
+    cfg.minecraftDrawDistance = 0;
+    valid = false;
+  }
+
   if (cfg.title.empty()) {
     WarnConfigAdjusted("title", "must not be empty, using default title");
     cfg.title = defaults.title;
@@ -546,6 +552,10 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
         cfg.startSceneExplicit = true;
       }
     }
+    else if (arg == "--minecraftDrawDistance") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) cfg.minecraftDrawDistance = value;
+    }
     else if (arg == "--fullscreen") {
       cfg.flags.fullscreen = true;
     }
@@ -705,6 +715,7 @@ void PrintHelp() {
     << "  --height <pixels>                  Window height\n"
     << "  --fullscreen                       Launch fullscreen\n"
     << "  --scene <index>                    Starting scene index\n"
+    << "  --minecraftDrawDistance <1..32>    Queue Minecraft draw distance after scene load\n"
     << "  --model <path>                     glTF model for Sandbox\n"
     << "  --sceneFile <path>                 T8ditor .t8scene file for Sandbox\n"
     << "  --sceneProfile <name>              Override runtime scene profile selection\n\n"

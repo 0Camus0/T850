@@ -76,6 +76,7 @@ public:
   bool orbitYawOverride = false;
   float orbitYaw = 0.0f;
   int ragdollSimulationSpeedIndex = -1;
+  int minecraftDrawDistance = 0;
 };
 
 extern Config g_config;

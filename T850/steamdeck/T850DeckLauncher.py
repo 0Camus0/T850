@@ -25,6 +25,7 @@ SCENES = [
     ("Quake3 Mock", 2),
     ("Ragdoll Editor", 3),
     ("Scene Template", 4),
+    ("Minecraft", 6),
 ]
 SCENE_LABEL_BY_ID = {value: label for label, value in SCENES}
 SCENE_ID_BY_LABEL = {label: value for label, value in SCENES}

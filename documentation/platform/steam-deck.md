@@ -145,6 +145,36 @@ Common operations:
 .\LaunchSteamDeckSolution.bat --deck-host 192.168.1.50 --deck-user deck --run-desktop --skip-host --skip-deck --setup-only
 ```
 
+### Update the Deck from a Windows working tree
+
+`UpdateSteamDeck.ps1` is the direct development loop when the local changes are not committed or pushed yet. It packages `HEAD` plus local tracked and untracked overlays, excludes the vcpkg tree, updates a separate managed Deck directory, reuses dependencies from the base Deck checkout, runs the official SteamRT build, and refreshes desktop/Steam shortcuts.
+
+Configure ignored `deckConfig.json` beside the script:
+
+```json
+{
+  "deckHost": "192.168.1.50",
+  "deckUser": "deck",
+  "deckRoot": "/home/deck/Code/T850-minecraft-atlas-test",
+  "baseDeckRoot": "/home/deck/Code/T850"
+}
+```
+
+Then run from PowerShell:
+
+```powershell
+# Sync the current working tree, build SteamRT Release, and install shortcuts.
+.\UpdateSteamDeck.ps1
+
+# Also launch Minecraft as a supervised fullscreen Game Mode process.
+.\UpdateSteamDeck.ps1 -Run
+
+# Refresh source/assets and shortcuts without rebuilding.
+.\UpdateSteamDeck.ps1 -SkipBuild
+```
+
+The managed `deckRoot` must differ from `baseDeckRoot`; the updater never resets or changes the branch of the base checkout. `-Desktop` changes the optional `-Run` launch to windowed 1280x800.
+
 Remote setup requires Windows OpenSSH `ssh`/`scp` and key-based/no-password connectivity. When package setup is enabled, it may disable SteamOS read-only mode and run `sudo pacman`; review this before using it on a managed Deck.
 
 Important switches:
@@ -203,6 +233,14 @@ T850/steamdeck/InstallSteamDeckLauncher.sh
 ```
 
 The installer creates desktop/application launchers and can update Steam shortcuts using the supplied Python launcher tooling.
+
+It installs three non-Steam library entries:
+
+- **T850** for the default runtime;
+- **T850 Minecraft** for `T850.sh --game-mode --scene 6`;
+- **T850 Launcher** for the graphical scene/settings launcher.
+
+The shortcut writer backs up `shortcuts.vdf` as `shortcuts.vdf.t850bak`. Restart Steam or switch back to Game Mode after installation so the Steam client reloads the shortcut database.
 
 ## CI Behavior
 

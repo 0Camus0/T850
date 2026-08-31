@@ -210,8 +210,9 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_worldHeight = m_voxelSettings.world_height;
   m_waterLevel = m_voxelSettings.water_level;
   m_renderDistance = m_voxelSettings.render_distance;
-  m_streamingRecenterThreshold = m_voxelSettings.streaming_recenter_threshold;
-  m_chunkCountX = m_renderDistance * 2 + 1;
+  m_streamingRecenterThreshold = (std::min)(
+    m_voxelSettings.streaming_recenter_threshold, m_renderDistance - 1);
+  m_chunkCountX = kMaxChunkCount;
   m_chunkCountZ = m_chunkCountX;
   m_maxChunks = m_chunkCountX * m_chunkCountZ;
   m_mobMeshIndex = m_maxChunks;
@@ -586,8 +587,10 @@ void MinecraftScene::GenerateWorld() {
 void MinecraftScene::BuildNavigationMesh() {
   std::vector<uint8_t> blockSnapshot(sizeof(m_blocks));
   std::memcpy(blockSnapshot.data(), m_blocks, sizeof(m_blocks));
+  const int centerChunkX = m_centerChunkX;
+  const int centerChunkZ = m_centerChunkZ;
   t850::navigation::NavMeshGeometry geometry;
-  BuildNavigationGeometry(blockSnapshot, m_centerChunkX, m_centerChunkZ, geometry);
+  BuildNavigationGeometry(blockSnapshot, centerChunkX, centerChunkZ, geometry);
 
   m_navMeshSettings = t850::navigation::NavMeshBuildSettings{};
   if (m_sceneFile.navigation_mesh) {
@@ -625,6 +628,8 @@ void MinecraftScene::BuildNavigationMesh() {
   const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
   T8_LOG_INFO("[Minecraft] NavMesh ready: %.2fms verts=%d tris=%d polys=%d",
               m_navMeshBuildMs, stats.vertexCount, stats.triangleCount, stats.polygonCount);
+  m_navMeshCenterChunkX = centerChunkX;
+  m_navMeshCenterChunkZ = centerChunkZ;
   m_mob.repathTimer = 0.0f;
   m_mob.pathReady = false;
 }
@@ -734,6 +739,8 @@ void MinecraftScene::ProcessNavigationMeshBuild() {
       const auto& stats = m_navMesh.GetStats();
       T8_LOG_INFO("[Minecraft] Background NavMesh ready: %.2fms verts=%d tris=%d polys=%d",
                   m_navMeshBuildMs, stats.vertexCount, stats.triangleCount, stats.polygonCount);
+      m_navMeshCenterChunkX = m_pendingNavMeshBuild->centerChunkX;
+      m_navMeshCenterChunkZ = m_pendingNavMeshBuild->centerChunkZ;
       m_mob.repathTimer = 0.0f;
       m_mob.pathReady = false;
     } else if (m_pendingNavMeshBuild) {
@@ -749,11 +756,60 @@ void MinecraftScene::ProcessNavigationMeshBuild() {
 void MinecraftScene::UpdateMob(float dt) {
   if (!m_navMeshReady) return;
 
+  if (m_navMeshCenterChunkX != m_centerChunkX ||
+      m_navMeshCenterChunkZ != m_centerChunkZ) {
+    m_mob.path.clear();
+    m_mob.pathCursor = 0;
+    m_mob.pathReady = false;
+    m_mob.repathTimer = 0.0f;
+    return;
+  }
+
   m_mob.repathTimer -= dt;
   if (m_mob.repathTimer <= 0.0f) {
+    const XVECTOR3 playerPosition = m_player.GetPosition();
+    XVECTOR3 projectedStart;
+    if (!m_navMesh.ProjectPoint(m_mob.position, projectedStart,
+                                m_navMeshSettings.queryExtents, nullptr)) {
+      const XVECTOR3 towardPreviousPosition(
+        m_mob.position.x - playerPosition.x, 0.0f,
+        m_mob.position.z - playerPosition.z, 0.0f);
+      const XVECTOR3 spawnDirection = Normalize3(
+        towardPreviousPosition, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+      const float recoveryDistance = (std::max)(4.0f, m_chunkSize * 0.5f);
+      const XVECTOR3 recoveryCandidate(
+        playerPosition.x + spawnDirection.x * recoveryDistance,
+        playerPosition.y,
+        playerPosition.z + spawnDirection.z * recoveryDistance, 1.0f);
+      if (!m_navMesh.ProjectPoint(recoveryCandidate, projectedStart,
+                                  m_navMeshSettings.queryExtents, nullptr) &&
+          !m_navMesh.ProjectPoint(playerPosition, projectedStart,
+                                  m_navMeshSettings.queryExtents, nullptr)) {
+        m_mob.path.clear();
+        m_mob.pathCursor = 0;
+        m_mob.pathReady = false;
+        m_mob.repathTimer = m_voxelSettings.mob.repath_seconds;
+        return;
+      }
+      m_mob.position = projectedStart;
+      UpdateMobInstance();
+      T8_LOG_INFO("[Minecraft] Rehomed mob onto streamed navmesh at (%.1f, %.1f, %.1f)",
+                  m_mob.position.x, m_mob.position.y, m_mob.position.z);
+    }
+
+    XVECTOR3 projectedEnd;
+    if (!m_navMesh.ProjectPoint(playerPosition, projectedEnd,
+                                m_navMeshSettings.queryExtents, nullptr)) {
+      m_mob.path.clear();
+      m_mob.pathCursor = 0;
+      m_mob.pathReady = false;
+      m_mob.repathTimer = m_voxelSettings.mob.repath_seconds;
+      return;
+    }
+
     t850::navigation::NavPathRequest request;
-    request.start = m_mob.position;
-    request.end = m_player.GetPosition();
+    request.start = projectedStart;
+    request.end = projectedEnd;
     request.queryExtents = m_navMeshSettings.queryExtents;
     const t850::navigation::NavPathResult result = m_navMesh.FindPath(request);
     m_mob.path = result.points;
@@ -1414,7 +1470,7 @@ void MinecraftScene::BuildChunkMesh(int cx, int cz) {
   }
 
   std::string error;
-  if (!mesh->ReplaceSnapshot(std::move(snapshot), &error)) {
+  if (!mesh->ReplaceSnapshot(std::move(snapshot), &error, false)) {
     T8_LOG_ERROR("[Minecraft] Chunk (%d,%d) mutable mesh commit failed: %s",
                  cx, cz, error.c_str());
     Meshes[idx].SetVisible(false);
@@ -1436,6 +1492,115 @@ void MinecraftScene::RebuildDirtyChunks() {
       }
     }
   }
+}
+
+void MinecraftScene::ApplyPendingRenderDistance() {
+  if (m_pendingRenderDistance <= 0) return;
+  if (m_pendingRenderDistance == m_renderDistance) {
+    m_pendingRenderDistance = 0;
+    return;
+  }
+  if (m_chunkGenerationFuture.valid() || m_navMeshBuildFuture.valid() ||
+      !m_chunksAwaitingMesh.empty()) return;
+  {
+    std::lock_guard<std::mutex> lock(m_pendingMutex);
+    if (!m_pendingChunks.empty()) return;
+  }
+
+  const int oldDistance = m_renderDistance;
+  const int newDistance = (std::max)(1, (std::min)(kMaxRenderDistance, m_pendingRenderDistance));
+  m_pendingRenderDistance = 0;
+
+  for (int cz = m_centerChunkZ - oldDistance; cz <= m_centerChunkZ + oldDistance; ++cz) {
+    for (int cx = m_centerChunkX - oldDistance; cx <= m_centerChunkX + oldDistance; ++cx) {
+      if (std::abs(cx - m_centerChunkX) <= newDistance &&
+          std::abs(cz - m_centerChunkZ) <= newDistance) continue;
+      const int gx = ((cx % m_chunkCountX) + m_chunkCountX) % m_chunkCountX;
+      const int gz = ((cz % m_chunkCountZ) + m_chunkCountZ) % m_chunkCountZ;
+      const int idx = gz * m_chunkCountX + gx;
+      if (Meshes[idx].pBase) Meshes[idx].SetVisible(false);
+      m_chunkBuilt[gz][gx] = false;
+      m_chunkDirty[gz][gx] = false;
+    }
+  }
+
+  m_renderDistance = newDistance;
+  m_renderDistanceBuildTarget = newDistance;
+  m_voxelSettings.render_distance = newDistance;
+  m_streamingRecenterThreshold = (std::min)(
+    m_voxelSettings.streaming_recenter_threshold, newDistance - 1);
+
+  std::vector<std::pair<int, int>> newChunks;
+  if (newDistance > oldDistance) {
+    for (int cz = m_centerChunkZ - newDistance; cz <= m_centerChunkZ + newDistance; ++cz) {
+      for (int cx = m_centerChunkX - newDistance; cx <= m_centerChunkX + newDistance; ++cx) {
+        if (std::abs(cx - m_centerChunkX) <= oldDistance &&
+            std::abs(cz - m_centerChunkZ) <= oldDistance) continue;
+        const int idx = ChunkIndex(cx, cz);
+        if (idx < 0) continue;
+        if (Meshes[idx].pBase) Meshes[idx].SetVisible(false);
+        m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX] = false;
+        newChunks.emplace_back(cx, cz);
+      }
+    }
+  }
+
+  const bool useBackgroundGeneration = !newChunks.empty() && m_asyncStreaming &&
+    t850::g_threadPool && t850::g_threadPool->NumWorkers() > 0;
+  if (useBackgroundGeneration) {
+    m_generatedChunkBatch =
+      std::make_shared<std::vector<GeneratedChunkData>>(newChunks.size());
+    const auto generatedBatch = m_generatedChunkBatch;
+    m_chunkGenerationFuture = t850::g_threadPool->Submit(
+      [this, newChunks = std::move(newChunks), generatedBatch]() {
+        for (std::size_t index = 0; index < newChunks.size(); ++index) {
+          GeneratedChunkData& generated = (*generatedBatch)[index];
+          generated.cx = newChunks[index].first;
+          generated.cz = newChunks[index].second;
+          GenerateChunkData(generated.cx, generated.cz, generated.blocks);
+        }
+      });
+  } else if (!newChunks.empty()) {
+    for (const auto& chunk : newChunks) GenerateChunk(chunk.first, chunk.second);
+    for (int cz = m_centerChunkZ - newDistance; cz <= m_centerChunkZ + newDistance; ++cz)
+      for (int cx = m_centerChunkX - newDistance; cx <= m_centerChunkX + newDistance; ++cx)
+        GenerateChunkTrees(cx, cz);
+    RebuildDirtyChunks();
+  } else {
+    for (int offset = -newDistance; offset <= newDistance; ++offset) {
+      QueueChunkRemesh(m_centerChunkX - newDistance, m_centerChunkZ + offset);
+      QueueChunkRemesh(m_centerChunkX + newDistance, m_centerChunkZ + offset);
+      QueueChunkRemesh(m_centerChunkX + offset, m_centerChunkZ - newDistance);
+      QueueChunkRemesh(m_centerChunkX + offset, m_centerChunkZ + newDistance);
+    }
+  }
+
+  m_navMeshDirty = true;
+  m_navMeshRebuildTimer = m_voxelSettings.navmesh_rebuild_seconds;
+  m_mob.path.clear();
+  m_mob.pathReady = false;
+  T8_LOG_INFO("[Minecraft] Draw distance changed %d -> %d chunks", oldDistance, newDistance);
+}
+
+void MinecraftScene::ReportRenderDistanceReady() {
+  if (m_renderDistanceBuildTarget <= 0 || m_chunkGenerationFuture.valid() ||
+      !m_chunksAwaitingMesh.empty()) return;
+  {
+    std::lock_guard<std::mutex> lock(m_pendingMutex);
+    if (!m_pendingChunks.empty()) return;
+  }
+
+  int chunkMeshes = 0;
+  for (int cz = m_centerChunkZ - m_renderDistance; cz <= m_centerChunkZ + m_renderDistance; ++cz) {
+    for (int cx = m_centerChunkX - m_renderDistance; cx <= m_centerChunkX + m_renderDistance; ++cx) {
+      const int idx = ChunkIndex(cx, cz);
+      if (idx >= 0 && Meshes[idx].pBase && Meshes[idx].Visible) ++chunkMeshes;
+    }
+  }
+  const int expected = (m_renderDistance * 2 + 1) * (m_renderDistance * 2 + 1);
+  T8_LOG_INFO("[Minecraft] Draw distance ready: radius=%d chunkMeshes=%d expected=%d",
+              m_renderDistance, chunkMeshes, expected);
+  m_renderDistanceBuildTarget = 0;
 }
 
 void MinecraftScene::UpdateChunkStreaming() {
@@ -1770,9 +1935,20 @@ void MinecraftScene::UploadChunkMesh(PendingChunk& pc) {
   if (idx < 0) return;
 
   t850::MutableMesh* mesh = dynamic_cast<t850::MutableMesh*>(Meshes[idx].pBase);
-  if (!mesh) return;
+  if (!mesh) {
+    if (Meshes[idx].pBase) {
+      Meshes[idx].pBase->Destroy();
+      delete Meshes[idx].pBase;
+    }
+    mesh = new t850::MutableMesh();
+    mesh->SetEngineContext(pEngineContext);
+    mesh->SetSceneProps(&SceneProp);
+    mesh->Create();
+    Meshes[idx].CreateInstance(mesh, &VP);
+    Meshes[idx].SetTexture(m_atlasTexture, 0);
+  }
   std::string error;
-  if (!pc.meshSnapshot || !mesh->ReplaceSnapshot(std::move(*pc.meshSnapshot), &error)) {
+  if (!pc.meshSnapshot || !mesh->ReplaceSnapshot(std::move(*pc.meshSnapshot), &error, false)) {
     T8_LOG_ERROR("[Minecraft] Chunk (%d,%d) mutable mesh upload failed: %s",
                  pc.cx, pc.cz, error.c_str());
     Meshes[idx].SetVisible(false);
@@ -2114,8 +2290,14 @@ void MinecraftScene::HandleBlockInteraction(InputManager* IManager) {
   m_breakCooldown -= DtSecs;
   m_placeCooldown -= DtSecs;
 
-  // Left click: break block (SDL button 1 -> index 0)
-  if (IManager->PressedMouseButton(0) && m_breakCooldown <= 0.0f) {
+  const bool gamepadActive = IManager->Gamepad.connected && IManager->Gamepad.enabled;
+  const bool breakInput = IManager->PressedMouseButton(0) ||
+    (gamepadActive && IManager->Gamepad.rightTrigger > 0.5f);
+  const bool placeInput = IManager->PressedMouseButton(2) ||
+    (gamepadActive && IManager->Gamepad.leftTrigger > 0.5f);
+
+  // Left click / right trigger: break block.
+  if (breakInput && m_breakCooldown <= 0.0f) {
     if (m_highlightVisible) {
       const uint8_t removedBlock = GetBlock(bx, by, bz);
       const std::string removed = removedBlock < m_blockDefs.size()
@@ -2130,8 +2312,8 @@ void MinecraftScene::HandleBlockInteraction(InputManager* IManager) {
       m_interactionMessageTime = 0.75f;
     }
   }
-  // Right click: place block (SDL button 3 -> index 2)
-  if (IManager->PressedMouseButton(2) && m_placeCooldown <= 0.0f && m_highlightVisible) {
+  // Right click / left trigger: place block.
+  if (placeInput && m_placeCooldown <= 0.0f && m_highlightVisible) {
     // Don't place inside the player
     const int ex = (int)std::floor(m_playerEye.x);
     const int ey = (int)std::floor(m_playerEye.y);
@@ -2151,7 +2333,7 @@ void MinecraftScene::HandleBlockInteraction(InputManager* IManager) {
       T8_LOG_INFO("[Minecraft] Place rejected: cell (%d,%d,%d) inside player (eye %d,%d,%d)",
                   px, py, pz, ex, ey, ez);
     }
-  } else if (IManager->PressedMouseButton(2) && m_placeCooldown <= 0.0f && !m_highlightVisible) {
+  } else if (placeInput && m_placeCooldown <= 0.0f && !m_highlightVisible) {
     m_interactionMessage = "No block within reach";
     m_interactionMessageTime = 0.75f;
   }
@@ -2613,6 +2795,11 @@ void MinecraftScene::CreateAssets() {
 
   // Create the first-person weapon (sword)
   CreateWeaponMesh();
+
+  if (g_config.minecraftDrawDistance > 0 &&
+      g_config.minecraftDrawDistance != m_renderDistance) {
+    m_pendingRenderDistance = g_config.minecraftDrawDistance;
+  }
 }
 
 void MinecraftScene::OnLoadScene() {
@@ -2715,16 +2902,19 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
 
   // Upload ready async chunks to the GPU (a few per frame)
   ProcessPendingChunks();
+  ReportRenderDistanceReady();
 
   // Legacy APIs can still opt out of asynchronous chunk remeshing.
   if (!m_asyncStreaming) RebuildDirtyChunks();
+
+  ApplyPendingRenderDistance();
 
   // Rebuild the navmesh (throttled) when blocks changed, so enemies
   // re-path around newly placed/removed blocks.
   if (m_navMeshDirty) {
     m_navMeshRebuildTimer += DtSecs;
     if (m_navMeshRebuildTimer >= m_voxelSettings.navmesh_rebuild_seconds &&
-        !m_navMeshBuildFuture.valid()) {
+      !m_navMeshBuildFuture.valid() && !m_chunkGenerationFuture.valid()) {
       m_navMeshRebuildTimer = 0.0f;
       m_navMeshDirty = false;
       StartNavigationMeshBuild();
@@ -2735,6 +2925,17 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
 }
 
 void MinecraftScene::OnInput(InputManager* IManager) {
+  const GamepadInputState& gamepad = IManager->Gamepad;
+  const bool gamepadActive = gamepad.connected && gamepad.enabled;
+  constexpr float kGamepadMoveThreshold = 0.12f;
+  constexpr float kGamepadLookThreshold = 0.08f;
+  constexpr float kGamepadYawSpeed = 2.6f;
+  constexpr float kGamepadPitchSpeed = 2.2f;
+  if (gamepadActive && !m_gamepadControlsLogged) {
+    m_gamepadControlsLogged = true;
+    T8_LOG_INFO("[Minecraft] Gamepad controls active: '%s'", gamepad.name.c_str());
+  }
+
   // Mouse look
   if (m_mouseCaptured) {
     if (m_cameraMode == 2 && m_lightCameraEditMode) {
@@ -2757,6 +2958,14 @@ void MinecraftScene::OnInput(InputManager* IManager) {
       const float pitchLimit = m_voxelSettings.player.look_pitch_limit;
       m_playerPitch = (std::max)(-pitchLimit, (std::min)(pitchLimit, m_playerPitch));
     }
+  }
+  if (gamepadActive && m_cameraMode == 0 &&
+      (std::fabs(gamepad.rightX) > kGamepadLookThreshold ||
+       std::fabs(gamepad.rightY) > kGamepadLookThreshold)) {
+    m_playerYaw += gamepad.rightX * kGamepadYawSpeed * DtSecs;
+    m_playerPitch += gamepad.rightY * kGamepadPitchSpeed * DtSecs;
+    const float pitchLimit = m_voxelSettings.player.look_pitch_limit;
+    m_playerPitch = (std::max)(-pitchLimit, (std::min)(pitchLimit, m_playerPitch));
   }
 
   if (m_cameraMode == 1 || (m_cameraMode == 2 && m_lightCameraEditMode)) {
@@ -2793,6 +3002,18 @@ void MinecraftScene::OnInput(InputManager* IManager) {
     m_playerInput.sprint = IManager->PressedKey(T800K_LSHIFT);
     m_playerInput.moveForwardAmount = (m_playerInput.moveForward ? 1.0f : 0.0f) - (m_playerInput.moveBackward ? 1.0f : 0.0f);
     m_playerInput.moveRightAmount = (m_playerInput.moveRight ? 1.0f : 0.0f) - (m_playerInput.moveLeft ? 1.0f : 0.0f);
+    if (gamepadActive) {
+      m_playerInput.moveForwardAmount = std::clamp(
+        m_playerInput.moveForwardAmount - gamepad.leftY, -1.0f, 1.0f);
+      m_playerInput.moveRightAmount = std::clamp(
+        m_playerInput.moveRightAmount + gamepad.leftX, -1.0f, 1.0f);
+      m_playerInput.moveForward = m_playerInput.moveForward || gamepad.leftY < -kGamepadMoveThreshold;
+      m_playerInput.moveBackward = m_playerInput.moveBackward || gamepad.leftY > kGamepadMoveThreshold;
+      m_playerInput.moveLeft = m_playerInput.moveLeft || gamepad.leftX < -kGamepadMoveThreshold;
+      m_playerInput.moveRight = m_playerInput.moveRight || gamepad.leftX > kGamepadMoveThreshold;
+      m_playerInput.jump = m_playerInput.jump || gamepad.buttonSouth;
+      m_playerInput.sprint = m_playerInput.sprint || gamepad.leftStick;
+    }
   }
 
   if (m_cameraMode == 0)
@@ -2808,6 +3029,17 @@ void MinecraftScene::OnInput(InputManager* IManager) {
   if (IManager->PressedOnceKey(T800K_7) && m_hotbar.size() > 6) m_selectedBlock = m_hotbar[6];
   if (IManager->PressedOnceKey(T800K_8) && m_hotbar.size() > 7) m_selectedBlock = m_hotbar[7];
   if (IManager->PressedOnceKey(T800K_9) && m_hotbar.size() > 8) m_selectedBlock = m_hotbar[8];
+  if (gamepadActive && !m_hotbar.empty()) {
+    const bool previousBlock = gamepad.dpadLeftPressed || gamepad.leftShoulderPressed;
+    const bool nextBlock = gamepad.dpadRightPressed || gamepad.rightShoulderPressed;
+    auto selected = std::find(m_hotbar.begin(), m_hotbar.end(), (uint8_t)m_selectedBlock);
+    int selectedIndex = selected == m_hotbar.end()
+      ? 0 : static_cast<int>(std::distance(m_hotbar.begin(), selected));
+    if (previousBlock)
+      selectedIndex = (selectedIndex + (int)m_hotbar.size() - 1) % (int)m_hotbar.size();
+    if (nextBlock) selectedIndex = (selectedIndex + 1) % (int)m_hotbar.size();
+    if (previousBlock || nextBlock) m_selectedBlock = m_hotbar[selectedIndex];
+  }
   // Extra blocks via Q/E cycle (Q = previous, E toggles cursor, so use R/F)
   if (IManager->PressedOnceKey(T800K_r)) m_selectedBlock = BlockId("brick", m_selectedBlock);
   if (IManager->PressedOnceKey(T800K_f)) m_selectedBlock = BlockId("glass", m_selectedBlock);
@@ -3598,6 +3830,20 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
     char chunk[128];
     snprintf(chunk, sizeof(chunk), "Chunk: %d, %d", m_centerChunkX, m_centerChunkZ);
     gui.Text(chunk);
+    char distance[128];
+    snprintf(distance, sizeof(distance), "Active draw radius: %d chunks%s",
+         m_renderDistance, m_renderDistanceBuildTarget > 0 ? " (streaming)" : "");
+    gui.Text(distance);
+    t850::SliderDesc drawDistance;
+    drawDistance.name = "draw_distance";
+    drawDistance.label = "Draw distance (chunks)";
+    drawDistance.min_val = 1.0f;
+    drawDistance.max_val = (float)kMaxRenderDistance;
+    drawDistance.step = 1.0f;
+    float drawDistanceValue = (float)(m_pendingRenderDistance > 0
+      ? m_pendingRenderDistance : m_renderDistance);
+    if (gui.Slider(drawDistance, drawDistanceValue))
+      m_pendingRenderDistance = (int)drawDistanceValue;
     gui.Separator();
 
     static int s_skyIndex = 0;

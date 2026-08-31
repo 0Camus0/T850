@@ -16,11 +16,12 @@ public:
   MutableMesh(const MutableMesh&) = delete;
   MutableMesh& operator=(const MutableMesh&) = delete;
 
-  bool ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* error = nullptr);
-  bool Ready() const { return m_vertexBuffer && m_indexBuffer && !m_snapshot.Empty(); }
+  bool ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* error = nullptr,
+                       bool retainCpuGeometry = true);
+  bool Ready() const { return m_vertexBuffer && m_indexBuffer && m_vertexCount > 0 && m_indexCount > 0; }
   uint64_t Version() const { return m_snapshot.version; }
-  std::size_t VertexCount() const { return m_snapshot.vertices.size(); }
-  std::size_t IndexCount() const { return m_snapshot.indices.size(); }
+  std::size_t VertexCount() const { return m_vertexCount; }
+  std::size_t IndexCount() const { return m_indexCount; }
   const AABB& LocalBounds() const { return m_snapshot.localBounds; }
   const MutableMeshSnapshot& Snapshot() const { return m_snapshot; }
 
@@ -38,6 +39,8 @@ private:
                              RenderMesh::MeshMaterialCBuffer& constants) const;
 
   MutableMeshSnapshot m_snapshot;
+  std::size_t m_vertexCount = 0;
+  std::size_t m_indexCount = 0;
   VertexBuffer* m_vertexBuffer = nullptr;
   IndexBuffer* m_indexBuffer = nullptr;
   ConstantBuffer* m_combinedCB = nullptr;

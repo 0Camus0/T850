@@ -53,7 +53,7 @@ struct BlockDef {
 // ── Voxel world constants ────────────────────────────────────────────
 constexpr int kMaxChunkSize = 16;
 constexpr int kMaxWorldHeight = 64;
-constexpr int kMaxRenderDistance = 8;
+constexpr int kMaxRenderDistance = 32;
 constexpr int kMaxChunkCount = kMaxRenderDistance * 2 + 1;
 constexpr int kMaxChunks = kMaxChunkCount * kMaxChunkCount;
 constexpr int kMaxRenderMeshCount = kMaxChunks + 2;
@@ -193,6 +193,8 @@ public:
   int m_renderMeshCount = 0;
   int m_centerChunkX = 0;
   int m_centerChunkZ = 0;
+  int m_pendingRenderDistance = 0;
+  int m_renderDistanceBuildTarget = 0;
 
   // ── Async chunk streaming ──
   struct GeneratedChunkData {
@@ -241,6 +243,8 @@ public:
   };
   std::future<void> m_navMeshBuildFuture;
   std::shared_ptr<PendingNavMeshBuild> m_pendingNavMeshBuild;
+  int m_navMeshCenterChunkX = 0;
+  int m_navMeshCenterChunkZ = 0;
   // Set when a block is placed/removed so the navmesh is rebuilt (throttled)
   // and the mob re-paths around the new obstacle.
   bool m_navMeshDirty = false;
@@ -301,6 +305,8 @@ public:
   void GenerateChunkTrees(int cx, int cz, bool markState = true);
   void BuildChunkMesh(int cx, int cz);
   void RebuildDirtyChunks();
+  void ApplyPendingRenderDistance();
+  void ReportRenderDistanceReady();
   void UpdateChunkStreaming();
   void ShiftWorldAndStream(int newCx, int newCz);
   void QueueChunkRemesh(int cx, int cz);
@@ -368,4 +374,5 @@ public:
   float m_interactionMessageTime = 0.0f;
   float m_breakCooldown = 0.0f;
   float m_placeCooldown = 0.0f;
+  bool m_gamepadControlsLogged = false;
 };

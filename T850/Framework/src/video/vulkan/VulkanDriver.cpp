@@ -1472,6 +1472,19 @@ namespace t850 {
     if (m_uploadBatchDepth > 0)
       return;
 
+    for (auto iterator = m_pendingUploadBatches.begin();
+         iterator != m_pendingUploadBatches.end();) {
+      if (vkGetFenceStatus(m_device, iterator->fence) != VK_SUCCESS) {
+        ++iterator;
+        continue;
+      }
+      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &iterator->commandBuffer);
+      vkDestroyFence(m_device, iterator->fence, nullptr);
+      for (const DeferredBuffer& buffer : iterator->buffers)
+        vmaDestroyBuffer(m_allocator, buffer.buffer, buffer.alloc);
+      iterator = m_pendingUploadBatches.erase(iterator);
+    }
+
     if (m_uploadBatchCmd) {
       vkEndCommandBuffer(m_uploadBatchCmd);
 

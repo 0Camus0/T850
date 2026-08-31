@@ -214,6 +214,7 @@ Benchmark matrix mode forces DayScene, D3D11 startup, 1920x1080, and onscreen st
 --d3d12debug
 --profile
 --profileFrames N
+--minecraftDrawDistance N
 --telemetry | --runtimeTelemetry
 --telemetryFrequencyFrames N
 --runtimeTelemetryFrequencyFrames N

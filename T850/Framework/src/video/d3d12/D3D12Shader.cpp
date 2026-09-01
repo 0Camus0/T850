@@ -422,7 +422,11 @@ namespace t850 {
       driver->m_lastPSO = pso;
     }
 
-    // Bind default sampler if shader uses one
+    // Bind default sampler as a fallback for draws that never bind a
+    // texture sampler. Textured draws rebind the texture's own sampler
+    // atomically with its SRV inside Texture::Set/SetVS (which run after
+    // this call), so per-texture samplers (e.g. the voxel atlas NEAREST
+    // sampler) always win over the aniso default.
     for (const auto& samplerBinding : samplerSlots) {
       cmdList->SetGraphicsRootDescriptorTable(samplerBinding.second, driver->GetDefaultSamplerGPU());
     }

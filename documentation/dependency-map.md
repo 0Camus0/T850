@@ -1,6 +1,6 @@
 # Dependency Map
 
-Status: verified against source on 2026-08-19.
+Status: verified against source on 2026-08-30.
 
 This document cross-links the subsystem documentation and shows the major class/data dependencies between architecture, assets, rendering, animation, physics, navigation, editor authoring, and scene runtime.
 
@@ -24,7 +24,7 @@ This document cross-links the subsystem documentation and shows the major class/
 - [Editor overview](editor/editor-overview.md)
 - [Scene format and runtime](scenes/scene-format-and-runtime.md)
 - [SceneSetup descriptors](scenes/scene-setup-descriptors.md)
-- [Review and gaps](review-and-gaps.md)
+- [Current status and remaining work](current-status-and-roadmap.md)
 
 ## Documentation dependency table
 
@@ -65,6 +65,9 @@ classDiagram
   }
   class InputManager
   class ImGuiSystem
+  class ImGuiRendererBackend
+  class Profiler
+  class ProfilerGpuBackend
   class DevGuiContext
   class CameraController
   class SceneBase {
@@ -99,6 +102,7 @@ classDiagram
   class RenderMesh
   class RenderSkinnedMesh
   class Texture
+  class TextureAtlas
   class IBLResources
   class EnvironmentMapSet
   class ResourceLocator {
@@ -118,6 +122,9 @@ classDiagram
   AppBase <|-- EditorApp
   AppBase --> InputManager
   AppBase --> ImGuiSystem
+  ImGuiSystem --> ImGuiRendererBackend
+  Profiler --> ProfilerGpuBackend
+  ProfilerGpuBackend --> BaseDriver
   AppBase --> SceneBase
   AppBase --> EngineContext
   EngineContext --> BaseDriver
@@ -130,6 +137,8 @@ classDiagram
   PrimitiveManager --> RenderMesh
   RenderMesh <|-- RenderSkinnedMesh
   RenderMesh --> Texture
+  TextureAtlas --> Texture
+  TextureAtlas --> BaseDriver
   RenderMesh --> MeshAssetCache
   RenderGraph --> EnvironmentMapSet
   EnvironmentMapSet --> Texture
@@ -237,15 +246,20 @@ Key documents:
 ```mermaid
 flowchart TD
   App["DayScene App / T8ditor EditorImGui"] --> ImGuiSystem["ImGuiSystem"]
-  ImGuiSystem --> Platform["SDL3 or Android backend"]
-  ImGuiSystem --> Renderer["D3D11 / D3D12 / GL / Vulkan renderer backend"]
+  ImGuiSystem --> Factory["ImGui backend factory"]
+  Factory --> Backend["ImGuiRendererBackend"]
+  Backend --> Platform["SDL3 or Android adapter"]
+  Backend --> Renderer["D3D11 / D3D12 / GL / Vulkan adapter"]
   ImGuiSystem --> Frame["NewFrame / Render / platform windows"]
+  ImGuiSystem --> TextureIDs["backend-owned preview texture IDs"]
   App --> DevGui["DevGuiContext"]
   DevGui --> SceneGui["SceneBase::DrawDevGui"]
   T8ditor["T8ditor hosted windows"] --> Hosted["HostedViewportPanel"]
   Hosted --> DevGui
   ImGuiSystem --> Loading["LoadingProgress renderer"]
 ```
+
+GPU profiling follows the same composition pattern: `Profiler` owns API-neutral scope accounting and `ProfilerGpuBackend` owns timestamp resources for the selected API.
 
 Key documents:
 

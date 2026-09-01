@@ -167,11 +167,17 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\ImGuiSystem.cpp" />
+    <ClCompile Include="src\ImGuiRendererBackend.cpp" />
+    <ClCompile Include="src\ImGuiD3D11Backend.cpp" />
+    <ClCompile Include="src\ImGuiD3D12Backend.cpp" />
+    <ClCompile Include="src\ImGuiOpenGLBackend.cpp" />
+    <ClCompile Include="src\ImGuiVulkanBackend.cpp" />
     <ClCompile Include="src\DevGuiContext.cpp" />
     <ClCompile Include="src\RagdollEditorGui.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\imgui\ImGuiSystem.h" />
+    <ClInclude Include="include\imgui\ImGuiRendererBackend.h" />
     <ClInclude Include="include\imgui\DevGuiContext.h" />
     <ClInclude Include="include\imgui\RagdollEditorGui.h" />
   </ItemGroup>

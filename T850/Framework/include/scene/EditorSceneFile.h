@@ -521,9 +521,12 @@ struct SceneVoxelBoxPartDesc {
 
 struct SceneVoxelMobDesc {
   Vec3f spawn = {24.5f, 40.0f, 24.5f};
+  int count = 1;
   float move_speed = 1.8f;
   float repath_seconds = 1.0f;
   float waypoint_distance = 0.2f;
+  float player_avoidance_radius = 1.35f;
+  float visual_ground_clearance = 0.001f;
   float half_width = 0.25f;
   float height = 1.4f;
   float vertical_follow_speed = 8.0f;
@@ -579,6 +582,14 @@ struct SceneVoxelWorldDesc {
   bool async_streaming = true;
   int atlas_size = 256;
   int atlas_tiles_per_axis = 16;
+  // When non-empty, the voxel renderer samples this image file (under
+  // Assets/Textures/) as the block atlas instead of generating a solid-color
+  // one. atlas_tile_px is the logical tile size. atlas_pixelation_factor
+  // optionally reduces source detail and nearest-expands it while preserving
+  // that grid.
+  std::string atlas_texture;
+  int atlas_tile_px = 16;
+  int atlas_pixelation_factor = 1;
   float navmesh_rebuild_seconds = 0.5f;
   std::string environment_map = "sky/CubeMap_SkyWater.dds";
   std::vector<std::string> environment_options;

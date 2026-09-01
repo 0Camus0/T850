@@ -1,6 +1,6 @@
 # Main Architecture
 
-Status: verified against source on 2026-08-19.
+Status: verified against source on 2026-08-30.
 
 This document describes the top-level architecture of T850: the Framework layer, scene applications, editor application, dev layer, and shared runtime context. It focuses on ownership and lifecycle rather than subsystem internals.
 
@@ -124,6 +124,16 @@ classDiagram
   SceneBase --> BaseDriver
 ```
 
+### Graphics backend dispatch
+
+Shared runtime, scene, editor, and debug code must not downcast `BaseDriver` or branch on `GraphicsApi` to perform backend work. Backend-owned behavior is exposed through virtual capabilities and lifecycle hooks on `BaseDriver`; substantial cross-API subsystems use strategy objects:
+
+- `ImGuiRendererBackend` owns ImGui platform/renderer initialization, frame setup, draw submission, texture descriptors, viewport behavior, and shutdown for one API.
+- `ProfilerGpuBackend` owns timestamp queries, frame rings, resolves, and cleanup for one API; `Profiler` owns only API-neutral CPU timing and reporting.
+- `BaseDriver` capabilities describe shader dialect, texture origin, deferred rendering, render-target mip generation, native-surface lifecycle, late present, and pre-present overlays.
+
+Graphics API switches remain only at composition boundaries where an implementation is selected: driver factories, ImGui/profiler backend factories, CLI/config parsing, API-switching UI, and benchmark scheduling. Typed casts are valid inside the selected backend implementation, not in shared callers.
+
 ## Runtime ownership
 
 ### `RootFramework`
@@ -183,6 +193,14 @@ struct EngineContext {
 ```
 
 `RefreshEngineContextFromGlobals()` pulls current globals (`g_pBaseDriver`, `T8Device`, `T8DeviceContext`, `g_threadPool`, `g_config`) into `EngineContext`. This is called after graphics API creation. It lets subsystems avoid passing the driver/device/thread pool through every call.
+
+### Managed textures and atlases
+
+`BaseDriver` owns file-backed and memory-backed GPU textures in the same registry. `CreateTextureFromMemory(key, ...)` assigns a stable texture ID, deduplicates by the caller's content key, and releases the texture with the rest of the driver resources. Scenes must not release a managed texture directly.
+
+`TextureAtlas` in `Framework/include/video/TextureAtlas.h` is immutable metadata over one managed texture ID. It validates exact tile divisibility, supports rectangular images and tiles, and computes half-texel-inset UV regions from pixel dimensions. File loading preserves source resolution by default; `TextureAtlasDesc::pixelationFactor` is an explicit opt-in for pixel-art downsampling followed by nearest expansion.
+
+Materials that need a different texture use `MaterialAssetCache::AcquireTextureVariant()` before drawing. Cached `MaterialAsset` objects are immutable after acquisition; changing their texture pointers or IDs in place invalidates content hashing and deduplication.
 
 ## Application startup flow
 

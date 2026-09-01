@@ -52,6 +52,7 @@ namespace t850 {
     static constexpr uint32_t kBackBufferCount = 3;  // triple-buffer for full CPU-GPU overlap
 
     VulkanDriver() { m_currentAPI = GraphicsApi::VULKAN; }
+    const char* ApiTag() const override { return "vulkan"; }
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;
@@ -145,7 +146,7 @@ namespace t850 {
 
     // Ensure the backbuffer render pass is active (for ImGui overlay rendering)
     void EnsureBackbufferRenderPass();
-    void SetPrePresentOverlayCallback(std::function<void()> callback) {
+    void SetPrePresentOverlayCallback(std::function<void()> callback) override {
       if (!callback) {
         m_prePresentOverlayCallback = nullptr;
         return;
@@ -163,9 +164,9 @@ namespace t850 {
 
     // Copy a rendered RT to the swapchain immediately before present. Used on
     // Android to avoid compositor-visible issues with the normal final quad.
-    void SetLatePresentSource(int rtID, int attachment);
-    bool SuspendWindowSurface();
-    bool ResumeWindowSurface(void* nativeWindow, int newW, int newH);
+    void SetLatePresentSource(int rtID, int attachment) override;
+    bool SuspendWindowSurface() override;
+    bool ResumeWindowSurface(void* nativeWindow, int newW, int newH) override;
 
     // End the currently active render pass (if any) — safe to call even when none is active
     bool EndRenderPassIfActive(VkCommandBuffer cmd) {

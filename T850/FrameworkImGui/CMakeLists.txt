@@ -2,6 +2,11 @@ project(FrameworkImGui LANGUAGES CXX)
 
 add_library(FrameworkImGui STATIC
   src/ImGuiSystem.cpp
+  src/ImGuiRendererBackend.cpp
+  src/ImGuiD3D11Backend.cpp
+  src/ImGuiD3D12Backend.cpp
+  src/ImGuiOpenGLBackend.cpp
+  src/ImGuiVulkanBackend.cpp
   src/DevGuiContext.cpp
   src/RagdollEditorGui.cpp)
 

@@ -63,6 +63,20 @@ namespace t850 {
     return raw;
   }
 
+  MaterialAsset* MaterialAssetCache::AcquireTextureVariant(const MaterialAsset& base,
+                                                           MatTexSlot slot,
+                                                           Texture* texture,
+                                                           int textureId,
+                                                           bool* outCreated) {
+    MaterialAsset prototype = base;
+    prototype.contentHash = 0;
+    prototype.refCount = 0;
+    const int slotIndex = static_cast<int>(slot);
+    prototype.textures[slotIndex] = texture;
+    prototype.textureIds[slotIndex] = textureId;
+    return Acquire(prototype, outCreated);
+  }
+
   void MaterialAssetCache::Release(MaterialAsset* asset) {
     if (!asset) return;
     std::lock_guard<std::mutex> lk(m_mutex);

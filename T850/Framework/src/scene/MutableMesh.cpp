@@ -202,7 +202,8 @@ bool MutableMesh::CompileShaders() {
   return true;
 }
 
-bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* error) {
+bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* error,
+                                  bool retainCpuGeometry) {
   if (!m_created) Create();
   if (!m_created || !CompileShaders()) {
     if (error) *error = "mutable mesh GPU resources are unavailable";
@@ -217,6 +218,8 @@ bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* err
   if (snapshot.Empty()) {
     RetireGeometryBuffers();
     m_snapshot = std::move(snapshot);
+    m_vertexCount = 0;
+    m_indexCount = 0;
     return true;
   }
 
@@ -243,7 +246,15 @@ bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* err
   RetireGeometryBuffers();
   m_vertexBuffer = newVertexBuffer;
   m_indexBuffer = newIndexBuffer;
+  m_vertexCount = snapshot.vertices.size();
+  m_indexCount = snapshot.indices.size();
   m_snapshot = std::move(snapshot);
+  if (!retainCpuGeometry) {
+    std::vector<MutableMeshVertex>().swap(m_snapshot.vertices);
+    std::vector<uint32_t>().swap(m_snapshot.indices);
+    std::vector<char>().swap(m_vertexBuffer->sysMemCpy);
+    std::vector<char>().swap(m_indexBuffer->sysMemCpy);
+  }
   RuntimeTelemetry::AddCounter("render.mutable_mesh.commits", 1.0);
   RuntimeTelemetry::AddCounter("render.mutable_mesh.upload_bytes",
       static_cast<double>(vertexDesc.byteWidth + indexDesc.byteWidth));
@@ -426,6 +437,8 @@ void MutableMesh::Destroy() {
   m_instanceCB = nullptr;
   m_materialCB = nullptr;
   m_snapshot = MutableMeshSnapshot{};
+  m_vertexCount = 0;
+  m_indexCount = 0;
   m_vertexShaderSource.clear();
   m_fragmentShaderSource.clear();
   m_created = false;

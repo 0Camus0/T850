@@ -147,6 +147,11 @@ namespace t850 {
     // prototype (refCount=1). On cache hit, returns the existing
     // asset and bumps refCount. `outCreated` reports which path.
     MaterialAsset* Acquire(const MaterialAsset& prototype, bool* outCreated = nullptr);
+    MaterialAsset* AcquireTextureVariant(const MaterialAsset& base,
+                       MatTexSlot slot,
+                       Texture* texture,
+                       int textureId,
+                       bool* outCreated = nullptr);
 
     void Release(MaterialAsset* asset);
 

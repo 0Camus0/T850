@@ -96,11 +96,14 @@
     <ClInclude Include="include\scene\Quad.h" />
     <ClInclude Include="include\scene\TextRenderer.h" />
     <ClInclude Include="include\terrain\BlockRegistry.h" />
+    <ClInclude Include="include\video\TextureAtlas.h" />
     <ClInclude Include="include\terrain\VoxelChunk.h" />
     <ClInclude Include="include\terrain\VoxelMesher.h" />
     <ClInclude Include="include\terrain\VoxelWorld.h" />
     <ClInclude Include="include\terrain\VoxelStreaming.h" />
     <ClInclude Include="include\terrain\VoxelPersistence.h" />
+    <ClInclude Include="include\terrain\VoxelNavigation.h" />
+    <ClInclude Include="include\terrain\VoxelCollision.h" />
     <ClInclude Include="include\physics\CharacterController.h" />
     <ClInclude Include="include\physics\GameplayLayers.h" />
     <ClInclude Include="include\physics\JoltPhysicsSystem.h" />
@@ -253,6 +256,7 @@
     <ClCompile Include="src\debug\CrashDiagnostics.cpp" />
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />
     <ClCompile Include="src\debug\Profiler.cpp" />
+    <ClCompile Include="src\debug\ProfilerGpuBackend.cpp" />
     <ClCompile Include="src\debug\RuntimeTelemetry.cpp" />
     <ClCompile Include="src\debug\RenderTrace.cpp" />
     <ClCompile Include="src\scene\EditorSceneFile.cpp" />
@@ -267,11 +271,14 @@
     <ClCompile Include="src\scene\Quad.cpp" />
     <ClCompile Include="src\scene\TextRenderer.cpp" />
     <ClCompile Include="src\terrain\BlockRegistry.cpp" />
+    <ClCompile Include="src\video\TextureAtlas.cpp" />
     <ClCompile Include="src\terrain\VoxelChunk.cpp" />
     <ClCompile Include="src\terrain\VoxelMesher.cpp" />
     <ClCompile Include="src\terrain\VoxelWorld.cpp" />
     <ClCompile Include="src\terrain\VoxelStreaming.cpp" />
     <ClCompile Include="src\terrain\VoxelPersistence.cpp" />
+    <ClCompile Include="src\terrain\VoxelNavigation.cpp" />
+    <ClCompile Include="src\terrain\VoxelCollision.cpp" />
     <ClCompile Include="src\utils\cil.cpp" />
     <ClCompile Include="src\utils\Log.cpp" />
     <ClCompile Include="src\utils\InputManager.cpp" />
@@ -675,7 +682,7 @@
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>T850_ENABLE_JOLT;T850_ENABLE_RECAST;JPH_FLOATING_POINT_EXCEPTIONS_ENABLED;JPH_OBJECT_STREAM;_CRT_SECURE_NO_WARNINGS;_DEBUG;_LIB;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>T850_ENABLE_JOLT;T850_ENABLE_RECAST;JPH_FLOATING_POINT_EXCEPTIONS_ENABLED;JPH_OBJECT_STREAM;T8_VULKAN_VALIDATION;_CRT_SECURE_NO_WARNINGS;_DEBUG;_LIB;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;$(SolutionDir)Librerias\mikktspace\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>

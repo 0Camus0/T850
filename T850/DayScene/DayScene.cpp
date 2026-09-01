@@ -24,7 +24,6 @@
 #ifdef OS_ANDROID
 #include <android/input.h>
 #include <core/android/AndroidFramework.h>
-#include <video/vulkan/VulkanDriver.h>
 #endif
 #include <imgui/DevGuiContext.h>
 #include <imgui.h>
@@ -2437,9 +2436,7 @@ void DayScene::OnDraw() {
       Quads[7].SetGlobalKey(dbgKey);
       Quads[7].Draw();
 #ifdef OS_ANDROID
-      if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
-        vkDriver->SetLatePresentSource(selected, attachment);
-      }
+  pFramework->pVideoDriver->SetLatePresentSource(selected, attachment);
 #endif
     }
   }
@@ -2484,9 +2481,7 @@ void DayScene::OnDraw() {
 
 #ifdef OS_ANDROID
   if (m_showPhysics || m_showNavMesh) {
-    if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
-      vkDriver->SetPrePresentOverlayCallback(drawDebugOverlays);
-    }
+    pFramework->pVideoDriver->SetPrePresentOverlayCallback(drawDebugOverlays);
   }
 #else
   drawDebugOverlays();

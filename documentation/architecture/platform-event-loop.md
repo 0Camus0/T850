@@ -1,6 +1,6 @@
 # Platform Event Loop and Window Management
 
-Status: verified against source on 2026-08-19.
+Status: verified against source and PR CI on 2026-08-30.
 
 This document describes how T850 runs on Windows, Linux/Steam Deck, and Android: event loops, window/surface ownership, graphics API creation, resize handling, and frame lifecycle.
 
@@ -270,6 +270,8 @@ flowchart TD
   RuntimeGui --> Present["Present/Swap"]
 ```
 
+Every frame that records scene or ImGui commands must call `CompleteFrame()`. The runtime no longer leaves the first rendered frame open across the next logical update; this keeps command-buffer/fence and ImGui frame-resource rotation aligned on explicit APIs.
+
 ### Editor application
 
 `EditorApp::OnUpdate()` owns editor timing, input, scene loading, and drawing.
@@ -310,6 +312,8 @@ The editor also has its own `CheckResize()` and hosted viewport/render-target ma
 | Windows | Can select D3D11, D3D12, OpenGL, Vulkan. Runtime scenes also expose API switching hotkeys in some scenes. |
 | Linux/Steam Deck | Vulkan-only. Non-Vulkan requests are forced to Vulkan. |
 | Android | Vulkan-only. Native window controls surface creation/suspend/resume. |
+
+Android calls virtual `BaseDriver::SuspendWindowSurface()` and `ResumeWindowSurface()` hooks. `VulkanDriver` implements them; platform code does not downcast the active driver. Pre-present UI/debug overlays and late-present render-target copies use `BaseDriver` virtual hooks for the same reason.
 
 ## Troubleshooting
 

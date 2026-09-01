@@ -79,6 +79,11 @@ namespace t850 {
   class GLDriver : public BaseDriver {
   public:
     GLDriver() { m_currentAPI = GraphicsApi::OPENGL; }
+    const char* ApiTag() const override { return "gl"; }
+        bool UsesGLSL() const override { return true; }
+        bool NeedsVFlip() const override { return true; }
+        bool SupportsRenderTargetMipGeneration() const override { return true; }
+        bool SupportsDeferredRendering() const override { return false; }
     void	InitDriver();
     void	CreateSurfaces();
     void	DestroySurfaces();

@@ -774,11 +774,14 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 		*mipmaps = 1;
 		*buffersize = (*x)*(*y) * 4;   // buffer is always 4 bytes/pixel
 		*props = props_;
+		unsigned int resizeFactor = ForceResizeFactor;
 #ifdef FORCE_LOW_RES_TEXTURES
-		if (buffer) {
+		if (resizeFactor == 0) resizeFactor = FORCED_FACTOR;
+#endif
+		if (buffer && resizeFactor > 1) {
 
-			int nx = *x / FORCED_FACTOR;
-			int ny = *y / FORCED_FACTOR;
+			int nx = (std::max)(1, *x / static_cast<int>(resizeFactor));
+			int ny = (std::max)(1, *y / static_cast<int>(resizeFactor));
 
 			unsigned char* resizedBuf = (unsigned char*)STBI_MALLOC(nx*ny * 4 + 1);
 
@@ -794,7 +797,6 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 			*y = ny;
 			channels = 4;
 		}
-#endif
 		return buffer;
 	}
 #else

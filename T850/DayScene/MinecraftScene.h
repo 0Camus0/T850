@@ -17,6 +17,8 @@
 #include <navigation/NavigationDebugRenderer.h>
 #include <debug/FrameDumper.h>
 #include <utils/XDataBase.h>
+#include <video/TextureAtlas.h>
+#include <terrain/VoxelNavigation.h>
 #include <Config.h>
 
 #include <array>
@@ -34,7 +36,7 @@ namespace t850 {
 class JoltPhysicsSystem;
 }
 
-// Atlas tile coordinates (16x16 tiles in a 256x256 atlas)
+// Grid coordinates in the configured texture atlas.
 struct BlockTile {
   int u; // tile column
   int v; // tile row
@@ -52,17 +54,22 @@ struct BlockDef {
 // ── Voxel world constants ────────────────────────────────────────────
 constexpr int kMaxChunkSize = 16;
 constexpr int kMaxWorldHeight = 64;
-constexpr int kMaxRenderDistance = 8;
+constexpr int kMaxRenderDistance = 32;
 constexpr int kMaxChunkCount = kMaxRenderDistance * 2 + 1;
 constexpr int kMaxChunks = kMaxChunkCount * kMaxChunkCount;
-constexpr int kMaxRenderMeshCount = kMaxChunks + 2;
+constexpr int kMaxMinecraftEnemies = 8;
+constexpr int kMaxRenderMeshCount = kMaxChunks + kMaxMinecraftEnemies + 1;
 
 struct MinecraftMob {
   XVECTOR3 position = XVECTOR3(24.5f, 40.0f, 24.5f, 1.0f);
+  t850::KinematicCharacterController controller;
   std::vector<XVECTOR3> path;
   std::size_t pathCursor = 0;
   float repathTimer = 0.0f;
+  float stuckTimer = 0.0f;
+  uint64_t pathRevision = 0;
   bool pathReady = false;
+  bool initialPathLogged = false;
 };
 
 class MinecraftScene : public t850::SceneBase, public t850::CharacterCollisionWorld {
@@ -87,6 +94,11 @@ public:
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override;
 
+    // Benchmark final-frame capture: dumps the backbuffer once the benchmark
+    // duration elapses, then exits. (DayScene has its own capture path; other
+    // scenes reuse the FrameDumper with a timed dump instead.)
+    float m_benchmarkElapsedSecs = 0.0f;
+    bool m_benchmarkFinalDumpDone = false;
   // CharacterCollisionWorld
   bool SweepCapsule(const t850::CharacterCollisionSweep& sweep, t850::CharacterCollisionHit& outHit) const override;
   bool SweepBox(const t850::CharacterBoxSweep& sweep, t850::CharacterCollisionHit& outHit) const override;
@@ -182,11 +194,13 @@ public:
   int m_chunkCountX = 0;
   int m_chunkCountZ = 0;
   int m_maxChunks = 0;
-  int m_mobMeshIndex = 0;
+  int m_mobMeshStartIndex = 0;
   int m_weaponMeshIndex = 0;
   int m_renderMeshCount = 0;
   int m_centerChunkX = 0;
   int m_centerChunkZ = 0;
+  int m_pendingRenderDistance = 0;
+  int m_renderDistanceBuildTarget = 0;
 
   // ── Async chunk streaming ──
   struct GeneratedChunkData {
@@ -221,7 +235,8 @@ public:
   t850::navigation::NavMesh m_navMesh;
   t850::navigation::NavMeshDebugRenderer m_navMeshDebugRenderer;
   t850::navigation::NavMeshBuildSettings m_navMeshSettings;
-  MinecraftMob m_mob;
+  std::array<MinecraftMob, kMaxMinecraftEnemies> m_mobs;
+  int m_mobCount = 1;
   bool m_navMeshReady = false;
   bool m_showNavMesh = false;
   float m_navMeshBuildMs = 0.0f;
@@ -232,13 +247,17 @@ public:
     bool success = false;
     int centerChunkX = 0;
     int centerChunkZ = 0;
+    uint64_t voxelRevision = 0;
   };
   std::future<void> m_navMeshBuildFuture;
   std::shared_ptr<PendingNavMeshBuild> m_pendingNavMeshBuild;
+  int m_navMeshCenterChunkX = 0;
+  int m_navMeshCenterChunkZ = 0;
   // Set when a block is placed/removed so the navmesh is rebuilt (throttled)
   // and the mob re-paths around the new obstacle.
   bool m_navMeshDirty = false;
   float m_navMeshRebuildTimer = 0.0f;
+  uint64_t m_voxelRevision = 1;
 
   // First-person weapon (sword)
   float m_weaponSwing = 0.0f;   // 0..1 swing animation progress
@@ -248,6 +267,8 @@ public:
   // Player
   t850::KinematicCharacterController m_player;
   t850::KinematicCharacterSettings m_playerSettings;
+  t850::KinematicCharacterSettings m_mobSettings;
+  t850::terrain::VoxelNavigationSettings m_voxelNavigationSettings;
   t850::KinematicCharacterInput m_playerInput;
   XVECTOR3 m_playerEye = XVECTOR3(0.0f, 40.0f, 0.0f, 1.0f);
   float m_playerYaw = 0.0f;
@@ -269,6 +290,9 @@ public:
   std::vector<uint8_t> m_hotbar;
   int m_atlasSize = 0;
   int m_atlasTiles = 0;
+  std::string m_atlasTexturePath; // empty => procedural solid-color atlas
+  int m_atlasTilePx = 16;
+  int m_atlasPixelationFactor = 1;
 
   // ── Internals ──
   void GenerateWorld();
@@ -278,9 +302,13 @@ public:
                                t850::navigation::NavMeshGeometry& geometry) const;
   void StartNavigationMeshBuild();
   void ProcessNavigationMeshBuild();
-  void UpdateMob(float dt);
-  void CreateMobMesh();
-  void UpdateMobInstance();
+  void UpdateMobs(float dt);
+  void UpdateMob(MinecraftMob& mob, int mobIndex, float dt);
+  void CreateMobMesh(int mobIndex);
+  void UpdateMobInstance(int mobIndex);
+  void ResetMob(int mobIndex);
+  void SetMobCount(int count);
+  void SetMobSpeed(float speed);
   void CreateWeaponMesh();
   void UpdateWeapon(float dt);
   void UpdateDayNight(float dt);
@@ -292,6 +320,8 @@ public:
   void GenerateChunkTrees(int cx, int cz, bool markState = true);
   void BuildChunkMesh(int cx, int cz);
   void RebuildDirtyChunks();
+  void ApplyPendingRenderDistance();
+  void ReportRenderDistanceReady();
   void UpdateChunkStreaming();
   void ShiftWorldAndStream(int newCx, int newCz);
   void QueueChunkRemesh(int cx, int cz);
@@ -309,12 +339,9 @@ public:
   void SetBlock(int wx, int wy, int wz, uint8_t block);
   bool IsBlockOpaque(uint8_t block) const;
   bool IsBlockSolid(uint8_t block) const;
-  // Simple AABB box-vs-voxel collision for the mob (all geometry is boxes).
-  // Returns true if the box [minX,minY,minZ .. maxX,maxY,maxZ] overlaps any
-  // solid block. Used instead of the capsule sweep, which got the mob stuck
-  // at block boundaries.
-  bool MobBoxCollides(float minX, float minY, float minZ,
-                      float maxX, float maxY, float maxZ) const;
+  bool IsColumnLoaded(int wx, int wz) const;
+  void InvalidateMobPath(MinecraftMob& mob);
+  void InvalidateMobPaths();
   int  HeightAt(int wx, int wz) const;
   int  WorldToChunk(int wx) const;
   int  WorldToLocal(int wx) const;
@@ -323,12 +350,19 @@ public:
   uint8_t BlockId(const std::string& name, uint8_t fallback) const;
   float Noise2D(float x, float z) const;
   float Noise3D(float x, float y, float z) const;
-  void BuildTextureAtlas();
+  bool BuildTextureAtlas();
+  bool BuildRealTextureAtlas();
+  // Offscreen benchmark capture: blits the active offscreen RT into a private
+  // RT via a fullscreen quad every frame (the swapchain backbuffer stays
+  // black in offscreen mode, and reading a just-completed offscreen RT
+  // directly can crash on resource-state mismatch). The dump saves the copy.
+  void BlitOffscreenToCaptureRT(t850::BaseDriver* driver);
+  int m_offscreenCaptureRT = -1;
   void CreateChunkMesh(int cx, int cz, xF::XDataBase& outDb);
   void AddFace(xF::xMeshGeometry& geom, int x, int y, int z, int face, uint8_t block);
   void AddVertex(xF::xMeshGeometry& geom, float x, float y, float z, float nx, float ny, float nz, float u, float v);
   void AddQuad(xF::xMeshGeometry& geom, const XVECTOR3& a, const XVECTOR3& b, const XVECTOR3& c, const XVECTOR3& d,
-               const XVECTOR3& n, float u0, float v0, float u1, float v1);
+               const XVECTOR3& n, int face, float u0, float v0, float u1, float v1);
   void UpdatePlayer(float dt);
   void HandleBlockInteraction(InputManager* IManager);
   void ApplyPendingCubemap();
@@ -336,6 +370,7 @@ public:
                      int& outX, int& outY, int& outZ, int& outPrevX, int& outPrevY, int& outPrevZ) const;
 
   t850::Texture* m_atlasTexture = nullptr;
+  t850::TextureAtlas m_textureAtlas;
   int m_atlasTexIndex = -1;
   // Skybox selection (ImGui)
   std::string m_currentCubemapPath;
@@ -351,4 +386,5 @@ public:
   float m_interactionMessageTime = 0.0f;
   float m_breakCooldown = 0.0f;
   float m_placeCooldown = 0.0f;
+  bool m_gamepadControlsLogged = false;
 };

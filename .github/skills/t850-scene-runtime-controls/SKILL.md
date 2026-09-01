@@ -54,6 +54,8 @@ Unknown JSON keys may be ignored. A typo can look like a valid save while having
 | shader feature | shadows, DOF, parallax | update state and enable/disable dependent render-graph passes |
 | GPU resource shape | shadow resolution, attachment count | mark dirty; recreate at a safe render-thread boundary |
 | streamed world shape | draw distance, chunk radius | queue request; wait for jobs; generate/unload/remesh incrementally |
+| bounded entity population | enemy count 0..8 | pre-create slots; reset/show additions; invalidate/hide removals |
+| live entity tuning | enemy speed | update shared settings and every active/reserved controller immediately |
 | navigation/physics topology | navmesh, collision bodies | rebuild after source geometry is committed |
 | camera/input mode | player/free/light mode | clear stale input and synchronize owning camera state |
 
@@ -127,6 +129,10 @@ These paths commonly differ. Example failure pattern:
 - panel shows B but rendering remains at A.
 
 The discriminating check is an actual A-to-B transition with counts.
+
+Minecraft enemy population uses `--minecraftEnemyCount N` as its test hook. It must call the same `SetMobCount` path as the **Enemy count** slider after the authored count and all eight render slots load. Validate both 1-to-0 and 1-to-8 transitions; startup authored at 0 or 8 does not cover live behavior.
+
+Minecraft enemy speed uses `--minecraftEnemySpeed N` to exercise the same `SetMobSpeed` path as the slider. Compare fixed-frame positions at low and high values; a changed label alone is not sufficient evidence that controller settings updated.
 
 ## 5. Add a CLI/Test Hook When UI Automation Is Weak
 

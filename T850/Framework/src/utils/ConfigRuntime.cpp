@@ -369,6 +369,19 @@ bool ValidateConfig(Config& cfg) {
     valid = false;
   }
 
+  if (cfg.minecraftEnemyCount < -1 || cfg.minecraftEnemyCount > 8) {
+    WarnConfigAdjusted("minecraftEnemyCount", "must be -1 or 0..8, disabling override");
+    cfg.minecraftEnemyCount = -1;
+    valid = false;
+  }
+
+  if (cfg.minecraftEnemySpeed != 0.0f &&
+      (cfg.minecraftEnemySpeed < 0.25f || cfg.minecraftEnemySpeed > 6.0f)) {
+    WarnConfigAdjusted("minecraftEnemySpeed", "must be 0 or 0.25..6.0, disabling override");
+    cfg.minecraftEnemySpeed = 0.0f;
+    valid = false;
+  }
+
   if (cfg.title.empty()) {
     WarnConfigAdjusted("title", "must not be empty, using default title");
     cfg.title = defaults.title;
@@ -556,6 +569,14 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       int value = 0;
       if (ReadIntArgument(arg, argc, argv, i, value)) cfg.minecraftDrawDistance = value;
     }
+    else if (arg == "--minecraftEnemyCount") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) cfg.minecraftEnemyCount = value;
+    }
+    else if (arg == "--minecraftEnemySpeed") {
+      float value = 0.0f;
+      if (ReadFloatArgument(arg, argc, argv, i, value)) cfg.minecraftEnemySpeed = value;
+    }
     else if (arg == "--fullscreen") {
       cfg.flags.fullscreen = true;
     }
@@ -716,6 +737,8 @@ void PrintHelp() {
     << "  --fullscreen                       Launch fullscreen\n"
     << "  --scene <index>                    Starting scene index\n"
     << "  --minecraftDrawDistance <1..32>    Queue Minecraft draw distance after scene load\n"
+    << "  --minecraftEnemyCount <0..8>       Set live Minecraft enemy count after scene load\n"
+    << "  --minecraftEnemySpeed <0.25..6>    Set live Minecraft enemy speed after scene load\n"
     << "  --model <path>                     glTF model for Sandbox\n"
     << "  --sceneFile <path>                 T8ditor .t8scene file for Sandbox\n"
     << "  --sceneProfile <name>              Override runtime scene profile selection\n\n"

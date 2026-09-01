@@ -188,7 +188,7 @@ Scale runtime checks to the changed subsystem:
 - shared renderer/backend: fixed-frame D3D11, D3D12, Vulkan, GL captures;
 - D3D12/Vulkan resource lifetime: explicit API stress plus error-log scan;
 - voxel streaming: movement across multiple recenter thresholds;
-- block edits: repeated place/remove and background navmesh completion;
+- block edits: repeated place/remove, voxel path invalidation, and collision-authoritative recovery;
 - scene serialization: parse changed JSON and save/reload round trip;
 - native crash/assert: use `t850-crash-debugging` before changing code.
 
@@ -223,7 +223,7 @@ Require:
 
 - registration passed;
 - all six Windows cells passed;
-- 41/41 tests passed on supported hosts;
+- 43/43 tests passed on supported hosts;
 - Android arm64-v8a and x86_64 passed sequentially;
 - SteamRT passed locally or is explicitly blocked;
 - requested runtime/visual checks passed;

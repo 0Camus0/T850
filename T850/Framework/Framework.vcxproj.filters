@@ -497,6 +497,12 @@
     <ClInclude Include="include\terrain\VoxelPersistence.h">
       <Filter>Header Files\terrain</Filter>
     </ClInclude>
+    <ClInclude Include="include\terrain\VoxelNavigation.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\VoxelCollision.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
     <ClInclude Include="include\scene\RenderViewport.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
@@ -800,6 +806,12 @@
       <Filter>Source Files\terrain</Filter>
     </ClCompile>
     <ClCompile Include="src\terrain\VoxelPersistence.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\VoxelNavigation.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\VoxelCollision.cpp">
       <Filter>Source Files\terrain</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\RenderViewport.cpp">

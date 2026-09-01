@@ -18,6 +18,7 @@
 #include <debug/FrameDumper.h>
 #include <utils/XDataBase.h>
 #include <video/TextureAtlas.h>
+#include <terrain/VoxelNavigation.h>
 #include <Config.h>
 
 #include <array>
@@ -56,14 +57,19 @@ constexpr int kMaxWorldHeight = 64;
 constexpr int kMaxRenderDistance = 32;
 constexpr int kMaxChunkCount = kMaxRenderDistance * 2 + 1;
 constexpr int kMaxChunks = kMaxChunkCount * kMaxChunkCount;
-constexpr int kMaxRenderMeshCount = kMaxChunks + 2;
+constexpr int kMaxMinecraftEnemies = 8;
+constexpr int kMaxRenderMeshCount = kMaxChunks + kMaxMinecraftEnemies + 1;
 
 struct MinecraftMob {
   XVECTOR3 position = XVECTOR3(24.5f, 40.0f, 24.5f, 1.0f);
+  t850::KinematicCharacterController controller;
   std::vector<XVECTOR3> path;
   std::size_t pathCursor = 0;
   float repathTimer = 0.0f;
+  float stuckTimer = 0.0f;
+  uint64_t pathRevision = 0;
   bool pathReady = false;
+  bool initialPathLogged = false;
 };
 
 class MinecraftScene : public t850::SceneBase, public t850::CharacterCollisionWorld {
@@ -188,7 +194,7 @@ public:
   int m_chunkCountX = 0;
   int m_chunkCountZ = 0;
   int m_maxChunks = 0;
-  int m_mobMeshIndex = 0;
+  int m_mobMeshStartIndex = 0;
   int m_weaponMeshIndex = 0;
   int m_renderMeshCount = 0;
   int m_centerChunkX = 0;
@@ -229,7 +235,8 @@ public:
   t850::navigation::NavMesh m_navMesh;
   t850::navigation::NavMeshDebugRenderer m_navMeshDebugRenderer;
   t850::navigation::NavMeshBuildSettings m_navMeshSettings;
-  MinecraftMob m_mob;
+  std::array<MinecraftMob, kMaxMinecraftEnemies> m_mobs;
+  int m_mobCount = 1;
   bool m_navMeshReady = false;
   bool m_showNavMesh = false;
   float m_navMeshBuildMs = 0.0f;
@@ -240,6 +247,7 @@ public:
     bool success = false;
     int centerChunkX = 0;
     int centerChunkZ = 0;
+    uint64_t voxelRevision = 0;
   };
   std::future<void> m_navMeshBuildFuture;
   std::shared_ptr<PendingNavMeshBuild> m_pendingNavMeshBuild;
@@ -249,6 +257,7 @@ public:
   // and the mob re-paths around the new obstacle.
   bool m_navMeshDirty = false;
   float m_navMeshRebuildTimer = 0.0f;
+  uint64_t m_voxelRevision = 1;
 
   // First-person weapon (sword)
   float m_weaponSwing = 0.0f;   // 0..1 swing animation progress
@@ -258,6 +267,8 @@ public:
   // Player
   t850::KinematicCharacterController m_player;
   t850::KinematicCharacterSettings m_playerSettings;
+  t850::KinematicCharacterSettings m_mobSettings;
+  t850::terrain::VoxelNavigationSettings m_voxelNavigationSettings;
   t850::KinematicCharacterInput m_playerInput;
   XVECTOR3 m_playerEye = XVECTOR3(0.0f, 40.0f, 0.0f, 1.0f);
   float m_playerYaw = 0.0f;
@@ -291,9 +302,13 @@ public:
                                t850::navigation::NavMeshGeometry& geometry) const;
   void StartNavigationMeshBuild();
   void ProcessNavigationMeshBuild();
-  void UpdateMob(float dt);
-  void CreateMobMesh();
-  void UpdateMobInstance();
+  void UpdateMobs(float dt);
+  void UpdateMob(MinecraftMob& mob, int mobIndex, float dt);
+  void CreateMobMesh(int mobIndex);
+  void UpdateMobInstance(int mobIndex);
+  void ResetMob(int mobIndex);
+  void SetMobCount(int count);
+  void SetMobSpeed(float speed);
   void CreateWeaponMesh();
   void UpdateWeapon(float dt);
   void UpdateDayNight(float dt);
@@ -324,12 +339,9 @@ public:
   void SetBlock(int wx, int wy, int wz, uint8_t block);
   bool IsBlockOpaque(uint8_t block) const;
   bool IsBlockSolid(uint8_t block) const;
-  // Simple AABB box-vs-voxel collision for the mob (all geometry is boxes).
-  // Returns true if the box [minX,minY,minZ .. maxX,maxY,maxZ] overlaps any
-  // solid block. Used instead of the capsule sweep, which got the mob stuck
-  // at block boundaries.
-  bool MobBoxCollides(float minX, float minY, float minZ,
-                      float maxX, float maxY, float maxZ) const;
+  bool IsColumnLoaded(int wx, int wz) const;
+  void InvalidateMobPath(MinecraftMob& mob);
+  void InvalidateMobPaths();
   int  HeightAt(int wx, int wz) const;
   int  WorldToChunk(int wx) const;
   int  WorldToLocal(int wx) const;

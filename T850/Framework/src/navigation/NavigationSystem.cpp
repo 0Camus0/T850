@@ -1156,6 +1156,11 @@ NavPathResult FindPathWithQuery(dtNavMeshQuery* query,
     result.error = "Detour failed to find a path";
     return result;
   }
+  if (pathPolys[pathPolyCount - 1] != endRef) {
+    RuntimeTelemetry::AddCounter("navigation.detour.find_path.fail", 1.0);
+    result.error = "Detour returned a partial path";
+    return result;
+  }
 
   float straightPath[kMaxStraightPath * 3] = {};
   unsigned char straightFlags[kMaxStraightPath] = {};
@@ -2090,6 +2095,10 @@ bool NavMesh::FindPath(const XVECTOR3& start,
                                    &filter, pathPolys, &pathPolyCount, kMaxPathPolys);
   if (dtStatusFailed(status) || pathPolyCount <= 0) {
     SetError(error, "Detour failed to find a path");
+    return false;
+  }
+  if (pathPolys[pathPolyCount - 1] != endRef) {
+    SetError(error, "Detour returned a partial path");
     return false;
   }
 

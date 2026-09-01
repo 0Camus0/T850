@@ -41,7 +41,7 @@ GitHub Actions uses the same script with `-Action Build`. Run the exact local Wi
 .\scripts\RunWindowsBuildMatrix.ps1
 ```
 
-This runs registration validation, full-solution Win32/x64/ARM64 Debug+Release builds, verifies `DayScene.exe` and `T8ditor.exe` in every cell, and runs the 41 self-tests for Win32/x64 Debug and Release. ARM64 is compile/link-only on the x64 runner.
+This runs registration validation, full-solution Win32/x64/ARM64 Debug+Release builds, verifies `DayScene.exe` and `T8ditor.exe` in every cell, and runs the 43 self-tests for Win32/x64 Debug and Release. ARM64 is compile/link-only on the x64 runner.
 
 ## Gameplay Self-Tests
 
@@ -54,13 +54,23 @@ Build x64, then run the matching executable:
 
 Expected result: every line begins with `PASS` and process exit code is 0. Any `FAIL` or nonzero exit blocks the next milestone.
 
-The suite currently has 41 checks covering schema/migration/IDs, validation, groups, stable registry ownership, fixed tick/pause, controllers, components, events, state machines, physics handle reuse, generated triangle-mesh body creation, mutable mesh validation, stable render handles, chunks, greedy meshing, negative coordinates, DDA, streaming budgets, atomic voxel persistence, atlas UV/bounds behavior, immutable material variants, and unavailable navigation.
+The suite currently has 43 checks covering schema/migration/IDs, validation, groups, stable registry ownership, fixed tick/pause, controllers, components, events, state machines, physics handle reuse, generated triangle-mesh body creation, mutable mesh validation, stable render handles, chunks, greedy meshing, negative coordinates, DDA, streaming budgets, atomic voxel persistence, voxel path completeness and clearance, exact voxel box collision, atlas UV/bounds behavior, immutable material variants, and unavailable navigation.
 
 Validate the authored Minecraft block-to-atlas contract without creating a graphics device:
 
 ```powershell
 python .\scripts\verify_minecraft_atlas.py
 ```
+
+Exercise live Minecraft enemy removal and expansion through the same path as the ImGui slider:
+
+```powershell
+.\bin\x64\Release\DayScene.exe --api d3d12 --scene 6 --minecraftEnemyCount 0 --dump-frame 240
+.\bin\x64\Release\DayScene.exe --api d3d12 --scene 6 --minecraftEnemyCount 8 --dump-frame 240
+.\bin\x64\Release\DayScene.exe --api d3d12 --scene 6 --minecraftEnemySpeed 6 --dump-frame 240
+```
+
+Require the matching `Enemy count changed` or `Enemy speed changed` line, `Enemy population ready: active=N capacity=8`, a complete dump, and no path-unavailable, stuck, or rendering errors.
 
 Expected: the audited `terrain.png` SHA-256, 20 block definitions, and all 120 face mappings pass.
 

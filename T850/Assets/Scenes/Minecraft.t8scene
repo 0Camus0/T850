@@ -445,9 +445,12 @@
             "y": 40,
             "z": 24.5
          },
+         "count": 1,
          "move_speed": 1.8,
          "repath_seconds": 1,
          "waypoint_distance": 0.2,
+         "player_avoidance_radius": 1.35,
+         "visual_ground_clearance": 0.001,
          "half_width": 0.25,
          "height": 1.4,
          "vertical_follow_speed": 8,

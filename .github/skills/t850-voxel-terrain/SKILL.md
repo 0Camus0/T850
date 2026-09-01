@@ -39,6 +39,8 @@ Route ownership:
 | GPU upload/draw/lifetime | `MutableMesh` and backend `RetireBuffer` |
 | desired radius/jobs/budgets | `VoxelStreamingManager` |
 | sparse save/load | `VoxelDeltaStore` |
+| complete standable-cell paths | `VoxelNavigation` |
+| exact swept-box voxel collision | `VoxelCollision` |
 | player/input/reference integration | `VoxelScene` |
 
 ## Non-Negotiable Contracts
@@ -168,7 +170,7 @@ The reference scene adds Jolt chunk bodies for dynamic rigid-body terrain collis
 - destroy/recreate through generational handles;
 - build/cook off the frame path where Jolt permits it, commit bodies on the owning thread.
 
-Do not rebuild whole-world Recast after each edit. Use grid navigation or implement a tiled `INavigationMesh` for voxel NPCs.
+Minecraft uses `VoxelNavigation` complete-path A* over loaded standable cells. Keep swept voxel collision authoritative, increment the world revision after topology/residency changes, and reject stale paths. Recast is an optional Minecraft diagnostic overlay; generic mesh scenes still use it for gameplay. For many voxel NPCs, add chunk-region portals and hierarchical search before tiled Detour.
 
 ## Persistence
 
@@ -191,7 +193,7 @@ Build and self-tests:
 .\bin\x64\Debug\DayScene.exe --game-selftest
 ```
 
-Expected: 41 PASS lines, exit 0.
+Expected: 43 PASS lines, exit 0.
 
 Focused Release visuals:
 

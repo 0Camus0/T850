@@ -5,6 +5,7 @@
 *********************************************************/
 
 #include <MinecraftScene.h>
+#include <terrain/VoxelCollision.h>
 #include <SandboxRenderGraphUtils.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
@@ -186,6 +187,17 @@ bool MinecraftScene::LoadAuthoredScene() {
       !m_voxelSettings.debug_render_targets[0].source.empty() ||
       m_voxelSettings.player.look_pitch_limit <= 0.0f ||
       m_voxelSettings.player.collision_sweep_step <= 0.0f ||
+      m_voxelSettings.mob.count < 0 ||
+      m_voxelSettings.mob.count > kMaxMinecraftEnemies ||
+      m_voxelSettings.mob.move_speed <= 0.0f ||
+      m_voxelSettings.mob.repath_seconds <= 0.0f ||
+      m_voxelSettings.mob.waypoint_distance <= 0.0f ||
+      m_voxelSettings.mob.half_width <= 0.0f ||
+      m_voxelSettings.mob.height <= m_voxelSettings.mob.half_width * 2.0f ||
+      m_voxelSettings.mob.player_avoidance_radius < m_voxelSettings.mob.half_width * 2.0f ||
+      m_voxelSettings.mob.player_avoidance_radius > 32.0f ||
+      m_voxelSettings.mob.visual_ground_clearance < 0.0f ||
+      m_voxelSettings.mob.visual_ground_clearance > 0.05f ||
       m_voxelSettings.mob.vertical_follow_speed <= 0.0f ||
       m_voxelSettings.navmesh_rebuild_seconds <= 0.0f ||
       m_voxelSettings.sun_debug_size <= 0.0f ||
@@ -216,9 +228,9 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_chunkCountX = kMaxChunkCount;
   m_chunkCountZ = m_chunkCountX;
   m_maxChunks = m_chunkCountX * m_chunkCountZ;
-  m_mobMeshIndex = m_maxChunks;
-  m_weaponMeshIndex = m_maxChunks + 1;
-  m_renderMeshCount = m_maxChunks + 2;
+  m_mobMeshStartIndex = m_maxChunks;
+  m_weaponMeshIndex = m_maxChunks + kMaxMinecraftEnemies;
+  m_renderMeshCount = m_maxChunks + kMaxMinecraftEnemies + 1;
   m_seed = m_voxelSettings.seed;
   m_maxUploadsPerFrame = (std::max)(1, m_voxelSettings.max_uploads_per_frame);
   m_asyncStreaming = m_voxelSettings.async_streaming;
@@ -232,6 +244,26 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_showChunkBounds = m_voxelSettings.show_chunk_bounds;
   m_showLights = m_voxelSettings.show_lights;
   m_showNavMesh = m_voxelSettings.show_navmesh;
+  m_navMeshSettings = t850::navigation::NavMeshBuildSettings{};
+  if (m_sceneFile.navigation_mesh) {
+    const auto& authored = m_sceneFile.navigation_mesh->build_settings;
+    m_navMeshSettings.cellSize = authored.cell_size;
+    m_navMeshSettings.cellHeight = authored.cell_height;
+    m_navMeshSettings.agentHeight = authored.agent_height;
+    m_navMeshSettings.agentRadius = authored.agent_radius;
+    m_navMeshSettings.agentMaxClimb = authored.agent_max_climb;
+    m_navMeshSettings.agentMaxSlope = authored.agent_max_slope;
+    m_navMeshSettings.regionMinSize = authored.region_min_size;
+    m_navMeshSettings.regionMergeSize = authored.region_merge_size;
+    m_navMeshSettings.edgeMaxLen = authored.edge_max_len;
+    m_navMeshSettings.edgeMaxError = authored.edge_max_error;
+    m_navMeshSettings.vertsPerPoly = authored.verts_per_poly;
+    m_navMeshSettings.detailSampleDist = authored.detail_sample_dist;
+    m_navMeshSettings.detailSampleMaxError = authored.detail_sample_max_error;
+    m_navMeshSettings.queryExtents = XVECTOR3(authored.query_extents.x,
+                                               authored.query_extents.y,
+                                               authored.query_extents.z, 0.0f);
+  }
   SceneProp.FrustumCullingToggleAllowed =
     g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
   SceneProp.FrustumCullingEnabled =
@@ -260,9 +292,7 @@ void MinecraftScene::ApplyVoxelSettings() {
   SceneProp.DOFAutoFocusRadius = m_voxelSettings.dof.auto_focus_radius;
   m_mouseSensitivity = (std::max)(0.00001f, m_voxelSettings.player.mouse_sensitivity);
   m_debugCameraSpeed = (std::max)(0.1f, m_voxelSettings.player.debug_camera_speed);
-  m_mob.position = XVECTOR3(m_voxelSettings.mob.spawn.x,
-                            m_voxelSettings.mob.spawn.y,
-                            m_voxelSettings.mob.spawn.z, 1.0f);
+  m_mobCount = (std::max)(0, (std::min)(kMaxMinecraftEnemies, m_voxelSettings.mob.count));
 
   m_blockDefs.clear();
   m_blockDefs.reserve(m_voxelSettings.blocks.size());
@@ -319,6 +349,25 @@ int MinecraftScene::ChunkIndex(int cx, int cz) const {
   return gz * m_chunkCountX + gx;
 }
 
+bool MinecraftScene::IsColumnLoaded(int wx, int wz) const {
+  const int index = ChunkIndex(WorldToChunk(wx), WorldToChunk(wz));
+  return index >= 0 && m_chunkBuilt[index / m_chunkCountX][index % m_chunkCountX];
+}
+
+void MinecraftScene::InvalidateMobPath(MinecraftMob& mob) {
+  mob.path.clear();
+  mob.pathCursor = 0;
+  mob.pathReady = false;
+  mob.pathRevision = 0;
+  mob.repathTimer = 0.0f;
+  mob.stuckTimer = 0.0f;
+}
+
+void MinecraftScene::InvalidateMobPaths() {
+  for (int mobIndex = 0; mobIndex < m_mobCount; ++mobIndex)
+    InvalidateMobPath(m_mobs[mobIndex]);
+}
+
 // ── Noise accessors (member, use seed) ───────────────────────────────
 float MinecraftScene::Noise2D(float x, float z) const {
   const auto& terrain = m_voxelSettings.terrain;
@@ -363,11 +412,15 @@ void MinecraftScene::SetBlock(int wx, int wy, int wz, uint8_t block) {
   if (idx < 0) return;
   const int lx = WorldToLocal(wx);
   const int lz = WorldToLocal(wz);
-  m_blocks[idx % m_chunkCountX][wy][idx / m_chunkCountX][lx][lz] = block;
-  // The world changed, so the navmesh is stale. Rebuild it (throttled in
-  // OnUpdate) so enemies re-path around the new/removed block.
-  m_navMeshDirty = true;
-  m_navMeshRebuildTimer = 0.0f;
+  uint8_t& target = m_blocks[idx % m_chunkCountX][wy][idx / m_chunkCountX][lx][lz];
+  if (target == block) return;
+  target = block;
+  ++m_voxelRevision;
+  InvalidateMobPaths();
+  if (m_showNavMesh) {
+    m_navMeshDirty = true;
+    m_navMeshRebuildTimer = 0.0f;
+  }
   QueueChunkRemesh(cx, cz);
   if (lx == 0) QueueChunkRemesh(cx - 1, cz);
   if (lx == m_chunkSize - 1) QueueChunkRemesh(cx + 1, cz);
@@ -387,24 +440,6 @@ bool MinecraftScene::IsBlockSolid(uint8_t block) const {
 
 // Simple AABB box-vs-voxel collision. All world geometry is axis-aligned
 // boxes, so a box-to-box overlap test against the solid blocks is enough.
-bool MinecraftScene::MobBoxCollides(float minX, float minY, float minZ,
-                                    float maxX, float maxY, float maxZ) const {
-  const int bx0 = (int)std::floor(minX);
-  const int bx1 = (int)std::floor(maxX);
-  const int by0 = (int)std::floor(minY);
-  const int by1 = (int)std::floor(maxY);
-  const int bz0 = (int)std::floor(minZ);
-  const int bz1 = (int)std::floor(maxZ);
-  for (int by = by0; by <= by1; ++by) {
-    for (int bz = bz0; bz <= bz1; ++bz) {
-      for (int bx = bx0; bx <= bx1; ++bx) {
-        if (IsBlockSolid(GetBlock(bx, by, bz))) return true;
-      }
-    }
-  }
-  return false;
-}
-
 // ── World generation ─────────────────────────────────────────────────
 void MinecraftScene::GenerateChunkData(
     int cx, int cz, std::vector<uint8_t>& blocks) const {
@@ -555,8 +590,15 @@ void MinecraftScene::GenerateWorld() {
   std::memset(m_blocks, 0, sizeof(m_blocks));
   std::memset(m_chunkDirty, 0, sizeof(m_chunkDirty));
   std::memset(m_chunkBuilt, 0, sizeof(m_chunkBuilt));
+  m_navMesh.Clear();
   m_navMeshReady = false;
-  m_mob.pathReady = false;
+  m_navMeshDirty = false;
+  ++m_voxelRevision;
+  InvalidateMobPaths();
+  if (m_showNavMesh) {
+    m_navMeshDirty = true;
+    m_navMeshRebuildTimer = m_voxelSettings.navmesh_rebuild_seconds;
+  }
   for (int cz = -m_renderDistance; cz <= m_renderDistance; ++cz) {
     for (int cx = -m_renderDistance; cx <= m_renderDistance; ++cx) {
       GenerateChunk(cx, cz);
@@ -593,27 +635,6 @@ void MinecraftScene::BuildNavigationMesh() {
   t850::navigation::NavMeshGeometry geometry;
   BuildNavigationGeometry(blockSnapshot, centerChunkX, centerChunkZ, geometry);
 
-  m_navMeshSettings = t850::navigation::NavMeshBuildSettings{};
-  if (m_sceneFile.navigation_mesh) {
-    const auto& authored = m_sceneFile.navigation_mesh->build_settings;
-    m_navMeshSettings.cellSize = authored.cell_size;
-    m_navMeshSettings.cellHeight = authored.cell_height;
-    m_navMeshSettings.agentHeight = authored.agent_height;
-    m_navMeshSettings.agentRadius = authored.agent_radius;
-    m_navMeshSettings.agentMaxClimb = authored.agent_max_climb;
-    m_navMeshSettings.agentMaxSlope = authored.agent_max_slope;
-    m_navMeshSettings.regionMinSize = authored.region_min_size;
-    m_navMeshSettings.regionMergeSize = authored.region_merge_size;
-    m_navMeshSettings.edgeMaxLen = authored.edge_max_len;
-    m_navMeshSettings.edgeMaxError = authored.edge_max_error;
-    m_navMeshSettings.vertsPerPoly = authored.verts_per_poly;
-    m_navMeshSettings.detailSampleDist = authored.detail_sample_dist;
-    m_navMeshSettings.detailSampleMaxError = authored.detail_sample_max_error;
-    m_navMeshSettings.queryExtents = XVECTOR3(authored.query_extents.x,
-                                               authored.query_extents.y,
-                                               authored.query_extents.z, 0.0f);
-  }
-
   const auto buildStart = std::chrono::steady_clock::now();
   std::string error;
   m_navMesh.Clear();
@@ -631,8 +652,7 @@ void MinecraftScene::BuildNavigationMesh() {
               m_navMeshBuildMs, stats.vertexCount, stats.triangleCount, stats.polygonCount);
   m_navMeshCenterChunkX = centerChunkX;
   m_navMeshCenterChunkZ = centerChunkZ;
-  m_mob.repathTimer = 0.0f;
-  m_mob.pathReady = false;
+  m_navMeshDirty = false;
 }
 
 void MinecraftScene::BuildNavigationGeometry(
@@ -651,8 +671,10 @@ void MinecraftScene::BuildNavigationGeometry(
     (worldMaxX - worldMinX) * (worldMaxZ - worldMinZ) * 4));
   geometry.indices.reserve(static_cast<std::size_t>(
     (worldMaxX - worldMinX) * (worldMaxZ - worldMinZ) * 6));
-  const uint8_t leaves = BlockId(m_voxelSettings.terrain.leaves_block, 0);
-  const uint8_t logs = BlockId(m_voxelSettings.terrain.log_block, 0);
+  const float agentHeight = m_sceneFile.navigation_mesh
+    ? m_sceneFile.navigation_mesh->build_settings.agent_height
+    : m_voxelSettings.mob.height;
+  const int clearanceCells = (std::max)(1, static_cast<int>(std::ceil(agentHeight)));
 
   for (int wz = worldMinZ; wz < worldMaxZ; ++wz) {
     for (int wx = worldMinX; wx < worldMaxX; ++wx) {
@@ -664,28 +686,30 @@ void MinecraftScene::BuildNavigationGeometry(
       int localZ = wz % m_chunkSize;
       if (localX < 0) localX += m_chunkSize;
       if (localZ < 0) localZ += m_chunkSize;
-      int groundY = -1;
-      for (int wy = m_worldHeight - 1; wy >= 0; --wy) {
-        const uint8_t block = blocks[gx][wy][gz][localX][localZ];
-        if (IsBlockSolid(block) && block != leaves && block != logs) {
-          groundY = wy;
-          break;
+      for (int feetY = 1; feetY + clearanceCells <= m_worldHeight; ++feetY) {
+        if (!IsBlockSolid(blocks[gx][feetY - 1][gz][localX][localZ])) continue;
+        bool clear = true;
+        for (int bodyY = feetY; bodyY < feetY + clearanceCells; ++bodyY) {
+          if (IsBlockSolid(blocks[gx][bodyY][gz][localX][localZ])) {
+            clear = false;
+            break;
+          }
         }
-      }
-      if (groundY < 0) continue;
+        if (!clear) continue;
 
-      const int base = static_cast<int>(geometry.vertices.size());
-      const float y = static_cast<float>(groundY + 1);
-      geometry.vertices.emplace_back(static_cast<float>(wx), y, static_cast<float>(wz));
-      geometry.vertices.emplace_back(static_cast<float>(wx), y, static_cast<float>(wz + 1));
-      geometry.vertices.emplace_back(static_cast<float>(wx + 1), y, static_cast<float>(wz + 1));
-      geometry.vertices.emplace_back(static_cast<float>(wx + 1), y, static_cast<float>(wz));
-      geometry.indices.push_back(base + 0);
-      geometry.indices.push_back(base + 1);
-      geometry.indices.push_back(base + 2);
-      geometry.indices.push_back(base + 0);
-      geometry.indices.push_back(base + 2);
-      geometry.indices.push_back(base + 3);
+        const int base = static_cast<int>(geometry.vertices.size());
+        const float y = static_cast<float>(feetY);
+        geometry.vertices.emplace_back(static_cast<float>(wx), y, static_cast<float>(wz));
+        geometry.vertices.emplace_back(static_cast<float>(wx), y, static_cast<float>(wz + 1));
+        geometry.vertices.emplace_back(static_cast<float>(wx + 1), y, static_cast<float>(wz + 1));
+        geometry.vertices.emplace_back(static_cast<float>(wx + 1), y, static_cast<float>(wz));
+        geometry.indices.push_back(base + 0);
+        geometry.indices.push_back(base + 1);
+        geometry.indices.push_back(base + 2);
+        geometry.indices.push_back(base + 0);
+        geometry.indices.push_back(base + 2);
+        geometry.indices.push_back(base + 3);
+      }
     }
   }
 }
@@ -706,6 +730,7 @@ void MinecraftScene::StartNavigationMeshBuild() {
   const auto pending = m_pendingNavMeshBuild;
   pending->centerChunkX = centerChunkX;
   pending->centerChunkZ = centerChunkZ;
+  pending->voxelRevision = m_voxelRevision;
   m_navMeshBuildFuture = t850::g_threadPool->Submit(
     [this, blockSnapshot = std::move(blockSnapshot), centerChunkX, centerChunkZ,
      settings, pending]() {
@@ -726,13 +751,16 @@ void MinecraftScene::ProcessNavigationMeshBuild() {
 
   try {
     m_navMeshBuildFuture.get();
-    const bool staleCenter = m_pendingNavMeshBuild &&
+     const bool staleBuild = m_pendingNavMeshBuild &&
       (m_pendingNavMeshBuild->centerChunkX != m_centerChunkX ||
-       m_pendingNavMeshBuild->centerChunkZ != m_centerChunkZ);
-    if (staleCenter) {
-      m_navMeshDirty = true;
-      m_navMeshRebuildTimer = m_voxelSettings.navmesh_rebuild_seconds;
-    } else if (m_pendingNavMeshBuild && m_pendingNavMeshBuild->success) {
+       m_pendingNavMeshBuild->centerChunkZ != m_centerChunkZ ||
+       m_pendingNavMeshBuild->voxelRevision != m_voxelRevision);
+    if (!m_showNavMesh) {
+      m_navMesh.Clear();
+      m_navMeshReady = false;
+      m_navMeshDirty = false;
+    } else if (staleBuild) m_navMeshDirty = true;
+    else if (m_pendingNavMeshBuild && m_pendingNavMeshBuild->success) {
       m_navMesh = std::move(m_pendingNavMeshBuild->navMesh);
       m_navMeshReady = true;
       m_navMeshBuildMs = m_pendingNavMeshBuild->buildMs;
@@ -742,8 +770,6 @@ void MinecraftScene::ProcessNavigationMeshBuild() {
                   m_navMeshBuildMs, stats.vertexCount, stats.triangleCount, stats.polygonCount);
       m_navMeshCenterChunkX = m_pendingNavMeshBuild->centerChunkX;
       m_navMeshCenterChunkZ = m_pendingNavMeshBuild->centerChunkZ;
-      m_mob.repathTimer = 0.0f;
-      m_mob.pathReady = false;
     } else if (m_pendingNavMeshBuild) {
       T8_LOG_ERROR("[Minecraft] Background NavMesh build failed: %s",
                    m_pendingNavMeshBuild->error.c_str());
@@ -754,118 +780,160 @@ void MinecraftScene::ProcessNavigationMeshBuild() {
   m_pendingNavMeshBuild.reset();
 }
 
-void MinecraftScene::UpdateMob(float dt) {
-  if (!m_navMeshReady) return;
+void MinecraftScene::UpdateMob(MinecraftMob& mob, int mobIndex, float dt) {
+  if (mob.pathRevision != 0 && mob.pathRevision != m_voxelRevision)
+    InvalidateMobPath(mob);
 
-  if (m_navMeshCenterChunkX != m_centerChunkX ||
-      m_navMeshCenterChunkZ != m_centerChunkZ) {
-    m_mob.path.clear();
-    m_mob.pathCursor = 0;
-    m_mob.pathReady = false;
-    m_mob.repathTimer = 0.0f;
-    return;
-  }
+  const float playerHalfHeight = m_playerSettings.capsuleHalfHeight +
+                                 m_playerSettings.capsuleRadius;
+  XVECTOR3 playerFeet = m_player.GetPosition();
+  playerFeet.y -= playerHalfHeight;
 
-  m_mob.repathTimer -= dt;
-  if (m_mob.repathTimer <= 0.0f) {
-    const XVECTOR3 playerPosition = m_player.GetPosition();
-    XVECTOR3 projectedStart;
-    if (!m_navMesh.ProjectPoint(m_mob.position, projectedStart,
-                                m_navMeshSettings.queryExtents, nullptr)) {
-      const XVECTOR3 towardPreviousPosition(
-        m_mob.position.x - playerPosition.x, 0.0f,
-        m_mob.position.z - playerPosition.z, 0.0f);
-      const XVECTOR3 spawnDirection = Normalize3(
-        towardPreviousPosition, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+  mob.repathTimer -= dt;
+  if (mob.repathTimer <= 0.0f) {
+    t850::terrain::VoxelNavigationQuery query;
+    query.isColumnLoaded = [this](int x, int z) { return IsColumnLoaded(x, z); };
+    query.isSolid = [this](int x, int y, int z) { return IsBlockSolid(GetBlock(x, y, z)); };
+    t850::terrain::VoxelNavigationResult result = t850::terrain::FindVoxelPath(
+        mob.position, playerFeet, m_voxelNavigationSettings, query);
+    const bool mobOutsideLoadedWorld = !IsColumnLoaded(
+      static_cast<int>(std::floor(mob.position.x)),
+      static_cast<int>(std::floor(mob.position.z)));
+    if (!result.success && (mobOutsideLoadedWorld || !mob.initialPathLogged)) {
+      XVECTOR3 recoveryDirection(mob.position.x - playerFeet.x, 0.0f,
+                                 mob.position.z - playerFeet.z, 0.0f);
+      recoveryDirection = Normalize3(
+        recoveryDirection, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
       const float recoveryDistance = (std::max)(4.0f, m_chunkSize * 0.5f);
       const XVECTOR3 recoveryCandidate(
-        playerPosition.x + spawnDirection.x * recoveryDistance,
-        playerPosition.y,
-        playerPosition.z + spawnDirection.z * recoveryDistance, 1.0f);
-      if (!m_navMesh.ProjectPoint(recoveryCandidate, projectedStart,
-                                  m_navMeshSettings.queryExtents, nullptr) &&
-          !m_navMesh.ProjectPoint(playerPosition, projectedStart,
-                                  m_navMeshSettings.queryExtents, nullptr)) {
-        m_mob.path.clear();
-        m_mob.pathCursor = 0;
-        m_mob.pathReady = false;
-        m_mob.repathTimer = m_voxelSettings.mob.repath_seconds;
-        return;
+        playerFeet.x + recoveryDirection.x * recoveryDistance,
+        playerFeet.y,
+        playerFeet.z + recoveryDirection.z * recoveryDistance, 1.0f);
+      result = t850::terrain::FindVoxelPath(
+        recoveryCandidate, playerFeet, m_voxelNavigationSettings, query);
+    }
+    mob.repathTimer = m_voxelSettings.mob.repath_seconds;
+    if (result.success && !result.points.empty()) {
+      const XVECTOR3 projectedStart = result.points.front();
+      const XVECTOR3 projectionDelta = projectedStart - mob.position;
+      const float horizontalProjection = std::sqrt(
+          projectionDelta.x * projectionDelta.x + projectionDelta.z * projectionDelta.z);
+      if (horizontalProjection > 1.0f || std::fabs(projectionDelta.y) > 1.1f) {
+        const float halfHeight = m_mobSettings.capsuleHalfHeight +
+                                 m_mobSettings.capsuleRadius;
+        mob.controller.Reset();
+        mob.controller.SetPosition(
+            projectedStart + XVECTOR3(0.0f, halfHeight, 0.0f, 0.0f));
+        mob.position = projectedStart;
+        T8_LOG_INFO("[Minecraft] Rehomed mob %d onto voxel navigation at (%.1f, %.1f, %.1f)",
+                    mobIndex, mob.position.x, mob.position.y, mob.position.z);
       }
-      m_mob.position = projectedStart;
-      UpdateMobInstance();
-      T8_LOG_INFO("[Minecraft] Rehomed mob onto streamed navmesh at (%.1f, %.1f, %.1f)",
-                  m_mob.position.x, m_mob.position.y, m_mob.position.z);
-    }
-
-    XVECTOR3 projectedEnd;
-    if (!m_navMesh.ProjectPoint(playerPosition, projectedEnd,
-                                m_navMeshSettings.queryExtents, nullptr)) {
-      m_mob.path.clear();
-      m_mob.pathCursor = 0;
-      m_mob.pathReady = false;
-      m_mob.repathTimer = m_voxelSettings.mob.repath_seconds;
-      return;
-    }
-
-    t850::navigation::NavPathRequest request;
-    request.start = projectedStart;
-    request.end = projectedEnd;
-    request.queryExtents = m_navMeshSettings.queryExtents;
-    const t850::navigation::NavPathResult result = m_navMesh.FindPath(request);
-    m_mob.path = result.points;
-    m_mob.pathCursor = m_mob.path.size() > 1 ? 1 : 0;
-    m_mob.pathReady = result.success && m_mob.path.size() > 1;
-    m_mob.repathTimer = m_voxelSettings.mob.repath_seconds;
-    if (!m_mob.pathReady && !result.error.empty()) {
-      T8_LOG_VERBOSE("[Minecraft] Mob path unavailable: %s", result.error.c_str());
-    }
-  }
-
-  if (m_mob.pathReady && m_mob.pathCursor < m_mob.path.size()) {
-    const XVECTOR3 target = m_mob.path[m_mob.pathCursor];
-    const XVECTOR3 delta(target.x - m_mob.position.x, 0.0f, target.z - m_mob.position.z, 0.0f);
-    const float distance = Length3(delta);
-    if (distance < m_voxelSettings.mob.waypoint_distance) {
-      ++m_mob.pathCursor;
+      mob.path = std::move(result.points);
+      mob.pathCursor = mob.path.size() > 1 ? 1 : mob.path.size();
+      mob.pathReady = mob.pathCursor < mob.path.size();
+      mob.pathRevision = m_voxelRevision;
+      mob.stuckTimer = 0.0f;
+      if (mob.pathReady && !mob.initialPathLogged) {
+        T8_LOG_INFO("[Minecraft] Enemy %d path ready: points=%d", mobIndex,
+                    static_cast<int>(mob.path.size()));
+        mob.initialPathLogged = true;
+      }
     } else {
-      const float step = (std::min)(distance, m_voxelSettings.mob.move_speed * dt);
-      const XVECTOR3 direction = Normalize3(delta, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
-
-      // Simple AABB collision for the mob. m_mob.position is the FEET
-      // position (ground surface Y from the navmesh). The mob's body is a
-      // box ~0.5 wide and ~1.4 tall, centered on the feet.
-      const float halfW = m_voxelSettings.mob.half_width;
-      const float height = m_voxelSettings.mob.height;
-      auto boxFree = [&](float px, float pz) -> bool {
-        return !MobBoxCollides(px - halfW, m_mob.position.y, pz - halfW,
-                               px + halfW, m_mob.position.y + height, pz + halfW);
-      };
-
-      // Move along X and Z separately so the mob slides around obstacles.
-      const float mx = direction.x * step;
-      const float mz = direction.z * step;
-      if (boxFree(m_mob.position.x + mx, m_mob.position.z)) {
-        m_mob.position.x += mx;
-      }
-      if (boxFree(m_mob.position.x, m_mob.position.z + mz)) {
-        m_mob.position.z += mz;
-      }
-
-      m_mob.position.y += (target.y - m_mob.position.y) *
-              (std::min)(1.0f, dt * m_voxelSettings.mob.vertical_follow_speed);
+      mob.path.clear();
+      mob.pathCursor = 0;
+      mob.pathReady = false;
+      mob.pathRevision = m_voxelRevision;
+      T8_LOG_VERBOSE("[Minecraft] Voxel mob %d path unavailable: %s",
+                     mobIndex, result.error.c_str());
     }
   }
-  UpdateMobInstance();
 
-  // Periodic mob position log (every ~2 seconds)
+  t850::KinematicCharacterInput input;
+  const XVECTOR3 previousFeet = mob.position;
+  float targetDistance = 0.0f;
+  XVECTOR3 direction(0.0f, 0.0f, 0.0f, 0.0f);
+  const XVECTOR3 fromPlayer(mob.position.x - playerFeet.x, 0.0f,
+                            mob.position.z - playerFeet.z, 0.0f);
+  const float playerDistance = Length3(fromPlayer);
+  const float avoidanceRadius = m_voxelSettings.mob.player_avoidance_radius;
+  if (playerDistance < avoidanceRadius) {
+    const float angle = static_cast<float>(mobIndex) * 0.7853981634f;
+    direction = Normalize3(fromPlayer,
+        XVECTOR3(std::cos(angle), 0.0f, std::sin(angle), 0.0f));
+    targetDistance = avoidanceRadius - playerDistance;
+  } else if (playerDistance > avoidanceRadius + 0.15f &&
+             mob.pathReady && mob.pathCursor < mob.path.size()) {
+    const XVECTOR3 target = mob.path[mob.pathCursor];
+    direction = XVECTOR3(target.x - mob.position.x, 0.0f,
+                         target.z - mob.position.z, 0.0f);
+    targetDistance = Length3(direction);
+    const float verticalDistance = std::fabs(target.y - mob.position.y);
+    if (targetDistance < m_voxelSettings.mob.waypoint_distance && verticalDistance < 0.35f) {
+      ++mob.pathCursor;
+      mob.pathReady = mob.pathCursor < mob.path.size();
+      direction = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+  }
+
+  XVECTOR3 separation(0.0f, 0.0f, 0.0f, 0.0f);
+  const float separationRadius = m_voxelSettings.mob.half_width * 2.0f + 0.25f;
+  for (int otherIndex = 0; otherIndex < m_mobCount; ++otherIndex) {
+    if (otherIndex == mobIndex) continue;
+    XVECTOR3 away(mob.position.x - m_mobs[otherIndex].position.x, 0.0f,
+                  mob.position.z - m_mobs[otherIndex].position.z, 0.0f);
+    const float distance = Length3(away);
+    if (distance >= separationRadius) continue;
+    const float angle = static_cast<float>(mobIndex) * 0.7853981634f;
+    away = Normalize3(away, XVECTOR3(std::cos(angle), 0.0f, std::sin(angle), 0.0f));
+    separation += away * ((separationRadius - distance) / separationRadius);
+  }
+  direction += separation * 1.5f;
+  if (Length3(direction) > 0.0001f) {
+    direction = Normalize3(direction, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+    input.forward = direction;
+    input.right = XVECTOR3(direction.z, 0.0f, -direction.x, 0.0f);
+    input.moveForward = true;
+    input.moveForwardAmount = 1.0f;
+  }
+
+  t850::CharacterControllerContext context;
+  context.collisionWorld = this;
+  mob.controller.UpdateQuake3(dt, input, context);
+  const float mobHalfHeight = m_mobSettings.capsuleHalfHeight +
+                              m_mobSettings.capsuleRadius;
+  mob.position = mob.controller.GetPosition() -
+                 XVECTOR3(0.0f, mobHalfHeight, 0.0f, 0.0f);
+  mob.position.w = 1.0f;
+
+  const XVECTOR3 movement = mob.position - previousFeet;
+  const float horizontalMovement = std::sqrt(
+      movement.x * movement.x + movement.z * movement.z);
+  if (mob.pathReady && targetDistance > m_voxelSettings.mob.waypoint_distance &&
+      horizontalMovement < 0.001f) {
+    mob.stuckTimer += dt;
+    if (mob.stuckTimer >= 0.75f) {
+      T8_LOG_VERBOSE("[Minecraft] Mob %d corridor blocked; requesting a new voxel path", mobIndex);
+      InvalidateMobPath(mob);
+      mob.controller.SetVelocity(XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
+    }
+  } else {
+    mob.stuckTimer = 0.0f;
+  }
+  UpdateMobInstance(mobIndex);
+}
+
+void MinecraftScene::UpdateMobs(float dt) {
+  for (int mobIndex = 0; mobIndex < m_mobCount; ++mobIndex)
+    UpdateMob(m_mobs[mobIndex], mobIndex, dt);
+
   static float s_mobLogTimer = 0.0f;
   s_mobLogTimer += dt;
-  if (s_mobLogTimer > 2.0f) {
+  if (s_mobLogTimer > 2.0f && m_mobCount > 0) {
     s_mobLogTimer = 0.0f;
-    T8_LOG_INFO("[Minecraft] Mob pos=(%.1f, %.1f, %.1f) pathReady=%d pathPts=%d",
-                m_mob.position.x, m_mob.position.y, m_mob.position.z,
-                m_mob.pathReady ? 1 : 0, (int)m_mob.path.size());
+    const MinecraftMob& first = m_mobs[0];
+    T8_LOG_INFO("[Minecraft] Enemies=%d mob0=(%.1f, %.1f, %.1f) pathReady=%d pathPts=%d",
+                m_mobCount, first.position.x, first.position.y, first.position.z,
+                first.pathReady ? 1 : 0, (int)first.path.size());
   }
 }
 
@@ -963,7 +1031,7 @@ void MinecraftScene::SetLightCameraEditMode(bool enabled) {
   }
 }
 
-void MinecraftScene::CreateMobMesh() {
+void MinecraftScene::CreateMobMesh(int mobIndex) {
   xF::XDataBase db;
   xF::xMeshContainer* mc = new xF::xMeshContainer;
   mc->FileName = "MinecraftMob";
@@ -977,20 +1045,20 @@ void MinecraftScene::CreateMobMesh() {
   // unit cubes). Uses the same addBox helper as the weapon.
   auto addBox = [&](float x0, float y0, float z0, float x1, float y1, float z1, uint8_t block) {
     const BlockDef& def = m_blockDefs[block];
-    const XVECTOR3 c[8] = {
-      XVECTOR3(x0, y0, z0), XVECTOR3(x1, y0, z0), XVECTOR3(x1, y1, z0), XVECTOR3(x0, y1, z0),
-      XVECTOR3(x0, y0, z1), XVECTOR3(x1, y0, z1), XVECTOR3(x1, y1, z1), XVECTOR3(x0, y1, z1),
-    };
-    auto faceUV = [&](int face) {
+    for (int face = 0; face < 6; ++face) {
       const BlockTile& tile = def.tiles[face];
-      return TileUV(m_textureAtlas, tile.u, tile.v);
-    };
-    { UVQuad uv = faceUV(0); AddQuad(geom, c[1], c[5], c[6], c[2], XVECTOR3(1,0,0), 0, uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(1); AddQuad(geom, c[4], c[0], c[3], c[7], XVECTOR3(-1,0,0), 1, uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(2); AddQuad(geom, c[3], c[2], c[6], c[7], XVECTOR3(0,1,0), 2, uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(3); AddQuad(geom, c[0], c[4], c[5], c[1], XVECTOR3(0,-1,0), 3, uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(4); AddQuad(geom, c[5], c[4], c[7], c[6], XVECTOR3(0,0,1), 4, uv.u0, uv.v0, uv.u1, uv.v1); }
-    { UVQuad uv = faceUV(5); AddQuad(geom, c[0], c[1], c[2], c[3], XVECTOR3(0,0,-1), 5, uv.u0, uv.v0, uv.u1, uv.v1); }
+      const UVQuad uv = TileUV(m_textureAtlas, tile.u, tile.v);
+      XVECTOR3 corners[4];
+      for (int corner = 0; corner < 4; ++corner) {
+        const XVECTOR3& unit = kFaces[face].corners[corner];
+        corners[corner] = XVECTOR3(
+            x0 + (x1 - x0) * unit.x,
+            y0 + (y1 - y0) * unit.y,
+            z0 + (z1 - z0) * unit.z);
+      }
+      AddQuad(geom, corners[0], corners[1], corners[2], corners[3],
+              kFaces[face].normal, face, uv.u0, uv.v0, uv.u1, uv.v1);
+    }
   };
 
   for (const auto& part : m_voxelSettings.mob.parts) {
@@ -1049,7 +1117,7 @@ void MinecraftScene::CreateMobMesh() {
   mesh->SetEngineContext(pEngineContext);
   mesh->SetSceneProps(&SceneProp);
   mesh->xFile = new xF::XDataBase(std::move(db));
-  mesh->m_sourcePath = "MinecraftMob";
+  mesh->m_sourcePath = "MinecraftMob" + std::to_string(mobIndex);
   bool created = false;
   mesh->m_asset = MeshAssetCache::Get().Acquire(mesh->m_sourcePath, &created);
   mesh->Create();
@@ -1069,14 +1137,90 @@ void MinecraftScene::CreateMobMesh() {
       }
     }
   }
-  Meshes[m_mobMeshIndex].CreateInstance(mesh, &VP);
-  UpdateMobInstance();
+  const int meshIndex = m_mobMeshStartIndex + mobIndex;
+  Meshes[meshIndex].CreateInstance(mesh, &VP);
+  Meshes[meshIndex].SetVisible(mobIndex < m_mobCount);
+  UpdateMobInstance(mobIndex);
 }
 
-void MinecraftScene::UpdateMobInstance() {
-  if (!Meshes[m_mobMeshIndex].pBase) return;
-  Meshes[m_mobMeshIndex].TranslateAbsolute(m_mob.position.x, m_mob.position.y, m_mob.position.z);
-  Meshes[m_mobMeshIndex].Update();
+void MinecraftScene::UpdateMobInstance(int mobIndex) {
+  const int meshIndex = m_mobMeshStartIndex + mobIndex;
+  if (mobIndex < 0 || mobIndex >= kMaxMinecraftEnemies || !Meshes[meshIndex].pBase) return;
+  const MinecraftMob& mob = m_mobs[mobIndex];
+  float renderY = mob.position.y;
+  if (mob.controller.IsGrounded()) {
+    const float bodyHalfHeight = m_mobSettings.capsuleHalfHeight +
+                   m_mobSettings.capsuleRadius;
+    t850::CharacterBoxSweep supportSweep;
+    supportSweep.startCenter = mob.controller.GetPosition();
+    supportSweep.displacement = XVECTOR3(
+      0.0f, -(std::max)(0.05f, m_mobSettings.groundProbeDistance), 0.0f, 0.0f);
+    supportSweep.halfExtents = XVECTOR3(
+      m_mobSettings.capsuleRadius, bodyHalfHeight,
+      m_mobSettings.capsuleRadius, 0.0f);
+    t850::CharacterCollisionHit supportHit;
+    if (SweepBox(supportSweep, supportHit) &&
+      supportHit.normal.y >= m_mobSettings.minWalkNormalY) {
+      renderY = supportHit.position.y - bodyHalfHeight +
+          m_voxelSettings.mob.visual_ground_clearance;
+    }
+  }
+  Meshes[meshIndex].TranslateAbsolute(
+      mob.position.x,
+      renderY,
+      mob.position.z);
+  Meshes[meshIndex].Update();
+}
+
+void MinecraftScene::ResetMob(int mobIndex) {
+  if (mobIndex < 0 || mobIndex >= kMaxMinecraftEnemies) return;
+  static constexpr int spawnOffsets[kMaxMinecraftEnemies][2] = {
+    {0, 0}, {4, 0}, {-4, 0}, {0, 4}, {0, -4}, {4, 4}, {-4, 4}, {4, -4}
+  };
+  MinecraftMob& mob = m_mobs[mobIndex];
+  mob.position = XVECTOR3(
+      m_voxelSettings.mob.spawn.x + static_cast<float>(spawnOffsets[mobIndex][0]),
+      m_voxelSettings.mob.spawn.y,
+      m_voxelSettings.mob.spawn.z + static_cast<float>(spawnOffsets[mobIndex][1]), 1.0f);
+  mob.controller.SetSettings(m_mobSettings);
+  mob.controller.Reset();
+  const float halfHeight = m_mobSettings.capsuleHalfHeight + m_mobSettings.capsuleRadius;
+  mob.controller.SetPosition(mob.position + XVECTOR3(0.0f, halfHeight, 0.0f, 0.0f));
+  InvalidateMobPath(mob);
+  mob.initialPathLogged = false;
+  mob.repathTimer = m_voxelSettings.mob.repath_seconds *
+                    static_cast<float>(mobIndex) / static_cast<float>(kMaxMinecraftEnemies);
+  const int meshIndex = m_mobMeshStartIndex + mobIndex;
+  if (Meshes[meshIndex].pBase) {
+    Meshes[meshIndex].SetVisible(mobIndex < m_mobCount);
+    UpdateMobInstance(mobIndex);
+  }
+}
+
+void MinecraftScene::SetMobCount(int count) {
+  const int newCount = (std::max)(0, (std::min)(kMaxMinecraftEnemies, count));
+  if (newCount == m_mobCount) return;
+  const int oldCount = m_mobCount;
+  m_mobCount = newCount;
+  m_voxelSettings.mob.count = newCount;
+  for (int mobIndex = 0; mobIndex < kMaxMinecraftEnemies; ++mobIndex) {
+    const int meshIndex = m_mobMeshStartIndex + mobIndex;
+    if (mobIndex >= oldCount && mobIndex < newCount) ResetMob(mobIndex);
+    if (mobIndex >= newCount && mobIndex < oldCount) InvalidateMobPath(m_mobs[mobIndex]);
+    if (Meshes[meshIndex].pBase) Meshes[meshIndex].SetVisible(mobIndex < newCount);
+  }
+  T8_LOG_INFO("[Minecraft] Enemy count changed %d -> %d", oldCount, newCount);
+}
+
+void MinecraftScene::SetMobSpeed(float speed) {
+  const float newSpeed = (std::max)(0.25f, (std::min)(6.0f, speed));
+  if (std::fabs(newSpeed - m_voxelSettings.mob.move_speed) <= 0.0001f) return;
+  m_voxelSettings.mob.move_speed = newSpeed;
+  m_mobSettings.walkSpeed = newSpeed;
+  m_mobSettings.sprintSpeed = newSpeed;
+  for (MinecraftMob& mob : m_mobs)
+    mob.controller.SetSettings(m_mobSettings);
+  T8_LOG_INFO("[Minecraft] Enemy speed changed to %.2f", newSpeed);
 }
 
 // ── First-person weapon (sword) ──────────────────────────────────────
@@ -1596,10 +1740,12 @@ void MinecraftScene::ApplyPendingRenderDistance() {
     }
   }
 
-  m_navMeshDirty = true;
-  m_navMeshRebuildTimer = m_voxelSettings.navmesh_rebuild_seconds;
-  m_mob.path.clear();
-  m_mob.pathReady = false;
+  ++m_voxelRevision;
+  InvalidateMobPaths();
+  if (m_showNavMesh) {
+    m_navMeshDirty = true;
+    m_navMeshRebuildTimer = m_voxelSettings.navmesh_rebuild_seconds;
+  }
   T8_LOG_INFO("[Minecraft] Draw distance changed %d -> %d chunks", oldDistance, newDistance);
 }
 
@@ -1651,8 +1797,12 @@ void MinecraftScene::ShiftWorldAndStream(int oldCx, int oldCz) {
   const int dz = m_centerChunkZ - oldCz;
   const bool useBackgroundGeneration = m_asyncStreaming && t850::g_threadPool &&
     t850::g_threadPool->NumWorkers() > 0;
-  m_navMeshDirty = true;
-  m_navMeshRebuildTimer = m_voxelSettings.navmesh_rebuild_seconds;
+  ++m_voxelRevision;
+  InvalidateMobPaths();
+  if (m_showNavMesh) {
+    m_navMeshDirty = true;
+    m_navMeshRebuildTimer = m_voxelSettings.navmesh_rebuild_seconds;
+  }
 
   // Ring-mapped slots keep resident chunks in place. Only entering world
   // chunks reuse outgoing slots, so crossing a boundary never copies the
@@ -2428,57 +2578,12 @@ bool MinecraftScene::SweepCapsule(const t850::CharacterCollisionSweep& sweep, t8
 }
 
 bool MinecraftScene::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CharacterCollisionHit& outHit) const {
-  outHit = t850::CharacterCollisionHit{};
-  const XVECTOR3 half = sweep.halfExtents;
-  const XVECTOR3 start = sweep.startCenter;
-  const XVECTOR3 disp = sweep.displacement;
-  const float dist = Length3(disp);
-  if (dist < 0.0001f) return false;
-  const XVECTOR3 dir = disp / dist;
-  const int steps = (int)std::ceil(dist / m_voxelSettings.player.collision_sweep_step) + 1;
-  float bestFraction = 1.0f;
-  bool hit = false;
-  XVECTOR3 hitNormal(0, 1, 0, 0);
-
-  for (int s = 0; s <= steps; ++s) {
-    const float t = (float)s / (float)steps;
-    const XVECTOR3 center = start + dir * (dist * t);
-    const int minX = (int)std::floor(center.x - half.x);
-    const int maxX = (int)std::floor(center.x + half.x);
-    const int minY = (int)std::floor(center.y - half.y);
-    const int maxY = (int)std::floor(center.y + half.y);
-    const int minZ = (int)std::floor(center.z - half.z);
-    const int maxZ = (int)std::floor(center.z + half.z);
-
-    for (int by = minY; by <= maxY; ++by) {
-      for (int bz = minZ; bz <= maxZ; ++bz) {
-        for (int bx = minX; bx <= maxX; ++bx) {
-          if (IsBlockSolid(GetBlock(bx, by, bz))) {
-            if (t < bestFraction) {
-              bestFraction = t;
-              hit = true;
-              const float cx = center.x - (bx + 0.5f);
-              const float cy = center.y - (by + 0.5f);
-              const float cz = center.z - (bz + 0.5f);
-              const float ax = std::fabs(cx), ay = std::fabs(cy), az = std::fabs(cz);
-              if (ax >= ay && ax >= az) hitNormal = XVECTOR3(cx > 0 ? 1 : -1, 0, 0, 0);
-              else if (ay >= az) hitNormal = XVECTOR3(0, cy > 0 ? 1 : -1, 0, 0);
-              else hitNormal = XVECTOR3(0, 0, cz > 0 ? 1 : -1, 0);
-            }
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  if (hit) {
-    outHit.hit = true;
-    outHit.fraction = bestFraction;
-    outHit.position = start + dir * (dist * bestFraction);
-    outHit.normal = hitNormal;
-  }
-  return hit;
+  t850::terrain::VoxelCollisionQuery query;
+  query.isBlocked = [this](int x, int y, int z) {
+    if (y >= 0 && y < m_worldHeight && !IsColumnLoaded(x, z)) return true;
+    return IsBlockSolid(GetBlock(x, y, z));
+  };
+  return t850::terrain::SweepVoxelBox(sweep, query, outHit);
 }
 
 bool MinecraftScene::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
@@ -2706,6 +2811,45 @@ void MinecraftScene::InitVars() {
   m_playerYaw = Cam.Yaw;
   m_playerPitch = Cam.Pitch;
 
+    const auto& mob = m_voxelSettings.mob;
+    const float mobHalfHeight = mob.height * 0.5f;
+    m_mobSettings.collisionShape = t850::KinematicCharacterSettings::CollisionShape::Box;
+    m_mobSettings.walkSpeed = mob.move_speed;
+    m_mobSettings.sprintSpeed = mob.move_speed;
+    m_mobSettings.groundAcceleration = 10.0f;
+    m_mobSettings.airAcceleration = 3.0f;
+    m_mobSettings.friction = 6.0f;
+    m_mobSettings.stopSpeed = 0.5f;
+    m_mobSettings.gravity = player.gravity;
+    m_mobSettings.jumpSpeed = player.jump_speed;
+    m_mobSettings.capsuleRadius = mob.half_width;
+    m_mobSettings.capsuleHalfHeight = (std::max)(
+      0.01f, mobHalfHeight - mob.half_width);
+    m_mobSettings.eyeHeight = mobHalfHeight;
+    m_mobSettings.groundProbeDistance = player.ground_probe_distance;
+    m_mobSettings.stepHeight = m_sceneFile.navigation_mesh
+    ? m_sceneFile.navigation_mesh->build_settings.agent_max_climb : 1.0f;
+    m_mobSettings.minWalkNormalY = player.min_walk_normal_y;
+    m_mobSettings.allowSprint = false;
+    m_mobSettings.airControl = true;
+    for (int mobIndex = 0; mobIndex < kMaxMinecraftEnemies; ++mobIndex)
+      ResetMob(mobIndex);
+
+    m_voxelNavigationSettings.agentRadius = mob.half_width;
+    m_voxelNavigationSettings.agentHeight = mob.height;
+    m_voxelNavigationSettings.minFeetY = 1;
+    m_voxelNavigationSettings.maxFeetY = m_worldHeight -
+      static_cast<int>(std::ceil(mob.height));
+    m_voxelNavigationSettings.maxStepUp = 1;
+    m_voxelNavigationSettings.maxStepDown = 1;
+    if (m_sceneFile.navigation_mesh) {
+    const auto& queryExtents = m_sceneFile.navigation_mesh->build_settings.query_extents;
+    m_voxelNavigationSettings.projectionHorizontalRadius = (std::max)(
+      1, static_cast<int>(std::ceil((std::max)(queryExtents.x, queryExtents.z))));
+    m_voxelNavigationSettings.projectionVerticalRadius = (std::max)(
+      1, static_cast<int>(std::ceil(queryExtents.y)));
+    }
+
   m_centerChunkX = WorldToChunk((int)std::floor(player.spawn.x));
   m_centerChunkZ = WorldToChunk((int)std::floor(player.spawn.z));
 
@@ -2810,9 +2954,17 @@ void MinecraftScene::CreateAssets() {
   GenerateWorld();
   RebuildDirtyChunks();
 
-  // Build the navigation mesh and spawn the mob
-  BuildNavigationMesh();
-  CreateMobMesh();
+  // Recast remains available as an optional diagnostic overlay. Gameplay
+  // navigation reads voxel occupancy directly and requires no global build.
+  if (m_showNavMesh) BuildNavigationMesh();
+  for (int mobIndex = 0; mobIndex < kMaxMinecraftEnemies; ++mobIndex)
+    CreateMobMesh(mobIndex);
+  if (g_config.minecraftEnemyCount >= 0)
+    SetMobCount(g_config.minecraftEnemyCount);
+  if (g_config.minecraftEnemySpeed > 0.0f)
+    SetMobSpeed(g_config.minecraftEnemySpeed);
+  T8_LOG_INFO("[Minecraft] Enemy population ready: active=%d capacity=%d",
+              m_mobCount, kMaxMinecraftEnemies);
 
   // Create the first-person weapon (sword)
   CreateWeaponMesh();
@@ -2890,8 +3042,8 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
   // Update the first-person weapon (sword) position + swing
   UpdateWeapon(DtSecs);
 
-  // Update the path-following mob
-  UpdateMob(DtSecs);
+  // Update voxel-path enemies.
+  UpdateMobs(DtSecs);
 
   // Update the day/night cycle (sun position, light color, ambient)
   UpdateDayNight(DtSecs);
@@ -2930,9 +3082,9 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
 
   ApplyPendingRenderDistance();
 
-  // Rebuild the navmesh (throttled) when blocks changed, so enemies
-  // re-path around newly placed/removed blocks.
-  if (m_navMeshDirty) {
+  // Voxel paths invalidate immediately. Recast rebuilds only while its
+  // optional diagnostic overlay is enabled.
+  if (m_showNavMesh && m_navMeshDirty) {
     m_navMeshRebuildTimer += DtSecs;
     if (m_navMeshRebuildTimer >= m_voxelSettings.navmesh_rebuild_seconds &&
       !m_navMeshBuildFuture.valid() && !m_chunkGenerationFuture.valid()) {
@@ -3412,9 +3564,12 @@ void MinecraftScene::DrawVoxelDebugBounds() {
     appendBox(playerCenter.x - radius, playerCenter.y - verticalExtent, playerCenter.z - radius,
               playerCenter.x + radius, playerCenter.y + verticalExtent, playerCenter.z + radius);
     const float mobHalfWidth = m_voxelSettings.mob.half_width;
-    appendBox(m_mob.position.x - mobHalfWidth, m_mob.position.y, m_mob.position.z - mobHalfWidth,
-              m_mob.position.x + mobHalfWidth, m_mob.position.y + m_voxelSettings.mob.height,
-              m_mob.position.z + mobHalfWidth);
+    for (int mobIndex = 0; mobIndex < m_mobCount; ++mobIndex) {
+      const MinecraftMob& mob = m_mobs[mobIndex];
+      appendBox(mob.position.x - mobHalfWidth, mob.position.y, mob.position.z - mobHalfWidth,
+                mob.position.x + mobHalfWidth, mob.position.y + m_voxelSettings.mob.height,
+                mob.position.z + mobHalfWidth);
+    }
   }
   const int collisionBoxEnd = boxCount;
 
@@ -3865,6 +4020,24 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
       ? m_pendingRenderDistance : m_renderDistance);
     if (gui.Slider(drawDistance, drawDistanceValue))
       m_pendingRenderDistance = (int)drawDistanceValue;
+    t850::SliderDesc enemyCount;
+    enemyCount.name = "enemy_count";
+    enemyCount.label = "Enemy count";
+    enemyCount.min_val = 0.0f;
+    enemyCount.max_val = static_cast<float>(kMaxMinecraftEnemies);
+    enemyCount.step = 1.0f;
+    int enemyCountValue = m_mobCount;
+    if (gui.SliderInt(enemyCount, enemyCountValue))
+      SetMobCount(enemyCountValue);
+    t850::SliderDesc enemySpeed;
+    enemySpeed.name = "enemy_speed";
+    enemySpeed.label = "Enemy speed";
+    enemySpeed.min_val = 0.25f;
+    enemySpeed.max_val = 6.0f;
+    enemySpeed.step = 0.05f;
+    float enemySpeedValue = m_voxelSettings.mob.move_speed;
+    if (gui.Slider(enemySpeed, enemySpeedValue))
+      SetMobSpeed(enemySpeedValue);
     gui.Separator();
 
     static int s_skyIndex = 0;
@@ -3895,7 +4068,16 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
     t850::CheckboxDesc showNavMesh;
     showNavMesh.name = "show_navmesh";
     showNavMesh.label = "Show navigation mesh";
-    gui.Checkbox(showNavMesh, m_showNavMesh);
+    if (gui.Checkbox(showNavMesh, m_showNavMesh)) {
+      if (m_showNavMesh && !m_navMeshReady) {
+        m_navMeshDirty = true;
+        m_navMeshRebuildTimer = m_voxelSettings.navmesh_rebuild_seconds;
+      } else if (!m_showNavMesh && !m_navMeshBuildFuture.valid()) {
+        m_navMesh.Clear();
+        m_navMeshReady = false;
+        m_navMeshDirty = false;
+      }
+    }
     t850::CheckboxDesc showLights;
     showLights.name = "show_lights";
     showLights.label = "Show Sun marker";

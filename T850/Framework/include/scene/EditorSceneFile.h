@@ -521,9 +521,12 @@ struct SceneVoxelBoxPartDesc {
 
 struct SceneVoxelMobDesc {
   Vec3f spawn = {24.5f, 40.0f, 24.5f};
+  int count = 1;
   float move_speed = 1.8f;
   float repath_seconds = 1.0f;
   float waypoint_distance = 0.2f;
+  float player_avoidance_radius = 1.35f;
+  float visual_ground_clearance = 0.001f;
   float half_width = 0.25f;
   float height = 1.4f;
   float vertical_follow_speed = 8.0f;

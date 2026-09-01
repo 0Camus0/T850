@@ -1,6 +1,6 @@
 # FrameworkImGui Runtime UI Layer
 
-Status: verified against source on 2026-08-19.
+Status: verified against source and four-backend runtime tests on 2026-08-30.
 
 This document explains the reusable FrameworkImGui layer used by runtime scenes and wrapped by T8ditor: platform/backend initialization, frame lifecycle, docking and platform windows, Android native-window rebinding, loading-screen rendering, `DevGuiContext`, and hosted viewport integration.
 
@@ -31,8 +31,9 @@ It is responsible for:
 ```mermaid
 flowchart LR
   App["DayScene App / T8ditor wrapper"] --> ImGuiSystem["ImGuiSystem"]
-  ImGuiSystem --> Platform["SDL3 or Android platform backend"]
-  ImGuiSystem --> Renderer["D3D11 / D3D12 / OpenGL / Vulkan backend"]
+  ImGuiSystem --> Factory["CreateImGuiRendererBackend"]
+  Factory --> Renderer["ImGuiRendererBackend"]
+  Renderer --> APIs["D3D11 / D3D12 / OpenGL / Vulkan"]
   ImGuiSystem --> DevGui["DevGuiContext"]
   DevGui --> SceneGui["SceneBase::DrawDevGui"]
   ImGuiSystem --> Loading["LoadingProgress frame callback"]
@@ -45,7 +46,10 @@ flowchart LR
 | File/class | Role |
 |---|---|
 | `FrameworkImGui/include/imgui/ImGuiSystem.h` | Public UI-system wrapper: init/shutdown, frame lifecycle, draw data, loading frame renderer, capture queries, wheel/gamepad input, Android event/native-window APIs. |
-| `FrameworkImGui/src/ImGuiSystem.cpp` | Platform/backend initialization, renderer dispatch, dockspace/platform windows, SDL event watcher, Android native-window rebind, loading screen, gamepad navigation. |
+| `FrameworkImGui/include/imgui/ImGuiRendererBackend.h` | Polymorphic backend contract for initialization, frame hooks, draw submission, texture IDs, descriptor cleanup, platform windows, and native input/window integration. |
+| `FrameworkImGui/src/ImGuiRendererBackend.cpp` | The single graphics-API factory boundary. |
+| `FrameworkImGui/src/ImGuiD3D11Backend.cpp`, `ImGuiD3D12Backend.cpp`, `ImGuiOpenGLBackend.cpp`, `ImGuiVulkanBackend.cpp` | Per-API ImGui platform/renderer integration and API-specific preview texture ownership. |
+| `FrameworkImGui/src/ImGuiSystem.cpp` | API-neutral context coordinator, dockspace/platform windows, SDL event watcher, loading screen, and gamepad navigation. |
 | `FrameworkImGui/include/imgui/DevGuiContext.h` | Shared scene/dev GUI facade around ImGui panels, sections, descriptor widgets, hosted viewport docking IDs, embedded panels, and navigation focus. |
 | `FrameworkImGui/src/DevGuiContext.cpp` | `DevGuiContext` implementation: scoped labels, panel begin/end, slider/checkbox/combo/button helpers, frame stats overlay, navigation focus. |
 | `DayScene/Application.cpp` | Runtime ImGui owner: layout seeding, init, loading-frame install, runtime GUI drawing, Android pre-present overlay rendering, input dispatch. |
@@ -80,7 +84,7 @@ sequenceDiagram
 
 ## ImGuiSystem initialization
 
-`ImGuiSystem::Init()` requires a valid `RootFramework` and `RootFramework::pVideoDriver`. It extracts the platform window from the framework and the API from the active driver.
+`ImGuiSystem::Init()` requires a valid `RootFramework` and `RootFramework::pVideoDriver`. It extracts the native window once, creates the matching `ImGuiRendererBackend` through the factory, and delegates platform plus renderer initialization to that object.
 
 Root extraction:
 
@@ -101,9 +105,9 @@ Initial setup:
 7. Apply dark style and rounded defaults.
 8. When platform windows are enabled, set window rounding to 0 and force opaque window backgrounds.
 
-## Platform backend setup
+## Backend strategy setup
 
-Platform backend selection:
+The selected backend owns both the Dear ImGui platform adapter and renderer adapter because their initialization and shutdown order must remain paired:
 
 | Platform/API | Backend init |
 |---|---|
@@ -128,9 +132,7 @@ Desktop initialization also registers an SDL event watcher after renderer init. 
 - accumulates mouse wheel into `m_wheelAccum`;
 - records window events for short trace logging.
 
-## Renderer backend setup
-
-Renderer backend selection:
+Renderer behavior:
 
 | API | Backend init and special notes |
 |---|---|
@@ -139,17 +141,16 @@ Renderer backend selection:
 | OpenGL | Desktop only. Calls `ImGui_ImplOpenGL3_Init("#version 300 es")`. |
 | Vulkan | Uses `VulkanDriver` instance/device/queue family/queue, descriptor pool size 64, backbuffer count, and the backbuffer render pass. |
 
-D3D12 uses custom descriptor allocation callbacks that allocate CPU/GPU descriptors from `D3D12Heap::CBV_SRV_UAV_VISIBLE`. The free callback is intentionally empty because descriptors come from the driver's heap allocator path.
+D3D12 uses custom descriptor allocation callbacks from `D3D12Heap::CBV_SRV_UAV_VISIBLE`. It also owns opaque preview descriptors for depth/single-channel render targets.
 
-Vulkan rendering calls `VulkanDriver::EnsureBackbufferRenderPass()` before rendering draw data and uses the current `VulkanDeviceContext` command buffer.
+Vulkan rendering calls `VulkanDriver::EnsureBackbufferRenderPass()` before rendering draw data, uses the current command buffer, and owns descriptor sets created by `ImGui_ImplVulkan_AddTexture()`.
 
 ## NewFrame and rendering lifecycle
 
 `NewFrame(createDockspace)` performs:
 
 1. Android native-window validation/rebind when needed.
-2. Renderer backend `NewFrame()`.
-3. Platform backend `NewFrame()`.
+2. `ImGuiRendererBackend::NewFrame()`, which advances the paired renderer/platform adapters.
 4. Desktop mouse synchronization from SDL global/window mouse state.
 5. Manual gamepad navigation submission.
 6. `ImGui::NewFrame()`.
@@ -173,14 +174,18 @@ OpenGL preserves/restores the current SDL GL window/context around platform-wind
 
 `BuildDrawData()` is intentionally small: it calls `ImGui::Render()`.
 
-`RenderDrawData()` dispatches by active API:
+`RenderDrawData()` delegates once to the selected backend:
 
 - D3D11 -> `ImGui_ImplDX11_RenderDrawData`.
 - D3D12 -> binds the D3D12 SRV heap and calls `ImGui_ImplDX12_RenderDrawData` with the current command list.
 - OpenGL -> `ImGui_ImplOpenGL3_RenderDrawData`.
 - Vulkan -> clears pending texture slots, ensures the backbuffer render pass, gets the current command buffer, then calls `ImGui_ImplVulkan_RenderDrawData`.
 
-On Android, runtime code normally calls `BuildDrawData()` in `DrawRuntimeGui()`, then installs a Vulkan pre-present overlay callback that calls `RenderDrawData()` at the correct point in the frame.
+On Android, runtime code normally calls `BuildDrawData()` in `DrawRuntimeGui()`, then installs a `BaseDriver::SetPrePresentOverlayCallback()` callback that calls `RenderDrawData()` at the correct point. Vulkan implements that virtual hook; shared UI code does not downcast the driver.
+
+## Preview texture IDs
+
+`ImGuiSystem::GetTextureID(texture, mode)` delegates texture interoperability to the selected backend. D3D11 returns its SRV, OpenGL returns the texture object ID, D3D12 returns a native SRV or creates an opaque preview descriptor, and Vulkan creates/caches a combined-image descriptor set. `PruneTextureIDs()` and `ReleaseTextureIDs()` keep descriptor lifetime inside the backend. Runtime and T8ditor no longer switch on `GraphicsApi` or cast texture subclasses.
 
 ## Capture queries and wheel input
 
@@ -200,7 +205,7 @@ Editor and runtime input code use these capture flags to avoid applying shortcut
 
 Android is special because the `ANativeWindow` can be destroyed and recreated while the app object and ImGui wrapper survive.
 
-`SetAndroidNativeWindow(window)`:
+`SetAndroidNativeWindow(window)` delegates to the Vulkan backend:
 
 1. If not initialized yet, stores the incoming window and returns whether it is non-null.
 2. If already initialized with the same live window, returns true.
@@ -324,11 +329,11 @@ T8ditor-specific additions:
 - `ImGuiInit(fw, true)` enables docking and platform windows.
 - `ApplyArtistEditorStyle()` applies editor-specific theme/font scaling.
 - `ImGuiRender()` calls `s_imguiSystem.Render()` and saves the global layout when dirty.
-- `ImGuiTextureID()` converts backend texture objects to ImGui texture IDs for D3D11, D3D12, Vulkan, and OpenGL.
-- Vulkan texture descriptors are cached through `ImGui_ImplVulkan_AddTexture()`.
+- `ImGuiTextureID()` delegates to `ImGuiSystem::GetTextureID()`.
+- Backend classes own Vulkan and D3D12 preview descriptor caches.
 - Log capture feeds the editor console ring buffer.
 
-This means FrameworkImGui owns the backend lifecycle, while T8ditor owns editor layout policy, editor appearance, editor panels, texture-ID conversion, and scene-specific layout behavior.
+This means FrameworkImGui owns backend lifecycle and texture-ID conversion, while T8ditor owns editor layout policy, appearance, panels, and scene-specific layout behavior.
 
 ## Hosted viewport integration
 
@@ -362,8 +367,7 @@ When adding hosted windows, use unique `SetIdSuffix()` values and window class I
 
 1. Clears the loading-progress frame callback.
 2. Saves ini settings when an ini path exists.
-3. Shuts down the active renderer backend.
-4. Shuts down the platform backend.
+3. Calls `ImGuiRendererBackend::Shutdown()`, which releases preview texture IDs and shuts down the paired renderer/platform adapters.
 5. Removes the SDL event watcher on desktop.
 6. Destroys the ImGui context.
 7. Clears framework/window/gamepad/transient state.
@@ -389,11 +393,11 @@ When adding a runtime UI panel:
 
 When adding backend/platform support:
 
-1. Add platform init and shutdown branches together.
-2. Add renderer init, new-frame, shutdown, and render-draw-data branches together.
-3. Verify docking and platform windows are either supported or explicitly disabled.
-4. Verify texture-ID conversion for T8ditor if editor image previews must work.
-5. Verify loading-frame rendering during long startup.
+1. Add one `ImGuiRendererBackend` implementation and register it in the factory.
+2. Keep typed driver/texture casts inside that selected backend.
+3. Implement init, new-frame, render, texture-ID ownership, and shutdown together.
+4. Verify docking/platform windows and loading-frame rendering.
+5. Add the source to FrameworkImGui MSBuild, filters, desktop CMake, and Android CMake when applicable.
 
 When adding hosted editor panels:
 
@@ -408,7 +412,7 @@ When adding hosted editor panels:
 - Android does not enable platform viewports; hosted native editor windows are desktop-only.
 - D3D12 backend support depends on `imgui_impl_dx12.h` being available at compile time.
 - `DevGuiContext` does not prevent direct ImGui calls; mixed direct/wrapper code must still avoid ID collisions.
-- T8ditor Vulkan texture descriptor caching must be cleared on ImGui shutdown/API reload.
+- Backend texture descriptor caches must be released before ImGui renderer shutdown/API reload.
 - Platform-window behavior is sensitive to mouse/resize events; the system has trace logging for short windows after SDL window events.
 
 ## Debugging checklist

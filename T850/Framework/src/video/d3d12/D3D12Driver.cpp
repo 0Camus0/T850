@@ -933,7 +933,13 @@ namespace t850 {
       m_frameStarted = false;
       if (IsOffscreenEnabled()) {
         CompleteOffscreenFrame();
-        m_currentBackBuffer = (m_currentBackBuffer + 1) % kBackBufferCount;
+        // Offscreen frames never Present, so the swap chain's current buffer
+        // never advances. Rotating m_currentBackBuffer would make the next
+        // frame record into a backbuffer that is NOT the swap chain's current
+        // one, which trips EXECUTECOMMANDLISTS_WRONGSWAPCHAINBUFFERREFERENCE
+        // (and a barrier-state mismatch) as soon as any mid-frame
+        // Close+Execute happens. Keep the index pinned to the current buffer.
+        m_currentBackBuffer = m_swapChain ? m_swapChain->GetCurrentBackBufferIndex() : 0;
       } else {
         CurrentRT = -1;
       }
@@ -1444,6 +1450,14 @@ namespace t850 {
   }
 
   void D3D12Driver::FlushResourceUploadBatch() {
+    const UINT64 completedFence = m_fence ? m_fence->GetCompletedValue() : 0;
+    m_pendingUploadBatches.erase(
+      std::remove_if(m_pendingUploadBatches.begin(), m_pendingUploadBatches.end(),
+        [completedFence](const PendingUploadBatch& batch) {
+          return batch.fenceValue <= completedFence;
+        }),
+      m_pendingUploadBatches.end());
+
     if (!m_uploadBatchList) {
       m_uploadBatchKeepAlive.clear();
       m_uploadBatchCommandCount = 0;

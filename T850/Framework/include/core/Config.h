@@ -49,6 +49,9 @@ public:
   float dumpSeconds = -1.0f;
   std::string replaySnapshotPath;
   int startScene = 0;
+  // True when startScene was set explicitly (config JSON "scene" or --scene),
+  // so defaults like the benchmark scene override can detect user intent.
+  bool startSceneExplicit = false;
 
   int logLevel = 3;
   std::string logFile;
@@ -73,6 +76,9 @@ public:
   bool orbitYawOverride = false;
   float orbitYaw = 0.0f;
   int ragdollSimulationSpeedIndex = -1;
+  int minecraftDrawDistance = 0;
+  int minecraftEnemyCount = -1;
+  float minecraftEnemySpeed = 0.0f;
 };
 
 extern Config g_config;

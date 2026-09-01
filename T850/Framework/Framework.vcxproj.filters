@@ -479,6 +479,9 @@
     <ClInclude Include="include\terrain\BlockRegistry.h">
       <Filter>Header Files\terrain</Filter>
     </ClInclude>
+    <ClInclude Include="include\video\TextureAtlas.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
     <ClInclude Include="include\terrain\VoxelChunk.h">
       <Filter>Header Files\terrain</Filter>
     </ClInclude>
@@ -492,6 +495,12 @@
       <Filter>Header Files\terrain</Filter>
     </ClInclude>
     <ClInclude Include="include\terrain\VoxelPersistence.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\VoxelNavigation.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\VoxelCollision.h">
       <Filter>Header Files\terrain</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\RenderViewport.h">
@@ -781,6 +790,9 @@
     <ClCompile Include="src\terrain\BlockRegistry.cpp">
       <Filter>Source Files\terrain</Filter>
     </ClCompile>
+    <ClCompile Include="src\video\TextureAtlas.cpp">
+      <Filter>Source Files\video</Filter>
+    </ClCompile>
     <ClCompile Include="src\terrain\VoxelChunk.cpp">
       <Filter>Source Files\terrain</Filter>
     </ClCompile>
@@ -794,6 +806,12 @@
       <Filter>Source Files\terrain</Filter>
     </ClCompile>
     <ClCompile Include="src\terrain\VoxelPersistence.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\VoxelNavigation.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\VoxelCollision.cpp">
       <Filter>Source Files\terrain</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\RenderViewport.cpp">
@@ -926,6 +944,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\Profiler.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\ProfilerGpuBackend.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\RuntimeTelemetry.cpp">

@@ -1,6 +1,6 @@
 # Glossary
 
-Status: verified and expanded on 2026-08-19.
+Status: verified and expanded on 2026-08-30.
 
 This glossary captures engine terms used across the documentation.
 
@@ -27,7 +27,7 @@ This glossary captures engine terms used across the documentation.
 | RuntimeTelemetry | Runtime frame sampler for named scopes and counters, written to JSON on shutdown when enabled. |
 | FrameDumper | Diagnostic system that dumps backbuffer/render targets and writes/replays `snapshot.json` frame state. |
 | RenderTrace | Optional compile-time render instrumentation system that writes API resource/state/bind/draw events for cross-backend diffing. |
-| Profiler | CPU/GPU scope profiler with draw-call counting and API-specific timestamp backends. |
+| Profiler | API-neutral CPU/GPU scope coordinator with draw-call counting; a `ProfilerGpuBackend` strategy owns timestamp resources for each graphics API. |
 | `ResourceLocator` | Process-wide path abstraction for normalizing resource paths, reading desktop or Android packaged assets, listing assets, resolving filesystem files, and choosing cache paths. |
 | Resource path | Portable engine-relative asset path, usually stored without a leading slash or top-level `Assets/` prefix, such as `Models/Robot.glb`. |
 | Base path | `ResourceLocator` readable root used as one candidate for resolving relative desktop assets. |
@@ -41,7 +41,8 @@ This glossary captures engine terms used across the documentation.
 | `CameraInputState` | Scene/editor camera intent structure containing movement, jump/crouch/sprint, mouse look, orbit flags, deltas, and scroll. |
 | `EditorCamera` | T8ditor-specific orbit/pan/zoom camera used by the main editor viewport. |
 | Handheld overlay | ImGui gamepad navigation and controller help/footer UI drawn for handheld/controller workflows. |
-| `ImGuiSystem` | FrameworkImGui wrapper that owns Dear ImGui context setup, platform/renderer backend init, frame lifecycle, draw-data rendering, loading frames, and Android native-window rebinding. |
+| `ImGuiSystem` | API-neutral FrameworkImGui coordinator for Dear ImGui context, frame lifecycle, loading frames, and input integration. |
+| `ImGuiRendererBackend` | Per-API strategy that owns ImGui platform/renderer initialization, frame hooks, draw submission, preview texture IDs, descriptor caches, shutdown, and Android native-window rebinding. |
 | `DevGuiContext` | Shared scene/runtime debug UI facade used for panels, descriptor controls, embedded panels, hosted viewport docking, and gamepad navigation focus. |
 | Platform windows | Dear ImGui multi-viewport/native-window feature used by T8ditor hosted windows on desktop. |
 | Hosted scene panel | T8ditor Play Scene or Mesh Edit panel that pins a runtime scene's `DrawDevGui` output into a hosted ImGui viewport/dockspace. |
@@ -76,6 +77,7 @@ This glossary captures engine terms used across the documentation.
 | GBuffer | Deferred rendering target set containing surface properties, depth, etc. |
 | IBL | Image-based lighting resources. |
 | `Texture` | API-neutral base texture object containing source path, CIL flags, sampler params, dimensions, mip count, and backend bind/update functions. |
+| `TextureAtlas` | Immutable rectangular grid metadata over a `BaseDriver`-managed texture ID, with validated tile dimensions and half-texel UV regions. |
 | CIL | Common image loader used by `Texture::LoadTexture` for DDS/cubemap/compressed/half-float texture data. |
 | `EnvironmentMapSet` | Texture-index bundle for sky, diffuse/specular IBL, BRDF LUT, Charlie IBL/LUT, and sheen E LUT. |
 | `IBLResources` | Framework helpers that load explicit IBL assets, generate/cache filtered IBL cubemaps/LUTs, and update `SceneProps` IBL settings. |

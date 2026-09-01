@@ -176,11 +176,11 @@ inline void DrawHandheldControllerImage(ImDrawList* drawList, ImVec2 min, ImVec2
                           8.0f);
   DrawHandheldCenteredText(drawList, ImVec2(min.x + w * 0.265f, min.y), "LB", text);
   DrawHandheldCenteredText(drawList, ImVec2(min.x + w * 0.735f, min.y), "RB", text);
-  DrawHandheldCenteredText(drawList, ImVec2(min.x + w * 0.50f, min.y + h * 0.89f), "VIEW: EXIT     START: GUI     RT: HELP", accent);
+  DrawHandheldCenteredText(drawList, ImVec2(min.x + w * 0.50f, min.y + h * 0.89f), "VIEW: EXIT     START: GUI     R3: HELP", accent);
 }
 
 inline void DrawHandheldControllerHelpOverlay(const GamepadInputState& gamepad) {
-  if (!gamepad.connected || !gamepad.enabled || gamepad.rightTrigger <= 0.18f) {
+  if (!gamepad.connected || !gamepad.enabled || !gamepad.rightStick) {
     return;
   }
 
@@ -207,7 +207,7 @@ inline void DrawHandheldControllerHelpOverlay(const GamepadInputState& gamepad) 
 
   ImGui::TextUnformatted("ROG Ally X / Xbox layout");
   ImGui::SameLine();
-  ImGui::TextDisabled("(hold RT to show)");
+  ImGui::TextDisabled("(hold R3 to show)");
   ImGui::Separator();
 
   const ImVec2 imageMin = ImGui::GetCursorScreenPos();

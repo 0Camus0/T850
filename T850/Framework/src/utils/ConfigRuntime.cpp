@@ -180,7 +180,10 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.width) cfg.width = *json.width;
   if (json.height) cfg.height = *json.height;
   if (json.fullscreen) cfg.flags.fullscreen = *json.fullscreen;
-  if (json.scene) cfg.startScene = *json.scene;
+  if (json.scene) {
+    cfg.startScene = *json.scene;
+    cfg.startSceneExplicit = true;
+  }
   if (json.title) cfg.title = *json.title;
   if (json.model) cfg.modelPath = *json.model;
   if (json.sceneFile) cfg.sceneFilePath = StripQuotes(*json.sceneFile);
@@ -236,7 +239,10 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (display.width) cfg.width = *display.width;
     if (display.height) cfg.height = *display.height;
     if (display.fullscreen) cfg.flags.fullscreen = *display.fullscreen;
-    if (display.scene) cfg.startScene = *display.scene;
+    if (display.scene) {
+      cfg.startScene = *display.scene;
+      cfg.startSceneExplicit = true;
+    }
     if (display.model) cfg.modelPath = *display.model;
     if (display.sceneFile) cfg.sceneFilePath = StripQuotes(*display.sceneFile);
     if (display.sceneProfile) cfg.sceneProfile = StripQuotes(*display.sceneProfile);
@@ -354,6 +360,25 @@ bool ValidateConfig(Config& cfg) {
   if (cfg.startScene < 0) {
     WarnConfigAdjusted("startScene", "must be non-negative, using 0");
     cfg.startScene = 0;
+    valid = false;
+  }
+
+  if (cfg.minecraftDrawDistance < 0 || cfg.minecraftDrawDistance > 32) {
+    WarnConfigAdjusted("minecraftDrawDistance", "must be 0 or 1..32, disabling override");
+    cfg.minecraftDrawDistance = 0;
+    valid = false;
+  }
+
+  if (cfg.minecraftEnemyCount < -1 || cfg.minecraftEnemyCount > 8) {
+    WarnConfigAdjusted("minecraftEnemyCount", "must be -1 or 0..8, disabling override");
+    cfg.minecraftEnemyCount = -1;
+    valid = false;
+  }
+
+  if (cfg.minecraftEnemySpeed != 0.0f &&
+      (cfg.minecraftEnemySpeed < 0.25f || cfg.minecraftEnemySpeed > 6.0f)) {
+    WarnConfigAdjusted("minecraftEnemySpeed", "must be 0 or 0.25..6.0, disabling override");
+    cfg.minecraftEnemySpeed = 0.0f;
     valid = false;
   }
 
@@ -535,7 +560,22 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     }
     else if (arg == "--scene") {
       int value = 0;
-      if (ReadIntArgument(arg, argc, argv, i, value)) cfg.startScene = value;
+      if (ReadIntArgument(arg, argc, argv, i, value)) {
+        cfg.startScene = value;
+        cfg.startSceneExplicit = true;
+      }
+    }
+    else if (arg == "--minecraftDrawDistance") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) cfg.minecraftDrawDistance = value;
+    }
+    else if (arg == "--minecraftEnemyCount") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) cfg.minecraftEnemyCount = value;
+    }
+    else if (arg == "--minecraftEnemySpeed") {
+      float value = 0.0f;
+      if (ReadFloatArgument(arg, argc, argv, i, value)) cfg.minecraftEnemySpeed = value;
     }
     else if (arg == "--fullscreen") {
       cfg.flags.fullscreen = true;
@@ -696,6 +736,9 @@ void PrintHelp() {
     << "  --height <pixels>                  Window height\n"
     << "  --fullscreen                       Launch fullscreen\n"
     << "  --scene <index>                    Starting scene index\n"
+    << "  --minecraftDrawDistance <1..32>    Queue Minecraft draw distance after scene load\n"
+    << "  --minecraftEnemyCount <0..8>       Set live Minecraft enemy count after scene load\n"
+    << "  --minecraftEnemySpeed <0.25..6>    Set live Minecraft enemy speed after scene load\n"
     << "  --model <path>                     glTF model for Sandbox\n"
     << "  --sceneFile <path>                 T8ditor .t8scene file for Sandbox\n"
     << "  --sceneProfile <name>              Override runtime scene profile selection\n\n"

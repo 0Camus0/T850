@@ -13,9 +13,6 @@
 #include <Application.h>
 #include <video/BaseDriver.h>
 #include <thread>
-#if defined(USING_GL_COMMON)
-#include <video/gl/GLTexture.h>
-#endif
 #include <utils/InputManager.h>
 #include <utils/HandheldControllerOverlay.h>
 #ifndef OS_ANDROID
@@ -39,19 +36,10 @@
 #endif
 #ifndef OS_ANDROID
 
-#include <imgui_impl_vulkan.h>
-#endif
-
-#ifdef OS_WINDOWS
-#  include <video/d3d11/D3D11Texture.h>
-#  include <video/d3d12/D3D12Driver.h>
-#  include <video/d3d12/D3D12Texture.h>
-#  include <video/vulkan/VulkanTexture.h>
 #endif
 #ifdef OS_ANDROID
 #  include <android/input.h>
 #  include <core/android/AndroidFramework.h>
-#  include <video/vulkan/VulkanDriver.h>
 #  include <unistd.h>
 #endif
 
@@ -135,126 +123,6 @@ namespace {
     bool opaqueBlend = false;
   };
 
-#ifdef OS_WINDOWS
-  uint64_t StoreVkDescriptorSet(VkDescriptorSet descriptor) {
-#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
-    return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(descriptor));
-#else
-    return static_cast<uint64_t>(descriptor);
-#endif
-  }
-
-  VkDescriptorSet LoadVkDescriptorSet(uint64_t descriptor) {
-#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
-    return reinterpret_cast<VkDescriptorSet>(static_cast<uintptr_t>(descriptor));
-#else
-    return static_cast<VkDescriptorSet>(descriptor);
-#endif
-  }
-
-  bool IsSingleChannelFormat(DXGI_FORMAT format) {
-    switch (format) {
-    case DXGI_FORMAT_R8_UNORM:
-    case DXGI_FORMAT_R16_FLOAT:
-    case DXGI_FORMAT_R32_FLOAT:
-      return true;
-    default:
-      return false;
-    }
-  }
-
-  UINT D3D12OpaquePreviewMapping(DXGI_FORMAT format) {
-    int green = IsSingleChannelFormat(format) ? D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0
-                                              : D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1;
-    int blue = IsSingleChannelFormat(format) ? D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0
-                                             : D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2;
-    return D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
-      D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
-      green,
-      blue,
-      D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1);
-  }
-#endif
-
-  ImTextureID GetDebugTextureID(t850::BaseDriver* driver, t850::Texture* texture,
-                                std::unordered_map<void*, uint64_t>& textureDescriptors,
-                                std::unordered_map<void*, uint64_t>& opaqueTextureDescriptors) {
-    if (!driver || !texture) return (ImTextureID)nullptr;
-
-#ifdef OS_WINDOWS
-    if (driver->m_currentAPI == t850::GraphicsApi::D3D11) {
-      auto* d3dTexture = static_cast<t850::D3DXTexture*>(texture);
-      return (ImTextureID)d3dTexture->pSRVTex.Get();
-    }
-    if (driver->m_currentAPI == t850::GraphicsApi::D3D12) {
-      auto* d3dTexture = static_cast<t850::D3D12Texture*>(texture);
-      if (!d3dTexture->pTexResource) return (ImTextureID)nullptr;
-
-      auto found = opaqueTextureDescriptors.find(texture);
-      if (found != opaqueTextureDescriptors.end()) {
-        return (ImTextureID)found->second;
-      }
-
-      auto* d3d12Driver = static_cast<t850::D3D12Driver*>(driver);
-      auto& srvHeap = d3d12Driver->GetHeap(t850::D3D12Heap::CBV_SRV_UAV_VISIBLE);
-      D3D12_CPU_DESCRIPTOR_HANDLE srvCPU = srvHeap.AllocateCPU();
-      D3D12_GPU_DESCRIPTOR_HANDLE srvGPU = srvHeap.AllocateGPU();
-
-      D3D12_RESOURCE_DESC resourceDesc = d3dTexture->pTexResource->GetDesc();
-      DXGI_FORMAT srvFormat = resourceDesc.Format;
-      if (resourceDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) {
-        if (resourceDesc.Format == DXGI_FORMAT_R32_TYPELESS) srvFormat = DXGI_FORMAT_R32_FLOAT;
-        if (resourceDesc.Format == DXGI_FORMAT_R16_TYPELESS) srvFormat = DXGI_FORMAT_R16_FLOAT;
-      }
-
-      D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-      srvDesc.Format = srvFormat;
-      srvDesc.Shader4ComponentMapping = D3D12OpaquePreviewMapping(srvFormat);
-      if (resourceDesc.DepthOrArraySize == 6 && (resourceDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) {
-        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-        srvDesc.TextureCube.MipLevels = 1;
-      } else {
-        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-        srvDesc.Texture2D.MipLevels = 1;
-      }
-
-      Microsoft::WRL::ComPtr<ID3D12Device> device;
-      if (FAILED(d3dTexture->pTexResource->GetDevice(IID_PPV_ARGS(device.GetAddressOf())))) {
-        return (ImTextureID)d3dTexture->srvGPU.ptr;
-      }
-
-      device->CreateShaderResourceView(d3dTexture->pTexResource.Get(), &srvDesc, srvCPU);
-      opaqueTextureDescriptors[texture] = static_cast<uint64_t>(srvGPU.ptr);
-      return (ImTextureID)srvGPU.ptr;
-    }
-#endif
-
-    if (driver->m_currentAPI == t850::GraphicsApi::OPENGL) {
-      return (ImTextureID)(intptr_t)texture->id;
-    }
-
-#ifdef OS_WINDOWS
-    if (driver->m_currentAPI == t850::GraphicsApi::VULKAN) {
-      auto* vkTexture = static_cast<t850::VulkanTexture*>(texture);
-      if (!vkTexture->m_sampler || !vkTexture->m_imageView) return (ImTextureID)nullptr;
-
-      auto found = textureDescriptors.find(texture);
-      if (found != textureDescriptors.end()) {
-        return (ImTextureID)found->second;
-      }
-
-      VkDescriptorSet descriptor = ImGui_ImplVulkan_AddTexture(
-        vkTexture->m_sampler,
-        vkTexture->m_imageView,
-        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-      textureDescriptors[texture] = StoreVkDescriptorSet(descriptor);
-      return (ImTextureID)descriptor;
-    }
-#endif
-
-    return (ImTextureID)nullptr;
-  }
-
   float TextureAspect(t850::Texture* texture) {
     if (!texture || texture->x == 0 || texture->y == 0) return 16.0f / 9.0f;
     float aspect = (float)texture->x / (float)texture->y;
@@ -276,8 +144,7 @@ namespace {
   }
 
   std::vector<DebugRTEntry> BuildDebugRTEntries(t850::BaseDriver* driver,
-                                                std::unordered_map<void*, uint64_t>& textureDescriptors,
-                                                std::unordered_map<void*, uint64_t>& opaqueTextureDescriptors) {
+                                                t850::ImGuiSystem& imguiSystem) {
     std::vector<DebugRTEntry> entries;
     if (!driver) return entries;
 
@@ -293,8 +160,9 @@ namespace {
         char label[160];
         snprintf(key, sizeof(key), "rt%d_color%d", rtIndex, colorIndex);
         snprintf(label, sizeof(label), "RT %d Color %d  %ux%u", rtIndex, colorIndex, texture->x, texture->y);
-        ImTextureID image = GetDebugTextureID(driver, texture, textureDescriptors, opaqueTextureDescriptors);
-        bool opaqueBlend = driver->m_currentAPI == t850::GraphicsApi::D3D11;
+        ImTextureID image = imguiSystem.GetTextureID(
+          texture, t850::ImGuiTextureMode::OpaquePreview);
+        bool opaqueBlend = imguiSystem.RequiresOpaquePreviewBlend();
         entries.push_back({ key, label, driver, texture, image, driver->NeedsVFlip(), opaqueBlend });
       }
 
@@ -304,8 +172,9 @@ namespace {
         char label[160];
         snprintf(key, sizeof(key), "rt%d_depth", rtIndex);
         snprintf(label, sizeof(label), "RT %d Depth  %ux%u", rtIndex, texture->x, texture->y);
-        ImTextureID image = GetDebugTextureID(driver, texture, textureDescriptors, opaqueTextureDescriptors);
-        bool opaqueBlend = driver->m_currentAPI == t850::GraphicsApi::D3D11;
+        ImTextureID image = imguiSystem.GetTextureID(
+          texture, t850::ImGuiTextureMode::OpaquePreview);
+        bool opaqueBlend = imguiSystem.RequiresOpaquePreviewBlend();
         entries.push_back({ key, label, driver, texture, image, driver->NeedsVFlip(), opaqueBlend });
       }
     }
@@ -313,50 +182,13 @@ namespace {
     return entries;
   }
 
-  void PruneDebugTextureDescriptors(t850::BaseDriver* driver,
-                                    const std::vector<DebugRTEntry>& entries,
-                                    std::unordered_map<void*, uint64_t>& textureDescriptors,
-                                    std::unordered_map<void*, uint64_t>& opaqueTextureDescriptors) {
-    if (!driver) return;
-
-    std::unordered_set<void*> liveTextures;
+  void PruneDebugTextureDescriptors(t850::ImGuiSystem& imguiSystem,
+                                    const std::vector<DebugRTEntry>& entries) {
+    std::unordered_set<t850::Texture*> liveTextures;
     for (const DebugRTEntry& entry : entries) {
       liveTextures.insert(entry.texture);
     }
-
-    if (driver->m_currentAPI == t850::GraphicsApi::VULKAN) {
-      for (auto it = textureDescriptors.begin(); it != textureDescriptors.end();) {
-        if (liveTextures.find(it->first) == liveTextures.end()) {
-#ifdef OS_WINDOWS
-          ImGui_ImplVulkan_RemoveTexture(LoadVkDescriptorSet(it->second));
-#endif
-          it = textureDescriptors.erase(it);
-        } else {
-          ++it;
-        }
-      }
-    }
-
-    if (driver->m_currentAPI == t850::GraphicsApi::D3D12) {
-      for (auto it = opaqueTextureDescriptors.begin(); it != opaqueTextureDescriptors.end();) {
-        if (liveTextures.find(it->first) == liveTextures.end()) {
-          it = opaqueTextureDescriptors.erase(it);
-        } else {
-          ++it;
-        }
-      }
-    }
-  }
-
-  void ReleaseDebugTextureDescriptors(std::unordered_map<void*, uint64_t>& textureDescriptors,
-                                      std::unordered_map<void*, uint64_t>& opaqueTextureDescriptors) {
-#ifdef OS_WINDOWS
-    for (auto& entry : textureDescriptors) {
-      ImGui_ImplVulkan_RemoveTexture(LoadVkDescriptorSet(entry.second));
-    }
-#endif
-    textureDescriptors.clear();
-    opaqueTextureDescriptors.clear();
+    imguiSystem.PruneTextureIDs(liveTextures);
   }
 
   void BeginOpaquePreviewCallback(const ImDrawList*, const ImDrawCmd* command) {
@@ -565,7 +397,9 @@ void App::InitVars() {
   if (!g_config.sceneFilePath.empty() && g_config.startScene < 0) {
     sceneIdx = 0;
   }
-  if (g_config.flags.benchmark && m_scenes.size() > 1) {
+  // Benchmark defaults to the DayScene benchmark scene, but an explicit
+  // --scene <index> on the command line must win over that default.
+  if (g_config.flags.benchmark && m_scenes.size() > 1 && !g_config.startSceneExplicit) {
     sceneIdx = 1;
   }
   m_actualScene = m_scenes[sceneIdx].get();
@@ -706,7 +540,7 @@ void App::DestroyAssets() {
 #endif
    if (m_imguiReady) {
 #ifndef OS_ANDROID
-     ReleaseDebugTextureDescriptors(m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
+    m_imgui.ReleaseTextureIDs();
 #endif
      m_imgui.Shutdown();
      m_imguiReady = false;
@@ -951,15 +785,10 @@ void App::OnDraw() {
     }
   }
 
-  // Skip presenting the first frame (black with only text)
-  if (frameCount > 1) {
-    T8_LOG_TRACE("[Frame %d] === SwapBuffers ===" , frameCount);
-    {
-      T8_TELEMETRY_SCOPE("frame.swap_buffers");
-      pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::Present);
-    }
-  } else {
-    T8_LOG_TRACE("[Frame %d] === SKIPPED SwapBuffers (first frame) ===" , frameCount);
+  T8_LOG_TRACE("[Frame %d] === SwapBuffers ===" , frameCount);
+  {
+    T8_TELEMETRY_SCOPE("frame.swap_buffers");
+    pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::Present);
   }
 }
 
@@ -1276,8 +1105,8 @@ void App::DrawRuntimeGui() {
     if (m_debugPanelVisible || !m_debugOpenTargets.empty()) {
       T8_TELEMETRY_SCOPE("ui.debug_rt_panel");
       t850::BaseDriver* driver = pFramework ? pFramework->pVideoDriver : nullptr;
-      std::vector<DebugRTEntry> debugRTs = BuildDebugRTEntries(driver, m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
-      PruneDebugTextureDescriptors(driver, debugRTs, m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
+      std::vector<DebugRTEntry> debugRTs = BuildDebugRTEntries(driver, m_imgui);
+      PruneDebugTextureDescriptors(m_imgui, debugRTs);
       DrawDebugRenderTargetPanel(debugRTs, m_debugOpenTargets, &m_debugPanelVisible);
       DrawDebugPreviewWindows(debugRTs, m_debugOpenTargets);
     }
@@ -1306,8 +1135,8 @@ void App::DrawRuntimeGui() {
   }
 
   m_imgui.BuildDrawData();
-  if (auto* vkDriver = static_cast<t850::VulkanDriver*>(pFramework ? pFramework->pVideoDriver : nullptr)) {
-    vkDriver->SetPrePresentOverlayCallback([this]() {
+  if (auto* driver = pFramework ? pFramework->pVideoDriver : nullptr) {
+    driver->SetPrePresentOverlayCallback([this]() {
       m_imgui.RenderDrawData();
     });
   }

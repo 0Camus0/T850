@@ -427,12 +427,12 @@ namespace t850 {
     if (key.isValid()) {
 
 #if defined(USING_OPENGL)
-      if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
+      if (g_pBaseDriver->UsesGLSL()) {
         Defines += "#version 330\n\n";
         Defines += "#define ES_30\n\n";
       }
 #elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
-      if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
+      if (g_pBaseDriver->UsesGLSL()) {
         Defines += "#version 300 es\n\n";
         Defines += "#define ES_30\n\n";
       }
@@ -753,6 +753,45 @@ namespace t850 {
     T8_TRACE_REGISTER_TEXTURE(pTex, "tex2d");
     return retIdx;
   }
+
+  int BaseDriver::CreateTextureFromMemory(const std::string& key, const unsigned char* data,
+                                          int width, int height, int channels)
+  {
+    if (key.empty() || !data || width <= 0 || height <= 0 || channels <= 0) {
+      T8_LOG_ERROR("CreateTextureFromMemory: invalid request key='%s' size=%dx%d channels=%d",
+                   key.c_str(), width, height, channels);
+      return -1;
+    }
+
+    int firstFreeSlot = -1;
+    for (unsigned int i = 0; i < Textures.size(); ++i) {
+      if (!Textures[i]) {
+        if (firstFreeSlot < 0) firstFreeSlot = static_cast<int>(i);
+        continue;
+      }
+      if (Textures[i]->filepath == key) return static_cast<int>(i);
+    }
+
+    Texture* texture = T8Device->CreateTextureFromMemory(
+      data, width, height, channels, key);
+    if (!texture) {
+      T8_LOG_ERROR("Memory texture creation failed: '%s'", key.c_str());
+      return -1;
+    }
+    texture->filepath = key;
+
+    const int textureId = firstFreeSlot >= 0
+      ? firstFreeSlot
+      : static_cast<int>(Textures.size());
+    if (firstFreeSlot >= 0) Textures[firstFreeSlot] = texture;
+    else Textures.push_back(texture);
+
+    T8_LOG_DEBUG("Memory texture created: '%s' -> slot %d (%dx%d)",
+                 key.c_str(), textureId, width, height);
+    T8_TRACE_REGISTER_TEXTURE(texture, "tex2d");
+    return textureId;
+  }
+
   int BaseDriver::CreateCubeMap(const unsigned char * buff, int w, int h)
   {
     Texture *pTex = T8Device->CreateCubeMap(buff,w,h);
@@ -995,13 +1034,6 @@ namespace t850 {
       m_offscreenFrameIndex = (m_offscreenFrameIndex + 1) % static_cast<int>(m_offscreenRTs.size());
   }
 
-  const char* BaseDriver::OffscreenApiTag() const {
-    return (m_currentAPI == GraphicsApi::OPENGL) ? "gl"
-         : (m_currentAPI == GraphicsApi::D3D12)  ? "d3d12"
-         : (m_currentAPI == GraphicsApi::VULKAN) ? "vulkan"
-         : "d3d11";
-  }
-
   std::string BaseDriver::BuildOffscreenDebugDirectory() {
     if (!m_offscreenDebugDir.empty())
       return m_offscreenDebugDir;
@@ -1016,7 +1048,7 @@ namespace t850 {
 #endif
 
     std::ostringstream out;
-    out << "dumps_" << OffscreenApiTag()
+    out << "dumps_" << ApiTag()
         << "_offscreen_f" << m_offscreenFrameCounter << "_"
         << std::put_time(&localTime, "%Y%m%d_%H%M%S");
     m_offscreenDebugDir = out.str();

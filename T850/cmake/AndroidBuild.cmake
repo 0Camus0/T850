@@ -175,17 +175,26 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/Quad.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/LensFlare.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/BlockRegistry.cpp
+  ${T850_SOURCE_DIR}/Framework/src/video/TextureAtlas.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelChunk.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelMesher.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelWorld.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelStreaming.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelPersistence.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelNavigation.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelCollision.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/CrashDiagnostics.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/Profiler.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/ProfilerGpuBackend.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/RuntimeTelemetry.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumper.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumperIO.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiSystem.cpp
+  ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiRendererBackend.cpp
+  ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiD3D11Backend.cpp
+  ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiD3D12Backend.cpp
+  ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiOpenGLBackend.cpp
+  ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiVulkanBackend.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/DevGuiContext.cpp
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/tinyxml2.cpp
   ${T850_SOURCE_DIR}/Librerias/mikktspace/src/mikktspace.c)

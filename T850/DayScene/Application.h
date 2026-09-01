@@ -28,7 +28,6 @@
 
 #include <string>
 #include <memory>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -92,8 +91,6 @@ public:
   bool m_runtimeGuiInputBlockThisFrame = false;
   int m_runtimeGuiFocusedPanelIndex = 1;
   std::unordered_set<std::string> m_debugOpenTargets;
-  std::unordered_map<void*, uint64_t> m_debugTextureDescriptors;
-  std::unordered_map<void*, uint64_t> m_debugOpaqueTextureDescriptors;
 #else
   float m_androidGuiScale = 1.6f;
   int m_androidGuiPanelMode = 0;

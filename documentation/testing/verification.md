@@ -1,6 +1,6 @@
 # Verification and Release Gates
 
-Status: verified against scripts, CI, and the P0-P14 acceptance run on 2026-08-19.
+Status: verified against scripts, local matrix runs, deterministic captures, and PR CI on 2026-08-30.
 
 Use the narrowest gate that can falsify the change, then broaden according to blast radius. Do not report success from compilation alone when the change has a runtime or visual contract.
 
@@ -41,7 +41,7 @@ GitHub Actions uses the same script with `-Action Build`. Run the exact local Wi
 .\scripts\RunWindowsBuildMatrix.ps1
 ```
 
-This runs registration validation, full-solution Win32/x64/ARM64 Debug+Release builds, verifies `DayScene.exe` and `T8ditor.exe` in every cell, and runs the 39 self-tests for Win32/x64 Debug and Release. ARM64 is compile/link-only on the x64 runner.
+This runs registration validation, full-solution Win32/x64/ARM64 Debug+Release builds, verifies `DayScene.exe` and `T8ditor.exe` in every cell, and runs the 43 self-tests for Win32/x64 Debug and Release. ARM64 is compile/link-only on the x64 runner.
 
 ## Gameplay Self-Tests
 
@@ -54,7 +54,36 @@ Build x64, then run the matching executable:
 
 Expected result: every line begins with `PASS` and process exit code is 0. Any `FAIL` or nonzero exit blocks the next milestone.
 
-The suite currently has 39 checks covering schema/migration/IDs, validation, groups, stable registry ownership, fixed tick/pause, controllers, components, events, state machines, physics handle reuse, generated triangle-mesh body creation, mutable mesh validation, stable render handles, chunks, greedy meshing, negative coordinates, DDA, streaming budgets, atomic voxel persistence, and unavailable navigation.
+The suite currently has 43 checks covering schema/migration/IDs, validation, groups, stable registry ownership, fixed tick/pause, controllers, components, events, state machines, physics handle reuse, generated triangle-mesh body creation, mutable mesh validation, stable render handles, chunks, greedy meshing, negative coordinates, DDA, streaming budgets, atomic voxel persistence, voxel path completeness and clearance, exact voxel box collision, atlas UV/bounds behavior, immutable material variants, and unavailable navigation.
+
+Validate the authored Minecraft block-to-atlas contract without creating a graphics device:
+
+```powershell
+python .\scripts\verify_minecraft_atlas.py
+```
+
+Exercise live Minecraft enemy removal and expansion through the same path as the ImGui slider:
+
+```powershell
+.\bin\x64\Release\DayScene.exe --api d3d12 --scene 6 --minecraftEnemyCount 0 --dump-frame 240
+.\bin\x64\Release\DayScene.exe --api d3d12 --scene 6 --minecraftEnemyCount 8 --dump-frame 240
+.\bin\x64\Release\DayScene.exe --api d3d12 --scene 6 --minecraftEnemySpeed 6 --dump-frame 240
+```
+
+Require the matching `Enemy count changed` or `Enemy speed changed` line, `Enemy population ready: active=N capacity=8`, a complete dump, and no path-unavailable, stuck, or rendering errors.
+
+Expected: the audited `terrain.png` SHA-256, 20 block definitions, and all 120 face mappings pass.
+
+For graphics-backend strategy changes, also exercise ImGui and GPU profiling on every desktop API:
+
+```powershell
+& .\bin\x64\Debug\DayScene.exe --api d3d11 --scene 4 --profile --profileFrames 8
+& .\bin\x64\Debug\DayScene.exe --api d3d12 --scene 4 --profile --profileFrames 8
+& .\bin\x64\Debug\DayScene.exe --api vulkan --scene 4 --profile --profileFrames 8
+& .\bin\x64\Debug\DayScene.exe --api gl --scene 4 --profile --profileFrames 8
+```
+
+Require an `ImGuiSystem initialized` line, a matching `Profiler initialized (API=..., GPU=...)` line, a profiler report, exit 0, and no validation/device errors.
 
 Focused voxel visual gate:
 
@@ -219,7 +248,7 @@ See [Steam Deck build and deployment](../platform/steam-deck.md).
 - Steam Deck: SteamRT Release build and tarball package;
 - tagged `v*` release: Windows ZIPs, Android APKs, Steam Deck tarball, and compiled launcher.
 
-CI's non-x64 Windows branch explicitly builds Framework and DayScene; local `scripts/build.ps1` builds the full solution and has verified T8ditor for ARM64 in the current worktree.
+CI builds and verifies both `DayScene.exe` and `T8ditor.exe` in all six Windows cells. PR #33 run [33325073153](https://github.com/0Camus0/T850/actions/runs/33325073153) passed registration, Win32/x64/ARM64 Debug+Release, Android arm64-v8a/x86_64, and Steam Deck.
 
 ## Failure Classification
 

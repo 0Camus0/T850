@@ -1,12 +1,12 @@
 #pragma once
 
 #include <core/Core.h>
+#include <imgui/ImGuiRendererBackend.h>
+
+#include <memory>
 
 struct SDL_Window;
 
-#ifdef OS_WINDOWS
-struct ID3D12DescriptorHeap;
-#endif
 #ifdef OS_ANDROID
 struct AInputEvent;
 struct ANativeWindow;
@@ -28,6 +28,10 @@ namespace t850 {
     void Render();
     void BuildDrawData();
     void RenderDrawData();
+    ImTextureID GetTextureID(Texture* texture, ImGuiTextureMode mode = ImGuiTextureMode::Native);
+    void PruneTextureIDs(const std::unordered_set<Texture*>& liveTextures);
+    void ReleaseTextureIDs();
+    bool RequiresOpaquePreviewBlend() const;
     void InstallLoadingProgressRenderer();
     void ClearLoadingProgressRenderer();
     void RenderLoadingFrame();
@@ -61,14 +65,7 @@ namespace t850 {
     std::string m_lastWindowEventName;
     int m_lastWindowEventData1 = 0;
     int m_lastWindowEventData2 = 0;
-
-#ifdef OS_WINDOWS
-    ID3D12DescriptorHeap* m_d3d12SrvHeap = nullptr;
-#endif
-#ifdef OS_ANDROID
-    ANativeWindow* m_androidWindow = nullptr;
-    bool m_androidPlatformInited = false;
-#endif
+    std::unique_ptr<ImGuiRendererBackend> m_rendererBackend;
   };
 
 } // namespace t850

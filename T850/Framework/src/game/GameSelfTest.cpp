@@ -14,13 +14,17 @@
 #include <scene/EditorSceneFile.h>
 #include <scene/MutableMeshData.h>
 #include <scene/RenderContainer.h>
+#include <scene/MaterialAsset.h>
 #include <terrain/BlockRegistry.h>
 #include <terrain/VoxelChunk.h>
 #include <terrain/VoxelMesher.h>
 #include <terrain/VoxelWorld.h>
 #include <terrain/VoxelStreaming.h>
 #include <terrain/VoxelPersistence.h>
+#include <terrain/VoxelNavigation.h>
+#include <terrain/VoxelCollision.h>
 #include <utils/ThreadPool.h>
+#include <video/TextureAtlas.h>
 
 #include <filesystem>
 #include <fstream>
@@ -905,6 +909,49 @@ void TestRenderContainerStableHandles() {
   Require(!container.RemoveMesh(first), "stale render handle removed a replacement instance");
 }
 
+  void TestTextureAtlasGridRegions() {
+    TextureAtlas atlas;
+    atlas.textureId = 7;
+    atlas.widthPx = 64;
+    atlas.heightPx = 32;
+    atlas.tileWidthPx = 16;
+    atlas.tileHeightPx = 8;
+    atlas.columns = 4;
+    atlas.rows = 4;
+
+    TextureAtlasRegion region;
+    Require(atlas.TryGetGridRegion(2, 1, region), "atlas rejected a valid grid region");
+    Require(region.xPx == 32 && region.yPx == 8 && region.widthPx == 16 && region.heightPx == 8,
+      "atlas returned incorrect pixel bounds");
+    Require(std::abs(region.u0 - (32.5f / 64.0f)) < 0.000001f &&
+      std::abs(region.v0 - (8.5f / 32.0f)) < 0.000001f &&
+      std::abs(region.u1 - (47.5f / 64.0f)) < 0.000001f &&
+      std::abs(region.v1 - (15.5f / 32.0f)) < 0.000001f,
+      "atlas half-texel UVs were incorrect");
+    Require(!atlas.TryGetGridRegion(4, 1, region) && !atlas.TryGetGridRegion(2, 4, region),
+      "atlas accepted an out-of-range grid region");
+  }
+
+  void TestMaterialTextureVariantIsImmutable() {
+    MaterialAsset base;
+    base.name = "selftest_material";
+    base.textureIds[(int)MatTexSlot::BaseColor] = 3;
+    base.textures[(int)MatTexSlot::BaseColor] = reinterpret_cast<Texture*>(1);
+    MaterialAsset* cachedBase = MaterialAssetCache::Get().Acquire(base);
+    MaterialAsset* variant = MaterialAssetCache::Get().AcquireTextureVariant(
+      *cachedBase, MatTexSlot::BaseColor, reinterpret_cast<Texture*>(2), 9);
+
+    Require(cachedBase->textureIds[(int)MatTexSlot::BaseColor] == 3 &&
+      cachedBase->textures[(int)MatTexSlot::BaseColor] == reinterpret_cast<Texture*>(1),
+      "material texture variant mutated the cached base asset");
+    Require(variant != cachedBase && variant->textureIds[(int)MatTexSlot::BaseColor] == 9 &&
+      variant->textures[(int)MatTexSlot::BaseColor] == reinterpret_cast<Texture*>(2),
+      "material texture variant did not contain the requested binding");
+
+    MaterialAssetCache::Get().Release(variant);
+    MaterialAssetCache::Get().Release(cachedBase);
+  }
+
 terrain::BlockId RegisterTestStone(terrain::BlockRegistry& registry) {
   terrain::BlockDefinition stone;
   stone.name = "test_stone";
@@ -1047,6 +1094,99 @@ void TestVoxelMesherUsesNeighborBoundary() {
             "voxel delta applied to the wrong local cell in a negative chunk");
   }
 
+  void TestVoxelNavigationAvoidsSolidsAndRejectsPartialPaths() {
+    constexpr int width = 7;
+    constexpr int depth = 5;
+    constexpr int height = 4;
+    bool solids[width][height][depth] = {};
+    for (int x = 0; x < width; ++x)
+      for (int z = 0; z < depth; ++z)
+        solids[x][0][z] = true;
+    for (int z = 0; z < depth - 1; ++z) {
+      solids[3][1][z] = true;
+      solids[3][2][z] = true;
+    }
+
+    terrain::VoxelNavigationSettings settings;
+    settings.minFeetY = 1;
+    settings.maxFeetY = height - 1;
+    settings.projectionHorizontalRadius = 0;
+    settings.projectionVerticalRadius = 0;
+    terrain::VoxelNavigationQuery query;
+    query.isColumnLoaded = [](int x, int z) {
+      return x >= 0 && x < width && z >= 0 && z < depth;
+    };
+    query.isSolid = [&](int x, int y, int z) {
+      return x >= 0 && x < width && y >= 0 && y < height && z >= 0 && z < depth &&
+             solids[x][y][z];
+    };
+
+    const terrain::VoxelNavigationResult around = terrain::FindVoxelPath(
+        XVECTOR3(0.5f, 1.0f, 0.5f, 1.0f),
+        XVECTOR3(6.5f, 1.0f, 0.5f, 1.0f), settings, query);
+    Require(around.success, "voxel navigation failed to route around a solid wall: " + around.error);
+    bool usedGap = false;
+    for (const XVECTOR3& point : around.points)
+      usedGap = usedGap || point.z > 3.5f;
+    Require(usedGap, "voxel navigation crossed a solid wall instead of using its gap");
+
+    query.isColumnLoaded = [](int x, int z) {
+      return x >= 0 && x < width && z == 0;
+    };
+    const terrain::VoxelNavigationResult blocked = terrain::FindVoxelPath(
+        XVECTOR3(0.5f, 1.0f, 0.5f, 1.0f),
+        XVECTOR3(6.5f, 1.0f, 0.5f, 1.0f), settings, query);
+    Require(!blocked.success && blocked.points.empty(),
+            "voxel navigation returned a partial path through a blocked corridor");
+
+    std::memset(solids, 0, sizeof(solids));
+    solids[0][0][0] = true;
+    for (int x = 1; x <= 2; ++x) {
+      solids[x][0][0] = true;
+      solids[x][1][0] = true;
+    }
+    query.isColumnLoaded = [](int x, int z) { return x >= 0 && x <= 2 && z == 0; };
+    const terrain::VoxelNavigationResult step = terrain::FindVoxelPath(
+      XVECTOR3(0.5f, 1.0f, 0.5f, 1.0f),
+      XVECTOR3(2.5f, 2.0f, 0.5f, 1.0f), settings, query);
+    Require(step.success, "voxel navigation failed a clear one-block step: " + step.error);
+
+    solids[0][3][0] = true;
+    const terrain::VoxelNavigationResult lowCeiling = terrain::FindVoxelPath(
+      XVECTOR3(0.5f, 1.0f, 0.5f, 1.0f),
+      XVECTOR3(2.5f, 2.0f, 0.5f, 1.0f), settings, query);
+    Require(!lowCeiling.success,
+        "voxel navigation planned a one-block step without lift clearance");
+  }
+
+    void TestVoxelCollisionPreventsTunneling() {
+      terrain::VoxelCollisionQuery query;
+      query.isBlocked = [](int x, int y, int z) {
+        return x == 3 && y == 1 && z == 0;
+      };
+      CharacterBoxSweep sweep;
+      sweep.startCenter = XVECTOR3(0.5f, 1.5f, 0.5f, 1.0f);
+      sweep.displacement = XVECTOR3(6.0f, 0.0f, 0.0f, 0.0f);
+      sweep.halfExtents = XVECTOR3(0.25f, 0.5f, 0.25f, 0.0f);
+      CharacterCollisionHit hit;
+      Require(terrain::SweepVoxelBox(sweep, query, hit) && hit.hit,
+        "voxel box sweep tunneled through a solid block");
+      Require(hit.fraction > 0.37f && hit.fraction < 0.38f && hit.normal.x < -0.99f,
+        "voxel box sweep returned the wrong impact time or wall normal");
+
+      sweep.displacement = XVECTOR3(0.0f, 0.0f, 4.0f, 0.0f);
+      Require(!terrain::SweepVoxelBox(sweep, query, hit),
+        "voxel box sweep hit geometry outside its swept broadphase");
+
+      sweep.startCenter = XVECTOR3(2.75f, 1.5f, 0.5f, 1.0f);
+      sweep.displacement = XVECTOR3(-1.0f, 0.0f, 0.0f, 0.0f);
+      Require(terrain::SweepVoxelBox(sweep, query, hit) && hit.fraction == 0.0f,
+        "voxel box sweep missed initial wall contact");
+      Require(hit.normal.x < -0.99f &&
+        hit.normal.x * sweep.displacement.x > 0.0f,
+        "voxel box sweep initial contact normal blocks movement away from a wall");
+    }
+
   void TestNavigationUnavailable() {
     GameNavigationService navigation;
     navigation.Bind(nullptr, nullptr);
@@ -1100,12 +1240,16 @@ constexpr TestCase kTests[] = {
     {"T-MESH-01", TestMutableMeshValidationAndBounds},
     {"T-MESH-02", TestMutableMeshSectionValidation},
     {"T-MESH-03", TestRenderContainerStableHandles},
+    {"T-ATLAS-01", TestTextureAtlasGridRegions},
+    {"T-MAT-01", TestMaterialTextureVariantIsImmutable},
     {"T-VOXEL-01", TestVoxelChunkMutation},
     {"T-VOXEL-02", TestGreedyVoxelMesher},
     {"T-VOXEL-03", TestVoxelMesherUsesNeighborBoundary},
     {"T-VOXEL-04", TestVoxelWorldCoordinatesAndRaycast},
     {"T-VOXEL-05", TestVoxelStreamingBudgetsAndUnloads},
     {"T-VOXEL-06", TestVoxelDeltaPersistenceRoundTrip},
+    {"T-VOXEL-07", TestVoxelNavigationAvoidsSolidsAndRejectsPartialPaths},
+    {"T-VOXEL-08", TestVoxelCollisionPreventsTunneling},
     {"T-NAV-01", TestNavigationUnavailable},
 };
 

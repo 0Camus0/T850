@@ -28,6 +28,9 @@ Repository root contains `documentation/` and `LaunchSolution.bat`. Source root 
 | voxel terrain, mutable mesh, chunks, streaming, block edits | `t850-voxel-terrain` skill |
 | screenshots, RT dumps, replay, visual baselines, image comparison | `t850-visual-regression` skill |
 | Android, Steam Deck, install, deploy, package, release | `t850-platform-deploy` skill |
+| PresentMon, FPS/frame time, CPU/GPU bottlenecks, Deck performance loop | `t850-deck-performance` skill |
+| runtime ImGui controls, scene/profile precedence, startup-vs-live settings | `t850-scene-runtime-controls` skill |
+| GPU uploads, staging, fences, retirement, resource lifetime, memory | `t850-gpu-resource-lifetime` skill |
 | current implementation status | `documentation/current-status-and-roadmap.md` |
 | subsystem owner/dependencies | `documentation/dependency-map.md` then one owning document |
 | runtime scene choice | `documentation/runtime/runtime-hosts.md` |

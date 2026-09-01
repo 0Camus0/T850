@@ -57,6 +57,7 @@ set(FRAMEWORK_SOURCES
   src/debug/CrashDiagnostics.cpp
   src/debug/FrameDumperIO.cpp
   src/debug/Profiler.cpp
+  src/debug/ProfilerGpuBackend.cpp
   src/debug/RuntimeTelemetry.cpp
   src/debug/RenderTrace.cpp
   src/scene/EditorSceneFile.cpp
@@ -71,11 +72,14 @@ set(FRAMEWORK_SOURCES
   src/scene/Quad.cpp
   src/scene/TextRenderer.cpp
   src/terrain/BlockRegistry.cpp
+  src/video/TextureAtlas.cpp
   src/terrain/VoxelChunk.cpp
   src/terrain/VoxelMesher.cpp
   src/terrain/VoxelWorld.cpp
   src/terrain/VoxelStreaming.cpp
   src/terrain/VoxelPersistence.cpp
+  src/terrain/VoxelNavigation.cpp
+  src/terrain/VoxelCollision.cpp
   src/utils/cil.cpp
   src/utils/Log.cpp
   src/utils/InputManager.cpp

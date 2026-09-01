@@ -401,6 +401,15 @@ namespace t850 {
     if (it != shader->srvSlots.end()) {
       cmdList->SetGraphicsRootDescriptorTable(it->second, srvGPU);
     }
+    // Bind this texture's sampler with its SRV. Draw paths establish the
+    // shader/root signature first, then texture bindings replace its default
+    // sampler with the texture-specific state (for example atlas NEAREST).
+    if (hasSampler) {
+      auto sit = shader->samplerSlots.find(slot);
+      if (sit != shader->samplerSlots.end()) {
+        cmdList->SetGraphicsRootDescriptorTable(sit->second, samplerGPU);
+      }
+    }
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       int texId = g_renderTracer->LookupTextureId(this);
@@ -432,6 +441,12 @@ namespace t850 {
     auto it = shader->srvSlots.find(slot);
     if (it != shader->srvSlots.end()) {
       cmdList->SetGraphicsRootDescriptorTable(it->second, srvGPU);
+    }
+    if (hasSampler) {
+      auto sit = shader->samplerSlots.find(slot);
+      if (sit != shader->samplerSlots.end()) {
+        cmdList->SetGraphicsRootDescriptorTable(sit->second, samplerGPU);
+      }
     }
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {

@@ -77,6 +77,8 @@ public:
   float orbitYaw = 0.0f;
   int ragdollSimulationSpeedIndex = -1;
   int minecraftDrawDistance = 0;
+  int minecraftEnemyCount = -1;
+  float minecraftEnemySpeed = 0.0f;
 };
 
 extern Config g_config;

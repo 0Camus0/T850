@@ -1,6 +1,6 @@
 # Mutable Voxel Terrain and Streaming
 
-Status: implemented and verified against source, 41 self-tests, and four-backend captures on 2026-08-30.
+Status: implemented and verified against source, 43 self-tests, and four-backend captures on 2026-08-31.
 
 This subsystem provides backend-neutral mutable geometry, voxel chunks, atlas-aware greedy meshing, bounded asynchronous streaming, voxel selection/player collision, per-chunk Jolt collision, and sparse persistent edits. `VoxelScene` is the executable reference integration.
 
@@ -17,6 +17,8 @@ This subsystem provides backend-neutral mutable geometry, voxel chunks, atlas-aw
 | greedy meshing | `Framework/include/terrain/VoxelMesher.h`, `src/terrain/VoxelMesher.cpp` |
 | streaming scheduler | `Framework/include/terrain/VoxelStreaming.h`, `src/terrain/VoxelStreaming.cpp` |
 | persisted edits | `Framework/include/terrain/VoxelPersistence.h`, `src/terrain/VoxelPersistence.cpp` |
+| voxel navigation | `Framework/include/terrain/VoxelNavigation.h`, `src/terrain/VoxelNavigation.cpp` |
+| exact voxel box collision | `Framework/include/terrain/VoxelCollision.h`, `src/terrain/VoxelCollision.cpp` |
 | general atlas asset | `Framework/include/video/TextureAtlas.h`, `src/video/TextureAtlas.cpp` |
 | reference runtime | `DayScene/VoxelScene.h`, `DayScene/VoxelScene.cpp` |
 | authored block-world runtime | `DayScene/MinecraftScene.h`, `DayScene/MinecraftScene.cpp`, `Assets/Scenes/Minecraft.t8scene` |
@@ -217,9 +219,15 @@ Controls:
 | left click | remove targeted block |
 | right click | place grass in the previous DDA cell |
 
-Minecraft exposes **Draw distance (chunks)** in the runtime ImGui Minecraft section. The value can be changed from 1 through 32 while the scene is running. The scene keeps a fixed-capacity 65x65 chunk ring so changing the active radius does not remap existing storage or mesh slots. A requested change waits for outstanding chunk and navigation jobs, hides chunks leaving the radius, generates only newly entering chunks, remeshes the new boundary, and schedules a navigation rebuild.
+Minecraft exposes **Draw distance (chunks)** in the runtime ImGui Minecraft section. The value can be changed from 1 through 32 while the scene is running. The scene keeps a fixed-capacity 65x65 chunk ring so changing the active radius does not remap existing storage or mesh slots. A requested change waits for outstanding chunk jobs, hides chunks leaving the radius, generates only newly entering chunks, remeshes the new boundary, and increments the voxel revision so active paths are discarded immediately.
 
 `--minecraftDrawDistance N` queues the same live transition after the authored world loads, which is useful for automated validation. Expansion is progressive and obeys `max_uploads_per_frame`; the panel shows `(streaming)` until completion, and the log reports `Draw distance ready: radius=N chunkMeshes=X expected=X`. With the current one-upload-per-frame Minecraft setting, a 6-to-32 transition can take tens of seconds before all 4,225 chunk meshes are visible.
+
+Minecraft also exposes a discrete integer **Enemy count** from 0 through 8. Eight independent mesh/controller slots are created once; changing the slider resets and shows newly active slots or immediately hides and invalidates removed slots without allocating during the UI interaction. Spawn offsets and repath staggering are deterministic. `--minecraftEnemyCount N` applies the same live `SetMobCount` path after the authored count loads, so `--minecraftEnemyCount 0` and `8` validate real 1-to-0 and 1-to-8 transitions.
+
+**Enemy speed** is a live floating-point control from 0.25 through 6.0 blocks per second. Changes update the shared mob settings and all eight active/reserved controllers immediately. `--minecraftEnemySpeed N` invokes the same `SetMobSpeed` path for deterministic validation.
+
+Enemy body-part boxes use the same outward-wound `kFaces` table as terrain cubes. Their movement enforces the authored `player_avoidance_radius` (1.35 blocks in the shipped scene) with a small dead band and applies local separation between active enemies, preventing them from occupying the player or collapsing into one stack. Grounded models sweep their full collision footprint downward and derive visual feet from the exact support impact. `visual_ground_clearance` adds a 0.001-unit non-contact gap; airborne models retain the controller height. Controller feet, paths, and debug bounds are unchanged.
 
 Minecraft commits mutable chunk buffers with metadata-only CPU retention: bounds, materials, sections, version, and vertex/index counts remain available, while uploaded CPU vertex/index arrays and backend system copies are released. Completed D3D12/Vulkan staging batches are also reclaimed during startup uploads instead of waiting for the first rendered frame. A Release D3D12 radius-32 frame-3 validation peaked at about 2.1 GB after these changes (down from about 9.4 GB before retention cleanup). The equivalent Steam Deck Vulkan run completed in 31.2 seconds with a 716.9 MB cgroup memory peak and no swap. Generating and meshing all 4,225 chunks still makes radius 32 a deliberately expensive setting.
 
@@ -230,22 +238,29 @@ The scene uses `CharacterCollisionWorld` swept AABBs against loaded collidable v
 Implemented:
 
 - voxel-grid player collision;
+- voxel-native multi-level A* over loaded standable cells;
+- agent-radius, height, support, headroom, and step-clearance validation;
+- revision-invalidated mob paths with off-ring recovery and stuck detection;
+- collision-authoritative mob movement through the shared kinematic controller;
+- live 0-to-8 enemy population with player and enemy separation;
+- exact swept-AABB mob collision against loaded voxels, with unloaded columns blocked;
 - DDA block selection;
 - one generated static Jolt triangle body per active chunk through `PhysicsTriangleMeshBodyDesc`;
 - no-disk-cache, build-speed-oriented collision cooking for mutable chunks;
 - reusable generational body slots.
 
+Minecraft does not rebuild a global Recast mesh for gameplay. The optional developer overlay builds Recast geometry only while requested, includes every standable vertical span, and rejects async results whose center or voxel revision became stale. Generic mesh scenes continue to use Recast/Detour. Detour path queries reject partial polygon corridors instead of exposing them as successful paths.
+
 Not implemented:
 
 - asynchronous/off-thread chunk collision cooking or incremental collision updates;
-- voxel-aware NPC navigation;
 - tiled Detour updates.
 
-Do not rebuild the current whole-world Recast mesh after every block edit. Prefer grid/voxel navigation for block worlds or add a true tiled `INavigationMesh` implementation.
+For many voxel NPCs, add chunk-region portals and hierarchical search over the existing standable-cell rules before considering tiled Detour. Physics remains authoritative over every planned segment.
 
 ## Diagnostics and Gates
 
-The 41-test suite currently includes:
+The 43-test suite currently includes:
 
 - stable gameplay owner pointers;
 - stale physics-handle rejection and slot reuse;
@@ -257,6 +272,8 @@ The 41-test suite currently includes:
 - negative coordinates and DDA;
 - asynchronous streaming budgets/unloads;
 - atomic delta round trip.
+- complete voxel path routing, solid barriers, one-block steps, and lift clearance;
+- exact swept-box anti-tunneling and initial-contact normals;
 - rectangular atlas bounds/half-texel UVs;
 - immutable material texture variants.
 

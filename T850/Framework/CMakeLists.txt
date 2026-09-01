@@ -78,6 +78,8 @@ set(FRAMEWORK_SOURCES
   src/terrain/VoxelWorld.cpp
   src/terrain/VoxelStreaming.cpp
   src/terrain/VoxelPersistence.cpp
+  src/terrain/VoxelNavigation.cpp
+  src/terrain/VoxelCollision.cpp
   src/utils/cil.cpp
   src/utils/Log.cpp
   src/utils/InputManager.cpp

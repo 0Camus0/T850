@@ -123,7 +123,8 @@ Deck runtime acceptance requires:
 
 - process remains active or finite capture exits 0;
 - Vulkan reports RADV/VANGOGH on Deck;
-- authored scene, world, and navmesh initialize;
+- authored scene and world initialize, and the Minecraft mob reports a ready voxel path;
+- a Minecraft Recast NavMesh is expected only when the diagnostic overlay is authored on;
 - SDL opens `Steam Deck Controller`;
 - scene logs its gamepad controls active;
 - no `[ERROR]`, fatal, validation, device-loss, OOM, or missing required asset line;

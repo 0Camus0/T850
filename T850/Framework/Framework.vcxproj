@@ -102,6 +102,8 @@
     <ClInclude Include="include\terrain\VoxelWorld.h" />
     <ClInclude Include="include\terrain\VoxelStreaming.h" />
     <ClInclude Include="include\terrain\VoxelPersistence.h" />
+    <ClInclude Include="include\terrain\VoxelNavigation.h" />
+    <ClInclude Include="include\terrain\VoxelCollision.h" />
     <ClInclude Include="include\physics\CharacterController.h" />
     <ClInclude Include="include\physics\GameplayLayers.h" />
     <ClInclude Include="include\physics\JoltPhysicsSystem.h" />
@@ -275,6 +277,8 @@
     <ClCompile Include="src\terrain\VoxelWorld.cpp" />
     <ClCompile Include="src\terrain\VoxelStreaming.cpp" />
     <ClCompile Include="src\terrain\VoxelPersistence.cpp" />
+    <ClCompile Include="src\terrain\VoxelNavigation.cpp" />
+    <ClCompile Include="src\terrain\VoxelCollision.cpp" />
     <ClCompile Include="src\utils\cil.cpp" />
     <ClCompile Include="src\utils\Log.cpp" />
     <ClCompile Include="src\utils\InputManager.cpp" />

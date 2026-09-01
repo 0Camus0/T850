@@ -173,14 +173,15 @@ that is light movement, not spectator ownership of the cascades.
 
 Minecraft runtime tuning belongs to `voxel_world`: Sun orbit basis/center/radius/phase,
 horizon blend, day/night colors and intensities, ambient tint, cascade debug palette, camera
-pitch limit and speed, collision sweep resolution, navmesh rebuild throttle, mob smoothing,
+pitch limit and speed, collision sweep resolution, optional navmesh-overlay rebuild throttle, mob count,
+movement, body dimensions, player avoidance radius, and render-only ground clearance,
 and voxel material parameters are authored there. Mathematical constants, fixed vertex/index
 formats, array capacities, and topology remain code invariants. Keyboard bindings remain in
 the shared input layer until the engine has a cross-scene keymap schema; do not add a
 Minecraft-only string-to-key parser.
 
 Minecraft chunk residency is controlled by `render_distance`; the shipped scene uses six
-chunks in every horizontal direction and the runtime supports up to eight. The resident grid
+chunks in every horizontal direction and the runtime supports up to 32. The resident grid
 uses world-coordinate ring slots, so recentering does not copy the full voxel array or mesh
 instance table. `streaming_recenter_threshold` keeps the player inside the preloaded area
 before requesting another ring update. Entering terrain is generated into private worker
@@ -196,13 +197,21 @@ through staging buffers into GPU-local vertex/index memory. Upload command buffe
 allocations remain alive until backend fences complete, so each budgeted commit is submitted
 without a CPU wait and subsequent rendering is ordered on the same graphics queue.
 
-Minecraft block edits update the authoritative voxel grid immediately, then queue the edited
-chunk (and a boundary neighbor when required) through the same worker-mesh pipeline. The old
-chunk mesh remains visible until its GPU-local replacement is ready. Edits also debounce an
-asynchronous Recast/Detour rebuild built from an immutable voxel snapshot; the previous
-navigation mesh remains active until the replacement is published. Minecraft collision does
-not rebuild Jolt bodies for block edits: player and mob collision query voxel occupancy
-directly, so edit-time pauses should be diagnosed in remeshing or navigation rather than Jolt.
+Minecraft block edits update the authoritative voxel grid immediately, increment its revision,
+invalidate active mob paths, then queue the edited chunk (and a boundary neighbor when required)
+through the same worker-mesh pipeline. Mobs plan complete routes over loaded standable voxel cells
+and move through swept box collision, so collision remains authoritative if geometry changes after
+planning. Recast/Detour is an optional diagnostic overlay in this scene; generic mesh scenes still
+use it for gameplay. Minecraft collision does not rebuild Jolt bodies for block edits: player and
+mob collision query voxel occupancy directly, so edit-time pauses should be diagnosed in remeshing
+or voxel path search rather than Jolt.
+
+Minecraft reserves eight independent enemy mesh/controller slots. The runtime **Enemy count**
+slider activates 0 through 8 slots without reallocating render resources. Added enemies reset to
+deterministic offsets around the authored mob spawn and stagger their first path query; removed
+enemies are hidden and have their paths invalidated immediately. `--minecraftEnemyCount 0..8`
+uses this same live transition path for regression tests. Enemy meshes derive all six box faces
+from the terrain cube face table so normals, UV orientation, and back-face winding agree.
 
 Minecraft owns a gameplay HUD through the scene-level `DrawGameplayGui` hook, independently
 of the docked developer controls. It draws a target-aware crosshair, world/target status,

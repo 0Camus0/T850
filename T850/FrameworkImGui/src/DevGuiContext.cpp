@@ -119,6 +119,16 @@ bool DevGuiContext::Slider(const SliderDesc& desc, float& value) {
   return changed;
 }
 
+bool DevGuiContext::SliderInt(const SliderDesc& desc, int& value) {
+  const std::string label = MakeImGuiLabel(desc.name, desc.label);
+  const int minValue = static_cast<int>(std::ceil(desc.min_val));
+  const int maxValue = static_cast<int>(std::floor(desc.max_val));
+  int clamped = (std::max)(minValue, (std::min)(maxValue, value));
+  const bool changed = ImGui::SliderInt(label.c_str(), &clamped, minValue, maxValue);
+  if (changed) value = clamped;
+  return changed;
+}
+
 bool DevGuiContext::Checkbox(const CheckboxDesc& desc, bool& value) {
   const std::string label = MakeImGuiLabel(desc.name, desc.label);
   if (!desc.enabled) ImGui::BeginDisabled();

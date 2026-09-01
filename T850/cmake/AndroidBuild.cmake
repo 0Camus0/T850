@@ -181,6 +181,8 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelWorld.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelStreaming.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelPersistence.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelNavigation.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelCollision.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/CrashDiagnostics.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/Profiler.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/ProfilerGpuBackend.cpp

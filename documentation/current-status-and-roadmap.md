@@ -36,7 +36,7 @@ This is the single source of truth for implementation maturity, verified gates, 
 | Android arm64-v8a and x86_64 Release | Passed in CI |
 | Android local development/production Debug | Passed |
 | Steam Deck/SteamRT | Passed in CI |
-| Gameplay/terrain/atlas self-tests | 41/41 passed |
+| Gameplay/terrain/atlas self-tests | 43/43 passed |
 | Vulkan validation | Zero errors in deterministic Minecraft capture |
 | Atlas redesign visual preservation | Old accepted D3D12 versus redesigned D3D12 exact across all 12 render targets |
 | Polymorphism refactor visual preservation | D3D12 exact against atlas-only baseline; D3D11/Vulkan/OpenGL variance unchanged |
@@ -66,7 +66,7 @@ Shared application, scene, editor, and diagnostic code does not downcast `BaseDr
 
 Gameplay v1 includes schema v2, stable IDs, fixed tick, component lifecycle, event/state systems, player/AI control, Jolt queries, navigation facade, groups, health/weapons, runtime DevGui, telemetry, editor authoring, validation, undo snapshots, and self-tests.
 
-The generic `VoxelScene` remains a generated finite streamed terrain reference. Minecraft is a separate authored block-world integration using the Framework atlas, async chunk generation/remeshing, voxel collision, Recast navigation, gameplay HUD, and render graph.
+The generic `VoxelScene` remains a generated finite streamed terrain reference. Minecraft is a separate authored block-world integration using the Framework atlas, async chunk generation/remeshing, voxel-native A* navigation, collision-authoritative mob locomotion, gameplay HUD, and render graph. Recast remains an optional Minecraft diagnostic overlay and the production navigation path for mesh scenes.
 
 ## Build and Release State
 
@@ -92,7 +92,7 @@ Use:
 6. Add render-graph resource-lifetime validation and shader-cache operation tooling.
 7. Add named atlas-region descriptors and mip-safe edge extrusion for filtered atlases.
 8. Add voxel sunlight/emissive propagation, ambient occlusion, fluid simulation, and transparent sorting when required.
-9. Add asynchronous chunk collision cooking, voxel NPC navigation, LOD, indirect drawing, and floating origin based on measured project needs.
+9. Add asynchronous chunk collision cooking, hierarchical voxel path regions for large crowds, LOD, indirect drawing, and floating origin based on measured project needs.
 10. Add hot reload, cross-scene persistence, or granular editor commands only when a project requires them.
 
 ## Known Limits

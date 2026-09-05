@@ -78,6 +78,29 @@ def ensure_runtime_links():
             link.symlink_to(target)
 
 
+def vulkan_loader_dirs():
+    """Return directories containing a Vulkan loader that exposes the
+    Wayland/X11 surface extensions. The binaries carry a baked RUNPATH into the
+    vcpkg loader (Librerias/vcpkg/...), which lacks VK_KHR_wayland_surface, so
+    window creation fails. LD_LIBRARY_PATH is searched before DT_RUNPATH, so
+    prepending the system loader fixes it."""
+    import ctypes.util
+    dirs = []
+    found = ctypes.util.find_library("vulkan")
+    if found and Path(found).is_absolute():
+        dirs.append(str(Path(found).parent))
+    for candidate in (
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64",
+        "/usr/lib",
+        "/usr/lib/x86_64-linux-gnu/dri",
+    ):
+        p = Path(candidate) / "libvulkan.so.1"
+        if p.exists():
+            dirs.append(str(p.parent))
+    return dirs
+
+
 def quote_cmd(args):
     def q(v):
         s = str(v)
@@ -759,7 +782,9 @@ class Launcher(Gtk.Window):
     def launch_process(self, executable, args):
         ensure_runtime_links()
         env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = f"{RUNTIME_DIR}:{env.get('LD_LIBRARY_PATH', '')}"
+        loader = os.pathsep.join(vulkan_loader_dirs())
+        prefix = ":".join(x for x in (loader, str(RUNTIME_DIR)) if x)
+        env["LD_LIBRARY_PATH"] = f"{prefix}:{env.get('LD_LIBRARY_PATH', '')}"
         env["SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS"] = "0"
         env["SDL_GAMECONTROLLER_USE_BUTTON_LABELS"] = "1"
         subprocess.Popen([str(executable)] + args, cwd=str(T850_ROOT), env=env, start_new_session=True)

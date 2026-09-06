@@ -93,6 +93,14 @@ namespace t850 {
                 navInfo.recastVersion.c_str(),
                 navigation::ValidateNavigationBackend() ? "ok" : "failed");
 
+    // On Wayland (e.g. GNOME) SDL defaults to the Wayland backend, whose
+    // windows have no X11-style title bar (can't grab/move/minimize/close).
+    // Prefer the X11 backend (Xwayland) so the window manager decorates the
+    // window normally. Respect an explicit user override (SDL_VIDEODRIVER).
+    if (!std::getenv("SDL_VIDEODRIVER")) {
+      setenv("SDL_VIDEODRIVER", "x11", 0);
+    }
+
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
       T8_LOG_ERROR("[LinuxFramework] SDL initialization failed: %s", SDL_GetError());
       m_alive = false;
@@ -147,8 +155,30 @@ namespace t850 {
       if (!m_alive) {
         break;
       }
+      // Apply any window resize coalesced during event processing at the frame
+      // boundary, before the app (and thus the GPU) does any work this frame.
+      // Doing this here — rather than inside the SDL event pump — avoids
+      // destroying/recreating the swapchain mid-frame, which crashed on Linux.
+      ApplyPendingResize();
       pBaseApp->OnUpdate();
     }
+  }
+
+  void LinuxFramework::ApplyPendingResize() {
+    if (m_pendingResizeW <= 0 || m_pendingResizeH <= 0) {
+      return;
+    }
+    // Coalesce repeated resize events: only resize when the size actually
+    // changed since the last applied resize.
+    if (pVideoDriver &&
+        (static_cast<int>(aplicationDescriptor.width) != m_pendingResizeW ||
+         static_cast<int>(aplicationDescriptor.height) != m_pendingResizeH)) {
+      aplicationDescriptor.width = static_cast<unsigned int>(m_pendingResizeW);
+      aplicationDescriptor.height = static_cast<unsigned int>(m_pendingResizeH);
+      pVideoDriver->ResizeSwapchain(m_pendingResizeW, m_pendingResizeH);
+    }
+    m_pendingResizeW = 0;
+    m_pendingResizeH = 0;
   }
 
   void LinuxFramework::ProcessInput() {
@@ -221,16 +251,19 @@ namespace t850 {
 
       case SDL_EVENT_WINDOW_RESIZED:
       case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
+        // Record the requested pixel size but do NOT resize the swapchain here.
+        // Resizing (device-wait + destroy/recreate of the swapchain, depth and
+        // framebuffers) inside the event pump happens mid-frame and corrupts the
+        // driver's in-flight frame state, which crashes on Linux. Instead we
+        // coalesce the pending size and apply it once per frame at the frame
+        // boundary in UpdateApplication (before any GPU work), the same way
+        // Windows keeps the resize event separate from the swapchain resize.
         int width = 0;
         int height = 0;
         if (m_pWindow && SDL_GetWindowSizeInPixels(m_pWindow, &width, &height)) {
-          aplicationDescriptor.width = static_cast<unsigned int>((std::max)(1, width));
-          aplicationDescriptor.height = static_cast<unsigned int>((std::max)(1, height));
+          m_pendingResizeW = (std::max)(1, width);
+          m_pendingResizeH = (std::max)(1, height);
           ResetInputAfterWindowStateChange();
-          if (pVideoDriver) {
-            pVideoDriver->ResizeSwapchain(static_cast<int>(aplicationDescriptor.width),
-                                          static_cast<int>(aplicationDescriptor.height));
-          }
         }
       } break;
 

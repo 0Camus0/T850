@@ -38,9 +38,17 @@ public:
 	void ProcessInput();
 	void ResetApplication();
   void ChangeAPI(GraphicsApi::E api);
+  void ApplyPendingResize();
 
 	bool	m_alive;
   SDL_Window* m_pWindow;
+  // Window-resize is coalesced here and applied once per frame at the frame
+  // boundary (see UpdateApplication). Resizing the swapchain directly from the
+  // SDL event pump destroys/recreates GPU resources mid-frame and crashes; the
+  // pending size is instead applied before any GPU work for the frame, matching
+  // how Windows defers swapchain resize out of the resize event handler.
+  int m_pendingResizeW = 0;
+  int m_pendingResizeH = 0;
 
 	static LinuxFramework* thiz;
 private:

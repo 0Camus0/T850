@@ -9,7 +9,8 @@ add_executable(DayScene
 	RagdollEditor.cpp
 	SandboxScene.cpp
 	VoxelScene.cpp
-	MinecraftScene.cpp)
+	MinecraftScene.cpp
+	RtsScene.cpp)
 
 t850_apply_app(DayScene)
 t850_apply_profiler_defines(DayScene)

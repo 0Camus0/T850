@@ -26,6 +26,7 @@ SCENES = [
     ("Ragdoll Editor", 3),
     ("Scene Template", 4),
     ("Minecraft", 6),
+    ("RTS", 7),
 ]
 SCENE_LABEL_BY_ID = {value: label for label, value in SCENES}
 SCENE_ID_BY_LABEL = {label: value for label, value in SCENES}
@@ -787,7 +788,24 @@ class Launcher(Gtk.Window):
         env["LD_LIBRARY_PATH"] = f"{prefix}:{env.get('LD_LIBRARY_PATH', '')}"
         env["SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS"] = "0"
         env["SDL_GAMECONTROLLER_USE_BUTTON_LABELS"] = "1"
-        subprocess.Popen([str(executable)] + args, cwd=str(T850_ROOT), env=env, start_new_session=True)
+        # Capture the child's stdout/stderr to a log file. Previously the output
+        # went to the launcher's own terminal, which is lost when the launcher is
+        # started from the desktop — so crashes (e.g. during window resize) could
+        # not be inspected. A timestamped log makes the failure reproducible.
+        log_dir = T850_ROOT / "logs"
+        try:
+            log_dir.mkdir(exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            name = Path(executable).name or "process"
+            log_path = log_dir / f"{name}_{ts}.log"
+            log_file = open(log_path, "w", encoding="utf-8")
+        except Exception:
+            log_file = None
+        popen_kwargs = dict(cwd=str(T850_ROOT), env=env, start_new_session=True)
+        if log_file is not None:
+            popen_kwargs["stdout"] = log_file
+            popen_kwargs["stderr"] = subprocess.STDOUT
+        subprocess.Popen([str(executable)] + args, **popen_kwargs)
         self.destroy()
 
     def run_dayscene(self):

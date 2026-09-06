@@ -714,6 +714,25 @@ namespace t850 {
     if (surfCaps.currentExtent.width != UINT32_MAX)
       m_swapChainExtent = surfCaps.currentExtent;
 
+    // Clamp the extent to what the surface actually supports. During a fast
+    // window drag (or a minimize) currentExtent can transiently report 0x0 or an
+    // out-of-range size; creating a swapchain with such an extent makes
+    // vkCreateSwapchainKHR fail, and — because ResizeSwapchain has already
+    // destroyed the old swapchain — leaves m_swapChain NULL and the app crashes
+    // on the next acquire/present. Clamping keeps creation valid.
+    if (m_swapChainExtent.width == 0 || m_swapChainExtent.height == 0) {
+      m_swapChainExtent.width = (uint32_t)(std::max)(1, width);
+      m_swapChainExtent.height = (uint32_t)(std::max)(1, height);
+    }
+    if (surfCaps.minImageExtent.width != 0) {
+      m_swapChainExtent.width = (std::max)(m_swapChainExtent.width, surfCaps.minImageExtent.width);
+      m_swapChainExtent.width = (std::min)(m_swapChainExtent.width, surfCaps.maxImageExtent.width);
+    }
+    if (surfCaps.minImageExtent.height != 0) {
+      m_swapChainExtent.height = (std::max)(m_swapChainExtent.height, surfCaps.minImageExtent.height);
+      m_swapChainExtent.height = (std::min)(m_swapChainExtent.height, surfCaps.maxImageExtent.height);
+    }
+
     uint32_t imageCount = surfCaps.minImageCount + 1;
     if (surfCaps.maxImageCount > 0 && imageCount > surfCaps.maxImageCount)
       imageCount = surfCaps.maxImageCount;
@@ -840,10 +859,20 @@ namespace t850 {
   }
 
   void VulkanDriver::CreateDepthBuffer() {
+    // The depth attachment is paired with the swapchain color attachment in the
+    // backbuffer framebuffer. Vulkan requires all framebuffer attachments to have
+    // the SAME width/height. The swapchain color image is sized to m_swapChainExtent
+    // (the surface's currentExtent), which during a fast window drag can differ from
+    // the requested width/height — sizing the depth image to width/height produced a
+    // size-mismatched framebuffer that made the driver SIGSEGV on the next use.
+    // Always match m_swapChainExtent. (Falls back to width/height only if the
+    // extent is somehow unset.)
+    uint32_t dWidth = m_swapChainExtent.width ? m_swapChainExtent.width : (uint32_t)width;
+    uint32_t dHeight = m_swapChainExtent.height ? m_swapChainExtent.height : (uint32_t)height;
     VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     imgCI.imageType = VK_IMAGE_TYPE_2D;
     imgCI.format = VK_FORMAT_D32_SFLOAT;
-    imgCI.extent = { (uint32_t)width, (uint32_t)height, 1 };
+    imgCI.extent = { dWidth, dHeight, 1 };
     imgCI.mipLevels = 1;
     imgCI.arrayLayers = 1;
     imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -872,7 +901,8 @@ namespace t850 {
       T8_LOG_ERROR("[Vulkan] Depth image view creation failed res=%d", res);
       return;
     }
-    T8_LOG_INFO("[Vulkan] Depth buffer created (%dx%d)", width, height);
+    T8_LOG_INFO("[Vulkan] Depth buffer created (%ux%u, swapchain extent %ux%u)",
+                dWidth, dHeight, m_swapChainExtent.width, m_swapChainExtent.height);
   }
 
   void VulkanDriver::CreateFramebuffers() {
@@ -1122,6 +1152,17 @@ namespace t850 {
 
     // Recreate swap chain, views, depth, framebuffers
     CreateSwapChain();
+    // If swapchain creation failed (e.g. the surface transiently reported an
+    // invalid extent during a fast drag/minimize), do NOT proceed: building
+    // back-buffer views / framebuffers on a NULL swapchain handle and then
+    // acquiring/presenting it is what crashed the app. Bail out; the next frame's
+    // out-of-date path (or the next resize) will retry the recreation.
+    if (!m_swapChain) {
+      T8_LOG_ERROR("[Vulkan] ResizeSwapchain failed to recreate swapchain (%dx%d); will retry next frame", newW, newH);
+      m_swapchainNeedsRecreate = true;
+      m_frameStarted = false;
+      return false;
+    }
     CreateBackBufferViews();
     CreateDepthBuffer();
     CreateFramebuffers();
@@ -1320,6 +1361,14 @@ namespace t850 {
     if (useSwapchain && m_swapchainNeedsRecreate) {
       T8_LOG_INFO("[Vulkan] Recreating suboptimal swapchain before acquire");
       ResizeSwapchain(width, height);
+      // Recreation can fail (e.g. transiently-invalid surface extent during a fast
+      // drag/minimize), leaving m_swapChain NULL. Do NOT acquire/present a NULL
+      // swapchain — skip this frame; the next one retries the recreation.
+      if (!m_swapChain) {
+        T8_LOG_ERROR("[Vulkan] Swapchain recreation failed; skipping frame");
+        m_frameStarted = false;
+        return;
+      }
     }
 
     {
@@ -1340,6 +1389,14 @@ namespace t850 {
     }
 
     if (useSwapchain) {
+      // Defensive: never acquire from a NULL swapchain (can happen if a
+      // recreation failed this frame). Skip the frame; recreation is retried
+      // next frame via m_swapchainNeedsRecreate.
+      if (!m_swapChain) {
+        m_swapchainNeedsRecreate = true;
+        m_frameStarted = false;
+        return;
+      }
       VkResult res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
                                             m_imageAvailableSemaphores[m_currentFrame],
                                             VK_NULL_HANDLE, &m_imageIndex);

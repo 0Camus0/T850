@@ -60,6 +60,15 @@ T850/bin/SteamDeck/Release/libunwind.so.1
 
 A missing Podman message is an environment prerequisite failure before CMake, not a source failure.
 
+The Sniper SDK retains its Bullseye ABI. Bullseye LTS ended on 2026-08-31, and
+the discontinued `bullseye-security`/`bullseye-security-debug` feeds now have expired
+metadata. `PrepareSteamRuntimeApt.sh` comments only those suite entries inside the
+disposable SDK container before APT runs; unrelated feeds are preserved. This does
+not change the host OS, disable signature/expiry verification, or claim ongoing
+Debian security support for the EOL build environment. Unexpected deb822 entries
+fail explicitly for review. Keep the resulting application on a supported Steam
+Runtime; do not deploy the development container as an operating system.
+
 The GitHub Actions Steam Deck job uses `--with-editor`, verifies both executable
 outputs, and includes both in the `T850-SteamDeck-Release` artifact. Packaging with
 `--with-editor --skip-build` rejects an absent editor instead of silently publishing

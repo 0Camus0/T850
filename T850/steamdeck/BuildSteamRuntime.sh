@@ -74,6 +74,7 @@ podman run --rm \
   "${IMAGE}" \
   bash -lc "
 set -e
+bash /workspace/T850/steamdeck/PrepareSteamRuntimeApt.sh
 apt-get update >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   clang-16 libc++-16-dev libc++abi-16-dev \

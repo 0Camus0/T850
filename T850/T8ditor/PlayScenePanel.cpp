@@ -74,7 +74,7 @@ bool EditorApp::ExportTemporaryPlayScene(std::string& outPath) {
   std::filesystem::path tempPath = tempDir / ("play_scene_" + std::to_string(stamp) + ".t8scene");
   outPath = tempPath.string();
   m_playSceneEditorSnapshot = RefreshVirtualEditorScene(outPath);
-  if (!RunGameValidation(m_playSceneEditorSnapshot, false)) {
+  if (!RunGameValidation(m_playSceneEditorSnapshot, false, true)) {
     m_playSceneStatus = "Game-logic validation failed. Review Game Validation before Play.";
     T8_LOG_ERROR("[T8ditor] Play Scene blocked by game-logic validation errors");
     return false;
@@ -330,6 +330,7 @@ bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
   }
 
   m_playScene = std::make_unique<::SceneTemplate>();
+  m_playScene->SetComponentFactories(m_componentFactories, m_host.requireKnownComponentsForPlay);
   m_playScene->pFramework = pFramework;
   SceneTemplateLaunchDesc launchDesc;
   launchDesc.sceneFilePath = m_playSceneTempPath;
@@ -343,10 +344,10 @@ bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
   m_playScene->SetRenderSize(m_playSceneViewport.Width(), m_playSceneViewport.Height());
   m_playScene->SetFinalOutputRT(m_playSceneViewport.Handle());
   m_playScene->OnLoadScene();
-  if (m_playScene->m_meshCount <= 0) {
+  if (m_playScene->m_meshCount <= 0 || !m_playScene->GameLogicReady()) {
     m_playScene->OnDestoryScene();
     m_playScene.reset();
-    m_playSceneStatus = "Play Scene did not load any visible meshes.";
+    m_playSceneStatus = "Play Scene failed to load visible meshes or gameplay.";
     m_playSceneLaunchFailed = true;
     T8_LOG_ERROR("[T8ditor] Play Scene launch failed: runtime loaded no visible meshes from '%s'",
                  m_playSceneTempPath.c_str());

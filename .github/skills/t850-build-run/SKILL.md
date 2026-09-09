@@ -140,7 +140,9 @@ Use it for interactive build/run/config/device selection. For automated evidence
 & (Join-Path $SourceRoot 'bin\x64\Debug\DayScene.exe') --game-selftest
 ```
 
-Expected: all 43 lines pass, exit 0. Any fail blocks completion.
+Expected: all registered checks pass (53 after the first editor SDK slice), exit 0.
+Any fail blocks completion. For external editor hosts, also use the
+`t850-editor-extensions` skill and the external sample self-test/native workflow.
 
 ### Offline glTF
 

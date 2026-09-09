@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E56B60EB-8E53-4201-8A70-75F29B0A0D91}</ProjectGuid>
+    <T850EditorSdk Condition="'$(T850EditorSdk)'==''">$(MSBuildThisFileDirectory)..\..\T850\T8ditor\</T850EditorSdk>
+    <T850StageEngineAssets>true</T850StageEngineAssets>
+  </PropertyGroup>
+  <Import Project="$(T850EditorSdk)EditorHost.props" />
+  <ItemDefinitionGroup><Link><SubSystem>Console</SubSystem></Link></ItemDefinitionGroup>
+  <ItemGroup><ClCompile Include="main.cpp" /></ItemGroup>
+  <Import Project="$(T850EditorSdk)EditorHost.targets" />
+</Project>

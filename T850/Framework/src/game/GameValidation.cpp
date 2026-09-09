@@ -2,6 +2,7 @@
 
 #include <game/GameValidation.h>
 
+#include <game/ComponentFactory.h>
 #include <game/GameIds.h>
 
 #include <array>
@@ -91,7 +92,10 @@ bool SceneValidationReport::HasErrors() const {
   return false;
 }
 
-SceneValidationReport ValidateEditorSceneGameLogic(const EditorSceneFile& scene) {
+SceneValidationReport ValidateEditorSceneGameLogic(
+  const EditorSceneFile& scene,
+  const game::ComponentFactoryRegistry* factories,
+  bool requireKnownTypes) {
   SceneValidationReport report;
   std::unordered_set<std::string> entityIds;
   std::unordered_set<std::string> objectNames;
@@ -158,9 +162,13 @@ SceneValidationReport ValidateEditorSceneGameLogic(const EditorSceneFile& scene)
       if (component.type.empty()) {
         AddIssue(report, SceneValidationSeverity::Error, "game.component.empty_type",
                  "Component type must not be empty.", &entity, &component, entityIndex);
-      } else if (!IsKnownComponentType(component.type)) {
-        AddIssue(report, SceneValidationSeverity::Warning, "game.component.unknown_type",
-                 "Unknown component type '" + component.type + "' will be preserved.", &entity, &component, entityIndex);
+      } else if (factories ? !factories->Info(component.type) : !IsKnownComponentType(component.type)) {
+        const bool required = requireKnownTypes && component.enabled;
+        AddIssue(report, required ? SceneValidationSeverity::Error : SceneValidationSeverity::Warning,
+                 "game.component.unknown_type",
+                 "Unavailable component type '" + component.type +
+                     (required ? "' is required for execution." : "' will be preserved."),
+                 &entity, &component, entityIndex);
       }
     }
 

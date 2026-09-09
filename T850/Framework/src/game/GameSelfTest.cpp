@@ -322,6 +322,31 @@ void TestDuplicateComponentId() {
           "duplicate component id error code missing");
 }
 
+void TestComponentRegistryValidation() {
+  ComponentFactoryRegistry factories;
+  Require(factories.Register("test_lifecycle", CreateLifecycleTestComponent, {}), "external registration failed");
+  Require(!factories.Register("test_lifecycle", CreateOwnerStabilityTestComponent, {}), "duplicate replaced factory");
+  Require(!factories.Register("", CreateLifecycleTestComponent, {}), "empty type registered");
+  Require(!factories.Register("invalid", nullptr, {}), "null factory registered");
+  Require(factories.Types() == std::vector<std::string>{"test_lifecycle"}, "registry enumeration differs");
+  scene::EditorSceneFile scene;
+  auto entity = MakeValidEntity();
+  entity.components = {{.id = "component_external", .type = "test_lifecycle"}};
+  scene.game_entities.push_back(entity);
+  auto report = scene::ValidateEditorSceneGameLogic(scene, &factories, true);
+  Require(!report.HasErrors(), "registered external component rejected");
+  Require(!HasIssue(report, "game.component.unknown_type", scene::SceneValidationSeverity::Warning),
+          "registered external component reported unknown");
+  ComponentLoadContext context;
+  auto component = factories.Create(entity.components.front(), context);
+  Require(component->Type() == "test_lifecycle", "duplicate registration changed original factory");
+  scene.game_entities.front().components.front().type = "missing_external";
+  Require(scene::ValidateEditorSceneGameLogic(scene, &factories, true).HasErrors(), "required missing type accepted");
+  Require(!scene::ValidateEditorSceneGameLogic(scene, &factories).HasErrors(), "authoring cannot preserve unknown type");
+  scene.game_entities.front().components.front().enabled = false;
+  Require(!scene::ValidateEditorSceneGameLogic(scene, &factories, true).HasErrors(), "disabled missing type blocks execution");
+}
+
 void TestUnknownComponentWarning() {
   TempSceneFiles files;
   const std::filesystem::path path = files.Add("_unknown.t8scene");
@@ -1604,6 +1629,7 @@ constexpr TestCase kTests[] = {
     {"T-VALID-01", TestDuplicateEntityId},
     {"T-VALID-02", TestDuplicateComponentId},
     {"T-VALID-03", TestUnknownComponentWarning},
+    {"T-EXTENSION-01", TestComponentRegistryValidation},
     {"T-VALID-04", TestMissingInitialState},
     {"T-GROUP-01", TestGroupStableIdsAfterRename},
     {"T-GROUP-02", TestGroupValidationReferences},

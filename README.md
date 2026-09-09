@@ -94,6 +94,15 @@ Set-Location ..\..\..
 
 Full guide: [Windows setup, build, and run](documentation/development/windows-build-and-run.md).
 
+## Custom Editors
+
+For a private/custom editor, reuse T8ditorCore through the
+[static editor SDK](documentation/editor/editor-sdk.md). The first slice provides
+external panels, commands, component inspectors/validators, undoable gameplay edits,
+and shared component registration in default Play. See the
+[external consumer sample](examples/EditorExtension/main.cpp); no editor source copy
+is required. Replaceable Play sessions and full-world transactions remain follow-up work.
+
 ## Runtime Hosts
 
 `DayScene.exe` contains six selectable hosts:

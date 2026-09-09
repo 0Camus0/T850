@@ -25,6 +25,7 @@
 #include <core/Config.h>
 #include <debug/CrashDiagnostics.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 
 #include <string>
 #include <vector>
@@ -46,7 +47,7 @@ namespace t8ditor {
 static t850::AppBase*       g_pApp       = nullptr;
 static t850::RootFramework* g_pFramework = nullptr;
 
-int main(int argc, char** argv) {
+int t8ditor::RunEditor(int argc, char** argv, EditorHostDesc host) {
   t850::InstallUnattendedCrtReportHook();
   g_args.clear();
   for (int i = 0; i < argc; ++i) {
@@ -58,7 +59,7 @@ int main(int argc, char** argv) {
   desc.height    = 720;
   desc.width     = 1280;
   desc.videoMode = t850::VideoMode::WINDOWED;
-  desc.title     = "T8ditor";
+  desc.title     = host.title.c_str();
 
   // Minimal CLI: --api {d3d12|d3d11|vulkan|gl}, --width N, --height N,
   // --logFile PATH, --logLevel {error|info|debug|verbose|trace|0..4}, --mesh PATH,
@@ -67,9 +68,10 @@ int main(int argc, char** argv) {
   int   logLevel = 3;
   std::string logFile;
   std::string meshPath;
-  std::string sceneFilePath;
+  std::string sceneFilePath = host.startupScene;
   int dumpFrame = -1;
   bool terrainSelfTest = false;
+  bool extensionSelfTest = false;
   std::string tutorialStep;
 
   for (int i = 1; i < argc; ++i) {
@@ -89,6 +91,7 @@ int main(int argc, char** argv) {
     else if (a == "--logFile" && i + 1 < argc) logFile = argv[++i];
     else if (a == "--d3d12debug") t850::g_config.flags.d3d12Debug = true;
     else if (a == "--terrain-editor-selftest") terrainSelfTest = true;
+    else if (a == "--editor-extension-selftest") extensionSelfTest = true;
     else if (a == "--tutorial-step" && i + 1 < argc) tutorialStep = argv[++i];
     else if (a == "--logLevel" && i + 1 < argc) {
       std::string v = argv[++i];
@@ -121,6 +124,15 @@ int main(int argc, char** argv) {
   );
   t850::Log::SetSessionTag("t8ditor");
 
+  if (!host.projectRoot.empty()) {
+    const auto root = std::filesystem::absolute(host.projectRoot);
+    std::filesystem::current_path(root);
+    t850::ResourceLocator::Instance().SetBasePath(root.string());
+  }
+  if (!host.cacheRoot.empty()) {
+    t850::ResourceLocator::Instance().SetCachePath(std::filesystem::absolute(host.cacheRoot).string());
+  }
+
   // Default to a sample model if the user didn't pick one — Models/SkyBox.glb
   // ships with the repo and is loaded by DayScene, so it's known-good.
   if (meshPath.empty() && sceneFilePath.empty()) {
@@ -132,9 +144,10 @@ int main(int argc, char** argv) {
   t8ditor::SetStartupSceneFilePath(sceneFilePath);
   t8ditor::SetStartupDumpFrame(dumpFrame);
 
-  g_pApp = new t8ditor::EditorApp();
+  g_pApp = new t8ditor::EditorApp(std::move(host));
   if (!tutorialStep.empty()) static_cast<t8ditor::EditorApp*>(g_pApp)->ConfigureTutorialCapture(tutorialStep);
   if (terrainSelfTest) static_cast<t8ditor::EditorApp*>(g_pApp)->EnableTerrainSelfTest();
+  if (extensionSelfTest) static_cast<t8ditor::EditorApp*>(g_pApp)->EnableExtensionSelfTest();
   pApp   = g_pApp;  // RenderMesh::Load() uses this global
 
 #ifdef OS_LINUX
@@ -151,7 +164,8 @@ int main(int argc, char** argv) {
   g_pFramework->OnDestroyApplication();
 #endif
 
-  const int result = static_cast<t8ditor::EditorApp*>(g_pApp)->TerrainSelfTestResult();
+  const auto* editor = static_cast<t8ditor::EditorApp*>(g_pApp);
+  const int result = editor->TerrainSelfTestResult() || editor->ExtensionSelfTestResult() ? 1 : 0;
   delete g_pFramework;
   delete g_pApp;
 

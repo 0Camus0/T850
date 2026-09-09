@@ -23,7 +23,8 @@ private:
 
 class ComponentFactoryRegistry {
 public:
-  void Register(std::string type, ComponentFactoryFn function, ComponentTypeInfo info);
+  bool Register(std::string type, ComponentFactoryFn function, ComponentTypeInfo info);
+  std::vector<std::string> Types() const;
   std::unique_ptr<Component> Create(
       const t850::scene::SceneComponentDesc& descriptor, ComponentLoadContext& context) const;
   const ComponentTypeInfo* Info(std::string_view type) const;

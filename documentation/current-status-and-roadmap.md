@@ -7,6 +7,17 @@ This is the single source of truth for implementation maturity, verified gates, 
 
 ## Engine Status
 
+2026-09-09 editor SDK update: [T8ditorCore/static extensions](editor/editor-sdk.md)
+now supports an external host, panels/commands, component inspectors/validators,
+revision-checked gameplay edits, and shared factory registration for default Play.
+x64/ARM64 Debug/Release solution builds pass (ARM64 compile/link only). The x64
+Debug/Release gameplay suite has 53 passing tests. External MSBuild Debug/Release
+self-tests and CMake Debug build/staging/self-test pass. Native Debug extension
+workflows pass on D3D11/D3D12/Vulkan/OpenGL; Release extension and stock terrain
+workflows pass on D3D12/Vulkan. Win32, Android, Steam Deck, and the full historical
+visual-baseline matrix were not run for this slice. This is an initial SDK slice,
+not replaceable Play, full document transactions, or a completed SceneWorld refactor.
+
 | Area | State |
 |---|---|
 | D3D11, D3D12, OpenGL, Vulkan | Implemented peer backends on Windows |

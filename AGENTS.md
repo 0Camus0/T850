@@ -14,6 +14,7 @@ This is a **C++23 rendering/game engine** with two primary desktop executables (
 | `FrameworkImGui/` | ImGui wrapper — Dear ImGui context init, platform/renderer backends (D3D11/12, GL, Vulkan) |
 | `DayScene/` | Runtime demo scene — main entry point for shipping builds |
 | `T8ditor/` | Editor executable — authors `.t8scene` files, hosted viewports, undo/redo |
+| `T8ditor/include/t8ditor/` | Public static editor SDK; T8ditorCore owns implementation |
 | `Shaders/` | HLSL/GLSL shader sources; compiled to `.t8shadercache` |
 | `Assets/`, `Models/`, `Textures/` | Source assets (GLTF/X/DDS, textures, IBL) |
 | `Navigation/` | Baked navmesh assets (`.t8nav`) |
@@ -93,6 +94,7 @@ WPF-based launcher that lets you pick target (Windows/Android), architecture, co
 Use the focused workspace skills for exact procedures:
 
 - `t850-build-run`
+- `t850-editor-extensions` (external/private editor hosts and static tools)
 - `t850-crash-debugging`
 - `t850-voxel-terrain`
 - `t850-visual-regression`
@@ -106,6 +108,7 @@ Use the focused workspace skills for exact procedures:
 | FrameworkImGui | `FrameworkImGui/FrameworkImGui.vcxproj` | `Lib/<config>/<arch>/FrameworkImGui.lib` |
 | DayScene | `DayScene/DayScene.vcxproj` | `bin/<arch>/<config>/DayScene.exe` |
 | T8ditor | `T8ditor/T8ditor.vcxproj` | `bin/<arch>/<config>/T8ditor.exe` |
+| T8ditorCore | `T8ditor/T8ditorCore.vcxproj` | `Lib/<config>/<arch>/T8ditorCore.lib` |
 
 Platform mapping in MSBuild: `x64` → `x64`, `x86` → `Win32`, `ARM64` → `ARM64`.
 

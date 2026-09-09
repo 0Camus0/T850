@@ -242,4 +242,5 @@ Start with [Documentation index](documentation/README.md) and [Current status](d
 
 ## License
 
-See [LICENSE.md](LICENSE.md).
+T850 is licensed under the [MIT License](LICENSE). Third-party dependencies retain
+their own licenses and notices.

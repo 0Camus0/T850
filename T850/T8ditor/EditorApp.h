@@ -48,6 +48,8 @@
 #include <physics/RagdollEditorTool.h>
 #include <navigation/NavigationDebugRenderer.h>
 #include <navigation/NavigationSystem.h>
+#include <terrain/HeightmapMesh.h>
+#include <terrain/TerrainPlacement.h>
 #include <utils/Camera.h>
 #include <RagdollEditor.h>
 #include <SceneTemplate.h>
@@ -107,13 +109,30 @@ namespace t8ditor {
     }
 
     void LoadScene(int id) override;
+    void EnableTerrainSelfTest() { m_terrainSelfTest = true; m_terrainSelfTestResult = 1; }
+    int TerrainSelfTestResult() const { return m_terrainSelfTestResult; }
+    void ConfigureTutorialCapture(std::string step);
 
   private:
     void ProcessSelectionInput();
-    void ImportMesh(const std::string& path);
+    void ImportMesh(const std::string& path, const t850::scene::SceneObjectDesc* descriptor = nullptr);
     void CloneSelected();
     void CheckResize();
     void HandleMousePick();
+    void DrawTerrainInspector(struct SceneObject& object);
+    void DrawTerrainPlacementPanel(struct SceneObject& object);
+    void UpdateTerrainPlacementInput();
+    bool QueueTerrainPlacement(struct SceneObject& object);
+    void DrawRegionsPanel();
+    void DrawTerrainOverlays();
+    void RunTerrainEditorSelfTest();
+    void PrepareTutorialCapture();
+    void SignalTutorialCapture();
+    void PositionTutorialPanel();
+    void QueueTutorialSceneReload(const std::string& path);
+    void UpdateTerrainEditing();
+    bool CommitTerrainEdit(int objectIndex, const t850::scene::SceneHeightmapDesc& terrain);
+    void FinishTerrainStroke();
     void SyncSceneObjectTransforms();
     void DestroyObjectRagdoll(struct SceneObject& obj);
     void DestroyAllObjectRagdolls();
@@ -210,6 +229,31 @@ namespace t8ditor {
     void ThrottleMainEditorFrameIfNeeded();
 
     Timer m_dtTimer;
+    std::string m_tutorialStep;
+    unsigned m_tutorialFrame = 0;
+    bool m_tutorialPrepared = false;
+    bool m_tutorialSignaled = false;
+    std::string m_tutorialScenePath;
+    bool m_terrainSelfTest = false;
+    int m_terrainSelfTestResult = 0;
+    int m_terrainSelfTestFrame = 0;
+    bool m_terrainSelfTestRequestPlay = false;
+    std::string m_terrainSelfTestPath;
+    std::optional<t850::scene::SceneHeightmapDesc> m_terrainSelfTestExpected;
+    bool m_terrainBrushEnabled = false;
+    bool m_placementMode = false;
+    bool m_showPlacementGrid = true;
+    t850::scene::SceneTerrainPlacementDesc m_placementBrush;
+    std::string m_placementStatus;
+    unsigned int m_propertiesDockId = 0;
+    t850::TerrainBrush m_terrainBrush;
+    float m_terrainBrushStrength = 4.0f;
+    float m_terrainBrushElapsed = 0.0f;
+    std::string m_terrainEditObject;
+    std::shared_ptr<EditorUndoState> m_terrainStrokeBefore;
+    std::string m_terrainStrokeKey;
+    std::optional<t850::scene::SceneHeightmapDesc> m_pendingTerrainSettings;
+    std::string m_terrainStatus;
     float m_dtSecs   = 0.0f;
     bool  m_firstFrame = true;
 

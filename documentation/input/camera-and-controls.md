@@ -2,6 +2,12 @@
 
 Status: verified against source on 2026-08-19.
 
+2026-09-07 Play correction: SceneTemplate defaults to `FreeFly` for authored
+scenes without a player, preserving the initial overview without gravity. Authored
+player entities and explicit camera-profile overrides retain their own behavior.
+The terrain editor regression now requests Play through the toolbar handler and
+checks automatic runtime loading, idle-camera stability, and forwarded movement.
+
 This document explains T850's input state, platform input translation, gamepad and handheld paths, runtime camera profiles, editor camera routing, hosted window input behavior, and Android virtual controls.
 
 Related documents:

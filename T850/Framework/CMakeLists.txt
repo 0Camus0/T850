@@ -47,6 +47,7 @@ set(FRAMEWORK_SOURCES
   src/scene/MaterialAssetCache.cpp
   src/scene/MeshPool.cpp
   src/scene/MutableMeshData.cpp
+  src/scene/MeshDatabaseBuilder.cpp
   src/scene/MutableMesh.cpp
   src/scene/RenderQueue.cpp
   src/scene/RenderContainer.cpp
@@ -61,6 +62,8 @@ set(FRAMEWORK_SOURCES
   src/debug/RuntimeTelemetry.cpp
   src/debug/RenderTrace.cpp
   src/scene/EditorSceneFile.cpp
+  src/scene/SceneConversions.cpp
+  src/scene/SceneRegions.cpp
   src/scene/RenderGraph.cpp
   src/scene/SceneDescriptor.cpp
   src/scene/SceneSetup.cpp
@@ -72,6 +75,9 @@ set(FRAMEWORK_SOURCES
   src/scene/Quad.cpp
   src/scene/TextRenderer.cpp
   src/terrain/BlockRegistry.cpp
+  src/terrain/HeightmapTerrain.cpp
+  src/terrain/TerrainPlacement.cpp
+  src/terrain/HeightmapMesh.cpp
   src/video/TextureAtlas.cpp
   src/terrain/VoxelChunk.cpp
   src/terrain/VoxelMesher.cpp

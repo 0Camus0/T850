@@ -51,7 +51,8 @@ flowchart TD
 | `Framework/src/scene/EditorSceneFile.cpp` | `.t8scene` Glaze JSON load/save and mesh fallback resolution. |
 | `T8ditor/EditorScene.cpp` | Editor wrapper for save/load dialogs and scene file IO. |
 | `T8ditor/EditorApp.cpp` | Builds editor scene snapshots, loads editor scenes into editor state, exports Play Scene temp files. |
-| `T8ditor/EditorSceneSerialization.cpp` | Conversion helpers between editor/runtime structs and scene schema for NavMesh, physics, links, volumes. |
+| `T8ditor/EditorSceneSerialization.h` | Compatibility facade exposing Framework conversion helpers to editor callers. |
+| `Framework/src/scene/SceneConversions.cpp` | Shared conversion implementation; replaces the former editor/runtime conversion copies. |
 | `Framework/include/scene/SceneDescriptor.h` | Runtime scene descriptor schema for settings, controls, lights, cameras, profiles. |
 | `Framework/src/scene/SceneDescriptor.cpp` | Glaze load/save for runtime `SceneDescriptor`. |
 | `Framework/include/scene/SceneSetup.h` and `Framework/src/scene/SceneSetup.cpp` | Builds cameras/lights/kernels/splines from `SceneDescriptor` and applies them to `SceneProps`. |
@@ -63,6 +64,27 @@ flowchart TD
 | `Assets/Scenes/*_RenderGraph.json` | Render graph files referenced by scenes. |
 
 ## `.t8scene` schema
+
+Placement authoring adds `objects[].heightmap.placement_grid` and `placements`.
+These store cell size, default flat-only building policy, footprint IDs/coordinates,
+dimensions, heights, and colors. See [placement grids](../terrain/placement-grid.md)
+and [the RTS tutorial series](../tutorials/README.md). No scene-name checks or extra
+C++ map classes are needed to load these records.
+
+Terrain editing adds `objects[].heightmap.elevations`, `materials`, `cell_materials`,
+`lod_levels`, and `lod_distance`. Root `regions` holds stable-ID tagged volumes.
+See [terrain editing](../terrain/heightmap-terrain.md) and
+[regions](scene-regions.md). Older editor builds may discard these unknown fields
+on save; use an updated editor for scenes authored with these features.
+
+2026-09-07: objects can use an optional `heightmap` geometry source; see
+[heightmap terrain](../terrain/heightmap-terrain.md). File loading is transactional
+and starts from fresh defaults. SceneTemplate reads one document per load, honors
+its control descriptor and orthographic cameras, retains explicitly authored hidden
+navigation/collision geometry, and sizes runtime mesh storage from the document.
+It no longer implicitly selects a Q3 map. Legacy graph/control defaults remain;
+see the [architecture review](../editor/architecture-review.md) for the remaining
+work toward a fully shared, strict data-driven runtime.
 
 The `.t8scene` root maps to `EditorSceneFile`.
 

@@ -1,0 +1,60 @@
+{
+  "version": 2,
+  "render_graph": "Scenes/SceneTemplate_RenderGraph.json",
+  "control_descriptor": "Scenes/SceneTemplate.json",
+  "editor": {
+    "camera_target": {"x": 0, "y": 3, "z": 0},
+    "camera_distance": 85,
+    "camera_yaw": 0.7,
+    "camera_pitch": 0.55
+  },
+  "objects": [
+    {
+      "name": "Terrain",
+      "heightmap": {
+        "image": "Textures/Terrain/HeightmapExample.bmp",
+        "size_x": 64,
+        "size_z": 64,
+        "height_scale": 10,
+        "height_offset": -1.5,
+        "samples_x": 65,
+        "samples_z": 65,
+        "base_color": {"x": 0.28, "y": 0.48, "z": 0.21}
+      },
+      "position": {"x": -32, "y": 0, "z": -32},
+      "navigation": {"include": true, "walkable": true, "static_object": true},
+      "physics": {"enabled": true, "body_type": "static_triangle_mesh", "motion": "static"}
+    }
+  ],
+  "physics_entities": [
+    {"name": "Terrain Collision", "type": "static_triangle_mesh", "source_object": "Terrain"}
+  ],
+  "navigation_mesh": {
+    "enabled": true,
+    "runtime_mode": "build",
+    "build_settings": {
+      "cell_size": 0.5,
+      "cell_height": 0.2,
+      "agent_height": 2,
+      "agent_radius": 0.6,
+      "region_min_size": 2,
+      "region_merge_size": 4,
+      "auto_drop_links": false,
+      "auto_jump_links": false,
+      "hybrid_jump_links": false
+    },
+    "volumes": [
+      {"name": "Center Exclusion", "type": "exclude", "position": {"x": 0, "y": 5, "z": 0}, "half_extents": {"x": 5, "y": 10, "z": 5}},
+      {"name": "Mud", "type": "area_cost", "area": "mud", "cost": 3, "position": {"x": 15, "y": 5, "z": 0}, "half_extents": {"x": 4, "y": 10, "z": 12}}
+    ]
+  },
+  "cameras": [
+    {"name": "Overview", "position": {"x": 50, "y": 40, "z": -50}, "target": {"x": 0, "y": 2, "z": 0}, "fov_deg": 50, "far_plane": 500}
+  ],
+  "lights": [
+    {"id": "sun", "name": "Sun", "type": 0, "position": {"x": 20, "y": 60, "z": -20}, "direction": {"x": -0.4, "y": -1, "z": 0.2}, "intensity": 3}
+  ],
+  "light_cameras": [
+    {"name": "Sun Camera", "attached_light_id": "sun", "type": 1, "position": {"x": 20, "y": 60, "z": -20}, "target": {"x": 0, "y": 0, "z": 0}, "ortho_w": 100, "ortho_h": 100, "far_plane": 150}
+  ]
+}

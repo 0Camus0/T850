@@ -3,6 +3,7 @@
  *********************************************************/
 
 #include "EditorUtil.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include <algorithm>
 #include <cctype>
@@ -13,6 +14,14 @@
 #endif
 
 namespace t8ditor {
+
+std::wstring EditorPathToWide(const std::string& path) {
+  char* converted = SDL_iconv_string("WCHAR_T", "UTF-8", path.c_str(), path.size() + 1);
+  if (!converted) return {};
+  std::wstring result(reinterpret_cast<const wchar_t*>(converted));
+  SDL_free(converted);
+  return result;
+}
 
 std::string ToLowerCopy(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {

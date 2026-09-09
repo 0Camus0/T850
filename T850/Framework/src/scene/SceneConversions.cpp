@@ -1,28 +1,31 @@
-/*********************************************************
- * T8ditor — editor scene serialization helpers. See header.
- *********************************************************/
-
-#include "EditorSceneSerialization.h"
-
-#include <utils/xMaths.h>
+#include <pch.h>
+#include <scene/SceneConversions.h>
 
 #include <algorithm>
 #include <cmath>
 
-namespace t8ditor {
+namespace t850::scene {
 
-t850::navigation::NavMeshBuildSettings DefaultEditorNavMeshBuildSettings() {
-  t850::navigation::NavMeshBuildSettings settings;
-  settings.enableAutoDropLinks = true;
-  settings.enableAutoJumpLinks = true;
-  settings.enableHybridJumpLinks = true;
-  settings.hybridJumpMaxLinks = 192;
-  return settings;
+void ApplySceneCamera(const SceneCameraDesc& desc, Camera& camera, float aspect) {
+  const XVECTOR3 eye(desc.position.x, desc.position.y, desc.position.z, 1.0f);
+  const float nearPlane = (std::max)(0.0001f, desc.near_plane);
+  const float farPlane = (std::max)(nearPlane + 0.01f, desc.far_plane);
+  if (desc.type == 1) {
+    camera.InitOrtho(eye, (std::max)(0.01f, desc.ortho_w), (std::max)(0.01f, desc.ortho_h), nearPlane, farPlane);
+  } else {
+    camera.InitPerspective(eye, Deg2Rad(std::clamp(desc.fov_deg, 1.0f, 179.0f)),
+        (std::max)(0.01f, aspect), nearPlane, farPlane);
+  }
+  camera.SetLookAt(XVECTOR3(desc.target.x, desc.target.y, desc.target.z, 1.0f));
+  camera.Update(0.0f);
 }
 
-t850::scene::SceneNavMeshBuildSettingsDesc NavMeshBuildSettingsToScene(
-    const t850::navigation::NavMeshBuildSettings& settings) {
-  t850::scene::SceneNavMeshBuildSettingsDesc desc;
+navigation::NavMeshBuildSettings DefaultSceneNavMeshBuildSettings() {
+  return NavMeshBuildSettingsFromScene(SceneNavMeshBuildSettingsDesc{});
+}
+
+SceneNavMeshBuildSettingsDesc NavMeshBuildSettingsToScene(const navigation::NavMeshBuildSettings& settings) {
+  SceneNavMeshBuildSettingsDesc desc;
   desc.cell_size = settings.cellSize;
   desc.cell_height = settings.cellHeight;
   desc.agent_height = settings.agentHeight;
@@ -53,9 +56,8 @@ t850::scene::SceneNavMeshBuildSettingsDesc NavMeshBuildSettingsToScene(
   return desc;
 }
 
-t850::navigation::NavMeshBuildSettings NavMeshBuildSettingsFromScene(
-    const t850::scene::SceneNavMeshBuildSettingsDesc& desc) {
-  t850::navigation::NavMeshBuildSettings settings = DefaultEditorNavMeshBuildSettings();
+navigation::NavMeshBuildSettings NavMeshBuildSettingsFromScene(const SceneNavMeshBuildSettingsDesc& desc) {
+  navigation::NavMeshBuildSettings settings;
   settings.cellSize = desc.cell_size;
   settings.cellHeight = desc.cell_height;
   settings.agentHeight = desc.agent_height;
@@ -86,23 +88,23 @@ t850::navigation::NavMeshBuildSettings NavMeshBuildSettingsFromScene(
   return settings;
 }
 
-const char* NavLinkTypeName(t850::navigation::NavTraversalType type) {
+const char* NavLinkTypeName(navigation::NavTraversalType type) {
   switch (type) {
-    case t850::navigation::NavTraversalType::Drop: return "drop";
-    case t850::navigation::NavTraversalType::Jump: return "jump";
-    case t850::navigation::NavTraversalType::JumpPad: return "jump_pad";
-    case t850::navigation::NavTraversalType::JumpIntent: return "jump_intent";
-    case t850::navigation::NavTraversalType::Walk:
+    case navigation::NavTraversalType::Drop: return "drop";
+    case navigation::NavTraversalType::Jump: return "jump";
+    case navigation::NavTraversalType::JumpPad: return "jump_pad";
+    case navigation::NavTraversalType::JumpIntent: return "jump_intent";
+    case navigation::NavTraversalType::Walk:
     default: return "walk";
   }
 }
 
-t850::navigation::NavTraversalType NavLinkTypeFromName(const std::string& name) {
-  if (name == "drop") return t850::navigation::NavTraversalType::Drop;
-  if (name == "jump_pad") return t850::navigation::NavTraversalType::JumpPad;
-  if (name == "jump_intent") return t850::navigation::NavTraversalType::JumpIntent;
-  if (name == "jump") return t850::navigation::NavTraversalType::Jump;
-  return t850::navigation::NavTraversalType::Jump;
+navigation::NavTraversalType NavLinkTypeFromName(const std::string& name) {
+  if (name == "walk") return navigation::NavTraversalType::Walk;
+  if (name == "drop") return navigation::NavTraversalType::Drop;
+  if (name == "jump_pad") return navigation::NavTraversalType::JumpPad;
+  if (name == "jump_intent") return navigation::NavTraversalType::JumpIntent;
+  return navigation::NavTraversalType::Jump;
 }
 
 int NavAreaFromName(const std::string& name) {
@@ -114,28 +116,23 @@ int NavAreaFromName(const std::string& name) {
   if (name == "water") return 5;
   if (name == "door") return 6;
   if (name == "mud") return 7;
-  if (name == "custom") return 8;
   return 8;
 }
 
-t850::navigation::NavMeshModifierMode NavModifierModeFromName(const std::string& name) {
-  if (name == "include" || name == "include_bounds" || name == "bounds") {
-    return t850::navigation::NavMeshModifierMode::Include;
-  }
-  if (name == "area" || name == "area_cost" || name == "cost") {
-    return t850::navigation::NavMeshModifierMode::Area;
-  }
-  if (name == "link_include" || name == "link_add" || name == "add_links") {
-    return t850::navigation::NavMeshModifierMode::LinkInclude;
-  }
-  if (name == "link_exclude" || name == "exclude_links") {
-    return t850::navigation::NavMeshModifierMode::LinkExclude;
-  }
-  return t850::navigation::NavMeshModifierMode::Exclude;
+navigation::NavMeshModifierMode NavModifierModeFromName(const std::string& name) {
+  if (name == "include" || name == "include_bounds" || name == "bounds")
+    return navigation::NavMeshModifierMode::Include;
+  if (name == "area" || name == "area_cost" || name == "cost")
+    return navigation::NavMeshModifierMode::Area;
+  if (name == "link_include" || name == "link_add" || name == "add_links")
+    return navigation::NavMeshModifierMode::LinkInclude;
+  if (name == "link_exclude" || name == "exclude_links")
+    return navigation::NavMeshModifierMode::LinkExclude;
+  return navigation::NavMeshModifierMode::Exclude;
 }
 
-t850::navigation::NavOffMeshLink NavOffMeshLinkFromScene(const t850::scene::SceneNavMeshLinkDesc& desc) {
-  t850::navigation::NavOffMeshLink link;
+navigation::NavOffMeshLink NavOffMeshLinkFromScene(const SceneNavMeshLinkDesc& desc) {
+  navigation::NavOffMeshLink link;
   link.start = XVECTOR3(desc.start.x, desc.start.y, desc.start.z, 1.0f);
   link.end = XVECTOR3(desc.end.x, desc.end.y, desc.end.z, 1.0f);
   link.radius = (std::max)(0.05f, desc.radius);
@@ -144,8 +141,8 @@ t850::navigation::NavOffMeshLink NavOffMeshLinkFromScene(const t850::scene::Scen
   return link;
 }
 
-t850::navigation::NavMeshVolumeModifier NavVolumeModifierFromScene(const t850::scene::SceneNavMeshVolumeDesc& desc) {
-  t850::navigation::NavMeshVolumeModifier modifier;
+navigation::NavMeshVolumeModifier NavVolumeModifierFromScene(const SceneNavMeshVolumeDesc& desc) {
+  navigation::NavMeshVolumeModifier modifier;
   modifier.name = desc.name;
   modifier.mode = NavModifierModeFromName(desc.type);
   modifier.position = XVECTOR3(desc.position.x, desc.position.y, desc.position.z, 1.0f);
@@ -153,40 +150,37 @@ t850::navigation::NavMeshVolumeModifier NavVolumeModifierFromScene(const t850::s
   modifier.halfExtents = XVECTOR3(
       (std::max)(0.001f, std::abs(desc.half_extents.x)),
       (std::max)(0.001f, std::abs(desc.half_extents.y)),
-      (std::max)(0.001f, std::abs(desc.half_extents.z)),
-      0.0f);
+      (std::max)(0.001f, std::abs(desc.half_extents.z)), 0.0f);
   modifier.area = NavAreaFromName(desc.area);
   modifier.cost = (std::max)(0.01f, desc.cost);
   modifier.enabled = desc.enabled && desc.shape == "box";
   return modifier;
 }
 
-bool IsFiniteNavPoint(const t850::scene::Vec3f& point) {
+bool IsFiniteNavPoint(const Vec3f& point) {
   return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
 }
 
-bool IsUsableAuthoredNavLink(const t850::scene::SceneNavMeshLinkDesc& link) {
-  if (!link.enabled || !IsFiniteNavPoint(link.start) || !IsFiniteNavPoint(link.end)) {
-    return false;
-  }
-  const float dx = link.end.x - link.start.x;
-  const float dy = link.end.y - link.start.y;
-  const float dz = link.end.z - link.start.z;
-  return dx * dx + dy * dy + dz * dz > 0.0001f && link.radius > 0.0f;
+bool IsUsableAuthoredNavLink(const SceneNavMeshLinkDesc& link) {
+  if (!link.enabled || !IsFiniteNavPoint(link.start) || !IsFiniteNavPoint(link.end) ||
+      !std::isfinite(link.radius) || link.radius <= 0.0f) return false;
+  const double dx = static_cast<double>(link.end.x) - link.start.x;
+  const double dy = static_cast<double>(link.end.y) - link.start.y;
+  const double dz = static_cast<double>(link.end.z) - link.start.z;
+  return dx * dx + dy * dy + dz * dz > 0.0001;
 }
 
-std::string PhysicsBuildQualityToScene(t850::PhysicsMeshBuildQuality quality) {
-  return quality == t850::PhysicsMeshBuildQuality::FavorBuildSpeed ? "build_speed" : "runtime_performance";
+std::string PhysicsBuildQualityToScene(PhysicsMeshBuildQuality quality) {
+  return quality == PhysicsMeshBuildQuality::FavorBuildSpeed ? "build_speed" : "runtime_performance";
 }
 
-t850::PhysicsMeshBuildQuality PhysicsBuildQualityFromScene(const std::string& quality) {
-  return quality == "build_speed"
-      ? t850::PhysicsMeshBuildQuality::FavorBuildSpeed
-      : t850::PhysicsMeshBuildQuality::FavorRuntimePerformance;
+PhysicsMeshBuildQuality PhysicsBuildQualityFromScene(const std::string& quality) {
+  return quality == "build_speed" ? PhysicsMeshBuildQuality::FavorBuildSpeed
+                                  : PhysicsMeshBuildQuality::FavorRuntimePerformance;
 }
 
-t850::scene::ScenePhysicsCookSettingsDesc PhysicsCookSettingsToScene(const t850::PhysicsTriangleMeshCookSettings& settings) {
-  t850::scene::ScenePhysicsCookSettingsDesc desc;
+ScenePhysicsCookSettingsDesc PhysicsCookSettingsToScene(const PhysicsTriangleMeshCookSettings& settings) {
+  ScenePhysicsCookSettingsDesc desc;
   desc.max_triangles_per_leaf = settings.maxTrianglesPerLeaf;
   desc.build_quality = PhysicsBuildQualityToScene(settings.buildQuality);
   desc.active_edge_cos_threshold_angle = settings.activeEdgeCosThresholdAngle;
@@ -195,8 +189,8 @@ t850::scene::ScenePhysicsCookSettingsDesc PhysicsCookSettingsToScene(const t850:
   return desc;
 }
 
-t850::PhysicsTriangleMeshCookSettings PhysicsCookSettingsFromScene(const t850::scene::ScenePhysicsCookSettingsDesc& desc) {
-  t850::PhysicsTriangleMeshCookSettings settings;
+PhysicsTriangleMeshCookSettings PhysicsCookSettingsFromScene(const ScenePhysicsCookSettingsDesc& desc) {
+  PhysicsTriangleMeshCookSettings settings;
   settings.maxTrianglesPerLeaf = desc.max_triangles_per_leaf;
   settings.buildQuality = PhysicsBuildQualityFromScene(desc.build_quality);
   settings.activeEdgeCosThresholdAngle = desc.active_edge_cos_threshold_angle;
@@ -205,4 +199,4 @@ t850::PhysicsTriangleMeshCookSettings PhysicsCookSettingsFromScene(const t850::s
   return settings;
 }
 
-} // namespace t8ditor
+}

@@ -40,6 +40,11 @@ static int                    s_editorTheme = 0;
 static float                  s_editorFontScale = 1.04f;
 static bool                   s_allowCustomSceneLayout = false;
 static std::string            s_globalLayoutPath;
+static bool s_transientCapture = false;
+static std::string s_captureMenu;
+
+void ImGuiSetTransientCapture(bool enabled) { s_transientCapture = enabled; }
+void ImGuiSetCaptureMenu(const std::string& menu) { s_captureMenu = menu; }
 
 // ── Log capture ring buffer ───────────────────────────
 static const int              kMaxLogLines = 500;
@@ -410,8 +415,8 @@ void ImGuiLogCaptureStop() {
 bool ImGuiInit(t850::RootFramework* fw, bool enablePlatformWindows) {
   if (s_inited) return true;
   if (!fw || !fw->pVideoDriver) return false;
-  s_globalLayoutPath = BuildGlobalLayoutPath();
-  s_inited = s_imguiSystem.Init(fw, s_globalLayoutPath.c_str(), true, enablePlatformWindows);
+  s_globalLayoutPath = s_transientCapture ? std::string{} : BuildGlobalLayoutPath();
+  s_inited = s_imguiSystem.Init(fw, s_globalLayoutPath.empty() ? nullptr : s_globalLayoutPath.c_str(), true, enablePlatformWindows && !s_transientCapture);
   if (s_inited) {
     s_allowCustomSceneLayout = false;
     ApplyArtistEditorStyle();
@@ -443,7 +448,7 @@ void ImGuiSetNextNativeEditorWindow(float offsetX, float offsetY, float width, f
   if (!s_inited) return;
 
   ImGuiWindowClass windowClass{};
-  windowClass.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge;
+  windowClass.ViewportFlagsOverrideSet = s_transientCapture ? ImGuiViewportFlags_None : ImGuiViewportFlags_NoAutoMerge;
   windowClass.ViewportFlagsOverrideClear = ImGuiViewportFlags_NoDecoration | ImGuiViewportFlags_NoTaskBarIcon;
   ImGui::SetNextWindowClass(&windowClass);
 
@@ -527,9 +532,12 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
   if (!s_inited) return action;
 
   if (ImGui::BeginMainMenuBar()) {
+    if (!s_captureMenu.empty()) ImGui::OpenPopup(s_captureMenu.c_str());
     if (ImGui::BeginMenu("File")) {
       if (ImGui::MenuItem("Import Mesh ...", "Ctrl+I"))
         action.wantsImportX = true;
+      if (ImGui::MenuItem("Import Heightmap ..."))
+        action.wantsImportHeightmap = true;
       ImGui::Separator();
       if (ImGui::MenuItem("Load Scene ...", "Ctrl+O"))
         action.wantsLoadScene = true;
@@ -551,10 +559,13 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
       ImGui::MenuItem("Rendering", nullptr, &panels.showRendering);
       ImGui::MenuItem("Timeline",  nullptr, &panels.showTimeline);
       ImGui::MenuItem("NavMesh Authoring", nullptr, &panels.showNavMeshAuthoring);
+      ImGui::MenuItem("Regions", nullptr, &panels.showRegions);
+      ImGui::MenuItem("Terrain Editor", nullptr, &panels.showTerrainEditor);
       ImGui::MenuItem("Game Validation", nullptr, &panels.showGameValidation);
       ImGui::Separator();
       ImGui::MenuItem("Game Overlays", nullptr, &panels.showGameOverlays);
       ImGui::MenuItem("Wireframe Overlay", nullptr, &panels.showWireframe);
+      ImGui::MenuItem("Selection Wireframe", nullptr, &panels.showSelectionWireframe);
       ImGui::MenuItem("Show Skybox",       nullptr, &panels.showSkybox);
       ImGui::Separator();
       ImGui::MenuItem("RT Debug",          nullptr, &panels.showRTDebug);

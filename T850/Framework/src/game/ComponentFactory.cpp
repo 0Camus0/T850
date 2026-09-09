@@ -5,6 +5,7 @@
 #include <game/GameObject.h>
 #include <game/GameValidation.h>
 
+#include <algorithm>
 #include <utility>
 
 namespace t850::game {
@@ -20,10 +21,20 @@ const t850::scene::SceneComponentDesc& UnknownComponent::Descriptor() const {
   return descriptor_;
 }
 
-void ComponentFactoryRegistry::Register(
+bool ComponentFactoryRegistry::Register(
     std::string type, ComponentFactoryFn function, ComponentTypeInfo info) {
+  if (type.empty() || !function || entries_.contains(type)) return false;
   info.type = type;
-  entries_[std::move(type)] = Entry{function, std::move(info)};
+  entries_.emplace(std::move(type), Entry{function, std::move(info)});
+  return true;
+}
+
+std::vector<std::string> ComponentFactoryRegistry::Types() const {
+  std::vector<std::string> types;
+  types.reserve(entries_.size());
+  for (const auto& [type, entry] : entries_) types.push_back(type);
+  std::sort(types.begin(), types.end());
+  return types;
 }
 
 std::unique_ptr<Component> ComponentFactoryRegistry::Create(

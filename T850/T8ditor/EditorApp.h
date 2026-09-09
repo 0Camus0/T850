@@ -67,6 +67,7 @@
 #include "EditorScene.h"
 #include "EditorImGui.h"
 #include "HostedViewportPanel.h"
+#include <t8ditor/EditorHost.h>
 
 namespace t8ditor {
 
@@ -81,9 +82,9 @@ namespace t8ditor {
 
   struct EditorUndoState;
 
-  class EditorApp : public t850::AppBase {
+  class EditorApp : public t850::AppBase, public EditorContext {
   public:
-    EditorApp() : AppBase() {}
+    explicit EditorApp(EditorHostDesc host = {});
     ~EditorApp() override;
 
     // AppBase contract.
@@ -111,9 +112,30 @@ namespace t8ditor {
     void LoadScene(int id) override;
     void EnableTerrainSelfTest() { m_terrainSelfTest = true; m_terrainSelfTestResult = 1; }
     int TerrainSelfTestResult() const { return m_terrainSelfTestResult; }
+    void EnableExtensionSelfTest() { m_extensionSelfTest = true; m_extensionSelfTestResult = 1; }
+    int ExtensionSelfTestResult() const { return m_extensionSelfTestResult; }
     void ConfigureTutorialCapture(std::string step);
+    EditorSnapshot ReadScene() override;
+    void SubmitGameplayEdit(GameplayEdit edit) override;
+    const std::string& LastEditStatus() const override { return m_extensionEditStatus; }
 
   private:
+    EditorHostDesc m_host;
+    EditorRegistry m_extensions;
+    t850::game::ComponentFactoryRegistry m_componentFactories;
+    std::vector<GameplayEdit> m_pendingGameplayEdits;
+    std::string m_extensionEditStatus;
+    std::string m_extensionDocumentKey;
+    uint64_t m_extensionRevision = 0;
+    bool m_extensionSelfTest = false;
+    bool m_extensionTestRequestPlay = false;
+    int m_extensionSelfTestResult = 0;
+    int m_extensionTestStep = 0;
+    int m_extensionTestFrames = 0;
+    std::string m_extensionTestPath;
+    void RunExtensionSelfTest();
+    void ApplyExtensionEdits();
+    void DrawExtensionPanels();
     void ProcessSelectionInput();
     void ImportMesh(const std::string& path, const t850::scene::SceneObjectDesc* descriptor = nullptr);
     void CloneSelected();
@@ -170,7 +192,7 @@ namespace t8ditor {
     SceneFile BuildEditorSceneSnapshot(const std::string& scenePath, bool captureImGuiLayout = false);
     SceneFile RefreshVirtualEditorScene(const std::string& scenePath);
     bool SaveEditorSceneSnapshot(const std::string& path, bool updateLoadedScene);
-    bool RunGameValidation(const SceneFile& scene, bool showPanel);
+    bool RunGameValidation(const SceneFile& scene, bool showPanel, bool forPlay = false);
     void DrawGameValidationPanel();
     t850::SandboxProfileDesc BuildEditorSceneProfile() const;
     void UpsertEditorSceneProfile(std::vector<t850::SandboxProfileDesc>& profiles) const;

@@ -24,6 +24,7 @@ Repository root contains `documentation/` and `LaunchSolution.bat`. Source root 
 | Task | Load/use |
 |---|---|
 | build, run, test, config, assets | `t850-build-run` skill |
+| external/private editor, static extensions, component inspectors, editor SDK | `t850-editor-extensions` skill |
 | native crash, assert, call stack, CDB, dump analysis | `t850-crash-debugging` skill |
 | voxel terrain, mutable mesh, chunks, streaming, block edits | `t850-voxel-terrain` skill |
 | screenshots, RT dumps, replay, visual baselines, image comparison | `t850-visual-regression` skill |
@@ -57,6 +58,7 @@ Use only the indexed documentation tree; superseded documents belong in Git hist
 | gameplay | `game/game-entity-system-spec.md` | `Framework/*/game/`, SceneTemplate |
 | voxel terrain | `terrain/voxel-terrain.md` | `Framework/*/terrain/`, MutableMesh, VoxelScene |
 | editor | `editor/editor-overview.md` | `T8ditor/` |
+| embeddable editor SDK | `editor/editor-sdk.md` | `T8ditor/include/t8ditor/EditorHost.h` |
 | runtime ImGui | `editor/imgui-system.md` | `FrameworkImGui/` |
 | scene schema/load | `scenes/scene-format-and-runtime.md` | `EditorSceneFile`, SceneTemplate |
 | legacy runtime descriptors | `scenes/scene-setup-descriptors.md` | `SceneDescriptor`, `SceneSetup` |

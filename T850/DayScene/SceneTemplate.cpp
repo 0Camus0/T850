@@ -4033,6 +4033,7 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
   t850::game::examples::RegisterHealthComponent(m_gameLogic.Factories());
   t850::game::examples::RegisterPathFollowComponent(m_gameLogic.Factories());
   t850::game::examples::RegisterWeaponComponent(m_gameLogic.Factories());
+  if (m_hostComponentFactories) m_gameLogic.Factories() = *m_hostComponentFactories;
 
   t850::game::GameSceneRuntimeLinks gameLinks;
   gameLinks.resolveMeshSlot = [this](std::string_view objectName) {
@@ -4076,7 +4077,8 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
   gameLinks.navMesh = &m_navMesh;
 
   t850::scene::SceneValidationReport gameReport;
-  if (!m_gameLogic.LoadFromScene(scene, gameLinks, &gameReport)) {
+  m_gameLogicReady = m_gameLogic.LoadFromScene(scene, gameLinks, &gameReport, m_requireKnownComponentTypes);
+  if (!m_gameLogicReady) {
     T8_LOG_ERROR("[GameLogic] Scene '%s' contains game-logic validation errors", scenePath.c_str());
   }
   m_rtsCommandController.Bind(&m_groupManager, &m_gameLogic);
@@ -5602,6 +5604,7 @@ void SceneTemplate::CreateAssets() {
 }
 
 void SceneTemplate::OnLoadScene() {
+  m_gameLogicReady = false;
   InstallSandboxConsoleLogCapture();
   InitVars();
   CreateAssets();

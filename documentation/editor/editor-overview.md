@@ -45,6 +45,12 @@ Related documents:
 
 ## Purpose and responsibilities
 
+2026-09-09: the implementation now builds as `T8ditorCore`; stock T8ditor calls
+the public `RunEditor` host. Static external panels, commands, component inspectors,
+validators, gameplay edits, and default Play component registration are available.
+See [the SDK contract](editor-sdk.md) for supported APIs and remaining boundaries.
+Private callers must not include EditorApp/EditorWorld or compile DayScene sources.
+
 T8ditor is the authoring shell for `.t8scene` files. It is an `AppBase` application that shares the Framework renderer, physics, navigation, mesh loading, render graph, and scene serialization systems with runtime scenes.
 
 The editor is responsible for:

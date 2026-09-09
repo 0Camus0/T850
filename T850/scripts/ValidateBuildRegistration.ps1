@@ -32,6 +32,8 @@ $imguiFilters = Get-Content (Join-Path $imguiRoot "FrameworkImGui.vcxproj.filter
 $imguiCmake = Get-Content (Join-Path $imguiRoot "CMakeLists.txt") -Raw
 $editorRoot = Join-Path $SourceRoot "T8ditor"
 $editorProject = Get-Content (Join-Path $editorRoot "T8ditor.vcxproj") -Raw
+$editorSources = Get-Content (Join-Path $editorRoot "EditorSources.props") -Raw
+$editorFilters = Get-Content (Join-Path $editorRoot "T8ditorCore.vcxproj.filters") -Raw
 $editorCmake = Get-Content (Join-Path $editorRoot "CMakeLists.txt") -Raw
 
 $errors = New-Object System.Collections.Generic.List[string]
@@ -103,9 +105,20 @@ Require-Entry $imguiFilters ($ragdollGui.Replace('/', '\')) "FrameworkImGui.vcxp
 Require-Entry $imguiCmake $ragdollGui "FrameworkImGui/CMakeLists.txt"
 
 foreach ($sharedScene in @("RagdollEditor.cpp", "Quake3Mock.cpp", "SceneTemplate.cpp")) {
-    Require-Entry $editorProject "..\DayScene\$sharedScene" "T8ditor.vcxproj"
+    Require-Entry $editorSources "..\DayScene\$sharedScene" "EditorSources.props"
     Require-Entry $editorCmake "../DayScene/$sharedScene" "T8ditor/CMakeLists.txt"
 }
+
+foreach ($source in Get-ChildItem $editorRoot -Filter "*.cpp") {
+    $owner = if ($source.Name -eq 'EditorMain.cpp') { $editorProject } else { $editorSources }
+    Require-Entry $owner $source.Name "T8ditor MSBuild sources"
+    Require-Entry $editorCmake $source.Name "T8ditor/CMakeLists.txt"
+    if ($source.Name -ne 'EditorMain.cpp') {
+        Require-Entry $editorFilters $source.Name "T8ditorCore.vcxproj.filters"
+    }
+}
+Require-Entry $editorSources 'include\t8ditor\EditorHost.h' "EditorSources.props"
+Require-Entry $editorFilters 'include\t8ditor\EditorHost.h' "T8ditorCore.vcxproj.filters"
 
 if ($errors.Count -gt 0) {
     $errors | ForEach-Object { Write-Error $_ }

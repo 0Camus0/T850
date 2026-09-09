@@ -147,6 +147,11 @@ Important authoring constraints:
 
 ## Remaining Architectural Work
 
+2026-09-09 update: [the first static editor SDK](editor-sdk.md) extracts a reusable
+T8ditorCore target and adds host registrations and gameplay-only transactions.
+The shared-world extraction and all-world stable references described below are
+still outstanding; default Play still wraps the existing SceneTemplate internally.
+
 ### Shared World Assembly
 
 SceneTemplate remains a large class under DayScene and is compiled into T8ditor

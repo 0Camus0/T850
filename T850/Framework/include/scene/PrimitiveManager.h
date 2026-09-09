@@ -20,6 +20,7 @@
 #include <scene/PrimitiveBase.h>
 #include <scene/SceneProp.h>
 namespace t850 {
+  namespace scene { struct SceneObjectDesc; }
   struct EngineContext;
   class Spline;
   class MutableMesh;
@@ -39,6 +40,7 @@ namespace t850 {
     int	 CreateCube();
     int	 CreateMesh(const char *fname);
     int  CreateMutableMesh();
+    int  CreateSceneObject(const scene::SceneObjectDesc& object, std::string* error = nullptr);
     int  CreateSpline(Spline& spline);
 
     void SetEngineContext(EngineContext* context);

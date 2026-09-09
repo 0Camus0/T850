@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "render_graph": "Scenes/SceneTemplate_RenderGraph.json",
+  "control_descriptor": "Scenes/SceneTemplate.json",
+  "editor": {
+    "camera_target": {"x": -10, "y": 2, "z": -14},
+    "camera_distance": 65,
+    "camera_yaw": 0.7,
+    "camera_pitch": 0.6
+  },
+  "objects": [{
+    "name": "RTS Terrain",
+    "position": {"x": -32, "y": 0, "z": -32},
+    "heightmap": {
+      "size_x": 64, "size_z": 64,
+      "samples_x": 65, "samples_z": 65,
+      "base_color": {"x": 0.22, "y": 0.38, "z": 0.26},
+      "placement_grid": {
+        "enabled": true, "cell_size": 2,
+        "flat_buildings_only": true,
+        "max_height_difference": 0.02, "max_slope_degrees": 1
+      },
+      "placements": [
+        {"id": "two-cells", "name": "Blue - 2 cells", "cell_x": 4, "cell_z": 4, "width": 2, "depth": 1, "height": 3, "color": {"x": 0.15, "y": 0.45, "z": 0.85}},
+        {"id": "three-cells", "name": "Red - 3 cells", "cell_x": 9, "cell_z": 4, "width": 3, "depth": 1, "height": 4, "color": {"x": 0.8, "y": 0.15, "z": 0.12}},
+        {"id": "four-cells", "name": "Yellow - 4 cells", "cell_x": 15, "cell_z": 4, "width": 2, "depth": 2, "height": 5, "color": {"x": 0.9, "y": 0.65, "z": 0.1}},
+        {"id": "five-cells", "name": "Cyan - 5 cells", "cell_x": 4, "cell_z": 10, "width": 5, "depth": 1, "height": 3, "color": {"x": 0.1, "y": 0.7, "z": 0.7}},
+        {"id": "one-cell-unit", "name": "White - 1 cell unit marker", "kind": "unit", "cell_x": 11, "cell_z": 10, "width": 1, "depth": 1, "height": 1.5, "color": {"x": 0.8, "y": 0.85, "z": 0.9}}
+      ]
+    },
+    "physics": {"enabled": true, "body_type": "static_triangle_mesh", "motion": "static"},
+    "navigation": {"include": true, "walkable": true, "static_object": true}
+  }],
+  "physics_entities": [{"name": "Terrain and Blockout Collision", "type": "static_triangle_mesh", "source_object": "RTS Terrain", "visible": false, "show_wire": false}],
+  "navigation_mesh": {
+    "enabled": true, "runtime_mode": "build", "visible": false, "show_wire": false,
+    "build_settings": {
+      "cell_size": 0.25, "cell_height": 0.1,
+      "agent_height": 1.5, "agent_radius": 0.4,
+      "region_min_size": 2, "region_merge_size": 4,
+      "auto_drop_links": false, "auto_jump_links": false, "hybrid_jump_links": false
+    }
+  },
+  "cameras": [{"name": "RTS Overview", "position": {"x": 30, "y": 40, "z": -50}, "target": {"x": -10, "y": 1, "z": -14}, "fov_deg": 50, "far_plane": 500, "visible": false}],
+  "lights": [{"id": "sun", "name": "Sun", "type": 0, "position": {"x": 20, "y": 60, "z": -20}, "direction": {"x": -0.4, "y": -1, "z": 0.2}, "intensity": 3}],
+  "light_cameras": [{"name": "Sun Camera", "attached_light_id": "sun", "type": 1, "position": {"x": 20, "y": 60, "z": -20}, "target": {"x": 0, "y": 0, "z": 0}, "ortho_w": 100, "ortho_h": 100, "far_plane": 150, "visible": false}]
+}

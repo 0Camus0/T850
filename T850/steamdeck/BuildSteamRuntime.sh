@@ -7,6 +7,7 @@ IMAGE="registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest"
 BUILD_DIR="build/steamdeck-steamrt-libcpp"
 CONFIG="Release"
 BUILD_EDITOR="OFF"
+BUILD_TARGETS="DayScene"
 CLEAN=0
 CONFIGURE_ONLY=0
 
@@ -31,6 +32,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-editor)
       BUILD_EDITOR="ON"
+      BUILD_TARGETS="DayScene T8ditor"
       shift
       ;;
     --clean)
@@ -72,13 +74,27 @@ podman run --rm \
   "${IMAGE}" \
   bash -lc "
 set -e
-apt-get update >/dev/null
+bash /workspace/T850/steamdeck/PrepareSteamRuntimeApt.sh
+apt-get update
+python_version=\$(dpkg-query -W -f='\${Version}' python3.9)
+if [ \"\${python_version}\" != '3.9.2-1+deb11u7' ]; then
+  echo \"[T850] Review pinned venv package for SDK Python \${python_version}\" >&2
+  exit 1
+fi
+python_venv=/tmp/python3.9-venv_3.9.2-1+deb11u7_amd64.deb
+curl --fail --location --retry 3 --connect-timeout 20 --max-time 180 \
+  --output \"\${python_venv}\" \
+  'https://snapshot.debian.org/file/6c9af9f36b1ee93aaaa7b89529ec47ab636a8d19'
+echo \"799b8115b5eb26a98cfda1d8f2b8ada39a0918c3c5f1114cab541a2fb2243981  \${python_venv}\" | sha256sum --check --strict
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   clang-16 libc++-16-dev libc++abi-16-dev \
-  autoconf-archive libltdl-dev python3-venv \
+  autoconf-archive libltdl-dev \"\${python_venv}\" \
   libx11-dev libxft-dev libxext-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
   libxi-dev libxrandr-dev libxcursor-dev libxfixes-dev \
-  pkg-config zip unzip curl ca-certificates make m4 perl >/dev/null
+  pkg-config zip unzip curl ca-certificates make m4 perl
+python3 -m venv /tmp/t850-python-check
+/tmp/t850-python-check/bin/python -m pip --version
+rm -rf /tmp/t850-python-check
 
 if [ ! -x /tmp/autoconf-install/bin/autoconf ]; then
   rm -rf /tmp/autoconf-2.72 /tmp/autoconf-install
@@ -117,8 +133,11 @@ cmake -S T850 -B ${BUILD_DIR} -G Ninja \
   -DT850_BUILD_EDITOR=${BUILD_EDITOR}
 
 if [ '${CONFIGURE_ONLY}' != '1' ]; then
-  cmake --build ${BUILD_DIR} --target DayScene --parallel \$(nproc)
+  cmake --build ${BUILD_DIR} --target ${BUILD_TARGETS} --parallel \$(nproc)
   runtime_dir=/workspace/T850/bin/SteamDeck/${CONFIG}
+  for target in ${BUILD_TARGETS}; do
+    test -x \"\${runtime_dir}/\${target}\" || exit 1
+  done
   cp -L /usr/lib/x86_64-linux-gnu/libc++.so.1 \"\${runtime_dir}/\"
   cp -L /usr/lib/x86_64-linux-gnu/libc++abi.so.1 \"\${runtime_dir}/\"
   cp -L /usr/lib/x86_64-linux-gnu/libunwind.so.1 \"\${runtime_dir}/\"

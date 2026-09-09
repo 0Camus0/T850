@@ -16,6 +16,9 @@
 #include <scene/RenderMesh.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <scene/MutableMesh.h>
+#include <terrain/HeightmapTerrain.h>
+#include <terrain/HeightmapMesh.h>
+#include <terrain/TerrainPlacement.h>
 #include <scene/RenderQuad.h>
 #include <scene/SplineWireframe.h>
 #include <core/EngineContext.h>
@@ -101,6 +104,26 @@ namespace t850 {
     primitives.push_back(primitive);
     T8_LOG_INFO("Mesh '%s' ready (primitive %d)", fname, (int)(primitives.size()-1));
     return (int)(primitives.size() - 1);
+  }
+
+  int PrimitiveManager::CreateSceneObject(const scene::SceneObjectDesc& object, std::string* error) {
+    if (!object.heightmap) return CreateMesh(object.mesh.c_str());
+    if (!object.mesh.empty()) {
+      if (error) *error = "Scene object must select either mesh or heightmap, not both";
+      return -1;
+    }
+    if (!object.heightmap->placements.empty() && !TerrainPlacementTransformSupported(object.rotation, object.scale)) {
+      if (error) *error = "Placement terrain must have zero rotation and unit scale; set dimensions in the terrain descriptor";
+      return -1;
+    }
+    auto mesh = std::make_unique<HeightmapMesh>();
+    mesh->SetEngineContext(m_engineContext);
+    if (!mesh->ReplaceTerrain(*object.heightmap, error)) {
+      mesh->Destroy();
+      return -1;
+    }
+    primitives.push_back(mesh.release());
+    return static_cast<int>(primitives.size() - 1);
   }
 
   int PrimitiveManager::CreateMutableMesh() {

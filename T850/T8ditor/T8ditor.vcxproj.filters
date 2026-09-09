@@ -21,6 +21,9 @@
     <ClCompile Include="EditorApp.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="EditorTutorialCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="EditorCamera.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -52,9 +55,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="HostedViewportPanel.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="EditorSceneSerialization.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="EditorWorld.cpp">

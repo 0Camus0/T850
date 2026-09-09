@@ -11,11 +11,18 @@
 #include <game/StateMachine.h>
 #include <game/GameValidation.h>
 #include <physics/JoltPhysicsSystem.h>
+#include <physics/PhysicsAuthoring.h>
+#include <scene/RenderMesh.h>
 #include <scene/EditorSceneFile.h>
+#include <scene/SceneConversions.h>
+#include <scene/SceneRegions.h>
 #include <scene/MutableMeshData.h>
 #include <scene/RenderContainer.h>
 #include <scene/MaterialAsset.h>
 #include <terrain/BlockRegistry.h>
+#include <terrain/HeightmapTerrain.h>
+#include <terrain/TerrainPlacement.h>
+#include <terrain/HeightmapMesh.h>
 #include <terrain/VoxelChunk.h>
 #include <terrain/VoxelMesher.h>
 #include <terrain/VoxelWorld.h>
@@ -24,11 +31,13 @@
 #include <terrain/VoxelNavigation.h>
 #include <terrain/VoxelCollision.h>
 #include <utils/ThreadPool.h>
+#include <utils/XDataBase.h>
 #include <video/TextureAtlas.h>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1207,7 +1216,387 @@ void TestVoxelMesherUsesNeighborBoundary() {
     navigation.ResolveCompleted();
   }
 
+void TestSceneConversions() {
+  scene::SceneCameraDesc cameraDesc;
+  cameraDesc.type = 1;
+  cameraDesc.ortho_w = 64.0f;
+  cameraDesc.ortho_h = 32.0f;
+  Camera camera;
+  scene::ApplySceneCamera(cameraDesc, camera, 2.0f);
+  Require(camera.Ortho && camera.Width == 64.0f && camera.Height == 32.0f,
+      "authored orthographic camera was not preserved");
+  cameraDesc.type = 0;
+  scene::ApplySceneCamera(cameraDesc, camera, 2.0f);
+  Require(!camera.Ortho && camera.AspectRatio == 2.0f, "perspective camera application failed");
+  for (navigation::NavTraversalType type : {navigation::NavTraversalType::Walk,
+     navigation::NavTraversalType::Drop, navigation::NavTraversalType::Jump,
+     navigation::NavTraversalType::JumpPad, navigation::NavTraversalType::JumpIntent}) {
+  scene::SceneNavMeshLinkDesc link;
+  link.type = scene::NavLinkTypeName(type);
+  link.end = {2.0f, 0.0f, 0.0f};
+  Require(scene::NavOffMeshLinkFromScene(link).type == type, "traversal type did not round trip");
+  Require(scene::IsUsableAuthoredNavLink(link), "valid authored link rejected");
+  link.radius = std::numeric_limits<float>::infinity();
+  Require(!scene::IsUsableAuthoredNavLink(link), "infinite link radius accepted");
+  link.radius = 1.0f;
+  link.end = link.start;
+  Require(!scene::IsUsableAuthoredNavLink(link), "zero-length link accepted");
+  }
+  navigation::NavMeshBuildSettings settings = scene::DefaultSceneNavMeshBuildSettings();
+  settings.agentRadius = 1.25f;
+  settings.enableAutoJumpLinks = false;
+  settings.queryExtents = XVECTOR3(7.0f, 8.0f, 9.0f, 0.0f);
+  settings.offMeshLinkValidationKey = 1234567;
+  const auto loaded = scene::NavMeshBuildSettingsFromScene(scene::NavMeshBuildSettingsToScene(settings));
+  Require(loaded.agentRadius == settings.agentRadius && !loaded.enableAutoJumpLinks &&
+    loaded.queryExtents.z == 9.0f && loaded.offMeshLinkValidationKey == settings.offMeshLinkValidationKey,
+    "navigation settings did not round trip");
+  scene::SceneNavMeshVolumeDesc volume;
+  volume.type = "area_cost";
+  volume.area = "mud";
+  volume.cost = 3.0f;
+  const auto modifier = scene::NavVolumeModifierFromScene(volume);
+  Require(modifier.mode == navigation::NavMeshModifierMode::Area && modifier.area == 7 && modifier.cost == 3.0f,
+    "authored area volume changed meaning");
+  PhysicsTriangleMeshCookSettings cook;
+  cook.buildQuality = PhysicsMeshBuildQuality::FavorBuildSpeed;
+  cook.useDiskCache = false;
+  const auto cooked = scene::PhysicsCookSettingsFromScene(scene::PhysicsCookSettingsToScene(cook));
+  Require(cooked.buildQuality == cook.buildQuality && !cooked.useDiskCache,
+    "physics cook settings did not round trip");
+}
+
+void TestHeightmapTerrain() {
+  scene::SceneHeightmapDesc desc;
+  desc.samples_x = 3;
+  desc.samples_z = 3;
+  desc.size_x = 8.0f;
+  desc.size_z = 4.0f;
+  desc.height_scale = 10.0f;
+  desc.height_offset = -2.0f;
+  const std::array<float, 4> heights = {0.0f, 1.0f, 0.0f, 1.0f};
+  MutableMeshSnapshot mesh;
+  std::string error;
+  Require(BuildHeightmapTerrain(desc, heights, 2, 2, mesh, &error), error);
+  Require(mesh.vertices.size() == 9 && mesh.indices.size() == 24, "incorrect heightmap topology");
+    Require(mesh.vertices[4].position.y == 3.0f && mesh.localBounds.vMax.x == 8.0f &&
+      mesh.localBounds.vMax.z == 4.0f, "heightmap interpolation or dimensions are wrong");
+  Require(mesh.vertices[4].normal.y > 0.0f && mesh.vertices[4].normal.x < 0.0f,
+    "heightmap normals do not face up the slope");
+    auto database = BuildMeshDatabase(mesh, &error);
+    Require(database != nullptr, error);
+    navigation::NavMeshGeometry navGeometry;
+    Require(navigation::BuildGeometryFromXDataBase(*database, navGeometry, &error), error);
+    Require(navGeometry.vertices.size() == mesh.vertices.size() && navGeometry.indices.size() == mesh.indices.size(),
+      "navigation did not receive generated terrain geometry");
+    Require(BuildMeshDatabase(mesh, &error)->m_name == database->m_name, "generated geometry identity is unstable");
+    RenderMesh renderMesh;
+    renderMesh.xFile = database.get();
+    XMATRIX44 identity;
+    identity.Identity();
+    PhysicsTriangleMeshBodyDesc collision;
+    Require(BuildStaticTriangleMeshBodyDesc(renderMesh, identity, 1, PhysicsTriangleMeshCookSettings{}, collision),
+        "generated terrain cannot supply static collision");
+  desc.samples_x = 0;
+  Require(!BuildHeightmapTerrain(desc, heights, 2, 2, mesh, &error) && mesh.vertices.size() == 9,
+    "invalid heightmap replaced existing geometry");
+  desc.samples_x = 3;
+  desc.height_scale = std::numeric_limits<float>::quiet_NaN();
+  Require(!BuildHeightmapTerrain(desc, heights, 2, 2, mesh, &error), "NaN elevation accepted");
+  desc.height_scale = 10.0f;
+  TempSceneFiles files;
+  const auto imagePath = files.Add("_heightmap.bmp");
+  std::array<unsigned char, 70> image{};
+  image[0] = 'B'; image[1] = 'M'; image[2] = 70; image[10] = 54;
+  image[14] = 40; image[18] = 2; image[22] = 2; image[26] = 1; image[28] = 24;
+  for (size_t offset : {57u, 58u, 59u, 65u, 66u, 67u}) image[offset] = 255;
+  {
+    std::ofstream stream(imagePath, std::ios::binary);
+    stream.write(reinterpret_cast<const char*>(image.data()), image.size());
+  }
+  desc.image = imagePath.string();
+  MutableMeshSnapshot decoded;
+  Require(LoadHeightmapTerrain(desc, decoded, &error), error);
+  Require(decoded.vertices[4].position.y == mesh.vertices[4].position.y,
+      "image decoder and normalized sample generator disagree");
+  const auto path = files.Add("_heightmap.t8scene");
+  scene::EditorSceneFile source;
+  source.objects.emplace_back();
+  source.objects.back().name = "Terrain";
+  source.objects.back().heightmap = desc;
+  Require(scene::SaveEditorSceneFile(source, path.string(), &error), error);
+  scene::EditorSceneFile loaded;
+  Require(scene::LoadEditorSceneFile(path.string(), loaded, &error), error);
+  Require(loaded.objects.size() == 1 && loaded.objects[0].heightmap &&
+    loaded.objects[0].heightmap->size_x == 8.0f && loaded.objects[0].mesh.empty(),
+    "heightmap scene descriptor did not round trip");
+}
+
+void TestHeightmapNavigationExclusion() {
+  scene::SceneHeightmapDesc desc;
+  desc.samples_x = 33;
+  desc.samples_z = 33;
+  desc.size_x = 32;
+  desc.size_z = 32;
+  const std::array<float, 4> heights{};
+  MutableMeshSnapshot mesh;
+  std::string error;
+  Require(BuildHeightmapTerrain(desc, heights, 2, 2, mesh, &error), error);
+  auto database = BuildMeshDatabase(mesh, &error);
+  Require(database != nullptr, error);
+  navigation::NavMeshGeometry geometry;
+  Require(navigation::BuildGeometryFromXDataBase(*database, geometry, &error), error);
+  scene::SceneNavMeshVolumeDesc zone;
+  zone.type = "exclude";
+  zone.position = {16.0f, 0.0f, 16.0f};
+  zone.half_extents = {4.0f, 4.0f, 4.0f};
+  geometry.volumeModifiers.push_back(scene::NavVolumeModifierFromScene(zone));
+  navigation::NavMeshBuildSettings settings;
+  settings.regionMinSize = 1;
+  settings.regionMergeSize = 2;
+  navigation::NavMesh navMesh;
+  Require(navMesh.Build(geometry, settings, &error), error);
+  XVECTOR3 projected;
+  Require(navMesh.ProjectPoint(XVECTOR3(4.0f, 0.0f, 4.0f), projected, XVECTOR3(0.5f, 2.0f, 0.5f), &error),
+    "walkable terrain has no navmesh");
+  Require(!navMesh.ProjectPoint(XVECTOR3(16.0f, 0.0f, 16.0f), projected, XVECTOR3(0.5f, 2.0f, 0.5f), &error),
+    "excluded terrain remained walkable");
+  std::vector<XVECTOR3> path;
+  Require(navMesh.FindPath(XVECTOR3(4.0f, 0.0f, 16.0f), XVECTOR3(28.0f, 0.0f, 16.0f), path, &error) && path.size() > 2,
+    "navigation did not route around the exclusion zone");
+}
+
+void TestSceneLoadIsolation() {
+  TempSceneFiles files;
+  const auto emptyPath = files.Add("_empty.t8scene");
+  const auto invalidPath = files.Add("_invalid.t8scene");
+  {
+    std::ofstream stream(emptyPath);
+    stream << "{\"version\":1}";
+  }
+  {
+    std::ofstream stream(invalidPath);
+    stream << "{\"version\":999,\"objects\":[";
+  }
+  scene::EditorSceneFile document;
+  document.render_graph = "previous-graph";
+  document.objects.emplace_back();
+  document.objects.back().heightmap = scene::SceneHeightmapDesc{};
+  std::string error;
+  Require(scene::LoadEditorSceneFile(emptyPath.string(), document, &error), error);
+  Require(document.objects.empty() && document.render_graph.empty(), "loading a scene retained data from the previous file");
+  Require(!scene::LoadEditorSceneFile(invalidPath.string(), document, &error), "malformed scene accepted");
+  Require(document.version == 1 && document.objects.empty(), "failed scene load partially mutated the destination");
+}
+
+void TestTerrainEditing() {
+  scene::SceneHeightmapDesc terrain;
+  terrain.samples_x = terrain.samples_z = 5;
+  terrain.size_x = terrain.size_z = 4;
+  terrain.height_offset = 0;
+  TerrainBrush brush;
+  brush.x = brush.z = 2;
+  brush.radius = 1.5f;
+  bool changed = false;
+  std::string error;
+  Require(ApplyTerrainBrush(terrain, brush, &changed, &error) && changed, error);
+  Require(terrain.elevations[12] == 1.0f && terrain.elevations[0] == 0.0f, "brush footprint is incorrect");
+  const auto raised = terrain;
+  brush.mode = TerrainBrushMode::Lower;
+  Require(ApplyTerrainBrush(terrain, brush, &changed, &error), error);
+  Require(terrain.elevations[12] == 0.0f, "lower brush did not reverse raise");
+  terrain = raised;
+  brush.mode = TerrainBrushMode::Smooth;
+  Require(ApplyTerrainBrush(terrain, brush, &changed, &error) && terrain.elevations[12] < 1.0f, "smooth failed");
+  brush.mode = TerrainBrushMode::Flatten;
+  brush.targetHeight = -2.0f;
+  Require(ApplyTerrainBrush(terrain, brush, &changed, &error) && terrain.elevations[12] == -2.0f, "flatten failed");
+  terrain.materials.resize(2);
+  terrain.materials[1].color = {0.8f, 0.1f, 0.1f};
+  brush.mode = TerrainBrushMode::Material;
+  brush.material = 1;
+  Require(ApplyTerrainBrush(terrain, brush, &changed, &error) && changed, "material brush failed");
+  MutableMeshSnapshot mesh;
+  Require(LoadHeightmapTerrain(terrain, mesh, &error) && mesh.sections.size() == 2, "paint did not create material sections");
+  MutableMeshSnapshot reduced;
+  Require(BuildTerrainLod(terrain, 1, reduced, &error) && reduced.vertices.size() < mesh.vertices.size(), "terrain LOD did not simplify");
+  Require(reduced.localBounds.vMax.x == mesh.localBounds.vMax.x && reduced.localBounds.vMax.z == mesh.localBounds.vMax.z,
+      "terrain LOD changed its extent");
+  Require(SelectTerrainLod(10, 20, 4) == 0 && SelectTerrainLod(85, 20, 4) == 3, "terrain LOD selection failed");
+  TempSceneFiles files;
+  scene::EditorSceneFile document;
+  document.objects.emplace_back();
+  document.objects.back().heightmap = terrain;
+  const auto path = files.Add("_terrain_edits.t8scene");
+  Require(scene::SaveEditorSceneFile(document, path.string(), &error), error);
+  scene::EditorSceneFile loaded;
+  Require(scene::LoadEditorSceneFile(path.string(), loaded, &error), error);
+  Require(loaded.objects[0].heightmap->elevations == terrain.elevations &&
+      loaded.objects[0].heightmap->cell_materials == terrain.cell_materials, "terrain edits did not round trip");
+  const auto before = terrain;
+  brush.radius = 0;
+  Require(!ApplyTerrainBrush(terrain, brush, &changed, &error) && terrain.elevations == before.elevations,
+      "invalid brush mutated terrain");
+}
+
+void TestSceneRegions() {
+  scene::SceneRegionDesc region;
+  region.id = "region-test";
+  region.half_extents = {4.0f, 2.0f, 1.0f};
+  region.rotation.y = 90.0f;
+  region.tags = {"objective", "buildable"};
+  std::vector<scene::SceneRegionDesc> regions{region};
+  Require(scene::RegionContainsPoint(region, XVECTOR3(0.0f, 0.0f, 3.0f)), "rotated region rejected inside point");
+  Require(!scene::RegionContainsPoint(region, XVECTOR3(3.0f, 0.0f, 0.0f)), "rotated region accepted outside point");
+  Require(scene::QuerySceneRegions(regions, XVECTOR3(0.0f, 0.0f, 0.0f), "objective").size() == 1,
+      "tagged region query failed");
+  regions.push_back(region);
+  Require(!scene::ValidateSceneRegions(regions), "duplicate region IDs accepted");
+  regions.pop_back();
+  regions[0].enabled = false;
+  Require(scene::QuerySceneRegions(regions, XVECTOR3(0.0f, 0.0f, 0.0f)).empty(), "disabled region remained active");
+  scene::EditorSceneFile document;
+  document.regions = {region};
+  EngineContext context;
+  GameLogicSystem game;
+  game.Initialize(context, {});
+  Require(game.LoadFromScene(document, {}), "runtime region loading failed");
+  Require(game.RegionsAt(XVECTOR3(0.0f, 0.0f, 0.0f), "objective").size() == 1, "gameplay cannot query regions");
+  game.Shutdown();
+  Require(game.RegionsAt(XVECTOR3(0.0f, 0.0f, 0.0f)).empty(), "region state survived world shutdown");
+}
+
+void TestTerrain16BitImage() {
+  const unsigned char png[] = {
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x10, 0x00, 0x00, 0x00, 0x00, 0x07, 0x4D, 0x8E,
+    0xBB, 0x00, 0x00, 0x00, 0x12, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0x68, 0x60, 0x68, 0x60,
+    0x64, 0x60, 0x60, 0xF8, 0xFF, 0x1F, 0x00, 0x0B, 0x0D, 0x03, 0x00, 0x69, 0x23, 0x82, 0x3C, 0x00,
+    0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82
+  };
+  TempSceneFiles files;
+  const auto path = files.Add("_precision16.png");
+  {
+    std::ofstream stream(path, std::ios::binary);
+    stream.write(reinterpret_cast<const char*>(png), sizeof(png));
+  }
+  scene::SceneHeightmapDesc terrain;
+  terrain.image = path.string();
+  terrain.samples_x = terrain.samples_z = 2;
+  terrain.height_scale = 65535;
+  MutableMeshSnapshot mesh;
+  std::string error;
+  Require(LoadHeightmapTerrain(terrain, mesh, &error), error);
+  Require(std::abs(mesh.vertices[0].position.y - 32768.0f) < 0.01f &&
+      std::abs(mesh.vertices[1].position.y - 32769.0f) < 0.01f &&
+      mesh.vertices[2].position.y == 0.0f && mesh.vertices[3].position.y == 65535.0f,
+      "native 16-bit elevations were quantized or flipped");
+}
+
+void TestTerrainPlacementGrid() {
+  scene::SceneHeightmapDesc terrain;
+  terrain.samples_x = terrain.samples_z = 9;
+  terrain.size_x = terrain.size_z = 8;
+  terrain.placement_grid.enabled = true;
+  Require(InitializeTerrainEditing(terrain), "cannot prepare flat terrain");
+  uint32_t columns = 0, rows = 0;
+  Require(TerrainGridDimensions(terrain, columns, rows) && columns == 4 && rows == 4, "grid does not use authored world-cell size");
+  scene::SceneTerrainPlacementDesc building;
+  building.id = "building-1";
+  Require(AddTerrainPlacement(terrain, building), "flat 2x2 building rejected");
+  auto second = building;
+  second.id = "building-2";
+  Require(!AddTerrainPlacement(terrain, second), "overlap accepted");
+  second.cell_x = 2;
+  Require(AddTerrainPlacement(terrain, second), "adjacent footprint rejected");
+    MutableMeshSnapshot mesh;
+    Require(LoadHeightmapTerrain(terrain, mesh) && mesh.vertices.size() == 81 + 48 && mesh.indices.size() == 384 + 72,
+      "building blockout boxes were not generated");
+    MutableMeshSnapshot reduced;
+    Require(BuildTerrainLod(terrain, 1, reduced) && reduced.vertices.size() == 25 + 48,
+      "terrain LOD removed or simplified placed buildings");
+    TempSceneFiles files;
+    const auto path = files.Add("_placement.t8scene");
+    scene::EditorSceneFile document;
+    document.objects.emplace_back();
+    document.objects[0].heightmap = terrain;
+    Require(scene::SaveEditorSceneFile(document, path.string()), "placement save failed");
+    scene::EditorSceneFile loaded;
+    Require(scene::LoadEditorSceneFile(path.string(), loaded) && loaded.objects[0].heightmap->placements.size() == 2 &&
+      loaded.objects[0].heightmap->placements[0].id == building.id, "placement identity did not survive reload");
+  second.cell_x = 3;
+  Require(!CheckTerrainPlacement(terrain, second).allowed, "out-of-bounds footprint accepted");
+  Require(RemoveTerrainPlacement(terrain, building.id), "placement deletion failed");
+  terrain.elevations[2 * 9 + 2] = 0.5f;
+  Require(!CheckTerrainPlacement(terrain, building).allowed, "interior hill accepted under a building");
+  building.kind = "unit";
+  building.width = building.depth = 1;
+  Require(CheckTerrainPlacement(terrain, building).allowed, "unit marker incorrectly requires flat building ground");
+  terrain.placement_grid.cell_size = 0;
+  Require(!TerrainGridDimensions(terrain, columns, rows), "zero cell size accepted");
+}
+
+void TestPlacementVisualFitting() {
+  scene::SceneHeightmapDesc terrain;
+  terrain.samples_x = terrain.samples_z = 5;
+  terrain.size_x = terrain.size_z = 8;
+  terrain.height_offset = 7;
+  terrain.placement_grid.enabled = true;
+  Require(InitializeTerrainEditing(terrain), "cannot prepare model-fit terrain");
+  scene::SceneTerrainPlacementDesc placement;
+  placement.id = "model-fit";
+  placement.width = 2;
+  placement.depth = 1;
+  placement.height = 3;
+  placement.visual = scene::ScenePlacementVisualDesc{};
+  placement.visual->mesh = "Models/building.glb";
+  placement.visual->hidden_geometry = {1};
+  placement.visual->animation = "Idle";
+  placement.visual->animate = false;
+  placement.visual->loop = false;
+  placement.visual->animation_speed = 0.75f;
+  const AABB bounds(XVECTOR3(-10.0f, -2.0f, 4.0f), XVECTOR3(10.0f, 8.0f, 14.0f));
+  for (float yaw : {0.0f, 90.0f, 37.0f}) {
+    placement.visual->yaw_degrees = yaw;
+    XMATRIX44 transform;
+    Require(FitPlacementVisual(terrain, placement, bounds, transform), "model fitting failed");
+    const auto fitted = bounds.Transformed(transform);
+    Require(fitted.vMin.x >= -0.0001f && fitted.vMax.x <= 4.0001f &&
+        fitted.vMin.z >= -0.0001f && fitted.vMax.z <= 2.0001f &&
+        std::abs(fitted.vMin.y - 7.0f) < 0.0001f && fitted.vMax.y <= 10.0001f,
+        "model fit escaped its footprint or was not bottom-aligned");
+  }
+  XMATRIX44 unused;
+  Require(!FitPlacementVisual(terrain, placement, AABB{}, unused), "empty model bounds accepted");
+  TempSceneFiles files;
+  scene::EditorSceneFile document;
+  document.objects.emplace_back();
+  document.objects[0].heightmap = terrain;
+  document.objects[0].heightmap->placements.push_back(placement);
+  const auto path = files.Add("_placement_visual.t8scene");
+  Require(scene::SaveEditorSceneFile(document, path.string()), "visual descriptor save failed");
+  scene::EditorSceneFile loaded;
+  Require(scene::LoadEditorSceneFile(path.string(), loaded) &&
+      loaded.objects[0].heightmap->placements[0].visual->mesh == placement.visual->mesh,
+      "visual asset reference did not round trip");
+    const auto& visual = *loaded.objects[0].heightmap->placements[0].visual;
+    Require(visual.hidden_geometry == placement.visual->hidden_geometry && visual.animation == "Idle" &&
+      !visual.animate && !visual.loop && visual.animation_speed == 0.75f && visual.yaw_degrees == 37.0f,
+      "placement visual parts or playback settings did not round trip");
+    placement.visual->animation_speed = -1;
+    Require(!CheckTerrainPlacement(terrain, placement).allowed, "negative placement animation speed accepted");
+}
+
 constexpr TestCase kTests[] = {
+  {"T-PLACEMENT-VISUAL-01", TestPlacementVisualFitting},
+  {"T-PLACEMENT-01", TestTerrainPlacementGrid},
+  {"T-TERRAIN-16BIT-01", TestTerrain16BitImage},
+  {"T-REGION-01", TestSceneRegions},
+  {"T-TERRAIN-EDIT-01", TestTerrainEditing},
+  {"T-HEIGHTMAP-NAV-01", TestHeightmapNavigationExclusion},
+    {"T-SCENE-ISOLATION-01", TestSceneLoadIsolation},
+  {"T-HEIGHTMAP-01", TestHeightmapTerrain},
+  {"T-SCENE-CONVERSIONS-01", TestSceneConversions},
     {"T-SCHEMA-01", TestSchemaRoundTrip},
     {"T-SCHEMA-02", TestMigrationIdsPersist},
     {"T-SCHEMA-02B", TestEnsureIdsForV2Authoring},

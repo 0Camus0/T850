@@ -70,6 +70,12 @@ Animation import stores data in the legacy `xF` structures used by the renderer.
 
 The renderer currently supports a maximum of `kMaxBones = 256` bones in `AnimationController`.
 
+Placement visuals use separate skinned renderers/controllers for each footprint.
+They update before render passes in both hosts, with fixed initial-pose fitting and
+explicit clip/part selection. See [placement visuals](../terrain/placement-grid.md#model-visuals).
+Mixed static/skinned GLBs enable the skinning shader only on geometries containing
+both joint and weight streams, not on every geometry in the asset.
+
 ## glTF import flow
 
 `BuildSkinsAndAnimations()` is called after glTF geometry has been converted into `XDataBase`.

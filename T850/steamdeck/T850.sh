@@ -7,15 +7,17 @@ CONFIG_PATH="${T850_ROOT}/steamdeck/config_steamdeck.json"
 EXECUTABLE="${T850_ROOT}/bin/SteamDeck/Release/DayScene"
 
 MODE="game"
+EDITOR=0
 EXTRA_ARGS=()
 
 usage() {
   cat <<'USAGE'
-Usage: T850.sh [options] [-- extra DayScene args]
+Usage: T850.sh [options] [-- extra application args]
 
 Options:
   --game-mode      Fullscreen 1280x800 defaults for Steam Game Mode.
   --desktop        Windowed 1280x800 defaults for Desktop Mode.
+  --editor         Launch the separate T8ditor executable in Desktop Mode.
   --scene N        Override starting scene index.
   --scene-file P   Launch Sandbox with a .t8scene file.
   --model P        Launch Sandbox with a model file.
@@ -34,6 +36,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --desktop)
       MODE="desktop"
+      shift
+      ;;
+    --editor)
+      EDITOR=1
       shift
       ;;
     --scene)
@@ -76,9 +82,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${EDITOR}" == "1" ]]; then
+  EXECUTABLE="${T850_ROOT}/bin/SteamDeck/Release/T8ditor"
+  MODE="desktop"
+fi
+
 if [[ ! -x "${EXECUTABLE}" ]]; then
   echo "[T850] Missing executable: ${EXECUTABLE}" >&2
-  echo "[T850] Build it with LaunchSteamDeckSolution.bat --build or cmake --build build/steamdeck --target DayScene." >&2
+  echo "[T850] Build it with steamdeck/BuildSteamRuntime.sh --with-editor." >&2
   exit 1
 fi
 

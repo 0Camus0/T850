@@ -308,6 +308,7 @@ namespace {
 
   // Pending mesh import — deferred to show loading progress dialog
   std::string g_pendingImportMeshPath;
+  std::optional<t850::scene::SceneObjectDesc> g_pendingHeightmap;
   std::string g_loadedScenePath;
   auto& g_loadedSceneFile = g_world.loadedSceneFile;
   auto& g_hasLoadedSceneFile = g_world.hasLoadedSceneFile;
@@ -3544,10 +3545,10 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
     CreateEditorNavMesh();
   }
   ImGui::SameLine();
-  if (ImGui::Button("Reset Quake3Mock Defaults")) {
+  if (ImGui::Button("Reset Defaults")) {
     settings = DefaultEditorNavMeshBuildSettings();
     markNavMeshDirty();
-    m_editorNavMeshStatus = "NavMesh settings reset to Quake3Mock defaults. Click Re-generate.";
+    m_editorNavMeshStatus = "NavMesh settings reset to defaults. Click Re-generate.";
   }
   ImGui::SameLine();
   if (!m_editorNavMeshDirty) {
@@ -4053,6 +4054,7 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   }
 
   ImGui::SeparatorText("Recast Build Settings");
+  if (m_tutorialStep == "navigation-settings") ImGui::SetScrollHereY(0.0f);
   bool buildSettingsChanged = false;
   buildSettingsChanged |= ImGui::DragFloat("Cell Size", &settings.cellSize, 0.01f, 0.01f, 10.0f, "%.3f");
   buildSettingsChanged |= ImGui::DragFloat("Cell Height", &settings.cellHeight, 0.01f, 0.01f, 10.0f, "%.3f");
@@ -4075,6 +4077,7 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   }
 
   ImGui::SeparatorText("Traversal Link Generation");
+  if (m_tutorialStep == "navigation-links") ImGui::SetScrollHereY(0.0f);
   ImGui::TextWrapped("Auto links are generated from exposed NavMesh polygon edges. Disable Auto Drop Links and Auto Jump Links for a pure connected-surface NavMesh. If static triangle physics bodies exist, drop/jump links are validated with a swept Jolt capsule against those triangle meshes.");
   buildSettingsChanged |= ImGui::Checkbox("Auto Drop Links", &settings.enableAutoDropLinks);
   buildSettingsChanged |= ImGui::DragFloat("Drop Min Height", &settings.dropLinkMinHeight, 0.05f, 0.0f, 128.0f, "%.2f");
@@ -4100,6 +4103,16 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
 }
 
 void EditorApp::SyncSceneObjectTransforms() {
+  for (auto& object : g_objects) {
+    if (!object.heightmap || object.heightmap->placements.empty()) continue;
+    const auto rotation = object.wireframe.EulerRadians();
+    const auto scale = object.wireframe.Scale();
+    if (!t850::TerrainPlacementTransformSupported({rotation.x, rotation.y, rotation.z}, {scale.x, scale.y, scale.z})) {
+      object.wireframe.EulerRadians() = XVECTOR3(0.0f, 0.0f, 0.0f);
+      object.wireframe.Scale() = XVECTOR3(1.0f, 1.0f, 1.0f);
+      m_terrainStatus = "Placement terrain rotation/scale is locked; change terrain dimensions instead";
+    }
+  }
   bool attachmentSnapshotsValid =
       g_lastSceneObjectTransforms.size() == g_objects.size() &&
       g_lastSceneObjectTransformNames.size() == g_objects.size();
@@ -4379,6 +4392,7 @@ void EditorApp::UpdateSkinnedAnimationAndRagdolls() {
     }
     SceneObject& obj = g_objects[objectIndex];
     if (obj.primId < 0 || !obj.visible) continue;
+    if (auto* terrain = dynamic_cast<t850::HeightmapMesh*>(obj.litInst.pBase)) terrain->UpdatePlacementAnimations(m_dtSecs);
     t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
     if (!skinned || !skinned->HasSkinData()) continue;
 
@@ -4428,6 +4442,7 @@ void EditorApp::UpdateSkinnedAnimationAndRagdolls() {
 void EditorApp::UploadSkinnedBoneTextures() {
   for (SceneObject& obj : g_objects) {
     if (obj.primId < 0 || !obj.visible) continue;
+    if (auto* terrain = dynamic_cast<t850::HeightmapMesh*>(obj.litInst.pBase)) terrain->UploadPlacementBones();
     t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
     if (skinned && skinned->HasSkinData())
       skinned->UploadBoneTexture();
@@ -4617,7 +4632,8 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath, bool
     }
     SceneObjectDesc od;
     od.name     = obj.name;
-    od.mesh     = obj.meshPath.empty() ? obj.name : obj.meshPath;
+    od.mesh     = obj.heightmap ? std::string{} : (obj.meshPath.empty() ? obj.name : obj.meshPath);
+    od.heightmap = obj.heightmap;
     od.ragdoll  = obj.ragdollResourcePath;
     od.position = { obj.wireframe.Position().x, obj.wireframe.Position().y, obj.wireframe.Position().z };
     od.rotation = { obj.wireframe.EulerRadians().x * kRadToDeg,
@@ -4651,6 +4667,7 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath, bool
   }
 
   sf.game_entities = g_gameEntities;
+  sf.regions = GetEditorWorld().regions;
   sf.game_groups = g_gameGroups;
   sf.game_logic_settings = g_gameLogicSettings;
   t850::scene::EnsureGameEntityIds(sf);
@@ -4733,6 +4750,7 @@ SceneFile EditorApp::RefreshVirtualEditorScene(const std::string& scenePath) {
   SceneFile sf = BuildEditorSceneSnapshot(scenePath);
   g_loadedSceneFile = sf;
   g_hasLoadedSceneFile = true;
+  GetEditorWorld().regions = sf.regions;
   g_sceneProfiles = sf.profiles;
   LoadEditorSceneProfiles();
   g_sceneCollisionResourcePath = sf.collision;
@@ -4979,9 +4997,9 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   }
 
   for (const auto& od : sf.objects) {
-    const std::string meshPath = od.mesh.empty() ? od.name : od.mesh;
+    const std::string meshPath = od.heightmap ? std::string{} : (od.mesh.empty() ? od.name : od.mesh);
     const std::size_t objectCountBeforeImport = g_objects.size();
-    ImportMesh(meshPath);
+    ImportMesh(meshPath, &od);
     if (g_objects.size() > objectCountBeforeImport) {
       SceneObject& obj = g_objects.back();
       obj.name = od.name;
@@ -5546,7 +5564,8 @@ void EditorApp::DrawSelectedAnimationInspector(SceneObject& obj) {
 
 void EditorApp::DrawEditorRenderingPanel() {
   if (m_editorSceneSetup.descriptor.name.empty()) {
-    m_editorSceneSetup.Load("Scenes/Quake3Mock.json");
+    m_editorSceneSetup.Load(g_hasLoadedSceneFile && !g_loadedSceneFile.control_descriptor.empty()
+        ? g_loadedSceneFile.control_descriptor : "Scenes/Quake3Mock.json");
   }
 
   auto findSlider = [&](const char* name) -> const t850::SliderDesc* {
@@ -6459,28 +6478,37 @@ void EditorApp::CreateAssets() {
   T8_LOG_INFO("[T8ditor] CreateAssets done (%dx%d)", w, h);
 }
 
-void EditorApp::ImportMesh(const std::string& path) {
-  const std::string meshPath = NormalizeEditorResourcePath(path);
-  if (!t850::ResourceLocator::Instance().Exists(meshPath)) {
+void EditorApp::ImportMesh(const std::string& path, const t850::scene::SceneObjectDesc* descriptor) {
+  const bool generated = descriptor && descriptor->heightmap.has_value();
+  const std::string meshPath = generated ? std::string{} : NormalizeEditorResourcePath(path);
+  if (!generated && !t850::ResourceLocator::Instance().Exists(meshPath)) {
     T8_LOG_ERROR("[T8ditor] Mesh file not found: %s", meshPath.c_str());
     return;
   }
 
   // Create a new scene object (append, don't replace)
-  int id = m_primMgr.CreateMesh(meshPath.c_str());
+  t850::scene::SceneObjectDesc source = descriptor ? *descriptor : t850::scene::SceneObjectDesc{};
+  if (!generated) source.mesh = meshPath;
+  std::string error;
+  int id = m_primMgr.CreateSceneObject(source, &error);
   if (id < 0) {
-    T8_LOG_ERROR("[T8ditor] Failed to load mesh: %s", meshPath.c_str());
+    T8_LOG_ERROR("[T8ditor] Failed to load object '%s': %s", source.name.c_str(), error.c_str());
     return;
   }
 
   g_objects.emplace_back();
   SceneObject& obj = g_objects.back();
   obj.primId = id;
-  obj.name   = meshPath;
+  obj.name   = generated ? source.name : meshPath;
   obj.meshPath = meshPath;
+  obj.heightmap = source.heightmap;
+  if (generated) m_panels.showTerrainEditor = true;
+  obj.physics = source.physics;
+  obj.navigation = source.navigation;
   obj.litInst.CreateInstance(m_primMgr.GetPrimitive(id), &m_vp);
   obj.litInst.Update();
-  m_renderResources.RegisterMesh(meshPath, obj.litInst.pBase, id);
+  const auto* renderMesh = dynamic_cast<t850::RenderMesh*>(obj.litInst.pBase);
+  m_renderResources.RegisterMesh(generated && renderMesh ? renderMesh->m_sourcePath : meshPath, obj.litInst.pBase, id);
   if (obj.litInst.GetSkinnedMesh()) {
     obj.ragdollModelKey = t850::BuildRagdollEditModelKey(meshPath);
     obj.ragdollResourcePath = t850::BuildRagdollEditResourcePath(meshPath);
@@ -6491,7 +6519,15 @@ void EditorApp::ImportMesh(const std::string& path) {
 
   m_primMgr.SetSceneProps(&m_sceneProps);
 
-  obj.wireframe.Load(meshPath);
+  if (generated && renderMesh && renderMesh->xFile) {
+    t850::navigation::NavMeshGeometry geometry;
+    if (t850::navigation::BuildGeometryFromXDataBase(*renderMesh->xFile, geometry, &error)) {
+      std::vector<unsigned int> indices(geometry.indices.begin(), geometry.indices.end());
+      obj.wireframe.LoadFromTriangles(obj.name, geometry.vertices, indices);
+    }
+  } else {
+    obj.wireframe.Load(meshPath);
+  }
 
   // Select the newly imported mesh
   g_selectedIdx = (int)g_objects.size() - 1;
@@ -6644,6 +6680,7 @@ void EditorApp::CloneSelected() {
     const int sourceObjectIndex = g_selectedIdx;
     SceneObject& src = g_objects[g_selectedIdx];
     const std::string meshPath = src.meshPath.empty() ? src.name : src.meshPath;
+    const auto heightmap = src.heightmap;
     const std::string sourceName = src.name;
     const std::string name = makeUniqueObjectName(sourceName);
     const std::string ragdollResourcePath = src.ragdollResourcePath;
@@ -6676,15 +6713,18 @@ void EditorApp::CloneSelected() {
     const std::string sourceStatus = src.ragdollStatus;
     const t850::PhysicsRagdollAuthoringDesc sourceAuthoring = src.ragdollAuthoring;
 
-    if (meshPath.empty() || !t850::ResourceLocator::Instance().Exists(meshPath)) {
+    if (!heightmap && (meshPath.empty() || !t850::ResourceLocator::Instance().Exists(meshPath))) {
       T8_LOG_ERROR("[T8ditor] Cannot clone mesh '%s': source mesh path is missing or unreadable",
                    sourceName.c_str());
       return;
     }
 
-    int id = src.primId;
+    int id = heightmap ? -1 : src.primId;
     if (id < 0 || !m_primMgr.GetPrimitive(id)) {
-      id = m_primMgr.CreateMesh(meshPath.c_str());
+      t850::scene::SceneObjectDesc source;
+      source.mesh = heightmap ? std::string{} : meshPath;
+      source.heightmap = heightmap;
+      id = m_primMgr.CreateSceneObject(source);
       if (id < 0) {
         T8_LOG_ERROR("[T8ditor] Failed to clone mesh: %s", meshPath.c_str());
         return;
@@ -6696,7 +6736,8 @@ void EditorApp::CloneSelected() {
     SceneObject& clone = g_objects.back();
     clone.primId = id;
     clone.name = name;
-    clone.meshPath = meshPath;
+    clone.meshPath = heightmap ? std::string{} : meshPath;
+    clone.heightmap = heightmap;
     clone.visible = visible;
     clone.mobileVisible = mobileVisible;
     clone.frozen = frozen;
@@ -6725,7 +6766,7 @@ void EditorApp::CloneSelected() {
       clone.ragdollModelKey.clear();
       clone.ragdollResourcePath.clear();
     }
-    if (!clone.wireframe.CloneFrom(src.wireframe)) {
+    if (!clone.wireframe.CloneFrom(g_objects[sourceObjectIndex].wireframe)) {
       clone.wireframe.Load(meshPath);
     }
     clone.wireframe.Position() = position;
@@ -6896,6 +6937,7 @@ void EditorApp::DestroyAssets() {
   g_groups.clear();
   g_activeGroupIdx = -1;
   g_loadedSceneFile = SceneFile{};
+  GetEditorWorld().regions.clear();
   g_hasLoadedSceneFile = false;
   g_loadedScenePath.clear();
   g_unloadedSceneObjects.clear();
@@ -7202,8 +7244,16 @@ void EditorApp::LoadPendingScene() {
 
       g_loadedSceneFile = sf;
       g_hasLoadedSceneFile = true;
+      GetEditorWorld().regions = sf.regions;
       g_loadedScenePath = loadPath;
       g_sceneProfiles = sf.profiles;
+      const std::string controlPath = sf.control_descriptor.empty()
+          ? "Scenes/Quake3Mock.json" : sf.control_descriptor;
+      if (m_editorSceneSetup.Load(controlPath)) {
+        m_editorSceneSetup.ApplyQualityAndSettings(m_sceneProps);
+      } else {
+        T8_LOG_ERROR("[T8ditor] Failed to load control descriptor '%s'", controlPath.c_str());
+      }
       LoadEditorSceneProfiles();
 
       // Flush all GPU work from previous frames
@@ -7306,7 +7356,7 @@ void EditorApp::LoadPendingScene() {
       // Load mesh objects
       for (std::size_t objectIndex = 0; objectIndex < sf.objects.size(); ++objectIndex) {
         const auto& od = sf.objects[objectIndex];
-        const std::string meshPath = od.mesh.empty() ? od.name : od.mesh;
+        const std::string meshPath = od.heightmap ? std::string{} : (od.mesh.empty() ? od.name : od.mesh);
         t850::LoadingProgress::ScopedStep objectStep(
             "Loading scene object",
             od.name.empty() ? meshPath : od.name,
@@ -7314,7 +7364,7 @@ void EditorApp::LoadPendingScene() {
         t850::LoadingProgress::SetDetail(
             "Model " + std::to_string(objectIndex + 1) + "/" + std::to_string(sf.objects.size()) + ": " + meshPath);
         const std::size_t objectCountBeforeImport = g_objects.size();
-        ImportMesh(meshPath);
+        ImportMesh(meshPath, &od);
         if (g_objects.size() > objectCountBeforeImport) {
           auto& obj = g_objects.back();
           obj.name = od.name;
@@ -7456,6 +7506,13 @@ void EditorApp::LoadPendingScene() {
 }
 
 void EditorApp::ImportPendingMesh() {
+  if (g_pendingHeightmap) {
+    std::string beforeKey;
+    const EditorUndoState before = CaptureEditorUndoState(&beforeKey);
+    ImportMesh({}, &*g_pendingHeightmap);
+    g_pendingHeightmap.reset();
+    PushEditorUndoState("Import Heightmap", before, beforeKey, CaptureEditorUndoState(nullptr));
+  }
   // Execute deferred mesh import with loading progress dialog
   if (!g_pendingImportMeshPath.empty()) {
     const std::string meshPath = g_pendingImportMeshPath;
@@ -7490,6 +7547,746 @@ void EditorApp::ImportPendingMesh() {
   }
 }
 
+bool EditorApp::CommitTerrainEdit(int objectIndex, const t850::scene::SceneHeightmapDesc& terrain) {
+  if (objectIndex < 0 || objectIndex >= static_cast<int>(g_objects.size())) return false;
+  SceneObject& object = g_objects[objectIndex];
+  auto* render = dynamic_cast<t850::HeightmapMesh*>(object.litInst.pBase);
+  if (!render || object.frozen) return false;
+  const auto rotation = object.wireframe.EulerRadians();
+  const auto scale = object.wireframe.Scale();
+  if (!terrain.placements.empty() && !t850::TerrainPlacementTransformSupported(
+      {rotation.x, rotation.y, rotation.z}, {scale.x, scale.y, scale.z})) {
+    m_terrainStatus = "Placement terrain requires zero rotation and unit scale";
+    return false;
+  }
+  t850::MutableMeshSnapshot snapshot;
+  if (!t850::LoadHeightmapTerrain(terrain, snapshot, &m_terrainStatus)) return false;
+  EditorMesh wireframe;
+  std::vector<XVECTOR3> vertices;
+  vertices.reserve(snapshot.vertices.size());
+  for (const auto& vertex : snapshot.vertices) vertices.push_back(vertex.position);
+  std::vector<unsigned int> indices(snapshot.indices.begin(), snapshot.indices.end());
+  if (!wireframe.LoadFromTriangles(object.name, vertices, indices)) {
+    m_terrainStatus = "Cannot prepare terrain picking geometry";
+    return false;
+  }
+  wireframe.Position() = object.wireframe.Position();
+  wireframe.EulerRadians() = object.wireframe.EulerRadians();
+  wireframe.Scale() = object.wireframe.Scale();
+  std::vector<size_t> collisionEntities;
+  std::vector<t850::TerrainCollisionBinding> collision;
+  for (size_t index = 0; index < g_physicsEntities.size(); ++index) {
+    const auto& entity = g_physicsEntities[index];
+    if (entity.type != PhysicsSceneEntityType::StaticTriangleMesh || entity.sourceName != object.name) continue;
+    collisionEntities.push_back(index);
+    collision.push_back({entity.body, entity.cookSettings, object.wireframe.BuildWorld(),
+        object.litInst.GetEntityId(), entity.friction, entity.restitution, entity.sensor});
+  }
+  if (!t850::CommitTerrainRevision(*render, terrain, m_physics, collision,
+      m_editorNavMeshAuthored ? &m_editorNavMesh : nullptr, nullptr, &m_terrainStatus)) return false;
+  for (size_t index = 0; index < collision.size(); ++index) {
+    g_physicsEntities[collisionEntities[index]].body = collision[index].body;
+  }
+  object.wireframe = std::move(wireframe);
+  object.heightmap = terrain;
+  render->SetEditing(m_terrainBrushEnabled);
+  if (m_editorNavMeshAuthored) {
+    m_editorNavMesh.Clear();
+    m_editorNavMeshDebugRenderer.Invalidate();
+    MarkEditorNavMeshDirty("Terrain changed; navigation rebuild pending");
+  }
+  InvalidateSceneObjectTransformSnapshots();
+  InvalidateEditorFrozenFrame();
+  m_terrainStatus = "Terrain updated";
+  return true;
+}
+
+void EditorApp::FinishTerrainStroke() {
+  if (!m_terrainStrokeBefore) return;
+  if (m_editorNavMeshAuthored && m_editorNavMeshDirty && !CreateEditorNavMesh())
+    m_terrainStatus = "Terrain updated; navigation rebuild failed. Play remains blocked.";
+  PushEditorUndoState("Terrain Stroke", *m_terrainStrokeBefore, m_terrainStrokeKey, CaptureEditorUndoState(nullptr));
+  m_terrainStrokeBefore.reset();
+  m_terrainBrushElapsed = 0.0f;
+}
+
+bool EditorApp::QueueTerrainPlacement(SceneObject& object) {
+  if (!object.heightmap || object.frozen || !object.visible || m_pendingTerrainSettings) return false;
+  const auto rotation = object.wireframe.EulerRadians();
+  const auto scale = object.wireframe.Scale();
+  if (!t850::TerrainPlacementTransformSupported({rotation.x, rotation.y, rotation.z}, {scale.x, scale.y, scale.z})) {
+    m_placementStatus = "Use zero terrain rotation and unit scale; set size in Geometry and LOD";
+    return false;
+  }
+  auto terrain = *object.heightmap;
+  if (!t850::InitializeTerrainEditing(terrain, &m_placementStatus)) return false;
+  auto placement = m_placementBrush;
+  placement.id = t850::game::MakeStableId("placement_");
+  placement.name = (placement.kind == "unit" ? "Unit " : "Building ") + std::to_string(terrain.placements.size() + 1);
+  if (!t850::AddTerrainPlacement(terrain, placement, &m_placementStatus)) return false;
+  m_terrainEditObject = object.name;
+  m_pendingTerrainSettings = std::move(terrain);
+  m_placementStatus = "Placement queued";
+  return true;
+}
+
+void EditorApp::UpdateTerrainPlacementInput() {
+  if (!m_tutorialStep.empty()) return;
+  if (!m_placementMode || g_selectionType != 0 || ImGui::GetIO().WantCaptureMouse ||
+      IManager.PressedKey(T800K_LALT) || IManager.PressedKey(T800K_RALT)) return;
+  SceneObject* object = SelectedObject();
+  if (!object || !object->heightmap || object->frozen || !object->visible) return;
+  const Camera* camera = m_sceneProps.GetPrimaryCamera();
+  if (!camera) camera = &m_camera.GetCamera();
+  const auto ray = BuildEditorCameraRay(*camera, static_cast<float>(IManager.mouseX), static_cast<float>(IManager.mouseY), m_lastW, m_lastH);
+  float distance = 0.0f;
+  if (!object->wireframe.RaycastSurface(ray, distance)) return;
+  XMATRIX44 inverse;
+  if (!BuildInverseSceneObjectWorldFromTransform({object->wireframe.Position(), object->wireframe.EulerRadians(), object->wireframe.Scale()}, inverse)) return;
+  const auto point = t850::TransformPoint(ray.origin + ray.direction * distance, inverse);
+  const float cell = object->heightmap->placement_grid.cell_size;
+  if (!std::isfinite(cell) || cell <= 0) return;
+  m_placementBrush.cell_x = static_cast<int>(std::floor(point.x / cell));
+  m_placementBrush.cell_z = static_cast<int>(std::floor(point.z / cell));
+  if (IManager.PressedOnceMouseButton(0)) QueueTerrainPlacement(*object);
+}
+
+void EditorApp::DrawTerrainPlacementPanel(SceneObject& object) {
+  if (!m_tutorialStep.empty()) ImGui::SetNextItemOpen(m_tutorialStep == "grid" || m_tutorialStep == "footprint" ||
+      m_tutorialStep.starts_with("placement-") || m_tutorialStep.starts_with("model-") || m_tutorialStep == "unit-marker" || m_tutorialStep == "reloaded", ImGuiCond_Always);
+  if (!ImGui::TreeNodeEx("Placement Grid", ImGuiTreeNodeFlags_DefaultOpen)) return;
+  auto terrain = *object.heightmap;
+  bool changed = false;
+  ImGui::BeginDisabled(!terrain.placements.empty());
+  changed |= ImGui::Checkbox("Enable Square Grid", &terrain.placement_grid.enabled);
+  changed |= ImGui::InputFloat("Cell Size", &terrain.placement_grid.cell_size, 0.5f, 2.0f, "%.2f");
+  ImGui::EndDisabled();
+  ImGui::Checkbox("Show Placement Grid", &m_showPlacementGrid);
+  changed |= ImGui::Checkbox("Flat Buildings Only", &terrain.placement_grid.flat_buildings_only);
+  if (terrain.placement_grid.flat_buildings_only) {
+    changed |= ImGui::DragFloat("Height Tolerance", &terrain.placement_grid.max_height_difference, 0.005f, 0.0f, 2.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+    changed |= ImGui::SliderFloat("Slope Limit", &terrain.placement_grid.max_slope_degrees, 0.0f, 15.0f, "%.2f deg");
+  }
+  uint32_t columns = 0, rows = 0;
+  const bool gridValid = t850::TerrainGridDimensions(terrain, columns, rows);
+  if (gridValid) ImGui::Text("%u x %u cells | %.2f world units per cell", columns, rows, terrain.placement_grid.cell_size);
+  if (changed && !m_pendingTerrainSettings) {
+    m_terrainEditObject = object.name;
+    m_pendingTerrainSettings = std::move(terrain);
+  }
+  ImGui::BeginDisabled(!gridValid || m_pendingTerrainSettings.has_value() || m_terrainStrokeBefore != nullptr);
+  if (ImGui::Checkbox("Place Blockouts", &m_placementMode) && m_placementMode) {
+    m_terrainBrushEnabled = false;
+    m_gizmo.SetMode(GizmoMode::Select);
+  }
+  int kind = m_placementBrush.kind == "unit" ? 1 : 0;
+  if (ImGui::Combo("Blockout Type", &kind, "Building\0Unit Marker\0")) {
+    m_placementBrush.kind = kind ? "unit" : "building";
+    if (kind) { m_placementBrush.width = m_placementBrush.depth = 1; m_placementBrush.height = 1; }
+  }
+  int size[2] = {static_cast<int>(m_placementBrush.width), static_cast<int>(m_placementBrush.depth)};
+  if (ImGui::InputInt2("Footprint W / D", size)) {
+    m_placementBrush.width = static_cast<uint32_t>(std::clamp(size[0], 1, 64));
+    m_placementBrush.depth = static_cast<uint32_t>(std::clamp(size[1], 1, 64));
+  }
+  ImGui::Text("Occupies %u cells", m_placementBrush.width * m_placementBrush.depth);
+  if (ImGui::Button("Rotate Footprint")) std::swap(m_placementBrush.width, m_placementBrush.depth);
+  ImGui::DragFloat("Blockout Height", &m_placementBrush.height, 0.1f, 0.1f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+  ImGui::ColorEdit3("Blockout Color", &m_placementBrush.color.x);
+  int coordinates[2] = {m_placementBrush.cell_x, m_placementBrush.cell_z};
+  if (ImGui::InputInt2("Cell X / Z", coordinates)) {
+    m_placementBrush.cell_x = coordinates[0];
+    m_placementBrush.cell_z = coordinates[1];
+  }
+  const auto* mesh = dynamic_cast<const t850::HeightmapMesh*>(object.litInst.pBase);
+  const auto result = mesh ? t850::CheckTerrainPlacement(mesh->AuthoredTerrain(), m_placementBrush) : t850::TerrainPlacementResult{};
+  const auto rotation = object.wireframe.EulerRadians();
+  const auto scale = object.wireframe.Scale();
+  const bool transformSupported = t850::TerrainPlacementTransformSupported({rotation.x, rotation.y, rotation.z}, {scale.x, scale.y, scale.z});
+  ImGui::TextWrapped("%s", result.allowed ? "Valid footprint" : result.reason.c_str());
+  if (!transformSupported) ImGui::TextWrapped("Terrain requires zero rotation and unit scale");
+  ImGui::BeginDisabled(!result.allowed || !transformSupported);
+  if (ImGui::Button("Place at Cell")) QueueTerrainPlacement(object);
+  ImGui::EndDisabled();
+  ImGui::EndDisabled();
+  if (!m_placementStatus.empty()) ImGui::TextWrapped("%s", m_placementStatus.c_str());
+  if (ImGui::TreeNodeEx("Placed Blockouts", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (m_tutorialStep == "placement-list" || m_tutorialStep == "placement-removed" || m_tutorialStep == "reloaded" ||
+        m_tutorialStep.starts_with("model-")) ImGui::SetScrollHereY(0.0f);
+    ImGui::BeginDisabled(m_pendingTerrainSettings.has_value());
+    for (const auto& placement : object.heightmap->placements) {
+      ImGui::PushID(placement.id.c_str());
+      ImGui::TextWrapped("%s | %u x %u (%u cells) | [%d,%d]", placement.name.c_str(), placement.width, placement.depth,
+          placement.width * placement.depth, placement.cell_x, placement.cell_z);
+      if (ImGui::SmallButton("Remove")) {
+        auto edited = *object.heightmap;
+        t850::RemoveTerrainPlacement(edited, placement.id);
+        m_terrainEditObject = object.name;
+        m_pendingTerrainSettings = std::move(edited);
+      }
+      ImGui::SameLine();
+      auto replacement = placement;
+      bool visualChanged = false;
+      if (ImGui::SmallButton("Assign Model")) {
+        const auto path = OpenFileDialog(L"GLB Models\0*.glb\0glTF Models\0*.gltf\0", L"Assign Placement Model", nullptr);
+        if (!path.empty()) {
+          replacement.visual = t850::scene::ScenePlacementVisualDesc{};
+          replacement.visual->mesh = path;
+          std::error_code pathError;
+          const auto relative = std::filesystem::relative(path,
+              t850::ResourceLocator::Instance().ResolveFilePath("Models"), pathError);
+          if (!pathError && !relative.empty() && *relative.begin() != "..")
+            replacement.visual->mesh = "Models/" + relative.generic_string();
+          visualChanged = true;
+        }
+      }
+      if (replacement.visual && !replacement.visual->mesh.empty()) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear Model")) { replacement.visual.reset(); visualChanged = true; }
+      }
+      if (replacement.visual && !replacement.visual->mesh.empty()) {
+        auto& visual = *replacement.visual;
+        ImGui::TextWrapped("Model: %s", std::filesystem::path(visual.mesh).filename().string().c_str());
+        ImGui::TextUnformatted("Fit: Uniform / Bottom Aligned");
+        if (m_tutorialStep == "model-parts") ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        if (ImGui::TreeNode("Model Parts")) {
+          const auto* model = mesh ? mesh->PlacementMesh(placement.id) : nullptr;
+          if (model) for (uint32_t index = 0; index < model->Info.size(); ++index) {
+            ImGui::PushID(static_cast<int>(index));
+            bool visible = std::find(visual.hidden_geometry.begin(), visual.hidden_geometry.end(), index) == visual.hidden_geometry.end();
+            if (ImGui::Checkbox("##part", &visible)) {
+              if (visible) std::erase(visual.hidden_geometry, index);
+              else visual.hidden_geometry.push_back(index);
+              visualChanged = true;
+            }
+            ImGui::SameLine();
+            ImGui::Text("Part %u (%u vertices)", index + 1, model->Info[index].NumVertex);
+            ImGui::PopID();
+          }
+          ImGui::TreePop();
+        }
+        visualChanged |= ImGui::DragFloat("Model Yaw", &visual.yaw_degrees, 1.0f, -180.0f, 180.0f, "%.1f deg", ImGuiSliderFlags_AlwaysClamp);
+        const auto clips = mesh ? mesh->PlacementAnimationNames(placement.id) : std::vector<std::string>{};
+        if (ImGui::BeginCombo("Animation", visual.animation.empty() ? "Bind Pose" : visual.animation.c_str())) {
+          if (ImGui::Selectable("Bind Pose", visual.animation.empty())) { visual.animation.clear(); visualChanged = true; }
+          for (const auto& clip : clips) {
+            if (ImGui::Selectable(clip.c_str(), visual.animation == clip)) { visual.animation = clip; visualChanged = true; }
+          }
+          ImGui::EndCombo();
+        }
+        ImGui::BeginDisabled(visual.animation.empty());
+        visualChanged |= ImGui::Checkbox("Animate", &visual.animate);
+        ImGui::SameLine();
+        visualChanged |= ImGui::Checkbox("Loop", &visual.loop);
+        visualChanged |= ImGui::SliderFloat("Playback Speed", &visual.animation_speed, 0.0f, 3.0f, "%.2f");
+        ImGui::EndDisabled();
+      }
+      if (visualChanged && !m_pendingTerrainSettings) {
+        auto edited = *object.heightmap;
+        for (auto& target : edited.placements) if (target.id == placement.id) target = replacement;
+        m_terrainEditObject = object.name;
+        m_pendingTerrainSettings = std::move(edited);
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndDisabled();
+    ImGui::TreePop();
+  }
+  ImGui::TreePop();
+}
+
+void EditorApp::UpdateTerrainEditing() {
+  if (!ImGui::GetCurrentContext()) return;
+  if (HasHostedSceneWindowOpen() || !g_pendingLoadPath.empty()) {
+    FinishTerrainStroke();
+    m_pendingTerrainSettings.reset();
+    m_terrainBrushEnabled = false;
+    m_placementMode = false;
+    return;
+  }
+  if (m_pendingTerrainSettings) {
+    std::string key;
+    const auto before = CaptureEditorUndoState(&key);
+    const int index = FindSceneObjectIndexByName(m_terrainEditObject);
+    if (CommitTerrainEdit(index, *m_pendingTerrainSettings)) {
+      if (m_editorNavMeshAuthored && m_editorNavMeshDirty) CreateEditorNavMesh();
+      PushEditorUndoState("Terrain Settings", before, key, CaptureEditorUndoState(nullptr));
+    }
+    m_pendingTerrainSettings.reset();
+  }
+  UpdateTerrainPlacementInput();
+  SceneObject* object = g_selectionType == 0 ? SelectedObject() : nullptr;
+  if (!m_terrainBrushEnabled || !object || !object->heightmap || object->frozen || !object->visible ||
+      (m_terrainStrokeBefore && object->name != m_terrainEditObject)) {
+    FinishTerrainStroke();
+    return;
+  }
+  if (!IManager.PressedMouseButton(0)) {
+    FinishTerrainStroke();
+    return;
+  }
+  if (ImGui::GetIO().WantCaptureMouse || IManager.PressedKey(T800K_LALT) || IManager.PressedKey(T800K_RALT)) return;
+  const Camera* camera = m_sceneProps.GetPrimaryCamera();
+  if (!camera) camera = &m_camera.GetCamera();
+  const auto ray = BuildEditorCameraRay(*camera, static_cast<float>(IManager.mouseX), static_cast<float>(IManager.mouseY), m_lastW, m_lastH);
+  float distance = 0;
+  if (!object->wireframe.RaycastSurface(ray, distance)) return;
+  XMATRIX44 inverse;
+  if (!BuildInverseSceneObjectWorldFromTransform({object->wireframe.Position(), object->wireframe.EulerRadians(), object->wireframe.Scale()}, inverse)) return;
+  const auto point = t850::TransformPoint(ray.origin + ray.direction * distance, inverse);
+  m_terrainBrushElapsed += (std::min)(m_dtSecs, 0.1f);
+  if (m_terrainStrokeBefore && m_terrainBrushElapsed < 0.1f) return;
+  if (!m_terrainStrokeBefore) {
+    m_terrainStrokeBefore = std::make_shared<EditorUndoState>(CaptureEditorUndoState(&m_terrainStrokeKey));
+    m_terrainEditObject = object->name;
+  }
+  auto edited = *object->heightmap;
+  auto brush = m_terrainBrush;
+  brush.x = point.x;
+  brush.z = point.z;
+  brush.amount = m_terrainBrushStrength * (std::max)(0.016f, m_terrainBrushElapsed);
+  if (IManager.PressedKey(T800K_LSHIFT) && brush.mode == t850::TerrainBrushMode::Raise) brush.mode = t850::TerrainBrushMode::Lower;
+  bool changed = false;
+  if (t850::ApplyTerrainBrush(edited, brush, &changed, &m_terrainStatus) && changed)
+    CommitTerrainEdit(g_selectedIdx, edited);
+  m_terrainBrushElapsed = 0;
+}
+
+void EditorApp::DrawTerrainOverlays() {
+  const Camera* camera = m_sceneProps.GetPrimaryCamera();
+  if (!camera) return;
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImDrawList* draw = ImGui::GetBackgroundDrawList(viewport);
+  auto project = [&](const XVECTOR3& point, ImVec2& screen) {
+    const auto& matrix = camera->VP;
+    const float clipX = point.x * matrix.m11 + point.y * matrix.m21 + point.z * matrix.m31 + matrix.m41;
+    const float clipY = point.x * matrix.m12 + point.y * matrix.m22 + point.z * matrix.m32 + matrix.m42;
+    const float clipW = point.x * matrix.m14 + point.y * matrix.m24 + point.z * matrix.m34 + matrix.m44;
+    if (clipW <= 0.0001f) return false;
+    screen = ImVec2(viewport->Pos.x + (clipX / clipW + 1) * m_lastW * 0.5f,
+        viewport->Pos.y + (1 - clipY / clipW) * m_lastH * 0.5f);
+    return true;
+  };
+  if (m_panels.showRegions) {
+    for (const auto& region : GetEditorWorld().regions) {
+      XMATRIX44 rotateX, rotateY, rotateZ, translation;
+      XMatRotationX(rotateX, Deg2Rad(region.rotation.x));
+      XMatRotationY(rotateY, Deg2Rad(region.rotation.y));
+      XMatRotationZ(rotateZ, Deg2Rad(region.rotation.z));
+      XMatTranslation(translation, region.position.x, region.position.y, region.position.z);
+      const auto world = rotateX * rotateY * rotateZ * translation;
+      for (unsigned corner = 0; corner < 8; ++corner) {
+        const XVECTOR3 point((corner & 1 ? 1 : -1) * region.half_extents.x,
+            (corner & 2 ? 1 : -1) * region.half_extents.y, (corner & 4 ? 1 : -1) * region.half_extents.z, 1.0f);
+        for (unsigned axis : {1u, 2u, 4u}) {
+          if (corner & axis) continue;
+          auto other = point;
+          if (axis == 1) other.x = -other.x;
+          if (axis == 2) other.y = -other.y;
+          if (axis == 4) other.z = -other.z;
+          ImVec2 start, end;
+          if (project(t850::TransformPoint(point, world), start) && project(t850::TransformPoint(other, world), end))
+            draw->AddLine(start, end, region.enabled ? IM_COL32(245, 190, 45, 255) : IM_COL32(125, 125, 125, 180), 2);
+        }
+      }
+    }
+  }
+  SceneObject* object = g_selectionType == 0 ? SelectedObject() : nullptr;
+  if (object && object->heightmap && m_showPlacementGrid && object->heightmap->placement_grid.enabled) {
+    const auto* placementMesh = dynamic_cast<const t850::HeightmapMesh*>(object->litInst.pBase);
+    if (placementMesh) {
+      const auto& terrain = placementMesh->AuthoredTerrain();
+      uint32_t columns = 0, rows = 0;
+      if (t850::TerrainGridDimensions(terrain, columns, rows)) {
+        const auto world = object->wireframe.BuildWorld();
+        auto line = [&](float startX, float startZ, float endX, float endZ, ImU32 color, float thickness) {
+          const float startY = t850::TerrainSurfaceHeight(terrain, startX, startZ);
+          const float endY = t850::TerrainSurfaceHeight(terrain, endX, endZ);
+          ImVec2 start, end;
+          if (project(t850::TransformPoint(XVECTOR3(startX, startY + 0.08f, startZ, 1.0f), world), start) &&
+              project(t850::TransformPoint(XVECTOR3(endX, endY + 0.08f, endZ, 1.0f), world), end)) draw->AddLine(start, end, color, thickness);
+        };
+        const float cell = terrain.placement_grid.cell_size;
+        const uint32_t stepX = (std::max)(1u, (columns + 127) / 128);
+        const uint32_t stepZ = (std::max)(1u, (rows + 127) / 128);
+        for (uint32_t column = 0; column <= columns; column += stepX)
+          for (uint32_t row = 0; row < rows; row += stepZ)
+            line(column * cell, row * cell, column * cell, (std::min)(row + stepZ, rows) * cell, IM_COL32(160, 210, 220, 100), 1);
+        for (uint32_t row = 0; row <= rows; row += stepZ)
+          for (uint32_t column = 0; column < columns; column += stepX)
+            line(column * cell, row * cell, (std::min)(column + stepX, columns) * cell, row * cell, IM_COL32(160, 210, 220, 100), 1);
+        const auto result = t850::CheckTerrainPlacement(terrain, m_placementBrush);
+        const float left = m_placementBrush.cell_x * cell, top = m_placementBrush.cell_z * cell;
+        const float right = left + m_placementBrush.width * cell, bottom = top + m_placementBrush.depth * cell;
+        if (m_placementMode && std::abs(left) <= terrain.size_x * 2 && std::abs(top) <= terrain.size_z * 2) {
+          const auto rotation = object->wireframe.EulerRadians();
+          const auto scale = object->wireframe.Scale();
+          const bool supported = t850::TerrainPlacementTransformSupported({rotation.x, rotation.y, rotation.z}, {scale.x, scale.y, scale.z});
+          const ImU32 color = result.allowed && supported ? IM_COL32(55, 235, 110, 255) : IM_COL32(250, 65, 70, 255);
+          line(left, top, right, top, color, 3);
+          line(right, top, right, bottom, color, 3);
+          line(right, bottom, left, bottom, color, 3);
+          line(left, bottom, left, top, color, 3);
+        }
+      }
+    }
+  }
+  if (!m_terrainBrushEnabled || !object || !object->heightmap || ImGui::GetIO().WantCaptureMouse) return;
+  const auto ray = BuildEditorCameraRay(*camera, static_cast<float>(IManager.mouseX), static_cast<float>(IManager.mouseY), m_lastW, m_lastH);
+  float hitDistance = 0;
+  if (!object->wireframe.RaycastSurface(ray, hitDistance)) return;
+  XMATRIX44 inverse;
+  if (!BuildInverseSceneObjectWorldFromTransform({object->wireframe.Position(), object->wireframe.EulerRadians(), object->wireframe.Scale()}, inverse)) return;
+  const auto center = t850::TransformPoint(ray.origin + ray.direction * hitDistance, inverse);
+  auto* mesh = dynamic_cast<t850::RenderMesh*>(object->litInst.pBase);
+  if (!mesh || !mesh->xFile || mesh->xFile->MeshInfo.empty()) return;
+  const auto& terrain = *object->heightmap;
+  const auto& geometry = mesh->xFile->MeshInfo[0];
+  const auto world = object->wireframe.BuildWorld();
+  ImVec2 previous;
+  bool previousValid = false;
+  for (unsigned segment = 0; segment <= 64; ++segment) {
+    const float angle = segment * 6.28318530718f / 64;
+    XVECTOR3 point(center.x + std::cos(angle) * m_terrainBrush.radius, center.y, center.z + std::sin(angle) * m_terrainBrush.radius, 1.0f);
+    const auto column = static_cast<uint32_t>(std::clamp(point.x / terrain.size_x, 0.0f, 1.0f) * (terrain.samples_x - 1));
+    const auto row = static_cast<uint32_t>(std::clamp(point.z / terrain.size_z, 0.0f, 1.0f) * (terrain.samples_z - 1));
+    point.y = geometry.pData[(row * terrain.samples_x + column) * (geometry.VertexSize / sizeof(float)) + 1] + 0.05f;
+    ImVec2 screen;
+    const bool valid = project(t850::TransformPoint(point, world), screen);
+    if (valid && previousValid) draw->AddLine(previous, screen, IM_COL32(70, 235, 230, 255), 2);
+    previous = screen;
+    previousValid = valid;
+  }
+}
+
+void EditorApp::DrawRegionsPanel() {
+  if (!m_panels.showRegions) return;
+  if (m_propertiesDockId) ImGui::SetNextWindowDockID(m_propertiesDockId, ImGuiCond_Appearing);
+  ImGui::SetNextWindowSize(ImVec2(360, 520), ImGuiCond_FirstUseEver);
+  if (ImGui::Begin("Regions", &m_panels.showRegions)) {
+    auto& regions = GetEditorWorld().regions;
+    if (ImGui::Button("Add Region")) {
+      t850::scene::SceneRegionDesc region;
+      region.id = t850::game::MakeStableId("region_");
+      region.name = "Region " + std::to_string(regions.size() + 1);
+      const auto target = m_camera.GetTarget();
+      region.position = {target.x, target.y, target.z};
+      regions.push_back(std::move(region));
+    }
+    int remove = -1;
+    for (size_t index = 0; index < regions.size(); ++index) {
+      auto& region = regions[index];
+      ImGui::PushID(region.id.c_str());
+      if (ImGui::TreeNodeEx(region.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        char name[128];
+        std::snprintf(name, sizeof(name), "%s", region.name.c_str());
+        if (ImGui::InputText("Name", name, sizeof(name))) region.name = name;
+        ImGui::Checkbox("Enabled", &region.enabled);
+        ImGui::DragFloat3("Position", &region.position.x, 0.1f);
+        ImGui::DragFloat3("Rotation", &region.rotation.x, 1.0f);
+        ImGui::DragFloat3("Half Extents", &region.half_extents.x, 0.1f, 0.01f, 100000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::Button("Add Tag")) region.tags.emplace_back("tag");
+        int removeTag = -1;
+        for (size_t tagIndex = 0; tagIndex < region.tags.size(); ++tagIndex) {
+          ImGui::PushID(static_cast<int>(tagIndex));
+          char tag[128];
+          std::snprintf(tag, sizeof(tag), "%s", region.tags[tagIndex].c_str());
+          if (ImGui::InputText("Tag", tag, sizeof(tag))) region.tags[tagIndex] = tag;
+          ImGui::SameLine();
+          if (ImGui::SmallButton("X")) removeTag = static_cast<int>(tagIndex);
+          ImGui::PopID();
+        }
+        if (removeTag >= 0) region.tags.erase(region.tags.begin() + removeTag);
+        if (ImGui::Button("Frame Region")) {
+          m_camera.SetTarget(XVECTOR3(region.position.x, region.position.y, region.position.z));
+          m_camera.Frame();
+        }
+        if (ImGui::Button("Delete Region")) remove = static_cast<int>(index);
+        ImGui::TreePop();
+      }
+      ImGui::PopID();
+    }
+    if (remove >= 0) regions.erase(regions.begin() + remove);
+  }
+  ImGui::End();
+}
+
+void EditorApp::DrawTerrainInspector(SceneObject& object) {
+  if (!m_tutorialStep.empty()) ImGui::SetNextItemOpen(m_tutorialStep != "physics" && m_tutorialStep != "transform", ImGuiCond_Always);
+  if (!ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen)) return;
+  ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.48f);
+  if (ImGui::Button("Regions")) m_panels.showRegions = true;
+  ImGui::BeginDisabled(object.frozen);
+  DrawTerrainPlacementPanel(object);
+  if (ImGui::Checkbox("Sculpt / Paint", &m_terrainBrushEnabled)) {
+    if (m_terrainBrushEnabled) m_placementMode = false;
+    if (auto* mesh = dynamic_cast<t850::HeightmapMesh*>(object.litInst.pBase)) mesh->SetEditing(m_terrainBrushEnabled);
+    m_gizmo.SetMode(GizmoMode::Select);
+  }
+  int mode = static_cast<int>(m_terrainBrush.mode);
+  const char* modes[] = {"Raise", "Lower", "Flatten", "Smooth", "Paint Material"};
+  if (ImGui::Combo("Brush", &mode, modes, 5)) m_terrainBrush.mode = static_cast<t850::TerrainBrushMode>(mode);
+  ImGui::DragFloat("Radius", &m_terrainBrush.radius, 0.1f, 0.05f, 10000.0f);
+  ImGui::DragFloat("Strength", &m_terrainBrushStrength, 0.1f, 0.01f, 1000.0f);
+  ImGui::SliderFloat("Hardness", &m_terrainBrush.hardness, 0.0f, 1.0f);
+  if (m_terrainBrush.mode == t850::TerrainBrushMode::Flatten) ImGui::InputFloat("Flatten Height", &m_terrainBrush.targetHeight);
+  auto edited = *object.heightmap;
+  bool changed = false;
+  ImGui::BeginDisabled(m_terrainStrokeBefore != nullptr);
+  if (!m_tutorialStep.empty()) ImGui::SetNextItemOpen(m_tutorialStep == "flat-terrain" || m_tutorialStep == "heightmap-terrain", ImGuiCond_Always);
+  if (ImGui::TreeNode("Geometry and LOD")) {
+    changed |= ImGui::InputFloat("Terrain Width", &edited.size_x);
+    changed |= ImGui::InputFloat("Terrain Depth", &edited.size_z);
+    changed |= ImGui::InputFloat("UV Repeat", &edited.uv_scale);
+    int levels = static_cast<int>(edited.lod_levels);
+    if (ImGui::SliderInt("LOD Levels", &levels, 1, 5)) { edited.lod_levels = levels; changed = true; }
+    changed |= ImGui::InputFloat("LOD Distance", &edited.lod_distance);
+    ImGui::Text("Grid: %u x %u", edited.samples_x, edited.samples_z);
+    if (ImGui::Button("Reload Source Image")) { edited.elevations.clear(); changed = true; }
+    ImGui::TreePop();
+  }
+  if (!m_tutorialStep.empty()) ImGui::SetNextItemOpen(m_tutorialStep == "paint-material", ImGuiCond_Always);
+  if (ImGui::TreeNodeEx("Terrain Materials", ImGuiTreeNodeFlags_DefaultOpen)) {
+    int removeMaterial = -1;
+    if (edited.materials.empty()) changed |= ImGui::ColorEdit3("Ground Color", &edited.base_color.x);
+    if (edited.materials.size() < 16 && ImGui::Button("Add Material")) {
+      t850::scene::SceneTerrainMaterialDesc material;
+      material.name = "Material " + std::to_string(edited.materials.size() + 1);
+      material.color = edited.base_color;
+      edited.materials.push_back(material);
+      m_terrainBrush.material = static_cast<uint32_t>(edited.materials.size() - 1);
+      changed = true;
+    }
+    for (size_t index = 0; index < edited.materials.size(); ++index) {
+      ImGui::PushID(static_cast<int>(index));
+      auto& material = edited.materials[index];
+      if (ImGui::RadioButton(material.name.c_str(), m_terrainBrush.material == index)) m_terrainBrush.material = static_cast<uint32_t>(index);
+      char name[128];
+      std::snprintf(name, sizeof(name), "%s", material.name.c_str());
+      if (ImGui::InputText("Name", name, sizeof(name))) { material.name = name; changed = true; }
+      changed |= ImGui::ColorEdit3("Color", &material.color.x);
+      changed |= ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
+      changed |= ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
+      char texture[1024];
+      std::snprintf(texture, sizeof(texture), "%s", material.texture.c_str());
+      if (ImGui::InputText("Texture", texture, sizeof(texture), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        material.texture = NormalizeEditorResourcePath(texture);
+        changed = true;
+      }
+      if (ImGui::Button("Choose Texture")) {
+        const auto path = OpenFileDialog(L"Textures\0*.png;*.dds;*.bmp;*.tga;*.jpg\0All Files\0*.*\0", L"Terrain Material", nullptr);
+        if (!path.empty()) { material.texture = NormalizeEditorResourcePath(path); changed = true; }
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Clear Texture")) { material.texture.clear(); changed = true; }
+      if (ImGui::Button("Delete Material")) removeMaterial = static_cast<int>(index);
+      ImGui::Separator();
+      ImGui::PopID();
+    }
+    if (removeMaterial >= 0) {
+      edited.materials.erase(edited.materials.begin() + removeMaterial);
+      for (auto& cell : edited.cell_materials) {
+        if (cell == static_cast<uint32_t>(removeMaterial)) cell = 0;
+        else if (cell > static_cast<uint32_t>(removeMaterial)) --cell;
+      }
+      m_terrainBrush.material = 0;
+      changed = true;
+    }
+    ImGui::TreePop();
+  }
+  if (changed) {
+    if (!m_pendingTerrainSettings) {
+      m_terrainEditObject = object.name;
+      m_pendingTerrainSettings = std::move(edited);
+    }
+  }
+  ImGui::EndDisabled();
+  if (!m_terrainStatus.empty()) ImGui::TextWrapped("%s", m_terrainStatus.c_str());
+  ImGui::EndDisabled();
+  ImGui::PopItemWidth();
+}
+
+void EditorApp::RunTerrainEditorSelfTest() {
+  if (!m_terrainSelfTest || m_terrainSelfTestResult == 0) return;
+  auto require = [](bool condition, const std::string& message) {
+    if (!condition) throw std::runtime_error(message);
+  };
+  try {
+    ++m_terrainSelfTestFrame;
+    if (m_terrainSelfTestFrame < 5) return;
+    if (m_terrainSelfTestFrame == 5) {
+      require(EditorPathToWide("Assets/caf\xc3\xa9") == L"Assets/caf\u00e9" && EditorPathToWide("").empty(),
+          "portable file-dialog path conversion failed");
+      require(!g_objects.empty() && g_objects[0].heightmap.has_value(), "test requires a terrain scene");
+      g_selectedIdx = 0;
+      g_selectionType = 0;
+      ClearMixedSelection();
+      const auto original = *g_objects[0].heightmap;
+      m_terrainBrushEnabled = true;
+      m_terrainBrush.radius = 10.0f;
+      IManager.mouseX = m_lastW / 2;
+      IManager.mouseY = m_lastH / 2;
+      IManager.MouseButtonStates[0][0] = true;
+      const bool capture = ImGui::GetIO().WantCaptureMouse;
+      ImGui::GetIO().WantCaptureMouse = false;
+      UpdateTerrainEditing();
+      ImGui::GetIO().WantCaptureMouse = capture;
+      IManager.MouseButtonStates[0][0] = false;
+      FinishTerrainStroke();
+      require(!g_objects[0].heightmap->elevations.empty(), "viewport brush did not edit terrain");
+      const auto sculpted = *g_objects[0].heightmap;
+      g_undoStack.Undo();
+      require(g_objects[0].heightmap->elevations == original.elevations, "terrain stroke undo failed");
+      g_undoStack.Redo();
+      require(g_objects[0].heightmap->elevations == sculpted.elevations, "terrain stroke redo failed");
+      auto painted = sculpted;
+      painted.materials.resize(2);
+      painted.materials[0].color = painted.base_color;
+      painted.materials[1].color = {0.7f, 0.2f, 0.1f};
+      painted.materials[1].texture = "Textures/Terrain/HeightmapExample.bmp";
+      painted.lod_levels = 3;
+      painted.lod_distance = 1;
+      t850::TerrainBrush brush;
+      brush.mode = t850::TerrainBrushMode::Material;
+      brush.x = painted.size_x * 0.5f;
+      brush.z = painted.size_z * 0.5f;
+      brush.radius = 12;
+      brush.material = 1;
+      bool changed = false;
+      std::string error;
+      require(t850::ApplyTerrainBrush(painted, brush, &changed, &error) && changed, error);
+      m_terrainBrushEnabled = false;
+      for (unsigned replacement = 0; replacement < 5; ++replacement)
+        require(CommitTerrainEdit(0, painted), m_terrainStatus);
+      auto invalid = painted;
+      invalid.samples_x = 0;
+      require(!CommitTerrainEdit(0, invalid) && g_objects[0].heightmap->elevations == painted.elevations,
+          "invalid terrain commit replaced the document");
+      painted.placement_grid.enabled = true;
+      painted.placement_grid.cell_size = 2.0f;
+      for (uint32_t row = 0; row <= 12; ++row)
+        for (uint32_t column = 0; column <= 12; ++column) painted.elevations[row * painted.samples_x + column] = 0;
+      require(CommitTerrainEdit(0, painted), m_terrainStatus);
+      g_selectedIdx = 0;
+      g_selectionType = 0;
+      m_placementBrush = t850::scene::SceneTerrainPlacementDesc{};
+      m_placementBrush.cell_x = m_placementBrush.cell_z = 1;
+      require(QueueTerrainPlacement(g_objects[0]), m_placementStatus);
+      UpdateTerrainEditing();
+      require(g_objects[0].heightmap->placements.size() == 1, "placement did not commit");
+      g_objects[0].wireframe.EulerRadians().x = 0.5f;
+      SyncSceneObjectTransforms();
+      require(g_objects[0].wireframe.EulerRadians().x == 0.0f, "placed building terrain accepted tilted ground transform");
+      const auto placementId = g_objects[0].heightmap->placements[0].id;
+      require(!QueueTerrainPlacement(g_objects[0]), "overlapping building was placed");
+      g_undoStack.Undo();
+      require(g_objects[0].heightmap->placements.empty(), "placement undo did not release occupancy");
+      g_undoStack.Redo();
+      require(g_objects[0].heightmap->placements[0].id == placementId, "placement redo changed identity");
+      auto uneven = *g_objects[0].heightmap;
+      uneven.elevations[3 * uneven.samples_x + 3] = 1;
+      require(!CommitTerrainEdit(0, uneven), "sculpting invalidated an occupied building foundation");
+      auto removed = *g_objects[0].heightmap;
+      require(t850::RemoveTerrainPlacement(removed, placementId) && CommitTerrainEdit(0, removed), "building removal failed");
+      m_placementBrush.width = 1;
+      m_placementBrush.depth = 3;
+      require(QueueTerrainPlacement(g_objects[0]), m_placementStatus);
+      UpdateTerrainEditing();
+      painted = *g_objects[0].heightmap;
+      std::vector<t850::navigation::NavSourceInstance> sources(1);
+      sources[0].instance = &g_objects[0].litInst;
+      t850::navigation::NavMeshGeometry geometry;
+      require(t850::navigation::BuildGeometryFromNavSources(sources, geometry, nullptr, &error) &&
+          !geometry.volumeModifiers.empty(), "placement did not reach navigation");
+      t850::navigation::NavMesh navMesh;
+      require(navMesh.Build(geometry, m_editorNavMeshBuildSettings, &error), error);
+      const auto center = t850::TransformPoint(XVECTOR3(3.0f, 0.0f, 5.0f, 1.0f), g_objects[0].litInst.Final);
+      XVECTOR3 projected;
+        const bool projectedToMesh = navMesh.ProjectPoint(center, projected, XVECTOR3(0.1f, 10.0f, 0.1f), &error);
+        require(!projectedToMesh || std::abs(projected.x - center.x) >= 1.0f || std::abs(projected.z - center.z) >= 3.0f,
+          "building footprint remained navigable");
+        t850::navigation::NavMeshClassificationResult classification;
+        require(t850::navigation::ClassifyNavMeshTriangles(geometry, m_editorNavMeshBuildSettings, classification, &error) &&
+          classification.excludedByVolumeCount > 0, "building did not exclude source triangles");
+      T8_LOG_INFO("[TerrainEditorTest] PASS placement flatness, occupancy, undo/redo, removal, navigation exclusion");
+      require(!m_editorNavMeshAuthored || CreateEditorNavMesh(), "terrain navigation rebuild failed");
+      g_selectedIdx = 0;
+      g_selectionType = 0;
+      CloneSelected();
+      require(g_objects.size() > 1 && g_objects.back().litInst.pBase != g_objects.front().litInst.pBase,
+          "terrain clone shares mutable geometry");
+      t850::scene::SceneRegionDesc region;
+      region.id = "terrain-editor-test-region";
+      region.tags = {"objective"};
+      GetEditorWorld().regions.push_back(region);
+      m_terrainSelfTestExpected = painted;
+      m_terrainSelfTestPath = (std::filesystem::temp_directory_path() /
+          (t850::game::MakeStableId("terrain_editor_test_") + ".t8scene")).string();
+      require(SaveEditorSceneSnapshot(m_terrainSelfTestPath, false), "terrain scene save failed");
+      g_pendingLoadPath = m_terrainSelfTestPath;
+      T8_LOG_INFO("[TerrainEditorTest] PASS brush input, collision commit, undo/redo, paint, clone, save");
+    } else if (m_terrainSelfTestFrame == 6) {
+      require(g_objects.size() >= 2 && g_objects[0].heightmap &&
+          g_objects[0].heightmap->elevations == m_terrainSelfTestExpected->elevations &&
+          g_objects[0].heightmap->cell_materials == m_terrainSelfTestExpected->cell_materials,
+          "editor terrain reload lost edits");
+          require(g_objects[0].heightmap->placements.size() == 1 && g_objects[0].heightmap->placements[0].depth == 3,
+            "placement footprint did not survive editor reload");
+      require(!GetEditorWorld().regions.empty(), "editor reload lost regions");
+      m_terrainSelfTestRequestPlay = true;
+      T8_LOG_INFO("[TerrainEditorTest] Requested Play through the normal window lifecycle");
+    } else if (m_terrainSelfTestFrame == 12) {
+      require(m_playSceneLoaded && m_playScene, "Play window did not initialize the runtime automatically");
+      require(m_playScene->m_meshCount == static_cast<int>(g_objects.size()), "Play omitted terrain objects");
+      T8_LOG_INFO("[TerrainEditorTest] PASS reload and hosted Play");
+        const XVECTOR3 idleEye = m_playScene->Cam.Eye;
+        m_playScene->ResetViewInput();
+        for (unsigned frame = 0; frame < 120; ++frame) m_playScene->OnUpdate(1.0f / 60.0f);
+        require((m_playScene->Cam.Eye - idleEye).Length() < 0.001f,
+          "Play camera without an authored player moved under gravity");
+          const bool previousForward = IManager.KeyStates[0][T800K_w];
+          IManager.KeyStates[0][T800K_w] = true;
+          IManager.xDelta = 0;
+          IManager.yDelta = 0;
+          OnInput();
+          for (unsigned frame = 0; frame < 30; ++frame) m_playScene->OnUpdate(1.0f / 60.0f);
+          IManager.KeyStates[0][T800K_w] = previousForward;
+          m_playScene->ResetViewInput();
+          require((m_playScene->Cam.Eye - idleEye).Length() > 0.1f,
+            "Editor did not forward movement input to the Play camera");
+          T8_LOG_INFO("[TerrainEditorTest] PASS stable preview camera and forwarded movement input");
+      auto* terrain = dynamic_cast<t850::HeightmapMesh*>(m_playScene->Meshes[0].pBase);
+      require(terrain != nullptr && terrain->ActiveLod() > 0, "Play did not select a reduced terrain LOD");
+        require(terrain->AuthoredTerrain().placements.size() == 1 && !terrain->PlacementObstacles().empty(),
+          "Play omitted placed blockouts");
+      ClosePlayScene(true);
+      std::error_code ignored;
+      std::filesystem::remove(m_terrainSelfTestPath, ignored);
+      g_selectedIdx = 0;
+      g_selectionType = 0;
+      m_panels.showRegions = true;
+      m_panels.showGameValidation = false;
+      m_editorNavMeshVisible = false;
+      m_editorNavMeshShowSourcePreview = false;
+      for (auto& entity : g_physicsEntities) entity.showWire = false;
+      m_gizmo.SetMode(GizmoMode::Select);
+      m_terrainSelfTestResult = 0;
+      T8_LOG_INFO("[TerrainEditorTest] PASS hosted Play shutdown and editor restoration");
+    }
+  } catch (const std::exception& exception) {
+    T8_LOG_ERROR("[TerrainEditorTest] FAIL: %s", exception.what());
+    m_terrainSelfTest = false;
+    m_terrainSelfTestResult = 1;
+#ifdef OS_WINDOWS
+    static_cast<t850::Win32Framework*>(pFramework)->m_alive = false;
+#endif
+  }
+}
+
+void EditorApp::QueueTutorialSceneReload(const std::string& path) {
+  g_pendingLoadPath = path;
+}
+
 void EditorApp::OnUpdate() {
   ThrottleMainEditorFrameIfNeeded();
 
@@ -7497,6 +8294,7 @@ void EditorApp::OnUpdate() {
   m_dtSecs = m_dtTimer.GetDTSecs();
   if (m_firstFrame) { m_dtSecs = 1.0f / 60.0f; m_firstFrame = false; }
   m_sceneProps.FrameDeltaSec = m_dtSecs;
+  UpdateTerrainEditing();
 
   if (m_meshEditorCloseRequested) {
     CloseMeshEditor();
@@ -7509,18 +8307,22 @@ void EditorApp::OnUpdate() {
 
   LoadPendingScene();
   ImportPendingMesh();
+  PrepareTutorialCapture();
 
   CheckResize();
   UpdateEditorSplinePreview(m_dtSecs);
 
   OnInput();
+  RunTerrainEditorSelfTest();
   if (!m_meshEditorOpen && !m_playSceneOpen) {
     UpdateSkinnedAnimationAndRagdolls();
   }
   OnDraw();
+  SignalTutorialCapture();
 }
 
 void EditorApp::OnInput() {
+  if (!m_tutorialStep.empty()) return;
   const ImGuiIO& io = ImGui::GetIO();
   const bool imguiWantsMouse    = io.WantCaptureMouse;
   const bool imguiWantsKeyboard = io.WantCaptureKeyboard;
@@ -7808,7 +8610,7 @@ void EditorApp::OnInput() {
     }
   }
 
-  if (orbitCameraMode && !imguiWantsKeyboard)
+  if (orbitCameraMode && !imguiWantsKeyboard && !m_terrainBrushEnabled && !m_placementMode)
     ProcessSelectionInput();
 
   if (orbitCameraMode && !imguiWantsMouse) {
@@ -9219,6 +10021,7 @@ t850::Ray BuildEditorCameraRay(const ::Camera& camera,
 }
 
 void EditorApp::HandleMousePick() {
+  if (m_terrainBrushEnabled || m_placementMode) return;
   const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
   const bool selectMode = (m_gizmo.Mode() == GizmoMode::Select);
   const ImGuiIO& io = ImGui::GetIO();
@@ -9847,7 +10650,7 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
     SceneObject& obj = g_objects[i];
     if (!obj.visible || (obj.primId < 0 && !obj.wireframe.IsLoaded())) continue;
     bool isSelected = (g_selectionType == 0 && i == g_selectedIdx) || g_multiSelect.count(i);
-    bool showWire = m_panels.showWireframe || isSelected || obj.showWire;
+    bool showWire = m_panels.showWireframe || (isSelected && m_panels.showSelectionWireframe) || obj.showWire;
     t850::RenderSkinnedMesh* skinned = nullptr;
     if (obj.litInst.pBase)
       skinned = dynamic_cast<t850::RenderSkinnedMesh*>(obj.litInst.pBase);
@@ -10152,6 +10955,10 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
                                 g_selectedIdx >= 0, g_multiSelect.size() >= 2,
                                 toolbarCameraMode,
                                 m_editorNavMeshAuthoringMode);
+  if (m_terrainSelfTestRequestPlay) {
+    wantsPlayScene = true;
+    m_terrainSelfTestRequestPlay = false;
+  }
   m_gizmo.SetMode((GizmoMode)mode);
   if (m_editorNavMeshAuthoringMode) {
     m_panels.showHierarchy = true;
@@ -10799,57 +11606,120 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
 #endif
   }
   if (menuAction.wantsImportX) {
-    auto toWstr = [](const std::string& s) {
-      int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-      std::wstring ws(len - 1, L'\0');
-      MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
-      return ws;
-    };
     std::string solDir = GetSolutionDir();
     std::string modelDir = (std::filesystem::path(solDir) / "Assets" / "Models").string();
     std::string path = OpenFileDialog(
       L"3D Models (*.glb;*.gltf)\0*.glb;*.gltf\0glTF Binary (*.glb)\0*.glb\0glTF (*.gltf)\0*.gltf\0All Files (*.*)\0*.*\0",
       L"Import Mesh",
-      toWstr(modelDir).c_str());
+      EditorPathToWide(modelDir).c_str());
     if (!path.empty()) {
       // Defer the actual import to the start of the next frame to show loading progress
       g_pendingImportMeshPath = path;
     }
   }
+  if (menuAction.wantsImportHeightmap ||
+      (!m_tutorialSignaled && (m_tutorialStep == "flat-import" || m_tutorialStep == "image-import"))) ImGui::OpenPopup("Import Heightmap");
+  if (ImGui::BeginPopupModal("Import Heightmap", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    static char imagePath[1024] = {};
+    static t850::scene::SceneHeightmapDesc heightmap;
+    static int samples[2] = {129, 129};
+    static bool flatTerrain = false;
+    if (m_tutorialStep == "flat-import" || m_tutorialStep == "image-import") {
+      flatTerrain = m_tutorialStep == "flat-import";
+      heightmap.size_x = heightmap.size_z = 64;
+      heightmap.height_scale = 12;
+      heightmap.height_offset = flatTerrain ? 0.0f : -2.0f;
+      samples[0] = samples[1] = 65;
+      std::snprintf(imagePath, sizeof(imagePath), "%s", flatTerrain ? "" : "Textures/Terrain/HeightmapExample.bmp");
+    }
+    ImGui::Checkbox("Flat Terrain", &flatTerrain);
+    ImGui::BeginDisabled(flatTerrain);
+    ImGui::InputText("Image", imagePath, sizeof(imagePath));
+    ImGui::SameLine();
+    if (ImGui::Button("Browse...")) {
+      const std::string path = OpenFileDialog(
+          L"Heightmap Images (*.png;*.bmp;*.tga;*.jpg)\0*.png;*.bmp;*.tga;*.jpg\0All Files (*.*)\0*.*\0",
+          L"Import Heightmap", nullptr);
+      if (!path.empty()) {
+        const std::string normalized = NormalizeEditorResourcePath(path);
+        std::snprintf(imagePath, sizeof(imagePath), "%s", normalized.c_str());
+      }
+    }
+    ImGui::EndDisabled();
+    ImGui::InputFloat("Width", &heightmap.size_x);
+    ImGui::InputFloat("Depth", &heightmap.size_z);
+    ImGui::InputFloat("Elevation Scale", &heightmap.height_scale);
+    ImGui::InputFloat("Elevation Offset", &heightmap.height_offset);
+    ImGui::InputInt2("Grid Samples", samples);
+    ImGui::ColorEdit3("Base Color", &heightmap.base_color.x);
+    const bool valid = (flatTerrain || imagePath[0]) && heightmap.size_x > 0.0f && heightmap.size_z > 0.0f &&
+        samples[0] >= 2 && samples[1] >= 2 && samples[0] <= 1025 && samples[1] <= 1025;
+    ImGui::BeginDisabled(!valid);
+    if (ImGui::Button("Import")) {
+      heightmap.image = flatTerrain ? std::string{} : imagePath;
+      heightmap.samples_x = static_cast<uint32_t>(samples[0]);
+      heightmap.samples_z = static_cast<uint32_t>(samples[1]);
+      t850::scene::SceneObjectDesc object;
+      object.name = "Terrain";
+      for (unsigned suffix = 2; FindSceneObjectIndexByName(object.name) >= 0; ++suffix)
+        object.name = "Terrain " + std::to_string(suffix);
+      object.heightmap = heightmap;
+      object.navigation = t850::scene::SceneObjectNavigationDesc{};
+      g_pendingHeightmap = std::move(object);
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+  }
   if (menuAction.wantsSaveScene) {
-    auto toWstr = [](const std::string& s) {
-      int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-      std::wstring ws(len - 1, L'\0');
-      MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
-      return ws;
-    };
     std::string solDir = GetSolutionDir();
     std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();
     std::string path = SaveFileDialog(
       L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
-      L"Save Scene", L"t8scene", toWstr(scenesDir).c_str());
+      L"Save Scene", L"t8scene", EditorPathToWide(scenesDir).c_str());
     if (!path.empty()) {
       SaveEditorSceneSnapshot(path, true);
     }
   }
   if (menuAction.wantsLoadScene) {
-    auto toWstr = [](const std::string& s) {
-      int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-      std::wstring ws(len - 1, L'\0');
-      MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
-      return ws;
-    };
     std::string solDir = GetSolutionDir();
     std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();
     std::string path = OpenFileDialog(
       L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
       L"Load Scene",
-      toWstr(scenesDir).c_str());
+      EditorPathToWide(scenesDir).c_str());
     if (!path.empty()) {
       // Defer the actual load to the start of the next frame (before BeginFrame)
       // to avoid destroying GPU resources mid-command-list on D3D12.
       g_pendingLoadPath = path;
     }
+  }
+
+  DrawTerrainOverlays();
+  DrawRegionsPanel();
+  if (m_panels.showTerrainEditor) {
+    if (m_propertiesDockId) ImGui::SetNextWindowDockID(m_propertiesDockId, ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(370, 600), ImGuiCond_FirstUseEver);
+    PositionTutorialPanel();
+    if (ImGui::Begin("Terrain Editor", &m_panels.showTerrainEditor)) {
+      SceneObject* selected = g_selectionType == 0 ? SelectedObject() : nullptr;
+      if (ImGui::BeginCombo("Terrain Object", selected && selected->heightmap ? selected->name.c_str() : "None")) {
+        for (size_t index = 0; index < g_objects.size(); ++index) {
+          if (!g_objects[index].heightmap) continue;
+          if (ImGui::Selectable(g_objects[index].name.c_str(), selected == &g_objects[index])) {
+            g_selectedIdx = static_cast<int>(index);
+            g_selectionType = 0;
+            m_terrainBrushEnabled = false;
+            selected = &g_objects[index];
+          }
+        }
+        ImGui::EndCombo();
+      }
+      if (selected && selected->heightmap) DrawTerrainInspector(*selected);
+    }
+    ImGui::End();
   }
 
   // Panels
@@ -11629,7 +12499,9 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
                                      viewport->WorkPos.y + margin), layoutCond);
       ImGui::SetNextWindowSize(ImVec2(width, height), layoutCond);
     }
+    PositionTutorialPanel();
     if (ImGui::Begin("Properties", &m_panels.showInspector, ImGuiWindowFlags_NoCollapse)) {
+      m_propertiesDockId = ImGui::GetWindowDockID();
       ImGuiClampCurrentWindowToEditorWorkArea();
       if (g_selectionType == 9 && g_selectedIdx < static_cast<int>(g_gameEntities.size())) {
         const std::string entityId = g_gameEntities[static_cast<std::size_t>(g_selectedIdx)].id;
@@ -11741,7 +12613,11 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           }
         }
 
+        if (sel->heightmap) DrawTerrainInspector(*sel);
+
+        if (m_tutorialStep == "physics") ImGui::SetNextItemOpen(true, ImGuiCond_Always);
         if (ImGui::CollapsingHeader("Physics Authoring", ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (m_tutorialStep == "physics") ImGui::SetScrollHereY(0.0f);
           ImGui::TextWrapped("Create authored Jolt physics from the selected render mesh. Triangle meshes are static collision; characters use the same shape and Character/CharacterVirtual settings as the player.");
           int maxTrianglesPerLeaf = static_cast<int>(g_triangleMeshCookSettings.maxTrianglesPerLeaf);
           if (ImGui::SliderInt("Max Triangles / Leaf", &maxTrianglesPerLeaf, 1, 8)) {
@@ -12296,6 +13172,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           layoutCond);
       ImGui::SetNextWindowSize(ImVec2(width, height), layoutCond);
     }
+    PositionTutorialPanel();
     if (ImGui::Begin("NavMesh Authoring", &m_panels.showNavMeshAuthoring, ImGuiWindowFlags_NoCollapse)) {
       ImGuiClampCurrentWindowToEditorWorkArea();
       DrawNavMeshAuthoringPanel();

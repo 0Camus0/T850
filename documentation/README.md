@@ -1,6 +1,6 @@
 # T850 Engine Documentation
 
-Status: index verified on 2026-08-30.
+Status: editor/terrain/tutorial index refreshed on 2026-09-07.
 
 This tree documents the current T850 rendering/game engine, runtime hosts, editor, build/deploy workflows, diagnostics, and acceptance gates. Superseded documents are removed and remain available through Git history.
 
@@ -8,6 +8,7 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 
 | Need | Read |
 |---|---|
+| learn terrain and RTS blockout authoring step by step | [Editor tutorials](tutorials/README.md) |
 | current implementation and verified gates | [Current status](current-status-and-roadmap.md) |
 | first Windows setup/build/run | [Windows setup, build, and run](development/windows-build-and-run.md) |
 | CLI/config fields | [Runtime configuration](development/runtime-configuration.md) |
@@ -68,8 +69,12 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Recast/Detour/game navigation | [navigation/navmesh-detour.md](navigation/navmesh-detour.md) | Verified 2026-08-19 |
 | Game entities/components/control/events | [game/game-entity-system-spec.md](game/game-entity-system-spec.md) | Implemented v1, verified 2026-08-19 |
 | Mutable voxel terrain/chunk streaming | [terrain/voxel-terrain.md](terrain/voxel-terrain.md) | Implemented reference, verified 2026-08-30 |
+| Authored image-based terrain | [terrain/heightmap-terrain.md](terrain/heightmap-terrain.md) | Implemented, verified 2026-09-07 |
+| Square-grid placement and colored building blockouts | [terrain/placement-grid.md](terrain/placement-grid.md) | Implemented, verified 2026-09-07 |
+| Tagged gameplay regions | [scenes/scene-regions.md](scenes/scene-regions.md) | Implemented, verified 2026-09-07 |
 | P0-P14 maintenance contracts | [game/game-entity-system-implementation-prompts.md](game/game-entity-system-implementation-prompts.md) | Executed; reference only |
-| T8ditor | [editor/editor-overview.md](editor/editor-overview.md) | Verified 2026-08-19 |
+| T8ditor | [editor/editor-overview.md](editor/editor-overview.md) | Terrain/placement/Play refreshed 2026-09-07 |
+| Editor/runtime architecture assessment | [editor/architecture-review.md](editor/architecture-review.md) | Review and first extraction, 2026-09-07 |
 | `.t8scene` and runtime loading | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Verified 2026-08-30 |
 | SceneDescriptor/SceneSetup | [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md) | Verified 2026-08-19 |
 

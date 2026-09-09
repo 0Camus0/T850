@@ -9,6 +9,8 @@
 #include <scene/RenderSkinnedMesh.h>
 #include <scene/SceneDescriptor.h>
 #include <scene/EditorSceneFile.h>
+#include <terrain/HeightmapMesh.h>
+#include <scene/SceneConversions.h>
 #include <scene/IBLResources.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
@@ -67,11 +69,6 @@ namespace {
   constexpr float kNavTestDiagIntervalSec = 1.0f / 60.0f;
   constexpr float kNavTestFailedPathRetrySec = 0.25f;
   constexpr uint64_t kJoltNavLinkValidationCacheKey = 0x4a4f4c544e41564cull; // JOLT NAVL
-
-  const std::string& DefaultSceneTemplateSceneFilePath() {
-    static const std::string path = "Scenes/Q3/q3dm6_mod_3_jolt.t8scene";
-    return path;
-  }
 
   float ClampMouseSensitivity(float value) {
     return (std::max)(0.05f, (std::min)(5.0f, value));
@@ -174,47 +171,10 @@ namespace {
   }
 
   int NavAreaFromSceneName(const std::string& name) {
-    if (name == "walkable") return 0;
-    if (name == "drop") return 1;
-    if (name == "jump") return 2;
-    if (name == "jump_pad") return 3;
-    if (name == "jump_intent") return 4;
-    if (name == "water") return 5;
-    if (name == "door") return 6;
-    if (name == "mud") return 7;
-    if (name == "custom") return 8;
-    return 8;
+    return t850::scene::NavAreaFromName(name);
   }
 
-  t850::navigation::NavMeshModifierMode NavModifierModeFromSceneName(const std::string& name) {
-    if (name == "include" || name == "include_bounds" || name == "bounds")
-      return t850::navigation::NavMeshModifierMode::Include;
-    if (name == "area" || name == "area_cost" || name == "cost")
-      return t850::navigation::NavMeshModifierMode::Area;
-    if (name == "link_include" || name == "link_add" || name == "add_links")
-      return t850::navigation::NavMeshModifierMode::LinkInclude;
-    if (name == "link_exclude" || name == "exclude_links")
-      return t850::navigation::NavMeshModifierMode::LinkExclude;
-    return t850::navigation::NavMeshModifierMode::Exclude;
-  }
-
-  t850::navigation::NavMeshVolumeModifier NavVolumeModifierFromScene(
-      const t850::scene::SceneNavMeshVolumeDesc& desc) {
-    t850::navigation::NavMeshVolumeModifier modifier;
-    modifier.name = desc.name;
-    modifier.mode = NavModifierModeFromSceneName(desc.type);
-    modifier.position = XVECTOR3(desc.position.x, desc.position.y, desc.position.z, 1.0f);
-    modifier.rotation = XVECTOR3(desc.rotation.x, desc.rotation.y, desc.rotation.z, 0.0f);
-    modifier.halfExtents = XVECTOR3(
-        (std::max)(0.001f, std::abs(desc.half_extents.x)),
-        (std::max)(0.001f, std::abs(desc.half_extents.y)),
-        (std::max)(0.001f, std::abs(desc.half_extents.z)),
-        0.0f);
-    modifier.area = NavAreaFromSceneName(desc.area);
-    modifier.cost = (std::max)(0.01f, desc.cost);
-    modifier.enabled = desc.enabled && desc.shape == "box";
-    return modifier;
-  }
+  using t850::scene::NavVolumeModifierFromScene;
 
   void HashNavMeshVolumes(uint64_t& hash, const std::vector<t850::scene::SceneNavMeshVolumeDesc>& volumes) {
     HashNavCacheValue(hash, static_cast<uint64_t>(volumes.size()));
@@ -243,20 +203,21 @@ namespace {
                                          const std::string& scenePath,
                                          const t850::navigation::NavMeshBuildSettings& settings) {
     uint64_t hash = 0xcbf29ce484222325ull;
-    constexpr uint32_t kSandboxNavCacheVersion = 3;
+    constexpr uint32_t kSandboxNavCacheVersion = 4;
     HashNavCacheValue(hash, kSandboxNavCacheVersion);
     HashNavCacheFileSignature(hash, scenePath);
     HashNavCacheSettings(hash, settings);
     int includedSources = 0;
     for (int meshIndex = 0; meshIndex < instanceCount; ++meshIndex) {
       const PrimitiveInst& instance = instances[meshIndex];
-      if (!instance.Visible || !instance.pBase || instance.GetSkinnedMesh()) {
+      if (!instance.pBase || instance.GetSkinnedMesh()) {
         continue;
       }
 
       ++includedSources;
       HashNavCacheValue(hash, meshIndex);
-      if (meshIndex >= 0 && meshIndex < static_cast<int>(meshPaths.size())) {
+        if (meshIndex >= 0 && meshIndex < static_cast<int>(meshPaths.size()) &&
+          !meshPaths[static_cast<std::size_t>(meshIndex)].empty()) {
         HashNavCacheFileSignature(hash, meshPaths[static_cast<std::size_t>(meshIndex)]);
       } else if (const RenderMesh* mesh = dynamic_cast<const RenderMesh*>(instance.pBase)) {
         HashNavCacheFileSignature(hash, mesh->m_sourcePath);
@@ -2729,94 +2690,16 @@ namespace {
            ToLowerAscii(NormalizeSceneResourcePath(rhs));
   }
 
-  t850::PhysicsMeshBuildQuality PhysicsBuildQualityFromScene(const std::string& quality) {
-    return quality == "build_speed"
-        ? t850::PhysicsMeshBuildQuality::FavorBuildSpeed
-        : t850::PhysicsMeshBuildQuality::FavorRuntimePerformance;
-  }
-
-  t850::PhysicsTriangleMeshCookSettings PhysicsCookSettingsFromScene(const t850::scene::ScenePhysicsCookSettingsDesc& desc) {
-    t850::PhysicsTriangleMeshCookSettings settings;
-    settings.maxTrianglesPerLeaf = desc.max_triangles_per_leaf;
-    settings.buildQuality = PhysicsBuildQualityFromScene(desc.build_quality);
-    settings.activeEdgeCosThresholdAngle = desc.active_edge_cos_threshold_angle;
-    settings.perTriangleUserData = desc.per_triangle_user_data;
-    settings.useDiskCache = desc.use_disk_cache;
-    return settings;
-  }
+  using t850::scene::PhysicsCookSettingsFromScene;
 
   t850::navigation::NavMeshBuildSettings DefaultAuthoredNavMeshBuildSettings() {
-    t850::navigation::NavMeshBuildSettings settings;
-    settings.enableAutoDropLinks = true;
-    settings.enableAutoJumpLinks = true;
-    settings.enableHybridJumpLinks = true;
-    settings.hybridJumpMaxLinks = 192;
-    return settings;
+    return t850::scene::DefaultSceneNavMeshBuildSettings();
   }
 
-  t850::navigation::NavMeshBuildSettings NavMeshBuildSettingsFromScene(
-      const t850::scene::SceneNavMeshBuildSettingsDesc& desc) {
-    t850::navigation::NavMeshBuildSettings settings = DefaultAuthoredNavMeshBuildSettings();
-    settings.cellSize = desc.cell_size;
-    settings.cellHeight = desc.cell_height;
-    settings.agentHeight = desc.agent_height;
-    settings.agentRadius = desc.agent_radius;
-    settings.agentMaxClimb = desc.agent_max_climb;
-    settings.agentMaxSlope = desc.agent_max_slope;
-    settings.regionMinSize = desc.region_min_size;
-    settings.regionMergeSize = desc.region_merge_size;
-    settings.edgeMaxLen = desc.edge_max_len;
-    settings.edgeMaxError = desc.edge_max_error;
-    settings.vertsPerPoly = desc.verts_per_poly;
-    settings.detailSampleDist = desc.detail_sample_dist;
-    settings.detailSampleMaxError = desc.detail_sample_max_error;
-    settings.queryExtents = XVECTOR3(desc.query_extents.x, desc.query_extents.y, desc.query_extents.z, 0.0f);
-    settings.enableAutoDropLinks = desc.auto_drop_links;
-    settings.dropLinkMinHeight = desc.drop_min_height;
-    settings.dropLinkMaxHeight = desc.drop_max_height;
-    settings.dropLinkMaxHorizontalDistance = desc.drop_max_horizontal;
-    settings.dropLinkSampleSpacing = desc.drop_sample_spacing;
-    settings.dropLinkRadius = desc.drop_link_radius;
-    settings.enableAutoJumpLinks = desc.auto_jump_links;
-    settings.jumpLinkMaxHorizontalDistance = desc.jump_max_horizontal;
-    settings.jumpLinkSampleSpacing = desc.jump_sample_spacing;
-    settings.jumpLinkRadius = desc.jump_link_radius;
-    settings.enableHybridJumpLinks = desc.hybrid_jump_links;
-    settings.hybridJumpMaxLinks = desc.hybrid_max_links;
-    settings.offMeshLinkValidationKey = desc.off_mesh_link_validation_key;
-    return settings;
-  }
-
-  t850::navigation::NavTraversalType NavLinkTypeFromSceneName(const std::string& name) {
-    if (name == "drop") return t850::navigation::NavTraversalType::Drop;
-    if (name == "jump_pad") return t850::navigation::NavTraversalType::JumpPad;
-    if (name == "jump_intent") return t850::navigation::NavTraversalType::JumpIntent;
-    return t850::navigation::NavTraversalType::Jump;
-  }
-
-  t850::navigation::NavOffMeshLink NavOffMeshLinkFromScene(const t850::scene::SceneNavMeshLinkDesc& desc) {
-    t850::navigation::NavOffMeshLink link;
-    link.start = XVECTOR3(desc.start.x, desc.start.y, desc.start.z, 1.0f);
-    link.end = XVECTOR3(desc.end.x, desc.end.y, desc.end.z, 1.0f);
-    link.radius = (std::max)(0.05f, desc.radius);
-    link.bidirectional = desc.bidirectional;
-    link.type = NavLinkTypeFromSceneName(desc.type);
-    return link;
-  }
-
-  bool IsFiniteNavPoint(const t850::scene::Vec3f& point) {
-    return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
-  }
-
-  bool IsUsableAuthoredNavLink(const t850::scene::SceneNavMeshLinkDesc& link) {
-    if (!link.enabled || !IsFiniteNavPoint(link.start) || !IsFiniteNavPoint(link.end)) {
-      return false;
-    }
-    const float dx = link.end.x - link.start.x;
-    const float dy = link.end.y - link.start.y;
-    const float dz = link.end.z - link.start.z;
-    return dx * dx + dy * dy + dz * dz > 0.0001f && link.radius > 0.0f;
-  }
+  using t850::scene::NavMeshBuildSettingsFromScene;
+  using t850::scene::NavOffMeshLinkFromScene;
+  using t850::scene::IsFiniteNavPoint;
+  using t850::scene::IsUsableAuthoredNavLink;
 
   bool SceneHasStaticPhysicsEntityForObject(const t850::scene::EditorSceneFile& scene, const std::string& objectName) {
     for (const t850::scene::ScenePhysicsEntityDesc& entity : scene.physics_entities) {
@@ -2973,13 +2856,7 @@ void SceneTemplate::SetLaunchDesc(const SceneTemplateLaunchDesc& desc) {
 }
 
 const std::string& SceneTemplate::ActiveSceneFilePath() const {
-  if (m_hasLaunchDesc && !m_launchDesc.sceneFilePath.empty()) {
-    return m_launchDesc.sceneFilePath;
-  }
-  if (!g_config.sceneFilePath.empty()) {
-    return g_config.sceneFilePath;
-  }
-  return DefaultSceneTemplateSceneFilePath();
+  return m_hasLaunchDesc ? m_launchDesc.sceneFilePath : g_config.sceneFilePath;
 }
 
 const std::string& SceneTemplate::ActiveModelPath() const {
@@ -3231,10 +3108,21 @@ void SceneTemplate::InitVars() {
   SceneProp.IBLMipCount = 4.0f;
   SceneProp.IBLBRDFLUTEnabled = 0.0f;
 
-  if (m_controlSetup.Load("Scenes/SceneTemplate.json")) {
+  m_sceneDocument.reset();
+  m_sceneDocumentError.clear();
+  t850::scene::EditorSceneFile document;
+  if (ActiveSceneFilePath().empty()) {
+    m_sceneDocumentError = "SceneTemplate requires an explicit --sceneFile or hosted scene document";
+  } else if (t850::scene::LoadEditorSceneFile(ActiveSceneFilePath(), document, &m_sceneDocumentError)) {
+    m_sceneDocument = std::move(document);
+  }
+  const std::string controlPath = m_sceneDocument && !m_sceneDocument->control_descriptor.empty()
+      ? m_sceneDocument->control_descriptor : "Scenes/SceneTemplate.json";
+  if (m_controlSetup.Load(controlPath)) {
     m_controlSetup.ApplyQualityAndSettings(SceneProp);
   } else {
-    T8_LOG_ERROR("[SceneTemplate] Failed to load Scenes/SceneTemplate.json");
+    m_sceneDocumentError = "Failed to load control descriptor: " + controlPath;
+    T8_LOG_ERROR("[SceneTemplate] %s", m_sceneDocumentError.c_str());
   }
   SceneProp.FrustumCullingToggleAllowed = g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
   SceneProp.FrustumCullingEnabled = g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad;
@@ -3253,30 +3141,13 @@ void SceneTemplate::InitVars() {
 
 void SceneTemplate::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
   const bool hasSceneCamera = !scene.cameras.empty();
-  const bool useQ3CameraDefaults = !hasSceneCamera;
-  XVECTOR3 eye(0.0f, 0.0f, 0.0f, 1.0f);
-  XVECTOR3 target(-1.0f, 0.0f, 0.0f, 1.0f);
-  float nearPlane = (std::max)(0.0001f, Cam.NPlane);
-  float farPlane = (std::max)(nearPlane + 0.01f, Cam.FPlane);
-  float fov = Cam.Fov > 0.0f ? Cam.Fov : Deg2Rad(46.8f);
+  XVECTOR3 target = m_orbitTarget;
   if (hasSceneCamera) {
     const auto& camera = scene.cameras.front();
-    eye = SceneVecToVector(camera.position);
     target = SceneVecToVector(camera.target);
-    nearPlane = (std::max)(0.0001f, camera.near_plane);
-    farPlane = (std::max)(nearPlane + 0.01f, camera.far_plane);
-    fov = Deg2Rad((std::max)(1.0f, camera.fov_deg));
-  } else if (useQ3CameraDefaults) {
-    eye = XVECTOR3(-18.524239f, 9.683158f, 2.7011344f, 1.0f);
-    target = eye + XVECTOR3(-0.96796095f, -0.2035667f, 0.14701098f, 0.0f);
-    nearPlane = 0.125f;
-    farPlane = 6198.7783f;
-    fov = Deg2Rad(100.0f);
-  } else {
-    target = eye + XVECTOR3(-1.0f, 0.0f, 0.0f, 0.0f);
+    t850::scene::ApplySceneCamera(camera, Cam,
+        static_cast<float>(RenderViewportWidth()) / static_cast<float>(RenderViewportHeight()));
   }
-  const float aspect = static_cast<float>(RenderViewportWidth()) / static_cast<float>(RenderViewportHeight());
-  Cam.InitPerspective(eye, fov, aspect, nearPlane, farPlane);
   Cam.Speed = 10.0f;
   Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f);
   Cam.SetLookAt(target);
@@ -3286,10 +3157,10 @@ void SceneTemplate::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSce
   m_orbitPitch = 0.0f;
   m_orbitYaw = -1.57079632679f;
   SyncOrbitProfileFromSandbox();
-  SetCameraProfile(t850::CameraProfileType::Quake3Fps);
+  SetCameraProfile(t850::CameraProfileType::FreeFly);
   VP = Cam.VP;
   T8_LOG_INFO("[SceneTemplate] Using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f near=%.3f far=%.3f",
-              hasSceneCamera ? "scene" : "SceneTemplate FPS",
+              hasSceneCamera ? "scene" : "fitted preview",
               Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
               Cam.Look.x, Cam.Look.y, Cam.Look.z,
               Rad2Deg(Cam.Fov),
@@ -3506,7 +3377,7 @@ int SceneTemplate::GetRuntimeMeshCount() const {
 }
 
 RenderSkinnedMesh* SceneTemplate::GetSkinnedMeshForIndex(int meshIndex) const {
-  if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || meshIndex >= GetRuntimeMeshCount() || !Meshes[meshIndex].pBase) {
+  if (meshIndex < 0 || meshIndex >= MeshCapacity() || meshIndex >= GetRuntimeMeshCount() || !Meshes[meshIndex].pBase) {
     return nullptr;
   }
   RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
@@ -3520,7 +3391,7 @@ std::vector<std::string> SceneTemplate::BuildSkinnedMeshOptions(std::vector<int>
 
   std::vector<std::string> options;
   const int meshCount = GetRuntimeMeshCount();
-  for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
+  for (int meshIndex = 0; meshIndex < meshCount && meshIndex < MeshCapacity(); ++meshIndex) {
     RenderSkinnedMesh* skinned = GetSkinnedMeshForIndex(meshIndex);
     if (!skinned) {
       continue;
@@ -3586,7 +3457,7 @@ RenderSkinnedMesh* SceneTemplate::GetSelectedAnimationMesh() const {
 bool SceneTemplate::AttachSceneObjectRagdoll(int meshIndex,
                                             const std::string& meshPath,
                                             const std::string& ragdollPath) {
-  if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || !Meshes[meshIndex].pBase) {
+  if (meshIndex < 0 || meshIndex >= MeshCapacity() || !Meshes[meshIndex].pBase) {
     return false;
   }
 
@@ -3724,7 +3595,7 @@ void SceneTemplate::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
       continue;
     }
     if (runtime.meshIndex < 0 || runtime.meshIndex >= static_cast<int>(m_meshCount) ||
-        runtime.meshIndex >= kMaxSandboxMeshes) {
+        runtime.meshIndex >= MeshCapacity()) {
       continue;
     }
 
@@ -3780,7 +3651,7 @@ bool SceneTemplate::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
     if (runtime.physicsDriven ||
         runtime.meshIndex < 0 ||
         runtime.meshIndex >= static_cast<int>(m_meshCount) ||
-        runtime.meshIndex >= kMaxSandboxMeshes ||
+        runtime.meshIndex >= MeshCapacity() ||
         !Meshes[runtime.meshIndex].HasPhysicsRagdoll()) {
       continue;
     }
@@ -3825,7 +3696,7 @@ bool SceneTemplate::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   if (!runtime ||
       runtime->meshIndex < 0 ||
       runtime->meshIndex >= static_cast<int>(m_meshCount) ||
-      runtime->meshIndex >= kMaxSandboxMeshes ||
+      runtime->meshIndex >= MeshCapacity() ||
       !Meshes[runtime->meshIndex].HasPhysicsRagdoll()) {
     return false;
   }
@@ -3873,12 +3744,9 @@ bool SceneTemplate::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
 }
 
 bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
-  t850::scene::EditorSceneFile scene;
+  if (!m_sceneDocument || scenePath != ActiveSceneFilePath()) return false;
+  t850::scene::EditorSceneFile scene = *m_sceneDocument;
   std::string error;
-  if (!t850::scene::LoadEditorSceneFile(scenePath, scene, &error)) {
-    T8_LOG_ERROR("[SceneTemplate] Failed to load editor scene '%s': %s", scenePath.c_str(), error.c_str());
-    return false;
-  }
 
   std::string migrationLog;
   if (t850::scene::MigrateEditorSceneGameLogic(scene, &migrationLog)) {
@@ -3889,6 +3757,8 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
   m_loadedEditorScene = true;
   m_loadedEditorScenePath = scenePath;
   m_meshCount = 0;
+  Meshes.clear();
+  Meshes.resize((std::max)(size_t{1}, scene.objects.size()));
   m_sceneObjectNames.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
@@ -3937,7 +3807,10 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
   loadedObjectSlots.reserve(scene.objects.size());
 
   for (const auto& object : scene.objects) {
-    if (!object.visible) continue;
+    const bool contributesNavigation = object.navigation && object.navigation->include;
+    const bool contributesPhysics = (object.physics && object.physics->enabled) ||
+        SceneHasStaticPhysicsEntityForObject(scene, object.name);
+    if (!object.visible && !contributesNavigation && !contributesPhysics) continue;
 #if defined(OS_ANDROID)
     if (object.mobile_visible && !*object.mobile_visible) {
       T8_LOG_INFO("[SceneTemplate] Android skipped mobile-hidden scene object '%s'", object.name.c_str());
@@ -3945,20 +3818,14 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
     }
 #endif
     const std::string meshPath = NormalizeSceneResourcePath(object.mesh);
-    if (meshPath.empty()) {
+    if (meshPath.empty() && !object.heightmap) {
       T8_LOG_ERROR("[SceneTemplate] Scene object '%s' has no mesh path; skipping", object.name.c_str());
       continue;
     }
-    if (m_meshCount >= kMaxSandboxMeshes) {
-      T8_LOG_ERROR("[SceneTemplate] Scene '%s' has more than %d visible meshes; remaining objects skipped",
-                   scenePath.c_str(), kMaxSandboxMeshes);
-      break;
-    }
-
     T8_LOG_INFO("[SceneTemplate] Loading scene object '%s' mesh='%s'", object.name.c_str(), meshPath.c_str());
-    const int primitiveIndex = PrimitiveMgr.CreateMesh(meshPath.c_str());
+    const int primitiveIndex = PrimitiveMgr.CreateSceneObject(object, &error);
     if (primitiveIndex < 0) {
-      T8_LOG_ERROR("[SceneTemplate] Failed to load scene object '%s' mesh '%s'", object.name.c_str(), meshPath.c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to load scene object '%s': %s", object.name.c_str(), error.c_str());
       continue;
     }
 
@@ -4113,8 +3980,7 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
   }
 
   if (m_meshCount <= 0) {
-    T8_LOG_ERROR("[SceneTemplate] Editor scene '%s' did not load any visible meshes", scenePath.c_str());
-    return false;
+    T8_LOG_INFO("[SceneTemplate] Scene '%s' contains no loaded mesh objects", scenePath.c_str());
   }
 
   m_selectedSkinningMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
@@ -4259,7 +4125,7 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
   }
   m_navMeshBuildAttempted = true;
 
-  const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
+  const int meshCount = (std::min)(MeshCapacity(), (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
   t850::navigation::NavMeshBuildSettings navBuildSettings = m_navMeshBuildSettings;
   uint64_t authoredLinksHash = 0xcbf29ce484222325ull;
   HashNavCacheValue(authoredLinksHash, static_cast<uint64_t>(m_authoredNavMesh.authored_links.size()));
@@ -4292,7 +4158,7 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
   }
   const uint64_t navCacheKey =
       ComputeSandboxNavMeshCacheKey(
-          Meshes,
+          Meshes.data(),
           meshCount,
           m_sceneMeshPaths,
           m_loadedEditorScenePath,
@@ -4427,7 +4293,7 @@ void SceneTemplate::InitializeNavTestAgents() {
     return;
   }
 
-  const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
+  const int meshCount = (std::min)(MeshCapacity(), (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
   auto findAuthoredCharacterForMesh = [&](int meshIndex) -> const t850::scene::ScenePhysicsEntityDesc* {
     if (meshIndex < 0 || meshIndex >= static_cast<int>(m_sceneObjectNames.size())) {
       return nullptr;
@@ -4584,7 +4450,7 @@ void SceneTemplate::PlanNavTestAgentPaths() {
   for (int i = 0; i < static_cast<int>(m_navTestAgents.size()); ++i) {
     NavTestAgentRuntime& agent = m_navTestAgents[static_cast<std::size_t>(i)];
     if (!agent.active || agent.physicsTraversalActive || !agent.needsPath || agent.repathCooldownSec > 0.0f ||
-        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+        agent.meshIndex < 0 || agent.meshIndex >= MeshCapacity() ||
         !Meshes[agent.meshIndex].pBase) {
       continue;
     }
@@ -4763,7 +4629,7 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
     T8_TELEMETRY_SCOPE("navigation.agents.target_update");
     for (NavTestAgentRuntime& agent : m_navTestAgents) {
       if (!agent.active ||
-          agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+          agent.meshIndex < 0 || agent.meshIndex >= MeshCapacity() ||
           !Meshes[agent.meshIndex].pBase) {
         continue;
       }
@@ -4932,7 +4798,7 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
   for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
     NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
     if (!agent.active ||
-        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+        agent.meshIndex < 0 || agent.meshIndex >= MeshCapacity() ||
         !Meshes[agent.meshIndex].pBase) {
       continue;
     }
@@ -5222,7 +5088,7 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
       for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
         NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
         if (!agent.active ||
-            agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+            agent.meshIndex < 0 || agent.meshIndex >= MeshCapacity() ||
             !Meshes[agent.meshIndex].pBase) {
           continue;
         }
@@ -5277,7 +5143,7 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
     for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
       NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
       if (!agent.active ||
-          agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+          agent.meshIndex < 0 || agent.meshIndex >= MeshCapacity() ||
           !Meshes[agent.meshIndex].pBase) {
         continue;
       }
@@ -5377,7 +5243,7 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
       m_navTestDiagAccumSec = 0.0f;
       for (const NavTestAgentRuntime& agent : m_navTestAgents) {
         if (!agent.active ||
-            agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+            agent.meshIndex < 0 || agent.meshIndex >= MeshCapacity() ||
             !Meshes[agent.meshIndex].pBase) {
           continue;
         }
@@ -5464,30 +5330,25 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
 }
 
 void SceneTemplate::CreateAssets() {
+  if (!m_sceneDocument || !m_sceneDocumentError.empty()) {
+    T8_LOG_ERROR("[SceneTemplate] %s", m_sceneDocumentError.c_str());
+    return;
+  }
   const std::string& activeSceneFilePath = ActiveSceneFilePath();
   const std::string& activeModelPath = ActiveModelPath();
   const bool embeddedSceneProfile = !activeSceneFilePath.empty();
   const std::string startupModelKey = embeddedSceneProfile ? std::string{} : SandboxProfileModelKey(activeModelPath);
   std::vector<t850::SandboxProfileDesc> startupSceneProfiles;
   const std::vector<t850::SandboxProfileDesc>* startupProfiles = nullptr;
-  t850::scene::EditorSceneFile startupScene;
+  const t850::scene::EditorSceneFile& startupScene = *m_sceneDocument;
   std::string renderGraphPath = "Scenes/SceneTemplate_RenderGraph.json";
 
-  if (m_controlSetup.descriptor.name.empty()) {
-    m_controlSetup.Load("Scenes/SceneTemplate.json");
-  }
   startupProfiles = &m_controlSetup.descriptor.profiles;
   if (embeddedSceneProfile) {
-    std::string startupSceneError;
-    if (t850::scene::LoadEditorSceneFile(activeSceneFilePath, startupScene, &startupSceneError)) {
-      startupSceneProfiles = startupScene.profiles;
-      startupProfiles = &startupSceneProfiles;
-      if (!startupScene.render_graph.empty()) {
-        renderGraphPath = startupScene.render_graph;
-      }
-    } else {
-      T8_LOG_ERROR("[SceneTemplate] Could not pre-read scene file from '%s': %s",
-                   activeSceneFilePath.c_str(), startupSceneError.c_str());
+    startupSceneProfiles = startupScene.profiles;
+    startupProfiles = &startupSceneProfiles;
+    if (!startupScene.render_graph.empty()) {
+      renderGraphPath = startupScene.render_graph;
     }
   }
 
@@ -6065,6 +5926,7 @@ void SceneTemplate::OnUpdate(float _DtSecs) {
     const int updateMeshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
     for (int meshIndex = 0; meshIndex < updateMeshCount; ++meshIndex) {
       if (!Meshes[meshIndex].pBase) continue;
+      if (auto* terrain = dynamic_cast<t850::HeightmapMesh*>(Meshes[meshIndex].pBase)) terrain->UpdatePlacementAnimations(DtSecs);
       RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
       if (!skinned || !skinned->HasSkinData()) continue;
       T8_TELEMETRY_SCOPE("sandbox.update.skinned_animation.pose");
@@ -6164,7 +6026,7 @@ void SceneTemplate::UpdateSceneSkeletonsFromRagdollPhysics() {
     if (!runtime.physicsDriven ||
         runtime.meshIndex < 0 ||
         runtime.meshIndex >= static_cast<int>(m_meshCount) ||
-        runtime.meshIndex >= kMaxSandboxMeshes ||
+        runtime.meshIndex >= MeshCapacity() ||
         !Meshes[runtime.meshIndex].HasPhysicsRagdoll()) {
       continue;
     }
@@ -13340,7 +13202,7 @@ void SceneTemplate::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
     }
     const bool hasSelectedRagdoll =
         selectedMeshIndex >= 0 &&
-        selectedMeshIndex < kMaxSandboxMeshes &&
+        selectedMeshIndex < MeshCapacity() &&
         Meshes[selectedMeshIndex].HasPhysicsRagdoll();
     if (gui.Button("Start Simulation", hasSelectedRagdoll)) {
       if (selectedPrimaryAuthoring) {
@@ -13606,7 +13468,7 @@ void SceneTemplate::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
   const bool selectedPrimaryAuthoring = (selectedMeshIndex == 0 && sceneRagdoll == nullptr && !m_loadedEditorScene);
   const bool hasSelectedRagdoll =
       selectedMeshIndex >= 0 &&
-      selectedMeshIndex < kMaxSandboxMeshes &&
+      selectedMeshIndex < MeshCapacity() &&
       Meshes[selectedMeshIndex].HasPhysicsRagdoll();
 
   if (hasSelectedRagdoll) {
@@ -14586,7 +14448,7 @@ void SceneTemplate::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) 
   }
 
   const int meshCount = GetRuntimeMeshCount();
-  for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
+  for (int meshIndex = 0; meshIndex < meshCount && meshIndex < MeshCapacity(); ++meshIndex) {
     RenderSkinnedMesh* skinned = GetSkinnedMeshForIndex(meshIndex);
     if (!skinned) {
       continue;
@@ -14733,7 +14595,7 @@ void SceneTemplate::ApplySandboxProfileState(const t850::SandboxProfileDesc& sta
 
     int matchedMeshIndex = -1;
     const int meshCount = GetRuntimeMeshCount();
-    for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
+    for (int meshIndex = 0; meshIndex < meshCount && meshIndex < MeshCapacity(); ++meshIndex) {
       if (!GetSkinnedMeshForIndex(meshIndex) || !ResourcePathEquals(animation.mesh, profileMeshPath(meshIndex))) {
         continue;
       }
@@ -15308,6 +15170,7 @@ void SceneTemplate::OnDraw() {
   UpdateSceneSkeletonsFromRagdollPhysics();
   for (int meshIndex = 0; meshIndex < drawMeshCount; ++meshIndex) {
     if (!Meshes[meshIndex].pBase) continue;
+    if (auto* terrain = dynamic_cast<t850::HeightmapMesh*>(Meshes[meshIndex].pBase)) terrain->UploadPlacementBones();
     Meshes[meshIndex].SetParallaxSettings(SceneProp.ParallaxLowSamples,
                                            SceneProp.ParallaxHighSamples,
                                            SceneProp.ParallaxHeight);
@@ -15330,7 +15193,7 @@ void SceneTemplate::OnDraw() {
   m_renderGraph.Execute(
     pFramework->pVideoDriver,
     SceneProp,
-    Meshes, drawMeshCount,
+    Meshes.data(), drawMeshCount,
     Quads,
     &Cam,
     &LightCam,

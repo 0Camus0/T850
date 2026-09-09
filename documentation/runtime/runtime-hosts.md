@@ -64,6 +64,11 @@ From `bin/x64/Release`:
 
 ## SceneTemplate Ownership
 
+SceneTemplate requires an explicit `--sceneFile` or hosted launch scene path.
+It does not choose a map implicitly. One parsed document supplies startup resources
+and runtime assembly. See [the architecture review](../editor/architecture-review.md)
+for the current ownership boundary and remaining extraction work.
+
 SceneTemplate:
 
 - loads `.t8scene` through `EditorSceneFile`;
@@ -96,6 +101,12 @@ Play Scene currently uses Fidelity mode only:
 5. load it through the real SceneTemplate file path.
 
 Validation errors block Play. Fast in-memory Play is not implemented.
+
+Scenes without an authored player default to a gravity-free `FreeFly` camera at
+their authored view (or fitted preview). A `physics_entities` entry of type
+`player` still selects its grounded controller and spawn; explicit profile values
+remain authoritative. A terrain mesh and its collision alone do not imply a
+player. This avoids forcing an overview/RTS camera through FPS gravity.
 
 ## Regression Cases
 

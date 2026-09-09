@@ -377,6 +377,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="EditorApp.cpp" />
+    <ClCompile Include="EditorTutorialCapture.cpp" />
     <ClCompile Include="EditorCamera.cpp" />
     <ClCompile Include="EditorLineRenderer.cpp" />
     <ClCompile Include="EditorGrid.cpp" />
@@ -388,7 +389,6 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClCompile Include="EditorUtil.cpp" />
     <ClCompile Include="EditorViewportUtil.cpp" />
     <ClCompile Include="HostedViewportPanel.cpp" />
-    <ClCompile Include="EditorSceneSerialization.cpp" />
     <ClCompile Include="EditorWorld.cpp" />
     <ClCompile Include="PlayScenePanel.cpp" />
     <ClCompile Include="MeshEditorPanel.cpp" />

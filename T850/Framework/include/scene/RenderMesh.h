@@ -436,6 +436,7 @@ namespace t850 {
     };
 
     struct MeshInfo {
+      bool visible = true;
       unsigned int			 VertexSize;
       unsigned int			 NumVertex;
 
@@ -460,6 +461,7 @@ namespace t850 {
     };
 
     void Load(const char *);
+    bool LoadGenerated(std::unique_ptr<XDataBase> database);
     void Create();
     void Transform(float *t);
     void Draw(float *t, float *vp);
@@ -525,6 +527,7 @@ namespace t850 {
     std::vector<std::size_t> m_drawOrderScratch;
 
   private:
+    std::unique_ptr<XDataBase> m_generatedDatabase;
     void BuildWireframeBuffers();
     void CreateWireframeShader();
     bool ApplyCullingPreprocessCache(const MeshPreprocessCacheData& cache);

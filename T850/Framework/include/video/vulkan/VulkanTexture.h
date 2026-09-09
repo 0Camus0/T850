@@ -25,6 +25,9 @@
 #endif
 
 #include <string>
+#include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace t850 {
 
@@ -52,6 +55,8 @@ namespace t850 {
     VkFormat        m_format = VK_FORMAT_R8G8B8A8_UNORM;
     float           m_samplerMaxAnisotropy = 1.0f;
     bool            m_isFloatTex = false;  // true for CreateFloatTexture textures
+  private:
+    std::vector<std::pair<uint64_t, VkSampler>> m_samplerVariants;
   };
 
 } // namespace t850

@@ -135,8 +135,8 @@ public:
 
   float DtSecs = 0.0f;
   t850::PrimitiveManager PrimitiveMgr;
-  static constexpr int kMaxSandboxMeshes = 64;
-  t850::PrimitiveInst Meshes[kMaxSandboxMeshes];
+  std::vector<t850::PrimitiveInst> Meshes = std::vector<t850::PrimitiveInst>(1);
+  int MeshCapacity() const { return static_cast<int>(Meshes.size()); }
   t850::PrimitiveInst Quads[10];
   int m_meshCount = 0;
   int m_finalOutputRT = -1;
@@ -153,6 +153,8 @@ public:
   int m_gameLogicSelectedObject = 0;
   int m_gameLogicForceState = 0;
   t850::SceneSetup m_controlSetup;
+  std::optional<t850::scene::EditorSceneFile> m_sceneDocument;
+  std::string m_sceneDocumentError;
   t850::FrameDumper m_dumper;
   int ChangeActiveGaussSelection = 1; // 0=Shadow, 1=Bloom, 2=DOF
   int m_debugRTSelection = 0;

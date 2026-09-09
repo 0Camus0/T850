@@ -1392,6 +1392,7 @@ namespace t850 {
     m_lineRenderer.SetFarPlane(cam->FPlane);
 
     for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
+      if (!Info[i].visible) continue;
       if (!m_wireGeo[i].HasIndexBuffer()) continue;
 
       MeshInfo* mi = &Info[i];
@@ -1506,9 +1507,11 @@ namespace t850 {
               matKey.bits |= ShaderKey::SPECULAR_MAP;
             if (mDef->NameParam == "glossMap")
               matKey.bits |= ShaderKey::GLOSS_MAP;
-            if (mDef->NameParam == "normalMap")
+            if (mDef->NameParam == "normalMap" && baseKey.has(ShaderKey::HAS_NORMALS) &&
+                baseKey.has(ShaderKey::HAS_TANGENTS) && baseKey.has(ShaderKey::HAS_BINORMALS))
               matKey.bits |= ShaderKey::NORMAL_MAP;
-            if (mDef->NameParam == "heightMap")
+            if (mDef->NameParam == "heightMap" && baseKey.has(ShaderKey::HAS_NORMALS) &&
+                baseKey.has(ShaderKey::HAS_TANGENTS) && baseKey.has(ShaderKey::HAS_BINORMALS))
               matKey.bits |= ShaderKey::HEIGHT_MAP;
             if (mDef->NameParam == "metallicMap")
               matKey.bits |= ShaderKey::METALLIC_MAP;
@@ -2051,6 +2054,7 @@ namespace t850 {
     for (std::size_t oi = 0; oi < numGeometries; oi++) {
       std::size_t i = geometryOrder[oi];
       MeshInfo  *it_MeshInfo = &Info[i];
+      if (!it_MeshInfo->visible) continue;
       int drawableSubsetCount = 0;
       int drawableClusterCount = 0;
       unsigned long long drawableIndexCount = 0;
@@ -2550,6 +2554,16 @@ namespace t850 {
     }
   }
 
+  bool RenderMesh::LoadGenerated(std::unique_ptr<XDataBase> database) {
+    if (!database || database->MeshInfo.empty() || !Info.empty() || xFile) return false;
+    m_generatedDatabase = std::move(database);
+    xFile = m_generatedDatabase.get();
+    m_sourcePath = xFile->m_name;
+    m_asset = MeshAssetCache::Get().Acquire(m_sourcePath);
+    Create();
+    return !Info.empty();
+  }
+
   void RenderMesh::Destroy() {
     // Phase A.5 step 3 + B step 1: VB/IB are owned by MeshAssetCache
     // pools. Material data is shared via MaterialAssetCache. Only the
@@ -2598,5 +2612,9 @@ namespace t850 {
     m_wireDepthTex = nullptr;
     m_wireDepthTex2 = nullptr;
     m_cullingMetadataReady = false;
+    if (m_generatedDatabase) {
+      xFile = nullptr;
+      m_generatedDatabase.reset();
+    }
   }
 }

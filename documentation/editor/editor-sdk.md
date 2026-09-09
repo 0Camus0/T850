@@ -138,6 +138,11 @@ T850::Editor)`. Call `t850_stage_editor_runtime(MyEditor)` for Windows DLLs; add
 `ENGINE_ASSETS` for stock assets. There is no installed `find_package` SDK yet.
 Set the external target's MSVC runtime to `MultiThreaded$<$<CONFIG:Debug>:Debug>`.
 
+On Linux, Framework declares its Draco and glslang dependencies directly. Keep
+those target dependencies on Framework: linking them only from an executable or
+the editor library can place static archives before their consumers and cause
+undefined references with the SteamRT linker.
+
 ```powershell
 cmake -S examples/EditorExtension -B examples/EditorExtension/build -G "Visual Studio 17 2022" -A x64 -DT850_AUTO_INSTALL_VCPKG_DEPS=OFF
 cmake --build examples/EditorExtension/build --config Debug --target EditorExtension --parallel 4

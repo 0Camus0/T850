@@ -19,6 +19,7 @@ namespace t8ditor {
 
 // ── String / path ────────────────────────────────────
 std::string ToLowerCopy(std::string value);
+std::wstring EditorPathToWide(const std::string& path);
 // Strip a leading (possibly embedded) "Assets/" prefix and normalise slashes.
 std::string NormalizeEditorResourcePath(std::string path);
 // Lowercased file name (no directory) of a normalised resource path.

@@ -8115,6 +8115,8 @@ void EditorApp::RunTerrainEditorSelfTest() {
     ++m_terrainSelfTestFrame;
     if (m_terrainSelfTestFrame < 5) return;
     if (m_terrainSelfTestFrame == 5) {
+      require(EditorPathToWide("Assets/caf\xc3\xa9") == L"Assets/caf\u00e9" && EditorPathToWide("").empty(),
+          "portable file-dialog path conversion failed");
       require(!g_objects.empty() && g_objects[0].heightmap.has_value(), "test requires a terrain scene");
       g_selectedIdx = 0;
       g_selectionType = 0;
@@ -11604,18 +11606,12 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
 #endif
   }
   if (menuAction.wantsImportX) {
-    auto toWstr = [](const std::string& s) {
-      int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-      std::wstring ws(len - 1, L'\0');
-      MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
-      return ws;
-    };
     std::string solDir = GetSolutionDir();
     std::string modelDir = (std::filesystem::path(solDir) / "Assets" / "Models").string();
     std::string path = OpenFileDialog(
       L"3D Models (*.glb;*.gltf)\0*.glb;*.gltf\0glTF Binary (*.glb)\0*.glb\0glTF (*.gltf)\0*.gltf\0All Files (*.*)\0*.*\0",
       L"Import Mesh",
-      toWstr(modelDir).c_str());
+      EditorPathToWide(modelDir).c_str());
     if (!path.empty()) {
       // Defer the actual import to the start of the next frame to show loading progress
       g_pendingImportMeshPath = path;
@@ -11678,34 +11674,22 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
     ImGui::EndPopup();
   }
   if (menuAction.wantsSaveScene) {
-    auto toWstr = [](const std::string& s) {
-      int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-      std::wstring ws(len - 1, L'\0');
-      MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
-      return ws;
-    };
     std::string solDir = GetSolutionDir();
     std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();
     std::string path = SaveFileDialog(
       L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
-      L"Save Scene", L"t8scene", toWstr(scenesDir).c_str());
+      L"Save Scene", L"t8scene", EditorPathToWide(scenesDir).c_str());
     if (!path.empty()) {
       SaveEditorSceneSnapshot(path, true);
     }
   }
   if (menuAction.wantsLoadScene) {
-    auto toWstr = [](const std::string& s) {
-      int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-      std::wstring ws(len - 1, L'\0');
-      MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
-      return ws;
-    };
     std::string solDir = GetSolutionDir();
     std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();
     std::string path = OpenFileDialog(
       L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
       L"Load Scene",
-      toWstr(scenesDir).c_str());
+      EditorPathToWide(scenesDir).c_str());
     if (!path.empty()) {
       // Defer the actual load to the start of the next frame (before BeginFrame)
       // to avoid destroying GPU resources mid-command-list on D3D12.

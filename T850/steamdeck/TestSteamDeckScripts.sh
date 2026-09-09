@@ -12,6 +12,9 @@ editor_build="$(bash "${SCRIPT_DIR}/BuildSteamRuntime.sh" --with-editor)"
 runtime_build="$(bash "${SCRIPT_DIR}/BuildSteamRuntime.sh")"
 [[ "${editor_build}" == *'--target DayScene T8ditor --parallel'* ]]
 [[ "${editor_build}" == *'-DT850_BUILD_EDITOR=ON'* ]]
+[[ "${editor_build}" == *'799b8115b5eb26a98cfda1d8f2b8ada39a0918c3c5f1114cab541a2fb2243981'* ]]
+[[ "${editor_build}" == *'sha256sum --check --strict'* ]]
+[[ "${editor_build}" == *'python3 -m venv /tmp/t850-python-check'* ]]
 [[ "${runtime_build}" == *'--target DayScene --parallel'* ]]
 [[ "${runtime_build}" == *'-DT850_BUILD_EDITOR=OFF'* ]]
 

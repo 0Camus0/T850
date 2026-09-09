@@ -54,6 +54,9 @@ $frameworkSources = @(
     Get-Item (Join-Path $frameworkRoot "src\physics\GameplayLayers.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMesh.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMeshData.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\scene\MeshDatabaseBuilder.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\scene\SceneConversions.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\scene\SceneRegions.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\ShadowSystem.cpp")
 ) | Sort-Object FullName -Unique
 
@@ -64,6 +67,8 @@ $frameworkHeaders = @(
     Get-Item (Join-Path $frameworkRoot "include\physics\GameplayLayers.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\MutableMesh.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\MutableMeshData.h")
+    Get-Item (Join-Path $frameworkRoot "include\scene\SceneConversions.h")
+    Get-Item (Join-Path $frameworkRoot "include\scene\SceneRegions.h")
 ) | Sort-Object FullName -Unique
 
 foreach ($source in $frameworkSources) {

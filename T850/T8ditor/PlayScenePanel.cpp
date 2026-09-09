@@ -74,7 +74,7 @@ bool EditorApp::ExportTemporaryPlayScene(std::string& outPath) {
   std::filesystem::path tempPath = tempDir / ("play_scene_" + std::to_string(stamp) + ".t8scene");
   outPath = tempPath.string();
   m_playSceneEditorSnapshot = RefreshVirtualEditorScene(outPath);
-  if (!RunGameValidation(m_playSceneEditorSnapshot, true)) {
+  if (!RunGameValidation(m_playSceneEditorSnapshot, false)) {
     m_playSceneStatus = "Game-logic validation failed. Review Game Validation before Play.";
     T8_LOG_ERROR("[T8ditor] Play Scene blocked by game-logic validation errors");
     return false;
@@ -354,7 +354,7 @@ bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
   }
   m_playSceneLoaded = true;
   m_playSceneStatus.clear();
-  T8_LOG_INFO("[T8ditor] Play Scene launched Quake3 scene from '%s'", m_playSceneTempPath.c_str());
+  T8_LOG_INFO("[T8ditor] Play Scene launched authored scene from '%s'", m_playSceneTempPath.c_str());
   return true;
 }
 
@@ -480,7 +480,7 @@ void EditorApp::DrawPlaySceneWindow() {
     if (m_playSceneLaunchFailed) {
       ImGui::TextDisabled("%s", m_playSceneStatus.c_str());
     } else if (m_playSceneHasVisibleObjects) {
-      ImGui::TextDisabled("Temporary scene: %s", m_playSceneTempPath.c_str());
+      ImGui::TextDisabled("%s", m_playSceneLoaded ? "Running" : "Loading...");
     } else {
       ImGui::TextDisabled("Temporary scene has no visible meshes; nothing to run.");
     }

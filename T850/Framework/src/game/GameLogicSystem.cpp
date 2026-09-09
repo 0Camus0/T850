@@ -78,6 +78,8 @@ bool GameLogicSystem::LoadFromScene(
   }
   if (report) *report = validation;
   if (validation.HasErrors()) return false;
+  if (!scene::ValidateSceneRegions(scene.regions)) return false;
+  regions_ = scene.regions;
 
   for (GameObject& object : registry_.Objects()) DestroyComponents(object);
   registry_.Clear();
@@ -162,6 +164,7 @@ void GameLogicSystem::SetPaused(bool paused) {
 }
 
 void GameLogicSystem::Shutdown() {
+  regions_.clear();
   if (groupSystem_) groupSystem_->Clear();
   for (GameObject& object : registry_.Objects()) DestroyComponents(object);
   for (const std::unique_ptr<IController>& controller : controllers_) {

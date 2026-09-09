@@ -464,6 +464,21 @@
     <ClInclude Include="include\scene\EditorSceneFile.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
+    <ClInclude Include="include\scene\SceneConversions.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\SceneRegions.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\HeightmapTerrain.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\TerrainPlacement.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="include\terrain\HeightmapMesh.h">
+      <Filter>Header Files\terrain</Filter>
+    </ClInclude>
     <ClInclude Include="include\scene\IBLResources.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
@@ -933,6 +948,24 @@
     </ClCompile>
     <ClCompile Include="src\scene\EditorSceneFile.cpp">
       <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\SceneConversions.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\SceneRegions.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\MeshDatabaseBuilder.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\HeightmapTerrain.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\TerrainPlacement.cpp">
+      <Filter>Source Files\terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="src\terrain\HeightmapMesh.cpp">
+      <Filter>Source Files\terrain</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\SceneDescriptor.cpp">
       <Filter>Source Files\scene</Filter>

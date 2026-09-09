@@ -540,8 +540,12 @@ namespace t850 {
     // Use texture-based bone matrix skinning
     uint64_t skinBit = ShaderKey::HAS_SKINNING_TEX;
 
-    for (auto& meshInfo : Info) {
-      for (auto& subset : meshInfo.SubSets) {
+    for (size_t geometryIndex = 0; geometryIndex < Info.size(); ++geometryIndex) {
+      if (geometryIndex >= mc->Geometry.size()) continue;
+      const auto attributes = mc->Geometry[geometryIndex].VertexAttributes;
+      if (!(attributes & xF::xMeshGeometry::HAS_SKINWEIGHTS0) ||
+          !(attributes & xF::xMeshGeometry::HAS_SKININDEXES0)) continue;
+      for (auto& subset : Info[geometryIndex].SubSets) {
         subset.key.bits |= skinBit;
       }
     }
@@ -783,6 +787,7 @@ namespace t850 {
     bool anyVertex = false;
     const std::size_t geometryCount = (std::min)(meshContainer->Geometry.size(), xFile->MeshInfo.size());
     for (std::size_t geometryIndex = 0; geometryIndex < geometryCount; ++geometryIndex) {
+      if (geometryIndex < Info.size() && !Info[geometryIndex].visible) continue;
       const xF::xMeshGeometry& sourceGeometry = meshContainer->Geometry[geometryIndex];
       const xF::xFinalGeometry& finalGeometry = xFile->MeshInfo[geometryIndex];
       const unsigned int stride = finalGeometry.VertexSize / sizeof(float);
@@ -985,6 +990,7 @@ namespace t850 {
     ExtractMeshInstanceCB(wireInstanceCB, wireCB);
 
     for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
+      if (!Info[i].visible) continue;
       if (!m_wireGeo[i].HasIndexBuffer()) continue;
 
       MeshInfo* mi = &Info[i];
@@ -1271,6 +1277,7 @@ namespace t850 {
     for (std::size_t oi = 0; oi < geometryOrder.size(); oi++) {
       std::size_t i = geometryOrder[oi];
       MeshInfo *it_MeshInfo = &Info[i];
+      if (!it_MeshInfo->visible) continue;
 
       // Fill base CBuffer (no bone data — that's in the texture)
       RenderMesh::CBuffer baseCB;

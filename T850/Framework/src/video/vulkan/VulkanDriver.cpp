@@ -348,7 +348,7 @@ namespace t850 {
     m_viewport.maxDepth = 1.0f;
     m_scissorRect.offset = { int32_t(x), int32_t(y) };
     m_scissorRect.extent = { uint32_t(w), uint32_t(h) };
-    if (m_currentFrame < kBackBufferCount && m_commandBuffers[m_currentFrame]) {
+    if (m_frameStarted && m_currentFrame < kBackBufferCount && m_commandBuffers[m_currentFrame]) {
       vkCmdSetViewport(m_commandBuffers[m_currentFrame], 0, 1, &m_viewport);
       vkCmdSetScissor(m_commandBuffers[m_currentFrame], 0, 1, &m_scissorRect);
     }
@@ -360,7 +360,7 @@ namespace t850 {
 
     m_scissorRect.offset = { int32_t(x), int32_t(y) };
     m_scissorRect.extent = { uint32_t(w), uint32_t(h) };
-    if (m_currentFrame < kBackBufferCount && m_commandBuffers[m_currentFrame])
+    if (m_frameStarted && m_currentFrame < kBackBufferCount && m_commandBuffers[m_currentFrame])
       vkCmdSetScissor(m_commandBuffers[m_currentFrame], 0, 1, &m_scissorRect);
   }
 

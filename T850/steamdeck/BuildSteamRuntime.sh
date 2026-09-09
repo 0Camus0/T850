@@ -7,6 +7,7 @@ IMAGE="registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest"
 BUILD_DIR="build/steamdeck-steamrt-libcpp"
 CONFIG="Release"
 BUILD_EDITOR="OFF"
+BUILD_TARGETS="DayScene"
 CLEAN=0
 CONFIGURE_ONLY=0
 
@@ -31,6 +32,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-editor)
       BUILD_EDITOR="ON"
+      BUILD_TARGETS="DayScene T8ditor"
       shift
       ;;
     --clean)
@@ -117,8 +119,11 @@ cmake -S T850 -B ${BUILD_DIR} -G Ninja \
   -DT850_BUILD_EDITOR=${BUILD_EDITOR}
 
 if [ '${CONFIGURE_ONLY}' != '1' ]; then
-  cmake --build ${BUILD_DIR} --target DayScene --parallel \$(nproc)
+  cmake --build ${BUILD_DIR} --target ${BUILD_TARGETS} --parallel \$(nproc)
   runtime_dir=/workspace/T850/bin/SteamDeck/${CONFIG}
+  for target in ${BUILD_TARGETS}; do
+    test -x \"\${runtime_dir}/\${target}\" || exit 1
+  done
   cp -L /usr/lib/x86_64-linux-gnu/libc++.so.1 \"\${runtime_dir}/\"
   cp -L /usr/lib/x86_64-linux-gnu/libc++abi.so.1 \"\${runtime_dir}/\"
   cp -L /usr/lib/x86_64-linux-gnu/libunwind.so.1 \"\${runtime_dir}/\"

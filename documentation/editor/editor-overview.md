@@ -1,8 +1,33 @@
 # Editor Overview
 
-Status: verified against source on 2026-08-19.
+Status: terrain, placement, shared conversion, and Play sections refreshed against
+the local editor on 2026-09-07; legacy subsystem details retain their earlier audit scope.
 
 This document explains T850's editor, T8ditor: app lifecycle, editor-world data model, scene save/load, panels, hierarchy/inspector/rendering/timeline controls, viewport and gizmo behavior, Play Scene, Mesh Editor, Ragdoll Editor, NavMesh authoring, undo/redo, hosted windows, render-graph integration, limitations, and debugging workflows.
+
+2026-09-07 update: see the [architecture review](architecture-review.md) for the
+shared-world ownership gaps and implemented fixes. [Heightmap import](../terrain/heightmap-terrain.md)
+is available through File > Import Heightmap; generation and runtime interpretation
+belong to Framework. Scene loads now honor authored control descriptors.
+
+Terrain follow-up: **View > Terrain Editor** exposes Raise/Lower/Flatten/Smooth,
+textured palette painting, and LOD settings. **View > Regions** authors tagged
+volumes. Edits persist in `.t8scene`; commits synchronize rendering/collision and
+invalidate navigation, rebuilding at stroke completion. See
+[terrain editing](../terrain/heightmap-terrain.md) and
+[regions](../scenes/scene-regions.md) for contracts and test commands.
+
+RTS blockout authoring now adds **Placement Grid** to the terrain tools: generated
+square-cell guides, rectangular footprints, occupied-cell checks, flat-only building
+placement by default, and colored box placeholders. All rules and geometry live
+in Framework. See [placement reference](../terrain/placement-grid.md).
+For practical lessons rather than implementation details, start with the separate
+[editor tutorial series](../tutorials/README.md).
+
+The tutorial series now includes step-specific editor captures. **View > Selection
+Wireframe** controls automatic wire outlines on selected objects independently of
+the global Wireframe Overlay toggle. This makes terrain grid/brush views readable
+without changing authored geometry.
 
 Related documents:
 
@@ -25,7 +50,7 @@ T8ditor is the authoring shell for `.t8scene` files. It is an `AppBase` applicat
 The editor is responsible for:
 
 1. Importing and previewing meshes.
-2. Editing object transforms, visibility, grouping, cameras, lights, splines, physics, ragdolls, navigation, God Rays, render settings, and profiles.
+2. Editing object transforms, visibility, grouping, cameras, lights, splines, physics, ragdolls, navigation, terrain, placement blockouts, tagged regions, God Rays, render settings, and profiles.
 3. Saving/loading `.t8scene`.
 4. Running Play Scene through an embedded `SceneTemplate`.
 5. Hosting embedded Mesh Edit and Ragdoll Edit windows.
@@ -59,7 +84,7 @@ flowchart TD
 | `T8ditor/EditorGizmo.*` | Editor line-gizmo meshes for translate/rotate/scale. |
 | `T8ditor/EditorMesh.*` | Editor wireframe/picking mesh loader for `.x`, `.gltf`, `.glb`, and generated triangle meshes. |
 | `T8ditor/EditorSceneGizmos.*` | Camera/light/gizmo overlay geometry. |
-| `T8ditor/EditorSceneSerialization.*` | Editor-to-scene conversion helpers for NavMesh, physics cook settings, links, volumes, etc. |
+| `Framework/scene/SceneConversions.*` | Shared NavMesh, physics cook settings, links, volumes, and camera conversion semantics; the editor retains a compatibility header. |
 | `T8ditor/UndoRedo.h` | Command-pattern undo stack plus transform/group-transform commands. |
 | `T8ditor/HostedViewportPanel.*` | Shared native ImGui viewport/window and render-target wrapper for hosted windows. |
 | `T8ditor/PlayScenePanel.cpp` | Hosted Play Scene runtime window. |
@@ -347,7 +372,11 @@ The editor uses the same Framework render path as scenes:
 8. Draws RT debug override if selected.
 9. Draws wireframe, skeleton, physics, NavMesh, spline, camera, and light overlays.
 
-The Look & Lighting panel maps controls from `Scenes/Quake3Mock.json` into editor `SceneProps`, including exposure, bloom, light scales, lightmaps, tone mapping, shadow/SSAO/DOF/parallax/God Rays, debug RTs, cubemap, Gaussian kernels, material multipliers, and render graph pass toggles.
+The Look & Lighting panel maps the loaded scene's `control_descriptor` into editor
+`SceneProps`, falling back to `Scenes/Quake3Mock.json` for legacy scenes without a
+descriptor. Controls include exposure, bloom, light scales, lightmaps, tone mapping,
+shadow/SSAO/DOF/parallax/God Rays, debug RTs, cubemap, Gaussian kernels, material
+multipliers, and render graph pass toggles.
 
 ## Timeline
 
@@ -381,6 +410,30 @@ Flow:
 8. Restore editor state and delete temp file on close.
 
 `WantsRelativeMouseMode()` returns true only when Play Scene is open, loaded, GUI hidden, and not closing.
+
+Scenes without a player start with a free-fly preview camera rather than implicit
+FPS gravity. Authored player entities and explicit camera-profile overrides remain
+authoritative. The terrain regression uses the normal toolbar request/window load
+path and checks stable idle positioning plus forwarded movement input.
+
+## Terrain and Placement
+
+**View > Terrain Editor** and the selected terrain's Properties inspector expose
+sculpting, palette painting, LOD, and placement controls. The placement cell size is
+independent of terrain sample spacing. Buildings use integer width/depth footprints;
+four occupied cells can be 2-by-2, while 4-by-4 occupies sixteen cells.
+
+Placement checks the full footprint against authored terrain and occupancy. It
+does not flatten a site implicitly. Height variation and slope tolerances implement
+the default flat-only rule. Edits that invalidate occupied building foundations
+are rejected. Placement/removal use the same deferred terrain transaction and
+whole-scene undo path as the rest of terrain editing.
+
+Blockouts are terrain-owned static records with stable local IDs. They generate
+colored boxes, collision through authored terrain physics, and shared navigation
+exclusions. They are not selectable game actors, construction systems, or moving
+units. Use [RtsBlockout.t8scene](../../T850/Assets/Scenes/RtsBlockout.t8scene) and
+[the tutorials](../tutorials/README.md) to explore the current feature set.
 
 ## Mesh Editor hosted window
 
@@ -512,6 +565,9 @@ When adding editor features:
 - Scene snapshots skip transient objects but preserve unloaded scene objects.
 - Hosted windows can freeze the main editor viewport and route input differently.
 - Some editor state is still global/static or referenced through aliases into `EditorWorld`.
+- Placement blockouts currently support rectangular square-cell footprints on
+  unrotated, unit-scale terrain. They do not check arbitrary imported obstacles
+  or occupancy on another terrain. Unit markers are static size references.
 
 ## Debugging checklist
 

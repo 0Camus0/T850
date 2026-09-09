@@ -6,6 +6,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG="Release"
 OUTPUT=""
 SKIP_BUILD=0
+WITH_EDITOR=0
 
 usage() {
   cat <<'USAGE'
@@ -15,6 +16,7 @@ Options:
   --configuration NAME   CMake build type. Default: Release.
   --output PATH          Output .tar.gz path. Default: T850/steamdeck/package/T850-SteamDeck-<config>.tar.gz
   --skip-build           Package an already-built Steam Deck runtime.
+  --with-editor          Build and require the separate T8ditor executable.
   -h, --help             Show this help.
 USAGE
 }
@@ -31,6 +33,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-build)
       SKIP_BUILD=1
+      shift
+      ;;
+    --with-editor)
+      WITH_EDITOR=1
       shift
       ;;
     -h|--help)
@@ -50,12 +56,19 @@ if [[ -z "${OUTPUT}" ]]; then
 fi
 
 if [[ "${SKIP_BUILD}" != "1" ]]; then
-  "${SCRIPT_DIR}/BuildSteamRuntime.sh" --configuration "${CONFIG}"
+  BUILD_ARGS=(--configuration "${CONFIG}")
+  if [[ "${WITH_EDITOR}" == "1" ]]; then BUILD_ARGS+=(--with-editor); fi
+  "${SCRIPT_DIR}/BuildSteamRuntime.sh" "${BUILD_ARGS[@]}"
 fi
 
 RUNTIME_DIR="${REPO_ROOT}/T850/bin/SteamDeck/${CONFIG}"
 if [[ ! -x "${RUNTIME_DIR}/DayScene" ]]; then
   echo "[T850] Missing Steam Deck runtime: ${RUNTIME_DIR}/DayScene" >&2
+  exit 1
+fi
+
+if [[ "${WITH_EDITOR}" == "1" && ! -x "${RUNTIME_DIR}/T8ditor" ]]; then
+  echo "[T850] Missing Steam Deck editor: ${RUNTIME_DIR}/T8ditor" >&2
   exit 1
 fi
 

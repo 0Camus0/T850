@@ -1,6 +1,7 @@
 # Steam Deck Build and Deployment
 
-Status: verified against SteamRT, package, launcher, cloud-asset, and Windows SSH orchestration scripts on 2026-08-19.
+Status: editor build/package/launch contract updated on 2026-09-08; CI execution
+must be checked on the pushed commit, not inferred from script tests.
 
 Steam Deck/Linux uses Vulkan and the CMake build. The official reproducible build runs inside Valve's Steam Runtime `sniper` SDK container through Podman with Clang 16 and libc++.
 
@@ -26,7 +27,7 @@ Configure only:
 ./steamdeck/BuildSteamRuntime.sh --configuration Release --configure-only
 ```
 
-Include T8ditor in CMake configuration:
+Build the separate T8ditor executable alongside DayScene:
 
 ```bash
 ./steamdeck/BuildSteamRuntime.sh --configuration Release --with-editor
@@ -44,19 +45,35 @@ The script:
 2. runs `registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest`;
 3. installs Clang 16/libc++ and X11/Wayland/EGL development dependencies;
 4. configures Ninja with `T850_PLATFORM_STEAM_DECK=ON`;
-5. builds `DayScene` unless configure-only;
+5. builds `DayScene` and, with `--with-editor`, `T8ditor`, unless configure-only;
 6. copies `libc++.so.1`, `libc++abi.so.1`, and `libunwind.so.1` beside the executable.
 
 Output:
 
 ```text
 T850/bin/SteamDeck/Release/DayScene
+T850/bin/SteamDeck/Release/T8ditor  # with --with-editor
 T850/bin/SteamDeck/Release/libc++.so.1
 T850/bin/SteamDeck/Release/libc++abi.so.1
 T850/bin/SteamDeck/Release/libunwind.so.1
 ```
 
 A missing Podman message is an environment prerequisite failure before CMake, not a source failure.
+
+The GitHub Actions Steam Deck job uses `--with-editor`, verifies both executable
+outputs, and includes both in the `T850-SteamDeck-Release` artifact. Packaging with
+`--with-editor --skip-build` rejects an absent editor instead of silently publishing
+a runtime-only archive. The editor is an independent Linux binary, not a runtime
+mode or a Windows executable. Existing x64 Linux/SteamRT dependencies are shared.
+
+```bash
+./steamdeck/PackageSteamDeckRelease.sh --configuration Release --with-editor --skip-build
+bash ./steamdeck/TestSteamDeckScripts.sh
+```
+
+The script test uses mock executables and a temporary package to test routing,
+required outputs, and archive contents. It does not substitute for a Linux compile
+or a real desktop render test.
 
 ## Run on Steam Deck/Linux
 
@@ -65,15 +82,19 @@ Use the runtime wrapper:
 ```bash
 ./steamdeck/T850.sh --game-mode
 ./steamdeck/T850.sh --desktop
+./steamdeck/T850.sh --editor --scene-file Scenes/RtsBlockout.t8scene
 ```
 
 Game mode defaults to fullscreen 1280x800. Desktop defaults to windowed 1280x800. Both force Vulkan and load `steamdeck/config_steamdeck.json`.
+`--editor` selects `T8ditor` and Desktop Mode, using the same libraries, assets and
+configuration setup. It requires an editor-inclusive build/package.
 
 Options:
 
 ```text
 --game-mode
 --desktop
+--editor
 --scene N
 --scene-file PATH | --t8scene PATH
 --model PATH

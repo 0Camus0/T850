@@ -159,6 +159,12 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/MaterialAssetCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/MeshPool.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/MutableMeshData.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/MeshDatabaseBuilder.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/SceneConversions.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/SceneRegions.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/HeightmapTerrain.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/TerrainPlacement.cpp
+  ${T850_SOURCE_DIR}/Framework/src/terrain/HeightmapMesh.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/MutableMesh.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderQueue.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderContainer.cpp

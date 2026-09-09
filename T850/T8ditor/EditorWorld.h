@@ -143,6 +143,7 @@ struct EditorWorld {
   std::vector<t850::SandboxProfileDesc> sceneProfiles;
   std::vector<t850::scene::SceneGameEntityDesc> gameEntities;
   std::vector<t850::scene::SceneGroupDesc> gameGroups;
+  std::vector<t850::scene::SceneRegionDesc> regions;
   std::optional<t850::scene::SceneGameLogicSettingsDesc> gameLogicSettings;
   std::unique_ptr<t850::Q3BspCollisionWorld> q3CollisionWorld;
 };

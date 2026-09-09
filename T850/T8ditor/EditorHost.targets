@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Condition="'$(T8ditorBuildCore)'!='true'">
+    <ProjectReference Include="$(T850SourceRoot)T8ditor\T8ditorCore.vcxproj">
+      <Project>{9E74CC36-F1BB-41A5-88F9-BF499A702BC1}</Project>
+      <GlobalPropertiesToRemove>OutDir;IntDir;TargetName;T850StageEngineAssets</GlobalPropertiesToRemove>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup Condition="'$(T8ditorBuildCore)'=='true'">
+    <ProjectReference Include="$(T850SourceRoot)Framework\Framework.vcxproj">
+      <Project>{844841CA-54AA-45DF-AA7A-65C27F50FB75}</Project>
+      <AdditionalProperties>SolutionDir=$(T850SourceRoot)</AdditionalProperties>
+      <GlobalPropertiesToRemove>OutDir;IntDir;TargetName;T850StageEngineAssets</GlobalPropertiesToRemove>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+    <ProjectReference Include="$(T850SourceRoot)FrameworkImGui\FrameworkImGui.vcxproj">
+      <Project>{6B2D52DE-7E82-45D6-A2E6-9735576C91CF}</Project>
+      <AdditionalProperties>SolutionDir=$(T850SourceRoot)</AdditionalProperties>
+      <GlobalPropertiesToRemove>OutDir;IntDir;TargetName;T850StageEngineAssets</GlobalPropertiesToRemove>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="T850StageEditorRuntime" AfterTargets="Build" Condition="'$(T8ditorBuildCore)'!='true'">
+    <ItemGroup>
+      <T850RuntimeDll Include="$(T850SourceRoot)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll;$(T8VcpkgDynamic)\bin\libEGL.dll;$(T8VcpkgDynamic)\bin\libGLESv2.dll;$(T8VcpkgDynamic)\bin\draco.dll" />
+      <T850RuntimeDll Include="$(T8VcpkgDynamic)\bin\zlib1.dll" Condition="Exists('$(T8VcpkgDynamic)\bin\zlib1.dll')" />
+      <T850RuntimeDll Include="$(T8VcpkgDynamic)\bin\z.dll" Condition="Exists('$(T8VcpkgDynamic)\bin\z.dll')" />
+      <T850RuntimeAsset Include="Shaders;Models;Fonts;Textures;Scenes;Layouts" />
+    </ItemGroup>
+    <Copy SourceFiles="@(T850RuntimeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Exec Condition="'$(T850StageEngineAssets)'=='true'" Command="call &quot;$(T850SourceRoot)scripts\EnsureJunction.cmd&quot; &quot;$(OutDir)%(T850RuntimeAsset.Identity)&quot; &quot;$(T850SourceRoot)Assets\%(T850RuntimeAsset.Identity)&quot;" />
+  </Target>
+</Project>

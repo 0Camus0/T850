@@ -193,6 +193,13 @@ if(T850_RECAST_ENABLED)
     RecastNavigation::DetourCrowd
     RecastNavigation::DetourTileCache)
 endif()
+if(T850_PLATFORM_STEAM_DECK)
+  target_link_libraries(Framework PRIVATE
+    draco::draco
+    glslang::glslang
+    glslang::SPIRV
+    glslang::glslang-default-resource-limits)
+endif()
 target_include_directories(Framework PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/include

@@ -110,6 +110,11 @@ public:
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
   void SetLaunchDesc(const SceneTemplateLaunchDesc& desc);
+  void SetComponentFactories(t850::game::ComponentFactoryRegistry factories, bool requireKnownTypes = false) {
+    m_hostComponentFactories = std::move(factories);
+    m_requireKnownComponentTypes = requireKnownTypes;
+  }
+  bool GameLogicReady() const { return m_gameLogicReady; }
   void SetFinalOutputRT(int rtHandle) { m_finalOutputRT = rtHandle; }
   void SetRenderSize(int width, int height);
   void ResizeRenderTargets(int width, int height, int finalOutputRT);
@@ -150,6 +155,9 @@ public:
   t850::game::examples::GroupManager m_groupManager;
   t850::game::examples::RtsCommandController m_rtsCommandController;
   t850::game::GameLogicSystem m_gameLogic;
+  std::optional<t850::game::ComponentFactoryRegistry> m_hostComponentFactories;
+  bool m_requireKnownComponentTypes = false;
+  bool m_gameLogicReady = false;
   int m_gameLogicSelectedObject = 0;
   int m_gameLogicForceState = 0;
   t850::SceneSetup m_controlSetup;

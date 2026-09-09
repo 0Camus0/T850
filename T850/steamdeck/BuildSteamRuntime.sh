@@ -75,13 +75,13 @@ podman run --rm \
   bash -lc "
 set -e
 bash /workspace/T850/steamdeck/PrepareSteamRuntimeApt.sh
-apt-get update >/dev/null
+apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   clang-16 libc++-16-dev libc++abi-16-dev \
   autoconf-archive libltdl-dev python3-venv \
   libx11-dev libxft-dev libxext-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
   libxi-dev libxrandr-dev libxcursor-dev libxfixes-dev \
-  pkg-config zip unzip curl ca-certificates make m4 perl >/dev/null
+  pkg-config zip unzip curl ca-certificates make m4 perl
 
 if [ ! -x /tmp/autoconf-install/bin/autoconf ]; then
   rm -rf /tmp/autoconf-2.72 /tmp/autoconf-install

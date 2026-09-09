@@ -73,7 +73,8 @@ public:
   void Initialize(t850::EngineContext& context, const GameLogicSettings& settings);
   bool LoadFromScene(const t850::scene::EditorSceneFile& scene,
                      const GameSceneRuntimeLinks& links,
-                     t850::scene::SceneValidationReport* report = nullptr);
+                     t850::scene::SceneValidationReport* report = nullptr,
+                     bool requireKnownTypes = false);
   void Update(float deltaSeconds);
   void SetPaused(bool paused);
   bool Paused() const { return paused_; }

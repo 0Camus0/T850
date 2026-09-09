@@ -74,6 +74,7 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Tagged gameplay regions | [scenes/scene-regions.md](scenes/scene-regions.md) | Implemented, verified 2026-09-07 |
 | P0-P14 maintenance contracts | [game/game-entity-system-implementation-prompts.md](game/game-entity-system-implementation-prompts.md) | Executed; reference only |
 | T8ditor | [editor/editor-overview.md](editor/editor-overview.md) | Terrain/placement/Play refreshed 2026-09-07 |
+| Embeddable editor/static extensions | [editor/editor-sdk.md](editor/editor-sdk.md) | First implementation, 2026-09-09 |
 | Editor/runtime architecture assessment | [editor/architecture-review.md](editor/architecture-review.md) | Review and first extraction, 2026-09-07 |
 | `.t8scene` and runtime loading | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Verified 2026-08-30 |
 | SceneDescriptor/SceneSetup | [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md) | Verified 2026-08-19 |

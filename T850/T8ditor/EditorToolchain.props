@@ -1,0 +1,181 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition="'$(Platform)'=='Win32'">
+    <T8Arch>x86</T8Arch>
+    <T8VcpkgStatic>$(T850SourceRoot)Librerias\vcpkg\installed\x86-windows-static</T8VcpkgStatic>
+    <T8VcpkgDynamic>$(T850SourceRoot)Librerias\vcpkg\installed\x86-windows</T8VcpkgDynamic>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='x64'">
+    <T8Arch>x64</T8Arch>
+    <T8VcpkgStatic>$(T850SourceRoot)Librerias\vcpkg\installed\x64-windows-static</T8VcpkgStatic>
+    <T8VcpkgDynamic>$(T850SourceRoot)Librerias\vcpkg\installed\x64-windows</T8VcpkgDynamic>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='ARM64'">
+    <T8Arch>arm64</T8Arch>
+    <T8VcpkgStatic>$(T850SourceRoot)Librerias\vcpkg\installed\arm64-windows-static</T8VcpkgStatic>
+    <T8VcpkgDynamic>$(T850SourceRoot)Librerias\vcpkg\installed\arm64-windows</T8VcpkgDynamic>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <PrecompiledHeader />
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_DEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(T850SourceRoot)Librerias\glaze\include;$(T850SourceRoot)Librerias\tinyxml2\include;$(T850SourceRoot)Framework;$(T850SourceRoot)Framework\include;$(T850SourceRoot)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(T850SourceRoot)Librerias\stb\include</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MinimalRebuild>false</MinimalRebuild>
+      <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(T850SourceRoot)Librerias\tinyxml2\lib;$(T850SourceRoot)Lib\$(Configuration)\$(Platform)\;$(T850SourceRoot)$(Configuration);$(T850SourceRoot)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\debug\lib;$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;Recast-d.lib;Detour-d.lib;DetourCrowd-d.lib;DetourTileCache-d.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <PrecompiledHeader />
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_DEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(T850SourceRoot)Librerias\glaze\include;$(T850SourceRoot)Librerias\tinyxml2\include;$(T850SourceRoot)Framework;$(T850SourceRoot)Framework\include;$(T850SourceRoot)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(T850SourceRoot)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MinimalRebuild>false</MinimalRebuild>
+      <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(T850SourceRoot)Librerias\tinyxml2\lib;$(T850SourceRoot)Lib\$(Configuration)\$(Platform)\;$(T850SourceRoot)$(Configuration);$(T850SourceRoot)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\debug\lib;$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;Recast-d.lib;Detour-d.lib;DetourCrowd-d.lib;DetourTileCache-d.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
+    <ClCompile>
+      <PrecompiledHeader />
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_DEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(T850SourceRoot)Librerias\glaze\include;$(T850SourceRoot)Librerias\tinyxml2\include;$(T850SourceRoot)Framework;$(T850SourceRoot)Framework\include;$(T850SourceRoot)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(T850SourceRoot)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MinimalRebuild>false</MinimalRebuild>
+      <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(T850SourceRoot)Librerias\tinyxml2\lib;$(T850SourceRoot)Lib\$(Configuration)\$(Platform)\;$(T850SourceRoot)$(Configuration);$(T850SourceRoot)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\debug\lib;$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;Recast-d.lib;Detour-d.lib;DetourCrowd-d.lib;DetourTileCache-d.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader />
+      <Optimization>Full</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;NDEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(T850SourceRoot)Librerias\glaze\include;$(T850SourceRoot)Librerias\tinyxml2\include;$(T850SourceRoot)Framework;$(T850SourceRoot)Framework\include;$(T850SourceRoot)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(T850SourceRoot)Librerias\stb\include</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(T850SourceRoot)Librerias\tinyxml2\lib;$(T850SourceRoot)Lib\$(Configuration)\$(Platform)\;$(T850SourceRoot)$(Configuration);$(T850SourceRoot)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;Recast.lib;Detour.lib;DetourCrowd.lib;DetourTileCache.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader />
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NDEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(T850SourceRoot)Librerias\glaze\include;$(T850SourceRoot)Librerias\tinyxml2\include;$(T850SourceRoot)Framework;$(T850SourceRoot)Framework\include;$(T850SourceRoot)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(T850SourceRoot)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(T850SourceRoot)Librerias\tinyxml2\lib;$(T850SourceRoot)Lib\$(Configuration)\$(Platform)\;$(T850SourceRoot)$(Configuration);$(T850SourceRoot)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;Recast.lib;Detour.lib;DetourCrowd.lib;DetourTileCache.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader />
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NDEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(T850SourceRoot)Librerias\glaze\include;$(T850SourceRoot)Librerias\tinyxml2\include;$(T850SourceRoot)Framework;$(T850SourceRoot)Framework\include;$(T850SourceRoot)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(T850SourceRoot)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(T850SourceRoot)Librerias\tinyxml2\lib;$(T850SourceRoot)Lib\$(Configuration)\$(Platform)\;$(T850SourceRoot)$(Configuration);$(T850SourceRoot)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;Recast.lib;Detour.lib;DetourCrowd.lib;DetourTileCache.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(T850SourceRoot)T8ditor\include;$(T850SourceRoot)FrameworkImGui\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <Link>
+      <AdditionalDependencies>FrameworkImGuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <Link>
+      <AdditionalDependencies>FrameworkImGui.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

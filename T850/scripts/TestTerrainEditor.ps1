@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')][string]$Config = 'Debug',
+    [switch]$Extensions,
     [string[]]$Apis = @('d3d11', 'd3d12', 'vulkan', 'gl'),
     [int]$Width = 1440,
     [int]$Height = 900,
@@ -11,6 +12,10 @@ $ErrorActionPreference = 'Stop'
 $sourceRoot = Split-Path $PSScriptRoot -Parent
 $directory = Join-Path $sourceRoot "bin\x64\$Config"
 $executable = Join-Path $directory 'T8ditor.exe'
+if ($Extensions) {
+    $directory = Join-Path (Split-Path $sourceRoot -Parent) "examples\EditorExtension\bin\x64\$Config"
+    $executable = Join-Path $directory 'EditorExtension.exe'
+}
 if (-not (Test-Path $executable)) { throw "Build T8ditor $Config x64 first." }
 Add-Type -AssemblyName System.Drawing
 
@@ -65,7 +70,8 @@ foreach ($api in $Apis) {
     if ($api -notin @('d3d11', 'd3d12', 'vulkan', 'gl')) { throw "Unknown API: $api" }
     $runId = [Guid]::NewGuid().ToString('N').Substring(0, 8)
     $log = "logs/terrain-editor-$api-${Width}x${Height}-$runId.log"
-    $arguments = "--api $api --sceneFile Scenes/HeightmapExample.t8scene --terrain-editor-selftest --width $Width --height $Height --dump-frame 30 --logLevel info --logFile $log"
+    $testFlag = if ($Extensions) { '--editor-extension-selftest' } else { '--terrain-editor-selftest' }
+    $arguments = "--api $api --sceneFile Scenes/HeightmapExample.t8scene $testFlag --width $Width --height $Height --dump-frame 30 --logLevel info --logFile $log"
     $process = Start-Process $executable -WorkingDirectory $directory -ArgumentList $arguments -PassThru
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         Stop-Process -Id $process.Id
@@ -75,19 +81,24 @@ foreach ($api in $Apis) {
     if ($process.ExitCode -ne 0 -or $text -match '\[ERROR\]|device lost|fatal error') {
         throw "Terrain editor test failed: $api exit=$($process.ExitCode). Log: $directory\$log"
     }
-    if ($text -notmatch '\[TerrainEditorTest\] PASS hosted Play shutdown and editor restoration') {
+    if ($Extensions) {
+        if ($text -notmatch '\[EditorExtensionTest\] PASS edits, stale rejection, validation, undo/redo, reload, repeated hosted Play') {
+            throw "Editor extension regression did not finish: $api"
+        }
+    } elseif ($text -notmatch '\[TerrainEditorTest\] PASS hosted Play shutdown and editor restoration') {
         throw "Terrain editor regression did not finish: $api"
     }
-    if ($text -notmatch '\[TerrainEditorTest\] PASS stable preview camera and forwarded movement input') {
+    if (-not $Extensions -and $text -notmatch '\[TerrainEditorTest\] PASS stable preview camera and forwarded movement input') {
         throw "Terrain Play camera/input regression did not finish: $api"
     }
-    if ($text -notmatch '\[TerrainEditorTest\] PASS placement flatness, occupancy, undo/redo, removal, navigation exclusion') {
+    if (-not $Extensions -and $text -notmatch '\[TerrainEditorTest\] PASS placement flatness, occupancy, undo/redo, removal, navigation exclusion') {
         throw "Terrain placement regression did not finish: $api"
     }
     $dump = [regex]::Match($text, 'RT dump complete -> ([^/\r\n]+)')
     if (-not $dump.Success) { throw "Missing capture: $api" }
     $capture = Join-Path $directory ($dump.Groups[1].Value + '/RT_Dump_BackBuffer.ppm')
     $png = Convert-Capture $capture $Width $Height
-    Write-Host "PASS $api terrain brush/paint/collision/undo/clone/reload/Play/camera/input/LOD ${Width}x${Height}"
+    $suite = if ($Extensions) { 'editor extensions' } else { 'terrain workflow' }
+    Write-Host "PASS $api $suite ${Width}x${Height}"
     Write-Host "Capture: $png"
 }

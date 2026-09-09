@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{9E74CC36-F1BB-41A5-88F9-BF499A702BC1}</ProjectGuid>
+    <T8ditorBuildCore>true</T8ditorBuildCore>
+  </PropertyGroup>
+  <Import Project="EditorHost.props" />
+  <ItemDefinitionGroup>
+    <ClCompile><AdditionalIncludeDirectories>$(T850SourceRoot)DayScene;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile>
+  </ItemDefinitionGroup>
+  <Import Project="EditorSources.props" />
+  <Import Project="EditorHost.targets" />
+</Project>

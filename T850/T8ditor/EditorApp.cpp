@@ -3,6 +3,10 @@
  *********************************************************/
 
 #include "EditorApp.h"
+#include <game/MovementComponent.h>
+#include <game/examples/HealthComponent.h>
+#include <game/examples/PathFollowComponent.h>
+#include <game/examples/WeaponComponent.h>
 #include "SceneObject.h"
 #include "SceneGraph.h"
 #include "EditorScene.h"
@@ -1820,7 +1824,9 @@ static std::vector<std::string> GameCameraChoices() {
   return choices;
 }
 
-static bool DrawGameEntityInspector(t850::scene::SceneGameEntityDesc& entity) {
+static bool DrawGameEntityInspector(t850::scene::SceneGameEntityDesc& entity,
+                                    const t850::game::ComponentFactoryRegistry& factories,
+                                    const EditorRegistry& extensions, EditorContext& context) {
   ImGui::SeparatorText("Identity");
   ImGui::TextDisabled("ID");
   ImGui::SameLine();
@@ -1864,13 +1870,14 @@ static bool DrawGameEntityInspector(t850::scene::SceneGameEntityDesc& entity) {
   }
 
   ImGui::SeparatorText("Components");
-  constexpr const char* componentTypes[] = {
-      "health", "movement", "path_follow", "weapon", "sensor", "combat",
-      "debug_name", "formation_slot", "resource", "state_machine", "status_effect", "transform"};
+  const auto componentTypes = factories.Types();
+  std::vector<const char*> typeLabels;
+  for (const auto& type : componentTypes) typeLabels.push_back(type.c_str());
   static int newComponentType = 0;
-  ImGui::Combo("New Component", &newComponentType, componentTypes, static_cast<int>(std::size(componentTypes)));
+  newComponentType = std::clamp(newComponentType, 0, (std::max)(0, static_cast<int>(componentTypes.size()) - 1));
+  ImGui::Combo("New Component", &newComponentType, typeLabels.data(), static_cast<int>(typeLabels.size()));
   ImGui::SameLine();
-  if (ImGui::Button("Add##component")) {
+  if (ImGui::Button("Add##component") && !componentTypes.empty()) {
     t850::scene::SceneComponentDesc component;
     component.id = t850::game::MakeStableId("comp_");
     component.type = componentTypes[newComponentType];
@@ -1884,9 +1891,26 @@ static bool DrawGameEntityInspector(t850::scene::SceneGameEntityDesc& entity) {
     if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::TextDisabled("%s", component.id.c_str());
       ImGui::Checkbox("Enabled", &component.enabled);
-      DrawGameStringField("Type", component.type);
-      DrawGameParamsTable("ComponentParams", component.params);
-      DrawGameStringField("Config JSON", component.config_json, true);
+      if (const auto* inspector = extensions.FindInspector(component.type)) {
+        auto edited = component;
+        const auto snapshot = context.ReadScene();
+        if ((*inspector)(edited)) {
+          GameplayEdit edit{snapshot.revision, "Edit " + component.type,
+                            snapshot.scene.game_entities, snapshot.scene.game_groups,
+                            snapshot.scene.game_logic_settings};
+          for (auto& editedEntity : edit.entities) {
+            if (editedEntity.id != entity.id) continue;
+            for (auto& editedComponent : editedEntity.components) {
+              if (editedComponent.id == component.id) editedComponent = edited;
+            }
+          }
+          context.SubmitGameplayEdit(std::move(edit));
+        }
+      } else {
+        DrawGameStringField("Type", component.type);
+        DrawGameParamsTable("ComponentParams", component.params);
+        DrawGameStringField("Config JSON", component.config_json, true);
+      }
       if (ImGui::Button("Remove Component")) removeComponent = index;
     }
     ImGui::PopID();
@@ -4773,8 +4797,10 @@ bool EditorApp::SaveEditorSceneSnapshot(const std::string& path, bool updateLoad
   return true;
 }
 
-bool EditorApp::RunGameValidation(const SceneFile& scene, bool showPanel) {
-  m_gameValidationReport = t850::scene::ValidateEditorSceneGameLogic(scene);
+bool EditorApp::RunGameValidation(const SceneFile& scene, bool showPanel, bool forPlay) {
+  m_gameValidationReport = t850::scene::ValidateEditorSceneGameLogic(
+      scene, &m_componentFactories, forPlay && m_host.requireKnownComponentsForPlay);
+  m_extensions.Validate(scene, m_gameValidationReport);
   m_gameValidationHasRun = true;
   if (showPanel || !m_gameValidationReport.issues.empty()) m_panels.showGameValidation = true;
 
@@ -4918,6 +4944,8 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   if (!pFramework || !pFramework->pVideoDriver) {
     return;
   }
+  m_extensionDocumentKey.clear();
+  ++m_extensionRevision;
 
   const bool previousApplying = g_applyingUndoState;
   g_applyingUndoState = true;
@@ -6231,6 +6259,104 @@ void EditorApp::InitVars() {
   T8_LOG_INFO("[T8ditor] EditorApp::InitVars");
 }
 
+EditorApp::EditorApp(EditorHostDesc host) : m_host(std::move(host)) {
+  m_componentFactories.Register("movement", t850::game::CreateMovementComponent,
+      t850::game::ComponentTypeInfo{.type = "movement"});
+  t850::game::examples::RegisterHealthComponent(m_componentFactories);
+  t850::game::examples::RegisterPathFollowComponent(m_componentFactories);
+  t850::game::examples::RegisterWeaponComponent(m_componentFactories);
+  if (m_host.registerRuntime) m_host.registerRuntime(m_componentFactories);
+  if (m_host.registerEditor) m_host.registerEditor(m_extensions);
+}
+
+EditorSnapshot EditorApp::ReadScene() {
+  auto scene = BuildEditorSceneSnapshot(g_loadedScenePath);
+  const auto serialized = glz::write<glz::opts{.prettify = false}>(
+      std::tie(scene.game_entities, scene.game_groups, scene.game_logic_settings));
+  const std::string key = g_loadedScenePath + "\n" + serialized.value_or(std::string{});
+  if (key != m_extensionDocumentKey) {
+    m_extensionDocumentKey = key;
+    ++m_extensionRevision;
+  }
+  return {m_extensionRevision, std::move(scene)};
+}
+
+void EditorApp::SubmitGameplayEdit(GameplayEdit edit) {
+  m_pendingGameplayEdits.push_back(std::move(edit));
+}
+
+void EditorApp::ApplyExtensionEdits() {
+  auto edits = std::move(m_pendingGameplayEdits);
+  m_pendingGameplayEdits.clear();
+  for (auto& edit : edits) {
+    auto snapshot = ReadScene();
+    if (HasHostedSceneWindowOpen() || edit.expectedRevision != snapshot.revision || edit.label.empty()) {
+      m_extensionEditStatus = "Rejected stale, unnamed, or hosted-session edit";
+      T8_LOG_INFO("[EditorExtension] %s", m_extensionEditStatus.c_str());
+      continue;
+    }
+    snapshot.scene.game_entities = std::move(edit.entities);
+    snapshot.scene.game_groups = std::move(edit.groups);
+    snapshot.scene.game_logic_settings = std::move(edit.settings);
+    if (!RunGameValidation(snapshot.scene, false)) {
+      m_extensionEditStatus = "Rejected invalid gameplay edit";
+      continue;
+    }
+    std::string beforeKey;
+    const auto before = CaptureEditorUndoState(&beforeKey);
+    std::string selectedId;
+    if (g_selectionType == 9 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_gameEntities.size()))
+      selectedId = g_gameEntities[g_selectedIdx].id;
+    if (g_selectionType == 10 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_gameGroups.size()))
+      selectedId = g_gameGroups[g_selectedIdx].id;
+    g_gameEntities = std::move(snapshot.scene.game_entities);
+    g_gameGroups = std::move(snapshot.scene.game_groups);
+    g_gameLogicSettings = std::move(snapshot.scene.game_logic_settings);
+    if (g_selectionType == 9 || g_selectionType == 10) {
+      g_selectedIdx = -1;
+      if (g_selectionType == 9) {
+        for (int index = 0; index < static_cast<int>(g_gameEntities.size()); ++index)
+          if (g_gameEntities[index].id == selectedId) g_selectedIdx = index;
+      } else {
+        for (int index = 0; index < static_cast<int>(g_gameGroups.size()); ++index)
+          if (g_gameGroups[index].id == selectedId) g_selectedIdx = index;
+      }
+      if (g_selectedIdx < 0) g_selectionType = 0;
+      ClearMixedSelection();
+    }
+    PushEditorUndoState(edit.label.c_str(), before, beforeKey, CaptureEditorUndoState(nullptr));
+    ReadScene();
+    m_extensionEditStatus = "Applied: " + edit.label;
+    T8_LOG_INFO("[EditorExtension] %s", m_extensionEditStatus.c_str());
+  }
+}
+
+void EditorApp::DrawExtensionPanels() {
+  if (ImGui::BeginMainMenuBar()) {
+    if (ImGui::BeginMenu("Extensions")) {
+      for (auto& [id, panel] : m_extensions.panels_) {
+        ImGui::PushID(id.c_str());
+        ImGui::MenuItem(panel.title.c_str(), nullptr, &panel.visible);
+        ImGui::PopID();
+      }
+      for (auto& [id, command] : m_extensions.commands_) {
+        ImGui::PushID(id.c_str());
+        if (ImGui::MenuItem(command.title.c_str())) command.draw(*this);
+        ImGui::PopID();
+      }
+      ImGui::EndMenu();
+    }
+    ImGui::EndMainMenuBar();
+  }
+  for (auto& [id, panel] : m_extensions.panels_) {
+    if (!panel.visible) continue;
+    const std::string title = panel.title + "###extension." + id;
+    ImGui::SetNextWindowSize(ImVec2(320.0f, 220.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(title.c_str(), &panel.visible)) panel.draw(*this);
+    ImGui::End();
+  }
+}
+
 void EditorApp::CreateAssets() {
   if (m_assetsCreated) return;
   if (!pFramework || !pFramework->pVideoDriver) {
@@ -7210,6 +7336,8 @@ void EditorApp::ThrottleMainEditorFrameIfNeeded() {
 void EditorApp::LoadPendingScene() {
   // Execute deferred scene load BEFORE any GPU work this frame
   if (!g_pendingLoadPath.empty()) {
+    m_extensionDocumentKey.clear();
+    ++m_extensionRevision;
     ResetMainEditorFrameLimiter();
     const std::string loadPath = g_pendingLoadPath;
     auto lastLoadingLine = std::make_shared<std::string>();
@@ -8283,6 +8411,105 @@ void EditorApp::RunTerrainEditorSelfTest() {
   }
 }
 
+void EditorApp::RunExtensionSelfTest() {
+  if (!m_extensionSelfTest || !m_assetsCreated || !m_imguiReady) return;
+  auto require = [](bool passed, const char* message) {
+    if (!passed) throw std::runtime_error(message);
+  };
+  auto queue = [&](EditorSnapshot snapshot, const char* label) {
+    SubmitGameplayEdit({snapshot.revision, label, std::move(snapshot.scene.game_entities),
+                        std::move(snapshot.scene.game_groups), std::move(snapshot.scene.game_logic_settings)});
+  };
+  try {
+    require(++m_extensionTestFrames < 120, "extension regression timed out");
+    auto snapshot = ReadScene();
+    const std::string type = m_componentFactories.Info("sample.counter") ? "sample.counter" : "health";
+    if (m_extensionTestStep == 0) {
+      require(!g_objects.empty(), "extension regression needs a visible authored scene");
+      t850::scene::SceneGameEntityDesc entity;
+      entity.id = "extension_test_entity";
+      entity.name = "Extension Test";
+      entity.components.push_back({.id = "extension_test_component", .type = type,
+          .params = {{"value", "7"}}, .config_json = "{\"version\":1}"});
+      snapshot.scene.game_entities.push_back(entity);
+      queue(std::move(snapshot), "Extension test add");
+      ++m_extensionTestStep;
+    } else if (m_extensionTestStep == 1) {
+      require(m_extensionEditStatus == "Applied: Extension test add", "queued edit was not applied");
+      const auto count = g_gameEntities.size();
+      g_undoStack.Undo();
+      require(g_gameEntities.size() + 1 == count, "extension undo failed");
+      g_undoStack.Redo();
+      require(g_gameEntities.size() == count, "extension redo failed");
+      snapshot = ReadScene();
+      snapshot.revision = 0;
+      queue(std::move(snapshot), "Extension test stale");
+      ++m_extensionTestStep;
+    } else if (m_extensionTestStep == 2) {
+      require(m_extensionEditStatus.starts_with("Rejected stale"), "stale edit was accepted");
+      snapshot.scene.game_entities.push_back(snapshot.scene.game_entities.back());
+      queue(std::move(snapshot), "Extension test invalid");
+      ++m_extensionTestStep;
+    } else if (m_extensionTestStep == 3) {
+      require(m_extensionEditStatus == "Rejected invalid gameplay edit", "invalid edit was accepted");
+      require(RunGameValidation(snapshot.scene, false), "failed edit changed authored document");
+      m_extensionTestPath = (std::filesystem::temp_directory_path() /
+          (t850::game::MakeStableId("t850_extension_") + ".t8scene")).string();
+      require(SaveEditorSceneSnapshot(m_extensionTestPath, false), "extension save failed");
+      g_pendingLoadPath = m_extensionTestPath;
+      ++m_extensionTestStep;
+    } else if (m_extensionTestStep == 4) {
+      require(g_loadedScenePath == m_extensionTestPath, "extension reload failed");
+      require(g_gameEntities.back().components.front().config_json == "{\"version\":1}", "extension payload lost on reload");
+      m_extensionTestRequestPlay = true;
+      ++m_extensionTestStep;
+    } else if (m_extensionTestStep == 5 || m_extensionTestStep == 7) {
+      require(!m_playSceneLaunchFailed, "extension Play failed");
+      if (!m_playSceneLoaded) return;
+      require(m_playScene->GameLogicReady(), "extension gameplay not ready");
+      bool found = false;
+      for (const auto& object : m_playScene->m_gameLogic.Registry().Objects()) {
+        if (object.sceneId != "extension_test_entity") continue;
+        require(!object.components.empty(), "extension component missing in Play");
+        require(dynamic_cast<t850::game::UnknownComponent*>(object.components.front().get()) == nullptr,
+                "Play instantiated an inert unknown component");
+        found = true;
+      }
+      require(found, "extension entity missing in Play");
+      m_playScene->m_gameLogic.Update(1.0f / 60.0f);
+      require(m_playScene->m_gameLogic.TickIndex() > 0, "extension fixed tick did not execute");
+      ClosePlayScene(true);
+      ++m_extensionTestStep;
+    } else if (m_extensionTestStep == 6) {
+      m_extensionTestRequestPlay = true;
+      ++m_extensionTestStep;
+    } else if (m_extensionTestStep == 8) {
+      auto invalid = snapshot.scene;
+      invalid.game_entities.back().components.front().type = "missing.required.extension";
+      const auto report = t850::scene::ValidateEditorSceneGameLogic(invalid, &m_componentFactories, true);
+      require(report.HasErrors(), "missing runtime type was accepted");
+      m_extensionSelfTestResult = 0;
+      m_extensionSelfTest = false;
+      m_panels.showGameValidation = false;
+      m_panels.showRendering = false;
+      m_panels.showInspector = true;
+      g_selectionType = 9;
+      g_selectedIdx = static_cast<int>(g_gameEntities.size()) - 1;
+      m_editorNavMeshVisible = false;
+      m_editorNavMeshShowSourcePreview = false;
+      for (auto& physics : g_physicsEntities) physics.showWire = false;
+      std::error_code ignored;
+      std::filesystem::remove(m_extensionTestPath, ignored);
+      T8_LOG_INFO("[EditorExtensionTest] PASS edits, stale rejection, validation, undo/redo, reload, repeated hosted Play");
+    }
+  } catch (const std::exception& error) {
+    T8_LOG_ERROR("[EditorExtensionTest] FAIL: %s", error.what());
+    m_extensionSelfTest = false;
+    std::error_code ignored;
+    if (!m_extensionTestPath.empty()) std::filesystem::remove(m_extensionTestPath, ignored);
+  }
+}
+
 void EditorApp::QueueTutorialSceneReload(const std::string& path) {
   g_pendingLoadPath = path;
 }
@@ -8307,6 +8534,7 @@ void EditorApp::OnUpdate() {
 
   LoadPendingScene();
   ImportPendingMesh();
+  ApplyExtensionEdits();
   PrepareTutorialCapture();
 
   CheckResize();
@@ -8314,6 +8542,7 @@ void EditorApp::OnUpdate() {
 
   OnInput();
   RunTerrainEditorSelfTest();
+  RunExtensionSelfTest();
   if (!m_meshEditorOpen && !m_playSceneOpen) {
     UpdateSkinnedAnimationAndRagdolls();
   }
@@ -10936,6 +11165,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   }
 
   MenuAction menuAction = ImGuiDrawMenuBar(m_panels);
+  DrawExtensionPanels();
   if (menuAction.wantsResetLayout) {
     g_resetArtistLayout = true;
     m_panels.showHierarchy = true;
@@ -10955,9 +11185,10 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
                                 g_selectedIdx >= 0, g_multiSelect.size() >= 2,
                                 toolbarCameraMode,
                                 m_editorNavMeshAuthoringMode);
-  if (m_terrainSelfTestRequestPlay) {
+  if (m_terrainSelfTestRequestPlay || m_extensionTestRequestPlay) {
     wantsPlayScene = true;
     m_terrainSelfTestRequestPlay = false;
+    m_extensionTestRequestPlay = false;
   }
   m_gizmo.SetMode((GizmoMode)mode);
   if (m_editorNavMeshAuthoringMode) {
@@ -12505,7 +12736,8 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
       ImGuiClampCurrentWindowToEditorWorkArea();
       if (g_selectionType == 9 && g_selectedIdx < static_cast<int>(g_gameEntities.size())) {
         const std::string entityId = g_gameEntities[static_cast<std::size_t>(g_selectedIdx)].id;
-        if (DrawGameEntityInspector(g_gameEntities[static_cast<std::size_t>(g_selectedIdx)])) {
+        if (DrawGameEntityInspector(g_gameEntities[static_cast<std::size_t>(g_selectedIdx)],
+                  m_componentFactories, m_extensions, *this)) {
           g_gameEntities.erase(g_gameEntities.begin() + g_selectedIdx);
           for (auto& group : g_gameGroups) {
             group.member_entity_ids.erase(

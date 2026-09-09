@@ -49,6 +49,7 @@ GameLogicSystem::~GameLogicSystem() {
 
 void GameLogicSystem::Initialize(t850::EngineContext& context, const GameLogicSettings& settings) {
   Shutdown();
+  factories_ = ComponentFactoryRegistry{};
   context_ = &context;
   settings_ = settings;
   if (!std::isfinite(settings_.fixedDeltaSeconds) || settings_.fixedDeltaSeconds <= 0.0f) {
@@ -67,9 +68,10 @@ void GameLogicSystem::Initialize(t850::EngineContext& context, const GameLogicSe
 bool GameLogicSystem::LoadFromScene(
     const t850::scene::EditorSceneFile& scene,
     const GameSceneRuntimeLinks& links,
-    t850::scene::SceneValidationReport* report) {
+    t850::scene::SceneValidationReport* report,
+    bool requireKnownTypes) {
   navigation_.Bind(links.navMesh, context_ ? context_->threadPool : nullptr);
-  t850::scene::SceneValidationReport validation = t850::scene::ValidateEditorSceneGameLogic(scene);
+  t850::scene::SceneValidationReport validation = t850::scene::ValidateEditorSceneGameLogic(scene, &factories_, requireKnownTypes);
   validationErrors_ = 0;
   validationWarnings_ = 0;
   for (const t850::scene::SceneValidationIssue& issue : validation.issues) {

@@ -5,6 +5,10 @@
 #include <string>
 #include <vector>
 
+namespace t850::game {
+class ComponentFactoryRegistry;
+}
+
 namespace t850::scene {
 
 constexpr int kSceneSchemaV1 = 1;
@@ -32,7 +36,10 @@ struct SceneValidationReport {
   bool HasErrors() const;
 };
 
-SceneValidationReport ValidateEditorSceneGameLogic(const EditorSceneFile& scene);
+SceneValidationReport ValidateEditorSceneGameLogic(
+  const EditorSceneFile& scene,
+  const game::ComponentFactoryRegistry* factories = nullptr,
+  bool requireKnownTypes = false);
 bool EnsureGameEntityIds(EditorSceneFile& scene);
 bool MigrateEditorSceneGameLogic(EditorSceneFile& scene, std::string* log = nullptr);
 

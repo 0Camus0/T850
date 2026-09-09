@@ -69,6 +69,13 @@ Debian security support for the EOL build environment. Unexpected deb822 entries
 fail explicitly for review. Keep the resulting application on a supported Steam
 Runtime; do not deploy the development container as an operating system.
 
+The SDK's Python is `3.9.2-1+deb11u7`, while the base Debian archive has an older
+venv companion. The build fetches the exact matching Debian amd64 venv package
+from Debian's immutable snapshot service,
+pinned by SHA-256, instead of downgrading Python or trusting an expired APT index.
+It rejects other SDK Python versions for review and smoke-tests venv/pip before
+CMake. This is an EOL SDK compatibility pin, not a Python security upgrade.
+
 The GitHub Actions Steam Deck job uses `--with-editor`, verifies both executable
 outputs, and includes both in the `T850-SteamDeck-Release` artifact. Packaging with
 `--with-editor --skip-build` rejects an absent editor instead of silently publishing

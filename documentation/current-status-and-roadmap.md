@@ -69,8 +69,13 @@ the editor target. `T850.sh --editor` launches it with the shared Linux setup.
 
 Local shell tests verify target routing, missing-editor rejection, packaging and
 launch arguments. These are not Linux compilation/render evidence; GitHub Actions
-results must be checked against the pushed `editor_refactor_4` commit. That branch
-has a direct push trigger, in addition to existing master/PR/tag triggers.
+results must be checked against the pushed `editor_refactor_4` commit. With PR #34
+open, validation uses the PR trigger; the temporary branch-push trigger was removed
+to avoid duplicate matrices. Master pushes and release tags retain their triggers.
+The initial Linux runs stopped before CMake on the discontinued Bullseye security
+feeds. The build now retires those entries inside the disposable Sniper SDK while
+preserving APT verification and all unrelated feeds. See the
+[SteamRT prerequisite notes](platform/steam-deck.md) for the EOL scope and limits.
 
 ## Historical Evidence (2026-08-30)
 

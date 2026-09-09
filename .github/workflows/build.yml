@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ master, editor_refactor_4 ]
+    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-for script in BuildSteamRuntime.sh PackageSteamDeckRelease.sh T850.sh; do
+for script in BuildSteamRuntime.sh PackageSteamDeckRelease.sh T850.sh PrepareSteamRuntimeApt.sh; do
   bash -n "${SCRIPT_DIR}/${script}"
 done
 
@@ -17,6 +17,27 @@ runtime_build="$(bash "${SCRIPT_DIR}/BuildSteamRuntime.sh")"
 
 fixture="$(mktemp -d)"
 trap 'rm -rf -- "${fixture}"' EXIT
+apt_root="${fixture}/apt"
+mkdir -p "${apt_root}/sources.list.d"
+printf '%s\n' 'deb http://deb.debian.org/debian bullseye main' \
+  'deb http://deb.debian.org/debian-security bullseye-security main' \
+  'deb-src [signed-by=/usr/share/keyrings/debian.gpg] https://deb.debian.org/debian-security-debug bullseye-security-debug main' \
+  'deb https://repo.steampowered.com/steamrt3 sniper main' \
+  '# deb https://example.invalid bullseye-security main' > "${apt_root}/sources.list"
+bash "${SCRIPT_DIR}/PrepareSteamRuntimeApt.sh" "${apt_root}"
+[[ "$(grep -c '^# T850: Bullseye LTS ended' "${apt_root}/sources.list")" == 2 ]]
+[[ "$(grep -c '^deb ' "${apt_root}/sources.list")" == 2 ]]
+grep -Fx 'deb http://deb.debian.org/debian bullseye main' "${apt_root}/sources.list"
+grep -Fx 'deb https://repo.steampowered.com/steamrt3 sniper main' "${apt_root}/sources.list"
+cp "${apt_root}/sources.list" "${fixture}/prepared.list"
+bash "${SCRIPT_DIR}/PrepareSteamRuntimeApt.sh" "${apt_root}"
+cmp "${apt_root}/sources.list" "${fixture}/prepared.list"
+printf '%s\n' 'Types: deb' 'URIs: https://deb.debian.org/debian-security' 'Suites: bullseye-security' > "${apt_root}/sources.list.d/unsupported.sources"
+if bash "${SCRIPT_DIR}/PrepareSteamRuntimeApt.sh" "${apt_root}" > "${fixture}/unsupported.log" 2>&1; then
+  echo 'Unexpected security source format was accepted' >&2
+  exit 1
+fi
+grep -q 'unsupported deb822' "${fixture}/unsupported.log"
 source_root="${fixture}/T850"
 runtime="${source_root}/bin/SteamDeck/Release"
 mkdir -p "${source_root}/steamdeck" "${source_root}/Assets/Scenes" "${runtime}"

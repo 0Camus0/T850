@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, editor_refactor_4 ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
@@ -99,6 +99,8 @@ jobs:
 
       - name: Build
         shell: pwsh
+        env:
+          PreferredToolArchitecture: x64
         run: |
           & T850/scripts/build.ps1 `
             -Config ${{ matrix.configuration }} `
@@ -326,22 +328,25 @@ jobs:
           bash -n T850/steamdeck/PackageSteamDeckRelease.sh
           bash -n T850/steamdeck/T850.sh
           bash -n T850/steamdeck/T850DeckLauncher.sh
+          bash T850/steamdeck/TestSteamDeckScripts.sh
           python3 -m py_compile T850/steamdeck/T850DeckLauncher.py
 
-      - name: Build Steam Deck runtime
+      - name: Build Steam Deck runtime and editor
         run: |
-          T850/steamdeck/BuildSteamRuntime.sh --configuration Release
+          T850/steamdeck/BuildSteamRuntime.sh --configuration Release --with-editor
 
-      - name: Verify Steam Deck runtime output
+      - name: Verify Steam Deck runtime and editor output
         run: |
           test -x T850/bin/SteamDeck/Release/DayScene
+          test -x T850/bin/SteamDeck/Release/T8ditor
           test -f T850/bin/SteamDeck/Release/libc++.so.1
           test -f T850/bin/SteamDeck/Release/libc++abi.so.1
           test -f T850/bin/SteamDeck/Release/libunwind.so.1
 
       - name: Package Steam Deck release
         run: |
-          T850/steamdeck/PackageSteamDeckRelease.sh --configuration Release --skip-build --output artifacts/steamdeck/T850-SteamDeck-Release.tar.gz
+          T850/steamdeck/PackageSteamDeckRelease.sh --configuration Release --with-editor --skip-build --output artifacts/steamdeck/T850-SteamDeck-Release.tar.gz
+          tar -tzf artifacts/steamdeck/T850-SteamDeck-Release.tar.gz | grep -Fx 'T850-SteamDeck-Release/bin/SteamDeck/Release/T8ditor'
 
       - name: Upload Steam Deck package
         uses: actions/upload-artifact@v4

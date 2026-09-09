@@ -243,7 +243,23 @@ bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* err
     return false;
   }
 
+  std::vector<Texture*> materialTextures(snapshot.materials.size(), nullptr);
+  for (size_t index = 0; index < snapshot.materials.size(); ++index) {
+    const auto& material = snapshot.materials[index];
+    if (material.baseColorTexture.empty()) continue;
+    std::string texturePath = material.baseColorTexture;
+    if (texturePath.starts_with("Textures/")) texturePath.erase(0, 9);
+    const int textureId = context.driver->CreateTexture(texturePath);
+    if (textureId < 0) {
+      context.driver->RetireBuffer(newVertexBuffer);
+      context.driver->RetireBuffer(newIndexBuffer);
+      if (error) *error = "Cannot load terrain material texture: " + material.baseColorTexture;
+      return false;
+    }
+    materialTextures[index] = context.driver->GetTexture(textureId);
+  }
   RetireGeometryBuffers();
+  m_materialTextures = std::move(materialTextures);
   m_vertexBuffer = newVertexBuffer;
   m_indexBuffer = newIndexBuffer;
   m_vertexCount = snapshot.vertices.size();
@@ -362,7 +378,9 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
     const MutableMeshMaterial& material = m_snapshot.materials[section.materialIndex];
     if (!DrawsInPass(material.alphaMode, pass)) continue;
     ShaderKey key(ShaderKey::HAS_NORMALS | ShaderKey::HAS_TEXCOORD0);
-    if (material.usesBaseColorTexture && Textures[0]) key.bits |= ShaderKey::DIFFUSE_MAP;
+    Texture* baseColor = section.materialIndex < m_materialTextures.size() && m_materialTextures[section.materialIndex]
+      ? m_materialTextures[section.materialIndex] : Textures[0];
+    if (material.usesBaseColorTexture && baseColor) key.bits |= ShaderKey::DIFFUSE_MAP;
     key.setPass(pass == PassType::NONE ? PassType::FORWARD : pass);
     ShaderBase* shader = context.driver->GetShader(key);
     if (!shader) continue;
@@ -390,8 +408,8 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
           *context.deviceContext, m_materialCB, 2, &materialConstants, sizeof(materialConstants));
     }
     if (key.has(ShaderKey::DIFFUSE_MAP)) {
-      if (tracker.ShouldBindTexture(0, Textures[0])) Textures[0]->Set(*context.deviceContext, 0, "DiffuseTex");
-      Textures[0]->SetSampler(*context.deviceContext, 0);
+      if (tracker.ShouldBindTexture(0, baseColor)) baseColor->Set(*context.deviceContext, 0, "DiffuseTex");
+      baseColor->SetSampler(*context.deviceContext, 0);
     }
     context.deviceContext->DrawIndexed(section.indexCount, section.firstIndex, 0);
     if (changedCull) context.driver->SetCullFace(previousCull);

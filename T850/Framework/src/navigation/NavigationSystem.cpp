@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <terrain/HeightmapMesh.h>
 
 #include <navigation/NavigationSystem.h>
 
@@ -1406,6 +1407,16 @@ bool BuildGeometryFromPrimitiveInstances(const PrimitiveInst* instances,
       continue;
     }
 
+    if (const auto* terrain = dynamic_cast<const HeightmapMesh*>(instance.pBase)) {
+      for (const auto& localBounds : terrain->PlacementObstacles()) {
+        const auto bounds = localBounds.Transformed(instance.Final);
+        NavMeshVolumeModifier obstacle;
+        obstacle.name = "Blockout footprint";
+        obstacle.position = bounds.Center();
+        obstacle.halfExtents = bounds.Extents();
+        outGeometry.volumeModifiers.push_back(obstacle);
+      }
+    }
     if (stats) ++stats->included;
   }
 
@@ -1474,6 +1485,18 @@ bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
         outGeometry.indices.size() == indicesBefore) {
       if (stats) ++stats->skippedInvalid;
       continue;
+    }
+    if (source.instance) {
+      if (const auto* terrain = dynamic_cast<const HeightmapMesh*>(source.instance->pBase)) {
+        for (const auto& localBounds : terrain->PlacementObstacles()) {
+          const auto bounds = localBounds.Transformed(worldTransform);
+          NavMeshVolumeModifier obstacle;
+          obstacle.name = "Blockout footprint";
+          obstacle.position = bounds.Center();
+          obstacle.halfExtents = bounds.Extents();
+          outGeometry.volumeModifiers.push_back(obstacle);
+        }
+      }
     }
     if (stats) ++stats->included;
   }

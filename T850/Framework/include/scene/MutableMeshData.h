@@ -3,8 +3,11 @@
 #include <utils/Picking.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+namespace xF { class XDataBase; }
 
 namespace t850 {
 
@@ -30,6 +33,7 @@ struct MutableMeshMaterial {
   MutableMeshAlphaMode alphaMode = MutableMeshAlphaMode::Opaque;
   bool doubleSided = false;
   bool usesBaseColorTexture = false;
+  std::string baseColorTexture;
 };
 
 struct MutableMeshSection {
@@ -51,5 +55,6 @@ struct MutableMeshSnapshot {
 
 void RecalculateMutableMeshBounds(MutableMeshSnapshot& snapshot);
 bool ValidateMutableMeshSnapshot(const MutableMeshSnapshot& snapshot, std::string* error = nullptr);
+std::unique_ptr<xF::XDataBase> BuildMeshDatabase(const MutableMeshSnapshot& snapshot, std::string* error = nullptr);
 
 } // namespace t850

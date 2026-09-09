@@ -41,9 +41,68 @@ struct SceneObjectRagdollDesc {
   std::string runtime_motion = "disabled";
 };
 
+struct SceneTerrainMaterialDesc {
+  std::string name = "Ground";
+  Vec3f color = {0.35f, 0.5f, 0.25f};
+  float roughness = 0.8f;
+  float metallic = 0.0f;
+  std::string texture;
+};
+
+struct ScenePlacementGridDesc {
+  bool enabled = false;
+  float cell_size = 2.0f;
+  bool flat_buildings_only = true;
+  float max_height_difference = 0.02f;
+  float max_slope_degrees = 1.0f;
+};
+
+struct ScenePlacementVisualDesc {
+  std::string mesh;
+  std::vector<uint32_t> hidden_geometry;
+  float yaw_degrees = 0.0f;
+  std::string animation;
+  bool animate = true;
+  bool loop = true;
+  float animation_speed = 1.0f;
+};
+
+struct SceneTerrainPlacementDesc {
+  std::string id;
+  std::string name = "Building";
+  std::string kind = "building";
+  int cell_x = 0;
+  int cell_z = 0;
+  uint32_t width = 2;
+  uint32_t depth = 2;
+  float height = 3.0f;
+  Vec3f color = {0.2f, 0.6f, 0.9f};
+  std::optional<ScenePlacementVisualDesc> visual;
+};
+
+struct SceneHeightmapDesc {
+  std::string image;
+  float size_x = 128.0f;
+  float size_z = 128.0f;
+  float height_scale = 32.0f;
+  float height_offset = 0.0f;
+  uint32_t samples_x = 129;
+  uint32_t samples_z = 129;
+  float uv_scale = 1.0f;
+  Vec3f base_color = {0.35f, 0.5f, 0.25f};
+  std::vector<float> elevations;
+  std::vector<SceneTerrainMaterialDesc> materials;
+  std::vector<uint32_t> cell_materials;
+  uint32_t lod_levels = 1;
+  float lod_distance = 150.0f;
+  ScenePlacementGridDesc placement_grid;
+  std::vector<SceneTerrainPlacementDesc> placements;
+};
+
 struct SceneObjectDesc {
   std::string name;
   std::string mesh;
+  std::optional<SceneHeightmapDesc> heightmap;
   std::string ragdoll;
   Vec3f position;
   Vec3f rotation;
@@ -626,6 +685,16 @@ struct SceneVoxelWorldDesc {
   std::vector<std::string> hotbar;
 };
 
+struct SceneRegionDesc {
+  std::string id;
+  std::string name = "Region";
+  Vec3f position;
+  Vec3f rotation;
+  Vec3f half_extents = {5.0f, 5.0f, 5.0f};
+  std::vector<std::string> tags;
+  bool enabled = true;
+};
+
 struct EditorSceneFile {
   int version = 2;  // v2 adds stable light IDs; v1 still loads (migrated in memory)
   std::string collision;
@@ -633,6 +702,7 @@ struct EditorSceneFile {
   std::string control_descriptor;
   EditorStateDesc editor;
   std::vector<SceneObjectDesc> objects;
+  std::vector<SceneRegionDesc> regions;
   std::vector<SceneGameEntityDesc> game_entities;
   std::vector<SceneGroupDesc> game_groups;
   std::optional<SceneGameLogicSettingsDesc> game_logic_settings;

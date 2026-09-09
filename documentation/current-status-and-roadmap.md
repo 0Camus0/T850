@@ -1,6 +1,7 @@
 # Current Status and Remaining Work
 
-Status: verified against source, local builds, deterministic rendering captures, and PR CI on 2026-08-30.
+Status: editor/terrain local-worktree update on 2026-09-07; historical CI/rendering
+evidence below remains dated 2026-08-30 and does not validate later uncommitted work.
 
 This is the single source of truth for implementation maturity, verified gates, known limits, and remaining engineering work. Subsystem documents own behavior and commands; Git history preserves completed plans and superseded reviews.
 
@@ -20,6 +21,11 @@ This is the single source of truth for implementation maturity, verified gates, 
 | Gameplay v1 (P0-P14) | Implemented |
 | Mutable voxel terrain reference | Implemented: chunks, atlas-aware meshes, streaming, FPS collision, edits, persistence |
 | T8ditor game authoring/validation/overlays | Implemented |
+| Authored heightmap editing | Native 16-bit import, sculpt/material brushes, mutable rendering, LOD, scene persistence |
+| Generic tagged regions | Stable-ID oriented boxes, authoring controls, runtime point/tag queries |
+| Square-grid terrain blockouts | Cell metrics, footprint occupancy, flat-only buildings by default, colored boxes, nav exclusions |
+| Placement model visuals | Uniform GLB fitting, per-instance parts/clip playback, box proxy retained for collision/navigation |
+| Editor tutorials | Separate [hands-on series](tutorials/README.md), including grid choice, terrain, buildings, and Play |
 | Fidelity Play through temporary `.t8scene` | Implemented |
 | Fast in-memory Play | Not implemented; optional future work |
 | Gameplay hot reload/live Play editing | Not implemented |
@@ -27,7 +33,46 @@ This is the single source of truth for implementation maturity, verified gates, 
 | Cross-scene persistent gameplay entities | Not implemented; out of scope for v1 |
 | 100/1,000-entity benchmark scenes | Not implemented; budgets remain unmeasured |
 
-## Verified Evidence
+## Current Editor Evidence
+
+The local terrain/placement work has focused Framework and editor regression
+coverage: native precision, sculpting, LOD, regions, flatness, occupied footprints,
+blockout geometry, undo/removal, reload, and hosted Play. The editor test requires
+automatic window-driven runtime loading and verifies camera stability/movement.
+See [terrain](terrain/heightmap-terrain.md) and [placement](terrain/placement-grid.md)
+for exact commands and current bounds. No later CI/platform pass is implied by
+the historical table below.
+
+The local model-assignment fixture imports one GLB with 92 joints and 17 clips.
+Checks cover square/rectangle fitting, independent animated bones, mixed static/
+skinned shader attributes, invalid asset/clip/part transactions, Clear Model
+undo/redo, reload, and hosted Play. D3D11/D3D12/Vulkan images were inspected; Vulkan
+validation is clean after retaining immutable sampler variants for shared textures.
+OpenGL lifecycle checks run, but the close-up editor capture is overexposed and
+does not pass visual acceptance. This is not a cross-API pixel-parity result.
+
+All six Windows configurations build with 52 self-tests on Win32/x64 Debug/Release.
+ARM64 is cross-compiled, not executed; its clean Debug/Release rebuild required
+`PreferredToolArchitecture=x64`, four workers and `/FS` after mixed-host PDB/linker
+failures. Release terrain workflow regressions pass on D3D12/Vulkan. Android, Steam
+Deck and the full historical visual-baseline suite were not rerun for this change.
+See the illustrated [model assignment lesson](tutorials/05-assign-building-models.md).
+
+## Editor Build Delivery (2026-09-08)
+
+Windows CI already builds and verifies both hosts in every Win32/x64/ARM64
+Debug/Release cell, including T8ditor in Release artifacts. Builds now request the
+x64-hosted MSVC tools. The Steam Deck job explicitly builds and packages the separate
+Linux `T8ditor` binary alongside `DayScene`, and checks the archive entry. The SteamRT
+`--with-editor` flag now selects both build targets; previously it only configured
+the editor target. `T850.sh --editor` launches it with the shared Linux setup.
+
+Local shell tests verify target routing, missing-editor rejection, packaging and
+launch arguments. These are not Linux compilation/render evidence; GitHub Actions
+results must be checked against the pushed `editor_refactor_4` commit. That branch
+has a direct push trigger, in addition to existing master/PR/tag triggers.
+
+## Historical Evidence (2026-08-30)
 
 | Gate | Result |
 |---|---|

@@ -30,6 +30,8 @@ namespace t8ditor {
 
   // ── Lifecycle (called from EditorApp) ──────────────
   bool ImGuiInit(t850::RootFramework* fw, bool enablePlatformWindows = false);
+  void ImGuiSetTransientCapture(bool enabled);
+  void ImGuiSetCaptureMenu(const std::string& menu);
   void ImGuiShutdown();
   void ImGuiNewFrame();
   void ImGuiRender();          // calls ImGui::Render() + backend RenderDrawData
@@ -44,6 +46,7 @@ namespace t8ditor {
   // ── Menu bar ───────────────────────────────────────
   struct MenuAction {
     bool wantsImportX  = false;   // File > Import Mesh (.x / .glb / .gltf)
+    bool wantsImportHeightmap = false;
     bool wantsLoadScene = false;  // File > Load Scene
     bool wantsSaveScene = false;  // File > Save Scene
     bool wantsExit     = false;   // File > Exit
@@ -58,9 +61,12 @@ namespace t8ditor {
     bool showRendering  = true;
     bool showTimeline   = true;
     bool showNavMeshAuthoring = false;
+    bool showRegions = false;
+    bool showTerrainEditor = false;
     bool showGameValidation = false;
     bool showGameOverlays = true;
     bool showWireframe  = false;
+    bool showSelectionWireframe = true;
     bool showSkybox     = true;
     bool showRTDebug    = false;
   };

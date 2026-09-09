@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <scene/SceneRegions.h>
 
 #include <scene/EditorSceneFile.h>
 #include <debug/LoadingProgress.h>
@@ -95,6 +96,7 @@ std::vector<std::string> BuildSceneMeshFallbackDirectories(const std::string& me
 void ResolveSceneMeshFallbacks(const std::string& scenePath, EditorSceneFile& scene) {
   ResourceLocator& locator = ResourceLocator::Instance();
   for (SceneObjectDesc& object : scene.objects) {
+    if (object.heightmap) continue;
     const bool meshWasEmpty = object.mesh.empty();
     const std::string originalMeshPath = meshWasEmpty ? object.name : object.mesh;
     std::string normalizedMeshPath = NormalizeSceneResourcePath(originalMeshPath);
@@ -122,7 +124,7 @@ void ResolveSceneMeshFallbacks(const std::string& scenePath, EditorSceneFile& sc
 
 } // namespace
 
-bool LoadEditorSceneFile(const std::string& path, EditorSceneFile& scene, std::string* error) {
+bool LoadEditorSceneFile(const std::string& path, EditorSceneFile& output, std::string* error) {
   LoadingProgress::ScopedStep loadingStep("Loading scene file", path, 1.0f);
   std::string content;
   if (!ResourceLocator::Instance().ReadText(path, content)) {
@@ -132,6 +134,7 @@ bool LoadEditorSceneFile(const std::string& path, EditorSceneFile& scene, std::s
     return false;
   }
 
+  EditorSceneFile scene;
   auto err = glz::read<glz::opts{.error_on_unknown_keys = false}>(scene, content);
   if (err) {
     std::string message = glz::format_error(err, content);
@@ -140,6 +143,7 @@ bool LoadEditorSceneFile(const std::string& path, EditorSceneFile& scene, std::s
     return false;
   }
 
+  if (!ValidateSceneRegions(scene.regions, error)) return false;
   ResolveSceneMeshFallbacks(path, scene);
 
   // Deterministic stable-light-ID migration (v1 -> v2).
@@ -177,10 +181,13 @@ bool LoadEditorSceneFile(const std::string& path, EditorSceneFile& scene, std::s
 
   T8_LOG_INFO("[SceneFile] Loaded %s (%zu objects, %zu cameras, %zu lights)",
               path.c_str(), scene.objects.size(), scene.cameras.size(), scene.lights.size());
+  output = std::move(scene);
+  if (error) error->clear();
   return true;
 }
 
 bool SaveEditorSceneFile(const EditorSceneFile& scene, const std::string& path, std::string* error) {
+  if (!ValidateSceneRegions(scene.regions, error)) return false;
   auto result = glz::write<glz::opts{.prettify = true}>(scene);
   if (!result) {
     std::string message = "Failed to serialize scene";

@@ -9,6 +9,7 @@
 #include <game/GameValidation.h>
 #include <game/InputFrame.h>
 #include <game/Controller.h>
+#include <scene/SceneRegions.h>
 
 #include <cstdint>
 #include <functional>
@@ -88,6 +89,9 @@ public:
   const GamePhysicsService& Physics() const;
   GameNavigationService& Navigation();
   const GameNavigationService& Navigation() const;
+  std::vector<std::string> RegionsAt(const XVECTOR3& point, std::string_view tag = {}) const {
+    return scene::QuerySceneRegions(regions_, point, tag);
+  }
 
   void RequestAddComponent(RuntimeGameObjectId id, t850::scene::SceneComponentDesc descriptor);
   void RequestRemoveComponent(RuntimeGameObjectId id, std::string componentId);
@@ -138,6 +142,7 @@ private:
   std::vector<PendingComponentRemove> pendingComponentRemoves_;
   std::vector<RuntimeGameObjectId> pendingObjectDestroys_;
   GameLogicStats stats_;
+  std::vector<scene::SceneRegionDesc> regions_;
 };
 
 } // namespace t850::game

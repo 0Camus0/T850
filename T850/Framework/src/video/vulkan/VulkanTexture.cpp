@@ -696,7 +696,9 @@ namespace t850 {
     VkDevice device = driver->GetDevice();
     VmaAllocator allocator = driver->GetAllocator();
 
-    if (m_sampler)   { vkDestroySampler(device, m_sampler, nullptr); m_sampler = VK_NULL_HANDLE; }
+    for (const auto& variant : m_samplerVariants) vkDestroySampler(device, variant.second, nullptr);
+    m_samplerVariants.clear();
+    m_sampler = VK_NULL_HANDLE;
     if (m_imageView) { vkDestroyImageView(device, m_imageView, nullptr); m_imageView = VK_NULL_HANDLE; }
     if (m_image)     { vmaDestroyImage(allocator, m_image, m_allocation); m_image = VK_NULL_HANDLE; }
   }
@@ -705,10 +707,12 @@ namespace t850 {
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
 
-    // Destroy old sampler if recreating
-    if (m_sampler) {
-      vkDestroySampler(device, m_sampler, nullptr);
-      m_sampler = VK_NULL_HANDLE;
+    const uint64_t variantKey = (static_cast<uint64_t>(params) << 32) | static_cast<uint32_t>(cil_props);
+    for (const auto& variant : m_samplerVariants) {
+      if (variant.first == variantKey) {
+        m_sampler = variant.second;
+        return;
+      }
     }
 
     VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -756,7 +760,12 @@ namespace t850 {
     samplerCI.minLod = 0.0f;
     samplerCI.maxLod = (params & (NEAREST_FILTER | LINEAR_FILTER)) ? 0.0f : VK_LOD_CLAMP_NONE;
 
-    VkResult res = vkCreateSampler(device, &samplerCI, nullptr, &m_sampler);
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkResult res = vkCreateSampler(device, &samplerCI, nullptr, &sampler);
+    if (res == VK_SUCCESS) {
+      m_sampler = sampler;
+      m_samplerVariants.emplace_back(variantKey, sampler);
+    }
     if (res != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] Sampler creation failed res=%d", res);
     }

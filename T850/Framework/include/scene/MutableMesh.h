@@ -39,6 +39,7 @@ private:
                              RenderMesh::MeshMaterialCBuffer& constants) const;
 
   MutableMeshSnapshot m_snapshot;
+  std::vector<Texture*> m_materialTextures;
   std::size_t m_vertexCount = 0;
   std::size_t m_indexCount = 0;
   VertexBuffer* m_vertexBuffer = nullptr;

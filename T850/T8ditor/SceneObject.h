@@ -33,6 +33,7 @@ struct SceneObject {
   int                   primId = -1;
   std::string           name;
   std::string           meshPath;
+  std::optional<t850::scene::SceneHeightmapDesc> heightmap;
   bool                  visible = true;
   bool                  transient = false;
   std::optional<bool>   mobileVisible;

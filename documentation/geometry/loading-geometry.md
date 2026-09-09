@@ -25,6 +25,12 @@ Geometry loading has three major responsibilities:
 
 The current path is intentionally format-normalized: both modern glTF/GLB and legacy `.x` files feed into `xF::XDataBase`. Runtime renderers then consume `XDataBase` instead of knowing which file format was loaded.
 
+Normal/parallax material variants require normals, tangents and binormals on the
+specific geometry. A shared material does not imply every primitive supplies those
+streams. Mixed static/skinned assets likewise enable skinning per geometry.
+Placement model part visibility is renderer-instance state; it does not mutate
+the cached source database. See [placement visuals](../terrain/placement-grid.md#model-visuals).
+
 ```mermaid
 flowchart LR
   Scene["Scene / Editor request"] --> PM["PrimitiveManager::CreateMesh"]

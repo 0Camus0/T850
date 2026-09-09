@@ -3,6 +3,7 @@ project(T8ditor LANGUAGES CXX)
 add_executable(T8ditor
 	main.cpp
 	EditorApp.cpp
+	EditorTutorialCapture.cpp
 	EditorCamera.cpp
 	EditorLineRenderer.cpp
 	EditorGrid.cpp
@@ -14,7 +15,6 @@ add_executable(T8ditor
 	EditorUtil.cpp
 	EditorViewportUtil.cpp
 	HostedViewportPanel.cpp
-	EditorSceneSerialization.cpp
 	EditorWorld.cpp
 	PlayScenePanel.cpp
 	MeshEditorPanel.cpp

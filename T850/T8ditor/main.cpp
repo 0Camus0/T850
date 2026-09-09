@@ -69,6 +69,8 @@ int main(int argc, char** argv) {
   std::string meshPath;
   std::string sceneFilePath;
   int dumpFrame = -1;
+  bool terrainSelfTest = false;
+  std::string tutorialStep;
 
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -86,6 +88,8 @@ int main(int argc, char** argv) {
     else if ((a == "--dump-frame" || a == "--dumpFrame") && i + 1 < argc) dumpFrame = std::stoi(argv[++i]);
     else if (a == "--logFile" && i + 1 < argc) logFile = argv[++i];
     else if (a == "--d3d12debug") t850::g_config.flags.d3d12Debug = true;
+    else if (a == "--terrain-editor-selftest") terrainSelfTest = true;
+    else if (a == "--tutorial-step" && i + 1 < argc) tutorialStep = argv[++i];
     else if (a == "--logLevel" && i + 1 < argc) {
       std::string v = argv[++i];
       if      (v == "error"   || v == "0") logLevel = 0;
@@ -129,6 +133,8 @@ int main(int argc, char** argv) {
   t8ditor::SetStartupDumpFrame(dumpFrame);
 
   g_pApp = new t8ditor::EditorApp();
+  if (!tutorialStep.empty()) static_cast<t8ditor::EditorApp*>(g_pApp)->ConfigureTutorialCapture(tutorialStep);
+  if (terrainSelfTest) static_cast<t8ditor::EditorApp*>(g_pApp)->EnableTerrainSelfTest();
   pApp   = g_pApp;  // RenderMesh::Load() uses this global
 
 #ifdef OS_LINUX
@@ -145,9 +151,10 @@ int main(int argc, char** argv) {
   g_pFramework->OnDestroyApplication();
 #endif
 
+  const int result = static_cast<t8ditor::EditorApp*>(g_pApp)->TerrainSelfTestResult();
   delete g_pFramework;
   delete g_pApp;
 
   t850::Log::Shutdown();
-  return 0;
+  return result;
 }

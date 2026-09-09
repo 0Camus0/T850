@@ -49,6 +49,22 @@ namespace t850 {
     void SetSceneProps(SceneProps *p) { pScProp = p; }
     void SetEngineContext(EngineContext* context) { pEngineContext = context; }
     EngineContext* GetEngineContext() const { return pEngineContext; }
+    void CopyRenderStateFrom(const PrimitiveBase& source) {
+      pScProp = source.pScProp;
+      gKey = source.gKey;
+      for (int index = 0; index < MaxPrimitiveTextures; ++index) Textures[index] = source.Textures[index];
+      EnvMap = source.EnvMap;
+      m_brightness = source.m_brightness;
+      m_fParallaxLowSamples = source.m_fParallaxLowSamples;
+      m_fParallaxHighSamples = source.m_fParallaxHighSamples;
+      m_fParallaxHeight = source.m_fParallaxHeight;
+      m_fParallaxEnabled = source.m_fParallaxEnabled;
+      m_fParallaxShadowMinLayers = source.m_fParallaxShadowMinLayers;
+      m_fParallaxShadowMaxLayers = source.m_fParallaxShadowMaxLayers;
+      m_fParallaxShadowSoftness = source.m_fParallaxShadowSoftness;
+      m_fParallaxShadowStrength = source.m_fParallaxShadowStrength;
+      m_fParallaxShadowEnabled = source.m_fParallaxShadowEnabled;
+    }
     SceneProps				*pScProp;
   protected:
     void SetGlobalKey(ShaderKey k) { gKey = k; }

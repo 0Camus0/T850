@@ -341,7 +341,7 @@ namespace t850 {
     for (auto* tex : vColorTextures) {
       if (tex) {
         VulkanTexture* vt = static_cast<VulkanTexture*>(tex);
-        if (vt->m_sampler) { vkDestroySampler(device, vt->m_sampler, nullptr); vt->m_sampler = VK_NULL_HANDLE; }
+        vt->DestroySamplers(device);
         vt->m_image = VK_NULL_HANDLE;      // prevent double-free
         vt->m_imageView = VK_NULL_HANDLE;
         delete vt;
@@ -360,7 +360,7 @@ namespace t850 {
     // Destroy depth texture wrapper sampler (image/view destroyed below)
     if (pDepthTexture) {
       VulkanTexture* dt = static_cast<VulkanTexture*>(pDepthTexture);
-      if (dt->m_sampler) { vkDestroySampler(device, dt->m_sampler, nullptr); dt->m_sampler = VK_NULL_HANDLE; }
+      dt->DestroySamplers(device);
       dt->m_image = VK_NULL_HANDLE;
       dt->m_imageView = VK_NULL_HANDLE;
       delete dt;

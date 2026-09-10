@@ -153,6 +153,11 @@ Validate:
 - delayed descriptor binding is accounted for in trace/debug comparisons;
 - all rendered frames call `CompleteFrame`.
 
+VulkanTexture owns every cached sampler variant, including samplers of render-target
+texture wrappers. Use `DestroySamplers` from both texture and render-target cleanup;
+freeing only `m_sampler` leaks inactive variants. The render target still owns its
+images/views. Verify teardown with validation enabled after changing texture params.
+
 Treat validation-layer messages as primary evidence. Record object type/handle, command buffer, queue, and VUID before editing.
 
 ## 8. API-Neutral Design

@@ -11906,7 +11906,8 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   }
   if (menuAction.wantsSaveScene) {
     std::string solDir = GetSolutionDir();
-    std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();
+    std::string scenesDir = m_host.sceneDirectory.empty()
+        ? (std::filesystem::path(solDir) / "Assets" / "Scenes").string() : m_host.sceneDirectory;
     std::string path = SaveFileDialog(
       L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
       L"Save Scene", L"t8scene", EditorPathToWide(scenesDir).c_str());
@@ -11916,7 +11917,8 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   }
   if (menuAction.wantsLoadScene) {
     std::string solDir = GetSolutionDir();
-    std::string scenesDir = (std::filesystem::path(solDir) / "Assets" / "Scenes").string();
+    std::string scenesDir = m_host.sceneDirectory.empty()
+        ? (std::filesystem::path(solDir) / "Assets" / "Scenes").string() : m_host.sceneDirectory;
     std::string path = OpenFileDialog(
       L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
       L"Load Scene",

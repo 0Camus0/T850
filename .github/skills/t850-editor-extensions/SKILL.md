@@ -40,6 +40,9 @@ simulate them. Propose a separate bounded implementation when they are required.
 
 One RunEditor per process is supported. Captured registration state must outlive
 that run. Keep private code and assets outside the engine checkout.
+Use `sceneDirectory` to default Open/Save dialogs to source or persistent authoring
+storage. It is not a sandbox; the host must choose a safe startupScene and must not
+overwrite authored files when staging a new build. Test seed/relaunch/rebuild paths.
 
 ## Build and Check
 

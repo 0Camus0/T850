@@ -41,6 +41,7 @@ namespace t850 {
     void LoadAPITexture(DeviceContext* context, unsigned char* buffer) override;
     void LoadAPITextureCompressed(unsigned char* buffer) override;
     void DestroyAPITexture() override;
+    void DestroySamplers(VkDevice device);
     void SetTextureParams() override;
     void GetFormatBpp(unsigned int& props, unsigned int& format, unsigned int& bpp) override;
     void Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) override;

@@ -38,6 +38,13 @@ ResourceLocator base path; relative cache paths are resolved after that change.
 Provide the project's complete resource tree, including engine shaders/defaults
 it uses. There is no project/engine mount-overlay resolver in this slice.
 
+`sceneDirectory` optionally selects the initial directory for Open Scene and Save
+Scene dialogs. Pass an absolute source/user authoring path, separate from disposable
+staged resources. This setting is a dialog default, not a path sandbox or automatic
+save destination. Empty retains stock T8ditor's scene-directory behavior. Hosts own
+startup-scene selection and any seed-once policy for packaged maps; resource lookup
+can remain rooted in the executable directory while scenes are authored elsewhere.
+
 ## Registrations and Lifetime
 
 - `registerRuntime` receives a registry containing movement and the existing

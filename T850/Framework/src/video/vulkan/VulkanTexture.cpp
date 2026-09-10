@@ -696,11 +696,15 @@ namespace t850 {
     VkDevice device = driver->GetDevice();
     VmaAllocator allocator = driver->GetAllocator();
 
+    DestroySamplers(device);
+    if (m_imageView) { vkDestroyImageView(device, m_imageView, nullptr); m_imageView = VK_NULL_HANDLE; }
+    if (m_image)     { vmaDestroyImage(allocator, m_image, m_allocation); m_image = VK_NULL_HANDLE; }
+  }
+
+  void VulkanTexture::DestroySamplers(VkDevice device) {
     for (const auto& variant : m_samplerVariants) vkDestroySampler(device, variant.second, nullptr);
     m_samplerVariants.clear();
     m_sampler = VK_NULL_HANDLE;
-    if (m_imageView) { vkDestroyImageView(device, m_imageView, nullptr); m_imageView = VK_NULL_HANDLE; }
-    if (m_image)     { vmaDestroyImage(allocator, m_image, m_allocation); m_image = VK_NULL_HANDLE; }
   }
 
   void VulkanTexture::SetTextureParams() {

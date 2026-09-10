@@ -65,6 +65,7 @@ struct EditorHostDesc {
   std::string projectRoot;
   std::string cacheRoot;
   std::string startupScene;
+  std::string sceneDirectory;
   bool requireKnownComponentsForPlay = false;
   std::function<void(t850::game::ComponentFactoryRegistry&)> registerRuntime;
   std::function<void(EditorRegistry&)> registerEditor;

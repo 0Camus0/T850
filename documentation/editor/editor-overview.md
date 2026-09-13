@@ -35,7 +35,7 @@ Static editor wireframes are composited after deferred rendering and compare the
 reverse-Z depth against the opaque and forward scene depth textures. Zero is the
 cleared/background value; small positive values are valid distant geometry, not an
 empty depth buffer. The comparison must not discard those values with a fixed
-`0.0001` cutoff. The proportional bias is `0.00005`, enough for surface precision
+`0.0001` cutoff. The proportional bias is `0.0005`, enough for surface precision
 without the former `0.005` bias pulling hidden lines through nearby surfaces.
 
 The focused native regression uses procedural foreground/rear planes, selects the

@@ -83,6 +83,7 @@ try {
         Write-Output "$api hidden wire pixels=$hidden; visible wire pixels=$visible"
         if ($hidden -gt 2) { throw "$api selected wireframe bleeds through the opaque foreground plane" }
         if ($visible -lt 50) { throw "$api visible selected wireframe disappeared" }
+        if (!$Thin -and !$Far -and $visible -lt 9000) { throw "$api coplanar wireframe coverage regressed" }
         Write-Output "PASS $api selected wireframe occlusion"
     }
 } finally { if (Test-Path $temporary) { Remove-Item $temporary -Recurse -Force } }

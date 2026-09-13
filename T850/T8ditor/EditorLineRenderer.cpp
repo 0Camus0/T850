@@ -110,7 +110,7 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
     (m_viewW > 0) ? 1.0f / (float)m_viewW : 1.0f / 1280.0f,
     (m_viewH > 0) ? 1.0f / (float)m_viewH : 1.0f / 720.0f,
     m_farPlane,
-    0.00005f);
+    0.0005f);
 
   t850::MeshDrawStateTracker& tracker = t850::MeshDrawStateTracker::Get();
   tracker.BindIndexedGeometry(*t850::T8DeviceContext,

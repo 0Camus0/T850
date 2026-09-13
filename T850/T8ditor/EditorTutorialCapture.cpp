@@ -88,6 +88,28 @@ void EditorApp::PrepareTutorialCapture() {
     return;
   }
   if (!world.hasLoadedSceneFile || world.objects.empty() || m_tutorialFrame < 4) return;
+  if (m_tutorialStep == "wireframe-depth-on" || m_tutorialStep == "wireframe-depth-off" ||
+      m_tutorialStep == "wireframe-depth-far-on" || m_tutorialStep == "wireframe-depth-far-off") {
+    m_tutorialPrepared = true;
+    m_panels.showHierarchy = m_panels.showInspector = m_panels.showRendering = false;
+    m_panels.showConsole = m_panels.showTimeline = m_panels.showGameValidation = false;
+    m_panels.showRegions = m_panels.showNavMeshAuthoring = m_panels.showTerrainEditor = false;
+    m_panels.showGameOverlays = m_panels.showWireframe = m_panels.showSkybox = false;
+    m_panels.showSelectionWireframe = m_tutorialStep.ends_with("-on");
+    m_editorNavMeshVisible = m_editorNavMeshShowSourcePreview = m_editorShowPhysics = false;
+    m_showPlacementGrid = m_placementMode = m_terrainBrushEnabled = false;
+    world.selectedIdx = 0;
+    world.selectionType = 0;
+    world.activeCameraIdx = -1;
+    world.multiSelect.clear();
+    world.multiEntitySelect.clear();
+    m_gizmo.SetMode(GizmoMode::Select);
+    m_camera.SetTarget(XVECTOR3(0.0f, 0.0f, 0.0f));
+    m_camera.SetOrbitState(0.0f, 1.3f, m_tutorialStep.starts_with("wireframe-depth-far") ? 1500.0f : 12.0f);
+    m_sceneProps.ToogleDOF = 0;
+    T8_LOG_INFO("[WireframeDepthTest] Selected rear plane; wireframe=%d", m_panels.showSelectionWireframe);
+    return;
+  }
   try {
     m_tutorialPrepared = true;
     const std::set<std::string> steps = {"file-menu", "save-menu", "empty-scene", "view-menu", "grid", "flat-import", "image-import", "flat-terrain",

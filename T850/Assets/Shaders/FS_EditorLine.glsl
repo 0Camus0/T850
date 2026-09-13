@@ -26,7 +26,7 @@ void main(){
 	highp float sceneDepth = max(SampleDepth(depthTex, screenUV),
 	                             SampleDepth(depthTex2, screenUV));
 	highp float wireDepth = gl_FragCoord.z;
-	if (sceneDepth > 0.0001 && wireDepth < sceneDepth * (1.0 - DepthParams.w)) {
+	if (sceneDepth > 0.0 && wireDepth < sceneDepth * (1.0 - DepthParams.w)) {
 		discard;
 	}
 #ifdef ES_30

@@ -29,6 +29,33 @@ Wireframe** controls automatic wire outlines on selected objects independently o
 the global Wireframe Overlay toggle. This makes terrain grid/brush views readable
 without changing authored geometry.
 
+### Selection Wireframe Depth
+
+Static editor wireframes are composited after deferred rendering and compare their
+reverse-Z depth against the opaque and forward scene depth textures. Zero is the
+cleared/background value; small positive values are valid distant geometry, not an
+empty depth buffer. The comparison must not discard those values with a fixed
+`0.0001` cutoff. The proportional bias is `0.00005`, enough for surface precision
+without the former `0.005` bias pulling hidden lines through nearby surfaces.
+
+The focused native regression uses procedural foreground/rear planes, selects the
+rear mesh, and compares wireframe-on/off captures. It requires zero bleed-through
+in an interior occluder region (at most two rasterization pixels allowed) and a
+nonempty exposed wireframe. From the engine source root:
+
+```powershell
+./scripts/TestEditorWireframe.ps1 -Config Debug
+./scripts/TestEditorWireframe.ps1 -Config Debug -Thin
+./scripts/TestEditorWireframe.ps1 -Config Debug -Far
+```
+
+The default APIs are D3D11, D3D12 and Vulkan. `-Thin` checks a 0.025-unit surface
+separation at ordinary zoom; `-Far` checks valid small depths at a 1500-unit camera
+distance. Fixtures and UI layout are temporary; PNG/PPM evidence and logs remain
+in the runtime output. This test does not validate skinned-mesh wireframes or the
+OpenGL forward-rendering path. GLSL keeps the same corrected reverse-Z comparison,
+but OpenGL visual occlusion remains a separate verification gap.
+
 Related documents:
 
 - [Main architecture](../architecture/main-architecture.md)

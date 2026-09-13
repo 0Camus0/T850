@@ -23,7 +23,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
     float wireDepth = input.hposition.z;
 
     // Discard if wireframe is behind scene geometry
-    if (wireDepth < sceneDepth * (1.0 - DepthParams.w) && sceneDepth > 0.0001)
+    if (wireDepth < sceneDepth * (1.0 - DepthParams.w) && sceneDepth > 0.0)
         discard;
 
     return LineColor;

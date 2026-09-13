@@ -29,6 +29,61 @@ Wireframe** controls automatic wire outlines on selected objects independently o
 the global Wireframe Overlay toggle. This makes terrain grid/brush views readable
 without changing authored geometry.
 
+### Selection Wireframe Depth
+
+Static editor wireframes are composited after deferred rendering and compare their
+reverse-Z depth against the opaque and forward scene depth textures. Zero is the
+cleared/background value; small positive values are valid distant geometry, not an
+empty depth buffer. The comparison must not discard those values with a fixed
+`0.0001` cutoff. The proportional bias is `0.0005`, enough for surface precision
+without the former `0.005` bias pulling hidden lines through nearby surfaces.
+
+The focused native regression uses procedural foreground/rear planes, selects the
+rear mesh, and compares wireframe-on/off captures. It requires zero bleed-through
+in an interior occluder region (at most two rasterization pixels allowed) and a
+nonempty exposed wireframe. From the engine source root:
+
+```powershell
+./scripts/TestEditorWireframe.ps1 -Config Debug
+./scripts/TestEditorWireframe.ps1 -Config Debug -Thin
+./scripts/TestEditorWireframe.ps1 -Config Debug -Far
+```
+
+The default APIs are D3D11, D3D12 and Vulkan. `-Thin` checks a 0.025-unit surface
+separation at ordinary zoom; `-Far` checks valid small depths at a 1500-unit camera
+distance. Fixtures and UI layout are temporary; PNG/PPM evidence and logs remain
+in the runtime output. This test does not validate skinned-mesh wireframes or the
+OpenGL forward-rendering path. GLSL keeps the same corrected reverse-Z comparison,
+but OpenGL visual occlusion remains a separate verification gap.
+
+### Terrain Placement Grid Depth
+
+The square grid shown when selecting a heightmap is a placement-grid overlay,
+not the selected mesh's triangle wireframe. It previously projected lines into
+ImGui's background draw list after the scene, which bypassed depth testing entirely.
+Changing the mesh-wire depth shader could not fix grid lines over blockouts.
+
+Grid and placement-preview segments now use cached world-space line geometry in
+the scene overlay pass. The renderer compares against opaque/forward scene depth
+for deferred rendering and uses read-only hardware depth in the forward fallback.
+The grid follows the same authored terrain heights and transforms, with a 0.04-unit
+surface lift and 0.0005 proportional depth bias to avoid self-occlusion. Buffers are
+replaced only when geometry changes and retired through the existing resource helpers.
+ImGui remains responsible for the surrounding panels, not placement-grid rendering.
+
+```powershell
+./scripts/TestEditorWireframe.ps1 -Config Debug -PlacementGrid
+```
+
+This separate regression selects a 64x64 terrain with blue and red blockouts and
+toggles the placement grid, leaving triangle wireframe off. It compares pixels in
+both solid boxes using pre-bloom G-buffer albedo masks inset by three pixels, and
+requires the exposed ground grid to remain visible. With the same final masks,
+the original D3D12 captures changed 1,708 red-box and 1,193 blue-box pixels; the
+corrected D3D11/D3D12/Vulkan runs change zero. The original two-plane wireframe
+fixture explicitly disabled the placement grid and did not cover this bug.
+OpenGL forward-path occlusion is not part of the verified matrix.
+
 Related documents:
 
 - [Main architecture](../architecture/main-architecture.md)

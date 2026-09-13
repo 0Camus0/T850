@@ -61,6 +61,8 @@
 
 #include "EditorCamera.h"
 #include "EditorLineRenderer.h"
+#include <scene/LineRenderer.h>
+#include <scene/WireframeGeometry.h>
 #include "EditorGrid.h"
 #include "EditorGizmo.h"
 #include "EditorMesh.h"
@@ -147,6 +149,7 @@ namespace t8ditor {
     bool QueueTerrainPlacement(struct SceneObject& object);
     void DrawRegionsPanel();
     void DrawTerrainOverlays();
+    void DrawTerrainPlacementOverlay(const Camera& camera, t850::Texture* depth, t850::Texture* forwardDepth);
     void RunTerrainEditorSelfTest();
     void PrepareTutorialCapture();
     void SignalTutorialCapture();
@@ -282,6 +285,13 @@ namespace t8ditor {
     EditorCamera        m_camera;
     EditorLineRenderer  m_lines;
     EditorLineRenderer  m_navLinkOverlayLines;
+    t850::LineRenderer m_terrainOverlayLines;
+    struct TerrainOverlayBatch {
+      t850::WireframeGeometry geometry;
+      std::vector<float> positions;
+    };
+    TerrainOverlayBatch m_terrainGridBatch;
+    TerrainOverlayBatch m_terrainPreviewBatch;
     t850::TextRenderer  m_gameOverlayText;
     EditorGrid          m_grid;
     EditorGizmo         m_gizmo;

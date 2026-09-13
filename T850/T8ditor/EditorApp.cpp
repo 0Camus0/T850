@@ -6400,6 +6400,7 @@ void EditorApp::CreateAssets() {
   {
     LogEditorLoadingLabel("Initializing editor", "Viewport helpers");
     t850::LoadingProgress::ScopedStep helpersStep("Initializing editor", "Viewport helpers", 12.0f);
+    if (!m_terrainOverlayLines.Create()) T8_LOG_ERROR("[T8ditor] Terrain overlay renderer creation failed");
     if (!m_lines.Create())
       T8_LOG_ERROR("[T8ditor] EditorLineRenderer::Create failed");
     if (!m_navLinkOverlayLines.Create())
@@ -7081,6 +7082,11 @@ void EditorApp::DestroyAssets() {
   t850::MeshAssetCache::Get().Clear();
   m_gizmo.Destroy();
   m_grid.Destroy();
+  m_terrainGridBatch.geometry.Destroy();
+  m_terrainGridBatch.positions.clear();
+  m_terrainPreviewBatch.geometry.Destroy();
+  m_terrainPreviewBatch.positions.clear();
+  m_terrainOverlayLines.Destroy();
   m_navLinkOverlayLines.Destroy();
   m_lines.Destroy();
   m_physics.Shutdown();
@@ -7980,6 +7986,72 @@ void EditorApp::UpdateTerrainEditing() {
   m_terrainBrushElapsed = 0;
 }
 
+void EditorApp::DrawTerrainPlacementOverlay(const Camera& camera, t850::Texture* depth, t850::Texture* forwardDepth) {
+  SceneObject* object = g_selectionType == 0 ? SelectedObject() : nullptr;
+  if (!object || !object->visible || !object->heightmap || !m_showPlacementGrid ||
+      !object->heightmap->placement_grid.enabled || !m_terrainOverlayLines.IsReady()) return;
+  const auto* mesh = dynamic_cast<const t850::HeightmapMesh*>(object->litInst.pBase);
+  if (!mesh) return;
+  const auto& terrain = mesh->AuthoredTerrain();
+  uint32_t columns = 0, rows = 0;
+  if (!t850::TerrainGridDimensions(terrain, columns, rows)) return;
+  std::vector<float> grid;
+  std::vector<float> preview;
+  const auto line = [&](std::vector<float>& positions, float startX, float startZ, float endX, float endZ) {
+    positions.insert(positions.end(), {startX, t850::TerrainSurfaceHeight(terrain, startX, startZ) + 0.04f, startZ, 1.0f,
+      endX, t850::TerrainSurfaceHeight(terrain, endX, endZ) + 0.04f, endZ, 1.0f});
+  };
+  const float cell = terrain.placement_grid.cell_size;
+  const uint32_t stepX = (std::max)(1u, (columns + 127) / 128);
+  const uint32_t stepZ = (std::max)(1u, (rows + 127) / 128);
+  for (uint32_t column = 0; column <= columns; column += stepX)
+    for (uint32_t row = 0; row < rows; row += stepZ)
+      line(grid, column * cell, row * cell, column * cell, (std::min)(row + stepZ, rows) * cell);
+  for (uint32_t row = 0; row <= rows; row += stepZ)
+    for (uint32_t column = 0; column < columns; column += stepX)
+      line(grid, column * cell, row * cell, (std::min)(column + stepX, columns) * cell, row * cell);
+  XVECTOR3 previewColor(55.0f / 255, 235.0f / 255, 110.0f / 255, 1.0f);
+  const float left = m_placementBrush.cell_x * cell, top = m_placementBrush.cell_z * cell;
+  const float right = left + m_placementBrush.width * cell, bottom = top + m_placementBrush.depth * cell;
+  if (m_placementMode && std::abs(left) <= terrain.size_x * 2 && std::abs(top) <= terrain.size_z * 2) {
+    const auto rotation = object->wireframe.EulerRadians();
+    const auto scale = object->wireframe.Scale();
+    const bool supported = t850::TerrainPlacementTransformSupported({rotation.x, rotation.y, rotation.z}, {scale.x, scale.y, scale.z});
+    if (!supported || !t850::CheckTerrainPlacement(terrain, m_placementBrush).allowed)
+      previewColor = XVECTOR3(250.0f / 255, 65.0f / 255, 70.0f / 255, 1.0f);
+    line(preview, left, top, right, top);
+    line(preview, right, top, right, bottom);
+    line(preview, right, bottom, left, bottom);
+    line(preview, left, bottom, left, top);
+  }
+  auto* driver = pFramework->pVideoDriver;
+  const bool sampledDepth = depth || forwardDepth;
+  m_terrainOverlayLines.SetDepthTestEnabled(sampledDepth);
+  m_terrainOverlayLines.SetDepthTexture(depth);
+  m_terrainOverlayLines.SetSecondaryDepthTexture(forwardDepth);
+  m_terrainOverlayLines.SetViewport(m_lastW, m_lastH);
+  m_terrainOverlayLines.SetFarPlane(camera.FPlane);
+  m_terrainOverlayLines.SetDepthBias(0.0005f);
+  driver->SetDepthStencilState(sampledDepth ? t850::BaseDriver::NONE : t850::BaseDriver::READ);
+  driver->SetBlendState(t850::BaseDriver::NON_PREMULTIPLIED);
+  const auto draw = [&](TerrainOverlayBatch& batch, const std::vector<float>& positions, const XVECTOR3& color) {
+    if (positions.empty()) return;
+    const auto count = static_cast<unsigned>(positions.size() / 4);
+    if (batch.positions != positions || !batch.geometry.IsReady()) {
+      std::vector<unsigned> indices(count);
+      for (unsigned index = 0; index < count; ++index) indices[index] = index;
+      if (!batch.geometry.CreatePositionBuffer(positions.data(), count) || !batch.geometry.CreateLineIndexBuffer(indices, count)) return;
+      batch.positions = positions;
+    }
+    m_terrainOverlayLines.DrawLines(object->wireframe.BuildWorld(), camera.VP, color,
+        batch.geometry.GetVertexBuffer(), batch.geometry.GetIndexBuffer(), count, sizeof(float) * 4, batch.geometry.GetIndexFormat());
+  };
+  draw(m_terrainGridBatch, grid, XVECTOR3(160.0f / 255, 210.0f / 255, 220.0f / 255, 100.0f / 255));
+  draw(m_terrainPreviewBatch, preview, previewColor);
+  driver->SetBlendState(t850::BaseDriver::BLEND_OPAQUE);
+  driver->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
+}
+
 void EditorApp::DrawTerrainOverlays() {
   const Camera* camera = m_sceneProps.GetPrimaryCamera();
   if (!camera) return;
@@ -8020,45 +8092,6 @@ void EditorApp::DrawTerrainOverlays() {
     }
   }
   SceneObject* object = g_selectionType == 0 ? SelectedObject() : nullptr;
-  if (object && object->heightmap && m_showPlacementGrid && object->heightmap->placement_grid.enabled) {
-    const auto* placementMesh = dynamic_cast<const t850::HeightmapMesh*>(object->litInst.pBase);
-    if (placementMesh) {
-      const auto& terrain = placementMesh->AuthoredTerrain();
-      uint32_t columns = 0, rows = 0;
-      if (t850::TerrainGridDimensions(terrain, columns, rows)) {
-        const auto world = object->wireframe.BuildWorld();
-        auto line = [&](float startX, float startZ, float endX, float endZ, ImU32 color, float thickness) {
-          const float startY = t850::TerrainSurfaceHeight(terrain, startX, startZ);
-          const float endY = t850::TerrainSurfaceHeight(terrain, endX, endZ);
-          ImVec2 start, end;
-          if (project(t850::TransformPoint(XVECTOR3(startX, startY + 0.08f, startZ, 1.0f), world), start) &&
-              project(t850::TransformPoint(XVECTOR3(endX, endY + 0.08f, endZ, 1.0f), world), end)) draw->AddLine(start, end, color, thickness);
-        };
-        const float cell = terrain.placement_grid.cell_size;
-        const uint32_t stepX = (std::max)(1u, (columns + 127) / 128);
-        const uint32_t stepZ = (std::max)(1u, (rows + 127) / 128);
-        for (uint32_t column = 0; column <= columns; column += stepX)
-          for (uint32_t row = 0; row < rows; row += stepZ)
-            line(column * cell, row * cell, column * cell, (std::min)(row + stepZ, rows) * cell, IM_COL32(160, 210, 220, 100), 1);
-        for (uint32_t row = 0; row <= rows; row += stepZ)
-          for (uint32_t column = 0; column < columns; column += stepX)
-            line(column * cell, row * cell, (std::min)(column + stepX, columns) * cell, row * cell, IM_COL32(160, 210, 220, 100), 1);
-        const auto result = t850::CheckTerrainPlacement(terrain, m_placementBrush);
-        const float left = m_placementBrush.cell_x * cell, top = m_placementBrush.cell_z * cell;
-        const float right = left + m_placementBrush.width * cell, bottom = top + m_placementBrush.depth * cell;
-        if (m_placementMode && std::abs(left) <= terrain.size_x * 2 && std::abs(top) <= terrain.size_z * 2) {
-          const auto rotation = object->wireframe.EulerRadians();
-          const auto scale = object->wireframe.Scale();
-          const bool supported = t850::TerrainPlacementTransformSupported({rotation.x, rotation.y, rotation.z}, {scale.x, scale.y, scale.z});
-          const ImU32 color = result.allowed && supported ? IM_COL32(55, 235, 110, 255) : IM_COL32(250, 65, 70, 255);
-          line(left, top, right, top, color, 3);
-          line(right, top, right, bottom, color, 3);
-          line(right, bottom, left, bottom, color, 3);
-          line(left, bottom, left, top, color, 3);
-        }
-      }
-    }
-  }
   if (!m_terrainBrushEnabled || !object || !object->heightmap || ImGui::GetIO().WantCaptureMouse) return;
   const auto ray = BuildEditorCameraRay(*camera, static_cast<float>(IManager.mouseX), static_cast<float>(IManager.mouseY), m_lastW, m_lastH);
   float hitDistance = 0;
@@ -10909,6 +10942,8 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
       obj.wireframe.WireColor = savedColor;
     }
   }
+
+  DrawTerrainPlacementOverlay(cam, overlayOpaqueDepth, overlayForwardDepth);
 
   for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
     PhysicsSceneEntity& entity = g_physicsEntities[i];

@@ -320,7 +320,7 @@ namespace t850 {
   }
 
   void Win32Framework::UpdateMouseMode() {
-    if (!m_pWindow) {
+    if (!m_pWindow || !pBaseApp || !pBaseApp->AllowsMouseCapture()) {
       ReleaseMouseMode();
       return;
     }

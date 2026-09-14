@@ -18,6 +18,7 @@
 #include <scene/SceneRegions.h>
 #include <scene/MutableMeshData.h>
 #include <scene/RenderContainer.h>
+#include <scene/RenderQuad.h>
 #include <scene/MaterialAsset.h>
 #include <terrain/BlockRegistry.h>
 #include <terrain/HeightmapTerrain.h>
@@ -34,6 +35,7 @@
 #include <utils/XDataBase.h>
 #include <video/TextureAtlas.h>
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1612,7 +1614,65 @@ void TestPlacementVisualFitting() {
     Require(!CheckTerrainPlacement(terrain, placement).allowed, "negative placement animation speed accepted");
 }
 
+void TestLegacyShadowSampling() {
+  SceneProps props;
+  props.ShadowMapResolution = 2048;
+  props.ShadowBias = 0.000005f;
+  props.ShadowMin = 0.2f;
+  RenderQuad quad;
+  XMATRIX44 legacyLightVP;
+  XMatTranslation(legacyLightVP, 4.0f, 5.0f, 6.0f);
+  quad.CnstBuffer.WVPLight = legacyLightVP;
+
+  const auto requireLegacyPayload = [&]() {
+    const auto& payload = quad.ShadowSamplingCB;
+    Require(payload.Params0.x == 1.0f && payload.Params0.y == 2048.0f &&
+        payload.Params0.z == 2048.0f, "legacy shadow view or dimensions missing");
+    Require(std::memcmp(&payload.ViewProjection[0], &legacyLightVP, sizeof(legacyLightVP)) == 0,
+        "legacy light matrix was not preserved");
+    Require(payload.AtlasScaleBias[0].x == 1.0f && payload.AtlasScaleBias[0].y == 1.0f &&
+        payload.AtlasScaleBias[0].z == 0.0f && payload.AtlasScaleBias[0].w == 0.0f,
+        "legacy shadow does not cover the whole texture");
+    Require(payload.Params1.z == props.ShadowBias && payload.Params1.w == props.ShadowMin,
+        "legacy shadow bias or minimum light lost");
+    XMATRIX44 emptyMatrix;
+    std::memset(&emptyMatrix, 0, sizeof(emptyMatrix));
+    for (int view = 1; view < kMaxShadowViewsPerProjection; ++view) {
+      Require(std::memcmp(&payload.ViewProjection[view], &emptyMatrix, sizeof(emptyMatrix)) == 0,
+          "stale cascade matrix survived legacy fallback");
+    }
+    Require(payload.SplitDepths[0].x == 0.0f, "stale cascade boundary survived legacy fallback");
+  };
+
+  quad.UploadShadowSamplingCB(props);
+  requireLegacyPayload();
+
+  auto& projection = props.Shadows.projections.emplace_back();
+  projection.resolvedDesc.technique = "csm";
+  projection.viewCount = 2;
+  projection.atlasWidth = 4096;
+  projection.atlasHeight = 2048;
+  projection.splitBoundaries[0] = 40.0f;
+  XMatIdentity(projection.views[0].viewProjection);
+  projection.views[1].viewProjection = legacyLightVP;
+  projection.views[0].atlasScaleBias = {0.5f, 1.0f, 0.0f, 0.0f};
+  projection.views[1].atlasScaleBias = {0.5f, 1.0f, 0.5f, 0.0f};
+  quad.UploadShadowSamplingCB(props);
+  Require(quad.ShadowSamplingCB.Params0.x == 2.0f &&
+      quad.ShadowSamplingCB.Params0.y == 4096.0f &&
+      quad.ShadowSamplingCB.SplitDepths[0].x == 40.0f &&
+      quad.ShadowSamplingCB.AtlasScaleBias[1].z == 0.5f &&
+      std::memcmp(&quad.ShadowSamplingCB.ViewProjection[1], &legacyLightVP, sizeof(legacyLightVP)) == 0,
+      "explicit cascade sampling payload changed");
+
+  props.Shadows.Reset();
+  quad.CnstBuffer.WVPLight = legacyLightVP;
+  quad.UploadShadowSamplingCB(props);
+  requireLegacyPayload();
+}
+
 constexpr TestCase kTests[] = {
+  {"T-SHADOW-LEGACY-01", TestLegacyShadowSampling},
   {"T-PLACEMENT-VISUAL-01", TestPlacementVisualFitting},
   {"T-PLACEMENT-01", TestTerrainPlacementGrid},
   {"T-TERRAIN-16BIT-01", TestTerrain16BitImage},

@@ -2,21 +2,26 @@
 
 Status: proposed; reassessed against `c9bb6a75b0b75314673d95ef0e2702c575ac4d0d` after rebasing `master` onto `origin/master`. This is a source/documentation assessment, not a Dawn build, shader-conversion result, or measured performance report. No WebGPU or shared compute backend is implemented by this proposal.
 
-This proposal covers a Dawn-first engine port, cross-backend compute and a three-day performance experiment. The detailed backend architecture also describes deferred full-parity work; it is not all required for the experiment.
+2026-09-14 requirement update: WebGPU is a required built-in graphics API for supported Windows x64 builds, using Dawn's D3D12 backend only. The dependency, shader, launcher and release requirements below supersede the earlier optional external-install plan. Package inspection is source evidence only; no Dawn package build or shader conversion has been validated here.
+
+2026-09-14 source review: the numeric claims in this document were checked against the engine sources and hold (GBuffer formats and byte count, per-scene pass counts, shader register counts, absence of compute, the three profiler defects). The review also found four blocking gaps that earlier revisions did not address: data-driven shader permutations versus offline-only WGSL, a vcpkg feature conflict between `imgui[webgpu-binding]` and `dawn[core,d3d12]`, combined image samplers in the existing SPIR-V path, and an already-implemented benchmark matrix that this plan duplicated. Those are resolved in [shader translation and caching](#shader-translation-and-caching-model), [required vcpkg package](#required-vcpkg-package), [canonical flow](#canonical-flow) and [controls and run protocol](#controls-and-run-protocol). Reading the sources is still not a build, a conversion or a measurement.
+
+This proposal covers the required Dawn/D3D12 engine port, cross-backend compute and a three-day internal performance experiment. Full scene and editor compatibility is the release acceptance requirement; the smaller experiment is an implementation milestone, not permission to ship partial WebGPU support.
 
 Start with [findings](#reassessment-findings), [compute design](#cross-backend-compute-design), [per-scene opportunities](#per-scene-compute-opportunities), [benchmark methodology](#native-d3d12-versus-dawn-experiment), and the [three-day work split and gates](#milestones-and-stopgo-gates).
 
-The primary target is **Windows x64 using Dawn over D3D12**, both to port T850 and to measure the cost of the WebGPU implementation relative to the engine's native D3D12 path. HLSL remains canonical; WGSL generation is an offline feasibility gate. Dawn is pinned and installed outside this repository.
+The primary target is **Windows x64 using Dawn over D3D12**, both to port T850 and to measure the cost of the WebGPU implementation relative to the engine's native D3D12 path. HLSL remains canonical; WGSL is generated from it, on demand at runtime like the existing Vulkan path, with offline pre-compilation available as an option. Dawn is a required, pinned vcpkg dependency; downloaded sources, build products and installed packages are not committed to Git.
 
 ## Objectives and Timebox
 
-1. **Port the engine to Dawn/WebGPU.** Full scene and editor parity is the long-term objective. The three-day deliverable is a small integrated graphics path, not a claim that every shader and scene has been ported.
-2. **Measure native D3D12 versus Dawn/D3D12.** Compare equivalent work on the same adapter, with matched shaders, resources, rendering settings and presentation policy. Separate CPU command-construction cost, GPU elapsed time, cold compilation, and frame pacing; do not label every difference WebGPU API overhead.
-3. **Add a shared compute path** for D3D11, D3D12, Vulkan, and Dawn/WebGPU. GL receives no compute implementation. Keep existing graphics paths working and select a graphics fallback or report unsupported when compute is requested on GL.
-4. **Assess compute candidates in every scene**, including the newly added heightmap/placement content and embeddable editor. Start with a bounded image-processing kernel; treat volumetric lighting, culling, skinning, and terrain generation as later experiments until correctness and performance are measured.
-5. **Deliver with two people in three days.** The owner takes Dawn graphics integration and native-versus-Dawn comparison; the teammate owns the common compute contract, kernel, and native compute backends. Freeze the shared contract early and integrate daily. Six person-days is a prototype budget, not a full-engine parity budget.
+1. **Ship WebGPU alongside every existing graphics API.** Supported Windows x64 builds always include Dawn/D3D12. Users select the API at runtime without installing a separate backend or rebuilding. Full scene and editor parity is required for release; the three-day deliverable is only an internal integrated graphics milestone.
+2. **Port the shader inventory to WGSL through generation, not hand authoring.** HLSL stays canonical. Translation happens in process on a cache miss, mirroring the existing Vulkan path, and offline pre-compilation is an optional pre-warm of the same cache.
+3. **Measure native D3D12 versus Dawn/D3D12.** Compare equivalent work on the same adapter, with matched shaders, resources, rendering settings and presentation policy. Separate CPU command-construction cost, GPU elapsed time, cold compilation, and frame pacing; do not label every difference WebGPU API overhead.
+4. **Add a shared compute path** for D3D11, D3D12, Vulkan, and Dawn/WebGPU. GL receives no compute implementation. Keep existing graphics paths working and select a graphics fallback or report unsupported when compute is requested on GL.
+5. **Assess compute candidates in every scene**, including the newly added heightmap/placement content and embeddable editor. Start with a bounded image-processing kernel; treat volumetric lighting, culling, skinning, and terrain generation as later experiments until correctness and performance are measured.
+6. **Deliver an internal prototype with two people in three days.** The owner takes Dawn graphics integration and native-versus-Dawn comparison; the teammate owns the common compute contract, kernel, and native compute backends. Freeze the shared contract early and integrate daily. Six person-days is a prototype budget, not a full-engine parity budget or a committed release date.
 
-The detailed work split, measurements, and per-scene assessment below are the acceptance contract. Emscripten and wgpu-native remain future considerations, not competing workstreams during these three days.
+The required release gate and the internal prototype gate below are distinct acceptance contracts. Emscripten and wgpu-native remain future considerations requiring separate approval, not competing workstreams during these three days.
 
 ## Purpose
 
@@ -39,21 +44,31 @@ This proposal does not treat a triangle sample as scene parity. Full support mea
 |---|---|
 | First target | Windows x64 native |
 | First provider | Dawn |
-| Dawn backend | D3D12 preferred and required for the first acceptance matrix |
+| Dawn backend | D3D12 only; no Dawn/Vulkan, Dawn/D3D11, Dawn/GL or automatic backend fallback |
+| Windows x64 availability | Required in normal Debug/Release builds and runtime packages, not a build opt-in |
+| User API selection | D3D11, D3D12, Vulkan, GL and WebGPU remain distinct selectable graphics paths |
 | Shader source of truth | Existing HLSL |
-| WGSL creation | Deterministic offline generation and validation |
-| Dawn distribution | Pinned external install outside Git |
-| Browser target | Later milestone through Emscripten 4.0.10+ and `--use-port=emdawnwebgpu` |
-| Linux/Steam Deck | Later native Dawn/Vulkan milestone after Windows parity |
+| WGSL creation | In-process HLSL to SPIR-V to WGSL on cache miss, mirroring the existing Vulkan runtime path; results stored in the shared shader disk cache |
+| Offline pre-compilation | Optional build step that pre-warms the same cache. A startup optimization, not a correctness requirement |
+| Unlisted permutations | Translated on demand. A key is never a hard failure merely because it was not pre-generated |
+| Shader port scope | All nine HLSL families must convert and validate; see [WGSL port scope](#wgsl-shader-port-scope) |
+| SPIR-V generation | Dedicated glslang configuration with separate samplers and explicit bindings; the Vulkan backend's combined-sampler configuration is not reused |
+| Dawn distribution | Required pinned vcpkg package, D3D12 feature only; tracked overlay if needed for build/tooling fixes |
+| ImGui WebGPU binding | vcpkg `imgui[webgpu-binding]`, pinned through a tracked overlay so it requests `dawn[core,d3d12]` instead of Dawn's default features |
+| Benchmark harness | Extend the existing DayScene benchmark matrix; no parallel harness |
+| Browser target | Out of current scope; Emscripten notes are future research requiring separate approval |
+| Linux/Steam Deck | Existing native Vulkan path remains; no Dawn backend is scheduled for these targets |
 | Android | Existing Vulkan backend remains the production path in the initial scope |
-| Alternate provider | wgpu-native remains feasible behind a provider boundary |
+| Win32/ARM64 | Existing builds remain supported; mandatory Dawn coverage is not inferred from the x64 plan |
+| Alternate provider | Out of scope; isolate Dawn-specific code without implementing another provider |
 | Compute targets | D3D11, D3D12, Vulkan, Dawn/WebGPU; no GL compute |
 | Benchmark target | Native D3D12 versus Dawn using the same D3D12 adapter |
 | Immediate budget | Two people, three days; prototype and evidence, not full scene parity |
+| Release gate | Existing runtime scenes and T8ditor work across all five graphics APIs on the declared supported Windows x64 hardware; prototype evidence is insufficient |
 | Scene-specific branches | Rejected |
-| Shipping runtime HLSL-to-WGSL translation | Rejected |
+| Runtime HLSL-to-WGSL translation | Required, matching the existing Vulkan runtime-compilation contract |
 
-Later targets are part of the architecture, but not part of the Windows stage-one acceptance gate.
+The mandatory-build requirement applies to the established Windows x64 scope, not to platforms without D3D12. Expanding that platform matrix needs an explicit new requirement and independent validation. Hardware/driver prerequisites still apply; missing engine support or missing packaged dependencies must not be presented as a hardware limitation.
 
 ## Reassessment Findings
 
@@ -62,12 +77,32 @@ The overall direction makes sense: the shared driver and explicit-backend frame 
 | Priority | Finding | Required response |
 |---|---|---|
 | Blocking for delivery | Full engine parity plus four compute implementations does not fit six person-days reliably | Commit to a bounded vertical slice; make incomplete gates explicit, with no silent reduction of the four-API goal |
+| Blocking for release | An optional or fixture-only backend does not meet the required all-API experience | Include Dawn in normal Windows x64 setup/build/package and complete the advertised scene/editor matrix before release |
 | Blocking for deferred parity | Raw GBuffer storage is 36 bytes, but WebGPU attachment cost is 56 bytes/sample | Query/request the real limit; use a small forward graph for the experiment and defer GBuffer repacking |
-| Blocking for shader integration | Existing APIs, in-memory cache and permutation dump assume graphics pairs/key-only identities | Separate compute identity and artifact loading; qualify resource counts using compiled entry-point reflection |
+| Blocking for release | Shader permutations are data-driven: [RenderMesh](../../T850/Framework/src/scene/RenderMesh.cpp) derives `matKey` from loaded glTF material definitions and compiles on demand, so a pre-generated artifact list can never be complete | Translate on demand in process, exactly as the Vulkan backend already does, and cache the result. Offline generation becomes an optional pre-warm. See [shader translation and caching model](#shader-translation-and-caching-model) |
+| Blocking for setup | vcpkg `imgui[webgpu-binding]` declares an unqualified `dawn` dependency, so feature unification installs Dawn's Windows defaults (D3D11 + D3D12 + Vulkan) and defeats the D3D12-only requirement | Tracked overlay for the ImGui port requesting `dawn[core,d3d12]`, plus an installed-feature audit in setup and CI |
+| Blocking for shader integration | The Vulkan path compiles HLSL with `setAutoMapBindings(true)` and `EShTexSampTransUpgradeTextureRemoveSampler`, emitting combined image samplers that WGSL cannot express | Add a separate SPIR-V generation configuration; do not reuse the Vulkan compile settings |
+| Blocking for shader integration | The permutation dump assumes key-only identity; compute has no single-stage artifact path | Separate compute identity and artifact loading; qualify resource counts using compiled entry-point reflection. The disk cache already carries a stronger identity, see [stable `ShaderKey`](#stable-shaderkey) |
 | Blocking for compute | No shared dispatch/storage-resource contract; graph edges are not synchronization | Add typed compute passes, declared accesses, resource usages and backend hazard handling |
 | Blocking for conclusions | Current timings are not sufficient to isolate WebGPU overhead | Separate CPU/GPU sample accounting; compare matched native and Dawn workloads and disclose shader/compiler differences |
+| High | A benchmark matrix over APIs, resolutions and presentation modes already exists in DayScene; this plan proposed a parallel harness | Extend the existing matrix instead. See [controls and run protocol](#controls-and-run-protocol) |
+| High | Runtime API switching tears down and rebuilds driver, window and caches, and the benchmark matrix drives it; no gate covered it | Make Dawn teardown/recreate an explicit acceptance item with no pending asynchronous callbacks |
 | High | HLSL-to-WGSL conversion has not been executed for the selected permutations | Make graphics and compute conversion a day-one stop/go gate |
 | High | CPU terrain and placement data now own more gameplay/editor behavior | Preserve authoritative CPU geometry and transactions; GPU-only terrain generation is deferred |
+
+The bounded three-day slice does not waive the mandatory-build or full-release requirements. If full parity needs more time, report the remaining work instead of disabling WebGPU or calling the prototype release-ready.
+
+### Corrected Assumptions
+
+The review also corrected assumptions that made the plan larger than it needs to be:
+
+| Earlier assumption | Source finding | Effect on the plan |
+|---|---|---|
+| Generated WGSL needs offline generation and a new manifest subsystem | The Vulkan backend already compiles HLSL at runtime and stores the result through [ShaderDiskCache](../../T850/Framework/src/utils/ShaderDiskCache.cpp), keyed by API, driver signature, key bits, names and source hashes | Mirror that path for WGSL; offline generation becomes an optional pre-warm of the same cache |
+| Render targets carry one color format | `BaseDriver::CreateRT` has a per-attachment overload used by [RenderGraph](../../T850/Framework/src/scene/RenderGraph.cpp) when `color_formats` is set | Mixed-format MRT already works on every backend; the seven-target GBuffer maps to WebGPU attachments directly |
+| Render-target mip generation must be implemented | `SupportsRenderTargetMipGeneration()` is false on D3D12 and Vulkan; `generate_mips` is already inert there | Return false and match D3D12; no mip render/compute chain is needed for parity |
+| Sample-count handling is an open design question | Every render target is created with one sample on all backends | Keep sample count in the pipeline key, drop it from the gates |
+| The uniform ring is new work | D3D12 already runs a per-frame constant-buffer ring with an overflow diagnostic | Mirror the existing sizing and reporting; see [uniform buffers](#uniform-buffers) |
 
 ### Incoming Upstream Changes
 
@@ -173,18 +208,17 @@ Implementation must not inherit assumptions from one native backend:
 
 ## Provider Boundary
 
-The T850 WebGPU renderer should depend on the standard `webgpu.h` object model. Dawn types/extensions stay inside the backend. The following `WebGpuProvider` boundary describes eventual ownership, not a requirement to implement three providers or an abstract provider framework during the timebox.
+The T850 WebGPU renderer should depend on the standard `webgpu.h` object model. Dawn types/extensions stay inside `video/webgpu/dawn`. Implement a concrete Dawn context helper first, not an abstract multi-provider framework. Standard WebGPU rendering code must not inherit from T850's `D3D12Driver` or call through it.
 
 ```mermaid
 flowchart TD
   T850[WebGpuDriver and resources] --> CAPI[Standard webgpu.h subset]
-  CAPI --> Provider[WebGpuProvider]
-  Provider --> Dawn[Dawn native]
-  Provider --> Emscripten[emdawnwebgpu]
-  Provider -. optional .-> WgpuNative[wgpu-native]
+  CAPI --> Context[Dawn context]
+  Context --> Dawn[Dawn native]
+  Dawn --> D3D12[D3D12 backend only]
 ```
 
-### `WebGpuProvider` Responsibilities
+### Dawn Context Responsibilities
 
 The provider boundary owns:
 
@@ -192,11 +226,11 @@ The provider boundary owns:
 - adapter and device requests;
 - native surface chained descriptors;
 - event processing and timed waits;
-- provider/backend/toggle selection;
+- enforce the Dawn provider and D3D12 backend; allow only documented diagnostic toggles;
 - uncaptured-error and device-lost callbacks;
 - provider, version, adapter, driver, and underlying-backend identity;
 - optional native extensions;
-- any header or callback convention that differs between Dawn, Emscripten, and wgpu-native.
+- pinned Dawn header and callback conventions, isolated from shared engine interfaces.
 
 It does not own:
 
@@ -221,39 +255,91 @@ Dawn is the recommended implementation because it provides:
 - an Emscripten Dawn WebGPU port;
 - BSD-3-Clause licensing.
 
-### External Installation
+Upstream Dawn supports more native backends than T850 will enable. Only D3D12 is part of this integration; upstream Vulkan, Metal, D3D11 and GL support is not a T850 implementation commitment.
 
-Dawn should be pinned and installed outside Git. A proposed layout is:
+### Required vcpkg Package
 
-```text
-%LOCALAPPDATA%/T850Tools/Dawn/<commit>/windows-x64/<configuration>/
+[LaunchSolution.bat](../../LaunchSolution.bat) currently uses vcpkg classic mode, pins the compiler selection to VS2022/v143, and installs most native libraries with static Windows triplets. Add Dawn to the normal Windows x64 dependency setup, not behind a setup flag or to the common list also used for x86/ARM64.
+
+The inspected vcpkg checkout is `77df67cfff9c12ccfdb52284e07c87c75092f723`. Its unmodified [Dawn port manifest](../../T850/Librerias/vcpkg/ports/dawn/vcpkg.json) declares version `20260219.200501`, D3D12/Vulkan backend features, and a `tint` command-tool feature. This is a candidate package revision, not a proven build pin. The initial package request, from the source/solution directory, is:
+
+```powershell
+.\Librerias\vcpkg\vcpkg.exe install "dawn[core,d3d12]:x64-windows-static" --no-print-usage
 ```
 
-A tracked lock manifest should contain:
+`core` suppresses default features: the Windows defaults otherwise include Dawn D3D11 and Vulkan as well as D3D12. Verify the installed package's features; a previously installed broader feature set must not be assumed to shrink merely by issuing this command. Confirm the effective Dawn build options and reject unintended native backends. The D3D12 feature brings `directx-dxc`; other dependencies are resolved by the pinned port. Validate the final compiler-runtime and deployment requirements rather than assuming all dependencies become static.
 
-- Dawn commit;
-- build configuration and CMake options;
-- compiler/SDK requirements;
-- expected headers/libraries/runtime files;
-- hashes for distributed artifacts;
-- Dawn and Tint license paths.
+#### ImGui Pulls Dawn's Default Features
 
-A future setup script should:
+This command alone does not deliver a D3D12-only Dawn. The Dawn port declares Windows `default-features` of `d3d11`, `d3d12` and `vulkan`, and the ImGui port's [WebGPU feature](../../T850/Librerias/vcpkg/ports/imgui/vcpkg.json) declares an unqualified dependency:
 
-1. clone the pinned commit outside the repository;
-2. fetch Dawn dependencies;
-3. configure CMake/Ninja with `DAWN_ENABLE_INSTALL=ON`;
-4. build/install the required targets;
-5. write a machine-readable manifest;
-6. leave source and build trees outside the T850 checkout.
+```json
+"webgpu-binding": { "description": "Make available WebGPU binding", "dependencies": [ "dawn" ] }
+```
 
-T850 should discover the install through `T850_DAWN_ROOT` or `CMAKE_PREFIX_PATH` and link `dawn::webgpu_dawn`. A missing or mismatched install must produce a prerequisite error, not a link-time mystery.
+vcpkg unifies features across the dependency graph, so requesting the ImGui WebGPU binding resolves `dawn` with its default feature set and re-enables the D3D11 and Vulkan backends this proposal rejects. Install order does not save it: in classic mode an already-installed broader feature set is reported as satisfied rather than rebuilt.
+
+Recommended resolution:
+
+1. Add a tracked overlay port for `imgui` whose `webgpu-binding` feature depends on `dawn[core,d3d12]`. The proposal already permits an overlay for Dawn; extend the same mechanism rather than hand-editing the submodule.
+2. Keep the overlay minimal, versioned with the Dawn pin, and record why it diverges from upstream so it can be dropped if upstream qualifies the dependency.
+3. Make an installed-feature audit part of setup and CI: read the installed Dawn control/manifest data and fail when any native backend other than D3D12 is enabled. Startup separately logs and rejects an unexpected underlying backend, so a packaging mistake cannot pass silently.
+4. Add `webgpu-binding` to the x64 ImGui feature string in [LaunchSolution.bat](../../LaunchSolution.bat), which currently requests `docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding`. Leave the x86 and ARM64 feature strings unchanged; those platforms share the script and must not acquire a Dawn dependency.
+
+The ImGui side of the integration is otherwise already packaged. The port's [build file](../../T850/Librerias/vcpkg/ports/imgui/CMakeLists.txt) calls `find_package(Dawn CONFIG REQUIRED)`, links `dawn::webgpu_dawn` and defines `IMGUI_IMPL_WEBGPU_BACKEND_DAWN` when the feature is enabled, so no manual backend-mode configuration is required.
+
+The package procedure must:
+
+1. Pin the vcpkg revision/port baseline, Dawn source revision, features, triplet and any overlay patches. Do not update vcpkg to a moving latest revision during setup or force an unrelated dependency upgrade.
+2. Build matching x64 Debug and Release libraries with VS2022/v143 and the engine's `/MTd` and `/MT` CRT settings. Keep existing non-x64 setup paths unchanged.
+3. Use a tracked overlay port or registry entry for required changes; never hand-edit the vcpkg submodule or installed package. Downloaded Dawn sources, build trees, installed libraries and binary-cache contents remain untracked.
+4. Record headers, exported libraries, transitive dependencies, required runtime files, license notices, compiler/SDK versions, build options and distributed-artifact hashes in reproducible package metadata.
+5. Install and validate the host shader tools separately from target runtime libraries, then generate the required WGSL artifacts before packaging.
+6. Cache packages by the pinned dependency/overlay content and build ABI. Run installs serially for a given vcpkg root. Missing or mismatched dependencies fail setup/build clearly; they never disable WebGPU silently.
+
+Use conditional platform/configuration properties in MSBuild to consume the required x64 package and propagate its link/staging requirements to runtime/editor consumers. CMake uses the same package contract:
+
+```cmake
+find_package(Dawn CONFIG REQUIRED)
+target_link_libraries(Framework PRIVATE dawn::webgpu_dawn)
+```
+
+The port's [usage file](../../T850/Librerias/vcpkg/ports/dawn/usage) documents that target; actual static-link transitive dependencies still need a link test. No user-managed external Dawn install or enable flag is required for normal supported Windows x64 builds. If the candidate port cannot build correctly, fix or replace the pinned package recipe; report a blocked build rather than reverting to an optional backend. A manually built Dawn tree may help diagnose packaging failures but is not the delivered setup contract.
+
+### Tint Host Tooling Gate
+
+The inspected [portfile](../../T850/Librerias/vcpkg/ports/dawn/portfile.cmake) explicitly passes `TINT_BUILD_SPV_READER=OFF` and enables WGSL reader/writer support. The `tint` feature is described as a minimal compiler mainly for WGSL validation. Therefore installing `dawn[tint]` is not proof that the proposed HLSL -> SPIR-V -> WGSL conversion is available.
+
+Provide a pinned host-tool recipe or overlay enabling the necessary SPIR-V reader and WGSL writer, with versions compatible with the Dawn runtime. Verify effective build flags, tool execution, one real graphics permutation and the compute kernel. The proposed command above installs the renderer dependency; it does not pass this shader-tool gate.
+
+Two outputs are needed from the same overlay, and they are not the same artifact:
+
+| Output | Consumer | Requirement |
+|---|---|---|
+| Linkable Tint library | Every runtime, for on-demand translation | Exported CMake target with the SPIR-V reader enabled, matching the engine's CRT and configuration |
+| Tint command-line tool | The optional pre-compile step and CI conversion gate | Host build, runnable from the build scripts |
+
+The inspected port describes its `tint` feature as a minimal command tool, so whether a linkable target is exported has not been verified and is a day-one question. Marginal binary cost should be small: glslang is already linked into every build for the Vulkan backend, and Tint already ships inside Dawn; the overlay mainly turns on a reader that the recipe currently disables. Internal Dawn shader translation and any required DXC runtime are still deployment concerns.
+
+Only the WGSL half of the conversion needs a new tool. `glslang` is already a linked engine dependency used by the Vulkan backend to compile HLSL at runtime, so the SPIR-V half should reuse the in-tree library at the version the engine already builds against. That removes one host-tool pin, and it prevents the offline generator and the Vulkan backend from drifting onto different glslang versions. What it does not remove is the need for a distinct compile configuration, described under [canonical flow](#canonical-flow).
+
+### Native Vulkan Remains Independent
+
+T850 keeps `vulkan-headers`, `vulkan-loader`, `vulkan-memory-allocator` and `glslang` in its existing vcpkg dependency list. The launcher also checks for `glslangValidator` through PATH or the Vulkan SDK. Preserve that developer tooling and validation-layer setup; vcpkg libraries do not install the vendor GPU driver.
+
+```text
+--api vulkan : T850 VulkanDriver -> Vulkan loader -> GPU driver
+--api d3d12  : T850 D3D12Driver  -> D3D12
+--api webgpu : T850 WebGpuDriver -> Dawn -> D3D12
+```
+
+Dawn's Vulkan feature must remain disabled and no Dawn/Vulkan runtime option is to be added. Native Vulkan owns its existing Vulkan objects and VMA allocations; Dawn will own independent D3D12 objects and submission state. Keep native Vulkan shaders, synchronization, runtime deployment and validation working. The shared compute work still includes T850's native Vulkan backend, not Vulkan through Dawn. Linux/Steam Deck and Android continue using their existing native Vulkan paths.
 
 ### Toolchain Risks
 
 Dawn is a large dependency and its primary development environment follows Chromium. Current upstream requirements include C++20, Python, CMake or GN/Ninja, and additional dependency-fetch tooling. Windows x64 is supported; Windows ARM64 remains a later proof target. Linux CMake builds have compiler and system-package requirements that may not fit the current SteamRT image without a separate dependency build.
 
-Pinning is mandatory because WebGPU headers, chained structures, callback modes, and native extensions evolve.
+Pinning is mandatory because WebGPU headers, chained structures, callback modes, and native extensions evolve. Source inspection above does not establish that this candidate vcpkg version builds with T850, exports the needed tooling, or produces compatible shaders; those remain explicit day-one gates.
 
 ## Dawn Versus wgpu-native
 
@@ -274,7 +360,7 @@ Pinning is mandatory because WebGPU headers, chained structures, callback modes,
 
 ### Recommendation
 
-Use Dawn first. Keep wgpu-native feasible by enforcing the provider boundary and standard C API subset.
+Use Dawn/D3D12 only for this project scope. The comparison above is background research, not a second package or selectable provider to implement. Preserve the standard C API boundary without promising wgpu-native support.
 
 Do not implement an alternate-provider framework during the timebox. Isolate Dawn initialization, callbacks and native extensions inside its backend; extract a common provider interface when a second provider is actually scheduled. Headers and native libraries must match: they are not interchangeable binary drop-ins. Re-estimate wgpu-native later from the delivered Dawn implementation, not from the previous unmeasured week ranges.
 
@@ -291,6 +377,8 @@ Initial profiles:
 | `portable-web` | Later Emscripten/browser-compatible rendering constrained to portable limits |
 
 The selected profile must record requested and actual features/limits. For the experiment, log and retain them in the result manifest; telemetry, all shader signatures and full frame-dump integration follow later.
+
+A narrower capability query already exists: `BaseDriver::SupportsDeferredRendering()` returns false for GL and is consulted only by T8ditor, while the GL path still executes the same seven-target graphs. Before adding `render_profile`, decide whether that query is retired into the profile mechanism or kept for its editor-facing meaning. Two overlapping capability systems with different answers for the same backend would be worse than either alone.
 
 ### Required Capability Inventory
 
@@ -328,6 +416,8 @@ RGBA8 + RGBA16F + RGBA8 + RGBA8 + RGBA16F + RGBA8 + RGBA8
 = 36 bytes/sample
 ```
 
+This is the verified attachment list: every scene graph that defines a GBuffer declares exactly those seven `color_formats`, and mixed per-attachment formats are already supported through the `CreateRT` overload that takes a format vector. No repacking is required to express the target in WebGPU; only the byte budget below is at issue.
+
 That is **raw color storage**, not WebGPU attachment accounting. The specification's plain-color-format table assigns an 8-byte render-target pixel cost to both `rgba8unorm` and `rgba16float`. Its algorithm applies component alignment and adds those costs in attachment order; these formats need no extra padding here:
 
 ```text
@@ -358,21 +448,28 @@ No choice is approved until visual and GPU-cost measurements exist.
 Current mesh shader declarations include:
 
 - nine unconditional fragment textures;
-- up to sixteen conditional fragment material textures;
+- up to sixteen conditional fragment material textures, each guarded by an independent glTF material feature;
 - 25 fragment texture declarations across the source family, not a proven simultaneously active compiled permutation;
-- sixteen declared fragment samplers;
-- a vertex-stage bone texture at logical slot `t24` for texture skinning;
+- sixteen fragment samplers, all **unconditional**;
+- a vertex-stage bone texture at logical slot `t24` for texture skinning, declared in `VS_Mesh.hlsl`;
 - a lightmap at logical slot `t25`.
 
 Splitting resources across bind groups does **not** avoid per-stage sampled-texture or sampler limits.
 
-These declaration counts are a warning, not a measured executable resource maximum. Preprocessing, pass selection, entry-point reachability and compiler elimination determine actual bindings. The reassessment did not compile the complete inventory. Core defaults include 16 sampled textures and 16 samplers per stage; verify requested/actual limits and reflect each artifact before declaring a blocker or claiming compatibility.
+The texture count remains a warning rather than a measured maximum: preprocessing, pass selection, entry-point reachability and compiler elimination determine actual bindings, and no permutation inventory has been compiled. The sampler count is different. All sixteen sampler declarations are outside `#ifdef` guards, so any permutation that reaches them sits exactly at the core default of 16 samplers per stage with no headroom. Treat sampler consolidation as required work for `native-full`, not a contingency, and verify the reduction with reflection rather than by counting declarations.
+
+Bindings also arrive through two distinct paths, and a bind-group builder driven by only one of them will silently drop resources:
+
+| Path | Range | Source |
+|---|---|---|
+| Render-graph and primitive slot array | 0 to `MaxPrimitiveTextures - 1`, currently 0-23 | `pass.inputs[].slot` resolved by `RenderGraph`, stored in the primitive `Textures` array |
+| Direct per-draw binds above the array bound | `t24` bone texture, slot 25 lightmap | `RenderMesh` and `RenderSkinnedMesh` bind these directly, outside the slot array |
 
 Required policy:
 
-- reflect active resources per `ShaderKey` permutation;
+- reflect active resources per `ShaderKey` permutation, covering both binding paths above;
 - never reserve all logical slots for every pipeline;
-- collapse samplers into semantic reusable samplers where behavior is equivalent;
+- collapse samplers into semantic reusable samplers; this is required for the full material set, not optional;
 - request elevated limits only for `native-full`;
 - reject or decompose over-limit permutations under `portable-web`;
 - report the exact shader key and resource count when validation fails.
@@ -390,6 +487,14 @@ A likely semantic sampler set is:
 This must be proven against existing texture parameter behavior before sampler declarations are changed.
 
 ## API-Neutral Changes
+
+### BaseDriver and Scene Impact
+
+Reuse the existing `BeginFrame`, `EndFrame`, `CompleteFrame`, upload-batch, `RetireBuffer`, `WaitForGPU` and `FlushGPUResources` entry points. Most implementation belongs in the new backend. Add shared capability/resource/pass descriptors only where the existing contract cannot express the required behavior; preserve existing backend defaults and `ShaderKey` identity.
+
+`BaseDriver`, `Device` and `DeviceContext` expose no Dawn types. Keep submission serials, bind-group caches and native event handling inside the backend unless a shared consumer demonstrably needs an API-neutral hook. The recent scene-loop fix establishes the teardown invariant: `App::LoadScene` flushes after the final fade-out frame and before destroying scene resources. Dawn must honor that invariant too.
+
+Scenes retain shared asset loading, gameplay and rendering calls. Audit API-switch hotkeys, benchmark lists and other enumerations, but do not add scene-level Dawn rendering branches. Shared shader/material/skinning/graph coverage is the porting work; every scene still needs independent validation. Returning unsupported for an unported scene is an internal development diagnostic, not full release support.
 
 ### Shader Language and Artifact Selection
 
@@ -420,9 +525,18 @@ WGSL has no HLSL preprocessor. Apply defines to HLSL before conversion; never pr
 
 Do not renumber bits or pass values. The WebGPU pipeline uses the same key identity as existing backends.
 
-Key bits alone are not a complete artifact identity. [The current permutation recorder](../../T850/Framework/src/utils/ShaderPermutationDump.cpp) stores `g_entries[entry.keyHex]`, so different shader families can overwrite each other. Use `(family, stage, entry point, key/defines, source hash, compiler options/version, binding-layout version)` for new artifacts. Keep compute out of the existing key-only graphics map. Capture dynamic feature combinations deliberately; a startup dump is not an exhaustive permutation inventory.
+Key bits alone are not a complete artifact identity. [The current permutation recorder](../../T850/Framework/src/utils/ShaderPermutationDump.cpp) stores `g_entries[entry.keyHex]`, so different shader families can overwrite each other. That defect is confined to the dump. [ShaderDiskCache](../../T850/Framework/src/utils/ShaderDiskCache.cpp) already keys entries on a hash of API tag, driver signature, key bits, shader names and both source strings, stored under per-API directories with the driver signature recorded in each manifest, which is the identity this proposal asks for.
 
-Generated shader manifest fields:
+Recommended approach:
+
+- reuse `ShaderDiskCache` for WGSL by adding a `webgpu` API directory and a driver signature that names the Dawn pin, the Tint version and the binding-layout version, so a pin change invalidates artifacts automatically;
+- extend the cache from its current vertex/fragment pair layout to a per-stage entry so a single compute module has a place to live;
+- fix the dump's key-only map while touching it, using `(family, stage, entry point, key/defines, source hash, compiler options/version, binding-layout version)`;
+- keep compute out of the existing key-only graphics map.
+
+Capture dynamic feature combinations deliberately; a startup dump is not an exhaustive permutation inventory.
+
+Per-artifact manifest fields:
 
 - key bits and pass;
 - canonical HLSL paths and source hashes;
@@ -435,7 +549,7 @@ Generated shader manifest fields:
 - required features and limits;
 - glslang, Tint, Dawn, and generator versions.
 
-Release builds fail on missing or stale artifacts. Development tooling may regenerate them explicitly.
+Artifacts are invalidated by hash, never trusted blindly: a driver-signature or source change simply misses and retranslates. Development tooling may clear or regenerate the cache explicitly.
 
 ### Resource Usage Descriptors
 
@@ -510,6 +624,8 @@ WebGPU pipelines are immutable. The key must include:
 - sample count;
 - alpha-to-coverage state.
 
+Sample count is in the key for correctness, not because it varies: every render target on every existing backend is created with one sample, and no depth-bias rasterizer state is used either, since the line and overlay renderers apply their bias in the shader. Neither needs a gate during the timebox.
+
 Cache pipelines in memory. Do not promise portable pipeline-binary persistence. Track creation time, hits, misses, and live count.
 
 ### Bind Groups
@@ -575,8 +691,6 @@ Proposed files follow existing backend organization:
 
 ```text
 Framework/include/video/webgpu/
-  WebGpuProvider.h
-  DawnWebGpuProvider.h
   WebGpuDriver.h
   WebGpuDevice.h
   WebGpuDeviceContext.h
@@ -584,9 +698,10 @@ Framework/include/video/webgpu/
   WebGpuTexture.h
   WebGpuBuffer.h
   WebGpuRT.h
+  dawn/
+    DawnContext.h
 
 Framework/src/video/webgpu/
-  DawnWebGpuProvider.cpp
   WebGpuDriver.cpp
   WebGpuDevice.cpp
   WebGpuDeviceContext.cpp
@@ -594,9 +709,11 @@ Framework/src/video/webgpu/
   WebGpuTexture.cpp
   WebGpuBuffer.cpp
   WebGpuRT.cpp
+  dawn/
+    DawnContext.cpp
 ```
 
-The exact file split may be consolidated during the day-one spike; ownership must remain explicit. These are proposed paths, not a requirement to create one file per type immediately.
+The exact file split may be consolidated during the day-one spike; ownership must remain explicit. These are proposed paths, not a requirement to create one file per type immediately. The `dawn` subdirectory contains T850's integration helper, not vendored Dawn source. Standard WebGPU resource and draw code stays in the parent directory. Extract an abstract provider only if a separately approved second provider actually needs it.
 
 ### Driver Initialization
 
@@ -617,7 +734,7 @@ sequenceDiagram
   Provider->>Device: request required features/limits
   Device->>Driver: queue + callbacks
   Driver->>Surface: choose format/mode and configure
-  Driver->>Driver: resources and rings; optional diagnostics/UI
+  Driver->>Driver: resources and rings; minimal diagnostics
 ```
 
 Initialization requirements:
@@ -706,9 +823,13 @@ Map existing buffer creation to explicit usages:
 
 Use a per-frame ring buffer with aligned slices for frame, instance, material, quad, and cascade constants. Bind slices through dynamic offsets where practical.
 
+The D3D12 backend already runs this design: a per-frame-index mapped ring with a running offset, a peak-usage counter and an explicit error when a frame's allocations exceed the fixed ring size. Mirror the sizing, the peak reporting and the overflow diagnostic rather than inventing a second policy, and size the WebGPU ring from the same worst-case scene.
+
+One behavior does not survive the move. `MeshDrawStateTracker::UpdateAndBindConstantBuffer` compares the incoming bytes against a shadow copy and skips the upload when they match, which is correct when a constant buffer is a single persistent allocation. With a per-frame ring the previous slice belongs to an earlier frame, so unchanged contents must still be written into the current frame's slice; only the bind may be skipped. Getting this wrong produces stale constants that appear only under specific frame-reuse patterns.
+
 Required checks:
 
-- maximum uniform binding size;
+- maximum uniform binding size, against the largest existing block: the skinned bone constant buffer holds 256 transforms;
 - dynamic-offset alignment;
 - per-stage uniform buffer count;
 - member offsets and total sizes;
@@ -718,6 +839,8 @@ Required checks:
 ### Upload Policy
 
 Small dynamic updates may use queue write operations. Large/streamed updates use staging buffers and copy commands. Track upload bytes and count by resource class.
+
+The engine has a global thread pool, and glTF image decoding, Draco decompression and primitive building run on it, but GPU resource creation and upload batches stay on the main thread. The WebGPU backend keeps that contract: one thread owns the device, queue and encoders. Any future move of resource creation onto worker threads is a separate design change and must not be introduced incidentally by this port.
 
 Mutable replacement preserves this rule:
 
@@ -755,7 +878,9 @@ Create cubemaps as six-layer 2D textures with:
 - all required mip views;
 - explicit copy/render/sample usage.
 
-Generated diffuse/specular/sheen IBL paths must be ported and validated independently. If runtime mip generation is used, implement it as a render or compute pipeline rather than relying on a driver call.
+Generated diffuse/specular/sheen IBL paths must be ported and validated independently.
+
+Render-target mip generation is not part of that work. `SupportsRenderTargetMipGeneration()` already returns false for D3D12 and Vulkan and true only for D3D11 and GL, and the render graph skips mip allocation when the driver reports false, so the `generate_mips` flag is inert on the explicit backends today. WebGPU reports false and matches D3D12. A render or compute mip chain is only needed if a future target requires mips on an explicit backend, which would be a change for all of them, not a WebGPU obligation.
 
 ### Render Targets
 
@@ -769,33 +894,125 @@ Generated diffuse/specular/sheen IBL paths must be ported and validated independ
 
 ```mermaid
 flowchart LR
-  Permutations[shader_permutations.json] --> Defines[Shared ShaderKey defines]
-  HLSL[Canonical HLSL] --> Preprocess[Preprocessed variant]
-  Defines --> Preprocess
-  Preprocess --> SPIRV[glslang or verified DXC to SPIR-V]
+  Key[ShaderKey + defines] --> Preprocess[Preprocessed HLSL variant]
+  HLSL[Canonical HLSL] --> Preprocess
+  Preprocess --> CacheQ{Disk cache hit?}
+  CacheQ -- yes --> Module[WGSL module]
+  CacheQ -- no --> SPIRV[glslang HLSL to SPIR-V, WGSL configuration]
   SPIRV --> Tint[Tint SPIR-V to WGSL]
-  Tint --> Validate[WGSL + Dawn validation]
-  Validate --> Reflect[Bindings / IO / layouts / limits]
-  Reflect --> Manifest[Generated WebGPU shader manifest]
-  Manifest --> Runtime[WebGpuShader]
+  Tint --> Reflect[Bindings / IO / layouts / limits]
+  Reflect --> Store[Store artifact + manifest]
+  Store --> Module
+  Module --> Runtime[WebGpuShader]
+  Prewarm[Optional offline pre-compile] -.-> Store
 ```
 
-Day one must prove that the selected Tint build enables its SPIR-V reader and WGSL writer and can translate the chosen graphics permutation and compute kernel. Tint's current command source exposes both paths behind build flags, but that is not proof of T850 conversion correctness. SPIRV-Cross does not provide a WGSL backend. glslang or DXC produces SPIR-V; Tint (or a separately validated Naga route) produces WGSL.
+This is the Vulkan path with a second conversion stage appended. The Vulkan backend already builds a driver signature, forms a cache key from the API tag, that signature, the key bits, the shader names and both preprocessed sources, loads `vs.spv`/`fs.spv` on a hit, and on a miss compiles with glslang and stores the result. WebGPU does the same with `vs.wgsl`/`fs.wgsl` and one extra stage.
 
-Do not feed Vulkan's already shifted/combined-sampler SPIR-V into Tint blindly. Generate explicit, noncolliding bindings for the chosen entry point and compare reflection, uniform layout and numerical output. A small handwritten WGSL bootstrap can diagnose backend bring-up, but must be labelled an exception, not successful HLSL portability or a matched-shader overhead result.
+Day one must prove that the selected Tint build enables its SPIR-V reader and WGSL writer and can translate the chosen graphics permutation and compute kernel. The inspected vcpkg recipe disables the reader, so the [host-tooling gate](#tint-host-tooling-gate) is required. Tint's current command source exposes both paths behind build flags, but that is not proof of T850 conversion correctness. SPIRV-Cross does not provide a WGSL backend. glslang or DXC produces SPIR-V; the validated Tint build produces WGSL.
+
+#### The Vulkan Compile Configuration Cannot Be Reused
+
+This is stronger than a caution about binding numbers. The Vulkan backend compiles HLSL through glslang with `setAutoMapBindings(true)`, `setAutoMapLocations(true)` and `setTextureSamplerTransformMode(EShTexSampTransUpgradeTextureRemoveSampler)`, then rewrites the resulting SPIR-V to shift uniform-buffer bindings past the texture range. The transform mode folds textures and samplers into combined sampled-image objects. WGSL has no combined sampler type, so Tint's SPIR-V reader rejects such module-scope variables outright; the conversion fails rather than producing different bindings.
+
+The WGSL pipeline therefore needs its own glslang configuration, not a reuse of the Vulkan one:
+
+- keep textures and samplers separate; do not enable the combining transform;
+- assign explicit, non-colliding binding numbers per group up front instead of automatic mapping followed by a post-hoc shift;
+- skip the SPIR-V binding-shift rewrite entirely, since the shift exists to undo automatic mapping;
+- reflect the emitted SPIR-V and compare it against the declared binding table before handing the module to Tint.
+
+Because both configurations come from the same in-tree glslang, they can be exercised from one generator and kept on one version. Treat the resulting binding numbers as unrelated to the Vulkan backend's; they are not expected to match and must not be assumed to.
+
+A small handwritten WGSL bootstrap can diagnose backend bring-up, but must be labelled an exception, not successful HLSL portability or a matched-shader overhead result.
 
 ### Generated Artifacts
 
-Suggested layout:
+Generated WGSL lives in `ShaderDiskCache` under a `webgpu` API directory, using the same key construction and manifest writing the other backends already use. Artifact names are already per stage, so `vs.wgsl` and `fs.wgsl` need no structural change. What does need a change is the key itself: `MakeKey` takes a vertex and fragment name plus both sources, which has no meaning for a single compute module. Add a single-stage key form rather than passing empty strings for the unused stage.
 
-```text
-Assets/Shaders/webgpu/
-  manifest.json
-  <shader-pair>/<shader-key>/vs.wgsl
-  <shader-pair>/<shader-key>/fs.wgsl
-```
+Generated output must be reproducible from canonical source and tool versions, so that an artifact produced offline and the same artifact produced at runtime are identical. Verify this equality explicitly; it is what allows the pre-warm to be optional.
 
-Generated output should be reproducible from canonical source and tool versions. For the experiment, package the small generated inventory with its manifest; decide long-term source-control/CI policy later. Release packages must not require shader conversion tools.
+### Shader Translation and Caching Model
+
+Shader permutations are data-driven and cannot be enumerated ahead of time. The loader builds a `ShaderKey` from each glTF material's declared features and immediately requests compilation of that key plus its pass variants, and forty-two key bits are meaningful. The engine already solved this for Vulkan by translating at runtime and caching, so WebGPU uses the same model rather than inventing a stricter one.
+
+| Stage | Vulkan today | WebGPU |
+|---|---|---|
+| Cache key | `MakeKey("vulkan", driverSignature, key.bits, vsName, fsName, vsSource, fsSource)` | Same call with the `webgpu` API tag |
+| Driver signature | `vulkan;shaderCompiler=glslang-hlsl-spv1.0;pipelineCache=1` plus adapter identity | `webgpu;provider=dawn-<pin>;shaderCompiler=glslang-hlsl-spv+tint-<ver>;bindingLayout=<version>`, deliberately without adapter identity |
+| Artifacts | `vs.spv`, `fs.spv` | `vs.wgsl`, `fs.wgsl`, and `cs.wgsl` for compute |
+| Miss path | Compile HLSL with glslang, store, write manifest | Compile HLSL with the WGSL glslang configuration, convert with Tint, reflect, store, write manifest |
+| Invalidation | Driver signature plus source hashes | Same, driven by the Dawn pin, the Tint version and the binding-layout version |
+
+Excluding adapter identity from the WebGPU signature is deliberate. Vulkan includes the device name because the same signature also guards a device-specific pipeline cache blob; WGSL text is device independent, and a cache keyed on adapter identity could never be shipped pre-warmed. Keep any future device-specific Dawn blob under a separate API-level artifact so it cannot poison the portable one.
+
+The binary cost of runtime translation is small because both halves are already present. glslang is linked into every build for the Vulkan backend, and Tint ships inside Dawn. The overlay that enables Tint's SPIR-V reader is the same overlay already required for the offline tool, so one change serves both. Confirm that the overlay exports a linkable Tint target and not only the command-line tool; the inspected port describes its `tint` feature as a command tool, and that has not been verified.
+
+Cost and reporting rules:
+
+- Translation happens on a cache miss only, at load time, never inside a measured frame interval.
+- Report translation count, elapsed time and cache hit rate as startup metrics, separate from steady-state frame cost.
+- A translation failure names the shader family, key bits and defines, and fails that material explicitly rather than rendering it black.
+
+### Optional Offline Pre-Compilation
+
+Offline pre-compilation is an option, not a prerequisite. It writes the same artifacts into the same cache layout so that a shipped build starts warm.
+
+A committed seed already exists: `shader_permutations.json` records 254 permutations with their shader family, pass, key bits and exact define list, produced by the runtime permutation dump. That is enough to pre-warm the common content without any new inventory format.
+
+Scope of the optional tool:
+
+1. Read a permutation list. Default to the committed dump; accept a per-title list produced by playing or cooking the target content.
+2. For each entry, reconstruct the preprocessed HLSL through the same shared define generation the runtime uses, so an offline artifact is bit-identical to what the runtime would have produced.
+3. Run the same glslang configuration and Tint build, then write artifacts and manifests into the cache directory.
+4. Fail the build on a conversion error, so a broken shader is caught in CI rather than at a customer's load screen. This is the main value of the option beyond startup time.
+5. Emit a coverage report: permutations requested, converted, failed, and cache size.
+
+Because the dump is keyed by key bits alone, two shader families that produce the same key overwrite each other in it. Fix that identity before relying on the dump as a pre-compile input, or the pre-warm will silently miss entries.
+
+Packaging rules:
+
+- Pre-warmed cache contents are optional package payload. A package without them is correct and merely slower on first use.
+- Stale artifacts are ignored by hash, not trusted. The cache invalidates through the driver signature and source hashes, exactly as the Vulkan cache does.
+- The pre-warm step never becomes the correctness contract. If the tool is skipped, WebGPU still renders everything.
+
+### WGSL Shader Port Scope
+
+Converting shaders is not only a toolchain question. Every HLSL family has to survive the new glslang configuration and Tint, and some constructs will need source changes that must remain valid for D3D11, D3D12, Vulkan and GL. This is the inventory.
+
+| Family | HLSL lines | Permutations | Consumers | Port risk |
+|---|---:|---|---|---|
+| `VS_Quad` + `FS_Quad` | 1,618 | Fixed list compiled by `RenderQuad::Create` | Every post-process and deferred pass | High. The largest source file, heavy branching on pass defines, many render-target inputs |
+| `VS_Mesh` + `FS_Mesh` | 1,110 | Data-driven from material keys | All mesh and skinned rendering | High. The texture and sampler limits, the bone texture and the lightmap all live here |
+| `VS_Mesh` + `FS_WireMesh` | 49 | Skinned and static wireframe | Mesh wireframe overlays | Low, but shares the `VS_Mesh` vertex stage and its skinning paths |
+| `VS_W` + `FS_W` | 63 | One | Dev layer, spline, arrow and sphere wireframes | Low |
+| `VS_EditorLine` + `FS_EditorLine`, `FS_LineFlat` | 55 | One each | Line renderers, editor and navigation overlays | Low, but these carry the shader-side depth-bias behavior |
+| `VS_Text` + `FS_Text` | 30 | One | Text renderer | Low |
+| `VS_tri` + `FS_tri`, `VS` + `FS` | 67 | One each | Minimal and bootstrap paths | Lowest. Good first conversions |
+
+Roughly 2,900 lines of HLSL, with 85 percent of it concentrated in the two uber-shaders. The GLSL files alongside them are the GL backend's separate sources and are not part of this work.
+
+Order the port by risk, not by file order:
+
+1. `VS_tri`/`FS_tri` or `VS`/`FS`, to prove the toolchain end to end on something trivial.
+2. `VS_W`/`FS_W` and the text and line families, to cover constant buffers, vertex layouts and the shader-side depth bias.
+3. `VS_Mesh`/`FS_Mesh` for one selected material permutation, which is where binding limits and layout equality actually get tested.
+4. `VS_Quad`/`FS_Quad` for the passes the fixture uses, then the remainder.
+5. The compute kernel, which is new source rather than a port.
+
+Constructs to check before assuming a family converts. Each needs a decision recorded as "converts unchanged", "needs a source change valid on all five APIs", or "needs a WebGPU-specific artifact":
+
+- entry-point names, since the engine compiles `VS` and `FS` entry points rather than `main`;
+- `register(tN)`, `register(sN)` and `register(bN)` assignments against the explicit binding table;
+- matrix majorness and the `float3` padding in the existing constant-buffer blocks;
+- `SV_Position`, `SV_Target[N]` and any depth output semantics;
+- texture methods that differ in WGSL: `SampleCmp`, `SampleLevel`, `SampleGrad`, `Load`, `GatherRed`;
+- derivative use inside non-uniform control flow, which the parallax and normal paths rely on;
+- loops over light and cascade arrays, which must remain bounded;
+- `discard` and alpha-test behavior;
+- integer and boolean packing in constant buffers.
+
+Acceptance for a family is not that it compiles. It is that reflection matches the declared binding table, that generated layout tests compare C++ `sizeof` and `offsetof` against WGSL reflection, and that its output matches an accepted backend on the same snapshot within the visual-regression tolerance. Until a family reaches that bar it is reported as unconverted, not as working.
 
 ### Shader-Specific Risks
 
@@ -840,6 +1057,11 @@ Validation includes:
 - surface-format compatibility.
 
 Compatibility differences use named profiles, not scene/API conditionals.
+
+Two existing behaviors have to be reconciled before this validation can be added:
+
+- **Format leniency.** The D3D12 and Vulkan render-target format mappings fall through to `RGBA8` for any value they do not recognize, including `RGB8`, the BGR variants and `BGRA32`. A WebGPU backend that refuses to substitute formats will therefore reject graphs that the other four silently accept. Choose one contract for all backends: either make the fallback explicit and logged everywhere, or make unmapped formats an error everywhere. Do not leave WebGPU as the only strict backend, because that reads to users as WebGPU being broken.
+- **Silent unknown keys.** The graph is parsed with unknown-key errors disabled, so a misspelled field is ignored. That is tolerable for a cosmetic field and dangerous for a compute declaration. Require known values for the execution-type and access fields specifically, so a malformed compute pass fails instead of running as a graphics pass.
 
 Example selection concept:
 
@@ -982,9 +1204,8 @@ Compute may save repeated texture fetches through workgroup reuse or fuse passes
 
 Add `ImGuiWebGpuBackend` behind the existing `ImGuiRendererBackend` factory.
 
-Use upstream `imgui_impl_wgpu`:
+Use upstream `imgui_impl_wgpu`, obtained through the vcpkg `imgui[webgpu-binding]` feature. That feature already compiles the backend in Dawn mode and links `dawn::webgpu_dawn`, so no manual mode selection is needed; what it does need is the overlay described under [required vcpkg package](#imgui-pulls-dawns-default-features), or it will drag in Dawn's other native backends. Remaining integration work:
 
-- compile with `IMGUI_IMPL_WEBGPU_BACKEND_DAWN` for native Dawn;
 - use the matching Dawn Emscripten mode for browser builds;
 - pass device, frames in flight, render-target format, depth format, and active render-pass encoder;
 - map preview texture IDs to `WGPUTextureView`;
@@ -1023,7 +1244,7 @@ Every scene must use the normal API factory path. No scene should detect Dawn or
 | 8 | DayScene | Full PBR/IBL/CSM/SSAO/bloom/DoF/god rays | GBuffer budget and full post stack | All registered targets and major effects render |
 | 9 | T8ditor | ImGui, hosted surfaces, previews, Play Scene, switching | Multi-surface/editor lifecycle | Editor workflow parity |
 
-Only the smoke path and small fixture are candidates for the three-day milestone. The remaining rows are a parity backlog, not a three-day sequence. Within full SceneTemplate/T8ditor coverage, add both authored heightmap examples and static/skinned placement visuals.
+Only the smoke path and small fixture are candidates for the three-day internal milestone. The remaining rows are required release-parity work, not a three-day sequence or optional scene coverage. Within full SceneTemplate/T8ditor coverage, add both authored heightmap examples and static/skinned placement visuals. Do not publish a release that advertises WebGPU for ordinary scenes while only the fixture works.
 
 Physics, navigation, gameplay, and CPU asset parsing should remain behaviorally unchanged. Their rendered outputs and debug views still require validation.
 
@@ -1045,7 +1266,13 @@ R-native versus C-native and R-dawn versus C-dawn answer whether compute is bett
 
 ### Controls and Run Protocol
 
-1. Fix engine SHA, assets, camera, seed, elapsed simulation time, material/graph hashes, shader manifests, resolution (initially 1280x720), sample count, formats, color space, load/store behavior, filter policy and quality settings. Use the same minimal graph on both APIs. Disable GUI overlays, asynchronous streaming and gameplay variation for the baseline.
+The harness already exists. `DayScene` builds a benchmark matrix over the cross product of graphics APIs, three resolutions and onscreen/offscreen modes, applies each run, collects a result per run and writes a report, and both launchers expose it. Extend that matrix rather than adding a second collector. Three consequences follow:
+
+- Adding WebGPU to the API list makes it five APIs by three resolutions by two modes, thirty runs. At the current ninety-second default that is roughly forty-five minutes per full sweep. Provide a filtered subset for the day-three evidence run and keep the full sweep for regression.
+- The matrix drives in-process API changes, which tear down and rebuild the driver, window, asset caches and resource manager. Dawn must therefore support full teardown and recreation with no pending asynchronous callbacks; this is an acceptance item, not an incidental detail.
+- The current entry point forces the starting API and resolution when matrix mode is requested, and the matrix uses 1080p, 1440p and 2160p while the experiment below specifies 1280x720. Reconcile these explicitly: either add the experiment's resolution to the matrix or run the experiment as a filtered matrix configuration. Do not report numbers from one set of controls under the other's label.
+
+1. Fix engine SHA, assets, camera, seed, elapsed simulation time, material/graph hashes, shader manifests, resolution, sample count, formats, color space, load/store behavior, filter policy and quality settings. Use the same minimal graph on both APIs. Disable GUI overlays, asynchronous streaming and gameplay variation for the baseline.
 2. Select the same physical adapter explicitly, ideally matching the Windows adapter LUID. Force Dawn's D3D12 backend; reject software/WARP fallback. Record adapter/driver/OS, Dawn commit, compiler/toolchain, build optimization, power mode, validation layers, feature requests, robustness settings and presentation configuration.
 3. Benchmark Release with cached pipelines/bind groups/resources. Keep validation enabled for correctness runs, and use the normal Release validation policy for the primary measurement. A Dawn validation-disabled/native-extension run is optional, separate, clearly labelled and never the sole headline number. Do not mix diagnostic GPU-validation runs with release measurements.
 4. Match frames in flight, queue submissions, useful draws/dispatches, binding changes, uniform bytes and upload bytes. Do not rebuild pipelines or bind groups every frame accidentally. Count unavoidable extra work explicitly instead of hiding it. Track surface acquire, CPU encode, queue submit and presentation waits separately.
@@ -1133,7 +1360,7 @@ Report measured phases first. Use resolution sweeps to test a GPU-cost hypothesi
 
 [ProfileScope](../../T850/Framework/include/debug/Profiler.h) divides CPU and GPU totals by the same `sampleCount`. [Profiler.cpp](../../T850/Framework/src/debug/Profiler.cpp) accumulates CPU work immediately while GPU counts arrive later, and `EndScope` selects the latest allocated slot rather than maintaining a nested-scope stack. [Vulkan Resolve](../../T850/Framework/src/debug/ProfilerGpuBackend.cpp) uses `VK_QUERY_RESULT_WAIT_BIT`, which can block the render thread.
 
-Before relying on these averages, use independent valid CPU/GPU sample counts, frame/submission IDs, and explicit scope tokens or a stack. Respect actual completion before recycling query slots; do not assume a fixed three-frame delay proves readiness. Defer unavailable results without waits, with bounded rings and dropped/invalid sample counts. In the timebox, a small flat per-frame benchmark collector is an acceptable alternative to a profiler-wide refactor. Do not claim these existing issues are fixed by adding a Dawn strategy.
+Before relying on these averages, use independent valid CPU/GPU sample counts, frame/submission IDs, and explicit scope tokens or a stack. Respect actual completion before recycling query slots. The existing backends recycle on a fixed frame-delay constant, which is safe only because their resolution latency is fixed; WebGPU map completion is not, so the slot-recycling rule has to become completion-driven rather than counted. Defer unavailable results without waits, with bounded rings and dropped/invalid sample counts. In the timebox, reusing the existing benchmark matrix collector is preferable to a profiler-wide refactor. Do not claim these existing issues are fixed by adding a Dawn strategy.
 
 ### Existing Tool Integration
 
@@ -1141,12 +1368,12 @@ Reuse:
 
 - `Profiler` scope names and reports;
 - `RuntimeTelemetry` JSON and counters;
-- benchmark output;
+- the DayScene benchmark matrix, its per-run result records and its report writer, extended with the WebGPU API entry and provider/backend/profile metadata;
 - `FrameDumper` and snapshot replay;
 - `RenderTrace` event signatures;
 - external PresentMon on Windows.
 
-Add WebGPU debug groups and markers. Dawn's D3D12 backend can expose them to PIX when the required PIX event runtime is present. Dawn's Vulkan backend can expose markers to RenderDoc in supported launch configurations.
+Add WebGPU debug groups and markers. Dawn's D3D12 backend can expose them to PIX when the required PIX event runtime is present. Preserve native Vulkan's existing diagnostics independently; Dawn/Vulkan is not part of the integration or profiling matrix.
 
 Do not promise portable:
 
@@ -1198,12 +1425,31 @@ RenderTrace adds WebGPU pipeline, bind-group-layout, bind-group, resource-usage,
 Planned composition-boundary changes:
 
 - add `GraphicsApi::WEBGPU`;
-- accept `webgpu` and optionally `wgpu` in config/CLI parsing;
+- accept `webgpu` and optionally `wgpu` in config/CLI parsing, which stores the API as a string and needs no numeric migration;
 - report API tag `webgpu`;
 - add Windows driver factory selection;
 - add API picker entries;
 - add profiler and ImGui factory entries;
-- include provider/backend/profile in benchmark scheduling and reports.
+- add the API to the DayScene benchmark matrix list;
+- handle the new value in `Win32Framework::ChangeAPI`, including its window-title and driver-recreation paths.
+
+`ChangeAPI` is the strictest lifecycle path in the engine and is exercised by both the hotkey and the benchmark matrix. It flushes GPU resources, destroys scene assets, mesh and material caches, the resource manager, the driver and the SDL window, then rebuilds everything. For Dawn this means tearing down surface, device, adapter and instance while no map or work-done callback is still pending, and doing so repeatedly within one process. Budget for it explicitly; it is not covered by ordinary shutdown.
+
+Two existing behaviors conflict with the "no silent substitution" acceptance criterion and should be fixed or scoped in the same change. The Android and Linux hosts construct a Vulkan driver unconditionally, so `--api` is already ignored on those platforms for every value, not only `webgpu`. Either restrict that criterion to Windows in writing, or make the non-Windows hosts log and reject an API they cannot provide.
+
+### Launcher and Runtime Selection
+
+The normal supported Windows x64 launcher presents D3D11, D3D12, Vulkan, GL and WebGPU (Dawn/D3D12). Selection persists in config and is passed to the matching factory as `--api`; selecting native D3D12 is not equivalent to selecting WebGPU. Provider/backend metadata is fixed to Dawn/D3D12 for WebGPU, not another user-facing backend menu.
+
+[Launcher.ps1](../../T850/scripts/Launcher.ps1) currently hardcodes the API list and remaps editor selections to D3D11/D3D12/Vulkan. Update runtime and editor argument construction, dependency checks, saved selection, build invocation and diagnostics together. A WebGPU editor selection must reach WebGPU, never silently fall through to native D3D12. Resolve existing remapping that contradicts the selected API; hiding or excluding one of the five required APIs is not a substitute for the requested release compatibility.
+
+There is more than one launcher. The same API list, dependency checks and benchmark wiring exist in [Launcher_Release.ps1](../../T850/scripts/Launcher_Release.ps1), and the Steam Deck and Android launchers construct benchmark arguments and read the shared report format. The Deck and Android launchers gain no WebGPU entry, but any change to the benchmark argument set or report layout has to stay compatible with them. Updating one launcher and not the other produces two different advertised API lists on the same build.
+
+The launcher's vcpkg readiness check verifies that expected ImGui backend headers are installed. Add the WebGPU backend header to the x64 list so a partially provisioned toolchain is reported at launch rather than at link time.
+
+Normal setup obtains Dawn automatically. A packaged runtime includes the backend, all required runtime libraries and the shader converter, which is how Vulkan already ships; end users do not need vcpkg or the Vulkan SDK to select WebGPU. An optional pre-warmed shader cache may be staged alongside it, per the [caching model](#shader-translation-and-caching-model). Developer setup/build reports missing prerequisites and fails instead of hiding the API. Package staging must verify required DXC or other runtime files from the selected pin, even when the primary Dawn library is static.
+
+During development, unfinished scene/API combinations may fail explicitly in internal builds. They do not satisfy release acceptance. Before release, every advertised combination must pass on the declared hardware/driver baseline. Adapter limits and unsupported hardware still require precise errors rather than a silent provider, renderer or quality downgrade. GL retains equivalent graphics paths where compute is unavailable; this does not make GL compute a requirement.
 
 ### Build Files
 
@@ -1216,29 +1462,38 @@ Register WebGPU sources in:
 - source registration validation;
 - Windows runtime packaging.
 
-Add build options conceptually equivalent to:
+Registration is a hard gate, not bookkeeping: the validator requires every source file to appear in the MSBuild project, the filters file and the CMake source list, and it runs in CI. Each new backend file costs three registrations, and the CMake side must place them under the existing Windows condition so the Steam Deck and Android source lists stay Vulkan-only.
+
+The dependency additions must be x64-only for the same reason. `LaunchSolution.bat` provisions x86 and ARM64 from the same script, and the CI matrix builds Win32, x64 and ARM64. Adding Dawn or the ImGui WebGPU feature to a shared list breaks two matrix cells that have no D3D12 requirement.
+
+The supported Windows x64 build contract is:
 
 ```text
-T850_ENABLE_WEBGPU=ON|OFF
-T850_DAWN_ROOT=<external install>
-T850_WEBGPU_PROFILE=experiment|native-full
+Dawn dependency: required pinned vcpkg package
+Dawn native backend: D3D12 only
+Shader artifacts: required generated WGSL plus manifest
+Normal release profile: native-full
+Internal experiment profile: explicit test/benchmark fixture only
 ```
 
-Exact option spelling is an implementation decision. Keep WebGPU opt-in; future provider/browser switches are deferred. Match architecture, CRT and configuration between T850 and Dawn; record the package/exported-target contract of the chosen pin. Later editor support must propagate dependencies through `T8ditorCore` and its host props/targets and CMake target, not just through the stock executable.
+There is no user-facing WebGPU enable/disable build option. Platform guards preserve existing targets outside Windows x64; they are not an opt-out for supported x64 builds. Centralize package discovery, transitive linking and runtime staging in shared MSBuild properties/targets, maintaining CMake source and dependency parity. Missing headers, mismatched ABI, missing runtime files or stale WGSL fail the appropriate build/package gate. The previous `T850_DAWN_ROOT` external-install requirement is superseded by package-manager discovery.
+
+Match architecture, CRT and configuration between T850 and Dawn; record the package/exported-target contract of the chosen pin. Editor support must propagate required dependencies through `T8ditorCore` and its host props/targets and CMake target, not just through the stock executable. Link-test static consumers; do not assume adding one library to Framework stages everything needed by executables.
 
 ### CI Rollout
 
-1. Add opt-in Windows x64 Dawn dependency/setup and build job.
-2. Cache the external Dawn install by commit, compiler, SDK, architecture, and configuration.
-3. Run backend smoke tests and non-rendering self-tests.
-4. Add WebGPU deterministic captures only after FrameDumper support exists.
-5. Require zero WebGPU validation errors.
-6. Add full scene cases incrementally by milestone.
-7. Do not add Win32, ARM64, Linux, Android, or browser as passing cells until independently proven.
+1. Make Dawn setup, build and package validation required gates in normal Windows x64 Debug/Release CI.
+2. Audit the installed Dawn feature set in CI and fail when a native backend other than D3D12 is enabled.
+3. Cache vcpkg packages and host shader tools by source/port/overlay revision, features, compiler, SDK, triplet and configuration.
+4. Run backend smoke tests and non-rendering self-tests.
+5. Add WebGPU deterministic captures only after FrameDumper support exists.
+6. Require zero WebGPU validation errors.
+7. Add full scene/editor cases incrementally during development; require the complete advertised API matrix for release. Also smoke-test packaged executables outside the developer dependency PATH.
+8. Keep Win32 and ARM64 cells building without the Dawn dependency, and do not add Linux, Android or browser as passing cells until independently proven.
 
 ## Emscripten and Browser Milestone
 
-The browser target is designed now but delivered after native Windows parity.
+Browser support is not scheduled by this revision: the requested integration is Dawn/D3D12 on Windows x64. The following notes preserve future research only. A browser target would require separate approval, packaging and lifecycle design; it must not change the current mandatory Windows dependency contract or introduce another Dawn native backend.
 
 Requirements:
 
@@ -1271,30 +1526,51 @@ An initial single-threaded smoke build is acceptable only if disabled systems ar
 
 ## Milestones and Stop/Go Gates
 
+### Required Release Acceptance
+
+- Normal Windows x64 Debug/Release setup, builds and packages include Dawn/D3D12 without an enable flag or manual external install. No build silently drops WebGPU when a prerequisite is missing.
+- The installed Dawn package has D3D12 as its only enabled native backend, verified by an audit rather than by the install command that was issued.
+- The launcher, CLI and config select the requested API consistently, in every launcher that presents an API list. Logs prove `api=webgpu`, provider Dawn and underlying backend D3D12; native Vulkan and native D3D12 remain separate paths. No automatic renderer/provider substitution counts as success on Windows.
+- Runtime scenes 0 through 6 and T8ditor pass across D3D11, D3D12, Vulkan, GL and WebGPU on supported Windows x64 hardware. The full compatibility matrix includes generated shader coverage, expected effects, authored terrain/placements, overlays, readback, resize, API switching, scene reload and teardown. Retain the existing four-API regression gates; removing an API or scene from the UI does not satisfy this requirement.
+- Repeated in-process API switches to and from WebGPU complete without leaked resources, pending asynchronous callbacks or validation errors, including the full benchmark-matrix sweep.
+- Every HLSL shader family listed in the [port scope](#wgsl-shader-port-scope) converts, reflects against its declared binding table and matches an accepted backend within the visual-regression tolerance.
+- A previously unseen material combination imported at runtime renders without a pre-generated artifact, and the optional pre-compile step reproduces byte-identical artifacts for the same inputs.
+- Distributed executables run with their staged dependencies and shader artifacts on the declared supported GPU/driver baseline, without the developer's vcpkg tree, shader tools or SDK paths.
+- Graphics-equivalent GL fallback remains available where production effects use compute; optional GPU timestamps do not determine graphics availability.
+
+The internal three-day experiment below is not this release gate. Its result may establish feasibility and timing evidence while release readiness remains unmet. Re-estimate the remaining parity work from those results rather than describing partial support as complete.
+
 ### Three-Day Target
 
 There are approximately **48 engineer-hours**, including setup, integration, validation and reporting. The previous 14-20 engineer-week native roadmap and browser/provider estimates were unvalidated full-scope guesses; they are superseded, not compressed into three days. A full Dawn port and substantial compute techniques across all scenes cannot be responsibly promised in this budget.
 
-Aim for one integrated experimental vertical slice: selected Dawn graphics resources/draw path, one two-pass compute kernel on four APIs, and controlled native-Dawn evidence. Even that is a stretch from a checkout without a proven Dawn install or HLSL-to-WGSL pipeline. The feasibility gates below decide what has actually been achieved; a partial result is not full acceptance.
+Aim for one integrated experimental vertical slice: selected Dawn graphics resources/draw path, one two-pass compute kernel on four APIs, and controlled native-Dawn evidence. Even that is a stretch from a checkout without a proven Dawn install or HLSL-to-WGSL pipeline. The source review moved two items earlier in the critical path and one item out of reach, so the gates below are split into required and stretch rather than presented as one list.
 
 **Required to call the three-day slice complete:**
 
-- Windows x64 runtime selects Dawn/D3D12 through the ordinary factory; logs the exact adapter/pin; renders an indexed textured/depth-tested fixture to an offscreen target and presents it.
-- A small shared fixture/profile uses the normal engine rendering path with a bounded artifact list. `RenderQuad::Create` and mesh gathering can eagerly compile more permutations than the graph uses: add explicit fixture artifact selection or scope the harness honestly. A triangle-only external sample is bootstrap evidence, not an engine port.
+- The dependency gate passes: the pinned Dawn package and the ImGui overlay install together, the installed-feature audit reports D3D12 as the only native backend, and normal x64 Debug/Release builds link. Without this nothing downstream is meaningful, so it precedes shader work.
+- The separate SPIR-V configuration produces separate samplers with explicit bindings, and Tint converts at least the compute kernel and one graphics permutation, with reflection compared against the declared binding table.
+- On-demand translation works end to end through the shader disk cache: a cold run converts and stores, a warm run loads without invoking the converter, and changing the driver signature invalidates. At least the two lowest-risk shader families from the [port scope](#wgsl-shader-port-scope) convert.
+- Windows x64 runtime selects Dawn/D3D12 through the ordinary factory, logs the exact adapter and pin, and renders an indexed textured/depth-tested fixture to an offscreen target and presents it.
 - The blur contract passes numerical and graphics/compute hazard tests on D3D11, D3D12, Vulkan and Dawn; GL's graphics fallback/unsupported path is explicit.
 - The graph selects raster versus compute without scene/backend conditionals. Old graph JSON remains valid, scratch resize works, and resource teardown has no validation/lifetime errors.
-- Matched native-D3D12/Dawn CPU measurements and correctness captures exist. GPU measurements exist when supported; otherwise the report states that GPU overhead is unresolved. Startup and steady state are separate.
-- Default non-WebGPU builds still work without Dawn installed; source registration and focused existing-backend regressions pass. No broad platform pass is inferred from x64 testing.
+- Matched native-D3D12/Dawn CPU measurements and correctness captures exist, produced through the existing benchmark matrix with a recorded filtered configuration. GPU measurements exist when supported; otherwise the report states that GPU overhead is unresolved. Startup and steady state are separate.
+- Source registration and focused existing-backend regressions pass, and existing targets outside this scope remain unaffected. No full release or broad platform pass is inferred from the fixture.
 
-Full deferred rendering, all shader permutations, ImGui/editor parity, device-loss recovery, shader-cache tooling overhaul, complete frame-dump/RenderTrace support, Emscripten, wgpu-native and advanced compute techniques are **not** in this acceptance gate. Minimal diagnostics, controlled failure and one readback path are.
+**Stretch, and honest to report as incomplete:**
+
+- A small shared fixture/profile driving the normal engine rendering path with a bounded artifact list. `RenderQuad::Create` eagerly compiles a fixed set of quad permutations and mesh gathering compiles per-material variants, so this needs explicit fixture artifact selection. A triangle-only external sample is bootstrap evidence, not an engine port.
+- Repeated in-process API switching to and from WebGPU.
+
+Full deferred rendering, the remaining shader families, the optional pre-compile tool, ImGui/editor parity, device-loss recovery, complete frame-dump/RenderTrace support, Emscripten, wgpu-native and advanced compute techniques are **not** in this internal prototype gate. Minimal diagnostics, controlled failure and one readback path are. Required scene/editor behavior and diagnostics still block release until the full gate above passes; browser/alternate-provider work remains outside the current scope.
 
 ### Two-Person Work Split
 
 | Ownership | User: Dawn Port | Teammate: Compute |
 |---|---|---|
-| Main responsibility | Dawn dependency/pin, factory, device/surface/lifecycle, resources, graphics pipeline/artifacts, Dawn compute adapter, native-Dawn measurements | Shared compute descriptors and context contract, D3D11/D3D12/Vulkan compute adapters, kernel/raster reference, graph accesses and correctness tests |
-| Shared files | Consume the agreed contract; own Dawn factory/build integration and flat timing collector | Own initial edits to `Descriptors.h`, `BaseDriver.h`, `RenderGraphDescriptor.h`/executor, with user review |
-| Shader/tooling handoff | Produce/validate selected graphics WGSL and the teammate's compute WGSL against Dawn | Supply SM5-compatible HLSL, binding table, CPU/raster references, extents and expected outputs |
+| Main responsibility | Required vcpkg Dawn/D3D12 recipe, ImGui overlay and Tint tools, factory, device/surface/lifecycle, resources, graphics pipeline/artifacts, Dawn compute adapter, native-Dawn measurements | Shared compute descriptors and context contract, D3D11/D3D12/Vulkan compute adapters, kernel/raster reference, graph accesses and correctness tests |
+| Shared files | Consume the agreed contract; own Dawn factory/build integration and the benchmark-matrix additions | Own initial edits to `Descriptors.h`, `BaseDriver.h`, `RenderGraphDescriptor.h`/executor, with user review |
+| Shader/tooling handoff | Own the new SPIR-V configuration and the on-demand translation path through the shader cache; produce/validate selected graphics WGSL and the teammate's compute WGSL against Dawn | Supply SM5-compatible HLSL, binding table, CPU/raster references, extents and expected outputs |
 | Integration responsibility | Implement Dawn's compute pipeline/pass/binding methods using the same textures already used by graphics | Verify those methods through the same kernel/test fixture as native backends; no second Dawn texture wrapper |
 | Merge policy | One integrator for project files, API factories and merged headers | Keep backend-specific changes local; avoid simultaneous independent shared-header redesigns |
 
@@ -1306,31 +1582,45 @@ Each day is eight hours per person. The first day's two-hour agreement, later da
 
 | Day | User | Teammate | Joint gate |
 |---|---|---|---|
-| Day 1: contract and feasibility | First 2h together; next 5h pin/build Dawn, adapter/limits/error handling, minimal surface/offscreen indexed draw and first graphics WGSL conversion; final 1h integration | First 2h together; next 5h freeze compute descriptors/layout, implement D3D11 kernel/raster/CPU reference and prove compute HLSL compilation; final 1h integration | Matching headers/builds; explicit shader conversion results; Dawn can create and write the proposed storage texture using the shared contract or a clearly labelled bootstrap test |
+| Day 1: contract and feasibility | First 2h together; next 5h install the pinned Dawn package with the ImGui overlay, audit the installed features, then validate adapter/limits/error handling, a minimal surface/offscreen indexed draw and the first graphics WGSL conversion from the new SPIR-V configuration; final 1h integration | First 2h together; next 5h freeze compute descriptors/layout, implement D3D11 kernel/raster/CPU reference and prove compute HLSL compilation; final 1h integration | Installed-feature audit shows D3D12 only; matching package headers/libraries and normal x64 builds; explicit shader conversion results including separate-sampler reflection; Dawn can create and write the proposed storage texture using the shared contract or a clearly labelled bootstrap test |
 | Day 2: integration | First 5h engine fixture/resource/pipeline path and Dawn compute adapter using teammate kernel; next 2h graphics-compute-graphics integration/readback; final 1h gate | First 5h D3D12 then Vulkan compute adapters and graph resource accesses; next 2h same integration/tests; final 1h gate | One integrated shared-resource blur on Dawn and native D3D12; D3D11/Vulkan status known; output/hazard failures take priority over more features |
-| Day 3: evidence and fixes | First 3h fix fixture, warm caches, CPU/timestamp collector and controls; next 2h paired measurements; last 3h joint validation/report | First 3h remaining native-backend correctness, odd extents/resize/GL fallback; next 2h assist controls and image diffs; last 3h joint validation/report | Per-API pass/fail/blocked table, configuration/results/captures, known gaps and next work estimate |
+| Day 3: evidence and fixes | First 3h fix fixture, warm caches, add the WebGPU entry and filtered configuration to the existing benchmark matrix; next 2h paired measurements; last 3h joint validation/report | First 3h remaining native-backend correctness, odd extents/resize/GL fallback; next 2h assist controls and image diffs; last 3h joint validation/report | Per-API pass/fail/blocked table, configuration/results/captures, known gaps and next work estimate |
 
-The first two hours must settle kernel/layout, resource ownership, API signatures, graph execution field, adapter, artifact list, quality tolerance, build pin and acceptance labels. Use a storage-texture probe while graphics is unfinished, but replace bootstrap shortcuts before claiming the integrated gate.
+The first two hours must settle kernel/layout, resource ownership, API signatures, graph execution field, adapter, artifact list, quality tolerance, build pin, the overlay strategy and acceptance labels. Use a storage-texture probe while graphics is unfinished, but replace bootstrap shortcuts before claiming the integrated gate.
 
 ### Stop/Go and Contingencies
 
-- **Day 1 dependency/translation gate fails:** stop expanding the scene port. Preserve the exact build/compiler diagnostic and independent native compute progress. Propose a feasibility-only outcome or a time extension; do not present a handwritten WGSL triangle as the agreed port.
+- **Day 1 dependency/translation gate fails:** stop expanding the scene port. Preserve the exact package/build/compiler diagnostic and independent native compute progress. Fix the pinned recipe or propose a feasibility-only outcome/time extension; do not bypass the mandatory dependency with an enable flag or present a handwritten WGSL triangle as the agreed port.
+- **The feature audit shows Dawn backends other than D3D12:** treat it as a blocked dependency gate, not a cosmetic warning. Fix the overlay, remove the installed package and reinstall; do not proceed on a Dawn that can fall back to another backend, because every later measurement and log becomes ambiguous.
 - **Day 2 Dawn graphics/compute integration fails:** prioritize the small shared fixture. Do not start GBuffer repacking, editor integration or volumetrics. A compute-only native-Dawn result remains useful, but does not satisfy the graphics-port objective.
 - **A native compute backend is incomplete:** retain its explicit unsupported result and report which correctness gate is missing. Four-backend coverage is unmet; any reduced delivery must be agreed, not hidden by a raster fallback labelled compute.
 - **Timings are unavailable or noisy:** ship the reproducible configuration and valid CPU/correctness evidence, label GPU or overhead conclusions unresolved, and identify the next discriminating run. Do not spend the final hours producing a misleading headline number.
 
 ### Deferred Backlog
 
-After the slice, prioritize by measured blocker: real material/permutation coverage and seven-target deferred support; shared bloom/luminance integration; mutable/skinned/heightmap scene parity; full profiling/readback/ImGui; editor/static-host lifecycle; then advanced workloads such as volumetrics. Browser portability and wgpu-native get separate milestones only after a stable native Dawn path. Re-estimate from actual setup, shader and resource-integration time, not the old ranges.
+After the slice, prioritize required release work by measured blocker: the remaining shader families in the [port scope](#wgsl-shader-port-scope) order, since they gate every content-driven scene; seven-target deferred support; sampler consolidation; the optional pre-compile tool and its CI conversion gate; shared bloom/luminance integration; mutable/skinned/heightmap scene parity; in-process API-switch hardening; full profiling/readback/ImGui; editor/static-host lifecycle and packaging. Advanced workloads such as volumetrics remain later experiments. Browser portability and wgpu-native are not scheduled; either needs separate approval. No Dawn/Vulkan milestone is planned. Re-estimate from actual setup, shader and resource-integration time, not the old ranges.
 
 ## Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 |---|---|---|
+| A shader family fails to convert | Those materials or passes cannot render on WebGPU at all | Risk-ordered port with per-family acceptance, source changes kept valid on all five APIs, unconverted families reported rather than hidden |
+| First-use translation stalls | Visible hitching on a cold cache, mistaken for a WebGPU frame cost | Optional pre-warm, translation confined to load time, startup metrics reported separately from frame cost |
+| Pre-warmed cache diverges from runtime output | Shipped artifacts ignored or, worse, wrong | Byte-identical reproduction test between offline and runtime conversion; hash-based invalidation; adapter identity excluded from the WebGPU driver signature |
+| Pre-compile seeded from a colliding key map | Silent gaps in the pre-warm | Fix the permutation dump's key-only identity before using it as a tool input |
+| Dependency feature unification re-enables Dawn backends | D3D12-only requirement silently violated; measurements and logs become ambiguous | Tracked ImGui overlay requesting `dawn[core,d3d12]`, installed-feature audit in setup and CI, startup rejection of an unexpected backend |
+| Combined image samplers reach Tint | Conversion fails outright and the day-one gate stalls | Dedicated glslang configuration with separate samplers and explicit bindings; reflect the SPIR-V before conversion |
+| Parallel benchmark harness | Two sets of numbers under different controls; the existing matrix rots | Extend the existing matrix and record the filtered configuration used for any headline result |
+| In-process API switching leaks Dawn objects | Benchmark sweeps and the hotkey path crash or leak after several switches | Treat teardown/recreate as an acceptance item; assert no pending callbacks and no live resources after destruction |
 | HLSL-to-WGSL conversion mismatch | Wrong rendering across many permutations | Day-one real-shader proof, generated reflection/layout tests, labelled bootstrap exceptions |
 | GBuffer exceeds portable attachment-byte limit | Browser/full-deferred path unavailable | Explicit profiles and measured repack/pass-split prototype |
-| Texture/sampler limits exceeded | Complex materials fail pipeline creation | Per-permutation reflection, sampler consolidation, native limit request, portable rejection/decomposition |
-| Dawn build weight and churn | Slow setup/CI and pin maintenance | External pinned install, cached artifacts, lock manifest, isolated provider |
+| Texture/sampler limits exceeded | Complex materials fail pipeline creation | Per-permutation reflection covering both binding paths, required sampler consolidation, native limit request, portable rejection/decomposition |
+| Stricter format validation than the other backends | WebGPU appears broken on graphs the other four accept | Decide one format-fallback contract for all backends before adding the validation phase |
+| Ring-allocated constants skipped by the change check | Stale constants under specific frame-reuse patterns | Write every frame's slice; skip only the bind, and cover it with a repeated-draw test |
+| Dawn build weight and churn | Slow setup/CI and pin maintenance | Required pinned vcpkg recipe, cached artifacts, reproducible metadata, isolated Dawn context |
+| Minimal Tint package lacks SPIR-V reader | WGSL conversion gate cannot run | Verified host-tool recipe or tracked overlay; do not equate package installation with shader-conversion support |
+| Launcher or packaging silently selects another API | User cannot run the chosen backend | End-to-end API identity assertions in every launcher, required dependency staging and full advertised release matrix |
+| Windows-only dependency added to shared lists | Win32 and ARM64 CI cells break | Keep Dawn and the ImGui WebGPU feature in the x64 branch of the setup script and the CMake Windows condition |
 | Blocking async callbacks | Frame stalls or browser deadlock | Event pump and nonblocking readback/query rings |
 | Resource lifetime bugs | Device loss or corruption under streaming | Submission serials and deferred retirement tests |
 | Surface/device loss | Black frames or crashes | Explicit status state machine and controlled recovery |
@@ -1346,7 +1636,11 @@ After the slice, prioritize by measured blocker: real material/permutation cover
 
 - Scene-level `if WebGPU` branches.
 - A separate WebGPU-only scene or render graph as the permanent architecture.
-- Runtime HLSL conversion in shipping builds.
+- A hand-authored parallel WGSL shader set maintained alongside the HLSL, which would double the maintenance of every shader change.
+- Making offline pre-compilation a correctness requirement, which the data-driven permutation space cannot satisfy.
+- Reusing the Vulkan backend's combined-sampler glslang configuration for the WGSL path.
+- Accepting Dawn's default vcpkg features because the ImGui port asks for them.
+- A second benchmark harness alongside the existing matrix.
 - Assuming adapter limits from the underlying D3D12 GPU.
 - Reserving every logical texture/sampler slot in every pipeline.
 - Claiming bind-group splitting solves per-stage binding limits.
@@ -1356,14 +1650,18 @@ After the slice, prioritize by measured blocker: real material/permutation cover
 - Leaking Dawn C++ types into shared renderer, scene, or editor interfaces.
 - Calling a browser triangle demo full Emscripten support.
 - Requiring pixel-exact output across providers without measured evidence.
+- Optional Dawn installation or a WebGPU-off switch in supported Windows x64 builds.
+- Enabling Dawn's Vulkan/D3D11/GL backends through default package features or runtime fallback.
+- Shipping a fixture-only backend as working support for every scene or silently mapping WebGPU to native D3D12.
 
 ## Day-One Decisions
 
-1. Which exact Dawn/Tint commit, compiler options, CRT and package files work with this x64 MSBuild environment, and can setup finish on day one?
-2. Which selected graphics permutation and compute kernel convert correctly, with matching layouts and output? What is the smallest artifact set that avoids eager unrelated shader compilation?
+1. Do the pinned Dawn port and the ImGui overlay install together with the x64 MSBuild/v143 CRT settings, and does the installed-feature audit report D3D12 as the only native backend? What overlay or host-tool recipe is needed for Tint's SPIR-V reader? Record actual source revisions, installed features, link dependencies and deployment files; can setup finish on day one?
+2. Does the new glslang configuration emit separate samplers with explicit bindings, and does Tint accept the result? Which selected graphics permutation and compute kernel convert correctly, with matching layouts and output? What is the smallest artifact set that avoids eager unrelated shader compilation?
 3. Which physical adapter is used, what are its actual limits/storage formats, and are timestamps available? The 56-byte GBuffer limit is a later parity question, not a requirement for the one-target fixture.
-4. Can the existing native D3D12 path and Dawn match offscreen submissions, frames in flight and presentation controls? What shader/compiler differences remain?
-5. Which gates are passed by each day? Any reduced delivery or time extension needs explicit agreement; the full four-API compute objective remains visible.
+4. Can the existing native D3D12 path and Dawn match offscreen submissions, frames in flight and presentation controls within the existing benchmark matrix? What shader/compiler differences remain?
+5. Does the overlay expose a linkable Tint target, or only the command-line tool? The runtime path needs the library; the optional pre-compile step needs the tool. If only one is available, that decides which lands first.
+6. Which gates are passed by each day? Any reduced delivery or time extension needs explicit agreement; the full four-API compute objective remains visible.
 
 Sampler consolidation, GBuffer packing, browser threads/filesystems, alternate providers and full editor switching are deferred design decisions, not reasons to delay the small experiment.
 
@@ -1392,15 +1690,17 @@ WebGPU backend:
 
 - `T850/Framework/include/video/webgpu/*`
 - `T850/Framework/src/video/webgpu/*`
+- `dawn/DawnContext.h` and `dawn/DawnContext.cpp` under those backend trees; no vendored Dawn source.
 
 Shaders/tooling:
 
-- `T850/Assets/Shaders/VS_Mesh.hlsl`
-- `T850/Assets/Shaders/FS_Mesh.hlsl`
-- `T850/Assets/Shaders/shader_permutations.json`
+- every HLSL family in the [port scope](#wgsl-shader-port-scope), including `T850/Assets/Shaders/VS_Mesh.hlsl`, `FS_Mesh.hlsl`, `VS_Quad.hlsl`, `FS_Quad.hlsl`, the wireframe, line, text and bootstrap pairs
+- `T850/Assets/Shaders/shader_permutations.json` as the seed list for the optional pre-compile step, and the dump that produces it
 - `T850/Framework/src/utils/ShaderPermutationDump.cpp`
-- `T850/Framework/src/utils/ShaderDiskCache.cpp`
-- planned WebGPU shader generation/validation scripts
+- `T850/Framework/src/utils/ShaderDiskCache.cpp` for the `webgpu` API tag and a single-stage key form
+- `T850/Framework/src/utils/SPIRVReflection.cpp` for compute-stage and separate-sampler reflection
+- `T850/Framework/src/video/vulkan/VulkanShader.cpp` as the reference for the existing runtime-compile-and-cache flow and the existing glslang configuration, not as a path to modify
+- planned WGSL translation path in the WebGPU shader class, plus the optional offline pre-compile tool and its CI conversion gate
 
 Diagnostics:
 
@@ -1409,19 +1709,27 @@ Diagnostics:
 - `T850/Framework/src/debug/ProfilerGpuBackend.cpp`
 - `T850/Framework/src/debug/FrameDumper.cpp`
 - `T850/Framework/src/debug/RenderTrace.cpp`
+- `T850/DayScene/DayScene.cpp` benchmark matrix API list, run records and report writer
+- `T850/DayScene/App.cpp` forced API/resolution when matrix mode is requested
 
 Platform/UI/build:
 
-- `T850/Framework/src/core/windows/Win32Framework.cpp`
+- `LaunchSolution.bat` required Windows x64 Dawn package setup and x64-only ImGui feature string
+- `T850/scripts/Launcher.ps1` and `T850/scripts/Launcher_Release.ps1` runtime/editor API selection and dependency checks
+- `T850/Framework/src/core/windows/Win32Framework.cpp`, including `ChangeAPI`
 - `T850/Framework/src/utils/ConfigRuntime.cpp`
 - `T850/FrameworkImGui/include/imgui/ImGuiRendererBackend.h`
 - planned `T850/FrameworkImGui/src/ImGuiWebGpuBackend.cpp`
+- tracked vcpkg overlay ports for `dawn` and `imgui`
 - MSBuild projects and filters
 - Framework and FrameworkImGui CMake files
 - source registration validator
 - `.github/workflows/build.yml`
+- tracked dependency/host-tool pins and overlay recipe if required; shared Dawn MSBuild linkage/staging properties and targets
 
-Deferred editor/static-host propagation includes [EditorHost.props](../../T850/T8ditor/EditorHost.props), [EditorHost.targets](../../T850/T8ditor/EditorHost.targets) and [T8ditorCore.vcxproj](../../T850/T8ditor/T8ditorCore.vcxproj).
+Reviewed and deliberately unchanged: the Steam Deck and Android launchers gain no WebGPU entry, and `T850/Framework/src/core/android/AndroidFramework.cpp` and `T850/Framework/src/core/LinuxFramework.cpp` are touched only if the silent `--api` fallback described under [API selection](#api-selection) is fixed.
+
+Required editor/static-host propagation, after the internal fixture milestone but before release, includes [EditorHost.props](../../T850/T8ditor/EditorHost.props), [EditorHost.targets](../../T850/T8ditor/EditorHost.targets) and [T8ditorCore.vcxproj](../../T850/T8ditor/T8ditorCore.vcxproj).
 
 ## Verification Strategy
 
@@ -1429,8 +1737,13 @@ Documentation acceptance before implementation:
 
 - every local Markdown link resolves;
 - WebGPU is marked proposed, never implemented;
+- required Windows x64 Dawn packaging, D3D12-only provider behavior and full release acceptance are consistent throughout; the three-day fixture is labelled internal evidence;
+- candidate vcpkg/Tint source inspection is not reported as a successful package build or shader conversion;
 - the GBuffer distinguishes 36 raw storage bytes from 56 WebGPU attachment bytes/sample;
-- declaration counts are not reported as measured active resource counts; compiled reflection remains an implementation gate;
+- declaration counts are not reported as measured active resource counts, except for the unconditional sampler set, which is a declaration-level fact; compiled reflection remains an implementation gate;
+- the permutation policy is stated in one place and is consistent with both the release gate and the rejected-approaches list;
+- offline pre-compilation is described as optional everywhere, and no gate depends on it;
+- the shader port scope lists every HLSL family with its acceptance bar;
 - all runtime scenes and T8ditor appear in the matrix;
 - Dawn, emdawnwebgpu, and wgpu-native are treated as distinct providers/targets;
 - profiling includes CPU-only fallback and asynchronous GPU timing;
@@ -1439,8 +1752,15 @@ Documentation acceptance before implementation:
 Implementation gates:
 
 - for the three-day slice, run Windows x64 build/registration, the selected graphics/compute fixtures on all four participating APIs and GL fallback; exercise touched shader/layout/lifetime paths with focused existing tests;
-- full scene/platform/editor parity requires the wider existing build and visual matrices when those stages are implemented; do not claim them from this experiment;
-- source registration validation passes;
+- full release scene/editor parity requires the advertised Windows x64 API matrix and wider existing regression gates; do not claim it from the experiment or silently narrow it;
+- normal x64 setup/build/package requires Dawn; absent or incompatible packages fail explicitly, and a cold shader cache is never treated as a failure;
+- the installed Dawn feature/options audit confirms D3D12 is the only enabled native rendering backend, and startup rejects unintended provider/backend selection;
+- Win32 and ARM64 build without the Dawn dependency, and the Steam Deck and Android source lists remain Vulkan-only;
+- packaged runtime/editor and static-host link/staging checks pass without developer dependency paths; launcher/CLI/config route each advertised API correctly in every launcher that presents the list;
+- repeated in-process API switches to and from WebGPU leave no live resources or pending callbacks;
+- a cold-cache run converts and stores artifacts, a warm-cache run loads them without invoking the converter, and the optional pre-compile step reproduces byte-identical artifacts;
+- every shader family in the port scope reaches its acceptance bar before it is reported as converted;
+- source registration validation passes for every added file in MSBuild, filters and CMake;
 - WebGPU startup logs adapter/provider/backend/features/limits;
 - zero WebGPU validation errors;
 - deterministic dump exists for each accepted scene;

@@ -981,11 +981,15 @@ bool App::IsModalActive() const {
 #endif
 }
 
+bool App::AllowsMouseCapture() const {
+  return m_actualScene && m_actualScene->AllowsMouseCapture();
+}
+
 bool App::WantsRelativeMouseMode() const {
 #ifdef OS_ANDROID
   return false;
 #else
-  return g_config.regressionFixedDt <= 0.0f &&
+  return AllowsMouseCapture() && g_config.regressionFixedDt <= 0.0f &&
       m_imguiReady && !m_imguiVisible && !IsModalActive();
 #endif
 }

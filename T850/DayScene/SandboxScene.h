@@ -95,6 +95,7 @@ public:
   void InitVars() override;
   void CreateAssets() override;
   void DestroyAssets() override;
+  bool AllowsMouseCapture() const override { return false; }
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
   bool EnsureNavMeshBuilt();

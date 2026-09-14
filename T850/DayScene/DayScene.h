@@ -107,6 +107,7 @@ class DayScene : public t850::SceneBase
   void InitVars() override;
   void CreateAssets() override;
   void DestroyAssets() override;
+  bool AllowsMouseCapture() const override { return false; }
 
   void ChangeSettingsOnPlus();
   void ChangeSettingsOnMinus();

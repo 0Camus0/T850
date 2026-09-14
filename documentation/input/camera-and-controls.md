@@ -134,6 +134,7 @@ Important Windows behavior:
 - `RefreshGamepadState()` normalizes axes with deadzones, triggers with trigger deadzones, and updates held/pressed flags.
 - Pressing gamepad View/Back requests app close in the framework.
 - Window focus/resize events reset mouse deltas and button state to avoid stale drags.
+- `UpdateMouseMode()` releases relative mode and cursor confinement when the app's `AllowsMouseCapture()` policy is false, including while a modal UI is active. Modal keyboard handling is unchanged.
 - `UpdateMouseMode()` enables SDL relative mouse mode and hides the cursor when `AppBase::WantsRelativeMouseMode()` is true.
 - In relative mode, `xDelta`/`yDelta` come from `SDL_GetRelativeMouseState()`.
 - Outside relative mode, deltas are computed from absolute cursor movement.
@@ -178,7 +179,8 @@ Generic Android touch fallback:
 
 Desktop runtime behavior:
 
-- `WantsRelativeMouseMode()` returns true when ImGui is ready, the runtime GUI is hidden, and no modal text/keyboard input is active.
+- `App::AllowsMouseCapture()` follows the active scene's policy. `SceneBase` allows capture by default; DayScene and Sandbox override it to false, keeping the cursor visible and free to leave the window. Other scenes, including Quake and Minecraft, retain their existing capture policy.
+- `WantsRelativeMouseMode()` returns true only when the scene allows capture, regression fixed-step mode is disabled, ImGui is ready, the runtime GUI is hidden, and no modal text/keyboard input is active.
 - Runtime GUI calls `SubmitRuntimeGamepadGuiInput()` before drawing panels.
 - When GUI is visible, `DrawHandheldGuiFooter()` draws controller hints.
 - `DrawHandheldControllerHelpOverlay()` draws the hold-R3 mapping overlay whenever a gamepad is connected and enabled.

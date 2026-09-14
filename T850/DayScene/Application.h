@@ -67,6 +67,7 @@ public:
 
   // Modal UI state queried by the framework to block Esc-to-quit.
   bool IsModalActive() const override;
+  bool AllowsMouseCapture() const override;
   bool WantsRelativeMouseMode() const override;
 
 

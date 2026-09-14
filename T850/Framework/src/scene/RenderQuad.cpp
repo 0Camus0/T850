@@ -907,44 +907,49 @@ namespace t850 {
     // Zero all entries so count reductions cannot expose stale data.
     std::memset(&ShadowSamplingCB, 0, sizeof(ShadowSamplingCBuffer));
 
-    if (props.Shadows.projections.empty())
-      return;
+    if (props.Shadows.projections.empty()) {
+      ShadowSamplingCB.ViewProjection[0] = CnstBuffer.WVPLight;
+      ShadowSamplingCB.AtlasScaleBias[0] = XVECTOR3(1.0f, 1.0f, 0.0f, 0.0f);
+      ShadowSamplingCB.Params0 = XVECTOR3(
+        1.0f, (float)props.ShadowMapResolution, (float)props.ShadowMapResolution, 0.0f);
+      ShadowSamplingCB.Params1 = XVECTOR3(0.0f, 0.0f, props.ShadowBias, props.ShadowMin);
+    } else {
+      // Use the first enabled directional/CSM projection for the composition pass.
+      const auto& projection = props.Shadows.projections[0];
+      const int viewCount = projection.viewCount;
+      if (viewCount < 1 || viewCount > 6)
+        return;
 
-    // Use the first enabled directional/CSM projection for the composition pass.
-    const auto& projection = props.Shadows.projections[0];
-    const int viewCount = projection.viewCount;
-    if (viewCount < 1 || viewCount > 6)
-      return;
+      CnstBuffer.WVPLight = projection.views[0].viewProjection;
 
-    CnstBuffer.WVPLight = projection.views[0].viewProjection;
+      for (int view = 0; view < viewCount; ++view) {
+        ShadowSamplingCB.ViewProjection[view] = projection.views[view].viewProjection;
+        const auto& atlas = projection.views[view].atlasScaleBias;
+        ShadowSamplingCB.AtlasScaleBias[view].x = atlas.scaleX;
+        ShadowSamplingCB.AtlasScaleBias[view].y = atlas.scaleY;
+        ShadowSamplingCB.AtlasScaleBias[view].z = atlas.biasX;
+        ShadowSamplingCB.AtlasScaleBias[view].w = atlas.biasY;
+      }
+      // Split boundaries: up to 5 boundaries packed into 2 float4s.
+      for (int boundary = 0; boundary < kMaxCascadeBoundaries; ++boundary) {
+        int slot = boundary / 4;
+        int component = boundary % 4;
+        ShadowSamplingCB.SplitDepths[slot].v[component] = projection.splitBoundaries[boundary];
+      }
 
-    for (int v = 0; v < viewCount; ++v) {
-      ShadowSamplingCB.ViewProjection[v] = projection.views[v].viewProjection;
-      const auto& atlas = projection.views[v].atlasScaleBias;
-      ShadowSamplingCB.AtlasScaleBias[v].x = atlas.scaleX;
-      ShadowSamplingCB.AtlasScaleBias[v].y = atlas.scaleY;
-      ShadowSamplingCB.AtlasScaleBias[v].z = atlas.biasX;
-      ShadowSamplingCB.AtlasScaleBias[v].w = atlas.biasY;
+      ShadowSamplingCB.Params0 = XVECTOR3(
+        (float)viewCount,
+        (float)projection.atlasWidth,
+        (float)projection.atlasHeight,
+        (float)t850::ShadowSystem::ResolveTechnique(projection.resolvedDesc.technique));
+      ShadowSamplingCB.Params1 = XVECTOR3(
+        projection.resolvedDesc.far_distance,
+        projection.resolvedDesc.blend_fraction,
+        props.ShadowBias,
+        props.ShadowMin);
     }
-    // Split boundaries: up to 5 boundaries packed into 2 float4s.
-    for (int b = 0; b < kMaxCascadeBoundaries; ++b) {
-      int slot = b / 4;
-      int comp = b % 4;
-      ShadowSamplingCB.SplitDepths[slot].v[comp] = projection.splitBoundaries[b];
-    }
 
-    ShadowSamplingCB.Params0 = XVECTOR3(
-      (float)viewCount,
-      (float)projection.atlasWidth,
-      (float)projection.atlasHeight,
-      (float)t850::ShadowSystem::ResolveTechnique(projection.resolvedDesc.technique));
-    ShadowSamplingCB.Params1 = XVECTOR3(
-      projection.resolvedDesc.far_distance,
-      projection.resolvedDesc.blend_fraction,
-      props.ShadowBias,
-      props.ShadowMin);
-
-    if (g_pBaseDriver->UsesGLSL()) {
+    if (g_pBaseDriver && g_pBaseDriver->UsesGLSL()) {
       std::memcpy(CnstBuffer.ShadowViewProjection,
                   ShadowSamplingCB.ViewProjection,
                   sizeof(CnstBuffer.ShadowViewProjection));

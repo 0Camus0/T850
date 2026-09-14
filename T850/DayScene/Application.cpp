@@ -428,7 +428,11 @@ void App::LoadScene(int id) {
   }
 
   if (m_actualScene != nullptr) {
+    T8_LOG_INFO("[App] Scene transition begin: target=%d api=%s", id,
+                pFramework->pVideoDriver->ApiTag());
     FadeFX(0.5, true);
+    pFramework->pVideoDriver->FlushGPUResources();
+    T8_LOG_INFO("[App] Scene transition GPU drained; destroying previous scene");
     m_actualScene->OnDestoryScene();
   }
 
@@ -439,6 +443,8 @@ void App::LoadScene(int id) {
   m_devLayer.SetActiveScene(m_actualScene);
 #endif
   FadeFX(0.5,false);
+  T8_LOG_INFO("[App] Scene transition complete: target=%d api=%s", id,
+              pFramework->pVideoDriver->ApiTag());
 }
 
 void App::LoadAssets()

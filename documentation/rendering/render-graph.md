@@ -440,6 +440,42 @@ To add a new render graph feature:
 5. Update graph JSON files in `Assets/Scenes`.
 6. Verify D3D12/Vulkan PSO behavior if the change alters RT formats, topology, input layout, or resource binding.
 
+## Legacy and Cascaded Shadow Sampling
+
+Legacy graphs such as DayScene do not declare `shadow_projections`. Their depth
+pass still uses the selected light camera, while the shared shadow-composition
+shader consumes the fixed-size shadow-sampling payload introduced for cascades.
+[RenderQuad::UploadShadowSamplingCB](../../T850/Framework/src/scene/RenderQuad.cpp)
+must bridge those contracts: one view using the existing light VP matrix, a
+whole-texture atlas transform, the legacy shadow-map resolution, and the current
+shadow bias/minimum light. Upload this payload on HLSL backends and copy it into
+the loose-uniform payload on OpenGL. An empty projection list must not skip the
+upload or reuse previous cascade values.
+
+Fixed on 2026-09-14: the cascade integration returned early for empty projection
+lists, leaving legacy shadow composition without initialized shadow matrices and
+parameters. Explicit cascade projections retain their existing path. The shared
+[self-test suite](../../T850/Framework/src/game/GameSelfTest.cpp) now includes
+`T-SHADOW-LEGACY-01`, covering legacy data, an explicit two-cascade payload, and
+returning from cascades to legacy rendering without stale matrices or splits.
+
+Verification used the working `Q3.8_v2` checkout with matched DayScene snapshot
+replays at 1280x720. D3D11/D3D12/Vulkan courtyard shadow depth and accumulation
+matched exactly; 17 of 18 dumped targets matched within two 8-bit levels. The
+final backbuffer retained small differences, so this is not exact final-frame
+parity. OpenGL has a pre-existing full-kernel blur correction relative to the
+reference: a temporary old-kernel probe made shadow accumulation, deferred
+lighting and god rays exact matches. The corrected blur was restored, and its
+shadow/deferred targets repeated exactly; final-frame variation remained.
+
+x64 Debug/Release builds and all 54 self-tests passed. ARM64 Debug/Release
+compile/link passed, without ARM64 execution. Minecraft D3D12/Vulkan smoke captures
+with four cascades, draw distance four and one enemy completed without errors;
+all four atlas tiles contained rendered depth. These are focused shadow gates,
+not a full scene/editor/platform visual matrix. Raw snapshots, images and reports
+from this run are local ignored outputs under `bin/x64/Release` and
+`VisualBaselines/day-shadow-regression`.
+
 ## Known limitations and gotchas
 
 - Execution is JSON order, not topologically sorted graph order.

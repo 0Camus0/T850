@@ -2,6 +2,14 @@
 
 Status: verified against source and four-backend runtime tests on 2026-08-30.
 
+2026-09-14: Windows x64 also has `ImGuiWebGPUBackend`, using the pinned upstream
+`imgui_impl_wgpu` renderer and SDL3 platform backend. It supports the main runtime
+window's loading frames, fonts and controls through `WebGPUDriver`'s active render
+pass. Platform viewports are disabled because the upstream backend does not
+support them. Cube/depth and full opaque-preview handling, T8ditor and multiple
+hosted surfaces remain outside this integration. See
+[normal WebGPU scene validation](../development/windows-build-and-run.md#first-normal-webgpu-scene).
+
 This document explains the reusable FrameworkImGui layer used by runtime scenes and wrapped by T8ditor: platform/backend initialization, frame lifecycle, docking and platform windows, Android native-window rebinding, loading-screen rendering, `DevGuiContext`, and hosted viewport integration.
 
 Related documents:

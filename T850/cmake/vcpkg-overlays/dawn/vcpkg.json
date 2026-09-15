@@ -1,0 +1,22 @@
+{
+  "name": "dawn",
+  "version": "20260219.200501",
+  "port-version": 6,
+  "description": "T850 pinned Dawn runtime, Windows x64 D3D12 only.",
+  "homepage": "https://dawn.googlesource.com/dawn",
+  "license": "BSD-3-Clause",
+  "supports": "x64 & windows & !uwp & !mingw",
+  "dependencies": [
+    "abseil",
+    { "name": "vcpkg-cmake", "host": true },
+    { "name": "vcpkg-cmake-config", "host": true },
+    { "name": "vcpkg-get-python-packages", "host": true }
+  ],
+  "default-features": [ "d3d12" ],
+  "features": {
+    "d3d12": {
+      "description": "Required Direct3D 12 backend",
+      "dependencies": [ "directx-dxc" ]
+    }
+  }
+}

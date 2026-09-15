@@ -32,6 +32,8 @@
 #include <terrain/VoxelNavigation.h>
 #include <terrain/VoxelCollision.h>
 #include <utils/ThreadPool.h>
+#include <utils/TextureMipmaps.h>
+#include <utils/ConfigRuntime.h>
 #include <utils/XDataBase.h>
 #include <video/TextureAtlas.h>
 
@@ -1671,7 +1673,62 @@ void TestLegacyShadowSampling() {
   requireLegacyPayload();
 }
 
+void TestShaderFlowConfiguration() {
+  const auto parse = [](Config& config, std::vector<std::string> arguments) {
+    std::vector<char*> pointers;
+    for (auto& argument : arguments) pointers.push_back(argument.data());
+    config::ApplyCommandLine(static_cast<int>(pointers.size()), pointers.data(), config);
+  };
+  Config defaults;
+  Require(defaults.webgpuShaderFlow == "auto", "WebGPU shader flow must default to auto");
+  for (const auto* mode : {"auto", "wgsl", "spirv"}) {
+    Config selected;
+    selected.api = "d3d12";
+    config::RuntimeConfigJson json;
+    json.webgpuShaderFlow = "wgsl";
+    config::ApplyConfigJson(json, selected);
+    Require(selected.webgpuShaderFlow == "wgsl", "Shader flow JSON setting ignored");
+    parse(selected, {"DayScene", "--shaderFlow", mode, "--width", "640"});
+    Require(config::ValidateConfig(selected), "Valid shader flow config rejected");
+    Require(selected.webgpuShaderFlow == mode && selected.width == 640 && selected.api == "d3d12",
+            "Shader flow override changed API or consumed another option");
+  }
+  parse(defaults, {"DayScene", "--shaderFlow", "SPIRV", "--shaderFlow", "WGSL"});
+  Require(defaults.webgpuShaderFlow == "wgsl", "Shader flow case normalization or last override failed");
+  for (const auto& arguments : std::vector<std::vector<std::string>>{
+         {"DayScene", "--shaderFlow"}, {"DayScene", "--shaderFlow", "--api", "webgpu"},
+         {"DayScene", "--shaderFlow", "invalid"}, {"DayScene", "--shaderFlow", ""}}) {
+    bool rejected = false;
+    try { parse(defaults, arguments); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "Invalid or missing shader flow silently accepted");
+  }
+  defaults.webgpuShaderFlow = "invalid";
+  bool rejected = false;
+  try { config::ValidateConfig(defaults); } catch (const std::invalid_argument&) { rejected = true; }
+  Require(rejected, "Invalid configured shader flow silently defaulted");
+}
+
+void TestTextureMipmaps() {
+  Require(CalculateFullMipCount(1, 1) == 1 && CalculateFullMipCount(5, 3) == 3, "mip count mismatch");
+  std::vector<unsigned char> output;
+  const std::array<unsigned char, 16> alphaPixels{255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 0, 255, 255, 255, 0};
+  GenerateMipChain8(alphaPixels.data(), 2, 2, 1, 4, output);
+  Require(output.size() == 20 && output[16] == 255 && output[17] == 0 && output[18] == 0 && output[19] == 64,
+          "alpha-weighted mip filtering changed");
+  const std::array<unsigned char, 3> column{10, 30, 200};
+  GenerateMipChain8(column.data(), 1, 3, 1, 1, output);
+  Require(output.size() == 4 && output[3] == 20, "odd single-column mip policy changed");
+  std::vector<unsigned char> faces(5 * 3 * 6);
+  for (unsigned face = 0; face < 6; ++face) std::fill_n(faces.begin() + face * 15, 15, static_cast<unsigned char>(face * 31));
+  GenerateMipChain8(faces.data(), 5, 3, 6, 1, output);
+  Require(output.size() == 18 * 6, "cube mip chain size mismatch");
+  for (unsigned face = 0; face < 6; ++face)
+    for (unsigned pixel = 0; pixel < 18; ++pixel) Require(output[face * 18 + pixel] == face * 31, "mip generation mixed cube faces");
+}
+
 constexpr TestCase kTests[] = {
+  {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
+  {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
   {"T-SHADOW-LEGACY-01", TestLegacyShadowSampling},
   {"T-PLACEMENT-VISUAL-01", TestPlacementVisualFitting},
   {"T-PLACEMENT-01", TestTerrainPlacementGrid},

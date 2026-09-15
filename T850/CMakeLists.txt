@@ -82,6 +82,10 @@ function(t850_ensure_vcpkg)
 	if(NOT T850_AUTO_INSTALL_VCPKG_DEPS)
 		return()
 	endif()
+	if(WIN32 AND T850_ARCH STREQUAL "x64")
+		t850_execute_process("Pinned Dawn vcpkg bootstrap"
+			COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${T850_SOURCE_DIR}/scripts/SetupDawn.ps1" -Mode Bootstrap)
+	endif()
 
 	if(WIN32)
 		set(T850_VCPKG_EXE ${T850_VCPKG_SOURCE_DIR}/vcpkg.exe)
@@ -236,6 +240,10 @@ function(t850_ensure_vcpkg)
 		if(NOT T850_ARCH STREQUAL "x86")
 			set(T850_IMGUI_FEATURES "docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding")
 		endif()
+		if(T850_ARCH STREQUAL "x64")
+			string(APPEND T850_IMGUI_FEATURES ",webgpu-binding")
+			list(APPEND T850_VCPKG_PACKAGE_SPECS "dawn[core,d3d12]:${T850_VCPKG_STATIC_TRIPLET}")
+		endif()
 	else()
 		set(T850_IMGUI_FEATURES "docking-experimental,vulkan-binding,opengl3-binding,sdl3-binding")
 	endif()
@@ -250,6 +258,9 @@ function(t850_ensure_vcpkg)
 
 	message(STATUS "Installing vcpkg packages for ${T850_ARCH}: ${T850_VCPKG_PACKAGE_SPECS}")
 	set(T850_VCPKG_INSTALL_ARGS install --recurse)
+	if(WIN32 AND T850_ARCH STREQUAL "x64")
+		list(APPEND T850_VCPKG_INSTALL_ARGS --overlay-ports=${T850_SOURCE_DIR}/cmake/vcpkg-overlays)
+	endif()
 	if(EXISTS ${T850_SOURCE_DIR}/ports)
 		list(APPEND T850_VCPKG_INSTALL_ARGS --overlay-ports=${T850_SOURCE_DIR}/ports)
 	endif()
@@ -264,6 +275,15 @@ t850_ensure_vcpkg()
 list(APPEND CMAKE_PREFIX_PATH ${T850_VCPKG_STATIC})
 set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
 set(CMAKE_MAP_IMPORTED_CONFIG_MINSIZEREL Release)
+if(WIN32 AND T850_ARCH STREQUAL "x64")
+	set(T850_DAWN_SETUP_MODE Check)
+	if(T850_AUTO_INSTALL_VCPKG_DEPS)
+		set(T850_DAWN_SETUP_MODE Install)
+	endif()
+	t850_execute_process("Required Dawn package validation"
+		COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${T850_SOURCE_DIR}/scripts/SetupDawn.ps1" -Mode ${T850_DAWN_SETUP_MODE})
+	find_package(Dawn CONFIG REQUIRED)
+endif()
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 if(T850_PLATFORM_STEAM_DECK)
@@ -355,6 +375,9 @@ function(t850_apply_app target)
 	target_include_directories(${target} SYSTEM PRIVATE
 		${T850_SOURCE_DIR}/Librerias/glaze/include)
 	if(WIN32)
+		if(T850_ARCH STREQUAL "x64")
+			target_link_libraries(${target} PRIVATE dawn::webgpu_dawn)
+		endif()
 		target_link_directories(${target} PRIVATE
 			${T850_SOURCE_DIR}/Librerias/tinyxml2/lib
 			${T850_SOURCE_DIR}/Librerias/SDL3/lib/${T850_ARCH}
@@ -404,6 +427,22 @@ function(t850_stage_runtime target)
 	endforeach()
 
 	if(WIN32)
+		if(T850_ARCH STREQUAL "x64")
+			add_custom_command(TARGET ${target} POST_BUILD
+				COMMAND ${CMAKE_COMMAND} -E copy_if_different
+					"${T850_VCPKG_STATIC}/$<$<CONFIG:Debug>:debug/>bin/dxcompiler.dll"
+					"${T850_VCPKG_STATIC}/$<$<CONFIG:Debug>:debug/>bin/dxil.dll"
+					$<TARGET_FILE_DIR:${target}>
+				COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/licenses"
+				VERBATIM)
+			foreach(package dawn directx-dxc abseil imgui)
+				add_custom_command(TARGET ${target} POST_BUILD
+					COMMAND ${CMAKE_COMMAND} -E copy_if_different
+						"${T850_VCPKG_STATIC}/share/${package}/copyright"
+						"$<TARGET_FILE_DIR:${target}>/licenses/${package}.txt"
+					VERBATIM)
+			endforeach()
+		endif()
 		add_custom_command(TARGET ${target} POST_BUILD
 			COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_SDL3_ROOT}/lib/${T850_ARCH}/SDL3.dll $<TARGET_FILE_DIR:${target}>
 			COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/libEGL.dll $<TARGET_FILE_DIR:${target}>

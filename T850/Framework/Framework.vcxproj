@@ -138,6 +138,13 @@
     <ClInclude Include="include\utils\ShaderPermutationDump.h" />
     <ClInclude Include="include\utils\SPIRVReflection.h" />
     <ClInclude Include="include\utils\ShaderDiskCache.h" />
+    <ClInclude Include="include\utils\ShaderPreprocessor.h" />
+    <ClInclude Include="include\utils\TextureMipmaps.h" />
+    <ClInclude Include="include\video\webgpu\WebGPUShaderCompiler.h" />
+    <ClInclude Include="include\video\webgpu\WebGPUContext.h" />
+    <ClInclude Include="include\video\webgpu\WebGPUDriver.h" />
+    <ClInclude Include="include\video\WindowsDriverFactory.h" />
+    <ClInclude Include="include\debug\GraphicsFixture.h" />
     <ClInclude Include="include\utils\gltf\GLTFTypes.h" />
     <ClInclude Include="include\utils\gltf\GLTFLoader.h" />
     <ClInclude Include="include\utils\gltf\GLTFAccessor.h" />
@@ -309,6 +316,24 @@
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp" />
     <ClCompile Include="src\utils\SPIRVReflection.cpp" />
     <ClCompile Include="src\utils\ShaderDiskCache.cpp" />
+    <ClCompile Include="src\utils\ShaderPreprocessor.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\Librerias\simplecpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="..\Librerias\simplecpp\simplecpp.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\video\webgpu\WebGPUShaderCompiler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\video\webgpu\WebGPUContext.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\video\webgpu\WebGPUDriver.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\video\WindowsDriverFactory.cpp" />
+    <ClCompile Include="src\debug\GraphicsFixture.cpp" />
     <ClCompile Include="src\video\BaseDriver.cpp" />
     <ClCompile Include="src\video\gl\GLDriver.cpp" />
     <ClCompile Include="src\video\gl\GLDeviceContext.cpp" />
@@ -809,6 +834,7 @@
       <AdditionalLibraryDirectories>$(T8VcpkgStatic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Lib>
   </ItemDefinitionGroup>
+  <Import Project="..\cmake\DawnPackage.targets" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

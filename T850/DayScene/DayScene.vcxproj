@@ -413,6 +413,7 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
   <ItemGroup>
     <ResourceCompile Include="DayScene.rc" />
   </ItemGroup>
+  <Import Project="..\cmake\DawnPackage.targets" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

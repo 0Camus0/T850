@@ -13,10 +13,22 @@ namespace t850 {
     uint64_t shaderKeyBits = 0;
     std::string vsName;
     std::string fsName;
+    std::string stage;
+    std::string entryPoint;
+    std::string sourceName;
   };
 
   namespace ShaderDiskCache {
     constexpr int kCacheFormatVersion = 1;
+
+    std::string ContentHash(const std::string& content);
+    ShaderDiskCacheKey MakeStageKey(const std::string& api,
+                    const std::string& compilerSignature,
+                    uint64_t shaderKeyBits,
+                    const std::string& stage,
+                    const std::string& entryPoint,
+                    const std::string& sourceName,
+                    const std::string& source);
 
     ShaderDiskCacheKey MakeKey(const std::string& api,
                                const std::string& driverSignature,

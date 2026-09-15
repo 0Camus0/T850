@@ -218,6 +218,8 @@ namespace t850 {
     void release();
 
     ShaderKey key;
+  protected:
+    std::string m_sourceDefines;
   };
 
   class BaseDriver {

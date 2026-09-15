@@ -230,6 +230,8 @@ namespace t850 {
           if (sh) k.bits |= ShaderKey::SHADOWS;
           if (ao) k.bits |= ShaderKey::SSAO;
           g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+          k.bits |= ShaderKey::NO_ENVIRONMENT;
+          g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
         }
       }
     }
@@ -319,6 +321,8 @@ namespace t850 {
     else if (pass == PassType::DEFERRED || pass == PassType::DEFERRED_LDR || pass == PassType::DEFERRED_LIGHT_VOLUME) {
       if (pScProp->ToogleShadow) finalKey.bits |= ShaderKey::SHADOWS;
       if (pScProp->ToogleSSAO)   finalKey.bits |= ShaderKey::SSAO;
+      if (!EnvMap && !Textures[EnvironmentTextureSlot::DiffuseIBL] && !Textures[EnvironmentTextureSlot::SpecularIBL])
+        finalKey.bits |= ShaderKey::NO_ENVIRONMENT;
     }
     else if (pass == PassType::COC) {
       if (pScProp->AutoFocus)     finalKey.bits |= ShaderKey::AUTO_FOCUS;
@@ -658,8 +662,8 @@ namespace t850 {
     Camera* cascadeCamera = pScProp->pCullingCamera ? pScProp->pCullingCamera : pActualCamera;
     CnstBuffer.World = cascadeCamera->View;
     CnstBuffer.WVPLight = cascadeCamera->VP;
-		for (unsigned int i = 1; i < pScProp->SSAOKernel.vSSAOKernel.size(); i++) {
-			CnstBuffer.LightPositions[i] = pScProp->SSAOKernel.vSSAOKernel[i-1];
+    for (size_t sample = 0; sample < pScProp->SSAOKernel.vSSAOKernel.size() && sample + 1 < std::size(CnstBuffer.LightPositions); ++sample) {
+      CnstBuffer.LightPositions[sample + 1] = pScProp->SSAOKernel.vSSAOKernel[sample];
 		}
 	}
     else if (pass == PassType::CASCADE_DEBUG) {

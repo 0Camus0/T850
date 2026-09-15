@@ -119,6 +119,8 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/ConfigRuntime.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/RuntimeProfile.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderDiskCache.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPreprocessor.cpp
+  ${T850_SOURCE_DIR}/Librerias/simplecpp/simplecpp.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPermutationDump.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/SPIRVReflection.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ThreadPool.cpp
@@ -201,6 +203,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiD3D12Backend.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiOpenGLBackend.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiVulkanBackend.cpp
+  ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiWebGPUBackend.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/DevGuiContext.cpp
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/tinyxml2.cpp
   ${T850_SOURCE_DIR}/Librerias/mikktspace/src/mikktspace.c)
@@ -238,6 +241,9 @@ if(T850_VULKAN_VALIDATION)
 endif()
 target_compile_options(T850Android PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 target_precompile_headers(T850Android PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${T850_SOURCE_DIR}/Framework/pch.h>)
+set_source_files_properties(${T850_SOURCE_DIR}/Framework/src/utils/ShaderPreprocessor.cpp
+  ${T850_SOURCE_DIR}/Librerias/simplecpp/simplecpp.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+target_include_directories(T850Android PRIVATE ${T850_SOURCE_DIR}/Librerias/simplecpp)
 target_include_directories(T850Android PRIVATE
   ${T850_SOURCE_DIR}/DayScene
   ${T850_SOURCE_DIR}/FrameworkImGui/include

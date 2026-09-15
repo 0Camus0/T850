@@ -19,9 +19,9 @@ function Test-Launcher([string]$Name) {
     $path = Join-Path $PSScriptRoot $Name
     $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors)
     Assert-True ($parseErrors.Count -eq 0) "$Name has syntax errors: $parseErrors"
-    Assert-True ($ast.Extent.Text -notmatch 'fixture|cmbShaderFlow|webgpuShaderFlow') "$Name retains fixture-specific UI or dispatch"
+    Assert-True ($ast.Extent.Text -notmatch 'fixture') "$Name retains fixture-specific UI or dispatch"
     Assert-True ($ast.Extent.Text -match 'forward and deferred runtime scenes' -and $ast.Extent.Text -notmatch 'forward scene support only|Full deferred scenes remain unsupported') "$Name has stale WebGPU runtime capability text"
-    foreach ($functionName in @('Test-WebGpuSelected', 'Test-WebGpuSupported', 'Get-LaunchCommand', 'Get-EditorLaunchCommand')) {
+    foreach ($functionName in @('Test-WebGpuSelected', 'Test-WebGpuSupported', 'Get-LaunchCommand', 'Get-EditorLaunchCommand', 'Get-ShaderCompileCommands')) {
         $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
         Assert-True ($null -ne $definition) "Missing function $functionName in $Name"
         . ([scriptblock]::Create($definition.Extent.Text))
@@ -29,6 +29,7 @@ function Test-Launcher([string]$Name) {
     $rootDir = Join-Path ([IO.Path]::GetTempPath()) ("T850 launcher test " + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($rootDir)
     $cmbApi = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = 'webgpu' } }
+    $cmbShaderFlow = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = 'auto' } }
     $cmbArch = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Content = 'x64' } }
     $cmbConfig = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Content = 'Release' } }
     $cmbScene = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = '4' } }
@@ -58,14 +59,24 @@ function Test-Launcher([string]$Name) {
             Write-TestExecutable 0x8664
         }
         Assert-True (Test-WebGpuSupported) "$Name rejected x64"
+        $compileJobs = @(Get-ShaderCompileCommands)
+        Assert-True (($compileJobs.Name -join ',') -eq 'd3d11-native,d3d12-native,vulkan-native,gl-native,webgpu-auto,webgpu-spirv') 'Shader compilation must include all APIs and both working WebGPU flows'
+        foreach ($job in $compileJobs) {
+            Assert-True ($job.Args[0] -eq '--compileShaders' -and $job.Args -notcontains '--scene' -and $job.Args -notcontains '--graphics-fixture') 'Shader precompile must not load a scene or fixture'
+            Assert-True ($job.WorkingDirectory -eq (Split-Path $job.ExePath)) 'Shader precompile working directory differs from normal runtime'
+        }
         foreach ($api in @('webgpu', 'd3d12', 'd3d11', 'vulkan', 'gl')) {
             $cmbApi.SelectedItem.Tag = $api
-            $command = Get-LaunchCommand
-            Assert-True ($command.Args -notcontains '--graphics-fixture') 'Launcher must not substitute a fixture for normal engine startup'
-            Assert-True ($command.Args -notcontains '--shaderFlow' -and $command.Args -notcontains '--output') 'Fixture-only flags leaked into normal startup'
-            Assert-True (($command.Args -join ' ') -eq "--api $api --scene 4 --culling frustum --sceneFile `"Scenes/Test.t8scene`" --width 960 --height 540 --logLevel info") 'Normal scene arguments were not preserved'
-            Assert-True ($command.Display.StartsWith('"' + $command.ExePath + '" ')) 'Executable path with spaces is not quoted'
-            Assert-True ($command.ExePath.StartsWith($rootDir)) 'Unexpected executable location'
+            foreach ($flow in @('auto', 'spirv')) {
+                $cmbShaderFlow.SelectedItem.Tag = $flow
+                $command = Get-LaunchCommand
+                Assert-True ($command.Args -notcontains '--graphics-fixture' -and $command.Args -notcontains '--output') 'Launcher must not substitute a fixture for normal engine startup'
+                $flowArgs = if ($api -eq 'webgpu') { " --shaderFlow $flow" } else { '' }
+                Assert-True (($command.Args -join ' ') -eq "--api $api$flowArgs --scene 4 --culling frustum --sceneFile `"Scenes/Test.t8scene`" --width 960 --height 540 --logLevel info") "$Name did not preserve normal arguments and WebGPU-only shader flow $flow for $api"
+                Assert-True ($command.Display.StartsWith('"' + $command.ExePath + '" ')) 'Executable path with spaces is not quoted'
+                Assert-True ($command.ExePath.StartsWith($rootDir)) 'Unexpected executable location'
+                Assert-True ((Get-EditorLaunchCommand).Args -notcontains '--shaderFlow') 'Runtime shader flow leaked into editor startup'
+            }
             if ($api -eq 'webgpu') {
                 Assert-True ((Get-EditorLaunchCommand).Args[1] -eq 'webgpu') 'WebGPU editor silently remapped'
             }
@@ -76,10 +87,15 @@ function Test-Launcher([string]$Name) {
                 $cmbArch.SelectedItem.Content = $architecture
                 Assert-Rejected { Get-LaunchCommand } 'Unsupported Windows architecture accepted'
                 Assert-Rejected { Get-EditorLaunchCommand } 'Unsupported editor architecture accepted'
+                Assert-True (@(Get-ShaderCompileCommands).Count -eq 4) 'Non-x64 shader precompile must omit WebGPU only'
             }
             $cmbArch.SelectedItem.Content = 'x64'
             $android = $true
             Assert-Rejected { Get-LaunchCommand } 'Android WebGPU accepted'
+            Assert-Rejected { Get-ShaderCompileCommands } 'Android target accepted desktop precompile jobs'
+        } else {
+            Write-TestExecutable 0xAA64
+            Assert-True (@(Get-ShaderCompileCommands).Count -eq 4) 'Portable non-x64 shader precompile must omit WebGPU'
         }
         Write-Output "$Name WebGPU command tests PASS"
     } finally {
@@ -125,6 +141,42 @@ function Test-DawnPreflight {
 
 Test-DawnPreflight
 
+function Test-ShaderCompileQueue([string]$Name) {
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $Name), [ref]$tokens, [ref]$parseErrors)
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Update-ShaderCompileQueue' }, $false)
+    . ([scriptblock]::Create($definition.Extent.Text))
+    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('T850 shader queue ' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($temporary)
+    try {
+        foreach ($scenario in @('success', 'compile-failure', 'old-executable', 'cancelled', 'late-output')) {
+            $process = [pscustomobject]@{ HasExited = $true; ExitCode = $(if ($scenario -eq 'compile-failure') { 1 } else { 0 }); Disposed = $false; FinalLog = $(if ($scenario -eq 'late-output') { Join-Path $temporary 'stdout.log' } else { '' }) }
+            $process | Add-Member ScriptMethod WaitForExit {
+                if ($this.FinalLog) { '[ShaderPrecompile] complete: 281 succeeded, 0 failed' | Set-Content $this.FinalLog }
+            }
+            $process | Add-Member ScriptMethod Dispose { $this.Disposed = $true }
+            $timer = [pscustomobject]@{ Stopped = $false }
+            $timer | Add-Member ScriptMethod Stop { $this.Stopped = $true }
+            $output = [pscustomobject]@{ Text = '' }
+            $output | Add-Member ScriptMethod ScrollToEnd {}
+            $stdout = Join-Path $temporary 'stdout.log'
+            $text = if ($scenario -eq 'success') { '[ShaderPrecompile] complete: 281 succeeded, 0 failed' } elseif ($scenario -eq 'compile-failure') { '[ShaderPrecompile] complete: 280 succeeded, 1 failed' } else { 'Normal engine startup' }
+            $text | Set-Content $stdout
+            $state = [pscustomobject]@{ Process = $process; Stdout = $stdout; Output = $output; Jobs = @([pscustomobject]@{ Name = 'd3d12-native' }); Index = 1; CancelRequested = ($scenario -eq 'cancelled'); Failures = 0; Results = [Collections.ArrayList]::new(); Progress = [pscustomobject]@{ Value = 0 }; Timer = $timer; Status = [pscustomobject]@{ Text = '' }; Cancel = [pscustomobject]@{ Content = 'Cancel'; IsEnabled = $true }; Directory = $temporary }
+            Update-ShaderCompileQueue $state
+            Assert-True ($state.Results.Count -eq 1 -and $state.Results[0].Passed -eq ($scenario -in @('success', 'late-output'))) "Shader queue misreported $scenario"
+            Assert-True ($timer.Stopped -and $process.Disposed -and $state.Cancel.Content -eq 'Close') 'Shader queue did not clean up on completion'
+            Assert-True (Test-Path (Join-Path $temporary 'summary.json')) 'Shader queue omitted the durable summary'
+            if ($scenario -eq 'cancelled') { Assert-True ($state.Status.Text -like 'Cancelled.*' -and $state.Cancel.IsEnabled) 'Cancelled shader queue did not return control to the user' }
+        }
+        Write-Output "$Name shader compile queue tests PASS"
+    } finally { Remove-Item $temporary -Recurse -Force }
+}
+
+Test-ShaderCompileQueue 'Launcher.ps1'
+Test-ShaderCompileQueue 'Launcher_Release.ps1'
+
 function Test-LauncherUi([string]$Name) {
     $parseErrors = $null
     $tokens = $null
@@ -160,6 +212,11 @@ function Test-LauncherUi([string]$Name) {
         [void][IO.Directory]::CreateDirectory($runtime)
         [IO.File]::WriteAllBytes((Join-Path $runtime 'DayScene.exe'), $bytes)
         [IO.File]::WriteAllBytes((Join-Path $runtime 'T8ditor.exe'), $bytes)
+        Assert-True ($cmbShaderFlow.Items.Count -eq 2 -and $cmbShaderFlow.SelectedItem.Tag -eq 'auto') 'Shader selector must default to WGSL-first and offer the two working runtime flows'
+        Assert-True ($pnlShaderFlow.Visibility -eq 'Collapsed') 'Shader selector must initially be hidden for native APIs'
+        $flowEvent = $ast.Find({ param($node) $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Extent.Text -eq '$cmbShaderFlow.Add_SelectionChanged({ Update-Preview })' }, $true)
+        Assert-True ($null -ne $flowEvent) 'Shader selector is not wired to refresh the command preview'
+        . ([scriptblock]::Create($flowEvent.Extent.Text))
         Set-Api 'webgpu'
         $chkDump.IsChecked = $true
         $chkReplaySnapshot.IsChecked = $true
@@ -170,9 +227,9 @@ function Test-LauncherUi([string]$Name) {
         foreach ($controlName in @('cmbScene', 'txtWidth', 'chkDump', 'chkTelemetry')) {
             Assert-True $window.FindName($controlName).IsEnabled "Normal control $controlName was disabled"
         }
-        Assert-True ($null -eq $window.FindName('cmbShaderFlow')) 'Fixture-only shader selector remains visible'
+        Assert-True ($pnlShaderFlow.Visibility -eq 'Visible' -and $cmbShaderFlow.IsEnabled) 'WebGPU runtime shader selector is unavailable'
         Assert-True ($btnRun.Content -match 'RUN' -and $btnRun.Content -notmatch 'FIXTURE') 'Normal RUN caption was replaced'
-        foreach ($flag in @('--api webgpu', '--dumpSnapshot-', '--replaySnapshot', '--telemetry')) {
+        foreach ($flag in @('--api webgpu', '--shaderFlow auto', '--dumpSnapshot-', '--replaySnapshot', '--telemetry')) {
             Assert-True ($txtCmdPreview.Text.Contains($flag)) "Normal preview dropped $flag"
         }
         $sceneDependencies.Ok = $true
@@ -181,24 +238,46 @@ function Test-LauncherUi([string]$Name) {
         $script:CloudAssetStatus.Missing = 0
         Update-Preview
         Assert-True $btnRun.IsEnabled 'Normal RUN was disabled despite available executable and assets'
+        Assert-True $btnCompileShaders.IsEnabled 'Shader compile button unavailable with an executable'
         Assert-True (-not $btnEditor.IsEnabled) 'Unimplemented editor API could silently fall through to native D3D12'
         Assert-True ($txtStatus.Text -eq 'WebGPU: runtime forward/deferred rendering; editor unavailable.') 'WebGPU runtime/editor capabilities were reported incorrectly'
         Assert-True ((Get-EditorLaunchCommand).Args[1] -eq 'webgpu') 'WebGPU editor selection was remapped'
-        Save-Config
-        Set-Api 'd3d12'
-        Load-Config
-        Assert-True (Test-WebGpuSelected) 'WebGPU API config round trip failed'
+        foreach ($flow in @('spirv', 'auto')) {
+            $cmbShaderFlow.SelectedItem = @($cmbShaderFlow.Items | Where-Object Tag -eq $flow)[0]
+            Assert-True ($txtCmdPreview.Text.Contains("--shaderFlow $flow")) 'Changing shader flow did not immediately refresh the preview'
+            Save-Config
+            $savedConfig = Get-Content $configPath -Raw | ConvertFrom-Json
+            Assert-True ($savedConfig.webgpuShaderFlow -eq $flow) 'Shader flow was not persisted'
+            $cmbShaderFlow.SelectedIndex = 1 - $cmbShaderFlow.SelectedIndex
+            Set-Api 'd3d12'
+            Load-Config
+            Assert-True ((Test-WebGpuSelected) -and $cmbShaderFlow.SelectedItem.Tag -eq $flow) 'WebGPU API/shader flow config round trip failed'
+        }
+        foreach ($configuredFlow in @($null, 'unknown', 'SPIRV')) {
+            $savedConfig = @{ api = 'webgpu' }
+            if ($null -ne $configuredFlow) { $savedConfig.webgpuShaderFlow = $configuredFlow }
+            $savedConfig | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+            $cmbShaderFlow.SelectedIndex = 1
+            Load-Config
+            $expectedFlow = if ($configuredFlow -eq 'SPIRV') { 'spirv' } else { 'auto' }
+            Assert-True ($cmbShaderFlow.SelectedItem.Tag -eq $expectedFlow) 'Legacy/default or case-insensitive shader-flow loading failed'
+        }
         Set-Api 'd3d12'
         Update-Preview
+        Assert-True ($pnlShaderFlow.Visibility -eq 'Collapsed' -and -not $cmbShaderFlow.IsEnabled) 'Shader selector remained active for a native API'
+        Assert-True ((Get-LaunchCommand).Args -notcontains '--shaderFlow') 'Native API received WebGPU shader-flow arguments'
         Assert-True ($btnRun.IsEnabled -and $btnEditor.IsEnabled -and $txtStatus.Text -notmatch 'WebGPU') 'Native readiness behavior changed'
         Assert-True ((Get-LaunchCommand).Args -notcontains '--graphics-fixture') 'Native API became a fixture'
         Assert-True ((Get-EditorLaunchCommand).Args -contains 'd3d12') 'Native editor mapping changed'
         Set-Api 'webgpu'
+        Update-Preview
+        Assert-True ($cmbShaderFlow.SelectedItem.Tag -eq 'spirv' -and $txtCmdPreview.Text.Contains('--shaderFlow spirv')) 'Switching APIs lost the selected shader flow'
         if ($Name -eq 'Launcher.ps1') {
             foreach ($architecture in @('ARM64', 'x86')) {
                 $cmbArch.SelectedItem = @($cmbArch.Items | Where-Object Content -eq $architecture)[0]
                 Update-Preview
                 Assert-True (-not $btnRun.IsEnabled -and -not $btnEditor.IsEnabled -and $txtStatus.Text -match 'requires Windows x64') 'Unsupported architecture was not blocked'
+                Assert-True (-not $cmbShaderFlow.IsEnabled) 'Unsupported architecture enabled the shader selector'
             }
             $cmbArch.SelectedItem = @($cmbArch.Items | Where-Object Content -eq 'x64')[0]
             Update-Preview
@@ -207,6 +286,10 @@ function Test-LauncherUi([string]$Name) {
         Remove-Item (Join-Path $runtime 'DayScene.exe')
         Update-Preview
         Assert-True (-not $btnRun.IsEnabled) 'Missing executable did not disable RUN'
+        Assert-True (-not $btnCompileShaders.IsEnabled) 'Missing executable did not disable shader compilation'
+        if ($Name -eq 'Launcher_Release.ps1') {
+            Assert-True (-not $cmbShaderFlow.IsEnabled) 'Missing portable executable enabled the shader selector'
+        }
         Write-Output "$Name WPF/config/normal-routing tests PASS"
     } finally {
         $window.Close()

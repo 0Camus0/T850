@@ -66,8 +66,14 @@ The Windows host applies the setting on every WebGPU driver creation through
 `ChangeAPI`, before `InitDriver()` and `CreateAssets()`. Startup logs
 `[WebGPU] startup shaderFlow=... (before asset loading)`; per-shader logs report
 the actual successful flow and cache state. Source-language cache identities stay
-separate. The Launcher has not regained a fixture mode or shader selector, and
-T8ditor does not use this CLI parser or support WebGPU rendering yet.
+separate. Both Windows launchers show a **Shader Flow** selector only for WebGPU:
+**WGSL preferred (auto)** or **SPIR-V (HLSL translation)**. They persist
+`webgpuShaderFlow` and pass it explicitly on the next RUN; no engine rebuild is
+needed, and changing the selection does not switch an already-running process.
+Older launcher configs without a supported selection default to `auto`.
+Strict `wgsl` remains available from the CLI, not the launcher, because normal
+startup still needs anonymous HLSL helpers. No fixture is injected, and T8ditor
+does not use this CLI parser or support WebGPU rendering yet.
 
 **Normal runtime selection works in `auto` and `spirv`; strict `wgsl` still has an anonymous-source limitation.**
 The known DOF, CoC, shadow/SSAO, refraction and lightmap derivative-uniformity
@@ -234,6 +240,9 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 --offscreenDebug
 --glOffscreenFlushMode frame|wait|none
 --dumpShaderPermutations
+--recordShaderPermutations
+--compileShaders
+--shaderPermutationInput PATH
 --shaderPermutationOutput PATH
 ```
 

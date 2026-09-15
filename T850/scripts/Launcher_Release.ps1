@@ -198,6 +198,10 @@ $xaml = @"
             <StackPanel>
                 <TextBlock Text="GRAPHICS API" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
+                <Button Name="btnCompileShaders" Content="Compile Shaders" Height="30" Margin="0,0,0,10"
+                    FontSize="13" Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
+                    BorderThickness="0" Cursor="Hand"
+                    ToolTip="Compile all recorded permutations for every supported desktop API, including both WebGPU flows."/>
                 <ComboBox Name="cmbApi">
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" Tag="d3d11"/>
                     <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
@@ -205,6 +209,15 @@ $xaml = @"
                     <ComboBoxItem Content="Vulkan" IsSelected="True" Tag="vulkan"/>
                     <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
+                <StackPanel Name="pnlShaderFlow" Margin="0,12,0,0" Visibility="Collapsed">
+                    <TextBlock Text="Shader Flow" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbShaderFlow" IsEnabled="False">
+                        <ComboBoxItem Content="WGSL preferred (auto)" Tag="auto" IsSelected="True"
+                                      ToolTip="Prefer WGSL; allow HLSL translation for missing WGSL sources and unnamed helpers."/>
+                        <ComboBoxItem Content="SPIR-V (HLSL translation)" Tag="spirv"
+                                      ToolTip="Use HLSL through glslang/SPIR-V and Tint/WGSL, with no source-language fallback."/>
+                    </ComboBox>
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -417,6 +430,9 @@ $window.Width = [Math]::Min($window.Width, $window.MaxWidth)
 
 # Get controls
 $cmbApi         = $window.FindName("cmbApi")
+$btnCompileShaders = $window.FindName("btnCompileShaders")
+$pnlShaderFlow  = $window.FindName("pnlShaderFlow")
+$cmbShaderFlow  = $window.FindName("cmbShaderFlow")
 $chkDump        = $window.FindName("chkDump")
 $chkDebugFrames = $window.FindName("chkDebugFrames")
 $chkKeepRunning = $window.FindName("chkKeepRunning")
@@ -908,6 +924,7 @@ function Set-CullingMode {
 }
 
 function Load-Config {
+    $cmbShaderFlow.SelectedIndex = 0
     if (-not (Test-Path $configPath)) { return }
     try {
         $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -916,6 +933,11 @@ function Load-Config {
         foreach ($item in $cmbApi.Items) {
             if ($item.Tag -ieq $cfg.api) {
                 $cmbApi.SelectedItem = $item; break
+            }
+        }
+        foreach ($item in $cmbShaderFlow.Items) {
+            if ($item.Tag -ieq $cfg.webgpuShaderFlow) {
+                $cmbShaderFlow.SelectedItem = $item; break
             }
         }
         # Display
@@ -1049,6 +1071,7 @@ function Save-Config {
     }
     $cfg = @{
         api           = ($cmbApi.SelectedItem).Tag.ToString()
+        webgpuShaderFlow = $cmbShaderFlow.SelectedItem.Tag.ToString()
         display = $display
         debugFrames = [bool]$chkDebugFrames.IsChecked
         benchmark = ($sceneTag -eq "1" -and [bool]$chkBenchmark.IsChecked)
@@ -1114,6 +1137,9 @@ function Test-WebGpuSupported {
 
 function Update-WebGpuControls {
     $selected = Test-WebGpuSelected
+    $btnCompileShaders.IsEnabled = -not $script:LauncherBusy -and (Test-Path (Join-Path $rootDir "DayScene.exe"))
+    $pnlShaderFlow.Visibility = if ($selected) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+    $cmbShaderFlow.IsEnabled = $selected -and (Test-WebGpuSupported)
     foreach ($item in $cmbApi.Items) {
         if ($item.Tag -eq "webgpu") { $item.IsEnabled = Test-WebGpuSupported }
     }
@@ -1137,6 +1163,9 @@ function Get-LaunchCommand {
     $exePath = Join-Path $rootDir "DayScene.exe"
     if ($apiTag -eq "webgpu" -and -not (Test-WebGpuSupported)) { throw "WebGPU requires an x64 DayScene.exe in this folder." }
     $argList = @("--api", $apiTag)
+    if ($apiTag -eq "webgpu") {
+        $argList += @("--shaderFlow", $cmbShaderFlow.SelectedItem.Tag.ToString())
+    }
 
     if ($chkDebugFrames.IsChecked) {
         $argList += "--debugFrames"
@@ -1215,6 +1244,115 @@ function Get-LaunchCommand {
         Args    = $argList
         Display = ('"' + $exePath + '" ' + ($argList -join ' '))
     }
+}
+
+function Get-ShaderCompileCommands {
+    $runtime = $rootDir
+    $exe = Join-Path $runtime "DayScene.exe"
+    foreach ($api in @("d3d11", "d3d12", "vulkan", "gl", "webgpu")) {
+        if ($api -eq "webgpu" -and -not (Test-WebGpuSupported)) { continue }
+        $flows = if ($api -eq "webgpu") { @("auto", "spirv") } else { @("native") }
+        foreach ($flow in $flows) {
+            $arguments = @("--compileShaders", "--api", $api, "--logLevel", "info")
+            if ($api -eq "webgpu") { $arguments += @("--shaderFlow", $flow) }
+            [pscustomobject]@{ Name = "$api-$flow"; ExePath = $exe; WorkingDirectory = $runtime; Args = $arguments }
+        }
+    }
+}
+
+function Update-ShaderCompileQueue($State) {
+    if ($State.Process) {
+        if (Test-Path $State.Stdout) {
+            $stream = [IO.File]::Open($State.Stdout, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            $reader = [IO.StreamReader]::new($stream)
+            try { $State.Output.Text = $reader.ReadToEnd(); $State.Output.ScrollToEnd() } finally { $reader.Dispose() }
+        }
+        if (-not $State.Process.HasExited) { return }
+        $State.Process.WaitForExit()
+        if (Test-Path $State.Stdout) {
+            $State.Output.Text = [IO.File]::ReadAllText($State.Stdout)
+            $State.Output.ScrollToEnd()
+        }
+        $passed = $State.Process.ExitCode -eq 0 -and $State.Output.Text -match '\[ShaderPrecompile\] complete: \d+ succeeded, 0 failed'
+        if (-not $passed) { $State.Failures++ }
+        [void]$State.Results.Add([pscustomobject]@{ Job = $State.Jobs[$State.Index - 1].Name; ExitCode = $State.Process.ExitCode; Passed = $passed })
+        $State.Process.Dispose()
+        $State.Process = $null
+        $State.Progress.Value = $State.Index
+    }
+    if ($State.CancelRequested) {
+        $State.Timer.Stop()
+        $State.Status.Text = "Cancelled. Logs: $($State.Directory)"
+        $State.Cancel.Content = "Close"
+        $State.Cancel.IsEnabled = $true
+        $State.Results | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $State.Directory "summary.json") -Encoding UTF8
+        return
+    }
+    if ($State.Index -ge $State.Jobs.Count) {
+        $State.Timer.Stop()
+        $State.Status.Text = "Completed: $($State.Jobs.Count - $State.Failures) passed, $($State.Failures) failed. Logs: $($State.Directory)"
+        $State.Cancel.Content = "Close"
+        $State.Results | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $State.Directory "summary.json") -Encoding UTF8
+        return
+    }
+    $job = $State.Jobs[$State.Index]
+    $State.Stdout = Join-Path $State.Directory "$($job.Name).log"
+    $stderr = Join-Path $State.Directory "$($job.Name)-errors.log"
+    $State.Status.Text = "[$($State.Index + 1)/$($State.Jobs.Count)] $($job.Name)"
+    $State.Output.Text = ""
+    $arguments = $job.Args + @("--shaderCompileCancelFile", ('"{0}"' -f $State.CancelFile))
+    $State.Process = Start-Process -FilePath $job.ExePath -ArgumentList $arguments -WorkingDirectory $job.WorkingDirectory -RedirectStandardOutput $State.Stdout -RedirectStandardError $stderr -PassThru
+    $null = $State.Process.Handle
+    $State.Index++
+}
+
+function Invoke-ShaderCompilation {
+    $jobs = @(Get-ShaderCompileCommands)
+    if (-not $jobs.Count -or -not (Test-Path $jobs[0].ExePath)) { throw "Build DayScene before compiling shaders." }
+    $help = & $jobs[0].ExePath --help 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or $help -notmatch '--shaderCompileCancelFile') { throw "This DayScene build does not support cancellable shader precompilation. Rebuild or update the engine." }
+    $manifest = Join-Path $jobs[0].WorkingDirectory "Shaders\shader_permutations.json"
+    if (-not (Test-Path $manifest)) { throw "Missing shader permutation manifest: $manifest" }
+    $directory = Join-Path $jobs[0].WorkingDirectory ("logs\shader-compile-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+    [void][IO.Directory]::CreateDirectory($directory)
+    $dialog = [Windows.Markup.XamlReader]::Parse(@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Title="Compile Shaders" Width="760" Height="480" MinWidth="480" MinHeight="320" WindowStartupLocation="CenterOwner" Background="#1E1E2E" Foreground="#CDD6F4">
+  <DockPanel Margin="16">
+    <TextBlock Name="status" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,12"/>
+    <ProgressBar Name="progress" DockPanel.Dock="Top" Height="8" Margin="0,0,0,12"/>
+    <Button Name="cancel" DockPanel.Dock="Bottom" Content="Cancel" Width="100" Height="30" HorizontalAlignment="Right" Margin="0,12,0,0"/>
+    <TextBox Name="output" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12" Background="#0D1117" Foreground="#C9D1D9"/>
+  </DockPanel>
+</Window>
+'@)
+    $dialog.Owner = $window
+    $state = [pscustomobject]@{ Jobs = $jobs; Index = 0; Process = $null; Stdout = ""; Directory = $directory; CancelFile = (Join-Path $directory "cancel.request"); CancelRequested = $false; Failures = 0; Results = [Collections.ArrayList]::new(); Timer = [Windows.Threading.DispatcherTimer]::new(); Status = $dialog.FindName("status"); Progress = $dialog.FindName("progress"); Output = $dialog.FindName("output"); Cancel = $dialog.FindName("cancel") }
+    $state.Progress.Maximum = $jobs.Count
+    $state.Status.Text = if ($jobs.Count -eq 6) { "6 API/flow jobs" } else { "4 API jobs; WebGPU requires an x64 runtime" }
+    $state.Timer.Interval = [TimeSpan]::FromMilliseconds(300)
+    $updateQueue = ${function:Update-ShaderCompileQueue}
+    $state.Timer.Add_Tick({
+        try { & $updateQueue $state } catch {
+            $state.Timer.Stop()
+            $state.Status.Text = "Compilation stopped: $($_.Exception.Message). Logs: $($state.Directory)"
+        }
+    }.GetNewClosure())
+    $state.Cancel.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $dialog.Add_Closing({
+        param($sender, $eventArgs)
+        if ($state.Process) {
+            $eventArgs.Cancel = $true
+            $state.CancelRequested = $true
+            [IO.File]::WriteAllText($state.CancelFile, "cancel")
+            $state.Status.Text = "Cancelling after the current shader..."
+            $state.Cancel.IsEnabled = $false
+            $state.Timer.Start()
+        } else {
+            $state.Timer.Stop()
+        }
+    }.GetNewClosure())
+    $state.Timer.Start()
+    [void]$dialog.ShowDialog()
 }
 
 function Get-EditorLaunchCommand {
@@ -1383,6 +1521,10 @@ $cmbSandboxInput.Add_SelectionChanged({
 })
 
 $cmbApi.Add_SelectionChanged({ Update-Preview })
+$btnCompileShaders.Add_Click({
+    try { Invoke-ShaderCompilation } catch { [System.Windows.MessageBox]::Show($_.Exception.Message, "Compile Shaders", "OK", "Error") }
+})
+$cmbShaderFlow.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({
     Update-SceneOptionVisibility
     Select-PreferredSceneFileForScene

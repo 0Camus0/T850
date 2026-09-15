@@ -136,7 +136,9 @@ accept `--shaderFlow auto|wgsl|spirv`. The runtime stores `webgpuShaderFlow`
 values fail before loading; the Windows host sets the driver policy before
 initialization and shader creation on every WebGPU driver recreation. Logs record
 the selected startup policy, then each shader's actual flow. Both Windows launchers
-retain normal startup behavior without a fixture or shader-flow selector. See
+retain normal startup behavior and offer a WebGPU-only shader-flow selector for
+WGSL preferred (`auto`) or HLSL translation (`spirv`). The saved choice is passed
+on the next runtime launch; strict `wgsl` remains CLI-only. No fixture is injected. See
 [runtime commands and strict-mode limitations](../development/runtime-configuration.md#webgpu-shader-flow).
 All ten available runtime cases captured with the default policy; editor coverage
 remains pending. Named engine shaders resolve through `Shaders/`; anonymous HLSL
@@ -831,6 +833,47 @@ or with JSON config fields:
 `DayScene/App.cpp` starts recording before app/framework creation and flushes after creation instead of running the normal update loop. The output JSON records key bits, pass, shader filenames, and defines. Existing entries are merged by key.
 
 The checked-in `Assets/Shaders/shader_permutations.json` is an example/seed list of known requested permutations.
+
+### Refreshing and Compiling Permutations
+
+`--recordShaderPermutations` records through the runtime loop and merges results
+at normal process exit, including bounded snapshot exits. Unlike
+`--dumpShaderPermutations`, it does not stop immediately after startup. Aborted
+or forcibly terminated processes cannot guarantee a completed recording.
+
+From the source root, refresh the manifest using the current bounded scene suite:
+
+```powershell
+.\scripts\CaptureVisualBaselines.ps1 -RunSet candidate -Apis d3d12 -DumpSeconds 5 -PermutationOutput .\Assets\Shaders\shader_permutations.json -OutputRoot .\build\shader-permutation-sweep -ContinueOnError
+```
+
+On 2026-09-15, the refreshed sweep captured ten available cases, skipped Nexus
+because its models were missing, and had zero capture failures. All ten recorder
+flushes were verified. The merged manifest grew from 254 to **281 permutations**,
+retaining previously recorded coverage and adding **27** newly observed keys.
+This is observed scene-suite coverage, not an exhaustive enumeration of all
+possible scenes, runtime interactions or feature-bit combinations.
+
+From a built runtime directory, compile the entire manifest without scene loading:
+
+```powershell
+.\DayScene.exe --compileShaders --api d3d12
+.\DayScene.exe --compileShaders --api webgpu --shaderFlow auto
+.\DayScene.exe --compileShaders --api webgpu --shaderFlow spirv
+```
+
+`--shaderPermutationInput <path>` selects a different manifest. Current
+`ShaderKey` define generation is reused, with GLSL counterparts selected for
+OpenGL. Invalid manifests, missing sources and compilation failures produce a
+nonzero exit code; per-permutation progress is printed. Driver/compiler caches
+use their existing paths and identities. This caches shader artifacts, not every
+render-state pipeline combination or final GPU machine code.
+
+The **Compile Shaders** button in both Windows launchers runs all four native APIs
+and both supported WebGPU flows sequentially, with progress, cancellation and
+per-job logs. Unsupported WebGPU architectures are excluded explicitly. Android's
+existing Gradle shader task consumes the refreshed manifest for offline SPIR-V;
+the Windows cache job does not replace that APK build step.
 
 ## Resource binding conventions
 

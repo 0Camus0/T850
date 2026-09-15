@@ -241,7 +241,7 @@ now stop their workflow steps explicitly.
 | Registration, atlas, Launcher | PASS: source registration, 20 blocks/120 atlas face mappings, Windows PowerShell WPF/routing tests |
 | Android Release | PASS: arm64-v8a and x86_64, development and production APKs; ABI contents and signatures verified |
 | Workflow lint | PASS: checksum-verified actionlint 1.7.7; optional shellcheck/pyflakes integrations disabled |
-| Steam Deck job | Environment-blocked: no Linux distribution installed in WSL; no Linux/Podman build or package validation |
+| Steam Deck job | PASS on commit `851277e9`: hosted SteamRT build/package plus physical Deck runtime/editor smoke; details below |
 
 The first local Win32 attempt failed because x86 vcpkg packages were absent.
 Installing the workflow's exact package list resolved it; the subsequent complete
@@ -274,6 +274,57 @@ billing rules. A self-hosted runner can publish real Actions checks, but require
 deliberate setup and isolation from untrusted pull-request code; none was installed
 or registered here. Local test results do not automatically satisfy required
 GitHub check statuses. Windows MSBuild jobs are not reproduced by Linux-only `act`.
+
+### Hosted CI and Steam Deck
+
+The [hosted Build run for commit 851277e9](https://github.com/0Camus0/T850/actions/runs/35031344666)
+completed successfully: registration, all six Windows cells, both Android ABIs,
+and Steam Deck. The tag-only release job was skipped for the PR, as expected.
+
+The actual uploaded Steam Deck runtime/editor package was tested on physical
+SteamOS 3.8.10 hardware with RADV VANGOGH. Both executables resolved their shared
+libraries, all 56 runtime self-tests passed, and native Vulkan ForwardScene and
+editor captures rendered successfully. Required external scene assets were
+supplied separately. The earlier environment-blocked row is superseded by this
+evidence, not by a claim that the duplicate cold on-Deck source build completed;
+that redundant build was deliberately cancelled. See the
+[artifact hashes and bounded hardware evidence](https://github.com/0Camus0/T850/pull/38#issuecomment-5689162782).
+This is native Vulkan validation, not WebGPU on Linux.
+
+### Launcher and Shader Cache Follow-Up
+
+Both launchers now offer a WebGPU-only source-flow selector (`auto` or `spirv`)
+and a **Compile Shaders** button. The button uses the shipped Windows runtime,
+not an external developer compiler, to populate the normal caches for D3D11,
+D3D12, Vulkan, OpenGL and both WebGPU flows on x64. It preserves per-job logs and
+results and supports cooperative cancellation between permutations. Non-x64
+runtimes omit WebGPU; Android retains its offline APK shader task. The compile
+mode explicitly rejects non-Windows hosts before renderer startup.
+
+`--recordShaderPermutations` and the capture script's `-PermutationOutput` option
+allow a bounded scene sweep to collect requests after startup, including streamed
+shaders. The refreshed D3D12 sweep captured ten cases, skipped missing Nexus
+models, and verified ten recorder flushes. It retained 254 old keys and added 27,
+for **281 recorded permutations**. This is observed suite coverage, not every
+possible feature-bit combination or unnamed runtime helper.
+
+Follow-up validation on 2026-09-15:
+
+- All six API/flow compiler jobs passed for the refreshed manifest through the
+  real developer and portable WPF dialogs; cooperative cancellation was verified.
+- The six-cell Windows build matrix and 224 Win32/x64 self-test checks passed.
+- Android's offline shader task generated **576 SPIR-V outputs** successfully.
+  This follow-up did not rebuild APK packages or repeat Android device testing.
+- Launcher command/config/WPF/queue tests passed in PowerShell 7 and Windows
+  PowerShell 5.1, including a final-review regression test for delayed completion
+  output. Both launcher executables were rebuilt.
+- Build registration, pinned Dawn audit, manifest checks, and documentation links
+  passed. Missing manifests were rejected in Debug and Release.
+
+Evidence is under `T850/build/shader-prewarm-20260915` and the runtime
+`logs/shader-compile-*` directories. The hosted run above and Deck hardware test
+belong to the earlier commit; new commits require their own hosted checks.
+The native Voxel historical difference below remains unresolved and unaccepted.
 
 ### Runtime Commands
 

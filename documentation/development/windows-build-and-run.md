@@ -606,6 +606,30 @@ The launcher writes `config.json`. Runtime command-line arguments override value
 
 ### WebGPU Launcher Selection
 
+Both Windows launchers also have a **Compile Shaders** button in the Graphics API
+section. It compiles every entry in `Shaders/shader_permutations.json` through
+D3D11, D3D12, Vulkan and OpenGL, plus WebGPU `auto` and `spirv` on x64. It uses the
+selected architecture/configuration in the developer launcher and the adjacent
+DayScene executable in the portable launcher. No scene assets or development
+compiler tools are required beyond the shipped shaders, manifest and runtime.
+The engine itself must include the `--compileShaders` mode. This mode currently
+requires Windows; non-Windows runtimes reject it before renderer startup.
+
+The modal progress window runs one API/flow job at a time, supports cancellation,
+and retains per-job output/error logs and a completion `summary.json` under the
+runtime's `logs/shader-compile-<timestamp>` directory. A failed API is reported as
+a failure; cancellation finishes the current shader before exiting so it does
+not interrupt a cache write. Cancellation stops the remaining jobs. Otherwise,
+a compilation failure does not stop the remaining jobs. WebGPU is omitted on non-x64
+runtimes. The button is disabled for the Android target; APK builds already run
+their own offline SPIR-V compilation task using the same manifest.
+
+This prepares the normal local shader caches, reusing valid existing entries.
+It does not enumerate every possible 64-bit feature combination, compile unnamed
+runtime helpers, or produce portable GPU-specific pipeline binaries. New shader
+requests not represented in the manifest retain their normal runtime fallback.
+See [refreshing the permutation list](../rendering/shader-management.md#refreshing-and-compiling-permutations).
+
 Both the developer and portable Windows launchers offer **WebGPU (Dawn/D3D12)**
 for Windows x64 and persist the selected API. RUN and EDITOR use their normal
 argument builders with `--api webgpu`; the launcher does not remap that selection
@@ -622,9 +646,22 @@ controls and startup arguments. Existing native API routing is unchanged. See
 the [runtime handoff](../rendering/webgpu-runtime-summary.md) for measured image
 differences, accepted exceptions and remaining coverage gaps.
 
-The fixture-only shader selector, automatic capture directories and fixture
-completion UI have been removed. Both compiler flows and the explicit command-line
-developer tests remain available, with WGSL-first as the default. See
+Selecting WebGPU reveals the **Shader Flow** dropdown in both launchers:
+
+- **WGSL preferred (auto)**: the default, preferring named WGSL sources with HLSL
+	translation available for missing sources and anonymous helpers.
+- **SPIR-V (HLSL translation)**: strict HLSL -> glslang/SPIR-V -> Tint/WGSL.
+
+The choice is saved as `webgpuShaderFlow` and appears as `--shaderFlow` in the
+runtime command preview. It takes effect on the next RUN without rebuilding the
+engine. Switching away from WebGPU hides the control and omits the argument while
+retaining the choice. Unsupported targets disable the selector. Old configs
+without a supported value default to `auto`. Strict `wgsl` is CLI-only until
+anonymous HLSL helpers have WGSL counterparts.
+
+Automatic fixture capture directories and completion UI remain removed; the
+selector uses normal scene startup. Explicit command-line developer tests remain
+available. See
 [Shader Flow Selection](../rendering/shader-management.md#shader-flow-selection).
 
 Developer Build/Rebuild preflight now checks CMake availability and runs
@@ -641,7 +678,8 @@ and normal WPF control tests run in Windows CI:
 
 The tests passed locally on 2026-09-15 under PowerShell 7 and Windows PowerShell
 5.1. They reject fixture substitution and preserve normal scene arguments and
-controls while keeping config writes in temporary files. They do not establish
+controls, verify both shader choices, live preview changes, visibility and config
+round trips, and keep config writes in temporary files. They do not establish
 WebGPU scene rendering or automate packaged-EXE mouse clicks.
 
 ## Run DayScene

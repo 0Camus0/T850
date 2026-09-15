@@ -17,6 +17,7 @@ param(
     [int]$TimeoutSeconds = 240,
     [string]$ExePath,
     [string]$OutputRoot,
+    [string]$PermutationOutput,
     [string]$ReplayFromRunSet,
     [switch]$Force,
     [switch]$KeepRawDumps,
@@ -53,6 +54,12 @@ if ($FixedDeltaSeconds -le 0.0 -or $FixedDeltaSeconds -gt 1.0) {
 }
 if ($ReplayApi -and -not $ReplayFromRunSet) {
     throw "ReplayApi requires ReplayFromRunSet."
+}
+if ($PermutationOutput) {
+    $help = & $ExePath --help 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or $help -notmatch '--recordShaderPermutations') {
+        throw "This DayScene build does not support runtime permutation recording. Rebuild the engine first."
+    }
 }
 
 $modelDamagedHelmet = "Models/DamagedHelmet.glb"
@@ -303,6 +310,9 @@ foreach ($case in $caseDefinitions) {
             "--logFile", $engineLog
         ) + $case.ExtraArgs
         if ($api -eq "webgpu") { $arguments += @("--shaderFlow", $ShaderFlow) }
+        if ($PermutationOutput) {
+            $arguments += @("--recordShaderPermutations", "--shaderPermutationOutput", ('"{0}"' -f [IO.Path]::GetFullPath($PermutationOutput)))
+        }
 
         $captureMode = "timed"
         $replaySnapshot = $null

@@ -2,9 +2,13 @@ param(
     [ValidateSet("reference", "candidate")]
     [string]$RunSet = "reference",
 
-    [ValidateSet("d3d11", "d3d12", "gl", "vulkan")]
+    [ValidateSet("d3d11", "d3d12", "gl", "vulkan", "webgpu")]
     [string[]]$Apis = @("d3d11", "d3d12", "gl", "vulkan"),
 
+    [ValidateSet("auto", "wgsl", "spirv")]
+    [string]$ShaderFlow = "auto",
+    [ValidateSet("d3d11", "d3d12", "gl", "vulkan", "webgpu")]
+    [string]$ReplayApi,
     [string[]]$Cases = @(),
     [int]$Width = 1280,
     [int]$Height = 720,
@@ -46,6 +50,9 @@ if ($DumpSeconds -lt 0.0) {
 }
 if ($FixedDeltaSeconds -le 0.0 -or $FixedDeltaSeconds -gt 1.0) {
     throw "FixedDeltaSeconds must be greater than 0 and no more than 1 second."
+}
+if ($ReplayApi -and -not $ReplayFromRunSet) {
+    throw "ReplayApi requires ReplayFromRunSet."
 }
 
 $modelDamagedHelmet = "Models/DamagedHelmet.glb"
@@ -105,6 +112,13 @@ $caseDefinitions = @(
         Note = "SceneTemplate with DayScene.t8scene."
     },
     [pscustomobject]@{
+        Id = "scene-template-forward"
+        Scene = 4
+        ExtraArgs = @("--sceneFile", "Scenes/ForwardScene.t8scene")
+        RequiredAssets = @("Scenes/ForwardScene.t8scene", "Scenes/ForwardScene_RenderGraph.json", "Models/DamagedHelmet.glb")
+        Note = "Authored static material scene using the shared single-target forward graph."
+    },
+    [pscustomobject]@{
         Id = "scene-template-nexus"
         Scene = 4
         ExtraArgs = @("--sceneFile", "Scenes/Nexus.t8scene")
@@ -117,6 +131,13 @@ $caseDefinitions = @(
         ExtraArgs = @()
         RequiredAssets = @()
         Note = "VoxelScene with generated, asynchronously streamed mutable terrain."
+    },
+    [pscustomobject]@{
+        Id = "minecraft"
+        Scene = 6
+        ExtraArgs = @()
+        RequiredAssets = @("Scenes/Minecraft.t8scene")
+        Note = "MinecraftScene with its authored world, streaming terrain and runtime materials."
     }
 )
 
@@ -281,11 +302,13 @@ foreach ($case in $caseDefinitions) {
             "--logLevel", "info",
             "--logFile", $engineLog
         ) + $case.ExtraArgs
+        if ($api -eq "webgpu") { $arguments += @("--shaderFlow", $ShaderFlow) }
 
         $captureMode = "timed"
         $replaySnapshot = $null
         if ($ReplayFromRunSet) {
-            $replaySnapshot = Join-Path (Join-Path (Join-Path (Join-Path $OutputRoot $ReplayFromRunSet) $case.Id) $api) "snapshot.json"
+            $sourceApi = if ($ReplayApi) { $ReplayApi } else { $api }
+            $replaySnapshot = Join-Path (Join-Path (Join-Path (Join-Path $OutputRoot $ReplayFromRunSet) $case.Id) $sourceApi) "snapshot.json"
             if (-not (Test-Path -LiteralPath $replaySnapshot)) {
                 throw "Replay snapshot not found: $replaySnapshot"
             }
@@ -345,6 +368,10 @@ foreach ($case in $caseDefinitions) {
 
         $savedBackBuffer = Join-Path $caseDir "RT_Dump_BackBuffer.ppm"
         Copy-Item -LiteralPath $backBuffer -Destination $savedBackBuffer -Force
+        if ($KeepRawDumps) {
+            Get-ChildItem -LiteralPath $dumpDir.FullName -Filter '*.ppm' -File |
+                Copy-Item -Destination $caseDir -Force
+        }
         $snapshotPath = Join-Path $dumpDir.FullName "snapshot.json"
         if (Test-Path -LiteralPath $snapshotPath) {
             Copy-Item -LiteralPath $snapshotPath -Destination (Join-Path $caseDir "snapshot.json") -Force
@@ -362,6 +389,8 @@ foreach ($case in $caseDefinitions) {
             DumpSeconds = $DumpSeconds
             FixedDeltaSeconds = $FixedDeltaSeconds
             CaptureMode = $captureMode
+            ShaderFlow = if ($api -eq "webgpu") { $ShaderFlow } else { $null }
+            Arguments = $arguments
             ReplaySnapshot = $replaySnapshot
             DurationSeconds = [math]::Round(($ended - $started).TotalSeconds, 3)
             ExitCode = $exitCode
@@ -406,6 +435,8 @@ $manifest = [ordered]@{
     DumpSeconds = $DumpSeconds
     FixedDeltaSeconds = $FixedDeltaSeconds
     ReplayFromRunSet = $ReplayFromRunSet
+    ReplayApi = $ReplayApi
+    ShaderFlow = $ShaderFlow
     Apis = $Apis
     Gpu = $gpuInfo
     Captures = $records

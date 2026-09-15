@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture Condition="'$(Platform)'=='x64'">x64</PreferredToolArchitecture>
+    <T850DawnSourceRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\'))</T850DawnSourceRoot>
+    <T850DawnPackageRoot>$(T850DawnSourceRoot)Librerias\vcpkg\installed\x64-windows-static\</T850DawnPackageRoot>
+    <T850DawnLinkProps>$(T850DawnSourceRoot)build\dawn-package\Dawn.$(Configuration).props</T850DawnLinkProps>
+    <T850DawnRuntimeRoot>$(T850DawnPackageRoot)bin\</T850DawnRuntimeRoot>
+    <T850DawnRuntimeRoot Condition="'$(Configuration)'=='Debug'">$(T850DawnPackageRoot)debug\bin\</T850DawnRuntimeRoot>
+  </PropertyGroup>
+  <Import Project="$(T850DawnLinkProps)" Condition="'$(Platform)'=='x64' And Exists('$(T850DawnLinkProps)')" />
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(T850DawnSourceRoot)build\dawn-package;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <Target Name="T850CheckDawnPackage" BeforeTargets="PrepareForBuild" Condition="'$(Platform)'=='x64' And '$(DesignTimeBuild)'!='true'">
+    <Error Condition="!Exists('$(T850DawnLinkProps)')" Text="Required Dawn package metadata is missing. Run $(T850DawnSourceRoot)scripts\SetupDawn.ps1 before building Windows x64." />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(T850DawnSourceRoot)scripts\SetupDawn.ps1&quot; -Mode Check" />
+  </Target>
+  <Target Name="T850StageDawnRuntime" AfterTargets="Build" Condition="'$(Platform)'=='x64' And '$(ConfigurationType)'=='Application'">
+    <ItemGroup>
+      <T850DawnRuntime Include="$(T850DawnRuntimeRoot)dxcompiler.dll;$(T850DawnRuntimeRoot)dxil.dll" />
+      <T850DawnLicense Include="dawn;directx-dxc;abseil;imgui" />
+    </ItemGroup>
+    <Copy SourceFiles="@(T850DawnRuntime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(T850DawnLicense->'$(T850DawnPackageRoot)share\%(Identity)\copyright')" DestinationFiles="@(T850DawnLicense->'$(OutDir)licenses\%(Identity).txt')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

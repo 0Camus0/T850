@@ -5,7 +5,7 @@ param(
     [double]$MaximumDiffPercent = 0.0,
     [double]$MaximumAverageChannelDelta = 0.0,
     [string[]]$Cases = @(),
-    [ValidateSet("d3d11", "d3d12", "gl", "vulkan")]
+    [ValidateSet("d3d11", "d3d12", "gl", "vulkan", "webgpu")]
     [string[]]$Apis = @(),
     [string]$OutputPath
 )

@@ -197,6 +197,7 @@ $xaml = @"
                 <ComboBox Name="cmbApi">
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" IsSelected="True" Tag="d3d11"/>
                     <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
+                    <ComboBoxItem Content="WebGPU (Dawn/D3D12)" Tag="webgpu"/>
                     <ComboBoxItem Content="Vulkan" Tag="vulkan"/>
                     <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
@@ -1807,6 +1808,42 @@ function Test-WindowsVcpkgTripletReady {
     ))
 }
 
+function Invoke-DawnPackageCheck {
+    $ErrorActionPreference = "Continue"
+    $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $rootDir "scripts\SetupDawn.ps1") -Mode Check 2>&1
+    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output | Out-String).Trim() }
+}
+
+function Get-DawnSetupStatus {
+    param([string]$TargetPlatform)
+    if ($TargetPlatform -ine "x64") { return [pscustomobject]@{ Missing = @(); Diagnostic = "" } }
+    if (-not (Test-CommandExists "cmake")) {
+        return [pscustomobject]@{ Missing = @("CMake 3.21+ on PATH (required for Windows x64 Dawn setup)"); Diagnostic = "Install CMake and restart the Launcher." }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $rootDir "scripts\SetupDawn.ps1"))) {
+        return [pscustomobject]@{ Missing = @("Dawn setup script"); Diagnostic = "scripts\SetupDawn.ps1 is missing." }
+    }
+    $check = Invoke-DawnPackageCheck
+    if ($check.ExitCode -ne 0) {
+        return [pscustomobject]@{ Missing = @("Dawn package or generated metadata (missing/stale)"); Diagnostic = $check.Output }
+    }
+    return [pscustomobject]@{ Missing = @(); Diagnostic = "" }
+}
+
+function Invoke-DawnPackageSetup {
+    $txtBuildOutput.Text = ""
+    $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+    Set-LauncherBusy $true "SETUP..."
+    try {
+        $arguments = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $rootDir "scripts\SetupDawn.ps1"))
+        $exitCode = Invoke-LoggedProcess -FilePath "powershell.exe" -Arguments $arguments -WorkingDirectory $rootDir -StatusPrefix "Dawn dependency setup"
+        return $exitCode -eq 0
+    } finally {
+        Set-LauncherBusy $false
+        Update-Preview
+    }
+}
+
 function Get-WindowsToolchainStatus {
     param([string]$TargetPlatform)
     $repoRoot = Get-AndroidRepoRoot
@@ -1828,8 +1865,11 @@ function Get-WindowsToolchainStatus {
         }
     }
 
+    $dawnStatus = Get-DawnSetupStatus -TargetPlatform $TargetPlatform
+    foreach ($item in $dawnStatus.Missing) { $missing.Add($item) }
     return [pscustomobject]@{
         Missing = @($missing)
+        Dawn = $dawnStatus
         SetupScript = (Join-Path $repoRoot "LaunchSolution.bat")
     }
 }
@@ -1868,6 +1908,10 @@ function Ensure-WindowsToolchain {
     param([string]$TargetPlatform)
     $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
     if ($status.Missing.Count -eq 0) { return $true }
+    if ($status.Missing -match "^CMake") {
+        [System.Windows.MessageBox]::Show("CMake 3.21+ is required for Windows x64 builds. Install CMake, add it to PATH, restart the Launcher, then build again.", "T850 Launcher", "OK", "Warning") | Out-Null
+        return $false
+    }
 
     $missingText = ($status.Missing | ForEach-Object { "- $_" }) -join [System.Environment]::NewLine
     if ($status.Missing -match "Visual Studio") {
@@ -1904,10 +1948,43 @@ function Ensure-WindowsToolchain {
     }
 
     $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
+    if ($status.Dawn.Missing.Count -gt 0) {
+        $answer = [System.Windows.MessageBox]::Show(("The required Dawn package or build metadata is missing/stale." + "`n`n" + $status.Dawn.Diagnostic + "`n`nRun Dawn setup now?"), "T850 Launcher", "YesNo", "Warning")
+        if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return $false }
+        if (-not (Invoke-DawnPackageSetup)) { return $false }
+        $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
+    }
     if ($status.Missing.Count -gt 0) {
         [System.Windows.MessageBox]::Show(("Windows setup finished, but these pieces are still missing:" + "`n`n" + (($status.Missing | ForEach-Object { "- $_" }) -join "`n")), "T850 Launcher", "OK", "Warning")
         return $false
     }
+    return $true
+}
+
+function Test-WebGpuSelected {
+    return $cmbApi.SelectedItem -and $cmbApi.SelectedItem.Tag -eq "webgpu"
+}
+
+function Test-WebGpuSupported {
+    return -not (Test-AndroidTarget) -and $cmbArch.SelectedItem.Content -ieq "x64"
+}
+
+function Update-WebGpuControls {
+    $selected = Test-WebGpuSelected
+    foreach ($item in $cmbApi.Items) {
+        if ($item.Tag -eq "webgpu") { $item.IsEnabled = Test-WebGpuSupported }
+    }
+    $btnRun.ToolTip = if ($selected) { "WebGPU supports forward and deferred runtime scenes on Windows x64. Editor support is unavailable." } else { $null }
+    $btnEditor.ToolTip = if ($selected) { "WebGPU editor support is not implemented." } else { $null }
+}
+
+function Update-WebGpuPreview {
+    if (-not (Test-WebGpuSelected) -or (Test-WebGpuSupported)) { return $false }
+    $btnRun.IsEnabled = $false
+    $btnEditor.IsEnabled = $false
+    $txtCmdPreview.Text = ""
+    $txtStatus.Text = "WebGPU requires Windows x64."
+    $txtStatus.Foreground = $window.FindResource("RedBrush")
     return $true
 }
 
@@ -1919,6 +1996,7 @@ function Get-LaunchCommand {
     $archFolder = Get-ArchFolder
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\DayScene.exe"
+    if ($apiTag -eq "webgpu" -and -not (Test-WebGpuSupported)) { throw "WebGPU requires Windows x64." }
     $argList = @("--api", $apiTag)
 
     if ($chkDebugFrames.IsChecked) {
@@ -2013,6 +2091,7 @@ function Get-LaunchCommand {
 }
 
 function Get-EditorLaunchCommand {
+    if ((Test-WebGpuSelected) -and -not (Test-WebGpuSupported)) { throw "WebGPU requires Windows x64." }
     $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
     $config = ($cmbConfig.SelectedItem).Content.ToString()
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
@@ -2023,7 +2102,9 @@ function Get-EditorLaunchCommand {
     $argList = @()
 
     # Win32 ImGui is provisioned without the D3D12 backend; use D3D11 there.
-    $editorApi = if ($arch -eq "x86") {
+    $editorApi = if ($apiTag -eq "webgpu") {
+        "webgpu"
+    } elseif ($arch -eq "x86") {
         if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d11" }
     } else {
         if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d12" }
@@ -2166,8 +2247,10 @@ function Get-AndroidForceStopArguments {
 
 function Update-Preview {
     Update-TargetPlatformState
+    Update-WebGpuControls
     Update-DownloadAssetsButton
     if ($script:LauncherBusy) { return }
+    if (Update-WebGpuPreview) { return }
     $sceneDeps = Get-CachedSceneDependencyResult
     $assetStatus = $script:CloudAssetStatus
     $assetsMissing = ($assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok))
@@ -2236,6 +2319,13 @@ function Update-Preview {
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
         $btnEditor.IsEnabled = $false
+    }
+    if (Test-WebGpuSelected) {
+        $btnEditor.IsEnabled = $false
+        if ($sceneOk -and $sceneDeps.Ok -and -not $assetsMissing) {
+            $txtStatus.Text = "WebGPU: runtime forward/deferred rendering; editor unavailable."
+            $txtStatus.Foreground = $window.FindResource("AccentBrush")
+        }
     }
 }
 
@@ -2721,6 +2811,10 @@ $btnRun.Add_Click({
 
 # EDITOR button — launch T8ditor with current graphics/resolution/log settings
 $btnEditor.Add_Click({
+    if (Test-WebGpuSelected) {
+        [System.Windows.MessageBox]::Show("WebGPU editor support is not implemented. Select another API for EDITOR.", "T850 Launcher", "OK", "Information") | Out-Null
+        return
+    }
     Populate-ModelList
     if (Test-AndroidTarget) {
         Update-SceneDependencyCache

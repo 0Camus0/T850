@@ -201,6 +201,7 @@ $xaml = @"
                 <ComboBox Name="cmbApi">
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" Tag="d3d11"/>
                     <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
+                    <ComboBoxItem Content="WebGPU (Dawn/D3D12)" Tag="webgpu"/>
                     <ComboBoxItem Content="Vulkan" IsSelected="True" Tag="vulkan"/>
                     <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
@@ -1090,10 +1091,51 @@ function Format-LauncherCommandLine {
     return (('"' + $FilePath + '" ' + ($quotedArgs -join ' ')).Trim())
 }
 
+function Test-WebGpuSelected {
+    return $cmbApi.SelectedItem -and $cmbApi.SelectedItem.Tag -eq "webgpu"
+}
+
+function Test-WebGpuSupported {
+    $reader = $null
+    try {
+        $reader = [IO.BinaryReader]::new([IO.File]::OpenRead((Join-Path $rootDir "DayScene.exe")))
+        if ($reader.BaseStream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5A4D) { return $false }
+        $reader.BaseStream.Position = 0x3C
+        $offset = $reader.ReadUInt32()
+        if ($offset -gt $reader.BaseStream.Length - 6) { return $false }
+        $reader.BaseStream.Position = $offset
+        return $reader.ReadUInt32() -eq 0x00004550 -and $reader.ReadUInt16() -eq 0x8664
+    } catch {
+        return $false
+    } finally {
+        if ($reader) { $reader.Dispose() }
+    }
+}
+
+function Update-WebGpuControls {
+    $selected = Test-WebGpuSelected
+    foreach ($item in $cmbApi.Items) {
+        if ($item.Tag -eq "webgpu") { $item.IsEnabled = Test-WebGpuSupported }
+    }
+    $btnRun.ToolTip = if ($selected) { "WebGPU supports forward and deferred runtime scenes on Windows x64. Editor support is unavailable." } else { $null }
+    $btnEditor.ToolTip = if ($selected) { "WebGPU editor support is not implemented." } else { $null }
+}
+
+function Update-WebGpuPreview {
+    if (-not (Test-WebGpuSelected) -or (Test-WebGpuSupported)) { return $false }
+    $btnRun.IsEnabled = $false
+    $btnEditor.IsEnabled = $false
+    $txtCmdPreview.Text = ""
+    $txtStatus.Text = "WebGPU requires an x64 DayScene.exe in this folder."
+    $txtStatus.Foreground = $window.FindResource("RedBrush")
+    return $true
+}
+
 function Get-LaunchCommand {
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
 
     $exePath = Join-Path $rootDir "DayScene.exe"
+    if ($apiTag -eq "webgpu" -and -not (Test-WebGpuSupported)) { throw "WebGPU requires an x64 DayScene.exe in this folder." }
     $argList = @("--api", $apiTag)
 
     if ($chkDebugFrames.IsChecked) {
@@ -1176,12 +1218,15 @@ function Get-LaunchCommand {
 }
 
 function Get-EditorLaunchCommand {
+    if ((Test-WebGpuSelected) -and -not (Test-WebGpuSupported)) { throw "WebGPU requires an x64 DayScene.exe in this folder." }
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
     $exePath = Join-Path $rootDir "T8ditor.exe"
     $argList = @()
 
     # Win32 ImGui is provisioned without the D3D12 backend; use D3D11 there.
-    $editorApi = if (-not [Environment]::Is64BitProcess) {
+    $editorApi = if ($apiTag -eq "webgpu") {
+        "webgpu"
+    } elseif (-not [Environment]::Is64BitProcess) {
         if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d11" }
     } else {
         if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d12" }
@@ -1211,7 +1256,10 @@ function Get-EditorLaunchCommand {
 }
 
 function Update-Preview {
+    Update-WebGpuControls
     Update-DownloadAssetsButton
+    if ($script:LauncherBusy) { return }
+    if (Update-WebGpuPreview) { return }
     $cmd = Get-LaunchCommand
     $txtCmdPreview.Text = $cmd.Display
 
@@ -1252,6 +1300,13 @@ function Update-Preview {
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
         $btnEditor.IsEnabled = $editorOk
+    }
+    if (Test-WebGpuSelected) {
+        $btnEditor.IsEnabled = $false
+        if ($sceneOk -and $sceneDeps.Ok -and -not $assetsMissing) {
+            $txtStatus.Text = "WebGPU: runtime forward/deferred rendering; editor unavailable."
+            $txtStatus.Foreground = $window.FindResource("AccentBrush")
+        }
     }
 }
 
@@ -1416,6 +1471,10 @@ $btnRun.Add_Click({
 
 # EDITOR button
 $btnEditor.Add_Click({
+    if (Test-WebGpuSelected) {
+        [System.Windows.MessageBox]::Show("WebGPU editor support is not implemented. Select another API for EDITOR.", "T850 Launcher", "OK", "Information") | Out-Null
+        return
+    }
     Populate-ModelList
     $cmd = Get-EditorLaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {

@@ -60,6 +60,528 @@ flowchart LR
 | `Framework/src/utils/ShaderPermutationDump.cpp` | Records requested `ShaderKey` permutations to JSON for offline/prewarm workflows. |
 | `T850/Assets/Shaders/*` | HLSL and GLSL shader sources plus `shader_permutations.json`. |
 
+## WebGPU Compiler Gate
+
+Windows x64 now has an in-process compiler in
+[WebGPUShaderCompiler.cpp](../../T850/Framework/src/video/webgpu/WebGPUShaderCompiler.cpp),
+registered in Framework's MSBuild and CMake builds. The compiler is now consumed
+by the [WebGPU driver](../development/windows-build-and-run.md#first-normal-webgpu-scene)
+through a ShaderBase implementation. Normal forward and deferred runtime scenes
+run through the existing mesh/material/render-graph path on Windows x64.
+The 2026-09-15 close-out captured all ten available cases in both default `auto`
+and strict `spirv` modes. The earlier `WGPU-RENDER-02`/`03` measurements below are
+historical; residual image differences and case-specific visual acceptance are
+not proof of universal pixel parity. T8ditor remains unavailable.
+The stage-two detour adds maintained WGSL counterparts for all 17 HLSL stage
+files under `Assets/Shaders`, including the mesh and fullscreen pass families.
+The default file-loading path is `LoadShaderFiles(ShaderFileRequest, ...)`, with
+`ShaderFileRequest::flow = ShaderFlow::Auto`: prefer handwritten WGSL and fall
+back to the matching HLSL/SPIR-V source if WGSL cannot be prepared. Both flows
+remain built in and independently selectable at runtime; no rebuild is required
+to choose one. The native compiler paths are unchanged; the shared HLSL sampling
+corrections and their D3D12/Vulkan image checks are recorded below.
+Maintaining matching HLSL and WGSL behavior is a testable source-maintenance
+obligation.
+
+Stage-two completion is limited to the implemented compiler infrastructure and
+its documented tests, not 100% shader-port acceptance. The known derivative
+uniformity blockers are fixed for the tested corpus as of 2026-09-15, while full rendering parity remains
+unverified for the paths listed under [Automated HLSL/WGSL Tests](#automated-hlslwgsl-tests).
+
+### Shader Flow Selection
+
+| Mode | Compiler API | Behavior |
+|---|---|---|
+| `auto` (default) | `ShaderFlow::Auto` | Load/preprocess/reflect `.wgsl`; on failure, try the matching `.hlsl` through glslang/SPIR-V/Tint |
+| `wgsl` | `ShaderFlow::Wgsl` | Direct WGSL only; failure is returned without trying HLSL |
+| `spirv` | `ShaderFlow::Spirv` | HLSL/SPIR-V/Tint only; failure is returned without trying direct WGSL |
+
+Set `name` to a resource-relative family stem or a `.hlsl`/`.wgsl` path. The flow,
+not the supplied extension, chooses which sibling file to read through
+ResourceLocator. Stage, entry point, binding layout, defines, key bits and the
+specialization identity are identical for both attempts. The policy is per stage;
+the future renderer must still validate stage interfaces and pipeline layouts.
+
+Missing, unreadable, empty, preprocessing-invalid or reflection-invalid WGSL
+triggers fallback in `auto`. A corrupt WGSL cache entry first regenerates from
+WGSL source; a cache miss or cache-write failure alone does not switch flows.
+Fallback returns a warning diagnostic retaining the original WGSL failure. If
+both paths fail, both errors are retained and no partial artifact is returned.
+SPIR-V fallback is best-effort, not a guarantee for arbitrary future source:
+the known derivative-uniformity failures below are now regression-tested. This layer does not catch
+later Dawn pipeline validation failures, device loss or rendering errors.
+
+Every call tries the preferred path again, so a restored/fixed WGSL source takes
+priority even when a fallback artifact is cached. Both source languages retain
+separate cache identities; selection policy itself is not artifact identity,
+so a forced `spirv` run may reuse a previous HLSL fallback entry, never a direct
+WGSL entry. For controlled comparisons, use a forced mode and track cache state.
+
+`ShaderFlowReport` records the requested policy, whether fallback was attempted,
+total elapsed time and each attempted source's language/name, success, cache hit,
+preparation time, total attempt time and diagnostic. The actual successful flow
+is the successful attempt, not necessarily the requested policy. Attempt/total
+time includes loading, caching and failed work; preparation time excludes cache
+I/O and is zero on a hit or a missing source. These are CPU loading/compiler
+measurements, not Dawn pipeline creation time or GPU frame timings.
+
+For callers that already hold source text, `LoadOrTranslateShader` and
+`TranslateShader` remain strict single-language APIs. Their existing HLSL default
+is retained for compatibility; `ShaderSourceLanguage::Wgsl` selects direct text
+preprocessing without glslang or SPIR-V. File-based consumers should use
+`LoadShaderFiles` for the new default/fallback behavior. The stage-two probe exposes
+the same modes. Normal DayScene startup and the explicit developer fixture both
+accept `--shaderFlow auto|wgsl|spirv`. The runtime stores `webgpuShaderFlow`
+(default `auto`), with CLI overriding the optional root JSON field. Missing/invalid
+values fail before loading; the Windows host sets the driver policy before
+initialization and shader creation on every WebGPU driver recreation. Logs record
+the selected startup policy, then each shader's actual flow. Both Windows launchers
+retain normal startup behavior without a fixture or shader-flow selector. See
+[runtime commands and strict-mode limitations](../development/runtime-configuration.md#webgpu-shader-flow).
+All ten available runtime cases captured with the default policy; editor coverage
+remains pending. Named engine shaders resolve through `Shaders/`; anonymous HLSL
+debug shaders use `LoadOrTranslateShader` and explicitly log SPIR-V translation.
+Strict WGSL rejects anonymous HLSL without a paired WGSL source. See
+[WebGPU launcher selection](../development/windows-build-and-run.md#webgpu-launcher-selection).
+
+The portable [preprocessor adapter](../../T850/Framework/src/utils/ShaderPreprocessor.cpp)
+embeds [simplecpp 1.9.1](../../T850/Librerias/simplecpp/README.t850.md), pinned to
+commit `2499b51390e6ea74b8fbad91154f5529134de31a` under 0BSD. Its unmodified
+implementation/header and license are vendored, so no setup download or executable
+is needed. Templates support nested `#if/#ifdef/#ifndef/#elif/#else/#endif`,
+`#define`, `#undef`, and `#error`. The initial contract is ASCII with ordinary
+non-nested C-style comments; this is not a general WGSL lexer. Includes, pragmas,
+line directives and `__DATE__/__TIME__/__FILE__` are rejected. Caller-supplied text
+comes through ResourceLocator; preprocessing does not open shader files. Output
+contains no C `#line` markers. WGSL parser line numbers currently refer to emitted
+text, not a full original-source map.
+
+`GraphicsV1` maps registers `tN`, `sN`, and `bN` to group 0 bindings `N`, `32+N`,
+and `64+N`. `BlurV1` maps compute `b0/t0/u0` to group 0 bindings `0/1/2`.
+These are provisional compiler policies, not the final renderer's bind-group
+layout. Reflection verifies the requested entry point/stage and returns active
+resource kinds, uniform sizes/top-level member offsets, texture dimensions/scalar
+types, comparison-sampler status, storage-format status, typed input/output
+locations, depth-output status and compute workgroup size. Unsupported resource
+kinds fail explicitly. Full nested-layout/access metadata and final pipeline/bind
+group layout integration remain work for the renderer.
+
+`LoadOrTranslateShader` reuses `ShaderDiskCache` and `ResourceLocator`. A new
+single-stage key includes stage, entry point, source name, source/defines,
+`ShaderKey` bits, source language, binding policy and caller specialization identity. The compiler
+signature includes the pinned vcpkg revision, installed Dawn/glslang ABI hashes
+and translator/preprocessor/simplecpp source/header hashes, generated and checked
+by `SetupDawn.ps1`. Changing a WGSL file changes its source key without rebuilding
+the compiler. Changing the preprocessor requires refreshing setup metadata.
+The specialization argument is identity only; callers must supply specialized
+HLSL/defines. WGSL workgroup overrides are not resolved by this API.
+
+Each artifact is a checksummed `stage.wgsl.json` record under the `webgpu` cache.
+Hits validate identity/checksum and reparse/reflect WGSL without rerunning
+glslang or SPIR-V-to-WGSL translation. Corrupt, stale or invalid records miss and
+regenerate. Cache-write failure returns a usable artifact with a diagnostic.
+Adapter identity is not part of the portable WGSL key. Existing graphics-pair
+cache keys and `ShaderKey` bit layout are unchanged.
+
+### Automated HLSL/WGSL Tests
+
+The [shader probe](../../T850/cmake/dawn-package/ShaderProbe.cpp) and
+[numeric fixtures](../../T850/cmake/dawn-package/ShaderNumerics.cpp) provide
+several independent checks instead of requiring visual inspection of each variant:
+
+| Layer | Coverage |
+|---|---|
+| Preprocessing | Nested conditions, inactive parents, expressions, token preservation and malformed/unsupported directives |
+| Source/cache | All 17 WGSL stages, native HLSL compilation, corruption recovery, invalidation and fresh-process warm hits |
+| Flow selection | WGSL-first default, strict overrides, missing/invalid sources, entry-stage mismatch, fallback diagnostics, recovery to WGSL, invalid requests and cache separation |
+| Vertex feature combinations | 1,024 mesh variants: seven attribute flags, four skinning modes, shadow/non-shadow; plus three wireframe skinning variants. Compare translated-HLSL bindings and typed locations, and native uniform layouts |
+| Recorded corpus | All 254 recorded entries plus cascade-debug, quad depth-prepass, simple-color and 12 no-environment fixtures: 538 stages through both strict HLSL/SPIR-V/Tint and direct WGSL. Check native active bindings/dimensions/types, uniform sizes/offsets, fragment targets/depth, and vertex/fragment location compatibility in each path; no-environment variants must omit slots 6 and 10-15 |
+| Matrix execution | 448 exact native-HLSL/D3D11 versus translated-WGSL/Dawn cases: non-symmetric matrices, multiplication directions, arrays and dynamic indexed matrix/vector/scalar loads |
+| Blur execution | 60 fixtures across sizes, patterns and directions; native HLSL/D3D11, direct WGSL/Dawn/D3D12 and CPU reference. Includes borders, one-pixel sizes, non-workgroup-multiple dimensions and padded sentinel pixels |
+| Function execution | 6,144 input/mode cases per mesh/fullscreen family call the production functions through test-only compute entry points: GGX distribution/visibility, Fresnel/IBL, attenuation, sheen, octahedral normals and color conversion |
+| Test sensitivity | An in-memory mutation changes the blur divisor from 16 to 15; the numerical test must reject it |
+
+GPU references use Dawn's exact DXGI adapter, with its LUID logged. Outputs are
+read back after completion and checked for finite values. Blur tolerances are
+`0.001 + 0.001 * abs(cpu)` for both implementations and their difference; padded
+sentinels must match exactly. Function tests use RGBA16F readback and an absolute
+error limit of `0.002 * max(abs(hlsl), 1)`. These tolerances are explicit test
+policies, not proof of identical FP32 results. Observed Release maxima on the
+RTX 4080 Laptop GPU were 0.00312519 absolute for blur and 0.000571102 scaled for
+the function suite. Debug and Release passed locally on 2026-09-14.
+
+The corpus is not an exhaustive inventory of future material combinations. Native
+resource checks require all native active resources to exist in WGSL; WGSL can
+retain additional resources referenced by functions that HLSL optimizes away.
+The WGSL mesh/fullscreen ports no longer downgrade derivative-uniformity diagnostics.
+Both paths pass strict validation for the recorded corpus, and the default mesh
+stage participates in the same translation/cache checks as every other stage.
+This does not establish exhaustive parallax, alpha/discard, transmission, lighting
+composition or skinning execution parity. Those still require broader targeted
+rendering tests beyond the native before/after captures below.
+
+The shader-only tests above do not select an engine driver. The separate
+stage-three graphics fixture uses the real WebGPU driver and shared Windows
+factory, but still does not establish scene/editor parity. The driver consumes
+the defines retained by `ShaderBase::CreateShader`, so the new file-loading path
+does not reconstruct or duplicate the shared ShaderKey-to-defines logic. Visual snapshot
+comparisons remain useful for final integration, but are no longer the only
+regression signal.
+See [build commands](../development/windows-build-and-run.md#shader-compiler-probe).
+
+### Open Follow-Up: Derivative Uniformity
+
+**Tracking ID:** `WGPU-SHADER-01`
+
+**Status:** Known compiler failures fixed and regression-tested on 2026-09-15;
+broader rendering acceptance remains open. The historical diagnostics below are
+retained for context and are no longer expected failures on the tested variants.
+
+#### Corrections and Native Image Checks
+
+Before editing shaders, captured all seven runtime scene indices on D3D12 and
+Vulkan at 1280x720, with five-second fixed-delta runs and every available FrameDumper
+render target retained. The extended matrix produced 18 successful scene/API
+references with no failed timed captures. Two additional Vulkan Q3 variants were
+skipped by the capture script's VRAM guard; both Nexus variants were skipped for
+missing model assets. These are skips, not passing tests or proof of hardware
+incompatibility. The script now includes the previously omitted Minecraft case.
+
+An unchanged-source replay control was captured before making fixes. VoxelScene
+and Minecraft replay timed out on both APIs, so those scenes use preserved,
+unchanged-source timed controls instead; their timed runs succeed. Other scenes
+are compared against unchanged-source replays of the original snapshots. Shader
+sources and the executable were backed up before editing. No accepted reference
+was overwritten, and the user's unrelated WGSL edits were preserved.
+
+Corrections in both HLSL and WGSL:
+
+- DOF/DOF2, autofocus/CoC, shadow and SSAO depth/normal reads now explicitly select
+  mip zero of single-mip render-target inputs, retaining the sampler's within-mip
+  filtering. Conditional forward refraction reads do the same for scene color.
+- SSAO noise sampling uses explicit gradients computed before the depth-dependent
+  early return. Parallax's unchanged base-UV gradients are computed before its
+  height-dependent loop and reused for height/self-shadow samples; material mip
+  selection is not globally replaced with level zero.
+- The forward lightmap read occurs before the depth-dependent discard, preserving
+  its implicit mip selection. This can do extra sampling for fragments that later
+  discard; no performance improvement or zero-overhead claim is made.
+- Removed `diagnostic(warning, derivative_uniformity)` from both WGSL families.
+  The corpus now requires strict SPIR-V translation too, and the former default
+  mesh translator exclusion is removed.
+
+Results for every before/after render target, within the same native API:
+
+| Coverage | Result |
+|---|---|
+| All captured cases | 232 target pairs; identical target-name sets, no size mismatch |
+| Exact equality | 228/232 images byte-identical |
+| Minecraft deferred target | One channel-level maximum difference on each API, within tolerance 2 |
+| Minecraft D3D12 backbuffer | 1/921,600 pixels outside tolerance 2; maximum channel difference 4 |
+| Minecraft Vulkan backbuffer | 2/921,600 pixels outside tolerance 2; maximum channel difference 6 |
+| All other scenes/targets | Byte-identical to matched unchanged-source controls |
+
+No large native before/after divergence was found. The corrected Minecraft repeat
+was byte-identical to the first corrected run: retain the tiny before/after
+differences as observed changes, not presumed run-to-run noise. DayScene's saved
+state enabled DOF, shadows, SSAO and parallax, but that does not imply exhaustive
+material or parallax-self-shadow edge-case coverage. PPM checks do not expose all
+HDR/alpha differences. GPU performance was not benchmarked.
+
+The generated review set is under `T850/build/uniformity-native-20260915`:
+`reference` (original frames), `replay-control`, `timed-control`, `candidate`,
+`before-shaders`, `DayScene-before.exe`, and `all-target-comparison.json`.
+`REVIEW.md` links paired PNGs; `reports/minecraft-*/snapshot_report.html` compares
+all Minecraft targets. Generated evidence is local, not checked into Git.
+
+All 11 CTests passed in both Debug and Release: strict 514-stage corpus in both
+languages, 1,027 vertex variants, default/cache/flow tests, numerical GPU tests
+and surface lifecycle. Normal forward SceneTemplate and Sandbox both completed
+with `--shaderFlow spirv` and no runtime errors. Strict `wgsl` still encounters
+anonymous HLSL debug shaders without WGSL counterparts; that is independent of
+derivative uniformity. `WGPU-RENDER-02` remains a separate cross-API image-parity
+investigation and was not closed by these native before/after tests.
+
+Historical step-four evidence: one static normal-mapped helmet/IBL scene rendered through
+the normal engine path with byte-identical native D3D12/WGSL captures at the tested
+sizes. That initial result did not isolate the SPIR-V failure below or validate
+broader material behavior; the subsequent corrections and evidence are above.
+
+#### Historical Reproduction
+
+From the source root containing `T850.sln`, with the installed-package Release
+shader probe built:
+
+```powershell
+.\build\dawn-package\Release\DawnShaderProbe.exe `
+    .\Assets\Shaders .\build\dawn-package\diagnostic-mesh-spirv `
+    flow spirv FS_Mesh.hlsl
+```
+
+Before the fixes: exit code 1, `requested=spirv actual=none success=0 fallback=0`,
+entry point `FS`, key `0x0`, and an empty defines list. The relevant diagnostic is:
+
+```text
+error: 'textureSample' must only be called from uniform control flow
+note: control flow depends on possibly non-uniform value
+note: parameter 'input' of 'v_6' may point to a non-uniform value
+note: possibly non-uniform value passed via pointer here
+note: parameter 'v_5' of 'FS_inner' may be non-uniform
+note: possibly non-uniform value passed here
+note: user-defined input 'v_99' of 'FS' may be non-uniform
+```
+
+Generated symbol names can change with compiler revisions. Capture the complete
+diagnostic, source/define identity and Dawn/glslang pin when reproducing again.
+
+The pre-fix 2026-09-15 normal-startup reproduction used
+`DayScene.exe --api webgpu --shaderFlow spirv --scene 4 --sceneFile Scenes/ForwardScene.t8scene`.
+The first failure was earlier than mesh loading: `RenderQuad::Create()` eagerly
+compiled `FS_Quad.hlsl` `DOF_PASS`, key `0x1300008`, with defines `USE_TEXCOORD0`
+and `DOF_PASS`. Tint reported `'textureSample' must only be called from uniform
+control flow`, noting that a `textureSample` return value may be non-uniform.
+The standalone default fullscreen stage passing does not cover this permutation.
+Resolve both fullscreen and mesh cases; changing compilation order alone does not
+fix the shader compatibility issue. Startup logs are under
+`bin/x64/Release/logs/shader-flow-startup-spirv.log` in the local validation run.
+
+Before the fixes, the CLI wiring was tested in normal startup: `auto` completed, strict `spirv`
+reported the above failure without a WGSL attempt, and strict `wgsl` rejected an
+anonymous HLSL debug shader with no WGSL source. These are distinct limitations:
+the missing anonymous WGSL counterpart does not block HLSL/SPIR-V compilation.
+
+#### Confirmed Facts and Open Questions
+
+- Implicit-LOD texture sampling depends on fragment derivatives. Potentially
+  divergent branches, loops or discard can invalidate the uniform-control-flow
+  requirement; native HLSL compilation alone does not prove portability.
+- [TranslateShader](../../T850/Framework/src/video/webgpu/WebGPUShaderCompiler.cpp)
+  calls `tint::SpirvToWgsl` with strict validation and the narrowly enabled
+  `unrestricted_pointer_parameters` language feature needed by generated indexed
+  matrix helpers. WGSL reflection enables the same feature. The direct WGSL mesh and
+  fullscreen templates previously contained `diagnostic(warning, derivative_uniformity)`;
+  those overrides have been removed, and both paths now use strict validation.
+- In [FS_Mesh.hlsl](../../T850/Assets/Shaders/FS_Mesh.hlsl), `BuildSurface` previously
+  evaluated `ddx`/`ddy` inside the height-dependent parallax loop. Those invariant
+  gradients are now computed before the loop. `SampleGrad` alone was insufficient
+  when calculating its arguments already required divergent derivatives.
+- Also inspect `ApplyAlphaMask` before subsequent texture samples and the
+  conditional `SceneColorTex.Sample` in forward transmission. These are investigation
+  targets, not proof that each one causes the reproduced diagnostic.
+- The default reproduction has no feature defines, so the parallax loop is not
+  the sole cause. The diagnostic names translated functions rather than original
+  HLSL statements. Isolate the exact failing sample(s) before attributing the
+  default failure to parallax, discard or transmission.
+- Conservative uniformity tracking through translated pointer/output parameters
+  is another possibility, not a confirmed Tint bug. Preserve a minimal reproducer
+  if source data is uniform but the translated program cannot prove it.
+
+#### Investigation and Closure Checklist
+
+- [ ] Map the default failure to the original HLSL operation using a reduced
+  shader or diagnostic translation output; keep the validation failure as a regression.
+- [ ] Test feature variants separately: normal/height maps, parallax and its
+  self-shadowing, alpha masking, and textured/untextured transmission. Extend the
+  existing probe/numeric test infrastructure rather than adding a Launcher test mode.
+- [x] Where appropriate, compute gradients in uniform control flow before loops,
+  branches or discard, and pass them to `SampleGrad`/`textureSampleGrad`. Preserve
+  the intended UV transforms and filtering; do not assume moving any gradient
+  calculation automatically preserves the rendered result.
+- [x] Revalidate affected variants with strict uniformity diagnostics in both flows.
+  Remove the mesh/fullscreen warning overrides only once their affected paths pass.
+  Blanket suppression or forcing mip level zero is not a correctness fix.
+- [ ] Compare native HLSL, direct WGSL and translated WGSL on the same adapter,
+  with identical textures, samplers and render settings. Include minification,
+  grazing angles, parallax termination boundaries, alpha edges and neighboring
+  fragments that take different branches. Record captures and justified tolerances.
+- [x] Run the recorded permutation/contract suite and targeted graphics pipelines,
+  plus cold/warm cache checks. Exercise `auto` with a deliberately missing/invalid
+  WGSL source in isolated test assets and verify successful `actual=spirv` fallback;
+  restoring WGSL must restore the preferred flow.
+- [ ] Record tested variants and remaining exceptions here. Close this item only
+  when the reproduced failure and affected feature cases pass validation and
+  rendering checks, not merely because a warning was hidden or a simple draw worked.
+
+### Open Follow-Up: Sandbox Deferred Parity
+
+**Tracking ID:** `WGPU-RENDER-02`
+
+**Status:** Historical initial failure, measured on 2026-09-14 after MRT integration.
+The missing float-texture update and subsequent compiler/SSAO fixes supersede
+this checkpoint. Current Sandbox final output has 18 pixels outside tolerance 2
+at 1280x720, maximum delta 6, in both flows. See the
+[runtime handoff](webgpu-runtime-summary.md) for all-target results and limits.
+Neither nonblank capture nor this improvement proves universal pixel equality.
+
+The normal Sandbox graph runs unchanged on WebGPU with the existing helmet model
+and direct WGSL shaders. No production shader source or diagnostic-severity
+setting was changed in the MRT implementation. Native D3D12 and WebGPU both pass
+the capture workflow's runtime/error/nonblank checks. At 640x480, comparing raw
+targets with tolerance 2 gives:
+
+| Target | Pixels Outside Tolerance | Maximum Channel Delta |
+|---|---:|---:|
+| GBuffer depth / shadow depth | 0 | 0 |
+| GBuffer albedo / PBR | 1 each | 16 |
+| Other GBuffer color targets | 0 | 0 or 1 |
+| Shadow accumulation | 3,334 (1.09%) | 15 |
+| Deferred / Extra16F | 7,090 (2.31%) each | 252 |
+| HDR final | 5,431 (1.77%) | 245 |
+| Bloom | 1,493 (0.57%) | 38 |
+| Backbuffer | 15,641 (5.09%) | 199 |
+
+Artifacts: `build/webgpu-mrt-sandbox-validation/candidate/sandbox/{d3d12,webgpu}`
+contains the manifests and final captures. With `-KeepRawDumps`, use each
+`capture.json` `SourceDump` under `bin/x64/Release` to compare intermediate targets.
+The measured pair was `dumps_d3d12_f6_20260914_231603` and
+`dumps_webgpu_f6_20260914_231601`; generated artifacts are not versioned.
+See [reproduction commands](../development/windows-build-and-run.md#mixed-format-mrt-follow-up).
+
+A large black-background mismatch was fixed at the driver boundary: binding a
+new target must clear RGBA to zero, including GBuffer material-ID alpha. Previously
+alpha 1 made background pixels appear to contain a material. The MRT regression
+now checks this. The table records the remaining mismatch after that fix.
+
+Comparison controls checked: the paired snapshot documents differ only in the
+API tag. Matching native depth-sampler filtering precedence (border mode forces
+linear filtering even with a nearest flag) did not change these image metrics in
+the tested configuration. The later confirming pair is
+`dumps_d3d12_f6_20260914_232608` / `dumps_webgpu_f6_20260914_232606`, with manifests
+under `build/webgpu-mrt-sandbox-filter-validation`. This rules out that precedence
+difference as the sole cause here, not all filtering/addressing issues. WebGPU
+still uses clamp-to-edge rather than native white-border addressing.
+
+- [ ] Reproduce with matched snapshot state and compare the first divergent
+  pass, not only the final image. Inspect shadow/SSAO sampling, precision and
+  sampler addressing/filtering, including native depth-border behavior versus
+  WebGPU clamp behavior. These are investigation targets, not confirmed causes.
+- [ ] Check deferred inputs including alpha channels and unclamped HDR values;
+  PPM equality alone cannot prove equality of those values.
+- [ ] Validate filtered-depth copy interpolation and invalidation with varying
+  depth values at discontinuities; the isolated regression currently covers
+  constant values, clear/refresh and partial scissor preservation.
+- [ ] Isolate fullscreen/mesh shader differences only after matching resource
+  and sampling state. Preserve user edits in `FS_Quad.wgsl`; do not replace it
+  wholesale or hide diagnostics to pass the comparison.
+- [ ] Rerun paired Sandbox targets and native API regressions after fixes.
+  Record remaining exceptions explicitly; do not mark full deferred support or
+  all-scene compatibility complete while this comparison is failing.
+
+### Open Follow-Up: Translated Shader Rendering
+
+**Tracking ID:** `WGPU-RENDER-03`
+
+**Status:** Demonstrated matrix/compiler/resource defects are fixed; final runtime
+validation is recorded in the [handoff](webgpu-runtime-summary.md). Universal
+pixel parity is not claimed. The two residuals below were visually
+reviewed and accepted by the user on 2026-09-15; they no longer require corrective
+work for those captured states. The original failure report is retained below
+as historical evidence, not the current result for these cases.
+
+#### Accepted Visual Exceptions
+
+Both pairs compare native D3D12 with strict-SPIR-V WebGPU at 1280x720 using the
+same replay snapshot; the resulting snapshots differ only by API.
+
+| Reviewed case | Measured residual | Decision |
+|---|---|---|
+| RagdollEditor shadow accumulation | 11,739 pixels (1.27%) exceed tolerance 2; maximum RGB-channel delta 69/255. Shadows are disabled and SSAO is enabled. | Visually accepted |
+| Quake3Mock final image and PBR close-up | 103 final pixels (0.011%) exceed tolerance 2; maximum delta 194/255. PBR differs at one silhouette pixel, `(926, 221)` (zero-based), with maximum delta 255/255. Shadow accumulation is byte-identical. | Visually accepted |
+
+Ragdoll evidence is under `T850/build/spirv-ssao-view-depth-20260915`, including
+the paired buffers and amplified difference image in `reports/ragdoll-editor`.
+Quake3 evidence is under `T850/build/spirv-final-fixes-20260915`, including the
+paired final images, amplified difference and pixel close-up in `reports/quake3`.
+These are different capture checkpoints; the Quake3 pair predates the latest
+SSAO formulation change.
+
+Acceptance is case-specific visual approval, not pixel equality or a change to
+the automated tolerance of 2. The SSAO noise and kernel inputs were identical
+between APIs, so do not attribute the residual to different random inputs.
+No blanket all-scene or editor acceptance is implied.
+
+#### Historical Initial Failure
+
+Cross-API rendering validation initially failed on 2026-09-15.
+The known derivative-uniformity compiler failures were corrected and strict
+translation tests pass, but that does not establish correct rendered output.
+This is distinct from the smaller direct-WGSL Sandbox mismatch in `WGPU-RENDER-02`.
+
+Captured the normal runtime scene matrix on Windows x64 Release at 1280x720,
+comparing native D3D12 with WebGPU `--shaderFlow spirv`. Both replay-capable runs
+use the same native reference snapshot. Minecraft and VoxelScene use matched
+five-second fixed-delta timed runs because their replay path previously timed out
+even on native APIs. No shader, renderer or scene changes were made for this run.
+
+Ten available native cases captured successfully. Nine corresponding WebGPU
+cases passed the runtime/nonblank-image gate, but none passed final-image parity.
+Across those pairs, 127 render-target images were compared: 32 match within
+tolerance 2 and 95 differ. All completed pairs have identical target-name sets
+and dimensions. Final-image differences count pixels whose maximum RGB-channel
+delta exceeds 2/255:
+
+| Case | Pixels Outside Tolerance | Maximum Channel Delta |
+|---|---:|---:|
+| Forward SceneTemplate | 10.07% | 255 |
+| Sandbox | 99.76% | 242 |
+| DayScene | 100.00% rounded | 101 |
+| Quake3Mock | 99.60% | 255 |
+| RagdollEditor runtime scene | 98.53% | 154 |
+| SceneTemplate / Q3 Jolt | 99.73% | 242 |
+| SceneTemplate / Q3 | 93.54% | 255 |
+| SceneTemplate / Day | 100.00% | 107 |
+| Minecraft | 100.00% | 152 |
+
+VoxelScene exits 1 without a capture, reporting `Sampled texture missing or aliases
+active attachment at binding 6` after successful mesh shader translation.
+Investigate the shader's actual resource use and scene bindings; do not silently
+substitute a dummy material resource to make the test pass. Nexus is skipped on
+both APIs for missing `nexus_wars_terrain.glb` and `marine.glb` assets.
+
+#### Verified Controls
+
+- All nine successful WebGPU logs report startup `spirv`, with no `actual=wgsl`
+  or `fallback=1` engine shader load. Internal ImGui/renderer utility shaders are
+  outside this source-flow option.
+- Resulting snapshot documents differ only by API. This confirms captured
+  camera/light/render state, not complete simulation-state equivalence.
+- Forward and Sandbox SPIR-V repeats have byte-identical targets (17/17 total).
+  The large differences are reproducible, not merely capture noise.
+- Direct-WGSL-first controls use the same native snapshots and WebGPU driver:
+  forward matches native within one channel level; Sandbox GBuffer depth matches
+  exactly and normals differ by at most one channel level. Its final backbuffer
+  retains the approximately 5.08% direct-WGSL mismatch at this viewport.
+- Strict-SPIR-V Sandbox diverges already in GBuffer depth (10.23%), normals
+  (15.60%) and albedo (13.79%); shadow depth is exact in that case. The forward
+  helmet's geometry/silhouette changes visibly. SceneTemplate/Day also diverges
+  in geometry/depth, before post-processing. Therefore this cannot be treated
+  solely as the earlier direct-WGSL fullscreen shading difference.
+
+#### Next Checks
+
+- [ ] Isolate translated vertex execution with nonidentity world/view/projection
+  transforms and compare to native/direct WGSL using identical raw buffers.
+  Check matrix interpretation, vertex input locations/strides, transforms and
+  stage-varying semantics. Current layout size/member-offset tests do not prove
+  correct matrix interpretation. None of these candidates is yet a confirmed cause.
+- [ ] Inspect translated fullscreen varying and environment-direction behavior
+  separately from mesh geometry; the Sandbox background is visibly different.
+- [ ] Diagnose VoxelScene's binding 6 failure without weakening required-resource
+  validation or changing the selected scene.
+- [ ] Repeat all per-target comparisons after fixes, preserving these images and
+  the prior native before/after shader references. Do not mark the SPIR-V renderer
+  visually complete on the strength of shader compilation alone.
+
+Generated evidence is local under `T850/build/spirv-native-parity-20260915`:
+`REVIEW.md` links all native/SPIR-V images and HTML per-target reports, direct-WGSL
+controls, failure logs and metrics. `candidate/manifest.json` includes failed and
+skipped cases; `all-target-comparison.json` contains 127 rows, `comparison-controls.json`
+records source-flow/snapshot/target checks, and `repeatability.json` records repeats.
+The capture script now supports `-ShaderFlow spirv` and
+`-ReplayFromRunSet reference -ReplayApi d3d12`. `-KeepRawDumps` also copies every
+PPM beside each case manifest, so reports do not depend on raw dump discovery.
+See [commands](../development/windows-build-and-run.md#strict-spir-v-visual-comparison).
+
 ## `ShaderKey`
 
 `ShaderKey` is a 64-bit bitfield in `T850/Framework/Descriptors.h`. It combines vertex layout, material features, global toggles, and pass type into one lookup key.

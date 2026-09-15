@@ -21,6 +21,11 @@ jobs:
         run: |
           & T850/scripts/ValidateBuildRegistration.ps1
 
+      - name: Validate WebGPU launcher routing and WPF state
+        shell: powershell
+        run: |
+          & T850/scripts/TestLauncherWebGPU.ps1 -Ui
+
       - name: Validate Minecraft terrain atlas mappings
         shell: pwsh
         run: |
@@ -60,13 +65,22 @@ jobs:
       - name: Clone vcpkg
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+          if ('${{ matrix.platform }}' -eq 'x64') {
+            & T850/scripts/SetupDawn.ps1 -Mode Bootstrap
+          } else {
+            git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+            if ($LASTEXITCODE -ne 0) { throw 'vcpkg clone failed.' }
+            $revision = git rev-parse HEAD:T850/Librerias/vcpkg
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot read the recorded vcpkg revision.' }
+            git -C T850/Librerias/vcpkg checkout --detach $revision
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot check out the recorded vcpkg revision.' }
+          }
 
       - name: Cache vcpkg packages
         uses: actions/cache@v4
         with:
           path: T850/Librerias/vcpkg/installed
-          key: vcpkg-${{ matrix.platform }}-${{ hashFiles('.github/workflows/build.yml') }}
+          key: vcpkg-${{ matrix.platform }}-${{ hashFiles('.github/workflows/build.yml', 'T850/cmake/vcpkg-overlays/**', 'T850/scripts/SetupDawn.ps1') }}
           restore-keys: |
             vcpkg-${{ matrix.platform }}-
 
@@ -75,6 +89,7 @@ jobs:
         run: |
           cd T850/Librerias/vcpkg
           ./bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed.' }
 
       - name: Install vcpkg packages (Win32)
         if: matrix.platform == 'Win32'
@@ -82,13 +97,25 @@ jobs:
         run: |
           cd T850/Librerias/vcpkg
           ./vcpkg.exe install --recurse glew:x86-windows-static angle:x86-windows draco:x86-windows draco:x86-windows-static vulkan-headers:x86-windows-static vulkan-loader:x86-windows-static vulkan-memory-allocator:x86-windows-static glslang:x86-windows-static joltphysics:x86-windows-static recastnavigation:x86-windows-static "imgui[docking-experimental,dx11-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x86-windows-static" imguizmo:x86-windows-static
+          if ($LASTEXITCODE -ne 0) { throw 'Win32 dependency installation failed.' }
 
       - name: Install vcpkg packages (x64)
         if: matrix.platform == 'x64'
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install --recurse glew:x64-windows-static angle:x64-windows draco:x64-windows draco:x64-windows-static vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static joltphysics:x64-windows-static recastnavigation:x64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" imguizmo:x64-windows-static
+          ./vcpkg.exe install --recurse glew:x64-windows-static angle:x64-windows draco:x64-windows draco:x64-windows-static vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static joltphysics:x64-windows-static recastnavigation:x64-windows-static
+          if ($LASTEXITCODE -ne 0) { throw 'Base dependency installation failed.' }
+          & ../../scripts/SetupDawn.ps1
+
+      - name: Build Dawn package probe (hardware run is local)
+        if: matrix.platform == 'x64'
+        shell: pwsh
+        run: |
+          cmake --build T850/build/dawn-package --config ${{ matrix.configuration }} --target DawnPackageProbe DawnMSBuildProbe DawnShaderProbe ShaderPreprocessorProbe DawnSurfaceProbe --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Dawn package probe build failed.' }
+          ctest --test-dir T850/build/dawn-package -C ${{ matrix.configuration }} --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'In-process shader translation/cache tests failed.' }
 
       - name: Install vcpkg packages (ARM64)
         if: matrix.platform == 'ARM64'
@@ -96,6 +123,7 @@ jobs:
         run: |
           cd T850/Librerias/vcpkg
           ./vcpkg.exe install --recurse glew:arm64-windows-static angle:arm64-windows draco:arm64-windows draco:arm64-windows-static vulkan-headers:arm64-windows-static vulkan-loader:arm64-windows-static vulkan-memory-allocator:arm64-windows-static glslang:arm64-windows-static joltphysics:arm64-windows-static recastnavigation:arm64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:arm64-windows-static" imguizmo:arm64-windows-static
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 dependency installation failed.' }
 
       - name: Build
         shell: pwsh
@@ -145,6 +173,7 @@ jobs:
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/T8ditor.exe
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/*.dll
+            T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/licenses/*.txt
 
   android:
     needs: validate-build-registration
@@ -176,6 +205,11 @@ jobs:
         shell: pwsh
         run: |
           git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg clone failed.' }
+          $revision = git rev-parse HEAD:T850/Librerias/vcpkg
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read the recorded vcpkg revision.' }
+          git -C T850/Librerias/vcpkg checkout --detach $revision
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot check out the recorded vcpkg revision.' }
 
       - name: Cache Android vcpkg packages
         uses: actions/cache@v4
@@ -310,6 +344,8 @@ jobs:
       - name: Clone vcpkg
         run: |
           git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+          revision=$(git rev-parse HEAD:T850/Librerias/vcpkg)
+          git -C T850/Librerias/vcpkg checkout --detach "$revision"
 
       - name: Cache Steam Deck vcpkg packages
         uses: actions/cache@v4

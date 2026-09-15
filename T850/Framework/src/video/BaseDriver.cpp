@@ -482,6 +482,7 @@ namespace t850 {
       // Special modes
       if (key.has(ShaderKey::NO_LIGHT))       Defines += "#define NO_LIGHT\n\n";
       if (key.has(ShaderKey::OMNI_SHADOWS))   Defines += "#define OMNIDIRECTIONAL_SH\n\n";
+      if (key.has(ShaderKey::NO_ENVIRONMENT)) Defines += "#define NO_ENVIRONMENT\n\n";
 
       // Effect toggles
       if (key.has(ShaderKey::PARALLAX))       Defines += "#define ENABLE_PARALLAX\n\n";
@@ -530,6 +531,7 @@ namespace t850 {
       src_vs = Defines + src_vs;
       src_fs = Defines + src_fs;
     }
+    m_sourceDefines = Defines;
     this->key = key;
     if (!CreateShaderAPI(src_vs, src_fs, vs_name, fs_name)) {
       T8_LOG_ERROR("Shader defines for failed key 0x%016llX [VS='%s' FS='%s']:\n%s", static_cast<unsigned long long>(key.bits), vs_name.c_str(), fs_name.c_str(), Defines.c_str());

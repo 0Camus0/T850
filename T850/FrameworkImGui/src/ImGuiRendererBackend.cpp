@@ -11,6 +11,9 @@ std::unique_ptr<ImGuiRendererBackend> CreateImGuiRendererBackend(GraphicsApi::E 
   case GraphicsApi::D3D12: return CreateImGuiD3D12Backend();
   case GraphicsApi::OPENGL: return CreateImGuiOpenGLBackend();
   case GraphicsApi::VULKAN: return CreateImGuiVulkanBackend();
+#if defined(_WIN32) && defined(_M_X64)
+  case GraphicsApi::WEBGPU: return CreateImGuiWebGPUBackend();
+#endif
   default:
     T8_LOG_ERROR("[ImGuiSystem] Unsupported graphics API %d", static_cast<int>(api));
     return nullptr;

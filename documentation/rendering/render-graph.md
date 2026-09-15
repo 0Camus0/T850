@@ -101,6 +101,14 @@ Typical lifetime:
 
 ## Descriptor JSON schema
 
+The authored [ForwardScene graph](../../T850/Assets/Scenes/ForwardScene_RenderGraph.json)
+is a single-target example shared by native D3D12 and the first WebGPU scene.
+`DEFAULT_PASS` names `PassType::NONE` (the existing default mesh shading path),
+which draws opaque subsets as well. `FORWARD_PASS` retains its existing
+transparent/transmission-subset filter. SceneTemplate no longer assumes the
+first target is a multi-attachment GBuffer when initializing its fullscreen quad;
+pass inputs in the graph supply those bindings.
+
 The graph is loaded with glaze from JSON into `RenderGraphDesc`. Unknown keys are ignored, which lets JSON files carry future/editor-only fields without breaking current runtime parsing.
 
 Top-level shape:

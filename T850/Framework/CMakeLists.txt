@@ -105,6 +105,13 @@ set(FRAMEWORK_SOURCES
   src/utils/ShaderPermutationDump.cpp
   src/utils/SPIRVReflection.cpp
   src/utils/ShaderDiskCache.cpp
+  src/utils/ShaderPreprocessor.cpp
+  ../Librerias/simplecpp/simplecpp.cpp
+  src/video/webgpu/WebGPUShaderCompiler.cpp
+  src/video/webgpu/WebGPUContext.cpp
+  src/video/webgpu/WebGPUDriver.cpp
+  src/video/WindowsDriverFactory.cpp
+  src/debug/GraphicsFixture.cpp
   src/video/BaseDriver.cpp
   src/utils/gltf/GLTFLoader.cpp
   src/utils/gltf/GLTFJson.cpp
@@ -181,6 +188,16 @@ t850_apply_profiler_defines(Framework)
 set_target_properties(Framework PROPERTIES DEBUG_POSTFIX d)
 target_compile_definitions(Framework PRIVATE _LIB)
 target_precompile_headers(Framework PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
+set_source_files_properties(src/utils/ShaderPreprocessor.cpp ../Librerias/simplecpp/simplecpp.cpp
+  PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+target_include_directories(Framework PRIVATE ${T850_SOURCE_DIR}/Librerias/simplecpp)
+set_source_files_properties(src/video/webgpu/WebGPUShaderCompiler.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+set_source_files_properties(src/video/webgpu/WebGPUContext.cpp src/video/webgpu/WebGPUDriver.cpp
+  PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+if(WIN32 AND T850_ARCH STREQUAL "x64")
+  target_include_directories(Framework PRIVATE "${T850_SOURCE_DIR}/build/dawn-package")
+  target_link_libraries(Framework PRIVATE dawn::webgpu_dawn)
+endif()
 if(T850_JOLT_ENABLED)
   target_compile_definitions(Framework PUBLIC T850_ENABLE_JOLT=1)
   target_link_libraries(Framework PUBLIC Jolt::Jolt)

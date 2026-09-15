@@ -542,6 +542,27 @@
     <ClInclude Include="include\utils\ShaderDiskCache.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\utils\ShaderPreprocessor.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\TextureMipmaps.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\webgpu\WebGPUShaderCompiler.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\webgpu\WebGPUContext.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\webgpu\WebGPUDriver.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\WindowsDriverFactory.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
+    <ClInclude Include="include\debug\GraphicsFixture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="include\utils\ConfigRuntime.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
@@ -999,6 +1020,27 @@
     </ClCompile>
     <ClCompile Include="src\utils\ShaderDiskCache.cpp">
       <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\ShaderPreprocessor.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Librerias\simplecpp\simplecpp.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\webgpu\WebGPUShaderCompiler.cpp">
+      <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\webgpu\WebGPUContext.cpp">
+      <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\webgpu\WebGPUDriver.cpp">
+      <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\WindowsDriverFactory.cpp">
+      <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\GraphicsFixture.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ConfigRuntime.cpp">
       <Filter>Source Files\utils</Filter>

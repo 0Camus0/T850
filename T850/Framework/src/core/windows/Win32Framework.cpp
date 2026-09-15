@@ -14,6 +14,8 @@
 #include <core/windows/Win32Framework.h>
 #include <core/EngineContext.h>
 #include <core/Config.h>
+#include <video/WindowsDriverFactory.h>
+#include <video/webgpu/WebGPUDriver.h>
 
 #include <video/gl/GLDriver.h>
 #if defined(OS_WINDOWS)
@@ -700,6 +702,8 @@ namespace t850 {
       title += "   D3D12";
     else if (api == GraphicsApi::VULKAN)
       title += "   Vulkan";
+    else if (api == GraphicsApi::WEBGPU)
+      title += "   WebGPU (Dawn/D3D12)";
     else
       title += "   D3D11";
 
@@ -782,21 +786,18 @@ namespace t850 {
 #else
       T8_LOG_ERROR("USING_OPENGL not defined — skipping SDL_GL_CreateContext");
 #endif
-      pVideoDriver = new GLDriver;
-      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
     }
-    else if (api == GraphicsApi::D3D12) {
-      pVideoDriver = new D3D12Driver;
-      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
+    pVideoDriver = CreateWindowsGraphicsDriver(api);
+#if defined(_M_X64)
+    if (api == GraphicsApi::WEBGPU) {
+      webgpu::ShaderFlow shaderFlow;
+      if (!webgpu::ParseShaderFlow(g_config.webgpuShaderFlow, shaderFlow))
+        throw std::runtime_error("Invalid WebGPU startup shader flow");
+      static_cast<WebGPUDriver*>(pVideoDriver)->SetShaderFlow(shaderFlow);
+      T8_LOG_INFO("[WebGPU] startup shaderFlow=%s (before asset loading)", g_config.webgpuShaderFlow.c_str());
     }
-    else if (api == GraphicsApi::VULKAN) {
-      pVideoDriver = new VulkanDriver;
-      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
-    }
-    else {
-      pVideoDriver = new D3DXDriver;
-      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
-    }
+#endif
+    pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
 
     g_pBaseDriver = pVideoDriver;
     t850::Log::SetSessionTag(t850::config::ApiTag(pVideoDriver->m_currentAPI));

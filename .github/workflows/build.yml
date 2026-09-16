@@ -152,13 +152,29 @@ jobs:
           $editor = "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/T8ditor.exe"
           if (-not (Test-Path $editor)) { throw "Editor output not found: $editor" }
           Write-Host "Editor built: $editor"
+          foreach ($runtimeFile in @('vulkan-1.dll', 'licenses/vulkan-loader.txt')) {
+            $path = Join-Path (Split-Path $exe) $runtimeFile
+            if (-not (Test-Path $path)) { throw "Required Vulkan runtime file not staged: $path" }
+          }
 
       - name: Run gameplay and terrain self-tests
         if: matrix.platform != 'ARM64'
         shell: pwsh
         run: |
-          & "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe" --game-selftest
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = (Resolve-Path "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe").Path
+          $stdout = Join-Path $env:RUNNER_TEMP 'game-selftest-stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'game-selftest-stderr.log'
+          $process = Start-Process -FilePath $exe -ArgumentList '--game-selftest' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            Get-Content $stdout
+            Get-Content $stderr
+            $exitCode = $process.ExitCode
+            Write-Host ('Self-test exit code: {0} (0x{0:X8})' -f $exitCode)
+            if ($exitCode -ne 0) { throw "Gameplay/terrain self-tests failed with exit code $exitCode." }
+            if (-not (Select-String -Path $stdout -Pattern '^PASS ' -Quiet)) { throw 'Self-tests exited without reporting any passing checks.' }
+          } finally {
+            $process.Dispose()
+          }
 
       - name: Upload build artifacts
         if: matrix.configuration == 'Release'

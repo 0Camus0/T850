@@ -5634,6 +5634,7 @@ void SandboxScene::CreateAssets() {
   if (m_controlSetup.descriptor.name.empty()) {
     m_controlSetup.Load("Scenes/SandboxScene.json");
   }
+  m_controlSetup.ApplyInputSettings(SceneProp);
 
   const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
   const bool embeddedSceneProfile = !g_config.sceneFilePath.empty();
@@ -5644,6 +5645,7 @@ void SandboxScene::CreateAssets() {
     t850::scene::EditorSceneFile startupScene;
     std::string startupSceneError;
     if (t850::scene::LoadEditorSceneFile(g_config.sceneFilePath, startupScene, &startupSceneError)) {
+      m_controlSetup.ApplyInputSettings(SceneProp, startupScene.mouse_capture);
       startupSceneProfiles = startupScene.profiles;
       startupProfiles = &startupSceneProfiles;
     } else {
@@ -5721,11 +5723,6 @@ void SandboxScene::CreateAssets() {
   // Fullscreen quad setup
   m.Identity();
   Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[0], 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[1], 1);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[2], 2);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[3], 3);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->pDepthTexture, 4);
   Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
 
   for (int i = 1; i <= 7; i++)

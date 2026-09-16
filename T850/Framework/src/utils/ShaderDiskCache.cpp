@@ -195,7 +195,7 @@ namespace {
     std::unordered_map<std::string, std::string> drivers;
     const std::filesystem::path metadataPath = RootDirectory() / "metadata.json";
     const std::string metadata = ReadTextFile(metadataPath);
-    static const char* knownApis[] = { "d3d11", "d3d12", "opengl", "vulkan" };
+    static const char* knownApis[] = { "d3d11", "d3d12", "opengl", "vulkan", "webgpu" };
     for (const char* knownApi : knownApis) {
       std::string value = ExtractDriverSignature(metadata, knownApi);
       if (!value.empty())
@@ -216,6 +216,31 @@ namespace {
     std::filesystem::create_directories(ApiDirectory(api));
     g_preparedApis.insert(preparedKey);
   }
+}
+
+std::string ContentHash(const std::string& content) {
+  return Sha1(content);
+}
+
+ShaderDiskCacheKey MakeStageKey(const std::string& api,
+                                const std::string& compilerSignature,
+                                uint64_t shaderKeyBits,
+                                const std::string& stage,
+                                const std::string& entryPoint,
+                                const std::string& sourceName,
+                                const std::string& source) {
+  std::ostringstream input;
+  input << kCacheVersionString << "\nsingle-stage-v1\n" << shaderKeyBits << '\n';
+  for (const auto* field : {&api, &compilerSignature, &stage, &entryPoint, &sourceName, &source})
+    input << field->size() << ':' << *field << '\n';
+  ShaderDiskCacheKey key;
+  key.api = api;
+  key.sha1 = Sha1(input.str());
+  key.shaderKeyBits = shaderKeyBits;
+  key.stage = stage;
+  key.entryPoint = entryPoint;
+  key.sourceName = sourceName;
+  return key;
 }
 
 void EnsureApiMetadata(const std::string& api, const std::string& driverSignature) {
@@ -338,6 +363,11 @@ void WriteManifest(const ShaderDiskCacheKey& key, const std::string& driverSigna
   out << "  \"shaderKey\": \"0x" << std::hex << std::setw(16) << std::setfill('0') << key.shaderKeyBits << std::dec << "\",\n";
   out << "  \"vs\": \"" << JsonEscape(key.vsName) << "\",\n";
   out << "  \"fs\": \"" << JsonEscape(key.fsName) << "\",\n";
+  if (!key.stage.empty()) {
+    out << "  \"stage\": \"" << JsonEscape(key.stage) << "\",\n";
+    out << "  \"entryPoint\": \"" << JsonEscape(key.entryPoint) << "\",\n";
+    out << "  \"source\": \"" << JsonEscape(key.sourceName) << "\",\n";
+  }
   out << "  \"driverSignature\": \"" << JsonEscape(driverSignature) << "\"\n";
   out << "}\n";
 }

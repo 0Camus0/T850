@@ -87,6 +87,7 @@ static const std::unordered_map<std::string, int> s_depthFormatMap = {
 
 // Pass name -> PassType::E
 static const std::unordered_map<std::string, uint8_t> s_passMap = {
+  {"DEFAULT_PASS",          PassType::NONE},
   {"FORWARD_PASS",          PassType::FORWARD},
   {"GBUFF_PASS",            PassType::GBUFFER},
   {"SHADOW_MAP_PASS",       PassType::SHADOW_MAP},

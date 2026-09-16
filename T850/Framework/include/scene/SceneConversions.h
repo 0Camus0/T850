@@ -3,11 +3,14 @@
 #include <navigation/NavigationSystem.h>
 #include <physics/PhysicsTypes.h>
 #include <scene/EditorSceneFile.h>
+#include <scene/PrimitiveInstance.h>
 #include <utils/Camera.h>
 
 namespace t850::scene {
 
 void ApplySceneCamera(const SceneCameraDesc& desc, Camera& camera, float aspect);
+void ApplySceneObject(const SceneObjectDesc& desc, PrimitiveInst& instance);
+void BuildStreamedVoxelPalette(const SceneStreamedVoxelsDesc& desc, terrain::BlockRegistry& registry);
 
 navigation::NavMeshBuildSettings DefaultSceneNavMeshBuildSettings();
 SceneNavMeshBuildSettingsDesc NavMeshBuildSettingsToScene(const navigation::NavMeshBuildSettings& settings);

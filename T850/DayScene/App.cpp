@@ -33,18 +33,20 @@
 #include <utils/Log.h>
 #include <utils/ConfigRuntime.h>
 #include <utils/ShaderPermutationDump.h>
+#include <core/ShaderTools.h>
 #include <debug/Profiler.h>
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
 #include <game/GameSelfTest.h>
 #include <debug/CrashDiagnostics.h>
+#include <debug/GraphicsFixture.h>
 
 std::vector<std::string> g_args;
 
 t850::AppBase		  *pApp = 0;
 t850::RootFramework *pFrameWork = 0;
 
-int main(int arg,char ** args){
+int main(int arg,char ** args) try {
   t850::InstallUnattendedCrtReportHook();
   t850::Config defaultConfig;
   t850::g_config = defaultConfig;
@@ -54,6 +56,14 @@ int main(int arg,char ** args){
     }
 
   for (int i = 1; i < arg; ++i) {
+      if (std::string_view(args[i]) == "--graphics-fixture") {
+  #if defined(_WIN32) && defined(_M_X64)
+    return t850::RunGraphicsFixture(arg, args);
+  #else
+    std::cerr << "The graphics fixture currently requires Windows x64.\n";
+    return 1;
+  #endif
+      }
     if (std::string_view(args[i]) == "--game-selftest") {
       const int failures = t850::game::RunGameSelfTests();
       return failures == 0 ? 0 : 1;
@@ -72,6 +82,10 @@ int main(int arg,char ** args){
   t850::config::ApplyCommandLine(arg, args, t850::g_config);
   t850::config::ValidateConfig(t850::g_config);
   if (t850::g_config.flags.benchmarkMatrix) {
+    if (t850::g_config.api == "webgpu") {
+      std::cerr << "WebGPU benchmark-matrix integration is not implemented.\n";
+      return 1;
+    }
     t850::g_config.api = "d3d11";
     t850::g_config.width = 1920;
     t850::g_config.height = 1080;
@@ -171,11 +185,13 @@ int main(int arg,char ** args){
     t850::g_config.logFile.empty() ? nullptr : t850::g_config.logFile.c_str()
   );
   t850::Log::SetSessionTag(apiTag);
-  if (t850::g_config.flags.dumpShaderPermutations) {
-    t850::ShaderPermutationDump::Begin(t850::g_config.shaderPermutationOutputPath);
+  if (auto result = t850::RunShaderPrecompileCommand(t850::g_config)) {
+    t850::Log::Shutdown();
+    return *result;
   }
+  t850::BeginShaderPermutationRecording(t850::g_config);
 
-	pApp = new App;
+  pApp = new App;
 #ifdef OS_LINUX
     pFrameWork = new t850::LinuxFramework((t850::AppBase*)pApp);
     pFrameWork->InitGlobalVars();
@@ -192,10 +208,18 @@ int main(int arg,char ** args){
 	pFrameWork->OnDestroyApplication();
 #endif
 
-	delete pFrameWork;
+  delete pFrameWork;
 	delete pApp;
 
+  if (!t850::ShaderPermutationDump::Flush()) {
+    t850::Log::Shutdown();
+    return 1;
+  }
 	t850::Log::Shutdown();
 
     return 0;
+} catch (const std::exception& error) {
+  T8_LOG_ERROR("[App] Startup/runtime failure: %s", error.what());
+  std::cerr << "Engine failure: " << error.what() << '\n';
+  return 1;
 }

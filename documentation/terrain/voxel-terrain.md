@@ -1,3 +1,18 @@
+# Authored Reference Scene
+
+VoxelScene loads `Assets/Scenes/VoxelScene.t8scene`. Its `runtime_setup` uses the
+shared SceneSetup descriptor schema; `streamed_voxels` authors the palette,
+RGBA atlas, chunk dimensions, budgets, terrain parameters and interaction data.
+Framework `BuildStreamedVoxelPalette` validates these before replacing registry
+state, and `GenerateLayeredVoxelChunk` owns cancellable terrain generation.
+`VoxelStreamingManager::Reset(dimensions)` waits for prior jobs before changing
+dimensions. VoxelScene delegates sweeps to Framework `SweepVoxelBox`.
+
+Palette order still determines saved block IDs. Do not reorder an existing
+world's palette without a migration. Regression runs do not load user edits.
+The [ownership audit](../architecture/webgpu-branch-ownership-audit.md) records
+the remaining reference-app integration and current validation.
+
 # Mutable Voxel Terrain and Streaming
 
 Status: implemented and verified against source, 43 self-tests, and four-backend captures on 2026-08-31.

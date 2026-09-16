@@ -1,3 +1,9 @@
+#ifdef NO_ENVIRONMENT
+#define T850_SAMPLE_ENVIRONMENT(texture, sampler, coords, level) float4(0.0, 0.0, 0.0, 0.0)
+#else
+#define T850_SAMPLE_ENVIRONMENT(texture, sampler, coords, level) texture.SampleLevel(sampler, coords, level)
+#endif
+
 cbuffer QuadFrameCB : register(b0) {
     float4x4 WVP;
 	float4x4 World;  
@@ -238,7 +244,7 @@ Texture2D tex8 : register(t9);
 
 float AlbedoSheenScalingLUT(float NdotV, float sheenRoughness)
 {
-	return texIBLSheenELUT.SampleLevel(SS15, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
+	return T850_SAMPLE_ENVIRONMENT(texIBLSheenELUT, SS15, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
 }
 
 float3 GetIBLRadianceCharlie(float3 normal, float3 viewDir, float sheenRoughness, float3 sheenColor, float iblMaxMip)
@@ -248,8 +254,8 @@ float3 GetIBLRadianceCharlie(float3 normal, float3 viewDir, float sheenRoughness
 	float3 reflectedVec = reflect(-viewDir, normal);
 	reflectedVec.x = -reflectedVec.x;
 	reflectedVec.z = -reflectedVec.z;
-	float brdf = texIBLCharlieLUT.SampleLevel(SS14, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).b;
-	float3 sheenLight = texIBLCharlie.SampleLevel(SS13, reflectedVec, lod).rgb;
+	float brdf = T850_SAMPLE_ENVIRONMENT(texIBLCharlieLUT, SS14, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).b;
+	float3 sheenLight = T850_SAMPLE_ENVIRONMENT(texIBLCharlie, SS13, reflectedVec, lod).rgb;
 	return sheenLight * sheenColor * brdf;
 }
 
@@ -283,7 +289,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float3 skyDir = normalize(input.PosCorner.xyz);
 		skyDir.x = -skyDir.x;
 		skyDir.z = -skyDir.z;
-		float3 RefCol = texEnv.SampleLevel(SS6, skyDir, 0.0f).xyz;
+		float3 RefCol = T850_SAMPLE_ENVIRONMENT(texEnv, SS6, skyDir, 0.0f).xyz;
 		Final.xyz = RefCol.xyz * toogles.x;
 	} else if(MatId > 0) {
 		#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
@@ -400,9 +406,9 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float3 kDiffuseEnv = (float3(1.0f, 1.0f, 1.0f) - kSpecular) * (1.0f - metallic);
 
 		// Specular IBL: env reflection (toogles.z = IBL factor)
-		float3 RefleCol = texIBLSpecular.SampleLevel(SS11, ReflectedVec, rough * iblMaxMip).xyz;
+		float3 RefleCol = T850_SAMPLE_ENVIRONMENT(texIBLSpecular, SS11, ReflectedVec, rough * iblMaxMip).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
-		float2 brdfSample = hasBrdfLUT ? texIBLBRDF.SampleLevel(SS12, float2(NdotV, rough), 0.0f).rg : float2(0.0f, 0.0f);
+		float2 brdfSample = hasBrdfLUT ? T850_SAMPLE_ENVIRONMENT(texIBLBRDF, SS12, float2(NdotV, rough), 0.0f).rg : float2(0.0f, 0.0f);
 		float3 specularIBL = hasBrdfLUT ? IBLGGXFresnel(NdotV, rough, F0, brdfSample) : kSpecular * envAtten;
 		float3 indirectLight = RefleCol * specularIBL * toogles.z;
 
@@ -411,7 +417,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		irradianceDir.x = -irradianceDir.x;
 		irradianceDir.z = -irradianceDir.z;
 		float diffuseMip = clamp(brightness.z, 0.0f, iblMaxMip);
-		float3 irradiance = texIBLDiffuse.SampleLevel(SS10, irradianceDir, diffuseMip).xyz;
+		float3 irradiance = T850_SAMPLE_ENVIRONMENT(texIBLDiffuse, SS10, irradianceDir, diffuseMip).xyz;
 		indirectLight += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
 		indirectLight += Albedo.xyz * kDiffuseEnv * lightmap;
 
@@ -423,7 +429,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		}
 		Final.xyz += indirectLight * occlusion;
 		if (clearcoatFactor > 0.001f) {
-			float3 clearcoatSpec = texIBLSpecular.SampleLevel(SS11, ReflectedVec, clearcoatRoughness * iblMaxMip).xyz;
+			float3 clearcoatSpec = T850_SAMPLE_ENVIRONMENT(texIBLSpecular, SS11, ReflectedVec, clearcoatRoughness * iblMaxMip).xyz;
 			float clearcoatAtten = hasBrdfLUT ? 1.0f : (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
 			float3 clearcoatF = FresnelCalc(saturate(dot(normal, EyeDir)), float3(0.04f, 0.04f, 0.04f));
 			float clearcoatWeight = saturate(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)));
@@ -460,7 +466,7 @@ Texture2D tex8 : register(t9);
 
 float AlbedoSheenScalingLUT(float NdotV, float sheenRoughness)
 {
-	return texIBLSheenELUT.SampleLevel(SS15, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
+	return T850_SAMPLE_ENVIRONMENT(texIBLSheenELUT, SS15, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
 }
 
 float3 GetIBLRadianceCharlie(float3 normal, float3 viewDir, float sheenRoughness, float3 sheenColor, float iblMaxMip)
@@ -470,8 +476,8 @@ float3 GetIBLRadianceCharlie(float3 normal, float3 viewDir, float sheenRoughness
 	float3 reflectedVec = reflect(-viewDir, normal);
 	reflectedVec.x = -reflectedVec.x;
 	reflectedVec.z = -reflectedVec.z;
-	float brdf = texIBLCharlieLUT.SampleLevel(SS14, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).b;
-	float3 sheenLight = texIBLCharlie.SampleLevel(SS13, reflectedVec, lod).rgb;
+	float brdf = T850_SAMPLE_ENVIRONMENT(texIBLCharlieLUT, SS14, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).b;
+	float3 sheenLight = T850_SAMPLE_ENVIRONMENT(texIBLCharlie, SS13, reflectedVec, lod).rgb;
 	return sheenLight * sheenColor * brdf;
 }
 
@@ -504,7 +510,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		float3 EyeDir_mod = -EyeDir;
 		EyeDir_mod.x = -EyeDir_mod.x;
 		EyeDir_mod.z = -EyeDir_mod.z;
-		float3 RefCol = texEnv.SampleLevel(SS6, EyeDir_mod, 0.0f).xyz;
+		float3 RefCol = T850_SAMPLE_ENVIRONMENT(texEnv, SS6, EyeDir_mod, 0.0f).xyz;
 		Final.xyz = RefCol.xyz * 2.0;
 	} else if (MatId > 0) {
 		#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
@@ -602,9 +608,9 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		float NdotV = max(dot(normal, EyeDir), 0.0f);
 		float3 kSpecular = clamp(fresnelSchlickRoughness(NdotV, F0, rough), 0.0, 1.0);
 		float3 kDiffuseEnv = (float3(1.0f, 1.0f, 1.0f) - kSpecular) * (1.0f - metallic);
-		float3 RefleCol = texIBLSpecular.SampleLevel(SS11, ReflectedVec, rough * iblMaxMip).xyz;
+		float3 RefleCol = T850_SAMPLE_ENVIRONMENT(texIBLSpecular, SS11, ReflectedVec, rough * iblMaxMip).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
-		float2 brdfSample = hasBrdfLUT ? texIBLBRDF.SampleLevel(SS12, float2(NdotV, rough), 0.0f).rg : float2(0.0f, 0.0f);
+		float2 brdfSample = hasBrdfLUT ? T850_SAMPLE_ENVIRONMENT(texIBLBRDF, SS12, float2(NdotV, rough), 0.0f).rg : float2(0.0f, 0.0f);
 		float3 specularIBL = hasBrdfLUT ? IBLGGXFresnel(NdotV, rough, F0, brdfSample) : kSpecular * envAtten;
 		float3 ldrIBL = RefleCol * specularIBL * toogles.z;
 		ldrIBL += Albedo.xyz * kDiffuseEnv * lightmap;
@@ -615,7 +621,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		}
 		Final.xyz += ldrIBL * occlusion;
 		if (clearcoatFactor > 0.001f) {
-			float3 clearcoatSpec = texIBLSpecular.SampleLevel(SS11, ReflectedVec, clearcoatRoughness * iblMaxMip).xyz;
+			float3 clearcoatSpec = T850_SAMPLE_ENVIRONMENT(texIBLSpecular, SS11, ReflectedVec, clearcoatRoughness * iblMaxMip).xyz;
 			float clearcoatAtten = hasBrdfLUT ? 1.0f : (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
 			float3 clearcoatF = FresnelCalc(saturate(dot(normal, EyeDir)), float3(0.04f, 0.04f, 0.04f));
 			float clearcoatWeight = saturate(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)));
@@ -659,7 +665,7 @@ Texture2D texTileLightIndices : register(t17);
 
 float AlbedoSheenScalingLUT(float NdotV, float sheenRoughness)
 {
-	return texIBLSheenELUT.SampleLevel(SS15, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
+	return T850_SAMPLE_ENVIRONMENT(texIBLSheenELUT, SS15, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
 }
 
 float4 FS(VS_OUTPUT input) : SV_TARGET {
@@ -905,7 +911,7 @@ float4 CalculateShadow(float4 position, float viewDepth) {
 				    sampleUV.y < tileMin.y || sampleUV.y > tileMax.y) {
 					Val_1 = 0.0;
 				} else {
-					float depthSM = tex1.Sample(SS1, sampleUV);
+					float depthSM = tex1.SampleLevel(SS1, sampleUV, 0.0f);
 					depthSM -= ShadowParams1.z;  // shadowBias
 					Val_1 = (LightPos.z < depthSM) ? 0.0 : 1.0;
 				}
@@ -926,14 +932,14 @@ float4 CalculateShadow(float4 position, float viewDepth) {
 
 #ifdef ENABLE_SSAO
 float3 GetNormal(float2 coords) {
-	float4 normalmap = tex2.Sample(SS2, coords);
+	float4 normalmap = tex2.SampleLevel(SS2, coords, 0.0f);
 	return DecodeOctahedralNormal(normalmap.xy);
 }
 
-float GetOcclusion(float depth, float2 uv, float4 position, float3 normal) {
+float GetOcclusion(float depth, float2 uv, float4 position, float3 normal, float2 uvDx, float2 uvDy) {
 	float Radius = LightPositions[0].y;
 	float2 Scale = float2(LightPositions[0].z / brightness.w, LightPositions[0].w / brightness.w);
-	float3 pVec = tex3.Sample(SS3, Scale * uv).xyz * 2.0 - 1.0;
+	float3 pVec = tex3.SampleGrad(SS3, Scale * uv, Scale * uvDx, Scale * uvDy).xyz * 2.0 - 1.0;
 
 	float3 tangent = normalize(pVec - normal * dot(pVec, normal));
 	float3 bitangent = cross(normal, tangent);
@@ -941,12 +947,14 @@ float GetOcclusion(float depth, float2 uv, float4 position, float3 normal) {
 
 	float occlusion = 0.0;
 	int KernelSize = (int)LightPositions[0].x;
+	float viewDepth = LinearizeDepth(depth);
+	float2 centerClip = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+	float4 centerProjected = float4(centerClip, depth, 1.0) * viewDepth;
 	[loop] for (int i = 0; i < KernelSize; ++i) {
-		float3 Spheresample = mul(LightPositions[i+1].xyz, tbn);
-		Spheresample = Spheresample * Radius + position.xyz;
-		float4 SpheresampleV = mul(WorldView, float4(Spheresample, 1.0));
+		float3 sampleDelta = mul(LightPositions[i+1].xyz, tbn) * Radius;
+		float sampleViewDepth = viewDepth + mul(WorldView, float4(sampleDelta, 0.0)).z;
 
-		float4 offset = mul(Projection, float4(Spheresample, 1.0));
+		float4 offset = centerProjected + mul(Projection, float4(sampleDelta, 0.0));
 		offset.xy /= offset.w;
 		float2 sampleClip = offset.xy;
 		float2 sampleUV = sampleClip * 0.5 + 0.5;
@@ -954,16 +962,13 @@ float GetOcclusion(float depth, float2 uv, float4 position, float3 normal) {
 		if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0)
 			continue;
 
-		float sampleDepth = tex0.Sample(SS, sampleUV).r;
+		float sampleDepth = tex0.SampleLevel(SS, sampleUV, 0.0f).r;
 		if (!IsSceneDepthValid(sampleDepth))
 			continue;
 
-		float4 new_position = ReconstructPosition(sampleClip, sampleDepth);
-
-		float4 new_positionV = mul(WorldView, float4(new_position.xyz, 1.0));
-
-		float rangeCheck = abs(SpheresampleV.z - new_positionV.z) < Radius ? 1.0 : 0.0;
-		occlusion += ((new_positionV.z < SpheresampleV.z) ? 1.0 : 0.0) * rangeCheck;
+		float surfaceViewDepth = LinearizeDepth(sampleDepth);
+		float rangeCheck = abs(sampleViewDepth - surfaceViewDepth) < Radius ? 1.0 : 0.0;
+		occlusion += ((surfaceViewDepth < sampleViewDepth) ? 1.0 : 0.0) * rangeCheck;
 	}
 
 	occlusion = 1.0 - (occlusion / LightPositions[0].x);
@@ -973,7 +978,11 @@ float GetOcclusion(float depth, float2 uv, float4 position, float3 normal) {
 
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 Fcolor = float4(1.0,1.0,1.0,1.0);
-	float depth = tex0.Sample( SS, input.texture0 );
+	#ifdef ENABLE_SSAO
+		float2 uvDx = ddx(input.texture0);
+		float2 uvDy = ddy(input.texture0);
+	#endif
+	float depth = tex0.SampleLevel(SS, input.texture0, 0.0f);
 	if (!IsSceneDepthValid(depth))
 		return Fcolor;
 
@@ -986,7 +995,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 	#ifdef ENABLE_SSAO
 		float3 normal = GetNormal(input.texture0);
-		float Occlusion = GetOcclusion(depth, input.texture0.xy, position, normal);
+		float Occlusion = GetOcclusion(depth, input.texture0.xy, position, normal, uvDx, uvDy);
 		Fcolor *= Occlusion;
 	#endif
 
@@ -1166,13 +1175,13 @@ FS_OUT FS( VS_OUTPUT input ) : SV_TARGET {
 	OUT.color0 = 0.0;
 	OUT.color1 = 0.0;
 
-	float z = tex0.Sample( SS, input.texture0.xy ).r;
+	float z = tex0.SampleLevel(SS, input.texture0.xy, 0.0f).r;
 	if (!IsSceneDepthValid(z))
 		return OUT;
 
 	float depthFocus;
   #ifdef AUTO_FOCUS
-    depthFocus = tex0.Sample(SS, float2(0.5, 0.5)).r;// Auto Focus center
+	depthFocus = tex0.SampleLevel(SS, float2(0.5, 0.5), 0.0f).r;// Auto Focus center
 		if (LightPositions[1].z > 0.5f && !IsSceneDepthValid(depthFocus) && LightPositions[1].w > 0.0f) {
 			float bestDepth = 0.0f;
 			[unroll] for (int focusY = -2; focusY <= 2; ++focusY) {
@@ -1234,8 +1243,8 @@ float FS(VS_OUTPUT input) : SV_TARGET{
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
-  float dofblur = tex1.Sample(SS1, input.texture0).r;
-  float4 color = tex0.Sample(SS, input.texture0);
+	float dofblur = tex1.SampleLevel(SS1, input.texture0, 0.0f).r;
+	float4 color = tex0.SampleLevel(SS, input.texture0, 0.0f);
 	if (dofblur <= DEPTH_CLEAR_EPSILON)
 		return color;
 	float4 sum = float4(0.0, 0.0, 0.0, 0.0);
@@ -1246,7 +1255,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
 	[loop] for (int i = -samplesSquared; i <= samplesSquared; i++) {
 		[loop] for (int j = -samplesSquared; j <= samplesSquared; j++) {
 			float2 tcoord = input.texture0 + float2(i, j) * offset * dofblur;
-			sum += tex0.Sample(SS, tcoord);
+			sum += tex0.SampleLevel(SS, tcoord, 0.0f);
 			total++;
     }
   }
@@ -1261,8 +1270,8 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
-float dofblur = tex1.Sample(SS1, input.texture0).r;
-float4 color = tex0.Sample(SS, input.texture0);
+float dofblur = tex1.SampleLevel(SS1, input.texture0, 0.0f).r;
+float4 color = tex0.SampleLevel(SS, input.texture0, 0.0f);
 if (dofblur <= DEPTH_CLEAR_EPSILON)
 	return color;
 float4 sum = float4(0.0, 0.0, 0.0, 0.0);
@@ -1273,7 +1282,7 @@ float total = 0.0;
 	[loop] for (int i = -samplesSquared; i <= samplesSquared; i++) {
 	[loop] for (int j = -samplesSquared; j <= samplesSquared; j++) {
 		float2 tcoord = input.texture0 + float2(i, j) * offset * dofblur;
-		sum += tex0.Sample(SS, tcoord);
+		sum += tex0.SampleLevel(SS, tcoord, 0.0f);
 		total++;
   }
 }

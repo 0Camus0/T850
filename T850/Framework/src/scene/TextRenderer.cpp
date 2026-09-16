@@ -115,7 +115,7 @@ namespace t850 {
     free(vsSourceP);
     free(fsSourceP);
 
-    int shaderID = g_pBaseDriver->CreateShader(vstr, fstr);
+    int shaderID = g_pBaseDriver->CreateShader(vstr, fstr, ShaderKey(), vsName, fsName);
     m_shader = g_pBaseDriver->GetShaderIdx(shaderID);
 
 

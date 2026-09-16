@@ -2,9 +2,12 @@
 
 #include <utils/ShaderPermutationDump.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
+#include <glaze/glaze.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -15,6 +18,20 @@
 #include <vector>
 
 namespace t850::ShaderPermutationDump {
+struct ManifestEntry {
+  std::string key;
+  std::string bits;
+  uint32_t pass = 0;
+  std::string vertexShader;
+  std::string fragmentShader;
+  std::vector<std::string> defines;
+};
+
+struct Manifest {
+  int version = 1;
+  std::map<std::string, ManifestEntry> permutations;
+};
+
 namespace {
 
 struct Entry {
@@ -90,105 +107,6 @@ bool IsHexKey(const std::string& value) {
   return true;
 }
 
-bool ParseJsonString(const std::string& text, size_t& pos, std::string& out) {
-  if (pos >= text.size() || text[pos] != '"') return false;
-  ++pos;
-  out.clear();
-  while (pos < text.size()) {
-    char c = text[pos++];
-    if (c == '"') return true;
-    if (c == '\\' && pos < text.size()) {
-      char escaped = text[pos++];
-      switch (escaped) {
-        case '"': out += '"'; break;
-        case '\\': out += '\\'; break;
-        case '/': out += '/'; break;
-        case 'b': out += '\b'; break;
-        case 'f': out += '\f'; break;
-        case 'n': out += '\n'; break;
-        case 'r': out += '\r'; break;
-        case 't': out += '\t'; break;
-        default: out += escaped; break;
-      }
-    } else {
-      out += c;
-    }
-  }
-  return false;
-}
-
-void SkipWhitespace(const std::string& text, size_t& pos) {
-  while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
-}
-
-size_t FindMatchingBrace(const std::string& text, size_t openPos) {
-  bool inString = false;
-  bool escaped = false;
-  int depth = 0;
-  for (size_t i = openPos; i < text.size(); ++i) {
-    char c = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (c == '\\') {
-        escaped = true;
-      } else if (c == '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (c == '"') {
-      inString = true;
-    } else if (c == '{') {
-      ++depth;
-    } else if (c == '}') {
-      --depth;
-      if (depth == 0) return i;
-    }
-  }
-  return std::string::npos;
-}
-
-std::map<std::string, std::string> LoadExistingRawEntries(const std::filesystem::path& path) {
-  std::map<std::string, std::string> entries;
-  std::ifstream file(path, std::ios::in | std::ios::binary);
-  if (!file.is_open()) return entries;
-
-  std::ostringstream buffer;
-  buffer << file.rdbuf();
-  const std::string text = buffer.str();
-  const size_t permutationsPos = text.find("\"permutations\"");
-  if (permutationsPos == std::string::npos) return entries;
-  size_t pos = text.find('{', permutationsPos);
-  if (pos == std::string::npos) return entries;
-  ++pos;
-
-  while (pos < text.size()) {
-    SkipWhitespace(text, pos);
-    if (pos >= text.size() || text[pos] == '}') break;
-    if (text[pos] == ',') {
-      ++pos;
-      continue;
-    }
-
-    std::string key;
-    if (!ParseJsonString(text, pos, key) || !IsHexKey(key)) break;
-    SkipWhitespace(text, pos);
-    if (pos >= text.size() || text[pos] != ':') break;
-    ++pos;
-    SkipWhitespace(text, pos);
-    if (pos >= text.size() || text[pos] != '{') break;
-
-    const size_t objectStart = pos;
-    const size_t objectEnd = FindMatchingBrace(text, objectStart);
-    if (objectEnd == std::string::npos) break;
-    entries[key] = text.substr(objectStart, objectEnd - objectStart + 1);
-    pos = objectEnd + 1;
-  }
-
-  return entries;
-}
-
 std::string EntryToJson(const Entry& entry) {
   std::ostringstream out;
   out << "{\n";
@@ -210,9 +128,12 @@ std::string EntryToJson(const Entry& entry) {
 } // namespace
 
 void Begin(const std::string& outputPath) {
+  static const bool registered = std::atexit([] {
+    if (!Flush()) std::_Exit(EXIT_FAILURE);
+  }) == 0;
+  if (!registered) throw std::runtime_error("Cannot register shader permutation flush at exit");
   std::lock_guard<std::mutex> lock(g_mutex);
-  g_outputPath = outputPath.empty() ? std::filesystem::path("shader_permutations.json")
-                                    : std::filesystem::path(outputPath);
+  g_outputPath = std::filesystem::absolute(outputPath.empty() ? "shader_permutations.json" : outputPath);
   g_entries.clear();
   g_enabled = true;
   T8_LOG_INFO("[ShaderPermutationDump] Recording shader permutations to '%s'", g_outputPath.string().c_str());
@@ -245,27 +166,30 @@ bool Flush() {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (!g_enabled) return true;
 
-  std::map<std::string, std::string> merged = LoadExistingRawEntries(g_outputPath);
+  Manifest manifest;
+  std::error_code ec;
+  const bool exists = std::filesystem::exists(g_outputPath, ec);
+  if (ec) return false;
+  if (exists) {
+    std::string text;
+    if (!ResourceLocator::Instance().ReadText(g_outputPath.string(), text) ||
+        glz::read<glz::opts{.error_on_missing_keys = true}>(manifest, text) || manifest.version != 1) {
+      T8_LOG_ERROR("[ShaderPermutationDump] Refusing to replace unreadable or invalid manifest '%s'", g_outputPath.string().c_str());
+      return false;
+    }
+  }
+  std::map<std::string, std::string> merged;
+  for (const auto& [key, entry] : manifest.permutations) {
+    if (!IsHexKey(key) || entry.key != key || entry.bits != key) return false;
+    auto json = glz::write_json(entry);
+    if (!json) return false;
+    merged[key] = std::move(json.value());
+  }
   for (const auto& it : g_entries) {
     merged[it.first] = EntryToJson(it.second);
   }
 
-  std::error_code ec;
-  const std::filesystem::path parent = g_outputPath.parent_path();
-  if (!parent.empty()) {
-    std::filesystem::create_directories(parent, ec);
-    if (ec) {
-      T8_LOG_ERROR("[ShaderPermutationDump] Failed to create '%s': %s",
-                   parent.string().c_str(), ec.message().c_str());
-      return false;
-    }
-  }
-
-  std::ofstream file(g_outputPath, std::ios::out | std::ios::binary | std::ios::trunc);
-  if (!file.is_open()) {
-    T8_LOG_ERROR("[ShaderPermutationDump] Failed to open '%s' for writing", g_outputPath.string().c_str());
-    return false;
-  }
+  std::ostringstream file;
 
   file << "{\n";
   file << "  \"version\": 1,\n";
@@ -279,6 +203,12 @@ bool Flush() {
   file << "  }\n";
   file << "}\n";
 
+  const auto text = file.str();
+  if (!ResourceLocator::Instance().WriteBinaryAtomic(g_outputPath.string(),
+      std::span(reinterpret_cast<const unsigned char*>(text.data()), text.size()))) {
+    T8_LOG_ERROR("[ShaderPermutationDump] Failed to atomically write '%s'", g_outputPath.string().c_str());
+    return false;
+  }
   T8_LOG_INFO("[ShaderPermutationDump] Wrote %zu shader permutations to '%s'",
               merged.size(), g_outputPath.string().c_str());
   g_enabled = false;

@@ -6,6 +6,8 @@
 #include <core/EngineContext.h>
 #include <debug/RuntimeTelemetry.h>
 #include <physics/JoltPhysicsSystem.h>
+#include <terrain/VoxelCollision.h>
+#include <scene/SceneConversions.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 
@@ -13,54 +15,7 @@
 #include <cmath>
 #include <cstdlib>
 
-namespace {
-
-bool SweepPointAgainstExpandedBlock(const XVECTOR3& start,
-                                    const XVECTOR3& displacement,
-                                    const XVECTOR3& minimum,
-                                    const XVECTOR3& maximum,
-                                    float& fraction,
-                                    XVECTOR3& normal) {
-  float enter = 0.0f;
-  float exit = 1.0f;
-  XVECTOR3 enterNormal(0.0f, 0.0f, 0.0f, 0.0f);
-  for (int axis = 0; axis < 3; ++axis) {
-    const float origin = axis == 0 ? start.x : (axis == 1 ? start.y : start.z);
-    const float delta = axis == 0 ? displacement.x : (axis == 1 ? displacement.y : displacement.z);
-    const float low = axis == 0 ? minimum.x : (axis == 1 ? minimum.y : minimum.z);
-    const float high = axis == 0 ? maximum.x : (axis == 1 ? maximum.y : maximum.z);
-    if (std::abs(delta) <= 0.000001f) {
-      if (origin < low || origin > high) return false;
-      continue;
-    }
-    float nearTime = (low - origin) / delta;
-    float farTime = (high - origin) / delta;
-    float nearSign = -1.0f;
-    if (nearTime > farTime) {
-      std::swap(nearTime, farTime);
-      nearSign = 1.0f;
-    }
-    if (nearTime > enter) {
-      enter = nearTime;
-      enterNormal = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
-      if (axis == 0) enterNormal.x = nearSign;
-      else if (axis == 1) enterNormal.y = nearSign;
-      else enterNormal.z = nearSign;
-    }
-    exit = (std::min)(exit, farTime);
-    if (enter > exit) return false;
-  }
-  if (enter < 0.0f || enter > 1.0f) return false;
-  fraction = enter;
-  normal = enterNormal;
-  return true;
-}
-
-} // namespace
-
-VoxelScene::VoxelScene()
-    : m_world(t850::terrain::ChunkDimensions{16, 16, 16}),
-      m_streaming(t850::terrain::ChunkDimensions{16, 16, 16}) {}
+VoxelScene::VoxelScene() = default;
 
 void VoxelScene::InitVars() {
   m_deltaSeconds = 0.0f;
@@ -72,32 +27,24 @@ void VoxelScene::InitVars() {
   m_deltas.Clear();
   m_blockRegistry = t850::terrain::BlockRegistry{};
 
-  t850::terrain::BlockDefinition stone;
-  stone.name = "stone";
-  stone.color = XVECTOR3(0.38f, 0.43f, 0.48f, 1.0f);
-  stone.usesBaseColorTexture = true;
-  stone.atlasU0 = 0.0f;
-  stone.atlasU1 = 1.0f / 3.0f;
-  m_stone = m_blockRegistry.Register(std::move(stone));
-  t850::terrain::BlockDefinition dirt;
-  dirt.name = "dirt";
-  dirt.color = XVECTOR3(0.40f, 0.25f, 0.12f, 1.0f);
-  dirt.roughness = 1.0f;
-  dirt.usesBaseColorTexture = true;
-  dirt.atlasU0 = 1.0f / 3.0f;
-  dirt.atlasU1 = 2.0f / 3.0f;
-  m_dirt = m_blockRegistry.Register(std::move(dirt));
-  t850::terrain::BlockDefinition grass;
-  grass.name = "grass";
-  grass.color = XVECTOR3(0.16f, 0.55f, 0.20f, 1.0f);
-  grass.usesBaseColorTexture = true;
-  grass.atlasU0 = 2.0f / 3.0f;
-  grass.atlasU1 = 1.0f;
-  m_grass = m_blockRegistry.Register(std::move(grass));
-
-  m_deltaPath = t850::ResourceLocator::Instance()
-      .ResolveCachePath("VoxelWorlds/default/edits.t8vox")
-      .string();
+  const std::string scenePath = t850::g_config.sceneFilePath.empty()
+      ? "Scenes/VoxelScene.t8scene" : t850::g_config.sceneFilePath;
+  std::string sceneError;
+  if (!t850::scene::LoadEditorSceneFile(scenePath, m_sceneFile, &sceneError) ||
+      !m_sceneFile.runtime_setup || !m_sceneSetup.Load(*m_sceneFile.runtime_setup) ||
+      m_sceneSetup.cameras.size() != 1 || m_sceneSetup.lightCameras.size() != 1) {
+    throw std::runtime_error("Voxel scene requires runtime setup with one camera and light camera: " + sceneError);
+  }
+  if (!m_sceneFile.streamed_voxels)
+    throw std::runtime_error("Voxel scene requires streamed_voxels data");
+  const auto& voxels = *m_sceneFile.streamed_voxels;
+  t850::scene::BuildStreamedVoxelPalette(voxels, m_blockRegistry);
+  m_world = t850::terrain::VoxelWorld(voxels.chunk_dimensions);
+  m_streaming.Reset(voxels.chunk_dimensions);
+  m_stone = m_blockRegistry.Find(voxels.deep_block);
+  m_dirt = m_blockRegistry.Find(voxels.fill_block);
+  m_grass = m_blockRegistry.Find(voxels.surface_block);
+  m_deltaPath = t850::ResourceLocator::Instance().ResolveCachePath(voxels.edits_path).string();
   if (t850::g_config.regressionFixedDt <= 0.0f && std::filesystem::exists(m_deltaPath)) {
     std::string error;
     if (!m_deltas.Load(m_deltaPath, &error)) {
@@ -105,56 +52,17 @@ void VoxelScene::InitVars() {
       m_deltas.Clear();
     }
   }
-
-  m_camera.InitPerspective(XVECTOR3(16.0f, 10.0f, -6.0f), Deg2Rad(65.0f), 1280.0f / 720.0f, 0.05f, 1000.0f);
-  m_camera.Eye = XVECTOR3(16.0f, 10.0f, -6.0f, 1.0f);
-  m_camera.Yaw = 0.0f;
-  m_camera.Pitch = -0.15f;
-  m_camera.Update(0.0f);
-  m_cameraController.SetActiveProfile(t850::CameraProfileType::GroundedFps);
+  SceneProp = SceneProps{};
+  m_sceneSetup.Apply(SceneProp);
+  m_sceneSetup.ApplyInputSettings(SceneProp, m_sceneFile.mouse_capture);
+  m_camera = *m_sceneSetup.GetCamera();
+  m_lightCamera = *m_sceneSetup.GetLightCamera();
+  SceneProp.pCameras = {&m_camera};
+  SceneProp.pLightCameras = {&m_lightCamera};
+  m_cameraController.SetActiveProfile(t850::CameraProfileTypeFromIndex(voxels.camera_profile));
   m_cameraController.AttachCamera(&m_camera);
 
-  m_lightCamera.InitPerspective(XVECTOR3(16.0f, 40.0f, -10.0f), Deg2Rad(55.0f), 1.0f, 0.1f, 200.0f);
-  m_lightCamera.Eye = XVECTOR3(16.0f, 40.0f, -10.0f, 1.0f);
-  m_lightCamera.Pitch = 0.8f;
-  m_lightCamera.Yaw = 0.0f;
-  m_lightCamera.Update(0.0f);
-
-  SceneProp = SceneProps{};
-  SceneProp.AddCamera(&m_camera);
-  SceneProp.AddLightCamera(&m_lightCamera);
-  SceneProp.AddDirectionalLight(XVECTOR3(-0.35f, -1.0f, 0.2f, 0.0f), XVECTOR3(1.0f, 0.96f, 0.86f, 1.0f), 3.0f, true);
-  SceneProp.ActiveLights = 1;
-  SceneProp.AmbientColor = XVECTOR3(0.18f, 0.22f, 0.28f, 1.0f);
-  SceneProp.ToogleDOF = 0;
-  SceneProp.ToogleParallax = 0;
-  SceneProp.IBLFactor = 0.0f;
-  SceneProp.FrustumCullingEnabled = true;
-
-  m_shadowFilter.kernelSize = 4;
-  m_shadowFilter.radius = 1.0f;
-  m_shadowFilter.sigma = 1.0f;
-  m_shadowFilter.Update();
-  m_bloomFilter.kernelSize = 11;
-  m_bloomFilter.radius = 2.5f;
-  m_bloomFilter.sigma = 4.5f;
-  m_bloomFilter.Update();
-  m_dofFilter.kernelSize = 23;
-  m_dofFilter.radius = 3.0f;
-  m_dofFilter.sigma = 6.0f;
-  m_dofFilter.Update();
-  SceneProp.AddGaussKernel(&m_shadowFilter);
-  SceneProp.AddGaussKernel(&m_bloomFilter);
-  SceneProp.AddGaussKernel(&m_dofFilter);
-
-  t850::terrain::VoxelStreamingSettings streamingSettings;
-  streamingSettings.horizontalRadius = 2;
-  streamingSettings.verticalRadius = 0;
-  streamingSettings.maxInFlight = 4;
-  streamingSettings.maxLaunchesPerUpdate = 4;
-  streamingSettings.maxCommitsPerUpdate = 4;
-  streamingSettings.maxUnloadsPerUpdate = 4;
-  m_streaming.SetSettings(streamingSettings);
+  m_streaming.SetSettings(voxels.streaming);
 
   t850::FrameDumperConfig dumpConfig;
   dumpConfig.dumpEnabled = t850::g_config.flags.dumpEnabled;
@@ -173,25 +81,11 @@ t850::terrain::VoxelChunkBuildResult VoxelScene::BuildStreamedChunk(
   t850::terrain::VoxelChunkBuildResult result;
   result.key = request.key;
   result.epoch = request.epoch;
-  result.chunk = std::make_unique<t850::terrain::VoxelChunk>(request.key, request.dimensions);
-  for (int z = 0; z < request.dimensions.z; ++z) {
-    if (request.IsCancelled()) {
-      result.cancelled = true;
-      result.chunk.reset();
-      return result;
-    }
-    for (int x = 0; x < request.dimensions.x; ++x) {
-      const int worldX = request.key.x * request.dimensions.x + x;
-      const int worldZ = request.key.z * request.dimensions.z + z;
-      const int height = 3 + ((worldX * 13 + worldZ * 7 + (worldX ^ worldZ)) & 3);
-      for (int y = 0; y < request.dimensions.y; ++y) {
-        const int worldY = request.key.y * request.dimensions.y + y;
-        if (worldY > height) continue;
-        result.chunk->Set(
-            x, y, z,
-            worldY == height ? m_grass : (worldY + 2 >= height ? m_dirt : m_stone));
-      }
-    }
+  result.chunk = t850::terrain::GenerateLayeredVoxelChunk(
+      request, m_sceneFile.streamed_voxels->terrain, m_grass, m_dirt, m_stone);
+  if (!result.chunk) {
+    result.cancelled = true;
+    return result;
   }
   m_deltas.ApplyToChunk(*result.chunk);
   if (!t850::terrain::BuildGreedyVoxelMesh(
@@ -205,8 +99,8 @@ void VoxelScene::CreateAssets() {
   if (m_assetsCreated || !pFramework || !pFramework->pVideoDriver) return;
   SceneProp.SSAOKernel.InitTexture();
   t850::RenderContainerDesc descriptor;
-  descriptor.name = "VoxelScene";
-  descriptor.renderGraphPath = "Scenes/SceneTemplate_RenderGraph.json";
+  descriptor.name = m_sceneSetup.name;
+  descriptor.renderGraphPath = m_sceneFile.render_graph;
   descriptor.width = pFramework->pVideoDriver->width;
   descriptor.height = pFramework->pVideoDriver->height;
   descriptor.sceneProps = &SceneProp;
@@ -216,17 +110,12 @@ void VoxelScene::CreateAssets() {
   }
   m_renderContainer.SetMainCamera(&m_camera);
   m_renderContainer.SetLightCamera(&m_lightCamera);
-  m_renderContainer.Graph().DisablePass("Light Add");
-  const unsigned char atlasPixels[] = {
-      132, 142, 154, 255, 132, 142, 154, 255,
-      116,  76,  42, 255, 116,  76,  42, 255,
-       66, 158,  72, 255,  66, 158,  72, 255,
-      132, 142, 154, 255, 132, 142, 154, 255,
-      116,  76,  42, 255, 116,  76,  42, 255,
-       66, 158,  72, 255,  66, 158,  72, 255};
+  for (const auto& pass : m_sceneFile.disabled_render_passes)
+    m_renderContainer.Graph().DisablePass(pass);
+  const auto& voxels = *m_sceneFile.streamed_voxels;
   if (pEngineContext && pEngineContext->device) {
     m_blockAtlas = pEngineContext->device->CreateTextureFromMemory(
-        atlasPixels, 6, 2, 4, "voxel_block_atlas");
+        voxels.atlas_rgba.data(), voxels.atlas_width, voxels.atlas_height, 4, "voxel_block_atlas");
     if (m_blockAtlas) {
       m_blockAtlas->params = t850::TextBasicParams::CLAMP_TO_EDGE |
           t850::TextBasicParams::NEAREST_FILTER;
@@ -507,7 +396,7 @@ void VoxelScene::OnInput(InputManager* input) {
 
   if (input->PressedOnceMouseButton(0) || input->PressedOnceMouseButton(1)) {
     t850::terrain::VoxelRayHit hit;
-    if (m_world.Raycast(m_camera.Eye, m_camera.Look, 8.0f, m_blockRegistry, hit)) {
+    if (m_world.Raycast(m_camera.Eye, m_camera.Look, m_sceneFile.streamed_voxels->interaction_reach, m_blockRegistry, hit)) {
       bool changed = false;
       if (input->PressedOnceMouseButton(0)) {
         changed = m_world.SetBlock(hit.blockX, hit.blockY, hit.blockZ, t850::terrain::kAirBlock);
@@ -546,49 +435,14 @@ bool VoxelScene::SweepAabb(const XVECTOR3& start,
                            const XVECTOR3& displacement,
                            const XVECTOR3& halfExtents,
                            t850::CharacterCollisionHit& hit) const {
-  hit = t850::CharacterCollisionHit{};
-  const XVECTOR3 end = start + displacement;
-  const int minX = static_cast<int>(std::floor((std::min)(start.x, end.x) - halfExtents.x)) - 1;
-  const int minY = static_cast<int>(std::floor((std::min)(start.y, end.y) - halfExtents.y)) - 1;
-  const int minZ = static_cast<int>(std::floor((std::min)(start.z, end.z) - halfExtents.z)) - 1;
-  const int maxX = static_cast<int>(std::ceil((std::max)(start.x, end.x) + halfExtents.x)) + 1;
-  const int maxY = static_cast<int>(std::ceil((std::max)(start.y, end.y) + halfExtents.y)) + 1;
-  const int maxZ = static_cast<int>(std::ceil((std::max)(start.z, end.z) + halfExtents.z)) + 1;
-  float bestFraction = 1.0f;
-  XVECTOR3 bestNormal;
-  bool found = false;
-  for (int z = minZ; z <= maxZ; ++z) {
-    for (int y = minY; y <= maxY; ++y) {
-      for (int x = minX; x <= maxX; ++x) {
-        const auto block = m_world.GetBlock(x, y, z);
-        if (!m_blockRegistry.Get(block).collidable) continue;
-        const XVECTOR3 minimum(
-            static_cast<float>(x) - halfExtents.x,
-            static_cast<float>(y) - halfExtents.y,
-            static_cast<float>(z) - halfExtents.z,
-            1.0f);
-        const XVECTOR3 maximum(
-            static_cast<float>(x + 1) + halfExtents.x,
-            static_cast<float>(y + 1) + halfExtents.y,
-            static_cast<float>(z + 1) + halfExtents.z,
-            1.0f);
-        float fraction = 1.0f;
-        XVECTOR3 normal;
-        if (SweepPointAgainstExpandedBlock(start, displacement, minimum, maximum, fraction, normal) &&
-            fraction < bestFraction) {
-          bestFraction = fraction;
-          bestNormal = normal;
-          found = true;
-        }
-      }
-    }
-  }
-  if (!found) return false;
-  hit.hit = true;
-  hit.fraction = bestFraction;
-  hit.position = start + displacement * bestFraction;
-  hit.normal = bestNormal;
-  return true;
+  t850::CharacterBoxSweep sweep;
+  sweep.startCenter = start;
+  sweep.displacement = displacement;
+  sweep.halfExtents = halfExtents;
+  return t850::terrain::SweepVoxelBox(sweep, {
+      [this](int worldX, int worldY, int worldZ) {
+        return m_blockRegistry.Get(m_world.GetBlock(worldX, worldY, worldZ)).collidable;
+      }}, hit);
 }
 
 bool VoxelScene::SweepCapsule(

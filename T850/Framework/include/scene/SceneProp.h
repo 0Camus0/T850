@@ -81,6 +81,7 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	std::vector<Camera*> pCameras;
 	Camera* pCullingCamera = nullptr;
 	bool FrustumCullingEnabled = true;
+  bool MouseCaptureAllowed = true;
 	bool FrustumCullingToggleAllowed = true;
 	bool ShowCullingDebug = false;
 

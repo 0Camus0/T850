@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <scene/SceneDescriptor.h>
+#include <terrain/VoxelStreaming.h>
 #include <string>
 #include <vector>
 
@@ -494,6 +495,29 @@ struct SceneVoxelOreDesc {
   int min_depth = 0;
 };
 
+struct SceneVoxelPaletteEntry {
+  std::string name;
+  std::array<float, 4> color = {1, 1, 1, 1};
+  std::array<float, 4> atlas_rect = {0, 0, 1, 1};
+  float roughness = 0.8f;
+};
+
+struct SceneStreamedVoxelsDesc {
+  terrain::ChunkDimensions chunk_dimensions;
+  terrain::VoxelStreamingSettings streaming;
+  terrain::LayeredVoxelTerrainSettings terrain;
+  std::vector<SceneVoxelPaletteEntry> palette;
+  std::string surface_block;
+  std::string fill_block;
+  std::string deep_block;
+  std::string edits_path;
+  int camera_profile = 0;
+  float interaction_reach = 0;
+  int atlas_width = 0;
+  int atlas_height = 0;
+  std::vector<uint8_t> atlas_rgba;
+};
+
 struct SceneVoxelTerrainDesc {
   float base_frequency = 0.01f;
   int base_octaves = 4;
@@ -699,7 +723,10 @@ struct EditorSceneFile {
   int version = 2;  // v2 adds stable light IDs; v1 still loads (migrated in memory)
   std::string collision;
   std::string render_graph;
+  std::vector<std::string> disabled_render_passes;
   std::string control_descriptor;
+  std::optional<bool> mouse_capture;
+  std::optional<::t850::SceneDescriptor> runtime_setup;
   EditorStateDesc editor;
   std::vector<SceneObjectDesc> objects;
   std::vector<SceneRegionDesc> regions;
@@ -714,6 +741,7 @@ struct EditorSceneFile {
   std::vector<SceneCameraAnimationDesc> camera_animations;
   std::optional<SceneGodRaysVolumeDesc> god_rays_volume;
   std::optional<SceneVoxelWorldDesc> voxel_world;
+  std::optional<SceneStreamedVoxelsDesc> streamed_voxels;
   std::vector<SceneLightDesc> lights;
   std::vector<::t850::SandboxProfileDesc> profiles;
 };

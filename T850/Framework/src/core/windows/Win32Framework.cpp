@@ -15,7 +15,6 @@
 #include <core/EngineContext.h>
 #include <core/Config.h>
 #include <video/WindowsDriverFactory.h>
-#include <video/webgpu/WebGPUDriver.h>
 
 #include <video/gl/GLDriver.h>
 #if defined(OS_WINDOWS)
@@ -787,16 +786,7 @@ namespace t850 {
       T8_LOG_ERROR("USING_OPENGL not defined — skipping SDL_GL_CreateContext");
 #endif
     }
-    pVideoDriver = CreateWindowsGraphicsDriver(api);
-#if defined(_M_X64)
-    if (api == GraphicsApi::WEBGPU) {
-      webgpu::ShaderFlow shaderFlow;
-      if (!webgpu::ParseShaderFlow(g_config.webgpuShaderFlow, shaderFlow))
-        throw std::runtime_error("Invalid WebGPU startup shader flow");
-      static_cast<WebGPUDriver*>(pVideoDriver)->SetShaderFlow(shaderFlow);
-      T8_LOG_INFO("[WebGPU] startup shaderFlow=%s (before asset loading)", g_config.webgpuShaderFlow.c_str());
-    }
-#endif
+    pVideoDriver = CreateWindowsGraphicsDriver(api, g_config.webgpuShaderFlow);
     pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
 
     g_pBaseDriver = pVideoDriver;

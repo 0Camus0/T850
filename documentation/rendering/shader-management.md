@@ -1,3 +1,21 @@
+# Framework Ownership Update
+
+Shader precompilation now lives in Framework `ShaderPrecompiler` and the
+`ShaderTools` command host; scenes do not enumerate or manage shader caches.
+`ConfigRuntime` owns shader-tool options and validation. The recorder owns its
+exit flush registration. Existing launcher flags and progress output are retained.
+Recorder merges validate the entire existing manifest through Glaze and replace
+it atomically through ResourceLocator. Invalid input is preserved and reported
+as a failure. Use one recording process per output manifest.
+
+Opaque `DEFAULT_PASS` mesh variants do not require scene depth/color resources.
+`FORWARD_PASS` variants explicitly compile compositing reads in all shader
+languages, including the offline permutation manifest. Missing required WebGPU
+resources are errors, not backend-provided scene-specific substitutes.
+
+See [branch ownership audit](../architecture/webgpu-branch-ownership-audit.md)
+for validation and remaining legacy ownership debt.
+
 # Shader Management
 
 Status: verified against source on 2026-08-19.

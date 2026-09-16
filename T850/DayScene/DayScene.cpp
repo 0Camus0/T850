@@ -13,6 +13,7 @@
 #include <scene/IBLResources.h>
 #include <scene/RenderMesh.h>
 #include <physics/PhysicsAuthoring.h>
+#include <scene/SceneConversions.h>
 #include <utils/Log.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
@@ -639,7 +640,7 @@ void DayScene::InitVars() {
 }
 void DayScene::CreateAssets() {
   //Create RT's via RenderGraph
-  if (!m_renderGraph.Load("Scenes/DayScene_RenderGraph.json")) {
+  if (!m_sceneSetup.runtimeScene || !m_renderGraph.Load(m_sceneSetup.runtimeScene->render_graph)) {
     T8_LOG_ERROR("[DayScene] Failed to load render graph");
     return;
   }
@@ -691,35 +692,32 @@ void DayScene::CreateAssets() {
     SheenELUTTexIndex);
   UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
-  int index = PrimitiveMgr.CreateMesh("Models/SkyBox.glb");
-  Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
-  Meshes[1].TranslateAbsolute(0.0, -10.0f, 0.0f);
-  Meshes[1].Update();
-
-  index = PrimitiveMgr.CreateMesh("Models/SponzaEsc.glb");
-  Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
-  Meshes[0].Update();
+  const auto& objects = m_sceneSetup.runtimeScene->objects;
+  if (objects.size() > std::size(Meshes))
+    throw std::runtime_error("Authored DayScene object count exceeds runtime capacity");
+  int index = -1;
+  for (size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex) {
+    const auto& object = objects[objectIndex];
+    index = PrimitiveMgr.CreateSceneObject(object);
+    if (index < 0)
+      throw std::runtime_error("Failed to create authored scene object: " + object.name);
+    auto& instance = Meshes[objectIndex];
+    instance.CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+    scene::ApplySceneObject(object, instance);
+  }
   if (pEngineContext && pEngineContext->physics && pEngineContext->physics->IsInitialized()) {
-    RenderMesh* sponzaMesh = dynamic_cast<RenderMesh*>(Meshes[0].pBase);
-    PhysicsTriangleMeshCookSettings cookSettings;
-    cookSettings.maxTrianglesPerLeaf = 8;
-    cookSettings.buildQuality = PhysicsMeshBuildQuality::FavorRuntimePerformance;
-    cookSettings.useDiskCache = true;
-
-    PhysicsCookStats cookStats;
-    if (sponzaMesh && AttachStaticTriangleMeshBody(*pEngineContext->physics, Meshes[0], *sponzaMesh, cookSettings, &cookStats)) {
-      T8_LOG_INFO("[DayScene] Sponza physics mesh ready: cache=%s vertices=%u triangles=%u extract=%.2fms load=%.2fms cook=%.2fms save=%.2fms total=%.2fms path='%s'",
-                  cookStats.cacheHit ? "hit" : "miss",
-                  cookStats.vertexCount,
-                  cookStats.triangleCount,
-                  cookStats.extractionMs,
-                  cookStats.cacheLoadMs,
-                  cookStats.cookMs,
-                  cookStats.cacheSaveMs,
-                  cookStats.totalMs,
-                  cookStats.cachePath.c_str());
-    } else {
-      T8_LOG_ERROR("[DayScene] Failed to create Sponza physics mesh");
+    for (const auto& entity : m_sceneSetup.runtimeScene->physics_entities) {
+      if (entity.type != "static_triangle_mesh") continue;
+      const auto object = std::find_if(objects.begin(), objects.end(), [&](const auto& candidate) {
+        return candidate.name == entity.source_object;
+      });
+      if (object == objects.end())
+        throw std::runtime_error("Unknown physics source object: " + entity.source_object);
+      auto& instance = Meshes[static_cast<size_t>(object - objects.begin())];
+      auto* mesh = dynamic_cast<RenderMesh*>(instance.pBase);
+      const auto cookSettings = scene::PhysicsCookSettingsFromScene(entity.cook_settings);
+      if (!mesh || !AttachStaticTriangleMeshBody(*pEngineContext->physics, instance, *mesh, cookSettings))
+        throw std::runtime_error("Failed to create authored physics mesh: " + entity.source_object);
     }
   }
 
@@ -1221,16 +1219,6 @@ void DayScene::RebindRenderGraphOutputs() {
   CoCHelperPass    = m_renderGraph.GetRTHandle("CoCHelper");
   CoCHelperPass2   = m_renderGraph.GetRTHandle("CoCHelper2");
 
-  auto* driver = pFramework ? pFramework->pVideoDriver : nullptr;
-  if (driver && GBufferPass >= 0 && GBufferPass < static_cast<int>(driver->RTs.size()) && driver->RTs[GBufferPass]) {
-    auto* gbuffer = driver->RTs[GBufferPass];
-    for (int slot = 0; slot < 4; ++slot) {
-      Quads[0].SetTexture(slot < static_cast<int>(gbuffer->vColorTextures.size()) ? gbuffer->vColorTextures[slot] : nullptr, slot);
-    }
-    Quads[0].SetTexture(gbuffer->pDepthTexture, 4);
-  } else {
-    T8_LOG_ERROR("[DayScene] Cannot bind GBuffer textures, handle=%d", GBufferPass);
-  }
   Quads[0].SetEnvironmentMap((g_pBaseDriver && EnvMapTexIndex >= 0) ? g_pBaseDriver->GetTexture(EnvMapTexIndex) : nullptr);
   T8_LOG_INFO("[DayScene] Rebound render graph outputs: gbuffer=%d deferred=%d extra=%d depth=%d env=%d",
               GBufferPass, DeferredPass, Extra16FPass, DepthPass, EnvMapTexIndex);
@@ -1415,7 +1403,7 @@ void DayScene::ResetBenchmarkSameApiRun() {
 
   ResetSceneStateForBenchmarkRun();
   m_renderGraph = t850::RenderGraph{};
-  if (!m_renderGraph.Load("Scenes/DayScene_RenderGraph.json")) {
+  if (!m_sceneSetup.runtimeScene || !m_renderGraph.Load(m_sceneSetup.runtimeScene->render_graph)) {
     T8_LOG_ERROR("[BenchmarkMatrix] Failed to reload render graph for benchmark reset");
     return;
   }
@@ -2384,7 +2372,7 @@ void DayScene::OnDraw() {
   m_renderGraph.Execute(
     pFramework->pVideoDriver,
     SceneProp,
-    Meshes, 2,
+    Meshes, static_cast<int>(m_sceneSetup.runtimeScene->objects.size()),
     Quads,
     viewCam,
     &LightCam,

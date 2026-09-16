@@ -255,9 +255,7 @@ void DevLayer::ProcessInput(InputManager* input) {
 }
 
 void DevLayer::LoadScene(SceneBase* scene) {
-  if (m_activeScene) {
-    m_activeScene->OnDestoryScene();
-  }
+  UnloadScene();
   m_activeScene = scene;
   if (m_activeScene) {
     m_activeScene->OnLoadScene();
@@ -266,7 +264,8 @@ void DevLayer::LoadScene(SceneBase* scene) {
 
 void DevLayer::UnloadScene() {
   if (m_activeScene) {
-    m_activeScene->OnDestoryScene();
+    if (m_framework) m_framework->UnloadScene(*m_activeScene);
+    else m_activeScene->OnDestoryScene();
     m_activeScene = nullptr;
   }
 }

@@ -89,7 +89,7 @@ namespace t850 {
 
     virtual void ResetViewInput() {}
     virtual bool AllowsInputWhenRuntimeGuiVisible() const { return false; }
-    virtual bool AllowsMouseCapture() const { return true; }
+    virtual bool AllowsMouseCapture() const { return SceneProp.MouseCaptureAllowed; }
 
     void SetEngineContext(EngineContext* context) { pEngineContext = context; }
     EngineContext* GetEngineContext() const { return pEngineContext; }
@@ -111,6 +111,11 @@ namespace t850 {
     virtual void ProcessInput() = 0;
     virtual void ResetApplication() = 0;
     virtual void ChangeAPI(GraphicsApi::E api) = 0;
+
+    void UnloadScene(SceneBase& scene) {
+      if (pVideoDriver) pVideoDriver->FlushGPUResources();
+      scene.OnDestoryScene();
+    }
 
     BaseDriver		*pVideoDriver;
     AppBase			*pBaseApp;

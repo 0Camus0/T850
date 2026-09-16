@@ -1,10 +1,57 @@
 #include <pch.h>
 #include <scene/SceneConversions.h>
+#include <utils/CameraProfiles.h>
+#include <filesystem>
+#include <stdexcept>
 
 #include <algorithm>
 #include <cmath>
 
 namespace t850::scene {
+
+void ApplySceneObject(const SceneObjectDesc& desc, PrimitiveInst& instance) {
+  instance.TranslateAbsolute(desc.position.x, desc.position.y, desc.position.z);
+  instance.RotateXAbsolute(desc.rotation.x);
+  instance.RotateYAbsolute(desc.rotation.y);
+  instance.RotateZAbsolute(desc.rotation.z);
+  instance.ScaleAbsolute(desc.scale.x, desc.scale.y, desc.scale.z);
+  instance.SetVisible(desc.visible);
+  instance.Update();
+}
+
+void BuildStreamedVoxelPalette(const SceneStreamedVoxelsDesc& desc, terrain::BlockRegistry& registry) {
+  const auto fail = [] { throw std::runtime_error("Invalid streamed voxel scene data"); };
+  if (desc.chunk_dimensions.x <= 0 || desc.chunk_dimensions.y <= 0 || desc.chunk_dimensions.z <= 0 ||
+      desc.chunk_dimensions.x > 256 || desc.chunk_dimensions.y > 256 || desc.chunk_dimensions.z > 256 ||
+      desc.atlas_width <= 0 || desc.atlas_height <= 0 || desc.atlas_width > 4096 || desc.atlas_height > 4096 ||
+      desc.atlas_rgba.size() != static_cast<size_t>(desc.atlas_width) * desc.atlas_height * 4 ||
+      desc.edits_path.empty() || !std::isfinite(desc.interaction_reach) || desc.interaction_reach <= 0 ||
+      desc.camera_profile < 0 || desc.camera_profile >= static_cast<int>(CameraProfileType::Count) ||
+      desc.terrain.surface_depth < 0 || desc.palette.empty()) fail();
+  const std::filesystem::path edits(desc.edits_path);
+  if (edits.is_absolute() || edits.has_root_name()) fail();
+  for (const auto& part : edits) if (part == "..") fail();
+  terrain::BlockRegistry built;
+  for (const auto& authored : desc.palette) {
+    if (authored.name.empty() || authored.name == "air" || built.Find(authored.name) ||
+        !std::isfinite(authored.roughness) || authored.roughness < 0 || authored.roughness > 1) fail();
+    for (const auto value : authored.color) if (!std::isfinite(value) || value < 0 || value > 1) fail();
+    for (const auto value : authored.atlas_rect) if (!std::isfinite(value) || value < 0 || value > 1) fail();
+    if (authored.atlas_rect[0] >= authored.atlas_rect[2] || authored.atlas_rect[1] >= authored.atlas_rect[3]) fail();
+    terrain::BlockDefinition block;
+    block.name = authored.name;
+    block.color = XVECTOR3(authored.color[0], authored.color[1], authored.color[2], authored.color[3]);
+    block.roughness = authored.roughness;
+    block.usesBaseColorTexture = true;
+    block.atlasU0 = authored.atlas_rect[0];
+    block.atlasV0 = authored.atlas_rect[1];
+    block.atlasU1 = authored.atlas_rect[2];
+    block.atlasV1 = authored.atlas_rect[3];
+    built.Register(std::move(block));
+  }
+  if (!built.Find(desc.deep_block) || !built.Find(desc.fill_block) || !built.Find(desc.surface_block)) fail();
+  registry = std::move(built);
+}
 
 void ApplySceneCamera(const SceneCameraDesc& desc, Camera& camera, float aspect) {
   const XVECTOR3 eye(desc.position.x, desc.position.y, desc.position.z, 1.0f);

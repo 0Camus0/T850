@@ -36,6 +36,8 @@ public:
     bool offscreenDebug : 1 = false;
     bool benchmarkFinalFrameDump : 1 = false;
     bool dumpShaderPermutations : 1 = false;
+    bool recordShaderPermutations : 1 = false;
+    bool compileShaders : 1 = false;
     bool autoStartRagdoll : 1 = false;
     bool runtimeTelemetry : 1 = false;
   } flags;
@@ -72,6 +74,8 @@ public:
   std::string sceneFilePath;
   std::string sceneProfile;
   std::string shaderPermutationOutputPath = "shader_permutations.json";
+  std::string shaderPermutationInputPath = "Shaders/shader_permutations.json";
+  std::string shaderCompileCancelFile;
   int runtimeTelemetryFrequencyFrames = 60;
   std::string runtimeTelemetryOutputPath = "logs/perf_telemetry.json";
   bool orbitYawOverride = false;

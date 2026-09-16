@@ -572,6 +572,12 @@
     <ClInclude Include="include\utils\ShaderPermutationDump.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\utils\ShaderPrecompiler.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\core\ShaderTools.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="include\debug\Profiler.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
@@ -1050,6 +1056,12 @@
     </ClCompile>
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp">
       <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\ShaderPrecompiler.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\ShaderTools.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\Log.cpp">
       <Filter>Source Files\utils</Filter>

@@ -3124,6 +3124,7 @@ void SceneTemplate::InitVars() {
     m_sceneDocumentError = "Failed to load control descriptor: " + controlPath;
     T8_LOG_ERROR("[SceneTemplate] %s", m_sceneDocumentError.c_str());
   }
+  m_controlSetup.ApplyInputSettings(SceneProp, m_sceneDocument ? m_sceneDocument->mouse_capture : std::nullopt);
   SceneProp.FrustumCullingToggleAllowed = g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
   SceneProp.FrustumCullingEnabled = g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad;
 

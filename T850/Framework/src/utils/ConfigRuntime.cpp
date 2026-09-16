@@ -347,6 +347,13 @@ bool ValidateConfig(Config& cfg) {
 
   cfg.webgpuShaderFlow = NormalizeShaderFlow(cfg.webgpuShaderFlow);
 
+  if (cfg.flags.compileShaders) {
+    if (cfg.flags.recordShaderPermutations || cfg.flags.dumpShaderPermutations || cfg.flags.benchmarkMatrix)
+      throw std::invalid_argument("Shader compilation cannot be combined with recording or benchmark modes");
+    cfg.flags.offscreen = true;
+    cfg.flags.fullscreen = false;
+  }
+
   if (!IsKnownGraphicsApi(cfg.api)) {
     WarnConfigAdjusted("api", "unsupported value '" + cfg.api + "', using '" + defaults.api + "'");
     cfg.api = defaults.api;
@@ -732,6 +739,19 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "-dumpShaderPermutations" || arg == "--dumpShaderPermutations") {
       cfg.flags.dumpShaderPermutations = true;
     }
+    else if (arg == "--compileShaders") {
+      cfg.flags.compileShaders = true;
+    }
+    else if (arg == "--recordShaderPermutations") {
+      cfg.flags.recordShaderPermutations = true;
+    }
+    else if (arg == "--shaderPermutationInput" || arg == "--shaderCompileCancelFile") {
+      if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--"))
+        throw std::invalid_argument(arg + " requires a path");
+      auto& path = arg == "--shaderPermutationInput" ? cfg.shaderPermutationInputPath : cfg.shaderCompileCancelFile;
+      path = StripQuotes(argv[++i]);
+      if (path.empty()) throw std::invalid_argument(arg + " requires a nonempty path");
+    }
     else if ((arg == "-shaderPermutationOutput" || arg == "--shaderPermutationOutput") && i + 1 < argc) {
       cfg.shaderPermutationOutputPath = StripQuotes(argv[++i]);
     }
@@ -797,6 +817,10 @@ void PrintHelp() {
     << "  -dumpShaderPermutations, --dumpShaderPermutations\n"
     << "                                      Write requested ShaderKey permutations, then exit after startup\n"
     << "  --shaderPermutationOutput <path>   JSON dictionary path for --dumpShaderPermutations\n"
+    << "  --recordShaderPermutations         Record through runtime and flush at normal/snapshot exit\n"
+    << "  --compileShaders                  Compile all recorded permutations, then exit\n"
+    << "  --shaderPermutationInput <path>    Manifest to compile (default: Shaders/shader_permutations.json)\n"
+    << "  --shaderCompileCancelFile <path>   Stop between permutations when this file exists\n"
     << "  --validateGltf <path>              Validate and summarize glTF/GLB, then exit\n\n"
     << "GUI/tools:\n"
     << "  --gui                              Show GUI on startup\n"

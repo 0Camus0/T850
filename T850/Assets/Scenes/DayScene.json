@@ -1,5 +1,6 @@
 {
    "name": "DayScene",
+   "runtime_scene": "Scenes/DayScene.t8scene",
    "cameras": [
       {
          "position": [

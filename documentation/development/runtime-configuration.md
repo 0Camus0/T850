@@ -2,6 +2,9 @@
 
 Status: verified against `Config.h`, `ConfigRuntime.h/.cpp`, `DayScene/App.cpp`, and `Launcher.ps1` on 2026-08-19.
 
+2026-09-15: normal DayScene startup also accepts `--shaderFlow auto|wgsl|spirv`
+for WebGPU, applied before driver initialization and asset/shader loading.
+
 ## Configuration Precedence
 
 DayScene starts from a fresh `Config` object every process. The effective order is:
@@ -25,6 +28,7 @@ Unknown JSON keys are ignored. A typo can therefore be silent; use documented fi
 | Field | Default |
 |---|---|
 | API | `d3d11` |
+| WebGPU shader flow | `auto` (WGSL first, HLSL/SPIR-V fallback on preparation failure) |
 | Window | 1280x720, windowed |
 | Scene | 0 (Sandbox) |
 | Model | `Models/DamagedHelmet.glb` |
@@ -35,6 +39,58 @@ Unknown JSON keys are ignored. A typo can therefore be silent; use documented fi
 | Telemetry output | `logs/perf_telemetry.json` |
 | Benchmark/regression fixed delta | disabled (`0`) |
 
+## WebGPU Shader Flow
+
+From the selected Windows x64 executable directory:
+
+```powershell
+.\DayScene.exe --api webgpu --shaderFlow auto --scene 4 --sceneFile Scenes/ForwardScene.t8scene
+.\DayScene.exe --api webgpu --shaderFlow wgsl --scene 4 --sceneFile Scenes/ForwardScene.t8scene
+.\DayScene.exe --api webgpu --shaderFlow spirv --scene 4 --sceneFile Scenes/ForwardScene.t8scene
+```
+
+`auto` is the unchanged default. `wgsl` requires handwritten WGSL for engine
+shader requests; `spirv` requires HLSL -> glslang/SPIR-V -> Tint/WGSL. Strict modes
+never fall back to the other source language. The choice does not change the
+graphics API, scene or render graph, and does not affect native backend compilers.
+Dawn and upstream ImGui/internal renderer utility shaders keep their own shader
+implementation; this option selects the engine shader-source flow.
+
+The root JSON field `webgpuShaderFlow` supplies the same setting when `--config`
+is used; CLI overrides it. Values are case-insensitive. Unknown, empty or missing
+CLI values fail before asset loading, rather than silently choosing `auto`.
+Invalid configured values also fail validation unless a valid CLI override replaces
+them. Unlike older recoverable config fields, invalid flow selection is fatal.
+
+The Windows host applies the setting on every WebGPU driver creation through
+`ChangeAPI`, before `InitDriver()` and `CreateAssets()`. Startup logs
+`[WebGPU] startup shaderFlow=... (before asset loading)`; per-shader logs report
+the actual successful flow and cache state. Source-language cache identities stay
+separate. Both Windows launchers show a **Shader Flow** selector only for WebGPU:
+**WGSL preferred (auto)** or **SPIR-V (HLSL translation)**. They persist
+`webgpuShaderFlow` and pass it explicitly on the next RUN; no engine rebuild is
+needed, and changing the selection does not switch an already-running process.
+Older launcher configs without a supported selection default to `auto`.
+Strict `wgsl` remains available from the CLI, not the launcher, because normal
+startup still needs anonymous HLSL helpers. No fixture is injected, and T8ditor
+does not use this CLI parser or support WebGPU rendering yet.
+
+**Normal runtime selection works in `auto` and `spirv`; strict `wgsl` still has an anonymous-source limitation.**
+The known DOF, CoC, shadow/SSAO, refraction and lightmap derivative-uniformity
+failures were corrected on 2026-09-15. All 538 recorded/additional stages now pass
+strict translation in both paths; all ten available runtime cases captured in
+both `auto` and `spirv`. Native D3D12/Vulkan per-target before/after
+checks are recorded in the shader notes. Strict `wgsl` still stops at anonymous
+HLSL debug shaders without paired WGSL sources. Full rendering parity and broader
+material coverage remain separate acceptance requirements. See
+[shader flow and blockers](../rendering/shader-management.md#shader-flow-selection).
+
+The initial strict-SPIR-V scene comparison exposed matrix translation and runtime
+resource defects, including VoxelScene's missing environment binding. Those
+defects are fixed; residual image differences are not silently treated as passes.
+See the [runtime handoff](../rendering/webgpu-runtime-summary.md) for current
+measurements, accepted exceptions, native checkpoint caveats and remaining work.
+
 ## JSON Shape
 
 Root fields accepted by `RuntimeConfigJson` include:
@@ -42,6 +98,7 @@ Root fields accepted by `RuntimeConfigJson` include:
 ```json
 {
   "api": "d3d11",
+  "webgpuShaderFlow": "auto",
   "width": 1280,
   "height": 720,
   "fullscreen": false,
@@ -183,6 +240,9 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 --offscreenDebug
 --glOffscreenFlushMode frame|wait|none
 --dumpShaderPermutations
+--recordShaderPermutations
+--compileShaders
+--shaderPermutationInput PATH
 --shaderPermutationOutput PATH
 ```
 

@@ -597,6 +597,8 @@ void BuildSurface(VS_OUTPUT input, bool isFrontFace, out float4 color, out float
 #endif
 
 #if defined(HEIGHT_MAP) && defined(ENABLE_PARALLAX) && defined(USE_TEXCOORD0)
+    float2 baseUVDx = ddx(input.texture0);
+    float2 baseUVDy = ddy(input.texture0);
     float heightScale = ParallaxSettings.z;
     float3 viewDir = mul(TBN, normalize(CameraPosition.xyz - input.WorldPos.xyz));
     viewDir = normalize(viewDir);
@@ -613,7 +615,7 @@ void BuildSurface(VS_OUTPUT input, bool isFrontFace, out float4 color, out float
     float currentRayZ = 1.0f - layerDepth;
     float prevRayZ = 1.0f - layerDepth;
     [loop] while (currentRayZ > currentDepthMapValue) {
-        currentDepthMapValue = TextureHeight.SampleGrad(HeightSS, uv, ddx(input.texture0), ddy(input.texture0)).r;
+        currentDepthMapValue = TextureHeight.SampleGrad(HeightSS, uv, baseUVDx, baseUVDy).r;
         prevDepthMapValue = currentDepthMapValue;
         uv += deltaTexCoords;
         prevRayZ = currentRayZ;
@@ -725,8 +727,8 @@ void BuildSurface(VS_OUTPUT input, bool isFrontFace, out float4 color, out float
     clearcoatRoughness = saturate(clearcoatRoughness);
 
 #if defined(HEIGHT_MAP) && defined(ENABLE_PARALLAX) && defined(USE_TEXCOORD0)
-    float2 ssDxx = ddx(input.texture0);
-    float2 ssDyy = ddy(input.texture0);
+    float2 ssDxx = baseUVDx;
+    float2 ssDyy = baseUVDy;
     float ssStartZ = TextureHeight.SampleGrad(HeightSS, uv, ssDxx, ssDyy).r;
     float shadowStrength = ParallaxShadowSettings.w;
     if (shadowStrength > 0.001f) {
@@ -847,7 +849,9 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float2 uv;
     BuildSurface(input, isFrontFace, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     float3 emissive = SampleEmissive(input, uv);
+    float lightmap = SampleLightmap(input);
 
+#ifdef FORWARD_PASS
     if (ForwardParams.z > 0.5f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {
         float sceneDepth = LoadForwardSceneDepth(input);
         float meshDepth = input.Pos.z / input.Pos.w;
@@ -855,6 +859,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         if (sceneDepth > 0.0001f && meshDepth < sceneDepth - depthEpsilon)
             discard;
     }
+#endif
 
     float3 albedo = pow(max(color.rgb, float3(0.0f, 0.0f, 0.0f)), float3(2.2f, 2.2f, 2.2f));
     float3 eyeDir = normalize(CameraPosition.xyz - input.WorldPos.xyz);
@@ -946,7 +951,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float diffuseMip = clamp(MaterialParams3.z, 0.0f, iblMaxMip);
     float3 irradiance = texIBLDiffuse.SampleLevel(IBLDiffuseSS, irradianceDir, diffuseMip).xyz;
     indirectLight += irradiance * albedo * kDiffuseEnv * iblFactor;
-    indirectLight += albedo * kDiffuseEnv * SampleLightmap(input);
+    indirectLight += albedo * kDiffuseEnv * lightmap;
     if (hasSheenLUT && sheenStrength > 0.0f) {
         float albedoSheenScaling = 1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotV, sheenRoughness);
         float3 sheenIBL = GetIBLRadianceCharlie(normal, eyeDir, sheenRoughness, sheenColor, iblMaxMip) * iblFactor;
@@ -968,13 +973,15 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     }
 
     float transmission = saturate(transmissionFactor * MaterialParams2.x);
+#ifdef FORWARD_PASS
     if (MaterialParams2.z > 0.5f && transmission > 0.001f && MaterialParams2.y > 0.0f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {
         float2 screenUV = GetForwardScreenUV(input);
         float iorOffset = saturate(abs(ForwardParams.w - 1.0f));
         float2 refractUV = saturate(screenUV + normal.xy * MaterialParams2.y * transmission * (0.5f + iorOffset));
-        float3 sceneColor = SceneColorTex.Sample(SceneColorSS, refractUV).rgb;
+        float3 sceneColor = SceneColorTex.SampleLevel(SceneColorSS, refractUV, 0.0f).rgb;
         finalColor = lerp(finalColor, sceneColor, transmission);
     }
+#endif
     finalColor += emissive;
 
     float alpha = color.a;

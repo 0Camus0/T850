@@ -9,6 +9,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <utils/TextureMipmaps.h>
 #include <debug/RenderTrace.h>
 
 namespace t850 {
@@ -18,103 +19,6 @@ namespace t850 {
 
   static D3D12Driver* GetD3D12Driver() { return static_cast<D3D12Driver*>(g_pBaseDriver); }
   static ID3D12Device* GetNativeDevice() { return static_cast<D3D12Device*>(T8Device)->GetNativeDevice(); }
-
-  namespace {
-    UINT CalculateFullMipCount(UINT width, UINT height) {
-      UINT levels = 1;
-      while (width > 1 || height > 1) {
-        width = width > 1 ? (width >> 1) : 1;
-        height = height > 1 ? (height >> 1) : 1;
-        ++levels;
-      }
-      return levels;
-    }
-
-    void GenerateMipChain8(const unsigned char* src, UINT width, UINT height, UINT faceCount,
-                           UINT bytesPerPixel, std::vector<unsigned char>& outData) {
-      const UINT mipCount = CalculateFullMipCount(width, height);
-      size_t totalBytes = 0;
-      for (UINT face = 0; face < faceCount; ++face) {
-        UINT mipWidth = width;
-        UINT mipHeight = height;
-        for (UINT mip = 0; mip < mipCount; ++mip) {
-          totalBytes += static_cast<size_t>(mipWidth) * mipHeight * bytesPerPixel;
-          mipWidth = mipWidth > 1 ? (mipWidth >> 1) : 1;
-          mipHeight = mipHeight > 1 ? (mipHeight >> 1) : 1;
-        }
-      }
-
-      outData.resize(totalBytes);
-      size_t dstOffset = 0;
-      const size_t baseFaceBytes = static_cast<size_t>(width) * height * bytesPerPixel;
-
-      for (UINT face = 0; face < faceCount; ++face) {
-        UINT prevWidth = width;
-        UINT prevHeight = height;
-        const unsigned char* prev = src + static_cast<size_t>(face) * baseFaceBytes;
-        size_t prevBytes = baseFaceBytes;
-
-        memcpy(outData.data() + dstOffset, prev, prevBytes);
-        size_t prevOffset = dstOffset;
-        dstOffset += prevBytes;
-
-        for (UINT mip = 1; mip < mipCount; ++mip) {
-          UINT mipWidth = prevWidth > 1 ? (prevWidth >> 1) : 1;
-          UINT mipHeight = prevHeight > 1 ? (prevHeight >> 1) : 1;
-          unsigned char* dst = outData.data() + dstOffset;
-          const unsigned char* srcMip = outData.data() + prevOffset;
-
-          for (UINT y = 0; y < mipHeight; ++y) {
-            for (UINT x = 0; x < mipWidth; ++x) {
-              UINT sx0 = x * 2;
-              UINT sy0 = y * 2;
-              UINT sx1 = (sx0 + 1 < prevWidth) ? sx0 + 1 : sx0;
-              UINT sy1 = (sy0 + 1 < prevHeight) ? sy0 + 1 : sy0;
-              const size_t dstIndex = (static_cast<size_t>(y) * mipWidth + x) * bytesPerPixel;
-              const size_t i00 = (static_cast<size_t>(sy0) * prevWidth + sx0) * bytesPerPixel;
-              const size_t i10 = (static_cast<size_t>(sy0) * prevWidth + sx1) * bytesPerPixel;
-              const size_t i01 = (static_cast<size_t>(sy1) * prevWidth + sx0) * bytesPerPixel;
-              const size_t i11 = (static_cast<size_t>(sy1) * prevWidth + sx1) * bytesPerPixel;
-              if (bytesPerPixel == 4) {
-                const UINT a00 = srcMip[i00 + 3];
-                const UINT a10 = srcMip[i10 + 3];
-                const UINT a01 = srcMip[i01 + 3];
-                const UINT a11 = srcMip[i11 + 3];
-                const UINT alphaSum = a00 + a10 + a01 + a11;
-                dst[dstIndex + 3] = static_cast<unsigned char>((alphaSum + 2) / 4);
-                if (alphaSum > 0) {
-                  for (UINT c = 0; c < 3; ++c) {
-                    const UINT weighted =
-                      srcMip[i00 + c] * a00 + srcMip[i10 + c] * a10 +
-                      srcMip[i01 + c] * a01 + srcMip[i11 + c] * a11;
-                    dst[dstIndex + c] = static_cast<unsigned char>((weighted + alphaSum / 2) / alphaSum);
-                  }
-                } else {
-                  dst[dstIndex + 0] = 0;
-                  dst[dstIndex + 1] = 0;
-                  dst[dstIndex + 2] = 0;
-                }
-              } else {
-                for (UINT c = 0; c < bytesPerPixel; ++c) {
-                  UINT accum = 0;
-                  accum += srcMip[i00 + c];
-                  accum += srcMip[i10 + c];
-                  accum += srcMip[i01 + c];
-                  accum += srcMip[i11 + c];
-                  dst[dstIndex + c] = static_cast<unsigned char>((accum + 2) / 4);
-                }
-              }
-            }
-          }
-
-          prevOffset = dstOffset;
-          prevWidth = mipWidth;
-          prevHeight = mipHeight;
-          dstOffset += static_cast<size_t>(mipWidth) * mipHeight * bytesPerPixel;
-        }
-      }
-    }
-  }
 
   // ══════════════════════════════════════════════════════
   //  D3D12Texture — Uncompressed upload

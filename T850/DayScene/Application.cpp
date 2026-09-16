@@ -428,8 +428,10 @@ void App::LoadScene(int id) {
   }
 
   if (m_actualScene != nullptr) {
+    T8_LOG_INFO("[App] Scene transition begin: target=%d api=%s", id,
+                pFramework->pVideoDriver->ApiTag());
     FadeFX(0.5, true);
-    m_actualScene->OnDestoryScene();
+    pFramework->UnloadScene(*m_actualScene);
   }
 
   m_actualScene = m_scenes[id].get();
@@ -439,6 +441,8 @@ void App::LoadScene(int id) {
   m_devLayer.SetActiveScene(m_actualScene);
 #endif
   FadeFX(0.5,false);
+  T8_LOG_INFO("[App] Scene transition complete: target=%d api=%s", id,
+              pFramework->pVideoDriver->ApiTag());
 }
 
 void App::LoadAssets()
@@ -975,11 +979,15 @@ bool App::IsModalActive() const {
 #endif
 }
 
+bool App::AllowsMouseCapture() const {
+  return m_actualScene && m_actualScene->AllowsMouseCapture();
+}
+
 bool App::WantsRelativeMouseMode() const {
 #ifdef OS_ANDROID
   return false;
 #else
-  return g_config.regressionFixedDt <= 0.0f &&
+  return AllowsMouseCapture() && g_config.regressionFixedDt <= 0.0f &&
       m_imguiReady && !m_imguiVisible && !IsModalActive();
 #endif
 }

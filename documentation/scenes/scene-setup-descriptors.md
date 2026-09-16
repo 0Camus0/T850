@@ -1,3 +1,16 @@
+# Authored Runtime Setup
+
+`SceneSetup::Load` accepts either a descriptor path or a `SceneDescriptor` value.
+`.t8scene` files may embed that value as `runtime_setup`; VoxelScene uses this
+path. Legacy descriptor `runtime_scene` names the authored document, retained as
+`SceneSetup::runtimeScene`. The optional document `mouse_capture` controls
+`SceneProps::MouseCaptureAllowed`, with true as the compatibility default.
+`ApplyInputSettings` accepts an explicit scene override that takes precedence
+over the descriptor-associated document. Quality/profile changes do not reset it.
+
+See [ownership audit](../architecture/webgpu-branch-ownership-audit.md) for the
+current migration boundary and remaining specialized scene code.
+
 # SceneSetup and Runtime Control Descriptors
 
 Status: verified against source on 2026-08-19.

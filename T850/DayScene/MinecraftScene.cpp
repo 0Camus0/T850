@@ -2605,6 +2605,7 @@ void MinecraftScene::InitVars() {
 
   if (!m_sceneFile.control_descriptor.empty() && m_controlSetup.Load(m_sceneFile.control_descriptor)) {
     m_controlSetup.ApplyQualityAndSettings(SceneProp);
+    m_controlSetup.ApplyInputSettings(SceneProp, m_sceneFile.mouse_capture);
   } else {
     T8_LOG_ERROR("[Minecraft] Failed to load control descriptor '%s'",
                  m_sceneFile.control_descriptor.c_str());
@@ -2927,11 +2928,6 @@ void MinecraftScene::CreateAssets() {
   // Fullscreen quad
   m.Identity();
   Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[0], 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[1], 1);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[2], 2);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[3], 3);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->pDepthTexture, 4);
   Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
   for (int i = 1; i <= 7; i++)
     Quads[i].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);

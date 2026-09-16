@@ -7,6 +7,7 @@ add_library(FrameworkImGui STATIC
   src/ImGuiD3D12Backend.cpp
   src/ImGuiOpenGLBackend.cpp
   src/ImGuiVulkanBackend.cpp
+  src/ImGuiWebGPUBackend.cpp
   src/DevGuiContext.cpp
   src/RagdollEditorGui.cpp)
 

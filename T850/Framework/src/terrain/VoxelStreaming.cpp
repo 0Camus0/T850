@@ -10,11 +10,39 @@
 
 namespace t850::terrain {
 
+std::unique_ptr<VoxelChunk> GenerateLayeredVoxelChunk(
+    const VoxelChunkBuildRequest& request, const LayeredVoxelTerrainSettings& settings,
+    BlockId surface, BlockId fill, BlockId deep) {
+  auto chunk = std::make_unique<VoxelChunk>(request.key, request.dimensions);
+  for (int localZ = 0; localZ < request.dimensions.z; ++localZ) {
+    if (request.IsCancelled()) return nullptr;
+    for (int localX = 0; localX < request.dimensions.x; ++localX) {
+      const auto worldX = static_cast<uint32_t>(request.key.x) * request.dimensions.x + localX;
+      const auto worldZ = static_cast<uint32_t>(request.key.z) * request.dimensions.z + localZ;
+      const int64_t height = static_cast<int64_t>(settings.base_height) +
+          ((worldX * settings.x_coefficient + worldZ * settings.z_coefficient +
+            (worldX ^ worldZ)) & settings.height_mask);
+      for (int localY = 0; localY < request.dimensions.y; ++localY) {
+        const int64_t worldY = static_cast<int64_t>(request.key.y) * request.dimensions.y + localY;
+        if (worldY > height) continue;
+        chunk->Set(localX, localY, localZ,
+            worldY == height ? surface : (worldY + settings.surface_depth >= height ? fill : deep));
+      }
+    }
+  }
+  return chunk;
+}
+
 VoxelStreamingManager::VoxelStreamingManager(ChunkDimensions dimensions)
     : m_dimensions(dimensions) {}
 
 VoxelStreamingManager::~VoxelStreamingManager() {
   Reset();
+}
+
+void VoxelStreamingManager::Reset(ChunkDimensions dimensions) {
+  Reset();
+  m_dimensions = dimensions;
 }
 
 void VoxelStreamingManager::SetSettings(VoxelStreamingSettings settings) {

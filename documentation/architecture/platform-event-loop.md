@@ -272,6 +272,28 @@ flowchart TD
 
 Every frame that records scene or ImGui commands must call `CompleteFrame()`. The runtime no longer leaves the first rendered frame open across the next logical update; this keeps command-buffer/fence and ImGui frame-resource rotation aligned on explicit APIs.
 
+#### Scene reload lifetime
+
+`App::LoadScene()` fades out by running updates and submitting frames, then calls
+`FlushGPUResources()` before `OnDestoryScene()`. The flush must follow the fade:
+the last fade frame still references the old scene's buffers and render targets.
+The default flush waits for the GPU; Vulkan also resets command buffers and
+descriptor pools to release their references. Only then may the scene destroy
+its assets, load the replacement, and fade back in.
+
+Without this ordering, DayScene's automatic tour restart released a quad vertex
+buffer while it was still in flight. D3D12 validation reported error 921,
+`OBJECT_DELETED_WHILE_STILL_IN_USE`, and exception `0x87d`; Vulkan reported
+`VK_ERROR_DEVICE_LOST` on subsequent submissions. Transition begin, GPU-drained,
+and completion logs now identify these boundaries.
+
+Validation on Windows x64: Debug and Release D3D12 with `--d3d12debug` each
+completed two automatic tour restarts and clean shutdown with zero validation
+errors. Vulkan Debug confirmed validation layers enabled and passed the same
+two-restart check. D3D11, D3D12, Vulkan, and GL finite startup captures each
+produced 18 render targets and exited successfully without engine errors.
+D3D12 still reports the separate initial-buffer-state warning 1328.
+
 ### Editor application
 
 `EditorApp::OnUpdate()` owns editor timing, input, scene loading, and drawing.

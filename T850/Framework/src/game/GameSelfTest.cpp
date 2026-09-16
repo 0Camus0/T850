@@ -18,6 +18,7 @@
 #include <scene/SceneRegions.h>
 #include <scene/MutableMeshData.h>
 #include <scene/RenderContainer.h>
+#include <scene/RenderQuad.h>
 #include <scene/MaterialAsset.h>
 #include <terrain/BlockRegistry.h>
 #include <terrain/HeightmapTerrain.h>
@@ -31,9 +32,17 @@
 #include <terrain/VoxelNavigation.h>
 #include <terrain/VoxelCollision.h>
 #include <utils/ThreadPool.h>
+#include <utils/TextureMipmaps.h>
+#include <utils/ConfigRuntime.h>
+#include <utils/ShaderPrecompiler.h>
+#include <utils/ShaderPermutationDump.h>
+#include <utils/ResourceLocator.h>
+#include <scene/SceneSetup.h>
+#include <core/Core.h>
 #include <utils/XDataBase.h>
 #include <video/TextureAtlas.h>
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1612,7 +1621,330 @@ void TestPlacementVisualFitting() {
     Require(!CheckTerrainPlacement(terrain, placement).allowed, "negative placement animation speed accepted");
 }
 
+void TestLegacyShadowSampling() {
+  SceneProps props;
+  props.ShadowMapResolution = 2048;
+  props.ShadowBias = 0.000005f;
+  props.ShadowMin = 0.2f;
+  RenderQuad quad;
+  XMATRIX44 legacyLightVP;
+  XMatTranslation(legacyLightVP, 4.0f, 5.0f, 6.0f);
+  quad.CnstBuffer.WVPLight = legacyLightVP;
+
+  const auto requireLegacyPayload = [&]() {
+    const auto& payload = quad.ShadowSamplingCB;
+    Require(payload.Params0.x == 1.0f && payload.Params0.y == 2048.0f &&
+        payload.Params0.z == 2048.0f, "legacy shadow view or dimensions missing");
+    Require(std::memcmp(&payload.ViewProjection[0], &legacyLightVP, sizeof(legacyLightVP)) == 0,
+        "legacy light matrix was not preserved");
+    Require(payload.AtlasScaleBias[0].x == 1.0f && payload.AtlasScaleBias[0].y == 1.0f &&
+        payload.AtlasScaleBias[0].z == 0.0f && payload.AtlasScaleBias[0].w == 0.0f,
+        "legacy shadow does not cover the whole texture");
+    Require(payload.Params1.z == props.ShadowBias && payload.Params1.w == props.ShadowMin,
+        "legacy shadow bias or minimum light lost");
+    XMATRIX44 emptyMatrix;
+    std::memset(&emptyMatrix, 0, sizeof(emptyMatrix));
+    for (int view = 1; view < kMaxShadowViewsPerProjection; ++view) {
+      Require(std::memcmp(&payload.ViewProjection[view], &emptyMatrix, sizeof(emptyMatrix)) == 0,
+          "stale cascade matrix survived legacy fallback");
+    }
+    Require(payload.SplitDepths[0].x == 0.0f, "stale cascade boundary survived legacy fallback");
+  };
+
+  quad.UploadShadowSamplingCB(props);
+  requireLegacyPayload();
+
+  auto& projection = props.Shadows.projections.emplace_back();
+  projection.resolvedDesc.technique = "csm";
+  projection.viewCount = 2;
+  projection.atlasWidth = 4096;
+  projection.atlasHeight = 2048;
+  projection.splitBoundaries[0] = 40.0f;
+  XMatIdentity(projection.views[0].viewProjection);
+  projection.views[1].viewProjection = legacyLightVP;
+  projection.views[0].atlasScaleBias = {0.5f, 1.0f, 0.0f, 0.0f};
+  projection.views[1].atlasScaleBias = {0.5f, 1.0f, 0.5f, 0.0f};
+  quad.UploadShadowSamplingCB(props);
+  Require(quad.ShadowSamplingCB.Params0.x == 2.0f &&
+      quad.ShadowSamplingCB.Params0.y == 4096.0f &&
+      quad.ShadowSamplingCB.SplitDepths[0].x == 40.0f &&
+      quad.ShadowSamplingCB.AtlasScaleBias[1].z == 0.5f &&
+      std::memcmp(&quad.ShadowSamplingCB.ViewProjection[1], &legacyLightVP, sizeof(legacyLightVP)) == 0,
+      "explicit cascade sampling payload changed");
+
+  props.Shadows.Reset();
+  quad.CnstBuffer.WVPLight = legacyLightVP;
+  quad.UploadShadowSamplingCB(props);
+  requireLegacyPayload();
+}
+
+void TestShaderFlowConfiguration() {
+  const auto parse = [](Config& config, std::vector<std::string> arguments) {
+    std::vector<char*> pointers;
+    for (auto& argument : arguments) pointers.push_back(argument.data());
+    config::ApplyCommandLine(static_cast<int>(pointers.size()), pointers.data(), config);
+  };
+  Config defaults;
+  Require(defaults.webgpuShaderFlow == "auto", "WebGPU shader flow must default to auto");
+  for (const auto* mode : {"auto", "wgsl", "spirv"}) {
+    Config selected;
+    selected.api = "d3d12";
+    config::RuntimeConfigJson json;
+    json.webgpuShaderFlow = "wgsl";
+    config::ApplyConfigJson(json, selected);
+    Require(selected.webgpuShaderFlow == "wgsl", "Shader flow JSON setting ignored");
+    parse(selected, {"DayScene", "--shaderFlow", mode, "--width", "640"});
+    Require(config::ValidateConfig(selected), "Valid shader flow config rejected");
+    Require(selected.webgpuShaderFlow == mode && selected.width == 640 && selected.api == "d3d12",
+            "Shader flow override changed API or consumed another option");
+  }
+  parse(defaults, {"DayScene", "--shaderFlow", "SPIRV", "--shaderFlow", "WGSL"});
+  Require(defaults.webgpuShaderFlow == "wgsl", "Shader flow case normalization or last override failed");
+  for (const auto& arguments : std::vector<std::vector<std::string>>{
+         {"DayScene", "--shaderFlow"}, {"DayScene", "--shaderFlow", "--api", "webgpu"},
+         {"DayScene", "--shaderFlow", "invalid"}, {"DayScene", "--shaderFlow", ""}}) {
+    bool rejected = false;
+    try { parse(defaults, arguments); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "Invalid or missing shader flow silently accepted");
+  }
+  defaults.webgpuShaderFlow = "invalid";
+  bool rejected = false;
+  try { config::ValidateConfig(defaults); } catch (const std::invalid_argument&) { rejected = true; }
+  Require(rejected, "Invalid configured shader flow silently defaulted");
+}
+
+class NullTestDriver final : public BaseDriver {
+public:
+  std::vector<std::string> events;
+  void InitDriver() override {}
+  void CreateSurfaces() override {}
+  void DestroySurfaces() override {}
+  void Update() override {}
+  void DestroyDriver() override {}
+  void SetWindow(void*) override {}
+  void SetDimensions(int, int) override {}
+  void Clear() override {}
+  void SwapBuffers() override {}
+  void SetBlendState(BlendStates) override {}
+  void SetDepthStencilState(DepthStencilStates) override {}
+  void SaveScreenshot(std::string) override {}
+  void SetCullFace(FaceCulling) override {}
+  void PopRT() override {}
+  void FlushGPUResources() override { events.push_back("flush"); }
+};
+
+class LifecycleTestScene final : public SceneBase {
+public:
+  explicit LifecycleTestScene(std::vector<std::string>& events) : events(events) {}
+  void OnUpdate(float) override {}
+  void OnDraw() override {}
+  void OnInput(InputManager*) override {}
+  void OnLoadScene() override { events.push_back("load"); }
+  void OnDestoryScene() override { events.push_back("destroy"); }
+  void InitVars() override {}
+  void CreateAssets() override {}
+  void DestroyAssets() override {}
+private:
+  std::vector<std::string>& events;
+};
+
+class LifecycleTestFramework final : public RootFramework {
+public:
+  LifecycleTestFramework() : RootFramework(nullptr) {}
+  void InitGlobalVars() override {}
+  void OnCreateApplication(ApplicationDesc) override {}
+  void OnDestroyApplication() override {}
+  void OnInterruptApplication() override {}
+  void OnResumeApplication() override {}
+  void UpdateApplication() override {}
+  void ProcessInput() override {}
+  void ResetApplication() override {}
+  void ChangeAPI(GraphicsApi::E) override {}
+};
+
+void TestSceneRuntimeOwnership() {
+  TempSceneFiles files;
+  const auto scenePath = files.Add("_policy.t8scene");
+  const auto descriptorPath = files.Add("_policy.json");
+  scene::EditorSceneFile authored;
+  authored.mouse_capture = false;
+  authored.runtime_setup = SceneDescriptor{};
+  authored.runtime_setup->cameras.push_back(CameraDesc{});
+  authored.runtime_setup->cameras.front().position = {3, 4, 5};
+  Require(scene::SaveEditorSceneFile(authored, scenePath.string()), "cannot save scene input policy");
+  scene::EditorSceneFile loaded;
+  Require(scene::LoadEditorSceneFile(scenePath.string(), loaded) && loaded.mouse_capture == false,
+          "scene input policy did not survive round trip");
+  SceneDescriptor descriptor;
+  descriptor.runtime_scene = scenePath.string();
+  Require(SaveSceneDescriptor(descriptorPath.string(), descriptor), "cannot save descriptor policy reference");
+  SceneSetup setup;
+  Require(loaded.runtime_setup && setup.Load(*loaded.runtime_setup) && setup.GetCamera()->Eye.x == 3,
+      "embedded runtime setup did not round-trip or construct authored camera");
+  Require(setup.Load(descriptorPath.string()), "cannot load authored runtime policy");
+  NullTestDriver driver;
+  LifecycleTestScene runtime(driver.events);
+  setup.ApplyInputSettings(runtime.SceneProp);
+  Require(!runtime.AllowsMouseCapture(), "scene ignored authored capture policy");
+  setup.ApplyInputSettings(runtime.SceneProp, true);
+  Require(runtime.AllowsMouseCapture(), "explicit scene policy did not override descriptor default");
+  authored.mouse_capture = true;
+  Require(scene::SaveEditorSceneFile(authored, scenePath.string()) && setup.Load(descriptorPath.string()),
+          "cannot reload changed input policy");
+  setup.ApplyInputSettings(runtime.SceneProp);
+  Require(runtime.AllowsMouseCapture(), "scene hardcoded capture instead of loading updated data");
+  authored.mouse_capture.reset();
+  Require(scene::SaveEditorSceneFile(authored, scenePath.string()) && setup.Load(descriptorPath.string()),
+          "legacy scene did not load");
+  setup.ApplyInputSettings(runtime.SceneProp);
+  Require(runtime.AllowsMouseCapture(), "legacy scene retained stale input policy");
+  LifecycleTestFramework framework;
+  framework.pVideoDriver = &driver;
+  framework.UnloadScene(runtime);
+  Require(driver.events == std::vector<std::string>{"flush", "destroy"}, "GPU drain must precede scene destruction");
+}
+
+void TestAuthoredStreamedVoxels() {
+  TempSceneFiles files;
+  const auto path = files.Add("_voxels.t8scene");
+  scene::EditorSceneFile authored;
+  authored.streamed_voxels.emplace();
+  auto& fixture = *authored.streamed_voxels;
+  fixture.chunk_dimensions = {16, 16, 16};
+  fixture.terrain = {3, 3, 13, 7, 2};
+  fixture.palette = {{"stone"}, {"dirt"}, {"grass"}};
+  fixture.deep_block = "stone";
+  fixture.fill_block = "dirt";
+  fixture.surface_block = "grass";
+  fixture.edits_path = "VoxelWorlds/test/edits.t8vox";
+  fixture.interaction_reach = 8;
+  fixture.atlas_width = fixture.atlas_height = 1;
+  fixture.atlas_rgba = {255, 255, 255, 255};
+  Require(scene::SaveEditorSceneFile(authored, path.string()) &&
+          scene::LoadEditorSceneFile(path.string(), authored) && authored.streamed_voxels,
+          "cannot load authored streamed voxel asset");
+  auto data = *authored.streamed_voxels;
+  terrain::BlockRegistry registry;
+  scene::BuildStreamedVoxelPalette(data, registry);
+  Require(registry.Find("stone") == 1 && registry.Find("dirt") == 2 && registry.Find("grass") == 3,
+          "authored palette changed persisted block IDs");
+  terrain::VoxelChunkBuildRequest request;
+  request.key = {-1, 0, -1};
+  request.dimensions = data.chunk_dimensions;
+  auto chunk = terrain::GenerateLayeredVoxelChunk(request, data.terrain, 3, 2, 1);
+  Require(chunk && chunk->Get(0, 0, 0) == 1 && chunk->Get(0, 3, 0) == 3 && chunk->Get(0, 4, 0) == 0,
+          "layered generator changed negative-coordinate terrain");
+  request.cancelled = std::make_shared<std::atomic_bool>(true);
+  Require(!terrain::GenerateLayeredVoxelChunk(request, data.terrain, 3, 2, 1), "generator ignored cancellation");
+  for (int invalidCase = 0; invalidCase < 4; ++invalidCase) {
+    auto invalid = data;
+    if (invalidCase == 0) invalid.atlas_rgba.pop_back();
+    if (invalidCase == 1) invalid.palette.push_back(invalid.palette.front());
+    if (invalidCase == 2) invalid.surface_block = "unknown";
+    if (invalidCase == 3) invalid.edits_path = "../outside.t8vox";
+    bool rejected = false;
+    try { scene::BuildStreamedVoxelPalette(invalid, registry); } catch (const std::runtime_error&) { rejected = true; }
+    Require(rejected && registry.Count() == 4, "invalid voxel data was accepted or partially replaced palette");
+  }
+  terrain::VoxelStreamingManager streaming;
+  streaming.Reset(data.chunk_dimensions);
+  auto settings = data.streaming;
+  settings.horizontalRadius = 0;
+  streaming.SetSettings(settings);
+  bool receivedDimensions = false;
+  const auto build = [&](const terrain::VoxelChunkBuildRequest& job) {
+    receivedDimensions = job.dimensions.y == data.chunk_dimensions.y;
+    terrain::VoxelChunkBuildResult result;
+    result.key = job.key;
+    result.epoch = job.epoch;
+    result.chunk = terrain::GenerateLayeredVoxelChunk(job, data.terrain, 3, 2, 1);
+    return result;
+  };
+  streaming.Update({}, {}, nullptr, build);
+  Require(receivedDimensions, "streaming reset retained stale chunk dimensions");
+}
+
+void TestShaderPrecompilerContract() {
+  TempSceneFiles files;
+  const auto manifest = files.Add("_permutations.json");
+  {
+    std::ofstream output(manifest);
+    output << R"({"version":1,"permutations":{"0x0000000000000001":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"},"0x0000000000000002":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"}}})";
+  }
+  NullTestDriver driver;
+  ShaderPrecompileRequest request;
+  request.manifestPath = manifest.string();
+  request.sourceDirectory = files.Add("_missing_sources").string();
+  size_t reports = 0;
+  request.onProgress = [&](const ShaderPrecompileProgress& progress) {
+    ++reports;
+    Require(progress.completed == reports && progress.total == 2 && !progress.error.empty(),
+            "precompiler omitted failed-entry diagnostics");
+  };
+  auto result = PrecompileShaders(driver, request);
+  Require(!result.Succeeded() && result.failed == 2 && result.succeeded == 0 && reports == 2,
+          "precompiler incorrectly reported missing shaders as compiled");
+  reports = 0;
+  request.cancelRequested = [&] { return reports == 1; };
+  result = PrecompileShaders(driver, request);
+  Require(result.cancelled && result.failed == 1 && reports == 1, "precompiler did not stop between permutations");
+  request.manifestPath = files.Add("_missing.json").string();
+  bool rejected = false;
+  try { PrecompileShaders(driver, request); } catch (const std::runtime_error&) { rejected = true; }
+  Require(rejected, "precompiler accepted a missing manifest");
+
+    const auto recorded = files.Add("_recorded.json").string();
+    ShaderPermutationDump::Begin(recorded);
+    ShaderKey key;
+    key.bits = 1;
+    ShaderPermutationDump::Record(key, "quoted\"vertex.hlsl", "fragment.hlsl", "#define FORWARD_PASS\n");
+    Require(ShaderPermutationDump::Flush(), "cannot flush recorded manifest");
+    std::string original;
+    Require(ResourceLocator::Instance().ReadText(recorded, original), "cannot read recorded manifest");
+    ShaderPermutationDump::Begin(recorded);
+    key.bits = 2;
+    ShaderPermutationDump::Record(key, "second.hlsl", "fragment.hlsl", "");
+    Require(ShaderPermutationDump::Flush(), "cannot merge recorded manifest");
+    std::string merged;
+    Require(ResourceLocator::Instance().ReadText(recorded, merged) &&
+      merged.find("0x0000000000000001") != std::string::npos &&
+      merged.find("0x0000000000000002") != std::string::npos,
+      "recording discarded earlier permutations");
+    Require(ResourceLocator::Instance().WriteText(recorded, "{broken"), "cannot prepare malformed manifest");
+    ShaderPermutationDump::Begin(recorded);
+    const bool rejectedMerge = !ShaderPermutationDump::Flush();
+    std::string unchanged;
+    const bool preserved = ResourceLocator::Instance().ReadText(recorded, unchanged) && unchanged == "{broken";
+    Require(ResourceLocator::Instance().WriteText(recorded, original) && ShaderPermutationDump::Flush(),
+      "cannot recover recorder after failed merge");
+    Require(rejectedMerge && preserved, "recorder overwrote malformed input");
+}
+
+void TestTextureMipmaps() {
+  Require(CalculateFullMipCount(1, 1) == 1 && CalculateFullMipCount(5, 3) == 3, "mip count mismatch");
+  std::vector<unsigned char> output;
+  const std::array<unsigned char, 16> alphaPixels{255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 0, 255, 255, 255, 0};
+  GenerateMipChain8(alphaPixels.data(), 2, 2, 1, 4, output);
+  Require(output.size() == 20 && output[16] == 255 && output[17] == 0 && output[18] == 0 && output[19] == 64,
+          "alpha-weighted mip filtering changed");
+  const std::array<unsigned char, 3> column{10, 30, 200};
+  GenerateMipChain8(column.data(), 1, 3, 1, 1, output);
+  Require(output.size() == 4 && output[3] == 20, "odd single-column mip policy changed");
+  std::vector<unsigned char> faces(5 * 3 * 6);
+  for (unsigned face = 0; face < 6; ++face) std::fill_n(faces.begin() + face * 15, 15, static_cast<unsigned char>(face * 31));
+  GenerateMipChain8(faces.data(), 5, 3, 6, 1, output);
+  Require(output.size() == 18 * 6, "cube mip chain size mismatch");
+  for (unsigned face = 0; face < 6; ++face)
+    for (unsigned pixel = 0; pixel < 18; ++pixel) Require(output[face * 18 + pixel] == face * 31, "mip generation mixed cube faces");
+}
+
 constexpr TestCase kTests[] = {
+  {"T-VOXEL-AUTHORING-01", TestAuthoredStreamedVoxels},
+  {"T-SCENE-RUNTIME-OWNERSHIP-01", TestSceneRuntimeOwnership},
+  {"T-SHADER-PRECOMPILER-01", TestShaderPrecompilerContract},
+  {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
+  {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
+  {"T-SHADOW-LEGACY-01", TestLegacyShadowSampling},
   {"T-PLACEMENT-VISUAL-01", TestPlacementVisualFitting},
   {"T-PLACEMENT-01", TestTerrainPlacementGrid},
   {"T-TERRAIN-16BIT-01", TestTerrain16BitImage},

@@ -16,6 +16,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -53,8 +54,18 @@ std::filesystem::path ResolveConfigPath(const std::string& value, const char* ex
   return requested;
 }
 
+std::string NormalizeShaderFlow(const std::string& value) {
+  const auto flow = ToLower(StripQuotes(value));
+  if (flow != "auto" && flow != "wgsl" && flow != "spirv")
+    throw std::invalid_argument("Invalid WebGPU shader flow '" + value + "'; expected auto, wgsl or spirv");
+  return flow;
+}
+
 bool IsKnownGraphicsApi(const std::string& value) {
   std::string lowered = ToLower(value);
+#if defined(_WIN32) && defined(_M_X64)
+  if (lowered == "webgpu") return true;
+#endif
   return lowered == "gl" || lowered == "opengl"
       || lowered == "d3d12" || lowered == "dx12"
       || lowered == "d3d11" || lowered == "dx11"
@@ -155,6 +166,9 @@ Config::CullingLoadMode ParseCullingLoadMode(const std::string& value, Config::C
 
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback) {
   std::string lowered = ToLower(value);
+#if defined(_WIN32) && defined(_M_X64)
+  if (lowered == "webgpu") return GraphicsApi::WEBGPU;
+#endif
   if (lowered == "gl" || lowered == "opengl") return GraphicsApi::OPENGL;
   if (lowered == "d3d12" || lowered == "dx12") return GraphicsApi::D3D12;
   if (lowered == "d3d11" || lowered == "dx11") return GraphicsApi::D3D11;
@@ -166,6 +180,7 @@ const char* ApiTag(GraphicsApi::E api) {
   return (api == GraphicsApi::OPENGL) ? "gl"
        : (api == GraphicsApi::D3D12)  ? "d3d12"
        : (api == GraphicsApi::VULKAN) ? "vulkan"
+      : (api == GraphicsApi::WEBGPU) ? "webgpu"
        : "d3d11";
 }
 
@@ -177,6 +192,7 @@ const char* CullingLoadModeTag(Config::CullingLoadMode mode) {
 
 void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.api) cfg.api = *json.api;
+  if (json.webgpuShaderFlow) cfg.webgpuShaderFlow = *json.webgpuShaderFlow;
   if (json.width) cfg.width = *json.width;
   if (json.height) cfg.height = *json.height;
   if (json.fullscreen) cfg.flags.fullscreen = *json.fullscreen;
@@ -328,6 +344,15 @@ bool ValidateConfig(Config& cfg) {
   bool valid = true;
   const Config defaults;
   constexpr int kMaxDimension = 16384;
+
+  cfg.webgpuShaderFlow = NormalizeShaderFlow(cfg.webgpuShaderFlow);
+
+  if (cfg.flags.compileShaders) {
+    if (cfg.flags.recordShaderPermutations || cfg.flags.dumpShaderPermutations || cfg.flags.benchmarkMatrix)
+      throw std::invalid_argument("Shader compilation cannot be combined with recording or benchmark modes");
+    cfg.flags.offscreen = true;
+    cfg.flags.fullscreen = false;
+  }
 
   if (!IsKnownGraphicsApi(cfg.api)) {
     WarnConfigAdjusted("api", "unsupported value '" + cfg.api + "', using '" + defaults.api + "'");
@@ -524,6 +549,11 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--api" && i + 1 < argc) {
       cfg.api = argv[++i];
     }
+    else if (arg == "--shaderFlow") {
+      if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("-"))
+        throw std::invalid_argument("--shaderFlow requires auto, wgsl or spirv");
+      cfg.webgpuShaderFlow = NormalizeShaderFlow(argv[++i]);
+    }
     else if (arg == "--dump-frame" || arg == "--dumpFrame" || arg == "--dumpSnapshot-frame") {
       int value = 0;
       if (ReadIntArgument(arg, argc, argv, i, value)) {
@@ -709,6 +739,19 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "-dumpShaderPermutations" || arg == "--dumpShaderPermutations") {
       cfg.flags.dumpShaderPermutations = true;
     }
+    else if (arg == "--compileShaders") {
+      cfg.flags.compileShaders = true;
+    }
+    else if (arg == "--recordShaderPermutations") {
+      cfg.flags.recordShaderPermutations = true;
+    }
+    else if (arg == "--shaderPermutationInput" || arg == "--shaderCompileCancelFile") {
+      if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--"))
+        throw std::invalid_argument(arg + " requires a path");
+      auto& path = arg == "--shaderPermutationInput" ? cfg.shaderPermutationInputPath : cfg.shaderCompileCancelFile;
+      path = StripQuotes(argv[++i]);
+      if (path.empty()) throw std::invalid_argument(arg + " requires a nonempty path");
+    }
     else if ((arg == "-shaderPermutationOutput" || arg == "--shaderPermutationOutput") && i + 1 < argc) {
       cfg.shaderPermutationOutputPath = StripQuotes(argv[++i]);
     }
@@ -732,6 +775,10 @@ void PrintHelp() {
     << "  --config <path>                    Load JSON config before applying CLI overrides\n\n"
     << "Renderer/window:\n"
     << "  --api <d3d11|d3d12|vulkan|gl>      Select graphics backend\n"
+  #if defined(_WIN32) && defined(_M_X64)
+    << "  --api webgpu                       Select Dawn/D3D12 (scene parity still incomplete)\n"
+  #endif
+    << "  --shaderFlow <auto|wgsl|spirv>     Select WebGPU shader source flow before loading (default: auto)\n"
     << "  --width <pixels>                   Window width\n"
     << "  --height <pixels>                  Window height\n"
     << "  --fullscreen                       Launch fullscreen\n"
@@ -770,6 +817,10 @@ void PrintHelp() {
     << "  -dumpShaderPermutations, --dumpShaderPermutations\n"
     << "                                      Write requested ShaderKey permutations, then exit after startup\n"
     << "  --shaderPermutationOutput <path>   JSON dictionary path for --dumpShaderPermutations\n"
+    << "  --recordShaderPermutations         Record through runtime and flush at normal/snapshot exit\n"
+    << "  --compileShaders                  Compile all recorded permutations, then exit\n"
+    << "  --shaderPermutationInput <path>    Manifest to compile (default: Shaders/shader_permutations.json)\n"
+    << "  --shaderCompileCancelFile <path>   Stop between permutations when this file exists\n"
     << "  --validateGltf <path>              Validate and summarize glTF/GLB, then exit\n\n"
     << "GUI/tools:\n"
     << "  --gui                              Show GUI on startup\n"

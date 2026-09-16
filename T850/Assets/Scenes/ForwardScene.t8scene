@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "render_graph": "Scenes/ForwardScene_RenderGraph.json",
+  "objects": [
+    {
+      "name": "Damaged Helmet",
+      "mesh": "Models/DamagedHelmet.glb",
+      "position": { "x": 0, "y": 0, "z": 0 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 1, "y": 1, "z": 1 },
+      "visible": true
+    }
+  ],
+  "cameras": [
+    {
+      "name": "Forward Camera",
+      "type": 0,
+      "position": { "x": 0, "y": 0, "z": -4 },
+      "target": { "x": 0, "y": 0, "z": 0 },
+      "fov_deg": 45,
+      "near_plane": 0.1,
+      "far_plane": 100,
+      "visible": true
+    }
+  ]
+}

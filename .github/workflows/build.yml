@@ -153,12 +153,8 @@ jobs:
           if (-not (Test-Path $editor)) { throw "Editor output not found: $editor" }
           Write-Host "Editor built: $editor"
 
-      # Gameplay/terrain self-tests cannot run on GitHub-hosted runners (no
-      # display/GPU and no interactive session). They are exercised locally via
-      # T850/scripts/RunWindowsBuildMatrix.ps1, which runs the same six-cell
-      # matrix plus the Win32/x64 self-tests. Keep this step disabled in CI.
       - name: Run gameplay and terrain self-tests
-        if: false
+        if: matrix.platform != 'ARM64'
         shell: pwsh
         run: |
           & "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe" --game-selftest

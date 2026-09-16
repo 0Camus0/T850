@@ -129,6 +129,14 @@ still requires the installed package audit to pass. CI provisions it for x64,
 builds the probe without claiming hardware execution, and retains runtime DLLs
 and licenses in release artifacts.
 
+All Windows DayScene and editor-host builds also stage the architecture-matched
+`vulkan-1.dll` and `licenses/vulkan-loader.txt` from vcpkg. The Vulkan loader is
+dynamic even in `*-windows-static` triplets and is imported at process startup,
+including for CPU-only `--game-selftest` runs. Do not rely on a GPU driver or SDK
+installation to supply it. PR CI verifies the staged files and runs the gameplay
+and terrain self-tests for Win32/x64 Debug and Release, reporting captured output
+and the native process exit code; ARM64 is cross-build-only on the x64 runner.
+
 ### Probe and Validation
 
 ```powershell

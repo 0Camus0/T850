@@ -851,6 +851,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float3 emissive = SampleEmissive(input, uv);
     float lightmap = SampleLightmap(input);
 
+#ifdef FORWARD_PASS
     if (ForwardParams.z > 0.5f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {
         float sceneDepth = LoadForwardSceneDepth(input);
         float meshDepth = input.Pos.z / input.Pos.w;
@@ -858,6 +859,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         if (sceneDepth > 0.0001f && meshDepth < sceneDepth - depthEpsilon)
             discard;
     }
+#endif
 
     float3 albedo = pow(max(color.rgb, float3(0.0f, 0.0f, 0.0f)), float3(2.2f, 2.2f, 2.2f));
     float3 eyeDir = normalize(CameraPosition.xyz - input.WorldPos.xyz);
@@ -971,6 +973,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     }
 
     float transmission = saturate(transmissionFactor * MaterialParams2.x);
+#ifdef FORWARD_PASS
     if (MaterialParams2.z > 0.5f && transmission > 0.001f && MaterialParams2.y > 0.0f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {
         float2 screenUV = GetForwardScreenUV(input);
         float iorOffset = saturate(abs(ForwardParams.w - 1.0f));
@@ -978,6 +981,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         float3 sceneColor = SceneColorTex.SampleLevel(SceneColorSS, refractUV, 0.0f).rgb;
         finalColor = lerp(finalColor, sceneColor, transmission);
     }
+#endif
     finalColor += emissive;
 
     float alpha = color.a;

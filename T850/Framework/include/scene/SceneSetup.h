@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <scene/SceneDescriptor.h>
+#include <scene/EditorSceneFile.h>
 #include <scene/SceneProp.h>
 #include <utils/Camera.h>
 #include <utils/Spline.h>
@@ -25,12 +26,14 @@ namespace t850 {
 
     // Load scene from JSON and build all objects.
     bool Load(const std::string& jsonPath);
+    bool Load(const SceneDescriptor& source);
 
     // Wire built objects into a SceneProps instance.
     void Apply(SceneProps& props);
 
     // Apply only quality and render settings from the descriptor.
     void ApplyQualityAndSettings(SceneProps& props);
+    void ApplyInputSettings(SceneProps& props, std::optional<bool> overridePolicy = std::nullopt) const;
 
     // Write current runtime state back to descriptor and save to JSON.
     void SaveState(SceneBase* scene, const std::string& jsonPath);
@@ -51,6 +54,7 @@ namespace t850 {
 
     // The parsed descriptor (kept for introspection / re-export)
     SceneDescriptor descriptor;
+    std::optional<scene::EditorSceneFile> runtimeScene;
 
     // Asset paths from JSON (scenes use these in CreateAssets)
     std::vector<std::string> meshPaths;
@@ -62,6 +66,8 @@ namespace t850 {
     std::string environmentCharlieLUT;
     std::string environmentSheenELUT;
     std::string name;
+  private:
+    bool m_mouseCaptureAllowed = true;
   };
 
 } // namespace t850

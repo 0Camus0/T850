@@ -34,6 +34,11 @@
 #include <utils/ThreadPool.h>
 #include <utils/TextureMipmaps.h>
 #include <utils/ConfigRuntime.h>
+#include <utils/ShaderPrecompiler.h>
+#include <utils/ShaderPermutationDump.h>
+#include <utils/ResourceLocator.h>
+#include <scene/SceneSetup.h>
+#include <core/Core.h>
 #include <utils/XDataBase.h>
 #include <video/TextureAtlas.h>
 
@@ -1708,6 +1713,213 @@ void TestShaderFlowConfiguration() {
   Require(rejected, "Invalid configured shader flow silently defaulted");
 }
 
+class NullTestDriver final : public BaseDriver {
+public:
+  std::vector<std::string> events;
+  void InitDriver() override {}
+  void CreateSurfaces() override {}
+  void DestroySurfaces() override {}
+  void Update() override {}
+  void DestroyDriver() override {}
+  void SetWindow(void*) override {}
+  void SetDimensions(int, int) override {}
+  void Clear() override {}
+  void SwapBuffers() override {}
+  void SetBlendState(BlendStates) override {}
+  void SetDepthStencilState(DepthStencilStates) override {}
+  void SaveScreenshot(std::string) override {}
+  void SetCullFace(FaceCulling) override {}
+  void PopRT() override {}
+  void FlushGPUResources() override { events.push_back("flush"); }
+};
+
+class LifecycleTestScene final : public SceneBase {
+public:
+  explicit LifecycleTestScene(std::vector<std::string>& events) : events(events) {}
+  void OnUpdate(float) override {}
+  void OnDraw() override {}
+  void OnInput(InputManager*) override {}
+  void OnLoadScene() override { events.push_back("load"); }
+  void OnDestoryScene() override { events.push_back("destroy"); }
+  void InitVars() override {}
+  void CreateAssets() override {}
+  void DestroyAssets() override {}
+private:
+  std::vector<std::string>& events;
+};
+
+class LifecycleTestFramework final : public RootFramework {
+public:
+  LifecycleTestFramework() : RootFramework(nullptr) {}
+  void InitGlobalVars() override {}
+  void OnCreateApplication(ApplicationDesc) override {}
+  void OnDestroyApplication() override {}
+  void OnInterruptApplication() override {}
+  void OnResumeApplication() override {}
+  void UpdateApplication() override {}
+  void ProcessInput() override {}
+  void ResetApplication() override {}
+  void ChangeAPI(GraphicsApi::E) override {}
+};
+
+void TestSceneRuntimeOwnership() {
+  TempSceneFiles files;
+  const auto scenePath = files.Add("_policy.t8scene");
+  const auto descriptorPath = files.Add("_policy.json");
+  scene::EditorSceneFile authored;
+  authored.mouse_capture = false;
+  authored.runtime_setup = SceneDescriptor{};
+  authored.runtime_setup->cameras.push_back(CameraDesc{});
+  authored.runtime_setup->cameras.front().position = {3, 4, 5};
+  Require(scene::SaveEditorSceneFile(authored, scenePath.string()), "cannot save scene input policy");
+  scene::EditorSceneFile loaded;
+  Require(scene::LoadEditorSceneFile(scenePath.string(), loaded) && loaded.mouse_capture == false,
+          "scene input policy did not survive round trip");
+  SceneDescriptor descriptor;
+  descriptor.runtime_scene = scenePath.string();
+  Require(SaveSceneDescriptor(descriptorPath.string(), descriptor), "cannot save descriptor policy reference");
+  SceneSetup setup;
+  Require(loaded.runtime_setup && setup.Load(*loaded.runtime_setup) && setup.GetCamera()->Eye.x == 3,
+      "embedded runtime setup did not round-trip or construct authored camera");
+  Require(setup.Load(descriptorPath.string()), "cannot load authored runtime policy");
+  NullTestDriver driver;
+  LifecycleTestScene runtime(driver.events);
+  setup.ApplyInputSettings(runtime.SceneProp);
+  Require(!runtime.AllowsMouseCapture(), "scene ignored authored capture policy");
+  setup.ApplyInputSettings(runtime.SceneProp, true);
+  Require(runtime.AllowsMouseCapture(), "explicit scene policy did not override descriptor default");
+  authored.mouse_capture = true;
+  Require(scene::SaveEditorSceneFile(authored, scenePath.string()) && setup.Load(descriptorPath.string()),
+          "cannot reload changed input policy");
+  setup.ApplyInputSettings(runtime.SceneProp);
+  Require(runtime.AllowsMouseCapture(), "scene hardcoded capture instead of loading updated data");
+  authored.mouse_capture.reset();
+  Require(scene::SaveEditorSceneFile(authored, scenePath.string()) && setup.Load(descriptorPath.string()),
+          "legacy scene did not load");
+  setup.ApplyInputSettings(runtime.SceneProp);
+  Require(runtime.AllowsMouseCapture(), "legacy scene retained stale input policy");
+  LifecycleTestFramework framework;
+  framework.pVideoDriver = &driver;
+  framework.UnloadScene(runtime);
+  Require(driver.events == std::vector<std::string>{"flush", "destroy"}, "GPU drain must precede scene destruction");
+}
+
+void TestAuthoredStreamedVoxels() {
+  TempSceneFiles files;
+  const auto path = files.Add("_voxels.t8scene");
+  scene::EditorSceneFile authored;
+  authored.streamed_voxels.emplace();
+  auto& fixture = *authored.streamed_voxels;
+  fixture.chunk_dimensions = {16, 16, 16};
+  fixture.terrain = {3, 3, 13, 7, 2};
+  fixture.palette = {{"stone"}, {"dirt"}, {"grass"}};
+  fixture.deep_block = "stone";
+  fixture.fill_block = "dirt";
+  fixture.surface_block = "grass";
+  fixture.edits_path = "VoxelWorlds/test/edits.t8vox";
+  fixture.interaction_reach = 8;
+  fixture.atlas_width = fixture.atlas_height = 1;
+  fixture.atlas_rgba = {255, 255, 255, 255};
+  Require(scene::SaveEditorSceneFile(authored, path.string()) &&
+          scene::LoadEditorSceneFile(path.string(), authored) && authored.streamed_voxels,
+          "cannot load authored streamed voxel asset");
+  auto data = *authored.streamed_voxels;
+  terrain::BlockRegistry registry;
+  scene::BuildStreamedVoxelPalette(data, registry);
+  Require(registry.Find("stone") == 1 && registry.Find("dirt") == 2 && registry.Find("grass") == 3,
+          "authored palette changed persisted block IDs");
+  terrain::VoxelChunkBuildRequest request;
+  request.key = {-1, 0, -1};
+  request.dimensions = data.chunk_dimensions;
+  auto chunk = terrain::GenerateLayeredVoxelChunk(request, data.terrain, 3, 2, 1);
+  Require(chunk && chunk->Get(0, 0, 0) == 1 && chunk->Get(0, 3, 0) == 3 && chunk->Get(0, 4, 0) == 0,
+          "layered generator changed negative-coordinate terrain");
+  request.cancelled = std::make_shared<std::atomic_bool>(true);
+  Require(!terrain::GenerateLayeredVoxelChunk(request, data.terrain, 3, 2, 1), "generator ignored cancellation");
+  for (int invalidCase = 0; invalidCase < 4; ++invalidCase) {
+    auto invalid = data;
+    if (invalidCase == 0) invalid.atlas_rgba.pop_back();
+    if (invalidCase == 1) invalid.palette.push_back(invalid.palette.front());
+    if (invalidCase == 2) invalid.surface_block = "unknown";
+    if (invalidCase == 3) invalid.edits_path = "../outside.t8vox";
+    bool rejected = false;
+    try { scene::BuildStreamedVoxelPalette(invalid, registry); } catch (const std::runtime_error&) { rejected = true; }
+    Require(rejected && registry.Count() == 4, "invalid voxel data was accepted or partially replaced palette");
+  }
+  terrain::VoxelStreamingManager streaming;
+  streaming.Reset(data.chunk_dimensions);
+  auto settings = data.streaming;
+  settings.horizontalRadius = 0;
+  streaming.SetSettings(settings);
+  bool receivedDimensions = false;
+  const auto build = [&](const terrain::VoxelChunkBuildRequest& job) {
+    receivedDimensions = job.dimensions.y == data.chunk_dimensions.y;
+    terrain::VoxelChunkBuildResult result;
+    result.key = job.key;
+    result.epoch = job.epoch;
+    result.chunk = terrain::GenerateLayeredVoxelChunk(job, data.terrain, 3, 2, 1);
+    return result;
+  };
+  streaming.Update({}, {}, nullptr, build);
+  Require(receivedDimensions, "streaming reset retained stale chunk dimensions");
+}
+
+void TestShaderPrecompilerContract() {
+  TempSceneFiles files;
+  const auto manifest = files.Add("_permutations.json");
+  {
+    std::ofstream output(manifest);
+    output << R"({"version":1,"permutations":{"0x0000000000000001":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"},"0x0000000000000002":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"}}})";
+  }
+  NullTestDriver driver;
+  ShaderPrecompileRequest request;
+  request.manifestPath = manifest.string();
+  request.sourceDirectory = files.Add("_missing_sources").string();
+  size_t reports = 0;
+  request.onProgress = [&](const ShaderPrecompileProgress& progress) {
+    ++reports;
+    Require(progress.completed == reports && progress.total == 2 && !progress.error.empty(),
+            "precompiler omitted failed-entry diagnostics");
+  };
+  auto result = PrecompileShaders(driver, request);
+  Require(!result.Succeeded() && result.failed == 2 && result.succeeded == 0 && reports == 2,
+          "precompiler incorrectly reported missing shaders as compiled");
+  reports = 0;
+  request.cancelRequested = [&] { return reports == 1; };
+  result = PrecompileShaders(driver, request);
+  Require(result.cancelled && result.failed == 1 && reports == 1, "precompiler did not stop between permutations");
+  request.manifestPath = files.Add("_missing.json").string();
+  bool rejected = false;
+  try { PrecompileShaders(driver, request); } catch (const std::runtime_error&) { rejected = true; }
+  Require(rejected, "precompiler accepted a missing manifest");
+
+    const auto recorded = files.Add("_recorded.json").string();
+    ShaderPermutationDump::Begin(recorded);
+    ShaderKey key;
+    key.bits = 1;
+    ShaderPermutationDump::Record(key, "quoted\"vertex.hlsl", "fragment.hlsl", "#define FORWARD_PASS\n");
+    Require(ShaderPermutationDump::Flush(), "cannot flush recorded manifest");
+    std::string original;
+    Require(ResourceLocator::Instance().ReadText(recorded, original), "cannot read recorded manifest");
+    ShaderPermutationDump::Begin(recorded);
+    key.bits = 2;
+    ShaderPermutationDump::Record(key, "second.hlsl", "fragment.hlsl", "");
+    Require(ShaderPermutationDump::Flush(), "cannot merge recorded manifest");
+    std::string merged;
+    Require(ResourceLocator::Instance().ReadText(recorded, merged) &&
+      merged.find("0x0000000000000001") != std::string::npos &&
+      merged.find("0x0000000000000002") != std::string::npos,
+      "recording discarded earlier permutations");
+    Require(ResourceLocator::Instance().WriteText(recorded, "{broken"), "cannot prepare malformed manifest");
+    ShaderPermutationDump::Begin(recorded);
+    const bool rejectedMerge = !ShaderPermutationDump::Flush();
+    std::string unchanged;
+    const bool preserved = ResourceLocator::Instance().ReadText(recorded, unchanged) && unchanged == "{broken";
+    Require(ResourceLocator::Instance().WriteText(recorded, original) && ShaderPermutationDump::Flush(),
+      "cannot recover recorder after failed merge");
+    Require(rejectedMerge && preserved, "recorder overwrote malformed input");
+}
+
 void TestTextureMipmaps() {
   Require(CalculateFullMipCount(1, 1) == 1 && CalculateFullMipCount(5, 3) == 3, "mip count mismatch");
   std::vector<unsigned char> output;
@@ -1727,6 +1939,9 @@ void TestTextureMipmaps() {
 }
 
 constexpr TestCase kTests[] = {
+  {"T-VOXEL-AUTHORING-01", TestAuthoredStreamedVoxels},
+  {"T-SCENE-RUNTIME-OWNERSHIP-01", TestSceneRuntimeOwnership},
+  {"T-SHADER-PRECOMPILER-01", TestShaderPrecompilerContract},
   {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
   {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
   {"T-SHADOW-LEGACY-01", TestLegacyShadowSampling},

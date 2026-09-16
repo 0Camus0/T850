@@ -6,6 +6,8 @@
 #include <physics/PhysicsTypes.h>
 #include <scene/MutableMesh.h>
 #include <scene/RenderContainer.h>
+#include <scene/EditorSceneFile.h>
+#include <scene/SceneSetup.h>
 #include <terrain/BlockRegistry.h>
 #include <terrain/VoxelMesher.h>
 #include <terrain/VoxelPersistence.h>
@@ -69,14 +71,13 @@ private:
   t850::terrain::BlockId m_grass = t850::terrain::kAirBlock;
   std::unordered_map<t850::terrain::ChunkKey, ChunkRender, t850::terrain::ChunkKeyHash> m_chunkRenders;
   t850::RenderContainer m_renderContainer;
+  t850::scene::EditorSceneFile m_sceneFile;
+  t850::SceneSetup m_sceneSetup;
   Camera m_camera;
   Camera m_lightCamera;
   t850::CameraController m_cameraController;
   t850::FrameDumper m_dumper;
   t850::Texture* m_blockAtlas = nullptr;
-  GaussFilter m_shadowFilter;
-  GaussFilter m_bloomFilter;
-  GaussFilter m_dofFilter;
   float m_deltaSeconds = 0.0f;
   bool m_remeshRequested = false;
   bool m_assetsCreated = false;

@@ -493,7 +493,7 @@ namespace t850 {
 
       // Pass type
       switch (key.getPass()) {
-      case PassType::FORWARD:            break; // default forward path, no define needed
+      case PassType::FORWARD:            Defines += "#define FORWARD_PASS\n\n"; break;
       case PassType::GBUFFER:            Defines += "#define G_BUFFER_PASS\n\n"; break;
       case PassType::SHADOW_MAP:         Defines += "#define SHADOW_MAP_PASS\n\n"; break;
       case PassType::FSQUAD_1_TEX:       Defines += "#define FSQUAD_1_TEX\n\n"; break;

@@ -846,6 +846,7 @@ void main()
     BuildSurface(gl_FrontFacing, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     highp vec3 emissive = SampleEmissive(uv);
 
+#ifdef FORWARD_PASS
     if (ForwardParams.z > 0.5 && ForwardParams.x > 0.0 && ForwardParams.y > 0.0) {
         highp float sceneDepth = LoadForwardSceneDepth();
         highp float meshDepth = Pos.z / Pos.w;
@@ -853,6 +854,7 @@ void main()
         if (sceneDepth > 0.0001 && meshDepth < sceneDepth - depthEpsilon)
             discard;
     }
+    #endif
 
     highp vec3 albedo = pow(max(color.rgb, vec3(0.0)), vec3(2.2));
     highp vec3 eyeDir = normalize(CameraPosition.xyz - WorldPos.xyz);
@@ -969,6 +971,7 @@ void main()
     }
 
     highp float transmission = clamp(transmissionFactor * MaterialParams2.x, 0.0, 1.0);
+#ifdef FORWARD_PASS
     if (MaterialParams2.z > 0.5 && transmission > 0.001 && MaterialParams2.y > 0.0 && ForwardParams.x > 0.0 && ForwardParams.y > 0.0) {
         highp vec2 screenUV = gl_FragCoord.xy / ForwardParams.xy;
         highp float iorOffset = clamp(abs(ForwardParams.w - 1.0), 0.0, 1.0);
@@ -976,6 +979,7 @@ void main()
         highp vec3 sceneColor = SampleTexture2D(SceneColorTex, refractUV).rgb;
         finalColor = mix(finalColor, sceneColor, transmission);
     }
+#endif
     finalColor += emissive;
 
     highp float alpha = color.a;

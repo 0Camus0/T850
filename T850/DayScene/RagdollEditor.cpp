@@ -3650,6 +3650,7 @@ void RagdollEditor::CreateAssets() {
   if (m_controlSetup.descriptor.name.empty()) {
     m_controlSetup.Load("Scenes/RagdollEditor.json");
   }
+  m_controlSetup.ApplyInputSettings(SceneProp);
 
   const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
   const bool embeddedSceneProfile = false;
@@ -3663,6 +3664,7 @@ void RagdollEditor::CreateAssets() {
     t850::scene::EditorSceneFile startupScene;
     std::string startupSceneError;
     if (t850::scene::LoadEditorSceneFile(g_config.sceneFilePath, startupScene, &startupSceneError)) {
+      m_controlSetup.ApplyInputSettings(SceneProp, startupScene.mouse_capture);
       startupSceneProfiles = startupScene.profiles;
       startupProfiles = &startupSceneProfiles;
     } else {

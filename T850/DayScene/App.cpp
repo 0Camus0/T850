@@ -27,17 +27,13 @@
 #include <string>
 #include <vector>
 #include <filesystem>
-#include <charconv>
-#include <cstdlib>
-#include <map>
-#include <glaze/glaze.hpp>
 
 #include <Descriptors.h>
 #include <core/Config.h>
 #include <utils/Log.h>
 #include <utils/ConfigRuntime.h>
 #include <utils/ShaderPermutationDump.h>
-#include <utils/ResourceLocator.h>
+#include <core/ShaderTools.h>
 #include <debug/Profiler.h>
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
@@ -50,118 +46,16 @@ std::vector<std::string> g_args;
 t850::AppBase		  *pApp = 0;
 t850::RootFramework *pFrameWork = 0;
 
-namespace t850::shader_cache {
-struct ShaderCacheEntry {
-  std::string vertexShader;
-  std::string fragmentShader;
-};
-
-struct ShaderCacheManifest {
-  int version = 0;
-  std::map<std::string, ShaderCacheEntry> permutations;
-};
-
-class ShaderCacheApp final : public t850::AppBase {
-public:
-  ShaderCacheApp(const std::string& path, std::string cancelPath) : cancelFile(std::move(cancelPath)) {
-    std::string json;
-    if (!t850::ResourceLocator::Instance().ReadText(path, json))
-      throw std::runtime_error("Cannot read shader permutation manifest: " + path);
-    if (glz::read<glz::opts{.error_on_unknown_keys = false}>(manifest, json)
-        || manifest.version != 1 || manifest.permutations.empty())
-      throw std::runtime_error("Invalid or empty shader permutation manifest: " + path);
-  }
-
-  void CreateAssets() override {
-    size_t completed = 0;
-    for (const auto& [hex, entry] : manifest.permutations) {
-      if (!cancelFile.empty() && std::filesystem::exists(cancelFile)) {
-        cancelled = true;
-        std::cout << "[ShaderPrecompile] cancelled after " << completed << " permutations" << std::endl;
-        break;
-      }
-      try {
-        t850::ShaderKey key;
-        if (hex.size() != 18 || hex.substr(0, 2) != "0x")
-          throw std::runtime_error("Invalid permutation key");
-        const auto parsed = std::from_chars(hex.data() + 2, hex.data() + hex.size(), key.bits, 16);
-        if (parsed.ec != std::errc{} || parsed.ptr != hex.data() + hex.size() || !key.isValid())
-          throw std::runtime_error("Invalid permutation key");
-        auto sourceName = [](const std::string& recorded) {
-          if (recorded.empty()) throw std::runtime_error("Unnamed shader in permutation manifest");
-          auto name = std::filesystem::path(recorded).filename();
-          name.replace_extension(t850::g_pBaseDriver->UsesGLSL() ? ".glsl" : ".hlsl");
-          return name.string();
-        };
-        const auto vertexName = sourceName(entry.vertexShader);
-        const auto fragmentName = sourceName(entry.fragmentShader);
-        std::string vertexSource;
-        std::string fragmentSource;
-        auto& resources = t850::ResourceLocator::Instance();
-        if (!resources.ReadText("Shaders/" + vertexName, vertexSource)
-            || !resources.ReadText("Shaders/" + fragmentName, fragmentSource))
-          throw std::runtime_error("Missing shader source: " + vertexName + " / " + fragmentName);
-        if (t850::g_pBaseDriver->CreateShader(vertexSource, fragmentSource, key, vertexName, fragmentName) < 0)
-          throw std::runtime_error("Shader compilation failed");
-        std::cout << "[ShaderPrecompile] " << ++completed << '/' << manifest.permutations.size()
-                  << " OK " << hex << std::endl;
-      } catch (const std::exception& error) {
-        ++failures;
-        std::cerr << "[ShaderPrecompile] " << ++completed << '/' << manifest.permutations.size()
-                  << " FAILED " << hex << ": " << error.what() << std::endl;
-      }
-    }
-    if (!cancelled)
-      std::cout << "[ShaderPrecompile] complete: " << completed - failures << " succeeded, "
-                << failures << " failed" << std::endl;
-  }
-  void InitVars() override {}
-  void LoadAssets() override {}
-  void DestroyAssets() override {}
-  void OnUpdate() override {}
-  void OnDraw() override {}
-  void OnInput() override {}
-  void OnPause() override {}
-  void OnResume() override {}
-  void OnReset() override {}
-  void LoadScene(int) override {}
-  bool AllowsMouseCapture() const override { return false; }
-  size_t failures = 0;
-  bool cancelled = false;
-private:
-  ShaderCacheManifest manifest;
-  std::string cancelFile;
-};
-}
-
 int main(int arg,char ** args) try {
   t850::InstallUnattendedCrtReportHook();
   t850::Config defaultConfig;
   t850::g_config = defaultConfig;
-  bool recordShaderPermutations = false;
-  bool compileShaders = false;
-  std::string shaderPermutationInput = "Shaders/shader_permutations.json";
-  std::string shaderCompileCancelFile;
 
     for(int i=0;i<arg;i++){
         g_args.push_back( std::string( args[i] ) );
     }
 
   for (int i = 1; i < arg; ++i) {
-    if (std::string_view(args[i]) == "--compileShaders") compileShaders = true;
-    if (std::string_view(args[i]) == "--shaderPermutationInput") {
-      if (i + 1 >= arg || std::string_view(args[i + 1]).starts_with("--"))
-        throw std::invalid_argument("--shaderPermutationInput requires a manifest path");
-      shaderPermutationInput = args[++i];
-    }
-    if (std::string_view(args[i]) == "--shaderCompileCancelFile") {
-      if (i + 1 >= arg || std::string_view(args[i + 1]).starts_with("--"))
-        throw std::invalid_argument("--shaderCompileCancelFile requires a path");
-      shaderCompileCancelFile = args[++i];
-    }
-    if (std::string_view(args[i]) == "--recordShaderPermutations") {
-      recordShaderPermutations = true;
-    }
       if (std::string_view(args[i]) == "--graphics-fixture") {
   #if defined(_WIN32) && defined(_M_X64)
     return t850::RunGraphicsFixture(arg, args);
@@ -178,12 +72,6 @@ int main(int arg,char ** args) try {
 
   if (t850::config::HasHelpArgument(arg, args)) {
     t850::config::PrintHelp();
-    std::cout << "Shader cache tools:\n"
-              << "  --compileShaders                  Compile all recorded permutations, then exit\n"
-              << "  --shaderPermutationInput <path>    Manifest to compile (default: Shaders/shader_permutations.json)\n"
-              << "  --shaderCompileCancelFile <path>   Stop between permutations when this file exists\n"
-              << "  --recordShaderPermutations         Record through runtime and flush at normal/snapshot exit\n"
-              << "  --shaderPermutationOutput <path>   Manifest to merge recorded requests into\n";
     return 0;
   }
 
@@ -193,17 +81,6 @@ int main(int arg,char ** args) try {
 
   t850::config::ApplyCommandLine(arg, args, t850::g_config);
   t850::config::ValidateConfig(t850::g_config);
-  if (compileShaders) {
-#if !defined(OS_WINDOWS)
-    throw std::invalid_argument("--compileShaders currently requires the Windows runtime; Android uses offline APK compilation.");
-#endif
-    t850::g_config.width = 64;
-    t850::g_config.height = 64;
-    t850::g_config.flags.offscreen = true;
-    t850::g_config.flags.fullscreen = false;
-    if (recordShaderPermutations || t850::g_config.flags.dumpShaderPermutations || t850::g_config.flags.benchmarkMatrix)
-      throw std::invalid_argument("Shader compilation cannot be combined with recording or benchmark modes");
-  }
   if (t850::g_config.flags.benchmarkMatrix) {
     if (t850::g_config.api == "webgpu") {
       std::cerr << "WebGPU benchmark-matrix integration is not implemented.\n";
@@ -308,17 +185,13 @@ int main(int arg,char ** args) try {
     t850::g_config.logFile.empty() ? nullptr : t850::g_config.logFile.c_str()
   );
   t850::Log::SetSessionTag(apiTag);
-  if (t850::g_config.flags.dumpShaderPermutations || recordShaderPermutations) {
-    t850::ShaderPermutationDump::Begin(t850::g_config.shaderPermutationOutputPath);
+  if (auto result = t850::RunShaderPrecompileCommand(t850::g_config)) {
+    t850::Log::Shutdown();
+    return *result;
   }
-  if (recordShaderPermutations) {
-    std::atexit([] {
-      if (!t850::ShaderPermutationDump::Flush()) std::_Exit(EXIT_FAILURE);
-    });
-  }
+  t850::BeginShaderPermutationRecording(t850::g_config);
 
-  auto* shaderCacheApp = compileShaders ? new t850::shader_cache::ShaderCacheApp(shaderPermutationInput, shaderCompileCancelFile) : nullptr;
-  pApp = shaderCacheApp ? static_cast<t850::AppBase*>(shaderCacheApp) : new App;
+  pApp = new App;
 #ifdef OS_LINUX
     pFrameWork = new t850::LinuxFramework((t850::AppBase*)pApp);
     pFrameWork->InitGlobalVars();
@@ -329,23 +202,22 @@ int main(int arg,char ** args) try {
 	pFrameWork->OnCreateApplication(desc);
   if (t850::g_config.flags.dumpShaderPermutations) {
     t850::ShaderPermutationDump::Flush();
-  } else if (!compileShaders) {
+  } else {
 	  pFrameWork->UpdateApplication();
   }
 	pFrameWork->OnDestroyApplication();
 #endif
 
-  const int exitCode = shaderCacheApp && (shaderCacheApp->failures || shaderCacheApp->cancelled) ? 1 : 0;
   delete pFrameWork;
 	delete pApp;
 
-  if (recordShaderPermutations && !t850::ShaderPermutationDump::Flush()) {
+  if (!t850::ShaderPermutationDump::Flush()) {
     t850::Log::Shutdown();
     return 1;
   }
 	t850::Log::Shutdown();
 
-    return exitCode;
+    return 0;
 } catch (const std::exception& error) {
   T8_LOG_ERROR("[App] Startup/runtime failure: %s", error.what());
   std::cerr << "Engine failure: " << error.what() << '\n';

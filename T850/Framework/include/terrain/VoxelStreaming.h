@@ -45,6 +45,18 @@ struct VoxelChunkBuildResult {
 using VoxelChunkBuildFunction =
     std::function<VoxelChunkBuildResult(const VoxelChunkBuildRequest& request)>;
 
+struct LayeredVoxelTerrainSettings {
+  int base_height = 0;
+  uint32_t height_mask = 0;
+  uint32_t x_coefficient = 0;
+  uint32_t z_coefficient = 0;
+  int surface_depth = 0;
+};
+
+std::unique_ptr<VoxelChunk> GenerateLayeredVoxelChunk(
+    const VoxelChunkBuildRequest& request, const LayeredVoxelTerrainSettings& settings,
+    BlockId surface, BlockId fill, BlockId deep);
+
 struct VoxelStreamingSettings {
   int horizontalRadius = 2;
   int verticalRadius = 0;
@@ -85,6 +97,7 @@ public:
   std::vector<VoxelChunkBuildResult> TakeCompleted(std::size_t maximum = 0);
   std::vector<ChunkKey> TakeUnloadRequests(std::size_t maximum = 0);
   void Reset();
+  void Reset(ChunkDimensions dimensions);
 
   const VoxelStreamingStats& Stats() const { return m_stats; }
   bool IsDesired(ChunkKey key) const { return m_desired.contains(key); }

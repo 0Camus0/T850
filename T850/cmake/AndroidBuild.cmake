@@ -122,6 +122,8 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPreprocessor.cpp
   ${T850_SOURCE_DIR}/Librerias/simplecpp/simplecpp.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPermutationDump.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPrecompiler.cpp
+  ${T850_SOURCE_DIR}/Framework/src/core/ShaderTools.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/SPIRVReflection.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ThreadPool.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Spline.cpp

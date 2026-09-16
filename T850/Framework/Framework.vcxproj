@@ -136,6 +136,8 @@
     <ClInclude Include="include\utils\ConfigRuntime.h" />
     <ClInclude Include="include\utils\RuntimeProfile.h" />
     <ClInclude Include="include\utils\ShaderPermutationDump.h" />
+    <ClInclude Include="include\utils\ShaderPrecompiler.h" />
+    <ClInclude Include="include\core\ShaderTools.h" />
     <ClInclude Include="include\utils\SPIRVReflection.h" />
     <ClInclude Include="include\utils\ShaderDiskCache.h" />
     <ClInclude Include="include\utils\ShaderPreprocessor.h" />
@@ -271,7 +273,9 @@
     <ClCompile Include="src\debug\ProfilerGpuBackend.cpp" />
     <ClCompile Include="src\debug\RuntimeTelemetry.cpp" />
     <ClCompile Include="src\debug\RenderTrace.cpp" />
-    <ClCompile Include="src\scene\EditorSceneFile.cpp" />
+    <ClCompile Include="src\scene\EditorSceneFile.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
     <ClCompile Include="src\scene\SceneConversions.cpp" />
     <ClCompile Include="src\scene\SceneRegions.cpp" />
     <ClCompile Include="src\scene\MeshDatabaseBuilder.cpp" />
@@ -314,6 +318,8 @@
     <ClCompile Include="src\utils\ConfigRuntime.cpp" />
     <ClCompile Include="src\utils\RuntimeProfile.cpp" />
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp" />
+    <ClCompile Include="src\utils\ShaderPrecompiler.cpp" />
+    <ClCompile Include="src\core\ShaderTools.cpp" />
     <ClCompile Include="src\utils\SPIRVReflection.cpp" />
     <ClCompile Include="src\utils\ShaderDiskCache.cpp" />
     <ClCompile Include="src\utils\ShaderPreprocessor.cpp">

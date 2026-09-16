@@ -634,10 +634,12 @@ struct FragmentOutput {
     var surface = BuildSurface(input, isFrontFace);
     let emissive = SampleEmissive(input, surface.uv);
     let lightmap = SampleLightmap(input);
+#ifdef FORWARD_PASS
     if (material.ForwardParams.z > 0.5 && material.ForwardParams.x > 0.0 && material.ForwardParams.y > 0.0) {
         let sceneDepth = LoadForwardSceneDepth(input);
         if (sceneDepth > 0.0001 && input.Pos.z / input.Pos.w < sceneDepth - 0.000001) { discard; }
     }
+#endif
     let albedo = StoredSRGBToLinear(surface.color.rgb);
     let eyeDir = normalize(FRAME.CameraPosition.xyz - input.WorldPos.xyz);
     let F0 = mix(surface.dielectricF0 * surface.specularWeight, albedo, surface.metallic);
@@ -709,11 +711,13 @@ struct FragmentOutput {
     }
     if (material.MaterialParams.z > 0.5) { finalColor = albedo; }
     let transmission = clamp(surface.transmissionFactor * material.MaterialParams2.x, 0.0, 1.0);
+#ifdef FORWARD_PASS
     if (material.MaterialParams2.z > 0.5 && transmission > 0.001 && material.MaterialParams2.y > 0.0 && material.ForwardParams.x > 0.0 && material.ForwardParams.y > 0.0) {
         let offset = clamp(abs(material.ForwardParams.w - 1.0), 0.0, 1.0);
         let refractUV = clamp(GetForwardScreenUV(input) + surface.normal.xy * material.MaterialParams2.y * transmission * (0.5 + offset), vec2<f32>(0.0), vec2<f32>(1.0));
         finalColor = mix(finalColor, textureSampleLevel(SceneColorTex, SceneColorSS, refractUV, 0.0).rgb, transmission);
     }
+#endif
     finalColor += emissive;
     var alpha = surface.color.a;
     if (transmission > 0.0 && alpha >= 0.999) { alpha = clamp(1.0 - transmission, 0.0, 1.0); }

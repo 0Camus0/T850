@@ -60,6 +60,8 @@ $frameworkSources = @(
     Get-Item (Join-Path $frameworkRoot "src\scene\SceneConversions.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\SceneRegions.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\ShadowSystem.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\core\ShaderTools.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\utils\ShaderPrecompiler.cpp")
 ) | Sort-Object FullName -Unique
 
 $frameworkHeaders = @(
@@ -71,6 +73,8 @@ $frameworkHeaders = @(
     Get-Item (Join-Path $frameworkRoot "include\scene\MutableMeshData.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\SceneConversions.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\SceneRegions.h")
+    Get-Item (Join-Path $frameworkRoot "include\core\ShaderTools.h")
+    Get-Item (Join-Path $frameworkRoot "include\utils\ShaderPrecompiler.h")
 ) | Sort-Object FullName -Unique
 
 foreach ($source in $frameworkSources) {

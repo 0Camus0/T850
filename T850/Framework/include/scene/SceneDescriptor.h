@@ -230,6 +230,7 @@ namespace t850 {
 
   struct SceneDescriptor {
     std::string name;
+    std::string runtime_scene;
     std::vector<CameraDesc> cameras;
     std::vector<CameraDesc> light_cameras;
     std::vector<LightDesc> lights;

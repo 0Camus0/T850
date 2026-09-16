@@ -431,9 +431,7 @@ void App::LoadScene(int id) {
     T8_LOG_INFO("[App] Scene transition begin: target=%d api=%s", id,
                 pFramework->pVideoDriver->ApiTag());
     FadeFX(0.5, true);
-    pFramework->pVideoDriver->FlushGPUResources();
-    T8_LOG_INFO("[App] Scene transition GPU drained; destroying previous scene");
-    m_actualScene->OnDestoryScene();
+    pFramework->UnloadScene(*m_actualScene);
   }
 
   m_actualScene = m_scenes[id].get();

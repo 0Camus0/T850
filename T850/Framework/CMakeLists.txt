@@ -103,6 +103,8 @@ set(FRAMEWORK_SOURCES
   src/utils/ConfigRuntime.cpp
   src/utils/RuntimeProfile.cpp
   src/utils/ShaderPermutationDump.cpp
+  src/utils/ShaderPrecompiler.cpp
+  src/core/ShaderTools.cpp
   src/utils/SPIRVReflection.cpp
   src/utils/ShaderDiskCache.cpp
   src/utils/ShaderPreprocessor.cpp
@@ -179,6 +181,7 @@ add_library(T800Framework ALIAS Framework)
 
 if(MSVC)
   set_source_files_properties(../Librerias/tinyxml2/tinyxml2.cpp PROPERTIES COMPILE_OPTIONS /wd4267)
+  set_source_files_properties(src/scene/EditorSceneFile.cpp PROPERTIES COMPILE_OPTIONS /bigobj)
 endif()
 
 t850_apply_common(Framework)

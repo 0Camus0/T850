@@ -1,5 +1,6 @@
 {
    "name": "SandboxScene",
+   "runtime_scene": "Scenes/SandboxScene.t8scene",
    "cameras": [
       {
          "position": [

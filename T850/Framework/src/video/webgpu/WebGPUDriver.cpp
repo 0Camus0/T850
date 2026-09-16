@@ -70,7 +70,6 @@ struct WebGPUDriverState {
   std::array<WebGPUBufferData*, 16> constants{};
   std::array<WebGPUTexture*, 32> textures{};
   std::array<WebGPUTexture*, 32> samplers{};
-  std::unique_ptr<WebGPUTexture> emptySceneInput;
   WebGPUShader* shader = nullptr;
   unsigned draws = 0;
   void EndPass() { if (pass) { pass.End(); pass = nullptr; } }
@@ -693,14 +692,11 @@ void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned first
       Require(resource.binding >= 32 && resource.binding - 32 < samplers.size(), "Unsupported sampler binding");
       const auto slot = resource.binding - 32;
       const auto* texture = samplers[slot];
-      if (!texture && (slot == 7 || slot == 9)) texture = emptySceneInput.get();
       Require(texture != nullptr, "Required sampler not bound at slot " + std::to_string(slot));
       entry.sampler = texture->sampler;
     } else {
       Require(resource.binding < textures.size(), "Unsupported sampled texture binding");
       auto* texture = textures[resource.binding];
-      if (!texture && (resource.binding == 7 || resource.binding == 9) && resource.dimension == webgpu::TextureDimension::D2)
-        texture = emptySceneInput.get();
       Require(texture && !IsAttachment(texture->gpu),
         "Sampled texture " + std::string(texture ? "aliases active attachment" : "missing") + " at binding "
         + std::to_string(resource.binding) + " shaderKey=" + std::to_string(shader->key.bits));
@@ -754,9 +750,6 @@ void WebGPUDriver::InitDriver() {
   m_state->context.Initialize(m_state->hwnd, width, height);
   m_state->device = std::make_unique<WebGPUDevice>(*m_state);
   m_state->deviceContext = std::make_unique<WebGPUDeviceContext>(*m_state);
-  m_state->emptySceneInput = std::make_unique<WebGPUTexture>(*m_state);
-  m_state->emptySceneInput->params = CLAMP_TO_EDGE | NEAREST_FILTER;
-  m_state->emptySceneInput->Upload(nullptr, 1, 1, wgpu::TextureFormat::RGBA8Unorm, 4, 1, 1);
   T8Device = m_state->device.get(); T8DeviceContext = m_state->deviceContext.get();
 }
 void WebGPUDriver::CreateSurfaces() { m_state->context.Resize(width, height); }
@@ -957,7 +950,6 @@ void WebGPUDriver::DestroyDriver() {
   if (T8Device == m_state->device.get()) T8Device = nullptr;
   if (T8DeviceContext == m_state->deviceContext.get()) T8DeviceContext = nullptr;
   m_state->deviceContext.reset(); m_state->device.reset();
-  m_state->emptySceneInput.reset();
   m_state->depthSamplingCopyPipeline = nullptr;
   try { m_state->context.Shutdown(); }
   catch (...) { if (!failure) failure = std::current_exception(); }

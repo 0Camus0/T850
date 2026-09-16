@@ -2,10 +2,10 @@ name: Build
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, microsoft_webgpu_branch ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, microsoft_webgpu_branch ]
 
 jobs:
   validate-build-registration:

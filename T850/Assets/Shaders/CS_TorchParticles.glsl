@@ -65,7 +65,7 @@ void main()
         vec4 clip = ViewProjection * vec4(position, 1.0);
         if (clip.w <= 0.0001) continue;
         vec2 ndc = clip.xy / clip.w;
-        vec2 centerUv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        vec2 centerUv = vec2(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5);
         vec2 delta = uv - centerUv;
         delta.x *= aspect;
 

@@ -124,10 +124,12 @@ hardware uses the render graph's PS fallback instead of failing pipeline creatio
 
 ## OpenGL behavior
 
-Desktop OpenGL enables compute when the active context exposes OpenGL 4.3. Each authored
-HLSL compute shader has a sibling `.glsl` source with the same stem. `GLComputePipeline`
-loads that sibling, injects permutation defines after `#version`, compiles and links a compute
-program, and validates the API-neutral binding declaration before dispatch.
+On Windows, the GL host first requests a desktop OpenGL 4.3 compatibility context. If the
+driver cannot create it, it retries a 3.3 compatibility context for graphics-only fallback.
+Desktop OpenGL enables compute only when the active context exposes OpenGL 4.3 or newer.
+Each authored HLSL compute shader has a sibling `.glsl` source with the same stem.
+`GLComputePipeline` loads that sibling, injects permutation defines after `#version`, compiles
+and links a compute program, and validates the API-neutral binding declaration before dispatch.
 
 Constants use transient `std140` uniform buffers, structured buffers use shader-storage
 buffers, sampled textures use the texture object sampling state, and RGBA8/RGBA16F outputs
@@ -136,7 +138,7 @@ the same layout identity as Vulkan. Dispatch issues shader-storage, image-access
 texture-fetch, and buffer-update barriers before restoring graphics state. Diagnostic buffer
 readback uses `glGetBufferSubData` after the storage barrier.
 
-OpenGL contexts below 4.3 and OpenGL ES continue to report no compute support. Optional
+Desktop OpenGL contexts below 4.3 and OpenGL ES report no compute support. Optional
 post-process passes use their existing fullscreen fallback, and compute-only passes retain
 their existing clear behavior.
 
@@ -156,15 +158,13 @@ readback vector and triggered the Debug CRT heap check. `ReadFBOToPPM` now sets
 | `compute_entry` | Entry point, normally `CS` |
 | `compute_permutation` | Stable source-permutation identity |
 | `compute_threads` | Workgroup dimensions used for ceil-div dispatch |
-| `prefer_compute` | Chooses CS in `auto` mode |
 
 `RTDesc::storage` requests backend storage/UAV usage. `RenderGraph` creates optional pipelines
 after render targets and graph edges are resolved. Selection uses the global
 `postProcessMode`:
 
-- `raster`: use retained fullscreen draws;
-- `auto`: use CS only on passes marked `prefer_compute`;
-- `compute`: force every declared post-process CS alternative;
+- `raster`: use the authored graphics draw or clear fallback;
+- `compute`: enable every declared post-process CS alternative;
 - unsupported capability: log and use graphics fallback.
 
 Compute and graphics implementations share the same graph inputs and target. Dispatch uses
@@ -176,6 +176,14 @@ Kernel-specific constant packing stays in Framework `RenderGraph.cpp`, not in sc
 It converts stable `SceneProps` into the register layouts used by the shared shaders. Scene
 code does not create API pipelines, bind descriptors, issue dispatches, or branch on graphics
 API.
+
+`Framework/ComputeKernelRegistry` owns each registered kernel's canonical source
+name, entry point, post-process policy, and API-neutral binding layout. RenderGraph
+looks up that definition before it creates a runtime pipeline, and ShaderPrecompiler
+uses the same lookup when it prewarms a `compute_permutations` record. This keeps
+binding ABI out of graph JSON and prevents offline/runtime descriptor drift. RenderGraph
+retains only the live `SceneProps` constant packing and resource binding required to
+execute the selected kernel.
 
 ## Compute shaders
 
@@ -258,13 +266,13 @@ D3D11, D3D12, Vulkan, OpenGL, compute-pipeline, or descriptor implementation. Fi
 capacities, six cube faces, vertex layout/stride, homogeneous-coordinate constants, and
 validation safety ceilings remain C++ invariants; visual/tuning values are authored data.
 
-The original `herobrine_green.png` skin is checked in explicitly despite the cloud-texture
+The original `herobrine_green.png` skin is tracked explicitly despite the cloud-texture
 ignore rule. Missing skin data falls back to authored block-atlas tiles.
 
 ## Configuration and tools
 
-`postProcessMode` is accepted from runtime JSON and `--postProcessMode auto|compute|raster`.
-DayScene and T8ditor share the parser instead of maintaining different aliases.
+`postProcessMode` is accepted from runtime JSON and `--postProcessMode compute|raster`.
+DayScene and T8ditor share the parser; `auto` is rejected.
 
 `--compute-selftest` starts a minimal application and defaults to D3D12 on Windows unless an
 API is explicit. `--compute-selftest-wait N` adds capture windows before and after dispatch.
@@ -273,6 +281,11 @@ Visual Studio projects, filters, desktop CMake, and Android CMake register all n
 sources. Android's shader task validates that graphics permutation keys remain hexadecimal.
 Android Vulkan compute SPIR-V precompilation is not implemented in this change; Android keeps
 the HLSL source and uses runtime compilation.
+
+On Windows, `--compileShaders` validates/prewarms graphics and compute manifest sections.
+The compute section resolves layouts from `ComputeKernelRegistry`; it is not silently ignored.
+This path passed all seven compute entries on D3D11, D3D12, Vulkan, WebGPU, and desktop GL on
+2026-09-16. Android's independent Gradle task remains graphics-only.
 
 The branch also contains earlier reviewed work that:
 
@@ -327,6 +340,15 @@ Generated frame dumps named in the result JSON files remain beside the matching 
 D3D12 still emits the documented debug-layer warning ID 1328 for older buffer upload paths
 that request `COPY_DEST` as an initial buffer state. No compute binding, resource-state,
 descriptor, device-removal, or execution errors remained after the review fixes.
+
+On 2026-09-17, the Windows host created an OpenGL 4.3 compatibility context on the Intel
+adapter and reported `shaders=1 textures=1`. The arithmetic readback passed 96/96 values.
+DayScene forced-compute at 1023x577 created/dispatched God Rays, Blur V/H, Bright, and HDR
+with no engine errors. Minecraft similarly dispatched TorchParticles, Bright, and HDR.
+The complete 288-entry GL manifest prewarm passed, including all seven compute identities.
+The DayScene GL raster/compute capture compared 18 targets at tolerance 2; 17 matched and
+the final backbuffer had 0.530434% changed pixels with maximum channel delta 4. The 3.3
+fallback path is implemented but was not executable on the reviewed 4.3-capable adapter.
 
 Important proof summaries:
 

@@ -492,6 +492,50 @@ bool RunSelectedFlow(ShaderFlow flow, const std::string& selectedFile) {
   return allSucceeded;
 }
 
+bool CheckComputeV1Shaders() {
+  struct ExpectedShader {
+    const char* name;
+    uint32_t constantWords;
+    std::array<uint32_t, 3> workgroupSize;
+    size_t bindingCount;
+  };
+  constexpr ExpectedShader shaders[]{
+    {"CS_Arithmetic.hlsl", 4, {64, 1, 1}, 2},
+    {"CS_Blur.hlsl", 32, {8, 8, 1}, 4},
+    {"CS_Bright.hlsl", 8, {8, 8, 1}, 6},
+    {"CS_GodRays.hlsl", 52, {8, 8, 1}, 6},
+    {"CS_HDRComposite.hlsl", 8, {8, 8, 1}, 8},
+    {"CS_TorchParticles.hlsl", 28, {8, 8, 1}, 2},
+  };
+
+  for (const ExpectedShader& expected : shaders) {
+    ShaderFileRequest request;
+    request.name = expected.name;
+    request.stage = ShaderStage::Compute;
+    request.layout = BindingLayout::ComputeV1;
+    request.entryPoint = "CS";
+    request.flow = ShaderFlow::Spirv;
+
+    ShaderArtifact artifact;
+    ShaderFlowReport report;
+    std::string diagnostic;
+    Require(LoadShaderFiles(request, artifact, report, diagnostic), diagnostic);
+    const auto constants = std::find_if(artifact.bindings.begin(), artifact.bindings.end(),
+      [](const ShaderBinding& binding) {
+        return binding.kind == ResourceKind::UniformBuffer && binding.group == 0 && binding.binding == 0;
+      });
+    Require(artifact.bindings.size() == expected.bindingCount,
+            std::string(expected.name) + ": unexpected ComputeV1 binding count");
+    Require(constants != artifact.bindings.end() &&
+            constants->minimumBufferSize == expected.constantWords * sizeof(uint32_t),
+            std::string(expected.name) + ": unexpected ComputeV1 constant layout");
+    Require(artifact.workgroupSize == expected.workgroupSize,
+            std::string(expected.name) + ": unexpected ComputeV1 workgroup size");
+  }
+  std::cout << "ComputeV1 shader contracts PASS: " << std::size(shaders) << " families\n";
+  return true;
+}
+
 void CheckShaderFlows() {
   auto& locator = t850::ResourceLocator::Instance();
   const auto fixtureRoot = std::filesystem::absolute(locator.GetCachePath()) / "flow-fixtures"
@@ -640,13 +684,13 @@ void CheckBindings(const std::string& name, const ShaderArtifact& artifact) {
 int main(int argc, char** argv) {
   if (argc < 3 || argc > 6) {
     std::cerr << "Usage: DawnShaderProbe <shader-directory> <cache-root> [flow [auto|wgsl|spirv] [shader-file]]\n"
-      << "       DawnShaderProbe <shader-directory> <cache-root> <test|cold|warm|gpu|permutations|corpus|flow-test>\n";
+      << "       DawnShaderProbe <shader-directory> <cache-root> <test|cold|warm|gpu|permutations|corpus|flow-test|compute-v1>\n";
     return 1;
   }
   int exitCode = 0;
   try {
     const std::string mode = argc >= 4 ? argv[3] : "flow";
-    Require(mode == "test" || mode == "cold" || mode == "warm" || mode == "gpu" || mode == "permutations" || mode == "corpus" || mode == "flow-test" || mode == "flow", "Invalid test mode");
+    Require(mode == "test" || mode == "cold" || mode == "warm" || mode == "gpu" || mode == "permutations" || mode == "corpus" || mode == "flow-test" || mode == "compute-v1" || mode == "flow", "Invalid test mode");
     Require(mode == "flow" || argc <= 4, "Only flow mode accepts a flow and optional shader file");
     auto cacheRoot = std::filesystem::path(argv[2]);
     if (mode == "test" || mode == "gpu") cacheRoot /= std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -660,6 +704,9 @@ int main(int argc, char** argv) {
     if (mode == "flow-test") {
       CheckShaderFlows();
       return 0;
+    }
+    if (mode == "compute-v1") {
+      return CheckComputeV1Shaders() ? 0 : 1;
     }
     if (mode == "permutations") {
       CheckVertexPermutations();

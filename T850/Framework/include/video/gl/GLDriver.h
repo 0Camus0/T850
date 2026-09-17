@@ -80,8 +80,8 @@ namespace t850 {
   public:
     GLDriver() { m_currentAPI = GraphicsApi::OPENGL; }
     const char* ApiTag() const override { return "gl"; }
-    bool SupportsComputeShaders() const override { return m_computeShadersSupported; }
-    bool SupportsComputeTextures() const override { return m_computeTexturesSupported; }
+        bool SupportsComputeShaders() const override { return m_computeShadersSupported; }
+        bool SupportsComputeTextures() const override { return m_computeTexturesSupported; }
         bool UsesGLSL() const override { return true; }
         bool NeedsVFlip() const override { return true; }
         bool SupportsRenderTargetMipGeneration() const override { return true; }
@@ -149,7 +149,6 @@ namespace t850 {
 #endif
         bool m_computeShadersSupported = false;
         bool m_computeTexturesSupported = false;
-
   };
 }
 #endif

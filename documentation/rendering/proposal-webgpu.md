@@ -128,7 +128,7 @@ The primary target is **Windows x64 using Dawn over D3D12**, both to port T850 a
 1. **Ship WebGPU alongside every existing graphics API.** Supported Windows x64 builds always include Dawn/D3D12. Users select the API at runtime without installing a separate backend or rebuilding. Full scene and editor parity is required for release; the three-day deliverable is only an internal integrated graphics milestone.
 2. **Port the shader inventory to WGSL through generation, not hand authoring.** HLSL stays canonical. Translation happens in process on a cache miss, mirroring the existing Vulkan path, and offline pre-compilation is an optional pre-warm of the same cache.
 3. **Measure native D3D12 versus Dawn/D3D12.** Compare equivalent work on the same adapter, with matched shaders, resources, rendering settings and presentation policy. Separate CPU command-construction cost, GPU elapsed time, cold compilation, and frame pacing; do not label every difference WebGPU API overhead.
-4. **Add a shared compute path** for D3D11, D3D12, Vulkan, and Dawn/WebGPU. GL receives no compute implementation. Keep existing graphics paths working and select a graphics fallback or report unsupported when compute is requested on GL.
+4. **Add a shared compute path** for D3D11, D3D12, Vulkan, Dawn/WebGPU, and desktop OpenGL 4.3+. Keep existing graphics paths working and select a graphics fallback when desktop GL 4.3 is unavailable or on OpenGL ES.
 5. **Assess compute candidates in every scene**, including the newly added heightmap/placement content and embeddable editor. Start with a bounded image-processing kernel; treat volumetric lighting, culling, skinning, and terrain generation as later experiments until correctness and performance are measured.
 6. **Deliver an internal prototype with two people in three days.** The owner takes Dawn graphics integration and native-versus-Dawn comparison; the teammate owns the common compute contract, kernel, and native compute backends. Freeze the shared contract early and integrate daily. Six person-days is a prototype budget, not a full-engine parity budget or a committed release date.
 
@@ -172,7 +172,7 @@ This proposal does not treat a triangle sample as scene parity. Full support mea
 | Android | Existing Vulkan backend remains the production path in the initial scope |
 | Win32/ARM64 | Existing builds remain supported; mandatory Dawn coverage is not inferred from the x64 plan |
 | Alternate provider | Out of scope; isolate Dawn-specific code without implementing another provider |
-| Compute targets | D3D11, D3D12, Vulkan, Dawn/WebGPU; no GL compute |
+| Compute targets | D3D11, D3D12, Vulkan, Dawn/WebGPU, desktop OpenGL 4.3+ |
 | Benchmark target | Native D3D12 versus Dawn using the same D3D12 adapter |
 | Immediate budget | Two people, three days; prototype and evidence, not full scene parity |
 | Release gate | Existing runtime scenes and T8ditor work across all five graphics APIs on the declared supported Windows x64 hardware; prototype evidence is insufficient |
@@ -1197,7 +1197,7 @@ The exact schema is deferred until the portable GBuffer prototype is selected.
 
 This is an additive Framework capability, not a Dawn-only escape hatch. No scene or editor extension receives D3D, Vulkan or WebGPU handles. Keep the existing graphics entry points stable; do not force compute into `DrawIndexed`, a fake fullscreen draw, or the VS/FS `ShaderBase` contract.
 
-Implementation checkpoint: D3D11, D3D12, and Vulkan execute the same API-neutral structured-buffer arithmetic workload, pass deterministic GPU readback, and support the sampled/storage textures and samplers used by God Rays, separable blur, Bright, and HDR-composition compute passes. `--postProcessMode` provides the matched A/B path. OpenGL remains deliberately unsupported, as required by the agreed scope above: compute targets D3D11, D3D12, Vulkan, and Dawn/WebGPU, with no GL compute.
+Implementation checkpoint: D3D11, D3D12, Vulkan, Dawn/WebGPU, and desktop OpenGL 4.3+ execute the same API-neutral structured-buffer arithmetic workload, pass deterministic GPU readback, and support the sampled/storage textures and samplers used by God Rays, separable blur, Bright, and HDR-composition compute passes. `--postProcessMode` provides the matched A/B path. The GL driver requests a 4.3 compatibility context and gates compute capability on `GLEW_VERSION_4_3`; older desktop GL and OpenGL ES retain graphics fallbacks.
 
 ### Shared Contract and Ownership
 
@@ -1208,7 +1208,7 @@ The names below are proposed, not existing APIs. Agree on them in the first two 
 | `Descriptors.h` | GPU creation-usage flags, `ComputePipelineDesc`, `ComputeBindingDesc`, `ResourceAccess` | Explicit artifact/entry point, layout, resource kind, stage, access, buffer offset/size or texture view/subresource; no native enums |
 | `Device` | `CreateComputePipeline`, descriptor-based texture creation | Reuse ordinary `Texture` wrappers for sampled/storage views of the same allocation; do not copy to a second backend-private image just to dispatch |
 | `DeviceContext` | `BeginComputePass`, `SetComputePipeline`, `SetComputeBindings`, `Dispatch`, `EndComputePass` | Dispatch arguments are workgroup counts, not pixel counts. Bindings/layout validated before recording; no active graphics encoder |
-| `BaseDriver` | `GetComputeCapabilities`, managed resource ownership/retirement | Unsupported by default, including GL. Required calls fail explicitly; an empty no-op implementation must not count as compute support |
+| `BaseDriver` | `GetComputeCapabilities`, managed resource ownership/retirement | Unsupported by default. Desktop GL overrides the contract only when its context reports OpenGL 4.3+; an empty no-op implementation must not count as compute support |
 | `RenderGraph` | Typed compute nodes and resolved resource-use lists | Own dependencies, dimensions, resource usage union and unsupported-path policy; request work through the shared context |
 | Backend | Pipeline/layout/binding cache and access translation | Own actual transitions, descriptor lifetime, pass encoder state, command recording and submission |
 
@@ -1288,7 +1288,7 @@ Create a matching fullscreen pixel-shader reference using exactly the same weigh
 
 Test a constant image, impulse, edge/checker pattern and deterministic rendered image. Include `1x1`, `7x5`, `257x129`, and the benchmark resolution to catch dispatch rounding. Compare against a CPU reference that accounts for half-float rounding after each pass. Before seeing results, set a tolerance such as `max(0.002, 0.002 * abs(reference))` per channel for finite test inputs in `[0,4]`; reject NaNs, unwritten pixels and orientation errors. Record max/RMS error and a visual difference image. A checksum alone is not a cross-compiler floating-point test.
 
-On each participating API, require graphics-write -> compute-read, compute-write -> compute-read and compute-write -> graphics-read correctness, two consecutive frames with changing input/constants, a scratch resize/recreate, and zero validation errors. Read back only in the test/capture workflow after completion. Validate GL's graphics fallback separately; it is not a fifth compute implementation.
+On each participating API, require graphics-write -> compute-read, compute-write -> compute-read and compute-write -> graphics-read correctness, two consecutive frames with changing input/constants, a scratch resize/recreate, and zero validation errors. Read back only in the test/capture workflow after completion. Validate the graphics fallback separately on desktop GL below 4.3 and OpenGL ES.
 
 ### Per-Scene Compute Opportunities
 
@@ -1664,7 +1664,7 @@ An initial single-threaded smoke build is acceptable only if disabled systems ar
 - Every HLSL shader family listed in the [port scope](#wgsl-shader-port-scope) converts, reflects against its declared binding table and matches an accepted backend within the visual-regression tolerance.
 - A previously unseen supported material combination imported at runtime renders without a pre-generated artifact. When the optional pre-compile step is implemented/enabled, it reproduces byte-identical artifacts for the same inputs; skipping it does not fail release acceptance.
 - Distributed executables run with staged dependencies, canonical shader sources and the in-process converter on the declared supported GPU/driver baseline, without the developer's vcpkg tree, host shader tools or SDK paths. Test both a cold cache and, when supplied, a pre-warmed cache.
-- Graphics-equivalent GL fallback remains available where production effects use compute; optional GPU timestamps do not determine graphics availability.
+- Graphics-equivalent fallback remains available where production effects use compute on desktop GL below 4.3 and OpenGL ES; optional GPU timestamps do not determine graphics availability.
 
 The internal three-day experiment below is not this release gate. Its result may establish feasibility and timing evidence while release readiness remains unmet. Re-estimate the remaining parity work from those results rather than describing partial support as complete.
 
@@ -1681,7 +1681,7 @@ Aim for one integrated experimental vertical slice: selected Dawn graphics resou
 - On-demand translation works end to end through the shader disk cache: a cold run converts and stores, a warm run loads without invoking the converter, and changing the driver signature invalidates. At least the two lowest-risk shader families from the [port scope](#wgsl-shader-port-scope) convert.
 - A small shared fixture/profile drives the normal engine rendering path with a bounded material/shader inventory. The matrix selects and preserves that workload instead of forcing DayScene's full graph. Control eager mesh/quad compilation explicitly; a triangle-only external sample is bootstrap evidence, not an engine port.
 - Windows x64 runtime selects Dawn/D3D12 through the ordinary factory, logs the exact adapter and pin, and renders an indexed textured/depth-tested fixture to an offscreen target and presents it.
-- The blur contract passes numerical and graphics/compute hazard tests on D3D11, D3D12, Vulkan and Dawn; GL's graphics fallback/unsupported path is explicit.
+- The blur contract passes numerical and graphics/compute hazard tests on D3D11, D3D12, Vulkan, Dawn, and desktop GL 4.3+; the fallback path for older desktop GL and OpenGL ES is explicit.
 - The graph selects raster versus compute without scene/backend conditionals. Old graph JSON remains valid, scratch resize works, and resource teardown has no validation/lifetime errors.
 - The filtered matrix repeats native D3D12 -> WebGPU -> native D3D12 fixture runs in one process without stale resources, pending callbacks or validation errors. All selected run settings survive reset and recreation.
 - Matched native-D3D12/Dawn CPU phase measurements and correctness captures exist, produced through the extended benchmark matrix with a recorded filtered configuration. Result records include frame/submission identity and valid sample counts; FPS summaries alone are insufficient. GPU measurements use verified completion when supported; otherwise GPU overhead remains unresolved. Startup/content-load and steady state are separate, with no translation in measured intervals.
@@ -1711,7 +1711,7 @@ Each day is eight hours per person. The first day's two-hour agreement, later da
 |---|---|---|---|
 | Day 1: contract and feasibility | First 2h together; next 5h install the pinned Dawn package with the ImGui overlay, audit the installed features, then validate adapter/limits/error handling, a minimal surface/offscreen indexed draw and the first graphics WGSL conversion from the new SPIR-V configuration; final 1h integration | First 2h together; next 5h freeze compute descriptors/layout, implement D3D11 kernel/raster/CPU reference and prove compute HLSL compilation; final 1h integration | Installed-feature audit shows D3D12 only; matching package headers/libraries and normal x64 builds; explicit shader conversion results including separate-sampler reflection; Dawn can create and write the proposed storage texture using the shared contract or a clearly labelled bootstrap test |
 | Day 2: integration | First 5h shared engine fixture/resource/pipeline path, fixture-selectable matrix reset/recreation and Dawn compute adapter; next 2h graphics-compute-graphics integration/readback and paired API transitions; final 1h gate | First 5h D3D12 then Vulkan compute adapters and graph resource accesses; next 2h same integration/tests; final 1h gate | One integrated shared-resource blur on Dawn and native D3D12, selected fixture preserved across paired transitions; D3D11/Vulkan status known; output/hazard failures take priority |
-| Day 3: evidence and fixes | First 3h fix fixture/lifecycle gaps, warm caches and extend matrix records with validated CPU phases and completion-driven GPU samples where available; next 2h paired measurements; last 3h joint validation/report | First 3h remaining native-backend correctness, odd extents/resize/GL fallback; next 2h assist controls and image diffs; last 3h joint validation/report | Required fixture, transition and measurement gates pass or are explicitly incomplete; per-API configuration/results/captures, known gaps and next work estimate |
+| Day 3: evidence and fixes | First 3h fix fixture/lifecycle gaps, warm caches and extend matrix records with validated CPU phases and completion-driven GPU samples where available; next 2h paired measurements; last 3h joint validation/report | First 3h remaining native-backend correctness, odd extents/resize/GL 4.3 compute and fallback coverage; next 2h assist controls and image diffs; last 3h joint validation/report | Required fixture, transition and measurement gates pass or are explicitly incomplete; per-API configuration/results/captures, known gaps and next work estimate |
 
 The first two hours must settle kernel/layout, resource ownership, API signatures, graph execution field, adapter, artifact list, quality tolerance, build pin, the overlay strategy and acceptance labels. Use a storage-texture probe while graphics is unfinished, but replace bootstrap shortcuts before claiming the integrated gate.
 
@@ -1882,7 +1882,7 @@ Documentation acceptance before implementation:
 
 Implementation gates:
 
-- for the three-day slice, run Windows x64 build/registration, the selected graphics/compute fixtures on all four participating APIs and GL fallback; exercise touched shader/layout/lifetime paths with focused existing tests;
+- for the three-day slice, run Windows x64 build/registration and the selected graphics/compute fixtures on D3D11, D3D12, Vulkan, Dawn, and desktop GL 4.3+; exercise older desktop GL/OpenGL ES fallbacks and touched shader/layout/lifetime paths with focused existing tests;
 - full release scene/editor parity requires the advertised Windows x64 API matrix and wider existing regression gates; do not claim it from the experiment or silently narrow it;
 - normal x64 setup/build/package requires Dawn; absent or incompatible packages fail explicitly, and a cold shader cache is never treated as a failure;
 - the installed Dawn feature/options audit confirms D3D12 is the only enabled native rendering backend, and startup rejects unintended provider/backend selection;

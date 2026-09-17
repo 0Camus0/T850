@@ -10,6 +10,7 @@
 #include <Descriptors.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
+#include <utils/ComputeKernelRegistry.h>
 #include <core/Config.h>
 
 #ifdef _MSC_VER
@@ -81,12 +82,6 @@ namespace {
   static_assert(sizeof(ParticleComputeConstants) == 112,
                 "Particle compute constants must match the HLSL root-constant layout");
 
-  bool IsPostProcessComputeShader(const std::string& shader) {
-    return shader == "Shaders/CS_GodRays.hlsl" ||
-           shader == "Shaders/CS_Blur.hlsl" ||
-           shader == "Shaders/CS_Bright.hlsl" ||
-           shader == "Shaders/CS_HDRComposite.hlsl";
-  }
 }
 
 RenderGraph::~RenderGraph() = default;
@@ -638,27 +633,27 @@ void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
                    pass.name.c_str(), pass.execution.c_str());
       continue;
     }
-    const bool godRays = pass.compute_shader == "Shaders/CS_GodRays.hlsl";
-    if (IsPostProcessComputeShader(pass.compute_shader)) {
-      const bool useCompute = g_config.postProcessMode == Config::PostProcessMode::Compute ||
-        (g_config.postProcessMode == Config::PostProcessMode::Auto && pass.prefer_compute);
-      if (!useCompute) {
-        T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics implementation by post-process mode on API=%s",
-                    pass.name.c_str(), driver->ApiTag());
-        continue;
-      }
+    if (pass.compute_shader.empty() || pass.compute_entry.empty() || node.rt_handle < 0 ||
+        pass.compute_threads[0] <= 0 || pass.compute_threads[1] <= 0 || pass.compute_threads[2] <= 0) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute declaration", pass.name.c_str());
+      continue;
+    }
+    const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
+    if (!kernel || pass.compute_entry != kernel->entryPoint) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has an unknown compute kernel '%s:%s'",
+                   pass.name.c_str(), pass.compute_shader.c_str(), pass.compute_entry.c_str());
+      continue;
+    }
+    if (g_config.postProcessMode != Config::PostProcessMode::Compute) {
+      T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics implementation by post-process mode on API=%s",
+                  pass.name.c_str(), driver->ApiTag());
+      continue;
     }
     if (!driver->SupportsComputeTextures()) {
       T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics fallback on API=%s",
                   pass.name.c_str(), driver->ApiTag());
       continue;
     }
-    if (pass.compute_shader.empty() || pass.compute_entry.empty() || node.rt_handle < 0 ||
-        pass.compute_threads[0] <= 0 || pass.compute_threads[1] <= 0 || pass.compute_threads[2] <= 0) {
-      T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute declaration", pass.name.c_str());
-      continue;
-    }
-
     std::string source;
     if (!ResourceLocator::Instance().ReadText(pass.compute_shader, source)) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot load compute shader '%s'",
@@ -671,52 +666,7 @@ void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
     pipelineDesc.entryPoint = pass.compute_entry;
     pipelineDesc.debugName = pass.compute_shader;
     pipelineDesc.permutationName = pass.compute_permutation;
-    if (godRays) {
-      pipelineDesc.bindings = {
-        {ComputeBindingType::Constants32, 0, 0, 52},
-        {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
-        {ComputeBindingType::ReadOnlyTexture, 1, 2, 0},
-        {ComputeBindingType::Sampler, 0, 3, 0},
-        {ComputeBindingType::Sampler, 1, 4, 0},
-        {ComputeBindingType::ReadWriteTexture, 0, 5, 0}
-      };
-    } else if (pass.compute_shader == "Shaders/CS_Blur.hlsl") {
-      pipelineDesc.bindings = {
-        {ComputeBindingType::Constants32, 0, 0, 32},
-        {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
-        {ComputeBindingType::Sampler, 0, 2, 0},
-        {ComputeBindingType::ReadWriteTexture, 0, 3, 0}
-      };
-    } else if (pass.compute_shader == "Shaders/CS_Bright.hlsl") {
-      pipelineDesc.bindings = {
-        {ComputeBindingType::Constants32, 0, 0, 8},
-        {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
-        {ComputeBindingType::ReadOnlyTexture, 1, 2, 0},
-        {ComputeBindingType::Sampler, 0, 3, 0},
-        {ComputeBindingType::Sampler, 1, 4, 0},
-        {ComputeBindingType::ReadWriteTexture, 0, 5, 0}
-      };
-    } else if (pass.compute_shader == "Shaders/CS_HDRComposite.hlsl") {
-      pipelineDesc.bindings = {
-        {ComputeBindingType::Constants32, 0, 0, 8},
-        {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
-        {ComputeBindingType::ReadOnlyTexture, 1, 2, 0},
-        {ComputeBindingType::ReadOnlyTexture, 2, 3, 0},
-        {ComputeBindingType::Sampler, 0, 4, 0},
-        {ComputeBindingType::Sampler, 1, 5, 0},
-        {ComputeBindingType::Sampler, 2, 6, 0},
-        {ComputeBindingType::ReadWriteTexture, 0, 7, 0}
-      };
-    } else if (pass.compute_shader == "Shaders/CS_TorchParticles.hlsl") {
-      pipelineDesc.bindings = {
-        {ComputeBindingType::Constants32, 0, 0, 28},
-        {ComputeBindingType::ReadWriteTexture, 0, 1, 0}
-      };
-    } else {
-      T8_LOG_ERROR("[RenderGraph] Pass '%s' has no registered compute kernel '%s'",
-                   pass.name.c_str(), pass.compute_shader.c_str());
-      continue;
-    }
+    ConfigureComputePipelineDesc(*kernel, pipelineDesc);
     std::unique_ptr<ComputePipeline> pipeline = driver->CreateComputePipeline(pipelineDesc);
     if (!pipeline) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' failed to create compute pipeline", pass.name.c_str());
@@ -734,6 +684,11 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     return false;
 
   const RenderPassDesc& pass = *node.desc;
+  const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
+  if (!kernel || pass.compute_entry != kernel->entryPoint) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has no registered compute executor", pass.name.c_str());
+    return false;
+  }
   if (node.rt_handle < 0 || node.rt_handle >= static_cast<int>(driver->RTs.size()) ||
       !driver->RTs[node.rt_handle]) {
     T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute output render target",
@@ -779,7 +734,7 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
   PostProcessComputeConstants postConstants = {};
   ParticleComputeConstants particleConstants = {};
 
-  if (pass.compute_shader == "Shaders/CS_GodRays.hlsl") {
+  if (kernel->id == ComputeKernelId::GodRays) {
     Camera* camera = props.GetPrimaryCamera();
     if (!inputs[0] || !inputs[1] || !camera) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' is missing compute resources or camera", pass.name.c_str());
@@ -817,7 +772,7 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
     addTexture(ComputeBindingType::Sampler, 0, inputs[0]);
     addTexture(ComputeBindingType::Sampler, 1, inputs[1]);
-  } else if (pass.compute_shader == "Shaders/CS_Blur.hlsl") {
+  } else if (kernel->id == ComputeKernelId::Blur) {
     const bool validKernel = inputs[0] && props.ActiveGaussKernel >= 0 &&
       props.ActiveGaussKernel < static_cast<int>(props.pGaussKernels.size()) &&
       props.pGaussKernels[props.ActiveGaussKernel] &&
@@ -850,9 +805,9 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     addTexture(ComputeBindingType::ReadOnlyTexture, 0, inputs[0]);
     addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
     addTexture(ComputeBindingType::Sampler, 0, inputs[0]);
-  } else if (pass.compute_shader == "Shaders/CS_Bright.hlsl" ||
-             pass.compute_shader == "Shaders/CS_HDRComposite.hlsl") {
-    const bool hdrComposite = pass.compute_shader == "Shaders/CS_HDRComposite.hlsl";
+  } else if (kernel->id == ComputeKernelId::Bright ||
+             kernel->id == ComputeKernelId::HDRComposite) {
+    const bool hdrComposite = kernel->id == ComputeKernelId::HDRComposite;
     if (!inputs[0] || !inputs[1] || (hdrComposite && !inputs[2])) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' is missing post-process inputs", pass.name.c_str());
       return false;
@@ -874,7 +829,7 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     addTexture(ComputeBindingType::Sampler, 1, inputs[1]);
     if (hdrComposite)
       addTexture(ComputeBindingType::Sampler, 2, inputs[2]);
-  } else if (pass.compute_shader == "Shaders/CS_TorchParticles.hlsl") {
+  } else if (kernel->id == ComputeKernelId::TorchParticles) {
     Camera* camera = props.GetPrimaryCamera();
     if (!camera) {
       T8_LOG_ERROR("[RenderGraph] Particle pass '%s' is missing its camera",
@@ -896,7 +851,8 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     addConstants(&particleConstants, sizeof(particleConstants));
     addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
   } else {
-    T8_LOG_ERROR("[RenderGraph] Pass '%s' has no supported compute executor", pass.name.c_str());
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot execute standalone kernel '%s'",
+                 pass.name.c_str(), pass.compute_shader.c_str());
     return false;
   }
 

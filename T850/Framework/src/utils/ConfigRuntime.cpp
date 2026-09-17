@@ -164,12 +164,11 @@ Config::CullingLoadMode ParseCullingLoadMode(const std::string& value, Config::C
   return fallback;
 }
 
-Config::PostProcessMode ParsePostProcessMode(const std::string& value, Config::PostProcessMode fallback) {
+Config::PostProcessMode ParsePostProcessMode(const std::string& value) {
   const std::string lowered = ToLower(value);
-  if (lowered == "auto") return Config::PostProcessMode::Auto;
   if (lowered == "compute" || lowered == "cs") return Config::PostProcessMode::Compute;
   if (lowered == "raster" || lowered == "pixel" || lowered == "ps") return Config::PostProcessMode::Raster;
-  return fallback;
+  throw std::invalid_argument("Invalid post-process mode '" + value + "': expected compute or raster");
 }
 
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback) {
@@ -212,7 +211,7 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.model) cfg.modelPath = *json.model;
   if (json.sceneFile) cfg.sceneFilePath = StripQuotes(*json.sceneFile);
   if (json.sceneProfile) cfg.sceneProfile = StripQuotes(*json.sceneProfile);
-  if (json.postProcessMode) cfg.postProcessMode = ParsePostProcessMode(*json.postProcessMode, cfg.postProcessMode);
+  if (json.postProcessMode) cfg.postProcessMode = ParsePostProcessMode(*json.postProcessMode);
   if (json.debugFrames) {
     cfg.flags.debugFrames = *json.debugFrames;
     if (*json.debugFrames) cfg.flags.dumpEnabled = true;
@@ -663,7 +662,7 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       cfg.sceneProfile = StripQuotes(argv[++i]);
     }
     else if (arg == "--postProcessMode" && i + 1 < argc) {
-      cfg.postProcessMode = ParsePostProcessMode(argv[++i], cfg.postProcessMode);
+      cfg.postProcessMode = ParsePostProcessMode(argv[++i]);
     }
     else if (arg == "--orbitYaw") {
       float value = 0.0f;
@@ -801,7 +800,7 @@ void PrintHelp() {
     << "  --model <path>                     glTF model for Sandbox\n"
     << "  --sceneFile <path>                 T8ditor .t8scene file for Sandbox\n"
     << "  --sceneProfile <name>              Override runtime scene profile selection\n\n"
-    << "  --postProcessMode <auto|compute|raster> Select optional post-process CS/PS implementations\n"
+    << "  --postProcessMode <compute|raster> Select optional post-process CS/PS implementations\n"
     << "  --orbitYaw <radians>               Override Sandbox orbit yaw after model fit\n\n"
     << "Capture/debug:\n"
     << "  --dump-frame <frame>               Dump render targets at frame\n"

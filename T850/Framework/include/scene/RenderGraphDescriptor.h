@@ -65,7 +65,6 @@ namespace t850 {
     std::string compute_entry = "CS";
     std::string compute_permutation = "base";
     std::array<int, 3> compute_threads = {8, 8, 1};
-    bool prefer_compute = false;  // used by --postProcessMode auto
     bool clear = false;
     std::array<float, 4> clear_color = {0, 0, 0, 0};  // RGBA clear color (used when clear=true)
     float clear_depth = 1.0f;                           // Depth clear value

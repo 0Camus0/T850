@@ -119,6 +119,7 @@ struct RuntimeConfigJson {
   std::optional<std::string> runtimeTelemetryOutputPath;
   std::optional<float> orbitYaw;
   std::optional<std::string> sceneProfile;
+  std::optional<std::string> postProcessMode;
 
   std::optional<DisplayJson> display;
   std::optional<ReplaySnapshotJson> replaySnapshot;
@@ -131,6 +132,7 @@ std::string StripQuotes(std::string value);
 int ParseLogLevel(const std::string& value, int fallback);
 Config::GLOffscreenFlushMode ParseGLOffscreenFlushMode(const std::string& value, Config::GLOffscreenFlushMode fallback);
 Config::CullingLoadMode ParseCullingLoadMode(const std::string& value, Config::CullingLoadMode fallback);
+Config::PostProcessMode ParsePostProcessMode(const std::string& value, Config::PostProcessMode fallback);
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback);
 const char* ApiTag(GraphicsApi::E api);
 const char* CullingLoadModeTag(Config::CullingLoadMode mode);

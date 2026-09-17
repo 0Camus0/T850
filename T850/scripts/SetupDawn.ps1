@@ -132,7 +132,12 @@ if ($Mode -eq 'Install') {
         [IO.File]::WriteAllText($shaderConfigPath, $shaderConfig)
     }
     [IO.File]::WriteAllText((Join-Path $queryRoot 'codemodel-v2'), '')
-    & cmake -S (Join-Path $SourceRoot 'cmake\dawn-package') -B $exportRoot -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_GENERATOR_INSTANCE=$visualStudio" "-DT850_DAWN_PACKAGE_ROOT=$packageRoot"
+    $cmakeCommand = Get-Command cmake.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $cmake = if ($cmakeCommand) { $cmakeCommand.Source } else {
+        Join-Path $visualStudio 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+    }
+    if (!(Test-Path -LiteralPath $cmake)) { throw 'CMake is required to generate the Dawn exported-link contract.' }
+    & $cmake -S (Join-Path $SourceRoot 'cmake\dawn-package') -B $exportRoot -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_GENERATOR_INSTANCE=$visualStudio" "-DT850_DAWN_PACKAGE_ROOT=$packageRoot"
     if ($LASTEXITCODE -ne 0) { throw 'Dawn exported-link-contract generation failed.' }
     $replyRoot = Join-Path $exportRoot '.cmake\api\v1\reply'
     $indexFile = Get-ChildItem $replyRoot -Filter 'index-*.json' | Sort-Object Name -Descending | Select-Object -First 1

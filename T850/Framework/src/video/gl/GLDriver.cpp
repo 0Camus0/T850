@@ -212,6 +212,10 @@ namespace t850 {
     else {
       T8_LOG_INFO("GLEW OK");
     }
+    m_computeShadersSupported = GLEW_VERSION_4_3 != 0;
+    m_computeTexturesSupported = m_computeShadersSupported;
+    T8_LOG_INFO("[GL][Compute] shaders=%d textures=%d (desktop OpenGL 4.3 required)",
+                m_computeShadersSupported, m_computeTexturesSupported);
     SDL_GetWindowSizeInPixels((SDL_Window*)m_sdlWindow, &width, &height);
     if ((width <= 0 || height <= 0) && requestedWidth > 0 && requestedHeight > 0) {
       T8_LOG_INFO("[GL] SDL reported %dx%d pixels during init; using requested %dx%d",
@@ -481,6 +485,9 @@ namespace t850 {
     std::vector<unsigned char> rgbBuf(w * h * 3);
 
     int channels = (readFormat == GL_RGBA) ? 4 : 1;
+    GLint previousPackAlignment = 4;
+    glGetIntegerv(GL_PACK_ALIGNMENT, &previousPackAlignment);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
     if (readType == GL_UNSIGNED_BYTE) {
       std::vector<unsigned char> pixels(w * h * channels);
@@ -524,6 +531,7 @@ namespace t850 {
       }
     }
 
+    glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
     WritePPM(path, w, h, rgbBuf);
   }
 

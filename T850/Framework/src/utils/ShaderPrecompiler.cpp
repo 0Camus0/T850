@@ -32,7 +32,7 @@ ShaderPrecompileResult PrecompileShaders(BaseDriver& driver, const ShaderPrecomp
     throw std::runtime_error("Cannot read shader permutation manifest: " + request.manifestPath);
   shader_precompiler::Manifest manifest;
   if (glz::read<glz::opts{.error_on_unknown_keys = false}>(manifest, json)
-      || manifest.version != 1 || manifest.permutations.empty())
+      || (manifest.version != 1 && manifest.version != 2) || manifest.permutations.empty())
     throw std::runtime_error("Invalid or empty shader permutation manifest: " + request.manifestPath);
 
   ShaderPrecompileResult result;

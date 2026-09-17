@@ -24,6 +24,7 @@
 #include <Descriptors.h>
 #include <core/Config.h>
 #include <debug/CrashDiagnostics.h>
+#include <utils/ConfigRuntime.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 
@@ -90,6 +91,10 @@ int t8ditor::RunEditor(int argc, char** argv, EditorHostDesc host) {
     else if ((a == "--dump-frame" || a == "--dumpFrame") && i + 1 < argc) dumpFrame = std::stoi(argv[++i]);
     else if (a == "--logFile" && i + 1 < argc) logFile = argv[++i];
     else if (a == "--d3d12debug") t850::g_config.flags.d3d12Debug = true;
+    else if (a == "--postProcessMode" && i + 1 < argc) {
+      t850::g_config.postProcessMode = t850::config::ParsePostProcessMode(
+        argv[++i], t850::g_config.postProcessMode);
+    }
     else if (a == "--terrain-editor-selftest") terrainSelfTest = true;
     else if (a == "--editor-extension-selftest") extensionSelfTest = true;
     else if (a == "--tutorial-step" && i + 1 < argc) tutorialStep = argv[++i];

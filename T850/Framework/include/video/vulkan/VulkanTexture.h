@@ -54,9 +54,14 @@ namespace t850 {
     VkImageView     m_imageView = VK_NULL_HANDLE;
     VkSampler       m_sampler = VK_NULL_HANDLE;
     VkFormat        m_format = VK_FORMAT_R8G8B8A8_UNORM;
+    VkImageLayout GetLayout() const { return m_externalLayout ? *m_externalLayout : m_layout; }
+    void SetLayout(VkImageLayout layout) { if (m_externalLayout) *m_externalLayout = layout; else m_layout = layout; }
+    void SetExternalLayout(VkImageLayout* layout) { m_externalLayout = layout; }
     float           m_samplerMaxAnisotropy = 1.0f;
     bool            m_isFloatTex = false;  // true for CreateFloatTexture textures
   private:
+    VkImageLayout m_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkImageLayout* m_externalLayout = nullptr;
     std::vector<std::pair<uint64_t, VkSampler>> m_samplerVariants;
   };
 

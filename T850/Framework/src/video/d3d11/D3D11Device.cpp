@@ -189,9 +189,11 @@ namespace t850 {
     return tex;
   }
 
-  BaseRT * D3DXDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
+  BaseRT * D3DXDevice::CreateRT(int nrt, int cf, int df, int w, int h,
+                                bool genMips, bool allowStorage)
   {
     BaseRT* rt = new D3DXRT;
+    rt->AllowUnorderedAccess = allowStorage;
     if (rt->LoadRT(nrt, cf, df, w, h, genMips)) {
       return rt;
     }

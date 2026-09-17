@@ -276,6 +276,34 @@ ShaderDiskCacheKey MakeKey(const std::string& api,
   return key;
 }
 
+ShaderDiskCacheKey MakeComputeKey(const std::string& api,
+                                  const std::string& driverSignature,
+                                  const std::string& computeName,
+                                  const std::string& entryPoint,
+                                  const std::string& profile,
+                                  const std::string& source) {
+  EnsureApiMetadata(api, driverSignature);
+
+  std::ostringstream input;
+  input << kCacheVersionString << '\n';
+  input << "api=" << api << '\n';
+  input << "driver=" << driverSignature << '\n';
+  input << "kind=compute\n";
+  input << "computeName=" << computeName << '\n';
+  input << "entryPoint=" << entryPoint << '\n';
+  input << "profile=" << profile << '\n';
+  input << "sourceSize=" << source.size() << '\n' << source << '\n';
+
+  ShaderDiskCacheKey key;
+  key.api = api;
+  key.sha1 = Sha1(input.str());
+  key.computeName = computeName;
+  key.entryPoint = entryPoint;
+  key.profile = profile;
+  key.compute = true;
+  return key;
+}
+
 bool LoadArtifact(const ShaderDiskCacheKey& key, const std::string& artifactName,
                   std::vector<uint8_t>& outBytes) {
   outBytes.clear();
@@ -360,13 +388,20 @@ void WriteManifest(const ShaderDiskCacheKey& key, const std::string& driverSigna
   out << "  \"cacheVersion\": \"" << kCacheVersionString << "\",\n";
   out << "  \"api\": \"" << JsonEscape(key.api) << "\",\n";
   out << "  \"sha1\": \"" << JsonEscape(key.sha1) << "\",\n";
-  out << "  \"shaderKey\": \"0x" << std::hex << std::setw(16) << std::setfill('0') << key.shaderKeyBits << std::dec << "\",\n";
-  out << "  \"vs\": \"" << JsonEscape(key.vsName) << "\",\n";
-  out << "  \"fs\": \"" << JsonEscape(key.fsName) << "\",\n";
-  if (!key.stage.empty()) {
-    out << "  \"stage\": \"" << JsonEscape(key.stage) << "\",\n";
+  if (key.compute) {
+    out << "  \"kind\": \"compute\",\n";
+    out << "  \"compute\": \"" << JsonEscape(key.computeName) << "\",\n";
     out << "  \"entryPoint\": \"" << JsonEscape(key.entryPoint) << "\",\n";
-    out << "  \"source\": \"" << JsonEscape(key.sourceName) << "\",\n";
+    out << "  \"profile\": \"" << JsonEscape(key.profile) << "\",\n";
+  } else {
+    out << "  \"shaderKey\": \"0x" << std::hex << std::setw(16) << std::setfill('0') << key.shaderKeyBits << std::dec << "\",\n";
+    out << "  \"vs\": \"" << JsonEscape(key.vsName) << "\",\n";
+    out << "  \"fs\": \"" << JsonEscape(key.fsName) << "\",\n";
+    if (!key.stage.empty()) {
+      out << "  \"stage\": \"" << JsonEscape(key.stage) << "\",\n";
+      out << "  \"entryPoint\": \"" << JsonEscape(key.entryPoint) << "\",\n";
+      out << "  \"source\": \"" << JsonEscape(key.sourceName) << "\",\n";
+    }
   }
   out << "  \"driverSignature\": \"" << JsonEscape(driverSignature) << "\"\n";
   out << "}\n";

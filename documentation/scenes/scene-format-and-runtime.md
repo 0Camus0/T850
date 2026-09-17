@@ -115,8 +115,35 @@ The `.t8scene` root maps to `EditorSceneFile`.
 `voxel_world` makes procedural voxel content authored scene data rather than C++ scene
 constants. It contains bounded runtime dimensions, terrain/noise parameters, named block
 roles, ore rules, block face tiles/colors, hotbar entries, player movement/collision,
-streaming limits, day/night behavior, environment choices, mob/weapon box parts, interaction
-reach/cooldowns, and debug defaults.
+streaming limits, day/night behavior, environment choices, mob/weapon box parts, the optional
+spawn-relative torch base, interaction reach/cooldowns, and debug defaults.
+
+`voxel_world.torch` authors one static torch base. When enabled, Minecraft projects the
+player camera's authored spawn look direction onto the ground plane, moves
+`distance_from_spawn` blocks along it, finds the first solid support below the player spawn,
+and places a non-colliding `base_width` by `base_height` box textured from `base_block`.
+The upper `tip_height` section uses an unlit `tip_color`, guaranteeing a solid charred
+cap without depending on lighting or an atlas tile. The flame emitter starts at the box
+top plus `particle_spawn_offset_y`;
+the shipped negative offset starts particles slightly inside and around the cap.
+`particle_count`, `particle_lifetime`, `particle_rise_height`, `particle_spread`, and
+`particle_size` author the deterministic fire. D3D11, D3D12, and Vulkan run the crisp,
+square red/orange/yellow voxel particles in `CS_TorchParticles`; OpenGL clears the
+particle target and retains the base-only result.
+
+The torch also authors `tip_roughness`, `particle_time_wrap_seconds`, and one
+`min`/`max`/`step` control range for each live particle slider. Runtime UI therefore uses
+scene data rather than embedding effect tuning limits in `MinecraftScene.cpp`.
+
+`voxel_world.mob.skin_texture`, `skin_width`, `skin_height`, and
+`skin_pixelation_factor` select a character skin. Every authored mob box stores six
+`skin_faces` rectangles in engine face order (`+X`, `-X`, `+Y`, `-Y`, `+Z`, `-Z`), so
+MinecraftScene does not embed a model-specific 64x64 UV table. Missing skin art falls back
+to each part's block tile.
+The shipped `herobrine_green.png` is an original green-shirt, black-trouser, white-eye skin.
+Opening the developer panel with **G** exposes live torch-particle count, lifetime, rise,
+spread, size, and spawn-height controls. Saving the scene persists them under
+`voxel_world.torch`.
 
 Atlas fields:
 

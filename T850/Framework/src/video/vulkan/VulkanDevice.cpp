@@ -377,8 +377,10 @@ namespace t850 {
     return tex;
   }
 
-  BaseRT* VulkanDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips) {
+  BaseRT* VulkanDevice::CreateRT(int nrt, int cf, int df, int w, int h,
+                                 bool genMips, bool allowStorage) {
     VulkanRT* rt = new VulkanRT;
+    rt->AllowUnorderedAccess = allowStorage;
     if (rt->LoadRT(nrt, cf, df, w, h, genMips)) return rt;
     delete rt;
     return nullptr;

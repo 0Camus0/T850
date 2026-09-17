@@ -79,6 +79,7 @@
     <ClInclude Include="include\scene\IBLResources.h" />
     <ClInclude Include="include\debug\FrameDumper.h" />
     <ClInclude Include="include\debug\CrashDiagnostics.h" />
+    <ClInclude Include="include\debug\ComputeSelfTest.h" />
     <ClInclude Include="include\debug\LoadingProgress.h" />
     <ClInclude Include="include\debug\Profiler.h" />
     <ClInclude Include="include\debug\RuntimeTelemetry.h" />
@@ -154,6 +155,7 @@
     <ClInclude Include="include\utils\gltf\GLTFMaterial.h" />
     <ClInclude Include="include\video\BaseDriver.h" />
     <ClInclude Include="include\video\WindowHandle.h" />
+    <ClInclude Include="include\video\gl\GLCompute.h" />
     <ClInclude Include="include\video\gl\GLDriver.h" />
     <ClInclude Include="include\video\gl\GLDeviceContext.h" />
     <ClInclude Include="include\video\gl\GLDevice.h" />
@@ -171,6 +173,7 @@
     <ClInclude Include="include\video\d3d11\D3D11IndexBuffer.h" />
     <ClInclude Include="include\video\d3d11\D3D11ConstantBuffer.h" />
     <ClInclude Include="include\video\d3d11\D3D11Driver.h" />
+    <ClInclude Include="include\video\d3d11\D3D11Compute.h" />
     <ClInclude Include="include\video\d3d11\D3D11RT.h" />
     <ClInclude Include="include\video\d3d11\D3D11Shader.h" />
     <ClInclude Include="include\video\d3d11\D3D11Texture.h" />
@@ -183,9 +186,11 @@
     <ClInclude Include="include\video\d3d12\D3D12Device.h" />
     <ClInclude Include="include\video\d3d12\D3D12PipelineKey.h" />
     <ClInclude Include="include\video\d3d12\D3D12Shader.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Compute.h" />
     <ClInclude Include="include\video\d3d12\D3D12RT.h" />
     <ClInclude Include="include\video\d3d12\D3D12Texture.h" />
     <ClInclude Include="include\video\vulkan\VulkanDriver.h" />
+    <ClInclude Include="include\video\vulkan\VulkanCompute.h" />
     <ClInclude Include="include\video\vulkan\VulkanVertexBuffer.h" />
     <ClInclude Include="include\video\vulkan\VulkanIndexBuffer.h" />
     <ClInclude Include="include\video\vulkan\VulkanConstantBuffer.h" />
@@ -268,6 +273,7 @@
     <ClCompile Include="src\scene\IBLResources.cpp" />
     <ClCompile Include="src\debug\FrameDumper.cpp" />
     <ClCompile Include="src\debug\CrashDiagnostics.cpp" />
+    <ClCompile Include="src\debug\ComputeSelfTest.cpp" />
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />
     <ClCompile Include="src\debug\Profiler.cpp" />
     <ClCompile Include="src\debug\ProfilerGpuBackend.cpp" />
@@ -341,6 +347,7 @@
     <ClCompile Include="src\video\WindowsDriverFactory.cpp" />
     <ClCompile Include="src\debug\GraphicsFixture.cpp" />
     <ClCompile Include="src\video\BaseDriver.cpp" />
+    <ClCompile Include="src\video\gl\GLCompute.cpp" />
     <ClCompile Include="src\video\gl\GLDriver.cpp" />
     <ClCompile Include="src\video\gl\GLDeviceContext.cpp" />
     <ClCompile Include="src\video\gl\GLDevice.cpp" />
@@ -357,6 +364,7 @@
     <ClCompile Include="src\video\d3d11\D3D11IndexBuffer.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11ConstantBuffer.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11Driver.cpp" />
+    <ClCompile Include="src\video\d3d11\D3D11Compute.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11RT.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11Shader.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11Texture.cpp" />
@@ -368,9 +376,11 @@
     <ClCompile Include="src\video\d3d12\D3D12DeviceContext.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Device.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Shader.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Compute.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12RT.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Texture.cpp" />
     <ClCompile Include="src\video\vulkan\VulkanDriver.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanCompute.cpp" />
     <ClCompile Include="src\video\vulkan\VulkanVertexBuffer.cpp" />
     <ClCompile Include="src\video\vulkan\VulkanIndexBuffer.cpp" />
     <ClCompile Include="src\video\vulkan\VulkanConstantBuffer.cpp" />

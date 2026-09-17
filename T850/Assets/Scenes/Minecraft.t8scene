@@ -445,6 +445,10 @@
             "y": 40,
             "z": 24.5
          },
+         "skin_texture": "herobrine_green.png",
+         "skin_width": 64,
+         "skin_height": 64,
+         "skin_pixelation_factor": 1,
          "count": 1,
          "move_speed": 1.8,
          "repath_seconds": 1,
@@ -466,7 +470,15 @@
                   "y": 1.8,
                   "z": 0.25
                },
-               "block": "leaves"
+               "block": "leaves",
+               "skin_faces": [
+                  { "x": 16, "y": 8, "width": 8, "height": 8 },
+                  { "x": 0, "y": 8, "width": 8, "height": 8 },
+                  { "x": 8, "y": 0, "width": 8, "height": 8 },
+                  { "x": 16, "y": 0, "width": 8, "height": 8 },
+                  { "x": 24, "y": 8, "width": 8, "height": 8 },
+                  { "x": 8, "y": 8, "width": 8, "height": 8 }
+               ]
             },
             {
                "min": {
@@ -479,7 +491,15 @@
                   "y": 1.3,
                   "z": 0.15
                },
-               "block": "stone"
+               "block": "stone",
+               "skin_faces": [
+                  { "x": 28, "y": 20, "width": 4, "height": 12 },
+                  { "x": 16, "y": 20, "width": 4, "height": 12 },
+                  { "x": 20, "y": 16, "width": 8, "height": 4 },
+                  { "x": 28, "y": 16, "width": 8, "height": 4 },
+                  { "x": 32, "y": 20, "width": 8, "height": 12 },
+                  { "x": 20, "y": 20, "width": 8, "height": 12 }
+               ]
             },
             {
                "min": {
@@ -492,7 +512,15 @@
                   "y": 1.3,
                   "z": 0.15
                },
-               "block": "leaves"
+               "block": "leaves",
+               "skin_faces": [
+                  { "x": 40, "y": 52, "width": 4, "height": 12 },
+                  { "x": 32, "y": 52, "width": 4, "height": 12 },
+                  { "x": 36, "y": 48, "width": 4, "height": 4 },
+                  { "x": 40, "y": 48, "width": 4, "height": 4 },
+                  { "x": 44, "y": 52, "width": 4, "height": 12 },
+                  { "x": 36, "y": 52, "width": 4, "height": 12 }
+               ]
             },
             {
                "min": {
@@ -505,7 +533,15 @@
                   "y": 1.3,
                   "z": 0.15
                },
-               "block": "leaves"
+               "block": "leaves",
+               "skin_faces": [
+                  { "x": 48, "y": 20, "width": 4, "height": 12 },
+                  { "x": 40, "y": 20, "width": 4, "height": 12 },
+                  { "x": 44, "y": 16, "width": 4, "height": 4 },
+                  { "x": 48, "y": 16, "width": 4, "height": 4 },
+                  { "x": 52, "y": 20, "width": 4, "height": 12 },
+                  { "x": 44, "y": 20, "width": 4, "height": 12 }
+               ]
             },
             {
                "min": {
@@ -518,7 +554,15 @@
                   "y": 0.6,
                   "z": 0.15
                },
-               "block": "stone"
+               "block": "stone",
+               "skin_faces": [
+                  { "x": 24, "y": 52, "width": 4, "height": 12 },
+                  { "x": 16, "y": 52, "width": 4, "height": 12 },
+                  { "x": 20, "y": 48, "width": 4, "height": 4 },
+                  { "x": 24, "y": 48, "width": 4, "height": 4 },
+                  { "x": 28, "y": 52, "width": 4, "height": 12 },
+                  { "x": 20, "y": 52, "width": 4, "height": 12 }
+               ]
             },
             {
                "min": {
@@ -531,7 +575,15 @@
                   "y": 0.6,
                   "z": 0.15
                },
-               "block": "stone"
+               "block": "stone",
+               "skin_faces": [
+                  { "x": 8, "y": 20, "width": 4, "height": 12 },
+                  { "x": 0, "y": 20, "width": 4, "height": 12 },
+                  { "x": 4, "y": 16, "width": 4, "height": 4 },
+                  { "x": 8, "y": 16, "width": 4, "height": 4 },
+                  { "x": 12, "y": 20, "width": 4, "height": 12 },
+                  { "x": 4, "y": 20, "width": 4, "height": 12 }
+               ]
             }
          ]
       },
@@ -612,6 +664,33 @@
                "block": "stone"
             }
          ]
+      },
+      "torch": {
+         "enabled": true,
+         "distance_from_spawn": 2,
+         "base_width": 0.125,
+         "base_height": 0.625,
+         "base_block": "log",
+         "tip_height": 0.125,
+         "tip_color": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+         },
+         "tip_roughness": 1,
+         "particle_spawn_offset_y": -0.04,
+         "particle_count": 24,
+         "particle_lifetime": 1.25,
+         "particle_rise_height": 0.9,
+         "particle_spread": 0.16,
+         "particle_size": 0.035,
+         "particle_time_wrap_seconds": 4096,
+         "particle_count_control": { "min": 1, "max": 64, "step": 1 },
+         "particle_lifetime_control": { "min": 0.1, "max": 4, "step": 0.05 },
+         "particle_rise_height_control": { "min": 0.05, "max": 2.5, "step": 0.05 },
+         "particle_spread_control": { "min": 0, "max": 0.5, "step": 0.005 },
+         "particle_size_control": { "min": 0.005, "max": 0.15, "step": 0.005 },
+         "particle_spawn_offset_control": { "min": -0.25, "max": 0.25, "step": 0.005 }
       },
       "interaction": {
          "reach": 8,

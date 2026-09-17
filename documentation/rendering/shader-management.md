@@ -18,9 +18,9 @@ for validation and remaining legacy ownership debt.
 
 # Shader Management
 
-Status: verified against source on 2026-08-19.
+Status: verified against source on 2026-09-14.
 
-This document explains how T850 selects shader source files, builds `ShaderKey` permutations, prepends compile-time defines, compiles/caches shaders for D3D11, D3D12, OpenGL, and Vulkan, reflects resource/input layouts, and resolves explicit PSO objects on D3D12 and Vulkan.
+This document explains how T850 selects shader source files, builds graphics and compute permutations, prepends compile-time defines, compiles/caches shaders for D3D11, D3D12, OpenGL, and Vulkan, reflects resource/input layouts, and resolves explicit PSO objects on D3D12 and Vulkan. D3D11, D3D12, and Vulkan execute the shared structured-buffer arithmetic kernel plus texture kernels for God Rays, separable blur, Bright, and HDR composition. D3D12 additionally caches `cs.dxbc` artifacts.
 
 Related documents:
 
@@ -71,6 +71,7 @@ flowchart LR
 | `Framework/src/scene/RenderSkinnedMesh.cpp` | Adds skinning key bits and compiles skinned variants. |
 | `Framework/src/video/d3d11/D3D11Shader.cpp` | D3D11 HLSL compile/cache/reflection/input-layout path. |
 | `Framework/src/video/d3d12/D3D12Shader.cpp` | D3D12 HLSL compile/cache/reflection/root-signature path. |
+| `Framework/src/video/d3d12/D3D12Compute.cpp` | D3D12 compute define, DXBC cache, reflection, root-signature, PSO, dispatch, and readback path. |
 | `Framework/src/video/gl/GLShader.cpp` | OpenGL GLSL compile/link or GL program-binary cache path. |
 | `Framework/src/video/vulkan/VulkanShader.cpp` | Vulkan HLSL-to-SPIR-V compile/cache/reflection/descriptor-layout path. |
 | `Framework/src/utils/ShaderDiskCache.cpp` | Cross-API on-disk shader artifact cache under `Shaders/.t8shadercache`. |
@@ -824,6 +825,7 @@ The cache stores API-specific artifacts:
 |---|---|
 | D3D11 | `vs.dxbc`, `fs.dxbc` |
 | D3D12 | `vs.dxbc`, `fs.dxbc` |
+| D3D12 compute | `cs.dxbc` |
 | Vulkan | `vs.spv`, `fs.spv` |
 | OpenGL | `program.glbin` |
 
@@ -848,9 +850,24 @@ or with JSON config fields:
 }
 ```
 
-`DayScene/App.cpp` starts recording before app/framework creation and flushes after creation instead of running the normal update loop. The output JSON records key bits, pass, shader filenames, and defines. Existing entries are merged by key.
+`DayScene/App.cpp` starts recording before app/framework creation and flushes after creation instead of running the normal update loop. The version-2 output JSON keeps the established graphics convention homogeneous under `permutations`: every object key is a hexadecimal `ShaderKey`, with matching `key`, `bits`, pass, VS, FS, and defines. Compute entries live separately under `compute_permutations`, use `<file>:<entry-point>:<permutation>` identities, repeat that identity in `key`, and record `kind`, `computeShader`, `entryPoint`, `permutation`, and `defines`. They deliberately omit a backend profile: D3D `cs_5_0` and Vulkan SPIR-V are artifacts of the same source permutation and are identified in backend cache manifests/logs. Existing entries of either section are merged by identity; legacy mixed `compute:` entries are migrated when a dump is rewritten.
 
-The checked-in `Assets/Shaders/shader_permutations.json` is an example/seed list of known requested permutations.
+The checked-in `Assets/Shaders/shader_permutations.json` is an example/seed list of known requested permutations. It is an offline inventory and Android graphics precompile input, not a D3D12 runtime prewarm list. D3D12 creates a requested compute pipeline through the normal API, records its permutation when dumping is enabled, and stores or loads its `cs.dxbc` artifact from the same driver-qualified cache hierarchy used by graphics shaders.
+
+The D3D12 compute path records an entry only after shader compilation/cache loading, reflection, root-signature creation, and compute PSO creation succeed. `ComputePipelineDesc::permutationName` names the variant, while `ComputePipelineDesc::defines` supplies deterministic compile-time defines. The checked-in compute inventory contains arithmetic, God Rays, horizontal/vertical `CS_Blur`, Bright, HDR-composition, and Minecraft torch-particle identities.
+
+Graphics and compute alternatives are independent inventory entries, not a Cartesian product. A graphics `ShaderKey` continues to identify the VS/PS implementation; a compute identity uses `(file, entry point, permutation, defines)`. The render graph selects the stage implementation per pass through capability, `--postProcessMode`, and `prefer_compute`. This avoids multiplying unrelated PS and CS combinations while still allowing any declared pass to retain both implementations.
+
+`CS_Bright` and `CS_HDRComposite` are declared by all maintained render graphs, including T8ditor. The same compute pipeline identity is reused across scenes; scene-specific target names and input edges remain in graph JSON rather than creating duplicate shader permutations.
+
+Minecraft's `CS_TorchParticles` is a compute-only gameplay effect rather than a raster/compute
+post-process alternative, so `--postProcessMode raster` does not disable it. The kernel
+projects deterministic world-space particle positions into a screen-sized `RGBA16F` storage
+texture. Particle phases wrap by lifetime, rise and spread from the authored emitter, and
+fade before respawning. The texture is composited before luminance adaptation and bloom.
+OpenGL reports no compute-texture capability and receives a cleared transparent target.
+
+D3D12 compute reflection supports root constants, structured/byte-address buffer SRV/UAV root descriptors, and descriptor-table bindings for typed texture SRVs, typed texture UAVs, and samplers. Render-target textures requested with storage usage carry both SRV and UAV descriptors and share state tracking with their owning render target.
 
 ### Refreshing and Compiling Permutations
 
@@ -957,6 +974,9 @@ When adding shader features:
 - `EMISSIVE_MAP` aliases `REFLECT_MAP`, so emissive/reflect behavior shares one bit and define path.
 - `ShaderKey::VERTEX_ATTRIB_MASK` covers UV0-UV3 only; adding more UV channels requires new bits and layout handling.
 - D3D11/D3D12 shader model targets are hard-coded to `vs_5_0` and `ps_5_0`.
+- D3D11 and D3D12 compute target `cs_5_0`; Vulkan compute compiles the same HLSL entry point to SPIR-V 1.0 with an explicit API-neutral binding layout.
+- D3D11 enables texture compute only at feature level 11 or newer when RGBA8 and RGBA16F expose typed UAV support. Vulkan requires a compute-capable graphics queue, formatless storage-image writes, and storage-image support for both formats. D3D12 supports the required bindings directly. A failed capability gate selects the graphics fallback.
+- OpenGL compute is deliberately unsupported. The WebGPU proposal's agreed scope targets D3D11, D3D12, Vulkan, and Dawn/WebGPU and explicitly specifies no GL compute.
 - D3D12 and Vulkan share HLSL sources, but Vulkan's HLSL-to-SPIR-V path can expose differences in interpolation, semantics, resource mapping, and depth behavior.
 - Vulkan desktop can compile HLSL at runtime when the SPIR-V cache misses. Android tries precompiled SPIR-V names first, then falls back to runtime compile.
 - OpenGL program binary caching only works if the driver reports program-binary support.

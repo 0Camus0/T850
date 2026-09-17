@@ -24,9 +24,12 @@
 #include <Application.h>
 
 #include <iostream>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <chrono>
+#include <thread>
 
 #include <Descriptors.h>
 #include <core/Config.h>
@@ -38,6 +41,7 @@
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
 #include <game/GameSelfTest.h>
+#include <debug/ComputeSelfTest.h>
 #include <debug/CrashDiagnostics.h>
 #include <debug/GraphicsFixture.h>
 
@@ -45,6 +49,23 @@ std::vector<std::string> g_args;
 
 t850::AppBase		  *pApp = 0;
 t850::RootFramework *pFrameWork = 0;
+
+namespace {
+  class ComputeSelfTestApp final : public t850::AppBase {
+  public:
+    void InitVars() override {}
+    void CreateAssets() override {}
+    void LoadAssets() override {}
+    void DestroyAssets() override {}
+    void OnUpdate() override {}
+    void OnDraw() override {}
+    void OnInput() override {}
+    void OnPause() override {}
+    void OnResume() override {}
+    void OnReset() override {}
+    void LoadScene(int) override {}
+  };
+}
 
 int main(int arg,char ** args) try {
   t850::InstallUnattendedCrtReportHook();
@@ -55,6 +76,9 @@ int main(int arg,char ** args) try {
         g_args.push_back( std::string( args[i] ) );
     }
 
+  bool computeSelfTest = false;
+  bool computeSelfTestApiExplicit = false;
+  int computeSelfTestWaitSeconds = 0;
   for (int i = 1; i < arg; ++i) {
       if (std::string_view(args[i]) == "--graphics-fixture") {
   #if defined(_WIN32) && defined(_M_X64)
@@ -68,6 +92,21 @@ int main(int arg,char ** args) try {
       const int failures = t850::game::RunGameSelfTests();
       return failures == 0 ? 0 : 1;
     }
+    if (std::string_view(args[i]) == "--compute-selftest") {
+      computeSelfTest = true;
+    }
+    if (std::string_view(args[i]) == "--api" && i + 1 < arg) {
+      computeSelfTestApiExplicit = true;
+    }
+    if (std::string_view(args[i]) == "--compute-selftest-wait" && i + 1 < arg) {
+      computeSelfTest = true;
+      try {
+        computeSelfTestWaitSeconds = (std::max)(0, (std::min)(60, std::stoi(args[++i])));
+      } catch (...) {
+        std::cerr << "[ComputeSelfTest] Invalid --compute-selftest-wait value\n";
+        return 1;
+      }
+    }
   }
 
   if (t850::config::HasHelpArgument(arg, args)) {
@@ -80,6 +119,18 @@ int main(int arg,char ** args) try {
   }
 
   t850::config::ApplyCommandLine(arg, args, t850::g_config);
+#ifdef OS_WINDOWS
+  if (computeSelfTest && !computeSelfTestApiExplicit) {
+    // Preserve the original deterministic default while allowing an explicit
+    // backend for cross-API compute validation.
+    t850::g_config.api = "d3d12";
+  }
+#else
+  if (computeSelfTest) {
+    std::cerr << "[ComputeSelfTest] D3D12 compute is only available on Windows\n";
+    return 1;
+  }
+#endif
   t850::config::ValidateConfig(t850::g_config);
   if (t850::g_config.flags.benchmarkMatrix) {
     if (t850::g_config.api == "webgpu") {
@@ -191,7 +242,10 @@ int main(int arg,char ** args) try {
   }
   t850::BeginShaderPermutationRecording(t850::g_config);
 
-  pApp = new App;
+	pApp = computeSelfTest
+    ? static_cast<t850::AppBase*>(new ComputeSelfTestApp())
+    : static_cast<t850::AppBase*>(new App());
+  int result = 0;
 #ifdef OS_LINUX
     pFrameWork = new t850::LinuxFramework((t850::AppBase*)pApp);
     pFrameWork->InitGlobalVars();
@@ -200,11 +254,25 @@ int main(int arg,char ** args) try {
 	pFrameWork = new t850::Win32Framework((t850::AppBase*)pApp);
 	pFrameWork->InitGlobalVars();
 	pFrameWork->OnCreateApplication(desc);
-  if (t850::g_config.flags.dumpShaderPermutations) {
-    t850::ShaderPermutationDump::Flush();
-  } else {
+  if (computeSelfTest) {
+    T8_LOG_INFO("[ComputeSelfTest] Starting standalone arithmetic validation on API=%s",
+          pFrameWork->pVideoDriver->ApiTag());
+    if (computeSelfTestWaitSeconds > 0) {
+      T8_LOG_INFO("[ComputeSelfTest] Waiting %d seconds before dispatch for capture tools",
+                  computeSelfTestWaitSeconds);
+      std::this_thread::sleep_for(std::chrono::seconds(computeSelfTestWaitSeconds));
+    }
+    result = t850::RunComputeArithmeticSelfTest(pFrameWork->pVideoDriver);
+    if (computeSelfTestWaitSeconds > 0) {
+      T8_LOG_INFO("[ComputeSelfTest] Waiting %d seconds after dispatch for capture tools",
+                  computeSelfTestWaitSeconds);
+      std::this_thread::sleep_for(std::chrono::seconds(computeSelfTestWaitSeconds));
+    }
+  } else if (!t850::g_config.flags.dumpShaderPermutations) {
 	  pFrameWork->UpdateApplication();
   }
+  if (t850::g_config.flags.dumpShaderPermutations)
+    t850::ShaderPermutationDump::Flush();
 	pFrameWork->OnDestroyApplication();
 #endif
 
@@ -217,7 +285,7 @@ int main(int arg,char ** args) try {
   }
 	t850::Log::Shutdown();
 
-    return 0;
+  return result;
 } catch (const std::exception& error) {
   T8_LOG_ERROR("[App] Startup/runtime failure: %s", error.what());
   std::cerr << "Engine failure: " << error.what() << '\n';

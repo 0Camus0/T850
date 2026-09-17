@@ -10,6 +10,7 @@
 #include <Descriptors.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
+#include <core/Config.h>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -32,6 +33,65 @@
 #include <cmath>
 
 namespace t850 {
+
+namespace {
+  constexpr uint32_t kMaxBlurWeights = 24;
+
+  struct GodRaysComputeConstants {
+    XMATRIX44 WVPInverse;
+    XMATRIX44 WVPLight;
+    XVECTOR3 CameraPosition;
+    XVECTOR3 SunDirectionAndBias;
+    XVECTOR3 VolumeCenterAndEnabled;
+    XVECTOR3 VolumeHalfExtentsAndFactor;
+    XVECTOR3 OutputSizeStepsAndEnabled;
+  };
+  static_assert(sizeof(GodRaysComputeConstants) == 208,
+                "God Rays compute constants must match the HLSL root-constant layout");
+
+  struct BlurComputeConstants {
+    uint32_t outputWidth;
+    uint32_t outputHeight;
+    uint32_t kernelSize;
+    uint32_t direction;
+    float radius;
+    float padding[3];
+    float weights[kMaxBlurWeights];
+  };
+  static_assert(sizeof(BlurComputeConstants) == 128,
+                "Blur compute constants must match the HLSL root-constant layout");
+
+  struct PostProcessComputeConstants {
+    float outputWidth;
+    float outputHeight;
+    float parameter0;
+    float parameter1;
+    float parameter2;
+    float padding[3];
+  };
+  static_assert(sizeof(PostProcessComputeConstants) == 32,
+                "Post-process compute constants must match the HLSL root-constant layout");
+
+  struct ParticleComputeConstants {
+    XMATRIX44 viewProjection;
+    XVECTOR3 emitterAndTime;
+    XVECTOR3 outputSizeCountEnabled;
+    XVECTOR3 motion;
+  };
+  static_assert(sizeof(ParticleComputeConstants) == 112,
+                "Particle compute constants must match the HLSL root-constant layout");
+
+  bool IsPostProcessComputeShader(const std::string& shader) {
+    return shader == "Shaders/CS_GodRays.hlsl" ||
+           shader == "Shaders/CS_Blur.hlsl" ||
+           shader == "Shaders/CS_Bright.hlsl" ||
+           shader == "Shaders/CS_HDRComposite.hlsl";
+  }
+}
+
+RenderGraph::~RenderGraph() = default;
+RenderGraph::RenderGraph(RenderGraph&&) noexcept = default;
+RenderGraph& RenderGraph::operator=(RenderGraph&&) noexcept = default;
 
 // ---- JSON loading via glaze ----
 
@@ -502,9 +562,9 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
       std::vector<int> perCF;
       for (const auto& fmt : rt.color_formats)
         perCF.push_back(ResolveColorFormat(fmt));
-      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, generateMips);
+      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, generateMips, rt.storage);
     } else {
-      handle = driver->CreateRT(rt.color_count, cf, df, w, h, generateMips);
+      handle = driver->CreateRT(rt.color_count, cf, df, w, h, generateMips, rt.storage);
     }
     auto applyFilter = [&](Texture* tex) {
       if (!tex) return;
@@ -534,9 +594,12 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
 
   // Now that RT handles are resolved, build the DAG
   BuildGraph();
+  CreateComputePipelines(driver);
 }
 
 void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
+  m_computePipelines.clear();
+  m_loggedComputeDispatches.clear();
   if (!driver) {
     m_rtHandles.clear();
     m_nodes.clear();
@@ -558,6 +621,295 @@ void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
   m_rtHandles.clear();
   m_nodes.clear();
   m_edges.clear();
+}
+
+void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
+  m_computePipelines.clear();
+  m_loggedComputeDispatches.clear();
+  if (!driver)
+    return;
+
+  for (const GraphNode& node : m_nodes) {
+    const RenderPassDesc& pass = *node.desc;
+    if (pass.execution == "graphics")
+      continue;
+    if (pass.execution != "compute_if_supported") {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has unknown execution mode '%s'",
+                   pass.name.c_str(), pass.execution.c_str());
+      continue;
+    }
+    const bool godRays = pass.compute_shader == "Shaders/CS_GodRays.hlsl";
+    if (IsPostProcessComputeShader(pass.compute_shader)) {
+      const bool useCompute = g_config.postProcessMode == Config::PostProcessMode::Compute ||
+        (g_config.postProcessMode == Config::PostProcessMode::Auto && pass.prefer_compute);
+      if (!useCompute) {
+        T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics implementation by post-process mode on API=%s",
+                    pass.name.c_str(), driver->ApiTag());
+        continue;
+      }
+    }
+    if (!driver->SupportsComputeTextures()) {
+      T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics fallback on API=%s",
+                  pass.name.c_str(), driver->ApiTag());
+      continue;
+    }
+    if (pass.compute_shader.empty() || pass.compute_entry.empty() || node.rt_handle < 0 ||
+        pass.compute_threads[0] <= 0 || pass.compute_threads[1] <= 0 || pass.compute_threads[2] <= 0) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute declaration", pass.name.c_str());
+      continue;
+    }
+
+    std::string source;
+    if (!ResourceLocator::Instance().ReadText(pass.compute_shader, source)) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot load compute shader '%s'",
+                   pass.name.c_str(), pass.compute_shader.c_str());
+      continue;
+    }
+
+    ComputePipelineDesc pipelineDesc;
+    pipelineDesc.source = std::move(source);
+    pipelineDesc.entryPoint = pass.compute_entry;
+    pipelineDesc.debugName = pass.compute_shader;
+    pipelineDesc.permutationName = pass.compute_permutation;
+    if (godRays) {
+      pipelineDesc.bindings = {
+        {ComputeBindingType::Constants32, 0, 0, 52},
+        {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
+        {ComputeBindingType::ReadOnlyTexture, 1, 2, 0},
+        {ComputeBindingType::Sampler, 0, 3, 0},
+        {ComputeBindingType::Sampler, 1, 4, 0},
+        {ComputeBindingType::ReadWriteTexture, 0, 5, 0}
+      };
+    } else if (pass.compute_shader == "Shaders/CS_Blur.hlsl") {
+      pipelineDesc.bindings = {
+        {ComputeBindingType::Constants32, 0, 0, 32},
+        {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
+        {ComputeBindingType::Sampler, 0, 2, 0},
+        {ComputeBindingType::ReadWriteTexture, 0, 3, 0}
+      };
+    } else if (pass.compute_shader == "Shaders/CS_Bright.hlsl") {
+      pipelineDesc.bindings = {
+        {ComputeBindingType::Constants32, 0, 0, 8},
+        {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
+        {ComputeBindingType::ReadOnlyTexture, 1, 2, 0},
+        {ComputeBindingType::Sampler, 0, 3, 0},
+        {ComputeBindingType::Sampler, 1, 4, 0},
+        {ComputeBindingType::ReadWriteTexture, 0, 5, 0}
+      };
+    } else if (pass.compute_shader == "Shaders/CS_HDRComposite.hlsl") {
+      pipelineDesc.bindings = {
+        {ComputeBindingType::Constants32, 0, 0, 8},
+        {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
+        {ComputeBindingType::ReadOnlyTexture, 1, 2, 0},
+        {ComputeBindingType::ReadOnlyTexture, 2, 3, 0},
+        {ComputeBindingType::Sampler, 0, 4, 0},
+        {ComputeBindingType::Sampler, 1, 5, 0},
+        {ComputeBindingType::Sampler, 2, 6, 0},
+        {ComputeBindingType::ReadWriteTexture, 0, 7, 0}
+      };
+    } else if (pass.compute_shader == "Shaders/CS_TorchParticles.hlsl") {
+      pipelineDesc.bindings = {
+        {ComputeBindingType::Constants32, 0, 0, 28},
+        {ComputeBindingType::ReadWriteTexture, 0, 1, 0}
+      };
+    } else {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has no registered compute kernel '%s'",
+                   pass.name.c_str(), pass.compute_shader.c_str());
+      continue;
+    }
+    std::unique_ptr<ComputePipeline> pipeline = driver->CreateComputePipeline(pipelineDesc);
+    if (!pipeline) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' failed to create compute pipeline", pass.name.c_str());
+      continue;
+    }
+    m_computePipelines[node.index] = std::move(pipeline);
+    T8_LOG_INFO("[RenderGraph] Pass '%s' enabled compute kernel '%s' on API=%s",
+                pass.name.c_str(), pass.compute_shader.c_str(), driver->ApiTag());
+  }
+}
+
+bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props) {
+  const auto pipelineIt = m_computePipelines.find(node.index);
+  if (!driver || pipelineIt == m_computePipelines.end() || !pipelineIt->second)
+    return false;
+
+  const RenderPassDesc& pass = *node.desc;
+  if (node.rt_handle < 0 || node.rt_handle >= static_cast<int>(driver->RTs.size()) ||
+      !driver->RTs[node.rt_handle]) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute output render target",
+                 pass.name.c_str());
+    return false;
+  }
+
+  Texture* inputs[3] = {};
+  for (const TextureInput& input : pass.inputs) {
+    const ResolvedTexture resolved = ResolveTextureInput(input.source);
+    if (resolved.is_builtin || resolved.rt_handle < 0)
+      continue;
+    Texture* texture = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
+    if (input.slot >= 0 && input.slot < 3)
+      inputs[input.slot] = texture;
+  }
+  Texture* output = driver->GetRTTexture(node.rt_handle, BaseDriver::COLOR0_ATTACHMENT);
+  BaseRT* outputRT = driver->RTs[node.rt_handle];
+  if (!output || outputRT->w <= 0 || outputRT->h <= 0) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' is missing its compute output", pass.name.c_str());
+    return false;
+  }
+
+  std::vector<ComputeBindingDesc> bindings;
+  auto addConstants = [&](const void* data, size_t byteCount) {
+    ComputeBindingDesc binding;
+    binding.type = ComputeBindingType::Constants32;
+    binding.shaderRegister = 0;
+    binding.constants = reinterpret_cast<const uint32_t*>(data);
+    binding.constantCount = static_cast<uint32_t>(byteCount / sizeof(uint32_t));
+    bindings.push_back(binding);
+  };
+  auto addTexture = [&](ComputeBindingType type, uint32_t shaderRegister, Texture* texture) {
+    ComputeBindingDesc binding;
+    binding.type = type;
+    binding.shaderRegister = shaderRegister;
+    binding.texture = texture;
+    bindings.push_back(binding);
+  };
+
+  GodRaysComputeConstants godRaysConstants = {};
+  BlurComputeConstants blurConstants = {};
+  PostProcessComputeConstants postConstants = {};
+  ParticleComputeConstants particleConstants = {};
+
+  if (pass.compute_shader == "Shaders/CS_GodRays.hlsl") {
+    Camera* camera = props.GetPrimaryCamera();
+    if (!inputs[0] || !inputs[1] || !camera) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' is missing compute resources or camera", pass.name.c_str());
+      return false;
+    }
+    camera->VP.Inverse(&godRaysConstants.WVPInverse);
+    godRaysConstants.CameraPosition = camera->Eye;
+
+    XVECTOR3 sunDirection(0.0f, 1.0f, 0.0f, props.ShadowBias);
+    const bool hasLightCamera = props.ActiveLightCamera >= 0 &&
+                                props.ActiveLightCamera < static_cast<int>(props.pLightCameras.size()) &&
+                                props.pLightCameras[props.ActiveLightCamera];
+    if (hasLightCamera) {
+      godRaysConstants.WVPLight = props.pLightCameras[props.ActiveLightCamera]->VP;
+      XVECTOR3 direction = -props.pLightCameras[props.ActiveLightCamera]->Look;
+      direction.Normalize();
+      sunDirection.x = direction.x;
+      sunDirection.y = direction.y;
+      sunDirection.z = direction.z;
+    }
+    godRaysConstants.SunDirectionAndBias = sunDirection;
+    godRaysConstants.VolumeCenterAndEnabled = props.GodRaysVolumeCenter;
+    godRaysConstants.VolumeCenterAndEnabled.w = static_cast<float>(props.GodRaysVolumeEnabled);
+    godRaysConstants.VolumeHalfExtentsAndFactor = props.GodRaysVolumeHalfExtents;
+    godRaysConstants.VolumeHalfExtentsAndFactor.w = props.GodRaysFactor;
+    godRaysConstants.OutputSizeStepsAndEnabled = XVECTOR3(
+      static_cast<float>(outputRT->w), static_cast<float>(outputRT->h),
+      (std::max)(props.LightVolumeSteps, 2.0f),
+      props.ToogleGodRays && hasLightCamera ? 1.0f : 0.0f);
+
+    bindings.reserve(6);
+    addConstants(&godRaysConstants, sizeof(godRaysConstants));
+    addTexture(ComputeBindingType::ReadOnlyTexture, 0, inputs[0]);
+    addTexture(ComputeBindingType::ReadOnlyTexture, 1, inputs[1]);
+    addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
+    addTexture(ComputeBindingType::Sampler, 0, inputs[0]);
+    addTexture(ComputeBindingType::Sampler, 1, inputs[1]);
+  } else if (pass.compute_shader == "Shaders/CS_Blur.hlsl") {
+    const bool validKernel = inputs[0] && props.ActiveGaussKernel >= 0 &&
+      props.ActiveGaussKernel < static_cast<int>(props.pGaussKernels.size()) &&
+      props.pGaussKernels[props.ActiveGaussKernel] &&
+      !props.pGaussKernels[props.ActiveGaussKernel]->vGaussKernel.empty();
+    if (!validKernel) {
+      T8_LOG_ERROR("[RenderGraph] Blur pass '%s' is missing input or Gaussian kernel %d",
+                   pass.name.c_str(), props.ActiveGaussKernel);
+      return false;
+    }
+    const GaussFilter& kernel = *props.pGaussKernels[props.ActiveGaussKernel];
+    const uint32_t kernelSize = static_cast<uint32_t>(kernel.vGaussKernel[0].x);
+    if (kernelSize == 0 || kernelSize > kMaxBlurWeights ||
+        kernel.vGaussKernel.size() <= kernelSize) {
+      T8_LOG_ERROR("[RenderGraph] Blur pass '%s' kernel size %u exceeds compute limit %u",
+                   pass.name.c_str(), kernelSize, kMaxBlurWeights);
+      return false;
+    }
+    blurConstants.outputWidth = static_cast<uint32_t>(outputRT->w);
+    blurConstants.outputHeight = static_cast<uint32_t>(outputRT->h);
+    blurConstants.kernelSize = kernelSize;
+    blurConstants.direction = pass.compute_permutation == "vertical" ? 1u : 0u;
+    blurConstants.radius = kernel.vGaussKernel[0].y;
+    for (uint32_t index = 0; index < kernelSize; ++index) {
+      const float weight = kernel.vGaussKernel[index + 1].x;
+      blurConstants.weights[index] = std::round(weight * 1000000.0f) / 1000000.0f;
+    }
+
+    bindings.reserve(4);
+    addConstants(&blurConstants, sizeof(blurConstants));
+    addTexture(ComputeBindingType::ReadOnlyTexture, 0, inputs[0]);
+    addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
+    addTexture(ComputeBindingType::Sampler, 0, inputs[0]);
+  } else if (pass.compute_shader == "Shaders/CS_Bright.hlsl" ||
+             pass.compute_shader == "Shaders/CS_HDRComposite.hlsl") {
+    const bool hdrComposite = pass.compute_shader == "Shaders/CS_HDRComposite.hlsl";
+    if (!inputs[0] || !inputs[1] || (hdrComposite && !inputs[2])) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' is missing post-process inputs", pass.name.c_str());
+      return false;
+    }
+    postConstants.outputWidth = static_cast<float>(outputRT->w);
+    postConstants.outputHeight = static_cast<float>(outputRT->h);
+    postConstants.parameter0 = hdrComposite ? props.BloomFactor : props.BloomThreshold;
+    postConstants.parameter1 = props.Exposure;
+    postConstants.parameter2 = props.ToneMapWhiteLevel;
+
+    bindings.reserve(hdrComposite ? 8 : 6);
+    addConstants(&postConstants, sizeof(postConstants));
+    addTexture(ComputeBindingType::ReadOnlyTexture, 0, inputs[0]);
+    addTexture(ComputeBindingType::ReadOnlyTexture, 1, inputs[1]);
+    if (hdrComposite)
+      addTexture(ComputeBindingType::ReadOnlyTexture, 2, inputs[2]);
+    addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
+    addTexture(ComputeBindingType::Sampler, 0, inputs[0]);
+    addTexture(ComputeBindingType::Sampler, 1, inputs[1]);
+    if (hdrComposite)
+      addTexture(ComputeBindingType::Sampler, 2, inputs[2]);
+  } else if (pass.compute_shader == "Shaders/CS_TorchParticles.hlsl") {
+    Camera* camera = props.GetPrimaryCamera();
+    if (!camera) {
+      T8_LOG_ERROR("[RenderGraph] Particle pass '%s' is missing its camera",
+                   pass.name.c_str());
+      return false;
+    }
+    particleConstants.viewProjection = camera->VP;
+    particleConstants.emitterAndTime = props.ParticleEmitterPosition;
+    particleConstants.emitterAndTime.w = props.ParticleTimeSeconds;
+    particleConstants.outputSizeCountEnabled = XVECTOR3(
+      static_cast<float>(outputRT->w), static_cast<float>(outputRT->h),
+      static_cast<float>(props.ParticleCount),
+      props.ParticleEmitterEnabled ? 1.0f : 0.0f);
+    particleConstants.motion = XVECTOR3(
+      props.ParticleLifetime, props.ParticleRiseHeight,
+      props.ParticleSpread, props.ParticleSize);
+
+    bindings.reserve(2);
+    addConstants(&particleConstants, sizeof(particleConstants));
+    addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
+  } else {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has no supported compute executor", pass.name.c_str());
+    return false;
+  }
+
+  const uint32_t groupsX = (static_cast<uint32_t>(outputRT->w) + pass.compute_threads[0] - 1u) /
+                           static_cast<uint32_t>(pass.compute_threads[0]);
+  const uint32_t groupsY = (static_cast<uint32_t>(outputRT->h) + pass.compute_threads[1] - 1u) /
+                           static_cast<uint32_t>(pass.compute_threads[1]);
+  const bool dispatched = driver->DispatchCompute(*pipelineIt->second, bindings, groupsX, groupsY, 1);
+  if (dispatched && m_loggedComputeDispatches.insert(node.index).second) {
+    T8_LOG_INFO("[RenderGraph] Pass '%s' dispatched compute %u x %u x 1 for %dx%d output",
+                pass.name.c_str(), groupsX, groupsY, outputRT->w, outputRT->h);
+  }
+  return dispatched;
 }
 
 void RenderGraph::BuildGraph() {
@@ -769,6 +1121,20 @@ void RenderGraph::ExecutePass(
   int bs = ResolveBlendState(pass.state.blend);
   if (bs >= 0) driver->SetBlendState(static_cast<BaseDriver::BlendStates>(bs));
 
+  const auto applyPostState = [&]() {
+    int postDs = ResolveDepthStencilState(pass.post_state.depth_stencil);
+    if (postDs >= 0)
+      driver->SetDepthStencilState(static_cast<BaseDriver::DepthStencilStates>(postDs));
+
+    int postCf = ResolveCullFace(pass.post_state.cull_face);
+    if (postCf >= 0)
+      driver->SetCullFace(static_cast<BaseDriver::FaceCulling>(postCf));
+
+    int postBs = ResolveBlendState(pass.post_state.blend);
+    if (postBs >= 0)
+      driver->SetBlendState(static_cast<BaseDriver::BlendStates>(postBs));
+  };
+
   // Camera selection: generated shadow passes use their dedicated cascade camera.
   if (ResolvePassKind(pass.kind) == RenderPassKind::ShadowDepth &&
       pass.shadow_projection_index >= 0 &&
@@ -792,6 +1158,16 @@ void RenderGraph::ExecutePass(
   // Gauss kernel selection
   if (pass.gauss_kernel >= 0) {
     props.ActiveGaussKernel = pass.gauss_kernel;
+  }
+
+  if (pass.execution == "compute_if_supported" &&
+      m_computePipelines.find(node.index) != m_computePipelines.end()) {
+    if (ExecuteComputePass(node, driver, props)) {
+      applyPostState();
+      return;
+    }
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' compute dispatch failed; using graphics fallback",
+                 pass.name.c_str());
   }
 
   // Cubemap loop pass
@@ -1053,14 +1429,7 @@ void RenderGraph::ExecutePass(
   }
 
   // Post-pass state restoration
-  int postDs = ResolveDepthStencilState(pass.post_state.depth_stencil);
-  if (postDs >= 0) driver->SetDepthStencilState(static_cast<BaseDriver::DepthStencilStates>(postDs));
-
-  int postCf = ResolveCullFace(pass.post_state.cull_face);
-  if (postCf >= 0) driver->SetCullFace(static_cast<BaseDriver::FaceCulling>(postCf));
-
-  int postBs = ResolveBlendState(pass.post_state.blend);
-  if (postBs >= 0) driver->SetBlendState(static_cast<BaseDriver::BlendStates>(postBs));
+  applyPostState();
 }
 
 } // namespace t850

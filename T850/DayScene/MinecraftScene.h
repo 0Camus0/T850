@@ -58,7 +58,7 @@ constexpr int kMaxRenderDistance = 32;
 constexpr int kMaxChunkCount = kMaxRenderDistance * 2 + 1;
 constexpr int kMaxChunks = kMaxChunkCount * kMaxChunkCount;
 constexpr int kMaxMinecraftEnemies = 8;
-constexpr int kMaxRenderMeshCount = kMaxChunks + kMaxMinecraftEnemies + 1;
+constexpr int kMaxRenderMeshCount = kMaxChunks + kMaxMinecraftEnemies + 2;
 
 struct MinecraftMob {
   XVECTOR3 position = XVECTOR3(24.5f, 40.0f, 24.5f, 1.0f);
@@ -196,6 +196,7 @@ public:
   int m_maxChunks = 0;
   int m_mobMeshStartIndex = 0;
   int m_weaponMeshIndex = 0;
+  int m_torchMeshIndex = 0;
   int m_renderMeshCount = 0;
   int m_centerChunkX = 0;
   int m_centerChunkZ = 0;
@@ -264,6 +265,12 @@ public:
   bool m_weaponSwinging = false;
   float m_weaponBob = 0.0f;     // walk bob phase
 
+  // Static torch base. m_torchFlamePosition is the emitter anchor reserved
+  // for the compute-particle follow-up.
+  XVECTOR3 m_torchBasePosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 m_torchFlamePosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  float m_torchParticleTime = 0.0f;
+
   // Player
   t850::KinematicCharacterController m_player;
   t850::KinematicCharacterSettings m_playerSettings;
@@ -309,8 +316,11 @@ public:
   void ResetMob(int mobIndex);
   void SetMobCount(int count);
   void SetMobSpeed(float speed);
+  bool BuildMobSkin();
   void CreateWeaponMesh();
   void UpdateWeapon(float dt);
+  void CreateTorchBaseMesh();
+  void ApplyTorchParticleSettings();
   void UpdateDayNight(float dt);
   void SyncLightCameraFromSun();
   void SyncSunFromLightCamera();
@@ -372,6 +382,9 @@ public:
   t850::Texture* m_atlasTexture = nullptr;
   t850::TextureAtlas m_textureAtlas;
   int m_atlasTexIndex = -1;
+  t850::Texture* m_mobSkinTexture = nullptr;
+  t850::TextureAtlas m_mobSkinAtlas;
+  int m_mobSkinTexIndex = -1;
   // Skybox selection (ImGui)
   std::string m_currentCubemapPath;
   std::string m_pendingCubemap;

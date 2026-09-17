@@ -92,8 +92,7 @@ int t8ditor::RunEditor(int argc, char** argv, EditorHostDesc host) {
     else if (a == "--logFile" && i + 1 < argc) logFile = argv[++i];
     else if (a == "--d3d12debug") t850::g_config.flags.d3d12Debug = true;
     else if (a == "--postProcessMode" && i + 1 < argc) {
-      t850::g_config.postProcessMode = t850::config::ParsePostProcessMode(
-        argv[++i], t850::g_config.postProcessMode);
+      t850::g_config.postProcessMode = t850::config::ParsePostProcessMode(argv[++i]);
     }
     else if (a == "--terrain-editor-selftest") terrainSelfTest = true;
     else if (a == "--editor-extension-selftest") extensionSelfTest = true;

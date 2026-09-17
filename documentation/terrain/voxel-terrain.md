@@ -125,8 +125,9 @@ Minecraft authors `atlas_tile_px: 16` and `atlas_pixelation_factor: 2`. Its wate
 Minecraft also authors one non-colliding torch base under `voxel_world.torch`. The runtime
 places its narrow atlas-textured box on solid terrain two blocks along the horizontal spawn
 look direction. Its top-center position emits deterministic red, orange, and yellow fire
-particles into a storage texture. D3D11, D3D12, and Vulkan execute the rise, spread, lifetime,
-and fade calculation in a compute shader; OpenGL keeps the transparent fallback target.
+particles into a storage texture. D3D11, D3D12, Vulkan, and desktop OpenGL 4.3+ execute the
+rise, spread, lifetime, and fade calculation in a compute shader; older desktop GL and OpenGL
+ES keep the transparent fallback target.
 
 The canonical `terrain.png` mapping uses face order `+X, -X, +Y, -Y, +Z, -Z`:
 

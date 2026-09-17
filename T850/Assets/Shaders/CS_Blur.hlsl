@@ -6,8 +6,7 @@ cbuffer BlurConstants : register(b0)
     uint2 OutputSize;
     uint KernelSize;
     uint Direction;
-    float Radius;
-    float3 BlurPadding;
+    float4 RadiusAndPadding;
     float4 Weights[6];
 };
 
@@ -43,7 +42,7 @@ void CS(uint3 dispatchId : SV_DispatchThreadID)
     uint inputHeight;
     InputTexture.GetDimensions(inputWidth, inputHeight);
     const float2 uv = (float2(dispatchId.xy) + 0.5f) / float2(OutputSize);
-    const float2 texelStep = Radius / float2(max(inputWidth, 1u), max(inputHeight, 1u));
+    const float2 texelStep = RadiusAndPadding.x / float2(max(inputWidth, 1u), max(inputHeight, 1u));
     const float2 direction = Direction == 0u ? float2(1.0f, 0.0f) : float2(0.0f, 1.0f);
     const float origin = -((float(KernelSize) - 1.0f) * 0.5f);
 

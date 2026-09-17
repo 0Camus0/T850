@@ -19,6 +19,7 @@
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 
 namespace t850 {
 extern Device* T8Device;
@@ -30,7 +31,12 @@ void Require(bool success, const std::string& message) {
     throw std::runtime_error("[WebGPU] " + message);
   }
 }
-struct WebGPUBufferData { wgpu::Buffer gpu; uint64_t size = 0; };
+struct WebGPUBufferData {
+  wgpu::Buffer gpu;
+  uint64_t size = 0;
+  uint64_t bindingOffset = 0;
+  uint64_t uniformUploadGeneration = 0;
+};
 class WebGPUTexture;
 class WebGPUShader;
 class WebGPUDevice;
@@ -72,6 +78,12 @@ struct WebGPUDriverState {
   std::array<WebGPUTexture*, 32> textures{};
   std::array<WebGPUTexture*, 32> samplers{};
   WebGPUShader* shader = nullptr;
+  wgpu::Buffer uniformUploadBuffer;
+  uint64_t uniformUploadCapacity = 0;
+  uint64_t uniformUploadOffset = 0;
+  uint64_t uniformUploadGeneration = 0;
+  std::vector<uint8_t> uniformUploadData;
+  bool uniformUploadsPending = false;
   unsigned draws = 0;
   void EndPass() { if (pass) { pass.End(); pass = nullptr; } }
   void BeginPass();
@@ -81,10 +93,55 @@ struct WebGPUDriverState {
     return std::any_of(targetColors.begin(), targetColors.end(), [&](const auto& color) { return color.Get() == texture.Get(); });
   }
   void Draw(unsigned count, unsigned firstIndex, unsigned firstVertex);
+  void UploadUniform(WebGPUBufferData& buffer, const void* data, uint64_t byteCount);
+  void FlushUniformUploads();
   std::vector<float> ReadColor(WebGPUTexture& texture);
   void SaveColor(WebGPUTexture& texture, const std::string& path);
   void ResetBindings();
 };
+
+void WebGPUDriverState::UploadUniform(WebGPUBufferData& buffer, const void* data,
+                                      uint64_t byteCount) {
+  Require(data && byteCount && (byteCount % 4u) == 0,
+          "Uniform upload data must be non-empty and four-byte aligned");
+  constexpr uint64_t kUniformAlignment = 256;
+  constexpr uint64_t kInitialUniformCapacity = 4ull * 1024ull * 1024ull;
+  const uint64_t alignedSize = (byteCount + kUniformAlignment - 1) & ~(kUniformAlignment - 1);
+  const uint64_t requiredCapacity = uniformUploadOffset + alignedSize;
+  if (!uniformUploadBuffer || requiredCapacity > uniformUploadCapacity) {
+    if (active) {
+      FlushUniformUploads();
+      uniformUploadOffset = 0;
+    }
+    uint64_t capacity = uniformUploadCapacity ? uniformUploadCapacity : kInitialUniformCapacity;
+    while (capacity < uniformUploadOffset + alignedSize) capacity *= 2;
+    wgpu::BufferDescriptor descriptor{};
+    descriptor.size = capacity;
+    descriptor.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
+    uniformUploadBuffer = context.device.CreateBuffer(&descriptor);
+    Require(static_cast<bool>(uniformUploadBuffer), "Uniform upload buffer creation failed");
+    uniformUploadCapacity = capacity;
+    uniformUploadData.resize(static_cast<size_t>(capacity));
+  }
+  buffer.gpu = uniformUploadBuffer;
+  buffer.size = byteCount;
+  buffer.bindingOffset = uniformUploadOffset;
+  buffer.uniformUploadGeneration = uniformUploadGeneration;
+  if (active) {
+    std::memcpy(uniformUploadData.data() + buffer.bindingOffset, data, static_cast<size_t>(byteCount));
+    uniformUploadsPending = true;
+  } else {
+    context.queue.WriteBuffer(buffer.gpu, buffer.bindingOffset, data, byteCount);
+  }
+  uniformUploadOffset += alignedSize;
+}
+
+void WebGPUDriverState::FlushUniformUploads() {
+  if (!uniformUploadsPending || !uniformUploadBuffer || !uniformUploadOffset)
+    return;
+  context.queue.WriteBuffer(uniformUploadBuffer, 0, uniformUploadData.data(), uniformUploadOffset);
+  uniformUploadsPending = false;
+}
 
 namespace {
 template<class Base, wgpu::BufferUsage Usage>
@@ -125,6 +182,11 @@ public:
     const_cast<DeviceContext&>(context).actualIndexBuffer = dynamic_cast<IndexBuffer*>(this);
   }
   void Set(const DeviceContext& context, unsigned slot = 0) {
+    if constexpr (std::is_same_v<Base, ConstantBuffer>) {
+      if (m_state.active && this->uniformUploadGeneration != m_state.uniformUploadGeneration) {
+        m_state.UploadUniform(*this, this->sysMemCpy.data(), this->size);
+      }
+    }
     Require(slot < m_state.constants.size(), "Uniform slot exceeds driver limit");
     m_state.constants[slot] = this;
     const_cast<DeviceContext&>(context).actualConstantBuffer = dynamic_cast<ConstantBuffer*>(this);
@@ -133,10 +195,15 @@ private:
   void Upload() {
     Require(this->sysMemCpy.size() == static_cast<size_t>(this->descriptor.byteWidth), "Buffer shadow size mismatch");
     size = this->sysMemCpy.size();
+    if constexpr (std::is_same_v<Base, ConstantBuffer>) {
+      m_state.UploadUniform(*this, this->sysMemCpy.data(), size);
+      return;
+    }
     wgpu::BufferDescriptor desc{};
     desc.size = (size + 3) & ~uint64_t(3);
     desc.usage = Usage | wgpu::BufferUsage::CopyDst;
     gpu = m_state.context.device.CreateBuffer(&desc);
+    bindingOffset = 0;
     std::vector<char> aligned(desc.size);
     std::memcpy(aligned.data(), this->sysMemCpy.data(), size);
     m_state.context.queue.WriteBuffer(gpu, 0, aligned.data(), aligned.size());
@@ -544,7 +611,6 @@ public:
       std::ostringstream defines;
       for (const std::string& define : desc.defines)
         if (!define.empty()) defines << "#define " << define << '\n';
-      defines << "#define T850_SPIRV\n";
       request.defines = defines.str();
       request.flow = state.flow;
       webgpu::ShaderFlowReport report;
@@ -872,7 +938,9 @@ void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned first
       Require(resource.binding >= 64 && resource.binding - 64 < constants.size(), "Unsupported uniform binding");
       const auto* buffer = constants[resource.binding - 64];
       Require(buffer && buffer->size >= resource.minimumBufferSize, "Required uniform buffer missing or too small");
-      entry.buffer = buffer->gpu; entry.size = resource.minimumBufferSize;
+      entry.buffer = buffer->gpu;
+      entry.offset = buffer->bindingOffset;
+      entry.size = resource.minimumBufferSize;
     } else if (resource.kind == webgpu::ResourceKind::Sampler) {
       Require(resource.binding >= 32 && resource.binding - 32 < samplers.size(), "Unsupported sampler binding");
       const auto slot = resource.binding - 32;
@@ -1074,6 +1142,7 @@ bool WebGPUDriver::ReadComputeBuffer(ComputeBuffer& bufferBase, void* destinatio
     if (!staging) return false;
     if (m_state->active) {
       m_state->context.commands.CopyBufferToBuffer(buffer->gpu, 0, staging, 0, byteCount);
+      m_state->FlushUniformUploads();
       auto command = m_state->context.commands.Finish();
       m_state->context.queue.Submit(1, &command);
       m_state->context.commands = m_state->context.device.CreateCommandEncoder();
@@ -1118,6 +1187,9 @@ void WebGPUDriver::BeginFrame(FrameTargetMode target) {
   m_state->offscreen = target == FrameTargetMode::Offscreen;
   m_state->active = m_state->context.BeginFrame(!m_state->offscreen);
   m_state->draws = 0;
+  m_state->uniformUploadOffset = 0;
+  ++m_state->uniformUploadGeneration;
+  m_state->uniformUploadsPending = false;
   m_state->ResetBindings();
   if (m_state->active && !m_state->offscreen) PopRT();
 }
@@ -1126,6 +1198,7 @@ void WebGPUDriver::CompleteFrame(FrameCompletionMode mode) {
   if (!m_state->active) return;
   EndFrame();
   m_state->targetColors.clear(); m_state->targetDepth = nullptr;
+  m_state->FlushUniformUploads();
   m_state->context.Submit(mode == FrameCompletionMode::Present && !m_state->offscreen);
   m_state->active = false;
   m_state->ResetBindings();
@@ -1205,6 +1278,7 @@ std::vector<float> WebGPUDriverState::ReadColor(WebGPUTexture& texture) {
   }
   if (active) {
     EndPass();
+    FlushUniformUploads();
     auto pending = context.commands.Finish();
     context.queue.Submit(1, &pending);
     context.commands = context.device.CreateCommandEncoder();

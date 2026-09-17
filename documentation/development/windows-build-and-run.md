@@ -605,6 +605,7 @@ The launcher can:
 - select architecture/configuration;
 - build or rebuild;
 - select graphics API, scene, model or `.t8scene`, resolution, and fullscreen;
+- select raster or compute render-graph execution;
 - configure culling, dumps/replay, logging, telemetry, D3D12 debug, and benchmark mode;
 - download missing cloud assets;
 - launch DayScene or T8ditor;
@@ -671,6 +672,11 @@ Automatic fixture capture directories and completion UI remain removed; the
 selector uses normal scene startup. Explicit command-line developer tests remain
 available. See
 [Shader Flow Selection](../rendering/shader-management.md#shader-flow-selection).
+
+Both launchers also expose **Post-process Mode** for every desktop runtime API.
+It defaults to **Raster** and is saved as `postProcessMode`; every RUN command
+includes `--postProcessMode raster|compute`. Select **Compute** to enable each
+supported render-graph compute pass, including Minecraft torch particles.
 
 Developer Build/Rebuild preflight now checks CMake availability and runs
 `SetupDawn.ps1 -Mode Check` for every Windows x64 build, regardless of selected API.

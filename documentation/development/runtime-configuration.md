@@ -34,7 +34,7 @@ Unknown JSON keys are ignored. A typo can therefore be silent; use documented fi
 | Model | `Models/DamagedHelmet.glb` |
 | Log level | 3 (`verbose`) |
 | Culling | `full` |
-| Post-process mode | `auto` |
+| Post-process mode | `raster` |
 | Profile frames | 300 |
 | Telemetry frequency | 60 frames |
 | Telemetry output | `logs/perf_telemetry.json` |
@@ -108,7 +108,7 @@ Root fields accepted by `RuntimeConfigJson` include:
   "model": "Models/DamagedHelmet.glb",
   "sceneFile": "",
   "sceneProfile": "",
-  "postProcessMode": "auto",
+  "postProcessMode": "raster",
   "gui": false,
   "logLevel": "verbose",
   "logFile": "",
@@ -219,14 +219,14 @@ Always prefer the binary's own help for the current list:
 --model PATH
 --sceneFile PATH | --t8scene PATH
 --sceneProfile NAME
---postProcessMode auto|compute|raster
+--postProcessMode compute|raster
 --orbitYaw RADIANS
 --gui
 ```
 
 Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTemplate, and 5 VoxelScene.
 
-`postProcessMode=auto` uses each render-graph pass's `prefer_compute` policy. DayScene currently prefers compute for the God Rays calculation, while its unbenchmarked God Rays blur, Bright, and HDR-composition alternatives remain on PS. `compute` forces every declared post-process compute alternative, and `raster` forces every retained pixel-shader draw. OpenGL always executes pixel-shader fallbacks because it reports no compute support.
+`postProcessMode=compute` selects every `compute_if_supported` graph pass. `raster` selects the authored graphics draw or clear fallback, including Minecraft's transparent torch-particle target. `auto` is rejected. Desktop OpenGL enables compute only with an OpenGL 4.3 or newer context; older desktop GL and OpenGL ES use the retained fallbacks.
 
 ### Dumps, Replay, and Diagnostics
 
@@ -334,7 +334,7 @@ T8ditor has a separate minimal parser and defaults to D3D12:
 --logFile PATH
 --logLevel error|info|debug|verbose|trace|0..4
 --d3d12debug
---postProcessMode auto|compute|raster
+--postProcessMode compute|raster
 ```
 
 The developer launcher maps D3D11/D3D12 editor launches to D3D12 on x64 and ARM64, but to D3D11 on Win32 because that ImGui triplet omits the D3D12 backend. GL/Vulkan selections map to Vulkan. Direct T8ditor invocation accepts all four Windows APIs when the selected backend is available in that build.

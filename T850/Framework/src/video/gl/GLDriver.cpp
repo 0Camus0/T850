@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <iterator>
 #include <fstream>
+#include <stdexcept>
 #include <utils/Log.h>
 #include <debug/RenderTrace.h>
 
@@ -225,15 +226,33 @@ namespace t850 {
     }
 #endif
 #endif//HEADLESS
-    std::string GL_Version = std::string((const char*)glGetString(GL_VERSION));
-    std::string GL_Extensions = std::string((const char*)glGetString(GL_EXTENSIONS));
-
-    std::istringstream iss(GL_Extensions);
-    std::vector<std::string> tokens{ std::istream_iterator<std::string>{iss},
-      std::istream_iterator<std::string>{} };
+    const unsigned char* versionText = glGetString(GL_VERSION);
+    if (!versionText)
+      throw std::runtime_error("OpenGL context is not current or does not expose GL_VERSION");
+    std::string GL_Version = reinterpret_cast<const char*>(versionText);
+    std::vector<std::string> tokens;
+#if defined(USING_OPENGL)
+    GLint extensionCount = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
+    for (GLint index = 0; index < extensionCount; ++index) {
+      const unsigned char* extension = glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(index));
+      if (extension)
+        tokens.emplace_back(reinterpret_cast<const char*>(extension));
+    }
+#else
+    const unsigned char* extensionText = glGetString(GL_EXTENSIONS);
+    if (extensionText) {
+      std::istringstream iss(reinterpret_cast<const char*>(extensionText));
+      tokens.assign(std::istream_iterator<std::string>{iss}, std::istream_iterator<std::string>{});
+    }
+#endif
 
     ExtensionsTok = tokens;
-    Extensions = GL_Extensions;
+    Extensions.clear();
+    for (const std::string& extension : ExtensionsTok) {
+      if (!Extensions.empty()) Extensions += ' ';
+      Extensions += extension;
+    }
 
     T8_LOG_INFO("GL Version: %s", GL_Version.c_str());
 
@@ -241,8 +260,11 @@ namespace t850 {
       T8_LOG_VERBOSE("[%s]", ExtensionsTok[i].c_str());
     }
 
-    const unsigned char *version = glGetString(GL_SHADING_LANGUAGE_VERSION);
-    T8_LOG_INFO("GLSL Ver: %s", version);
+    const unsigned char* shadingLanguageVersion = glGetString(GL_SHADING_LANGUAGE_VERSION);
+    const char* glslVersion = shadingLanguageVersion
+      ? reinterpret_cast<const char*>(shadingLanguageVersion)
+      : "unavailable";
+    T8_LOG_INFO("GLSL Ver: %s", glslVersion);
 
 #if defined(USING_OPENGL)
     if (GLEW_VERSION_4_5 || GLEW_ARB_clip_control) {

@@ -144,7 +144,7 @@ public:
   ~TempSceneFiles() {
     for (const std::filesystem::path& path : paths_) {
       std::error_code error;
-      std::filesystem::remove(path, error);
+      std::filesystem::remove_all(path, error);
     }
   }
 
@@ -1716,6 +1716,7 @@ void TestShaderFlowConfiguration() {
 class NullTestDriver final : public BaseDriver {
 public:
   std::vector<std::string> events;
+  std::vector<ComputePipelineDesc> computePipelines;
   void InitDriver() override {}
   void CreateSurfaces() override {}
   void DestroySurfaces() override {}
@@ -1731,6 +1732,12 @@ public:
   void SetCullFace(FaceCulling) override {}
   void PopRT() override {}
   void FlushGPUResources() override { events.push_back("flush"); }
+  bool SupportsComputeShaders() const override { return true; }
+  std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override {
+    class NullComputePipeline final : public ComputePipeline {};
+    computePipelines.push_back(desc);
+    return std::make_unique<NullComputePipeline>();
+  }
 };
 
 class LifecycleTestScene final : public SceneBase {
@@ -1867,23 +1874,37 @@ void TestAuthoredStreamedVoxels() {
 void TestShaderPrecompilerContract() {
   TempSceneFiles files;
   const auto manifest = files.Add("_permutations.json");
+  const auto computeSourceDirectory = files.Add("_compute_sources");
+  std::filesystem::create_directories(computeSourceDirectory);
+  {
+    std::ofstream output(computeSourceDirectory / "CS_Arithmetic.hlsl");
+    output << "[numthreads(1, 1, 1)] void CS() {}\n";
+  }
   {
     std::ofstream output(manifest);
-    output << R"({"version":1,"permutations":{"0x0000000000000001":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"},"0x0000000000000002":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"}}})";
+    output << R"({"version":2,"permutations":{"0x0000000000000001":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"},"0x0000000000000002":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"}},"compute_permutations":{"CS_Arithmetic.hlsl:CS:base":{"key":"CS_Arithmetic.hlsl:CS:base","kind":"compute","computeShader":"CS_Arithmetic.hlsl","entryPoint":"CS","permutation":"base","defines":[]}}})";
   }
   NullTestDriver driver;
   ShaderPrecompileRequest request;
   request.manifestPath = manifest.string();
-  request.sourceDirectory = files.Add("_missing_sources").string();
+  request.sourceDirectory = computeSourceDirectory.string();
   size_t reports = 0;
   request.onProgress = [&](const ShaderPrecompileProgress& progress) {
     ++reports;
-    Require(progress.completed == reports && progress.total == 2 && !progress.error.empty(),
-            "precompiler omitted failed-entry diagnostics");
+    Require(progress.completed == reports && progress.total == 3,
+            "precompiler reported an invalid permutation total");
+    if (progress.key.starts_with("0x"))
+      Require(!progress.error.empty(), "precompiler omitted graphics-entry diagnostics");
+    else
+      Require(progress.error.empty(), "precompiler rejected a registered compute entry");
   };
   auto result = PrecompileShaders(driver, request);
-  Require(!result.Succeeded() && result.failed == 2 && result.succeeded == 0 && reports == 2,
-          "precompiler incorrectly reported missing shaders as compiled");
+  Require(!result.Succeeded() && result.failed == 2 && result.succeeded == 1 && reports == 3 &&
+          driver.computePipelines.size() == 1 &&
+          driver.computePipelines.front().debugName.ends_with("CS_Arithmetic.hlsl") &&
+          driver.computePipelines.front().bindings.size() == 2 &&
+          driver.computePipelines.front().bindings.front().constantCount == 4,
+          "precompiler did not compile the registered compute permutation");
   reports = 0;
   request.cancelRequested = [&] { return reports == 1; };
   result = PrecompileShaders(driver, request);

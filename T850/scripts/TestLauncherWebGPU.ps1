@@ -29,6 +29,7 @@ function Test-Launcher([string]$Name) {
     $rootDir = Join-Path ([IO.Path]::GetTempPath()) ("T850 launcher test " + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($rootDir)
     $cmbApi = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = 'webgpu' } }
+    $cmbPostProcessMode = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = 'raster' } }
     $cmbShaderFlow = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = 'auto' } }
     $cmbArch = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Content = 'x64' } }
     $cmbConfig = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Content = 'Release' } }
@@ -69,13 +70,16 @@ function Test-Launcher([string]$Name) {
             $cmbApi.SelectedItem.Tag = $api
             foreach ($flow in @('auto', 'spirv')) {
                 $cmbShaderFlow.SelectedItem.Tag = $flow
-                $command = Get-LaunchCommand
-                Assert-True ($command.Args -notcontains '--graphics-fixture' -and $command.Args -notcontains '--output') 'Launcher must not substitute a fixture for normal engine startup'
-                $flowArgs = if ($api -eq 'webgpu') { " --shaderFlow $flow" } else { '' }
-                Assert-True (($command.Args -join ' ') -eq "--api $api$flowArgs --scene 4 --culling frustum --sceneFile `"Scenes/Test.t8scene`" --width 960 --height 540 --logLevel info") "$Name did not preserve normal arguments and WebGPU-only shader flow $flow for $api"
-                Assert-True ($command.Display.StartsWith('"' + $command.ExePath + '" ')) 'Executable path with spaces is not quoted'
-                Assert-True ($command.ExePath.StartsWith($rootDir)) 'Unexpected executable location'
-                Assert-True ((Get-EditorLaunchCommand).Args -notcontains '--shaderFlow') 'Runtime shader flow leaked into editor startup'
+                foreach ($postProcessMode in @('raster', 'compute')) {
+                    $cmbPostProcessMode.SelectedItem.Tag = $postProcessMode
+                    $command = Get-LaunchCommand
+                    Assert-True ($command.Args -notcontains '--graphics-fixture' -and $command.Args -notcontains '--output') 'Launcher must not substitute a fixture for normal engine startup'
+                    $flowArgs = if ($api -eq 'webgpu') { " --shaderFlow $flow" } else { '' }
+                    Assert-True (($command.Args -join ' ') -eq "--api $api --postProcessMode $postProcessMode$flowArgs --scene 4 --culling frustum --sceneFile `"Scenes/Test.t8scene`" --width 960 --height 540 --logLevel info") "$Name did not preserve normal arguments, post-process mode, and WebGPU-only shader flow $flow for $api"
+                    Assert-True ($command.Display.StartsWith('"' + $command.ExePath + '" ')) 'Executable path with spaces is not quoted'
+                    Assert-True ($command.ExePath.StartsWith($rootDir)) 'Unexpected executable location'
+                    Assert-True ((Get-EditorLaunchCommand).Args -notcontains '--shaderFlow') 'Runtime shader flow leaked into editor startup'
+                }
             }
             if ($api -eq 'webgpu') {
                 Assert-True ((Get-EditorLaunchCommand).Args[1] -eq 'webgpu') 'WebGPU editor silently remapped'
@@ -212,6 +216,7 @@ function Test-LauncherUi([string]$Name) {
         [void][IO.Directory]::CreateDirectory($runtime)
         [IO.File]::WriteAllBytes((Join-Path $runtime 'DayScene.exe'), $bytes)
         [IO.File]::WriteAllBytes((Join-Path $runtime 'T8ditor.exe'), $bytes)
+        Assert-True ($cmbPostProcessMode.Items.Count -eq 2 -and $cmbPostProcessMode.SelectedItem.Tag -eq 'raster') 'Post-process selector must default to raster and offer both execution modes'
         Assert-True ($cmbShaderFlow.Items.Count -eq 2 -and $cmbShaderFlow.SelectedItem.Tag -eq 'auto') 'Shader selector must default to WGSL-first and offer the two working runtime flows'
         Assert-True ($pnlShaderFlow.Visibility -eq 'Collapsed') 'Shader selector must initially be hidden for native APIs'
         $flowEvent = $ast.Find({ param($node) $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Extent.Text -eq '$cmbShaderFlow.Add_SelectionChanged({ Update-Preview })' }, $true)
@@ -229,7 +234,7 @@ function Test-LauncherUi([string]$Name) {
         }
         Assert-True ($pnlShaderFlow.Visibility -eq 'Visible' -and $cmbShaderFlow.IsEnabled) 'WebGPU runtime shader selector is unavailable'
         Assert-True ($btnRun.Content -match 'RUN' -and $btnRun.Content -notmatch 'FIXTURE') 'Normal RUN caption was replaced'
-        foreach ($flag in @('--api webgpu', '--shaderFlow auto', '--dumpSnapshot-', '--replaySnapshot', '--telemetry')) {
+        foreach ($flag in @('--api webgpu', '--postProcessMode raster', '--shaderFlow auto', '--dumpSnapshot-', '--replaySnapshot', '--telemetry')) {
             Assert-True ($txtCmdPreview.Text.Contains($flag)) "Normal preview dropped $flag"
         }
         $sceneDependencies.Ok = $true
@@ -252,6 +257,17 @@ function Test-LauncherUi([string]$Name) {
             Set-Api 'd3d12'
             Load-Config
             Assert-True ((Test-WebGpuSelected) -and $cmbShaderFlow.SelectedItem.Tag -eq $flow) 'WebGPU API/shader flow config round trip failed'
+        }
+        foreach ($postProcessMode in @('compute', 'raster')) {
+            $cmbPostProcessMode.SelectedItem = @($cmbPostProcessMode.Items | Where-Object Tag -eq $postProcessMode)[0]
+            Update-Preview
+            Assert-True ($txtCmdPreview.Text.Contains("--postProcessMode $postProcessMode")) 'Changing post-process mode did not refresh the preview'
+            Save-Config
+            $savedConfig = Get-Content $configPath -Raw | ConvertFrom-Json
+            Assert-True ($savedConfig.postProcessMode -eq $postProcessMode) 'Post-process mode was not persisted'
+            $cmbPostProcessMode.SelectedIndex = 1 - $cmbPostProcessMode.SelectedIndex
+            Load-Config
+            Assert-True ($cmbPostProcessMode.SelectedItem.Tag -eq $postProcessMode) 'Post-process mode config round trip failed'
         }
         foreach ($configuredFlow in @($null, 'unknown', 'SPIRV')) {
             $savedConfig = @{ api = 'webgpu' }

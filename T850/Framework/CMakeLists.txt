@@ -103,6 +103,7 @@ set(FRAMEWORK_SOURCES
   src/utils/XMaths.cpp
   src/utils/ConfigRuntime.cpp
   src/utils/RuntimeProfile.cpp
+  src/utils/ComputeKernelRegistry.cpp
   src/utils/ShaderPermutationDump.cpp
   src/utils/ShaderPrecompiler.cpp
   src/core/ShaderTools.cpp

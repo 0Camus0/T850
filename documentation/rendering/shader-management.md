@@ -852,20 +852,28 @@ or with JSON config fields:
 
 `DayScene/App.cpp` starts recording before app/framework creation and flushes after creation instead of running the normal update loop. The version-2 output JSON keeps the established graphics convention homogeneous under `permutations`: every object key is a hexadecimal `ShaderKey`, with matching `key`, `bits`, pass, VS, FS, and defines. Compute entries live separately under `compute_permutations`, use `<file>:<entry-point>:<permutation>` identities, repeat that identity in `key`, and record `kind`, `computeShader`, `entryPoint`, `permutation`, and `defines`. They deliberately omit a backend profile: D3D `cs_5_0` and Vulkan SPIR-V are artifacts of the same source permutation and are identified in backend cache manifests/logs. Existing entries of either section are merged by identity; legacy mixed `compute:` entries are migrated when a dump is rewritten.
 
-The checked-in `Assets/Shaders/shader_permutations.json` is an example/seed list of known requested permutations. It is an offline inventory and Android graphics precompile input, not a D3D12 runtime prewarm list. D3D12 creates a requested compute pipeline through the normal API, records its permutation when dumping is enabled, and stores or loads its `cs.dxbc` artifact from the same driver-qualified cache hierarchy used by graphics shaders.
+The checked-in `Assets/Shaders/shader_permutations.json` is an offline inventory
+and prewarm input. `ShaderPrecompiler` compiles both sections: graphics entries
+continue through `BaseDriver::CreateShader`, while compute entries resolve their
+source identity and complete binding layout through the Framework
+`ComputeKernelRegistry` before calling `BaseDriver::CreateComputePipeline`.
+This validates the same API-neutral descriptor each backend uses at runtime.
+D3D12 stores or loads its `cs.dxbc` artifact from the same driver-qualified cache
+hierarchy used by graphics shaders.
 
 The D3D12 compute path records an entry only after shader compilation/cache loading, reflection, root-signature creation, and compute PSO creation succeed. `ComputePipelineDesc::permutationName` names the variant, while `ComputePipelineDesc::defines` supplies deterministic compile-time defines. The checked-in compute inventory contains arithmetic, God Rays, horizontal/vertical `CS_Blur`, Bright, HDR-composition, and Minecraft torch-particle identities.
 
-Graphics and compute alternatives are independent inventory entries, not a Cartesian product. A graphics `ShaderKey` continues to identify the VS/PS implementation; a compute identity uses `(file, entry point, permutation, defines)`. The render graph selects the stage implementation per pass through capability, `--postProcessMode`, and `prefer_compute`. This avoids multiplying unrelated PS and CS combinations while still allowing any declared pass to retain both implementations.
+Graphics and compute alternatives are independent inventory entries, not a Cartesian product. A graphics `ShaderKey` continues to identify the VS/PS implementation; a compute identity uses `(file, entry point, permutation, defines)`. The render graph selects the stage implementation per pass through capability and `--postProcessMode compute|raster`. This avoids multiplying unrelated PS and CS combinations while still allowing any declared pass to retain both implementations.
 
 `CS_Bright` and `CS_HDRComposite` are declared by all maintained render graphs, including T8ditor. The same compute pipeline identity is reused across scenes; scene-specific target names and input edges remain in graph JSON rather than creating duplicate shader permutations.
 
-Minecraft's `CS_TorchParticles` is a compute-only gameplay effect rather than a raster/compute
-post-process alternative, so `--postProcessMode raster` does not disable it. The kernel
-projects deterministic world-space particle positions into a screen-sized `RGBA16F` storage
-texture. Particle phases wrap by lifetime, rise and spread from the authored emitter, and
-fade before respawning. The texture is composited before luminance adaptation and bloom.
-OpenGL reports no compute-texture capability and receives a cleared transparent target.
+Minecraft's `CS_TorchParticles` uses the same selector: `compute` writes the
+screen-sized `RGBA16F` storage texture, while `raster` selects its transparent
+clear fallback. The kernel projects deterministic world-space particle positions,
+wraps phases by lifetime, rises and spreads from the authored emitter, and fades
+before respawning. The texture is composited before luminance adaptation and bloom.
+Desktop OpenGL 4.3+ dispatches the same compute kernel through its GL implementation.
+Older desktop GL and OpenGL ES receive a cleared transparent target.
 
 D3D12 compute reflection supports root constants, structured/byte-address buffer SRV/UAV root descriptors, and descriptor-table bindings for typed texture SRVs, typed texture UAVs, and samplers. Render-target textures requested with storage usage carry both SRV and UAV descriptors and share state tracking with their owning render target.
 
@@ -903,6 +911,13 @@ OpenGL. Invalid manifests, missing sources and compilation failures produce a
 nonzero exit code; per-permutation progress is printed. Driver/compiler caches
 use their existing paths and identities. This caches shader artifacts, not every
 render-state pipeline combination or final GPU machine code.
+
+Compute entries require the canonical bare filename identity, `kind=compute`, a
+sorted unique define list, and the exact `<filename>:<entry>:<permutation>` key.
+The registry rejects an unrecognized kernel or entry-point mismatch before asking
+a backend to compile it. On 2026-09-16 the checked-in manifest completed all 288
+records, including the seven compute entries numbered 282 through 288, with
+`DayScene.exe --compileShaders --api webgpu --shaderFlow spirv`.
 
 The **Compile Shaders** button in both Windows launchers runs all four native APIs
 and both supported WebGPU flows sequentially, with progress, cancellation and
@@ -976,7 +991,7 @@ When adding shader features:
 - D3D11/D3D12 shader model targets are hard-coded to `vs_5_0` and `ps_5_0`.
 - D3D11 and D3D12 compute target `cs_5_0`; Vulkan compute compiles the same HLSL entry point to SPIR-V 1.0 with an explicit API-neutral binding layout.
 - D3D11 enables texture compute only at feature level 11 or newer when RGBA8 and RGBA16F expose typed UAV support. Vulkan requires a compute-capable graphics queue, formatless storage-image writes, and storage-image support for both formats. D3D12 supports the required bindings directly. A failed capability gate selects the graphics fallback.
-- OpenGL compute is deliberately unsupported. The WebGPU proposal's agreed scope targets D3D11, D3D12, Vulkan, and Dawn/WebGPU and explicitly specifies no GL compute.
+- Desktop OpenGL compute requires a 4.3 or newer compatibility context. The GL backend gates both compute capability reporting and its pipeline/buffer/dispatch methods on `GLEW_VERSION_4_3`; older desktop GL and OpenGL ES retain graphics fallbacks.
 - D3D12 and Vulkan share HLSL sources, but Vulkan's HLSL-to-SPIR-V path can expose differences in interpolation, semantics, resource mapping, and depth behavior.
 - Vulkan desktop can compile HLSL at runtime when the SPIR-V cache misses. Android tries precompiled SPIR-V names first, then falls back to runtime compile.
 - OpenGL program binary caching only works if the driver reports program-binary support.

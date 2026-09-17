@@ -125,11 +125,13 @@ bool GLComputeBuffer::Create(const ComputeBufferDesc& desc, const void* initialD
 }
 
 std::unique_ptr<ComputePipeline> GLDriver::CreateComputePipeline(const ComputePipelineDesc& desc) {
+  if (!SupportsComputeShaders()) return {};
   auto pipeline = std::make_unique<GLComputePipeline>();
   return pipeline->Create(desc) ? std::move(pipeline) : nullptr;
 }
 
 std::unique_ptr<ComputeBuffer> GLDriver::CreateComputeBuffer(const ComputeBufferDesc& desc, const void* initialData) {
+  if (!SupportsComputeShaders()) return {};
   auto buffer = std::make_unique<GLComputeBuffer>();
   return buffer->Create(desc, initialData) ? std::move(buffer) : nullptr;
 }
@@ -171,6 +173,8 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
     }
   }
   if (boundLayouts.size() != pipeline->bindings.size()) return false;
+
+  while (glGetError() != GL_NO_ERROR) {}
 
   GLint previousProgram = 0;
   GLint previousActiveTexture = 0;

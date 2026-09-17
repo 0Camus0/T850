@@ -19,7 +19,6 @@ public:
   };
 
   enum class PostProcessMode {
-    Auto,
     Compute,
     Raster
   };
@@ -69,7 +68,7 @@ public:
   int dumpMatricesFrames = 0;
   GLOffscreenFlushMode glOffscreenFlushMode = GLOffscreenFlushMode::Frame;
   CullingLoadMode cullingLoadMode = CullingLoadMode::FullOnLoad;
-  PostProcessMode postProcessMode = PostProcessMode::Auto;
+  PostProcessMode postProcessMode = PostProcessMode::Raster;
   std::string benchmarkOutputPath;
   std::string benchmarkReportPath;
   std::string benchmarkFinalFrameDir;

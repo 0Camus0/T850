@@ -1197,6 +1197,8 @@ The exact schema is deferred until the portable GBuffer prototype is selected.
 
 This is an additive Framework capability, not a Dawn-only escape hatch. No scene or editor extension receives D3D, Vulkan or WebGPU handles. Keep the existing graphics entry points stable; do not force compute into `DrawIndexed`, a fake fullscreen draw, or the VS/FS `ShaderBase` contract.
 
+Implementation checkpoint: D3D11, D3D12, and Vulkan execute the same API-neutral structured-buffer arithmetic workload, pass deterministic GPU readback, and support the sampled/storage textures and samplers used by God Rays, separable blur, Bright, and HDR-composition compute passes. `--postProcessMode` provides the matched A/B path. OpenGL remains deliberately unsupported, as required by the agreed scope above: compute targets D3D11, D3D12, Vulkan, and Dawn/WebGPU, with no GL compute.
+
 ### Shared Contract and Ownership
 
 The names below are proposed, not existing APIs. Agree on them in the first two hours before either person implements a backend.

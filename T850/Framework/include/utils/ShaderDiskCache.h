@@ -16,6 +16,9 @@ namespace t850 {
     std::string stage;
     std::string entryPoint;
     std::string sourceName;
+    std::string computeName;
+    std::string profile;
+    bool compute = false;
   };
 
   namespace ShaderDiskCache {
@@ -37,6 +40,13 @@ namespace t850 {
                                const std::string& fsName,
                                const std::string& vsSource,
                                const std::string& fsSource);
+
+        ShaderDiskCacheKey MakeComputeKey(const std::string& api,
+                          const std::string& driverSignature,
+                          const std::string& computeName,
+                          const std::string& entryPoint,
+                          const std::string& profile,
+                          const std::string& source);
 
     bool LoadArtifact(const ShaderDiskCacheKey& key, const std::string& artifactName,
                       std::vector<uint8_t>& outBytes);

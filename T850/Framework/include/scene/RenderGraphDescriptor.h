@@ -19,6 +19,7 @@ namespace t850 {
     std::array<int, 2> size = {0, 0};      // [0,0] = screen size
     bool linear_filter = true;
     bool generate_mips = false;
+    bool storage = false;                    // create with storage/UAV usage where supported
     std::string size_ref;                  // e.g. "$shadow_resolution", "$god_rays_resolution"
     std::string shadow_projection;          // source JSON ID; empty for ordinary targets
   };
@@ -59,6 +60,12 @@ namespace t850 {
   struct RenderPassDesc {
     std::string name;             // Human-readable label (becomes node ID)
     std::string target;           // RT name to push, or "" for no push (continuation)
+    std::string execution = "graphics"; // "graphics" or "compute_if_supported"
+    std::string compute_shader;
+    std::string compute_entry = "CS";
+    std::string compute_permutation = "base";
+    std::array<int, 3> compute_threads = {8, 8, 1};
+    bool prefer_compute = false;  // used by --postProcessMode auto
     bool clear = false;
     std::array<float, 4> clear_color = {0, 0, 0, 0};  // RGBA clear color (used when clear=true)
     float clear_depth = 1.0f;                           // Depth clear value

@@ -36,6 +36,7 @@ using Microsoft::WRL::ComPtr;
 #include <video/d3d12/D3D12Device.h>
 #include <video/d3d12/D3D12PipelineKey.h>
 #include <video/d3d12/D3D12Shader.h>
+#include <video/d3d12/D3D12Compute.h>
 #include <video/d3d12/D3D12Texture.h>
 #include <video/d3d12/D3D12RT.h>
 
@@ -50,6 +51,8 @@ namespace t850 {
 
     D3D12Driver() { m_currentAPI = GraphicsApi::D3D12; }
     const char* ApiTag() const override { return "d3d12"; }
+    bool SupportsComputeShaders() const override { return true; }
+    bool SupportsComputeTextures() const override { return true; }
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;
@@ -88,6 +91,15 @@ namespace t850 {
     void BuildPipelineObjects() override;
     void SetViewport(float x, float y, float w, float h) override;
     void SetScissorRect(int x, int y, int w, int h) override;
+    std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
+    std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                              const void* initialData = nullptr) override;
+    bool DispatchCompute(ComputePipeline& pipeline,
+               const std::vector<ComputeBindingDesc>& bindings,
+               uint32_t groupCountX,
+               uint32_t groupCountY,
+               uint32_t groupCountZ) override;
+    bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
 
     // ── Helpers for resource creation ──
     D3D12Heap& GetHeap(D3D12Heap::Type type) { return m_heaps[type]; }
@@ -134,6 +146,7 @@ namespace t850 {
     void CreateBackBufferViews();
     void CreateDepthBuffer();
     void CreateHeaps();
+    void TransitionBackBuffer(D3D12_RESOURCE_STATES nextState);
     void CreateDefaultSampler();
     void WaitForFence();
     ID3D12GraphicsCommandList* GetResourceUploadCommandList();
@@ -174,6 +187,7 @@ namespace t850 {
 
     // Back buffers
     ComPtr<ID3D12Resource> m_backBuffers[kBackBufferCount];
+    D3D12_RESOURCE_STATES  m_backBufferStates[kBackBufferCount] = {};
     ComPtr<ID3D12Resource> m_depthBuffer;
     UINT m_currentBackBuffer = 0;
 

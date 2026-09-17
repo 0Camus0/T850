@@ -853,7 +853,8 @@ namespace t850 {
     T8_LOG_ERROR("Shader compilation FAILED: key=0x%016llX pass=%d", static_cast<unsigned long long>(key.bits), key.getPass());
     return -1;
   }
-  int BaseDriver::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
+  int BaseDriver::CreateRT(int nrt, int cf, int df, int w, int h,
+                           bool genMips, bool allowStorage)
   {
     if (w == 0)
       w = width;
@@ -863,7 +864,7 @@ namespace t850 {
       "Creating render target",
       std::to_string(w) + "x" + std::to_string(h) + " (" + std::to_string(nrt) + " color)",
       0.3f);
-    BaseRT	*pRT = T8Device->CreateRT(nrt,cf,df,w,h,genMips);
+    BaseRT	*pRT = T8Device->CreateRT(nrt,cf,df,w,h,genMips,allowStorage);
     pRT->number_RT = nrt;
     if (pRT!= nullptr) {
       for (std::size_t i = 0; i < RTs.size(); ++i) {
@@ -881,7 +882,8 @@ namespace t850 {
     }
     return -1;
   }
-  int BaseDriver::CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool genMips)
+  int BaseDriver::CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h,
+                           bool genMips, bool allowStorage)
   {
     if (w == 0) w = width;
     if (h == 0) h = height;
@@ -890,7 +892,7 @@ namespace t850 {
       std::to_string(w) + "x" + std::to_string(h) + " (" + std::to_string(nrt) + " color)",
       0.3f);
     int cf = perColorFormats.empty() ? BaseRT::RGBA8 : perColorFormats[0];
-    BaseRT* pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips);
+    BaseRT* pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips, allowStorage);
     if (pRT) {
       // Reload with per-attachment formats
       pRT->DestroyAPIRT();

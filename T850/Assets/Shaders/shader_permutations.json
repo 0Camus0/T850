@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "permutations": {
     "0x0000000000000008": {
       "key": "0x0000000000000008",
@@ -2248,6 +2248,64 @@
       "vertexShader": "VS_Quad.hlsl",
       "fragmentShader": "FS_Quad.hlsl",
       "defines": ["DEFERRED_LIGHT_VOLUME_PASS", "ENABLE_SHADOWS", "ENABLE_SSAO", "NO_ENVIRONMENT", "USE_TEXCOORD0"]
+    }
+  },
+  "compute_permutations": {
+    "CS_Arithmetic.hlsl:CS:base": {
+      "key": "CS_Arithmetic.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_Arithmetic.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_Blur.hlsl:CS:horizontal": {
+      "key": "CS_Blur.hlsl:CS:horizontal",
+      "kind": "compute",
+      "computeShader": "CS_Blur.hlsl",
+      "entryPoint": "CS",
+      "permutation": "horizontal",
+      "defines": []
+    },
+    "CS_Blur.hlsl:CS:vertical": {
+      "key": "CS_Blur.hlsl:CS:vertical",
+      "kind": "compute",
+      "computeShader": "CS_Blur.hlsl",
+      "entryPoint": "CS",
+      "permutation": "vertical",
+      "defines": []
+    },
+    "CS_Bright.hlsl:CS:base": {
+      "key": "CS_Bright.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_Bright.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_GodRays.hlsl:CS:base": {
+      "key": "CS_GodRays.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_GodRays.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_HDRComposite.hlsl:CS:base": {
+      "key": "CS_HDRComposite.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_HDRComposite.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_TorchParticles.hlsl:CS:base": {
+      "key": "CS_TorchParticles.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_TorchParticles.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
     }
   }
 }

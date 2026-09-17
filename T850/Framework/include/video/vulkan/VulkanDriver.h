@@ -34,6 +34,7 @@
 #else
 #include <vk_mem_alloc.h>
 #endif
+#include <video/vulkan/VulkanCompute.h>
 
 #include <unordered_map>
 #include <string>
@@ -53,6 +54,8 @@ namespace t850 {
 
     VulkanDriver() { m_currentAPI = GraphicsApi::VULKAN; }
     const char* ApiTag() const override { return "vulkan"; }
+    bool SupportsComputeShaders() const override { return m_supportsComputeShaders; }
+    bool SupportsComputeTextures() const override { return m_supportsComputeTextures; }
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;
@@ -91,6 +94,12 @@ namespace t850 {
     void BuildPipelineObjects() override;
     void SetViewport(float x, float y, float w, float h) override;
     void SetScissorRect(int x, int y, int w, int h) override;
+    std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
+    std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                              const void* initialData = nullptr) override;
+    bool DispatchCompute(ComputePipeline& pipeline, const std::vector<ComputeBindingDesc>& bindings,
+               uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
+    bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
 
     // ── Accessors ──
     VkCommandBuffer    GetCmdBuffer() const { return m_commandBuffers[m_currentFrame]; }
@@ -239,6 +248,8 @@ namespace t850 {
     VkQueue             m_presentQueue = VK_NULL_HANDLE;
     uint32_t            m_graphicsQueueFamily = 0;
     uint32_t            m_presentQueueFamily = 0;
+    bool                m_supportsComputeShaders = false;
+    bool                m_supportsComputeTextures = false;
 
     // Surface & swap chain
     VkSurfaceKHR        m_surface = VK_NULL_HANDLE;

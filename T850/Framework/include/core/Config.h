@@ -18,6 +18,12 @@ public:
     Disabled
   };
 
+  enum class PostProcessMode {
+    Auto,
+    Compute,
+    Raster
+  };
+
   struct BooleanFlags {
     bool dumpEnabled : 1 = false;
     bool dumpByFrame : 1 = false;
@@ -63,6 +69,7 @@ public:
   int dumpMatricesFrames = 0;
   GLOffscreenFlushMode glOffscreenFlushMode = GLOffscreenFlushMode::Frame;
   CullingLoadMode cullingLoadMode = CullingLoadMode::FullOnLoad;
+  PostProcessMode postProcessMode = PostProcessMode::Auto;
   std::string benchmarkOutputPath;
   std::string benchmarkReportPath;
   std::string benchmarkFinalFrameDir;

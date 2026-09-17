@@ -7,6 +7,7 @@
 #include <video/webgpu/WebGPUContext.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
+#include <utils/ShaderPermutationDump.h>
 #include <utils/TextureMipmaps.h>
 #include <SDL3/SDL.h>
 #include <DirectXPackedVector.h>
@@ -466,7 +467,11 @@ public:
       auto color = std::make_unique<WebGPUTexture>(state);
       color->m_channels = format == R8 || format == F16 ? 1 : 4;
       color->params = CLAMP_TO_EDGE | NEAREST_FILTER;
-      color->Allocate(w, h, nativeFormat, wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopySrc);
+      wgpu::TextureUsage usage = wgpu::TextureUsage::RenderAttachment |
+        wgpu::TextureUsage::TextureBinding |
+        wgpu::TextureUsage::CopySrc;
+      if (AllowUnorderedAccess) usage |= wgpu::TextureUsage::StorageBinding;
+      color->Allocate(w, h, nativeFormat, usage);
       colors.push_back(std::move(color));
     }
     std::unique_ptr<WebGPUTexture> depth;
@@ -494,6 +499,184 @@ public:
     for (auto* color : vColorTextures) colors.push_back(static_cast<WebGPUTexture*>(color)->gpu);
     const auto depth = pDepthTexture ? static_cast<WebGPUTexture*>(pDepthTexture)->gpu : wgpu::Texture{};
     state.SetTarget(std::move(colors), depth, w, h, clear, static_cast<WebGPUTexture*>(pDepthTexture));
+  }
+};
+
+bool ComputeBindingMatches(ComputeBindingType type, webgpu::ResourceKind kind) {
+  switch (type) {
+  case ComputeBindingType::Constants32:
+    return kind == webgpu::ResourceKind::UniformBuffer;
+  case ComputeBindingType::ReadOnlyBuffer:
+    return kind == webgpu::ResourceKind::ReadOnlyStorageBuffer;
+  case ComputeBindingType::ReadWriteBuffer:
+    return kind == webgpu::ResourceKind::ReadWriteStorageBuffer;
+  case ComputeBindingType::ReadOnlyTexture:
+    return kind == webgpu::ResourceKind::SampledTexture;
+  case ComputeBindingType::ReadWriteTexture:
+    return kind == webgpu::ResourceKind::WriteOnlyStorageTexture;
+  case ComputeBindingType::Sampler:
+    return kind == webgpu::ResourceKind::Sampler;
+  }
+  return false;
+}
+
+class WebGPUComputePipeline final : public ComputePipeline {
+public:
+  explicit WebGPUComputePipeline(WebGPUDriverState& state) : state(state) {}
+  WebGPUDriverState& state;
+  std::vector<ComputeBindingLayoutDesc> bindings;
+  std::map<uint32_t, webgpu::ShaderBinding> resources;
+  webgpu::ShaderArtifact artifact;
+  wgpu::ShaderModule module;
+  wgpu::BindGroupLayout bindGroupLayout;
+  wgpu::PipelineLayout pipelineLayout;
+  wgpu::ComputePipeline pipeline;
+
+  bool Create(const ComputePipelineDesc& desc) {
+    try {
+      Require(!desc.source.empty() && !desc.entryPoint.empty(), "Compute shader source and entry point are required");
+      webgpu::ShaderFileRequest request;
+      request.name = desc.debugName.empty() ? "Shaders/inline-compute.hlsl" : desc.debugName;
+      if (!std::filesystem::path(request.name).has_parent_path()) request.name = "Shaders/" + request.name;
+      request.stage = webgpu::ShaderStage::Compute;
+      request.layout = webgpu::BindingLayout::ComputeV1;
+      request.entryPoint = desc.entryPoint;
+      std::ostringstream defines;
+      for (const std::string& define : desc.defines)
+        if (!define.empty()) defines << "#define " << define << '\n';
+      defines << "#define T850_SPIRV\n";
+      request.defines = defines.str();
+      request.flow = state.flow;
+      webgpu::ShaderFlowReport report;
+      std::string diagnostic;
+      Require(webgpu::LoadShaderFiles(request, artifact, report, diagnostic, desc.source),
+              diagnostic.empty() ? "Compute shader preparation failed" : diagnostic);
+      if (!diagnostic.empty()) T8_LOG_INFO("[WebGPU][Compute] shader warning: %s", diagnostic.c_str());
+      Require(!artifact.wgsl.empty(), "Compute shader artifact is empty");
+      Require(artifact.workgroupSize[0] && artifact.workgroupSize[1] && artifact.workgroupSize[2],
+              "Compute shader has an invalid workgroup size");
+      Require(artifact.bindings.size() == desc.bindings.size(),
+              "Compute binding declaration count does not match shader reflection");
+
+      std::map<uint32_t, ComputeBindingLayoutDesc> declared;
+      std::vector<wgpu::BindGroupLayoutEntry> layoutEntries;
+      for (const ComputeBindingLayoutDesc& binding : desc.bindings) {
+        Require(declared.emplace(binding.bindingIndex, binding).second,
+                "Duplicate compute bind-group binding " + std::to_string(binding.bindingIndex));
+      }
+      for (const webgpu::ShaderBinding& resource : artifact.bindings) {
+        Require(resource.group == 0, "Compute shaders support bind group zero only");
+        const auto expected = declared.find(resource.binding);
+        Require(expected != declared.end() && ComputeBindingMatches(expected->second.type, resource.kind),
+                "Compute binding " + std::to_string(resource.binding) + " does not match its declaration");
+        if (expected->second.type == ComputeBindingType::Constants32) {
+          Require(expected->second.constantCount &&
+                  resource.minimumBufferSize == static_cast<uint64_t>(expected->second.constantCount) * sizeof(uint32_t),
+                  "Compute constant layout does not match shader reflection");
+        }
+
+        wgpu::BindGroupLayoutEntry entry{};
+        entry.binding = resource.binding;
+        entry.visibility = wgpu::ShaderStage::Compute;
+        switch (resource.kind) {
+        case webgpu::ResourceKind::UniformBuffer:
+          entry.buffer.type = wgpu::BufferBindingType::Uniform;
+          entry.buffer.minBindingSize = resource.minimumBufferSize;
+          break;
+        case webgpu::ResourceKind::ReadOnlyStorageBuffer:
+          entry.buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
+          entry.buffer.minBindingSize = resource.minimumBufferSize;
+          break;
+        case webgpu::ResourceKind::ReadWriteStorageBuffer:
+          entry.buffer.type = wgpu::BufferBindingType::Storage;
+          entry.buffer.minBindingSize = resource.minimumBufferSize;
+          break;
+        case webgpu::ResourceKind::SampledTexture:
+          Require(resource.dimension == webgpu::TextureDimension::D2 &&
+                  resource.sampledType == webgpu::ShaderComponentType::Float,
+                  "Compute sampled textures must be float 2D textures");
+          entry.texture.sampleType = wgpu::TextureSampleType::Float;
+          entry.texture.viewDimension = wgpu::TextureViewDimension::e2D;
+          break;
+        case webgpu::ResourceKind::Sampler:
+          Require(!resource.comparisonSampler, "Comparison compute samplers are not implemented");
+          entry.sampler.type = wgpu::SamplerBindingType::Filtering;
+          break;
+        case webgpu::ResourceKind::WriteOnlyStorageTexture:
+          Require(resource.dimension == webgpu::TextureDimension::D2,
+                  "Compute storage textures must be 2D");
+          Require(resource.storageRgba8Unorm || resource.storageRgba16Float,
+                  "Compute storage texture format must be rgba8unorm or rgba16float");
+          entry.storageTexture.access = wgpu::StorageTextureAccess::WriteOnly;
+          entry.storageTexture.format = resource.storageRgba16Float
+            ? wgpu::TextureFormat::RGBA16Float : wgpu::TextureFormat::RGBA8Unorm;
+          entry.storageTexture.viewDimension = wgpu::TextureViewDimension::e2D;
+          break;
+        }
+        resources.emplace(resource.binding, resource);
+        layoutEntries.push_back(entry);
+      }
+
+      wgpu::BindGroupLayoutDescriptor bindGroupDescriptor{};
+      bindGroupDescriptor.entryCount = layoutEntries.size();
+      bindGroupDescriptor.entries = layoutEntries.data();
+      bindGroupLayout = state.context.device.CreateBindGroupLayout(&bindGroupDescriptor);
+      wgpu::PipelineLayoutDescriptor layoutDescriptor{};
+      layoutDescriptor.bindGroupLayoutCount = 1;
+      layoutDescriptor.bindGroupLayouts = &bindGroupLayout;
+      pipelineLayout = state.context.device.CreatePipelineLayout(&layoutDescriptor);
+      wgpu::ShaderSourceWGSL source{};
+      source.code = artifact.wgsl.c_str();
+      wgpu::ShaderModuleDescriptor moduleDescriptor{};
+      moduleDescriptor.nextInChain = &source;
+      module = state.context.device.CreateShaderModule(&moduleDescriptor);
+      wgpu::ComputePipelineDescriptor pipelineDescriptor{};
+      pipelineDescriptor.layout = pipelineLayout;
+      pipelineDescriptor.compute.module = module;
+      pipelineDescriptor.compute.entryPoint = desc.entryPoint.c_str();
+      pipeline = state.context.device.CreateComputePipeline(&pipelineDescriptor);
+      state.context.CheckHealth();
+      Require(static_cast<bool>(pipeline), "Compute pipeline creation failed");
+      bindings = desc.bindings;
+      ShaderPermutationDump::RecordCompute(desc.debugName, desc.entryPoint,
+                                            desc.permutationName, desc.defines);
+      const char* flow = report.attempts.empty() ? "spirv" :
+        (report.attempts.back().sourceLanguage == webgpu::ShaderSourceLanguage::Wgsl ? "wgsl" : "spirv");
+      T8_LOG_INFO("[WebGPU][Compute] Pipeline '%s' created (flow=%s threads=%ux%ux%u bindings=%zu)",
+                  desc.debugName.c_str(), flow, artifact.workgroupSize[0], artifact.workgroupSize[1],
+                  artifact.workgroupSize[2], bindings.size());
+      return true;
+    } catch (const std::exception& error) {
+      T8_LOG_ERROR("[WebGPU][Compute] Pipeline '%s' failed: %s", desc.debugName.c_str(), error.what());
+      return false;
+    }
+  }
+};
+
+class WebGPUComputeBuffer final : public ComputeBuffer {
+public:
+  explicit WebGPUComputeBuffer(WebGPUDriverState& state) : state(state) {}
+  WebGPUDriverState& state;
+  wgpu::Buffer gpu;
+  uint64_t allocationSize = 0;
+
+  bool Create(const ComputeBufferDesc& desc, const void* initialData) {
+    if (!desc.byteWidth || !desc.structureStride ||
+        (desc.byteWidth % desc.structureStride) != 0 ||
+        (desc.byteWidth % sizeof(uint32_t)) != 0 ||
+        (desc.structureStride % sizeof(uint32_t)) != 0) return false;
+    descriptor = desc;
+    allocationSize = desc.byteWidth;
+    wgpu::BufferDescriptor bufferDescriptor{};
+    bufferDescriptor.size = allocationSize;
+    bufferDescriptor.usage = wgpu::BufferUsage::Storage |
+                             wgpu::BufferUsage::CopySrc |
+                             wgpu::BufferUsage::CopyDst;
+    gpu = state.context.device.CreateBuffer(&bufferDescriptor);
+    if (!gpu) return false;
+    if (initialData) state.context.queue.WriteBuffer(gpu, 0, initialData, desc.byteWidth);
+    state.context.CheckHealth();
+    return true;
   }
 };
 
@@ -545,8 +728,10 @@ public:
     texture->Upload(reinterpret_cast<const unsigned char*>(data), width, height, wgpu::TextureFormat::RGBA32Float, 16, mipCount, layers);
     return texture.release();
   }
-  BaseRT* CreateRT(int count, int color, int depth, int width, int height, bool mips) override {
+  BaseRT* CreateRT(int count, int color, int depth, int width, int height,
+                   bool mips, bool allowStorage) override {
     auto target = std::make_unique<WebGPURT>(state);
+    target->AllowUnorderedAccess = allowStorage;
     Require(target->LoadRT(count, color, depth, width, height, mips), "RT creation failed");
     return target.release();
   }
@@ -751,6 +936,168 @@ void WebGPUDriver::InitDriver() {
   m_state->device = std::make_unique<WebGPUDevice>(*m_state);
   m_state->deviceContext = std::make_unique<WebGPUDeviceContext>(*m_state);
   T8Device = m_state->device.get(); T8DeviceContext = m_state->deviceContext.get();
+}
+std::unique_ptr<ComputePipeline> WebGPUDriver::CreateComputePipeline(const ComputePipelineDesc& desc) {
+  auto pipeline = std::make_unique<WebGPUComputePipeline>(*m_state);
+  return pipeline->Create(desc) ? std::move(pipeline) : nullptr;
+}
+std::unique_ptr<ComputeBuffer> WebGPUDriver::CreateComputeBuffer(const ComputeBufferDesc& desc,
+                                                                  const void* initialData) {
+  auto buffer = std::make_unique<WebGPUComputeBuffer>(*m_state);
+  return buffer->Create(desc, initialData) ? std::move(buffer) : nullptr;
+}
+bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
+                                   const std::vector<ComputeBindingDesc>& runtimeBindings,
+                                   uint32_t groupX, uint32_t groupY, uint32_t groupZ) {
+  auto* pipeline = dynamic_cast<WebGPUComputePipeline*>(&pipelineBase);
+  if (!pipeline || &pipeline->state != m_state.get() || !pipeline->pipeline ||
+      !groupX || !groupY || !groupZ || groupX > 65535 || groupY > 65535 || groupZ > 65535 ||
+      runtimeBindings.size() != pipeline->bindings.size()) return false;
+  try {
+    m_state->EndPass();
+    std::vector<bool> consumed(runtimeBindings.size(), false);
+    std::vector<wgpu::BindGroupEntry> entries;
+    std::vector<wgpu::Buffer> transientConstants;
+    entries.reserve(pipeline->bindings.size());
+    for (const ComputeBindingLayoutDesc& layout : pipeline->bindings) {
+      const ComputeBindingDesc* runtime = nullptr;
+      size_t runtimeIndex = 0;
+      for (size_t index = 0; index < runtimeBindings.size(); ++index) {
+        if (runtimeBindings[index].type == layout.type &&
+            runtimeBindings[index].shaderRegister == layout.shaderRegister) {
+          if (runtime) return false;
+          runtime = &runtimeBindings[index];
+          runtimeIndex = index;
+        }
+      }
+      if (!runtime || consumed[runtimeIndex]) return false;
+      consumed[runtimeIndex] = true;
+      const auto reflected = pipeline->resources.find(layout.bindingIndex);
+      if (reflected == pipeline->resources.end()) return false;
+
+      wgpu::BindGroupEntry entry{};
+      entry.binding = layout.bindingIndex;
+      switch (layout.type) {
+      case ComputeBindingType::Constants32: {
+        if (!runtime->constants || runtime->constantCount != layout.constantCount) return false;
+        const uint64_t byteCount = static_cast<uint64_t>(runtime->constantCount) * sizeof(uint32_t);
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = (byteCount + 15u) & ~uint64_t(15u);
+        descriptor.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
+        auto buffer = m_state->context.device.CreateBuffer(&descriptor);
+        if (!buffer) return false;
+        std::vector<uint32_t> padded(static_cast<size_t>(descriptor.size / sizeof(uint32_t)), 0u);
+        std::copy_n(runtime->constants, runtime->constantCount, padded.data());
+        m_state->context.queue.WriteBuffer(buffer, 0, padded.data(), descriptor.size);
+        entry.buffer = buffer;
+        entry.size = descriptor.size;
+        transientConstants.push_back(std::move(buffer));
+        break;
+      }
+      case ComputeBindingType::ReadOnlyBuffer:
+      case ComputeBindingType::ReadWriteBuffer: {
+        auto* buffer = dynamic_cast<WebGPUComputeBuffer*>(runtime->buffer);
+        if (!buffer || &buffer->state != m_state.get() || !buffer->gpu ||
+            (layout.type == ComputeBindingType::ReadOnlyBuffer &&
+             buffer->descriptor.access != ComputeBufferAccess::ReadOnly) ||
+            (layout.type == ComputeBindingType::ReadWriteBuffer &&
+             buffer->descriptor.access != ComputeBufferAccess::ReadWrite)) return false;
+        entry.buffer = buffer->gpu;
+        entry.size = buffer->allocationSize;
+        break;
+      }
+      case ComputeBindingType::ReadOnlyTexture: {
+        auto* texture = dynamic_cast<WebGPUTexture*>(runtime->texture);
+        if (!texture || &texture->state != m_state.get() || !texture->gpu) return false;
+        entry.textureView = texture->SampleView();
+        break;
+      }
+      case ComputeBindingType::ReadWriteTexture: {
+        auto* texture = dynamic_cast<WebGPUTexture*>(runtime->texture);
+        if (!texture || &texture->state != m_state.get() || !texture->gpu ||
+            (reflected->second.storageRgba8Unorm && texture->format != wgpu::TextureFormat::RGBA8Unorm) ||
+            (reflected->second.storageRgba16Float && texture->format != wgpu::TextureFormat::RGBA16Float)) return false;
+        entry.textureView = texture->view;
+        break;
+      }
+      case ComputeBindingType::Sampler: {
+        auto* texture = dynamic_cast<WebGPUTexture*>(runtime->texture);
+        if (!texture || &texture->state != m_state.get() || !texture->sampler) return false;
+        entry.sampler = texture->sampler;
+        break;
+      }
+      }
+      entries.push_back(entry);
+    }
+    if (std::find(consumed.begin(), consumed.end(), false) != consumed.end()) return false;
+
+    wgpu::BindGroupDescriptor groupDescriptor{};
+    groupDescriptor.layout = pipeline->bindGroupLayout;
+    groupDescriptor.entryCount = entries.size();
+    groupDescriptor.entries = entries.data();
+    auto bindGroup = m_state->context.device.CreateBindGroup(&groupDescriptor);
+    if (!bindGroup) return false;
+
+    if (m_state->active) {
+      auto pass = m_state->context.commands.BeginComputePass();
+      pass.SetPipeline(pipeline->pipeline);
+      pass.SetBindGroup(0, bindGroup);
+      pass.DispatchWorkgroups(groupX, groupY, groupZ);
+      pass.End();
+    } else {
+      auto encoder = m_state->context.device.CreateCommandEncoder();
+      auto pass = encoder.BeginComputePass();
+      pass.SetPipeline(pipeline->pipeline);
+      pass.SetBindGroup(0, bindGroup);
+      pass.DispatchWorkgroups(groupX, groupY, groupZ);
+      pass.End();
+      auto command = encoder.Finish();
+      m_state->context.queue.Submit(1, &command);
+    }
+    m_state->context.CheckHealth();
+    return true;
+  } catch (const std::exception& error) {
+    T8_LOG_ERROR("[WebGPU][Compute] Dispatch failed: %s", error.what());
+    return false;
+  }
+}
+bool WebGPUDriver::ReadComputeBuffer(ComputeBuffer& bufferBase, void* destination, size_t byteCount) {
+  auto* buffer = dynamic_cast<WebGPUComputeBuffer*>(&bufferBase);
+  if (!buffer || &buffer->state != m_state.get() || !buffer->gpu || !destination || !byteCount ||
+      byteCount > buffer->descriptor.byteWidth || (byteCount % sizeof(uint32_t)) != 0) return false;
+  try {
+    m_state->EndPass();
+    wgpu::BufferDescriptor descriptor{};
+    descriptor.size = byteCount;
+    descriptor.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
+    auto staging = m_state->context.device.CreateBuffer(&descriptor);
+    if (!staging) return false;
+    if (m_state->active) {
+      m_state->context.commands.CopyBufferToBuffer(buffer->gpu, 0, staging, 0, byteCount);
+      auto command = m_state->context.commands.Finish();
+      m_state->context.queue.Submit(1, &command);
+      m_state->context.commands = m_state->context.device.CreateCommandEncoder();
+    } else {
+      auto encoder = m_state->context.device.CreateCommandEncoder();
+      encoder.CopyBufferToBuffer(buffer->gpu, 0, staging, 0, byteCount);
+      auto command = encoder.Finish();
+      m_state->context.queue.Submit(1, &command);
+    }
+    auto mapped = std::make_shared<bool>(false);
+    const auto future = staging.MapAsync(wgpu::MapMode::Read, 0, byteCount, wgpu::CallbackMode::WaitAnyOnly,
+      [mapped](wgpu::MapAsyncStatus status, wgpu::StringView) {
+        *mapped = status == wgpu::MapAsyncStatus::Success;
+      });
+    if (m_state->context.instance.WaitAny(future, 30'000'000'000ULL) != wgpu::WaitStatus::Success || !*mapped)
+      return false;
+    std::memcpy(destination, staging.GetConstMappedRange(0, byteCount), byteCount);
+    staging.Unmap();
+    m_state->context.CheckHealth();
+    return true;
+  } catch (const std::exception& error) {
+    T8_LOG_ERROR("[WebGPU][Compute] Readback failed: %s", error.what());
+    return false;
+  }
 }
 void WebGPUDriver::CreateSurfaces() { m_state->context.Resize(width, height); }
 void WebGPUDriver::DestroySurfaces() { m_state->context.Resize(0, 0); }

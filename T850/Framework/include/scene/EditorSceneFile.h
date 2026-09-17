@@ -600,10 +600,23 @@ struct SceneVoxelBoxPartDesc {
   Vec3f min;
   Vec3f max;
   std::string block;
+  // Optional image-space rectangles in engine face order:
+  // +X, -X, +Y, -Y, +Z, -Z.
+  struct SkinFace {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+  };
+  std::vector<SkinFace> skin_faces;
 };
 
 struct SceneVoxelMobDesc {
   Vec3f spawn = {24.5f, 40.0f, 24.5f};
+  std::string skin_texture;
+  int skin_width = 0;
+  int skin_height = 0;
+  int skin_pixelation_factor = 0;
   int count = 1;
   float move_speed = 1.8f;
   float repath_seconds = 1.0f;
@@ -645,6 +658,36 @@ struct SceneVoxelWeaponDesc {
   float swing_speed = 6.0f;
   float swing_angle = 1.2f;
   std::vector<SceneVoxelBoxPartDesc> parts;
+};
+
+struct SceneVoxelControlRangeDesc {
+  float min = 0.0f;
+  float max = 0.0f;
+  float step = 0.0f;
+};
+
+struct SceneVoxelTorchDesc {
+  bool enabled = false;
+  float distance_from_spawn = 0.0f;
+  float base_width = 0.0f;
+  float base_height = 0.0f;
+  std::string base_block;
+  float tip_height = 0.0f;
+  Vec3f tip_color = {0.0f, 0.0f, 0.0f};
+  float tip_roughness = 0.0f;
+  float particle_spawn_offset_y = 0.0f;
+  int particle_count = 0;
+  float particle_lifetime = 0.0f;
+  float particle_rise_height = 0.0f;
+  float particle_spread = 0.0f;
+  float particle_size = 0.0f;
+  float particle_time_wrap_seconds = 0.0f;
+  SceneVoxelControlRangeDesc particle_count_control;
+  SceneVoxelControlRangeDesc particle_lifetime_control;
+  SceneVoxelControlRangeDesc particle_rise_height_control;
+  SceneVoxelControlRangeDesc particle_spread_control;
+  SceneVoxelControlRangeDesc particle_size_control;
+  SceneVoxelControlRangeDesc particle_spawn_offset_control;
 };
 
 struct SceneVoxelInteractionDesc {
@@ -704,6 +747,7 @@ struct SceneVoxelWorldDesc {
   SceneVoxelDofDesc dof;
   SceneVoxelMobDesc mob;
   SceneVoxelWeaponDesc weapon;
+  SceneVoxelTorchDesc torch;
   SceneVoxelInteractionDesc interaction;
   std::vector<SceneVoxelBlockDesc> blocks;
   std::vector<std::string> hotbar;

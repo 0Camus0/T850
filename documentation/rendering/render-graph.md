@@ -134,6 +134,7 @@ Top-level shape:
 | `size` | `[int,int]` | Explicit dimensions; `[0,0]` means screen/override size. |
 | `linear_filter` | bool | Sets RT texture filtering to linear or nearest. |
 | `generate_mips` | bool | Requests mip generation where supported. |
+| `storage` | bool | Requests storage/UAV creation usage on D3D11, D3D12, and Vulkan. OpenGL retains graphics behavior. |
 | `size_ref` | string | Named dynamic size such as `$shadow_resolution` or `$god_rays_resolution`. |
 
 Supported color format strings:
@@ -167,6 +168,12 @@ On Android, screen-sized render targets can be scaled by the hard-coded Android 
 |---|---|---|
 | `name` | string | Human-readable pass name and graph node id. Some runtime skips are name-based. |
 | `target` | string | Render target name to bind. Empty string means draw to backbuffer/offscreen/final output. |
+| `execution` | string | `graphics` by default, or `compute_if_supported` to use a compute kernel with the authored draws as fallback. |
+| `compute_shader` | string | Resource-relative HLSL path for a compute pass. |
+| `compute_entry` | string | Compute entry point; defaults to `CS`. |
+| `compute_permutation` | string | Stable compute permutation name; defaults to `base`. |
+| `compute_threads` | `[int,int,int]` | Reflected workgroup dimensions used to calculate dispatch counts. |
+| `prefer_compute` | bool | Selects this optional compute implementation in `--postProcessMode auto`; default false. |
 | `clear` | bool | Whether to clear after target binding. |
 | `clear_color` | `[float,float,float,float]` | Clear color used when `clear` is true. |
 | `clear_depth` | float | Descriptor field exists, but current clear path uses driver clear defaults rather than this value directly. |
@@ -379,6 +386,37 @@ flowchart TD
 ```
 
 DayScene adds more post-processing, such as god rays and depth-of-field/CoC passes. T8ditor and SceneTemplate use smaller graph variants oriented around editor/runtime viewport needs.
+
+The DayScene `God Rays` calculation pass reads `GBuffer:DEPTH` and `DepthPass:DEPTH`, writes storage-enabled `GodRaysCalc:COLOR0`, and dispatches `ceil(width/8) x ceil(height/8) x 1`. Its existing `LIGHT_RAY_MARCHING` fullscreen draw remains the explicit raster mode and OpenGL fallback. DayScene also declares optional compute implementations for the God Rays horizontal/vertical blur, Bright, and HDR Composition passes; their existing fullscreen pixel-shader draws remain in the same descriptors. Shadow blur and 512x512 bloom blur remain raster after matched tests exposed unacceptable R8 quantization and cross-frame parity differences respectively. `LIGHT_ADD`, luminance adaptation, CoC, DoF, deferred lighting, copies, and final presentation remain graphics passes.
+
+Every maintained scene graph now exposes the shared Bright and HDR Composition compute alternatives: DayScene, MinecraftScene, Quake3Mock, RagdollEditor, SandboxScene, SceneTemplate, and T8ditor. Graphs that previously wrote Bright directly into `BloomAccum` now use a separate storage-enabled `BrightPass`, preserving the existing raster bloom H/V ping-pong before composition. God Rays compute remains DayScene-specific because the other graphs do not author that effect.
+
+Minecraft additionally writes `TorchParticles` with `CS_TorchParticles`. The compute kernel
+needs only the main camera, authored emitter state, and frame time, and writes every output
+pixel so no clear or atomic blend is required on compute-capable backends. `Light Add` samples
+that texture together with `Deferred`, placing the fire before luminance adaptation and bloom.
+The fallback pass clears `TorchParticles` to transparent, preserving base-only rendering on
+OpenGL.
+
+The particle workload is logically independent of shadow-map, GBuffer, and deferred-lighting
+generation, so a future dedicated compute queue could dispatch it early and overlap those
+graphics passes. The current D3D12 and Vulkan implementations record compute and graphics on
+one graphics command list/queue, while D3D11 uses one immediate context; JSON passes also
+execute serially. Therefore moving the pass earlier changes order but does not create GPU
+parallelism. A real overlap implementation requires a compute queue, queue-owned descriptors
+and command buffers, and a fence/semaphore before `Light Add` samples the storage result.
+That synchronization can cost more than this small effect, so the current implementation
+uses the existing same-queue UAV/write-to-sampled-read barrier.
+
+`--postProcessMode auto` chooses compute only for passes marked `prefer_compute`. DayScene marks the validated God Rays calculation as preferred; the unbenchmarked God Rays blur, Bright, and HDR-composition alternatives leave it false and therefore use PS. `compute` forces every declared compute alternative for A/B testing, while `raster` forces all retained pixel-shader paths. Selection is per render-graph pass rather than a Cartesian shader-key permutation. OpenGL rejects compute capability and always follows the authored graphics draw.
+
+A successful dispatch writes the pass target without executing its draw list and still applies
+the authored `post_state`. If pipeline creation is unavailable or a dispatch fails, execution
+falls through to the same pass's graphics draw. Compute-only passes can author an empty draw
+list plus a clear color as their unsupported-backend behavior; Minecraft uses this to produce
+a transparent torch-particle target on OpenGL.
+
+Use the unified `--postProcessMode` selector for God Rays and other post-processing alternatives. In `auto`, God Rays compute is preferred on D3D11, D3D12, and Vulkan. OpenGL reports no compute capability and always selects the raster fallback.
 
 ## Fullscreen and final quads
 

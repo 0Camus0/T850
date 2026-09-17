@@ -470,18 +470,40 @@ namespace t850 {
     std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, queueFamilies.data());
 
-    m_graphicsQueueFamily = 0;
+    uint32_t firstGraphicsQueueFamily = UINT32_MAX;
+    m_graphicsQueueFamily = UINT32_MAX;
     for (uint32_t i = 0; i < queueFamilyCount; i++) {
       if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-        m_graphicsQueueFamily = i;
-        break;
+        if (firstGraphicsQueueFamily == UINT32_MAX)
+          firstGraphicsQueueFamily = i;
+        if (queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
+          m_graphicsQueueFamily = i;
+          break;
+        }
       }
     }
+    if (m_graphicsQueueFamily == UINT32_MAX)
+      m_graphicsQueueFamily = firstGraphicsQueueFamily;
+    if (m_graphicsQueueFamily == UINT32_MAX) {
+      T8_LOG_ERROR("[Vulkan] No graphics queue family is available");
+      return;
+    }
     m_presentQueueFamily = m_graphicsQueueFamily;
+    m_supportsComputeShaders =
+      (queueFamilies[m_graphicsQueueFamily].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
 
     // Query features before creating device (best practice)
     VkPhysicalDeviceFeatures supportedFeatures = {};
     vkGetPhysicalDeviceFeatures(m_physicalDevice, &supportedFeatures);
+    const auto supportsStorageImage = [&](VkFormat format) {
+      VkFormatProperties properties = {};
+      vkGetPhysicalDeviceFormatProperties(m_physicalDevice, format, &properties);
+      return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
+    };
+    m_supportsComputeTextures = m_supportsComputeShaders &&
+      supportedFeatures.shaderStorageImageWriteWithoutFormat &&
+      supportsStorageImage(VK_FORMAT_R8G8B8A8_UNORM) &&
+      supportsStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT);
 
     float queuePriority = 1.0f;
     VkDeviceQueueCreateInfo queueCI = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -496,6 +518,8 @@ namespace t850 {
 
     VkPhysicalDeviceFeatures deviceFeatures = {};
     deviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy ? VK_TRUE : VK_FALSE;
+    deviceFeatures.shaderStorageImageWriteWithoutFormat =
+      supportedFeatures.shaderStorageImageWriteWithoutFormat ? VK_TRUE : VK_FALSE;
 
     VkDeviceCreateInfo deviceCI = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     deviceCI.queueCreateInfoCount = 1;
@@ -513,7 +537,11 @@ namespace t850 {
 
     vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &m_graphicsQueue);
     m_presentQueue = m_graphicsQueue;
-    T8_LOG_INFO("[Vulkan] Logical device created, graphics queue family=%u", m_graphicsQueueFamily);
+    T8_LOG_INFO(
+      "[Vulkan] Logical device created, graphics queue family=%u compute=%s computeTextures=%s",
+      m_graphicsQueueFamily,
+      m_supportsComputeShaders ? "yes" : "no",
+      m_supportsComputeTextures ? "yes" : "no");
   }
 
   void VulkanDriver::CreateAllocator() {
@@ -964,12 +992,17 @@ namespace t850 {
     constexpr uint32_t kCombinedImageDescriptorsPerFrame = 65536;
     VkDescriptorPoolSize poolSizes[] = {
       { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_SAMPLER, kUniformDescriptorsPerFrame },
       { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kCombinedImageDescriptorsPerFrame },
     };
 
     VkDescriptorPoolCreateInfo dpCI = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpCI.maxSets = kDescriptorSetsPerFrame;
-    dpCI.poolSizeCount = 2;
+    dpCI.poolSizeCount = static_cast<uint32_t>(std::size(poolSizes));
     dpCI.pPoolSizes = poolSizes;
     dpCI.flags = 0;
 

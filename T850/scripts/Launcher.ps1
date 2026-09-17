@@ -6,7 +6,8 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="T850 Engine Launcher" SizeToContent="Height" Width="920" MinWidth="760"
+    Title="T850 Engine Launcher" SizeToContent="Manual" Width="920" Height="760"
+        MinWidth="640" MinHeight="480"
         WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
         Background="#1B1B2F" Foreground="#E0E0E0">
     <Window.Resources>
@@ -117,6 +118,9 @@ $xaml = @"
         </Style>
     </Window.Resources>
 
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled"
+                  CanContentScroll="False">
     <Grid Margin="24,16,24,20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -485,12 +489,25 @@ $xaml = @"
             </Button>
         </Grid>
     </Grid>
+    </ScrollViewer>
 </Window>
 "@
 
 # Parse XAML
 $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml))
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
+
+# Keep the launcher inside the usable desktop at any DPI. The root
+# ScrollViewer makes every control reachable when the window is shortened.
+$workArea = [System.Windows.SystemParameters]::WorkArea
+$availableWidth = [Math]::Max(480.0, $workArea.Width - 24.0)
+$availableHeight = [Math]::Max(420.0, $workArea.Height - 24.0)
+$window.MinWidth = [Math]::Min($window.MinWidth, $availableWidth)
+$window.MinHeight = [Math]::Min($window.MinHeight, $availableHeight)
+$window.MaxWidth = $availableWidth
+$window.MaxHeight = $availableHeight
+$window.Width = [Math]::Min(920.0, $availableWidth)
+$window.Height = [Math]::Min(760.0, $availableHeight)
 
 # Get controls
 $cmbTarget      = $window.FindName("cmbTarget")
@@ -551,15 +568,44 @@ $chkD3D12Debug  = $window.FindName("chkD3D12Debug")
 $chkTelemetry   = $window.FindName("chkTelemetry")
 $txtTelemetryFrequency = $window.FindName("txtTelemetryFrequency")
 
-# Resolve root directory: if running from ps2exe, use exe location; otherwise script location
+# Resolve the source root from script, compiled-launcher, or working-directory locations.
+# Walking upward also supports a developer launcher copied beside bin/<arch>/<config> outputs.
+$rootDir = $null
+$rootCandidates = New-Object System.Collections.Generic.List[string]
+if ($PSScriptRoot) { $rootCandidates.Add($PSScriptRoot) }
 if ($MyInvocation.MyCommand.Path) {
-    $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-} else {
-    $rootDir = (Get-Location).Path
+    $rootCandidates.Add((Split-Path -Parent $MyInvocation.MyCommand.Path))
 }
-# If launched from scripts/, go up one level
-if ((Split-Path -Leaf $rootDir) -eq "scripts") {
-    $rootDir = Split-Path -Parent $rootDir
+try {
+    $processPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $processName = [System.IO.Path]::GetFileName($processPath)
+    if ($processPath -and $processName -notin @("powershell.exe", "pwsh.exe")) {
+        $rootCandidates.Add((Split-Path -Parent $processPath))
+    }
+} catch {}
+$rootCandidates.Add((Get-Location).Path)
+
+foreach ($candidate in $rootCandidates) {
+    if (-not $candidate) { continue }
+    $probe = $candidate
+    for ($depth = 0; $depth -le 4 -and $probe; ++$depth) {
+        if ((Test-Path (Join-Path $probe "T850.sln")) -and
+            (Test-Path (Join-Path $probe "scripts\build.ps1"))) {
+            $rootDir = $probe
+            break
+        }
+        $parent = Split-Path -Parent $probe
+        if (-not $parent -or $parent -eq $probe) { break }
+        $probe = $parent
+    }
+    if ($rootDir) { break }
+}
+
+if (-not $rootDir) {
+    [System.Windows.MessageBox]::Show(
+        "Could not locate the T850 source root (T850.sln and scripts\build.ps1).",
+        "T850 Launcher", "OK", "Error") | Out-Null
+    exit 1
 }
 
 $configPath = Join-Path $rootDir "config.json"
@@ -1507,6 +1553,19 @@ function Find-MSBuild {
             if (Test-MSBuildSupportsPlatform -MSBuildPath $candidate -TargetPlatform $TargetPlatform) { return $candidate }
         }
     }
+    return $null
+}
+
+function Find-PowerShellHost {
+    $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    if (Test-Path $windowsPowerShell) { return $windowsPowerShell }
+
+    $pwsh = Get-Command "pwsh.exe" -ErrorAction SilentlyContinue
+    if ($pwsh) { return $pwsh.Source }
+
+    $powershell = Get-Command "powershell.exe" -ErrorAction SilentlyContinue
+    if ($powershell) { return $powershell.Source }
+
     return $null
 }
 
@@ -2804,8 +2863,20 @@ function Invoke-Build {
         return
     }
 
-    # Run the same build entry point used by GitHub Actions.
-    $powerShellExe = (Get-Process -Id $PID).Path
+    # Run the same build entry point used by GitHub Actions. Do not reuse the
+    # current process path because a ps2exe launcher would recursively start
+    # T850Launcher.exe instead of a PowerShell host.
+    $powerShellExe = Find-PowerShellHost
+    if (-not $powerShellExe) {
+        $txtBuildOutput.Text = "ERROR: PowerShell host not found."
+        $txtStatus.Text = "Build failed - PowerShell not found"
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+        $btnBuild.IsEnabled = $true
+        $btnRebuild.IsEnabled = $true
+        $btnBuild.Content = "BUILD"
+        Update-Preview
+        return
+    }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $powerShellExe
     $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Config {1} -Platform {2} -Action {3}' -f $buildScript, $config, $platform, $buildTarget
@@ -2862,10 +2933,19 @@ function Invoke-Build {
 
         $exitCode = $proc.ExitCode
         if ($exitCode -eq 0) {
-            $txtStatus.Text = "Build succeeded - $config|$platform"
-            $txtStatus.Foreground = $window.FindResource("GreenBrush")
-            # Refresh model list — build creates symlinks to Models/ etc.
-            Populate-ModelList
+            $runtimeRoot = Get-WindowsRuntimeRoot
+            $missingOutputs = @("DayScene.exe", "T8ditor.exe") |
+                Where-Object { -not (Test-Path (Join-Path $runtimeRoot $_)) }
+            if ($missingOutputs.Count -gt 0) {
+                $txtStatus.Text = "Build completed, but runtime deployment is incomplete: $($missingOutputs -join ', ')"
+                $txtStatus.Foreground = $window.FindResource("RedBrush")
+                Append-BuildOutput ("ERROR: Missing expected output(s) in ${runtimeRoot}: " + ($missingOutputs -join ", "))
+            } else {
+                $txtStatus.Text = "Build and local deployment succeeded - $config|$platform"
+                $txtStatus.Foreground = $window.FindResource("GreenBrush")
+                # Refresh model list — build creates symlinks to Models/ etc.
+                Populate-ModelList
+            }
         } else {
             if ($errorLines.Count -gt 0) {
                 $txtStatus.Text = "Build FAILED ($($errorLines.Count) error(s))"

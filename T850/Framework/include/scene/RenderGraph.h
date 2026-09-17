@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
+#include <memory>
 
 class Camera;
 
@@ -16,6 +17,7 @@ namespace t850 {
   class BaseDriver;
   class Texture;
   class PrimitiveInst;
+  class ComputePipeline;
 
   namespace EnvironmentTextureSlot {
     constexpr int DiffuseIBL = 10;
@@ -84,6 +86,11 @@ namespace t850 {
   public:
     using CustomDrawCallback = std::function<void(const std::string&)>;
     RenderGraph() = default;
+    ~RenderGraph();
+    RenderGraph(RenderGraph&&) noexcept;
+    RenderGraph& operator=(RenderGraph&&) noexcept;
+    RenderGraph(const RenderGraph&) = delete;
+    RenderGraph& operator=(const RenderGraph&) = delete;
 
     // Load the graph descriptor from JSON and build the DAG.
     bool Load(const std::string& path);
@@ -167,9 +174,13 @@ namespace t850 {
     std::vector<GraphNode> m_nodes;
     std::vector<GraphEdge> m_edges;
     std::unordered_map<std::string, int> m_rtHandles;  // RT name -> driver RT handle
+    std::unordered_map<int, std::unique_ptr<ComputePipeline>> m_computePipelines;
+    std::unordered_set<int> m_loggedComputeDispatches;
 
     // Build the DAG (nodes + edges) from the descriptor.
     void BuildGraph();
+    void CreateComputePipelines(BaseDriver* driver);
+    bool ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props);
 
     // Resolve a "Source:ATTACHMENT" string into (rt_handle, attachment_enum).
     struct ResolvedTexture {

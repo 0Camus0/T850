@@ -13,6 +13,7 @@
 
 #include <video/d3d11/D3D11RT.h>
 #include <debug/RenderTrace.h>
+#include <utils/Log.h>
 #include <iostream>
 
 namespace t850 {
@@ -99,6 +100,8 @@ namespace t850 {
       desc.Format = thisFmt;
       desc.SampleDesc.Count = 1;
       desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+      if (AllowUnorderedAccess)
+        desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
       desc.Usage = D3D11_USAGE_DEFAULT;
       desc.MipLevels = GenMips ? 0 : 1;
       desc.MiscFlags = GenMips ? D3D11_RESOURCE_MISC_GENERATE_MIPS : 0;
@@ -135,6 +138,17 @@ namespace t850 {
         delete pTextureColor;
         std::cout << "Error creating Shader Resource View index " << i << std::endl;
         exit(444);
+      }
+      if (AllowUnorderedAccess) {
+        D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+        uavDesc.Format = thisFmt;
+        uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+        hr = device->CreateUnorderedAccessView(Tex.Get(), &uavDesc, &pTextureColor->pUAVTex);
+        if (FAILED(hr)) {
+          delete pTextureColor;
+          T8_LOG_ERROR("[D3D11] Failed to create storage UAV for RT color %d hr=0x%08X", i, hr);
+          return false;
+        }
       }
       pTextureColor->x = w;
       pTextureColor->y = h;

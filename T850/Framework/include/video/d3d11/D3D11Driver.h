@@ -21,6 +21,7 @@
 #include <video/d3d11/D3D11VertexBuffer.h>
 #include <video/d3d11/D3D11IndexBuffer.h>
 #include <video/d3d11/D3D11ConstantBuffer.h>
+#include <video/d3d11/D3D11Compute.h>
 
 #include <d3d11.h>
 #include <dxgi.h>
@@ -37,6 +38,8 @@ namespace t850 {
     D3DXDriver() { m_currentAPI = GraphicsApi::D3D11; }
     const char* ApiTag() const override { return "d3d11"; }
     bool SupportsRenderTargetMipGeneration() const override { return true; }
+    bool SupportsComputeShaders() const override { return m_featureLevel >= D3D_FEATURE_LEVEL_11_0; }
+    bool SupportsComputeTextures() const override { return m_supportsComputeTextures; }
     void	InitDriver();
     void	CreateSurfaces();
     void	DestroySurfaces();
@@ -67,10 +70,19 @@ namespace t850 {
     void  ClearBackbufferWithColor(float r, float g, float b, float a) override;
     void	SwapBuffers();
     void  CompleteFrame(FrameCompletionMode mode = FrameCompletionMode::Present) override;
+    std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
+    std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                              const void* initialData = nullptr) override;
+    bool DispatchCompute(ComputePipeline& pipeline,
+               const std::vector<ComputeBindingDesc>& bindings,
+               uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
+    bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
 
     HWND	hwnd;
 
     D3D11_VIEWPORT viewport;
+    D3D_FEATURE_LEVEL m_featureLevel = D3D_FEATURE_LEVEL_9_1;
+    bool m_supportsComputeTextures = false;
     //D3D11_VIEWPORT viewport_RT;
 
     /*STATES*/

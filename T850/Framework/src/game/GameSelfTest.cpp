@@ -11,6 +11,7 @@
 #include <game/StateMachine.h>
 #include <game/GameValidation.h>
 #include <physics/JoltPhysicsSystem.h>
+#include <physics/CharacterController.h>
 #include <physics/PhysicsAuthoring.h>
 #include <scene/RenderMesh.h>
 #include <scene/EditorSceneFile.h>
@@ -117,6 +118,29 @@ public:
   void Transform(float*) override {}
   void Draw(float*, float*) override {}
   void Destroy() override {}
+};
+
+class GroundPlaneCollisionWorld final : public CharacterCollisionWorld {
+public:
+  bool SweepCapsule(const CharacterCollisionSweep& sweep,
+                    CharacterCollisionHit& outHit) const override {
+    outHit = {};
+    if (sweep.displacement.y >= 0.0f)
+      return false;
+
+    const float startFeet = sweep.startCenter.y - sweep.halfHeight - sweep.radius;
+    const float endFeet = startFeet + sweep.displacement.y;
+    if (endFeet > 0.0f)
+      return false;
+
+    const float fraction = (std::max)(
+      0.0f, (std::min)(1.0f, startFeet / -sweep.displacement.y));
+    outHit.hit = true;
+    outHit.fraction = fraction;
+    outHit.position = sweep.startCenter + sweep.displacement * fraction;
+    outHit.normal = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+    return true;
+  }
 };
 
 std::unique_ptr<Component> CreateLifecycleTestComponent(
@@ -600,6 +624,43 @@ void TestControllerIntentsDiffer() {
   Require(aiIntent.moveDir.x > 0.9f, "AI controller did not steer toward navigation goal");
   Require(aiIntent.hasNavGoal && aiIntent.navGoal.has_value(), "AI intent did not preserve navigation goal");
   Require(playerIntent.moveDir != aiIntent.moveDir, "player and AI intents were not distinct");
+}
+
+void TestFpsJumpRemainsAirborne() {
+  KinematicCharacterSettings settings;
+  settings.gravity = 24.0f;
+  settings.jumpSpeed = 8.0f;
+  settings.capsuleRadius = 0.3f;
+  settings.capsuleHalfHeight = 0.9f;
+  settings.groundProbeDistance = 0.25f;
+
+  GroundPlaneCollisionWorld world;
+  CharacterControllerContext context;
+  context.collisionWorld = &world;
+  KinematicCharacterController controller(settings);
+  const float groundedCenterY = settings.capsuleHalfHeight + settings.capsuleRadius;
+  controller.SetPosition(XVECTOR3(0.0f, groundedCenterY, 0.0f, 1.0f));
+
+  KinematicCharacterInput input;
+  input.jump = true;
+  controller.UpdateFps(1.0f / 60.0f, input, context);
+  Require(!controller.IsGrounded(),
+    "FPS jump reacquired the ground while moving upward");
+  Require(controller.GetVelocity().y > 0.0f &&
+    controller.GetPosition().y > groundedCenterY,
+    "FPS jump did not produce upward motion");
+
+  const float firstJumpY = controller.GetPosition().y;
+  controller.UpdateFps(1.0f / 60.0f, input, context);
+  Require(!controller.IsGrounded() && controller.GetPosition().y > firstJumpY,
+    "held FPS jump was snapped back to the ground");
+
+  input.jump = false;
+  for (int frame = 0; frame < 180 && !controller.IsGrounded(); ++frame)
+    controller.UpdateFps(1.0f / 60.0f, input, context);
+  Require(controller.IsGrounded(), "FPS controller did not land after jumping");
+  Require(std::fabs(controller.GetPosition().y - groundedCenterY) < 0.001f,
+          "FPS controller landed above or below the ground plane");
 }
 
 void ConfigureLifecycleSystem(
@@ -1915,6 +1976,23 @@ void TestShaderPrecompilerContract() {
   try { PrecompileShaders(driver, request); } catch (const std::runtime_error&) { rejected = true; }
   Require(rejected, "precompiler accepted a missing manifest");
 
+  const auto invalidComputeManifest = files.Add("_invalid_compute_permutation.json");
+  {
+    std::ofstream output(invalidComputeManifest);
+    output << R"({"version":2,"permutations":{},"compute_permutations":{"CS_Arithmetic.hlsl:CS:typo":{"key":"CS_Arithmetic.hlsl:CS:typo","kind":"compute","computeShader":"CS_Arithmetic.hlsl","entryPoint":"CS","permutation":"typo","defines":[]}}})";
+  }
+  request.manifestPath = invalidComputeManifest.string();
+  request.cancelRequested = {};
+  std::string invalidComputeError;
+  request.onProgress = [&](const ShaderPrecompileProgress& progress) {
+    invalidComputeError = progress.error;
+  };
+  result = PrecompileShaders(driver, request);
+  Require(result.failed == 1 && result.succeeded == 0 &&
+          invalidComputeError.find("Unsupported compute permutation") != std::string::npos &&
+          driver.computePipelines.size() == 1,
+          "precompiler accepted an unregistered compute permutation");
+
     const auto recorded = files.Add("_recorded.json").string();
     ShaderPermutationDump::Begin(recorded);
     ShaderKey key;
@@ -1932,6 +2010,17 @@ void TestShaderPrecompilerContract() {
       merged.find("0x0000000000000001") != std::string::npos &&
       merged.find("0x0000000000000002") != std::string::npos,
       "recording discarded earlier permutations");
+    ShaderPermutationDump::Begin(recorded);
+    ShaderPermutationDump::RecordCompute("Shaders/CS_Blur.hlsl", "CS", "horizontal", {"B", "A", "A"});
+    ShaderPermutationDump::RecordCompute("CS_Blur.hlsl", "CS", "horizontal", {"A", "B"});
+    bool rejectedDefineConflict = false;
+    try {
+      ShaderPermutationDump::RecordCompute("CS_Blur.hlsl", "CS", "horizontal", {"C"});
+    } catch (const std::runtime_error&) {
+      rejectedDefineConflict = true;
+    }
+    Require(rejectedDefineConflict && ShaderPermutationDump::Flush(),
+      "recorder accepted conflicting defines for one compute permutation");
     Require(ResourceLocator::Instance().WriteText(recorded, "{broken"), "cannot prepare malformed manifest");
     ShaderPermutationDump::Begin(recorded);
     const bool rejectedMerge = !ShaderPermutationDump::Flush();
@@ -2085,6 +2174,7 @@ constexpr TestCase kTests[] = {
     {"T-TICK-01", TestFixedTickCap},
     {"T-TICK-02", TestFixedTickPause},
     {"T-CTRL-01", TestControllerIntentsDiffer},
+    {"T-CTRL-JUMP-01", TestFpsJumpRemainsAirborne},
     {"T-COMP-01", TestComponentLifecycleOrder},
     {"T-COMP-02", TestDeferredComponentRemoval},
     {"T-EVENT-01", TestEventFifo},

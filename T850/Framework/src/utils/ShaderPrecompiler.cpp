@@ -113,6 +113,8 @@ ShaderPrecompileResult PrecompileShaders(BaseDriver& driver, const ShaderPrecomp
       const ComputeKernelDefinition* kernel = FindComputeKernel(shaderName);
       if (!kernel || entry.entryPoint != kernel->entryPoint)
         throw std::runtime_error("Unknown compute kernel: " + shaderName + ":" + entry.entryPoint);
+      if (!SupportsComputePermutation(*kernel, entry.permutation))
+        throw std::runtime_error("Unsupported compute permutation: " + shaderName + ":" + entry.permutation);
       if (!driver.SupportsComputeShaders())
         throw std::runtime_error("Compute shaders are unsupported by the selected API");
       std::string source;

@@ -464,18 +464,24 @@ namespace t850 {
     SetRuntimeGpuInfo(selectedProps.deviceName, selectedProps.vendorID, selectedProps.deviceID);
     T8_LOG_INFO("[Vulkan] GPU: %s (vendor=0x%04x device=0x%04x)", selectedProps.deviceName, selectedProps.vendorID, selectedProps.deviceID);
 
-    // Find graphics queue family
+    // Find a present-capable graphics queue, preferring one that also supports compute.
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, nullptr);
     std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, queueFamilies.data());
 
-    uint32_t firstGraphicsQueueFamily = UINT32_MAX;
+    uint32_t firstGraphicsPresentQueueFamily = UINT32_MAX;
     m_graphicsQueueFamily = UINT32_MAX;
     for (uint32_t i = 0; i < queueFamilyCount; i++) {
+      VkBool32 supportsPresent = VK_FALSE;
+      if (vkGetPhysicalDeviceSurfaceSupportKHR(m_physicalDevice, i, m_surface,
+                                               &supportsPresent) != VK_SUCCESS ||
+          supportsPresent != VK_TRUE) {
+        continue;
+      }
       if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-        if (firstGraphicsQueueFamily == UINT32_MAX)
-          firstGraphicsQueueFamily = i;
+        if (firstGraphicsPresentQueueFamily == UINT32_MAX)
+          firstGraphicsPresentQueueFamily = i;
         if (queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
           m_graphicsQueueFamily = i;
           break;
@@ -483,9 +489,9 @@ namespace t850 {
       }
     }
     if (m_graphicsQueueFamily == UINT32_MAX)
-      m_graphicsQueueFamily = firstGraphicsQueueFamily;
+      m_graphicsQueueFamily = firstGraphicsPresentQueueFamily;
     if (m_graphicsQueueFamily == UINT32_MAX) {
-      T8_LOG_ERROR("[Vulkan] No graphics queue family is available");
+      T8_LOG_ERROR("[Vulkan] No graphics queue family supports surface presentation");
       return;
     }
     m_presentQueueFamily = m_graphicsQueueFamily;
@@ -501,7 +507,6 @@ namespace t850 {
       return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
     };
     m_supportsComputeTextures = m_supportsComputeShaders &&
-      supportedFeatures.shaderStorageImageWriteWithoutFormat &&
       supportsStorageImage(VK_FORMAT_R8G8B8A8_UNORM) &&
       supportsStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT);
 
@@ -518,8 +523,6 @@ namespace t850 {
 
     VkPhysicalDeviceFeatures deviceFeatures = {};
     deviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy ? VK_TRUE : VK_FALSE;
-    deviceFeatures.shaderStorageImageWriteWithoutFormat =
-      supportedFeatures.shaderStorageImageWriteWithoutFormat ? VK_TRUE : VK_FALSE;
 
     VkDeviceCreateInfo deviceCI = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     deviceCI.queueCreateInfoCount = 1;

@@ -96,7 +96,7 @@ For a PIX GPU capture, use D3D12 compute mode, hide the runtime controls after s
 
 For an external capture tool, add `--compute-selftest-wait 10`. The process waits ten seconds before and after the dispatch so a PIX timing capture can start and stop around the GPU work without adding the compute operation to a scene.
 
-The suite currently has 60 checks. In addition to gameplay, scene, terrain, physics,
+The suite currently has 61 checks. In addition to gameplay, scene, terrain, physics,
 navigation, material, and lifecycle contracts, `T-COMPUTE-GRAPH-01` loads every maintained
 render graph under strict parsing and rejects unknown keys, missing storage usage, read/write
 feedback, invalid permutations, and incomplete typed binding layouts.

@@ -153,6 +153,10 @@ Supported depth format strings:
 - `F32`
 - `CUBE_F32`
 
+If the selected driver cannot support compute textures, an authored storage target is
+allocated without storage/UAV usage so graphics initialization and raster fallback remain
+available. Compute pipelines are not created for that driver.
+
 `size_ref` is resolved from `SceneProps`:
 
 - `$shadow_resolution` -> `SceneProps::ShadowMapResolution`

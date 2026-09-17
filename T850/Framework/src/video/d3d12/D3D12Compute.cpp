@@ -200,6 +200,12 @@ namespace t850 {
     UINT threadGroupY = 0;
     UINT threadGroupZ = 0;
     reflection->GetThreadGroupSize(&threadGroupX, &threadGroupY, &threadGroupZ);
+    if (!threadGroupX || !threadGroupY || !threadGroupZ) {
+      T8_LOG_ERROR("[D3D12][Compute] Shader '%s' has an invalid thread-group size",
+                   desc.debugName.c_str());
+      return false;
+    }
+    threadGroupSize = {threadGroupX, threadGroupY, threadGroupZ};
 
     std::vector<D3D12_ROOT_PARAMETER> parameters;
     parameters.reserve(shaderDesc.BoundResources);

@@ -661,9 +661,29 @@ struct SceneVoxelWeaponDesc {
 };
 
 struct SceneVoxelControlRangeDesc {
+  std::string name;
+  std::string label;
   float min = 0.0f;
   float max = 0.0f;
   float step = 0.0f;
+};
+
+struct SceneVoxelTorchParticleAppearanceDesc {
+  std::vector<Vec3f> colors;
+  float radial_seed_min = 0.0f;
+  float radial_start_scale = 0.0f;
+  float radial_age_scale = 0.0f;
+  float wobble_frequency = 0.0f;
+  float wobble_frequency_variation = 0.0f;
+  float wobble_strength = 0.0f;
+  float wobble_z_scale = 0.0f;
+  float start_size_scale = 0.0f;
+  float end_size_scale = 0.0f;
+  float minimum_projection_depth = 0.0f;
+  float edge_softness_scale = 0.0f;
+  float fade_in_end = 0.0f;
+  float fade_out_start = 0.0f;
+  float intensity = 0.0f;
 };
 
 struct SceneVoxelTorchDesc {
@@ -675,6 +695,7 @@ struct SceneVoxelTorchDesc {
   float tip_height = 0.0f;
   Vec3f tip_color = {0.0f, 0.0f, 0.0f};
   float tip_roughness = 0.0f;
+  bool tip_unlit = false;
   float particle_spawn_offset_y = 0.0f;
   int particle_count = 0;
   float particle_lifetime = 0.0f;
@@ -682,6 +703,8 @@ struct SceneVoxelTorchDesc {
   float particle_spread = 0.0f;
   float particle_size = 0.0f;
   float particle_time_wrap_seconds = 0.0f;
+  SceneVoxelTorchParticleAppearanceDesc particle_appearance;
+  std::string particle_controls_label;
   SceneVoxelControlRangeDesc particle_count_control;
   SceneVoxelControlRangeDesc particle_lifetime_control;
   SceneVoxelControlRangeDesc particle_rise_height_control;

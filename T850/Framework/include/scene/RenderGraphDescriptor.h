@@ -31,6 +31,12 @@ namespace t850 {
     int slot = 0;
   };
 
+  struct ComputeResourceDesc {
+    std::string resource;          // RT:attachment or @kernel_constants
+    std::string access;            // constants, sampled, sampler, storage_write
+    int shader_register = 0;       // HLSL b/t/s/u register in the shared layout
+  };
+
   // ---- State overrides ----
 
   struct StateDesc {
@@ -64,7 +70,8 @@ namespace t850 {
     std::string compute_shader;
     std::string compute_entry = "CS";
     std::string compute_permutation = "base";
-    std::array<int, 3> compute_threads = {8, 8, 1};
+    std::string compute_extent_from;
+    std::vector<ComputeResourceDesc> compute_resources;
     bool clear = false;
     std::array<float, 4> clear_color = {0, 0, 0, 0};  // RGBA clear color (used when clear=true)
     float clear_depth = 1.0f;                           // Depth clear value

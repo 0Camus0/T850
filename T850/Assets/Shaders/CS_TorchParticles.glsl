@@ -7,6 +7,13 @@ layout(std140, binding = 0) uniform TorchParticleConstants {
     vec4 EmitterAndTime;
     vec4 OutputSizeCountEnabled;
     vec4 Motion;
+    vec4 ParticleColor0;
+    vec4 ParticleColor1;
+    vec4 ParticleColor2;
+    vec4 ShapeTuning;
+    vec4 WobbleTuning;
+    vec4 FadeTuning;
+    vec4 IntensityTuning;
 };
 
 layout(rgba16f, binding = 1) writeonly uniform image2D OutputTexture;
@@ -24,9 +31,9 @@ float Hash(uint value)
 vec3 ParticleColor(uint index)
 {
     uint paletteIndex = index % 3u;
-    if (paletteIndex == 0u) return vec3(1.0, 0.04, 0.01);
-    if (paletteIndex == 1u) return vec3(1.0, 0.32, 0.015);
-    return vec3(1.0, 0.88, 0.08);
+    if (paletteIndex == 0u) return ParticleColor0.rgb;
+    if (paletteIndex == 1u) return ParticleColor1.rgb;
+    return ParticleColor2.rgb;
 }
 
 void main()
@@ -53,13 +60,14 @@ void main()
         float phase = Hash(index * 9781u + 17u);
         float age = fract(time / lifetime + phase);
         float angle = Hash(index * 6271u + 43u) * 6.28318530718;
-        float radialSeed = 0.35 + Hash(index * 3253u + 91u) * 0.65;
-        float radialDistance = Motion.z * radialSeed * (0.25 + age * 0.75);
-        float wobble = sin(time * (2.0 + Hash(index * 1877u + 7u) * 2.0) + angle) * Motion.z * 0.18;
+        float radialSeed = mix(ShapeTuning.x, 1.0, Hash(index * 3253u + 91u));
+        float radialDistance = Motion.z * radialSeed * (ShapeTuning.y + age * ShapeTuning.z);
+        float wobble = sin(time * (WobbleTuning.x + Hash(index * 1877u + 7u) *
+            WobbleTuning.y) + angle) * Motion.z * ShapeTuning.w;
 
         vec3 position = EmitterAndTime.xyz;
         position.x += cos(angle) * radialDistance + wobble;
-        position.z += sin(angle) * radialDistance - wobble * 0.5;
+        position.z += sin(angle) * radialDistance - wobble * WobbleTuning.z;
         position.y += age * Motion.y;
 
         vec4 clip = ViewProjection * vec4(position, 1.0);
@@ -69,15 +77,16 @@ void main()
         vec2 delta = uv - centerUv;
         delta.x *= aspect;
 
-        float radius = Motion.w * mix(1.0, 0.45, age) / max(clip.w, 0.5);
+        float radius = Motion.w * mix(FadeTuning.x, FadeTuning.y, age) /
+            max(clip.w, WobbleTuning.w);
         float distanceToEdge = max(abs(delta.x), abs(delta.y));
         float pixelWidth = 1.0 / max(float(outputSize.y), 1.0);
-        float edgeSoftness = min(pixelWidth, radius * 0.25);
+        float edgeSoftness = min(pixelWidth, radius * FadeTuning.z);
         float shape = 1.0 - smoothstep(max(radius - edgeSoftness, 0.0), radius, distanceToEdge);
-        float fadeIn = smoothstep(0.0, 0.08, age);
-        float fadeOut = 1.0 - smoothstep(0.55, 1.0, age);
+        float fadeIn = smoothstep(0.0, FadeTuning.w, age);
+        float fadeOut = 1.0 - smoothstep(IntensityTuning.x, 1.0, age);
         float intensity = shape * fadeIn * fadeOut;
-        accumulated += ParticleColor(index) * intensity * 2.4;
+        accumulated += ParticleColor(index) * intensity * IntensityTuning.y;
         accumulatedAlpha = max(accumulatedAlpha, intensity);
     }
 

@@ -262,7 +262,7 @@ int main(int arg,char ** args) try {
                   computeSelfTestWaitSeconds);
       std::this_thread::sleep_for(std::chrono::seconds(computeSelfTestWaitSeconds));
     }
-    result = t850::RunComputeArithmeticSelfTest(pFrameWork->pVideoDriver);
+    result = t850::RunComputeSelfTests(pFrameWork->pVideoDriver);
     if (computeSelfTestWaitSeconds > 0) {
       T8_LOG_INFO("[ComputeSelfTest] Waiting %d seconds after dispatch for capture tools",
                   computeSelfTestWaitSeconds);

@@ -23,7 +23,6 @@ namespace t850 {
 
   private:
     static constexpr uint32_t kElementCount = 96;
-    static constexpr uint32_t kThreadsPerGroup = 64;
     static constexpr uint32_t kMultiplier = 3;
     static constexpr uint32_t kXorMask = 0x55AA55AAu;
 
@@ -38,6 +37,8 @@ namespace t850 {
   // Runs a deterministic GPU arithmetic dispatch and validates its readback.
   // Returns zero on success and nonzero on unsupported/error/mismatch.
   int RunComputeArithmeticSelfTest(BaseDriver* driver);
+  int RunComputeImageSelfTest(BaseDriver* driver);
+  int RunComputeSelfTests(BaseDriver* driver);
 }
 
 #endif

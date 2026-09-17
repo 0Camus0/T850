@@ -54,7 +54,7 @@ Build x64, then run the matching executable:
 
 Expected result: every line begins with `PASS` and process exit code is 0. Any `FAIL` or nonzero exit blocks the next milestone.
 
-## D3D12 Compute Smoke Test
+## Cross-Backend Compute Self-Test
 
 Run the standalone arithmetic dispatch after an x64 build:
 
@@ -62,33 +62,44 @@ Run the standalone arithmetic dispatch after an x64 build:
 & .\bin\x64\Debug\DayScene.exe --compute-selftest --d3d12debug
 ```
 
-The command creates a minimal application without scene assets, compiles `Shaders/CS_Arithmetic.hlsl`, dispatches two 64-thread workgroups over 96 integers, reads the output back, and exits. D3D12 remains the default; add `--api d3d11`, `--api vulkan`, `--api webgpu`, or `--api gl` for the other implementations. Require `[ComputeSelfTest] PASS` and exit code 0 on every supported API. Desktop GL requires the engine-created OpenGL 4.3 compatibility context and must log `shaders=1 textures=1`; older desktop GL and OpenGL ES report no compute support. This proves shared constants, a structured UAV/storage buffer, dispatch, synchronization, completion, and readback; it does not prove texture compute outside the tested API/backend.
+The command creates a minimal application without scene assets. It first compiles
+`Shaders/CS_Arithmetic.hlsl`, dispatches over 96 integers, and validates structured-buffer
+readback. It then runs paired image-write/image-read kernels at `1x1`, `7x5`, and
+`257x129`; each pair writes an RGBA8 storage texture, samples it in a second dispatch,
+writes packed pixels to a structured buffer, and checks every pixel on the CPU. Require three
+`[ComputeImage] PASS` lines, final `PASS: arithmetic and odd-sized image kernels`, and exit
+code 0. D3D12 remains the default; add `--api d3d11`, `--api vulkan`, `--api webgpu`, or
+`--api gl` for the other implementations. Desktop GL requires an OpenGL 4.3+ context;
+the 3.3 fallback is raster-only and correctly rejects this compute-only self-test.
 
 To verify compute permutation recording and D3D12 artifact caching, add `--dumpShaderPermutations --shaderPermutationOutput <temporary-json> --logLevel debug`. Require a version-2 `compute_permutations` entry named `CS_Arithmetic.hlsl:CS:base` with a matching `key`, `kind=compute`, entry point `CS`, permutation `base`, and no defines. The graphics `permutations` section must contain only hexadecimal keys. Backend profiles are intentionally artifact metadata rather than source-permutation identity. On a cold D3D12 cache, require `CS stored`; on the next identical run, require `CS hit`.
 
 The arithmetic workload is standalone-only; normal DayScene no longer records its diagnostic `Dispatch(2, 1, 1)`. Use `--compute-selftest` when validating structured-buffer compute and use the real God Rays dispatch for live PIX inspection.
 
-DayScene's God Rays calculation uses compute on D3D11, D3D12, Vulkan, WebGPU, and desktop OpenGL 4.3+ when `--postProcessMode compute` is selected. At 1280x720, require `Pass 'God Rays' dispatched compute 160 x 90 x 1`. D3D12 PIX must show `CS_GodRays.hlsl Compute PSO`, two sampled depth textures, two samplers, and the `GodRaysCalc` storage UAV. `--postProcessMode raster` must suppress every graph compute pipeline on each supported API. Desktop GL below 4.3 and OpenGL ES must use the graphics fallback.
+DayScene's God Rays calculation uses compute on D3D11, D3D12, Vulkan, WebGPU, and desktop OpenGL 4.3+ when `--postProcessMode compute` is selected. At 1280x720, require `Pass 'God Rays' dispatched compute 160 x 90 x 1`. D3D12 PIX must show `CS_GodRays.hlsl Compute PSO`, two sampled depth textures, two samplers, and the `GodRaysCalc` storage UAV. `--postProcessMode raster` must suppress every graph compute pipeline on each supported API. Desktop GL below 4.3 and OpenGL ES must use the raster fallback.
 
-Post-processing uses `--postProcessMode compute|raster`. `compute` selects every declared alternative for A/B testing, and `raster` suppresses all graph compute pipelines, including Minecraft TorchParticles. At 1280x720, forced compute requires 160x90 God Rays/blur/HDR dispatches and a 64x64 Bright dispatch. Shadow and bloom blur remain raster. On desktop GL 4.3+, forcing compute must create and dispatch every declared GL compute pipeline; older desktop GL and OpenGL ES must log the graphics fallback. Matched D3D11, D3D12, Vulkan, WebGPU, and desktop GL replay comparisons should retain every intermediate target within tolerance 2; record and review any backend-specific final backbuffer variance.
+Post-processing uses `--postProcessMode compute|raster`. `compute` selects every declared alternative for A/B testing, and `raster` suppresses all graph compute pipelines, including Minecraft TorchParticles. At 1280x720, forced compute requires 160x90 God Rays/blur/HDR dispatches and a 64x64 Bright dispatch. Shadow and bloom blur remain raster. On desktop GL 4.3+, forcing compute must create and dispatch every declared GL compute pipeline; older desktop GL and OpenGL ES must log the raster fallback. Matched D3D11, D3D12, Vulkan, WebGPU, and desktop GL replay comparisons should retain every intermediate target within tolerance 2; record and review any backend-specific final backbuffer variance.
 
-All maintained render graphs must create and dispatch `CS_Bright` and `CS_HDRComposite` when compute is forced. Validate DayScene scenes 0-3 and 5-6 directly; SceneTemplate scene 4 requires an explicit `--sceneFile`. Also run T8ditor separately because it has its own CLI/parser and graph. D3D11, D3D12, Vulkan, WebGPU, and desktop GL 4.3+ shared-graph plus Minecraft smoke tests must dispatch both kernels; older desktop GL and OpenGL ES must log graphics fallbacks, zero compute dispatches, and complete a nonuniform frame dump.
+All maintained render graphs must create and dispatch `CS_Bright` and `CS_HDRComposite` when compute is forced. Validate DayScene scenes 0-3 and 5-6 directly; SceneTemplate scene 4 requires an explicit `--sceneFile`. Also run T8ditor separately because it has its own CLI/parser and graph. D3D11, D3D12, Vulkan, WebGPU, and desktop GL 4.3+ shared-graph plus Minecraft smoke tests must dispatch both kernels; older desktop GL and OpenGL ES must log raster fallbacks, zero compute dispatches, and complete a nonuniform frame dump.
 
 For visual parity, capture matched fixed-time compute and raster frames on D3D11, D3D12, and Vulkan and compare all targets with tolerance 2. The first three-backend comparison matched all 18 targets exactly on each API, including `RT_Dump_GodRays.ppm`. Also run an odd output size such as 1023x577 and require a `128 x 73 x 1` dispatch to exercise bounds checking.
 
 ### Manual God Rays compute/raster validation
 
-Run from `bin/x64/Debug` with `--logLevel info` and a unique log per API/mode. Test `compute` and `raster` on D3D11, D3D12, Vulkan, WebGPU, and desktop GL 4.3+. For older desktop GL or OpenGL ES, request `compute` and require the logged graphics fallback.
+Run from `bin/x64/Debug` with `--logLevel info` and a unique log per API/mode. Test `compute` and `raster` on D3D11, D3D12, Vulkan, WebGPU, and desktop GL 4.3+. For older desktop GL or OpenGL ES, request `compute` and require the logged raster fallback.
 
 In every interactive run, press and release `G` once to open runtime controls, select `GodRays` in the Debug RT selector, and inspect the isolated target. Press and release `G` again to hide the controls while leaving the selected target visible. Compare the compute and raster images using the same camera and settings.
 
-Expected compute log evidence on each supported API is pipeline creation followed by `Pass 'God Rays' dispatched compute 320 x 180 x 1 for 2560x1440 output`. `--postProcessMode raster` must report the graphics implementation and must not mention `CS_GodRays` or `dispatched compute`. Older desktop GL and OpenGL ES compute mode must report `using graphics fallback on API=gl`.
+Expected compute log evidence on each supported API is pipeline creation followed by `Pass 'God Rays' dispatched compute 320 x 180 x 1 for 2560x1440 output`. `--postProcessMode raster` must report the graphics implementation and must not mention `CS_GodRays` or `dispatched compute`. Older desktop GL and OpenGL ES compute mode must report `using raster fallback on API=gl`.
 
 For a PIX GPU capture, use D3D12 compute mode, hide the runtime controls after selecting the God Rays debug target, then capture a frame. Search Events for `Dispatch`; normal DayScene should contain the God Rays `Dispatch(320,180,1)`, not the standalone arithmetic `Dispatch(2,1,1)`. Select it and require Pipeline/State to reference `Shaders/CS_GodRays.hlsl Compute PSO`, root constants at `b0`, sampled scene/shadow depth at `t0`/`t1`, samplers at `s0`/`s1`, and the `GodRaysCalc` storage UAV at `u0`. A following UAV/resource barrier is expected. Missing standalone `Set*` rows in PIX Events is not a failure because Pipeline/State reconstructs the bound state at the selected dispatch.
 
 For an external capture tool, add `--compute-selftest-wait 10`. The process waits ten seconds before and after the dispatch so a PIX timing capture can start and stop around the GPU work without adding the compute operation to a scene.
 
-The suite currently has 43 checks covering schema/migration/IDs, validation, groups, stable registry ownership, fixed tick/pause, controllers, components, events, state machines, physics handle reuse, generated triangle-mesh body creation, mutable mesh validation, stable render handles, chunks, greedy meshing, negative coordinates, DDA, streaming budgets, atomic voxel persistence, voxel path completeness and clearance, exact voxel box collision, atlas UV/bounds behavior, immutable material variants, and unavailable navigation.
+The suite currently has 60 checks. In addition to gameplay, scene, terrain, physics,
+navigation, material, and lifecycle contracts, `T-COMPUTE-GRAPH-01` loads every maintained
+render graph under strict parsing and rejects unknown keys, missing storage usage, read/write
+feedback, invalid permutations, and incomplete typed binding layouts.
 
 Validate the authored Minecraft block-to-atlas contract without creating a graphics device:
 

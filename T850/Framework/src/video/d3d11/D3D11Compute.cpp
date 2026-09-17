@@ -68,6 +68,12 @@ namespace t850 {
     if (FAILED(reflection->GetDesc(&shaderDesc))) return false;
     UINT tx = 0, ty = 0, tz = 0;
     reflection->GetThreadGroupSize(&tx, &ty, &tz);
+    if (!tx || !ty || !tz) {
+      T8_LOG_ERROR("[D3D11][Compute] Shader '%s' has an invalid thread-group size",
+                   desc.debugName.c_str());
+      return false;
+    }
+    threadGroupSize = {tx, ty, tz};
     for (UINT i = 0; i < shaderDesc.BoundResources; ++i) {
       D3D11_SHADER_INPUT_BIND_DESC binding = {};
       if (FAILED(reflection->GetResourceBindingDesc(i, &binding)) || binding.BindCount != 1)
@@ -153,16 +159,19 @@ namespace t850 {
     if (!pipeline || !device || !context || !groupCountX || !groupCountY || !groupCountZ ||
         groupCountX > 65535 || groupCountY > 65535 || groupCountZ > 65535) return false;
 
-    ID3D11ShaderResourceView* nullGraphicsSRVs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
-    context->VSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullGraphicsSRVs);
-    context->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullGraphicsSRVs);
-    context->GSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullGraphicsSRVs);
-    context->OMSetRenderTargets(0, nullptr, nullptr);
-
+    struct ResolvedBinding {
+      const ComputeBindingDesc* binding = nullptr;
+      D3D11ComputeBuffer* buffer = nullptr;
+      D3DXTexture* texture = nullptr;
+      Microsoft::WRL::ComPtr<ID3D11Buffer> constants;
+    };
     std::unordered_set<uint32_t> constants, bufferSrvs, bufferUavs;
     std::unordered_set<uint32_t> textureSrvs, textureUavs, samplers;
-    std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>> transientConstants;
+    std::vector<ResolvedBinding> resolved;
+    resolved.reserve(bindings.size());
     for (const ComputeBindingDesc& binding : bindings) {
+      ResolvedBinding item;
+      item.binding = &binding;
       switch (binding.type) {
         case ComputeBindingType::Constants32: {
           auto expected = pipeline->constantWordCounts.find(binding.shaderRegister);
@@ -176,59 +185,88 @@ namespace t850 {
           std::copy_n(binding.constants, binding.constantCount, paddedConstants.data());
           D3D11_SUBRESOURCE_DATA data = {};
           data.pSysMem = paddedConstants.data();
-          Microsoft::WRL::ComPtr<ID3D11Buffer> cb;
-          if (FAILED(device->CreateBuffer(&desc, &data, &cb))) return false;
-          ID3D11Buffer* raw = cb.Get();
-          context->CSSetConstantBuffers(binding.shaderRegister, 1, &raw);
-          transientConstants.push_back(std::move(cb));
+          if (FAILED(device->CreateBuffer(&desc, &data, &item.constants))) return false;
           break;
         }
         case ComputeBindingType::ReadOnlyBuffer: {
-          auto* buffer = dynamic_cast<D3D11ComputeBuffer*>(binding.buffer);
-          if (!buffer || !buffer->srv || !pipeline->bufferSrvs.count(binding.shaderRegister) ||
+          item.buffer = dynamic_cast<D3D11ComputeBuffer*>(binding.buffer);
+          if (!item.buffer || !item.buffer->srv || !pipeline->bufferSrvs.count(binding.shaderRegister) ||
               !bufferSrvs.insert(binding.shaderRegister).second) return false;
-          ID3D11ShaderResourceView* raw = buffer->srv.Get();
-          context->CSSetShaderResources(binding.shaderRegister, 1, &raw);
           break;
         }
         case ComputeBindingType::ReadWriteBuffer: {
-          auto* buffer = dynamic_cast<D3D11ComputeBuffer*>(binding.buffer);
-          if (!buffer || !buffer->uav || !pipeline->bufferUavs.count(binding.shaderRegister) ||
+          item.buffer = dynamic_cast<D3D11ComputeBuffer*>(binding.buffer);
+          if (!item.buffer || !item.buffer->uav || !pipeline->bufferUavs.count(binding.shaderRegister) ||
               !bufferUavs.insert(binding.shaderRegister).second) return false;
-          ID3D11UnorderedAccessView* raw = buffer->uav.Get();
-          context->CSSetUnorderedAccessViews(binding.shaderRegister, 1, &raw, nullptr);
           break;
         }
         case ComputeBindingType::ReadOnlyTexture: {
-          auto* texture = dynamic_cast<D3DXTexture*>(binding.texture);
-          if (!texture || !texture->pSRVTex || !pipeline->textureSrvs.count(binding.shaderRegister) ||
+          item.texture = dynamic_cast<D3DXTexture*>(binding.texture);
+          if (!item.texture || !item.texture->pSRVTex || !pipeline->textureSrvs.count(binding.shaderRegister) ||
               !textureSrvs.insert(binding.shaderRegister).second) return false;
-          ID3D11ShaderResourceView* raw = texture->pSRVTex.Get();
-          context->CSSetShaderResources(binding.shaderRegister, 1, &raw);
           break;
         }
         case ComputeBindingType::ReadWriteTexture: {
-          auto* texture = dynamic_cast<D3DXTexture*>(binding.texture);
-          if (!texture || !texture->pUAVTex || !pipeline->textureUavs.count(binding.shaderRegister) ||
+          item.texture = dynamic_cast<D3DXTexture*>(binding.texture);
+          if (!item.texture || !item.texture->pUAVTex || !pipeline->textureUavs.count(binding.shaderRegister) ||
               !textureUavs.insert(binding.shaderRegister).second) return false;
-          ID3D11UnorderedAccessView* raw = texture->pUAVTex.Get();
-          context->CSSetUnorderedAccessViews(binding.shaderRegister, 1, &raw, nullptr);
           break;
         }
         case ComputeBindingType::Sampler: {
-          auto* texture = dynamic_cast<D3DXTexture*>(binding.texture);
-          if (!texture || !texture->pSampler || !pipeline->samplers.count(binding.shaderRegister) ||
+          item.texture = dynamic_cast<D3DXTexture*>(binding.texture);
+          if (!item.texture || !item.texture->pSampler || !pipeline->samplers.count(binding.shaderRegister) ||
               !samplers.insert(binding.shaderRegister).second) return false;
-          ID3D11SamplerState* raw = texture->pSampler.Get();
-          context->CSSetSamplers(binding.shaderRegister, 1, &raw);
           break;
         }
       }
+      resolved.push_back(std::move(item));
     }
     if (constants.size() != pipeline->constantWordCounts.size() ||
         bufferSrvs.size() != pipeline->bufferSrvs.size() || bufferUavs.size() != pipeline->bufferUavs.size() ||
         textureSrvs.size() != pipeline->textureSrvs.size() || textureUavs.size() != pipeline->textureUavs.size() ||
         samplers.size() != pipeline->samplers.size()) return false;
+
+    ID3D11ShaderResourceView* nullGraphicsSRVs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
+    context->VSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullGraphicsSRVs);
+    context->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullGraphicsSRVs);
+    context->GSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullGraphicsSRVs);
+    context->OMSetRenderTargets(0, nullptr, nullptr);
+
+    for (const ResolvedBinding& item : resolved) {
+      const ComputeBindingDesc& binding = *item.binding;
+      switch (binding.type) {
+        case ComputeBindingType::Constants32: {
+          ID3D11Buffer* raw = item.constants.Get();
+          context->CSSetConstantBuffers(binding.shaderRegister, 1, &raw);
+          break;
+        }
+        case ComputeBindingType::ReadOnlyBuffer: {
+          ID3D11ShaderResourceView* raw = item.buffer->srv.Get();
+          context->CSSetShaderResources(binding.shaderRegister, 1, &raw);
+          break;
+        }
+        case ComputeBindingType::ReadWriteBuffer: {
+          ID3D11UnorderedAccessView* raw = item.buffer->uav.Get();
+          context->CSSetUnorderedAccessViews(binding.shaderRegister, 1, &raw, nullptr);
+          break;
+        }
+        case ComputeBindingType::ReadOnlyTexture: {
+          ID3D11ShaderResourceView* raw = item.texture->pSRVTex.Get();
+          context->CSSetShaderResources(binding.shaderRegister, 1, &raw);
+          break;
+        }
+        case ComputeBindingType::ReadWriteTexture: {
+          ID3D11UnorderedAccessView* raw = item.texture->pUAVTex.Get();
+          context->CSSetUnorderedAccessViews(binding.shaderRegister, 1, &raw, nullptr);
+          break;
+        }
+        case ComputeBindingType::Sampler: {
+          ID3D11SamplerState* raw = item.texture->pSampler.Get();
+          context->CSSetSamplers(binding.shaderRegister, 1, &raw);
+          break;
+        }
+      }
+    }
 
     context->CSSetShader(pipeline->shader.Get(), nullptr, 0);
     context->Dispatch(groupCountX, groupCountY, groupCountZ);

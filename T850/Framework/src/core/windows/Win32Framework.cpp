@@ -790,7 +790,7 @@ namespace t850 {
             "OpenGL 4.3 compute and 3.3 graphics context creation failed: " +
             computeContextError + "; " + SDL_GetError());
         }
-        T8_LOG_INFO("OpenGL 4.3 context unavailable; using desktop GL 3.3 graphics fallback");
+        T8_LOG_INFO("OpenGL 4.3 context unavailable; using desktop GL 3.3 raster-only fallback");
       } else {
         T8_LOG_INFO("SDL GL 4.3 compatibility context created OK");
       }

@@ -704,6 +704,7 @@ public:
       state.context.CheckHealth();
       Require(static_cast<bool>(pipeline), "Compute pipeline creation failed");
       bindings = desc.bindings;
+      threadGroupSize = artifact.workgroupSize;
       ShaderPermutationDump::RecordCompute(desc.debugName, desc.entryPoint,
                                             desc.permutationName, desc.defines);
       const char* flow = report.attempts.empty() ? "spirv" :

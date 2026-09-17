@@ -990,8 +990,8 @@ When adding shader features:
 - `ShaderKey::VERTEX_ATTRIB_MASK` covers UV0-UV3 only; adding more UV channels requires new bits and layout handling.
 - D3D11/D3D12 shader model targets are hard-coded to `vs_5_0` and `ps_5_0`.
 - D3D11 and D3D12 compute target `cs_5_0`; Vulkan compute compiles the same HLSL entry point to SPIR-V 1.0 with an explicit API-neutral binding layout.
-- D3D11 enables texture compute only at feature level 11 or newer when RGBA8 and RGBA16F expose typed UAV support. Vulkan requires a compute-capable graphics queue, formatless storage-image writes, and storage-image support for both formats. D3D12 supports the required bindings directly. A failed capability gate selects the graphics fallback.
-- Desktop OpenGL compute requires a 4.3 or newer compatibility context. The GL backend gates both compute capability reporting and its pipeline/buffer/dispatch methods on `GLEW_VERSION_4_3`; older desktop GL and OpenGL ES retain graphics fallbacks.
+- D3D11 enables texture compute only at feature level 11 or newer when RGBA8 and RGBA16F expose typed UAV support. Vulkan requires a compute-capable graphics queue, formatless storage-image writes, and storage-image support for both formats. D3D12 supports the required bindings directly. A failed capability gate selects the raster fallback.
+- Desktop OpenGL compute requires a 4.3 or newer compatibility context. The GL backend gates both compute capability reporting and its pipeline/buffer/dispatch methods on `GLEW_VERSION_4_3`; the Windows 3.3 context and OpenGL ES are raster-only fallbacks.
 - D3D12 and Vulkan share HLSL sources, but Vulkan's HLSL-to-SPIR-V path can expose differences in interpolation, semantics, resource mapping, and depth behavior.
 - Vulkan desktop can compile HLSL at runtime when the SPIR-V cache misses. Android tries precompiled SPIR-V names first, then falls back to runtime compile.
 - OpenGL program binary caching only works if the driver reports program-binary support.

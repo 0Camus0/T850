@@ -180,14 +180,133 @@ worker; frame counts or changing animation alone do not prove walking works.
 
 Production: **https://wssi-minecraft-2026.pages.dev/**
 
-Release **v0.1.2**, published on 2026-09-16 from the locally tested Release build.
-Deployment `026d7c7e-4e59-4cc5-b7cf-18633e9c2909` is also available at
-`https://026d7c7e.wssi-minecraft-2026.pages.dev`.
+Release **v0.1.7**, published on 2026-09-17 from the locally tested Release build.
+Deployment `cc377746-3ed0-4a38-8786-c8edabf8eb4d` is also available at
+`https://cc377746.wssi-minecraft-2026.pages.dev`.
 The launcher displays the version beside WSSI. Increment the final number for
-each subsequent fix release (next: `v0.1.3`), updating `#demo-version` in
+each subsequent fix release (next: `v0.1.8`), updating `#demo-version` in
 `web/minecraft-wssi.html` and its existing welcome regression assertion.
 
-After live verification, the superseded deployment
+Release v0.1.7 adds **View** and **InvertY** toggle buttons to the virtual
+gamepad and, when Touch is disabled, the page header. View switches between
+first person and free spectator, using the scene's `SetCameraMode` path shared
+with the ImGui camera selector. Entering spectator copies the current view's
+position and orientation; returning to first person does not teleport the player.
+The existing light-camera option remains available in ImGui, outside this binary
+toggle. Spectator now accepts left-stick movement, right-stick look and the
+existing Jump/Sprint buttons for ascent/descent (matching Space/Shift).
+
+InvertY reverses vertical mouse look and the virtual/physical gamepad right
+stick in both player and spectator views. Its default is off, and it is also
+exposed in the ImGui Cameras section. The preference is runtime/session state;
+it is not persisted across reloads or added to the authored scene schema.
+Both button sets use scene-reported `aria-pressed` state and tooltips, so they
+reflect ImGui changes rather than maintaining independent camera settings.
+Only one set is shown at a time, keeping the mobile header compact.
+
+The browser uses slot 7 of the existing eight-slot atomic input buffer for
+one-shot View/InvertY command bits, independently of whether the virtual pad is
+enabled. The worker maps these to `InputManager` commands; Minecraft consumes
+them, clears stale movement/look on a transition and owns the camera changes.
+`window.t850.camera` exposes mode, inversion, pitch and camera/player positions
+for bounded ten-frame diagnostics and UI synchronization. No synthetic keyboard
+events or scene downcasts were added to the browser framework.
+
+Local and live `--camera-controls` tests passed in Chrome touch emulation and
+Firefox mouse mode. They verify both transitions, synchronized buttons, opposite
+pitch changes from the same vertical input, independent spectator movement and
+return to the player. The live touch test also covers header commands with Touch
+off, OnTop, pointer-capture recovery and BC/float32-filtering fallback devices.
+Use canvas-relative mouse moves with a settled baseline in the harness: Firefox
+WebDriver's stale pointer origin and repeated identical coordinates caused early
+test failures, not an established engine inversion defect. Eleven web tests,
+Wasm self-tests, the native x64 Release build/self-tests and finite four-renderer
+Minecraft smoke captures passed. Physical phones, ARM64, Android and SteamRT
+were not tested for this change. Evidence:
+`%LOCALAPPDATA%/T850Profiles/camera-controls-20260917/`, especially
+`chrome-final/`, `firefox-mouse-final/`, `chrome-live-v0.1.7/`,
+`firefox-live-v0.1.7/` and `deployment-v0.1.7.log`.
+The deployment changed no R2 objects/settings and made no Git commit, push or rebase.
+
+Release v0.1.6 reduces BC cubemap fallback memory on WebGPU devices without BC
+support. The default sky uses its existing mip 1 (512x512 per face) and the nine
+smaller mips, instead of decoding mip 0 at 1024x1024. Each face's discarded mip
+is skipped in the compressed source before allocating or decoding RGBA pixels.
+No resampling, face reordering, rotations, flips, new cubemap or R2 upload occurs.
+BC-capable devices still upload the original compressed texture at full resolution.
+
+For this six-face sky, RGBA payload falls from 33,554,424 to 8,388,600 bytes:
+approximately 32 MiB to 8 MiB (24 MiB saved, 75% reduction). That reduction
+applies separately to the temporary decoder output and the GPU texel payload;
+the GPU's actual allocation can include overhead. The compressed download stays
+about 4 MiB. Existing texture ownership, queue-write ordering and completion-based
+retirement are unchanged. We did not measure whole-process/GPU peak memory on
+an affected phone, so the reported startup OOM is not universally declared fixed.
+
+Wasm tests compare every retained byte against a full decode for six distinct
+asymmetric faces across DXT1/3/5, multiple starting mips and truncated payloads.
+This checks face identity, pixel orientation and mip offsets. Live Chrome with
+BC/float32 filtering disabled confirms `512x512 mips=10 faces=6`, `firstMip=1`
+and `bytes=8388600`, plus working touch, OnTop and capture-error recovery.
+The BC-capable live Firefox desktop/block-edit/GUI/resize test passed as well.
+Eleven web tests, Wasm self-tests, native Windows x64 Release build/self-tests
+and finite D3D11/D3D12/Vulkan/GL frame-dump smoke tests passed. Android and
+SteamRT/Deck were not rebuilt for this change. Evidence:
+`%LOCALAPPDATA%/T850Profiles/cubemap-512-20260917/`, including
+`chrome-local-v0.1.6/`, `chrome-live-v0.1.6/`, `firefox-live-v0.1.6/`,
+`mip-tests-build.log`, `native-build.log` and `deployment-v0.1.6.log`.
+No R2 assets/settings, prior deployments, Git commits or rebase state were changed.
+
+Release v0.1.5 fixes virtual-control pointer-capture failures. Touch mode no
+longer acquires relative mouse lock, and enabling Touch releases an existing
+lock. Rejected or silently ignored captures do not publish held input; known
+`InvalidStateError` / `NotFoundError` capture/release exceptions are handled
+locally, while unrelated programming errors still propagate. Reset publishes
+neutral input before attempting browser capture cleanup.
+
+The Pointer Events specification requires `InvalidStateError` when the document
+has a locked pointer or the target is disconnected. A canvas click while Touch
+was enabled reproduced the mouse-lock conflict in the previous input policy;
+the same test passes after the fix. The user's exact phone/browser is unknown,
+so this is a verified contributing cause, not proof of every reported trigger.
+See [setting pointer capture](https://www.w3.org/TR/pointerevents3/#setting-pointer-capture).
+
+Local and live Chrome tests (`--touch --capture-errors`) inject both DOMException
+names into capture/release, require continued frame progress and neutral input,
+then verify the next real gesture works. Unit tests also cover unaffected
+simultaneous fingers, silent capture rejection and unexpected-error propagation.
+The browser test verifies mouse lock returns with Touch off and is released
+when Touch is re-enabled. Run those mode transitions after aim-dependent block
+edits: pointer-lock mouse movement can change the camera's aim. Live tests with
+BC/float32 filtering disabled passed touch, OnTop, block edits and rotation;
+Firefox desktop launch/input/GUI/resize/return checks also passed. Eleven web
+tests, the browser rebuild and Wasm self-tests passed. Physical affected-phone
+validation remains outstanding. Evidence:
+`%LOCALAPPDATA%/T850Profiles/pointer-capture-20260917/`, including
+`chrome-before-lock-fix/`, `chrome-final/`, `chrome-live-v0.1.5/`,
+`firefox-live-v0.1.5/` and `deployment-v0.1.5.log`.
+This deployment used the existing JSON-configured script with no R2 changes,
+old-deployment deletion, Git push or rebase.
+
+The preceding v0.1.4 release added **OnTop** for optional full-viewport touch controls, the SDL
+resize notification needed to keep framebuffer and canvas dimensions matched,
+and the standalone-browser guidance first prepared locally as v0.1.3.
+Live Chrome 152 touch tests passed with BC and float32 filtering disabled on
+the actual engine device. On a 390x844 viewport, the portrait framebuffer grows
+from 333x592 to 390x808; landscape fills 844x354 below the 36-pixel header.
+Both sticks, action buttons, cancellation, Touch toggling, rotation and restoration
+of the default footer layout passed, with nonblank captures and no runtime errors.
+Live Firefox 156 welcome/launch, desktop input, GUI, resize and return navigation
+also passed. Eleven web unit tests and the browser rebuild passed locally.
+Live isolation headers, private-config/excluded-resource 404s and the approved
+R2 sky response were verified. Evidence:
+`%LOCALAPPDATA%/T850Profiles/ontop-20260917/`, especially `chrome-touch-final/`,
+`chrome-live-v0.1.4/`, `firefox-live-v0.1.4/` and
+`deployment-v0.1.4-final.log`. Touch tests emulate browser input, not physical
+Android/iPhone performance. No R2 objects, bucket settings or old deployments
+were changed by this release.
+
+After the earlier v0.1.2 verification, the superseded broad-asset deployment
 `e06d70ef-41e7-4bf4-91a3-cbfce418982b` was deleted with the owner's approval.
 Its previously accessible model URL now returns 404; it is no longer a rollback
 target.
@@ -204,7 +323,7 @@ Worker uses `MODELS` and `TEXTURES` bindings to `t850-models` and `t850-textures
 `ASSET_SOURCE=public-mirror` is not set. The native launcher's separate public R2
 URLs remain public; this restriction applies to the demo, not to those buckets.
 
-The public HTTPS site passed:
+The earlier v0.1.2 public HTTPS verification passed:
 
 - COOP/COEP isolation, visible version at desktop and phone sizes, and the
   R2-backed default sky response.
@@ -282,8 +401,13 @@ credentials, and rotate any token previously shared or committed.
 
 Pages requires the standard `wrangler.jsonc` filename. The script generates it
 in an ignored temporary `build/cloudflare/deploy-*` directory, containing only
-account/project/output/bucket settings, and removes it on normal completion or
+project/output/bucket settings, and removes it on normal completion or
 a handled failure. Interrupted runs may leave only ignored temporary state.
+The account is passed through `CLOUDFLARE_ACCOUNT_ID`, not `account_id` in the
+generated file. Wrangler 4.133.0 accepted that field during local preview but
+rejected it during the first actual Pages deployment; the corrected schema is
+regression-tested and was used successfully for v0.1.4. The API token remains
+only in the deploy subprocess environment.
 Production uses R2 bindings and never sets `ASSET_SOURCE=public-mirror`.
 If packaging finds oversized resources not in the configured manifests, it
 writes an upload list under `build/pages-r2/` and refuses to publish. Populate
@@ -297,6 +421,36 @@ does not authenticate to Cloudflare or write to real R2. It cannot serve pending
 unmanifested oversized assets without separately populating local R2 state.
 `npm run test:pages --prefix .\web` includes credential/configuration tests.
 
+### Embedded Browser Isolation
+
+On 2026-09-17, the owner reported `Cross-origin isolation is unavailable` in
+an Instagram in-app browser. A live HEAD check of `/`, `/minecraft-wssi.html`
+and `/DayScene?demo=wssi&scene=6` returned HTTP 200 with both
+`Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp`. No restrictive Permissions-Policy
+header was returned. Those requests confirm the server configuration, not the
+behavior of the owner's embedded browser or any intermediary it uses.
+
+The runtime uses shared Wasm memory and pthreads. An embedded WebView or its
+hosting policy can leave `crossOriginIsolated` false even when direct requests
+receive the correct headers. WebGPU availability is a separate requirement.
+See [MDN's isolation requirements](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated).
+Do not disable the guard or weaken security headers: that cannot provide the
+shared memory required by this build.
+
+Use the host app's menu to open the link in an up-to-date standalone Safari,
+Chrome, Edge or Firefox. A web page cannot reliably force an embedded browser
+to launch an external one; `target="_blank"` may simply open another in-app
+view. Supporting a non-isolated browser would require a separately engineered
+non-threaded runtime and still require WebGPU and sufficient GPU limits, not
+just a launcher switch.
+
+The guidance change prepared as v0.1.3 is published in v0.1.4. It replaces the
+generic isolation error with that standalone-browser guidance. Launch remains
+disabled and adapter initialization is not attempted. The unit test covers this
+blocked state. This is a messaging improvement, not verified Instagram WebView
+support; no physical-device test is implied.
+
 ### Touch and Optional GPU Features (v0.1.2)
 
 Minecraft detects `maxTouchPoints`, a coarse pointer, or the first touch event.
@@ -307,6 +461,20 @@ landscape controls overlay its edges. Local Lucide assets require no CDN at
 runtime. Pointer capture supports simultaneous contacts and release/cancellation;
 blur, hide, resize, or disabling controls clears held input.
 
+Release **v0.1.4** adds an unchecked **OnTop** checkbox beside Touch.
+With Touch and OnTop enabled, the canvas and framebuffer fill the available
+browser viewport below the header, without the reserved control footer or
+fixed 9:16/16:9 letterboxing. The camera follows the actual viewport aspect;
+this is a resize, not a stretched screenshot or browser-fullscreen request.
+The same virtual controls overlay the game, leaving a bottom strip for the
+hotbar. Browser navigation chrome and the application header remain visible.
+Unchecking OnTop restores the existing layout. Disabling Touch disables OnTop
+and restores the regular canvas, retaining the choice for re-enabling Touch
+within that session. Changing modes releases held input. Layout transitions
+dispatch a resize notification through SDL's existing window callback; changing
+CSS alone leaves its framebuffer at the old dimensions. The browser test checks
+the actual renderer dimensions, not just the CSS layout.
+
 `web/touch-controls.js` publishes axes and button state through an eight-slot
 atomic buffer. `WebFramework::ReadTouchInput` reads it on the engine worker and
 maps it to the existing gamepad API. Pending press bits preserve short taps
@@ -316,10 +484,17 @@ input synchronously to the page thread.
 The block atlas (`Textures/terrain.png`) is not BC-compressed. The default
 `sky/CubeMap_SkyWater.dds` is BC1/DXT1, 1024-square, six faces and eleven mip
 levels. Without BC support the shared bounded DXT1/3/5 decoder uploads all faces
-and mips as RGBA8. Downloads stay compressed; this default sky uses roughly
-32 MiB GPU storage rather than 4 MiB. The supported-device compressed path is
-unchanged, and Vulkan shares the decoder. Wasm tests cover cube/mip order,
-truncated data, transparency, and BC2/BC3 color interpolation.
+as RGBA8. Starting in v0.1.6, WebGPU chooses the first available source mip at
+or below 512x512 and retains the smaller levels. The default sky thus uploads
+512x512 through 1x1 (ten mips), using about 8 MiB rather than the former 32 MiB.
+Downloads stay compressed and the supported-device BC path remains full-size.
+The shared decoder's default `firstMip=0` preserves Vulkan's existing behavior;
+only the WebGPU no-BC cubemap caller requests mip skipping. Small cubemaps and
+2D textures are unchanged. An incomplete mip chain can only select its smallest
+available mip; this is not a general-purpose resize operation. Non-BC raw/HDR
+skies and generated float IBL resources are outside this particular memory limit.
+Wasm tests cover cube/mip order, asymmetric face orientation, truncated data,
+transparency, and BC2/BC3 color interpolation.
 
 Without `float32-filterable`, nearest-sampled float data stays RGBA32F with
 unfilterable-float texture bindings and non-filtering samplers. Updates preserve
@@ -333,7 +508,8 @@ The compatibility test uses `--disable-bc --disable-float-filtering` (Chrome or
 Edge) and attaches to workers before startup. A page-only override does not
 affect the GPU-owning worker. It requires the device log to report
 `BC=0 float32-filterable=0` and a six-face BC decode log, in addition to frame
-progress, nonblank captures and touch interaction checks. Earlier `--no-bc`
+progress, nonblank captures and touch interaction checks. It also asserts the
+default 512-to-1 mip chain and 8,388,600-byte decoded payload. Earlier `--no-bc`
 runs did not actually disable the feature and are not compatibility evidence.
 
 ### Wasm Stack and Block Edits

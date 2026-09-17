@@ -40,7 +40,7 @@ export async function loadCloudflareConfig(path, options) {
 }
 
 export function cloudflareWranglerConfig(config, output) {
-  return { name: config.projectName, account_id: config.accountId,
+  return { name: config.projectName,
     pages_build_output_dir: output, compatibility_date: '2026-09-16',
     r2_buckets: config.r2Buckets.map(bucket => ({ binding: bucket.binding, bucket_name: bucket.bucketName })) };
 }

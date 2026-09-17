@@ -44,7 +44,7 @@ form.addEventListener('submit', event => {
 window.addEventListener('pageshow', () => { starting = false; launch.disabled = !ready; });
 
 try {
-  if (!crossOriginIsolated) throw new Error('Cross-origin isolation is unavailable.');
+  if (!crossOriginIsolated) throw new Error('This browser cannot enable the isolation required by the demo. Open this link in an up-to-date standalone Safari, Chrome, Edge or Firefox browser using the app menu.');
   if (!navigator.gpu) throw new Error('WebGPU is unavailable in this browser.');
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error('No WebGPU adapter is available.');

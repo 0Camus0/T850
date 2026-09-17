@@ -165,6 +165,11 @@ public:
   float m_cascadeDebugOpacity = 0.12f;
   std::array<XVECTOR3, 6> m_cascadeDebugColors;
   int   m_cameraMode = 0;             // 0=player, 1=free spectator, 2=light
+  bool m_invertY = false;
+  void SetCameraMode(int mode);
+#ifdef __EMSCRIPTEN__
+  unsigned m_cameraDiagnosticFrames = 0;
+#endif
   int   m_debugCascadeIndex = 0;
   bool  m_debugCameraOrtho = false;
   bool  m_lightCameraEditMode = false;

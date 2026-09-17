@@ -329,13 +329,21 @@ public:
       std::vector<unsigned char> rgba;
       const unsigned levels = std::max(1u, mipmaps);
       const unsigned faces = (cil_props & CIL_CUBE_MAP) ? 6 : 1;
-      Require(DecompressDXTToRGBA(data, size, x, y, levels, faces, cil_props, rgba), "Unsupported or invalid BC texture payload");
-      T8_LOG_INFO("[WebGPU] BC unavailable; decoded %ux%u mips=%u faces=%u to RGBA8", x, y, levels, faces);
+      unsigned firstMip = 0;
+      unsigned uploadWidth = x, uploadHeight = y;
+      while (faces == 6 && firstMip + 1 < levels && firstMip < 31 && (uploadWidth > 512 || uploadHeight > 512)) {
+        ++firstMip;
+        uploadWidth = std::max(1u, uploadWidth >> 1);
+        uploadHeight = std::max(1u, uploadHeight >> 1);
+      }
+      Require(DecompressDXTToRGBA(data, size, x, y, levels, faces, cil_props, rgba, firstMip), "Unsupported or invalid BC texture payload");
+      T8_LOG_INFO("[WebGPU] BC unavailable; decoded %ux%u mips=%u faces=%u to RGBA8 (source=%ux%u firstMip=%u bytes=%zu)",
+        uploadWidth, uploadHeight, levels - firstMip, faces, x, y, firstMip, rgba.size());
       cil_props = (cil_props & CIL_CUBE_MAP) | CIL_RGBA | CIL_RAW;
       props = TextBasicFormat::CH_RGBA;
       m_channels = 4;
       size = static_cast<unsigned int>(rgba.size());
-      Upload(rgba.data(), x, y, wgpu::TextureFormat::RGBA8Unorm, 4, levels, faces);
+      Upload(rgba.data(), uploadWidth, uploadHeight, wgpu::TextureFormat::RGBA8Unorm, 4, levels - firstMip, faces);
       return;
     }
     const auto textureFormat = (cil_props & CIL_DXT3) ? wgpu::TextureFormat::BC2RGBAUnorm
@@ -1120,6 +1128,12 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
       runtimeBindings.size() != pipeline->bindings.size()) return false;
   try {
     m_state->EndPass();
+    struct StandaloneCommands {
+      webgpu::WebGPUContext& context;
+      bool standalone;
+      ~StandaloneCommands() { if (standalone) context.commands = nullptr; }
+    } commands{m_state->context, !m_state->active};
+    if (commands.standalone) m_state->context.commands = m_state->context.device.CreateCommandEncoder();
     std::vector<bool> consumed(runtimeBindings.size(), false);
     std::vector<wgpu::BindGroupEntry> entries;
     entries.reserve(pipeline->bindings.size());
@@ -1193,20 +1207,13 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
     auto bindGroup = m_state->context.device.CreateBindGroup(&groupDescriptor);
     if (!bindGroup) return false;
 
-    if (m_state->active) {
-      auto pass = m_state->context.commands.BeginComputePass();
-      pass.SetPipeline(pipeline->pipeline);
-      pass.SetBindGroup(0, bindGroup);
-      pass.DispatchWorkgroups(groupX, groupY, groupZ);
-      pass.End();
-    } else {
-      auto encoder = m_state->context.device.CreateCommandEncoder();
-      auto pass = encoder.BeginComputePass();
-      pass.SetPipeline(pipeline->pipeline);
-      pass.SetBindGroup(0, bindGroup);
-      pass.DispatchWorkgroups(groupX, groupY, groupZ);
-      pass.End();
-      auto command = encoder.Finish();
+    auto pass = m_state->context.commands.BeginComputePass();
+    pass.SetPipeline(pipeline->pipeline);
+    pass.SetBindGroup(0, bindGroup);
+    pass.DispatchWorkgroups(groupX, groupY, groupZ);
+    pass.End();
+    if (commands.standalone) {
+      auto command = m_state->context.commands.Finish();
       m_state->context.SubmitCommands(command);
     }
     m_state->context.CheckHealth();

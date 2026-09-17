@@ -42,6 +42,7 @@ test('Cloudflare deployment config requires explicit credentials and never seria
   const wrangler = cloudflareWranglerConfig(config, '/build/pages-minecraft');
   assert.equal(JSON.stringify(wrangler).includes('test-secret'), false);
   assert.equal(Object.hasOwn(wrangler, 'apiToken'), false);
+  assert.equal(Object.hasOwn(wrangler, 'account_id'), false);
   assert.equal(Object.hasOwn(wrangler, 'vars'), false);
   assert.equal(wrangler.r2_buckets[1].bucket_name, 'example-textures');
   assert.equal(config.minecraftOnly, true);
@@ -65,9 +66,9 @@ test('Minecraft package rejects unrelated scene assets and retains declared depe
 
 test('WSSI welcome validates enemies, starts only on Launch, and handles unavailable WebGPU', async () => {
   const html = await readFile(new URL('./minecraft-wssi.html', import.meta.url), 'utf8');
-  assert.match(html, /<span id="demo-version">v0\.1\.2<\/span>/);
+  assert.match(html, /<span id="demo-version">v0\.1\.7<\/span>/);
   const source = await readFile(new URL('./minecraft-wssi.mjs', import.meta.url), 'utf8');
-  const createWelcome = async (gpu, search = '', mobile = false) => {
+  const createWelcome = async (gpu, search = '', mobile = false, isolated = true) => {
     const options = ['960x540', '1280x720', '1920x1080'].map(value => ({ value, selected: value === '1280x720' }));
     const portrait = { matches: mobile, addEventListener(name, callback) { this[name] = callback; } };
     const controls = {
@@ -78,7 +79,7 @@ test('WSSI welcome validates enemies, starts only on Launch, and handles unavail
       launch: { disabled: true }, status: { dataset: {} },
     };
     const navigations = [];
-    const sandbox = { URL, URLSearchParams, crossOriginIsolated: true, navigator: { gpu },
+    const sandbox = { URL, URLSearchParams, crossOriginIsolated: isolated, navigator: { gpu },
       document: { getElementById: id => controls[id] }, window: { addEventListener() {}, matchMedia: () => portrait },
       location: { href: 'https://test.pages.dev/minecraft-wssi.html', search, assign: url => navigations.push(url) } };
     await runInNewContext(`(async () => { ${source} })()`, sandbox);
@@ -119,6 +120,12 @@ test('WSSI welcome validates enemies, starts only on Launch, and handles unavail
   assert.equal(unavailable.controls.launch.disabled, true);
   assert.equal(unavailable.navigations.length, 0);
   assert.match(unavailable.controls.status.textContent, /WebGPU is unavailable/);
+  const embedded = await createWelcome({ requestAdapter() { assert.fail('Do not initialize GPU without isolation'); } }, '', true, false);
+  embedded.submit();
+  assert.equal(embedded.controls.launch.disabled, true);
+  assert.equal(embedded.navigations.length, 0);
+  assert.equal(embedded.controls.status.dataset.error, 'true');
+  assert.match(embedded.controls.status.textContent, /standalone Safari, Chrome, Edge or Firefox/);
 });
 
 test('WSSI runtime forwards validated enemy counts and stays on Minecraft', async () => {
@@ -279,7 +286,7 @@ test('touch gamepad detects capability, handles multitouch and releases all held
   const source = await readFile(new URL('./touch-controls.js', import.meta.url), 'utf8');
   function load(touchPoints) {
     const makeElement = dataset => ({ dataset, handlers: {}, captured: new Set(), hidden: true, style: { setProperty() {} },
-      classList: { add() {}, remove() {} },
+      classList: { values: new Set(), add(name) { this.values.add(name); }, remove(name) { this.values.delete(name); }, contains(name) { return this.values.has(name); } },
       addEventListener(name, handler) { this.handlers[name] = handler; },
       hasAttribute(name) { return name === 'data-axis' && dataset.axis !== undefined; },
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 120, height: 120 }),
@@ -293,21 +300,34 @@ test('touch gamepad detects capability, handles multitouch and releases all held
     const panel = { hidden: true, querySelectorAll: selector => selector === '.touch-stick' ? [move, look] : controls };
     const toggle = makeElement({});
     const label = { hidden: true };
+    const onTop = { ...makeElement({}), checked: false };
+    const onTopLabel = { hidden: true };
+    const cameraControls = { hidden: true };
+    const commands = ['1', '2', '1', '2'].map(command => ({ ...makeElement({ command }), setAttribute(name, value) { this[name] = value; } }));
+    const classes = new Set();
     const events = {};
-    const window = { t850: { scene: 'Minecraft' }, addEventListener: (name, callback) => { events[name] = callback; } };
-    const document = { hidden: false, body: { classList: { toggle() {} } }, addEventListener: (name, callback) => { events[name] = callback; },
-      getElementById: id => ({ 'touch-controls': panel, 'touch-enabled': toggle, 'touch-toggle': label })[id] };
-    runInNewContext(source, { window, document, navigator: { maxTouchPoints: touchPoints }, Atomics,
+    const window = { t850: { scene: 'Minecraft' }, resizeEvents: 0,
+      addEventListener: (name, callback) => { events[name] = callback; },
+      dispatchEvent(event) { if (event.type === 'resize') ++this.resizeEvents; events[event.type]?.(event); } };
+    const document = { hidden: false, body: { classList: { toggle(name, active) { if (active) classes.add(name); else classes.delete(name); } } }, addEventListener: (name, callback) => { events[name] = callback; },
+      querySelectorAll: () => commands,
+      getElementById: id => ({ 'touch-controls': panel, 'touch-enabled': toggle, 'touch-toggle': label,
+        'touch-ontop': onTop, 'touch-ontop-toggle': onTopLabel, 'camera-controls': cameraControls })[id] };
+    runInNewContext(source, { window, document, navigator: { maxTouchPoints: touchPoints }, Atomics, Event,
       matchMedia: () => ({ matches: false, addEventListener() {} }) });
     const memory = new Int32Array(new SharedArrayBuffer(32));
     window.t850Touch.attach(memory);
     events['t850-runtime-ready']();
     const send = (element, name, id, clientX = 60, clientY = 60) => element.handlers[name]({ pointerId: id, button: 0, clientX, clientY, preventDefault() {}, stopPropagation() {} });
-    return { move, look, jump, panel, toggle, label, events, memory, window, send };
+    return { move, look, jump, panel, toggle, label, onTop, onTopLabel, cameraControls, commands, classes, events, memory, window, send };
   }
   const touch = load(5);
   assert.equal(touch.panel.hidden, false);
   assert.equal(touch.memory[0], 1);
+  assert.equal(touch.onTopLabel.hidden, false);
+  assert.equal(touch.onTop.disabled, false);
+  assert.equal(touch.classes.has('touch-ontop'), false);
+  assert.equal(touch.window.resizeEvents, 1);
   touch.send(touch.move, 'pointerdown', 1, 60, 0);
   touch.send(touch.look, 'pointerdown', 2, 120, 60);
   touch.send(touch.jump, 'pointerdown', 3);
@@ -320,14 +340,86 @@ test('touch gamepad detects capability, handles multitouch and releases all held
   assert.equal(touch.memory[3], 1000);
   touch.events.blur();
   assert.deepEqual([...touch.memory.slice(1, 7)], [0, 0, 0, 0, 0, 0]);
+  touch.send(touch.move, 'pointerdown', 4, 60, 0);
+  touch.onTop.checked = true;
+  touch.onTop.handlers.change();
+  assert.equal(touch.classes.has('touch-ontop'), true);
+  assert.equal(touch.window.resizeEvents, 2);
+  assert.equal(touch.panel.hidden, false);
+  assert.deepEqual([...touch.memory.slice(1, 7)], [0, 0, 0, 0, 0, 0]);
+  touch.onTop.checked = false;
+  touch.onTop.handlers.change();
+  assert.equal(touch.classes.has('touch-ontop'), false);
+  touch.onTop.checked = true;
+  touch.onTop.handlers.change();
   touch.toggle.checked = false;
   touch.toggle.handlers.change();
   assert.equal(touch.panel.hidden, true);
   assert.equal(touch.memory[0], 0);
+  assert.equal(touch.onTop.disabled, true);
+  assert.equal(touch.classes.has('touch-ontop'), false);
+  touch.toggle.checked = true;
+  touch.toggle.handlers.change();
+  assert.equal(touch.classes.has('touch-ontop'), true);
   const desktop = load(0);
+  assert.equal(desktop.cameraControls.hidden, false);
+  assert.equal(touch.cameraControls.hidden, true);
+  for (const target of [desktop, touch]) {
+    for (const command of target.commands) {
+      assert.equal(command.disabled, false);
+      command.handlers.click({ preventDefault() {}, stopPropagation() {} });
+      assert.equal(Atomics.exchange(target.memory, 7, 0), Number(command.dataset.command));
+    }
+    target.window.t850Touch.updateCamera({ mode: 1, invertY: true });
+    for (const command of target.commands) assert.equal(command['aria-pressed'], 'true');
+    target.window.t850Touch.updateCamera({ mode: 0, invertY: false });
+    for (const command of target.commands) assert.equal(command['aria-pressed'], 'false');
+  }
   assert.equal(desktop.panel.hidden, true);
+  assert.equal(desktop.onTopLabel.hidden, true);
   desktop.events.pointerdown({ pointerType: 'touch' });
   assert.equal(desktop.panel.hidden, false);
+  assert.equal(desktop.onTopLabel.hidden, false);
+  desktop.onTop.checked = true;
+  desktop.onTop.handlers.change();
   desktop.window.t850Touch.detach();
   assert.equal(desktop.memory[0], 0);
+  assert.equal(desktop.classes.has('touch-ontop'), false);
+  for (const name of ['InvalidStateError', 'NotFoundError']) {
+    const rejected = load(5);
+    rejected.send(rejected.look, 'pointerdown', 2, 120, 60);
+    const capture = rejected.move.setPointerCapture;
+    rejected.move.setPointerCapture = () => { throw new DOMException('Pointer capture unavailable', name); };
+    rejected.jump.setPointerCapture = rejected.move.setPointerCapture;
+    assert.doesNotThrow(() => rejected.send(rejected.move, 'pointerdown', 1, 60, 0));
+    assert.doesNotThrow(() => rejected.send(rejected.jump, 'pointerdown', 3));
+    assert.equal(rejected.move.classList.contains('held'), false);
+    assert.equal(rejected.jump.classList.contains('held'), false);
+    assert.deepEqual([...rejected.memory.slice(0, 7)], [1, 0, 0, 1000, 0, 0, 0]);
+    rejected.send(rejected.move, 'pointermove', 1, 60, 0);
+    assert.equal(rejected.memory[2], 0);
+    rejected.move.setPointerCapture = capture;
+    rejected.jump.setPointerCapture = capture;
+    rejected.send(rejected.move, 'pointerdown', 1, 60, 0);
+    rejected.send(rejected.jump, 'pointerdown', 3);
+    assert.equal(rejected.memory[2], -1000);
+    assert.equal(rejected.memory[5], 1);
+    rejected.move.releasePointerCapture = () => { throw new DOMException('Pointer already canceled', name); };
+    assert.doesNotThrow(() => rejected.events.resize());
+    assert.deepEqual([...rejected.memory.slice(0, 7)], [1, 0, 0, 0, 0, 0, 0]);
+    for (const control of [rejected.move, rejected.look, rejected.jump]) assert.equal(control.classList.contains('held'), false);
+    assert.equal(rejected.look.captured.size, 0);
+    assert.equal(rejected.jump.captured.size, 0);
+    rejected.send(rejected.look, 'pointerdown', 4, 120, 60);
+    rejected.send(rejected.look, 'lostpointercapture', 4);
+    assert.equal(rejected.memory[3], 0);
+  }
+  const ignored = load(5);
+  ignored.move.setPointerCapture = () => {};
+  ignored.send(ignored.move, 'pointerdown', 1, 60, 0);
+  assert.equal(ignored.memory[2], 0);
+  assert.equal(ignored.move.classList.contains('held'), false);
+  const unexpected = load(5);
+  unexpected.move.setPointerCapture = () => { throw new TypeError('Unexpected capture failure'); };
+  assert.throws(() => unexpected.send(unexpected.move, 'pointerdown', 1), /Unexpected capture failure/);
 });

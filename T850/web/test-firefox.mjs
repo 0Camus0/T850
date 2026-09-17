@@ -28,6 +28,8 @@ const { values } = parseArgs({ allowNegative: true, options: {
   'block-edits': { type: 'boolean', default: false },
   'dig-seconds': { type: 'string', default: '0' },
   touch: { type: 'boolean', default: false },
+  'capture-errors': { type: 'boolean', default: false },
+  'camera-controls': { type: 'boolean', default: false },
   'disable-bc': { type: 'boolean', default: false },
   'disable-float-filtering': { type: 'boolean', default: false },
   gui: { type: 'boolean', default: false },
@@ -395,7 +397,9 @@ try {
       if (values['minecraft-welcome']) {
         await driver.wait(async () => driver.executeScript(`
           const portrait = matchMedia('(max-width: 700px) and (orientation: portrait)').matches;
-          const aspect = portrait ? 9 / 16 : 16 / 9;
+          const aspect = document.body.classList.contains('touch-ontop')
+            ? innerWidth / (innerHeight - document.querySelector('header').getBoundingClientRect().height)
+            : portrait ? 9 / 16 : 16 / 9;
           const rect = document.getElementById('canvas').getBoundingClientRect();
           const size = window.t850.renderSize;
           return Math.abs(rect.width / rect.height - aspect) < 0.003 &&
@@ -417,6 +421,49 @@ try {
         return { x: center.x + offsetX, y: center.y + offsetY, id, radiusX: 4, radiusY: 4, force: 1 };
       };
       const dispatchTouch = (type, touchPoints) => driver.sendDevToolsCommand('Input.dispatchTouchEvent', { type, touchPoints });
+      if (values['capture-errors']) {
+        report.captureRecovery = [];
+        for (const errorName of ['InvalidStateError', 'NotFoundError']) {
+          await driver.executeScript(`const element = document.getElementById('touch-move');
+            const original = element.setPointerCapture;
+            const failureName = arguments[0];
+            window.t850CaptureFaults = 0;
+            element.setPointerCapture = function(pointerId) {
+              element.setPointerCapture = original;
+              ++window.t850CaptureFaults;
+              throw new DOMException('Test capture rejection', failureName);
+            }.bind(element);`, errorName);
+          await dispatchTouch('touchStart', [await point('#touch-move', 7, 0, -36)]);
+          await waitFrames(30);
+          const failed = await driver.executeScript(`return { faults: window.t850CaptureFaults,
+            held: document.getElementById('touch-move').classList.contains('held'), input: window.t850.touch, errors: window.t850.errors };`);
+          if (failed.faults !== 1 || failed.held || failed.input.moveY || failed.errors.length)
+            throw new Error('Capture rejection left stale input or a runtime error');
+          await dispatchTouch('touchEnd', []);
+          await dispatchTouch('touchStart', [await point('#touch-move', 7, 0, -36)]);
+          await waitFrames(30);
+          const recovered = await driver.executeScript('return window.t850.touch');
+          if (recovered.moveY > -0.8) throw new Error('Stick did not recover after capture rejection');
+          await driver.executeScript(`const element = document.getElementById('touch-move');
+            const original = element.releasePointerCapture;
+            const failureName = arguments[0];
+            element.releasePointerCapture = function(pointerId) {
+              element.releasePointerCapture = original;
+              original.call(element, pointerId);
+              throw new DOMException('Test release rejection', failureName);
+            };
+            window.dispatchEvent(new Event('resize'));`, errorName);
+          await waitFrames(30);
+          if (await driver.executeScript('return window.t850.touch.moveY')) throw new Error('Release failure left stick held');
+          await dispatchTouch('touchEnd', []);
+          report.captureRecovery.push({ errorName, rejected: failed, recovered });
+        }
+        await canvas.click();
+        await waitFrames(60);
+        if (await driver.executeScript('return !!document.pointerLockElement'))
+          throw new Error('Touch mode acquired mouse pointer lock, preventing virtual-control capture');
+        report.touchModeAvoidsPointerLock = true;
+      }
       const start = await point('#touch-move', 1);
       await dispatchTouch('touchStart', [start]);
       const walking = { ...start, y: start.y - 40 };
@@ -455,7 +502,8 @@ try {
       if (report.touch.edits.length < 2) throw new Error('Touch block buttons did not produce actual voxel edits');
       const touchLayout = () => driver.executeScript(`
         const controls = [...document.querySelectorAll('#touch-controls button')].map(element => element.getBoundingClientRect());
-        return { width: innerWidth, height: innerHeight, renderSize: window.t850.renderSize,
+        const canvas = document.getElementById('canvas').getBoundingClientRect();
+        return { width: innerWidth, height: innerHeight, renderSize: window.t850.renderSize, canvasSize: [canvas.width, canvas.height],
           iconsReady: [...document.querySelectorAll('#touch-controls img')].every(image => image.complete && image.naturalWidth > 0),
           withinViewport: controls.every(rect => rect.left >= 0 && rect.top >= 36 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1),
           overlaps: controls.some((rect, index) => controls.slice(index + 1).some(other => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top)),
@@ -464,17 +512,191 @@ try {
       if (!report.touch.portrait.iconsReady || !report.touch.portrait.withinViewport || report.touch.portrait.overlaps || !report.touch.portrait.controlsBelowGame)
         throw new Error('Portrait touch layout has overlap, missing icons, or clipped controls');
       await writeFile(resolve(output, 'touch-controls.png'), Buffer.from(await driver.takeScreenshot(), 'base64'));
+      const onTopLayout = async () => {
+        await driver.wait(() => driver.executeScript(`
+          const rect = document.getElementById('canvas').getBoundingClientRect();
+          const size = window.t850.renderSize;
+          return document.body.classList.contains('touch-ontop') && size &&
+            Math.abs(size[0] - rect.width) < 2 && Math.abs(size[1] - rect.height) < 2;
+        `), 10000, 'OnTop framebuffer did not resize to the canvas');
+        const layout = await driver.executeScript(`
+          const canvas = document.getElementById('canvas').getBoundingClientRect();
+          const header = document.querySelector('header').getBoundingClientRect();
+          const controls = [...document.querySelectorAll('#touch-controls button')].map(element => element.getBoundingClientRect());
+          return { renderSize: window.t850.renderSize, viewport: [innerWidth, innerHeight],
+            fillsViewport: Math.abs(canvas.left) < 1 && Math.abs(canvas.right - innerWidth) < 1 &&
+              Math.abs(canvas.top - header.bottom) < 1 && Math.abs(canvas.bottom - innerHeight) < 1,
+            controlsOverCanvas: controls.every(rect => rect.left >= canvas.left && rect.right <= canvas.right &&
+              rect.top >= canvas.top && rect.bottom <= canvas.bottom - 48),
+            overlaps: controls.some((rect, index) => controls.slice(index + 1).some(other =>
+              rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top)),
+            overflow: document.documentElement.scrollWidth > innerWidth || document.documentElement.scrollHeight > innerHeight,
+            optionVisible: document.getElementById('touch-ontop').getBoundingClientRect().width > 0 };
+        `);
+        if (!layout.fillsViewport || !layout.controlsOverCanvas || layout.overlaps || layout.overflow || !layout.optionVisible)
+          throw new Error('OnTop layout failed: ' + JSON.stringify(layout));
+        return layout;
+      };
+      await driver.findElement(By.id('touch-ontop')).click();
+      await waitFrames(60);
+      report.touch.onTopPortrait = await onTopLayout();
+      if (report.touch.onTopPortrait.renderSize[1] <= report.touch.portrait.canvasSize[1])
+        throw new Error('OnTop did not expand the portrait viewport');
+      const overlayMove = await point('#touch-move', 1, 0, -32);
+      const overlayLook = await point('#touch-look', 2, 16, 0);
+      await dispatchTouch('touchStart', [overlayMove, overlayLook]);
+      await waitFrames(60);
+      report.touch.onTopInput = await driver.executeScript('return window.t850.touch');
+      if (report.touch.onTopInput.moveY > -0.7 || report.touch.onTopInput.lookX < 0.3)
+        throw new Error('OnTop sticks did not drive the engine');
+      await dispatchTouch('touchCancel', []);
+      for (const [label, field] of [['Jump', 'jump'], ['Sprint', 'sprint'], ['Break block', 'breakBlock'], ['Place block', 'placeBlock']]) {
+        await dispatchTouch('touchStart', [await point(`button[aria-label="${label}"]`, 3)]);
+        await waitFrames(30);
+        const state = await driver.executeScript('return window.t850.touch');
+        if (!state[field]) throw new Error(`OnTop ${label} did not reach the engine`);
+        await dispatchTouch('touchEnd', []);
+        await waitFrames(30);
+      }
+      await writeFile(resolve(output, 'touch-ontop-portrait.png'), Buffer.from(await driver.takeScreenshot(), 'base64'));
+      await driver.findElement(By.id('touch-ontop')).click();
+      await waitFrames(60);
+      report.touch.restoredPortrait = await touchLayout();
+      if (!report.touch.restoredPortrait.controlsBelowGame) throw new Error('OnTop off did not restore the portrait footer');
+      await driver.findElement(By.id('touch-ontop')).click();
       await driver.findElement(By.id('touch-enabled')).click();
       await waitFrames(30);
       if (await driver.executeScript('return window.t850.touch.active')) throw new Error('Touch disable did not clear the engine gamepad');
+      if (!await driver.findElement(By.id('touch-ontop')).getAttribute('disabled') ||
+          await driver.executeScript('return document.body.classList.contains("touch-ontop")'))
+        throw new Error('Touch disabled left OnTop active');
       await driver.findElement(By.id('touch-enabled')).click();
       await waitFrames(30);
+      await onTopLayout();
       await driver.sendDevToolsCommand('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
+      await waitFrames(60);
+      report.touch.onTopLandscape = await onTopLayout();
+      await writeFile(resolve(output, 'touch-ontop-landscape.png'), Buffer.from(await driver.takeScreenshot(), 'base64'));
+      await driver.findElement(By.id('touch-ontop')).click();
       await waitFrames(60);
       report.touch.landscape = await touchLayout();
       if (!report.touch.landscape.iconsReady || !report.touch.landscape.withinViewport || report.touch.landscape.overlaps)
         throw new Error('Landscape touch controls overlap or leave the viewport');
       await writeFile(resolve(output, 'touch-landscape.png'), Buffer.from(await driver.takeScreenshot(), 'base64'));
+      if (values['capture-errors']) {
+        await driver.findElement(By.id('touch-enabled')).click();
+        await waitFrames(30);
+        await canvas.click();
+        await driver.wait(() => driver.executeScript('return document.pointerLockElement === document.getElementById("canvas")'),
+          10000, 'Disabling Touch did not restore mouse pointer lock');
+        report.mouseModeRestoresPointerLock = true;
+        await driver.executeScript('document.getElementById("touch-enabled").click()');
+        await driver.wait(() => driver.executeScript('return !document.pointerLockElement && window.t850.touch?.active && !window.t850.input?.relative'),
+          10000, 'Enabling Touch did not release existing mouse pointer lock');
+        report.touchModeReleasesPointerLock = true;
+        await dispatchTouch('touchStart', [await point('#touch-move', 7, 0, -32)]);
+        await waitFrames(30);
+        if (await driver.executeScript('return window.t850.touch.moveY > -0.8')) throw new Error('Touch did not recover after mouse lock');
+        await dispatchTouch('touchCancel', []);
+        await waitFrames(30);
+      }
+    }
+    if (values['camera-controls']) {
+      await driver.wait(() => driver.executeScript('return !!window.t850.camera'), 10000, 'Camera state unavailable');
+      report.cameraControls = { input: values.touch ? 'touch' : 'mouse', checks: [] };
+      const snapshot = () => driver.executeScript('return window.t850.camera');
+      const clickCommand = async id => {
+        if (await driver.executeScript('return !!document.pointerLockElement')) {
+          await driver.executeScript('document.exitPointerLock()');
+          await waitFrames(20);
+        }
+        await driver.findElement(By.id(id)).click();
+        await waitFrames(40);
+      };
+      const checkButtons = async () => {
+        const state = await driver.executeScript(`const state = window.t850.camera;
+          return { ...state, synchronized: [...document.querySelectorAll('[data-command]')].every(button =>
+            button.getAttribute('aria-pressed') === String(button.dataset.command === '1' ? state.mode === 1 : state.invertY)) };`);
+        if (!state.synchronized) throw new Error('Header and virtual camera controls disagree with the scene');
+        return state;
+      };
+      const lookVertical = async () => {
+        if (!values.touch) {
+          await driver.wait(() => driver.executeScript('return !!document.pointerLockElement'), 10000, 'Mouse look did not acquire lock');
+          await driver.actions().move({ origin: canvas, x: 0, y: -24 }).perform();
+          await waitFrames(30);
+        }
+        const before = await snapshot();
+        if (values.touch) {
+          const point = await driver.executeScript(`const rect = document.getElementById('touch-look').getBoundingClientRect();
+            return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 + 20, id: 9 };`);
+          await driver.sendDevToolsCommand('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+          await waitFrames(40);
+          await driver.sendDevToolsCommand('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        } else {
+          await driver.actions().move({ origin: canvas, x: 0, y: 24 }).perform();
+        }
+        await waitFrames(30);
+        return { before, after: await snapshot() };
+      };
+      const prefix = values.touch ? 'touch' : 'web';
+      for (const mode of [0, 1]) {
+        let state = await snapshot();
+        if (state.mode !== mode) await clickCommand(`${prefix}-view`);
+        state = await checkButtons();
+        if (state.mode !== mode) throw new Error('Camera mode command was not applied');
+        if (state.invertY) await clickCommand(`${prefix}-invert-y`);
+        if (!values.touch) { await canvas.click(); await waitFrames(30); }
+        const normal = await lookVertical();
+        if (normal.after.pitch <= normal.before.pitch + 0.001) throw new Error(`Normal vertical look did not increase camera pitch: ${normal.before.pitch} -> ${normal.after.pitch}`);
+        await clickCommand(`${prefix}-invert-y`);
+        state = await checkButtons();
+        if (!state.invertY) throw new Error('InvertY command was not applied');
+        if (!values.touch) { await canvas.click(); await waitFrames(30); }
+        const inverted = await lookVertical();
+        if (inverted.after.pitch >= inverted.before.pitch - 0.001) throw new Error(`InvertY did not reverse vertical look: ${inverted.before.pitch} -> ${inverted.after.pitch}`);
+        await clickCommand(`${prefix}-invert-y`);
+        report.cameraControls.checks.push({ mode, normalDelta: normal.after.pitch - normal.before.pitch, invertedDelta: inverted.after.pitch - inverted.before.pitch });
+      }
+      const beforeMove = await snapshot();
+      if (values.touch) {
+        const point = await driver.executeScript(`const rect = document.getElementById('touch-move').getBoundingClientRect();
+          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 - 24, id: 9 };`);
+        await driver.sendDevToolsCommand('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+        await waitFrames(100);
+        await driver.sendDevToolsCommand('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      } else {
+        await canvas.click();
+        await driver.actions().keyDown('w').perform();
+        await waitFrames(100);
+        await driver.actions().keyUp('w').perform();
+      }
+      await waitFrames(30);
+      const afterMove = await snapshot();
+      const distance = (first, second) => Math.hypot(...first.map((value, index) => value - second[index]));
+      report.cameraControls.spectatorTravel = distance(beforeMove.eye, afterMove.eye);
+      report.cameraControls.playerTravel = distance(beforeMove.playerEye, afterMove.playerEye);
+      if (report.cameraControls.spectatorTravel < 0.1 || report.cameraControls.playerTravel > 0.1)
+        throw new Error('Free spectator did not move independently of the player');
+      await writeFile(resolve(output, 'camera-spectator.png'), Buffer.from(await driver.takeScreenshot(), 'base64'));
+      await clickCommand(`${prefix}-view`);
+      const restored = await checkButtons();
+      if (restored.mode !== 0 || restored.invertY) throw new Error('Returning to first person did not restore camera state');
+      if (distance(restored.eye, restored.playerEye) > 0.1) throw new Error('First person did not return to the player');
+      if (values.touch) {
+        await driver.findElement(By.id('touch-enabled')).click();
+        await waitFrames(30);
+        await clickCommand('web-view');
+        if ((await checkButtons()).mode !== 1) throw new Error('Header View failed with Touch disabled');
+        await clickCommand('web-invert-y');
+        if (!(await checkButtons()).invertY) throw new Error('Header InvertY failed with Touch disabled');
+        await clickCommand('web-invert-y');
+        await clickCommand('web-view');
+        await driver.findElement(By.id('touch-enabled')).click();
+        await waitFrames(30);
+      }
+      report.cameraControls.final = await checkButtons();
+      await writeFile(resolve(output, 'camera-player.png'), Buffer.from(await driver.takeScreenshot(), 'base64'));
     }
     if (profileFrames) {
       await driver.wait(() => driver.executeScript('return !!window.t850.telemetry'), 240000, 'Profile did not finish');
@@ -687,6 +909,15 @@ try {
   if (values['disable-bc']) {
     report.bcFallback = await driver.executeScript(`return window.t850.logs.filter(line => line.includes('BC unavailable; decoded'));`);
     if (!report.bcFallback.some(line => line.includes('faces=6'))) throw new Error('BC fallback was not exercised; use logLevel=info');
+    report.bcCubemaps = report.bcFallback.map(line => line.match(/decoded (\d+)x(\d+) mips=(\d+) faces=6 to RGBA8 \(source=(\d+)x(\d+) firstMip=(\d+) bytes=(\d+)\)/))
+      .filter(Boolean).map(match => ({ width: Number(match[1]), height: Number(match[2]), mips: Number(match[3]),
+        sourceWidth: Number(match[4]), sourceHeight: Number(match[5]), firstMip: Number(match[6]), bytes: Number(match[7]) }));
+    if (!report.bcCubemaps.length || report.bcCubemaps.some(cube => cube.width > 512 || cube.height > 512 || cube.bytes > 8 * 1024 * 1024))
+      throw new Error('BC cubemap fallback did not stay within the 512-square/8-MiB texture budget');
+    for (const cube of report.bcCubemaps) {
+      if (cube.sourceWidth === 1024 && (cube.width !== 512 || cube.height !== 512 || cube.mips !== 10 || cube.firstMip !== 1 || cube.bytes !== 8388600))
+        throw new Error('Default BC sky did not retain the expected 512-to-1 mip chain');
+    }
   }
   if (values['minecraft-welcome']) {
     report.runtime = await driver.executeScript('const { telemetry, ...runtime } = window.t850 ?? {}; return runtime');

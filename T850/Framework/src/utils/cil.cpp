@@ -16,10 +16,10 @@
 bool t850::DecompressDXTToRGBA(const unsigned char* source, size_t sourceBytes,
 														 uint32_t width, uint32_t height, uint32_t mipCount,
 														 uint32_t faceCount, unsigned int properties,
-														 std::vector<unsigned char>& output) {
+														 std::vector<unsigned char>& output, uint32_t firstMip) {
 	output.clear();
 	const auto format = properties & (CIL_DXT1 | CIL_DXT3 | CIL_DXT5);
-	if (!source || !width || !height || !mipCount || mipCount > 32 || (faceCount != 1 && faceCount != 6) ||
+	if (!source || !width || !height || !mipCount || mipCount > 32 || firstMip >= mipCount || (faceCount != 1 && faceCount != 6) ||
 			(format != CIL_DXT1 && format != CIL_DXT3 && format != CIL_DXT5)) return false;
 	const size_t blockBytes = format == CIL_DXT1 ? 8 : 16;
 	size_t totalSource = 0;
@@ -35,7 +35,7 @@ bool t850::DecompressDXTToRGBA(const unsigned char* source, size_t sourceBytes,
 		const size_t decoded = mipWidth * mipHeight * 4 * faceCount;
 		if (encoded > sourceBytes - totalSource || decoded > std::numeric_limits<size_t>::max() - totalOutput) return false;
 		totalSource += encoded;
-		totalOutput += decoded;
+		if (mip >= firstMip) totalOutput += decoded;
 	}
 	output.resize(totalOutput);
 	const auto decode565 = [](uint16_t value, unsigned char* color) {
@@ -52,6 +52,10 @@ bool t850::DecompressDXTToRGBA(const unsigned char* source, size_t sourceBytes,
 			const uint32_t mipHeight = std::max(1u, height >> mip);
 			const uint32_t columns = (mipWidth + 3) / 4;
 			const uint32_t rows = (mipHeight + 3) / 4;
+			if (mip < firstMip) {
+				sourceOffset += static_cast<size_t>(columns) * rows * blockBytes;
+				continue;
+			}
 			for (uint32_t row = 0; row < rows; ++row) {
 				for (uint32_t column = 0; column < columns; ++column) {
 					const auto* block = source + sourceOffset;

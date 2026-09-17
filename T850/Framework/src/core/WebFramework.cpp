@@ -163,6 +163,7 @@ void WebFramework::ProcessInput() {
   auto& input = pBaseApp->IManager;
   input.xDelta = input.yDelta = 0;
   input.scrollDelta = 0;
+  const bool touchActive = m_touchInput[0].load() != 0;
   SDL_Event event;
   while (SDL_PollEvent(&event)) {
     if (m_inputEventHandler) m_inputEventHandler(m_inputEventUserdata, &event);
@@ -189,7 +190,7 @@ void WebFramework::ProcessInput() {
       break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-      if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && pBaseApp->WantsRelativeMouseMode() &&
+      if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !touchActive && pBaseApp->WantsRelativeMouseMode() &&
           !SDL_GetWindowRelativeMouseMode(m_window)) {
         SDL_SetWindowRelativeMouseMode(m_window, true);
         break;
@@ -221,12 +222,15 @@ void WebFramework::ProcessInput() {
     default: break;
     }
   }
-  if (!pBaseApp->WantsRelativeMouseMode() && SDL_GetWindowRelativeMouseMode(m_window))
+  if ((touchActive || !pBaseApp->WantsRelativeMouseMode()) && SDL_GetWindowRelativeMouseMode(m_window))
     SDL_SetWindowRelativeMouseMode(m_window, false);
   ReadTouchInput();
 }
 
 void WebFramework::ReadTouchInput() {
+  const int commands = m_touchInput[7].exchange(0);
+  pBaseApp->IManager.toggleCameraView = (commands & 1) != 0;
+  pBaseApp->IManager.toggleInvertY = (commands & 2) != 0;
   auto& gamepad = pBaseApp->IManager.Gamepad;
   const bool active = m_touchInput[0].load() != 0;
   const int pressed = m_touchInput[6].exchange(0);

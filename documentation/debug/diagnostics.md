@@ -186,6 +186,13 @@ block/remesh logs as well as these input values. The touch harness requires
 `logLevel=info`; the production welcome intentionally launches with error-only
 logging. Test welcome navigation and log-based block verification separately.
 
+`window.t850.camera` reports Minecraft's active mode (0 player, 1 spectator,
+2 light), `invertY`, pitch, camera position and player position. The View/InvertY
+buttons reflect this scene-owned state. The harness's `--camera-controls` test
+measures pitch changes in both modes and spectator motion independent of the
+player; combine it with `--touch` for virtual controls or use desktop mouse input.
+These are functional checks, not input-latency or physical-device certification.
+
 WebGPU startup logs `Device optional features: BC=... float32-filterable=...`.
 The browser harness's `--disable-bc --disable-float-filtering` options modify
 device requests inside workers and assert both features are absent there.

@@ -13,9 +13,15 @@
     header a { color: inherit; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     select { min-width: 120px; max-width: 45vw; background: #252a27; color: inherit; border: 0; font: inherit; }
     #status { margin-left: auto; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #touch-toggle { font-size: 12px; white-space: nowrap; }
+    #touch-toggle, #touch-ontop-toggle { flex-shrink: 0; font-size: 12px; white-space: nowrap; }
+    #camera-controls { display: flex; gap: 6px; flex-shrink: 0; }
+    #camera-controls[hidden] { display: none; }
+    .camera-command { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 28px; border: 1px solid #8a9c91; border-radius: 4px; background: #19231e; color: #e5e8e6; font: 12px Consolas, monospace; cursor: pointer; }
+    .camera-command img { width: 16px; height: 16px; filter: invert(1); pointer-events: none; }
+    .camera-command[aria-pressed="true"], #touch-controls [aria-pressed="true"] { background: #446631ed; border-color: #f3ca64; }
+    .camera-command:focus-visible { outline: 2px solid #f3ca64; outline-offset: 2px; }
     #touch-controls { position: fixed; z-index: 4; inset: 36px 0 0; pointer-events: none; user-select: none; -webkit-user-select: none; }
-    #touch-controls[hidden], #touch-toggle[hidden] { display: none; }
+    #touch-controls[hidden], #touch-toggle[hidden], #touch-ontop-toggle[hidden] { display: none; }
     #touch-controls button { pointer-events: auto; touch-action: none; color: #fff; background: #14251dcc; border: 2px solid #d1e2d1cc; box-shadow: 0 2px 4px #0007; }
     #touch-controls button:focus-visible { outline: 3px solid #f3ca64; outline-offset: 3px; }
     #touch-controls .held { background: #446631ed; border-color: #f3ca64; }
@@ -28,7 +34,10 @@
     .touch-actions button { width: 48px; height: 48px; border-radius: 6px; display: grid; place-items: center; padding: 9px; }
     .touch-actions img { width: 24px; height: 24px; filter: invert(1); pointer-events: none; }
     .touch-stick img { filter: invert(1); pointer-events: none; }
+    .touch-options { position: absolute; bottom: max(88px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+    .touch-options .camera-command { width: 64px; height: 44px; flex-direction: column; gap: 2px; font-size: 10px; padding: 2px; }
     @media (max-width: 740px) { .touch-actions { bottom: 164px; gap: 6px; } .touch-actions button { width: 44px; height: 44px; } }
+    @media (max-width: 740px) and (min-height: 481px) { .touch-options { flex-direction: column; gap: 6px; bottom: max(24px, env(safe-area-inset-bottom)); } }
     @media (max-height: 480px) { .touch-stick { width: 100px; height: 100px; bottom: 12px; } .touch-actions { bottom: 18px; } .touch-actions button { width: 40px; height: 40px; padding: 6px; } }
     #runtime-error { position: fixed; z-index: 10; top: 48px; left: 12px; right: 12px; max-height: calc(100dvh - 64px); overflow: auto; padding: 12px; border: 1px solid #de8172; border-radius: 4px; background: #241d1c; color: #ffe0d9; }
     #runtime-error summary { cursor: pointer; font-weight: bold; }
@@ -39,14 +48,37 @@
       body.touch-mode { --touch-footer: calc(216px + env(safe-area-inset-bottom)); }
       .wssi-demo #canvas { width: min(100%, calc(var(--demo-long-side) * 9 / 16), calc((100dvh - 36px - var(--touch-footer, 0px)) * 9 / 16)); aspect-ratio: 9 / 16; }
     }
+    body.touch-ontop { --touch-footer: 0px; }
+    body.touch-ontop #canvas { width: 100%; height: 100%; max-width: none; max-height: none; aspect-ratio: auto; }
+    .touch-ontop .touch-stick { bottom: max(76px, calc(56px + env(safe-area-inset-bottom))); }
+    .touch-ontop .touch-actions { bottom: max(80px, calc(56px + env(safe-area-inset-bottom))); }
+    .touch-ontop .touch-options { bottom: max(140px, calc(116px + env(safe-area-inset-bottom))); }
+    @media (max-width: 740px) and (min-height: 481px) {
+      .touch-ontop .touch-actions { bottom: max(216px, calc(196px + env(safe-area-inset-bottom))); }
+      .touch-ontop .touch-options { bottom: max(112px, calc(88px + env(safe-area-inset-bottom))); }
+    }
+    @media (max-height: 480px) {
+      .touch-ontop .touch-stick { bottom: max(60px, calc(56px + env(safe-area-inset-bottom))); }
+      .touch-ontop .touch-actions { bottom: max(100px, calc(80px + env(safe-area-inset-bottom))); }
+      .touch-ontop .touch-options { bottom: max(152px, calc(132px + env(safe-area-inset-bottom))); }
+    }
+    @media (max-width: 700px) {
+      header { gap: 8px; padding: 0 8px; }
+      #status { min-width: 0; }
+    }
+    @media (max-width: 360px) { .touch-stick { width: 100px; height: 100px; } #touch-move { left: 12px; } #touch-look { right: 12px; } }
   </style>
 </head>
 <body>
-  <header><a href="./" aria-label="Back to scenes"><strong>T850</strong></a><select id="scene" aria-label="Scene"></select><label id="touch-toggle" hidden><input id="touch-enabled" type="checkbox">Touch</label><span id="status" role="status">Loading</span></header>
+  <header><a href="./" aria-label="Back to scenes"><strong>T850</strong></a><select id="scene" aria-label="Scene"></select><label id="touch-toggle" hidden><input id="touch-enabled" type="checkbox">Touch</label><label id="touch-ontop-toggle" hidden><input id="touch-ontop" type="checkbox">OnTop</label><div id="camera-controls" hidden><button class="camera-command" id="web-view" data-command="1" aria-label="Free spectator" aria-pressed="false" title="Switch to free spectator" disabled><img src="icons/camera.svg" alt="">View</button><button class="camera-command" id="web-invert-y" data-command="2" aria-label="InvertY" aria-pressed="false" title="Invert vertical look" disabled><img src="icons/flip-vertical-2.svg" alt="">InvertY</button></div><span id="status" role="status">Loading</span></header>
   <canvas id="canvas" width="1280" height="720" tabindex="0" aria-label="Scene viewport"></canvas>
   <div id="touch-controls" hidden aria-label="Touch gamepad">
     <button class="touch-stick" id="touch-move" data-axis="0" aria-label="Move" title="Move"><img src="icons/move.svg" alt=""></button>
     <button class="touch-stick" id="touch-look" data-axis="2" aria-label="Look" title="Look"><img src="icons/crosshair.svg" alt=""></button>
+    <div class="touch-options">
+      <button class="camera-command" id="touch-view" data-command="1" aria-label="Free spectator" aria-pressed="false" title="Switch to free spectator" disabled><img src="icons/camera.svg" alt="">View</button>
+      <button class="camera-command" id="touch-invert-y" data-command="2" aria-label="InvertY" aria-pressed="false" title="Invert vertical look" disabled><img src="icons/flip-vertical-2.svg" alt="">InvertY</button>
+    </div>
     <div class="touch-actions">
       <button data-button="16" aria-label="Previous block" title="Previous block"><img src="icons/chevron-left.svg" alt=""></button>
       <button data-button="4" aria-label="Break block" title="Break block"><img src="icons/pickaxe.svg" alt=""></button>

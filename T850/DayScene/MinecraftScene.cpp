@@ -25,6 +25,9 @@
 #include <utils/ThreadPool.h>
 #include <debug/RuntimeTelemetry.h>
 #include <imgui/DevGuiContext.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include <array>
 #include <iostream>
@@ -3476,7 +3479,32 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
   VP = ActiveCam ? ActiveCam->VP : Cam.VP;
 }
 
+void MinecraftScene::SetCameraMode(int mode) {
+  mode = std::clamp(mode, 0, 2);
+  if (mode == m_cameraMode) return;
+  if (mode != 2 && m_lightCameraEditMode) SetLightCameraEditMode(false);
+  if (mode == 1) {
+    const Camera& source = ActiveCam ? *ActiveCam : Cam;
+    SpectatorCam.Eye = source.Eye;
+    m_spectatorYaw = source.Yaw;
+    m_spectatorPitch = source.Pitch;
+    SpectatorCam.Yaw = m_spectatorYaw;
+    SpectatorCam.Pitch = m_spectatorPitch;
+    SpectatorCam.Update(0.0f);
+  }
+  m_cameraMode = mode;
+  m_playerInput = {};
+  m_highlightVisible = false;
+  T8_LOG_INFO("[Minecraft] Camera mode: %d", m_cameraMode);
+}
+
 void MinecraftScene::OnInput(InputManager* IManager) {
+  const bool changeView = std::exchange(IManager->toggleCameraView, false);
+  const bool changeInvert = std::exchange(IManager->toggleInvertY, false);
+  if (changeView) SetCameraMode(m_cameraMode == 0 ? 1 : 0);
+  if (changeInvert) m_invertY = !m_invertY;
+  if (changeView || changeInvert) IManager->xDelta = IManager->yDelta = 0;
+  const float verticalSign = m_invertY ? -1.0f : 1.0f;
   const GamepadInputState& gamepad = IManager->Gamepad;
   const bool gamepadActive = gamepad.connected && gamepad.enabled;
   constexpr float kGamepadMoveThreshold = 0.12f;
@@ -3492,12 +3520,12 @@ void MinecraftScene::OnInput(InputManager* IManager) {
   if (m_mouseCaptured) {
     if (m_cameraMode == 2 && m_lightCameraEditMode) {
       m_lightYaw += IManager->xDelta * m_mouseSensitivity;
-      m_lightPitch += IManager->yDelta * m_mouseSensitivity;
+      m_lightPitch += IManager->yDelta * m_mouseSensitivity * verticalSign;
       const float pitchLimit = m_voxelSettings.player.look_pitch_limit;
       m_lightPitch = (std::max)(-pitchLimit, (std::min)(pitchLimit, m_lightPitch));
     } else if (m_cameraMode == 1) {
       m_spectatorYaw += IManager->xDelta * m_mouseSensitivity;
-      m_spectatorPitch += IManager->yDelta * m_mouseSensitivity;
+      m_spectatorPitch += IManager->yDelta * m_mouseSensitivity * verticalSign;
       const float pitchLimit = m_voxelSettings.player.look_pitch_limit;
       m_spectatorPitch = (std::max)(-pitchLimit, (std::min)(pitchLimit, m_spectatorPitch));
     } else if (m_cameraMode == 0) {
@@ -3506,18 +3534,20 @@ void MinecraftScene::OnInput(InputManager* IManager) {
       // Engine convention: positive pitch = look down, negative = look up.
       // Moving the mouse up (yDelta negative) should look up (pitch negative),
       // so we ADD yDelta (inverted from the naive -=).
-      m_playerPitch += IManager->yDelta * m_mouseSensitivity;
+      m_playerPitch += IManager->yDelta * m_mouseSensitivity * verticalSign;
       const float pitchLimit = m_voxelSettings.player.look_pitch_limit;
       m_playerPitch = (std::max)(-pitchLimit, (std::min)(pitchLimit, m_playerPitch));
     }
   }
-  if (gamepadActive && m_cameraMode == 0 &&
+  if (gamepadActive && (m_cameraMode == 0 || m_cameraMode == 1) &&
       (std::fabs(gamepad.rightX) > kGamepadLookThreshold ||
        std::fabs(gamepad.rightY) > kGamepadLookThreshold)) {
-    m_playerYaw += gamepad.rightX * kGamepadYawSpeed * DtSecs;
-    m_playerPitch += gamepad.rightY * kGamepadPitchSpeed * DtSecs;
+    float& yaw = m_cameraMode == 0 ? m_playerYaw : m_spectatorYaw;
+    float& pitch = m_cameraMode == 0 ? m_playerPitch : m_spectatorPitch;
+    yaw += gamepad.rightX * kGamepadYawSpeed * DtSecs;
+    pitch += gamepad.rightY * kGamepadPitchSpeed * DtSecs * verticalSign;
     const float pitchLimit = m_voxelSettings.player.look_pitch_limit;
-    m_playerPitch = (std::max)(-pitchLimit, (std::min)(pitchLimit, m_playerPitch));
+    pitch = std::clamp(pitch, -pitchLimit, pitchLimit);
   }
 
   if (m_cameraMode == 1 || (m_cameraMode == 2 && m_lightCameraEditMode)) {
@@ -3525,9 +3555,10 @@ void MinecraftScene::OnInput(InputManager* IManager) {
     float& yaw = (m_cameraMode == 1) ? m_spectatorYaw : m_lightYaw;
     float& pitch = (m_cameraMode == 1) ? m_spectatorPitch : m_lightPitch;
     const float speed = m_debugCameraSpeed * DtSecs;
-    const float fwd = (IManager->PressedKey(T800K_w) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_s) ? 1.0f : 0.0f);
-    const float strafe = (IManager->PressedKey(T800K_d) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_a) ? 1.0f : 0.0f);
-    const float upInput = (IManager->PressedKey(T800K_SPACE) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_LSHIFT) ? 1.0f : 0.0f);
+    const bool spectatorGamepad = gamepadActive && m_cameraMode == 1;
+    const float fwd = std::clamp((IManager->PressedKey(T800K_w) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_s) ? 1.0f : 0.0f) - (spectatorGamepad ? gamepad.leftY : 0.0f), -1.0f, 1.0f);
+    const float strafe = std::clamp((IManager->PressedKey(T800K_d) ? 1.0f : 0.0f) - (IManager->PressedKey(T800K_a) ? 1.0f : 0.0f) + (spectatorGamepad ? gamepad.leftX : 0.0f), -1.0f, 1.0f);
+    const float upInput = ((IManager->PressedKey(T800K_SPACE) || (spectatorGamepad && gamepad.buttonSouth)) ? 1.0f : 0.0f) - ((IManager->PressedKey(T800K_LSHIFT) || (spectatorGamepad && gamepad.leftStick)) ? 1.0f : 0.0f);
     XVECTOR3 look(std::sin(yaw) * std::cos(pitch),
                   -std::sin(pitch),
                   std::cos(yaw) * std::cos(pitch));
@@ -3570,6 +3601,18 @@ void MinecraftScene::OnInput(InputManager* IManager) {
 
   if (m_cameraMode == 0)
     HandleBlockInteraction(IManager);
+
+#ifdef __EMSCRIPTEN__
+  if (++m_cameraDiagnosticFrames % 10 == 0) {
+    const Camera& camera = m_cameraMode == 1 ? SpectatorCam : m_cameraMode == 2 ? LightCam : Cam;
+    const float pitch = m_cameraMode == 1 ? m_spectatorPitch : m_cameraMode == 2 ? m_lightPitch : m_playerPitch;
+    MAIN_THREAD_ASYNC_EM_ASM({
+      const camera = Object.assign({}, { mode: $0, invertY: !!$1, pitch: $2, eye: Array.of($3, $4, $5), playerEye: Array.of($6, $7, $8) });
+      if (globalThis.t850) globalThis.t850.camera = camera;
+      globalThis.t850Touch?.updateCamera?.(camera);
+    }, m_cameraMode, m_invertY, pitch, camera.Eye.x, camera.Eye.y, camera.Eye.z, m_playerEye.x, m_playerEye.y, m_playerEye.z);
+  }
+#endif
 
   // Block selection (number keys 1-9)
   if (IManager->PressedOnceKey(T800K_1) && m_hotbar.size() > 0) m_selectedBlock = m_hotbar[0];
@@ -4781,8 +4824,13 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
       cameraMode.label = "View camera";
       cameraMode.options = {"Player", "Free spectator", "Light"};
       cameraMode.default_index = 0;
-      if (gui.Combo(cameraMode, m_cameraMode) && m_cameraMode != 2 && m_lightCameraEditMode)
-        SetLightCameraEditMode(false);
+      int selectedCamera = m_cameraMode;
+      if (gui.Combo(cameraMode, selectedCamera)) SetCameraMode(selectedCamera);
+
+      t850::CheckboxDesc invertY;
+      invertY.name = "invert_y";
+      invertY.label = "InvertY";
+      gui.Checkbox(invertY, m_invertY);
 
       if (gui.Button(m_lightCameraEditMode ? "Finish moving light camera" : "Move light camera"))
         SetLightCameraEditMode(!m_lightCameraEditMode);

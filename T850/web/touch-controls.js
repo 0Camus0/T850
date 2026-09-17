@@ -2,11 +2,16 @@
   const panel = document.getElementById('touch-controls');
   const toggle = document.getElementById('touch-enabled');
   const toggleLabel = document.getElementById('touch-toggle');
+  const onTop = document.getElementById('touch-ontop');
+  const onTopLabel = document.getElementById('touch-ontop-toggle');
+  const cameraControls = document.getElementById('camera-controls');
+  const commands = [...document.querySelectorAll('[data-command]')];
   const pointers = new Map();
   const axes = [0, 0, 0, 0];
   let memory;
   let enabled = false;
   let ready = false;
+  let layout = '';
   const coarse = matchMedia('(any-pointer: coarse)');
   const supported = () => navigator.maxTouchPoints > 0 || coarse.matches;
   function publish(pressed = 0) {
@@ -22,22 +27,36 @@
     const captured = [...pointers.entries()];
     pointers.clear();
     axes.fill(0);
-    for (const [pointerId, pointer] of captured) {
-      if (pointer.element.hasPointerCapture(pointerId)) pointer.element.releasePointerCapture(pointerId);
-      pointer.element.classList.remove('held');
-    }
     for (const stick of panel.querySelectorAll('.touch-stick')) {
       stick.style.setProperty('--stick-x', '0px');
       stick.style.setProperty('--stick-y', '0px');
     }
     if (memory) Atomics.store(memory, 6, 0);
     publish();
+    for (const [pointerId, pointer] of captured) {
+      pointer.element.classList.remove('held');
+      try {
+        if (pointer.element.hasPointerCapture(pointerId)) pointer.element.releasePointerCapture(pointerId);
+      } catch (error) {
+        if (error.name !== 'InvalidStateError' && error.name !== 'NotFoundError') throw error;
+      }
+    }
   }
   function refresh() {
     panel.hidden = !enabled || !ready;
     toggle.checked = enabled;
     document.body.classList.toggle('touch-mode', enabled && ready);
+    onTopLabel.hidden = toggleLabel.hidden;
+    onTop.disabled = !enabled || !ready;
+    document.body.classList.toggle('touch-ontop', enabled && ready && onTop.checked);
+    cameraControls.hidden = !ready || enabled;
+    for (const command of commands) command.disabled = !ready || !memory;
     if (!enabled || !ready) reset();
+    const nextLayout = enabled && ready ? (onTop.checked ? 'ontop' : 'touch') : '';
+    if (layout !== nextLayout) {
+      layout = nextLayout;
+      window.dispatchEvent(new Event('resize'));
+    }
     publish();
   }
   function moveStick(event, pointer) {
@@ -63,8 +82,14 @@
       const pointer = element.hasAttribute('data-axis')
         ? { element, axis: Number(element.dataset.axis) }
         : { element, button: Number(element.dataset.button) };
+      try {
+        element.setPointerCapture(event.pointerId);
+        if (!element.hasPointerCapture(event.pointerId)) return;
+      } catch (error) {
+        if (error.name === 'InvalidStateError' || error.name === 'NotFoundError') return;
+        throw error;
+      }
       pointers.set(event.pointerId, pointer);
-      element.setPointerCapture(event.pointerId);
       element.classList.add('held');
       if (pointer.axis !== undefined) moveStick(event, pointer);
       else publish(pointer.button);
@@ -91,6 +116,16 @@
     element.addEventListener('contextmenu', event => event.preventDefault());
   }
   toggle.addEventListener('change', () => { enabled = toggle.checked; refresh(); });
+  for (const command of commands) {
+    command.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!ready || !memory) return;
+      reset();
+      Atomics.xor(memory, 7, Number(command.dataset.command));
+    });
+  }
+  onTop.addEventListener('change', () => { reset(); refresh(); });
   const detect = () => {
     toggleLabel.hidden = false;
     enabled = supported();
@@ -117,7 +152,15 @@
   window.addEventListener('unhandledrejection', () => { ready = false; refresh(); });
   window.t850Touch = {
     attach(buffer) { memory = buffer; reset(); refresh(); },
-    detach() { reset(); if (memory) Atomics.store(memory, 0, 0); memory = undefined; ready = false; refresh(); },
+    detach() { reset(); if (memory) { Atomics.store(memory, 0, 0); Atomics.store(memory, 7, 0); } memory = undefined; ready = false; refresh(); },
+    updateCamera(camera) {
+      for (const command of commands) {
+        const view = command.dataset.command === '1';
+        const pressed = view ? camera.mode === 1 : camera.invertY;
+        command.setAttribute('aria-pressed', String(pressed));
+        command.title = view ? (pressed ? 'Return to first person' : 'Switch to free spectator') : (pressed ? 'Restore normal vertical look' : 'Invert vertical look');
+      }
+    },
     reset,
   };
 })();

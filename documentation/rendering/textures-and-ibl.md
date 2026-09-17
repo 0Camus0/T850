@@ -96,6 +96,16 @@ Common metadata:
 
 `BaseDriver::CreateTexture()` reuses an existing non-null texture slot when `Textures[i]->filepath == "Textures/" + path`. `CreateTextureFromMemory(key, ...)` applies the same ownership model to generated/decoded pixels and deduplicates by the caller-supplied stable key. Destroyed slots are reused for future textures. A scene holding a managed texture pointer does not release it directly.
 
+For WebGPU devices without BC compression, BC cubemaps select an existing mip
+at or below 512x512 (or the smallest available mip of an incomplete chain) before
+RGBA8 decoding. `DecompressDXTToRGBA(..., firstMip)` validates the entire input
+and skips discarded compressed levels independently for each face. Output stays
+face-major/mip-major with identical retained pixel orientation, and the GPU
+texture's dimensions/mip count reflect the selected base level. Its default
+`firstMip=0` leaves other callers unchanged. The original compressed resource,
+BC-capable WebGPU path, 2D textures and non-BC HDR skies are not modified. See
+[browser memory validation](../platform/browser.md#published-wssi-demo).
+
 ## File and memory creation APIs
 
 Texture creation entry points:

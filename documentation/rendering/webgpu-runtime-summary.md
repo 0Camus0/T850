@@ -352,21 +352,84 @@ initial CMake/setup options. For new captures, use a fresh output root and the
 [strict snapshot comparison workflow](../development/windows-build-and-run.md#strict-spir-v-visual-comparison).
 Never overwrite accepted reference evidence to obtain a passing comparison.
 
-## Remaining Work
+## Continuation Status (2026-09-17)
 
-1. Resolve or explicitly review the native Voxel checkpoint change. Preserve
-   residual metrics and accepted exceptions; do not reclassify them as pixel equality.
-2. T8ditor API parsing and rendering, hosted/multiple surfaces, platform viewports,
-   preview coverage and full editor workflows. The EDITOR guard stays enabled.
-3. Anonymous debug/helper WGSL counterparts for complete strict-WGSL normal startup.
-4. Cube render targets, comparison samplers, true border-color sampling and
-   render-target mip generation. Loaded texture mips are a different implemented path.
-5. Shared engine compute dispatch/resource contracts; standalone blur compute
-   tests prove shader execution, not an engine-wide compute API.
-6. GPU profiler timestamps, asynchronous telemetry and performance/overhead
-   measurements; upload/readback optimization and live-scene lifecycle coverage.
-7. Missing Nexus assets, guarded Vulkan cases, other GPUs and exhaustive material/
-   animation states; browser, Linux/Steam Deck, Android and Windows ARM64 WebGPU ports.
+This checkpoint reconciles the original seven-step plan with the later browser
+work. Earlier dated sections describe their own checkpoints, not today's backlog.
+The latest local implementation commit is `e00ea824`; it was not pushed during
+that work. Public Minecraft was v0.1.2 at this checkpoint. The subsequent
+v0.1.4 OnTop/isolation-guidance, v0.1.5 pointer-capture, v0.1.6 reduced-memory
+cubemap and v0.1.7 camera-control deployments are recorded in the
+[browser release notes](../platform/browser.md#published-wssi-demo); they do not
+change the stage or incoming compute-PR handoff below.
+
+| Original Step | Status | Evidence and Remaining Boundary |
+| --- | --- | --- |
+| 1. Dependency foundation | Complete | Pinned Dawn/D3D12, required Windows x64 build integration and package audits. |
+| 2. Shader feasibility | Complete | Native in-process translation, reflection, cold/warm cache tests, and the later maintained WGSL path. This is not exhaustive future-material coverage. |
+| 3. Driver lifecycle | Complete for milestone | Device/surface, submission, resize and bounded teardown/recreation tests. Full live-scene stress and device-loss recovery remain. |
+| 4. Minimal graphics integration | Complete and exceeded | Indexed/textured/depth fixture, readback and reuse tests; normal forward/deferred runtime scenes also work. |
+| 5. Shared compute | Awaiting incoming PR and rebase | Non-WebGPU compute is being implemented in a separate PR. WebGPU compute remains to be integrated against that work. |
+| 6. Full scene and editor coverage | Partial | Runtime scene coverage exists; T8ditor, hosted surfaces, missing renderer features and full workflow acceptance remain. |
+| 7. Release and measurements | Partial | Packaging, CPU-side comparisons and substantial optimization exist. GPU timestamp profiling, complete stress/portability gates and browser CI remain. |
+
+### Compute Handoff
+
+The owner confirmed on 2026-09-17 that non-WebGPU compute support is arriving in
+another PR and will perform the rebase later. Do not rebase now, duplicate those
+native implementations, or invent a competing shared compute abstraction.
+
+After the owner rebases:
+
+1. Inspect the incoming compute/resource/shader and render-graph contracts and
+  their tests before editing WebGPU. Confirm which native backends and fallback
+  behavior actually landed rather than assuming the entire original scope.
+2. Add the WebGPU implementation using the incoming abstractions and existing
+  WebGPU texture/buffer ownership. Cover pipeline creation, bindings, dispatch,
+  storage usages and graphics/compute ordering without scene-specific branches.
+3. Run the same blur/reference tests across supported native backends and
+  WebGPU, including odd extents, resize, resource recreation and hazards. Keep
+  GL's graphics fallback or explicit unsupported path; do not label it compute.
+4. Add completion-valid GPU timestamps and matched CPU/GPU measurements so the
+  original native-D3D12-versus-Dawn overhead goal can be closed with evidence.
+
+GPU profiling and editor work can be scoped separately while waiting, but no
+new implementation is authorized merely by this saved continuation note.
+
+### Open Acceptance Work
+
+- T8ditor API parsing/rendering, hosted/multiple surfaces, platform viewports,
+  previews and editor workflows. The EDITOR guard remains enabled.
+- Cube render targets, comparison samplers, true border-color sampling and
+  render-target mip generation; loaded texture mip support already exists.
+- Anonymous debug/helper strict-WGSL coverage and broader material/animation
+  states. Resolve or explicitly review the historical native Voxel checkpoint
+  lighting difference; later same-API cleanup passes do not close that older delta.
+- WebGPU GPU timestamps, asynchronous telemetry and controlled GPU-overhead
+  measurements. CPU-side comparison, uniform upload pooling and browser
+  scheduling optimization are implemented, not future work.
+- Full live-scene API switching/reload, device-loss recovery, save/reload,
+  long-running memory/frame-time behavior, missing Nexus assets, guarded Vulkan
+  cases, other GPUs and physical mobile-device coverage.
+- Automated Emscripten build/browser CI and fresh hosted validation of subsequent
+  commits. Native Windows ARM64, Android and Linux/Steam Deck Dawn ports remain
+  separate future work; existing native Vulkan validation is not a WebGPU port.
+
+### Browser Work Already Delivered
+
+The Emscripten build, browser selection in both launchers, prepared shader
+packages, local seven-scene smoke coverage, responsive Minecraft welcome,
+touch controls, block-edit tests, BC/float-filtering fallbacks, restricted
+Cloudflare demo and reusable JSON-configured deploy script are implemented.
+See [browser implementation and evidence](../platform/browser.md). These were
+later additions beyond the original plan, not unfinished prerequisites.
+
+Remaining browser-specific work includes lower-limit GBuffer compatibility,
+physical-device testing, full authoring/gameplay workflows and the deferred
+public multi-scene launcher. The reported digging slowdown and `file:///`
+security warning were not reliably reproduced or fixed; their diagnostic
+probes remain available. Embedded-browser cross-origin isolation failures are
+a separate capability/access issue, not evidence of the same runtime bug.
 
 The PR commit includes implementation, maintained shader sources, pinned dependency
 recipes, simplecpp sources/license, Launcher and documentation. Generated dependency

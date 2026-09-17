@@ -1,13 +1,14 @@
 # Cross-Backend Compute Shader Implementation
 
-Status: reviewed against source and validated on Windows x64 on 2026-09-16.
+Status: reviewed against source and validated on Windows x64 on 2026-09-17.
 
 ## Purpose
 
 This change adds an API-neutral compute contract and render-graph-selected compute
-implementations without making scene code depend on D3D11, D3D12, Vulkan, or OpenGL.
-D3D11, D3D12, Vulkan, and desktop OpenGL 4.3 execute the same kernel intent. Older OpenGL
-and OpenGL ES contexts report no compute capability and run the retained pixel-shader path.
+implementations without making scene code depend on D3D11, D3D12, Vulkan, WebGPU/Dawn, or
+OpenGL. D3D11, D3D12, Vulkan, WebGPU/Dawn, and desktop OpenGL 4.3+ execute the same kernel
+intent. Older OpenGL and OpenGL ES contexts report no compute capability and run the
+retained raster path.
 
 The design has four ownership layers:
 
@@ -34,7 +35,7 @@ flowchart LR
 `Framework/include/video/BaseDriver.h` adds:
 
 - `ComputePipelineDesc`: source, entry point, debug name, permutation name, defines, and
-  the explicit Vulkan binding layout;
+  the explicit cross-backend binding layout;
 - `ComputeBufferDesc`: byte size, structure stride, access, and debug name;
 - `ComputeBindingDesc`: constants, structured buffers, textures, and samplers by shader
   register;
@@ -68,7 +69,7 @@ commands recorded on the same immediate context.
 
 Capability reporting checks feature level 11 and verifies that the RGBA8 and RGBA16F
 formats required by the current graph expose typed unordered-access views. Unsupported
-hardware follows the graphics fallback.
+hardware follows the raster fallback.
 
 ## D3D12 implementation
 
@@ -120,7 +121,47 @@ the caller.
 Vulkan capability reporting now requires a graphics queue that also supports compute,
 formatless storage-image writes, and storage-image support for RGBA8 and RGBA16F. The feature
 is enabled on the logical device only when reported by the physical device. Unsupported
-hardware uses the render graph's PS fallback instead of failing pipeline creation later.
+hardware uses the render graph's raster fallback instead of failing pipeline creation later.
+
+## WebGPU/Dawn implementation
+
+`WebGPUDriver` implements the same `CreateComputePipeline`, `CreateComputeBuffer`,
+`DispatchCompute`, and `ReadComputeBuffer` contract as the native backends. This backend is
+built for Windows x64 and uses the pinned Dawn provider with its D3D12 native backend only.
+No Dawn or WebGPU object crosses into render-graph, scene, or authored-data interfaces.
+
+`WebGPUComputePipeline` sends the shared compute request through
+`WebGPUShaderCompiler`. The selected `auto`, `wgsl`, or `spirv` flow either preprocesses a
+maintained WGSL source or translates the canonical HLSL through SPIR-V and Tint. Pipeline
+creation requires nonempty WGSL, reflected workgroup dimensions, and an exact match between
+the reflected resources and `ComputeKernelRegistry`'s declared binding layout. The current
+compute layout supports one bind group containing:
+
+- uniform buffers with reflected minimum sizes;
+- read-only and read-write storage buffers;
+- sampled float 2D textures;
+- non-comparison filtering samplers;
+- write-only `rgba8unorm` or `rgba16float` storage textures.
+
+The reflected workgroup dimensions populate the shared `ComputePipeline::threadGroupSize`,
+so render-graph dispatch uses the same ceiling-division path as D3D11, D3D12, Vulkan, and
+OpenGL. Dawn shader modules, bind-group layouts, pipeline layouts, and compute pipelines are
+created from that validated artifact. Compute buffers carry `Storage | CopySrc | CopyDst`
+usage so the same allocation can participate in dispatch and explicit test readback.
+
+Before dispatch, the driver ends any active render pass and validates that every runtime
+binding belongs to the same WebGPU driver and appears exactly once with the expected type,
+register, size, texture dimension, and storage format. Constants use transient aligned
+uniform buffers, and the remaining resources form one bind group. Normal frame compute is
+recorded into the active command encoder; standalone diagnostics create and submit a bounded
+encoder. WebGPU owns native resource transitions and usage-scope validation, so the engine
+does not emit backend barrier objects.
+
+Diagnostic buffer readback copies into a `CopyDst | MapRead` staging buffer, submits the
+copy, and waits for `MapAsync` only inside the explicit self-test/readback call. Ordinary
+render-graph execution never maps or waits. Device health is checked after pipeline creation,
+dispatch, and readback so validation or device-loss failures surface through the normal
+WebGPU diagnostics.
 
 ## OpenGL behavior
 
@@ -139,8 +180,9 @@ texture-fetch, and buffer-update barriers before restoring graphics state. Diagn
 readback uses `glGetBufferSubData` after the storage barrier.
 
 Desktop OpenGL contexts below 4.3 and OpenGL ES report no compute support. Optional
-post-process passes use their existing fullscreen fallback, and compute-only passes retain
-their existing clear behavior.
+post-process passes use their existing fullscreen raster fallback, and compute-only passes
+retain their existing clear behavior. The Windows 3.3 context fallback is explicitly
+raster-only and never compiles or dispatches a compute shader.
 
 Odd-width validation exposed an independent GL dump bug: `glReadPixels` used the default
 four-byte pack alignment with tightly allocated one-channel rows. Width 1023 overran the
@@ -157,7 +199,8 @@ readback vector and triggered the Debug CRT heap check. `ReadFBOToPPM` now sets
 | `compute_shader` | Resource-relative HLSL source |
 | `compute_entry` | Entry point, normally `CS` |
 | `compute_permutation` | Stable source-permutation identity |
-| `compute_threads` | Workgroup dimensions used for ceil-div dispatch |
+| `compute_extent_from` | Storage output that supplies dispatch dimensions |
+| `compute_resources` | Complete typed constants/sample/sampler/storage binding list |
 
 `RTDesc::storage` requests backend storage/UAV usage. `RenderGraph` creates optional pipelines
 after render targets and graph edges are resolved. Selection uses the global
@@ -165,25 +208,27 @@ after render targets and graph edges are resolved. Selection uses the global
 
 - `raster`: use the authored graphics draw or clear fallback;
 - `compute`: enable every declared post-process CS alternative;
-- unsupported capability: log and use graphics fallback.
+- unsupported capability: log and use raster fallback.
 
-Compute and graphics implementations share the same graph inputs and target. Dispatch uses
-ceil division, so odd dimensions exercise shader bounds checks. A successful compute pass
-returns before the fullscreen draw but still applies `post_state`; failed dispatch falls
-through to the authored draw.
+Compute and graphics implementations may share authored resources, but compute bindings are
+declared independently and typed. Graph loading rejects unknown fields/accesses, incomplete
+or duplicate layouts, non-storage outputs, invalid permutations, and read/write feedback.
+Every backend reflects workgroup dimensions from the compiled pipeline; dispatch uses ceiling
+division, so odd dimensions exercise shader bounds checks. A successful compute pass returns
+before the fullscreen draw but still applies `post_state`; failed dispatch falls through to
+the authored draw.
 
-Kernel-specific constant packing stays in Framework `RenderGraph.cpp`, not in scene classes.
-It converts stable `SceneProps` into the register layouts used by the shared shaders. Scene
-code does not create API pipelines, bind descriptors, issue dispatches, or branch on graphics
-API.
+Kernel-specific constant packing stays in Framework `ComputeKernelRegistry`, not in
+`RenderGraph` or scene classes. The generic graph executor resolves typed resources, asks the
+registry for constant words, and calls the shared driver API. Scene code does not create API
+pipelines, bind descriptors, issue dispatches, or branch on graphics API.
 
 `Framework/ComputeKernelRegistry` owns each registered kernel's canonical source
 name, entry point, post-process policy, and API-neutral binding layout. RenderGraph
 looks up that definition before it creates a runtime pipeline, and ShaderPrecompiler
 uses the same lookup when it prewarms a `compute_permutations` record. This keeps
-binding ABI out of graph JSON and prevents offline/runtime descriptor drift. RenderGraph
-retains only the live `SceneProps` constant packing and resource binding required to
-execute the selected kernel.
+binding ABI validation shared by offline and runtime creation. RenderGraph retains only
+generic typed resource resolution and dispatch.
 
 ## Compute shaders
 
@@ -224,7 +269,9 @@ target.
 `CS_TorchParticles.hlsl` projects deterministic world-space particles from the authored torch
 emitter into a screen-sized RGBA16F texture. Lifetime, rise, spread, size, emitter position,
 particle count, and time are supplied through `SceneProps`. Every thread owns one output
-pixel, so no atomics or retained particle buffer are needed.
+pixel, so no atomics or retained particle buffer are needed. Palette colors, radial motion,
+wobble, size evolution, edge softness, fade windows, intensity, and tip lighting are authored
+under `voxel_world.torch` rather than embedded in C++ or shader code.
 
 ## Shader permutation inventory and cache
 
@@ -240,9 +287,10 @@ Each object repeats the exact identity in `key` and records `kind`, `computeShad
 `entryPoint`, `permutation`, and sorted unique `defines`. Backend profiles are intentionally
 excluded: D3D `cs_5_0` and Vulkan SPIR-V are artifacts of one source permutation.
 
-The inventory contains seven entries: Arithmetic, horizontal and vertical Blur, Bright,
-God Rays, HDR Composite, and Torch Particles. `ShaderPermutationDump` merges graphics and
-compute sections independently and rewrites entries in deterministic map order.
+The inventory contains nine entries: Arithmetic, horizontal and vertical Blur, Bright,
+God Rays, HDR Composite, Torch Particles, and the paired image-pattern write/read diagnostics.
+`ShaderPermutationDump` merges graphics and compute sections independently and rewrites
+entries in deterministic map order.
 
 D3D12 compute cache keys include API, driver signature, source name, entry point, compiler
 profile/flags, and fully prefixed source. This prevents graphics/compute collisions and stale
@@ -256,8 +304,8 @@ compute-only torch target. Existing PS draws remain next to each optional CS dec
 
 Minecraft authored values are stored under `voxel_world` in `Minecraft.t8scene`:
 
-- torch placement, dimensions, block material, tip color/roughness, particle values, time
-  wrap, and UI ranges;
+- torch placement, dimensions, block material, tip color/roughness/lighting, particle values,
+  palette, motion/shape/fade/intensity, time wrap, and UI ranges;
 - mob skin path, dimensions, pixelation factor, and six face rectangles per box part;
 - the existing world, camera, light, terrain, movement, rendering, and interaction settings.
 
@@ -275,7 +323,9 @@ ignore rule. Missing skin data falls back to authored block-atlas tiles.
 DayScene and T8ditor share the parser; `auto` is rejected.
 
 `--compute-selftest` starts a minimal application and defaults to D3D12 on Windows unless an
-API is explicit. `--compute-selftest-wait N` adds capture windows before and after dispatch.
+API is explicit. It validates arithmetic buffer compute, then writes and reads deterministic
+RGBA8 images at `1x1`, `7x5`, and `257x129`, checking every pixel after GPU readback.
+`--compute-selftest-wait N` adds capture windows before and after dispatch.
 
 Visual Studio projects, filters, desktop CMake, and Android CMake register all new Framework
 sources. Android's shader task validates that graphics permutation keys remain hexadecimal.
@@ -284,8 +334,10 @@ the HLSL source and uses runtime compilation.
 
 On Windows, `--compileShaders` validates/prewarms graphics and compute manifest sections.
 The compute section resolves layouts from `ComputeKernelRegistry`; it is not silently ignored.
-This path passed all seven compute entries on D3D11, D3D12, Vulkan, WebGPU, and desktop GL on
-2026-09-16. Android's independent Gradle task remains graphics-only.
+The original seven production entries passed this path on D3D11, D3D12, Vulkan, WebGPU, and
+desktop GL on 2026-09-16. On 2026-09-17, the expanded 290-entry manifest, including all nine
+compute identities, passed D3D12 precompile. Android's independent Gradle task remains
+graphics-only.
 
 The branch also contains earlier reviewed work that:
 
@@ -316,8 +368,8 @@ Generated frame dumps named in the result JSON files remain beside the matching 
 | x64 Debug full solution build | PASS |
 | x64 Release full solution build | PASS |
 | Framework build registration | PASS |
-| Release game self-tests | PASS, 59 tests |
-| JSON/permutation audit | PASS, 254 graphics entries, 7 compute entries, 6 graph identities, 7 graph files |
+| Release game self-tests | PASS, 60 tests |
+| JSON/permutation audit | PASS, 281 graphics entries, 9 compute entries, 6 compute graph identities, 8 graph files |
 | Arithmetic D3D11/D3D12/Vulkan | PASS, 96/96 values per API |
 | Arithmetic OpenGL | PASS, 96/96 values on desktop OpenGL 4.6 |
 | Prior DayScene D3D11/D3D12/Vulkan raster/auto/compute | PASS, 9/9 runs |
@@ -345,7 +397,7 @@ On 2026-09-17, the Windows host created an OpenGL 4.3 compatibility context on t
 adapter and reported `shaders=1 textures=1`. The arithmetic readback passed 96/96 values.
 DayScene forced-compute at 1023x577 created/dispatched God Rays, Blur V/H, Bright, and HDR
 with no engine errors. Minecraft similarly dispatched TorchParticles, Bright, and HDR.
-The complete 288-entry GL manifest prewarm passed, including all seven compute identities.
+The prior 288-entry GL manifest prewarm passed, including the seven production compute identities.
 The DayScene GL raster/compute capture compared 18 targets at tolerance 2; 17 matched and
 the final backbuffer had 0.530434% changed pixels with maximum channel delta 4. The 3.3
 fallback path is implemented but was not executable on the reviewed 4.3-capable adapter.
@@ -473,7 +525,7 @@ equals `((i + 7) * 3) ^ 0x55AA55AA`.
 Launch the DayScene command with `--api gl --postProcessMode compute`. On an OpenGL 4.3+
 context, a correct capture contains compute dispatches for God Rays, both blur directions,
 Bright, and HDR Composition. The log reports `shaders=1 textures=1` and each enabled compute
-kernel. On older desktop GL or OpenGL ES, the correct result remains the graphics fallback.
+kernel. On older desktop GL or OpenGL ES, the correct result remains the raster fallback.
 
 ## Known limitations
 

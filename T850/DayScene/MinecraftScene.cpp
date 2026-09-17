@@ -173,7 +173,8 @@ bool MinecraftScene::LoadAuthoredScene() {
   m_voxelSettings = *m_sceneFile.voxel_world;
   const auto validControl = [](float value,
                                const t850::scene::SceneVoxelControlRangeDesc& control) {
-    return control.min <= value && value <= control.max &&
+      return !control.name.empty() && !control.label.empty() &&
+        control.min <= value && value <= control.max &&
            control.min < control.max && control.step > 0.0f;
   };
   const auto validSkinFace = [&](const t850::scene::SceneVoxelBoxPartDesc::SkinFace& face) {
@@ -190,10 +191,38 @@ bool MinecraftScene::LoadAuthoredScene() {
           std::all_of(part.skin_faces.begin(), part.skin_faces.end(), validSkinFace);
       });
   const auto& torch = m_voxelSettings.torch;
+  const auto& appearance = torch.particle_appearance;
+  const auto finite = [](float value) { return std::isfinite(value); };
+  const bool validAppearance = appearance.colors.size() == 3 &&
+    std::all_of(appearance.colors.begin(), appearance.colors.end(),
+      [](const t850::scene::Vec3f& color) {
+        return color.x >= 0.0f && color.x <= 1.0f &&
+               color.y >= 0.0f && color.y <= 1.0f &&
+               color.z >= 0.0f && color.z <= 1.0f;
+      }) &&
+    finite(appearance.radial_seed_min) &&
+    appearance.radial_seed_min >= 0.0f && appearance.radial_seed_min <= 1.0f &&
+    finite(appearance.radial_start_scale) && appearance.radial_start_scale >= 0.0f &&
+    finite(appearance.radial_age_scale) && appearance.radial_age_scale >= 0.0f &&
+    finite(appearance.wobble_frequency) && appearance.wobble_frequency >= 0.0f &&
+    finite(appearance.wobble_frequency_variation) &&
+    appearance.wobble_frequency_variation >= 0.0f &&
+    finite(appearance.wobble_strength) && appearance.wobble_strength >= 0.0f &&
+    finite(appearance.wobble_z_scale) && appearance.wobble_z_scale >= 0.0f &&
+    finite(appearance.start_size_scale) && appearance.start_size_scale > 0.0f &&
+    finite(appearance.end_size_scale) && appearance.end_size_scale > 0.0f &&
+    finite(appearance.minimum_projection_depth) &&
+    appearance.minimum_projection_depth > 0.0f &&
+    finite(appearance.edge_softness_scale) && appearance.edge_softness_scale >= 0.0f &&
+    finite(appearance.fade_in_end) && appearance.fade_in_end > 0.0f &&
+    finite(appearance.fade_out_start) &&
+    appearance.fade_out_start >= appearance.fade_in_end &&
+    appearance.fade_out_start < 1.0f &&
+    finite(appearance.intensity) && appearance.intensity >= 0.0f;
   const bool validTorch = !torch.enabled ||
-    (torch.distance_from_spawn > 0.0f && torch.distance_from_spawn <= 64.0f &&
-     torch.base_width > 0.0f && torch.base_width <= 1.0f &&
-     torch.base_height > 0.0f && torch.base_height <= 2.0f &&
+    (finite(torch.distance_from_spawn) && torch.distance_from_spawn > 0.0f &&
+     finite(torch.base_width) && torch.base_width > 0.0f &&
+     finite(torch.base_height) && torch.base_height > 0.0f &&
      !torch.base_block.empty() &&
      torch.tip_height >= 0.0f && torch.tip_height < torch.base_height &&
      torch.tip_color.x >= 0.0f && torch.tip_color.x <= 1.0f &&
@@ -206,7 +235,9 @@ bool MinecraftScene::LoadAuthoredScene() {
      validControl(torch.particle_spread, torch.particle_spread_control) &&
      validControl(torch.particle_size, torch.particle_size_control) &&
      validControl(torch.particle_spawn_offset_y, torch.particle_spawn_offset_control) &&
-     torch.particle_time_wrap_seconds > 0.0f);
+    torch.particle_time_wrap_seconds > 0.0f &&
+    !torch.particle_controls_label.empty() &&
+    validAppearance);
   if (m_voxelSettings.chunk_size < 1 || m_voxelSettings.chunk_size > kMaxChunkSize ||
       m_voxelSettings.world_height < 8 || m_voxelSettings.world_height > kMaxWorldHeight ||
       m_voxelSettings.render_distance < 1 || m_voxelSettings.render_distance > kMaxRenderDistance ||
@@ -1610,7 +1641,7 @@ void MinecraftScene::CreateTorchBaseMesh() {
     tipMaterial.EffectInstance.pDefaults[1].CaseFloat = {torch.tip_roughness};
     tipMaterial.EffectInstance.pDefaults[2].Type = xF::xEFFECTENUM::STDX_DWORDS;
     tipMaterial.EffectInstance.pDefaults[2].NameParam = "unlit";
-    tipMaterial.EffectInstance.pDefaults[2].CaseDWORD = 1;
+    tipMaterial.EffectInstance.pDefaults[2].CaseDWORD = torch.tip_unlit ? 1u : 0u;
     geom.MaterialList.FaceIndices.insert(
       geom.MaterialList.FaceIndices.end(),
       geom.NumTriangles - bodyTriangleCount, 1);
@@ -1700,6 +1731,7 @@ void MinecraftScene::CreateTorchBaseMesh() {
 
 void MinecraftScene::ApplyTorchParticleSettings() {
   const auto& torch = m_voxelSettings.torch;
+  const auto& appearance = torch.particle_appearance;
   m_torchFlamePosition = XVECTOR3(
     m_torchBasePosition.x,
     m_torchBasePosition.y + torch.base_height + torch.particle_spawn_offset_y,
@@ -1710,6 +1742,23 @@ void MinecraftScene::ApplyTorchParticleSettings() {
   SceneProp.ParticleRiseHeight = torch.particle_rise_height;
   SceneProp.ParticleSpread = torch.particle_spread;
   SceneProp.ParticleSize = torch.particle_size;
+  SceneProp.ParticleColor0 = XVECTOR3(appearance.colors[0].x, appearance.colors[0].y,
+                                      appearance.colors[0].z, 0.0f);
+  SceneProp.ParticleColor1 = XVECTOR3(appearance.colors[1].x, appearance.colors[1].y,
+                                      appearance.colors[1].z, 0.0f);
+  SceneProp.ParticleColor2 = XVECTOR3(appearance.colors[2].x, appearance.colors[2].y,
+                                      appearance.colors[2].z, 0.0f);
+  SceneProp.ParticleShape = XVECTOR3(
+    appearance.radial_seed_min, appearance.radial_start_scale,
+    appearance.radial_age_scale, appearance.wobble_strength);
+  SceneProp.ParticleWobble = XVECTOR3(
+    appearance.wobble_frequency, appearance.wobble_frequency_variation,
+    appearance.wobble_z_scale, appearance.minimum_projection_depth);
+  SceneProp.ParticleFade = XVECTOR3(
+    appearance.start_size_scale, appearance.end_size_scale,
+    appearance.edge_softness_scale, appearance.fade_in_end);
+  SceneProp.ParticleFadeOutStart = appearance.fade_out_start;
+  SceneProp.ParticleIntensity = appearance.intensity;
 }
 
 // ── Mesh building ────────────────────────────────────────────────────
@@ -4363,11 +4412,11 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
     if (gui.Slider(enemySpeed, enemySpeedValue))
       SetMobSpeed(enemySpeedValue);
 
-    if (gui.BeginSection("Torch particles")) {
+    if (gui.BeginSection(m_voxelSettings.torch.particle_controls_label.c_str())) {
       bool particleSettingsChanged = false;
       t850::SliderDesc particleCount;
-      particleCount.name = "torch_particle_count";
-      particleCount.label = "Particle count";
+      particleCount.name = m_voxelSettings.torch.particle_count_control.name;
+      particleCount.label = m_voxelSettings.torch.particle_count_control.label;
       particleCount.min_val = m_voxelSettings.torch.particle_count_control.min;
       particleCount.max_val = m_voxelSettings.torch.particle_count_control.max;
       particleCount.step = m_voxelSettings.torch.particle_count_control.step;
@@ -4377,31 +4426,25 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
         particleSettingsChanged = true;
       }
 
-      auto particleSlider = [&](const char* name, const char* label,
-                                const t850::scene::SceneVoxelControlRangeDesc& control,
+      auto particleSlider = [&](const t850::scene::SceneVoxelControlRangeDesc& control,
                                 float& value) {
         t850::SliderDesc desc;
-        desc.name = name;
-        desc.label = label;
+        desc.name = control.name;
+        desc.label = control.label;
         desc.min_val = control.min;
         desc.max_val = control.max;
         desc.step = control.step;
         if (gui.Slider(desc, value)) particleSettingsChanged = true;
       };
-      particleSlider("torch_particle_lifetime", "Lifetime (seconds)",
-                     m_voxelSettings.torch.particle_lifetime_control,
+      particleSlider(m_voxelSettings.torch.particle_lifetime_control,
                      m_voxelSettings.torch.particle_lifetime);
-      particleSlider("torch_particle_rise", "Rise height",
-                     m_voxelSettings.torch.particle_rise_height_control,
+      particleSlider(m_voxelSettings.torch.particle_rise_height_control,
                      m_voxelSettings.torch.particle_rise_height);
-      particleSlider("torch_particle_spread", "Spread",
-                     m_voxelSettings.torch.particle_spread_control,
+      particleSlider(m_voxelSettings.torch.particle_spread_control,
                      m_voxelSettings.torch.particle_spread);
-      particleSlider("torch_particle_size", "Particle size",
-                     m_voxelSettings.torch.particle_size_control,
+      particleSlider(m_voxelSettings.torch.particle_size_control,
                      m_voxelSettings.torch.particle_size);
-      particleSlider("torch_particle_spawn_offset", "Spawn height offset",
-                     m_voxelSettings.torch.particle_spawn_offset_control,
+      particleSlider(m_voxelSettings.torch.particle_spawn_offset_control,
                      m_voxelSettings.torch.particle_spawn_offset_y);
       if (particleSettingsChanged) ApplyTorchParticleSettings();
     }

@@ -128,7 +128,7 @@ The primary target is **Windows x64 using Dawn over D3D12**, both to port T850 a
 1. **Ship WebGPU alongside every existing graphics API.** Supported Windows x64 builds always include Dawn/D3D12. Users select the API at runtime without installing a separate backend or rebuilding. Full scene and editor parity is required for release; the three-day deliverable is only an internal integrated graphics milestone.
 2. **Port the shader inventory to WGSL through generation, not hand authoring.** HLSL stays canonical. Translation happens in process on a cache miss, mirroring the existing Vulkan path, and offline pre-compilation is an optional pre-warm of the same cache.
 3. **Measure native D3D12 versus Dawn/D3D12.** Compare equivalent work on the same adapter, with matched shaders, resources, rendering settings and presentation policy. Separate CPU command-construction cost, GPU elapsed time, cold compilation, and frame pacing; do not label every difference WebGPU API overhead.
-4. **Add a shared compute path** for D3D11, D3D12, Vulkan, Dawn/WebGPU, and desktop OpenGL 4.3+. Keep existing graphics paths working and select a graphics fallback when desktop GL 4.3 is unavailable or on OpenGL ES.
+4. **Add a shared compute path** for D3D11, D3D12, Vulkan, Dawn/WebGPU, and desktop OpenGL 4.3+. Keep existing graphics paths working and select a raster fallback when desktop GL 4.3 is unavailable or on OpenGL ES.
 5. **Assess compute candidates in every scene**, including the newly added heightmap/placement content and embeddable editor. Start with a bounded image-processing kernel; treat volumetric lighting, culling, skinning, and terrain generation as later experiments until correctness and performance are measured.
 6. **Deliver an internal prototype with two people in three days.** The owner takes Dawn graphics integration and native-versus-Dawn comparison; the teammate owns the common compute contract, kernel, and native compute backends. Freeze the shared contract early and integrate daily. Six person-days is a prototype budget, not a full-engine parity budget or a committed release date.
 
@@ -1197,7 +1197,7 @@ The exact schema is deferred until the portable GBuffer prototype is selected.
 
 This is an additive Framework capability, not a Dawn-only escape hatch. No scene or editor extension receives D3D, Vulkan or WebGPU handles. Keep the existing graphics entry points stable; do not force compute into `DrawIndexed`, a fake fullscreen draw, or the VS/FS `ShaderBase` contract.
 
-Implementation checkpoint: D3D11, D3D12, Vulkan, Dawn/WebGPU, and desktop OpenGL 4.3+ execute the same API-neutral structured-buffer arithmetic workload, pass deterministic GPU readback, and support the sampled/storage textures and samplers used by God Rays, separable blur, Bright, and HDR-composition compute passes. `--postProcessMode` provides the matched A/B path. The GL driver requests a 4.3 compatibility context and gates compute capability on `GLEW_VERSION_4_3`; older desktop GL and OpenGL ES retain graphics fallbacks.
+Implementation checkpoint: D3D11, D3D12, Vulkan, Dawn/WebGPU, and desktop OpenGL 4.3+ execute the same API-neutral structured-buffer arithmetic workload, pass deterministic GPU readback, and support the sampled/storage textures and samplers used by God Rays, separable blur, Bright, and HDR-composition compute passes. `--postProcessMode` provides the matched A/B path. The GL driver requests a 4.3 compatibility context and gates compute capability on `GLEW_VERSION_4_3`; the Windows 3.3 context and OpenGL ES are raster-only fallbacks.
 
 ### Shared Contract and Ownership
 
@@ -1245,7 +1245,7 @@ For future reductions, every lane must reach workgroup barriers uniformly, inclu
 | Vulkan | Compute pipeline/layout, uniform/sampled-image/storage-image descriptors, compute descriptor bind point, `vkCmdDispatch` outside a render pass | Stage/access/layout barriers for color-write -> compute-read, compute-write -> compute-read, and compute-write -> fragment-read. Use storage image `GENERAL` and appropriate sampled layouts. Use supported legacy pipeline barriers or synchronization2 only when enabled; queue-submit order alone is not a memory dependency |
 | Dawn/WebGPU | Shader module, compute pipeline, bind-group layout/groups, `BeginComputePass`, `SetPipeline`, `SetBindGroup`, `DispatchWorkgroups`, `End` | Creation usages include `TextureBinding`/`StorageBinding`/copies as required. WebGPU validates usage scopes and manages native transitions; there is no public Vulkan-style barrier API. End the graphics pass first and use separate input/output subresources |
 
-Validate the actual format's sampled/storage-write support on all four devices. The first kernel does not require typed UAV loads on D3D11: it reads through an SRV and writes through a UAV. It does not write the swapchain directly or require optional BGRA storage support. Reject incompatible usage/format combinations at resource creation, with a graphics fallback chosen before graph execution.
+Validate the actual format's sampled/storage-write support on all four devices. The first kernel does not require typed UAV loads on D3D11: it reads through an SRV and writes through a UAV. It does not write the swapchain directly or require optional BGRA storage support. Reject incompatible usage/format combinations at resource creation, with a raster fallback chosen before graph execution.
 
 ### Render-Graph Changes
 
@@ -1288,7 +1288,7 @@ Create a matching fullscreen pixel-shader reference using exactly the same weigh
 
 Test a constant image, impulse, edge/checker pattern and deterministic rendered image. Include `1x1`, `7x5`, `257x129`, and the benchmark resolution to catch dispatch rounding. Compare against a CPU reference that accounts for half-float rounding after each pass. Before seeing results, set a tolerance such as `max(0.002, 0.002 * abs(reference))` per channel for finite test inputs in `[0,4]`; reject NaNs, unwritten pixels and orientation errors. Record max/RMS error and a visual difference image. A checksum alone is not a cross-compiler floating-point test.
 
-On each participating API, require graphics-write -> compute-read, compute-write -> compute-read and compute-write -> graphics-read correctness, two consecutive frames with changing input/constants, a scratch resize/recreate, and zero validation errors. Read back only in the test/capture workflow after completion. Validate the graphics fallback separately on desktop GL below 4.3 and OpenGL ES.
+On each participating API, require graphics-write -> compute-read, compute-write -> compute-read and compute-write -> graphics-read correctness, two consecutive frames with changing input/constants, a scratch resize/recreate, and zero validation errors. Read back only in the test/capture workflow after completion. Validate the raster fallback separately on desktop GL below 4.3 and OpenGL ES.
 
 ### Per-Scene Compute Opportunities
 

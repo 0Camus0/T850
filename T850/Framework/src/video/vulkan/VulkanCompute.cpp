@@ -17,7 +17,28 @@
 
 namespace t850 {
 namespace {
-  bool CompileCompute(const ComputePipelineDesc& desc, std::vector<uint32_t>& spirv) {
+  bool ReadLocalSize(const std::vector<uint32_t>& spirv,
+                     std::array<uint32_t, 3>& threadGroupSize) {
+    constexpr uint16_t kOpExecutionMode = 16;
+    constexpr uint32_t kExecutionModeLocalSize = 17;
+    for (size_t word = 5; word < spirv.size();) {
+      const uint16_t opcode = static_cast<uint16_t>(spirv[word] & 0xffffu);
+      const uint16_t wordCount = static_cast<uint16_t>(spirv[word] >> 16u);
+      if (!wordCount || word + wordCount > spirv.size())
+        return false;
+      if (opcode == kOpExecutionMode && wordCount >= 6 &&
+          spirv[word + 2] == kExecutionModeLocalSize) {
+        threadGroupSize = {spirv[word + 3], spirv[word + 4], spirv[word + 5]};
+        return threadGroupSize[0] && threadGroupSize[1] && threadGroupSize[2];
+      }
+      word += wordCount;
+    }
+    return false;
+  }
+
+  bool CompileCompute(const ComputePipelineDesc& desc,
+                      std::vector<uint32_t>& spirv,
+                      std::array<uint32_t, 3>& threadGroupSize) {
     static bool initialized = false;
     if (!initialized) { glslang::InitializeProcess(); initialized = true; }
     std::ostringstream combined;
@@ -47,9 +68,17 @@ namespace {
       T8_LOG_ERROR("[Vulkan][Compute] Program link failed '%s': %s", desc.debugName.c_str(), program.getInfoLog());
       return false;
     }
+    const glslang::TIntermediate* intermediate = program.getIntermediate(EShLangCompute);
+    if (!intermediate)
+      return false;
     std::vector<unsigned int> generated;
-    glslang::GlslangToSpv(*program.getIntermediate(EShLangCompute), generated);
+    glslang::GlslangToSpv(*intermediate, generated);
     spirv.assign(generated.begin(), generated.end());
+    if (!ReadLocalSize(spirv, threadGroupSize)) {
+      T8_LOG_ERROR("[Vulkan][Compute] Shader '%s' has an invalid thread-group size",
+                   desc.debugName.c_str());
+      return false;
+    }
     return !spirv.empty();
   }
 
@@ -103,7 +132,7 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
     }
   }
   std::vector<uint32_t> spirv;
-  if (!CompileCompute(desc, spirv)) return false;
+  if (!CompileCompute(desc, spirv, threadGroupSize)) return false;
   VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
   moduleInfo.codeSize = spirv.size() * sizeof(uint32_t);
   moduleInfo.pCode = spirv.data();

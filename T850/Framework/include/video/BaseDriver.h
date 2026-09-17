@@ -23,6 +23,7 @@
 #include <memory>
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <Descriptors.h>
 #include <utils/Technique.h>
 #include <video/WindowHandle.h>
@@ -76,6 +77,7 @@ namespace t850 {
   class ComputePipeline {
   public:
     virtual ~ComputePipeline() = default;
+    std::array<uint32_t, 3> threadGroupSize = {0, 0, 0};
   };
 
   class ComputeBuffer {

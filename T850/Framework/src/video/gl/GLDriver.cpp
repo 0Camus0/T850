@@ -217,6 +217,9 @@ namespace t850 {
     m_computeTexturesSupported = m_computeShadersSupported;
     T8_LOG_INFO("[GL][Compute] shaders=%d textures=%d (desktop OpenGL 4.3 required)",
                 m_computeShadersSupported, m_computeTexturesSupported);
+    if (!m_computeShadersSupported) {
+      T8_LOG_INFO("[GL][Compute] OpenGL 3.3 context is raster-only; compute graph passes use their raster implementations");
+    }
     SDL_GetWindowSizeInPixels((SDL_Window*)m_sdlWindow, &width, &height);
     if ((width <= 0 || height <= 0) && requestedWidth > 0 && requestedHeight > 0) {
       T8_LOG_INFO("[GL] SDL reported %dx%d pixels during init; using requested %dx%d",

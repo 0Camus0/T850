@@ -97,6 +97,18 @@ bool GLComputePipeline::Create(const ComputePipelineDesc& desc) {
   }
   std::string source;
   if (!LoadComputeSource(desc, source) || !CompileComputeProgram(desc, source, program)) return false;
+  GLint reflectedGroupSize[3] = {};
+  glGetProgramiv(program, GL_COMPUTE_WORK_GROUP_SIZE, reflectedGroupSize);
+  if (reflectedGroupSize[0] <= 0 || reflectedGroupSize[1] <= 0 || reflectedGroupSize[2] <= 0) {
+    T8_LOG_ERROR("[GL][Compute] Shader '%s' has an invalid thread-group size",
+                 desc.debugName.c_str());
+    return false;
+  }
+  threadGroupSize = {
+    static_cast<uint32_t>(reflectedGroupSize[0]),
+    static_cast<uint32_t>(reflectedGroupSize[1]),
+    static_cast<uint32_t>(reflectedGroupSize[2])
+  };
   bindings = desc.bindings;
   ShaderPermutationDump::RecordCompute(desc.debugName, desc.entryPoint, desc.permutationName, desc.defines);
   T8_LOG_INFO("[GL][Compute] Pipeline '%s' created (bindings=%zu)", desc.debugName.c_str(), bindings.size());

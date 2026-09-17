@@ -2299,6 +2299,22 @@
       "permutation": "base",
       "defines": []
     },
+    "CS_ImagePatternRead.hlsl:CS:base": {
+      "key": "CS_ImagePatternRead.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_ImagePatternRead.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_ImagePatternWrite.hlsl:CS:base": {
+      "key": "CS_ImagePatternWrite.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_ImagePatternWrite.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
     "CS_TorchParticles.hlsl:CS:base": {
       "key": "CS_TorchParticles.hlsl:CS:base",
       "kind": "compute",

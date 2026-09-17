@@ -188,7 +188,11 @@
       "compute_shader": "Shaders/CS_TorchParticles.hlsl",
       "compute_entry": "CS",
       "compute_permutation": "base",
-      "compute_threads": [8, 8, 1],
+      "compute_extent_from": "TorchParticles:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "TorchParticles:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "camera": "main",
       "clear": true,
       "clear_color": [0, 0, 0, 0],
@@ -233,7 +237,15 @@
       "compute_shader": "Shaders/CS_Bright.hlsl",
       "compute_entry": "CS",
       "compute_permutation": "base",
-      "compute_threads": [8, 8, 1],
+      "compute_extent_from": "BrightPass:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "Extra16F:COLOR0", "access": "sampled", "shader_register": 0 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampled", "shader_register": 1 },
+        { "resource": "Extra16F:COLOR0", "access": "sampler", "shader_register": 0 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampler", "shader_register": 1 },
+        { "resource": "BrightPass:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "inputs": [
         { "source": "Extra16F:COLOR0",           "slot": 0 },
         { "source": "AdaptedLumCurrent:COLOR0",  "slot": 1 }
@@ -314,7 +326,17 @@
       "compute_shader": "Shaders/CS_HDRComposite.hlsl",
       "compute_entry": "CS",
       "compute_permutation": "base",
-      "compute_threads": [8, 8, 1],
+      "compute_extent_from": "ExtraHelper:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "Extra16F:COLOR0", "access": "sampled", "shader_register": 0 },
+        { "resource": "BloomAccum:COLOR0", "access": "sampled", "shader_register": 1 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampled", "shader_register": 2 },
+        { "resource": "Extra16F:COLOR0", "access": "sampler", "shader_register": 0 },
+        { "resource": "BloomAccum:COLOR0", "access": "sampler", "shader_register": 1 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampler", "shader_register": 2 },
+        { "resource": "ExtraHelper:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "inputs": [
         { "source": "Extra16F:COLOR0",           "slot": 0 },
         { "source": "BloomAccum:COLOR0",         "slot": 1 },

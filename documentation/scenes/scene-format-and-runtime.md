@@ -127,9 +127,11 @@ cap without depending on lighting or an atlas tile. The flame emitter starts at 
 top plus `particle_spawn_offset_y`;
 the shipped negative offset starts particles slightly inside and around the cap.
 `particle_count`, `particle_lifetime`, `particle_rise_height`, `particle_spread`, and
-`particle_size` author the deterministic fire. D3D11, D3D12, and Vulkan run the crisp,
-square red/orange/yellow voxel particles in `CS_TorchParticles`; OpenGL clears the
-particle target and retains the base-only result.
+`particle_size` author the deterministic fire. `particle_appearance` owns the three-color
+palette, radial motion, wobble, size evolution, projection-depth floor, edge softness, fade
+windows, and intensity. `tip_unlit` controls the cap material. D3D11, D3D12, Vulkan,
+WebGPU, and desktop OpenGL 4.3+ run the same `CS_TorchParticles` intent. A desktop OpenGL
+3.3 fallback is raster-only, clears the particle target, and retains the base-only result.
 
 The torch also authors `tip_roughness`, `particle_time_wrap_seconds`, and one
 `min`/`max`/`step` control range for each live particle slider. Runtime UI therefore uses

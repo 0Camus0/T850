@@ -30,59 +30,13 @@
 #include <sstream>
 #include <cstdio>
 #include <unordered_map>
+#include <unordered_set>
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <set>
 
 namespace t850 {
-
-namespace {
-  constexpr uint32_t kMaxBlurWeights = 24;
-
-  struct GodRaysComputeConstants {
-    XMATRIX44 WVPInverse;
-    XMATRIX44 WVPLight;
-    XVECTOR3 CameraPosition;
-    XVECTOR3 SunDirectionAndBias;
-    XVECTOR3 VolumeCenterAndEnabled;
-    XVECTOR3 VolumeHalfExtentsAndFactor;
-    XVECTOR3 OutputSizeStepsAndEnabled;
-  };
-  static_assert(sizeof(GodRaysComputeConstants) == 208,
-                "God Rays compute constants must match the HLSL root-constant layout");
-
-  struct BlurComputeConstants {
-    uint32_t outputWidth;
-    uint32_t outputHeight;
-    uint32_t kernelSize;
-    uint32_t direction;
-    float radius;
-    float padding[3];
-    float weights[kMaxBlurWeights];
-  };
-  static_assert(sizeof(BlurComputeConstants) == 128,
-                "Blur compute constants must match the HLSL root-constant layout");
-
-  struct PostProcessComputeConstants {
-    float outputWidth;
-    float outputHeight;
-    float parameter0;
-    float parameter1;
-    float parameter2;
-    float padding[3];
-  };
-  static_assert(sizeof(PostProcessComputeConstants) == 32,
-                "Post-process compute constants must match the HLSL root-constant layout");
-
-  struct ParticleComputeConstants {
-    XMATRIX44 viewProjection;
-    XVECTOR3 emitterAndTime;
-    XVECTOR3 outputSizeCountEnabled;
-    XVECTOR3 motion;
-  };
-  static_assert(sizeof(ParticleComputeConstants) == 112,
-                "Particle compute constants must match the HLSL root-constant layout");
-
-}
 
 RenderGraph::~RenderGraph() = default;
 RenderGraph::RenderGraph(RenderGraph&&) noexcept = default;
@@ -98,7 +52,7 @@ bool LoadRenderGraphDescriptor(const std::string& path, RenderGraphDesc& desc) {
     return false;
   }
 
-  auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, json);
+  auto ec = glz::read<glz::opts{.error_on_unknown_keys = true}>(desc, json);
   if (ec) {
     std::string err = glz::format_error(ec, json);
     T8_LOG_ERROR("[RenderGraph] Parse error '%s': %s", path.c_str(), err.c_str());
@@ -123,6 +77,38 @@ static const std::unordered_map<std::string, int> s_attachmentMap = {
   {"COLOR6", BaseDriver::COLOR6_ATTACHMENT},
   {"COLOR7", BaseDriver::COLOR7_ATTACHMENT},
 };
+
+namespace {
+
+std::optional<ComputeBindingType> ResolveComputeAccess(std::string_view access) {
+  if (access == "constants") return ComputeBindingType::Constants32;
+  if (access == "sampled") return ComputeBindingType::ReadOnlyTexture;
+  if (access == "storage_write") return ComputeBindingType::ReadWriteTexture;
+  if (access == "sampler") return ComputeBindingType::Sampler;
+  return std::nullopt;
+}
+
+bool ParseRenderTargetReference(std::string_view reference,
+                                std::string& renderTarget,
+                                int& attachment) {
+  if (reference.empty() || reference.front() == '@')
+    return false;
+  const size_t separator = reference.find(':');
+  renderTarget = std::string(reference.substr(0, separator));
+  const std::string attachmentName = separator == std::string_view::npos
+    ? "COLOR0" : std::string(reference.substr(separator + 1));
+  const auto found = s_attachmentMap.find(attachmentName);
+  if (renderTarget.empty() || found == s_attachmentMap.end())
+    return false;
+  attachment = found->second;
+  return true;
+}
+
+std::string ResourceIdentity(const std::string& renderTarget, int attachment) {
+  return renderTarget + ":" + std::to_string(attachment);
+}
+
+} // namespace
 
 static const std::unordered_map<std::string, int> s_colorFormatMap = {
   {"NONE",    BaseRT::NOTHING},
@@ -303,7 +289,152 @@ bool RenderGraph::Load(const std::string& path) {
 
   if (!LoadRenderGraphDescriptor(path, m_sourceDesc))
     return false;
+
+  std::unordered_map<std::string, const RTDesc*> renderTargets;
+  for (const RTDesc& renderTarget : m_sourceDesc.render_targets) {
+    if (renderTarget.name.empty() ||
+        !renderTargets.emplace(renderTarget.name, &renderTarget).second) {
+      T8_LOG_ERROR("[RenderGraph] Render target names must be nonempty and unique: '%s'",
+                   renderTarget.name.c_str());
+      return false;
+    }
+  }
+
   for (const auto& pass : m_sourceDesc.passes) {
+    if (pass.execution != "graphics" && pass.execution != "compute_if_supported") {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has unknown execution mode '%s'",
+                   pass.name.c_str(), pass.execution.c_str());
+      return false;
+    }
+    if (pass.execution == "graphics" &&
+        (!pass.compute_shader.empty() || !pass.compute_extent_from.empty() ||
+         !pass.compute_resources.empty())) {
+      T8_LOG_ERROR("[RenderGraph] Graphics pass '%s' contains compute-only fields",
+                   pass.name.c_str());
+      return false;
+    }
+    if (pass.execution == "compute_if_supported") {
+      if (pass.compute_shader.empty() || pass.compute_entry.empty() ||
+          pass.compute_extent_from.empty() || pass.compute_resources.empty()) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has an incomplete compute declaration",
+                     pass.name.c_str());
+        return false;
+      }
+      const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
+      if (!kernel || pass.compute_entry != kernel->entryPoint) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has unknown compute kernel '%s:%s'",
+                     pass.name.c_str(), pass.compute_shader.c_str(),
+                     pass.compute_entry.c_str());
+        return false;
+      }
+      if (!SupportsComputePermutation(*kernel, pass.compute_permutation)) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has unsupported permutation '%s'",
+                     pass.name.c_str(), pass.compute_permutation.c_str());
+        return false;
+      }
+
+      std::set<std::pair<ComputeBindingType, uint32_t>> expectedBindings;
+      for (size_t index = 0; index < kernel->bindingCount; ++index) {
+        expectedBindings.emplace(kernel->bindings[index].type,
+                                 kernel->bindings[index].shaderRegister);
+      }
+      std::set<std::pair<ComputeBindingType, uint32_t>> declaredBindings;
+      std::unordered_set<std::string> sampledResources;
+      std::unordered_set<std::string> writtenResources;
+      std::unordered_set<std::string> samplerResources;
+      for (const ComputeResourceDesc& resource : pass.compute_resources) {
+        const std::optional<ComputeBindingType> type = ResolveComputeAccess(resource.access);
+        if (!type || resource.shader_register < 0) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute access '%s' or register %d",
+                       pass.name.c_str(), resource.access.c_str(), resource.shader_register);
+          return false;
+        }
+        const auto bindingKey = std::make_pair(
+          *type, static_cast<uint32_t>(resource.shader_register));
+        if (!expectedBindings.count(bindingKey) ||
+            !declaredBindings.insert(bindingKey).second) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' has unexpected or duplicate compute binding '%s' register %d",
+                       pass.name.c_str(), resource.access.c_str(), resource.shader_register);
+          return false;
+        }
+        if (*type == ComputeBindingType::Constants32) {
+          if (resource.resource != "@kernel_constants") {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' constants must use @kernel_constants",
+                         pass.name.c_str());
+            return false;
+          }
+          continue;
+        }
+
+        std::string renderTargetName;
+        int attachment = BaseDriver::COLOR0_ATTACHMENT;
+        if (!ParseRenderTargetReference(resource.resource, renderTargetName, attachment)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute resource '%s'",
+                       pass.name.c_str(), resource.resource.c_str());
+          return false;
+        }
+        const auto renderTargetIt = renderTargets.find(renderTargetName);
+        if (renderTargetIt == renderTargets.end()) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' references unknown compute target '%s'",
+                       pass.name.c_str(), renderTargetName.c_str());
+          return false;
+        }
+        const RTDesc& renderTarget = *renderTargetIt->second;
+        if ((attachment == BaseDriver::DEPTH_ATTACHMENT && renderTarget.depth_format == "NONE") ||
+            (attachment != BaseDriver::DEPTH_ATTACHMENT &&
+             (attachment < 0 || attachment >= renderTarget.color_count))) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' references unavailable attachment '%s'",
+                       pass.name.c_str(), resource.resource.c_str());
+          return false;
+        }
+        const std::string identity = ResourceIdentity(renderTargetName, attachment);
+        if (*type == ComputeBindingType::ReadOnlyTexture) {
+          sampledResources.insert(identity);
+        } else if (*type == ComputeBindingType::Sampler) {
+          samplerResources.insert(identity);
+        } else if (*type == ComputeBindingType::ReadWriteTexture) {
+          if (attachment == BaseDriver::DEPTH_ATTACHMENT || !renderTarget.storage) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' storage output '%s' is not a storage-enabled color target",
+                         pass.name.c_str(), resource.resource.c_str());
+            return false;
+          }
+          if (!writtenResources.insert(identity).second) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' writes '%s' more than once",
+                         pass.name.c_str(), resource.resource.c_str());
+            return false;
+          }
+        }
+      }
+      if (declaredBindings != expectedBindings) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' does not declare the kernel's complete binding layout",
+                     pass.name.c_str());
+        return false;
+      }
+      for (const std::string& sampler : samplerResources) {
+        if (!sampledResources.count(sampler)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' sampler '%s' has no matching sampled resource",
+                       pass.name.c_str(), sampler.c_str());
+          return false;
+        }
+      }
+      for (const std::string& written : writtenResources) {
+        if (sampledResources.count(written)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' reads and writes '%s' in one dispatch",
+                       pass.name.c_str(), written.c_str());
+          return false;
+        }
+      }
+      std::string extentTarget;
+      int extentAttachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (!ParseRenderTargetReference(pass.compute_extent_from,
+                                      extentTarget, extentAttachment) ||
+          !writtenResources.count(ResourceIdentity(extentTarget, extentAttachment))) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' compute_extent_from must name a storage output",
+                     pass.name.c_str());
+        return false;
+      }
+    }
+
     for (const auto& draw : pass.draws) {
       if (draw.signature != "LIGHT_ADD") continue;
       bool hasSlot0 = false;
@@ -628,29 +759,16 @@ void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
     const RenderPassDesc& pass = *node.desc;
     if (pass.execution == "graphics")
       continue;
-    if (pass.execution != "compute_if_supported") {
-      T8_LOG_ERROR("[RenderGraph] Pass '%s' has unknown execution mode '%s'",
-                   pass.name.c_str(), pass.execution.c_str());
-      continue;
-    }
-    if (pass.compute_shader.empty() || pass.compute_entry.empty() || node.rt_handle < 0 ||
-        pass.compute_threads[0] <= 0 || pass.compute_threads[1] <= 0 || pass.compute_threads[2] <= 0) {
-      T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute declaration", pass.name.c_str());
-      continue;
-    }
     const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
-    if (!kernel || pass.compute_entry != kernel->entryPoint) {
-      T8_LOG_ERROR("[RenderGraph] Pass '%s' has an unknown compute kernel '%s:%s'",
-                   pass.name.c_str(), pass.compute_shader.c_str(), pass.compute_entry.c_str());
+    if (!kernel)
       continue;
-    }
     if (g_config.postProcessMode != Config::PostProcessMode::Compute) {
       T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics implementation by post-process mode on API=%s",
                   pass.name.c_str(), driver->ApiTag());
       continue;
     }
     if (!driver->SupportsComputeTextures()) {
-      T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics fallback on API=%s",
+      T8_LOG_INFO("[RenderGraph] Pass '%s' using raster fallback on API=%s",
                   pass.name.c_str(), driver->ApiTag());
       continue;
     }
@@ -672,6 +790,12 @@ void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' failed to create compute pipeline", pass.name.c_str());
       continue;
     }
+    if (!pipeline->threadGroupSize[0] || !pipeline->threadGroupSize[1] ||
+        !pipeline->threadGroupSize[2]) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' created a pipeline without reflected workgroup dimensions",
+                   pass.name.c_str());
+      continue;
+    }
     m_computePipelines[node.index] = std::move(pipeline);
     T8_LOG_INFO("[RenderGraph] Pass '%s' enabled compute kernel '%s' on API=%s",
                 pass.name.c_str(), pass.compute_shader.c_str(), driver->ApiTag());
@@ -685,185 +809,74 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
 
   const RenderPassDesc& pass = *node.desc;
   const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
-  if (!kernel || pass.compute_entry != kernel->entryPoint) {
+  if (!kernel) {
     T8_LOG_ERROR("[RenderGraph] Pass '%s' has no registered compute executor", pass.name.c_str());
     return false;
   }
-  if (node.rt_handle < 0 || node.rt_handle >= static_cast<int>(driver->RTs.size()) ||
-      !driver->RTs[node.rt_handle]) {
-    T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute output render target",
+
+  const ResolvedTexture extentResource = ResolveTextureInput(pass.compute_extent_from);
+  if (extentResource.is_builtin || extentResource.rt_handle < 0 ||
+      extentResource.rt_handle >= static_cast<int>(driver->RTs.size()) ||
+      !driver->RTs[extentResource.rt_handle]) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute extent resource",
                  pass.name.c_str());
     return false;
   }
-
-  Texture* inputs[3] = {};
-  for (const TextureInput& input : pass.inputs) {
-    const ResolvedTexture resolved = ResolveTextureInput(input.source);
-    if (resolved.is_builtin || resolved.rt_handle < 0)
-      continue;
-    Texture* texture = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
-    if (input.slot >= 0 && input.slot < 3)
-      inputs[input.slot] = texture;
-  }
-  Texture* output = driver->GetRTTexture(node.rt_handle, BaseDriver::COLOR0_ATTACHMENT);
-  BaseRT* outputRT = driver->RTs[node.rt_handle];
-  if (!output || outputRT->w <= 0 || outputRT->h <= 0) {
-    T8_LOG_ERROR("[RenderGraph] Pass '%s' is missing its compute output", pass.name.c_str());
+  BaseRT* outputRT = driver->RTs[extentResource.rt_handle];
+  if (outputRT->w <= 0 || outputRT->h <= 0) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute output dimensions %dx%d",
+                 pass.name.c_str(), outputRT->w, outputRT->h);
     return false;
   }
 
   std::vector<ComputeBindingDesc> bindings;
-  auto addConstants = [&](const void* data, size_t byteCount) {
+  bindings.reserve(pass.compute_resources.size());
+  std::vector<uint32_t> constantWords;
+  for (const ComputeResourceDesc& resource : pass.compute_resources) {
+    const std::optional<ComputeBindingType> type = ResolveComputeAccess(resource.access);
+    if (!type)
+      return false;
     ComputeBindingDesc binding;
-    binding.type = ComputeBindingType::Constants32;
-    binding.shaderRegister = 0;
-    binding.constants = reinterpret_cast<const uint32_t*>(data);
-    binding.constantCount = static_cast<uint32_t>(byteCount / sizeof(uint32_t));
+    binding.type = *type;
+    binding.shaderRegister = static_cast<uint32_t>(resource.shader_register);
+    if (*type == ComputeBindingType::Constants32) {
+      ComputeKernelConstantsContext constantsContext;
+      constantsContext.sceneProps = &props;
+      constantsContext.outputWidth = static_cast<uint32_t>(outputRT->w);
+      constantsContext.outputHeight = static_cast<uint32_t>(outputRT->h);
+      constantsContext.permutation = pass.compute_permutation;
+      std::string error;
+      if (!BuildComputeConstants(*kernel, constantsContext, constantWords, error)) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot build constants: %s",
+                     pass.name.c_str(), error.c_str());
+        return false;
+      }
+      binding.constants = constantWords.data();
+      binding.constantCount = static_cast<uint32_t>(constantWords.size());
+    } else {
+      const ResolvedTexture resolved = ResolveTextureInput(resource.resource);
+      if (resolved.is_builtin || resolved.rt_handle < 0 ||
+          resolved.rt_handle >= static_cast<int>(driver->RTs.size())) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot resolve compute resource '%s'",
+                     pass.name.c_str(), resource.resource.c_str());
+        return false;
+      }
+      binding.texture = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
+      if (!binding.texture)
+        return false;
+    }
     bindings.push_back(binding);
-  };
-  auto addTexture = [&](ComputeBindingType type, uint32_t shaderRegister, Texture* texture) {
-    ComputeBindingDesc binding;
-    binding.type = type;
-    binding.shaderRegister = shaderRegister;
-    binding.texture = texture;
-    bindings.push_back(binding);
-  };
-
-  GodRaysComputeConstants godRaysConstants = {};
-  BlurComputeConstants blurConstants = {};
-  PostProcessComputeConstants postConstants = {};
-  ParticleComputeConstants particleConstants = {};
-
-  if (kernel->id == ComputeKernelId::GodRays) {
-    Camera* camera = props.GetPrimaryCamera();
-    if (!inputs[0] || !inputs[1] || !camera) {
-      T8_LOG_ERROR("[RenderGraph] Pass '%s' is missing compute resources or camera", pass.name.c_str());
-      return false;
-    }
-    camera->VP.Inverse(&godRaysConstants.WVPInverse);
-    godRaysConstants.CameraPosition = camera->Eye;
-
-    XVECTOR3 sunDirection(0.0f, 1.0f, 0.0f, props.ShadowBias);
-    const bool hasLightCamera = props.ActiveLightCamera >= 0 &&
-                                props.ActiveLightCamera < static_cast<int>(props.pLightCameras.size()) &&
-                                props.pLightCameras[props.ActiveLightCamera];
-    if (hasLightCamera) {
-      godRaysConstants.WVPLight = props.pLightCameras[props.ActiveLightCamera]->VP;
-      XVECTOR3 direction = -props.pLightCameras[props.ActiveLightCamera]->Look;
-      direction.Normalize();
-      sunDirection.x = direction.x;
-      sunDirection.y = direction.y;
-      sunDirection.z = direction.z;
-    }
-    godRaysConstants.SunDirectionAndBias = sunDirection;
-    godRaysConstants.VolumeCenterAndEnabled = props.GodRaysVolumeCenter;
-    godRaysConstants.VolumeCenterAndEnabled.w = static_cast<float>(props.GodRaysVolumeEnabled);
-    godRaysConstants.VolumeHalfExtentsAndFactor = props.GodRaysVolumeHalfExtents;
-    godRaysConstants.VolumeHalfExtentsAndFactor.w = props.GodRaysFactor;
-    godRaysConstants.OutputSizeStepsAndEnabled = XVECTOR3(
-      static_cast<float>(outputRT->w), static_cast<float>(outputRT->h),
-      (std::max)(props.LightVolumeSteps, 2.0f),
-      props.ToogleGodRays && hasLightCamera ? 1.0f : 0.0f);
-
-    bindings.reserve(6);
-    addConstants(&godRaysConstants, sizeof(godRaysConstants));
-    addTexture(ComputeBindingType::ReadOnlyTexture, 0, inputs[0]);
-    addTexture(ComputeBindingType::ReadOnlyTexture, 1, inputs[1]);
-    addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
-    addTexture(ComputeBindingType::Sampler, 0, inputs[0]);
-    addTexture(ComputeBindingType::Sampler, 1, inputs[1]);
-  } else if (kernel->id == ComputeKernelId::Blur) {
-    const bool validKernel = inputs[0] && props.ActiveGaussKernel >= 0 &&
-      props.ActiveGaussKernel < static_cast<int>(props.pGaussKernels.size()) &&
-      props.pGaussKernels[props.ActiveGaussKernel] &&
-      !props.pGaussKernels[props.ActiveGaussKernel]->vGaussKernel.empty();
-    if (!validKernel) {
-      T8_LOG_ERROR("[RenderGraph] Blur pass '%s' is missing input or Gaussian kernel %d",
-                   pass.name.c_str(), props.ActiveGaussKernel);
-      return false;
-    }
-    const GaussFilter& kernel = *props.pGaussKernels[props.ActiveGaussKernel];
-    const uint32_t kernelSize = static_cast<uint32_t>(kernel.vGaussKernel[0].x);
-    if (kernelSize == 0 || kernelSize > kMaxBlurWeights ||
-        kernel.vGaussKernel.size() <= kernelSize) {
-      T8_LOG_ERROR("[RenderGraph] Blur pass '%s' kernel size %u exceeds compute limit %u",
-                   pass.name.c_str(), kernelSize, kMaxBlurWeights);
-      return false;
-    }
-    blurConstants.outputWidth = static_cast<uint32_t>(outputRT->w);
-    blurConstants.outputHeight = static_cast<uint32_t>(outputRT->h);
-    blurConstants.kernelSize = kernelSize;
-    blurConstants.direction = pass.compute_permutation == "vertical" ? 1u : 0u;
-    blurConstants.radius = kernel.vGaussKernel[0].y;
-    for (uint32_t index = 0; index < kernelSize; ++index) {
-      const float weight = kernel.vGaussKernel[index + 1].x;
-      blurConstants.weights[index] = std::round(weight * 1000000.0f) / 1000000.0f;
-    }
-
-    bindings.reserve(4);
-    addConstants(&blurConstants, sizeof(blurConstants));
-    addTexture(ComputeBindingType::ReadOnlyTexture, 0, inputs[0]);
-    addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
-    addTexture(ComputeBindingType::Sampler, 0, inputs[0]);
-  } else if (kernel->id == ComputeKernelId::Bright ||
-             kernel->id == ComputeKernelId::HDRComposite) {
-    const bool hdrComposite = kernel->id == ComputeKernelId::HDRComposite;
-    if (!inputs[0] || !inputs[1] || (hdrComposite && !inputs[2])) {
-      T8_LOG_ERROR("[RenderGraph] Pass '%s' is missing post-process inputs", pass.name.c_str());
-      return false;
-    }
-    postConstants.outputWidth = static_cast<float>(outputRT->w);
-    postConstants.outputHeight = static_cast<float>(outputRT->h);
-    postConstants.parameter0 = hdrComposite ? props.BloomFactor : props.BloomThreshold;
-    postConstants.parameter1 = props.Exposure;
-    postConstants.parameter2 = props.ToneMapWhiteLevel;
-
-    bindings.reserve(hdrComposite ? 8 : 6);
-    addConstants(&postConstants, sizeof(postConstants));
-    addTexture(ComputeBindingType::ReadOnlyTexture, 0, inputs[0]);
-    addTexture(ComputeBindingType::ReadOnlyTexture, 1, inputs[1]);
-    if (hdrComposite)
-      addTexture(ComputeBindingType::ReadOnlyTexture, 2, inputs[2]);
-    addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
-    addTexture(ComputeBindingType::Sampler, 0, inputs[0]);
-    addTexture(ComputeBindingType::Sampler, 1, inputs[1]);
-    if (hdrComposite)
-      addTexture(ComputeBindingType::Sampler, 2, inputs[2]);
-  } else if (kernel->id == ComputeKernelId::TorchParticles) {
-    Camera* camera = props.GetPrimaryCamera();
-    if (!camera) {
-      T8_LOG_ERROR("[RenderGraph] Particle pass '%s' is missing its camera",
-                   pass.name.c_str());
-      return false;
-    }
-    particleConstants.viewProjection = camera->VP;
-    particleConstants.emitterAndTime = props.ParticleEmitterPosition;
-    particleConstants.emitterAndTime.w = props.ParticleTimeSeconds;
-    particleConstants.outputSizeCountEnabled = XVECTOR3(
-      static_cast<float>(outputRT->w), static_cast<float>(outputRT->h),
-      static_cast<float>(props.ParticleCount),
-      props.ParticleEmitterEnabled ? 1.0f : 0.0f);
-    particleConstants.motion = XVECTOR3(
-      props.ParticleLifetime, props.ParticleRiseHeight,
-      props.ParticleSpread, props.ParticleSize);
-
-    bindings.reserve(2);
-    addConstants(&particleConstants, sizeof(particleConstants));
-    addTexture(ComputeBindingType::ReadWriteTexture, 0, output);
-  } else {
-    T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot execute standalone kernel '%s'",
-                 pass.name.c_str(), pass.compute_shader.c_str());
-    return false;
   }
 
-  const uint32_t groupsX = (static_cast<uint32_t>(outputRT->w) + pass.compute_threads[0] - 1u) /
-                           static_cast<uint32_t>(pass.compute_threads[0]);
-  const uint32_t groupsY = (static_cast<uint32_t>(outputRT->h) + pass.compute_threads[1] - 1u) /
-                           static_cast<uint32_t>(pass.compute_threads[1]);
-  const bool dispatched = driver->DispatchCompute(*pipelineIt->second, bindings, groupsX, groupsY, 1);
+  const std::array<uint32_t, 3>& threads = pipelineIt->second->threadGroupSize;
+  const uint32_t groupsX = (static_cast<uint32_t>(outputRT->w) + threads[0] - 1u) / threads[0];
+  const uint32_t groupsY = (static_cast<uint32_t>(outputRT->h) + threads[1] - 1u) / threads[1];
+  const uint32_t groupsZ = (1u + threads[2] - 1u) / threads[2];
+  const bool dispatched = driver->DispatchCompute(
+    *pipelineIt->second, bindings, groupsX, groupsY, groupsZ);
   if (dispatched && m_loggedComputeDispatches.insert(node.index).second) {
-    T8_LOG_INFO("[RenderGraph] Pass '%s' dispatched compute %u x %u x 1 for %dx%d output",
-                pass.name.c_str(), groupsX, groupsY, outputRT->w, outputRT->h);
+    T8_LOG_INFO("[RenderGraph] Pass '%s' dispatched compute %u x %u x %u for %dx%d output",
+                pass.name.c_str(), groupsX, groupsY, groupsZ, outputRT->w, outputRT->h);
   }
   return dispatched;
 }
@@ -898,41 +911,52 @@ void RenderGraph::BuildGraph() {
       node.rt_handle = -1;
     }
 
-    // Scan inputs to build edges
-    for (const auto& input : passDesc.inputs) {
-      if (input.source.empty() || input.source[0] == '@')
-        continue;  // built-in, no graph edge
+    std::unordered_set<std::string> recordedReads;
+    auto recordRead = [&](const std::string& source, int slot) {
+      if (source.empty() || source[0] == '@')
+        return;
 
-      // Extract RT name from "RTName:ATTACHMENT"
-      std::string rtName = input.source;
-      auto colon = rtName.find(':');
-      if (colon != std::string::npos)
-        rtName = rtName.substr(0, colon);
+      std::string rtName;
+      int attachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (!ParseRenderTargetReference(source, rtName, attachment))
+        return;
+      const std::string readIdentity = ResourceIdentity(rtName, attachment);
+      if (!recordedReads.insert(readIdentity).second)
+        return;
 
       auto writerIt = lastWriter.find(rtName);
-      if (writerIt != lastWriter.end()) {
-        int fromPass = writerIt->second;
+      if (writerIt == lastWriter.end())
+        return;
+      const int fromPass = writerIt->second;
+      GraphEdge edge;
+      edge.from_pass = fromPass;
+      edge.to_pass = i;
+      edge.rt = rtName;
+      edge.attachment = attachment;
+      edge.slot = slot;
+      m_edges.push_back(edge);
+      if (std::find(node.inputs_from.begin(), node.inputs_from.end(), fromPass) == node.inputs_from.end())
+        node.inputs_from.push_back(fromPass);
+      if (std::find(m_nodes[fromPass].outputs_to.begin(), m_nodes[fromPass].outputs_to.end(), i) == m_nodes[fromPass].outputs_to.end())
+        m_nodes[fromPass].outputs_to.push_back(i);
+    };
 
-        GraphEdge edge;
-        edge.from_pass = fromPass;
-        edge.to_pass = i;
-        edge.rt = rtName;
-        edge.attachment = ResolveAttachment(
-          (colon != std::string::npos) ? input.source.substr(colon + 1) : "COLOR0");
-        edge.slot = input.slot;
-        m_edges.push_back(edge);
-
-        // Record adjacency
-        if (std::find(node.inputs_from.begin(), node.inputs_from.end(), fromPass) == node.inputs_from.end())
-          node.inputs_from.push_back(fromPass);
-        if (std::find(m_nodes[fromPass].outputs_to.begin(), m_nodes[fromPass].outputs_to.end(), i) == m_nodes[fromPass].outputs_to.end())
-          m_nodes[fromPass].outputs_to.push_back(i);
-      }
+    for (const auto& input : passDesc.inputs)
+      recordRead(input.source, input.slot);
+    for (const ComputeResourceDesc& resource : passDesc.compute_resources) {
+      if (resource.access == "sampled")
+        recordRead(resource.resource, resource.shader_register);
     }
 
-    // This pass writes to its target RT
-    if (!passDesc.target.empty()) {
+    if (!passDesc.target.empty())
       lastWriter[passDesc.target] = i;
+    for (const ComputeResourceDesc& resource : passDesc.compute_resources) {
+      if (resource.access != "storage_write")
+        continue;  // built-in, no graph edge
+      std::string rtName;
+      int attachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (ParseRenderTargetReference(resource.resource, rtName, attachment))
+        lastWriter[rtName] = i;
     }
   }
 

@@ -1,6 +1,6 @@
 # Render Graph
 
-Status: verified against source on 2026-08-19.
+Status: verified against source on 2026-09-17.
 
 This document explains T850's data-driven render graph: JSON descriptors, render target creation, pass execution, input/output edges, render-target push/pop behavior, state overrides, mesh and fullscreen-quad draws, post-processing, and final output routing.
 
@@ -109,7 +109,7 @@ transparent/transmission-subset filter. SceneTemplate no longer assumes the
 first target is a multi-attachment GBuffer when initializing its fullscreen quad;
 pass inputs in the graph supply those bindings.
 
-The graph is loaded with glaze from JSON into `RenderGraphDesc`. Unknown keys are ignored, which lets JSON files carry future/editor-only fields without breaking current runtime parsing.
+The graph is loaded with glaze from JSON into `RenderGraphDesc`. Unknown keys are errors. This is required because a misspelled execution, access, or extent field must not silently turn a compute pass into graphics work.
 
 Top-level shape:
 
@@ -134,7 +134,7 @@ Top-level shape:
 | `size` | `[int,int]` | Explicit dimensions; `[0,0]` means screen/override size. |
 | `linear_filter` | bool | Sets RT texture filtering to linear or nearest. |
 | `generate_mips` | bool | Requests mip generation where supported. |
-| `storage` | bool | Requests storage/UAV creation usage on D3D11, D3D12, and Vulkan. OpenGL retains graphics behavior. |
+| `storage` | bool | Requests storage/UAV creation usage on D3D11, D3D12, Vulkan, WebGPU, and desktop OpenGL 4.3+. |
 | `size_ref` | string | Named dynamic size such as `$shadow_resolution` or `$god_rays_resolution`. |
 
 Supported color format strings:
@@ -172,7 +172,8 @@ On Android, screen-sized render targets can be scaled by the hard-coded Android 
 | `compute_shader` | string | Resource-relative HLSL path for a compute pass. |
 | `compute_entry` | string | Compute entry point; defaults to `CS`. |
 | `compute_permutation` | string | Stable compute permutation name; defaults to `base`. |
-| `compute_threads` | `[int,int,int]` | Reflected workgroup dimensions used to calculate dispatch counts. |
+| `compute_extent_from` | string | Storage output whose dimensions determine dispatch counts. |
+| `compute_resources` | array | Complete typed binding list for constants, sampled textures, samplers, and storage outputs. |
 | `clear` | bool | Whether to clear after target binding. |
 | `clear_color` | `[float,float,float,float]` | Clear color used when `clear` is true. |
 | `clear_depth` | float | Descriptor field exists, but current clear path uses driver clear defaults rather than this value directly. |
@@ -207,6 +208,26 @@ Source format:
 Currently implemented built-in input:
 
 - `@ssao_noise` -> `SceneProps::SSAOKernel.NoiseTex`
+
+### Typed compute resources
+
+Every `compute_if_supported` pass declares the complete shader binding ABI in
+`compute_resources`. Each item contains `resource`, `access`, and
+`shader_register`.
+
+| Access | Resource | Binding |
+|---|---|---|
+| `constants` | `@kernel_constants` | Registry-packed constant words at `bN` |
+| `sampled` | `RT:COLORn` or `RT:DEPTH` | Read-only texture at `tN` |
+| `sampler` | Same texture as a sampled resource | Sampler at `sN` |
+| `storage_write` | Storage-enabled color target | Write-only texture at `uN` |
+
+Graph loading rejects unknown accesses, duplicate or incomplete bindings, invalid
+permutations, missing attachments, writes to non-storage targets, sampler entries
+without a matching sampled texture, and read/write feedback on the same subresource.
+`compute_extent_from` must name one declared storage output. Workgroup dimensions
+are reflected from the compiled pipeline on every backend; they are not authored in
+JSON. Dispatch uses ceiling division against the selected output extent.
 
 `RenderGraphDescriptor.h` mentions `@environment_map`, but the current execution path binds environment maps through `bind_environment_map`, not through this input string.
 

@@ -18,6 +18,7 @@
 #include <scene/SceneRegions.h>
 #include <scene/MutableMeshData.h>
 #include <scene/RenderContainer.h>
+#include <scene/RenderGraph.h>
 #include <scene/RenderQuad.h>
 #include <scene/MaterialAsset.h>
 #include <terrain/BlockRegistry.h>
@@ -1959,10 +1960,101 @@ void TestTextureMipmaps() {
     for (unsigned pixel = 0; pixel < 18; ++pixel) Require(output[face * 18 + pixel] == face * 31, "mip generation mixed cube faces");
 }
 
+void TestTypedComputeGraphValidation() {
+  TempSceneFiles files;
+  constexpr std::array<const char*, 8> maintainedGraphs = {
+    "Scenes/DayScene_RenderGraph.json",
+    "Scenes/ForwardScene_RenderGraph.json",
+    "Scenes/MinecraftScene_RenderGraph.json",
+    "Scenes/Quake3Mock_RenderGraph.json",
+    "Scenes/RagdollEditor_RenderGraph.json",
+    "Scenes/SandboxScene_RenderGraph.json",
+    "Scenes/SceneTemplate_RenderGraph.json",
+    "Scenes/T8ditor_RenderGraph.json"
+  };
+  for (const char* path : maintainedGraphs) {
+    RenderGraph maintained;
+    Require(maintained.Load(path),
+            std::string("maintained render graph failed strict validation: ") + path);
+  }
+
+  const std::string validGraph = R"({
+    "render_targets": [
+      {"name":"Input","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5]},
+      {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"storage":true}
+    ],
+    "passes": [{
+      "name":"Typed Blur","target":"Output","execution":"compute_if_supported",
+      "compute_shader":"Shaders/CS_Blur.hlsl","compute_entry":"CS",
+      "compute_permutation":"horizontal","compute_extent_from":"Output:COLOR0",
+      "compute_resources":[
+        {"resource":"@kernel_constants","access":"constants","shader_register":0},
+        {"resource":"Input:COLOR0","access":"sampled","shader_register":0},
+        {"resource":"Input:COLOR0","access":"sampler","shader_register":0},
+        {"resource":"Output:COLOR0","access":"storage_write","shader_register":0}
+      ],"draws":[]
+    }]
+  })";
+  const auto writeGraph = [&](std::string_view suffix, const std::string& json) {
+    const std::filesystem::path path = files.Add(suffix);
+    std::ofstream output(path);
+    output << json;
+    output.close();
+    return path;
+  };
+  const auto replaceOnce = [](std::string input,
+                              std::string_view oldValue,
+                              std::string_view newValue) {
+    const size_t position = input.find(oldValue);
+    Require(position != std::string::npos, "compute graph fixture mutation target missing");
+    input.replace(position, oldValue.size(), newValue);
+    return input;
+  };
+
+  RenderGraph graph;
+  Require(graph.Load(writeGraph("_valid_compute_graph.json", validGraph).string()),
+          "valid typed compute graph was rejected");
+
+  RenderGraphDesc descriptor;
+  const std::string unknownKey = replaceOnce(
+    validGraph, "\"compute_extent_from\"", "\"compute_extent_typo\"");
+  Require(!LoadRenderGraphDescriptor(
+            writeGraph("_unknown_compute_key.json", unknownKey).string(), descriptor),
+          "unknown compute graph key was ignored");
+
+  const std::string noStorage = replaceOnce(validGraph, ",\"storage\":true", "");
+  Require(!graph.Load(writeGraph("_compute_no_storage.json", noStorage).string()),
+          "compute graph accepted a non-storage output");
+
+  std::string feedback = replaceOnce(
+    validGraph, "\"Input:COLOR0\",\"access\":\"sampled\"",
+    "\"Output:COLOR0\",\"access\":\"sampled\"");
+  feedback = replaceOnce(
+    feedback, "\"Input:COLOR0\",\"access\":\"sampler\"",
+    "\"Output:COLOR0\",\"access\":\"sampler\"");
+  Require(!graph.Load(writeGraph("_compute_feedback.json", feedback).string()),
+          "compute graph accepted read/write feedback");
+
+  const std::string invalidPermutation = replaceOnce(
+    validGraph, "\"compute_permutation\":\"horizontal\"",
+    "\"compute_permutation\":\"diagonal\"");
+  Require(!graph.Load(
+            writeGraph("_compute_bad_permutation.json", invalidPermutation).string()),
+          "compute graph accepted an unknown permutation");
+
+  const std::string missingBinding = replaceOnce(
+    validGraph,
+    "        {\"resource\":\"Input:COLOR0\",\"access\":\"sampler\",\"shader_register\":0},\n",
+    "");
+  Require(!graph.Load(writeGraph("_compute_missing_binding.json", missingBinding).string()),
+          "compute graph accepted an incomplete binding layout");
+}
+
 constexpr TestCase kTests[] = {
   {"T-VOXEL-AUTHORING-01", TestAuthoredStreamedVoxels},
   {"T-SCENE-RUNTIME-OWNERSHIP-01", TestSceneRuntimeOwnership},
   {"T-SHADER-PRECOMPILER-01", TestShaderPrecompilerContract},
+  {"T-COMPUTE-GRAPH-01", TestTypedComputeGraphValidation},
   {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
   {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
   {"T-SHADOW-LEGACY-01", TestLegacyShadowSampling},

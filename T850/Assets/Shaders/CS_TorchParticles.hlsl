@@ -7,6 +7,13 @@ cbuffer TorchParticleConstants : register(b0)
     float4 EmitterAndTime;
     float4 OutputSizeCountEnabled;
     float4 Motion;
+    float4 ParticleColor0;
+    float4 ParticleColor1;
+    float4 ParticleColor2;
+    float4 ShapeTuning;
+    float4 WobbleTuning;
+    float4 FadeTuning;
+    float4 IntensityTuning;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -32,10 +39,10 @@ float3 ParticleColor(uint index)
 {
     const uint paletteIndex = index % 3u;
     if (paletteIndex == 0u)
-        return float3(1.0f, 0.04f, 0.01f);
+        return ParticleColor0.rgb;
     if (paletteIndex == 1u)
-        return float3(1.0f, 0.32f, 0.015f);
-    return float3(1.0f, 0.88f, 0.08f);
+        return ParticleColor1.rgb;
+    return ParticleColor2.rgb;
 }
 
 [numthreads(8, 8, 1)]
@@ -67,13 +74,15 @@ void CS(uint3 dispatchId : SV_DispatchThreadID)
         const float phase = Hash(index * 9781u + 17u);
         const float age = frac(time / lifetime + phase);
         const float angle = Hash(index * 6271u + 43u) * 6.28318530718f;
-        const float radialSeed = 0.35f + Hash(index * 3253u + 91u) * 0.65f;
-        const float radialDistance = spread * radialSeed * (0.25f + age * 0.75f);
-        const float wobble = sin(time * (2.0f + Hash(index * 1877u + 7u) * 2.0f) + angle) * spread * 0.18f;
+        const float radialSeed = lerp(ShapeTuning.x, 1.0f, Hash(index * 3253u + 91u));
+        const float radialDistance = spread * radialSeed *
+            (ShapeTuning.y + age * ShapeTuning.z);
+        const float wobble = sin(time * (WobbleTuning.x +
+            Hash(index * 1877u + 7u) * WobbleTuning.y) + angle) * spread * ShapeTuning.w;
 
         float3 position = EmitterAndTime.xyz;
         position.x += cos(angle) * radialDistance + wobble;
-        position.z += sin(angle) * radialDistance - wobble * 0.5f;
+        position.z += sin(angle) * radialDistance - wobble * WobbleTuning.z;
         position.y += age * riseHeight;
 
         const float4 clip = mul(ViewProjection, float4(position, 1.0f));
@@ -85,17 +94,18 @@ void CS(uint3 dispatchId : SV_DispatchThreadID)
         float2 delta = uv - centerUv;
         delta.x *= aspect;
 
-        const float radius = baseSize * lerp(1.0f, 0.45f, age) / max(clip.w, 0.5f);
+        const float radius = baseSize * lerp(FadeTuning.x, FadeTuning.y, age) /
+            max(clip.w, WobbleTuning.w);
         const float distanceToEdge = max(abs(delta.x), abs(delta.y));
         const float pixelWidth = 1.0f / max((float)outputSize.y, 1.0f);
-        const float edgeSoftness = min(pixelWidth, radius * 0.25f);
+        const float edgeSoftness = min(pixelWidth, radius * FadeTuning.z);
         const float shape = 1.0f - smoothstep(
             max(radius - edgeSoftness, 0.0f), radius, distanceToEdge);
-        const float fadeIn = smoothstep(0.0f, 0.08f, age);
-        const float fadeOut = 1.0f - smoothstep(0.55f, 1.0f, age);
+        const float fadeIn = smoothstep(0.0f, FadeTuning.w, age);
+        const float fadeOut = 1.0f - smoothstep(IntensityTuning.x, 1.0f, age);
         const float intensity = shape * fadeIn * fadeOut;
 
-        accumulated += ParticleColor(index) * intensity * 2.4f;
+        accumulated += ParticleColor(index) * intensity * IntensityTuning.y;
         accumulatedAlpha = max(accumulatedAlpha, intensity);
     }
 

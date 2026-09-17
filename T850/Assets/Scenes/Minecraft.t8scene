@@ -678,6 +678,7 @@
             "z": 0
          },
          "tip_roughness": 1,
+         "tip_unlit": true,
          "particle_spawn_offset_y": -0.04,
          "particle_count": 24,
          "particle_lifetime": 1.25,
@@ -685,12 +686,34 @@
          "particle_spread": 0.16,
          "particle_size": 0.035,
          "particle_time_wrap_seconds": 4096,
-         "particle_count_control": { "min": 1, "max": 64, "step": 1 },
-         "particle_lifetime_control": { "min": 0.1, "max": 4, "step": 0.05 },
-         "particle_rise_height_control": { "min": 0.05, "max": 2.5, "step": 0.05 },
-         "particle_spread_control": { "min": 0, "max": 0.5, "step": 0.005 },
-         "particle_size_control": { "min": 0.005, "max": 0.15, "step": 0.005 },
-         "particle_spawn_offset_control": { "min": -0.25, "max": 0.25, "step": 0.005 }
+         "particle_appearance": {
+            "colors": [
+               { "x": 1, "y": 0.04, "z": 0.01 },
+               { "x": 1, "y": 0.32, "z": 0.015 },
+               { "x": 1, "y": 0.88, "z": 0.08 }
+            ],
+            "radial_seed_min": 0.35,
+            "radial_start_scale": 0.25,
+            "radial_age_scale": 0.75,
+            "wobble_frequency": 2,
+            "wobble_frequency_variation": 2,
+            "wobble_strength": 0.18,
+            "wobble_z_scale": 0.5,
+            "start_size_scale": 1,
+            "end_size_scale": 0.45,
+            "minimum_projection_depth": 0.5,
+            "edge_softness_scale": 0.25,
+            "fade_in_end": 0.08,
+            "fade_out_start": 0.55,
+            "intensity": 2.4
+         },
+         "particle_controls_label": "Torch particles",
+         "particle_count_control": { "name": "torch_particle_count", "label": "Particle count", "min": 1, "max": 64, "step": 1 },
+         "particle_lifetime_control": { "name": "torch_particle_lifetime", "label": "Lifetime (seconds)", "min": 0.1, "max": 4, "step": 0.05 },
+         "particle_rise_height_control": { "name": "torch_particle_rise", "label": "Rise height", "min": 0.05, "max": 2.5, "step": 0.05 },
+         "particle_spread_control": { "name": "torch_particle_spread", "label": "Spread", "min": 0, "max": 0.5, "step": 0.005 },
+         "particle_size_control": { "name": "torch_particle_size", "label": "Particle size", "min": 0.005, "max": 0.15, "step": 0.005 },
+         "particle_spawn_offset_control": { "name": "torch_particle_spawn_offset", "label": "Spawn height offset", "min": -0.25, "max": 0.25, "step": 0.005 }
       },
       "interaction": {
          "reach": 8,

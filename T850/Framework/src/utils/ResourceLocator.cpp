@@ -5,6 +5,31 @@
 #include <cctype>
 #include <fstream>
 #include <system_error>
+#include <cstdlib>
+#include <stdexcept>
+
+#ifdef OS_WEB
+#include <emscripten.h>
+
+EM_ASYNC_JS(int, DownloadWebResource, (const char* baseUrl, const char* path, void** output, int* length), {
+  try {
+    const relative = UTF8ToString(path).split('/').map(encodeURIComponent).join('/');
+    const response = await fetch(new URL(relative, UTF8ToString(baseUrl) + '/'));
+    if (!response.ok) return 0;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > 2147483647) return 0;
+    const memory = _malloc(Math.max(1, bytes.length));
+    if (!memory) return 0;
+    HEAPU8.set(bytes, memory);
+    HEAPU32[output >> 2] = memory;
+    HEAP32[length >> 2] = bytes.length;
+    return 1;
+  } catch (error) {
+    console.error('Asset download failed', UTF8ToString(path), error);
+    return 0;
+  }
+});
+#endif
 
 #ifdef OS_ANDROID
 #include <android/asset_manager.h>
@@ -317,6 +342,37 @@ const std::filesystem::path& ResourceLocator::GetCachePath() const {
   return m_cachePath;
 }
 
+#ifdef OS_WEB
+void ResourceLocator::SetWebAssets(const std::string& baseUrl, const std::vector<std::string>& paths) {
+  std::map<std::string, std::string> assets;
+  for (const auto& path : paths) {
+    const auto normalized = NormalizePath(path);
+    if (normalized.empty() || std::filesystem::path(path).is_absolute())
+      throw std::invalid_argument("Invalid browser asset path");
+    for (const auto& component : std::filesystem::path(normalized))
+      if (component == "..") throw std::invalid_argument("Browser asset path escapes asset root");
+    const auto [entry, inserted] = assets.emplace(ToLowerAsciiCopy(normalized), normalized);
+    if (!inserted && entry->second != normalized)
+      throw std::invalid_argument("Ambiguous browser asset path: " + normalized);
+  }
+  m_webAssetBaseUrl = baseUrl;
+  m_webAssets = std::move(assets);
+}
+
+bool ResourceLocator::ReadWebAsset(const std::string& normalized, std::vector<unsigned char>& out) const {
+  const auto found = m_webAssets.find(ToLowerAsciiCopy(normalized));
+  if (found == m_webAssets.end()) return false;
+  const auto local = m_basePath / found->second;
+  if (ReadDiskBinary(local, out)) return true;
+  void* buffer = nullptr;
+  int length = 0;
+  if (!DownloadWebResource(m_webAssetBaseUrl.c_str(), found->second.c_str(), &buffer, &length)) return false;
+  std::unique_ptr<unsigned char, decltype(&std::free)> bytes(static_cast<unsigned char*>(buffer), &std::free);
+  out.assign(bytes.get(), bytes.get() + length);
+  return WriteBinaryAtomic(local.generic_string(), out);
+}
+#endif
+
 std::filesystem::path ResourceLocator::ResolveFilePath(const std::string& path) const {
   const std::string normalized = NormalizePath(path);
   for (const auto& candidate : DiskCandidates(m_basePath, path, normalized)) {
@@ -324,6 +380,11 @@ std::filesystem::path ResourceLocator::ResolveFilePath(const std::string& path) 
       return candidate;
     }
   }
+#ifdef OS_WEB
+  std::vector<unsigned char> bytes;
+  if (ReadWebAsset(normalized, bytes))
+    return m_basePath / m_webAssets.at(ToLowerAsciiCopy(normalized));
+#endif
   return std::filesystem::path(path);
 }
 
@@ -342,6 +403,13 @@ std::filesystem::path ResourceLocator::ResolveCachePath(const std::string& path)
 
 bool ResourceLocator::Exists(const std::string& path) const {
   const std::string normalized = NormalizePath(path);
+#ifdef OS_WEB
+  const auto key = ToLowerAsciiCopy(normalized);
+  if (m_webAssets.contains(key)) return true;
+  const auto prefix = key.empty() ? key : key + "/";
+  const auto child = m_webAssets.lower_bound(prefix);
+  if (child != m_webAssets.end() && child->first.starts_with(prefix)) return true;
+#endif
 #ifdef OS_ANDROID
   if (AndroidAssetExists(m_assetManager, normalized)) return true;
 #endif
@@ -367,6 +435,9 @@ bool ResourceLocator::ReadBinary(const std::string& path, std::vector<unsigned c
   if (ReadAndroidAssetBinary(m_assetManager, normalized, out)) return true;
 #endif
 
+#ifdef OS_WEB
+  if (ReadWebAsset(normalized, out)) return true;
+#endif
   return false;
 }
 
@@ -472,6 +543,15 @@ bool ResourceLocator::WriteBinaryAtomic(
 std::vector<std::string> ResourceLocator::List(const std::string& directory, bool recursive) const {
   std::vector<std::string> out;
   const std::string normalized = NormalizePath(directory);
+
+#ifdef OS_WEB
+  const auto prefix = normalized.empty() ? std::string{} : ToLowerAsciiCopy(normalized) + "/";
+  for (auto entry = m_webAssets.lower_bound(prefix);
+       entry != m_webAssets.end() && entry->first.starts_with(prefix); ++entry) {
+    if (recursive || entry->first.find('/', prefix.size()) == std::string::npos)
+      out.push_back(entry->second);
+  }
+#endif
 
 #ifdef OS_ANDROID
   if (m_assetManager) {

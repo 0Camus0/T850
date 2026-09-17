@@ -77,6 +77,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/core/Config.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/Core.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/EngineContext.cpp
+  ${T850_SOURCE_DIR}/Framework/src/core/WebFramework.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/android/AndroidFramework.cpp
   ${T850_SOURCE_DIR}/Framework/src/game/ComponentFactory.cpp
   ${T850_SOURCE_DIR}/Framework/src/game/Controller.cpp
@@ -124,6 +125,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Librerias/simplecpp/simplecpp.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPermutationDump.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPrecompiler.cpp
+  ${T850_SOURCE_DIR}/Framework/src/video/webgpu/WebGPUShaderPackage.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/ShaderTools.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/SPIRVReflection.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ThreadPool.cpp

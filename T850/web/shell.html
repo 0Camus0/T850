@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>T850</title>
+  <style>
+    :root { color-scheme: dark; font-family: Consolas, monospace; background: #141617; color: #e5e8e6; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100dvh; display: grid; grid-template-rows: 36px minmax(0, 1fr) var(--touch-footer, 0px); }
+    header { display: flex; align-items: center; gap: 16px; padding: 0 12px; border-bottom: 1px solid #404642; background: #252a27; }
+    strong { font-size: 14px; color: #b8ddb1; }
+    header a { color: inherit; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    select { min-width: 120px; max-width: 45vw; background: #252a27; color: inherit; border: 0; font: inherit; }
+    #status { margin-left: auto; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #touch-toggle { font-size: 12px; white-space: nowrap; }
+    #touch-controls { position: fixed; z-index: 4; inset: 36px 0 0; pointer-events: none; user-select: none; -webkit-user-select: none; }
+    #touch-controls[hidden], #touch-toggle[hidden] { display: none; }
+    #touch-controls button { pointer-events: auto; touch-action: none; color: #fff; background: #14251dcc; border: 2px solid #d1e2d1cc; box-shadow: 0 2px 4px #0007; }
+    #touch-controls button:focus-visible { outline: 3px solid #f3ca64; outline-offset: 3px; }
+    #touch-controls .held { background: #446631ed; border-color: #f3ca64; }
+    .touch-stick { position: absolute; width: 120px; height: 120px; border-radius: 50%; padding: 0; bottom: max(24px, env(safe-area-inset-bottom)); }
+    #touch-move { left: max(20px, env(safe-area-inset-left)); }
+    #touch-look { right: max(20px, env(safe-area-inset-right)); }
+    .touch-stick::after { content: ''; position: absolute; width: 46px; height: 46px; left: calc(50% - 23px); top: calc(50% - 23px); border-radius: 50%; background: #e3edd6aa; transform: translate(var(--stick-x, 0px), var(--stick-y, 0px)); pointer-events: none; }
+    .touch-stick img { width: 36px; height: 36px; opacity: .9; }
+    .touch-actions { position: absolute; bottom: max(28px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+    .touch-actions button { width: 48px; height: 48px; border-radius: 6px; display: grid; place-items: center; padding: 9px; }
+    .touch-actions img { width: 24px; height: 24px; filter: invert(1); pointer-events: none; }
+    .touch-stick img { filter: invert(1); pointer-events: none; }
+    @media (max-width: 740px) { .touch-actions { bottom: 164px; gap: 6px; } .touch-actions button { width: 44px; height: 44px; } }
+    @media (max-height: 480px) { .touch-stick { width: 100px; height: 100px; bottom: 12px; } .touch-actions { bottom: 18px; } .touch-actions button { width: 40px; height: 40px; padding: 6px; } }
+    #runtime-error { position: fixed; z-index: 10; top: 48px; left: 12px; right: 12px; max-height: calc(100dvh - 64px); overflow: auto; padding: 12px; border: 1px solid #de8172; border-radius: 4px; background: #241d1c; color: #ffe0d9; }
+    #runtime-error summary { cursor: pointer; font-weight: bold; }
+    #runtime-error pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 Consolas, monospace; }
+    #canvas { display: block; width: 100%; height: 100%; min-height: 0; outline: none; }
+    .wssi-demo #canvas { place-self: center; width: min(100%, var(--demo-long-side), calc((100dvh - 36px - var(--touch-footer, 0px)) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; }
+    @media (max-width: 700px) and (orientation: portrait) {
+      body.touch-mode { --touch-footer: calc(216px + env(safe-area-inset-bottom)); }
+      .wssi-demo #canvas { width: min(100%, calc(var(--demo-long-side) * 9 / 16), calc((100dvh - 36px - var(--touch-footer, 0px)) * 9 / 16)); aspect-ratio: 9 / 16; }
+    }
+  </style>
+</head>
+<body>
+  <header><a href="./" aria-label="Back to scenes"><strong>T850</strong></a><select id="scene" aria-label="Scene"></select><label id="touch-toggle" hidden><input id="touch-enabled" type="checkbox">Touch</label><span id="status" role="status">Loading</span></header>
+  <canvas id="canvas" width="1280" height="720" tabindex="0" aria-label="Scene viewport"></canvas>
+  <div id="touch-controls" hidden aria-label="Touch gamepad">
+    <button class="touch-stick" id="touch-move" data-axis="0" aria-label="Move" title="Move"><img src="icons/move.svg" alt=""></button>
+    <button class="touch-stick" id="touch-look" data-axis="2" aria-label="Look" title="Look"><img src="icons/crosshair.svg" alt=""></button>
+    <div class="touch-actions">
+      <button data-button="16" aria-label="Previous block" title="Previous block"><img src="icons/chevron-left.svg" alt=""></button>
+      <button data-button="4" aria-label="Break block" title="Break block"><img src="icons/pickaxe.svg" alt=""></button>
+      <button data-button="1" aria-label="Jump" title="Jump"><img src="icons/arrow-up.svg" alt=""></button>
+      <button data-button="2" aria-label="Sprint" title="Sprint"><img src="icons/zap.svg" alt=""></button>
+      <button data-button="8" aria-label="Place block" title="Place block"><img src="icons/plus.svg" alt=""></button>
+      <button data-button="32" aria-label="Next block" title="Next block"><img src="icons/chevron-right.svg" alt=""></button>
+    </div>
+  </div>
+  <details id="runtime-error" hidden open>
+    <summary id="runtime-error-title">Runtime error</summary>
+    <pre id="runtime-error-text" role="alert"></pre>
+  </details>
+  <script>
+    const diagnostics = window.t850 = { state: 'loading', logs: [], errors: [] };
+    const statusElement = document.getElementById('status');
+    const canvas = document.getElementById('canvas');
+    const argumentsList = [];
+    const errorStorageKey = 't850:last-runtime-error:v1';
+    function showError(report, previous = false) {
+      document.getElementById('runtime-error-title').textContent = previous ? 'Previous run: runtime error' : 'Runtime error';
+      document.getElementById('runtime-error-text').textContent = JSON.stringify(report, null, 2);
+      const panel = document.getElementById('runtime-error');
+      panel.hidden = false;
+      panel.open = true;
+    }
+    try {
+      const stored = sessionStorage.getItem(errorStorageKey);
+      if (stored && stored.length < 40000) {
+        const previous = JSON.parse(stored);
+        if (previous && typeof previous.message === 'string') {
+          diagnostics.previousError = previous;
+          showError(previous, true);
+        }
+      }
+    } catch {}
+    function retainFirstError(message) {
+      if (diagnostics.lastError) return;
+      const report = diagnostics.lastError = {
+        capturedAt: new Date().toISOString(),
+        message: message.slice(0, 8000),
+        scene: diagnostics.scene,
+        frames: diagnostics.frames,
+        draws: diagnostics.draws,
+        renderSize: diagnostics.renderSize?.slice(),
+        memoryBytes: diagnostics.memoryBytes,
+        workerTiming: diagnostics.workerTiming ? { ...diagnostics.workerTiming } : undefined,
+        input: diagnostics.input ? { ...diagnostics.input } : undefined,
+        recentLogs: diagnostics.logs.slice(-12).map(line => line.slice(0, 1000)),
+      };
+      showError(report);
+      try { sessionStorage.setItem(errorStorageKey, JSON.stringify(report)); } catch {}
+    }
+    function markReady() {
+      if (diagnostics.state === 'failed') return;
+      diagnostics.state = 'running';
+      statusElement.textContent = 'Running';
+    }
+    window.addEventListener('t850-runtime-ready', markReady);
+    function record(text, error = false) {
+      text = String(text).replace(/\x1b\[[0-9;]*m/g, '');
+      diagnostics.logs.push(text);
+      if (diagnostics.logs.length > 4000) diagnostics.logs.shift();
+      if (error || text.includes('[ERROR]') || text.includes('[ERROR ')) {
+        diagnostics.errors.push(text);
+        if (diagnostics.errors.length > 64) diagnostics.errors.shift();
+        diagnostics.state = 'failed';
+        statusElement.textContent = 'Error';
+        retainFirstError(text);
+        statusElement.title = diagnostics.lastError.message;
+      } else if (text.includes('[WebFramework] Runtime ready')) {
+        markReady();
+      }
+      console.log(text);
+    }
+    window.addEventListener('error', event => {
+      const source = event.filename ? `\n${event.filename}:${event.lineno ?? 0}:${event.colno ?? 0}` : '';
+      record(event.error?.stack ?? `${event.message ?? 'Unknown browser error'}${source}`, true);
+    });
+    window.addEventListener('unhandledrejection', event => record(event.reason?.stack ?? String(event.reason), true));
+    var Module = {
+      canvas,
+      arguments: argumentsList,
+      print: (...text) => record(text.join(' ')),
+      printErr: (...text) => record(text.join(' '), true),
+      onAbort: reason => record(reason, true),
+      preRun: [function () {
+        Module.addRunDependency('web-launch');
+        Promise.resolve().then(async () => {
+          if (!navigator.gpu) throw new Error('WebGPU is unavailable in this browser');
+          if (!crossOriginIsolated) throw new Error('Cross-origin isolation is required');
+          const response = await fetch('scenes.json');
+          if (!response.ok) throw new Error('Cannot load scene catalog');
+          const catalog = await response.json();
+          const parameters = new URLSearchParams(location.search);
+          const minecraftDemo = parameters.get('demo') === 'wssi';
+          let enemyCount;
+          if (parameters.has('minecraftEnemyCount')) {
+            const rawCount = parameters.get('minecraftEnemyCount');
+            enemyCount = Number(rawCount);
+            if (!/^\d+$/.test(rawCount) || !Number.isInteger(enemyCount) || enemyCount < 0 || enemyCount > 8)
+              throw new Error('Enemy count must be an integer from 0 to 8');
+          }
+          for (const dimension of ['width', 'height']) {
+            if (!parameters.has(dimension)) continue;
+            const size = Number(parameters.get(dimension));
+            if (!Number.isInteger(size) || size < 64 || size > 8192) throw new Error('Invalid canvas ' + dimension);
+            if (!minecraftDemo) {
+              canvas.style[dimension === 'width' ? 'maxWidth' : 'maxHeight'] = size + 'px';
+              canvas.style.placeSelf = 'center';
+            }
+          }
+          if (minecraftDemo) {
+            document.body.classList.add('wssi-demo');
+            canvas.style.setProperty('--demo-long-side', Math.max(Number(parameters.get('width') ?? 1280), Number(parameters.get('height') ?? 720)) + 'px');
+          }
+          const requested = minecraftDemo ? 6 : Number(parameters.get('scene') ?? catalog.defaultScene);
+          const selected = catalog.scenes.find(scene => scene.id === requested);
+          if (!selected) throw new Error('Unknown scene');
+          const selector = document.getElementById('scene');
+          selector.hidden = minecraftDemo;
+          const home = document.querySelector('header a');
+          if (minecraftDemo) {
+            home.href = 'minecraft-wssi.html?' + new URLSearchParams({
+              minecraftEnemyCount: String(enemyCount ?? 1),
+              resolution: `${parameters.get('width') ?? 1280}x${parameters.get('height') ?? 720}`,
+            });
+            home.setAttribute('aria-label', 'Back to WSSI welcome');
+            home.querySelector('strong').textContent = 'WSSI / Minecraft';
+          } else if (parameters.get('entry') === 'launcher') {
+            home.href = 'launcher.html';
+          }
+          for (const scene of catalog.scenes) selector.add(new Option(scene.name, scene.id, false, scene.id === selected.id));
+          selector.addEventListener('change', () => {
+            const url = new URL(location.href);
+            url.searchParams.set('scene', selector.value);
+            url.searchParams.delete('model');
+            url.searchParams.delete('sceneFile');
+            location.assign(url);
+          });
+          diagnostics.scene = selected.name;
+          document.title = minecraftDemo ? 'Hackathon 2026: WSSI Web GPU Minecraft Demo' : selected.name + ' | T850';
+          argumentsList.push('--api', 'webgpu', '--scene', String(selected.id),
+            '--width', minecraftDemo ? String(canvas.clientWidth) : parameters.get('width') ?? String(canvas.clientWidth),
+            '--height', minecraftDemo ? String(canvas.clientHeight) : parameters.get('height') ?? String(canvas.clientHeight),
+            '--webAssetBaseUrl', new URL('assets', location.href).href);
+          argumentsList.push(...catalog.arguments);
+          argumentsList.push(...(selected.arguments ?? []));
+          if (selected.id === 6 && (minecraftDemo || enemyCount !== undefined))
+            argumentsList.push('--minecraftEnemyCount', String(enemyCount ?? 1));
+          const sceneFile = minecraftDemo ? undefined : parameters.get('sceneFile') ?? selected.sceneFile;
+          if (sceneFile) argumentsList.push('--sceneFile', sceneFile);
+          for (const option of ['model', 'culling', 'logLevel']) {
+            if (minecraftDemo && option === 'model') continue;
+            if (parameters.has(option)) argumentsList.push('--' + option, parameters.get(option));
+          }
+          if (parameters.has('gui')) argumentsList.push('--gui');
+          if (parameters.has('profile')) {
+            const frames = Number(parameters.get('profileFrames') ?? 1000);
+            if (!Number.isInteger(frames) || frames < 60 || frames > 100000) throw new Error('Invalid profile frame count');
+            argumentsList.push('--profile', '--profileFrames', String(frames), '--telemetry',
+              '--telemetryFrequencyFrames', '1', '--telemetryOutput', '/persistent/web-profile.json');
+            if (parameters.has('fixedDt')) {
+              const fixedDt = Number(parameters.get('fixedDt'));
+              if (!Number.isFinite(fixedDt) || fixedDt <= 0 || fixedDt > 1) throw new Error('Invalid profiling fixed timestep');
+              argumentsList.push('--regressionFixedDt', String(fixedDt));
+            }
+          }
+          Module.FS.mkdirTree('/persistent');
+          Module.FS.mount(Module.IDBFS, { autoPersist: true }, '/persistent');
+          await new Promise((resolve, reject) => Module.FS.syncfs(true, error => error ? reject(error) : resolve()));
+          statusElement.textContent = 'Starting ' + selected.name;
+        }).catch(error => record(error.message, true)).finally(() => Module.removeRunDependency('web-launch'));
+      }]
+    };
+    canvas.addEventListener('contextmenu', event => event.preventDefault());
+  </script>
+  <script src="touch-controls.js"></script>
+  {{{ SCRIPT }}}
+</body>
+</html>

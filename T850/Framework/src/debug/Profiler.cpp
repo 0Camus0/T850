@@ -156,15 +156,15 @@ void Profiler::Report(int topN) const {
 
   double totalGpu = 0.0;
   double totalCpu = 0.0;
-  int totalDraws = 0;
-  int totalTriangles = 0;
+  uint64_t totalDraws = 0;
+  uint64_t totalTriangles = 0;
   const int count = topN > 0 ? (std::min)(topN, static_cast<int>(order.size()))
                              : static_cast<int>(order.size());
   for (int index = 0; index < count; ++index) {
     const ProfileScope& scope = m_scopes[order[index]];
-    T8_LOG_INFO("║ %-29s ║ %7.3fms ║ %7.3fms ║ %5d ║ %6d ║ %3d ║",
+    T8_LOG_INFO("║ %-29s ║ %7.3fms ║ %7.3fms ║ %5llu ║ %6llu ║ %3d ║",
                 scope.name.c_str(), scope.GpuAvgMs(), scope.CpuAvgMs(),
-                scope.drawCalls, scope.triangles, scope.sampleCount);
+          static_cast<unsigned long long>(scope.drawCalls), static_cast<unsigned long long>(scope.triangles), scope.sampleCount);
     totalGpu += scope.GpuAvgMs();
     totalCpu += scope.CpuAvgMs();
     totalDraws += scope.drawCalls;
@@ -172,8 +172,8 @@ void Profiler::Report(int topN) const {
   }
 
   T8_LOG_INFO("╠═══════════════════════════════╬═══════════╬═══════════╬═══════╬════════╬═════╣");
-  T8_LOG_INFO("║ TOTAL                         ║ %7.3fms ║ %7.3fms ║ %5d ║ %6d ║     ║",
-              totalGpu, totalCpu, totalDraws, totalTriangles);
+  T8_LOG_INFO("║ TOTAL                         ║ %7.3fms ║ %7.3fms ║ %5llu ║ %6llu ║     ║",
+              totalGpu, totalCpu, static_cast<unsigned long long>(totalDraws), static_cast<unsigned long long>(totalTriangles));
   T8_LOG_INFO("╚═══════════════════════════════╩═══════════╩═══════════╩═══════╩════════╩═════╝");
 }
 

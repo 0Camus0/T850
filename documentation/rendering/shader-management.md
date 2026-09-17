@@ -16,6 +16,21 @@ resources are errors, not backend-provided scene-specific substitutes.
 See [branch ownership audit](../architecture/webgpu-branch-ownership-audit.md)
 for validation and remaining legacy ownership debt.
 
+## Browser Shader Packages
+
+Emscripten builds use the shared WebGPU driver with prepared WGSL and reflection
+metadata, not the native HLSL/SPIR-V/Tint compiler. The Framework driver exports
+these packages when `--webShaderOutput <directory>` is supplied to native WebGPU
+compilation or a scene run. Export startup helpers as well as the recorded
+manifest: some helper shaders are anonymous and are only requested at startup.
+
+`WebGPUShaderPackage` checks request identity and payload integrity on loading;
+missing, stale or corrupt packages fail explicitly. Browser preparation uses the
+same scene and shader requests as native rendering, with no scene-owned cache
+logic. Re-export after changing maintained shader sources or permutations.
+See [browser build and Firefox validation](../platform/browser.md) for the
+reproducible export/build commands, Minecraft evidence and remaining coverage.
+
 # Shader Management
 
 Status: verified against source on 2026-09-14.

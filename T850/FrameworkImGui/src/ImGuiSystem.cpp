@@ -23,6 +23,9 @@
 #ifdef OS_LINUX
 #  include <core/LinuxFramework.h>
 #endif
+#ifdef OS_WEB
+#  include <core/WebFramework.h>
+#endif
 #ifdef OS_ANDROID
 #  include <android/native_window.h>
 #  include <core/android/AndroidFramework.h>
@@ -146,6 +149,10 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   auto* linuxFramework = static_cast<LinuxFramework*>(framework);
   m_sdlWindow = linuxFramework ? linuxFramework->m_pWindow : nullptr;
   nativeWindow = m_sdlWindow;
+#elif defined(OS_WEB)
+  auto* webFramework = static_cast<WebFramework*>(framework);
+  m_sdlWindow = webFramework ? webFramework->Window() : nullptr;
+  nativeWindow = m_sdlWindow;
 #else
   m_sdlWindow = nullptr;
 #endif
@@ -201,7 +208,9 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual);
 #endif
 
-#ifndef OS_ANDROID
+#ifdef OS_WEB
+  static_cast<WebFramework*>(framework)->SetInputEventHandler(sdlEventWatcher, this);
+#elif !defined(OS_ANDROID)
   SDL_AddEventWatch(sdlEventWatcher, this);
 #endif
   m_wheelAccum = 0.0f;
@@ -220,7 +229,9 @@ void ImGuiSystem::Shutdown() {
     ImGui::SaveIniSettingsToDisk(io.IniFilename);
   }
 
-#ifndef OS_ANDROID
+#ifdef OS_WEB
+  static_cast<WebFramework*>(m_framework)->SetInputEventHandler(nullptr, nullptr);
+#elif !defined(OS_ANDROID)
   SDL_RemoveEventWatch(sdlEventWatcher, this);
 #endif
   m_rendererBackend->Shutdown();

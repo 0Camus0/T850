@@ -376,7 +376,7 @@ public:
   void UpdatePlayer(float dt);
   void HandleBlockInteraction(InputManager* IManager);
   void ApplyPendingCubemap();
-  void RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, float maxDist,
+  bool RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, float maxDist,
                      int& outX, int& outY, int& outZ, int& outPrevX, int& outPrevY, int& outPrevZ) const;
 
   t850::Texture* m_atlasTexture = nullptr;

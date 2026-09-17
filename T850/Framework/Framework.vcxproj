@@ -139,6 +139,7 @@
     <ClInclude Include="include\utils\ComputeKernelRegistry.h" />
     <ClInclude Include="include\utils\ShaderPermutationDump.h" />
     <ClInclude Include="include\utils\ShaderPrecompiler.h" />
+    <ClInclude Include="include\core\WebFramework.h" />
     <ClInclude Include="include\core\ShaderTools.h" />
     <ClInclude Include="include\utils\SPIRVReflection.h" />
     <ClInclude Include="include\utils\ShaderDiskCache.h" />
@@ -327,6 +328,8 @@
     <ClCompile Include="src\utils\ComputeKernelRegistry.cpp" />
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp" />
     <ClCompile Include="src\utils\ShaderPrecompiler.cpp" />
+    <ClCompile Include="src\core\WebFramework.cpp" />
+    <ClCompile Include="src\video\webgpu\WebGPUShaderPackage.cpp" />
     <ClCompile Include="src\core\ShaderTools.cpp" />
     <ClCompile Include="src\utils\SPIRVReflection.cpp" />
     <ClCompile Include="src\utils\ShaderDiskCache.cpp" />

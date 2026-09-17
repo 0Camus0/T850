@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(_WIN32) && defined(_M_X64)
+#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
 #include <array>
 #include <cstdint>
 #include <string>
@@ -103,5 +103,9 @@ bool LoadOrTranslateShader(const ShaderRequest& request, ShaderArtifact& artifac
                            const std::string& specialization = {});
 bool TranslateShader(const ShaderRequest& request, ShaderArtifact& artifact, std::string& diagnostic);
 bool ReflectShader(const ShaderRequest& request, ShaderArtifact& artifact, std::string& diagnostic);
+bool WriteShaderPackage(const ShaderRequest& request, const ShaderArtifact& artifact,
+                        const std::string& directory, std::string& diagnostic);
+bool ReadShaderPackage(const ShaderRequest& request, ShaderArtifact& artifact,
+                       std::string& diagnostic, const std::string& directory = "WebShaders");
 }
 #endif

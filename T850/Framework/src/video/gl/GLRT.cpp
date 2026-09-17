@@ -61,7 +61,11 @@ namespace t850 {
       case BaseRT::RGBA8:
       case BaseRT::NOTHING:
       default:
+      #if (GL_DRIVER_SELECTED == OGLES20)
         internalFormat = GL_RGBA;
+      #else
+        internalFormat = GL_RGBA8;
+      #endif
         dataFormat = GL_RGBA;
         dataType = GL_UNSIGNED_BYTE;
         break;
@@ -97,7 +101,11 @@ namespace t850 {
       break;
     case RGB8:
     case RGBA8: {
+    #if (GL_DRIVER_SELECTED == OGLES20)
       cfmt = GL_RGBA;
+    #else
+      cfmt = GL_RGBA8;
+    #endif
       cinternal = GL_RGBA;
       bysize = GL_UNSIGNED_BYTE;
     }break;
@@ -213,6 +221,7 @@ namespace t850 {
         pTextureColor->x = w;
         pTextureColor->y = h;
         pTextureColor->id = ctex;
+        pTextureColor->glInternalFormat = attachmentFormat;
         vColorTextures.push_back(pTextureColor);
         vFrameBuffers.push_back(fbo);
         vGLColorTex.push_back(ctex);

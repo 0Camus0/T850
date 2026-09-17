@@ -45,6 +45,10 @@ namespace t850 {
     isCubeDepth = (depth_format == BaseRT::CUBE_F32);
     colorFormat = cfmt;  // cache for PSO lookup
     vColorFormats.clear();
+    vColorResources.reserve(number_RT);
+    vColorStates.reserve(number_RT);
+    vRTVHandles.reserve(number_RT);
+    vColorTextures.reserve(number_RT);
 
     // Color attachments
     for (int i = 0; i < number_RT; i++) {
@@ -69,6 +73,8 @@ namespace t850 {
       desc.MipLevels = 1; desc.Format = thisFmt;
       desc.SampleDesc.Count = 1;
       desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+      if (AllowUnorderedAccess)
+        desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
       D3D12_CLEAR_VALUE clearVal = {}; clearVal.Format = thisFmt;
       D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -94,6 +100,8 @@ namespace t850 {
       colorTex->mipmaps = 1;
       colorTex->m_channels = 4;
       colorTex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::LINEAR_FILTER;
+      colorTex->SetExternalState(&vColorStates.back());
+      colorTex->SetGraphicsReadState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
       D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
       srvDesc.Format = thisFmt;
       srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -103,6 +111,19 @@ namespace t850 {
       colorTex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
       if (!colorTex->srvCPU.ptr || !colorTex->srvGPU.ptr) { colorTex->release(); DestroyAPIRT(); return false; }
       device->CreateShaderResourceView(colorRes.Get(), &srvDesc, colorTex->srvCPU);
+      if (AllowUnorderedAccess) {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+        uavDesc.Format = thisFmt;
+        uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        colorTex->uavCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
+        colorTex->uavGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
+        if (!colorTex->uavCPU.ptr || !colorTex->uavGPU.ptr) {
+          colorTex->release();
+          DestroyAPIRT();
+          return false;
+        }
+        device->CreateUnorderedAccessView(colorRes.Get(), nullptr, &uavDesc, colorTex->uavCPU);
+      }
       colorTex->SetTextureParams();
       vColorTextures.push_back(colorTex);
 
@@ -156,6 +177,9 @@ namespace t850 {
     depthTex->mipmaps = 1;
     depthTex->m_channels = 1;
     depthTex->params = TextBasicParams::CLAMP_TO_BORDER;
+    depthTex->SetExternalState(&depthState);
+    depthTex->SetGraphicsReadState(
+      D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc = {};
     depthSrvDesc.Format = srvDepthFmt;
     depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;

@@ -11,6 +11,7 @@
 #include <game/StateMachine.h>
 #include <game/GameValidation.h>
 #include <physics/JoltPhysicsSystem.h>
+#include <physics/CharacterController.h>
 #include <physics/PhysicsAuthoring.h>
 #include <scene/RenderMesh.h>
 #include <scene/EditorSceneFile.h>
@@ -18,6 +19,7 @@
 #include <scene/SceneRegions.h>
 #include <scene/MutableMeshData.h>
 #include <scene/RenderContainer.h>
+#include <scene/RenderGraph.h>
 #include <scene/RenderQuad.h>
 #include <scene/MaterialAsset.h>
 #include <terrain/BlockRegistry.h>
@@ -118,6 +120,29 @@ public:
   void Destroy() override {}
 };
 
+class GroundPlaneCollisionWorld final : public CharacterCollisionWorld {
+public:
+  bool SweepCapsule(const CharacterCollisionSweep& sweep,
+                    CharacterCollisionHit& outHit) const override {
+    outHit = {};
+    if (sweep.displacement.y >= 0.0f)
+      return false;
+
+    const float startFeet = sweep.startCenter.y - sweep.halfHeight - sweep.radius;
+    const float endFeet = startFeet + sweep.displacement.y;
+    if (endFeet > 0.0f)
+      return false;
+
+    const float fraction = (std::max)(
+      0.0f, (std::min)(1.0f, startFeet / -sweep.displacement.y));
+    outHit.hit = true;
+    outHit.fraction = fraction;
+    outHit.position = sweep.startCenter + sweep.displacement * fraction;
+    outHit.normal = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+    return true;
+  }
+};
+
 std::unique_ptr<Component> CreateLifecycleTestComponent(
     const scene::SceneComponentDesc& descriptor, ComponentLoadContext& context) {
   (void)descriptor;
@@ -144,7 +169,7 @@ public:
   ~TempSceneFiles() {
     for (const std::filesystem::path& path : paths_) {
       std::error_code error;
-      std::filesystem::remove(path, error);
+      std::filesystem::remove_all(path, error);
     }
   }
 
@@ -599,6 +624,43 @@ void TestControllerIntentsDiffer() {
   Require(aiIntent.moveDir.x > 0.9f, "AI controller did not steer toward navigation goal");
   Require(aiIntent.hasNavGoal && aiIntent.navGoal.has_value(), "AI intent did not preserve navigation goal");
   Require(playerIntent.moveDir != aiIntent.moveDir, "player and AI intents were not distinct");
+}
+
+void TestFpsJumpRemainsAirborne() {
+  KinematicCharacterSettings settings;
+  settings.gravity = 24.0f;
+  settings.jumpSpeed = 8.0f;
+  settings.capsuleRadius = 0.3f;
+  settings.capsuleHalfHeight = 0.9f;
+  settings.groundProbeDistance = 0.25f;
+
+  GroundPlaneCollisionWorld world;
+  CharacterControllerContext context;
+  context.collisionWorld = &world;
+  KinematicCharacterController controller(settings);
+  const float groundedCenterY = settings.capsuleHalfHeight + settings.capsuleRadius;
+  controller.SetPosition(XVECTOR3(0.0f, groundedCenterY, 0.0f, 1.0f));
+
+  KinematicCharacterInput input;
+  input.jump = true;
+  controller.UpdateFps(1.0f / 60.0f, input, context);
+  Require(!controller.IsGrounded(),
+    "FPS jump reacquired the ground while moving upward");
+  Require(controller.GetVelocity().y > 0.0f &&
+    controller.GetPosition().y > groundedCenterY,
+    "FPS jump did not produce upward motion");
+
+  const float firstJumpY = controller.GetPosition().y;
+  controller.UpdateFps(1.0f / 60.0f, input, context);
+  Require(!controller.IsGrounded() && controller.GetPosition().y > firstJumpY,
+    "held FPS jump was snapped back to the ground");
+
+  input.jump = false;
+  for (int frame = 0; frame < 180 && !controller.IsGrounded(); ++frame)
+    controller.UpdateFps(1.0f / 60.0f, input, context);
+  Require(controller.IsGrounded(), "FPS controller did not land after jumping");
+  Require(std::fabs(controller.GetPosition().y - groundedCenterY) < 0.001f,
+          "FPS controller landed above or below the ground plane");
 }
 
 void ConfigureLifecycleSystem(
@@ -1716,6 +1778,7 @@ void TestShaderFlowConfiguration() {
 class NullTestDriver final : public BaseDriver {
 public:
   std::vector<std::string> events;
+  std::vector<ComputePipelineDesc> computePipelines;
   void InitDriver() override {}
   void CreateSurfaces() override {}
   void DestroySurfaces() override {}
@@ -1731,6 +1794,12 @@ public:
   void SetCullFace(FaceCulling) override {}
   void PopRT() override {}
   void FlushGPUResources() override { events.push_back("flush"); }
+  bool SupportsComputeShaders() const override { return true; }
+  std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override {
+    class NullComputePipeline final : public ComputePipeline {};
+    computePipelines.push_back(desc);
+    return std::make_unique<NullComputePipeline>();
+  }
 };
 
 class LifecycleTestScene final : public SceneBase {
@@ -1867,23 +1936,37 @@ void TestAuthoredStreamedVoxels() {
 void TestShaderPrecompilerContract() {
   TempSceneFiles files;
   const auto manifest = files.Add("_permutations.json");
+  const auto computeSourceDirectory = files.Add("_compute_sources");
+  std::filesystem::create_directories(computeSourceDirectory);
+  {
+    std::ofstream output(computeSourceDirectory / "CS_Arithmetic.hlsl");
+    output << "[numthreads(1, 1, 1)] void CS() {}\n";
+  }
   {
     std::ofstream output(manifest);
-    output << R"({"version":1,"permutations":{"0x0000000000000001":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"},"0x0000000000000002":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"}}})";
+    output << R"({"version":2,"permutations":{"0x0000000000000001":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"},"0x0000000000000002":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"}},"compute_permutations":{"CS_Arithmetic.hlsl:CS:base":{"key":"CS_Arithmetic.hlsl:CS:base","kind":"compute","computeShader":"CS_Arithmetic.hlsl","entryPoint":"CS","permutation":"base","defines":[]}}})";
   }
   NullTestDriver driver;
   ShaderPrecompileRequest request;
   request.manifestPath = manifest.string();
-  request.sourceDirectory = files.Add("_missing_sources").string();
+  request.sourceDirectory = computeSourceDirectory.string();
   size_t reports = 0;
   request.onProgress = [&](const ShaderPrecompileProgress& progress) {
     ++reports;
-    Require(progress.completed == reports && progress.total == 2 && !progress.error.empty(),
-            "precompiler omitted failed-entry diagnostics");
+    Require(progress.completed == reports && progress.total == 3,
+            "precompiler reported an invalid permutation total");
+    if (progress.key.starts_with("0x"))
+      Require(!progress.error.empty(), "precompiler omitted graphics-entry diagnostics");
+    else
+      Require(progress.error.empty(), "precompiler rejected a registered compute entry");
   };
   auto result = PrecompileShaders(driver, request);
-  Require(!result.Succeeded() && result.failed == 2 && result.succeeded == 0 && reports == 2,
-          "precompiler incorrectly reported missing shaders as compiled");
+  Require(!result.Succeeded() && result.failed == 2 && result.succeeded == 1 && reports == 3 &&
+          driver.computePipelines.size() == 1 &&
+          driver.computePipelines.front().debugName.ends_with("CS_Arithmetic.hlsl") &&
+          driver.computePipelines.front().bindings.size() == 2 &&
+          driver.computePipelines.front().bindings.front().constantCount == 4,
+          "precompiler did not compile the registered compute permutation");
   reports = 0;
   request.cancelRequested = [&] { return reports == 1; };
   result = PrecompileShaders(driver, request);
@@ -1892,6 +1975,23 @@ void TestShaderPrecompilerContract() {
   bool rejected = false;
   try { PrecompileShaders(driver, request); } catch (const std::runtime_error&) { rejected = true; }
   Require(rejected, "precompiler accepted a missing manifest");
+
+  const auto invalidComputeManifest = files.Add("_invalid_compute_permutation.json");
+  {
+    std::ofstream output(invalidComputeManifest);
+    output << R"({"version":2,"permutations":{},"compute_permutations":{"CS_Arithmetic.hlsl:CS:typo":{"key":"CS_Arithmetic.hlsl:CS:typo","kind":"compute","computeShader":"CS_Arithmetic.hlsl","entryPoint":"CS","permutation":"typo","defines":[]}}})";
+  }
+  request.manifestPath = invalidComputeManifest.string();
+  request.cancelRequested = {};
+  std::string invalidComputeError;
+  request.onProgress = [&](const ShaderPrecompileProgress& progress) {
+    invalidComputeError = progress.error;
+  };
+  result = PrecompileShaders(driver, request);
+  Require(result.failed == 1 && result.succeeded == 0 &&
+          invalidComputeError.find("Unsupported compute permutation") != std::string::npos &&
+          driver.computePipelines.size() == 1,
+          "precompiler accepted an unregistered compute permutation");
 
     const auto recorded = files.Add("_recorded.json").string();
     ShaderPermutationDump::Begin(recorded);
@@ -1910,6 +2010,17 @@ void TestShaderPrecompilerContract() {
       merged.find("0x0000000000000001") != std::string::npos &&
       merged.find("0x0000000000000002") != std::string::npos,
       "recording discarded earlier permutations");
+    ShaderPermutationDump::Begin(recorded);
+    ShaderPermutationDump::RecordCompute("Shaders/CS_Blur.hlsl", "CS", "horizontal", {"B", "A", "A"});
+    ShaderPermutationDump::RecordCompute("CS_Blur.hlsl", "CS", "horizontal", {"A", "B"});
+    bool rejectedDefineConflict = false;
+    try {
+      ShaderPermutationDump::RecordCompute("CS_Blur.hlsl", "CS", "horizontal", {"C"});
+    } catch (const std::runtime_error&) {
+      rejectedDefineConflict = true;
+    }
+    Require(rejectedDefineConflict && ShaderPermutationDump::Flush(),
+      "recorder accepted conflicting defines for one compute permutation");
     Require(ResourceLocator::Instance().WriteText(recorded, "{broken"), "cannot prepare malformed manifest");
     ShaderPermutationDump::Begin(recorded);
     const bool rejectedMerge = !ShaderPermutationDump::Flush();
@@ -1938,10 +2049,101 @@ void TestTextureMipmaps() {
     for (unsigned pixel = 0; pixel < 18; ++pixel) Require(output[face * 18 + pixel] == face * 31, "mip generation mixed cube faces");
 }
 
+void TestTypedComputeGraphValidation() {
+  TempSceneFiles files;
+  constexpr std::array<const char*, 8> maintainedGraphs = {
+    "Scenes/DayScene_RenderGraph.json",
+    "Scenes/ForwardScene_RenderGraph.json",
+    "Scenes/MinecraftScene_RenderGraph.json",
+    "Scenes/Quake3Mock_RenderGraph.json",
+    "Scenes/RagdollEditor_RenderGraph.json",
+    "Scenes/SandboxScene_RenderGraph.json",
+    "Scenes/SceneTemplate_RenderGraph.json",
+    "Scenes/T8ditor_RenderGraph.json"
+  };
+  for (const char* path : maintainedGraphs) {
+    RenderGraph maintained;
+    Require(maintained.Load(path),
+            std::string("maintained render graph failed strict validation: ") + path);
+  }
+
+  const std::string validGraph = R"({
+    "render_targets": [
+      {"name":"Input","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5]},
+      {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"storage":true}
+    ],
+    "passes": [{
+      "name":"Typed Blur","target":"Output","execution":"compute_if_supported",
+      "compute_shader":"Shaders/CS_Blur.hlsl","compute_entry":"CS",
+      "compute_permutation":"horizontal","compute_extent_from":"Output:COLOR0",
+      "compute_resources":[
+        {"resource":"@kernel_constants","access":"constants","shader_register":0},
+        {"resource":"Input:COLOR0","access":"sampled","shader_register":0},
+        {"resource":"Input:COLOR0","access":"sampler","shader_register":0},
+        {"resource":"Output:COLOR0","access":"storage_write","shader_register":0}
+      ],"draws":[]
+    }]
+  })";
+  const auto writeGraph = [&](std::string_view suffix, const std::string& json) {
+    const std::filesystem::path path = files.Add(suffix);
+    std::ofstream output(path);
+    output << json;
+    output.close();
+    return path;
+  };
+  const auto replaceOnce = [](std::string input,
+                              std::string_view oldValue,
+                              std::string_view newValue) {
+    const size_t position = input.find(oldValue);
+    Require(position != std::string::npos, "compute graph fixture mutation target missing");
+    input.replace(position, oldValue.size(), newValue);
+    return input;
+  };
+
+  RenderGraph graph;
+  Require(graph.Load(writeGraph("_valid_compute_graph.json", validGraph).string()),
+          "valid typed compute graph was rejected");
+
+  RenderGraphDesc descriptor;
+  const std::string unknownKey = replaceOnce(
+    validGraph, "\"compute_extent_from\"", "\"compute_extent_typo\"");
+  Require(!LoadRenderGraphDescriptor(
+            writeGraph("_unknown_compute_key.json", unknownKey).string(), descriptor),
+          "unknown compute graph key was ignored");
+
+  const std::string noStorage = replaceOnce(validGraph, ",\"storage\":true", "");
+  Require(!graph.Load(writeGraph("_compute_no_storage.json", noStorage).string()),
+          "compute graph accepted a non-storage output");
+
+  std::string feedback = replaceOnce(
+    validGraph, "\"Input:COLOR0\",\"access\":\"sampled\"",
+    "\"Output:COLOR0\",\"access\":\"sampled\"");
+  feedback = replaceOnce(
+    feedback, "\"Input:COLOR0\",\"access\":\"sampler\"",
+    "\"Output:COLOR0\",\"access\":\"sampler\"");
+  Require(!graph.Load(writeGraph("_compute_feedback.json", feedback).string()),
+          "compute graph accepted read/write feedback");
+
+  const std::string invalidPermutation = replaceOnce(
+    validGraph, "\"compute_permutation\":\"horizontal\"",
+    "\"compute_permutation\":\"diagonal\"");
+  Require(!graph.Load(
+            writeGraph("_compute_bad_permutation.json", invalidPermutation).string()),
+          "compute graph accepted an unknown permutation");
+
+  const std::string missingBinding = replaceOnce(
+    validGraph,
+    "        {\"resource\":\"Input:COLOR0\",\"access\":\"sampler\",\"shader_register\":0},\n",
+    "");
+  Require(!graph.Load(writeGraph("_compute_missing_binding.json", missingBinding).string()),
+          "compute graph accepted an incomplete binding layout");
+}
+
 constexpr TestCase kTests[] = {
   {"T-VOXEL-AUTHORING-01", TestAuthoredStreamedVoxels},
   {"T-SCENE-RUNTIME-OWNERSHIP-01", TestSceneRuntimeOwnership},
   {"T-SHADER-PRECOMPILER-01", TestShaderPrecompilerContract},
+  {"T-COMPUTE-GRAPH-01", TestTypedComputeGraphValidation},
   {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
   {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
   {"T-SHADOW-LEGACY-01", TestLegacyShadowSampling},
@@ -1972,6 +2174,7 @@ constexpr TestCase kTests[] = {
     {"T-TICK-01", TestFixedTickCap},
     {"T-TICK-02", TestFixedTickPause},
     {"T-CTRL-01", TestControllerIntentsDiffer},
+    {"T-CTRL-JUMP-01", TestFpsJumpRemainsAirborne},
     {"T-COMP-01", TestComponentLifecycleOrder},
     {"T-COMP-02", TestDeferredComponentRemoval},
     {"T-EVENT-01", TestEventFifo},

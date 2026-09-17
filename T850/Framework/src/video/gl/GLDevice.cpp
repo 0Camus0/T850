@@ -208,9 +208,11 @@ namespace t850 {
     return nullptr;
   }
 
-  BaseRT * GLDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
+  BaseRT * GLDevice::CreateRT(int nrt, int cf, int df, int w, int h,
+                              bool genMips, bool allowStorage)
   {
     BaseRT* rt = new GLRT;
+    rt->AllowUnorderedAccess = allowStorage;
     if (rt->LoadRT(nrt, cf, df, w, h, genMips)) {
       return rt;
     }

@@ -1,6 +1,6 @@
 # Render Graph
 
-Status: verified against source on 2026-08-19.
+Status: verified against source on 2026-09-17.
 
 This document explains T850's data-driven render graph: JSON descriptors, render target creation, pass execution, input/output edges, render-target push/pop behavior, state overrides, mesh and fullscreen-quad draws, post-processing, and final output routing.
 
@@ -109,7 +109,7 @@ transparent/transmission-subset filter. SceneTemplate no longer assumes the
 first target is a multi-attachment GBuffer when initializing its fullscreen quad;
 pass inputs in the graph supply those bindings.
 
-The graph is loaded with glaze from JSON into `RenderGraphDesc`. Unknown keys are ignored, which lets JSON files carry future/editor-only fields without breaking current runtime parsing.
+The graph is loaded with glaze from JSON into `RenderGraphDesc`. Unknown keys are errors. This is required because a misspelled execution, access, or extent field must not silently turn a compute pass into graphics work.
 
 Top-level shape:
 
@@ -134,6 +134,7 @@ Top-level shape:
 | `size` | `[int,int]` | Explicit dimensions; `[0,0]` means screen/override size. |
 | `linear_filter` | bool | Sets RT texture filtering to linear or nearest. |
 | `generate_mips` | bool | Requests mip generation where supported. |
+| `storage` | bool | Requests storage/UAV creation usage on D3D11, D3D12, Vulkan, WebGPU, and desktop OpenGL 4.3+. |
 | `size_ref` | string | Named dynamic size such as `$shadow_resolution` or `$god_rays_resolution`. |
 
 Supported color format strings:
@@ -152,6 +153,10 @@ Supported depth format strings:
 - `F32`
 - `CUBE_F32`
 
+If the selected driver cannot support compute textures, an authored storage target is
+allocated without storage/UAV usage so graphics initialization and raster fallback remain
+available. Compute pipelines are not created for that driver.
+
 `size_ref` is resolved from `SceneProps`:
 
 - `$shadow_resolution` -> `SceneProps::ShadowMapResolution`
@@ -167,6 +172,12 @@ On Android, screen-sized render targets can be scaled by the hard-coded Android 
 |---|---|---|
 | `name` | string | Human-readable pass name and graph node id. Some runtime skips are name-based. |
 | `target` | string | Render target name to bind. Empty string means draw to backbuffer/offscreen/final output. |
+| `execution` | string | `graphics` by default, or `compute_if_supported` to use a compute kernel with the authored draws as fallback. |
+| `compute_shader` | string | Resource-relative HLSL path for a compute pass. |
+| `compute_entry` | string | Compute entry point; defaults to `CS`. |
+| `compute_permutation` | string | Stable compute permutation name; defaults to `base`. |
+| `compute_extent_from` | string | Storage output whose dimensions determine dispatch counts. |
+| `compute_resources` | array | Complete typed binding list for constants, sampled textures, samplers, and storage outputs. |
 | `clear` | bool | Whether to clear after target binding. |
 | `clear_color` | `[float,float,float,float]` | Clear color used when `clear` is true. |
 | `clear_depth` | float | Descriptor field exists, but current clear path uses driver clear defaults rather than this value directly. |
@@ -201,6 +212,26 @@ Source format:
 Currently implemented built-in input:
 
 - `@ssao_noise` -> `SceneProps::SSAOKernel.NoiseTex`
+
+### Typed compute resources
+
+Every `compute_if_supported` pass declares the complete shader binding ABI in
+`compute_resources`. Each item contains `resource`, `access`, and
+`shader_register`.
+
+| Access | Resource | Binding |
+|---|---|---|
+| `constants` | `@kernel_constants` | Registry-packed constant words at `bN` |
+| `sampled` | `RT:COLORn` or `RT:DEPTH` | Read-only texture at `tN` |
+| `sampler` | Same texture as a sampled resource | Sampler at `sN` |
+| `storage_write` | Storage-enabled color target | Write-only texture at `uN` |
+
+Graph loading rejects unknown accesses, duplicate or incomplete bindings, invalid
+permutations, missing attachments, writes to non-storage targets, sampler entries
+without a matching sampled texture, and read/write feedback on the same subresource.
+`compute_extent_from` must name one declared storage output. Workgroup dimensions
+are reflected from the compiled pipeline on every backend; they are not authored in
+JSON. Dispatch uses ceiling division against the selected output extent.
 
 `RenderGraphDescriptor.h` mentions `@environment_map`, but the current execution path binds environment maps through `bind_environment_map`, not through this input string.
 
@@ -379,6 +410,37 @@ flowchart TD
 ```
 
 DayScene adds more post-processing, such as god rays and depth-of-field/CoC passes. T8ditor and SceneTemplate use smaller graph variants oriented around editor/runtime viewport needs.
+
+The DayScene `God Rays` calculation pass reads `GBuffer:DEPTH` and `DepthPass:DEPTH`, writes storage-enabled `GodRaysCalc:COLOR0`, and dispatches `ceil(width/8) x ceil(height/8) x 1`. Its existing `LIGHT_RAY_MARCHING` fullscreen draw remains the explicit raster mode and the fallback for desktop GL below 4.3 or OpenGL ES. DayScene also declares optional compute implementations for the God Rays horizontal/vertical blur, Bright, and HDR Composition passes; their existing fullscreen pixel-shader draws remain in the same descriptors. Shadow blur and 512x512 bloom blur remain raster after matched tests exposed unacceptable R8 quantization and cross-frame parity differences respectively. `LIGHT_ADD`, luminance adaptation, CoC, DoF, deferred lighting, copies, and final presentation remain graphics passes.
+
+Every maintained scene graph now exposes the shared Bright and HDR Composition compute alternatives: DayScene, MinecraftScene, Quake3Mock, RagdollEditor, SandboxScene, SceneTemplate, and T8ditor. Graphs that previously wrote Bright directly into `BloomAccum` now use a separate storage-enabled `BrightPass`, preserving the existing raster bloom H/V ping-pong before composition. God Rays compute remains DayScene-specific because the other graphs do not author that effect.
+
+Minecraft additionally writes `TorchParticles` with `CS_TorchParticles`. The compute kernel
+needs only the main camera, authored emitter state, and frame time, and writes every output
+pixel so no clear or atomic blend is required on compute-capable backends. `Light Add` samples
+that texture together with `Deferred`, placing the fire before luminance adaptation and bloom.
+The fallback pass clears `TorchParticles` to transparent, preserving base-only rendering on
+desktop GL below 4.3 and OpenGL ES.
+
+The particle workload is logically independent of shadow-map, GBuffer, and deferred-lighting
+generation, so a future dedicated compute queue could dispatch it early and overlap those
+graphics passes. The current D3D12 and Vulkan implementations record compute and graphics on
+one graphics command list/queue, while D3D11 uses one immediate context; JSON passes also
+execute serially. Therefore moving the pass earlier changes order but does not create GPU
+parallelism. A real overlap implementation requires a compute queue, queue-owned descriptors
+and command buffers, and a fence/semaphore before `Light Add` samples the storage result.
+That synchronization can cost more than this small effect, so the current implementation
+uses the existing same-queue UAV/write-to-sampled-read barrier.
+
+`--postProcessMode compute` selects every declared compute alternative for A/B testing, while `raster` selects all authored graphics or clear fallbacks. Selection is per render-graph pass rather than a Cartesian shader-key permutation. Desktop GL 4.3+ participates through its own compute implementation; older desktop GL and OpenGL ES follow the authored fallback. `auto` is rejected.
+
+A successful dispatch writes the pass target without executing its draw list and still applies
+the authored `post_state`. If pipeline creation is unavailable or a dispatch fails, execution
+falls through to the same pass's graphics draw. Compute-only passes can author an empty draw
+list plus a clear color as their unsupported-backend behavior; Minecraft uses this to produce
+a transparent torch-particle target on OpenGL.
+
+Use the unified `--postProcessMode compute|raster` selector for God Rays and other post-processing alternatives. Older desktop GL and OpenGL ES select the raster fallback when compute is requested.
 
 ## Fullscreen and final quads
 

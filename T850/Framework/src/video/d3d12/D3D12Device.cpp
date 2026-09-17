@@ -324,8 +324,10 @@ namespace t850 {
     return tex;
   }
 
-  BaseRT* D3D12Device::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips) {
+  BaseRT* D3D12Device::CreateRT(int nrt, int cf, int df, int w, int h,
+                                bool genMips, bool allowStorage) {
     D3D12RT* rt = new D3D12RT;
+    rt->AllowUnorderedAccess = allowStorage;
     if (rt->LoadRT(nrt, cf, df, w, h, genMips)) return rt;
     delete rt;
     return nullptr;

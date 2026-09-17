@@ -10,8 +10,15 @@ namespace t850::webgpu {
 enum class ShaderStage { Vertex, Fragment, Compute };
 enum class ShaderSourceLanguage { Hlsl, Wgsl };
 enum class ShaderFlow { Auto, Wgsl, Spirv };
-enum class BindingLayout { GraphicsV1, BlurV1 };
-enum class ResourceKind { UniformBuffer, SampledTexture, Sampler, WriteOnlyStorageTexture };
+enum class BindingLayout { GraphicsV1, BlurV1, ComputeV1 };
+enum class ResourceKind {
+  UniformBuffer,
+  ReadOnlyStorageBuffer,
+  ReadWriteStorageBuffer,
+  SampledTexture,
+  Sampler,
+  WriteOnlyStorageTexture
+};
 enum class TextureDimension { None, D1, D2, D2Array, D3, Cube, CubeArray };
 enum class ShaderComponentType { Float, Unsigned, Signed, Half };
 
@@ -28,6 +35,7 @@ struct ShaderBinding {
   uint32_t binding = 0;
   uint64_t minimumBufferSize = 0;
   std::vector<uint32_t> uniformMemberOffsets;
+  bool storageRgba8Unorm = false;
   bool storageRgba16Float = false;
   TextureDimension dimension = TextureDimension::None;
   ShaderComponentType sampledType = ShaderComponentType::Float;

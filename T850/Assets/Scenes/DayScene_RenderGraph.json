@@ -7,12 +7,12 @@
     { "name": "AdaptedLumPrev",   "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false },
     { "name": "DepthPass",        "color_count": 0, "color_format": "NONE",    "depth_format": "F32",  "size": [0,0], "linear_filter": false, "size_ref": "$shadow_resolution" },
     { "name": "ShadowAccum",      "color_count": 1, "color_format": "R8",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
-    { "name": "ExtraHelper",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true },
+    { "name": "ExtraHelper",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "storage": true },
     { "name": "BloomAccum",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
-    { "name": "BrightPass",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
+    { "name": "BrightPass",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true, "storage": true },
     { "name": "BloomHelper",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
-    { "name": "GodRaysCalc",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "size_ref": "$god_rays_resolution" },
-    { "name": "GodRaysCalcExtra", "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "size_ref": "$god_rays_resolution" },
+    { "name": "GodRaysCalc",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "storage": true, "size_ref": "$god_rays_resolution" },
+    { "name": "GodRaysCalcExtra", "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "storage": true, "size_ref": "$god_rays_resolution" },
     { "name": "CoC",              "color_count": 2, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "CombineCoC",       "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "CoCHelper",        "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": false },
@@ -147,6 +147,19 @@
     {
       "name": "God Rays",
       "target": "GodRaysCalc",
+      "execution": "compute_if_supported",
+      "compute_shader": "Shaders/CS_GodRays.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "GodRaysCalc:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "GBuffer:DEPTH", "access": "sampled", "shader_register": 0 },
+        { "resource": "DepthPass:DEPTH", "access": "sampled", "shader_register": 1 },
+        { "resource": "GBuffer:DEPTH", "access": "sampler", "shader_register": 0 },
+        { "resource": "DepthPass:DEPTH", "access": "sampler", "shader_register": 1 },
+        { "resource": "GodRaysCalc:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "inputs": [
         { "source": "GBuffer:DEPTH",   "slot": 0 },
         { "source": "DepthPass:DEPTH", "slot": 1 }
@@ -158,6 +171,17 @@
     {
       "name": "God Rays Blur V",
       "target": "GodRaysCalcExtra",
+      "execution": "compute_if_supported",
+      "compute_shader": "Shaders/CS_Blur.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "vertical",
+      "compute_extent_from": "GodRaysCalcExtra:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "GodRaysCalc:COLOR0", "access": "sampled", "shader_register": 0 },
+        { "resource": "GodRaysCalc:COLOR0", "access": "sampler", "shader_register": 0 },
+        { "resource": "GodRaysCalcExtra:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "gauss_kernel": 2,
       "inputs": [
         { "source": "GodRaysCalc:COLOR0", "slot": 0 }
@@ -169,6 +193,17 @@
     {
       "name": "God Rays Blur H",
       "target": "GodRaysCalc",
+      "execution": "compute_if_supported",
+      "compute_shader": "Shaders/CS_Blur.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "horizontal",
+      "compute_extent_from": "GodRaysCalc:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "GodRaysCalcExtra:COLOR0", "access": "sampled", "shader_register": 0 },
+        { "resource": "GodRaysCalcExtra:COLOR0", "access": "sampler", "shader_register": 0 },
+        { "resource": "GodRaysCalc:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "gauss_kernel": 2,
       "inputs": [
         { "source": "GodRaysCalcExtra:COLOR0", "slot": 0 }
@@ -212,6 +247,19 @@
     {
       "name": "Bright",
       "target": "BrightPass",
+      "execution": "compute_if_supported",
+      "compute_shader": "Shaders/CS_Bright.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "BrightPass:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "Extra16F:COLOR0", "access": "sampled", "shader_register": 0 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampled", "shader_register": 1 },
+        { "resource": "Extra16F:COLOR0", "access": "sampler", "shader_register": 0 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampler", "shader_register": 1 },
+        { "resource": "BrightPass:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "inputs": [
         { "source": "Extra16F:COLOR0", "slot": 0 },
         { "source": "AdaptedLumCurrent:COLOR0", "slot": 1 }
@@ -289,6 +337,21 @@
     {
       "name": "HDR Composition",
       "target": "ExtraHelper",
+      "execution": "compute_if_supported",
+      "compute_shader": "Shaders/CS_HDRComposite.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "ExtraHelper:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "Extra16F:COLOR0", "access": "sampled", "shader_register": 0 },
+        { "resource": "BloomAccum:COLOR0", "access": "sampled", "shader_register": 1 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampled", "shader_register": 2 },
+        { "resource": "Extra16F:COLOR0", "access": "sampler", "shader_register": 0 },
+        { "resource": "BloomAccum:COLOR0", "access": "sampler", "shader_register": 1 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampler", "shader_register": 2 },
+        { "resource": "ExtraHelper:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "inputs": [
         { "source": "Extra16F:COLOR0",   "slot": 0 },
         { "source": "BloomAccum:COLOR0", "slot": 1 },

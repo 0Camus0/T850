@@ -114,9 +114,13 @@ bool LoadShaderFiles(const ShaderFileRequest& request, ShaderArtifact& artifact,
     if (request.entryPoint.empty()) throw std::runtime_error("Shader entry point is required");
     if (request.stage != ShaderStage::Vertex && request.stage != ShaderStage::Fragment && request.stage != ShaderStage::Compute)
       throw std::runtime_error("Invalid shader stage");
-    if (request.layout != BindingLayout::GraphicsV1 && request.layout != BindingLayout::BlurV1)
+    if (request.layout != BindingLayout::GraphicsV1 &&
+        request.layout != BindingLayout::BlurV1 &&
+        request.layout != BindingLayout::ComputeV1)
       throw std::runtime_error("Invalid binding layout");
-    if ((request.stage == ShaderStage::Compute) != (request.layout == BindingLayout::BlurV1))
+    const bool computeLayout = request.layout == BindingLayout::BlurV1 ||
+                               request.layout == BindingLayout::ComputeV1;
+    if ((request.stage == ShaderStage::Compute) != computeLayout)
       throw std::runtime_error("Shader stage and binding layout are incompatible");
     if (request.flow != ShaderFlow::Auto && request.flow != ShaderFlow::Wgsl && request.flow != ShaderFlow::Spirv)
       throw std::runtime_error("Invalid shader flow");
@@ -293,6 +297,14 @@ bool ReflectShader(const ShaderRequest& request, ShaderArtifact& artifact, std::
         }
       }
       break;
+    case Binding::ResourceType::kReadOnlyStorageBuffer:
+      binding.kind = ResourceKind::ReadOnlyStorageBuffer;
+      binding.minimumBufferSize = resource.size;
+      break;
+    case Binding::ResourceType::kStorageBuffer:
+      binding.kind = ResourceKind::ReadWriteStorageBuffer;
+      binding.minimumBufferSize = resource.size;
+      break;
     case Binding::ResourceType::kSampledTexture:
       binding.kind = ResourceKind::SampledTexture;
       break;
@@ -302,6 +314,7 @@ bool ReflectShader(const ShaderRequest& request, ShaderArtifact& artifact, std::
       break;
     case Binding::ResourceType::kWriteOnlyStorageTexture:
       binding.kind = ResourceKind::WriteOnlyStorageTexture;
+      binding.storageRgba8Unorm = resource.image_format == Binding::TexelFormat::kRgba8Unorm;
       binding.storageRgba16Float = resource.image_format == Binding::TexelFormat::kRgba16Float;
       break;
     default:
@@ -349,7 +362,9 @@ bool TranslateShader(const ShaderRequest& request, ShaderArtifact& artifact, std
     });
     InitializeTint();
     if (request.source.empty() || request.entryPoint.empty()) throw std::runtime_error("Canonical source and entry point are required");
-    if ((request.stage == ShaderStage::Compute) != (request.layout == BindingLayout::BlurV1))
+    const bool computeLayout = request.layout == BindingLayout::BlurV1 ||
+                               request.layout == BindingLayout::ComputeV1;
+    if ((request.stage == ShaderStage::Compute) != computeLayout)
       throw std::runtime_error("Shader stage and binding layout are incompatible");
     const auto stage = Language(request.stage);
     glslang::TShader shader(stage);
@@ -364,12 +379,13 @@ bool TranslateShader(const ShaderRequest& request, ShaderArtifact& artifact, std
     shader.setAutoMapBindings(true);
     shader.setAutoMapLocations(true);
     shader.setTextureSamplerTransformMode(EShTexSampTransKeep);
-    const bool compute = request.layout == BindingLayout::BlurV1;
-    shader.setShiftBinding(glslang::EResTexture, compute ? 1 : 0);
-    shader.setShiftBinding(glslang::EResSampler, 32);
+    const bool compute = request.stage == ShaderStage::Compute;
+    const bool legacyBlur = request.layout == BindingLayout::BlurV1;
+    shader.setShiftBinding(glslang::EResTexture, legacyBlur ? 1 : 0);
+    shader.setShiftBinding(glslang::EResSampler, compute ? 0 : 32);
     shader.setShiftBinding(glslang::EResUbo, compute ? 0 : 64);
-    shader.setShiftBinding(glslang::EResUav, compute ? 2 : 96);
-    shader.setShiftBinding(glslang::EResImage, compute ? 2 : 96);
+    shader.setShiftBinding(glslang::EResUav, legacyBlur ? 2 : (compute ? 0 : 96));
+    shader.setShiftBinding(glslang::EResImage, legacyBlur ? 2 : (compute ? 0 : 96));
     const auto messages = static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules | EShMsgReadHlsl);
     if (!shader.parse(GetDefaultResources(), 100, false, messages)) throw std::runtime_error(shader.getInfoLog());
     glslang::TProgram program;

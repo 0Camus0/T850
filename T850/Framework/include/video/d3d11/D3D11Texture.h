@@ -41,6 +41,7 @@ namespace t850 {
 
     ComPtr<ID3D11Texture2D>				Tex;
     ComPtr<ID3D11ShaderResourceView>    pSRVTex;
+    ComPtr<ID3D11UnorderedAccessView>   pUAVTex;
     ComPtr<ID3D11SamplerState>          pSampler;
 
   };

@@ -123,8 +123,8 @@ static bool IsUsablePhysicsBodyDesc(const PhysicsBodyDesc& desc) {
 }
 
 namespace BroadPhaseLayers {
-static const JPH::BroadPhaseLayer NonMoving(0);
-static const JPH::BroadPhaseLayer Moving(1);
+static constexpr JPH::BroadPhaseLayer NonMoving(0);
+static constexpr JPH::BroadPhaseLayer Moving(1);
 static constexpr JPH::uint Count = 2;
 }
 

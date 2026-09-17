@@ -31,7 +31,7 @@
 #include <scene/MaterialAsset.h>
 #include <imgui/DevGuiContext.h>
 #include <imgui.h>
-#ifdef OS_LINUX
+#if defined(OS_LINUX) || defined(OS_WEB)
 #include <unistd.h>
 #endif
 #ifndef OS_ANDROID
@@ -644,6 +644,20 @@ void App::OnUpdate() {
     }
    }
    t850::RuntimeTelemetry::EndFrame();
+     if (t850::g_profiler && t850::g_profiler->GetFrameCount() >= g_config.profileFrames) {
+    pFramework->pVideoDriver->FlushGPUResources();
+    t850::g_profiler->Report();
+    t850::RuntimeTelemetry::Shutdown();
+  #ifdef __EMSCRIPTEN__
+    bPaused = true;
+  #else
+    DestroyAssets();
+    pFramework->pVideoDriver->DestroyDriver();
+    t850::Log::Shutdown();
+    std::fflush(nullptr);
+    _exit(0);
+  #endif
+     }
 }
 
 bool App::RunOffscreenBenchmarkFastPath(float initialDtSecs) {
@@ -773,20 +787,6 @@ void App::OnDraw() {
 
   if (t850::g_profiler) {
     t850::g_profiler->EndFrame();
-    static bool reported = false;
-    if (!reported && t850::g_profiler->GetFrameCount() >= g_config.profileFrames) {
-      reported = true;
-      T8_LOG_INFO("[App] Profiler reached %d frames, printing report...",
-                  t850::g_profiler->GetFrameCount());
-      t850::g_profiler->Report();
-      t850::g_profiler->Reset();
-      // Clean shutdown after profiling — use _exit to skip static destructors
-      // which may reference already-freed driver/framework objects.
-      pFramework->pVideoDriver->FlushGPUResources();
-      DestroyAssets();
-      pFramework->pVideoDriver->DestroyDriver();
-      _exit(0);
-    }
   }
 
   T8_LOG_TRACE("[Frame %d] === SwapBuffers ===" , frameCount);

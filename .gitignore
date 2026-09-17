@@ -13,6 +13,7 @@
 /T850/bin/SteamDeck/
 /T850/steamdeck/package/
 /deckConfig.json
+**/cloudflare*.local.json
 
 # ── IDE / editor ──
 /T850/.vs/

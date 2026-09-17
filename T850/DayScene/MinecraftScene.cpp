@@ -484,7 +484,10 @@ void MinecraftScene::SetBlock(int wx, int wy, int wz, uint8_t block) {
   const int lz = WorldToLocal(wz);
   uint8_t& target = m_blocks[idx % m_chunkCountX][wy][idx / m_chunkCountX][lx][lz];
   if (target == block) return;
+  const uint8_t previousBlock = target;
   target = block;
+  T8_LOG_INFO("[Minecraft] Block edit (%d,%d,%d): %u -> %u", wx, wy, wz,
+              static_cast<unsigned>(previousBlock), static_cast<unsigned>(block));
   ++m_voxelRevision;
   InvalidateMobPaths();
   if (m_showNavMesh) {
@@ -2464,6 +2467,7 @@ void MinecraftScene::UploadChunkMesh(PendingChunk& pc) {
   } else {
     Meshes[idx].SetVisible(mesh->Ready());
     Meshes[idx].Update();
+    T8_LOG_INFO("[Minecraft] Chunk (%d,%d) remesh uploaded", pc.cx, pc.cz);
   }
   m_chunkBuilt[idx / m_chunkCountX][idx % m_chunkCountX] = true;
   m_chunkDirty[idx / m_chunkCountX][idx % m_chunkCountX] = false;
@@ -2766,12 +2770,15 @@ void MinecraftScene::UpdatePlayer(float dt) {
   Cam.Yaw = m_playerYaw;
   Cam.Pitch = m_playerPitch;
   Cam.Roll = 0.0f;
+  const float viewportAspect = static_cast<float>(pFramework->pVideoDriver->width) /
+      static_cast<float>((std::max)(1, pFramework->pVideoDriver->height));
+  if (Cam.AspectRatio != viewportAspect) Cam.SetRatio(viewportAspect);
   Cam.Update(dt);
   VP = Cam.VP;
 }
 
 // ── Raycast for block interaction ────────────────────────────────────
-void MinecraftScene::RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, float maxDist,
+bool MinecraftScene::RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, float maxDist,
                                    int& outX, int& outY, int& outZ,
                                    int& outPrevX, int& outPrevY, int& outPrevZ) const {
   // DDA voxel traversal
@@ -2794,7 +2801,7 @@ void MinecraftScene::RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, 
     if (GetBlock(x, y, z) != BlockId(m_voxelSettings.terrain.air_block, 0)) {
       outX = x; outY = y; outZ = z;
       outPrevX = prevX; outPrevY = prevY; outPrevZ = prevZ;
-      return;
+      return true;
     }
     prevX = x; prevY = y; prevZ = z;
     if (tMaxX < tMaxY && tMaxX < tMaxZ) {
@@ -2807,15 +2814,14 @@ void MinecraftScene::RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, 
   }
   outX = outY = outZ = -1;
   outPrevX = outPrevY = outPrevZ = -1;
+  return false;
 }
 
 void MinecraftScene::HandleBlockInteraction(InputManager* IManager) {
   // Raycast from eye along look direction
   const XVECTOR3 dir = Cam.Look;
   int bx, by, bz, px, py, pz;
-  RaycastBlocks(m_playerEye, dir, m_voxelSettings.interaction.reach, bx, by, bz, px, py, pz);
-
-  m_highlightVisible = (bx >= 0);
+  m_highlightVisible = RaycastBlocks(m_playerEye, dir, m_voxelSettings.interaction.reach, bx, by, bz, px, py, pz);
   if (m_highlightVisible) {
     m_highlightX = bx; m_highlightY = by; m_highlightZ = bz;
     m_lastHighlightX = bx; m_lastHighlightY = by; m_lastHighlightZ = bz;

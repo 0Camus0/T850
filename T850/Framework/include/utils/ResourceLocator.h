@@ -3,6 +3,7 @@
 #include <Config.h>
 
 #include <filesystem>
+#include <map>
 #include <span>
 #include <string>
 #include <vector>
@@ -23,6 +24,10 @@ public:
   const std::filesystem::path& GetBasePath() const;
   void SetCachePath(const std::filesystem::path& cachePath);
   const std::filesystem::path& GetCachePath() const;
+
+#ifdef OS_WEB
+  void SetWebAssets(const std::string& baseUrl, const std::vector<std::string>& paths);
+#endif
 
   bool Exists(const std::string& path) const;
   bool ReadBinary(const std::string& path, std::vector<unsigned char>& out) const;
@@ -49,6 +54,12 @@ private:
 
   std::filesystem::path m_basePath;
   std::filesystem::path m_cachePath;
+
+#ifdef OS_WEB
+  std::string m_webAssetBaseUrl;
+  std::map<std::string, std::string> m_webAssets;
+  bool ReadWebAsset(const std::string& normalized, std::vector<unsigned char>& out) const;
+#endif
 
 #ifdef OS_ANDROID
   AAssetManager* m_assetManager = nullptr;

@@ -39,6 +39,7 @@
 #include <utils/ShaderPrecompiler.h>
 #include <utils/ShaderPermutationDump.h>
 #include <utils/ResourceLocator.h>
+#include <video/webgpu/WebGPUShaderCompiler.h>
 #include <scene/SceneSetup.h>
 #include <core/Core.h>
 #include <utils/XDataBase.h>
@@ -1748,18 +1749,32 @@ void TestShaderFlowConfiguration() {
   };
   Config defaults;
   Require(defaults.webgpuShaderFlow == "auto", "WebGPU shader flow must default to auto");
-  for (const auto* mode : {"auto", "wgsl", "spirv"}) {
+#ifdef __EMSCRIPTEN__
+  const auto modes = {"auto", "wgsl"};
+  const std::string expectedApi = "webgpu";
+#else
+  const auto modes = {"auto", "wgsl", "spirv"};
+  const std::string expectedApi = "d3d12";
+#endif
+  for (const auto* mode : modes) {
     Config selected;
-    selected.api = "d3d12";
+    selected.api = expectedApi;
     config::RuntimeConfigJson json;
     json.webgpuShaderFlow = "wgsl";
     config::ApplyConfigJson(json, selected);
     Require(selected.webgpuShaderFlow == "wgsl", "Shader flow JSON setting ignored");
     parse(selected, {"DayScene", "--shaderFlow", mode, "--width", "640"});
     Require(config::ValidateConfig(selected), "Valid shader flow config rejected");
-    Require(selected.webgpuShaderFlow == mode && selected.width == 640 && selected.api == "d3d12",
+    Require(selected.webgpuShaderFlow == mode && selected.width == 640 && selected.api == expectedApi,
             "Shader flow override changed API or consumed another option");
   }
+#ifdef __EMSCRIPTEN__
+  Config nativeOnly;
+  nativeOnly.webgpuShaderFlow = "spirv";
+  bool rejectedNativeFlow = false;
+  try { config::ValidateConfig(nativeOnly); } catch (const std::invalid_argument&) { rejectedNativeFlow = true; }
+  Require(rejectedNativeFlow, "Browser accepted unavailable SPIR-V runtime compiler");
+#endif
   parse(defaults, {"DayScene", "--shaderFlow", "SPIRV", "--shaderFlow", "WGSL"});
   Require(defaults.webgpuShaderFlow == "wgsl", "Shader flow case normalization or last override failed");
   for (const auto& arguments : std::vector<std::vector<std::string>>{
@@ -2029,9 +2044,37 @@ void TestShaderPrecompilerContract() {
     Require(ResourceLocator::Instance().WriteText(recorded, original) && ShaderPermutationDump::Flush(),
       "cannot recover recorder after failed merge");
     Require(rejectedMerge && preserved, "recorder overwrote malformed input");
+  #if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+    const auto packageRoot = files.Add("_web_packages");
+    std::filesystem::create_directories(packageRoot);
+    webgpu::ShaderRequest shaderRequest;
+    shaderRequest.name = "Shaders/test.hlsl";
+    shaderRequest.source = "test source";
+    shaderRequest.keyBits = 8;
+    webgpu::ShaderArtifact shaderArtifact;
+    shaderArtifact.wgsl = "@vertex fn VS() -> @builtin(position) vec4f { return vec4f(0); }";
+    shaderArtifact.translationMilliseconds = 15;
+    std::string diagnostic;
+    const bool wrotePackage = webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, packageRoot.string(), diagnostic);
+    webgpu::ShaderArtifact restoredArtifact;
+    const bool readPackage = webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, diagnostic, packageRoot.string());
+    shaderRequest.source += " changed";
+    const bool rejectedStale = !webgpu::ReadShaderPackage(shaderRequest, shaderArtifact, diagnostic, packageRoot.string());
+    const auto packagePath = std::filesystem::directory_iterator(packageRoot)->path();
+    ResourceLocator::Instance().WriteText(packagePath.string(), "{corrupt");
+    shaderRequest.source = "test source";
+    const bool rejectedCorrupt = !webgpu::ReadShaderPackage(shaderRequest, shaderArtifact, diagnostic, packageRoot.string());
+    std::filesystem::remove_all(packageRoot);
+    Require(wrotePackage && readPackage && restoredArtifact.cacheHit && restoredArtifact.translationMilliseconds == 0 &&
+            rejectedStale && rejectedCorrupt, "browser shader package integrity or invalidation failed");
+  #endif
 }
 
 void TestTextureMipmaps() {
+  Require(HalfToFloat(0x3c00) == 1.0f && HalfToFloat(0xc000) == -2.0f &&
+          HalfToFloat(1) == std::ldexp(1.0f, -24) && std::signbit(HalfToFloat(0x8000)) &&
+          std::isinf(HalfToFloat(0x7c00)) && std::isnan(HalfToFloat(0x7e00)),
+          "half-float conversion changed");
   Require(CalculateFullMipCount(1, 1) == 1 && CalculateFullMipCount(5, 3) == 3, "mip count mismatch");
   std::vector<unsigned char> output;
   const std::array<unsigned char, 16> alphaPixels{255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 0, 255, 255, 255, 0};

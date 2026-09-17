@@ -15,6 +15,9 @@
 #include <ctime>
 #include <unordered_map>
 #include <vector>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 namespace t850 {
 
@@ -177,6 +180,14 @@ void DumpLocked() {
   }
   out << "  ]\n";
   out << "}\n";
+  out.close();
+#ifdef __EMSCRIPTEN__
+  std::ifstream reportFile(outputPath);
+  const std::string report((std::istreambuf_iterator<char>(reportFile)), std::istreambuf_iterator<char>());
+  MAIN_THREAD_EM_ASM({
+    if (globalThis.t850) globalThis.t850.telemetry = JSON.parse(UTF8ToString($0));
+  }, report.c_str());
+#endif
 
   T8_LOG_INFO("[RuntimeTelemetry] Wrote %zu sampled frames to '%s'",
               g_state.samples.size(), outputPath.string().c_str());
@@ -184,8 +195,11 @@ void DumpLocked() {
 
 } // namespace
 
-RuntimeTelemetry::ScopedTimer::ScopedTimer(const char* name)
-  : ScopedTimer(std::string(name ? name : "")) {
+RuntimeTelemetry::ScopedTimer::ScopedTimer(const char* name) {
+  if (!name || !*name || !RuntimeTelemetry::IsFrameActive()) return;
+  m_name = name;
+  m_start = std::chrono::steady_clock::now();
+  m_active = true;
 }
 
 RuntimeTelemetry::ScopedTimer::ScopedTimer(std::string name) {

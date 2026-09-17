@@ -1,0 +1,17 @@
+{
+  "name": "t850-browser-validation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "node server.mjs",
+    "pages:prepare": "node prepare-pages.mjs",
+    "pages:deploy": "node deploy-pages.mjs",
+    "pages:dev": "node deploy-pages.mjs --dev",
+    "test:pages": "node --test pages.test.mjs"
+  },
+  "devDependencies": {
+    "pngjs": "7.0.0",
+    "selenium-webdriver": "4.35.0",
+    "wrangler": "4.133.0"
+  }
+}

@@ -8,6 +8,7 @@ set(FRAMEWORK_SOURCES
   src/core/DevLayer.cpp
   src/core/Config.cpp
   src/core/EngineContext.cpp
+  src/core/WebFramework.cpp
   src/game/ComponentFactory.cpp
   src/game/Controller.cpp
   src/game/EventBus.cpp
@@ -112,6 +113,7 @@ set(FRAMEWORK_SOURCES
   src/utils/ShaderPreprocessor.cpp
   ../Librerias/simplecpp/simplecpp.cpp
   src/video/webgpu/WebGPUShaderCompiler.cpp
+  src/video/webgpu/WebGPUShaderPackage.cpp
   src/video/webgpu/WebGPUContext.cpp
   src/video/webgpu/WebGPUDriver.cpp
   src/video/WindowsDriverFactory.cpp

@@ -659,7 +659,7 @@ struct CoCOutput {
 @fragment fn FS(input: FragmentInput) -> @location(0) vec4<f32> {
     var uv = input.texture0;
     let center = vec2<f32>(0.435, 1.0 - 0.59);
-    let scale = mix(1.0, 1.0 - 1.0 / 64.0, (1.0 - 0.4) * 0.2);
+    let scale = mix(1.0f, 1.0 - 1.0 / 64.0, (1.0 - 0.4) * 0.2);
     var color = textureSample(tex0, SS, uv).rgb;
     for (var index = 0; index < 64; index++) {
         uv = (uv - center) * scale + center;

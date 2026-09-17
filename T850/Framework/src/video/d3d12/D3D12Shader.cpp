@@ -34,7 +34,7 @@ namespace t850 {
       return a.HighPart == b.HighPart && a.LowPart == b.LowPart;
     }
 
-    std::string GetD3D12ShaderCacheDriverSignature(ID3D12Device* device) {
+    std::string BuildD3D12ShaderCacheDriverSignature(ID3D12Device* device) {
       std::ostringstream sig;
       sig << "d3d12;compiler=vs_5_0/ps_5_0";
       if (!device)
@@ -76,6 +76,10 @@ namespace t850 {
       blob = created;
       return true;
     }
+  }
+
+  std::string GetD3D12ShaderCacheDriverSignature(ID3D12Device* device) {
+    return BuildD3D12ShaderCacheDriverSignature(device);
   }
 
   // ══════════════════════════════════════════════════════

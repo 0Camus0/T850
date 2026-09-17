@@ -76,11 +76,28 @@ namespace t850 {
       0,
 #endif
       NULL, NULL, D3D11_SDK_VERSION, &SwapChainDesc, &DXGISwapchain,
-      reinterpret_cast<ID3D11Device**>(T8Device->GetAPIObjectReference()), NULL,
+      reinterpret_cast<ID3D11Device**>(T8Device->GetAPIObjectReference()), &m_featureLevel,
       reinterpret_cast<ID3D11DeviceContext**>(T8DeviceContext->GetAPIObjectReference()));
+
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D11] D3D11CreateDeviceAndSwapChain failed hr=0x%08X", hr);
+      return;
+    }
+    T8_LOG_INFO("[D3D11] Device feature level=0x%04X compute=%s",
+                static_cast<unsigned>(m_featureLevel), SupportsComputeShaders() ? "yes" : "no");
 
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    const auto supportsStorageFormat = [&](DXGI_FORMAT format) {
+      UINT support = 0;
+      return SUCCEEDED(device->CheckFormatSupport(format, &support)) &&
+             (support & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW) != 0;
+    };
+    m_supportsComputeTextures = SupportsComputeShaders() &&
+      supportsStorageFormat(DXGI_FORMAT_R8G8B8A8_UNORM) &&
+      supportsStorageFormat(DXGI_FORMAT_R16G16B16A16_FLOAT);
+    T8_LOG_INFO("[D3D11] Compute texture support=%s",
+                m_supportsComputeTextures ? "yes" : "no");
 
     // Get the back buffer
     ComPtr<ID3D11Texture2D> BackBuffer;

@@ -20,6 +20,10 @@
 #include <unordered_map>
 #include <chrono>
 #include <functional>
+#include <memory>
+#include <cstddef>
+#include <cstdint>
+#include <array>
 #include <Descriptors.h>
 #include <utils/Technique.h>
 #include <video/WindowHandle.h>
@@ -32,6 +36,64 @@ namespace t850 {
   class ConstantBuffer;
   class Texture;
   class BaseRT;
+
+  enum class ComputeBufferAccess {
+    ReadOnly,
+    ReadWrite
+  };
+
+  enum class ComputeBindingType {
+    Constants32,
+    ReadOnlyBuffer,
+    ReadWriteBuffer,
+    ReadOnlyTexture,
+    ReadWriteTexture,
+    Sampler
+  };
+
+  struct ComputeBindingLayoutDesc {
+    ComputeBindingType type = ComputeBindingType::Constants32;
+    uint32_t shaderRegister = 0;
+    uint32_t bindingIndex = 0;
+    uint32_t constantCount = 0;
+  };
+
+  struct ComputePipelineDesc {
+    std::string source;
+    std::string entryPoint = "CS";
+    std::string debugName;
+    std::string permutationName = "base";
+    std::vector<std::string> defines;
+    std::vector<ComputeBindingLayoutDesc> bindings;
+  };
+
+  struct ComputeBufferDesc {
+    uint32_t byteWidth = 0;
+    uint32_t structureStride = 0;
+    ComputeBufferAccess access = ComputeBufferAccess::ReadWrite;
+    std::string debugName;
+  };
+
+  class ComputePipeline {
+  public:
+    virtual ~ComputePipeline() = default;
+    std::array<uint32_t, 3> threadGroupSize = {0, 0, 0};
+  };
+
+  class ComputeBuffer {
+  public:
+    virtual ~ComputeBuffer() = default;
+    ComputeBufferDesc descriptor;
+  };
+
+  struct ComputeBindingDesc {
+    ComputeBindingType type = ComputeBindingType::Constants32;
+    uint32_t shaderRegister = 0;
+    ComputeBuffer* buffer = nullptr;
+    const uint32_t* constants = nullptr;
+    uint32_t constantCount = 0;
+    Texture* texture = nullptr;
+  };
 
   class DeviceContext {
   public:
@@ -67,7 +129,8 @@ namespace t850 {
     // face 0 mip 0..N, face 1 mip 0..N, etc.; each texel is four floats.
     // Backends may choose RGBA16F internally on mobile GPUs.
     virtual Texture* CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr) = 0;
-    virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) = 0;
+    virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h,
+                 bool genMips = false, bool allowStorage = false) = 0;
   };
   /* BUFFERS */
   class Buffer {
@@ -202,6 +265,7 @@ namespace t850 {
     int color_format;
     int depth_format;
     bool GenMips;
+    bool AllowUnorderedAccess = false;
     std::vector<int> perColorFormats;  // per-attachment formats (empty = use color_format for all)
 
     std::vector<Texture*>							vColorTextures;
@@ -279,6 +343,8 @@ namespace t850 {
     virtual bool NeedsVFlip() const { return false; }
     virtual bool SupportsRenderTargetMipGeneration() const { return false; }
     virtual bool SupportsDeferredRendering() const { return true; }
+    virtual bool SupportsComputeShaders() const { return false; }
+    virtual bool SupportsComputeTextures() const { return false; }
     virtual const char* ApiTag() const { return "unknown"; }
     virtual	void	 InitDriver() = 0;
     virtual void	 CreateSurfaces() = 0;
@@ -341,6 +407,27 @@ namespace t850 {
       (void)nativeWindow; (void)newW; (void)newH; return false;
     }
 
+    // Initial compute contract: shader creation, structured buffers, dispatch,
+    // and explicit diagnostic readback. Unsupported backends fail explicitly.
+    virtual std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) {
+      (void)desc; return {};
+    }
+    virtual std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                                                                const void* initialData = nullptr) {
+      (void)desc; (void)initialData; return {};
+    }
+    virtual bool DispatchCompute(ComputePipeline& pipeline,
+                                 const std::vector<ComputeBindingDesc>& bindings,
+                                 uint32_t groupCountX,
+                                 uint32_t groupCountY,
+                                 uint32_t groupCountZ) {
+      (void)pipeline; (void)bindings; (void)groupCountX; (void)groupCountY; (void)groupCountZ;
+      return false;
+    }
+    virtual bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) {
+      (void)buffer; (void)destination; (void)byteCount; return false;
+    }
+
     // Resize the swapchain, back-buffer RTVs, and depth buffer to the new
     // pixel dimensions. Returns true on success. Implementations must flush
     // the GPU before releasing/recreating resources.
@@ -353,8 +440,10 @@ namespace t850 {
     int    CreateFloatTexture(int w, int h, const float* data = nullptr);
     int    CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr);
     int	   CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
-    int 	 CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false);
-    int    CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool genMips = false);
+    int 	 CreateRT(int nrt, int cf, int df, int w, int h,
+            bool genMips = false, bool allowStorage = false);
+    int    CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h,
+            bool genMips = false, bool allowStorage = false);
     void 	 ModifyRT(int RTID, int nrt, int cf, int df, int w, int h, bool genMips = false);
     int    CreateTechnique(std::string path);
 

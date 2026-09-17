@@ -221,6 +221,9 @@
     <ClInclude Include="include\video\BaseDriver.h">
       <Filter>Header Files\video</Filter>
     </ClInclude>
+    <ClInclude Include="include\video\gl\GLCompute.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
     <ClInclude Include="include\video\WindowHandle.h">
       <Filter>Header Files\video</Filter>
     </ClInclude>
@@ -299,6 +302,9 @@
     <ClInclude Include="include\video\d3d12\D3D12Shader.h">
       <Filter>Header Files\video\d3d12</Filter>
     </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Compute.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
     <ClInclude Include="include\video\d3d12\D3D12RT.h">
       <Filter>Header Files\video\d3d12</Filter>
     </ClInclude>
@@ -306,6 +312,9 @@
       <Filter>Header Files\video\d3d12</Filter>
     </ClInclude>
     <ClInclude Include="include\video\vulkan\VulkanDriver.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanCompute.h">
       <Filter>Header Files\video\vulkan</Filter>
     </ClInclude>
     <ClInclude Include="include\video\vulkan\VulkanVertexBuffer.h">
@@ -419,6 +428,9 @@
     <ClInclude Include="include\video\d3d11\D3D11Driver.h">
       <Filter>Header Files\video\d3d11</Filter>
     </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11Compute.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
     <ClInclude Include="include\video\d3d11\D3D11IndexBuffer.h">
       <Filter>Header Files\video\d3d11</Filter>
     </ClInclude>
@@ -453,6 +465,9 @@
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\debug\CrashDiagnostics.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\debug\ComputeSelfTest.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\debug\LoadingProgress.h">
@@ -567,6 +582,9 @@
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\RuntimeProfile.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\ComputeKernelRegistry.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\ShaderPermutationDump.h">
@@ -700,6 +718,9 @@
     <ClCompile Include="src\video\BaseDriver.cpp">
       <Filter>Source Files\video</Filter>
     </ClCompile>
+    <ClCompile Include="src\video\gl\GLCompute.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
     <ClCompile Include="src\video\gl\GLDriver.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
@@ -757,6 +778,9 @@
     <ClCompile Include="src\video\d3d12\D3D12Shader.cpp">
       <Filter>Source Files\video\d3d12</Filter>
     </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Compute.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
     <ClCompile Include="src\video\d3d12\D3D12RT.cpp">
       <Filter>Source Files\video\d3d12</Filter>
     </ClCompile>
@@ -764,6 +788,9 @@
       <Filter>Source Files\video\d3d12</Filter>
     </ClCompile>
     <ClCompile Include="src\video\vulkan\VulkanDriver.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanCompute.cpp">
       <Filter>Source Files\video\vulkan</Filter>
     </ClCompile>
     <ClCompile Include="src\video\vulkan\VulkanVertexBuffer.cpp">
@@ -940,6 +967,9 @@
     <ClCompile Include="src\video\d3d11\D3D11Driver.cpp">
       <Filter>Source Files\video\d3d11</Filter>
     </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11Compute.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
     <ClCompile Include="src\video\d3d11\D3D11IndexBuffer.cpp">
       <Filter>Source Files\video\d3d11</Filter>
     </ClCompile>
@@ -959,6 +989,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\CrashDiagnostics.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\ComputeSelfTest.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\FrameDumperIO.cpp">
@@ -1058,6 +1091,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ShaderPrecompiler.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\ComputeKernelRegistry.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\core\ShaderTools.cpp">

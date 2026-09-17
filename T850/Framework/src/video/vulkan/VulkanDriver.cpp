@@ -464,24 +464,51 @@ namespace t850 {
     SetRuntimeGpuInfo(selectedProps.deviceName, selectedProps.vendorID, selectedProps.deviceID);
     T8_LOG_INFO("[Vulkan] GPU: %s (vendor=0x%04x device=0x%04x)", selectedProps.deviceName, selectedProps.vendorID, selectedProps.deviceID);
 
-    // Find graphics queue family
+    // Find a present-capable graphics queue, preferring one that also supports compute.
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, nullptr);
     std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, queueFamilies.data());
 
-    m_graphicsQueueFamily = 0;
+    uint32_t firstGraphicsPresentQueueFamily = UINT32_MAX;
+    m_graphicsQueueFamily = UINT32_MAX;
     for (uint32_t i = 0; i < queueFamilyCount; i++) {
+      VkBool32 supportsPresent = VK_FALSE;
+      if (vkGetPhysicalDeviceSurfaceSupportKHR(m_physicalDevice, i, m_surface,
+                                               &supportsPresent) != VK_SUCCESS ||
+          supportsPresent != VK_TRUE) {
+        continue;
+      }
       if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-        m_graphicsQueueFamily = i;
-        break;
+        if (firstGraphicsPresentQueueFamily == UINT32_MAX)
+          firstGraphicsPresentQueueFamily = i;
+        if (queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
+          m_graphicsQueueFamily = i;
+          break;
+        }
       }
     }
+    if (m_graphicsQueueFamily == UINT32_MAX)
+      m_graphicsQueueFamily = firstGraphicsPresentQueueFamily;
+    if (m_graphicsQueueFamily == UINT32_MAX) {
+      T8_LOG_ERROR("[Vulkan] No graphics queue family supports surface presentation");
+      return;
+    }
     m_presentQueueFamily = m_graphicsQueueFamily;
+    m_supportsComputeShaders =
+      (queueFamilies[m_graphicsQueueFamily].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
 
     // Query features before creating device (best practice)
     VkPhysicalDeviceFeatures supportedFeatures = {};
     vkGetPhysicalDeviceFeatures(m_physicalDevice, &supportedFeatures);
+    const auto supportsStorageImage = [&](VkFormat format) {
+      VkFormatProperties properties = {};
+      vkGetPhysicalDeviceFormatProperties(m_physicalDevice, format, &properties);
+      return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
+    };
+    m_supportsComputeTextures = m_supportsComputeShaders &&
+      supportsStorageImage(VK_FORMAT_R8G8B8A8_UNORM) &&
+      supportsStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT);
 
     float queuePriority = 1.0f;
     VkDeviceQueueCreateInfo queueCI = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -513,7 +540,11 @@ namespace t850 {
 
     vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &m_graphicsQueue);
     m_presentQueue = m_graphicsQueue;
-    T8_LOG_INFO("[Vulkan] Logical device created, graphics queue family=%u", m_graphicsQueueFamily);
+    T8_LOG_INFO(
+      "[Vulkan] Logical device created, graphics queue family=%u compute=%s computeTextures=%s",
+      m_graphicsQueueFamily,
+      m_supportsComputeShaders ? "yes" : "no",
+      m_supportsComputeTextures ? "yes" : "no");
   }
 
   void VulkanDriver::CreateAllocator() {
@@ -964,12 +995,17 @@ namespace t850 {
     constexpr uint32_t kCombinedImageDescriptorsPerFrame = 65536;
     VkDescriptorPoolSize poolSizes[] = {
       { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_SAMPLER, kUniformDescriptorsPerFrame },
       { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kCombinedImageDescriptorsPerFrame },
     };
 
     VkDescriptorPoolCreateInfo dpCI = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpCI.maxSets = kDescriptorSetsPerFrame;
-    dpCI.poolSizeCount = 2;
+    dpCI.poolSizeCount = static_cast<uint32_t>(std::size(poolSizes));
     dpCI.pPoolSizes = poolSizes;
     dpCI.flags = 0;
 

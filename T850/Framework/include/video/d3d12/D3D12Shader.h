@@ -17,6 +17,8 @@ using Microsoft::WRL::ComPtr;
 
 namespace t850 {
 
+  std::string GetD3D12ShaderCacheDriverSignature(ID3D12Device* device);
+
   class D3D12Shader : public ShaderBase {
   public:
     bool CreateShaderAPI(std::string src_vs, std::string src_fs,

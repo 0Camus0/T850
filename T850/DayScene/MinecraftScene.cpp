@@ -25,14 +25,13 @@
 #include <utils/ThreadPool.h>
 #include <debug/RuntimeTelemetry.h>
 #include <imgui/DevGuiContext.h>
-#if defined(USING_VULKAN) || defined(USING_VULKAN_ONLY)
-#endif
 
 #include <array>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
 #include <iomanip>
+#include <sstream>
 #include <string>
 #include <cstdint>
 #include <cctype>
@@ -172,6 +171,73 @@ bool MinecraftScene::LoadAuthoredScene() {
     return false;
   }
   m_voxelSettings = *m_sceneFile.voxel_world;
+  const auto validControl = [](float value,
+                               const t850::scene::SceneVoxelControlRangeDesc& control) {
+      return !control.name.empty() && !control.label.empty() &&
+        control.min <= value && value <= control.max &&
+           control.min < control.max && control.step > 0.0f;
+  };
+  const auto validSkinFace = [&](const t850::scene::SceneVoxelBoxPartDesc::SkinFace& face) {
+    return face.x >= 0 && face.y >= 0 && face.width > 0 && face.height > 0 &&
+           face.x + face.width <= m_voxelSettings.mob.skin_width &&
+           face.y + face.height <= m_voxelSettings.mob.skin_height;
+  };
+  const bool validMobSkin = m_voxelSettings.mob.skin_width > 0 &&
+    m_voxelSettings.mob.skin_height > 0 &&
+    m_voxelSettings.mob.skin_pixelation_factor > 0 &&
+    std::all_of(m_voxelSettings.mob.parts.begin(), m_voxelSettings.mob.parts.end(),
+      [&](const t850::scene::SceneVoxelBoxPartDesc& part) {
+        return part.skin_faces.size() == 6 &&
+          std::all_of(part.skin_faces.begin(), part.skin_faces.end(), validSkinFace);
+      });
+  const auto& torch = m_voxelSettings.torch;
+  const auto& appearance = torch.particle_appearance;
+  const auto finite = [](float value) { return std::isfinite(value); };
+  const bool validAppearance = appearance.colors.size() == 3 &&
+    std::all_of(appearance.colors.begin(), appearance.colors.end(),
+      [](const t850::scene::Vec3f& color) {
+        return color.x >= 0.0f && color.x <= 1.0f &&
+               color.y >= 0.0f && color.y <= 1.0f &&
+               color.z >= 0.0f && color.z <= 1.0f;
+      }) &&
+    finite(appearance.radial_seed_min) &&
+    appearance.radial_seed_min >= 0.0f && appearance.radial_seed_min <= 1.0f &&
+    finite(appearance.radial_start_scale) && appearance.radial_start_scale >= 0.0f &&
+    finite(appearance.radial_age_scale) && appearance.radial_age_scale >= 0.0f &&
+    finite(appearance.wobble_frequency) && appearance.wobble_frequency >= 0.0f &&
+    finite(appearance.wobble_frequency_variation) &&
+    appearance.wobble_frequency_variation >= 0.0f &&
+    finite(appearance.wobble_strength) && appearance.wobble_strength >= 0.0f &&
+    finite(appearance.wobble_z_scale) && appearance.wobble_z_scale >= 0.0f &&
+    finite(appearance.start_size_scale) && appearance.start_size_scale > 0.0f &&
+    finite(appearance.end_size_scale) && appearance.end_size_scale > 0.0f &&
+    finite(appearance.minimum_projection_depth) &&
+    appearance.minimum_projection_depth > 0.0f &&
+    finite(appearance.edge_softness_scale) && appearance.edge_softness_scale >= 0.0f &&
+    finite(appearance.fade_in_end) && appearance.fade_in_end > 0.0f &&
+    finite(appearance.fade_out_start) &&
+    appearance.fade_out_start >= appearance.fade_in_end &&
+    appearance.fade_out_start < 1.0f &&
+    finite(appearance.intensity) && appearance.intensity >= 0.0f;
+  const bool validTorch = !torch.enabled ||
+    (finite(torch.distance_from_spawn) && torch.distance_from_spawn > 0.0f &&
+     finite(torch.base_width) && torch.base_width > 0.0f &&
+     finite(torch.base_height) && torch.base_height > 0.0f &&
+     !torch.base_block.empty() &&
+     torch.tip_height >= 0.0f && torch.tip_height < torch.base_height &&
+     torch.tip_color.x >= 0.0f && torch.tip_color.x <= 1.0f &&
+     torch.tip_color.y >= 0.0f && torch.tip_color.y <= 1.0f &&
+     torch.tip_color.z >= 0.0f && torch.tip_color.z <= 1.0f &&
+     torch.tip_roughness >= 0.0f && torch.tip_roughness <= 1.0f &&
+     validControl(static_cast<float>(torch.particle_count), torch.particle_count_control) &&
+     validControl(torch.particle_lifetime, torch.particle_lifetime_control) &&
+     validControl(torch.particle_rise_height, torch.particle_rise_height_control) &&
+     validControl(torch.particle_spread, torch.particle_spread_control) &&
+     validControl(torch.particle_size, torch.particle_size_control) &&
+     validControl(torch.particle_spawn_offset_y, torch.particle_spawn_offset_control) &&
+    torch.particle_time_wrap_seconds > 0.0f &&
+    !torch.particle_controls_label.empty() &&
+    validAppearance);
   if (m_voxelSettings.chunk_size < 1 || m_voxelSettings.chunk_size > kMaxChunkSize ||
       m_voxelSettings.world_height < 8 || m_voxelSettings.world_height > kMaxWorldHeight ||
       m_voxelSettings.render_distance < 1 || m_voxelSettings.render_distance > kMaxRenderDistance ||
@@ -199,8 +265,11 @@ bool MinecraftScene::LoadAuthoredScene() {
       m_voxelSettings.mob.visual_ground_clearance < 0.0f ||
       m_voxelSettings.mob.visual_ground_clearance > 0.05f ||
       m_voxelSettings.mob.vertical_follow_speed <= 0.0f ||
+      m_voxelSettings.mob.skin_texture.empty() ||
+      !validMobSkin ||
       m_voxelSettings.navmesh_rebuild_seconds <= 0.0f ||
       m_voxelSettings.sun_debug_size <= 0.0f ||
+      !validTorch ||
       m_voxelSettings.dof.focus_range < 0.0f ||
       m_voxelSettings.dof.focus_falloff <= 0.0f ||
       m_voxelSettings.dof.auto_focus_radius < 0.0f ||
@@ -230,7 +299,8 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_maxChunks = m_chunkCountX * m_chunkCountZ;
   m_mobMeshStartIndex = m_maxChunks;
   m_weaponMeshIndex = m_maxChunks + kMaxMinecraftEnemies;
-  m_renderMeshCount = m_maxChunks + kMaxMinecraftEnemies + 1;
+  m_torchMeshIndex = m_weaponMeshIndex + 1;
+  m_renderMeshCount = m_maxChunks + kMaxMinecraftEnemies + 2;
   m_seed = m_voxelSettings.seed;
   m_maxUploadsPerFrame = (std::max)(1, m_voxelSettings.max_uploads_per_frame);
   m_asyncStreaming = m_voxelSettings.async_streaming;
@@ -609,22 +679,41 @@ void MinecraftScene::GenerateWorld() {
       GenerateChunkTrees(cx, cz);
     }
   }
-  // Count blocks for verification
-  int waterCount = 0, coalCount = 0, ironCount = 0, goldCount = 0, diamondCount = 0;
+  // Count authored water/ore roles for verification without assuming names.
+  struct TrackedBlockCount {
+    std::string name;
+    uint8_t id = 0;
+    int count = 0;
+  };
+  std::vector<TrackedBlockCount> trackedBlocks;
+  const auto addTrackedBlock = [&](const std::string& name) {
+    const auto found = m_blockIds.find(name);
+    if (found != m_blockIds.end())
+      trackedBlocks.push_back({name, found->second, 0});
+  };
+  addTrackedBlock(m_voxelSettings.terrain.water_block);
+  for (const auto& ore : m_voxelSettings.terrain.ores)
+    addTrackedBlock(ore.block);
   for (int cz = 0; cz < m_chunkCountZ; ++cz)
     for (int cx = 0; cx < m_chunkCountX; ++cx)
       for (int wy = 0; wy < m_worldHeight; ++wy)
         for (int lz = 0; lz < m_chunkSize; ++lz)
           for (int lx = 0; lx < m_chunkSize; ++lx) {
             const uint8_t b = m_blocks[cx][wy][cz][lx][lz];
-            if (b == BlockId("water", 0)) ++waterCount;
-            else if (b == BlockId("coal_ore", 0)) ++coalCount;
-            else if (b == BlockId("iron_ore", 0)) ++ironCount;
-            else if (b == BlockId("gold_ore", 0)) ++goldCount;
-            else if (b == BlockId("diamond_ore", 0)) ++diamondCount;
+            for (auto& tracked : trackedBlocks) {
+              if (b == tracked.id) {
+                ++tracked.count;
+                break;
+              }
+            }
           }
-  T8_LOG_INFO("[Minecraft] World generated: water=%d coal=%d iron=%d gold=%d diamond=%d",
-              waterCount, coalCount, ironCount, goldCount, diamondCount);
+  std::ostringstream counts;
+  bool firstCount = true;
+  for (const auto& tracked : trackedBlocks) {
+    counts << (firstCount ? "" : " ") << tracked.name << '=' << tracked.count;
+    firstCount = false;
+  }
+  T8_LOG_INFO("[Minecraft] World generated:%s", counts.str().c_str());
 }
 
 void MinecraftScene::BuildNavigationMesh() {
@@ -1041,31 +1130,45 @@ void MinecraftScene::CreateMobMesh(int mobIndex) {
   geom.VertexAttributes = xF::xMeshGeometry::HAS_POSITION | xF::xMeshGeometry::HAS_NORMAL | xF::xMeshGeometry::HAS_TEXCOORD0;
   geom.NumChannelsTexCoords = 1;
 
-  // Build a humanoid zombie-like figure from boxes (real dimensions, not
-  // unit cubes). Uses the same addBox helper as the weapon.
-  auto addBox = [&](float x0, float y0, float z0, float x1, float y1, float z1, uint8_t block) {
-    const BlockDef& def = m_blockDefs[block];
+  auto skinUv = [&](const t850::scene::SceneVoxelBoxPartDesc::SkinFace& face) -> UVQuad {
+    const float skinWidth = static_cast<float>(m_voxelSettings.mob.skin_width);
+    const float skinHeight = static_cast<float>(m_voxelSettings.mob.skin_height);
+    return {
+      (static_cast<float>(face.x) + 0.5f) / skinWidth,
+      (static_cast<float>(face.y) + 0.5f) / skinHeight,
+      (static_cast<float>(face.x + face.width) - 0.5f) / skinWidth,
+      (static_cast<float>(face.y + face.height) - 0.5f) / skinHeight
+    };
+  };
+
+  // Build the authored boxes with the face rectangles stored in the scene.
+  auto addBox = [&](const t850::scene::SceneVoxelBoxPartDesc& part,
+                    std::size_t /*partIndex*/) {
     for (int face = 0; face < 6; ++face) {
-      const BlockTile& tile = def.tiles[face];
-      const UVQuad uv = TileUV(m_textureAtlas, tile.u, tile.v);
+      UVQuad uv;
+      if (m_mobSkinTexture && part.skin_faces.size() == 6) {
+        uv = skinUv(part.skin_faces[face]);
+      } else {
+        const BlockDef& fallback = m_blockDefs[BlockId(part.block, 0)];
+        const BlockTile& tile = fallback.tiles[face];
+        uv = TileUV(m_textureAtlas, tile.u, tile.v);
+      }
       XVECTOR3 corners[4];
       for (int corner = 0; corner < 4; ++corner) {
         const XVECTOR3& unit = kFaces[face].corners[corner];
         corners[corner] = XVECTOR3(
-            x0 + (x1 - x0) * unit.x,
-            y0 + (y1 - y0) * unit.y,
-            z0 + (z1 - z0) * unit.z);
+            part.min.x + (part.max.x - part.min.x) * unit.x,
+            part.min.y + (part.max.y - part.min.y) * unit.y,
+            part.min.z + (part.max.z - part.min.z) * unit.z);
       }
       AddQuad(geom, corners[0], corners[1], corners[2], corners[3],
               kFaces[face].normal, face, uv.u0, uv.v0, uv.u1, uv.v1);
     }
   };
 
-  for (const auto& part : m_voxelSettings.mob.parts) {
-    addBox(part.min.x, part.min.y, part.min.z,
-           part.max.x, part.max.y, part.max.z,
-           BlockId(part.block, 0));
-  }
+  for (std::size_t partIndex = 0;
+       partIndex < m_voxelSettings.mob.parts.size(); ++partIndex)
+    addBox(m_voxelSettings.mob.parts[partIndex], partIndex);
 
   geom.NumVertices = static_cast<xDWORD>(geom.Positions.size());
   geom.NumTriangles = static_cast<xDWORD>(geom.Triangles.size() / 3);
@@ -1078,7 +1181,9 @@ void MinecraftScene::CreateMobMesh(int mobIndex) {
   mat.EffectInstance.pDefaults.resize(2);
   mat.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
   mat.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
-  mat.EffectInstance.pDefaults[0].CaseString = m_voxelSettings.material.diffuse_texture;
+  mat.EffectInstance.pDefaults[0].CaseString = m_mobSkinTexture
+    ? m_voxelSettings.mob.skin_texture
+    : m_voxelSettings.material.diffuse_texture;
   mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
   mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
   mat.EffectInstance.pDefaults[1].CaseFloat.push_back(m_voxelSettings.material.roughness);
@@ -1127,12 +1232,16 @@ void MinecraftScene::CreateMobMesh(int mobIndex) {
   }
   for (auto& info : mesh->Info) {
     for (auto& subsetInfo : info.SubSets) {
-      subsetInfo.DiffuseTex = m_atlasTexture;
-      subsetInfo.DiffuseId = m_atlasTexIndex;
+      t850::Texture* diffuseTexture = m_mobSkinTexture
+        ? m_mobSkinTexture : m_atlasTexture;
+      const int diffuseId = m_mobSkinTexture
+        ? m_mobSkinTexIndex : m_atlasTexIndex;
+      subsetInfo.DiffuseTex = diffuseTexture;
+      subsetInfo.DiffuseId = diffuseId;
       if (subsetInfo.matAsset) {
         MaterialAsset* previous = subsetInfo.matAsset;
         subsetInfo.matAsset = MaterialAssetCache::Get().AcquireTextureVariant(
-          *previous, MatTexSlot::BaseColor, m_atlasTexture, m_atlasTexIndex);
+          *previous, MatTexSlot::BaseColor, diffuseTexture, diffuseId);
         MaterialAssetCache::Get().Release(previous);
       }
     }
@@ -1328,7 +1437,10 @@ void MinecraftScene::CreateWeaponMesh() {
     return;
   }
   for (auto& info : mesh->Info) {
-    for (auto& subsetInfo : info.SubSets) {
+    for (std::size_t subsetIndex = 0;
+         subsetIndex < info.SubSets.size(); ++subsetIndex) {
+      auto& subsetInfo = info.SubSets[subsetIndex];
+      if (subsetIndex != 0) continue;
       subsetInfo.DiffuseTex = m_atlasTexture;
       subsetInfo.DiffuseId = m_atlasTexIndex;
       if (subsetInfo.matAsset) {
@@ -1421,6 +1533,232 @@ void MinecraftScene::UpdateWeapon(float dt) {
     Meshes[m_weaponMeshIndex].RotationZ.Identity();
   }
   Meshes[m_weaponMeshIndex].Update();
+}
+
+void MinecraftScene::CreateTorchBaseMesh() {
+  const auto& torch = m_voxelSettings.torch;
+  SceneProp.ParticleEmitterEnabled = 0;
+  if (!torch.enabled) return;
+
+  const auto blockIt = m_blockIds.find(torch.base_block);
+  if (blockIt == m_blockIds.end()) {
+    T8_LOG_ERROR("[Minecraft] Torch base block '%s' is not registered",
+                 torch.base_block.c_str());
+    return;
+  }
+
+  const auto& player = m_voxelSettings.player;
+  const XVECTOR3 fallbackForward(
+    std::sin(m_playerYaw), 0.0f, std::cos(m_playerYaw), 0.0f);
+  const XVECTOR3 spawnForward = Normalize3(
+    XVECTOR3(Cam.Look.x, 0.0f, Cam.Look.z, 0.0f), fallbackForward);
+  const float worldX = player.spawn.x + spawnForward.x * torch.distance_from_spawn;
+  const float worldZ = player.spawn.z + spawnForward.z * torch.distance_from_spawn;
+  const int blockX = static_cast<int>(std::floor(worldX));
+  const int blockZ = static_cast<int>(std::floor(worldZ));
+  int supportY = (std::min)(
+    m_worldHeight - 1,
+    static_cast<int>(std::floor(player.spawn.y - player.eye_height)));
+  while (supportY >= 0 && !IsBlockSolid(GetBlock(blockX, supportY, blockZ)))
+    --supportY;
+  if (supportY < 0) {
+    T8_LOG_ERROR("[Minecraft] Torch base has no ground support at (%d,%d)",
+                 blockX, blockZ);
+    return;
+  }
+
+  const float baseY = static_cast<float>(supportY + 1);
+  const float halfWidth = torch.base_width * 0.5f;
+  m_torchBasePosition = XVECTOR3(worldX, baseY, worldZ, 1.0f);
+  m_torchParticleTime = 0.0f;
+  SceneProp.ParticleEmitterEnabled = 1;
+  SceneProp.ParticleTimeSeconds = 0.0f;
+  ApplyTorchParticleSettings();
+
+  xF::XDataBase db;
+  xF::xMeshContainer* mc = new xF::xMeshContainer;
+  mc->FileName = "MinecraftTorchBase";
+  db.XMeshDataBase.push_back(mc);
+  mc->Geometry.resize(1);
+  xF::xMeshGeometry& geom = mc->Geometry[0];
+  geom.VertexAttributes = xF::xMeshGeometry::HAS_POSITION |
+                          xF::xMeshGeometry::HAS_NORMAL |
+                          xF::xMeshGeometry::HAS_TEXCOORD0;
+  geom.NumChannelsTexCoords = 1;
+
+  auto addSection = [&](float y0, float y1, const BlockDef& block) {
+    for (int face = 0; face < 6; ++face) {
+      const BlockTile& tile = block.tiles[face];
+      const UVQuad uv = TileUV(m_textureAtlas, tile.u, tile.v);
+      XVECTOR3 corners[4];
+      for (int corner = 0; corner < 4; ++corner) {
+        const XVECTOR3& unit = kFaces[face].corners[corner];
+        corners[corner] = XVECTOR3(
+          -halfWidth + torch.base_width * unit.x,
+          y0 + (y1 - y0) * unit.y,
+          -halfWidth + torch.base_width * unit.z);
+      }
+      AddQuad(geom, corners[0], corners[1], corners[2], corners[3],
+              kFaces[face].normal, face, uv.u0, uv.v0, uv.u1, uv.v1);
+    }
+  };
+
+  const bool hasTip = torch.tip_height > 0.0f;
+  const float tipStart = torch.base_height - torch.tip_height;
+  addSection(0.0f, tipStart, m_blockDefs[blockIt->second]);
+  const unsigned int bodyVertexCount = static_cast<unsigned int>(geom.Positions.size());
+  const unsigned int bodyTriangleCount = static_cast<unsigned int>(geom.Triangles.size() / 3);
+  if (hasTip)
+    addSection(tipStart, torch.base_height, m_blockDefs[blockIt->second]);
+
+  geom.NumVertices = static_cast<xDWORD>(geom.Positions.size());
+  geom.NumTriangles = static_cast<xDWORD>(geom.Triangles.size() / 3);
+  geom.NumIndices = static_cast<xDWORD>(geom.Triangles.size());
+  geom.VertexSize = 40;
+  geom.MaterialList.Materials.resize(hasTip ? 2 : 1);
+  xF::xMaterial& baseMaterial = geom.MaterialList.Materials[0];
+  baseMaterial.Name = "minecraft_torch_base";
+  baseMaterial.bEffects = true;
+  baseMaterial.EffectInstance.pDefaults.resize(2);
+  baseMaterial.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
+  baseMaterial.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
+  baseMaterial.EffectInstance.pDefaults[0].CaseString = m_voxelSettings.material.diffuse_texture;
+  baseMaterial.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
+  baseMaterial.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
+  baseMaterial.EffectInstance.pDefaults[1].CaseFloat.push_back(m_voxelSettings.material.roughness);
+  geom.MaterialList.FaceIndices.assign(bodyTriangleCount, 0);
+  if (hasTip) {
+    xF::xMaterial& tipMaterial = geom.MaterialList.Materials[1];
+    tipMaterial.Name = "minecraft_torch_black_tip";
+    tipMaterial.bEffects = true;
+    tipMaterial.EffectInstance.pDefaults.resize(3);
+    tipMaterial.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_FLOATS;
+    tipMaterial.EffectInstance.pDefaults[0].NameParam = "diffuseColor";
+    tipMaterial.EffectInstance.pDefaults[0].CaseFloat = {
+      torch.tip_color.x, torch.tip_color.y, torch.tip_color.z, 1.0f};
+    tipMaterial.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
+    tipMaterial.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
+    tipMaterial.EffectInstance.pDefaults[1].CaseFloat = {torch.tip_roughness};
+    tipMaterial.EffectInstance.pDefaults[2].Type = xF::xEFFECTENUM::STDX_DWORDS;
+    tipMaterial.EffectInstance.pDefaults[2].NameParam = "unlit";
+    tipMaterial.EffectInstance.pDefaults[2].CaseDWORD = torch.tip_unlit ? 1u : 0u;
+    geom.MaterialList.FaceIndices.insert(
+      geom.MaterialList.FaceIndices.end(),
+      geom.NumTriangles - bodyTriangleCount, 1);
+  }
+  geom.MaterialList.NumMatProcess = static_cast<xDWORD>(
+    geom.MaterialList.Materials.size());
+
+  xF::xFinalGeometry finalGeometry;
+  finalGeometry.VertexSize = 40;
+  finalGeometry.NumVertex = geom.NumVertices;
+  finalGeometry.pData = new float[10 * geom.NumVertices];
+  finalGeometry.pDataDest = new float[10 * geom.NumVertices];
+  unsigned int cursor = 0;
+  for (unsigned int i = 0; i < geom.NumVertices; ++i) {
+    finalGeometry.pData[cursor++] = geom.Positions[i].x;
+    finalGeometry.pData[cursor++] = geom.Positions[i].y;
+    finalGeometry.pData[cursor++] = geom.Positions[i].z;
+    finalGeometry.pData[cursor++] = 1.0f;
+    finalGeometry.pData[cursor++] = geom.Normals[i].x;
+    finalGeometry.pData[cursor++] = geom.Normals[i].y;
+    finalGeometry.pData[cursor++] = geom.Normals[i].z;
+    finalGeometry.pData[cursor++] = 0.0f;
+    finalGeometry.pData[cursor++] = geom.TexCoordinates[0][i].x;
+    finalGeometry.pData[cursor++] = geom.TexCoordinates[0][i].y;
+  }
+  std::copy(finalGeometry.pData, finalGeometry.pData + cursor,
+            finalGeometry.pDataDest);
+  xF::xSubsetInfo baseSubset;
+  baseSubset.NumTris = bodyTriangleCount;
+  baseSubset.NumVertex = bodyVertexCount;
+  baseSubset.VertexSize = 40;
+  baseSubset.VertexAttrib = geom.VertexAttributes;
+  baseSubset.bAlignedVertex = true;
+  finalGeometry.Subsets.push_back(baseSubset);
+  if (hasTip) {
+    xF::xSubsetInfo tipSubset;
+    tipSubset.NumTris = geom.NumTriangles - bodyTriangleCount;
+    tipSubset.NumVertex = geom.NumVertices - bodyVertexCount;
+    tipSubset.VertexStart = bodyVertexCount;
+    tipSubset.TriStart = bodyTriangleCount;
+    tipSubset.VertexSize = 40;
+    tipSubset.VertexAttrib = geom.VertexAttributes;
+    tipSubset.bAlignedVertex = true;
+    finalGeometry.Subsets.push_back(tipSubset);
+  }
+  db.MeshInfo.push_back(std::move(finalGeometry));
+
+  RenderMesh* mesh = new RenderMesh();
+  mesh->SetEngineContext(pEngineContext);
+  mesh->SetSceneProps(&SceneProp);
+  mesh->xFile = new xF::XDataBase(std::move(db));
+  mesh->m_sourcePath = "MinecraftTorchBase";
+  bool created = false;
+  mesh->m_asset = MeshAssetCache::Get().Acquire(mesh->m_sourcePath, &created);
+  mesh->Create();
+  if (mesh->Info.empty()) {
+    delete mesh;
+    return;
+  }
+  for (auto& info : mesh->Info) {
+    for (std::size_t subsetIndex = 0;
+         subsetIndex < info.SubSets.size(); ++subsetIndex) {
+      auto& subsetInfo = info.SubSets[subsetIndex];
+      if (subsetIndex != 0) continue;
+      subsetInfo.DiffuseTex = m_atlasTexture;
+      subsetInfo.DiffuseId = m_atlasTexIndex;
+      if (subsetInfo.matAsset) {
+        MaterialAsset* previous = subsetInfo.matAsset;
+        subsetInfo.matAsset = MaterialAssetCache::Get().AcquireTextureVariant(
+          *previous, MatTexSlot::BaseColor, m_atlasTexture, m_atlasTexIndex);
+        MaterialAssetCache::Get().Release(previous);
+      }
+    }
+  }
+
+  Meshes[m_torchMeshIndex].CreateInstance(mesh, &VP);
+  Meshes[m_torchMeshIndex].TranslateAbsolute(
+    m_torchBasePosition.x, m_torchBasePosition.y, m_torchBasePosition.z);
+  Meshes[m_torchMeshIndex].SetVisible(true);
+  Meshes[m_torchMeshIndex].Update();
+  T8_LOG_INFO(
+    "[Minecraft] Torch base ready: base=(%.3f,%.3f,%.3f) flame=(%.3f,%.3f,%.3f) tip=%.3f distance=%.2f",
+    m_torchBasePosition.x, m_torchBasePosition.y, m_torchBasePosition.z,
+    m_torchFlamePosition.x, m_torchFlamePosition.y, m_torchFlamePosition.z,
+    torch.tip_height, torch.distance_from_spawn);
+}
+
+void MinecraftScene::ApplyTorchParticleSettings() {
+  const auto& torch = m_voxelSettings.torch;
+  const auto& appearance = torch.particle_appearance;
+  m_torchFlamePosition = XVECTOR3(
+    m_torchBasePosition.x,
+    m_torchBasePosition.y + torch.base_height + torch.particle_spawn_offset_y,
+    m_torchBasePosition.z, 1.0f);
+  SceneProp.ParticleEmitterPosition = m_torchFlamePosition;
+  SceneProp.ParticleCount = torch.particle_count;
+  SceneProp.ParticleLifetime = torch.particle_lifetime;
+  SceneProp.ParticleRiseHeight = torch.particle_rise_height;
+  SceneProp.ParticleSpread = torch.particle_spread;
+  SceneProp.ParticleSize = torch.particle_size;
+  SceneProp.ParticleColor0 = XVECTOR3(appearance.colors[0].x, appearance.colors[0].y,
+                                      appearance.colors[0].z, 0.0f);
+  SceneProp.ParticleColor1 = XVECTOR3(appearance.colors[1].x, appearance.colors[1].y,
+                                      appearance.colors[1].z, 0.0f);
+  SceneProp.ParticleColor2 = XVECTOR3(appearance.colors[2].x, appearance.colors[2].y,
+                                      appearance.colors[2].z, 0.0f);
+  SceneProp.ParticleShape = XVECTOR3(
+    appearance.radial_seed_min, appearance.radial_start_scale,
+    appearance.radial_age_scale, appearance.wobble_strength);
+  SceneProp.ParticleWobble = XVECTOR3(
+    appearance.wobble_frequency, appearance.wobble_frequency_variation,
+    appearance.wobble_z_scale, appearance.minimum_projection_depth);
+  SceneProp.ParticleFade = XVECTOR3(
+    appearance.start_size_scale, appearance.end_size_scale,
+    appearance.edge_softness_scale, appearance.fade_in_end);
+  SceneProp.ParticleFadeOutStart = appearance.fade_out_start;
+  SceneProp.ParticleIntensity = appearance.intensity;
 }
 
 // ── Mesh building ────────────────────────────────────────────────────
@@ -2368,6 +2706,32 @@ bool MinecraftScene::BuildTextureAtlas() {
   return m_atlasTexture != nullptr;
 }
 
+bool MinecraftScene::BuildMobSkin() {
+  const t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->driver) return false;
+
+  t850::TextureAtlasDesc desc;
+  desc.texturePath = m_voxelSettings.mob.skin_texture;
+  desc.tileWidthPx = m_voxelSettings.mob.skin_width;
+  desc.tileHeightPx = m_voxelSettings.mob.skin_height;
+  desc.pixelationFactor = m_voxelSettings.mob.skin_pixelation_factor;
+  std::string error;
+  m_mobSkinAtlas = t850::LoadTextureAtlas(engineContext->driver, desc, &error);
+  if (!m_mobSkinAtlas.IsValid() ||
+      m_mobSkinAtlas.widthPx != m_voxelSettings.mob.skin_width ||
+      m_mobSkinAtlas.heightPx != m_voxelSettings.mob.skin_height) {
+    T8_LOG_ERROR("[Minecraft] Could not load %dx%d mob skin '%s': %s",
+                 m_voxelSettings.mob.skin_width, m_voxelSettings.mob.skin_height,
+                 m_voxelSettings.mob.skin_texture.c_str(), error.c_str());
+    m_mobSkinAtlas = {};
+    return false;
+  }
+  m_mobSkinTexIndex = m_mobSkinAtlas.textureId;
+  m_mobSkinTexture = engineContext->driver->GetTexture(m_mobSkinTexIndex);
+  return m_mobSkinTexture != nullptr;
+}
+
 // ── Player ───────────────────────────────────────────────────────────
 void MinecraftScene::UpdatePlayer(float dt) {
   // Use the input captured in OnInput
@@ -2945,10 +3309,13 @@ void MinecraftScene::CreateAssets() {
     T8_LOG_ERROR("[Minecraft] Texture atlas creation failed");
     return;
   }
+  if (!BuildMobSkin())
+    T8_LOG_INFO("[Minecraft] Mob skin unavailable; using block-atlas fallback");
 
   // Generate the world and build chunk meshes
   GenerateWorld();
   RebuildDirtyChunks();
+  CreateTorchBaseMesh();
 
   // Recast remains available as an optional diagnostic overlay. Gameplay
   // navigation reads voxel occupancy directly and requires no global build.
@@ -3016,6 +3383,9 @@ void MinecraftScene::DestroyAssets() {
   m_atlasTexture = nullptr;
   m_atlasTexIndex = -1;
   m_textureAtlas = {};
+  m_mobSkinTexture = nullptr;
+  m_mobSkinTexIndex = -1;
+  m_mobSkinAtlas = {};
 }
 
 void MinecraftScene::OnUpdate(float _DtSecs) {
@@ -3037,6 +3407,13 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
 
   // Update the first-person weapon (sword) position + swing
   UpdateWeapon(DtSecs);
+
+  if (SceneProp.ParticleEmitterEnabled) {
+    m_torchParticleTime = std::fmod(
+      m_torchParticleTime + DtSecs,
+      m_voxelSettings.torch.particle_time_wrap_seconds);
+    SceneProp.ParticleTimeSeconds = m_torchParticleTime;
+  }
 
   // Update voxel-path enemies.
   UpdateMobs(DtSecs);
@@ -4034,6 +4411,43 @@ void MinecraftScene::DrawDevGui(t850::DevGuiContext& gui) {
     float enemySpeedValue = m_voxelSettings.mob.move_speed;
     if (gui.Slider(enemySpeed, enemySpeedValue))
       SetMobSpeed(enemySpeedValue);
+
+    if (gui.BeginSection(m_voxelSettings.torch.particle_controls_label.c_str())) {
+      bool particleSettingsChanged = false;
+      t850::SliderDesc particleCount;
+      particleCount.name = m_voxelSettings.torch.particle_count_control.name;
+      particleCount.label = m_voxelSettings.torch.particle_count_control.label;
+      particleCount.min_val = m_voxelSettings.torch.particle_count_control.min;
+      particleCount.max_val = m_voxelSettings.torch.particle_count_control.max;
+      particleCount.step = m_voxelSettings.torch.particle_count_control.step;
+      int particleCountValue = m_voxelSettings.torch.particle_count;
+      if (gui.SliderInt(particleCount, particleCountValue)) {
+        m_voxelSettings.torch.particle_count = particleCountValue;
+        particleSettingsChanged = true;
+      }
+
+      auto particleSlider = [&](const t850::scene::SceneVoxelControlRangeDesc& control,
+                                float& value) {
+        t850::SliderDesc desc;
+        desc.name = control.name;
+        desc.label = control.label;
+        desc.min_val = control.min;
+        desc.max_val = control.max;
+        desc.step = control.step;
+        if (gui.Slider(desc, value)) particleSettingsChanged = true;
+      };
+      particleSlider(m_voxelSettings.torch.particle_lifetime_control,
+                     m_voxelSettings.torch.particle_lifetime);
+      particleSlider(m_voxelSettings.torch.particle_rise_height_control,
+                     m_voxelSettings.torch.particle_rise_height);
+      particleSlider(m_voxelSettings.torch.particle_spread_control,
+                     m_voxelSettings.torch.particle_spread);
+      particleSlider(m_voxelSettings.torch.particle_size_control,
+                     m_voxelSettings.torch.particle_size);
+      particleSlider(m_voxelSettings.torch.particle_spawn_offset_control,
+                     m_voxelSettings.torch.particle_spawn_offset_y);
+      if (particleSettingsChanged) ApplyTorchParticleSettings();
+    }
     gui.Separator();
 
     static int s_skyIndex = 0;

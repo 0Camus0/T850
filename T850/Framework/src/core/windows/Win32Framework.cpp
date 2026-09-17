@@ -716,8 +716,11 @@ namespace t850 {
 #if defined(USING_OPENGL)
       SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "0");
       flags |= SDL_WINDOW_OPENGL;
+      SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+      SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+      SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
       SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-      T8_LOG_INFO("SDL_WINDOW_OPENGL flag set, depth=24 (WGL forced)");
+      T8_LOG_INFO("SDL_WINDOW_OPENGL flag set, desktop GL 4.3 compatibility requested, depth=24");
 #else
       T8_LOG_ERROR("USING_OPENGL not defined — GL context will NOT be created");
 #endif
@@ -778,9 +781,18 @@ namespace t850 {
 #if defined(USING_OPENGL)
       m_glContext = SDL_GL_CreateContext(m_pWindow);
       if (!m_glContext) {
-        T8_LOG_ERROR("GL context creation failed: %s", SDL_GetError());
+        const std::string computeContextError = SDL_GetError();
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+        m_glContext = SDL_GL_CreateContext(m_pWindow);
+        if (!m_glContext) {
+          throw std::runtime_error(
+            "OpenGL 4.3 compute and 3.3 graphics context creation failed: " +
+            computeContextError + "; " + SDL_GetError());
+        }
+        T8_LOG_INFO("OpenGL 4.3 context unavailable; using desktop GL 3.3 raster-only fallback");
       } else {
-        T8_LOG_INFO("SDL GL context created OK");
+        T8_LOG_INFO("SDL GL 4.3 compatibility context created OK");
       }
 #else
       T8_LOG_ERROR("USING_OPENGL not defined — skipping SDL_GL_CreateContext");

@@ -209,6 +209,15 @@ $xaml = @"
                     <ComboBoxItem Content="Vulkan" IsSelected="True" Tag="vulkan"/>
                     <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
+                <StackPanel Margin="0,12,0,0">
+                    <TextBlock Text="Post-process Mode" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbPostProcessMode">
+                        <ComboBoxItem Content="Raster" Tag="raster" IsSelected="True"
+                                      ToolTip="Use the authored graphics or clear fallback for every compute-capable render-graph pass."/>
+                        <ComboBoxItem Content="Compute" Tag="compute"
+                                      ToolTip="Use compute shaders for every supported render-graph compute pass, including Minecraft torch particles."/>
+                    </ComboBox>
+                </StackPanel>
                 <StackPanel Name="pnlShaderFlow" Margin="0,12,0,0" Visibility="Collapsed">
                     <TextBlock Text="Shader Flow" Style="{StaticResource LabelStyle}"/>
                     <ComboBox Name="cmbShaderFlow" IsEnabled="False">
@@ -431,6 +440,7 @@ $window.Width = [Math]::Min($window.Width, $window.MaxWidth)
 # Get controls
 $cmbApi         = $window.FindName("cmbApi")
 $btnCompileShaders = $window.FindName("btnCompileShaders")
+$cmbPostProcessMode = $window.FindName("cmbPostProcessMode")
 $pnlShaderFlow  = $window.FindName("pnlShaderFlow")
 $cmbShaderFlow  = $window.FindName("cmbShaderFlow")
 $chkDump        = $window.FindName("chkDump")
@@ -924,6 +934,7 @@ function Set-CullingMode {
 }
 
 function Load-Config {
+    $cmbPostProcessMode.SelectedIndex = 0
     $cmbShaderFlow.SelectedIndex = 0
     if (-not (Test-Path $configPath)) { return }
     try {
@@ -933,6 +944,11 @@ function Load-Config {
         foreach ($item in $cmbApi.Items) {
             if ($item.Tag -ieq $cfg.api) {
                 $cmbApi.SelectedItem = $item; break
+            }
+        }
+        foreach ($item in $cmbPostProcessMode.Items) {
+            if ($item.Tag -ieq $cfg.postProcessMode) {
+                $cmbPostProcessMode.SelectedItem = $item; break
             }
         }
         foreach ($item in $cmbShaderFlow.Items) {
@@ -1071,6 +1087,7 @@ function Save-Config {
     }
     $cfg = @{
         api           = ($cmbApi.SelectedItem).Tag.ToString()
+        postProcessMode = $cmbPostProcessMode.SelectedItem.Tag.ToString()
         webgpuShaderFlow = $cmbShaderFlow.SelectedItem.Tag.ToString()
         display = $display
         debugFrames = [bool]$chkDebugFrames.IsChecked
@@ -1163,6 +1180,7 @@ function Get-LaunchCommand {
     $exePath = Join-Path $rootDir "DayScene.exe"
     if ($apiTag -eq "webgpu" -and -not (Test-WebGpuSupported)) { throw "WebGPU requires an x64 DayScene.exe in this folder." }
     $argList = @("--api", $apiTag)
+    $argList += @("--postProcessMode", $cmbPostProcessMode.SelectedItem.Tag.ToString())
     if ($apiTag -eq "webgpu") {
         $argList += @("--shaderFlow", $cmbShaderFlow.SelectedItem.Tag.ToString())
     }
@@ -1521,6 +1539,7 @@ $cmbSandboxInput.Add_SelectionChanged({
 })
 
 $cmbApi.Add_SelectionChanged({ Update-Preview })
+$cmbPostProcessMode.Add_SelectionChanged({ Update-Preview })
 $btnCompileShaders.Add_Click({
     try { Invoke-ShaderCompilation } catch { [System.Windows.MessageBox]::Show($_.Exception.Message, "Compile Shaders", "OK", "Error") }
 })

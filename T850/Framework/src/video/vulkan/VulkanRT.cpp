@@ -68,6 +68,8 @@ namespace t850 {
       imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
       imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
       imgCI.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+      if (AllowUnorderedAccess)
+        imgCI.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
       imgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
       imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -103,6 +105,7 @@ namespace t850 {
       tex->m_image = vColorImages[i];
       tex->m_imageView = vColorImageViews[i];
       tex->m_format = attachmentFormat;
+      tex->SetExternalLayout(&vColorLayouts[i]);
       tex->x = (unsigned int)w;
       tex->y = (unsigned int)h;
       tex->m_channels = 4;
@@ -162,6 +165,7 @@ namespace t850 {
       depthTex->m_image = m_depthImage;
       depthTex->m_imageView = m_depthImageView;
       depthTex->m_format = m_depthFormat;
+      depthTex->SetExternalLayout(&m_depthLayout);
       depthTex->x = (unsigned int)w;
       depthTex->y = (unsigned int)h;
       depthTex->m_channels = 1;

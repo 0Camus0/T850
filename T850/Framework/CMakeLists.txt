@@ -56,6 +56,7 @@ set(FRAMEWORK_SOURCES
   src/scene/RenderViewport.cpp
   src/debug/FrameDumper.cpp
   src/debug/CrashDiagnostics.cpp
+  src/debug/ComputeSelfTest.cpp
   src/debug/FrameDumperIO.cpp
   src/debug/Profiler.cpp
   src/debug/ProfilerGpuBackend.cpp
@@ -102,6 +103,7 @@ set(FRAMEWORK_SOURCES
   src/utils/XMaths.cpp
   src/utils/ConfigRuntime.cpp
   src/utils/RuntimeProfile.cpp
+  src/utils/ComputeKernelRegistry.cpp
   src/utils/ShaderPermutationDump.cpp
   src/utils/ShaderPrecompiler.cpp
   src/core/ShaderTools.cpp
@@ -127,6 +129,7 @@ set(FRAMEWORK_SOURCES
 
 set(T850_VULKAN_SOURCES
   src/video/vulkan/VulkanDriver.cpp
+  src/video/vulkan/VulkanCompute.cpp
   src/video/vulkan/VulkanVertexBuffer.cpp
   src/video/vulkan/VulkanIndexBuffer.cpp
   src/video/vulkan/VulkanConstantBuffer.cpp
@@ -140,6 +143,7 @@ set(T850_VULKAN_SOURCES
 if(WIN32)
   list(APPEND FRAMEWORK_SOURCES
     src/core/windows/Win32Framework.cpp
+    src/video/gl/GLCompute.cpp
     src/video/gl/GLDriver.cpp
     src/video/gl/GLDeviceContext.cpp
     src/video/gl/GLDevice.cpp
@@ -156,6 +160,7 @@ if(WIN32)
     src/video/d3d11/D3D11IndexBuffer.cpp
     src/video/d3d11/D3D11ConstantBuffer.cpp
     src/video/d3d11/D3D11Driver.cpp
+    src/video/d3d11/D3D11Compute.cpp
     src/video/d3d11/D3D11RT.cpp
     src/video/d3d11/D3D11Shader.cpp
     src/video/d3d11/D3D11Texture.cpp
@@ -167,6 +172,7 @@ if(WIN32)
     src/video/d3d12/D3D12DeviceContext.cpp
     src/video/d3d12/D3D12Device.cpp
     src/video/d3d12/D3D12Shader.cpp
+    src/video/d3d12/D3D12Compute.cpp
     src/video/d3d12/D3D12RT.cpp
     src/video/d3d12/D3D12Texture.cpp
     ${T850_VULKAN_SOURCES})

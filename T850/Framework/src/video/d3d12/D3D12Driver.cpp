@@ -436,6 +436,7 @@ namespace t850 {
       for (UINT i = 0; i < kBackBufferCount; i++) {
         if (!m_backBuffers[i] && SUCCEEDED(m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i])))) {
           device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRTVs[i]);
+          m_backBufferStates[i] = D3D12_RESOURCE_STATE_PRESENT;
         }
       }
       return false;
@@ -446,6 +447,7 @@ namespace t850 {
     for (UINT i = 0; i < kBackBufferCount; i++) {
       m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i]));
       device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRTVs[i]);
+      m_backBufferStates[i] = D3D12_RESOURCE_STATE_PRESENT;
     }
 
     // Recreate depth buffer at the same DSV descriptor slot
@@ -595,6 +597,7 @@ namespace t850 {
       m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i]));
       m_backBufferRTVs[i] = m_heaps[D3D12Heap::RTV].AllocateCPU();
       device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRTVs[i]);
+      m_backBufferStates[i] = D3D12_RESOURCE_STATE_PRESENT;
     }
     T8_LOG_INFO("[D3D12] Back buffer RTVs created");
   }
@@ -826,25 +829,32 @@ namespace t850 {
                 (unsigned long long)m_dynamicDescriptorBase);
   }
 
+  void D3D12Driver::TransitionBackBuffer(D3D12_RESOURCE_STATES nextState) {
+    if (m_currentBackBuffer >= kBackBufferCount ||
+        !m_backBuffers[m_currentBackBuffer] ||
+        m_backBufferStates[m_currentBackBuffer] == nextState)
+      return;
+
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
+    barrier.Transition.StateBefore = m_backBufferStates[m_currentBackBuffer];
+    barrier.Transition.StateAfter = nextState;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &barrier);
+    m_backBufferStates[m_currentBackBuffer] = nextState;
+  }
+
   void D3D12Driver::Clear() {
     if (!m_frameStarted) {
       BeginFrame();
-      m_frameStarted = true;
-
-      if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
-        return;
-
-      D3D12_RESOURCE_BARRIER b = {};
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
-      b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
     }
 
     if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
       return;
+
+    if (CurrentRT < 0)
+      TransitionBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET);
 
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       const float cc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -879,6 +889,7 @@ namespace t850 {
                          (rt->number_RT > 0 ? 1u : 0u) | (rt->depthResource ? 2u : 0u),
                          cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     } else {
+      TransitionBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET);
       m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
       m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
       T8_TRACE(EvClearRT(-1, 1u | 2u, cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
@@ -888,16 +899,9 @@ namespace t850 {
   void D3D12Driver::ClearBackbufferWithColor(float r, float g, float b, float a) {
     if (!m_frameStarted) {
       BeginFrame(FrameTargetMode::Swapchain);
-
-      D3D12_RESOURCE_BARRIER b = {};
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
-      b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
     }
 
+    TransitionBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET);
     CurrentRT = -1;
     m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
     m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
@@ -951,13 +955,7 @@ namespace t850 {
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_CmdClose+Execute");
       T8_TELEMETRY_SCOPE("gpu.d3d12.cmd_close_execute");
-      D3D12_RESOURCE_BARRIER b = {};
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
-      b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
+      TransitionBackBuffer(D3D12_RESOURCE_STATE_PRESENT);
       m_commandLists[m_currentBackBuffer]->Close();
       ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
       m_commandQueue->ExecuteCommandLists(1, lists);
@@ -1052,6 +1050,7 @@ namespace t850 {
     if (BindOffscreenTarget(false))
       return;
 
+    TransitionBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET);
     m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
     m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
     m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);

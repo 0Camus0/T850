@@ -97,6 +97,7 @@ T850/Assets/Models/**/*.bin
 # Cloud-downloaded texture assets
 /T850/Assets/Textures/**/*.dds
 /T850/Assets/Textures/**/*.png
+!/T850/Assets/Textures/herobrine_green.png
 /T850/Assets/Textures/**/*.t8ibl
 /T850/Assets/Textures/**/*.download
 /T850/imgui_layout.ini

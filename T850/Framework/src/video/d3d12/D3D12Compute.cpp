@@ -1,0 +1,739 @@
+#include <pch.h>
+#include <video/d3d12/D3D12Compute.h>
+#include <video/d3d12/D3D12Device.h>
+#include <video/d3d12/D3D12Driver.h>
+#include <video/d3d12/D3D12Texture.h>
+
+#ifdef OS_WINDOWS
+
+#include <utils/Log.h>
+#include <utils/ShaderDiskCache.h>
+#include <utils/ShaderPermutationDump.h>
+
+#include <algorithm>
+#include <cstring>
+#include <sstream>
+#include <unordered_set>
+#include <vector>
+
+namespace t850 {
+
+  extern Device* T8Device;
+  extern DeviceContext* T8DeviceContext;
+
+  namespace {
+    constexpr const char* kComputeShaderProfile = "cs_5_0";
+
+    bool BuildComputeSource(const ComputePipelineDesc& desc, std::string& source) {
+      std::ostringstream prefix;
+      for (const std::string& define : desc.defines) {
+        if (define.empty())
+          continue;
+        if (define.find('\n') != std::string::npos || define.find('\r') != std::string::npos) {
+          T8_LOG_ERROR("[D3D12][Compute] Invalid multiline define in permutation '%s'",
+                       desc.permutationName.c_str());
+          return false;
+        }
+        prefix << "#define " << define << '\n';
+      }
+      if (!desc.defines.empty())
+        prefix << '\n';
+      prefix << desc.source;
+      source = prefix.str();
+      return true;
+    }
+
+    bool CreateBlobFromBytes(const std::vector<uint8_t>& bytes,
+                             Microsoft::WRL::ComPtr<ID3DBlob>& blob) {
+      if (bytes.empty())
+        return false;
+      Microsoft::WRL::ComPtr<ID3DBlob> created;
+      if (FAILED(D3DCreateBlob(bytes.size(), &created)))
+        return false;
+      std::memcpy(created->GetBufferPointer(), bytes.data(), bytes.size());
+      blob = created;
+      return true;
+    }
+
+    int FindRootIndex(const std::unordered_map<uint32_t, int>& indices, uint32_t shaderRegister) {
+      const auto found = indices.find(shaderRegister);
+      return found == indices.end() ? -1 : found->second;
+    }
+
+    void TransitionBuffer(ID3D12GraphicsCommandList* commandList,
+                          D3D12ComputeBuffer& buffer,
+                          D3D12_RESOURCE_STATES nextState) {
+      if (buffer.GetState() == nextState)
+        return;
+
+      D3D12_RESOURCE_BARRIER barrier = {};
+      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      barrier.Transition.pResource = buffer.GetResource();
+      barrier.Transition.StateBefore = buffer.GetState();
+      barrier.Transition.StateAfter = nextState;
+      barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      commandList->ResourceBarrier(1, &barrier);
+      buffer.SetState(nextState);
+    }
+
+    void TransitionTexture(ID3D12GraphicsCommandList* commandList,
+                           D3D12Texture& texture,
+                           D3D12_RESOURCE_STATES nextState) {
+      if (!texture.pTexResource || texture.GetTrackedState() == nextState)
+        return;
+
+      D3D12_RESOURCE_BARRIER barrier = {};
+      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      barrier.Transition.pResource = texture.pTexResource.Get();
+      barrier.Transition.StateBefore = texture.GetTrackedState();
+      barrier.Transition.StateAfter = nextState;
+      barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      commandList->ResourceBarrier(1, &barrier);
+      texture.SetTrackedState(nextState);
+    }
+  }
+
+  int D3D12ComputePipeline::GetConstantRootIndex(uint32_t shaderRegister) const {
+    return FindRootIndex(m_constantRootIndices, shaderRegister);
+  }
+
+  int D3D12ComputePipeline::GetBufferSrvRootIndex(uint32_t shaderRegister) const {
+    return FindRootIndex(m_bufferSrvRootIndices, shaderRegister);
+  }
+
+  int D3D12ComputePipeline::GetBufferUavRootIndex(uint32_t shaderRegister) const {
+    return FindRootIndex(m_bufferUavRootIndices, shaderRegister);
+  }
+
+  int D3D12ComputePipeline::GetTextureSrvRootIndex(uint32_t shaderRegister) const {
+    return FindRootIndex(m_textureSrvRootIndices, shaderRegister);
+  }
+
+  int D3D12ComputePipeline::GetTextureUavRootIndex(uint32_t shaderRegister) const {
+    return FindRootIndex(m_textureUavRootIndices, shaderRegister);
+  }
+
+  int D3D12ComputePipeline::GetSamplerRootIndex(uint32_t shaderRegister) const {
+    return FindRootIndex(m_samplerRootIndices, shaderRegister);
+  }
+
+  uint32_t D3D12ComputePipeline::GetConstantWordCount(uint32_t shaderRegister) const {
+    const auto found = m_constantWordCounts.find(shaderRegister);
+    return found == m_constantWordCounts.end() ? 0u : found->second;
+  }
+
+  bool D3D12ComputePipeline::Create(ID3D12Device* device, const ComputePipelineDesc& desc) {
+    if (!device || desc.source.empty() || desc.entryPoint.empty()) {
+      T8_LOG_ERROR("[D3D12][Compute] Invalid pipeline descriptor");
+      return false;
+    }
+
+    UINT compileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+#ifdef _DEBUG
+    compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#else
+    compileFlags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
+#endif
+
+    std::string compiledSource;
+    if (!BuildComputeSource(desc, compiledSource))
+      return false;
+
+    const std::string driverSignature = GetD3D12ShaderCacheDriverSignature(device);
+    const std::string cacheProfile = std::string(kComputeShaderProfile) + ";flags=" + std::to_string(compileFlags);
+    const ShaderDiskCacheKey cacheKey = ShaderDiskCache::MakeComputeKey(
+      "d3d12",
+      driverSignature,
+      desc.debugName,
+      desc.entryPoint,
+      cacheProfile,
+      compiledSource);
+
+    std::vector<uint8_t> cachedShader;
+    if (ShaderDiskCache::LoadArtifact(cacheKey, "cs.dxbc", cachedShader) &&
+        CreateBlobFromBytes(cachedShader, m_shaderBlob)) {
+      T8_LOG_DEBUG("[ShaderCache][D3D12] CS hit %s", cacheKey.sha1.c_str());
+    } else {
+      Microsoft::WRL::ComPtr<ID3DBlob> errors;
+      const HRESULT compileHr = D3DCompile(
+        compiledSource.data(),
+        compiledSource.size(),
+        desc.debugName.empty() ? nullptr : desc.debugName.c_str(),
+        nullptr,
+        nullptr,
+        desc.entryPoint.c_str(),
+        kComputeShaderProfile,
+        compileFlags,
+        0,
+        &m_shaderBlob,
+        &errors);
+      if (FAILED(compileHr)) {
+        T8_LOG_ERROR("[D3D12][Compute] Shader compile failed for '%s' (hr=0x%08X): %s",
+                     desc.debugName.c_str(),
+                     static_cast<unsigned>(compileHr),
+                     errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown error");
+        return false;
+      }
+      ShaderDiskCache::StoreArtifact(
+        cacheKey, "cs.dxbc", m_shaderBlob->GetBufferPointer(), m_shaderBlob->GetBufferSize());
+      ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
+      T8_LOG_DEBUG("[ShaderCache][D3D12] CS stored %s", cacheKey.sha1.c_str());
+    }
+
+    Microsoft::WRL::ComPtr<ID3D12ShaderReflection> reflection;
+    const HRESULT reflectHr = D3DReflect(
+      m_shaderBlob->GetBufferPointer(),
+      m_shaderBlob->GetBufferSize(),
+      IID_PPV_ARGS(&reflection));
+    if (FAILED(reflectHr)) {
+      T8_LOG_ERROR("[D3D12][Compute] Shader reflection failed (hr=0x%08X)",
+                   static_cast<unsigned>(reflectHr));
+      return false;
+    }
+
+    D3D12_SHADER_DESC shaderDesc = {};
+    if (FAILED(reflection->GetDesc(&shaderDesc))) {
+      T8_LOG_ERROR("[D3D12][Compute] Could not inspect shader resources");
+      return false;
+    }
+    UINT threadGroupX = 0;
+    UINT threadGroupY = 0;
+    UINT threadGroupZ = 0;
+    reflection->GetThreadGroupSize(&threadGroupX, &threadGroupY, &threadGroupZ);
+    if (!threadGroupX || !threadGroupY || !threadGroupZ) {
+      T8_LOG_ERROR("[D3D12][Compute] Shader '%s' has an invalid thread-group size",
+                   desc.debugName.c_str());
+      return false;
+    }
+    threadGroupSize = {threadGroupX, threadGroupY, threadGroupZ};
+
+    std::vector<D3D12_ROOT_PARAMETER> parameters;
+    parameters.reserve(shaderDesc.BoundResources);
+    std::vector<D3D12_DESCRIPTOR_RANGE> descriptorRanges;
+    descriptorRanges.reserve(shaderDesc.BoundResources);
+    for (UINT resourceIndex = 0; resourceIndex < shaderDesc.BoundResources; ++resourceIndex) {
+      D3D12_SHADER_INPUT_BIND_DESC binding = {};
+      if (FAILED(reflection->GetResourceBindingDesc(resourceIndex, &binding))) {
+        T8_LOG_ERROR("[D3D12][Compute] Could not inspect resource %u", resourceIndex);
+        return false;
+      }
+      if (binding.BindCount != 1) {
+        T8_LOG_ERROR("[D3D12][Compute] Resource arrays are not supported yet: '%s' count=%u",
+                     binding.Name, binding.BindCount);
+        return false;
+      }
+      if (binding.Space != 0) {
+        T8_LOG_ERROR("[D3D12][Compute] Register spaces are not supported yet: '%s' space=%u",
+                     binding.Name, binding.Space);
+        return false;
+      }
+
+      D3D12_ROOT_PARAMETER parameter = {};
+      parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+      const int rootIndex = static_cast<int>(parameters.size());
+
+      switch (binding.Type) {
+        case D3D_SIT_CBUFFER: {
+          ID3D12ShaderReflectionConstantBuffer* constantBuffer =
+            reflection->GetConstantBufferByName(binding.Name);
+          D3D12_SHADER_BUFFER_DESC constantDesc = {};
+          if (!constantBuffer || FAILED(constantBuffer->GetDesc(&constantDesc)) ||
+              constantDesc.Size == 0 || (constantDesc.Size % sizeof(uint32_t)) != 0) {
+            T8_LOG_ERROR("[D3D12][Compute] Invalid constant buffer layout for '%s'", binding.Name);
+            return false;
+          }
+          const uint32_t wordCount = constantDesc.Size / sizeof(uint32_t);
+          if (wordCount > 64) {
+            T8_LOG_ERROR("[D3D12][Compute] Root constants exceed 64 DWORDs for '%s'", binding.Name);
+            return false;
+          }
+          parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+          parameter.Constants.ShaderRegister = binding.BindPoint;
+          parameter.Constants.RegisterSpace = binding.Space;
+          parameter.Constants.Num32BitValues = wordCount;
+          m_constantRootIndices[binding.BindPoint] = rootIndex;
+          m_constantWordCounts[binding.BindPoint] = wordCount;
+          T8_LOG_INFO("[D3D12][Compute] Root parameter %d: constants b%u (%u DWORDs)",
+                      rootIndex, binding.BindPoint, wordCount);
+          break;
+        }
+        case D3D_SIT_STRUCTURED:
+        case D3D_SIT_BYTEADDRESS:
+          parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+          parameter.Descriptor.ShaderRegister = binding.BindPoint;
+          parameter.Descriptor.RegisterSpace = binding.Space;
+          m_bufferSrvRootIndices[binding.BindPoint] = rootIndex;
+          T8_LOG_INFO("[D3D12][Compute] Root parameter %d: structured SRV t%u",
+                      rootIndex, binding.BindPoint);
+          break;
+        case D3D_SIT_UAV_RWSTRUCTURED:
+        case D3D_SIT_UAV_RWBYTEADDRESS:
+          parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+          parameter.Descriptor.ShaderRegister = binding.BindPoint;
+          parameter.Descriptor.RegisterSpace = binding.Space;
+          m_bufferUavRootIndices[binding.BindPoint] = rootIndex;
+          T8_LOG_INFO("[D3D12][Compute] Root parameter %d: structured UAV u%u",
+                      rootIndex, binding.BindPoint);
+          break;
+        case D3D_SIT_TEXTURE:
+        case D3D_SIT_UAV_RWTYPED:
+        case D3D_SIT_SAMPLER: {
+          D3D12_DESCRIPTOR_RANGE range = {};
+          range.NumDescriptors = 1;
+          range.BaseShaderRegister = binding.BindPoint;
+          range.RegisterSpace = binding.Space;
+          range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+          if (binding.Type == D3D_SIT_TEXTURE) {
+            range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            m_textureSrvRootIndices[binding.BindPoint] = rootIndex;
+          } else if (binding.Type == D3D_SIT_UAV_RWTYPED) {
+            range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+            m_textureUavRootIndices[binding.BindPoint] = rootIndex;
+          } else {
+            range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+            m_samplerRootIndices[binding.BindPoint] = rootIndex;
+          }
+          descriptorRanges.push_back(range);
+          parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+          parameter.DescriptorTable.NumDescriptorRanges = 1;
+          parameter.DescriptorTable.pDescriptorRanges = &descriptorRanges.back();
+          T8_LOG_INFO("[D3D12][Compute] Root parameter %d: descriptor type=%d register=%u",
+                      rootIndex, static_cast<int>(range.RangeType), binding.BindPoint);
+          break;
+        }
+        default:
+          T8_LOG_ERROR("[D3D12][Compute] Unsupported resource '%s' type=%d",
+                       binding.Name, static_cast<int>(binding.Type));
+          return false;
+      }
+      parameters.push_back(parameter);
+    }
+
+    D3D12_ROOT_SIGNATURE_DESC rootDesc = {};
+    rootDesc.NumParameters = static_cast<UINT>(parameters.size());
+    rootDesc.pParameters = parameters.empty() ? nullptr : parameters.data();
+    rootDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+
+    Microsoft::WRL::ComPtr<ID3DBlob> signature;
+    Microsoft::WRL::ComPtr<ID3DBlob> signatureErrors;
+    const HRESULT serializeHr = D3D12SerializeRootSignature(
+      &rootDesc,
+      D3D_ROOT_SIGNATURE_VERSION_1,
+      &signature,
+      &signatureErrors);
+    if (FAILED(serializeHr)) {
+      T8_LOG_ERROR("[D3D12][Compute] Root signature serialization failed (hr=0x%08X): %s",
+                   static_cast<unsigned>(serializeHr),
+                   signatureErrors ? static_cast<const char*>(signatureErrors->GetBufferPointer()) : "unknown error");
+      return false;
+    }
+
+    const HRESULT rootHr = device->CreateRootSignature(
+      0,
+      signature->GetBufferPointer(),
+      signature->GetBufferSize(),
+      IID_PPV_ARGS(&m_rootSignature));
+    if (FAILED(rootHr)) {
+      T8_LOG_ERROR("[D3D12][Compute] Root signature creation failed (hr=0x%08X)",
+                   static_cast<unsigned>(rootHr));
+      return false;
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pipelineDesc = {};
+    pipelineDesc.pRootSignature = m_rootSignature.Get();
+    pipelineDesc.CS.pShaderBytecode = m_shaderBlob->GetBufferPointer();
+    pipelineDesc.CS.BytecodeLength = m_shaderBlob->GetBufferSize();
+    const HRESULT pipelineHr = device->CreateComputePipelineState(
+      &pipelineDesc,
+      IID_PPV_ARGS(&m_pipelineState));
+    if (FAILED(pipelineHr)) {
+      T8_LOG_ERROR("[D3D12][Compute] Pipeline creation failed (hr=0x%08X)",
+                   static_cast<unsigned>(pipelineHr));
+      return false;
+    }
+
+    if (!desc.debugName.empty()) {
+      const std::wstring debugName(desc.debugName.begin(), desc.debugName.end());
+      const std::wstring rootName = debugName + L" Root Signature";
+      const std::wstring pipelineName = debugName + L" Compute PSO";
+      m_rootSignature->SetName(rootName.c_str());
+      m_pipelineState->SetName(pipelineName.c_str());
+    }
+
+    ShaderPermutationDump::RecordCompute(
+      desc.debugName, desc.entryPoint, desc.permutationName, desc.defines);
+
+    T8_LOG_INFO("[D3D12][Compute] Pipeline '%s' created (permutation=%s profile=cs_5_0 threads=%ux%ux%u constants=%zu bufferSRVs=%zu bufferUAVs=%zu textureSRVs=%zu textureUAVs=%zu samplers=%zu)",
+                desc.debugName.c_str(),
+                desc.permutationName.c_str(),
+                threadGroupX, threadGroupY, threadGroupZ,
+                m_constantRootIndices.size(),
+          m_bufferSrvRootIndices.size(),
+          m_bufferUavRootIndices.size(),
+          m_textureSrvRootIndices.size(),
+          m_textureUavRootIndices.size(),
+          m_samplerRootIndices.size());
+    return true;
+  }
+
+  bool D3D12ComputeBuffer::Create(ID3D12Device* device,
+                                  D3D12Driver* driver,
+                                  const ComputeBufferDesc& desc,
+                                  const void* initialData) {
+    if (!device || !driver || desc.byteWidth == 0 || desc.structureStride == 0 ||
+        (desc.byteWidth % desc.structureStride) != 0) {
+      T8_LOG_ERROR("[D3D12][Compute] Invalid buffer descriptor for '%s'", desc.debugName.c_str());
+      return false;
+    }
+
+    descriptor = desc;
+    D3D12_RESOURCE_DESC resourceDesc = {};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    resourceDesc.Width = desc.byteWidth;
+    resourceDesc.Height = 1;
+    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.MipLevels = 1;
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    resourceDesc.Flags = desc.access == ComputeBufferAccess::ReadWrite
+      ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
+      : D3D12_RESOURCE_FLAG_NONE;
+
+    const D3D12_RESOURCE_STATES finalState = desc.access == ComputeBufferAccess::ReadWrite
+      ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+      : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    // D3D12 buffers are effectively created in COMMON. Initial uploads rely on
+    // implicit promotion to COPY_DEST; otherwise DispatchCompute transitions
+    // from COMMON to the reflected SRV/UAV state before first use.
+    const D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;
+
+    D3D12_HEAP_PROPERTIES heap = {};
+    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    const HRESULT createHr = device->CreateCommittedResource(
+      &heap,
+      D3D12_HEAP_FLAG_NONE,
+      &resourceDesc,
+      initialState,
+      nullptr,
+      IID_PPV_ARGS(&m_resource));
+    if (FAILED(createHr)) {
+      T8_LOG_ERROR("[D3D12][Compute] Buffer '%s' creation failed (hr=0x%08X)",
+                   desc.debugName.c_str(), static_cast<unsigned>(createHr));
+      return false;
+    }
+
+    if (!desc.debugName.empty()) {
+      const std::wstring debugName(desc.debugName.begin(), desc.debugName.end());
+      m_resource->SetName(debugName.c_str());
+    }
+
+    m_state = initialState;
+    if (initialData) {
+      driver->UploadBufferData(m_resource.Get(), initialData, desc.byteWidth, finalState);
+      m_state = finalState;
+    }
+
+    T8_LOG_INFO("[D3D12][Compute] Buffer '%s' created (%u bytes, stride=%u, access=%s)",
+                desc.debugName.c_str(), desc.byteWidth, desc.structureStride,
+                desc.access == ComputeBufferAccess::ReadWrite ? "read-write" : "read-only");
+    return true;
+  }
+
+  std::unique_ptr<ComputePipeline> D3D12Driver::CreateComputePipeline(const ComputePipelineDesc& desc) {
+    auto pipeline = std::make_unique<D3D12ComputePipeline>();
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    if (!pipeline->Create(device, desc))
+      return {};
+    return pipeline;
+  }
+
+  std::unique_ptr<ComputeBuffer> D3D12Driver::CreateComputeBuffer(const ComputeBufferDesc& desc,
+                                                                  const void* initialData) {
+    auto buffer = std::make_unique<D3D12ComputeBuffer>();
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    if (!buffer->Create(device, this, desc, initialData))
+      return {};
+    return buffer;
+  }
+
+  bool D3D12Driver::DispatchCompute(ComputePipeline& pipelineBase,
+                                    const std::vector<ComputeBindingDesc>& bindings,
+                                    uint32_t groupCountX,
+                                    uint32_t groupCountY,
+                                    uint32_t groupCountZ) {
+    auto* pipeline = dynamic_cast<D3D12ComputePipeline*>(&pipelineBase);
+    if (!pipeline || groupCountX == 0 || groupCountY == 0 || groupCountZ == 0) {
+      T8_LOG_ERROR("[D3D12][Compute] Invalid pipeline or zero dispatch extent");
+      return false;
+    }
+    constexpr uint32_t maxDispatchGroupsPerDimension = 65535;
+    if (groupCountX > maxDispatchGroupsPerDimension ||
+        groupCountY > maxDispatchGroupsPerDimension ||
+        groupCountZ > maxDispatchGroupsPerDimension) {
+      T8_LOG_ERROR("[D3D12][Compute] Dispatch extent exceeds D3D12 limits: %u x %u x %u",
+                   groupCountX, groupCountY, groupCountZ);
+      return false;
+    }
+    if (CurrentRT >= 0) {
+      T8_LOG_ERROR("[D3D12][Compute] Dispatch requested while render target %d is active", CurrentRT);
+      return false;
+    }
+
+    struct ResolvedBinding {
+      const ComputeBindingDesc* binding = nullptr;
+      D3D12ComputeBuffer* buffer = nullptr;
+      D3D12Texture* texture = nullptr;
+      int rootIndex = -1;
+    };
+    std::vector<ResolvedBinding> resolved;
+    resolved.reserve(bindings.size());
+    std::unordered_set<uint32_t> boundConstants;
+    std::unordered_set<uint32_t> boundBufferSrvs;
+    std::unordered_set<uint32_t> boundBufferUavs;
+    std::unordered_set<uint32_t> boundTextureSrvs;
+    std::unordered_set<uint32_t> boundTextureUavs;
+    std::unordered_set<uint32_t> boundSamplers;
+
+    for (const ComputeBindingDesc& binding : bindings) {
+      ResolvedBinding item;
+      item.binding = &binding;
+      switch (binding.type) {
+        case ComputeBindingType::Constants32:
+          item.rootIndex = pipeline->GetConstantRootIndex(binding.shaderRegister);
+          if (!binding.constants || binding.constantCount == 0 ||
+              binding.constantCount != pipeline->GetConstantWordCount(binding.shaderRegister)) {
+            T8_LOG_ERROR("[D3D12][Compute] Constants b%u do not match reflected layout",
+                         binding.shaderRegister);
+            return false;
+          }
+          if (!boundConstants.insert(binding.shaderRegister).second) {
+            T8_LOG_ERROR("[D3D12][Compute] Duplicate constants binding b%u", binding.shaderRegister);
+            return false;
+          }
+          break;
+        case ComputeBindingType::ReadOnlyBuffer:
+          item.rootIndex = pipeline->GetBufferSrvRootIndex(binding.shaderRegister);
+          item.buffer = dynamic_cast<D3D12ComputeBuffer*>(binding.buffer);
+          if (!item.buffer || item.buffer->descriptor.access != ComputeBufferAccess::ReadOnly) {
+            T8_LOG_ERROR("[D3D12][Compute] Invalid read-only buffer t%u", binding.shaderRegister);
+            return false;
+          }
+          if (!boundBufferSrvs.insert(binding.shaderRegister).second) {
+            T8_LOG_ERROR("[D3D12][Compute] Duplicate read-only binding t%u", binding.shaderRegister);
+            return false;
+          }
+          break;
+        case ComputeBindingType::ReadWriteBuffer:
+          item.rootIndex = pipeline->GetBufferUavRootIndex(binding.shaderRegister);
+          item.buffer = dynamic_cast<D3D12ComputeBuffer*>(binding.buffer);
+          if (!item.buffer || item.buffer->descriptor.access != ComputeBufferAccess::ReadWrite) {
+            T8_LOG_ERROR("[D3D12][Compute] Invalid read-write buffer u%u", binding.shaderRegister);
+            return false;
+          }
+          if (!boundBufferUavs.insert(binding.shaderRegister).second) {
+            T8_LOG_ERROR("[D3D12][Compute] Duplicate read-write binding u%u", binding.shaderRegister);
+            return false;
+          }
+          break;
+        case ComputeBindingType::ReadOnlyTexture:
+          item.rootIndex = pipeline->GetTextureSrvRootIndex(binding.shaderRegister);
+          item.texture = dynamic_cast<D3D12Texture*>(binding.texture);
+          if (!item.texture || !item.texture->pTexResource || !item.texture->srvGPU.ptr) {
+            T8_LOG_ERROR("[D3D12][Compute] Invalid sampled texture t%u", binding.shaderRegister);
+            return false;
+          }
+          if (!boundTextureSrvs.insert(binding.shaderRegister).second) {
+            T8_LOG_ERROR("[D3D12][Compute] Duplicate sampled texture t%u", binding.shaderRegister);
+            return false;
+          }
+          break;
+        case ComputeBindingType::ReadWriteTexture:
+          item.rootIndex = pipeline->GetTextureUavRootIndex(binding.shaderRegister);
+          item.texture = dynamic_cast<D3D12Texture*>(binding.texture);
+          if (!item.texture || !item.texture->pTexResource || !item.texture->uavGPU.ptr) {
+            T8_LOG_ERROR("[D3D12][Compute] Invalid storage texture u%u", binding.shaderRegister);
+            return false;
+          }
+          if (!boundTextureUavs.insert(binding.shaderRegister).second) {
+            T8_LOG_ERROR("[D3D12][Compute] Duplicate storage texture u%u", binding.shaderRegister);
+            return false;
+          }
+          break;
+        case ComputeBindingType::Sampler:
+          item.rootIndex = pipeline->GetSamplerRootIndex(binding.shaderRegister);
+          item.texture = dynamic_cast<D3D12Texture*>(binding.texture);
+          if (!item.texture || !item.texture->hasSampler || !item.texture->samplerGPU.ptr) {
+            T8_LOG_ERROR("[D3D12][Compute] Invalid sampler s%u", binding.shaderRegister);
+            return false;
+          }
+          if (!boundSamplers.insert(binding.shaderRegister).second) {
+            T8_LOG_ERROR("[D3D12][Compute] Duplicate sampler s%u", binding.shaderRegister);
+            return false;
+          }
+          break;
+      }
+      if (item.rootIndex < 0) {
+        T8_LOG_ERROR("[D3D12][Compute] Shader register %u is not present in the pipeline",
+                     binding.shaderRegister);
+        return false;
+      }
+      resolved.push_back(item);
+    }
+
+    if (boundConstants.size() != pipeline->m_constantRootIndices.size() ||
+        boundBufferSrvs.size() != pipeline->m_bufferSrvRootIndices.size() ||
+        boundBufferUavs.size() != pipeline->m_bufferUavRootIndices.size() ||
+        boundTextureSrvs.size() != pipeline->m_textureSrvRootIndices.size() ||
+        boundTextureUavs.size() != pipeline->m_textureUavRootIndices.size() ||
+        boundSamplers.size() != pipeline->m_samplerRootIndices.size()) {
+      T8_LOG_ERROR("[D3D12][Compute] Dispatch bindings are incomplete (b=%zu/%zu buffer-t=%zu/%zu buffer-u=%zu/%zu texture-t=%zu/%zu texture-u=%zu/%zu s=%zu/%zu)",
+                   boundConstants.size(), pipeline->m_constantRootIndices.size(),
+                   boundBufferSrvs.size(), pipeline->m_bufferSrvRootIndices.size(),
+                   boundBufferUavs.size(), pipeline->m_bufferUavRootIndices.size(),
+                   boundTextureSrvs.size(), pipeline->m_textureSrvRootIndices.size(),
+                   boundTextureUavs.size(), pipeline->m_textureUavRootIndices.size(),
+                   boundSamplers.size(), pipeline->m_samplerRootIndices.size());
+      return false;
+    }
+
+    BeginFrame(FrameTargetMode::Offscreen);
+    ID3D12GraphicsCommandList* commandList = GetCmdList();
+    ID3D12DescriptorHeap* heaps[] = {
+      m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
+      m_heaps[D3D12Heap::SAMPLER].GetHeap()
+    };
+    commandList->SetDescriptorHeaps(2, heaps);
+    commandList->SetComputeRootSignature(pipeline->GetRootSignature());
+    commandList->SetPipelineState(pipeline->GetPipelineState());
+
+    std::unordered_set<ID3D12Resource*> writtenResources;
+    for (const ResolvedBinding& item : resolved) {
+      const ComputeBindingDesc& binding = *item.binding;
+      switch (binding.type) {
+        case ComputeBindingType::Constants32:
+          commandList->SetComputeRoot32BitConstants(
+            static_cast<UINT>(item.rootIndex),
+            binding.constantCount,
+            binding.constants,
+            0);
+          break;
+        case ComputeBindingType::ReadOnlyBuffer:
+          TransitionBuffer(commandList, *item.buffer, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+          commandList->SetComputeRootShaderResourceView(
+            static_cast<UINT>(item.rootIndex),
+            item.buffer->GetResource()->GetGPUVirtualAddress());
+          break;
+        case ComputeBindingType::ReadWriteBuffer:
+          TransitionBuffer(commandList, *item.buffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+          commandList->SetComputeRootUnorderedAccessView(
+            static_cast<UINT>(item.rootIndex),
+            item.buffer->GetResource()->GetGPUVirtualAddress());
+          writtenResources.insert(item.buffer->GetResource());
+          break;
+        case ComputeBindingType::ReadOnlyTexture:
+          TransitionTexture(commandList, *item.texture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+          commandList->SetComputeRootDescriptorTable(
+            static_cast<UINT>(item.rootIndex), item.texture->srvGPU);
+          break;
+        case ComputeBindingType::ReadWriteTexture:
+          TransitionTexture(commandList, *item.texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+          commandList->SetComputeRootDescriptorTable(
+            static_cast<UINT>(item.rootIndex), item.texture->uavGPU);
+          writtenResources.insert(item.texture->pTexResource.Get());
+          break;
+        case ComputeBindingType::Sampler:
+          commandList->SetComputeRootDescriptorTable(
+            static_cast<UINT>(item.rootIndex), item.texture->samplerGPU);
+          break;
+      }
+    }
+
+    commandList->Dispatch(groupCountX, groupCountY, groupCountZ);
+    for (ID3D12Resource* resource : writtenResources) {
+      D3D12_RESOURCE_BARRIER barrier = {};
+      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+      barrier.UAV.pResource = resource;
+      commandList->ResourceBarrier(1, &barrier);
+    }
+    for (const ResolvedBinding& item : resolved) {
+      if (item.texture && item.binding->type != ComputeBindingType::Sampler)
+        TransitionTexture(commandList, *item.texture, item.texture->GetGraphicsReadState());
+    }
+
+    // Graphics state must be rebound after a compute pipeline/root signature.
+    m_lastPSO = nullptr;
+    m_lastRootSig = nullptr;
+    T8DeviceContext->actualShaderSet = nullptr;
+    T8DeviceContext->actualConstantBuffer = nullptr;
+    T8_LOG_TRACE("[D3D12][Compute] Dispatched %u x %u x %u workgroups",
+           groupCountX, groupCountY, groupCountZ);
+    return true;
+  }
+
+  bool D3D12Driver::ReadComputeBuffer(ComputeBuffer& bufferBase,
+                                      void* destination,
+                                      size_t byteCount) {
+    auto* buffer = dynamic_cast<D3D12ComputeBuffer*>(&bufferBase);
+    if (!buffer || !destination || byteCount == 0 || byteCount > buffer->descriptor.byteWidth) {
+      T8_LOG_ERROR("[D3D12][Compute] Invalid readback request");
+      return false;
+    }
+    if (!m_frameStarted) {
+      T8_LOG_ERROR("[D3D12][Compute] Readback requires a recorded compute dispatch");
+      return false;
+    }
+
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    D3D12_HEAP_PROPERTIES readbackHeap = {};
+    readbackHeap.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC readbackDesc = {};
+    readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    readbackDesc.Width = byteCount;
+    readbackDesc.Height = 1;
+    readbackDesc.DepthOrArraySize = 1;
+    readbackDesc.MipLevels = 1;
+    readbackDesc.SampleDesc.Count = 1;
+    readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    Microsoft::WRL::ComPtr<ID3D12Resource> readback;
+    const HRESULT createHr = device->CreateCommittedResource(
+      &readbackHeap,
+      D3D12_HEAP_FLAG_NONE,
+      &readbackDesc,
+      D3D12_RESOURCE_STATE_COPY_DEST,
+      nullptr,
+      IID_PPV_ARGS(&readback));
+    if (FAILED(createHr)) {
+      T8_LOG_ERROR("[D3D12][Compute] Readback buffer creation failed (hr=0x%08X)",
+                   static_cast<unsigned>(createHr));
+      CompleteFrame(FrameCompletionMode::SubmitNoPresent);
+      WaitForGPU();
+      return false;
+    }
+
+    ID3D12GraphicsCommandList* commandList = GetCmdList();
+    const D3D12_RESOURCE_STATES previousState = buffer->GetState();
+    TransitionBuffer(commandList, *buffer, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    commandList->CopyBufferRegion(readback.Get(), 0, buffer->GetResource(), 0, byteCount);
+    TransitionBuffer(commandList, *buffer, previousState);
+
+    CompleteFrame(FrameCompletionMode::SubmitNoPresent);
+    WaitForGPU();
+
+    D3D12_RANGE readRange = { 0, byteCount };
+    void* mapped = nullptr;
+    const HRESULT mapHr = readback->Map(0, &readRange, &mapped);
+    if (FAILED(mapHr) || !mapped) {
+      T8_LOG_ERROR("[D3D12][Compute] Readback mapping failed (hr=0x%08X)",
+                   static_cast<unsigned>(mapHr));
+      return false;
+    }
+    std::memcpy(destination, mapped, byteCount);
+    const D3D12_RANGE writtenRange = { 0, 0 };
+    readback->Unmap(0, &writtenRange);
+    return true;
+  }
+
+} // namespace t850
+
+#endif // OS_WINDOWS

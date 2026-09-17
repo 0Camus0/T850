@@ -21,10 +21,11 @@
     { "name": "Extra16F",          "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "DepthPass",         "color_count": 0, "color_format": "NONE",    "depth_format": "F32",  "size": [0,0], "linear_filter": false, "size_ref": "$shadow_resolution", "shadow_projection": "sun-shadow" },
     { "name": "ShadowAccum",       "color_count": 1, "color_format": "R8",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
-    { "name": "ExtraHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true },
+    { "name": "ExtraHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "storage": true },
     { "name": "BloomAccum",        "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "BloomHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
-    { "name": "BrightPass",        "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
+    { "name": "BrightPass",        "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true, "storage": true },
+    { "name": "TorchParticles",    "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true, "storage": true },
     { "name": "CoC",               "color_count": 2, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "CombineCoC",        "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "AdaptedLumCurrent", "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false },
@@ -181,13 +182,31 @@
       "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
     },
     {
+      "name": "Torch Particles",
+      "target": "TorchParticles",
+      "execution": "compute_if_supported",
+      "compute_shader": "Shaders/CS_TorchParticles.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "TorchParticles:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "TorchParticles:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
+      "camera": "main",
+      "clear": true,
+      "clear_color": [0, 0, 0, 0],
+      "draws": []
+    },
+    {
       "name": "Light Add",
       "target": "Extra16F",
       "inputs": [
-        { "source": "Deferred:COLOR0", "slot": 0 }
+        { "source": "TorchParticles:COLOR0", "slot": 0 },
+        { "source": "Deferred:COLOR0",       "slot": 1 }
       ],
       "draws": [
-        { "type": "fullscreen_quad", "signature": "FSQUAD_1_TEX" }
+        { "type": "fullscreen_quad", "signature": "LIGHT_ADD" }
       ]
     },
     {
@@ -214,6 +233,19 @@
     {
       "name": "Bright",
       "target": "BrightPass",
+      "execution": "compute_if_supported",
+      "compute_shader": "Shaders/CS_Bright.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "BrightPass:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "Extra16F:COLOR0", "access": "sampled", "shader_register": 0 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampled", "shader_register": 1 },
+        { "resource": "Extra16F:COLOR0", "access": "sampler", "shader_register": 0 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampler", "shader_register": 1 },
+        { "resource": "BrightPass:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "inputs": [
         { "source": "Extra16F:COLOR0",           "slot": 0 },
         { "source": "AdaptedLumCurrent:COLOR0",  "slot": 1 }
@@ -290,6 +322,21 @@
     {
       "name": "HDR Composition",
       "target": "ExtraHelper",
+      "execution": "compute_if_supported",
+      "compute_shader": "Shaders/CS_HDRComposite.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "ExtraHelper:COLOR0",
+      "compute_resources": [
+        { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
+        { "resource": "Extra16F:COLOR0", "access": "sampled", "shader_register": 0 },
+        { "resource": "BloomAccum:COLOR0", "access": "sampled", "shader_register": 1 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampled", "shader_register": 2 },
+        { "resource": "Extra16F:COLOR0", "access": "sampler", "shader_register": 0 },
+        { "resource": "BloomAccum:COLOR0", "access": "sampler", "shader_register": 1 },
+        { "resource": "AdaptedLumCurrent:COLOR0", "access": "sampler", "shader_register": 2 },
+        { "resource": "ExtraHelper:COLOR0", "access": "storage_write", "shader_register": 0 }
+      ],
       "inputs": [
         { "source": "Extra16F:COLOR0",           "slot": 0 },
         { "source": "BloomAccum:COLOR0",         "slot": 1 },

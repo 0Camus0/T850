@@ -842,12 +842,14 @@ void KinematicCharacterController::UpdateFps(float deltaSeconds,
   T8_TELEMETRY_SCOPE("character.fps_update");
   deltaSeconds = ClampFloat(deltaSeconds, 0.0f, 0.1f);
 
-  if (context.collisionWorld) {
+  if (context.collisionWorld && m_velocity.y <= 0.0f) {
     CharacterCollisionHit groundHit;
     const XVECTOR3 probe(0.0f, -m_settings.groundProbeDistance, 0.0f, 0.0f);
     m_grounded = SweepCapsule(
         context, m_position, probe, m_settings.capsuleRadius, m_settings.capsuleHalfHeight, groundHit) &&
         groundHit.normal.y >= m_settings.minWalkNormalY;
+  } else if (context.collisionWorld) {
+    m_grounded = false;
   } else {
     m_grounded = true;
     m_velocity.y = 0.0f;
@@ -900,14 +902,18 @@ void KinematicCharacterController::UpdateFps(float deltaSeconds,
           context, m_position, displacement, m_settings.capsuleRadius, m_settings.capsuleHalfHeight, &m_velocity);
     }
 
-    CharacterCollisionHit groundHit;
-    const XVECTOR3 probe(0.0f, -m_settings.groundProbeDistance, 0.0f, 0.0f);
-    if (SweepCapsule(context, m_position, probe, m_settings.capsuleRadius, m_settings.capsuleHalfHeight, groundHit) &&
-        groundHit.normal.y >= m_settings.minWalkNormalY) {
-      m_position += probe * ClampFloat(groundHit.fraction, 0.0f, 1.0f);
-      m_grounded = true;
-      if (m_velocity.y < 0.0f) {
-        m_velocity.y = 0.0f;
+    if (m_velocity.y <= 0.0f) {
+      CharacterCollisionHit groundHit;
+      const XVECTOR3 probe(0.0f, -m_settings.groundProbeDistance, 0.0f, 0.0f);
+      if (SweepCapsule(context, m_position, probe, m_settings.capsuleRadius, m_settings.capsuleHalfHeight, groundHit) &&
+          groundHit.normal.y >= m_settings.minWalkNormalY) {
+        m_position += probe * ClampFloat(groundHit.fraction, 0.0f, 1.0f);
+        m_grounded = true;
+        if (m_velocity.y < 0.0f) {
+          m_velocity.y = 0.0f;
+        }
+      } else {
+        m_grounded = false;
       }
     } else {
       m_grounded = false;

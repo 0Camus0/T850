@@ -56,6 +56,7 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 |---|---|---|
 | Geometry/glTF/.x loading | [geometry/loading-geometry.md](geometry/loading-geometry.md) | Verified 2026-08-19 |
 | Shader keys/cache/reflection/PSOs | [rendering/shader-management.md](rendering/shader-management.md) | Verified 2026-08-19 |
+| Cross-backend compute shaders and RenderDoc validation | [rendering/compute-shader-implementation.md](rendering/compute-shader-implementation.md) | Verified 2026-09-15 |
 | JSON render graph | [rendering/render-graph.md](rendering/render-graph.md) | Verified 2026-08-19 |
 | Mesh draw path/state tracking | [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md) | Verified 2026-08-19 |
 | Textures/samplers/IBL/material slots | [rendering/textures-and-ibl.md](rendering/textures-and-ibl.md) | Verified 2026-08-30 |

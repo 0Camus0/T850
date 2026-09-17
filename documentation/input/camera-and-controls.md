@@ -225,6 +225,11 @@ Scenes and editor free-fly mode convert `InputManager` into `CameraInputState`.
 - left stick click sets `sprint`;
 - right stick becomes look deltas when look is allowed.
 
+The grounded FPS controller only acquires ground support while vertical velocity is
+non-positive. A downward ground probe must not reclassify an ascending jump as grounded;
+otherwise scene-level ground stabilization can snap the character back to the floor during
+the first jump frame. `T-CTRL-JUMP-01` covers jump launch, held-key ascent, and landing.
+
 The right-stick look mapping is expressed as mouse-like deltas scaled by frame time, so existing mouse look paths are reused.
 
 ### Minecraft gamepad controls

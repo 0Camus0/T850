@@ -118,6 +118,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/Technique.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ConfigRuntime.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/RuntimeProfile.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ComputeKernelRegistry.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderDiskCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPreprocessor.cpp
   ${T850_SOURCE_DIR}/Librerias/simplecpp/simplecpp.cpp
@@ -139,6 +140,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/gltf/GLTFAnimation.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/BaseDriver.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanDriver.cpp
+  ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanCompute.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanVertexBuffer.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanIndexBuffer.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanConstantBuffer.cpp
@@ -194,6 +196,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelNavigation.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelCollision.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/CrashDiagnostics.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/ComputeSelfTest.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/Profiler.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/ProfilerGpuBackend.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/RuntimeTelemetry.cpp

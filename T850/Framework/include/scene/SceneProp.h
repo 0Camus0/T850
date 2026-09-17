@@ -182,6 +182,22 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	bool DeferredLightVolumesEnabled = false;
 	bool PointLightsEnabled = true;
 	float FrameDeltaSec = 1.0f / 60.0f;
+	int ParticleEmitterEnabled = 0;
+	XVECTOR3 ParticleEmitterPosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+	float ParticleTimeSeconds = 0.0f;
+	int ParticleCount = 0;
+	float ParticleLifetime = 0.0f;
+	float ParticleRiseHeight = 0.0f;
+	float ParticleSpread = 0.0f;
+	float ParticleSize = 0.0f;
+	XVECTOR3 ParticleColor0 = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+	XVECTOR3 ParticleColor1 = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+	XVECTOR3 ParticleColor2 = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+	XVECTOR3 ParticleShape = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+	XVECTOR3 ParticleWobble = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+	XVECTOR3 ParticleFade = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+	float ParticleFadeOutStart = 0.0f;
+	float ParticleIntensity = 0.0f;
 
   //DOF
   float Aperture = 0.0f;

@@ -10,6 +10,8 @@
 #include <Descriptors.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
+#include <utils/ComputeKernelRegistry.h>
+#include <core/Config.h>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -28,10 +30,17 @@
 #include <sstream>
 #include <cstdio>
 #include <unordered_map>
+#include <unordered_set>
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <set>
 
 namespace t850 {
+
+RenderGraph::~RenderGraph() = default;
+RenderGraph::RenderGraph(RenderGraph&&) noexcept = default;
+RenderGraph& RenderGraph::operator=(RenderGraph&&) noexcept = default;
 
 // ---- JSON loading via glaze ----
 
@@ -43,7 +52,7 @@ bool LoadRenderGraphDescriptor(const std::string& path, RenderGraphDesc& desc) {
     return false;
   }
 
-  auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, json);
+  auto ec = glz::read<glz::opts{.error_on_unknown_keys = true}>(desc, json);
   if (ec) {
     std::string err = glz::format_error(ec, json);
     T8_LOG_ERROR("[RenderGraph] Parse error '%s': %s", path.c_str(), err.c_str());
@@ -68,6 +77,38 @@ static const std::unordered_map<std::string, int> s_attachmentMap = {
   {"COLOR6", BaseDriver::COLOR6_ATTACHMENT},
   {"COLOR7", BaseDriver::COLOR7_ATTACHMENT},
 };
+
+namespace {
+
+std::optional<ComputeBindingType> ResolveComputeAccess(std::string_view access) {
+  if (access == "constants") return ComputeBindingType::Constants32;
+  if (access == "sampled") return ComputeBindingType::ReadOnlyTexture;
+  if (access == "storage_write") return ComputeBindingType::ReadWriteTexture;
+  if (access == "sampler") return ComputeBindingType::Sampler;
+  return std::nullopt;
+}
+
+bool ParseRenderTargetReference(std::string_view reference,
+                                std::string& renderTarget,
+                                int& attachment) {
+  if (reference.empty() || reference.front() == '@')
+    return false;
+  const size_t separator = reference.find(':');
+  renderTarget = std::string(reference.substr(0, separator));
+  const std::string attachmentName = separator == std::string_view::npos
+    ? "COLOR0" : std::string(reference.substr(separator + 1));
+  const auto found = s_attachmentMap.find(attachmentName);
+  if (renderTarget.empty() || found == s_attachmentMap.end())
+    return false;
+  attachment = found->second;
+  return true;
+}
+
+std::string ResourceIdentity(const std::string& renderTarget, int attachment) {
+  return renderTarget + ":" + std::to_string(attachment);
+}
+
+} // namespace
 
 static const std::unordered_map<std::string, int> s_colorFormatMap = {
   {"NONE",    BaseRT::NOTHING},
@@ -248,7 +289,152 @@ bool RenderGraph::Load(const std::string& path) {
 
   if (!LoadRenderGraphDescriptor(path, m_sourceDesc))
     return false;
+
+  std::unordered_map<std::string, const RTDesc*> renderTargets;
+  for (const RTDesc& renderTarget : m_sourceDesc.render_targets) {
+    if (renderTarget.name.empty() ||
+        !renderTargets.emplace(renderTarget.name, &renderTarget).second) {
+      T8_LOG_ERROR("[RenderGraph] Render target names must be nonempty and unique: '%s'",
+                   renderTarget.name.c_str());
+      return false;
+    }
+  }
+
   for (const auto& pass : m_sourceDesc.passes) {
+    if (pass.execution != "graphics" && pass.execution != "compute_if_supported") {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has unknown execution mode '%s'",
+                   pass.name.c_str(), pass.execution.c_str());
+      return false;
+    }
+    if (pass.execution == "graphics" &&
+        (!pass.compute_shader.empty() || !pass.compute_extent_from.empty() ||
+         !pass.compute_resources.empty())) {
+      T8_LOG_ERROR("[RenderGraph] Graphics pass '%s' contains compute-only fields",
+                   pass.name.c_str());
+      return false;
+    }
+    if (pass.execution == "compute_if_supported") {
+      if (pass.compute_shader.empty() || pass.compute_entry.empty() ||
+          pass.compute_extent_from.empty() || pass.compute_resources.empty()) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has an incomplete compute declaration",
+                     pass.name.c_str());
+        return false;
+      }
+      const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
+      if (!kernel || pass.compute_entry != kernel->entryPoint) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has unknown compute kernel '%s:%s'",
+                     pass.name.c_str(), pass.compute_shader.c_str(),
+                     pass.compute_entry.c_str());
+        return false;
+      }
+      if (!SupportsComputePermutation(*kernel, pass.compute_permutation)) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has unsupported permutation '%s'",
+                     pass.name.c_str(), pass.compute_permutation.c_str());
+        return false;
+      }
+
+      std::set<std::pair<ComputeBindingType, uint32_t>> expectedBindings;
+      for (size_t index = 0; index < kernel->bindingCount; ++index) {
+        expectedBindings.emplace(kernel->bindings[index].type,
+                                 kernel->bindings[index].shaderRegister);
+      }
+      std::set<std::pair<ComputeBindingType, uint32_t>> declaredBindings;
+      std::unordered_set<std::string> sampledResources;
+      std::unordered_set<std::string> writtenResources;
+      std::unordered_set<std::string> samplerResources;
+      for (const ComputeResourceDesc& resource : pass.compute_resources) {
+        const std::optional<ComputeBindingType> type = ResolveComputeAccess(resource.access);
+        if (!type || resource.shader_register < 0) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute access '%s' or register %d",
+                       pass.name.c_str(), resource.access.c_str(), resource.shader_register);
+          return false;
+        }
+        const auto bindingKey = std::make_pair(
+          *type, static_cast<uint32_t>(resource.shader_register));
+        if (!expectedBindings.count(bindingKey) ||
+            !declaredBindings.insert(bindingKey).second) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' has unexpected or duplicate compute binding '%s' register %d",
+                       pass.name.c_str(), resource.access.c_str(), resource.shader_register);
+          return false;
+        }
+        if (*type == ComputeBindingType::Constants32) {
+          if (resource.resource != "@kernel_constants") {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' constants must use @kernel_constants",
+                         pass.name.c_str());
+            return false;
+          }
+          continue;
+        }
+
+        std::string renderTargetName;
+        int attachment = BaseDriver::COLOR0_ATTACHMENT;
+        if (!ParseRenderTargetReference(resource.resource, renderTargetName, attachment)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute resource '%s'",
+                       pass.name.c_str(), resource.resource.c_str());
+          return false;
+        }
+        const auto renderTargetIt = renderTargets.find(renderTargetName);
+        if (renderTargetIt == renderTargets.end()) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' references unknown compute target '%s'",
+                       pass.name.c_str(), renderTargetName.c_str());
+          return false;
+        }
+        const RTDesc& renderTarget = *renderTargetIt->second;
+        if ((attachment == BaseDriver::DEPTH_ATTACHMENT && renderTarget.depth_format == "NONE") ||
+            (attachment != BaseDriver::DEPTH_ATTACHMENT &&
+             (attachment < 0 || attachment >= renderTarget.color_count))) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' references unavailable attachment '%s'",
+                       pass.name.c_str(), resource.resource.c_str());
+          return false;
+        }
+        const std::string identity = ResourceIdentity(renderTargetName, attachment);
+        if (*type == ComputeBindingType::ReadOnlyTexture) {
+          sampledResources.insert(identity);
+        } else if (*type == ComputeBindingType::Sampler) {
+          samplerResources.insert(identity);
+        } else if (*type == ComputeBindingType::ReadWriteTexture) {
+          if (attachment == BaseDriver::DEPTH_ATTACHMENT || !renderTarget.storage) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' storage output '%s' is not a storage-enabled color target",
+                         pass.name.c_str(), resource.resource.c_str());
+            return false;
+          }
+          if (!writtenResources.insert(identity).second) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' writes '%s' more than once",
+                         pass.name.c_str(), resource.resource.c_str());
+            return false;
+          }
+        }
+      }
+      if (declaredBindings != expectedBindings) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' does not declare the kernel's complete binding layout",
+                     pass.name.c_str());
+        return false;
+      }
+      for (const std::string& sampler : samplerResources) {
+        if (!sampledResources.count(sampler)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' sampler '%s' has no matching sampled resource",
+                       pass.name.c_str(), sampler.c_str());
+          return false;
+        }
+      }
+      for (const std::string& written : writtenResources) {
+        if (sampledResources.count(written)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' reads and writes '%s' in one dispatch",
+                       pass.name.c_str(), written.c_str());
+          return false;
+        }
+      }
+      std::string extentTarget;
+      int extentAttachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (!ParseRenderTargetReference(pass.compute_extent_from,
+                                      extentTarget, extentAttachment) ||
+          !writtenResources.count(ResourceIdentity(extentTarget, extentAttachment))) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' compute_extent_from must name a storage output",
+                     pass.name.c_str());
+        return false;
+      }
+    }
+
     for (const auto& draw : pass.draws) {
       if (draw.signature != "LIGHT_ADD") continue;
       bool hasSlot0 = false;
@@ -496,15 +682,20 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
     // Keep it opt-in per target so bloom/intermediate passes never sample
     // implicit mips unexpectedly.
     const bool generateMips = rt.generate_mips;
+    const bool allowStorage = rt.storage && driver->SupportsComputeTextures();
+    if (rt.storage && !allowStorage) {
+      T8_LOG_INFO("[RenderGraph] Creating RT '%s' without storage usage on API=%s",
+                  rt.name.c_str(), driver->ApiTag());
+    }
     int handle;
     if (!rt.color_formats.empty()) {
       // Per-attachment formats specified in JSON
       std::vector<int> perCF;
       for (const auto& fmt : rt.color_formats)
         perCF.push_back(ResolveColorFormat(fmt));
-      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, generateMips);
+      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, generateMips, allowStorage);
     } else {
-      handle = driver->CreateRT(rt.color_count, cf, df, w, h, generateMips);
+      handle = driver->CreateRT(rt.color_count, cf, df, w, h, generateMips, allowStorage);
     }
     auto applyFilter = [&](Texture* tex) {
       if (!tex) return;
@@ -534,9 +725,12 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
 
   // Now that RT handles are resolved, build the DAG
   BuildGraph();
+  CreateComputePipelines(driver);
 }
 
 void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
+  m_computePipelines.clear();
+  m_loggedComputeDispatches.clear();
   if (!driver) {
     m_rtHandles.clear();
     m_nodes.clear();
@@ -558,6 +752,138 @@ void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
   m_rtHandles.clear();
   m_nodes.clear();
   m_edges.clear();
+}
+
+void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
+  m_computePipelines.clear();
+  m_loggedComputeDispatches.clear();
+  if (!driver)
+    return;
+
+  for (const GraphNode& node : m_nodes) {
+    const RenderPassDesc& pass = *node.desc;
+    if (pass.execution == "graphics")
+      continue;
+    const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
+    if (!kernel)
+      continue;
+    if (g_config.postProcessMode != Config::PostProcessMode::Compute) {
+      T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics implementation by post-process mode on API=%s",
+                  pass.name.c_str(), driver->ApiTag());
+      continue;
+    }
+    if (!driver->SupportsComputeTextures()) {
+      T8_LOG_INFO("[RenderGraph] Pass '%s' using raster fallback on API=%s",
+                  pass.name.c_str(), driver->ApiTag());
+      continue;
+    }
+    std::string source;
+    if (!ResourceLocator::Instance().ReadText(pass.compute_shader, source)) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot load compute shader '%s'",
+                   pass.name.c_str(), pass.compute_shader.c_str());
+      continue;
+    }
+
+    ComputePipelineDesc pipelineDesc;
+    pipelineDesc.source = std::move(source);
+    pipelineDesc.entryPoint = pass.compute_entry;
+    pipelineDesc.debugName = pass.compute_shader;
+    pipelineDesc.permutationName = pass.compute_permutation;
+    ConfigureComputePipelineDesc(*kernel, pipelineDesc);
+    std::unique_ptr<ComputePipeline> pipeline = driver->CreateComputePipeline(pipelineDesc);
+    if (!pipeline) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' failed to create compute pipeline", pass.name.c_str());
+      continue;
+    }
+    if (!pipeline->threadGroupSize[0] || !pipeline->threadGroupSize[1] ||
+        !pipeline->threadGroupSize[2]) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' created a pipeline without reflected workgroup dimensions",
+                   pass.name.c_str());
+      continue;
+    }
+    m_computePipelines[node.index] = std::move(pipeline);
+    T8_LOG_INFO("[RenderGraph] Pass '%s' enabled compute kernel '%s' on API=%s",
+                pass.name.c_str(), pass.compute_shader.c_str(), driver->ApiTag());
+  }
+}
+
+bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props) {
+  const auto pipelineIt = m_computePipelines.find(node.index);
+  if (!driver || pipelineIt == m_computePipelines.end() || !pipelineIt->second)
+    return false;
+
+  const RenderPassDesc& pass = *node.desc;
+  const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
+  if (!kernel) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has no registered compute executor", pass.name.c_str());
+    return false;
+  }
+
+  const ResolvedTexture extentResource = ResolveTextureInput(pass.compute_extent_from);
+  if (extentResource.is_builtin || extentResource.rt_handle < 0 ||
+      extentResource.rt_handle >= static_cast<int>(driver->RTs.size()) ||
+      !driver->RTs[extentResource.rt_handle]) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute extent resource",
+                 pass.name.c_str());
+    return false;
+  }
+  BaseRT* outputRT = driver->RTs[extentResource.rt_handle];
+  if (outputRT->w <= 0 || outputRT->h <= 0) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute output dimensions %dx%d",
+                 pass.name.c_str(), outputRT->w, outputRT->h);
+    return false;
+  }
+
+  std::vector<ComputeBindingDesc> bindings;
+  bindings.reserve(pass.compute_resources.size());
+  std::vector<uint32_t> constantWords;
+  for (const ComputeResourceDesc& resource : pass.compute_resources) {
+    const std::optional<ComputeBindingType> type = ResolveComputeAccess(resource.access);
+    if (!type)
+      return false;
+    ComputeBindingDesc binding;
+    binding.type = *type;
+    binding.shaderRegister = static_cast<uint32_t>(resource.shader_register);
+    if (*type == ComputeBindingType::Constants32) {
+      ComputeKernelConstantsContext constantsContext;
+      constantsContext.sceneProps = &props;
+      constantsContext.outputWidth = static_cast<uint32_t>(outputRT->w);
+      constantsContext.outputHeight = static_cast<uint32_t>(outputRT->h);
+      constantsContext.permutation = pass.compute_permutation;
+      std::string error;
+      if (!BuildComputeConstants(*kernel, constantsContext, constantWords, error)) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot build constants: %s",
+                     pass.name.c_str(), error.c_str());
+        return false;
+      }
+      binding.constants = constantWords.data();
+      binding.constantCount = static_cast<uint32_t>(constantWords.size());
+    } else {
+      const ResolvedTexture resolved = ResolveTextureInput(resource.resource);
+      if (resolved.is_builtin || resolved.rt_handle < 0 ||
+          resolved.rt_handle >= static_cast<int>(driver->RTs.size())) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot resolve compute resource '%s'",
+                     pass.name.c_str(), resource.resource.c_str());
+        return false;
+      }
+      binding.texture = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
+      if (!binding.texture)
+        return false;
+    }
+    bindings.push_back(binding);
+  }
+
+  const std::array<uint32_t, 3>& threads = pipelineIt->second->threadGroupSize;
+  const uint32_t groupsX = (static_cast<uint32_t>(outputRT->w) + threads[0] - 1u) / threads[0];
+  const uint32_t groupsY = (static_cast<uint32_t>(outputRT->h) + threads[1] - 1u) / threads[1];
+  const uint32_t groupsZ = (1u + threads[2] - 1u) / threads[2];
+  const bool dispatched = driver->DispatchCompute(
+    *pipelineIt->second, bindings, groupsX, groupsY, groupsZ);
+  if (dispatched && m_loggedComputeDispatches.insert(node.index).second) {
+    T8_LOG_INFO("[RenderGraph] Pass '%s' dispatched compute %u x %u x %u for %dx%d output",
+                pass.name.c_str(), groupsX, groupsY, groupsZ, outputRT->w, outputRT->h);
+  }
+  return dispatched;
 }
 
 void RenderGraph::BuildGraph() {
@@ -590,41 +916,52 @@ void RenderGraph::BuildGraph() {
       node.rt_handle = -1;
     }
 
-    // Scan inputs to build edges
-    for (const auto& input : passDesc.inputs) {
-      if (input.source.empty() || input.source[0] == '@')
-        continue;  // built-in, no graph edge
+    std::unordered_set<std::string> recordedReads;
+    auto recordRead = [&](const std::string& source, int slot) {
+      if (source.empty() || source[0] == '@')
+        return;
 
-      // Extract RT name from "RTName:ATTACHMENT"
-      std::string rtName = input.source;
-      auto colon = rtName.find(':');
-      if (colon != std::string::npos)
-        rtName = rtName.substr(0, colon);
+      std::string rtName;
+      int attachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (!ParseRenderTargetReference(source, rtName, attachment))
+        return;
+      const std::string readIdentity = ResourceIdentity(rtName, attachment);
+      if (!recordedReads.insert(readIdentity).second)
+        return;
 
       auto writerIt = lastWriter.find(rtName);
-      if (writerIt != lastWriter.end()) {
-        int fromPass = writerIt->second;
+      if (writerIt == lastWriter.end())
+        return;
+      const int fromPass = writerIt->second;
+      GraphEdge edge;
+      edge.from_pass = fromPass;
+      edge.to_pass = i;
+      edge.rt = rtName;
+      edge.attachment = attachment;
+      edge.slot = slot;
+      m_edges.push_back(edge);
+      if (std::find(node.inputs_from.begin(), node.inputs_from.end(), fromPass) == node.inputs_from.end())
+        node.inputs_from.push_back(fromPass);
+      if (std::find(m_nodes[fromPass].outputs_to.begin(), m_nodes[fromPass].outputs_to.end(), i) == m_nodes[fromPass].outputs_to.end())
+        m_nodes[fromPass].outputs_to.push_back(i);
+    };
 
-        GraphEdge edge;
-        edge.from_pass = fromPass;
-        edge.to_pass = i;
-        edge.rt = rtName;
-        edge.attachment = ResolveAttachment(
-          (colon != std::string::npos) ? input.source.substr(colon + 1) : "COLOR0");
-        edge.slot = input.slot;
-        m_edges.push_back(edge);
-
-        // Record adjacency
-        if (std::find(node.inputs_from.begin(), node.inputs_from.end(), fromPass) == node.inputs_from.end())
-          node.inputs_from.push_back(fromPass);
-        if (std::find(m_nodes[fromPass].outputs_to.begin(), m_nodes[fromPass].outputs_to.end(), i) == m_nodes[fromPass].outputs_to.end())
-          m_nodes[fromPass].outputs_to.push_back(i);
-      }
+    for (const auto& input : passDesc.inputs)
+      recordRead(input.source, input.slot);
+    for (const ComputeResourceDesc& resource : passDesc.compute_resources) {
+      if (resource.access == "sampled")
+        recordRead(resource.resource, resource.shader_register);
     }
 
-    // This pass writes to its target RT
-    if (!passDesc.target.empty()) {
+    if (!passDesc.target.empty())
       lastWriter[passDesc.target] = i;
+    for (const ComputeResourceDesc& resource : passDesc.compute_resources) {
+      if (resource.access != "storage_write")
+        continue;  // built-in, no graph edge
+      std::string rtName;
+      int attachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (ParseRenderTargetReference(resource.resource, rtName, attachment))
+        lastWriter[rtName] = i;
     }
   }
 
@@ -769,6 +1106,20 @@ void RenderGraph::ExecutePass(
   int bs = ResolveBlendState(pass.state.blend);
   if (bs >= 0) driver->SetBlendState(static_cast<BaseDriver::BlendStates>(bs));
 
+  const auto applyPostState = [&]() {
+    int postDs = ResolveDepthStencilState(pass.post_state.depth_stencil);
+    if (postDs >= 0)
+      driver->SetDepthStencilState(static_cast<BaseDriver::DepthStencilStates>(postDs));
+
+    int postCf = ResolveCullFace(pass.post_state.cull_face);
+    if (postCf >= 0)
+      driver->SetCullFace(static_cast<BaseDriver::FaceCulling>(postCf));
+
+    int postBs = ResolveBlendState(pass.post_state.blend);
+    if (postBs >= 0)
+      driver->SetBlendState(static_cast<BaseDriver::BlendStates>(postBs));
+  };
+
   // Camera selection: generated shadow passes use their dedicated cascade camera.
   if (ResolvePassKind(pass.kind) == RenderPassKind::ShadowDepth &&
       pass.shadow_projection_index >= 0 &&
@@ -792,6 +1143,16 @@ void RenderGraph::ExecutePass(
   // Gauss kernel selection
   if (pass.gauss_kernel >= 0) {
     props.ActiveGaussKernel = pass.gauss_kernel;
+  }
+
+  if (pass.execution == "compute_if_supported" &&
+      m_computePipelines.find(node.index) != m_computePipelines.end()) {
+    if (ExecuteComputePass(node, driver, props)) {
+      applyPostState();
+      return;
+    }
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' compute dispatch failed; using graphics fallback",
+                 pass.name.c_str());
   }
 
   // Cubemap loop pass
@@ -1053,14 +1414,7 @@ void RenderGraph::ExecutePass(
   }
 
   // Post-pass state restoration
-  int postDs = ResolveDepthStencilState(pass.post_state.depth_stencil);
-  if (postDs >= 0) driver->SetDepthStencilState(static_cast<BaseDriver::DepthStencilStates>(postDs));
-
-  int postCf = ResolveCullFace(pass.post_state.cull_face);
-  if (postCf >= 0) driver->SetCullFace(static_cast<BaseDriver::FaceCulling>(postCf));
-
-  int postBs = ResolveBlendState(pass.post_state.blend);
-  if (postBs >= 0) driver->SetBlendState(static_cast<BaseDriver::BlendStates>(postBs));
+  applyPostState();
 }
 
 } // namespace t850

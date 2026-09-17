@@ -286,6 +286,7 @@ namespace t850 {
   void D3DXTexture::DestroyAPITexture() {
     Tex.Reset();
     pSRVTex.Reset();
+    pUAVTex.Reset();
     pSampler.Reset();
   }
 

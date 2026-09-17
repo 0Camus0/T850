@@ -27,19 +27,34 @@ struct ManifestEntry {
   std::vector<std::string> defines;
 };
 
+struct ComputeManifestEntry {
+  std::string key;
+  std::string kind;
+  std::string computeShader;
+  std::string entryPoint;
+  std::string permutation;
+  std::vector<std::string> defines;
+};
+
 struct Manifest {
-  int version = 1;
+  int version = 2;
   std::map<std::string, ManifestEntry> permutations;
+  std::map<std::string, ComputeManifestEntry> compute_permutations;
 };
 
 namespace {
 
 struct Entry {
+  bool compute = false;
+  std::string identity;
   std::string keyHex;
   uint64_t bits = 0;
   uint32_t pass = 0;
   std::string vertexShader;
   std::string fragmentShader;
+  std::string computeShader;
+  std::string entryPoint;
+  std::string permutationName;
   std::vector<std::string> defines;
 };
 
@@ -99,6 +114,15 @@ std::vector<std::string> ParseDefines(const std::string& defines) {
   return out;
 }
 
+std::vector<std::string> NormalizeDefines(std::vector<std::string> defines) {
+  defines.erase(std::remove_if(defines.begin(), defines.end(), [](const std::string& value) {
+    return value.empty();
+  }), defines.end());
+  std::sort(defines.begin(), defines.end());
+  defines.erase(std::unique(defines.begin(), defines.end()), defines.end());
+  return defines;
+}
+
 bool IsHexKey(const std::string& value) {
   if (value.size() != 18 || value[0] != '0' || (value[1] != 'x' && value[1] != 'X')) return false;
   for (size_t i = 2; i < value.size(); ++i) {
@@ -106,15 +130,22 @@ bool IsHexKey(const std::string& value) {
   }
   return true;
 }
-
 std::string EntryToJson(const Entry& entry) {
   std::ostringstream out;
   out << "{\n";
-  out << "      \"key\": \"" << entry.keyHex << "\",\n";
-  out << "      \"bits\": \"" << entry.keyHex << "\",\n";
-  out << "      \"pass\": " << entry.pass << ",\n";
-  out << "      \"vertexShader\": \"" << JsonEscape(entry.vertexShader) << "\",\n";
-  out << "      \"fragmentShader\": \"" << JsonEscape(entry.fragmentShader) << "\",\n";
+  if (entry.compute) {
+    out << "      \"key\": \"" << JsonEscape(entry.identity) << "\",\n";
+    out << "      \"kind\": \"compute\",\n";
+    out << "      \"computeShader\": \"" << JsonEscape(entry.computeShader) << "\",\n";
+    out << "      \"entryPoint\": \"" << JsonEscape(entry.entryPoint) << "\",\n";
+    out << "      \"permutation\": \"" << JsonEscape(entry.permutationName) << "\",\n";
+  } else {
+    out << "      \"key\": \"" << entry.keyHex << "\",\n";
+    out << "      \"bits\": \"" << entry.keyHex << "\",\n";
+    out << "      \"pass\": " << entry.pass << ",\n";
+    out << "      \"vertexShader\": \"" << JsonEscape(entry.vertexShader) << "\",\n";
+    out << "      \"fragmentShader\": \"" << JsonEscape(entry.fragmentShader) << "\",\n";
+  }
   out << "      \"defines\": [";
   for (size_t i = 0; i < entry.defines.size(); ++i) {
     if (i > 0) out << ", ";
@@ -162,6 +193,32 @@ void Record(const ShaderKey& key,
   g_entries[entry.keyHex] = std::move(entry);
 }
 
+void RecordCompute(const std::string& computeShader,
+                   const std::string& entryPoint,
+                   const std::string& permutationName,
+                   const std::vector<std::string>& defines) {
+  if (computeShader.empty() || entryPoint.empty()) return;
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (!g_enabled) return;
+
+  Entry entry;
+  entry.compute = true;
+  entry.computeShader = std::filesystem::path(computeShader).filename().string();
+  entry.entryPoint = entryPoint;
+  entry.permutationName = permutationName.empty() ? "base" : permutationName;
+  entry.defines = NormalizeDefines(defines);
+  entry.identity = entry.computeShader + ":" + entry.entryPoint + ":" + entry.permutationName;
+  const auto existing = g_entries.find(entry.identity);
+  if (existing != g_entries.end()) {
+    if (existing->second.defines != entry.defines) {
+      throw std::runtime_error(
+        "Conflicting defines for compute permutation '" + entry.identity + "'");
+    }
+    return;
+  }
+  g_entries.emplace(entry.identity, std::move(entry));
+}
+
 bool Flush() {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (!g_enabled) return true;
@@ -173,7 +230,8 @@ bool Flush() {
   if (exists) {
     std::string text;
     if (!ResourceLocator::Instance().ReadText(g_outputPath.string(), text) ||
-        glz::read<glz::opts{.error_on_missing_keys = true}>(manifest, text) || manifest.version != 1) {
+        glz::read_json(manifest, text) ||
+        (manifest.version != 1 && manifest.version != 2)) {
       T8_LOG_ERROR("[ShaderPermutationDump] Refusing to replace unreadable or invalid manifest '%s'", g_outputPath.string().c_str());
       return false;
     }
@@ -185,19 +243,47 @@ bool Flush() {
     if (!json) return false;
     merged[key] = std::move(json.value());
   }
+  std::map<std::string, std::string> computeMerged;
+  for (const auto& [key, entry] : manifest.compute_permutations) {
+    const std::string identity = std::filesystem::path(entry.computeShader).filename().string()
+      + ":" + entry.entryPoint + ":" + entry.permutation;
+    if (key != identity || entry.key != key || entry.kind != "compute") return false;
+    auto json = glz::write_json(entry);
+    if (!json) return false;
+    computeMerged[key] = std::move(json.value());
+  }
   for (const auto& it : g_entries) {
-    merged[it.first] = EntryToJson(it.second);
+    if (it.second.compute) {
+      const auto existing = manifest.compute_permutations.find(it.first);
+      if (existing != manifest.compute_permutations.end() &&
+          NormalizeDefines(existing->second.defines) != it.second.defines) {
+        T8_LOG_ERROR("[ShaderPermutationDump] Conflicting defines for compute permutation '%s'",
+                     it.first.c_str());
+        return false;
+      }
+      computeMerged[it.first] = EntryToJson(it.second);
+    } else {
+      merged[it.first] = EntryToJson(it.second);
+    }
   }
 
   std::ostringstream file;
 
   file << "{\n";
-  file << "  \"version\": 1,\n";
+  file << "  \"version\": 2,\n";
   file << "  \"permutations\": {\n";
   size_t index = 0;
   for (const auto& it : merged) {
-    file << "    \"" << it.first << "\": " << it.second;
+    file << "    \"" << JsonEscape(it.first) << "\": " << it.second;
     if (++index < merged.size()) file << ",";
+    file << "\n";
+  }
+  file << "  },\n";
+  file << "  \"compute_permutations\": {\n";
+  index = 0;
+  for (const auto& it : computeMerged) {
+    file << "    \"" << JsonEscape(it.first) << "\": " << it.second;
+    if (++index < computeMerged.size()) file << ",";
     file << "\n";
   }
   file << "  }\n";
@@ -209,8 +295,8 @@ bool Flush() {
     T8_LOG_ERROR("[ShaderPermutationDump] Failed to atomically write '%s'", g_outputPath.string().c_str());
     return false;
   }
-  T8_LOG_INFO("[ShaderPermutationDump] Wrote %zu shader permutations to '%s'",
-              merged.size(), g_outputPath.string().c_str());
+  T8_LOG_INFO("[ShaderPermutationDump] Wrote %zu graphics and %zu compute permutations to '%s'",
+              merged.size(), computeMerged.size(), g_outputPath.string().c_str());
   g_enabled = false;
   return true;
 }

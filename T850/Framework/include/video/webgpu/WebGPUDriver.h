@@ -14,7 +14,15 @@ public:
   ~WebGPUDriver() override;
   const char* ApiTag() const override { return "webgpu"; }
   bool SupportsDeferredRendering() const override { return true; }
+  bool SupportsComputeShaders() const override { return true; }
+  bool SupportsComputeTextures() const override { return true; }
   void InitDriver() override;
+  std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
+  std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                                                      const void* initialData = nullptr) override;
+  bool DispatchCompute(ComputePipeline& pipeline, const std::vector<ComputeBindingDesc>& bindings,
+                       uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
+  bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t bytes) override;
   void CreateSurfaces() override;
   void DestroySurfaces() override;
   void Update() override;

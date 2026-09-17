@@ -63,6 +63,9 @@ set(process_cache "${CMAKE_CURRENT_BINARY_DIR}/ctest-process-cache-$<CONFIG>")
 add_test(NAME DawnShaderFlows COMMAND DawnShaderProbe "${shader_directory}"
   "${CMAKE_CURRENT_BINARY_DIR}/ctest-flow-cache-$<CONFIG>" flow-test)
 set_tests_properties(DawnShaderFlows PROPERTIES TIMEOUT 120)
+add_test(NAME DawnComputeV1 COMMAND DawnShaderProbe "${shader_directory}"
+  "${CMAKE_CURRENT_BINARY_DIR}/ctest-compute-v1-cache-$<CONFIG>" compute-v1)
+set_tests_properties(DawnComputeV1 PROPERTIES TIMEOUT 120)
 add_test(NAME DawnShaderDefaultFlow COMMAND DawnShaderProbe "${shader_directory}"
   "${CMAKE_CURRENT_BINARY_DIR}/ctest-default-flow-cache-$<CONFIG>")
 set_tests_properties(DawnShaderDefaultFlow PROPERTIES TIMEOUT 120)

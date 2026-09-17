@@ -38,7 +38,7 @@ and dispatch the pipeline successfully.
 ## Validation
 
 - `ValidateBuildRegistration.ps1`: passed.
-- Release `DayScene.exe --game-selftest`: passed all 60 registered checks. Logged
+- Release `DayScene.exe --game-selftest`: passed all 61 registered checks. Logged
   parse and manifest errors are intentional negative-path assertions.
 - `TestLauncherWebGPU.ps1 -Ui`: passed for developer and portable launchers,
   including the persisted `compute|raster` selector and WebGPU shader-flow args.

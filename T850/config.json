@@ -1,23 +1,24 @@
 ﻿{
-    "androidDeviceSerial":  "",
-    "configuration":  "Debug",
-    "keepRunning":  false,
-    "cullingMode":  "full",
-    "cullDisabled":  false,
-    "devTools":  {
-                     "logLevel":  "error",
-                     "logToFile":  false,
-                     "d3d12Debug":  false
-                 },
+    "telemetry":  {
+                      "frequencyFrames":  20,
+                      "outputPath":  "logs\\perf_telemetry.json",
+                      "enabled":  false
+                  },
     "dump":  {
                  "seconds":  -1,
                  "trigger":  "frame",
                  "frame":  -1,
                  "enabled":  false
              },
+    "configuration":  "Release",
+    "androidDeviceSerial":  "",
     "debugFrames":  false,
-    "architecture":  "x64",
-    "benchmark":  false,
+    "cullDisabled":  false,
+    "devTools":  {
+                     "logLevel":  "error",
+                     "logToFile":  false,
+                     "d3d12Debug":  false
+                 },
     "display":  {
                     "scene":  6,
                     "width":  2560,
@@ -25,15 +26,16 @@
                     "height":  1440,
                     "fullscreen":  false
                 },
+    "cullingMode":  "full",
+    "api":  "vulkan",
+    "targetPlatform":  "windows",
+    "benchmark":  false,
+    "postProcessMode":  "compute",
+    "keepRunning":  false,
     "replaySnapshot":  {
                            "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json",
                            "enabled":  false
                        },
-    "api":  "d3d12",
-    "targetPlatform":  "windows",
-    "telemetry":  {
-                      "frequencyFrames":  20,
-                      "outputPath":  "logs\\perf_telemetry.json",
-                      "enabled":  false
-                  }
+    "architecture":  "x64",
+    "webgpuShaderFlow":  "auto"
 }

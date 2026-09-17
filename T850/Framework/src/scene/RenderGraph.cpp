@@ -682,15 +682,20 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
     // Keep it opt-in per target so bloom/intermediate passes never sample
     // implicit mips unexpectedly.
     const bool generateMips = rt.generate_mips;
+    const bool allowStorage = rt.storage && driver->SupportsComputeTextures();
+    if (rt.storage && !allowStorage) {
+      T8_LOG_INFO("[RenderGraph] Creating RT '%s' without storage usage on API=%s",
+                  rt.name.c_str(), driver->ApiTag());
+    }
     int handle;
     if (!rt.color_formats.empty()) {
       // Per-attachment formats specified in JSON
       std::vector<int> perCF;
       for (const auto& fmt : rt.color_formats)
         perCF.push_back(ResolveColorFormat(fmt));
-      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, generateMips, rt.storage);
+      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, generateMips, allowStorage);
     } else {
-      handle = driver->CreateRT(rt.color_count, cf, df, w, h, generateMips, rt.storage);
+      handle = driver->CreateRT(rt.color_count, cf, df, w, h, generateMips, allowStorage);
     }
     auto applyFilter = [&](Texture* tex) {
       if (!tex) return;

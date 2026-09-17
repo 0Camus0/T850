@@ -125,10 +125,9 @@ int main(int arg,char ** args) try {
     // backend for cross-API compute validation.
     t850::g_config.api = "d3d12";
   }
-#else
-  if (computeSelfTest) {
-    std::cerr << "[ComputeSelfTest] D3D12 compute is only available on Windows\n";
-    return 1;
+#elif defined(OS_LINUX)
+  if (computeSelfTest && !computeSelfTestApiExplicit) {
+    t850::g_config.api = "vulkan";
   }
 #endif
   t850::config::ValidateConfig(t850::g_config);
@@ -247,13 +246,12 @@ int main(int arg,char ** args) try {
     : static_cast<t850::AppBase*>(new App());
   int result = 0;
 #ifdef OS_LINUX
-    pFrameWork = new t850::LinuxFramework((t850::AppBase*)pApp);
-    pFrameWork->InitGlobalVars();
-	pFrameWork->OnCreateApplication(desc);
+  pFrameWork = new t850::LinuxFramework((t850::AppBase*)pApp);
 #elif defined(OS_WINDOWS)
-	pFrameWork = new t850::Win32Framework((t850::AppBase*)pApp);
-	pFrameWork->InitGlobalVars();
-	pFrameWork->OnCreateApplication(desc);
+  pFrameWork = new t850::Win32Framework((t850::AppBase*)pApp);
+#endif
+  pFrameWork->InitGlobalVars();
+  pFrameWork->OnCreateApplication(desc);
   if (computeSelfTest) {
     T8_LOG_INFO("[ComputeSelfTest] Starting standalone arithmetic validation on API=%s",
           pFrameWork->pVideoDriver->ApiTag());
@@ -273,8 +271,7 @@ int main(int arg,char ** args) try {
   }
   if (t850::g_config.flags.dumpShaderPermutations)
     t850::ShaderPermutationDump::Flush();
-	pFrameWork->OnDestroyApplication();
-#endif
+  pFrameWork->OnDestroyApplication();
 
   delete pFrameWork;
 	delete pApp;

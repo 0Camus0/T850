@@ -68,8 +68,9 @@ binding, and restores normal frame output with `PopRT`. No CPU `Flush` is requir
 commands recorded on the same immediate context.
 
 Capability reporting checks feature level 11 and verifies that the RGBA8 and RGBA16F
-formats required by the current graph expose typed unordered-access views. Unsupported
-hardware follows the raster fallback.
+formats required by the current graph expose typed unordered-access views. When this
+capability is unavailable, render-graph targets are created without UAV usage so startup
+can continue through the authored raster fallback.
 
 ## D3D12 implementation
 
@@ -118,10 +119,11 @@ Compute buffers use VMA GPU-only storage allocations. Readback copies into a map
 GPU-to-CPU staging allocation, submits, waits, invalidates non-coherent memory, and copies to
 the caller.
 
-Vulkan capability reporting now requires a graphics queue that also supports compute,
-formatless storage-image writes, and storage-image support for RGBA8 and RGBA16F. The feature
-is enabled on the logical device only when reported by the physical device. Unsupported
-hardware uses the render graph's raster fallback instead of failing pipeline creation later.
+Vulkan selects a present-capable graphics queue and prefers one that also supports compute.
+Texture compute additionally requires storage-image support for RGBA8 and RGBA16F. All
+storage images carry explicit format decorations, so formatless storage-image writes are not
+required. Unsupported hardware uses the render graph's raster fallback instead of failing
+pipeline creation later.
 
 ## WebGPU/Dawn implementation
 
@@ -174,10 +176,12 @@ and links a compute program, and validates the API-neutral binding declaration b
 
 Constants use transient `std140` uniform buffers, structured buffers use shader-storage
 buffers, sampled textures use the texture object sampling state, and RGBA8/RGBA16F outputs
-use write-only images. Bindings use the render graph's explicit `bindingIndex`, preserving
-the same layout identity as Vulkan. Dispatch issues shader-storage, image-access,
-texture-fetch, and buffer-update barriers before restoring graphics state. Diagnostic buffer
-readback uses `glGetBufferSubData` after the storage barrier.
+use write-only images. Each API-neutral sampler `sN` must reference the same texture as
+sampled binding `tN`; dispatch selects that texture unit's object-owned sampling state and
+restores the prior sampler-object binding afterward. Bindings use the render graph's explicit
+`bindingIndex`, preserving the same layout identity as Vulkan. Dispatch issues shader-storage,
+image-access, texture-fetch, and buffer-update barriers before restoring graphics state.
+Diagnostic buffer readback uses `glGetBufferSubData` after the storage barrier.
 
 Desktop OpenGL contexts below 4.3 and OpenGL ES report no compute support. Optional
 post-process passes use their existing fullscreen raster fallback, and compute-only passes
@@ -285,7 +289,9 @@ entries live under `compute_permutations` and use:
 
 Each object repeats the exact identity in `key` and records `kind`, `computeShader`,
 `entryPoint`, `permutation`, and sorted unique `defines`. Backend profiles are intentionally
-excluded: D3D `cs_5_0` and Vulkan SPIR-V are artifacts of one source permutation.
+excluded: D3D `cs_5_0` and Vulkan SPIR-V are artifacts of one source permutation. One
+manifest identity may have only one normalized define set; recording conflicting defines is
+rejected, and a define-distinct variant must use another registered permutation name.
 
 The inventory contains nine entries: Arithmetic, horizontal and vertical Blur, Bright,
 God Rays, HDR Composite, Torch Particles, and the paired image-pattern write/read diagnostics.
@@ -322,9 +328,11 @@ ignore rule. Missing skin data falls back to authored block-atlas tiles.
 `postProcessMode` is accepted from runtime JSON and `--postProcessMode compute|raster`.
 DayScene and T8ditor share the parser; `auto` is rejected.
 
-`--compute-selftest` starts a minimal application and defaults to D3D12 on Windows unless an
-API is explicit. It validates arithmetic buffer compute, then writes and reads deterministic
-RGBA8 images at `1x1`, `7x5`, and `257x129`, checking every pixel after GPU readback.
+`--compute-selftest` starts a minimal application and defaults to D3D12 on Windows or Vulkan
+on Linux unless an API is explicit. Linux runs the same minimal application through its
+Vulkan framework. The self-test validates arithmetic buffer compute, then writes and reads
+deterministic RGBA8 images at `1x1`, `7x5`, and `257x129`, checking every pixel after GPU
+readback.
 `--compute-selftest-wait N` adds capture windows before and after dispatch.
 
 Visual Studio projects, filters, desktop CMake, and Android CMake register all new Framework
@@ -367,14 +375,17 @@ Generated frame dumps named in the result JSON files remain beside the matching 
 |---|---|
 | x64 Debug full solution build | PASS |
 | x64 Release full solution build | PASS |
+| Dawn `DawnComputeV1` Debug/Release | PASS, 6 shader families; Torch constants reflect as 56 DWORDs |
 | Framework build registration | PASS |
-| Release game self-tests | PASS, 60 tests |
+| Release game self-tests | PASS, 61 tests |
+| Release compute self-tests | PASS on D3D11, D3D12, Vulkan, WebGPU/Dawn, and OpenGL; arithmetic plus `1x1`, `7x5`, and `257x129` image kernels |
 | JSON/permutation audit | PASS, 281 graphics entries, 9 compute entries, 6 compute graph identities, 8 graph files |
 | Arithmetic D3D11/D3D12/Vulkan | PASS, 96/96 values per API |
 | Arithmetic OpenGL | PASS, 96/96 values on desktop OpenGL 4.6 |
 | Prior DayScene D3D11/D3D12/Vulkan raster/auto/compute | PASS, 9/9 runs |
 | Prior DayScene D3D11/D3D12/Vulkan forced compute | PASS, five dispatches per API |
 | DayScene OpenGL forced compute | PASS, five dispatches at 1023x577 |
+| DayScene OpenGL sampler regression | PASS, 18/18 compute-vs-raster targets within tolerance 4; maximum channel delta 4 |
 | DayScene OpenGL compute vs raster | 17/18 targets within tolerance 2; final backbuffer max delta 4 on 0.27% of pixels; repeated compute captures exact |
 | Prior DayScene D3D11/D3D12/Vulkan raster-vs-auto/compute comparisons | PASS, 18 targets per pair at tolerance 2; worst max delta 2 |
 | Prior Minecraft D3D11/D3D12/Vulkan raster/compute | PASS, 6/6 runs |

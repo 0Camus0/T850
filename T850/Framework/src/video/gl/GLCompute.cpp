@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace t850 {
@@ -166,6 +167,8 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
   glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &maxTextureUnits);
   glGetIntegerv(GL_MAX_IMAGE_UNITS, &maxImageUnits);
   std::unordered_set<const ComputeBindingLayoutDesc*> boundLayouts;
+  std::unordered_map<uint32_t, GLTexture*> sampledTextures;
+  std::unordered_map<uint32_t, GLTexture*> samplerTextures;
   for (const ComputeBindingDesc& binding : dispatchBindings) {
     const ComputeBindingLayoutDesc* layout = pipeline->Find(binding.type, binding.shaderRegister);
     if (!layout || !boundLayouts.insert(layout).second) return false;
@@ -177,14 +180,26 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
     } else {
       auto* texture = dynamic_cast<GLTexture*>(binding.texture);
       if (!texture || texture->glTarget != GL_TEXTURE_2D) return false;
-      if (binding.type == ComputeBindingType::ReadOnlyTexture &&
-          layout->bindingIndex >= static_cast<uint32_t>(maxTextureUnits)) return false;
+      if (binding.type == ComputeBindingType::ReadOnlyTexture) {
+        if (layout->bindingIndex >= static_cast<uint32_t>(maxTextureUnits) ||
+            !sampledTextures.emplace(binding.shaderRegister, texture).second) return false;
+      }
       if (binding.type == ComputeBindingType::ReadWriteTexture &&
           (!SupportsComputeTextures() || layout->bindingIndex >= static_cast<uint32_t>(maxImageUnits) ||
            (texture->glInternalFormat != GL_RGBA8 && texture->glInternalFormat != GL_RGBA16F))) return false;
+      if (binding.type == ComputeBindingType::Sampler) {
+        const ComputeBindingLayoutDesc* textureLayout = pipeline->Find(
+          ComputeBindingType::ReadOnlyTexture, binding.shaderRegister);
+        if (!textureLayout || textureLayout->bindingIndex >= static_cast<uint32_t>(maxTextureUnits) ||
+            !samplerTextures.emplace(binding.shaderRegister, texture).second) return false;
+      }
     }
   }
   if (boundLayouts.size() != pipeline->bindings.size()) return false;
+  for (const auto& [shaderRegister, texture] : samplerTextures) {
+    const auto sampled = sampledTextures.find(shaderRegister);
+    if (sampled == sampledTextures.end() || sampled->second != texture) return false;
+  }
 
   while (glGetError() != GL_NO_ERROR) {}
 
@@ -196,6 +211,7 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
   std::vector<GLuint> transientConstants;
   std::vector<std::pair<GLenum, GLuint>> bufferBindings;
   std::vector<TextureBindingRestore> textureBindings;
+  std::vector<std::pair<GLuint, GLint>> samplerBindings;
   std::vector<GLuint> imageBindings;
   glUseProgram(pipeline->program);
   for (const ComputeBindingDesc& binding : dispatchBindings) {
@@ -225,6 +241,13 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
       glBindImageTexture(layout->bindingIndex, texture->id, 0, GL_FALSE, 0,
                          GL_WRITE_ONLY, texture->glInternalFormat);
       imageBindings.push_back(layout->bindingIndex);
+    } else if (binding.type == ComputeBindingType::Sampler) {
+      const ComputeBindingLayoutDesc* textureLayout = pipeline->Find(
+        ComputeBindingType::ReadOnlyTexture, binding.shaderRegister);
+      GLint previousSampler = 0;
+      glGetIntegeri_v(GL_SAMPLER_BINDING, textureLayout->bindingIndex, &previousSampler);
+      samplerBindings.emplace_back(textureLayout->bindingIndex, previousSampler);
+      glBindSampler(textureLayout->bindingIndex, 0);
     }
   }
 
@@ -235,6 +258,8 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
   for (const auto& [target, index] : bufferBindings) glBindBufferBase(target, index, 0);
   for (GLuint index : imageBindings)
     glBindImageTexture(index, 0, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
+  for (auto it = samplerBindings.rbegin(); it != samplerBindings.rend(); ++it)
+    glBindSampler(it->first, static_cast<GLuint>(it->second));
   for (auto it = textureBindings.rbegin(); it != textureBindings.rend(); ++it) {
     glActiveTexture(GL_TEXTURE0 + it->unit);
     glBindTexture(it->target, static_cast<GLuint>(it->texture));

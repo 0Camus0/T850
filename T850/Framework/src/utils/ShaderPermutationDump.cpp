@@ -208,7 +208,15 @@ void RecordCompute(const std::string& computeShader,
   entry.permutationName = permutationName.empty() ? "base" : permutationName;
   entry.defines = NormalizeDefines(defines);
   entry.identity = entry.computeShader + ":" + entry.entryPoint + ":" + entry.permutationName;
-  g_entries[entry.identity] = std::move(entry);
+  const auto existing = g_entries.find(entry.identity);
+  if (existing != g_entries.end()) {
+    if (existing->second.defines != entry.defines) {
+      throw std::runtime_error(
+        "Conflicting defines for compute permutation '" + entry.identity + "'");
+    }
+    return;
+  }
+  g_entries.emplace(entry.identity, std::move(entry));
 }
 
 bool Flush() {
@@ -245,10 +253,18 @@ bool Flush() {
     computeMerged[key] = std::move(json.value());
   }
   for (const auto& it : g_entries) {
-    if (it.second.compute)
+    if (it.second.compute) {
+      const auto existing = manifest.compute_permutations.find(it.first);
+      if (existing != manifest.compute_permutations.end() &&
+          NormalizeDefines(existing->second.defines) != it.second.defines) {
+        T8_LOG_ERROR("[ShaderPermutationDump] Conflicting defines for compute permutation '%s'",
+                     it.first.c_str());
+        return false;
+      }
       computeMerged[it.first] = EntryToJson(it.second);
-    else
+    } else {
       merged[it.first] = EntryToJson(it.second);
+    }
   }
 
   std::ostringstream file;

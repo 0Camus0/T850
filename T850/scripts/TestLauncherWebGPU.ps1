@@ -568,6 +568,9 @@ function Test-LauncherLayout {
                     $window.FindName('txtAndroidDeviceStatus').Text = 'Android device connected'
                 }
                 Initialize-LauncherWindow $window $area
+                Assert-True ($window.SizeToContent -eq [Windows.SizeToContent]::Height) 'Launcher must request content-based height before a manual resize'
+                $window.SizeToContent = [Windows.SizeToContent]::Manual
+                $window.Height = $window.MaxHeight
                 Update-LauncherLayout $window $window.Width
                 $window.Add_SizeChanged({ param($sender, $eventArgs) Update-LauncherLayout $sender $eventArgs.NewSize.Width })
                 $window.Show()
@@ -576,10 +579,11 @@ function Test-LauncherLayout {
                 $liveArea = Get-LauncherWorkArea $window
                 Assert-True ($liveArea.Width -gt 0 -and $liveArea.Height -gt 0) 'Current monitor work-area conversion failed'
                 Assert-True ($window.ActualWidth -le $area.Width - 23 -and $window.ActualHeight -le $area.Height - 23) "$caseName exceeds its work area"
+                Assert-True ([Math]::Abs($window.ActualHeight - $window.Height) -lt 1) "$caseName did not receive its requested logical test viewport"
                 $scroll = $window.FindName('svSettings')
                 Assert-True ($scroll.ViewportHeight -gt 48 -and $scroll.ScrollableWidth -lt 1) "$caseName has unusable settings bounds"
                 if ($case.Height -ge 1080 -and $case.Scale -eq 1 -and $mode -eq 'native') {
-                    Assert-True ($scroll.ScrollableHeight -lt 1) '100% desktop unnecessarily scrolls the default settings'
+                    Assert-True ($scroll.ScrollableHeight -lt 1) "100% desktop unnecessarily scrolls the default settings (window=$($window.ActualHeight), viewport=$($scroll.ViewportHeight), extent=$($scroll.ExtentHeight))"
                 }
                 $root = $window.FindName('launcherLayout')
                 foreach ($controlName in @('btnRebuild', 'btnBuild', 'btnRun', 'btnDownloadAssets', 'btnBenchmarkMatrix', 'btnEditor')) {

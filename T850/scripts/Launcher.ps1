@@ -2152,6 +2152,7 @@ function Get-BrowserLaunchCommand {
     if (-not $node) { throw "Browser launch requires Node.js on PATH." }
     $scene = $cmbScene.SelectedItem.Tag.ToString()
     $parameters = [ordered]@{ scene = $scene; width = $txtWidth.Text; height = $txtHeight.Text; culling = (Get-CullingMode); logLevel = $cmbLogLevel.SelectedItem.Tag.ToString() }
+    $parameters.postProcessMode = $cmbPostProcessMode.SelectedItem.Tag.ToString()
     if ($scene -eq '2' -or $scene -eq '4' -or ($scene -eq '0' -and (Get-SandboxInputMode) -eq 'scene')) {
         $sceneFile = Get-SelectedSceneFilePath
         if ($sceneFile) { $parameters.sceneFile = Get-SceneFileResourcePath $sceneFile }

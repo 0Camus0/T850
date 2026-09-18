@@ -14,6 +14,7 @@ test('browser launch isolates ports, reuses matching servers and preserves URL d
   try {
     for (const directory of ['site', 'assets', 'shaders']) await mkdir(join(root, directory));
     for (const file of ['DayScene.html', 'DayScene.js', 'DayScene.wasm', 'scenes.json']) await writeFile(join(root, 'site', file), 'test');
+    await writeFile(join(root, 'site', 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
     await writeFile(join(root, 'assets', 'model with spaces.glb'), 'asset');
     blocker.listen(0, '127.0.0.1');
     await once(blocker, 'listening');
@@ -54,6 +55,8 @@ test('browser launch isolates ports, reuses matching servers and preserves URL d
     assert.equal(response.headers.get('cross-origin-opener-policy'), 'same-origin');
     assert.equal(response.headers.get('cross-origin-embedder-policy'), 'require-corp');
     assert.equal(await response.text(), 'test');
+    const icon = await fetch(new URL('icon.svg', first.url));
+    assert.equal(icon.headers.get('content-type'), 'image/svg+xml');
     const reused = await launch(process.execPath);
     assert.equal(reused.url.port, first.url.port);
     assert.match(reused.output, /Reusing T850/);

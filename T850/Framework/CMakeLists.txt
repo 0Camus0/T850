@@ -109,6 +109,8 @@ set(FRAMEWORK_SOURCES
   src/utils/ShaderPrecompiler.cpp
   src/core/ShaderTools.cpp
   src/utils/SPIRVReflection.cpp
+  src/utils/ComputeReflection.cpp
+  ../Librerias/spirv-reflect/spirv_reflect.c
   src/utils/ShaderDiskCache.cpp
   src/utils/ShaderPreprocessor.cpp
   ../Librerias/simplecpp/simplecpp.cpp

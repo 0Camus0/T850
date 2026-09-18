@@ -49,7 +49,7 @@
       .wssi-demo #canvas { width: min(100%, calc(var(--demo-long-side) * 9 / 16), calc((100dvh - 36px - var(--touch-footer, 0px)) * 9 / 16)); aspect-ratio: 9 / 16; }
     }
     body.touch-ontop { --touch-footer: 0px; }
-    body.touch-ontop #canvas { width: 100%; height: 100%; max-width: none; max-height: none; aspect-ratio: auto; }
+    body.touch-ontop #canvas { width: 100%; height: 100%; max-width: none !important; max-height: none !important; aspect-ratio: auto; }
     .touch-ontop .touch-stick { bottom: max(76px, calc(56px + env(safe-area-inset-bottom))); }
     .touch-ontop .touch-actions { bottom: max(80px, calc(56px + env(safe-area-inset-bottom))); }
     .touch-ontop .touch-options { bottom: max(140px, calc(116px + env(safe-area-inset-bottom))); }
@@ -235,6 +235,17 @@
             if (minecraftDemo && option === 'model') continue;
             if (parameters.has(option)) argumentsList.push('--' + option, parameters.get(option));
           }
+          if (parameters.has('postProcessMode')) {
+            const mode = parameters.get('postProcessMode');
+            if (!['raster', 'compute'].includes(mode)) throw new Error('Invalid post-process mode');
+            argumentsList.push('--postProcessMode', mode);
+          }
+          if (parameters.has('shaderFlow')) {
+            const flow = parameters.get('shaderFlow');
+            if (!['auto', 'wgsl', 'spirv'].includes(flow)) throw new Error('Invalid shader flow');
+            argumentsList.push('--shaderFlow', flow);
+          }
+          if (parameters.has('computeSelfTest')) argumentsList.push('--compute-selftest', '--logLevel', 'info');
           if (parameters.has('gui')) argumentsList.push('--gui');
           if (parameters.has('profile')) {
             const frames = Number(parameters.get('profileFrames') ?? 1000);

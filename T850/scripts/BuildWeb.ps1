@@ -72,18 +72,27 @@ if (-not $SkipShaderExport) {
     Push-Location (Join-Path $sourceRoot 'bin\x64\Release')
     try {
         $shaderOutput = Join-Path $buildRoot 'WebShaders'
-        Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments @('--compileShaders', '--api', 'webgpu', '--webShaderOutput', $shaderOutput) -LogPath (Join-Path $buildRoot 'shader-export.log') -Operation 'Recorded shader export'
-        foreach ($scene in $ExportScenes) {
-            $catalog = Get-Content (Join-Path $sourceRoot 'web\scenes.json') -Raw | ConvertFrom-Json
-            $launch = $catalog.scenes | Where-Object id -EQ $scene
-            if (-not $launch) { throw "Unknown runtime scene: $scene" }
-            $sceneArguments = @($launch.arguments | Where-Object { $_ })
-            if ($launch.sceneFile) { $sceneArguments += @('--sceneFile', $launch.sceneFile) }
-            $arguments = @('--api', 'webgpu', '--scene', [string]$scene, '--width', '640', '--height', '360',
-                '--regressionFixedDt', '0.0166666667', '--dumpSnapshot-seconds', '1', '--webShaderOutput', $shaderOutput) + $sceneArguments
-            Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments $arguments -LogPath (Join-Path $buildRoot "scene-$scene-export.log") -Operation "Scene $scene shader export"
-            if (Select-String -Path (Join-Path $buildRoot "scene-$scene-export.log") -Pattern '\[ERROR\s*\]' -Quiet) {
-                throw "Scene $scene reported an engine error during shader export"
+        foreach ($flow in @('auto', 'wgsl', 'spirv')) {
+            $flowArguments = @('--shaderFlow', $flow)
+            Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments (@('--compileShaders', '--api', 'webgpu', '--webShaderOutput', $shaderOutput) + $flowArguments) -LogPath (Join-Path $buildRoot "shader-$flow-export.log") -Operation "Recorded shader export ($flow)"
+            Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments (@('--compute-selftest', '--api', 'webgpu', '--webShaderOutput', $shaderOutput) + $flowArguments) -LogPath (Join-Path $buildRoot "compute-selftest-$flow-export.log") -Operation "Compute correctness test shader export ($flow)"
+            foreach ($scene in $ExportScenes) {
+                $catalog = Get-Content (Join-Path $sourceRoot 'web\scenes.json') -Raw | ConvertFrom-Json
+                $launch = $catalog.scenes | Where-Object id -EQ $scene
+                if (-not $launch) { throw "Unknown runtime scene: $scene" }
+                $sceneArguments = @($launch.arguments | Where-Object { $_ })
+                if ($launch.sceneFile) { $sceneArguments += @('--sceneFile', $launch.sceneFile) }
+                $arguments = @('--api', 'webgpu', '--scene', [string]$scene, '--width', '640', '--height', '360',
+                    '--regressionFixedDt', '0.0166666667', '--dumpSnapshot-seconds', '1', '--webShaderOutput', $shaderOutput) + $sceneArguments + $flowArguments
+                Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments ($arguments + @('--postProcessMode', 'raster')) -LogPath (Join-Path $buildRoot "scene-$scene-$flow-export.log") -Operation "Scene $scene shader export ($flow)"
+                if (Select-String -Path (Join-Path $buildRoot "scene-$scene-$flow-export.log") -Pattern '\[ERROR\s*\]' -Quiet) {
+                    throw "Scene $scene reported an engine error during shader export ($flow)"
+                }
+                $computeLog = Join-Path $buildRoot "scene-$scene-compute-$flow-export.log"
+                Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments ($arguments + @('--postProcessMode', 'compute')) -LogPath $computeLog -Operation "Scene $scene compute shader export ($flow)"
+                if (Select-String -Path $computeLog -Pattern '\[ERROR\s*\]' -Quiet) {
+                    throw "Scene $scene reported an engine error during compute shader export ($flow)"
+                }
             }
         }
     } finally {

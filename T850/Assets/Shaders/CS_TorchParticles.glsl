@@ -17,6 +17,7 @@ layout(std140, binding = 0) uniform TorchParticleConstants {
 };
 
 layout(rgba16f, binding = 1) writeonly uniform image2D OutputTexture;
+layout(binding = 2) uniform sampler2D SceneDepth;
 
 float Hash(uint value)
 {
@@ -53,6 +54,7 @@ void main()
     float time = EmitterAndTime.w;
     vec2 uv = (vec2(dispatchId) + vec2(0.5)) / vec2(outputSize);
     float aspect = float(outputSize.x) / max(float(outputSize.y), 1.0);
+    float sceneDepth = texelFetch(SceneDepth, ivec2(dispatchId), 0).r;
     vec3 accumulated = vec3(0.0);
     float accumulatedAlpha = 0.0;
 
@@ -72,6 +74,9 @@ void main()
 
         vec4 clip = ViewProjection * vec4(position, 1.0);
         if (clip.w <= 0.0001) continue;
+        float particleDepth = clip.z / clip.w;
+        if (particleDepth < 0.0 || particleDepth > 1.0 || particleDepth < sceneDepth)
+            continue;
         vec2 ndc = clip.xy / clip.w;
         vec2 centerUv = vec2(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5);
         vec2 delta = uv - centerUv;

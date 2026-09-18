@@ -191,7 +191,8 @@
       "compute_extent_from": "TorchParticles:COLOR0",
       "compute_resources": [
         { "resource": "@kernel_constants", "access": "constants", "shader_register": 0 },
-        { "resource": "TorchParticles:COLOR0", "access": "storage_write", "shader_register": 0 }
+        { "resource": "TorchParticles:COLOR0", "access": "storage_write", "shader_register": 0 },
+        { "resource": "GBuffer:DEPTH", "access": "sampled", "shader_register": 0 }
       ],
       "camera": "main",
       "clear": true,

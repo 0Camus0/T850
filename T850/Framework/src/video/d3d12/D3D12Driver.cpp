@@ -712,7 +712,7 @@ namespace t850 {
 
   void D3D12Driver::DestroyDriver() {
     StopDebugMessageThread();
-    WaitForGPU();
+    FlushGPUResources();
     for (const RetiredBuffer& retired : m_retiredBuffers)
       if (retired.buffer) retired.buffer->release();
     m_retiredBuffers.clear();
@@ -759,6 +759,12 @@ namespace t850 {
     m_pendingUploadBatches.clear();
   }
 
+  void D3D12Driver::FlushGPUResources() {
+    if (m_frameStarted) CompleteFrame(FrameCompletionMode::SubmitNoPresent);
+    WaitForGPU();
+    for (auto& resources : m_computeKeepAlive) resources.clear();
+  }
+
   // ══════════════════════════════════════════════════════
   //  D3D12Driver — Frame lifecycle
   // ══════════════════════════════════════════════════════
@@ -777,6 +783,7 @@ namespace t850 {
         m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);
         WaitForSingleObject(m_fenceEvent, INFINITE);
       }
+      m_computeKeepAlive[m_currentBackBuffer].clear();
       for (auto iterator = m_retiredBuffers.begin(); iterator != m_retiredBuffers.end();) {
         if (iterator->framesRemaining > 0) --iterator->framesRemaining;
         if (iterator->framesRemaining == 0) {

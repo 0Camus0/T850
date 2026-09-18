@@ -47,6 +47,38 @@ flowchart LR
 The base implementations fail explicitly. This keeps unsupported backends safe and makes
 capability selection a render-graph concern instead of a scene-side API switch.
 
+### Portable guarantees
+
+- Buffer creation access is a maximum capability. ReadWrite allocations can bind
+  as ReadOnlyBuffer or ReadWriteBuffer; ReadOnly allocations cannot bind writable.
+- Pipelines validate the complete reflected interface, constant word counts,
+  unique binding indices/logical register namespaces and storage formats. D3D
+  reflects HLSL registers; SPIR-V/GL/WebGPU reflect portable binding indices, with
+  the descriptor explicitly mapping them to caller-facing logical registers.
+- Texture compute supports non-array, non-multisampled 2D views. The retained
+  `ReadWriteTexture` name means write-only storage, RGBA8 UNORM or RGBA16F.
+  A resource cannot be both sampled/read and written in one dispatch. Samplers
+  must use the texture bound at the same logical register.
+- `ReadComputeBuffer` is a synchronous diagnostic boundary: a nonzero count
+  divisible by four, no larger than the allocation. It works before a frame,
+  immediately after dispatch and after submission. An open frame and its target
+  remain open; pending commands may be submitted and waited without presentation.
+  Rebind graphics resources and topology before the next draw; raw backend
+  command state is not preserved across recording resets.
+- Compute buffers/pipelines are CPU-owned, and their driver must outlive them.
+  Vulkan retires native compute handles after frame completion; D3D12 retains
+  referenced native objects per frame. Texture/view owners must synchronize
+  before destruction. RenderGraph flushes before target/pipeline teardown or
+  rebuild. `FlushGPUResources` submits pending work and waits before reclamation.
+- Invalid declared bindings are rejected before recording dispatch work. Device
+  loss or allocation failure is not a transactional rollback guarantee.
+
+The regression oracle covers producer/consumer chains, malformed layouts,
+write-capability violations, aliases, storage formats, aligned readback at each
+submission boundary, destruction before submission, and active-target clear
+continuation. SPIRV-Reflect is vendored unchanged at the revision documented in
+`T850/Librerias/spirv-reflect/README.t850.md` for native GL/Vulkan reflection.
+
 `Device::CreateRT` and both `BaseDriver::CreateRT` overloads now accept storage usage.
 `BaseRT::AllowUnorderedAccess` carries that request to the selected backend. Existing
 callers retain graphics-only behavior because storage defaults to false.
@@ -58,7 +90,7 @@ constant-buffer, structured-buffer, texture, UAV, and sampler registers. A dispa
 rejected unless every reflected binding appears exactly once with the expected type and
 constant count.
 
-`D3D11ComputeBuffer` creates a structured buffer with either an SRV or UAV. Diagnostic
+`D3D11ComputeBuffer` creates an SRV and, for ReadWrite capability, a UAV. Diagnostic
 readback copies to a `D3D11_USAGE_STAGING` buffer and maps it for CPU access.
 
 Texture compute uses SRV/UAV views added to D3D11 render-target wrappers. Before dispatch,
@@ -91,6 +123,8 @@ draw cannot reuse stale compute state.
 Storage-enabled render targets own SRV and UAV descriptors and share their tracked state with
 the owning `D3D12RT`. Diagnostic buffer readback transitions to copy source, copies into a
 readback heap, submits without presenting, waits for completion, and maps the result.
+An active frame resumes recording on the same frame slot and restores its target,
+viewport and scissor while invalidating cached graphics bindings.
 
 The review also fixed swapchain state tracking. Each backbuffer now records its actual state,
 and `Clear`, `ClearWithColor`, `ClearBackbufferWithColor`, `PopRT`, and `CompleteFrame` use one
@@ -102,7 +136,9 @@ code skipped the PRESENT-to-RENDER_TARGET barrier in that sequence.
 `VulkanComputePipeline` compiles the shared HLSL with glslang to SPIR-V 1.0. The shaders use
 `T850_VULKAN`-guarded `vk::binding` attributes, while D3D continues to use native HLSL
 registers. The pipeline owns a descriptor-set layout, pipeline layout, and compute pipeline.
-Binding indices and logical register/type pairs are validated for uniqueness.
+Binding indices and logical register/type pairs are validated for uniqueness;
+SPIRV-Reflect checks the declared interface and storage formats. `T850_SPIRV`
+enables the explicit RGBA8/RGBA16F shader annotations.
 
 At dispatch, the driver:
 
@@ -144,6 +180,22 @@ compute layout supports one bind group containing:
 - sampled float 2D textures;
 - non-comparison filtering samplers;
 - write-only `rgba8unorm` or `rgba16float` storage textures.
+
+All eight maintained compute families have direct `.wgsl` siblings: Arithmetic,
+ImagePatternWrite, ImagePatternRead, Blur, Bright, GodRays, HDRComposite and
+TorchParticles. Arithmetic also supports the `read-input` define in both languages.
+The existing SeparableBlur probe retains its own WGSL source. Before the 2026-09-17
+follow-up, only that older probe shader had been ported; `auto` hid the missing
+ComputeV1 ports by falling back to HLSL.
+
+`DawnComputeV1` requires identical reflected bindings (including uniform offsets,
+storage formats and minimum sizes) and workgroup sizes across strict `wgsl` and
+`spirv` for all nine variants. Run the native GPU oracle with each explicit
+`--shaderFlow wgsl` and `--shaderFlow spirv`; an `auto` pass alone is not dual-flow
+evidence. The browser uses version-3 packages keyed by the requested flow and
+checks source provenance, selected with `?shaderFlow=wgsl` or `?shaderFlow=spirv`.
+Both browser paths ultimately submit WGSL to WebGPU; SPIR-V translation happens
+during native package export.
 
 The reflected workgroup dimensions populate the shared `ComputePipeline::threadGroupSize`,
 so render-graph dispatch uses the same ceiling-division path as D3D11, D3D12, Vulkan, and
@@ -276,6 +328,19 @@ particle count, and time are supplied through `SceneProps`. Every thread owns on
 pixel, so no atomics or retained particle buffer are needed. Palette colors, radial motion,
 wobble, size evolution, edge softness, fade windows, intensity, and tip lighting are authored
 under `voxel_world.torch` rather than embedded in C++ or shader code.
+
+The pass binds the same frame's `GBuffer:DEPTH` at sampled register `t0`
+(portable binding 2), alongside constants at binding 0 and the output at binding 1.
+Each output pixel loads its depth without filtering. A particle's projected
+`clip.z / clip.w` must be in [0, 1] and greater than or equal to the scene depth
+because the engine uses reversed-Z. The camera-facing particle square uses its
+center depth across its pixels, so geometry can partially occlude a particle.
+Both HLSL and GLSL implement this test; no separate particle depth buffer is used.
+
+The shared `--compute-selftest` includes the production torch kernel with a 7x5
+depth mask and exact readback assertions for visible, hidden, partially occluded,
+and out-of-range particles. It passed D3D11, D3D12, Vulkan, GL, native WebGPU,
+Chrome and Firefox on 2026-09-17. The original merged kernel omitted depth entirely.
 
 ## Shader permutation inventory and cache
 

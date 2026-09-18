@@ -4,6 +4,7 @@ export function minecraftAssetSelection(scene) {
     'Fonts/Martius-LV9L4.ttf', 'Fonts/tahomabd.ttf',
     'Layouts/imgui_runtime_layout.ini',
     `Textures/${scene.voxel_world.atlas_texture}`,
+    ...(scene.voxel_world.mob?.skin_texture ? [`Textures/${scene.voxel_world.mob.skin_texture}`] : []),
     ...[scene.voxel_world.environment_map, ...scene.voxel_world.environment_options].map(path => `Textures/${path}`),
   ]);
   for (const path of required) {

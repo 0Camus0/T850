@@ -1,5 +1,8 @@
 # Compute Shader Branch Review
 
+> Historical assessment. The later [compute flow assessment](compute-flow-assessment-2026-09-17.md)
+> supersedes the no-defects conclusion below and tracks open correctness gaps.
+
 **Reviewed:** 2026-09-17
 **Base:** `origin/microsoft_webgpu_branch` (`70327f3`)
 **Decision:** Ready for pull request, subject to CI platform gates.

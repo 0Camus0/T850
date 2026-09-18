@@ -356,8 +356,8 @@ bool ValidateConfig(Config& cfg) {
   cfg.webgpuShaderFlow = NormalizeShaderFlow(cfg.webgpuShaderFlow);
 
 #ifdef __EMSCRIPTEN__
-  if (cfg.api != "webgpu" || cfg.webgpuShaderFlow == "spirv" || cfg.flags.benchmarkMatrix)
-    throw std::invalid_argument("Browser builds require WebGPU with prepared WGSL; native API matrices and SPIR-V runtime compilation are unavailable");
+  if (cfg.api != "webgpu" || cfg.flags.benchmarkMatrix)
+    throw std::invalid_argument("Browser builds require WebGPU with prepared shaders; native API matrices are unavailable");
 #endif
 
   if (cfg.flags.compileShaders) {

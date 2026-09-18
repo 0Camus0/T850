@@ -7,6 +7,33 @@ or a claim that every authoring, persistence, and gameplay workflow is covered.
 
 ## Build and Run
 
+After PR #40 integration, `?postProcessMode=compute` selects the shared compute
+post-processing kernels; `raster` remains the default. The launchers forward their
+existing Raster/Compute selector. Minecraft torch particles currently have only
+a compute implementation, so Raster mode leaves that layer empty.
+
+`BuildWeb.ps1` exports version-3 graphics/compute packages, all selected scenes
+in both execution modes and all three shader flows, and the shared compute correctness kernels. Rebuild
+without `-SkipShaderExport` after upgrading from the older package schema.
+`?shaderFlow=wgsl` requires direct WGSL; `?shaderFlow=spirv` requires the offline
+HLSL -> SPIR-V -> Tint WGSL path. `auto` prefers direct WGSL and permits fallback.
+Package identity includes the requested flow, and the recorded source provenance
+is checked when loading strict modes. Browsers consume prepared WGSL in both
+cases; they do not run an HLSL/SPIR-V compiler.
+`?computeSelfTest` runs arithmetic and odd-sized image GPU readback tests instead
+of the scene. For example, with the local server running:
+
+```powershell
+node .\web\test-firefox.mjs --browser chrome --compute-selftest --url 'http://127.0.0.1:8765/?computeSelfTest'
+node .\web\test-firefox.mjs --browser chrome --compute-selftest --url 'http://127.0.0.1:8765/?computeSelfTest&shaderFlow=wgsl'
+node .\web\test-firefox.mjs --browser chrome --compute-selftest --url 'http://127.0.0.1:8765/?computeSelfTest&shaderFlow=spirv'
+```
+
+Both Chrome and Firefox passed this test after integration. Real feature-removal
+Chrome tests also passed compute Minecraft with touch, OnTop and camera controls;
+physical phone validation remains separate. Use `--no-interactions` for the
+touch harness: its desktop mouse test expects pointer lock, which Touch prevents.
+
 From the source directory containing `T850.sln`, on the Windows development host:
 
 ```powershell
@@ -25,7 +52,7 @@ Both Launcher and Launcher Release offer separate entries:
 - **WebGPU (Dawn/D3D12)** launches the native x64 executable.
 - **WebGPU + Browser (Emscripten)** reveals a **Browser** dropdown, starts the
   Node server and opens the selected browser. RUN becomes OPEN BROWSER. Scene,
-  model/document, maximum canvas dimensions, culling, and log level are passed
+  model/document, maximum canvas dimensions, culling, post-process mode, and log level are passed
   through URL parameters; scene-specific overrides clear when the web selector
   changes scenes. Native shader flows, fullscreen, dumps, replay, telemetry,
   benchmark, and editor controls are disabled in this mode.

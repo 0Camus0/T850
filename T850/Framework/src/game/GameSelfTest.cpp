@@ -643,6 +643,14 @@ void TestFpsJumpRemainsAirborne() {
   controller.SetPosition(XVECTOR3(0.0f, groundedCenterY, 0.0f, 1.0f));
 
   KinematicCharacterInput input;
+  for (float deltaSeconds : {1.0f / 30.0f, 1.0f / 60.0f, 1.0f / 144.0f}) {
+    for (int frame = 0; frame < 120; ++frame) {
+      controller.UpdateFps(deltaSeconds, input, context);
+      Require(controller.IsGrounded(), "idle FPS controller lost ground contact");
+      Require(std::fabs(controller.GetPosition().y - groundedCenterY) < 0.001f,
+        "idle FPS camera height oscillated on the ground plane");
+    }
+  }
   input.jump = true;
   controller.UpdateFps(1.0f / 60.0f, input, context);
   Require(!controller.IsGrounded(),
@@ -1749,11 +1757,10 @@ void TestShaderFlowConfiguration() {
   };
   Config defaults;
   Require(defaults.webgpuShaderFlow == "auto", "WebGPU shader flow must default to auto");
+  const auto modes = {"auto", "wgsl", "spirv"};
 #ifdef __EMSCRIPTEN__
-  const auto modes = {"auto", "wgsl"};
   const std::string expectedApi = "webgpu";
 #else
-  const auto modes = {"auto", "wgsl", "spirv"};
   const std::string expectedApi = "d3d12";
 #endif
   for (const auto* mode : modes) {
@@ -1770,10 +1777,10 @@ void TestShaderFlowConfiguration() {
   }
 #ifdef __EMSCRIPTEN__
   Config nativeOnly;
-  nativeOnly.webgpuShaderFlow = "spirv";
-  bool rejectedNativeFlow = false;
-  try { config::ValidateConfig(nativeOnly); } catch (const std::invalid_argument&) { rejectedNativeFlow = true; }
-  Require(rejectedNativeFlow, "Browser accepted unavailable SPIR-V runtime compiler");
+  nativeOnly.api = "vulkan";
+  bool rejectedNativeApi = false;
+  try { config::ValidateConfig(nativeOnly); } catch (const std::invalid_argument&) { rejectedNativeApi = true; }
+  Require(rejectedNativeApi, "Browser accepted an unavailable native graphics API");
 #endif
   parse(defaults, {"DayScene", "--shaderFlow", "SPIRV", "--shaderFlow", "WGSL"});
   Require(defaults.webgpuShaderFlow == "wgsl", "Shader flow case normalization or last override failed");
@@ -2055,18 +2062,68 @@ void TestShaderPrecompilerContract() {
     shaderArtifact.wgsl = "@vertex fn VS() -> @builtin(position) vec4f { return vec4f(0); }";
     shaderArtifact.translationMilliseconds = 15;
     std::string diagnostic;
-    const bool wrotePackage = webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, packageRoot.string(), diagnostic);
+    webgpu::ShaderFlowReport packageReport;
+    const auto packageFlow = webgpu::ShaderFlow::Auto;
+    const bool wrotePackage = webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, packageFlow, packageReport, packageRoot.string(), diagnostic);
     webgpu::ShaderArtifact restoredArtifact;
-    const bool readPackage = webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, diagnostic, packageRoot.string());
+    const bool readPackage = webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, packageFlow, packageReport, diagnostic, packageRoot.string());
     shaderRequest.source += " changed";
-    const bool rejectedStale = !webgpu::ReadShaderPackage(shaderRequest, shaderArtifact, diagnostic, packageRoot.string());
+    const bool rejectedStale = !webgpu::ReadShaderPackage(shaderRequest, shaderArtifact, packageFlow, packageReport, diagnostic, packageRoot.string());
     const auto packagePath = std::filesystem::directory_iterator(packageRoot)->path();
     ResourceLocator::Instance().WriteText(packagePath.string(), "{corrupt");
     shaderRequest.source = "test source";
-    const bool rejectedCorrupt = !webgpu::ReadShaderPackage(shaderRequest, shaderArtifact, diagnostic, packageRoot.string());
+    const bool rejectedCorrupt = !webgpu::ReadShaderPackage(shaderRequest, shaderArtifact, packageFlow, packageReport, diagnostic, packageRoot.string());
     std::filesystem::remove_all(packageRoot);
     Require(wrotePackage && readPackage && restoredArtifact.cacheHit && restoredArtifact.translationMilliseconds == 0 &&
             rejectedStale && rejectedCorrupt, "browser shader package integrity or invalidation failed");
+        shaderRequest.stage = webgpu::ShaderStage::Compute;
+        shaderRequest.layout = webgpu::BindingLayout::ComputeV1;
+        shaderRequest.entryPoint = "CS";
+        shaderRequest.defines = "#define COMPUTE_TEST\n";
+        shaderArtifact = {};
+        shaderArtifact.wgsl = "@compute @workgroup_size(8, 4, 1) fn CS() {}";
+        shaderArtifact.workgroupSize = {8, 4, 1};
+        webgpu::ShaderBinding storage{};
+        storage.kind = webgpu::ResourceKind::WriteOnlyStorageTexture;
+        storage.binding = 5;
+        storage.dimension = webgpu::TextureDimension::D2;
+        storage.storageRgba16Float = true;
+        shaderArtifact.bindings.push_back(storage);
+        Require(webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, packageFlow, packageReport, packageRoot.string(), diagnostic) &&
+          webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, packageFlow, packageReport, diagnostic, packageRoot.string()) &&
+          restoredArtifact.workgroupSize == shaderArtifact.workgroupSize &&
+          restoredArtifact.bindings == shaderArtifact.bindings,
+          "compute package lost workgroup or storage format metadata");
+        for (int field = 0; field < 3; ++field) {
+          auto changed = shaderRequest;
+          if (field == 0) changed.entryPoint = "Other";
+          if (field == 1) changed.defines.clear();
+          if (field == 2) changed.layout = webgpu::BindingLayout::GraphicsV1;
+          Require(!webgpu::ReadShaderPackage(changed, restoredArtifact, packageFlow, packageReport, diagnostic, packageRoot.string()),
+            "compute package accepted a different entry point, defines or binding layout");
+        }
+        for (const auto strictFlow : {webgpu::ShaderFlow::Wgsl, webgpu::ShaderFlow::Spirv})
+          Require(!webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, strictFlow, packageReport, diagnostic, packageRoot.string()),
+            "strict compute flow accepted an auto package");
+        packageReport.attempts = {webgpu::ShaderFlowAttempt{}};
+        packageReport.attempts.front().sourceLanguage = webgpu::ShaderSourceLanguage::Wgsl;
+        Require(!webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, webgpu::ShaderFlow::Spirv,
+          packageReport, packageRoot.string(), diagnostic), "SPIR-V package accepted direct WGSL provenance");
+        auto directArtifact = shaderArtifact;
+        directArtifact.wgsl += "\n";
+        Require(webgpu::WriteShaderPackage(shaderRequest, directArtifact, webgpu::ShaderFlow::Wgsl,
+          packageReport, packageRoot.string(), diagnostic), "cannot write strict WGSL package");
+        packageReport.attempts.front().sourceLanguage = webgpu::ShaderSourceLanguage::Hlsl;
+        Require(webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, webgpu::ShaderFlow::Spirv,
+          packageReport, packageRoot.string(), diagnostic), "cannot write strict SPIR-V package");
+        for (const auto strictFlow : {webgpu::ShaderFlow::Wgsl, webgpu::ShaderFlow::Spirv}) {
+          const bool direct = strictFlow == webgpu::ShaderFlow::Wgsl;
+          Require(webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, strictFlow, packageReport, diagnostic, packageRoot.string()) &&
+            restoredArtifact.wgsl == (direct ? directArtifact.wgsl : shaderArtifact.wgsl) &&
+            packageReport.attempts.front().sourceLanguage == (direct ? webgpu::ShaderSourceLanguage::Wgsl : webgpu::ShaderSourceLanguage::Hlsl),
+            "strict compute packages collided or lost source provenance");
+        }
+        std::filesystem::remove_all(packageRoot);
   #endif
 }
 
@@ -2157,6 +2214,61 @@ void TestTypedComputeGraphValidation() {
   const std::string noStorage = replaceOnce(validGraph, ",\"storage\":true", "");
   Require(!graph.Load(writeGraph("_compute_no_storage.json", noStorage).string()),
           "compute graph accepted a non-storage output");
+  const std::string wrongFormat = replaceOnce(validGraph,
+    "\"name\":\"Output\",\"color_count\":1,\"color_format\":\"RGBA8\"",
+    "\"name\":\"Output\",\"color_count\":1,\"color_format\":\"RGBA16F\"");
+  Require(!graph.Load(writeGraph("_compute_wrong_format.json", wrongFormat).string()),
+          "compute graph accepted a storage format incompatible with its kernel");
+  const std::string wrongSampler = replaceOnce(validGraph,
+    "\"Input:COLOR0\",\"access\":\"sampler\"", "\"Output:COLOR0\",\"access\":\"sampler\"");
+  Require(!graph.Load(writeGraph("_compute_wrong_sampler.json", wrongSampler).string()),
+          "compute graph accepted a sampler bound to a different resource");
+
+  const std::string twoInputs = R"({
+    "render_targets":[
+      {"name":"First","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5]},
+      {"name":"Second","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5]},
+      {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"storage":true}
+    ],
+    "passes":[{"name":"Bright","target":"Output","execution":"compute_if_supported",
+      "compute_shader":"Shaders/CS_Bright.hlsl","compute_extent_from":"Output:COLOR0",
+      "compute_resources":[
+        {"resource":"@kernel_constants","access":"constants","shader_register":0},
+        {"resource":"First:COLOR0","access":"sampled","shader_register":0},
+        {"resource":"Second:COLOR0","access":"sampled","shader_register":1},
+        {"resource":"First:COLOR0","access":"sampler","shader_register":0},
+        {"resource":"Second:COLOR0","access":"sampler","shader_register":1},
+        {"resource":"Output:COLOR0","access":"storage_write","shader_register":0}
+      ],"draws":[]}
+    ]})";
+  Require(graph.Load(writeGraph("_compute_two_inputs.json", twoInputs).string()),
+          "valid two-input compute graph was rejected");
+  auto swappedSamplers = replaceOnce(twoInputs,
+    "\"First:COLOR0\",\"access\":\"sampler\"", "\"Second:COLOR0\",\"access\":\"sampler\"");
+  swappedSamplers = replaceOnce(swappedSamplers,
+    "\"Second:COLOR0\",\"access\":\"sampler\",\"shader_register\":1",
+    "\"First:COLOR0\",\"access\":\"sampler\",\"shader_register\":1");
+  Require(!graph.Load(writeGraph("_compute_swapped_samplers.json", swappedSamplers).string()),
+          "compute graph accepted samplers swapped between valid sampled resources");
+
+  const std::string particles = R"({
+    "render_targets":[
+      {"name":"Depth","color_count":0,"color_format":"NONE","depth_format":"F32","size":[7,5]},
+      {"name":"Output","color_count":1,"color_format":"RGBA16F","depth_format":"NONE","size":[7,5],"storage":true}
+    ],
+    "passes":[{"name":"Particles","target":"Output","execution":"compute_if_supported",
+      "compute_shader":"Shaders/CS_TorchParticles.hlsl","compute_extent_from":"Output:COLOR0",
+      "compute_resources":[
+        {"resource":"@kernel_constants","access":"constants","shader_register":0},
+        {"resource":"Depth:DEPTH","access":"sampled","shader_register":0},
+        {"resource":"Output:COLOR0","access":"storage_write","shader_register":0}
+      ],"draws":[]}
+    ]})";
+  Require(graph.Load(writeGraph("_compute_particle_extent.json", particles).string()),
+          "valid pixel-indexed particle depth was rejected");
+  const auto wrongExtent = replaceOnce(particles, "\"size\":[7,5]", "\"size\":[3,2]");
+  Require(!graph.Load(writeGraph("_compute_wrong_extent.json", wrongExtent).string()),
+          "compute graph accepted mismatched pixel-indexed depth extents");
 
   std::string feedback = replaceOnce(
     validGraph, "\"Input:COLOR0\",\"access\":\"sampled\"",

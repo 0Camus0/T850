@@ -208,6 +208,7 @@ namespace t850 {
     threadGroupSize = {threadGroupX, threadGroupY, threadGroupZ};
 
     std::vector<D3D12_ROOT_PARAMETER> parameters;
+    std::vector<ComputeBindingLayoutDesc> reflected;
     parameters.reserve(shaderDesc.BoundResources);
     std::vector<D3D12_DESCRIPTOR_RANGE> descriptorRanges;
     descriptorRanges.reserve(shaderDesc.BoundResources);
@@ -307,7 +308,25 @@ namespace t850 {
           return false;
       }
       parameters.push_back(parameter);
+      ComputeBindingLayoutDesc resource;
+      resource.shaderRegister = binding.BindPoint;
+      switch (binding.Type) {
+        case D3D_SIT_CBUFFER:
+          resource.type = ComputeBindingType::Constants32;
+          resource.constantCount = m_constantWordCounts.at(binding.BindPoint);
+          break;
+        case D3D_SIT_STRUCTURED: case D3D_SIT_BYTEADDRESS: resource.type = ComputeBindingType::ReadOnlyBuffer; break;
+        case D3D_SIT_UAV_RWSTRUCTURED: case D3D_SIT_UAV_RWBYTEADDRESS: resource.type = ComputeBindingType::ReadWriteBuffer; break;
+        case D3D_SIT_TEXTURE: resource.type = ComputeBindingType::ReadOnlyTexture; break;
+        case D3D_SIT_UAV_RWTYPED: resource.type = ComputeBindingType::ReadWriteTexture; break;
+        case D3D_SIT_SAMPLER: resource.type = ComputeBindingType::Sampler; break;
+        default: return false;
+      }
+      if ((resource.type == ComputeBindingType::ReadOnlyTexture || resource.type == ComputeBindingType::ReadWriteTexture) &&
+          binding.Dimension != D3D_SRV_DIMENSION_TEXTURE2D) return false;
+      reflected.push_back(resource);
     }
+    if (!SetValidatedLayout(desc, reflected, false)) return false;
 
     D3D12_ROOT_SIGNATURE_DESC rootDesc = {};
     rootDesc.NumParameters = static_cast<UINT>(parameters.size());
@@ -462,7 +481,7 @@ namespace t850 {
                                     uint32_t groupCountY,
                                     uint32_t groupCountZ) {
     auto* pipeline = dynamic_cast<D3D12ComputePipeline*>(&pipelineBase);
-    if (!pipeline || groupCountX == 0 || groupCountY == 0 || groupCountZ == 0) {
+    if (!pipeline || !pipeline->ValidateBindings(bindings) || groupCountX == 0 || groupCountY == 0 || groupCountZ == 0) {
       T8_LOG_ERROR("[D3D12][Compute] Invalid pipeline or zero dispatch extent");
       return false;
     }
@@ -495,6 +514,18 @@ namespace t850 {
     std::unordered_set<uint32_t> boundSamplers;
 
     for (const ComputeBindingDesc& binding : bindings) {
+      if (binding.type == ComputeBindingType::ReadWriteTexture || binding.type == ComputeBindingType::ReadOnlyTexture) {
+        const auto* texture = dynamic_cast<D3D12Texture*>(binding.texture);
+        if (!texture || !texture->pTexResource) return false;
+        const auto view = texture->pTexResource->GetDesc();
+        if (view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 1 || view.SampleDesc.Count != 1)
+          return false;
+        if (binding.type == ComputeBindingType::ReadWriteTexture)
+          for (const auto& layout : pipeline->bindingLayout)
+            if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
+                view.Format != (layout.storageFormat == ComputeStorageFormat::Rgba16Float
+                  ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
+      }
       ResolvedBinding item;
       item.binding = &binding;
       switch (binding.type) {
@@ -514,7 +545,7 @@ namespace t850 {
         case ComputeBindingType::ReadOnlyBuffer:
           item.rootIndex = pipeline->GetBufferSrvRootIndex(binding.shaderRegister);
           item.buffer = dynamic_cast<D3D12ComputeBuffer*>(binding.buffer);
-          if (!item.buffer || item.buffer->descriptor.access != ComputeBufferAccess::ReadOnly) {
+          if (!item.buffer) {
             T8_LOG_ERROR("[D3D12][Compute] Invalid read-only buffer t%u", binding.shaderRegister);
             return false;
           }
@@ -605,9 +636,14 @@ namespace t850 {
     commandList->SetDescriptorHeaps(2, heaps);
     commandList->SetComputeRootSignature(pipeline->GetRootSignature());
     commandList->SetPipelineState(pipeline->GetPipelineState());
+    auto& keepAlive = m_computeKeepAlive[m_currentBackBuffer];
+    keepAlive.try_emplace(pipeline->GetPipelineState(), pipeline->GetPipelineState());
+    keepAlive.try_emplace(pipeline->GetRootSignature(), pipeline->GetRootSignature());
 
     std::unordered_set<ID3D12Resource*> writtenResources;
     for (const ResolvedBinding& item : resolved) {
+      if (item.buffer) keepAlive.try_emplace(item.buffer->GetResource(), item.buffer->GetResource());
+      if (item.texture) keepAlive.try_emplace(item.texture->pTexResource.Get(), item.texture->pTexResource.Get());
       const ComputeBindingDesc& binding = *item.binding;
       switch (binding.type) {
         case ComputeBindingType::Constants32:
@@ -674,15 +710,10 @@ namespace t850 {
                                       void* destination,
                                       size_t byteCount) {
     auto* buffer = dynamic_cast<D3D12ComputeBuffer*>(&bufferBase);
-    if (!buffer || !destination || byteCount == 0 || byteCount > buffer->descriptor.byteWidth) {
+    if (!buffer || !destination || byteCount == 0 || byteCount % 4 || byteCount > buffer->descriptor.byteWidth) {
       T8_LOG_ERROR("[D3D12][Compute] Invalid readback request");
       return false;
     }
-    if (!m_frameStarted) {
-      T8_LOG_ERROR("[D3D12][Compute] Readback requires a recorded compute dispatch");
-      return false;
-    }
-
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
     D3D12_HEAP_PROPERTIES readbackHeap = {};
     readbackHeap.Type = D3D12_HEAP_TYPE_READBACK;
@@ -706,19 +737,46 @@ namespace t850 {
     if (FAILED(createHr)) {
       T8_LOG_ERROR("[D3D12][Compute] Readback buffer creation failed (hr=0x%08X)",
                    static_cast<unsigned>(createHr));
-      CompleteFrame(FrameCompletionMode::SubmitNoPresent);
-      WaitForGPU();
       return false;
     }
 
-    ID3D12GraphicsCommandList* commandList = GetCmdList();
+    const bool frameOpen = m_frameStarted;
+    Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator;
+    Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> standalone;
+    if (!frameOpen && (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator))) ||
+        FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&standalone)))))
+      return false;
+    ID3D12GraphicsCommandList* commandList = frameOpen ? GetCmdList() : standalone.Get();
     const D3D12_RESOURCE_STATES previousState = buffer->GetState();
     TransitionBuffer(commandList, *buffer, D3D12_RESOURCE_STATE_COPY_SOURCE);
     commandList->CopyBufferRegion(readback.Get(), 0, buffer->GetResource(), 0, byteCount);
     TransitionBuffer(commandList, *buffer, previousState);
 
-    CompleteFrame(FrameCompletionMode::SubmitNoPresent);
+    if (FAILED(commandList->Close())) return false;
+    ID3D12CommandList* lists[] = {commandList};
+    m_commandQueue->ExecuteCommandLists(1, lists);
     WaitForGPU();
+    if (frameOpen) {
+      if (FAILED(commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr))) return false;
+      ID3D12DescriptorHeap* heaps[] = {
+        m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(), m_heaps[D3D12Heap::SAMPLER].GetHeap()
+      };
+      commandList->SetDescriptorHeaps(2, heaps);
+      m_lastPSO = nullptr;
+      m_lastRootSig = nullptr;
+      T8DeviceContext->actualShaderSet = nullptr;
+      T8DeviceContext->actualConstantBuffer = nullptr;
+      T8DeviceContext->actualIndexBuffer = nullptr;
+      T8DeviceContext->actualVertexBuffer = nullptr;
+      const auto viewport = m_viewport;
+      const auto scissor = m_scissorRect;
+      if (CurrentRT >= 0) PushRTLoad(CurrentRT);
+      else PopRT();
+      m_viewport = viewport;
+      m_scissorRect = scissor;
+      commandList->RSSetViewports(1, &m_viewport);
+      commandList->RSSetScissorRects(1, &m_scissorRect);
+    }
 
     D3D12_RANGE readRange = { 0, byteCount };
     void* mapped = nullptr;

@@ -431,7 +431,7 @@ public:
       packagedRequest.keyBits = request.keyBits;
       packagedRequest.source = isVertex ? vertexSource : fragmentSource;
     #ifdef __EMSCRIPTEN__
-      Require(webgpu::ReadShaderPackage(packagedRequest, artifact, diagnostic), diagnostic);
+      Require(webgpu::ReadShaderPackage(packagedRequest, artifact, state.flow, report, diagnostic), diagnostic);
     #else
       if (request.name.empty()) {
         Require(state.flow != webgpu::ShaderFlow::Wgsl, "Anonymous HLSL shader has no direct WGSL source");
@@ -452,7 +452,7 @@ public:
           artifact.cacheHit, report.fallbackAttempted, report.elapsedMilliseconds);
       }
       if (!g_config.webShaderOutput.empty())
-        Require(webgpu::WriteShaderPackage(packagedRequest, artifact, g_config.webShaderOutput, diagnostic), diagnostic);
+        Require(webgpu::WriteShaderPackage(packagedRequest, artifact, state.flow, report, g_config.webShaderOutput, diagnostic), diagnostic);
 #endif
       if (!diagnostic.empty()) T8_LOG_INFO("[WebGPU] shader warning: %s", diagnostic.c_str());
       wgpu::ShaderSourceWGSL source{};
@@ -652,6 +652,41 @@ public:
   wgpu::BindGroupLayout bindGroupLayout;
   wgpu::PipelineLayout pipelineLayout;
   wgpu::ComputePipeline pipeline;
+  std::string entryPoint;
+  std::vector<wgpu::BindGroupLayoutEntry> bindingEntries;
+  struct Variant {
+    wgpu::BindGroupLayout bindings;
+    wgpu::PipelineLayout layout;
+    wgpu::ComputePipeline pipeline;
+  };
+  std::map<uint64_t, Variant> variants;
+
+  Variant& GetVariant(uint64_t nonFiltering) {
+    auto& variant = variants[nonFiltering];
+    if (variant.pipeline) return variant;
+    auto entries = bindingEntries;
+    for (auto& entry : entries) {
+      if (entry.binding < 64 && (nonFiltering & (uint64_t(1) << entry.binding))) {
+        if (entry.texture.sampleType != wgpu::TextureSampleType::BindingNotUsed)
+          entry.texture.sampleType = wgpu::TextureSampleType::UnfilterableFloat;
+        if (entry.sampler.type != wgpu::SamplerBindingType::BindingNotUsed)
+          entry.sampler.type = wgpu::SamplerBindingType::NonFiltering;
+      }
+    }
+    wgpu::BindGroupLayoutDescriptor binding{};
+    binding.entryCount = entries.size(); binding.entries = entries.data();
+    variant.bindings = state.context.device.CreateBindGroupLayout(&binding);
+    wgpu::PipelineLayoutDescriptor layout{};
+    layout.bindGroupLayoutCount = 1; layout.bindGroupLayouts = &variant.bindings;
+    variant.layout = state.context.device.CreatePipelineLayout(&layout);
+    wgpu::ComputePipelineDescriptor descriptor{};
+    descriptor.layout = variant.layout;
+    descriptor.compute.module = module;
+    descriptor.compute.entryPoint = entryPoint.c_str();
+    variant.pipeline = state.context.device.CreateComputePipeline(&descriptor);
+    state.context.CheckHealth();
+    return variant;
+  }
 
   bool Create(const ComputePipelineDesc& desc) {
     try {
@@ -669,8 +704,21 @@ public:
       request.flow = state.flow;
       webgpu::ShaderFlowReport report;
       std::string diagnostic;
+      webgpu::ShaderRequest packagedRequest;
+      packagedRequest.name = request.name;
+      packagedRequest.stage = request.stage;
+      packagedRequest.layout = request.layout;
+      packagedRequest.entryPoint = request.entryPoint;
+      packagedRequest.defines = request.defines;
+      packagedRequest.source = desc.source;
+    #ifdef __EMSCRIPTEN__
+      Require(webgpu::ReadShaderPackage(packagedRequest, artifact, state.flow, report, diagnostic), diagnostic);
+    #else
       Require(webgpu::LoadShaderFiles(request, artifact, report, diagnostic, desc.source),
               diagnostic.empty() ? "Compute shader preparation failed" : diagnostic);
+      if (!g_config.webShaderOutput.empty())
+        Require(webgpu::WriteShaderPackage(packagedRequest, artifact, state.flow, report, g_config.webShaderOutput, diagnostic), diagnostic);
+    #endif
       if (!diagnostic.empty()) T8_LOG_INFO("[WebGPU][Compute] shader warning: %s", diagnostic.c_str());
       Require(!artifact.wgsl.empty(), "Compute shader artifact is empty");
       Require(artifact.workgroupSize[0] && artifact.workgroupSize[1] && artifact.workgroupSize[2],
@@ -679,8 +727,10 @@ public:
               "Compute binding declaration count does not match shader reflection");
 
       std::map<uint32_t, ComputeBindingLayoutDesc> declared;
+      std::vector<ComputeBindingLayoutDesc> reflected;
       std::vector<wgpu::BindGroupLayoutEntry> layoutEntries;
       for (const ComputeBindingLayoutDesc& binding : desc.bindings) {
+        Require(binding.bindingIndex < 64, "Compute binding index exceeds layout key capacity");
         Require(declared.emplace(binding.bindingIndex, binding).second,
                 "Duplicate compute bind-group binding " + std::to_string(binding.bindingIndex));
       }
@@ -734,27 +784,26 @@ public:
           break;
         }
         resources.emplace(resource.binding, resource);
+        auto reflectedBinding = expected->second;
+        if (resource.kind == webgpu::ResourceKind::WriteOnlyStorageTexture)
+          reflectedBinding.storageFormat = resource.storageRgba16Float
+            ? ComputeStorageFormat::Rgba16Float : ComputeStorageFormat::Rgba8Unorm;
+        reflected.push_back(reflectedBinding);
         layoutEntries.push_back(entry);
       }
+      Require(SetValidatedLayout(desc, reflected, true), "Invalid compute binding layout");
 
-      wgpu::BindGroupLayoutDescriptor bindGroupDescriptor{};
-      bindGroupDescriptor.entryCount = layoutEntries.size();
-      bindGroupDescriptor.entries = layoutEntries.data();
-      bindGroupLayout = state.context.device.CreateBindGroupLayout(&bindGroupDescriptor);
-      wgpu::PipelineLayoutDescriptor layoutDescriptor{};
-      layoutDescriptor.bindGroupLayoutCount = 1;
-      layoutDescriptor.bindGroupLayouts = &bindGroupLayout;
-      pipelineLayout = state.context.device.CreatePipelineLayout(&layoutDescriptor);
       wgpu::ShaderSourceWGSL source{};
       source.code = artifact.wgsl.c_str();
       wgpu::ShaderModuleDescriptor moduleDescriptor{};
       moduleDescriptor.nextInChain = &source;
       module = state.context.device.CreateShaderModule(&moduleDescriptor);
-      wgpu::ComputePipelineDescriptor pipelineDescriptor{};
-      pipelineDescriptor.layout = pipelineLayout;
-      pipelineDescriptor.compute.module = module;
-      pipelineDescriptor.compute.entryPoint = desc.entryPoint.c_str();
-      pipeline = state.context.device.CreateComputePipeline(&pipelineDescriptor);
+      bindingEntries = std::move(layoutEntries);
+      entryPoint = desc.entryPoint;
+      auto& variant = GetVariant(0);
+      bindGroupLayout = variant.bindings;
+      pipelineLayout = variant.layout;
+      pipeline = variant.pipeline;
       state.context.CheckHealth();
       Require(static_cast<bool>(pipeline), "Compute pipeline creation failed");
       bindings = desc.bindings;
@@ -777,6 +826,10 @@ public:
 class WebGPUComputeBuffer final : public ComputeBuffer {
 public:
   explicit WebGPUComputeBuffer(WebGPUDriverState& state) : state(state) {}
+  ~WebGPUComputeBuffer() override {
+    state.context.Retire(std::move(gpu), allocationSize,
+      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst);
+  }
   WebGPUDriverState& state;
   wgpu::Buffer gpu;
   uint64_t allocationSize = 0;
@@ -793,9 +846,11 @@ public:
     bufferDescriptor.usage = wgpu::BufferUsage::Storage |
                              wgpu::BufferUsage::CopySrc |
                              wgpu::BufferUsage::CopyDst;
-    gpu = state.context.device.CreateBuffer(&bufferDescriptor);
+    gpu = state.context.AcquireBuffer(bufferDescriptor);
     if (!gpu) return false;
-    if (initialData) state.context.queue.WriteBuffer(gpu, 0, initialData, desc.byteWidth);
+    std::vector<unsigned char> zeros;
+    if (!initialData) zeros.resize(desc.byteWidth);
+    state.context.queue.WriteBuffer(gpu, 0, initialData ? initialData : zeros.data(), desc.byteWidth);
     state.context.CheckHealth();
     return true;
   }
@@ -1123,9 +1178,28 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
                                    const std::vector<ComputeBindingDesc>& runtimeBindings,
                                    uint32_t groupX, uint32_t groupY, uint32_t groupZ) {
   auto* pipeline = dynamic_cast<WebGPUComputePipeline*>(&pipelineBase);
-  if (!pipeline || &pipeline->state != m_state.get() || !pipeline->pipeline ||
+  if (!pipeline || !pipeline->ValidateBindings(runtimeBindings) || &pipeline->state != m_state.get() || !pipeline->pipeline ||
       !groupX || !groupY || !groupZ || groupX > 65535 || groupY > 65535 || groupZ > 65535 ||
       runtimeBindings.size() != pipeline->bindings.size()) return false;
+  for (const auto& binding : runtimeBindings) {
+    if (binding.buffer) {
+      const auto* buffer = dynamic_cast<WebGPUComputeBuffer*>(binding.buffer);
+      if (!buffer || &buffer->state != m_state.get() || !buffer->gpu) return false;
+    }
+    if (binding.texture) {
+      const auto* texture = dynamic_cast<WebGPUTexture*>(binding.texture);
+      if (!texture || &texture->state != m_state.get() || !texture->gpu ||
+          texture->gpu.GetDimension() != wgpu::TextureDimension::e2D || texture->gpu.GetDepthOrArrayLayers() != 1) return false;
+      if (binding.type == ComputeBindingType::Sampler && !texture->sampler) return false;
+      if (binding.type == ComputeBindingType::ReadWriteTexture) {
+        if (!(texture->gpu.GetUsage() & wgpu::TextureUsage::StorageBinding)) return false;
+        for (const auto& layout : pipeline->bindingLayout)
+          if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
+              texture->format != (layout.storageFormat == ComputeStorageFormat::Rgba16Float
+                ? wgpu::TextureFormat::RGBA16Float : wgpu::TextureFormat::RGBA8Unorm)) return false;
+      }
+    }
+  }
   try {
     m_state->EndPass();
     struct StandaloneCommands {
@@ -1136,6 +1210,7 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
     if (commands.standalone) m_state->context.commands = m_state->context.device.CreateCommandEncoder();
     std::vector<bool> consumed(runtimeBindings.size(), false);
     std::vector<wgpu::BindGroupEntry> entries;
+    uint64_t nonFiltering = 0;
     entries.reserve(pipeline->bindings.size());
     for (const ComputeBindingLayoutDesc& layout : pipeline->bindings) {
       const ComputeBindingDesc* runtime = nullptr;
@@ -1167,8 +1242,6 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
       case ComputeBindingType::ReadWriteBuffer: {
         auto* buffer = dynamic_cast<WebGPUComputeBuffer*>(runtime->buffer);
         if (!buffer || &buffer->state != m_state.get() || !buffer->gpu ||
-            (layout.type == ComputeBindingType::ReadOnlyBuffer &&
-             buffer->descriptor.access != ComputeBufferAccess::ReadOnly) ||
             (layout.type == ComputeBindingType::ReadWriteBuffer &&
              buffer->descriptor.access != ComputeBufferAccess::ReadWrite)) return false;
         entry.buffer = buffer->gpu;
@@ -1179,6 +1252,7 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
         auto* texture = dynamic_cast<WebGPUTexture*>(runtime->texture);
         if (!texture || &texture->state != m_state.get() || !texture->gpu) return false;
         entry.textureView = texture->SampleView();
+        if (texture->RequiresNonFilteringBinding()) nonFiltering |= uint64_t(1) << layout.bindingIndex;
         break;
       }
       case ComputeBindingType::ReadWriteTexture: {
@@ -1193,6 +1267,7 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
         auto* texture = dynamic_cast<WebGPUTexture*>(runtime->texture);
         if (!texture || &texture->state != m_state.get() || !texture->sampler) return false;
         entry.sampler = texture->sampler;
+        if (texture->RequiresNonFilteringBinding()) nonFiltering |= uint64_t(1) << layout.bindingIndex;
         break;
       }
       }
@@ -1201,17 +1276,19 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
     if (std::find(consumed.begin(), consumed.end(), false) != consumed.end()) return false;
 
     wgpu::BindGroupDescriptor groupDescriptor{};
-    groupDescriptor.layout = pipeline->bindGroupLayout;
+    auto& variant = pipeline->GetVariant(nonFiltering);
+    groupDescriptor.layout = variant.bindings;
     groupDescriptor.entryCount = entries.size();
     groupDescriptor.entries = entries.data();
     auto bindGroup = m_state->context.device.CreateBindGroup(&groupDescriptor);
     if (!bindGroup) return false;
 
     auto pass = m_state->context.commands.BeginComputePass();
-    pass.SetPipeline(pipeline->pipeline);
+    pass.SetPipeline(variant.pipeline);
     pass.SetBindGroup(0, bindGroup);
     pass.DispatchWorkgroups(groupX, groupY, groupZ);
     pass.End();
+    if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::AddCounter("webgpu.compute_dispatches", 1);
     if (commands.standalone) {
       auto command = m_state->context.commands.Finish();
       m_state->context.SubmitCommands(command);

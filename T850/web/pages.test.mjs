@@ -57,6 +57,10 @@ test('Minecraft package rejects unrelated scene assets and retains declared depe
   const scene = JSON.parse(await readFile(new URL('../Assets/Scenes/Minecraft.t8scene', import.meta.url), 'utf8'));
   const selection = minecraftAssetSelection(scene);
   for (const path of selection.required) assert.equal(selection.includes(path), true, path);
+  assert.equal(selection.required.has(`Textures/${scene.voxel_world.mob.skin_texture}`), true);
+  assert.throws(() => minecraftAssetSelection({ ...scene, voxel_world: {
+    ...scene.voxel_world, mob: { skin_texture: '../private.png' },
+  } }), /Unsafe Minecraft dependency/);
   for (const path of ['Models/DamagedHelmet.glb', 'Models/doomslayer.glb', 'Scenes/DayScene.t8scene',
     'Scenes/Q3/q3dm6_mod_3.t8scene', 'Textures/Terrain/HeightmapExample.bmp', 'model-cloud-manifest.json'])
     assert.equal(selection.includes(path), false, path);
@@ -169,6 +173,14 @@ test('WSSI runtime forwards validated enemy counts and stays on Minecraft', asyn
   const launcher = await execute('?entry=launcher&scene=0');
   assert.equal(launcher.home.href, 'launcher.html');
   assert.equal(launcher.elements.scene.hidden, false);
+  for (const mode of ['raster', 'compute']) {
+    const runtime = await execute(`?postProcessMode=${mode}&computeSelfTest`);
+    assert.equal(runtime.args[runtime.args.indexOf('--postProcessMode') + 1], mode);
+    assert.equal(runtime.args.includes('--compute-selftest'), true);
+  }
+  for (const mode of ['', 'invalid']) {
+    assert.equal((await execute(`?postProcessMode=${mode}`)).diagnostics.state, 'failed');
+  }
 });
 
 test('runtime errors show and retain the first failure across reloads without hiding current status', async () => {

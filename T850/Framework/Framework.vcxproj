@@ -332,6 +332,10 @@
     <ClCompile Include="src\video\webgpu\WebGPUShaderPackage.cpp" />
     <ClCompile Include="src\core\ShaderTools.cpp" />
     <ClCompile Include="src\utils\SPIRVReflection.cpp" />
+    <ClCompile Include="src\utils\ComputeReflection.cpp" />
+    <ClCompile Include="..\Librerias\spirv-reflect\spirv_reflect.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\utils\ShaderDiskCache.cpp" />
     <ClCompile Include="src\utils\ShaderPreprocessor.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>

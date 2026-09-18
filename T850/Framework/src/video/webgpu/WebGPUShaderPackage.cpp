@@ -9,24 +9,34 @@
 
 namespace t850::webgpu {
 struct ShaderPackageRecord {
-  uint32_t version = 1;
+  uint32_t version = 3;
+  ShaderFlow flow = ShaderFlow::Auto;
+  ShaderSourceLanguage sourceLanguage = ShaderSourceLanguage::Hlsl;
   std::string requestHash;
   std::string artifactHash;
   ShaderArtifact artifact;
 };
 
 namespace {
-std::string RequestHash(const ShaderRequest& request) {
+std::string RequestHash(const ShaderRequest& request, ShaderFlow flow) {
   auto normalized = request;
   normalized.name = std::filesystem::path(request.name).lexically_normal().generic_string();
-  return ShaderDiskCache::ContentHash(glz::write_json(normalized).value());
+  return ShaderDiskCache::ContentHash(glz::write_json(std::pair(normalized, flow)).value());
 }
 }
 
 bool WriteShaderPackage(const ShaderRequest& request, const ShaderArtifact& artifact,
+                        ShaderFlow flow, const ShaderFlowReport& report,
                         const std::string& directory, std::string& diagnostic) {
   ShaderPackageRecord record;
-  record.requestHash = RequestHash(request);
+  record.flow = flow;
+  record.sourceLanguage = report.attempts.empty() ? ShaderSourceLanguage::Hlsl : report.attempts.back().sourceLanguage;
+  if ((flow == ShaderFlow::Wgsl && record.sourceLanguage != ShaderSourceLanguage::Wgsl) ||
+      (flow == ShaderFlow::Spirv && record.sourceLanguage != ShaderSourceLanguage::Hlsl)) {
+    diagnostic = "Shader package source does not match the requested strict flow";
+    return false;
+  }
+  record.requestHash = RequestHash(request, flow);
   record.artifact = artifact;
   record.artifact.cacheHit = false;
   record.artifact.cacheStored = false;
@@ -43,14 +53,19 @@ bool WriteShaderPackage(const ShaderRequest& request, const ShaderArtifact& arti
 }
 
 bool ReadShaderPackage(const ShaderRequest& request, ShaderArtifact& artifact,
-                       std::string& diagnostic, const std::string& directory) {
+                       ShaderFlow flow, ShaderFlowReport& report, std::string& diagnostic,
+                       const std::string& directory) {
   artifact = {};
-  const auto hash = RequestHash(request);
+  report = {};
+  report.requestedFlow = flow;
+  const auto hash = RequestHash(request, flow);
   const auto path = (std::filesystem::path(directory) / (hash + ".json")).generic_string();
   std::string text;
   ShaderPackageRecord record;
   if (!ResourceLocator::Instance().ReadText(path, text) ||
-      glz::read_json(record, text) || record.version != 1 || record.requestHash != hash ||
+      glz::read_json(record, text) || record.version != 3 || record.requestHash != hash || record.flow != flow ||
+      (flow == ShaderFlow::Wgsl && record.sourceLanguage != ShaderSourceLanguage::Wgsl) ||
+      (flow == ShaderFlow::Spirv && record.sourceLanguage != ShaderSourceLanguage::Hlsl) ||
       record.artifact.wgsl.empty() || record.artifactHash !=
         ShaderDiskCache::ContentHash(glz::write_json(record.artifact).value())) {
     diagnostic = "Missing or invalid browser shader package for " + request.name + ": " + path;
@@ -58,6 +73,12 @@ bool ReadShaderPackage(const ShaderRequest& request, ShaderArtifact& artifact,
   }
   artifact = std::move(record.artifact);
   artifact.cacheHit = true;
+  ShaderFlowAttempt attempt;
+  attempt.sourceLanguage = record.sourceLanguage;
+  attempt.sourceName = request.name;
+  attempt.succeeded = true;
+  attempt.cacheHit = true;
+  report.attempts.push_back(std::move(attempt));
   return true;
 }
 }

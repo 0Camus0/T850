@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$Ui,
+    [string]$LayoutOutputDirectory,
     [switch]$BuildWeb,
     [ValidateSet('Release', 'Debug')][string]$Configuration = 'Release',
     [ValidateSet('Build', 'Rebuild')][string]$BuildTarget = 'Rebuild',
@@ -218,6 +219,52 @@ function Test-DawnPreflight {
 
 Test-DawnPreflight
 
+function Test-DependencySetupPreflight {
+    $parseErrors = $null
+    $tokens = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Launcher.ps1'), [ref]$tokens, [ref]$parseErrors)
+    foreach ($name in @('Get-DependencySetupActivity', 'Test-DependencySetupAvailable', 'Get-WindowsToolchainStatus', 'Ensure-WindowsToolchain', 'Invoke-WindowsVcpkgSetup', 'Invoke-DawnPackageSetup')) {
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $false)
+        Assert-True ($null -ne $definition) "Missing dependency preflight function $name"
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    $rootDir = Join-Path ([IO.Path]::GetTempPath()) 'T850 dependency test\T850'
+    $vcpkg = Join-Path $rootDir 'Librerias\vcpkg\vcpkg.exe'
+    foreach ($operation in @('install', 'remove', 'upgrade', 'build')) {
+        $process = [pscustomobject]@{ ExecutablePath = $vcpkg; CommandLine = ('"{0}" {1} dawn:x64-windows-static' -f $vcpkg, $operation); ProcessId = 123 }
+        Assert-True ((Get-DependencySetupActivity -Processes @($process)).State -eq 'Running') "Active vcpkg $operation was missed"
+    }
+    $process.CommandLine = 'vcpkg list --x-json'
+    Assert-True ((Get-DependencySetupActivity -Processes @($process)).State -eq 'Idle') 'Read-only vcpkg was treated as an installer'
+    $process.CommandLine = 'vcpkg install dawn --dry-run'
+    Assert-True ((Get-DependencySetupActivity -Processes @($process)).State -eq 'Idle') 'Dry-run setup blocked builds'
+    $process.ExecutablePath = 'C:\Other\vcpkg\vcpkg.exe'
+    $process.CommandLine = 'C:\Other\vcpkg\vcpkg.exe install dawn'
+    Assert-True ((Get-DependencySetupActivity -Processes @($process)).State -eq 'Idle') 'Another checkout blocked this launcher'
+    $process.CommandLine = 'powershell.exe -File "' + (Join-Path $rootDir 'scripts\SetupDawn.ps1') + '" -Mode Install'
+    Assert-True ((Get-DependencySetupActivity -Processes @($process)).State -eq 'Running') 'Setup wrapper was missed between vcpkg operations'
+    $process.CommandLine = $process.CommandLine.Replace('-Mode Install', '-Mode Check')
+    Assert-True ((Get-DependencySetupActivity -Processes @($process)).State -eq 'Idle') 'Read-only Dawn audit blocked builds'
+    Assert-True ((Get-DependencySetupActivity -Processes @()).State -eq 'Idle') 'Finished setup left a stale busy state'
+    function Get-CimInstance { throw 'Process query unavailable' }
+    Assert-True ((Get-DependencySetupActivity).State -eq 'Unknown') 'Process query failure was reported as idle'
+    function Get-DependencySetupActivity { return [pscustomobject]@{ State = 'Running'; Message = 'Dependency update in progress' } }
+    function Get-AndroidRepoRoot { return Split-Path -Parent $rootDir }
+    function Update-DependencySetupControls {}
+    function Find-MSBuild { throw 'Active setup should short-circuit missing-package checks' }
+    $txtStatus = [pscustomobject]@{ Text = ''; Foreground = $null }
+    $window = [pscustomobject]@{}
+    $window | Add-Member ScriptMethod FindResource { param($name) return $name }
+    $status = Get-WindowsToolchainStatus x64
+    Assert-True ($status.DependencyActivity.State -eq 'Running' -and $status.Missing.Count -eq 0) 'In-progress packages were classified as missing'
+    Assert-True (-not (Ensure-WindowsToolchain x64) -and $txtStatus.Text -eq 'Dependency update in progress') 'Build preflight did not report active setup'
+    Assert-True (-not (Invoke-WindowsVcpkgSetup x64)) 'Duplicate vcpkg installer started'
+    Assert-True (-not (Invoke-DawnPackageSetup)) 'Duplicate Dawn installer started'
+    Write-Output 'Launcher dependency-update preflight tests PASS'
+}
+
+Test-DependencySetupPreflight
+
 function Test-WebBuildLogging {
     $parseErrors = $null
     $tokens = $null
@@ -300,6 +347,7 @@ function Test-LauncherUi([string]$Name) {
     $rootDir = $temporary
     $configPath = Join-Path $temporary 'config.json'
     $script:LauncherBusy = $false
+    $script:DependencySetupActivity = [pscustomobject]@{ State = 'Idle'; Message = '' }
     $script:CloudAssetStatus = [pscustomobject]@{ Configured = $true; Ok = $true; Missing = 99; Total = 99; Message = 'Missing cloud assets' }
     $sceneDependencies = [pscustomobject]@{ Ok = $false; Missing = @('missing scene') }
     function Update-DownloadAssetsButton {}
@@ -460,6 +508,15 @@ function Test-LauncherUi([string]$Name) {
             Assert-True $btnRun.IsEnabled 'Successful browser build did not enable OPEN BROWSER'
             Write-Output "Launcher $Configuration $BuildTarget integration PASS"
         }
+        if ($Name -eq 'Launcher.ps1') {
+            $script:DependencySetupActivity = [pscustomobject]@{ State = 'Running'; Message = 'Dependencies are being updated by another process.' }
+            Update-Preview
+            Assert-True (-not $btnBuild.IsEnabled -and -not $btnRebuild.IsEnabled -and -not $btnCompileShaders.IsEnabled) 'External package update left build actions enabled'
+            Assert-True ($txtDependencyStatus.Visibility -eq 'Visible' -and $txtDependencyStatus.Text -eq $script:DependencySetupActivity.Message) 'Dependency update notice is not visible'
+            function Get-DependencySetupActivity { return [pscustomobject]@{ State = 'Idle'; Message = '' } }
+            Refresh-DependencySetupActivity
+            Assert-True ($btnBuild.IsEnabled -and $btnRebuild.IsEnabled -and $txtDependencyStatus.Visibility -eq 'Collapsed') 'Finished dependency update did not automatically restore build controls'
+        }
         Write-Output "$Name WPF/config/normal-routing tests PASS"
     } finally {
         $window.Close()
@@ -468,9 +525,106 @@ function Test-LauncherUi([string]$Name) {
     }
 }
 
+function Test-LauncherLayout {
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Launcher.ps1'), [ref]$tokens, [ref]$parseErrors)
+    foreach ($functionName in @('Initialize-LauncherWindow', 'Update-LauncherLayout', 'Get-LauncherWorkArea', 'Update-LauncherScreen')) {
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
+        Assert-True ($null -ne $definition) "Missing adaptive layout function $functionName"
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    $assignment = $ast.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$xaml' }, $false)
+    $literal = $assignment.Right.Find({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -or $node -is [Management.Automation.Language.ExpandableStringExpressionAst] }, $true)
+    $cases = @(
+        @{ Width = 1920; Height = 1080; Scale = 1.0 },
+        @{ Width = 1920; Height = 1080; Scale = 1.25 },
+        @{ Width = 1920; Height = 1080; Scale = 1.5 },
+        @{ Width = 1920; Height = 1080; Scale = 2.0 },
+        @{ Width = 1920; Height = 1080; Scale = 2.5 },
+        @{ Width = 1366; Height = 768; Scale = 1.0 },
+        @{ Width = 1366; Height = 768; Scale = 2.0 },
+        @{ Width = 1024; Height = 768; Scale = 2.0 },
+        @{ Width = 3840; Height = 2160; Scale = 2.0 }
+    )
+    if ($LayoutOutputDirectory) { [void][IO.Directory]::CreateDirectory($LayoutOutputDirectory) }
+    foreach ($case in $cases) {
+        foreach ($mode in @('native', 'browser', 'android')) {
+            $window = [Windows.Markup.XamlReader]::Parse($literal.Value)
+            $window.ShowActivated = $false
+            $window.ShowInTaskbar = $false
+            $caseName = '{0}x{1}-{2}pct-{3}' -f $case.Width, $case.Height, ($case.Scale * 100), $mode
+            $area = [Windows.Rect]::new(0, 0, ($case.Width / $case.Scale), ($case.Height / $case.Scale - 40))
+            try {
+                if ($mode -eq 'browser') {
+                    $window.FindName('cmbApi').SelectedItem = @($window.FindName('cmbApi').Items | Where-Object Tag -eq 'webgpu-browser')[0]
+                    $window.FindName('pnlBrowser').Visibility = 'Visible'
+                    $window.FindName('btnRun').Content = 'OPEN BROWSER'
+                    $window.FindName('btnRebuild').Content = 'REBUILD WEB'
+                    $window.FindName('btnBuild').Content = 'BUILD WEB'
+                } elseif ($mode -eq 'android') {
+                    $window.FindName('cmbTarget').SelectedItem = @($window.FindName('cmbTarget').Items | Where-Object Tag -eq 'android')[0]
+                    $window.FindName('pnlAndroidDevice').Visibility = 'Visible'
+                    $window.FindName('txtAndroidDeviceStatus').Text = 'Android device connected'
+                }
+                Initialize-LauncherWindow $window $area
+                Update-LauncherLayout $window $window.Width
+                $window.Add_SizeChanged({ param($sender, $eventArgs) Update-LauncherLayout $sender $eventArgs.NewSize.Width })
+                $window.Show()
+                $window.UpdateLayout()
+                $window.Dispatcher.Invoke([Action]{}, [Windows.Threading.DispatcherPriority]::Background)
+                $liveArea = Get-LauncherWorkArea $window
+                Assert-True ($liveArea.Width -gt 0 -and $liveArea.Height -gt 0) 'Current monitor work-area conversion failed'
+                Assert-True ($window.ActualWidth -le $area.Width - 23 -and $window.ActualHeight -le $area.Height - 23) "$caseName exceeds its work area"
+                $scroll = $window.FindName('svSettings')
+                Assert-True ($scroll.ViewportHeight -gt 48 -and $scroll.ScrollableWidth -lt 1) "$caseName has unusable settings bounds"
+                if ($case.Height -ge 1080 -and $case.Scale -eq 1 -and $mode -eq 'native') {
+                    Assert-True ($scroll.ScrollableHeight -lt 1) '100% desktop unnecessarily scrolls the default settings'
+                }
+                $root = $window.FindName('launcherLayout')
+                foreach ($controlName in @('btnRebuild', 'btnBuild', 'btnRun', 'btnDownloadAssets', 'btnBenchmarkMatrix', 'btnEditor')) {
+                    $button = $window.FindName($controlName)
+                    $bounds = $button.TransformToAncestor($root).TransformBounds([Windows.Rect]::new($button.RenderSize))
+                    Assert-True ($bounds.Width -gt 80 -and $bounds.Height -ge 23 -and $bounds.Left -ge -1 -and $bounds.Top -ge 0 -and $bounds.Right -le $root.ActualWidth + 1 -and $bounds.Bottom -le $root.ActualHeight + 1) "$caseName clips $controlName"
+                }
+                $before = $window.FindName('pnlActions').TranslatePoint([Windows.Point]::new(0, 0), $root)
+                $scroll.ScrollToEnd()
+                $window.UpdateLayout()
+                $after = $window.FindName('pnlActions').TranslatePoint([Windows.Point]::new(0, 0), $root)
+                Assert-True ($before -eq $after) "$caseName scrolls the action buttons"
+                $scroll.ScrollToTop()
+                $window.UpdateLayout()
+                $settingsScroll = [Math]::Round($scroll.ScrollableHeight)
+                if ($LayoutOutputDirectory) {
+                    $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new([int][Math]::Ceiling($window.ActualWidth * $case.Scale), [int][Math]::Ceiling($window.ActualHeight * $case.Scale), (96 * $case.Scale), (96 * $case.Scale), [Windows.Media.PixelFormats]::Pbgra32)
+                    $bitmap.Render($window)
+                    $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
+                    $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
+                    $stream = [IO.File]::Create((Join-Path $LayoutOutputDirectory "$caseName.png"))
+                    try { $encoder.Save($stream) } finally { $stream.Dispose() }
+                }
+                Update-LauncherScreen $window ([Windows.Rect]::new(0, 0, 680, 500))
+                $window.UpdateLayout()
+                Assert-True ($window.MaxWidth -eq 656 -and $window.MaxHeight -eq 476 -and $window.FindName('pnlActions').Columns -eq 3) 'Monitor work-area change did not reflow the launcher'
+                $window.FindName('pnlBuildOutput').Visibility = 'Visible'
+                $window.FindName('txtBuildOutput').Text = ('Building Framework and DayScene...' + [Environment]::NewLine) * 80
+                $window.FindName('txtCmdPreview').Text = 'DayScene.exe --api webgpu --scene 4 --sceneFile "Scenes/Example Scene.t8scene" --telemetry --width 1920 --height 1080'
+                $window.SizeToContent = 'Manual'
+                $window.Height = 420
+                $window.UpdateLayout()
+                $actions = $window.FindName('pnlActions')
+                $actionBounds = $actions.TransformToAncestor($root).TransformBounds([Windows.Rect]::new($actions.RenderSize))
+                Assert-True ($actionBounds.Top -gt 48 -and $actionBounds.Bottom -le $root.ActualHeight + 1 -and $scroll.ViewportHeight -gt 48) 'Build output or manual resize displaced the action bar'
+                Write-Output "Launcher layout $caseName PASS (settings scroll=$settingsScroll)"
+            } finally { $window.Close() }
+        }
+    }
+}
+
 if ($Ui) {
     Assert-True ([Threading.Thread]::CurrentThread.GetApartmentState() -eq 'STA') 'WPF tests require an STA PowerShell host'
-    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
     . Test-LauncherUi 'Launcher.ps1'
     . Test-LauncherUi 'Launcher_Release.ps1'
+    Test-LauncherLayout
 }

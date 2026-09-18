@@ -6,7 +6,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="T850 Engine Launcher" SizeToContent="Manual" Width="920" Height="760"
+    Title="T850 Engine Launcher" SizeToContent="Height" Width="920"
         MinWidth="640" MinHeight="480"
         WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
         Background="#1B1B2F" Foreground="#E0E0E0">
@@ -100,6 +100,11 @@ $xaml = @"
         <Style TargetType="CheckBox">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
             <Setter Property="FontSize" Value="14"/>
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap"/></DataTemplate>
+                </Setter.Value>
+            </Setter>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
 
@@ -108,6 +113,7 @@ $xaml = @"
             <Setter Property="Foreground" Value="{StaticResource SubtextBrush}"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Margin" Value="0,0,0,4"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
         </Style>
 
         <Style TargetType="RadioButton">
@@ -118,26 +124,27 @@ $xaml = @"
         </Style>
     </Window.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto"
+    <Grid Name="launcherLayout" Margin="24,16,24,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+    <TextBlock Name="txtDependencyStatus" Grid.Row="0" Visibility="Collapsed"
+               TextWrapping="Wrap" FontSize="13" Padding="10,8" Margin="0,0,0,8"
+               Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"/>
+    <ScrollViewer Name="svSettings" Grid.Row="1" VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled"
                   CanContentScroll="False">
-    <Grid Margin="24,16,24,20">
+    <Grid Name="pnlSettings">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="16"/>
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
 
         <!-- Header -->
-        <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,20">
+        <StackPanel Name="pnlLauncherHeader" Grid.Row="0" Margin="0,0,0,20">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="T850 ENGINE" FontSize="28" FontWeight="Bold"
                            Foreground="{StaticResource AccentBrush}" Margin="0"/>
@@ -146,20 +153,29 @@ $xaml = @"
                     <TextBlock Text="DEV" FontSize="11" FontWeight="Bold" Foreground="#1E1E2E"/>
                 </Border>
             </StackPanel>
-            <TextBlock Text="Deferred Rendering Demo Launcher" FontSize="13"
+            <TextBlock Name="txtLauncherSubtitle" Text="Deferred Rendering Demo Launcher" FontSize="13"
                        Foreground="#A6ADC8" Margin="0,2,0,0"/>
         </StackPanel>
 
+        <Grid Name="pnlSections" Grid.Row="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="16"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+        <StackPanel Name="pnlPrimarySettings" Grid.Column="0">
         <!-- Build Configuration -->
-        <Border Grid.Row="1" Grid.Column="0" Background="{StaticResource SurfaceBrush}"
+        <Border Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="BUILD CONFIGURATION" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="12"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="12"/>
                         <ColumnDefinition Width="*"/>
@@ -193,7 +209,7 @@ $xaml = @"
         </Border>
 
         <!-- Graphics API -->
-        <Border Grid.Row="2" Grid.Column="0" Background="{StaticResource SurfaceBrush}"
+        <Border Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="GRAPHICS API" FontSize="12" FontWeight="SemiBold"
@@ -242,63 +258,8 @@ $xaml = @"
             </StackPanel>
         </Border>
 
-        <!-- RT Dump Settings -->
-        <Border Grid.Row="1" Grid.Column="2" Background="{StaticResource SurfaceBrush}"
-                CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
-            <StackPanel>
-                <TextBlock Text="SNAPSHOT" FontSize="12" FontWeight="SemiBold"
-                           Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
-                <CheckBox Name="chkDump" Content="Enable snapshot dump on run" Margin="0,0,0,10"/>
-                <CheckBox Name="chkDebugFrames" Content="Debug Frames (spacebar dumps + exits)" Margin="0,0,0,10"/>
-                <CheckBox Name="chkReplaySnapshot" Content="Replay Snapshot (restore full scene state)" Margin="0,0,0,6"/>
-                <CheckBox Name="chkKeepRunning" Content="Keep running after dump" Margin="0,0,0,10"/>
-                <Grid Name="pnlReplaySnapshot" IsEnabled="False" Margin="20,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="8"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0" Name="txtReplaySnapshotPath" IsReadOnly="True"
-                             FontSize="11" VerticalContentAlignment="Center"/>
-                    <Button Grid.Column="2" Name="btnBrowseSnapshot" Content="Browse..."
-                            Padding="10,4" FontSize="12" Cursor="Hand"
-                            Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
-                            BorderThickness="0">
-                        <Button.Resources>
-                            <Style TargetType="Border">
-                                <Setter Property="CornerRadius" Value="4"/>
-                            </Style>
-                        </Button.Resources>
-                    </Button>
-                </Grid>
-                <StackPanel Name="pnlDumpOptions" IsEnabled="False">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                        <RadioButton Name="rbSeconds" Content="Dump at second"
-                                     IsChecked="True" GroupName="DumpTrigger"/>
-                        <RadioButton Name="rbFrame" Content="Dump at frame"
-                                     GroupName="DumpTrigger"/>
-                    </StackPanel>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="12"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Name="pnlSeconds">
-                            <TextBlock Text="Seconds" Style="{StaticResource LabelStyle}"/>
-                            <TextBox Name="txtSeconds" Text="5"/>
-                        </StackPanel>
-                        <StackPanel Grid.Column="2" Name="pnlFrame" IsEnabled="False">
-                            <TextBlock Text="Frame Number" Style="{StaticResource LabelStyle}"/>
-                            <TextBox Name="txtFrame" Text="300"/>
-                        </StackPanel>
-                    </Grid>
-                </StackPanel>
-            </StackPanel>
-        </Border>
-
         <!-- Display -->
-        <Border Grid.Row="3" Grid.Column="0" Background="{StaticResource SurfaceBrush}"
+        <Border Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="DISPLAY" FontSize="12" FontWeight="SemiBold"
@@ -327,11 +288,11 @@ $xaml = @"
                 </Grid>
                 <StackPanel Margin="0,0,0,8">
                     <TextBlock Text="Culling" Style="{StaticResource LabelStyle}"/>
-                    <StackPanel Orientation="Horizontal">
+                    <WrapPanel>
                         <RadioButton Name="rbCullingFull" Content="Enabled (Full on Load)" GroupName="CullingMode" IsChecked="True"/>
                         <RadioButton Name="rbCullingLazy" Content="Lazy" GroupName="CullingMode"/>
                         <RadioButton Name="rbCullingDisabled" Content="Disabled" GroupName="CullingMode"/>
-                    </StackPanel>
+                    </WrapPanel>
                 </StackPanel>
                 <CheckBox Name="chkBenchmark" Content="Benchmark mode" Margin="0,0,0,6" Visibility="Collapsed"/>
                 <StackPanel Name="pnlBenchmarkMode" Margin="20,0,0,8" Visibility="Collapsed">
@@ -373,9 +334,66 @@ $xaml = @"
                 </Grid>
             </StackPanel>
         </Border>
+        </StackPanel>
+        <StackPanel Name="pnlSecondarySettings" Grid.Column="2">
+
+        <!-- RT Dump Settings -->
+        <Border Background="{StaticResource SurfaceBrush}"
+                CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
+            <StackPanel>
+                <TextBlock Text="SNAPSHOT" FontSize="12" FontWeight="SemiBold"
+                           Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
+                <CheckBox Name="chkDump" Content="Enable snapshot dump on run" Margin="0,0,0,10"/>
+                <CheckBox Name="chkDebugFrames" Content="Debug Frames (spacebar dumps + exits)" Margin="0,0,0,10"/>
+                <CheckBox Name="chkReplaySnapshot" Content="Replay Snapshot (restore full scene state)" Margin="0,0,0,6"/>
+                <CheckBox Name="chkKeepRunning" Content="Keep running after dump" Margin="0,0,0,10"/>
+                <Grid Name="pnlReplaySnapshot" IsEnabled="False" Margin="20,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" Name="txtReplaySnapshotPath" IsReadOnly="True"
+                             FontSize="11" VerticalContentAlignment="Center"/>
+                    <Button Grid.Column="2" Name="btnBrowseSnapshot" Content="Browse..."
+                            Padding="10,4" FontSize="12" Cursor="Hand"
+                            Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
+                            BorderThickness="0">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="4"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                </Grid>
+                <StackPanel Name="pnlDumpOptions" IsEnabled="False">
+                    <WrapPanel Margin="0,0,0,8">
+                        <RadioButton Name="rbSeconds" Content="Dump at second"
+                                     IsChecked="True" GroupName="DumpTrigger"/>
+                        <RadioButton Name="rbFrame" Content="Dump at frame"
+                                     GroupName="DumpTrigger"/>
+                    </WrapPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Name="pnlSeconds">
+                            <TextBlock Text="Seconds" Style="{StaticResource LabelStyle}"/>
+                            <TextBox Name="txtSeconds" Text="5"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Name="pnlFrame" IsEnabled="False">
+                            <TextBlock Text="Frame Number" Style="{StaticResource LabelStyle}"/>
+                            <TextBox Name="txtFrame" Text="300"/>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </StackPanel>
+        </Border>
 
         <!-- Dev Tools -->
-        <Border Grid.Row="2" Grid.Column="2" Background="{StaticResource SurfaceBrush}"
+        <Border Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="DEV TOOLS" FontSize="12" FontWeight="SemiBold"
@@ -399,9 +417,11 @@ $xaml = @"
                 </StackPanel>
             </StackPanel>
         </Border>
+        </StackPanel>
+        </Grid>
 
         <!-- Status + Command Preview -->
-        <StackPanel Grid.Row="4" Grid.ColumnSpan="3" VerticalAlignment="Bottom" Margin="0,0,0,12">
+        <StackPanel Grid.Row="2" VerticalAlignment="Bottom" Margin="0,0,0,12">
             <TextBlock Name="txtStatus" Text="" FontSize="12"
                        Foreground="#A6ADC8" Margin="0,0,0,4"
                        TextWrapping="Wrap"/>
@@ -423,20 +443,21 @@ $xaml = @"
             </Border>
         </StackPanel>
 
+    </Grid>
+    </ScrollViewer>
+
         <!-- Buttons -->
-        <Grid Grid.Row="5" Grid.ColumnSpan="3">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="12"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="12"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="12"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="12"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <Grid Grid.Column="0">
+        <UniformGrid Name="pnlActions" Grid.Row="2" Columns="5" Margin="-6,8,-6,0">
+            <UniformGrid.Resources>
+                <Style TargetType="Button">
+                    <Setter Property="ContentTemplate">
+                        <Setter.Value>
+                            <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" TextAlignment="Center"/></DataTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </UniformGrid.Resources>
+            <Grid Margin="6,4">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="2"/>
@@ -463,7 +484,7 @@ $xaml = @"
                     </Button.Resources>
                 </Button>
             </Grid>
-            <Button Grid.Column="2" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
+            <Button Name="btnRun" Content="&#x25B6;  RUN" Height="48" Margin="6,4"
                     FontSize="18" FontWeight="Bold" Cursor="Hand"
                     Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
                     BorderThickness="0">
@@ -473,7 +494,7 @@ $xaml = @"
                     </Style>
                 </Button.Resources>
             </Button>
-            <Button Grid.Column="4" Name="btnDownloadAssets" Content="Download Assets" Height="48"
+            <Button Name="btnDownloadAssets" Content="Download Assets" Height="48" Margin="6,4"
                     FontSize="16" FontWeight="Bold" Cursor="Hand"
                     Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
                     BorderThickness="0" IsEnabled="False">
@@ -483,7 +504,7 @@ $xaml = @"
                     </Style>
                 </Button.Resources>
             </Button>
-            <Button Grid.Column="6" Name="btnBenchmarkMatrix" Content="Benchmark Matrix" Height="48"
+            <Button Name="btnBenchmarkMatrix" Content="Benchmark Matrix" Height="48" Margin="6,4"
                     FontSize="15" FontWeight="Bold" Cursor="Hand"
                     Background="{StaticResource Surface2Brush}" Foreground="#E0E0E0"
                     BorderThickness="0">
@@ -493,7 +514,7 @@ $xaml = @"
                     </Style>
                 </Button.Resources>
             </Button>
-            <Button Grid.Column="8" Name="btnEditor" Content="&#x270E;  EDITOR" Height="48"
+            <Button Name="btnEditor" Content="&#x270E;  EDITOR" Height="48" Margin="6,4"
                     FontSize="18" FontWeight="Bold" Cursor="Hand"
                     Background="{StaticResource AccentBrush}" Foreground="#E0E0E0"
                     BorderThickness="0">
@@ -503,9 +524,8 @@ $xaml = @"
                     </Style>
                 </Button.Resources>
             </Button>
-        </Grid>
+        </UniformGrid>
     </Grid>
-    </ScrollViewer>
 </Window>
 "@
 
@@ -513,17 +533,63 @@ $xaml = @"
 $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml))
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
-# Keep the launcher inside the usable desktop at any DPI. The root
-# ScrollViewer makes every control reachable when the window is shortened.
-$workArea = [System.Windows.SystemParameters]::WorkArea
-$availableWidth = [Math]::Max(480.0, $workArea.Width - 24.0)
-$availableHeight = [Math]::Max(420.0, $workArea.Height - 24.0)
-$window.MinWidth = [Math]::Min($window.MinWidth, $availableWidth)
-$window.MinHeight = [Math]::Min($window.MinHeight, $availableHeight)
-$window.MaxWidth = $availableWidth
-$window.MaxHeight = $availableHeight
-$window.Width = [Math]::Min(920.0, $availableWidth)
-$window.Height = [Math]::Min(760.0, $availableHeight)
+function Initialize-LauncherWindow {
+    param($Window, [System.Windows.Rect]$WorkArea = [System.Windows.SystemParameters]::WorkArea)
+    $availableWidth = [Math]::Max(1.0, $WorkArea.Width - 24.0)
+    $availableHeight = [Math]::Max(1.0, $WorkArea.Height - 24.0)
+    $Window.MinWidth = [Math]::Min(640.0, $availableWidth)
+    $Window.MinHeight = [Math]::Min(480.0, $availableHeight)
+    $Window.MaxWidth = $availableWidth
+    $Window.MaxHeight = $availableHeight
+    $Window.Width = [Math]::Min(920.0, $availableWidth)
+    $Window.SizeToContent = [System.Windows.SizeToContent]::Height
+    $Window.Resources['LauncherWorkArea'] = $WorkArea
+}
+
+Initialize-LauncherWindow $window
+
+function Update-LauncherLayout {
+    param($Window, [double]$Width = $Window.ActualWidth)
+    $sections = $Window.FindName('pnlSections')
+    $secondary = $Window.FindName('pnlSecondarySettings')
+    $narrow = $Width -lt 840
+    [System.Windows.Controls.Grid]::SetColumn($secondary, $(if ($narrow) { 0 } else { 2 }))
+    [System.Windows.Controls.Grid]::SetRow($secondary, $(if ($narrow) { 1 } else { 0 }))
+    $sections.ColumnDefinitions[1].Width = [System.Windows.GridLength]::new($(if ($narrow) { 0 } else { 16 }))
+    $sections.ColumnDefinitions[2].Width = if ($narrow) { [System.Windows.GridLength]::new(0) } else { [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }
+    $Window.FindName('pnlActions').Columns = if ($Width -ge 900) { 5 } elseif ($Width -ge 480) { 3 } else { 2 }
+    $short = $Window.MaxHeight -le 600 -or ($Window.ActualHeight -gt 0 -and $Window.ActualHeight -le 600)
+    $Window.FindName('launcherLayout').Margin = if ($short) { [System.Windows.Thickness]::new(16, 12, 16, 12) } else { [System.Windows.Thickness]::new(24, 16, 24, 20) }
+    $Window.FindName('pnlLauncherHeader').Margin = [System.Windows.Thickness]::new(0, 0, 0, $(if ($short) { 12 } else { 20 }))
+    $Window.FindName('txtLauncherSubtitle').Visibility = if ($short) { [System.Windows.Visibility]::Collapsed } else { [System.Windows.Visibility]::Visible }
+}
+
+function Get-LauncherWorkArea {
+    param($Window)
+    $source = [System.Windows.PresentationSource]::FromVisual($Window)
+    if ($source -and $source.CompositionTarget) {
+        $handle = [System.Windows.Interop.WindowInteropHelper]::new($Window).Handle
+        $bounds = [System.Windows.Forms.Screen]::FromHandle($handle).WorkingArea
+        $pixels = [System.Windows.Rect]::new($bounds.X, $bounds.Y, $bounds.Width, $bounds.Height)
+        $transform = [System.Windows.Media.MatrixTransform]::new($source.CompositionTarget.TransformFromDevice)
+        return $transform.TransformBounds($pixels)
+    }
+    return [System.Windows.SystemParameters]::WorkArea
+}
+
+function Update-LauncherScreen {
+    param($Window, [System.Windows.Rect]$WorkArea = (Get-LauncherWorkArea $Window))
+    if ($Window.WindowState -ne [System.Windows.WindowState]::Normal) { return }
+    if ($Window.Resources['LauncherWorkArea'] -eq $WorkArea) { return }
+    Initialize-LauncherWindow $Window $WorkArea
+    Update-LauncherLayout $Window $Window.Width
+}
+
+$window.Add_SourceInitialized({ param($sender, $eventArgs) Update-LauncherScreen $sender })
+$window.Add_LocationChanged({ param($sender, $eventArgs) Update-LauncherScreen $sender })
+$window.Add_DpiChanged({ param($sender, $eventArgs) Update-LauncherScreen $sender })
+$window.Add_SizeChanged({ param($sender, $eventArgs) Update-LauncherLayout $sender $eventArgs.NewSize.Width })
+Update-LauncherLayout $window $window.Width
 
 # Get controls
 $cmbTarget      = $window.FindName("cmbTarget")
@@ -1924,6 +1990,71 @@ function Test-WindowsVcpkgTripletReady {
     ))
 }
 
+function Get-DependencySetupActivity {
+    param([string]$SourceRoot = $rootDir, [object[]]$Processes)
+    if (-not $PSBoundParameters.ContainsKey('Processes')) {
+        try {
+            $Processes = @(Get-CimInstance Win32_Process -Filter "Name = 'vcpkg.exe' OR Name = 'powershell.exe' OR Name = 'pwsh.exe' OR Name = 'cmd.exe'" -ErrorAction Stop)
+        } catch {
+            return [pscustomobject]@{ State = 'Unknown'; Message = 'Cannot check whether dependency setup is running. Build/setup is paused to avoid a duplicate installer.' }
+        }
+    }
+    $sourcePath = [IO.Path]::GetFullPath($SourceRoot).TrimEnd('\', '/')
+    $vcpkgPath = Join-Path $sourcePath 'Librerias\vcpkg\vcpkg.exe'
+    $setupPath = Join-Path $sourcePath 'scripts\SetupDawn.ps1'
+    $launchPath = Join-Path (Split-Path -Parent $sourcePath) 'LaunchSolution.bat'
+    foreach ($process in $Processes) {
+        $command = [string]$process.CommandLine
+        $executable = [string]$process.ExecutablePath
+        $mutatingVcpkg = ($executable -ieq $vcpkgPath -or $command -match ('(?:^|["\s])' + [regex]::Escape($vcpkgPath) + '(?:["\s]|$)')) -and
+            $command -match '(?:^|\s)(install|remove|upgrade|build|ci)(?:\s|$)' -and $command -notmatch '(?:^|\s)--dry-run(?:\s|$)'
+        $setupScript = $command -match [regex]::Escape($setupPath) -and $command -notmatch '(?:^|\s)-Mode\s+["'']?(Check|Plan)["'']?(?:\s|$)'
+        $setupLauncher = $command -match [regex]::Escape($launchPath) -and $command -match '(?:^|\s)--setup-only(?:\s|$)'
+        if ($mutatingVcpkg -or $setupScript -or $setupLauncher) {
+            return [pscustomobject]@{
+                State = 'Running'
+                Message = "Dependencies are being updated by another process (PID $($process.ProcessId)). Package files may be temporarily absent. Build/setup will be available when it finishes."
+            }
+        }
+    }
+    return [pscustomobject]@{ State = 'Idle'; Message = '' }
+}
+
+function Test-DependencySetupAvailable {
+    $activity = Get-DependencySetupActivity
+    $script:DependencySetupActivity = $activity
+    Update-DependencySetupControls
+    if ($activity.State -eq 'Idle') { return $true }
+    $txtStatus.Text = $activity.Message
+    $txtStatus.Foreground = $window.FindResource('AccentBrush')
+    return $false
+}
+
+function Update-DependencySetupControls {
+    $notice = $window.FindName('txtDependencyStatus')
+    if (-not $notice) { return }
+    $activity = $script:DependencySetupActivity
+    $blocked = $activity -and $activity.State -ne 'Idle'
+    $notice.Text = if ($blocked) { $activity.Message } else { '' }
+    $notice.Visibility = if ($blocked) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+    foreach ($button in @($btnBuild, $btnRebuild)) {
+        $button.IsEnabled = -not $script:LauncherBusy -and -not $blocked
+        $button.ToolTip = if ($blocked) { $activity.Message } else { $null }
+    }
+    if ($blocked) { $btnCompileShaders.IsEnabled = $false }
+}
+
+function Refresh-DependencySetupActivity {
+    if ($script:LauncherBusy) { return }
+    $activity = Get-DependencySetupActivity
+    if (-not $script:DependencySetupActivity -or
+        $activity.State -ne $script:DependencySetupActivity.State -or
+        $activity.Message -ne $script:DependencySetupActivity.Message) {
+        $script:DependencySetupActivity = $activity
+        Update-Preview
+    }
+}
+
 function Invoke-DawnPackageCheck {
     $ErrorActionPreference = "Continue"
     $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $rootDir "scripts\SetupDawn.ps1") -Mode Check 2>&1
@@ -1947,6 +2078,7 @@ function Get-DawnSetupStatus {
 }
 
 function Invoke-DawnPackageSetup {
+    if (-not (Test-DependencySetupAvailable)) { return $false }
     $txtBuildOutput.Text = ""
     $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
     Set-LauncherBusy $true "SETUP..."
@@ -1964,6 +2096,15 @@ function Get-WindowsToolchainStatus {
     param([string]$TargetPlatform)
     $repoRoot = Get-AndroidRepoRoot
     $missing = New-Object System.Collections.Generic.List[string]
+    $activity = Get-DependencySetupActivity
+    if ($activity.State -ne 'Idle') {
+        return [pscustomobject]@{
+            Missing = @()
+            Dawn = [pscustomobject]@{ Missing = @(); Diagnostic = '' }
+            DependencyActivity = $activity
+            SetupScript = (Join-Path $repoRoot 'LaunchSolution.bat')
+        }
+    }
 
     if (-not (Find-MSBuild -TargetPlatform $TargetPlatform)) {
         $missing.Add("Visual Studio 2022 C++ Build Tools / MSBuild for $TargetPlatform")
@@ -1986,12 +2127,14 @@ function Get-WindowsToolchainStatus {
     return [pscustomobject]@{
         Missing = @($missing)
         Dawn = $dawnStatus
+        DependencyActivity = $activity
         SetupScript = (Join-Path $repoRoot "LaunchSolution.bat")
     }
 }
 
 function Invoke-WindowsVcpkgSetup {
     param([string]$TargetPlatform)
+    if (-not (Test-DependencySetupAvailable)) { return $false }
     $setupScript = Join-Path (Get-AndroidRepoRoot) "LaunchSolution.bat"
     if (-not (Test-Path $setupScript)) {
         [System.Windows.MessageBox]::Show(("Setup script not found:" + "`n" + $setupScript), "T850 Launcher", "OK", "Error")
@@ -2022,7 +2165,12 @@ function Invoke-WindowsVcpkgSetup {
 
 function Ensure-WindowsToolchain {
     param([string]$TargetPlatform)
+    if (-not (Test-DependencySetupAvailable)) { return $false }
     $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
+    if ($status.DependencyActivity.State -ne 'Idle') {
+        $txtStatus.Text = $status.DependencyActivity.Message
+        return $false
+    }
     if ($status.Missing.Count -eq 0) { return $true }
     if ($status.Missing -match "^CMake") {
         [System.Windows.MessageBox]::Show("CMake 3.21+ is required for Windows x64 builds. Install CMake, add it to PATH, restart the Launcher, then build again.", "T850 Launcher", "OK", "Warning") | Out-Null
@@ -2056,6 +2204,10 @@ function Ensure-WindowsToolchain {
     }
 
     $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
+    if ($status.DependencyActivity.State -ne 'Idle') {
+        $txtStatus.Text = $status.DependencyActivity.Message
+        return $false
+    }
     $vcpkgMissing = @($status.Missing | Where-Object { $_ -like "vcpkg*" })
     if ($vcpkgMissing.Count -gt 0) {
         $answer = [System.Windows.MessageBox]::Show(("Windows dependencies are missing:" + "`n`n" + (($vcpkgMissing | ForEach-Object { "- $_" }) -join "`n") + "`n`nInstall them now?"), "T850 Launcher", "YesNo", "Warning")
@@ -2064,11 +2216,19 @@ function Ensure-WindowsToolchain {
     }
 
     $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
+    if ($status.DependencyActivity.State -ne 'Idle') {
+        $txtStatus.Text = $status.DependencyActivity.Message
+        return $false
+    }
     if ($status.Dawn.Missing.Count -gt 0) {
         $answer = [System.Windows.MessageBox]::Show(("The required Dawn package or build metadata is missing/stale." + "`n`n" + $status.Dawn.Diagnostic + "`n`nRun Dawn setup now?"), "T850 Launcher", "YesNo", "Warning")
         if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return $false }
         if (-not (Invoke-DawnPackageSetup)) { return $false }
         $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
+    }
+    if ($status.DependencyActivity.State -ne 'Idle') {
+        $txtStatus.Text = $status.DependencyActivity.Message
+        return $false
     }
     if ($status.Missing.Count -gt 0) {
         [System.Windows.MessageBox]::Show(("Windows setup finished, but these pieces are still missing:" + "`n`n" + (($status.Missing | ForEach-Object { "- $_" }) -join "`n")), "T850 Launcher", "OK", "Warning")
@@ -2627,6 +2787,7 @@ function Update-Preview {
     Update-TargetPlatformState
     Update-WebGpuControls
     Update-DownloadAssetsButton
+    Update-DependencySetupControls
     if ($script:LauncherBusy) { return }
     if (Update-WebGpuPreview) { return }
     $sceneDeps = Get-CachedSceneDependencyResult
@@ -3366,6 +3527,7 @@ try {
     Update-LauncherCloudAssetStatus | Out-Null
     if (Test-AndroidTarget) { Refresh-AndroidDevices }
     Update-SceneOptionVisibility
+    $script:DependencySetupActivity = Get-DependencySetupActivity
     Update-Preview
 } finally {
     $script:LauncherInitializing = $false
@@ -3374,6 +3536,7 @@ try {
 $deviceRefreshTimer = New-Object System.Windows.Threading.DispatcherTimer
 $deviceRefreshTimer.Interval = [TimeSpan]::FromSeconds(5)
 $deviceRefreshTimer.Add_Tick({
+    Refresh-DependencySetupActivity
     if (Test-AndroidTarget) {
         Refresh-AndroidDevices
         Update-Preview

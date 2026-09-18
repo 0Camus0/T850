@@ -3,7 +3,9 @@
 #include <debug/RuntimeTelemetry.h>
 
 #include <core/Config.h>
+#if T850_ENABLE_PROFILING
 #include <video/BaseDriver.h>
+#endif
 #include <utils/Log.h>
 
 #include <algorithm>
@@ -332,6 +334,7 @@ std::filesystem::path MakeTimestampedOutputPath(const std::filesystem::path& req
 }
 
 void DumpLocked() {
+#if T850_ENABLE_PROFILING
   if (!g_state.enabled || g_state.samples.empty()) return;
 
   const std::filesystem::path requestedOutputPath = g_state.outputPath.empty()
@@ -456,6 +459,7 @@ void DumpLocked() {
 
   T8_LOG_INFO("[RuntimeTelemetry] Wrote %zu sampled frames to '%s'",
               g_state.samples.size(), outputPath.string().c_str());
+#endif
 }
 
 } // namespace

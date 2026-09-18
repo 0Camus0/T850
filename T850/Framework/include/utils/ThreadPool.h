@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <algorithm>
 #include <utility>
+#include <debug/RuntimeTelemetry.h>
 
 namespace t850 {
 
@@ -83,9 +84,14 @@ public:
       std::bind(std::forward<F>(f), std::forward<Args>(args)...)
     );
     std::future<ReturnType> result = task->get_future();
+    const auto uploadSource = RuntimeTelemetry::CurrentUploadSource();
     {
       std::lock_guard<std::mutex> lock(m_mutex);
-      m_tasks.emplace([task]() { (*task)(); });
+      m_tasks.emplace([task, uploadSource]() {
+        T8_UPLOAD_SOURCE(uploadSource);
+        (*task)();
+        RuntimeTelemetry::PublishThread();
+      });
       m_inFlight++;
     }
     m_cv.notify_one();
@@ -144,7 +150,9 @@ private:
     std::mutex doneMutex;
     std::condition_variable doneCv;
 
-    auto worker = [&]() {
+    const auto uploadSource = RuntimeTelemetry::CurrentUploadSource();
+    auto worker = [&, uploadSource]() {
+      T8_UPLOAD_SOURCE(uploadSource);
       for (;;) {
         int myBegin = nextIndex.fetch_add(chunkSize);
         if (myBegin >= end) break;
@@ -155,6 +163,7 @@ private:
       }
       {
         std::lock_guard<std::mutex> lock(doneMutex);
+        RuntimeTelemetry::PublishThread();
         --remaining;
         if (remaining == 0) {
           doneCv.notify_one();

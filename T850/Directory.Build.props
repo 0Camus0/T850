@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <T850EnableProfiling Condition="'$(T850EnableProfiling)' == ''">1</T850EnableProfiling>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>T850_ENABLE_PROFILING=$(T850EnableProfiling);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>

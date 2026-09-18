@@ -43,7 +43,7 @@ uint64_t GameNavigationService::RequestPath(RuntimeGameObjectId requester,
   request.start = start;
   request.end = goal;
   queuedRequests_.push_back(QueuedRequest{requestId, requester, request});
-  t850::RuntimeTelemetry::AddCounter("game.nav.requests", 1.0);
+  T8_TELEMETRY_ADD("game.nav.requests", 1.0);
   return requestId;
 }
 

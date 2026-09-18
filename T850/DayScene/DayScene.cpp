@@ -1151,9 +1151,14 @@ void DayScene::InitializeBenchmarkMatrix() {
     {t850::GraphicsApi::D3D12, "d3d12"},
     {t850::GraphicsApi::VULKAN, "vulkan"},
     {t850::GraphicsApi::OPENGL, "gl"}
+  #if defined(OS_WINDOWS) && defined(_M_X64)
+    ,{t850::GraphicsApi::WEBGPU, "webgpu"}
+  #endif
   };
 #endif
-  const std::vector<std::pair<int, int>> resolutions = {
+  const std::vector<std::pair<int, int>> resolutions = g_config.benchmarkPaired
+    ? std::vector<std::pair<int, int>>{{g_config.width, g_config.height}}
+    : std::vector<std::pair<int, int>>{
     {1920, 1080},
     {2560, 1440},
     {3840, 2160}
@@ -1173,8 +1178,10 @@ void DayScene::InitializeBenchmarkMatrix() {
     : reportPath.parent_path();
 
   for (const auto& api : apis) {
+    if (g_config.benchmarkPaired && api.second != "d3d12" && api.second != "webgpu") continue;
     for (const auto& resolution : resolutions) {
       for (bool offscreen : modes) {
+        if (g_config.benchmarkPaired && !offscreen) continue;
         BenchmarkMatrixRun run;
         run.api = api.first;
         run.apiTag = api.second;
@@ -1448,6 +1455,11 @@ void DayScene::FinishBenchmarkRun(float durationSecs) {
     const BenchmarkMatrixRun& run = m_benchmarkMatrixRuns[m_benchmarkMatrixRunIndex];
     BenchmarkMatrixResult result;
     result.run = run;
+    result.provider = pFramework->pVideoDriver->ProviderTag();
+    result.backend = pFramework->pVideoDriver->UnderlyingBackendTag();
+    result.adapterId = pFramework->pVideoDriver->ProfilingAdapterId();
+    result.shaderFlow = g_config.webgpuShaderFlow;
+    result.p95Ms = Percentile(sorted, 95.0);
     result.averageMs = averageMs;
     result.medianMs = Percentile(sorted, 50.0);
     result.averageFps = averageMs > 0.0 ? 1000.0 / averageMs : 0.0;
@@ -1495,6 +1507,12 @@ void DayScene::WriteBenchmarkMatrixReport() const {
   maxFps = std::ceil(maxFps / 10.0) * 10.0;
 
   file << "# DayScene Benchmark Report\n\n";
+  file << "GPU timing: unavailable in this report. CPU frame wall times are not GPU execution times.\n\n";
+  file << "| API | Provider | Backend | Adapter ID | Shader flow | p95 ms |\n|---|---|---|---|---|---:|\n";
+  for (const auto& result : m_benchmarkMatrixResults)
+    file << "| " << result.run.apiTag << " | " << result.provider << " | " << result.backend << " | "
+         << result.adapterId << " | " << result.shaderFlow << " | " << result.p95Ms << " |\n";
+  file << '\n';
   file << "## Average FPS Chart\n\n";
   file << "```mermaid\n";
   file << "xychart-beta\n";

@@ -13,9 +13,20 @@ public:
   WebGPUDriver();
   ~WebGPUDriver() override;
   const char* ApiTag() const override { return "webgpu"; }
+  const char* ProviderTag() const override { return "Dawn"; }
+  const char* UnderlyingBackendTag() const override {
+#ifdef __EMSCRIPTEN__
+    return "browser";
+#else
+    return "d3d12";
+#endif
+  }
+  uint64_t ProfilingAdapterId() const override { return AdapterLuid(); }
   bool SupportsDeferredRendering() const override { return true; }
   bool SupportsComputeShaders() const override { return true; }
   bool SupportsComputeTextures() const override { return true; }
+  unsigned MaxRenderTargetColorAttachments() const override;
+  int SurfaceColorFormat() const override;
   void InitDriver() override;
   std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
   std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,

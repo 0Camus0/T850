@@ -204,6 +204,8 @@ bool MutableMesh::CompileShaders() {
 
 bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* error,
                                   bool retainCpuGeometry) {
+  T8_CPU_WORK("gpu.upload_batch");
+  T8_UPLOAD_SOURCE(RuntimeTelemetry::UploadSource::Streaming);
   if (!m_created) Create();
   if (!m_created || !CompileShaders()) {
     if (error) *error = "mutable mesh GPU resources are unavailable";
@@ -271,8 +273,8 @@ bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* err
     std::vector<char>().swap(m_vertexBuffer->sysMemCpy);
     std::vector<char>().swap(m_indexBuffer->sysMemCpy);
   }
-  RuntimeTelemetry::AddCounter("render.mutable_mesh.commits", 1.0);
-  RuntimeTelemetry::AddCounter("render.mutable_mesh.upload_bytes",
+  T8_TELEMETRY_ADD("render.mutable_mesh.commits", 1.0);
+  T8_TELEMETRY_ADD("render.mutable_mesh.upload_bytes",
       static_cast<double>(vertexDesc.byteWidth + indexDesc.byteWidth));
   return true;
 }
@@ -339,14 +341,14 @@ void MutableMesh::FillMaterialConstants(
 
 void MutableMesh::Draw(float* transform, float* viewProjection) {
   (void)viewProjection;
-  T8_TELEMETRY_SCOPE("render.mutable_mesh.draw");
+  T8_TELEMETRY_ADD("render.mutable_mesh.draw.calls", 1);
   if (transform) Transform(transform);
   if (!Ready() || !pScProp) return;
   const uint8_t pass = gKey.getPass();
   if (std::none_of(m_snapshot.sections.begin(), m_snapshot.sections.end(), [&](const auto& section) {
         return DrawsInPass(m_snapshot.materials[section.materialIndex].alphaMode, pass);
       })) {
-    RuntimeTelemetry::AddCounter("render.mutable_mesh.empty_pass", 1.0);
+    T8_TELEMETRY_ADD("render.mutable_mesh.empty_pass", 1.0);
     return;
   }
   Camera* camera = pScProp->GetPrimaryCamera();
@@ -359,7 +361,7 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
     XVECTOR3 planes[6];
     RenderMesh::ExtractFrustumPlanes(camera->VP, planes);
     if (RenderMesh::ClassifyAABBFrustum(bounds, m_transform, planes) == RenderMesh::FrustumResult::Outside) {
-      RuntimeTelemetry::AddCounter("render.mutable_mesh.culled", 1.0);
+      T8_TELEMETRY_ADD("render.mutable_mesh.culled", 1.0);
       return;
     }
   }
@@ -419,7 +421,7 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
     }
     context.deviceContext->DrawIndexed(section.indexCount, section.firstIndex, 0);
     if (changedCull) context.driver->SetCullFace(previousCull);
-    RuntimeTelemetry::AddCounter("render.mutable_mesh.draw_calls", 1.0);
+    T8_TELEMETRY_ADD("render.mutable_mesh.draw_calls", 1.0);
   }
   if (ownsScope) tracker.End();
 }

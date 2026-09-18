@@ -1,6 +1,6 @@
 # Render Graph
 
-Status: verified against source on 2026-09-17.
+Status: capability-validation behavior verified against source and focused tests on 2026-09-18.
 
 This document explains T850's data-driven render graph: JSON descriptors, render target creation, pass execution, input/output edges, render-target push/pop behavior, state overrides, mesh and fullscreen-quad draws, post-processing, and final output routing.
 
@@ -92,7 +92,7 @@ Typical lifetime:
 
 1. Scene/editor calls `m_renderGraph.Load("Scenes/..._RenderGraph.json")`.
 2. Scene/editor calls `CreateRenderTargets()` after the driver and `SceneProps` are initialized.
-3. `CreateRenderTargets()` allocates every `RTDesc` through `BaseDriver::CreateRT()` and then calls `BuildGraph()`.
+3. `CreateRenderTargets()` preflights every resolved `RTDesc` against the driver before allocating through `BaseDriver::CreateRT()`, then calls `BuildGraph()` on success. It returns `false` on validation or allocation failure.
 4. Each frame calls `Execute()`.
 5. Resize or graph reload calls `DestroyRenderTargets()` and `CreateRenderTargets()` again.
 6. Scene shutdown calls `DestroyRenderTargets()`.
@@ -145,13 +145,48 @@ Supported color format strings:
 - `RGBA32F`
 - `R8`
 - `F16`
+- `F32` (single-channel floating-point color)
 - `RGB8`
 
 Supported depth format strings:
 
 - `NONE`
+- `FD16` (requires backend support; currently D3D11)
 - `F32`
 - `CUBE_F32`
+
+### Validation and capabilities
+
+Unknown color/depth names, invalid attachment counts, mismatched per-attachment
+format counts, negative extents and targets with no attachments fail structural
+graph loading with `[InvalidRenderTarget]` and the target name. Format lookups
+never substitute RGBA8 or NONE for an unknown name. `cube_faces` must be zero,
+or six with a declared `CUBE_F32` target.
+
+Creation resolves screen/override/shadow extents and asks the shared
+`BaseDriver::ValidateRenderTarget` policy before allocating any graph target.
+The driver supplies `SupportsCubeRenderTargets`,
+`SupportsRenderTargetDepthFormat`, `SupportsRenderTargetColorFormat`,
+`SupportsRenderTargetMipGeneration` and `MaxRenderTargetColorAttachments`.
+A valid unsupported request produces `[UnsupportedRenderTarget]`, naming the
+backend and feature; the graph adds the pass and target. Cube targets must be
+square. A failed preflight leaves no executable nodes. An allocation failure
+releases already-created graph targets and returns `false`.
+
+Mips have one explicit graph fallback: `generate_mips: true` becomes a single
+level on a backend without render-target mip generation, with a
+`[CapabilityFallback]` diagnostic naming the pass, target, backend and feature.
+Capable D3D11/GL backends retain the request. Depth/color formats and cube targets
+are not silently substituted. Direct `BaseDriver::CreateRT` requests have no
+implicit fallback: unsupported requests return `-1`. `RenderContainer`
+initialization and resize propagate the graph result; other callers must check
+the boolean and stop using the failed graph.
+
+Shader-derived requirements are checked at shader load rather than inferred
+from graph JSON. `SupportsComparisonSamplers` describes the implemented engine
+sampler path. Unsupported reflected comparison sampling fails with
+`[UnsupportedShaderFeature]` containing backend, shader name, stage and key.
+See [format and sampler support](textures-and-ibl.md#render-target-format-contract).
 
 If the selected driver cannot support compute textures, an authored storage target is
 allocated without storage/UAV usage so graphics initialization and raster fallback remain

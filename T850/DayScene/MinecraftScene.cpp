@@ -1112,6 +1112,7 @@ void MinecraftScene::UpdateMob(MinecraftMob& mob, int mobIndex, float dt) {
 }
 
 void MinecraftScene::UpdateMobs(float dt) {
+  T8_CPU_WORK("game.agents.steer");
   for (int mobIndex = 0; mobIndex < m_mobCount; ++mobIndex)
     UpdateMob(m_mobs[mobIndex], mobIndex, dt);
 
@@ -2501,6 +2502,8 @@ void MinecraftScene::ReportRenderDistanceReady() {
 }
 
 void MinecraftScene::UpdateChunkStreaming() {
+  T8_TELEMETRY_SCOPE("terrain.voxel.upload");
+  T8_UPLOAD_SOURCE(t850::RuntimeTelemetry::UploadSource::Streaming);
   if (m_chunkGenerationFuture.valid()) return;
   // Rebuild chunks around the player as they move between chunk centers
   const int pcx = WorldToChunk((int)std::floor(m_playerEye.x));

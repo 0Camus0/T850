@@ -3,6 +3,7 @@
 
 #include <scene/RenderGraphDescriptor.h>
 #include <scene/SceneProp.h>
+#include <debug/RuntimeTelemetry.h>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -71,6 +72,10 @@ namespace t850 {
 
   // Runtime node: a resolved pass with its adjacency.
   struct GraphNode {
+    RuntimeTelemetry::ScopeId profileScope = RuntimeTelemetry::InvalidId;
+    RuntimeTelemetry::ScopeId telemetryScope = RuntimeTelemetry::InvalidId;
+    RuntimeTelemetry::ScopeId drawCounter = RuntimeTelemetry::InvalidId;
+    RuntimeTelemetry::ScopeId indexCounter = RuntimeTelemetry::InvalidId;
     int index;
     const RenderPassDesc* desc;
     int rt_handle;                   // resolved RT handle from BaseDriver (-1 if none)
@@ -107,8 +112,8 @@ namespace t850 {
 
     // Create all render targets declared in the graph.
     // Call after Load(), before Execute().
-    void CreateRenderTargets(BaseDriver* driver, const SceneProps& props);
-    void CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride);
+    bool CreateRenderTargets(BaseDriver* driver, const SceneProps& props);
+    bool CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride);
     void DestroyRenderTargets(BaseDriver* driver);
 
     // Execute all passes in order.

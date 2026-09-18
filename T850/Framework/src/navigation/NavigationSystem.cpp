@@ -1109,13 +1109,13 @@ NavPathResult FindPathWithQuery(dtNavMeshQuery* query,
                                 const NavMeshBuildSettings& settings,
                                 const std::array<float, kNavMaxAreas>* areaCosts,
                                 const NavPathRequest& request) {
-  T8_TELEMETRY_SCOPE("navigation.detour.find_path");
+  T8_TELEMETRY_ADD("navigation.detour.find_path.calls", 1);
   if (RuntimeTelemetry::IsFrameActive()) {
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.count", 1.0);
+    T8_TELEMETRY_ADD("navigation.detour.find_path.count", 1.0);
   }
   NavPathResult result;
   if (!query) {
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.fail", 1.0);
+    T8_TELEMETRY_ADD("navigation.detour.find_path.fail", 1.0);
     result.error = "Navigation query is not available";
     return result;
   }
@@ -1137,13 +1137,13 @@ NavPathResult FindPathWithQuery(dtNavMeshQuery* query,
   float nearestEnd[3] = {};
   dtStatus status = query->findNearestPoly(startPos, extents, &filter, &startRef, nearestStart);
   if (dtStatusFailed(status) || !startRef) {
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.fail", 1.0);
+    T8_TELEMETRY_ADD("navigation.detour.find_path.fail", 1.0);
     result.error = "Failed to find nearest start nav polygon";
     return result;
   }
   status = query->findNearestPoly(endPos, extents, &filter, &endRef, nearestEnd);
   if (dtStatusFailed(status) || !endRef) {
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.fail", 1.0);
+    T8_TELEMETRY_ADD("navigation.detour.find_path.fail", 1.0);
     result.error = "Failed to find nearest end nav polygon";
     return result;
   }
@@ -1153,12 +1153,12 @@ NavPathResult FindPathWithQuery(dtNavMeshQuery* query,
   status = query->findPath(startRef, endRef, nearestStart, nearestEnd,
                            &filter, pathPolys, &pathPolyCount, kMaxPathPolys);
   if (dtStatusFailed(status) || pathPolyCount <= 0) {
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.fail", 1.0);
+    T8_TELEMETRY_ADD("navigation.detour.find_path.fail", 1.0);
     result.error = "Detour failed to find a path";
     return result;
   }
   if (pathPolys[pathPolyCount - 1] != endRef) {
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.fail", 1.0);
+    T8_TELEMETRY_ADD("navigation.detour.find_path.fail", 1.0);
     result.error = "Detour returned a partial path";
     return result;
   }
@@ -1172,7 +1172,7 @@ NavPathResult FindPathWithQuery(dtNavMeshQuery* query,
                                    straightPath, straightFlags, straightPolys,
                                    &straightPathCount, kMaxStraightPath);
   if (dtStatusFailed(status) || straightPathCount <= 0) {
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.fail", 1.0);
+    T8_TELEMETRY_ADD("navigation.detour.find_path.fail", 1.0);
     result.error = "Detour failed to straighten path";
     return result;
   }
@@ -1207,10 +1207,10 @@ NavPathResult FindPathWithQuery(dtNavMeshQuery* query,
     }
   }
   if (RuntimeTelemetry::IsFrameActive()) {
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.success", 1.0);
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.path_polys", static_cast<double>(pathPolyCount));
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.points", static_cast<double>(straightPathCount));
-    RuntimeTelemetry::AddCounter("navigation.detour.find_path.special_segments", static_cast<double>(specialSegmentCount));
+    T8_TELEMETRY_ADD("navigation.detour.find_path.success", 1.0);
+    T8_TELEMETRY_ADD("navigation.detour.find_path.path_polys", static_cast<double>(pathPolyCount));
+    T8_TELEMETRY_ADD("navigation.detour.find_path.points", static_cast<double>(straightPathCount));
+    T8_TELEMETRY_ADD("navigation.detour.find_path.special_segments", static_cast<double>(specialSegmentCount));
   }
   result.success = true;
   return result;
@@ -1625,6 +1625,7 @@ bool NavMesh::BuildFromXDataBase(const xF::XDataBase& database,
 bool NavMesh::Build(const NavMeshGeometry& geometry,
                     const NavMeshBuildSettings& settings,
                     std::string* error) {
+  T8_TELEMETRY_SCOPE("navigation.build");
   return BuildCached(geometry, settings, 0, error);
 }
 
@@ -2151,9 +2152,9 @@ bool NavMesh::ProjectPoint(const XVECTOR3& point,
                            XVECTOR3& outPoint,
                            const XVECTOR3& queryExtents,
                            std::string* error) const {
-  T8_TELEMETRY_SCOPE("navigation.project_point");
+  T8_TELEMETRY_ADD("navigation.project_point.calls", 1);
   if (RuntimeTelemetry::IsFrameActive()) {
-    RuntimeTelemetry::AddCounter("navigation.project_point.count", 1.0);
+    T8_TELEMETRY_ADD("navigation.project_point.count", 1.0);
   }
 #if !defined(T850_ENABLE_RECAST)
   if (error) *error = "RecastNavigation is not enabled in this build";
@@ -2185,7 +2186,7 @@ bool NavMesh::ProjectPoint(const XVECTOR3& point,
   const dtStatus status = m_impl->query->findNearestPoly(position, extents, &filter, &nearestRef, nearestPoint);
   if (dtStatusFailed(status) || !nearestRef) {
     if (RuntimeTelemetry::IsFrameActive()) {
-      RuntimeTelemetry::AddCounter("navigation.project_point.fail", 1.0);
+      T8_TELEMETRY_ADD("navigation.project_point.fail", 1.0);
     }
     if (error) *error = "Failed to project point onto nearest nav polygon";
     return false;
@@ -2193,7 +2194,7 @@ bool NavMesh::ProjectPoint(const XVECTOR3& point,
 
   outPoint = XVECTOR3(nearestPoint[0], nearestPoint[1], nearestPoint[2], 1.0f);
   if (RuntimeTelemetry::IsFrameActive()) {
-    RuntimeTelemetry::AddCounter("navigation.project_point.success", 1.0);
+    T8_TELEMETRY_ADD("navigation.project_point.success", 1.0);
   }
   return true;
 #endif
@@ -2225,8 +2226,8 @@ void NavMesh::FindPaths(const std::vector<NavPathRequest>& requests,
                         std::vector<NavPathResult>& outResults) const {
   T8_TELEMETRY_SCOPE("navigation.find_paths_batch");
   if (RuntimeTelemetry::IsFrameActive()) {
-    RuntimeTelemetry::AddCounter("navigation.find_paths_batch.calls", 1.0);
-    RuntimeTelemetry::AddCounter("navigation.find_paths_batch.requests", static_cast<double>(requests.size()));
+    T8_TELEMETRY_ADD("navigation.find_paths_batch.calls", 1.0);
+    T8_TELEMETRY_ADD("navigation.find_paths_batch.requests", static_cast<double>(requests.size()));
   }
   outResults.clear();
   outResults.resize(requests.size());
@@ -2271,7 +2272,7 @@ void NavMesh::FindPaths(const std::vector<NavPathRequest>& requests,
       g_threadPool->NumWorkers() > 0 &&
       !g_threadPool->IsWorkerThread()) {
     if (RuntimeTelemetry::IsFrameActive()) {
-      RuntimeTelemetry::AddCounter("navigation.find_paths_batch.threaded", 1.0);
+      T8_TELEMETRY_ADD("navigation.find_paths_batch.threaded", 1.0);
     }
     g_threadPool->ParallelForHeavy(0, static_cast<int>(requests.size()), runRequest);
   } else {
@@ -2294,10 +2295,10 @@ void NavMesh::FindPaths(const std::vector<NavPathRequest>& requests,
         }
       }
     }
-    RuntimeTelemetry::AddCounter("navigation.find_paths_batch.success", static_cast<double>(successCount));
-    RuntimeTelemetry::AddCounter("navigation.find_paths_batch.fail", static_cast<double>(outResults.size() - static_cast<std::size_t>(successCount)));
-    RuntimeTelemetry::AddCounter("navigation.find_paths_batch.points", static_cast<double>(pointCount));
-    RuntimeTelemetry::AddCounter("navigation.find_paths_batch.special_segments", static_cast<double>(specialSegmentCount));
+    T8_TELEMETRY_ADD("navigation.find_paths_batch.success", static_cast<double>(successCount));
+    T8_TELEMETRY_ADD("navigation.find_paths_batch.fail", static_cast<double>(outResults.size() - static_cast<std::size_t>(successCount)));
+    T8_TELEMETRY_ADD("navigation.find_paths_batch.points", static_cast<double>(pointCount));
+    T8_TELEMETRY_ADD("navigation.find_paths_batch.special_segments", static_cast<double>(specialSegmentCount));
   }
 #endif
 }
@@ -2712,6 +2713,7 @@ void NavigationWorld::SetBuildSettings(const NavMeshBuildSettings& settings) {
 }
 
 bool NavigationWorld::Rebuild(std::string* error) {
+  T8_TELEMETRY_SCOPE("navigation.rebuild");
   NavMeshGeometry geometry;
   m_lastSourceStats = NavSourceBuildStats{};
 

@@ -178,6 +178,11 @@ class DayScene : public t850::SceneBase
   };
 
   struct BenchmarkMatrixResult {
+    std::string provider;
+    std::string backend;
+    std::string shaderFlow;
+    uint64_t adapterId = 0;
+    double p95Ms = 0;
     BenchmarkMatrixRun run;
     double averageFps = 0.0;
     double medianFps = 0.0;

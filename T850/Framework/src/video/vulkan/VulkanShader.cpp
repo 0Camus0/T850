@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * T850 Engine — Vulkan Backend
  * VulkanShader.cpp: Shader implementation
@@ -39,7 +40,7 @@ namespace t850 {
     ci.codeSize = codeSize;
     ci.pCode = code;
     VkShaderModule mod = VK_NULL_HANDLE;
-    VkResult res = vkCreateShaderModule(device, &ci, nullptr, &mod);
+    VkResult res = T8_TELEMETRY_CALL("shader.module.create", vkCreateShaderModule(device, &ci, nullptr, &mod));
     if (res != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] vkCreateShaderModule failed res=%d", res);
       return VK_NULL_HANDLE;
@@ -78,6 +79,8 @@ namespace t850 {
 #if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   static bool CompileHLSLToSPIRV(const std::string& source, EShLanguage stage,
                                     std::vector<uint32_t>& spirv, const std::string& debugName) {
+    T8_TELEMETRY_SCOPE("shader.compile");
+    T8_TELEMETRY_ADD("shader.cache.misses", 1);
     if (!s_glslangInitialized) {
       glslang::InitializeProcess();
       s_glslangInitialized = true;
@@ -177,6 +180,7 @@ namespace t850 {
     SPIRVReflection::ShiftUBOBindings(vsSPIRV.data(), vsSPIRV.size(), VulkanShader::kMaxTextureSlots);
 #else
     if (LoadSpirvArtifact(cacheKey, "vs.spv", vsSPIRV)) {
+      T8_TELEMETRY_ADD("shader.cache.hits", 1);
       T8_LOG_DEBUG("[ShaderCache][Vulkan] VS SPIR-V hit %s", cacheKey.sha1.c_str());
     }
     else {
@@ -203,6 +207,7 @@ namespace t850 {
     SPIRVReflection::ShiftUBOBindings(fsSPIRV.data(), fsSPIRV.size(), VulkanShader::kMaxTextureSlots);
 #else
     if (LoadSpirvArtifact(cacheKey, "fs.spv", fsSPIRV)) {
+      T8_TELEMETRY_ADD("shader.cache.hits", 1);
       T8_LOG_DEBUG("[ShaderCache][Vulkan] FS SPIR-V hit %s", cacheKey.sha1.c_str());
     }
     else {
@@ -219,8 +224,16 @@ namespace t850 {
 
     // ── SPIR-V Reflection ──
     SPIRVReflection vsRefl, fsRefl;
-    vsRefl.Parse(vsSPIRV.data(), vsSPIRV.size());
-    fsRefl.Parse(fsSPIRV.data(), fsSPIRV.size());
+    if (!vsRefl.Parse(vsSPIRV.data(), vsSPIRV.size()) ||
+        !fsRefl.Parse(fsSPIRV.data(), fsSPIRV.size())) return false;
+    std::string diagnostic;
+    if (!driver->ValidateShaderComparisonSamplers(vsRefl.usesDepthComparison,
+          vs_name.empty() ? "inline" : vs_name, "vertex", key.bits, diagnostic) ||
+        !driver->ValidateShaderComparisonSamplers(fsRefl.usesDepthComparison,
+          fs_name.empty() ? "inline" : fs_name, "fragment", key.bits, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
 
     // Build descriptor set layout from reflected bindings
     std::unordered_map<uint32_t, VkDescriptorSetLayoutBinding> bindingMap;

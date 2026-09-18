@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -54,6 +55,7 @@ namespace t850 {
   }
   void D3DXConstantBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     ID3D11Device* apiDevice = reinterpret_cast<ID3D11Device*>(device.GetAPIObject());
     D3D11_USAGE usage;
@@ -87,13 +89,16 @@ namespace t850 {
     {
       reinterpret_cast<ID3D11Device*>(device.GetAPIObject())->CreateBuffer(&apiDesc, 0, APIBuffer.ReleaseAndGetAddressOf());
     }
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, 0, 1);
   }
   void D3DXConstantBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, sysMemCpy.size(), 0);
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer.Get(), 0, 0, &sysMemCpy[0], 0, 0);
   }
   void D3DXConstantBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, descriptor.byteWidth, 0);
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer.Get(), 0, 0, (char*)buffer, 0, 0);

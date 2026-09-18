@@ -31,6 +31,7 @@ public:
         !T8Device || !T8DeviceContext || !window ||
         !ImGui_ImplSDL3_InitForD3D(window)) return false;
     m_platformInitialized = true;
+    m_driver = framework->pVideoDriver;
 
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* context =
@@ -45,14 +46,19 @@ public:
     if (m_platformInitialized) ImGui_ImplSDL3_Shutdown();
     m_rendererInitialized = false;
     m_platformInitialized = false;
+    m_driver = nullptr;
+    m_targetReady = false;
   }
 
   void NewFrame() override {
+    m_targetLayout = m_driver->GetRenderTargetLayout();
+    m_targetReady = ValidateOverlayLayout(*m_driver, m_targetLayout);
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplSDL3_NewFrame();
   }
 
   void RenderDrawData(ImDrawData* drawData) override {
+    if (!m_targetReady || !ValidateOverlayDraw(*m_driver, m_targetLayout)) return;
     ImGui_ImplDX11_RenderDrawData(drawData);
   }
 
@@ -63,6 +69,9 @@ public:
   bool RequiresOpaquePreviewBlend() const override { return true; }
 
 private:
+  BaseDriver* m_driver = nullptr;
+  RenderTargetLayout m_targetLayout;
+  bool m_targetReady = false;
   bool m_platformInitialized = false;
   bool m_rendererInitialized = false;
 };

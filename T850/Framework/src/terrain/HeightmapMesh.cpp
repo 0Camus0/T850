@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <terrain/HeightmapMesh.h>
 #include <terrain/TerrainPlacement.h>
 #include <debug/RuntimeTelemetry.h>
@@ -237,8 +238,8 @@ void HeightmapMesh::Draw(float* world, float* viewProjection) {
     model.CopyRenderStateFrom(*this);
     model.Draw(&transform.m[0][0], viewProjection);
   }
-  RuntimeTelemetry::SetCounter("terrain.render_lod", m_activeLod);
-  RuntimeTelemetry::AddCounter("terrain.render_triangles", static_cast<double>(mesh.IndexCount() / 3));
+  T8_TELEMETRY_SET("terrain.render_lod", m_activeLod);
+  T8_TELEMETRY_ADD("terrain.render_triangles", static_cast<double>(mesh.IndexCount() / 3));
 }
 
 void HeightmapMesh::UpdatePlacementAnimations(float deltaSeconds) {
@@ -278,6 +279,8 @@ bool HeightmapMesh::PlacementVisualTransform(std::string_view id, XMATRIX44& tra
 bool CommitTerrainRevision(HeightmapMesh& mesh, const scene::SceneHeightmapDesc& desc,
     JoltPhysicsSystem& physics, std::span<TerrainCollisionBinding> collision,
     navigation::NavMesh* navigation, game::GameNavigationService* queries, std::string* error) {
+  T8_TELEMETRY_SCOPE("terrain.heightmap.commit");
+  T8_UPLOAD_SOURCE(RuntimeTelemetry::UploadSource::Streaming);
   MutableMeshSnapshot snapshot;
   if (!LoadHeightmapTerrain(desc, snapshot, error)) return false;
   auto database = BuildMeshDatabase(snapshot, error);

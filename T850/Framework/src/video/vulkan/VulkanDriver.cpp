@@ -290,7 +290,7 @@ namespace t850 {
     pipelineCI.subpass = 0;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VkResult res = vkCreateGraphicsPipelines(m_device, m_vkPipelineCache, 1, &pipelineCI, nullptr, &pipeline);
+    VkResult res = T8_TELEMETRY_CALL("pipeline.create.graphics", vkCreateGraphicsPipelines(m_device, m_vkPipelineCache, 1, &pipelineCI, nullptr, &pipeline));
     if (res != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] CreateGraphicsPipelines failed res=%d shader=%p blend=%d depth=%d cull=%d",
                    res, shader, key.blend, key.depth, key.cull);
@@ -1372,7 +1372,7 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "VK_FenceWait");
-      T8_TELEMETRY_SCOPE("gpu.vulkan.fence_wait");
+      T8_TELEMETRY_SCOPE("gpu.gpu_wait");
       WaitForFence(m_currentFrame);
       vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
     }
@@ -1443,7 +1443,7 @@ namespace t850 {
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_commandBuffer = cmd;
 
     // Flush profiler query pool reset (must happen before any render pass)
-    if (t850::g_profiler) t850::g_profiler->FlushVulkanQueryReset(cmd);
+    if (t850::g_profiler) t850::g_profiler->FlushDeferredQueryReset(cmd);
 
     // Reset per-frame descriptor pool and pending state
     vkResetDescriptorPool(m_device, m_descriptorPools[m_currentFrame], 0);
@@ -1908,6 +1908,9 @@ namespace t850 {
   }
 
   void VulkanDriver::CompleteFrame(FrameCompletionMode mode) {
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
+    T8_TELEMETRY_ADD("gpu.ring.overflows", 0);
     T8_LOG_TRACE("[Vulkan] SwapBuffers");
     if (!m_frameStarted) {
       return;
@@ -1938,7 +1941,7 @@ namespace t850 {
 
       VkResult submitRes;
       {
-        T8_TELEMETRY_SCOPE("gpu.vulkan.queue_submit");
+        T8_TELEMETRY_SCOPE("gpu.submit");
         submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
       }
       if (submitRes != VK_SUCCESS) {
@@ -2019,7 +2022,7 @@ namespace t850 {
 
     VkResult submitRes;
     {
-      T8_TELEMETRY_SCOPE("gpu.vulkan.queue_submit");
+      T8_TELEMETRY_SCOPE("gpu.submit");
       submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
     }
     if (submitRes != VK_SUCCESS) {
@@ -2040,7 +2043,7 @@ namespace t850 {
 
     VkResult presentRes;
     {
-      T8_TELEMETRY_SCOPE("gpu.vulkan.present");
+      T8_TELEMETRY_SCOPE("gpu.present");
       presentRes = vkQueuePresentKHR(m_presentQueue, &presentInfo);
     }
     if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_ERROR_SURFACE_LOST_KHR ||
@@ -2443,7 +2446,7 @@ reopen:
 
   bool VulkanDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
     T8_TELEMETRY_SCOPE("gpu.vulkan.read_rt_color_float");
-    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
+    T8_TELEMETRY_ADD("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || !RTs[rtID] || attachment < 0)
       return false;
     VulkanRT* rt = static_cast<VulkanRT*>(RTs[rtID]);
@@ -2608,6 +2611,7 @@ reopen:
     VmaAllocationInfo stagingAllocInfo;
     vmaCreateBuffer(m_allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
     memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(dataSize));
+    RuntimeTelemetry::RecordActiveStaging(dataSize, 1);
     vmaFlushAllocation(m_allocator, stagingAlloc, 0, dataSize);
 
     auto recordCopy = [&](VkCommandBuffer cmd) {
@@ -2666,6 +2670,7 @@ reopen:
   VkDescriptorBufferInfo VulkanDriver::AllocateCBData(const void* data, uint32_t dataSize) {
     uint32_t alignedSize = (dataSize + 255) & ~255u;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
+      RuntimeTelemetry::RecordRingOverflow();
       // Wrapping mid-frame would overwrite UBO data still being read by earlier
       // draws in the same command buffer (descriptor sets point at fixed offsets
       // via dynamic offset). The result looks like flicker / z-fighting because
@@ -2687,6 +2692,7 @@ reopen:
     uint32_t bufIdx = m_currentFrame;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, dataSize);
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, dataSize);
     vmaFlushAllocation(m_allocator, m_cbRingAllocations[bufIdx], m_cbRingOffset, alignedSize);
 
     VkDescriptorBufferInfo info = {};
@@ -2695,6 +2701,8 @@ reopen:
     info.range = alignedSize;
 
     m_cbRingOffset += alignedSize;
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
     if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return info;
   }
@@ -2703,6 +2711,7 @@ reopen:
     // Must align to 256 so subsequent UBO allocations from the same ring stay aligned
     uint32_t aligned = (size + 255) & ~255u;
     if (m_cbRingOffset + aligned > kCBRingBufferSize) {
+      RuntimeTelemetry::RecordRingOverflow();
       T8_LOG_ERROR("[Vulkan] CB ring buffer overflow in VB path! offset=%u + size=%u > %u (peak so far=%u)",
                    m_cbRingOffset, aligned, kCBRingBufferSize, m_cbRingPeakUsage);
       assert(false && "Vulkan CB ring buffer overflow (VB path) — increase kCBRingBufferSize");
@@ -2711,12 +2720,15 @@ reopen:
     uint32_t bufIdx = m_currentFrame;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, size);
+    RuntimeTelemetry::RecordActiveStaging(size);
     vmaFlushAllocation(m_allocator, m_cbRingAllocations[bufIdx], m_cbRingOffset, aligned);
     VBRingAlloc alloc;
     alloc.buffer = m_cbRingBuffers[bufIdx];
     alloc.offset = m_cbRingOffset;
     alloc.valid = true;
     m_cbRingOffset += aligned;
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
     if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return alloc;
   }

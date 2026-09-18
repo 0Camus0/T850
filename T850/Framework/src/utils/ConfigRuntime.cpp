@@ -229,6 +229,8 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.d3d12Debug) cfg.flags.d3d12Debug = *json.d3d12Debug;
   if (json.profile) cfg.flags.profile = *json.profile;
   if (json.profileFrames) cfg.profileFrames = *json.profileFrames;
+  if (json.profileCpuOnly) cfg.profileCpuOnly = *json.profileCpuOnly;
+  if (json.telemetryUploadBudgetMB) cfg.telemetryUploadBudgetMB = (std::max)(0, *json.telemetryUploadBudgetMB);
   if (json.autoStartRagdoll) cfg.flags.autoStartRagdoll = *json.autoStartRagdoll;
   if (json.dumpMatrices) cfg.flags.dumpMatrices = *json.dumpMatrices;
   if (json.dumpMatricesFrames) cfg.dumpMatricesFrames = *json.dumpMatricesFrames;
@@ -297,6 +299,7 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (devTools.d3d12Debug) cfg.flags.d3d12Debug = *devTools.d3d12Debug;
     if (devTools.profile) cfg.flags.profile = *devTools.profile;
     if (devTools.profileFrames) cfg.profileFrames = *devTools.profileFrames;
+    if (devTools.profileCpuOnly) cfg.profileCpuOnly = *devTools.profileCpuOnly;
     if (devTools.autoStartRagdoll) cfg.flags.autoStartRagdoll = *devTools.autoStartRagdoll;
     if (devTools.dumpMatrices) cfg.flags.dumpMatrices = *devTools.dumpMatrices;
     if (devTools.dumpMatricesFrames) cfg.dumpMatricesFrames = *devTools.dumpMatricesFrames;
@@ -642,6 +645,19 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       int value = 0;
       if (ReadIntArgument(arg, argc, argv, i, value)) cfg.profileFrames = value;
     }
+    else if (arg == "--profileCpuOnly") {
+      cfg.flags.profile = true;
+      cfg.profileCpuOnly = true;
+    }
+    else if (arg == "--benchmarkPaired") {
+      cfg.flags.benchmark = true;
+      cfg.flags.benchmarkMatrix = true;
+      cfg.benchmarkPaired = true;
+    }
+    else if (arg == "--telemetryUploadBudgetMB") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) cfg.telemetryUploadBudgetMB = (std::max)(0, value);
+    }
     else if (arg == "--telemetry" || arg == "--runtimeTelemetry") {
       cfg.flags.runtimeTelemetry = true;
     }
@@ -858,6 +874,9 @@ void PrintHelp() {
     << "  --d3d12debug                       Enable D3D12 debug layer\n"
     << "  --profile                          Enable GPU+CPU profiling\n"
     << "  --profileFrames <frames>           Frames to profile before report\n"
+    << "  --profileCpuOnly                  CPU scopes without GPU queries\n"
+    << "  --benchmarkPaired                 D3D12/WebGPU submit-only at configured resolution\n"
+    << "  --telemetryUploadBudgetMB <MB>     Dynamic upload warning budget (0 disables)\n"
     << "  --telemetry                        Enable lightweight sampled runtime telemetry\n"
     << "  --telemetryFrequencyFrames <N>     Sample every N frames (0 = every frame)\n"
     << "  --telemetryOutput <path>           Runtime telemetry JSON output path\n"

@@ -17,6 +17,26 @@ When a command says "from the source root", first run:
 Set-Location F:\T850\T850
 ```
 
+## Focused Profiling Runs
+
+From the source root, after building the chosen configuration:
+
+```powershell
+.\scripts\MeasureProfiling.ps1 -Config Release -Scene 6 -Frames 600 -Warmup 120 -Repetitions 3
+.\bin\x64\Release\DayScene.exe --benchmarkPaired --width 1280 --height 720 --benchmarkSeconds 90 --benchmarkReport "$env:LOCALAPPDATA\T850Profiles\paired\Report.md"
+```
+
+The first command is the preferred bounded phase/upload comparison: it runs only
+the requested APIs and scene, alternates order, and retains reports outside Git.
+The second filters the matrix to D3D12/WebGPU at the requested resolution in
+submit-only mode. `--profileCpuOnly --profileFrames N` disables GPU query timing
+while retaining a finite profiling run. MSBuild `/p:T850EnableProfiling=0` builds
+without instrumentation; restore `1` for normal development.
+
+Do not substitute the full rendering/platform matrix for a focused profiling
+test. The [diagnostics procedure](../debug/diagnostics.md#measurement-procedure)
+defines adapter/work matching, warmup, variance and external-tool evidence.
+
 ## Prerequisites
 
 Required for Windows builds:

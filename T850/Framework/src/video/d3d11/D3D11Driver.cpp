@@ -510,7 +510,7 @@ namespace t850 {
 
   void D3DXDriver::CompleteFrame(FrameCompletionMode mode) {
     T8_PROFILE_SCOPE(t850::g_profiler, "D3D11_Present");
-    T8_TELEMETRY_SCOPE("gpu.d3d11.present");
+    T8_TELEMETRY_SCOPE("gpu.present");
     T8_LOG_TRACE("[D3DXDriver] SwapBuffers/Present");
 
     if (mode == FrameCompletionMode::SubmitNoPresent) {
@@ -673,7 +673,7 @@ namespace t850 {
 
   bool D3DXDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
     T8_TELEMETRY_SCOPE("gpu.d3d11.read_rt_color_float");
-    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
+    T8_TELEMETRY_ADD("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || attachment < 0)
       return false;
     Texture* tex = GetRTTexture(rtID, attachment);

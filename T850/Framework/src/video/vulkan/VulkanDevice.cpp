@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * T850 Engine — Vulkan Backend
  * VulkanDevice.cpp: Device implementation
@@ -93,7 +94,7 @@ namespace t850 {
                                           const std::string& vs_name, const std::string& fs_name) {
     VulkanShader* sh = new VulkanShader();
     if (!sh->CreateShader(src_vs, src_fs, key, vs_name, fs_name)) {
-      delete sh;
+      sh->release();
       return nullptr;
     }
     return sh;
@@ -121,6 +122,7 @@ namespace t850 {
   }
 
   Texture* VulkanDevice::CreateFloatTexture(int w, int h, const float* data) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * 16 : 0, 0);
     auto* driver = static_cast<VulkanDriver*>(g_pBaseDriver);
     VkDevice device = driver->GetDevice();
     VmaAllocator allocator = driver->GetAllocator();
@@ -162,20 +164,12 @@ namespace t850 {
     ivCI.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     if (vkCreateImageView(device, &ivCI, nullptr, &tex->m_imageView) != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] CreateFloatTexture: vkCreateImageView failed");
-      delete tex; return nullptr;
+      tex->release(); return nullptr;
     }
 
-    // Create sampler (NEAREST, no interpolation)
-    VkSamplerCreateInfo sampCI = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-    sampCI.magFilter = VK_FILTER_NEAREST;
-    sampCI.minFilter = VK_FILTER_NEAREST;
-    sampCI.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    sampCI.addressModeU = sampCI.addressModeV = sampCI.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampCI.maxLod = 0.0f;
-    tex->m_samplerMaxAnisotropy = 1.0f;
-    if (vkCreateSampler(device, &sampCI, nullptr, &tex->m_sampler) != VK_SUCCESS) {
-      T8_LOG_ERROR("[Vulkan] CreateFloatTexture: vkCreateSampler failed");
-      delete tex; return nullptr;
+    tex->SetTextureParams();
+    if (!tex->m_sampler) {
+      tex->release(); return nullptr;
     }
 
     // Upload initial data if provided
@@ -195,15 +189,16 @@ namespace t850 {
         T8_LOG_ERROR("[Vulkan] CreateFloatTexture: staging buffer failed res=%d mapped=%p", stagingRes, stagingAllocInfo.pMappedData);
         if (stagingBuffer)
           vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
-        delete tex;
+        tex->release();
         return nullptr;
       }
       memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(totalSize));
+      RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, totalSize, 1);
       VkResult flushRes = vmaFlushAllocation(allocator, stagingAlloc, 0, totalSize);
       if (flushRes != VK_SUCCESS) {
         T8_LOG_ERROR("[Vulkan] CreateFloatTexture: staging flush failed res=%d", flushRes);
         vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
-        delete tex;
+        tex->release();
         return nullptr;
       }
 
@@ -239,6 +234,8 @@ namespace t850 {
   }
 
   Texture* VulkanDevice::CreateFloatCubeMap(int size, int mipCount, const float* data) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && size > 0 && mipCount > 0 ? RuntimeTelemetry::TextureUploadBytes(size, size, mipCount, 6, 16) : 0, 0);
     if (size <= 0 || mipCount <= 0)
       return nullptr;
 
@@ -318,6 +315,7 @@ namespace t850 {
       delete tex; return nullptr;
     }
     memcpy(stagingAllocInfo.pMappedData, sourceBytes, static_cast<size_t>(totalSize));
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, totalSize, 1);
 
     VkCommandBuffer cmd = driver->GetTransientCommandBuffer();
     VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };

@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12Shader.cpp: Shader compilation, reflection, root signature
@@ -210,13 +211,15 @@ namespace t850 {
     {
       std::vector<uint8_t> cachedVS;
       if (ShaderDiskCache::LoadArtifact(cacheKey, "vs.dxbc", cachedVS) && CreateBlobFromBytes(cachedVS, VS_blob)) {
+        T8_TELEMETRY_ADD("shader.cache.hits", 1);
         T8_LOG_DEBUG("[ShaderCache][D3D12] VS hit %s", cacheKey.sha1.c_str());
       }
       else {
         ComPtr<ID3DBlob> errBlob;
-        HRESULT hr = D3DCompile(src_vs.c_str(), src_vs.size(),
+        T8_TELEMETRY_ADD("shader.cache.misses", 1);
+        HRESULT hr = T8_TELEMETRY_CALL("shader.compile", D3DCompile(src_vs.c_str(), src_vs.size(),
                                  vs_name.empty() ? nullptr : vs_name.c_str(),
-                                 nullptr, nullptr, "VS", "vs_5_0", 0, 0, &VS_blob, &errBlob);
+                                 nullptr, nullptr, "VS", "vs_5_0", 0, 0, &VS_blob, &errBlob));
         if (FAILED(hr)) {
           T8_LOG_ERROR("[D3D12] VS compile error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "unknown");
           return false;
@@ -231,13 +234,15 @@ namespace t850 {
     {
       std::vector<uint8_t> cachedFS;
       if (ShaderDiskCache::LoadArtifact(cacheKey, "fs.dxbc", cachedFS) && CreateBlobFromBytes(cachedFS, FS_blob)) {
+        T8_TELEMETRY_ADD("shader.cache.hits", 1);
         T8_LOG_DEBUG("[ShaderCache][D3D12] FS hit %s", cacheKey.sha1.c_str());
       }
       else {
         ComPtr<ID3DBlob> errBlob;
-        HRESULT hr = D3DCompile(src_fs.c_str(), src_fs.size(),
+        T8_TELEMETRY_ADD("shader.cache.misses", 1);
+        HRESULT hr = T8_TELEMETRY_CALL("shader.compile", D3DCompile(src_fs.c_str(), src_fs.size(),
                                  fs_name.empty() ? nullptr : fs_name.c_str(),
-                                 nullptr, nullptr, "FS", "ps_5_0", 0, 0, &FS_blob, &errBlob);
+                                 nullptr, nullptr, "FS", "ps_5_0", 0, 0, &FS_blob, &errBlob));
         if (FAILED(hr)) {
           T8_LOG_ERROR("[D3D12] FS compile error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "unknown");
           return false;
@@ -338,6 +343,26 @@ namespace t850 {
     // Reflect FS
     ComPtr<ID3D12ShaderReflection> fsReflect;
     D3DReflect(FS_blob->GetBufferPointer(), FS_blob->GetBufferSize(), IID_PPV_ARGS(&fsReflect));
+
+    const auto validateSamplers = [&](ID3D12ShaderReflection* reflection, const std::string& name, const char* stage) {
+      if (!reflection) return false;
+      D3D12_SHADER_DESC descriptor{};
+      reflection->GetDesc(&descriptor);
+      for (UINT index = 0; index < descriptor.BoundResources; ++index) {
+        D3D12_SHADER_INPUT_BIND_DESC binding{};
+        reflection->GetResourceBindingDesc(index, &binding);
+        std::string diagnostic;
+        if (!g_pBaseDriver->ValidateShaderComparisonSamplers(
+              binding.Type == D3D_SIT_SAMPLER && (binding.uFlags & D3D_SIF_COMPARISON_SAMPLER),
+              name.empty() ? "inline" : name, stage, key.bits, diagnostic)) {
+          T8_LOG_ERROR("%s", diagnostic.c_str());
+          return false;
+        }
+      }
+      return true;
+    };
+    if (!validateSamplers(vsReflect.Get(), vs_name, "vertex") ||
+        !validateSamplers(fsReflect.Get(), fs_name, "fragment")) return false;
 
     // Build root signature from reflection
     if (!BuildRootSignature(device, vsReflect.Get(), fsReflect.Get())) return false;

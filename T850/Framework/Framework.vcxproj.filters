@@ -149,6 +149,9 @@
     <ClInclude Include="include\game\MovementComponent.h">
       <Filter>Header Files\game</Filter>
     </ClInclude>
+    <ClInclude Include="include\game\RegeneratingHealthState.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
     <ClInclude Include="include\game\StateMachine.h">
       <Filter>Header Files\game</Filter>
     </ClInclude>

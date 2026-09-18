@@ -196,6 +196,54 @@ bool MinecraftScene::LoadAuthoredScene() {
   const auto& torch = m_voxelSettings.torch;
   const auto& appearance = torch.particle_appearance;
   const auto finite = [](float value) { return std::isfinite(value); };
+  const auto& playerSettings = m_voxelSettings.player;
+  const auto& mobSettings = m_voxelSettings.mob;
+  const bool validSurvival = playerSettings.max_health > 0 &&
+    playerSettings.max_health <= 100 && playerSettings.contact_damage > 0 &&
+    playerSettings.contact_damage <= playerSettings.max_health &&
+    finite(playerSettings.health_regeneration_seconds) &&
+    playerSettings.health_regeneration_seconds > 0.0f;
+  const bool validGlowingEyes = !mobSettings.glowing_eyes ||
+    (finite(mobSettings.glowing_eye_color.x) &&
+     finite(mobSettings.glowing_eye_color.y) &&
+     finite(mobSettings.glowing_eye_color.z) &&
+     mobSettings.glowing_eye_color.x >= 0.0f && mobSettings.glowing_eye_color.x <= 1.0f &&
+     mobSettings.glowing_eye_color.y >= 0.0f && mobSettings.glowing_eye_color.y <= 1.0f &&
+     mobSettings.glowing_eye_color.z >= 0.0f && mobSettings.glowing_eye_color.z <= 1.0f &&
+     finite(mobSettings.glowing_eye_intensity) &&
+     mobSettings.glowing_eye_intensity > 0.0f &&
+     mobSettings.glowing_eye_intensity <= 100.0f);
+  const auto hasBlock = [&](const std::string& name) {
+    return std::any_of(m_voxelSettings.blocks.begin(), m_voxelSettings.blocks.end(),
+      [&](const t850::scene::SceneVoxelBlockDesc& block) { return block.name == name; });
+  };
+  bool validStructures = true;
+  std::size_t authoredVoxelCount = 0;
+  std::size_t authoredBoxCount = 0;
+  for (const auto& structure : m_voxelSettings.structures) {
+    validStructures = validStructures && !structure.name.empty();
+    for (const auto& region : structure.voxel_regions) {
+      const int64_t width = static_cast<int64_t>(region.max.x) - region.min.x + 1;
+      const int64_t height = static_cast<int64_t>(region.max.y) - region.min.y + 1;
+      const int64_t depth = static_cast<int64_t>(region.max.z) - region.min.z + 1;
+      validStructures = validStructures && width > 0 && height > 0 && depth > 0 &&
+        region.min.y >= 0 && region.max.y < m_voxelSettings.world_height &&
+        hasBlock(region.block);
+      if (width > 0 && height > 0 && depth > 0)
+        authoredVoxelCount += static_cast<std::size_t>(width * height * depth);
+    }
+    for (const auto& boxes : structure.box_arrays) {
+      const int64_t boxCount = static_cast<int64_t>(boxes.count.x) *
+        boxes.count.y * boxes.count.z;
+      validStructures = validStructures && boxes.count.x > 0 && boxes.count.y > 0 &&
+        boxes.count.z > 0 && boxes.size.x > 0.0f && boxes.size.y > 0.0f &&
+        boxes.size.z > 0.0f && finite(boxes.origin.x) && finite(boxes.origin.y) &&
+        finite(boxes.origin.z) && finite(boxes.size.x) && finite(boxes.size.y) &&
+        finite(boxes.size.z) && hasBlock(boxes.block);
+      if (boxCount > 0) authoredBoxCount += static_cast<std::size_t>(boxCount);
+    }
+  }
+  validStructures = validStructures && authoredVoxelCount <= 65536 && authoredBoxCount <= 4096;
   const bool validAppearance = appearance.colors.size() == 3 &&
     std::all_of(appearance.colors.begin(), appearance.colors.end(),
       [](const t850::scene::Vec3f& color) {
@@ -224,6 +272,10 @@ bool MinecraftScene::LoadAuthoredScene() {
     finite(appearance.intensity) && appearance.intensity >= 0.0f;
   const bool validTorch = !torch.enabled ||
     (finite(torch.distance_from_spawn) && torch.distance_from_spawn > 0.0f &&
+     torch.positions.size() <= kMaxMinecraftTorchEmitters &&
+     std::all_of(torch.positions.begin(), torch.positions.end(), [&](const auto& position) {
+       return finite(position.x) && finite(position.y) && finite(position.z);
+     }) &&
      finite(torch.base_width) && torch.base_width > 0.0f &&
      finite(torch.base_height) && torch.base_height > 0.0f &&
      !torch.base_block.empty() &&
@@ -256,6 +308,7 @@ bool MinecraftScene::LoadAuthoredScene() {
       !m_voxelSettings.debug_render_targets[0].source.empty() ||
       m_voxelSettings.player.look_pitch_limit <= 0.0f ||
       m_voxelSettings.player.collision_sweep_step <= 0.0f ||
+      !validSurvival ||
       m_voxelSettings.mob.count < 0 ||
       m_voxelSettings.mob.count > kMaxMinecraftEnemies ||
       m_voxelSettings.mob.move_speed <= 0.0f ||
@@ -270,8 +323,10 @@ bool MinecraftScene::LoadAuthoredScene() {
       m_voxelSettings.mob.vertical_follow_speed <= 0.0f ||
       m_voxelSettings.mob.skin_texture.empty() ||
       !validMobSkin ||
+      !validGlowingEyes ||
       m_voxelSettings.navmesh_rebuild_seconds <= 0.0f ||
       m_voxelSettings.sun_debug_size <= 0.0f ||
+      !validStructures ||
       !validTorch ||
       m_voxelSettings.dof.focus_range < 0.0f ||
       m_voxelSettings.dof.focus_falloff <= 0.0f ||
@@ -303,7 +358,8 @@ void MinecraftScene::ApplyVoxelSettings() {
   m_mobMeshStartIndex = m_maxChunks;
   m_weaponMeshIndex = m_maxChunks + kMaxMinecraftEnemies;
   m_torchMeshIndex = m_weaponMeshIndex + 1;
-  m_renderMeshCount = m_maxChunks + kMaxMinecraftEnemies + 2;
+  m_structureMeshIndex = m_torchMeshIndex + 1;
+  m_renderMeshCount = m_maxChunks + kMaxMinecraftEnemies + 3;
   m_seed = m_voxelSettings.seed;
   m_maxUploadsPerFrame = (std::max)(1, m_voxelSettings.max_uploads_per_frame);
   m_asyncStreaming = m_voxelSettings.async_streaming;
@@ -584,6 +640,43 @@ void MinecraftScene::GenerateChunkData(
 
     }
   }
+  ApplyAuthoredStructuresToChunk(cx, cz, blocks);
+}
+
+void MinecraftScene::ApplyAuthoredStructuresToChunk(
+    int cx, int cz, std::vector<uint8_t>& blocks) const {
+  const int baseX = cx * m_chunkSize;
+  const int baseZ = cz * m_chunkSize;
+  const int maxX = baseX + m_chunkSize - 1;
+  const int maxZ = baseZ + m_chunkSize - 1;
+  const uint8_t air = BlockId(m_voxelSettings.terrain.air_block, 0);
+  auto blockAt = [&](int wy, int lx, int lz) -> uint8_t& {
+    return blocks[(static_cast<std::size_t>(wy) * m_chunkSize + lx) * m_chunkSize + lz];
+  };
+  for (const auto& structure : m_voxelSettings.structures) {
+    for (const auto& region : structure.voxel_regions) {
+      const int regionMinX = (std::max)(region.min.x, baseX);
+      const int regionMaxX = (std::min)(region.max.x, maxX);
+      const int regionMinZ = (std::max)(region.min.z, baseZ);
+      const int regionMaxZ = (std::min)(region.max.z, maxZ);
+      if (regionMinX > regionMaxX || regionMinZ > regionMaxZ) continue;
+      const uint8_t block = BlockId(region.block, air);
+      for (int wy = region.min.y; wy <= region.max.y; ++wy)
+        for (int wx = regionMinX; wx <= regionMaxX; ++wx)
+          for (int wz = regionMinZ; wz <= regionMaxZ; ++wz)
+            blockAt(wy, wx - baseX, wz - baseZ) = block;
+    }
+  }
+}
+
+bool MinecraftScene::IsAuthoredStructureVoxel(int wx, int wy, int wz) const {
+  for (const auto& structure : m_voxelSettings.structures)
+    for (const auto& region : structure.voxel_regions)
+      if (wx >= region.min.x && wx <= region.max.x &&
+          wy >= region.min.y && wy <= region.max.y &&
+          wz >= region.min.z && wz <= region.max.z)
+        return true;
+  return false;
 }
 
 void MinecraftScene::GenerateChunk(int cx, int cz, bool markState) {
@@ -626,6 +719,7 @@ void MinecraftScene::GenerateChunkTrees(int cx, int cz, bool markState) {
   auto writeBlock = [&](int wx, int wy, int wz, uint8_t block, bool requireAir) {
     if (wy < 0 || wy >= m_worldHeight ||
         WorldToChunk(wx) != cx || WorldToChunk(wz) != cz) return;
+    if (IsAuthoredStructureVoxel(wx, wy, wz)) return;
     uint8_t& target = m_blocks[gx][wy][gz][WorldToLocal(wx)][WorldToLocal(wz)];
     if ((requireAir && target != air) || target == block) return;
     target = block;
@@ -956,7 +1050,7 @@ void MinecraftScene::UpdateMob(MinecraftMob& mob, int mobIndex, float dt) {
     direction = Normalize3(fromPlayer,
         XVECTOR3(std::cos(angle), 0.0f, std::sin(angle), 0.0f));
     targetDistance = avoidanceRadius - playerDistance;
-  } else if (playerDistance > avoidanceRadius + 0.15f &&
+  } else if (playerDistance > avoidanceRadius + 0.02f &&
              mob.pathReady && mob.pathCursor < mob.path.size()) {
     const XVECTOR3 target = mob.path[mob.pathCursor];
     direction = XVECTOR3(target.x - mob.position.x, 0.0f,
@@ -1030,6 +1124,66 @@ void MinecraftScene::UpdateMobs(float dt) {
                 m_mobCount, first.position.x, first.position.y, first.position.z,
                 first.pathReady ? 1 : 0, (int)first.path.size());
   }
+}
+
+bool MinecraftScene::PlayerTouchesMob(
+  const MinecraftMob& mob, bool retainContact) const {
+  const XVECTOR3& playerCenter = m_player.GetPosition();
+  const float playerVerticalExtent = m_playerSettings.capsuleHalfHeight +
+                                     m_playerSettings.capsuleRadius;
+  const float deltaX = playerCenter.x - mob.position.x;
+  const float deltaZ = playerCenter.z - mob.position.z;
+  const float horizontalExtent = m_playerSettings.capsuleRadius +
+    m_voxelSettings.mob.half_width + (retainContact ? 0.15f : 0.02f);
+  return deltaX * deltaX + deltaZ * deltaZ <= horizontalExtent * horizontalExtent &&
+         playerCenter.y + playerVerticalExtent >= mob.position.y &&
+         playerCenter.y - playerVerticalExtent <=
+           mob.position.y + m_voxelSettings.mob.height;
+}
+
+void MinecraftScene::UpdatePlayerHealth(float dt) {
+  if (m_playerHealth.IsDead()) return;
+  if (m_playerHealth.Update(dt)) {
+    T8_LOG_INFO("[Minecraft] Player regenerated one heart: health=%d/%d",
+                m_playerHealth.Current(), m_playerHealth.Maximum());
+  }
+  for (int mobIndex = 0; mobIndex < kMaxMinecraftEnemies; ++mobIndex) {
+    const bool touching = mobIndex < m_mobCount &&
+      PlayerTouchesMob(m_mobs[mobIndex], m_playerMobContacts[mobIndex]);
+    if (m_playerHealth.ApplyContact(
+          touching, m_voxelSettings.player.contact_damage,
+          m_playerMobContacts[mobIndex])) {
+      T8_LOG_INFO("[Minecraft] Herobrine %d hit player: health=%d/%d",
+                  mobIndex, m_playerHealth.Current(), m_playerHealth.Maximum());
+    }
+  }
+  if (m_playerHealth.IsDead()) {
+    m_playerInput = {};
+    T8_LOG_INFO("[Minecraft] Player died");
+  }
+}
+
+void MinecraftScene::RespawnPlayer() {
+  m_playerHealth.Reset();
+  m_player.Reset();
+  m_player.SetPosition(m_playerSpawnEye -
+    XVECTOR3(0.0f, m_playerSettings.eyeHeight, 0.0f, 0.0f));
+  m_playerEye = m_playerSpawnEye;
+  m_playerYaw = m_playerSpawnYaw;
+  m_playerPitch = m_playerSpawnPitch;
+  Cam.Eye = m_playerSpawnEye;
+  Cam.Yaw = m_playerSpawnYaw;
+  Cam.Pitch = m_playerSpawnPitch;
+  Cam.Roll = 0.0f;
+  Cam.Update(0.0f);
+  VP = Cam.VP;
+  m_playerInput = {};
+  m_playerMobContacts.fill(false);
+  for (int mobIndex = 0; mobIndex < m_mobCount; ++mobIndex)
+    ResetMob(mobIndex);
+  T8_LOG_INFO("[Minecraft] Player respawned: health=%d/%d spawn=(%.2f,%.2f,%.2f)",
+              m_playerHealth.Current(), m_playerHealth.Maximum(),
+              m_playerSpawnEye.x, m_playerSpawnEye.y, m_playerSpawnEye.z);
 }
 
 void MinecraftScene::UpdateDayNight(float dt) {
@@ -1176,11 +1330,31 @@ void MinecraftScene::CreateMobMesh(int mobIndex) {
        partIndex < m_voxelSettings.mob.parts.size(); ++partIndex)
     addBox(m_voxelSettings.mob.parts[partIndex], partIndex);
 
+  const unsigned int bodyVertexCount = static_cast<unsigned int>(geom.Positions.size());
+  const unsigned int bodyTriangleCount = static_cast<unsigned int>(geom.Triangles.size() / 3);
+  if (m_voxelSettings.mob.glowing_eyes) {
+    constexpr float eyeZ = -0.251f;
+    constexpr float eyeBottom = 1.4875f;
+    constexpr float eyeTop = 1.6125f;
+    const XVECTOR3 eyeNormal(0.0f, 0.0f, -1.0f, 0.0f);
+    const auto addEye = [&](float minX, float maxX) {
+      AddQuad(geom,
+              XVECTOR3(maxX, eyeBottom, eyeZ),
+              XVECTOR3(minX, eyeBottom, eyeZ),
+              XVECTOR3(minX, eyeTop, eyeZ),
+              XVECTOR3(maxX, eyeTop, eyeZ),
+              eyeNormal, 5, 0.0f, 0.0f, 1.0f, 1.0f);
+    };
+    addEye(-0.1875f, -0.0625f);
+    addEye(0.0625f, 0.1875f);
+  }
+
   geom.NumVertices = static_cast<xDWORD>(geom.Positions.size());
   geom.NumTriangles = static_cast<xDWORD>(geom.Triangles.size() / 3);
   geom.NumIndices = static_cast<xDWORD>(geom.Triangles.size());
   geom.VertexSize = 40;
-  geom.MaterialList.Materials.resize(1);
+  const bool hasGlowingEyes = geom.NumTriangles > bodyTriangleCount;
+  geom.MaterialList.Materials.resize(hasGlowingEyes ? 2 : 1);
   xF::xMaterial& mat = geom.MaterialList.Materials[0];
   mat.Name = "minecraft_mob";
   mat.bEffects = true;
@@ -1193,8 +1367,36 @@ void MinecraftScene::CreateMobMesh(int mobIndex) {
   mat.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
   mat.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
   mat.EffectInstance.pDefaults[1].CaseFloat.push_back(m_voxelSettings.material.roughness);
-  geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
-  geom.MaterialList.NumMatProcess = 1;
+  geom.MaterialList.FaceIndices.assign(bodyTriangleCount, 0);
+  if (hasGlowingEyes) {
+    const auto& eyeColor = m_voxelSettings.mob.glowing_eye_color;
+    const float eyeIntensity = m_voxelSettings.mob.glowing_eye_intensity;
+    xF::xMaterial& eyes = geom.MaterialList.Materials[1];
+    eyes.Name = "minecraft_herobrine_glowing_eyes";
+    eyes.bEffects = true;
+    eyes.EffectInstance.pDefaults.resize(4);
+    eyes.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_FLOATS;
+    eyes.EffectInstance.pDefaults[0].NameParam = "diffuseColor";
+    eyes.EffectInstance.pDefaults[0].CaseFloat = {1.0f, 1.0f, 1.0f, 1.0f};
+    eyes.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
+    eyes.EffectInstance.pDefaults[1].NameParam = "emissiveColor";
+    eyes.EffectInstance.pDefaults[1].CaseFloat = {
+      eyeColor.x * eyeIntensity,
+      eyeColor.y * eyeIntensity,
+      eyeColor.z * eyeIntensity,
+      1.0f};
+    eyes.EffectInstance.pDefaults[2].Type = xF::xEFFECTENUM::STDX_FLOATS;
+    eyes.EffectInstance.pDefaults[2].NameParam = "pbrRoughness";
+    eyes.EffectInstance.pDefaults[2].CaseFloat = {0.0f};
+    eyes.EffectInstance.pDefaults[3].Type = xF::xEFFECTENUM::STDX_DWORDS;
+    eyes.EffectInstance.pDefaults[3].NameParam = "unlit";
+    eyes.EffectInstance.pDefaults[3].CaseDWORD = 1u;
+    geom.MaterialList.FaceIndices.insert(
+      geom.MaterialList.FaceIndices.end(),
+      geom.NumTriangles - bodyTriangleCount, 1);
+  }
+  geom.MaterialList.NumMatProcess = static_cast<xDWORD>(
+    geom.MaterialList.Materials.size());
 
   xF::xFinalGeometry finalGeometry;
   finalGeometry.VertexSize = 40;
@@ -1215,13 +1417,24 @@ void MinecraftScene::CreateMobMesh(int mobIndex) {
     finalGeometry.pData[cursor++] = geom.TexCoordinates[0][i].y;
   }
   std::copy(finalGeometry.pData, finalGeometry.pData + cursor, finalGeometry.pDataDest);
-  xF::xSubsetInfo subset;
-  subset.NumTris = geom.NumTriangles;
-  subset.NumVertex = geom.NumVertices;
-  subset.VertexSize = 40;
-  subset.VertexAttrib = geom.VertexAttributes;
-  subset.bAlignedVertex = true;
-  finalGeometry.Subsets.push_back(subset);
+  xF::xSubsetInfo bodySubset;
+  bodySubset.NumTris = bodyTriangleCount;
+  bodySubset.NumVertex = bodyVertexCount;
+  bodySubset.VertexSize = 40;
+  bodySubset.VertexAttrib = geom.VertexAttributes;
+  bodySubset.bAlignedVertex = true;
+  finalGeometry.Subsets.push_back(bodySubset);
+  if (hasGlowingEyes) {
+    xF::xSubsetInfo eyeSubset;
+    eyeSubset.NumTris = geom.NumTriangles - bodyTriangleCount;
+    eyeSubset.NumVertex = geom.NumVertices - bodyVertexCount;
+    eyeSubset.VertexStart = bodyVertexCount;
+    eyeSubset.TriStart = bodyTriangleCount;
+    eyeSubset.VertexSize = 40;
+    eyeSubset.VertexAttrib = geom.VertexAttributes;
+    eyeSubset.bAlignedVertex = true;
+    finalGeometry.Subsets.push_back(eyeSubset);
+  }
   db.MeshInfo.push_back(std::move(finalGeometry));
 
   RenderMesh* mesh = new RenderMesh();
@@ -1237,7 +1450,10 @@ void MinecraftScene::CreateMobMesh(int mobIndex) {
     return;
   }
   for (auto& info : mesh->Info) {
-    for (auto& subsetInfo : info.SubSets) {
+    for (std::size_t subsetIndex = 0;
+         subsetIndex < info.SubSets.size(); ++subsetIndex) {
+      auto& subsetInfo = info.SubSets[subsetIndex];
+      if (subsetIndex != 0) continue;
       t850::Texture* diffuseTexture = m_mobSkinTexture
         ? m_mobSkinTexture : m_atlasTexture;
       const int diffuseId = m_mobSkinTexture
@@ -1256,6 +1472,13 @@ void MinecraftScene::CreateMobMesh(int mobIndex) {
   Meshes[meshIndex].CreateInstance(mesh, &VP);
   Meshes[meshIndex].SetVisible(mobIndex < m_mobCount);
   UpdateMobInstance(mobIndex);
+  if (hasGlowingEyes && mobIndex == 0) {
+    T8_LOG_INFO("[Minecraft] Herobrine glowing eyes ready: color=(%.2f,%.2f,%.2f) intensity=%.2f",
+                m_voxelSettings.mob.glowing_eye_color.x,
+                m_voxelSettings.mob.glowing_eye_color.y,
+                m_voxelSettings.mob.glowing_eye_color.z,
+                m_voxelSettings.mob.glowing_eye_intensity);
+  }
 }
 
 void MinecraftScene::UpdateMobInstance(int mobIndex) {
@@ -1541,9 +1764,142 @@ void MinecraftScene::UpdateWeapon(float dt) {
   Meshes[m_weaponMeshIndex].Update();
 }
 
+void MinecraftScene::CreateStructureDecorationMesh() {
+  std::size_t boxCount = 0;
+  for (const auto& structure : m_voxelSettings.structures)
+    for (const auto& boxes : structure.box_arrays)
+      boxCount += static_cast<std::size_t>(boxes.count.x) *
+                  boxes.count.y * boxes.count.z;
+  if (boxCount == 0) return;
+
+  xF::XDataBase db;
+  xF::xMeshContainer* mc = new xF::xMeshContainer;
+  mc->FileName = "MinecraftStructureDecorations";
+  db.XMeshDataBase.push_back(mc);
+  mc->Geometry.resize(1);
+  xF::xMeshGeometry& geom = mc->Geometry[0];
+  geom.VertexAttributes = xF::xMeshGeometry::HAS_POSITION |
+                          xF::xMeshGeometry::HAS_NORMAL |
+                          xF::xMeshGeometry::HAS_TEXCOORD0;
+  geom.NumChannelsTexCoords = 1;
+
+  auto addBox = [&](float x0, float y0, float z0,
+                    float x1, float y1, float z1, uint8_t block) {
+    const BlockDef& def = m_blockDefs[block];
+    for (int face = 0; face < 6; ++face) {
+      const BlockTile& tile = def.tiles[face];
+      const UVQuad uv = TileUV(m_textureAtlas, tile.u, tile.v);
+      XVECTOR3 corners[4];
+      for (int corner = 0; corner < 4; ++corner) {
+        const XVECTOR3& unit = kFaces[face].corners[corner];
+        corners[corner] = XVECTOR3(
+          x0 + (x1 - x0) * unit.x,
+          y0 + (y1 - y0) * unit.y,
+          z0 + (z1 - z0) * unit.z);
+      }
+      AddQuad(geom, corners[0], corners[1], corners[2], corners[3],
+              kFaces[face].normal, face, uv.u0, uv.v0, uv.u1, uv.v1);
+    }
+  };
+
+  for (const auto& structure : m_voxelSettings.structures) {
+    for (const auto& boxes : structure.box_arrays) {
+      const uint8_t block = BlockId(boxes.block, 0);
+      for (int iy = 0; iy < boxes.count.y; ++iy) {
+        for (int iz = 0; iz < boxes.count.z; ++iz) {
+          for (int ix = 0; ix < boxes.count.x; ++ix) {
+            const float x0 = boxes.origin.x + boxes.size.x * ix;
+            const float y0 = boxes.origin.y + boxes.size.y * iy;
+            const float z0 = boxes.origin.z + boxes.size.z * iz;
+            addBox(x0, y0, z0,
+                   x0 + boxes.size.x, y0 + boxes.size.y, z0 + boxes.size.z,
+                   block);
+          }
+        }
+      }
+    }
+  }
+
+  geom.NumVertices = static_cast<xDWORD>(geom.Positions.size());
+  geom.NumTriangles = static_cast<xDWORD>(geom.Triangles.size() / 3);
+  geom.NumIndices = static_cast<xDWORD>(geom.Triangles.size());
+  geom.VertexSize = 40;
+  geom.MaterialList.Materials.resize(1);
+  xF::xMaterial& material = geom.MaterialList.Materials[0];
+  material.Name = "minecraft_structure_decorations";
+  material.bEffects = true;
+  material.EffectInstance.pDefaults.resize(2);
+  material.EffectInstance.pDefaults[0].Type = xF::xEFFECTENUM::STDX_STRINGS;
+  material.EffectInstance.pDefaults[0].NameParam = "diffuseMap";
+  material.EffectInstance.pDefaults[0].CaseString = m_voxelSettings.material.diffuse_texture;
+  material.EffectInstance.pDefaults[1].Type = xF::xEFFECTENUM::STDX_FLOATS;
+  material.EffectInstance.pDefaults[1].NameParam = "pbrRoughness";
+  material.EffectInstance.pDefaults[1].CaseFloat.push_back(m_voxelSettings.material.roughness);
+  geom.MaterialList.FaceIndices.assign(geom.NumTriangles, 0);
+  geom.MaterialList.NumMatProcess = 1;
+
+  xF::xFinalGeometry finalGeometry;
+  finalGeometry.VertexSize = 40;
+  finalGeometry.NumVertex = geom.NumVertices;
+  finalGeometry.pData = new float[10 * geom.NumVertices];
+  finalGeometry.pDataDest = new float[10 * geom.NumVertices];
+  unsigned int cursor = 0;
+  for (unsigned int index = 0; index < geom.NumVertices; ++index) {
+    finalGeometry.pData[cursor++] = geom.Positions[index].x;
+    finalGeometry.pData[cursor++] = geom.Positions[index].y;
+    finalGeometry.pData[cursor++] = geom.Positions[index].z;
+    finalGeometry.pData[cursor++] = 1.0f;
+    finalGeometry.pData[cursor++] = geom.Normals[index].x;
+    finalGeometry.pData[cursor++] = geom.Normals[index].y;
+    finalGeometry.pData[cursor++] = geom.Normals[index].z;
+    finalGeometry.pData[cursor++] = 0.0f;
+    finalGeometry.pData[cursor++] = geom.TexCoordinates[0][index].x;
+    finalGeometry.pData[cursor++] = geom.TexCoordinates[0][index].y;
+  }
+  std::copy(finalGeometry.pData, finalGeometry.pData + cursor,
+            finalGeometry.pDataDest);
+  xF::xSubsetInfo subset;
+  subset.NumTris = geom.NumTriangles;
+  subset.NumVertex = geom.NumVertices;
+  subset.VertexSize = 40;
+  subset.VertexAttrib = geom.VertexAttributes;
+  subset.bAlignedVertex = true;
+  finalGeometry.Subsets.push_back(subset);
+  db.MeshInfo.push_back(std::move(finalGeometry));
+
+  RenderMesh* mesh = new RenderMesh();
+  mesh->SetEngineContext(pEngineContext);
+  mesh->SetSceneProps(&SceneProp);
+  mesh->xFile = new xF::XDataBase(std::move(db));
+  mesh->m_sourcePath = "MinecraftStructureDecorations";
+  bool created = false;
+  mesh->m_asset = MeshAssetCache::Get().Acquire(mesh->m_sourcePath, &created);
+  mesh->Create();
+  if (mesh->Info.empty()) {
+    delete mesh;
+    return;
+  }
+  for (auto& info : mesh->Info) {
+    for (auto& subsetInfo : info.SubSets) {
+      subsetInfo.DiffuseTex = m_atlasTexture;
+      subsetInfo.DiffuseId = m_atlasTexIndex;
+      if (subsetInfo.matAsset) {
+        MaterialAsset* previous = subsetInfo.matAsset;
+        subsetInfo.matAsset = MaterialAssetCache::Get().AcquireTextureVariant(
+          *previous, MatTexSlot::BaseColor, m_atlasTexture, m_atlasTexIndex);
+        MaterialAssetCache::Get().Release(previous);
+      }
+    }
+  }
+  Meshes[m_structureMeshIndex].CreateInstance(mesh, &VP);
+  Meshes[m_structureMeshIndex].Update();
+  T8_LOG_INFO("[Minecraft] Structure decorations ready: boxes=%zu", boxCount);
+}
+
 void MinecraftScene::CreateTorchBaseMesh() {
   const auto& torch = m_voxelSettings.torch;
   SceneProp.ParticleEmitterEnabled = 0;
+  m_torchEmitterCount = 0;
   if (!torch.enabled) return;
 
   const auto blockIt = m_blockIds.find(torch.base_block);
@@ -1553,31 +1909,46 @@ void MinecraftScene::CreateTorchBaseMesh() {
     return;
   }
 
-  const auto& player = m_voxelSettings.player;
-  const XVECTOR3 fallbackForward(
-    std::sin(m_playerYaw), 0.0f, std::cos(m_playerYaw), 0.0f);
-  const XVECTOR3 spawnForward = Normalize3(
-    XVECTOR3(Cam.Look.x, 0.0f, Cam.Look.z, 0.0f), fallbackForward);
-  const float worldX = player.spawn.x + spawnForward.x * torch.distance_from_spawn;
-  const float worldZ = player.spawn.z + spawnForward.z * torch.distance_from_spawn;
-  const int blockX = static_cast<int>(std::floor(worldX));
-  const int blockZ = static_cast<int>(std::floor(worldZ));
-  int supportY = (std::min)(
-    m_worldHeight - 1,
-    static_cast<int>(std::floor(player.spawn.y - player.eye_height)));
-  while (supportY >= 0 && !IsBlockSolid(GetBlock(blockX, supportY, blockZ)))
-    --supportY;
-  if (supportY < 0) {
-    T8_LOG_ERROR("[Minecraft] Torch base has no ground support at (%d,%d)",
-                 blockX, blockZ);
-    return;
+  if (!torch.positions.empty()) {
+    for (const auto& position : torch.positions) {
+      const int blockX = static_cast<int>(std::floor(position.x));
+      const int supportY = static_cast<int>(std::floor(position.y)) - 1;
+      const int blockZ = static_cast<int>(std::floor(position.z));
+      if (!IsBlockSolid(GetBlock(blockX, supportY, blockZ))) {
+        T8_LOG_ERROR("[Minecraft] Authored torch has no floor support at (%d,%d,%d)",
+                     blockX, supportY, blockZ);
+        return;
+      }
+      m_torchBasePositions[m_torchEmitterCount++] = XVECTOR3(
+        position.x, position.y, position.z, 1.0f);
+    }
+  } else {
+    const auto& player = m_voxelSettings.player;
+    const XVECTOR3 fallbackForward(
+      std::sin(m_playerYaw), 0.0f, std::cos(m_playerYaw), 0.0f);
+    const XVECTOR3 spawnForward = Normalize3(
+      XVECTOR3(Cam.Look.x, 0.0f, Cam.Look.z, 0.0f), fallbackForward);
+    const float worldX = player.spawn.x + spawnForward.x * torch.distance_from_spawn;
+    const float worldZ = player.spawn.z + spawnForward.z * torch.distance_from_spawn;
+    const int blockX = static_cast<int>(std::floor(worldX));
+    const int blockZ = static_cast<int>(std::floor(worldZ));
+    int supportY = (std::min)(
+      m_worldHeight - 1,
+      static_cast<int>(std::floor(player.spawn.y - player.eye_height)));
+    while (supportY >= 0 && !IsBlockSolid(GetBlock(blockX, supportY, blockZ)))
+      --supportY;
+    if (supportY < 0) {
+      T8_LOG_ERROR("[Minecraft] Torch base has no ground support at (%d,%d)",
+                   blockX, blockZ);
+      return;
+    }
+    m_torchBasePositions[m_torchEmitterCount++] = XVECTOR3(
+      worldX, static_cast<float>(supportY + 1), worldZ, 1.0f);
   }
 
-  const float baseY = static_cast<float>(supportY + 1);
   const float halfWidth = torch.base_width * 0.5f;
-  m_torchBasePosition = XVECTOR3(worldX, baseY, worldZ, 1.0f);
   m_torchParticleTime = 0.0f;
-  SceneProp.ParticleEmitterEnabled = 1;
+  SceneProp.ParticleEmitterEnabled = m_torchEmitterCount;
   SceneProp.ParticleTimeSeconds = 0.0f;
   ApplyTorchParticleSettings();
 
@@ -1592,7 +1963,8 @@ void MinecraftScene::CreateTorchBaseMesh() {
                           xF::xMeshGeometry::HAS_TEXCOORD0;
   geom.NumChannelsTexCoords = 1;
 
-  auto addSection = [&](float y0, float y1, const BlockDef& block) {
+  auto addSection = [&](const XVECTOR3& position, float y0, float y1,
+                        const BlockDef& block) {
     for (int face = 0; face < 6; ++face) {
       const BlockTile& tile = block.tiles[face];
       const UVQuad uv = TileUV(m_textureAtlas, tile.u, tile.v);
@@ -1600,9 +1972,9 @@ void MinecraftScene::CreateTorchBaseMesh() {
       for (int corner = 0; corner < 4; ++corner) {
         const XVECTOR3& unit = kFaces[face].corners[corner];
         corners[corner] = XVECTOR3(
-          -halfWidth + torch.base_width * unit.x,
-          y0 + (y1 - y0) * unit.y,
-          -halfWidth + torch.base_width * unit.z);
+          position.x - halfWidth + torch.base_width * unit.x,
+          position.y + y0 + (y1 - y0) * unit.y,
+          position.z - halfWidth + torch.base_width * unit.z);
       }
       AddQuad(geom, corners[0], corners[1], corners[2], corners[3],
               kFaces[face].normal, face, uv.u0, uv.v0, uv.u1, uv.v1);
@@ -1611,11 +1983,16 @@ void MinecraftScene::CreateTorchBaseMesh() {
 
   const bool hasTip = torch.tip_height > 0.0f;
   const float tipStart = torch.base_height - torch.tip_height;
-  addSection(0.0f, tipStart, m_blockDefs[blockIt->second]);
+  for (int emitterIndex = 0; emitterIndex < m_torchEmitterCount; ++emitterIndex)
+    addSection(m_torchBasePositions[emitterIndex], 0.0f, tipStart,
+               m_blockDefs[blockIt->second]);
   const unsigned int bodyVertexCount = static_cast<unsigned int>(geom.Positions.size());
   const unsigned int bodyTriangleCount = static_cast<unsigned int>(geom.Triangles.size() / 3);
-  if (hasTip)
-    addSection(tipStart, torch.base_height, m_blockDefs[blockIt->second]);
+  if (hasTip) {
+    for (int emitterIndex = 0; emitterIndex < m_torchEmitterCount; ++emitterIndex)
+      addSection(m_torchBasePositions[emitterIndex], tipStart, torch.base_height,
+                 m_blockDefs[blockIt->second]);
+  }
 
   geom.NumVertices = static_cast<xDWORD>(geom.Positions.size());
   geom.NumTriangles = static_cast<xDWORD>(geom.Triangles.size() / 3);
@@ -1724,25 +2101,34 @@ void MinecraftScene::CreateTorchBaseMesh() {
   }
 
   Meshes[m_torchMeshIndex].CreateInstance(mesh, &VP);
-  Meshes[m_torchMeshIndex].TranslateAbsolute(
-    m_torchBasePosition.x, m_torchBasePosition.y, m_torchBasePosition.z);
   Meshes[m_torchMeshIndex].SetVisible(true);
   Meshes[m_torchMeshIndex].Update();
   T8_LOG_INFO(
-    "[Minecraft] Torch base ready: base=(%.3f,%.3f,%.3f) flame=(%.3f,%.3f,%.3f) tip=%.3f distance=%.2f",
-    m_torchBasePosition.x, m_torchBasePosition.y, m_torchBasePosition.z,
+    "[Minecraft] Torch bases ready: count=%d firstFlame=(%.3f,%.3f,%.3f) tip=%.3f",
+    m_torchEmitterCount,
     m_torchFlamePosition.x, m_torchFlamePosition.y, m_torchFlamePosition.z,
-    torch.tip_height, torch.distance_from_spawn);
+    torch.tip_height);
 }
 
 void MinecraftScene::ApplyTorchParticleSettings() {
   const auto& torch = m_voxelSettings.torch;
   const auto& appearance = torch.particle_appearance;
+  if (m_torchEmitterCount <= 0) return;
   m_torchFlamePosition = XVECTOR3(
-    m_torchBasePosition.x,
-    m_torchBasePosition.y + torch.base_height + torch.particle_spawn_offset_y,
-    m_torchBasePosition.z, 1.0f);
+    m_torchBasePositions[0].x,
+    m_torchBasePositions[0].y + torch.base_height + torch.particle_spawn_offset_y,
+    m_torchBasePositions[0].z, 1.0f);
   SceneProp.ParticleEmitterPosition = m_torchFlamePosition;
+  const auto flamePosition = [&](int index) {
+    const int selected = (std::min)(index, m_torchEmitterCount - 1);
+    return XVECTOR3(
+      m_torchBasePositions[selected].x,
+      m_torchBasePositions[selected].y + torch.base_height + torch.particle_spawn_offset_y,
+      m_torchBasePositions[selected].z, 1.0f);
+  };
+  SceneProp.ParticleEmitterPosition1 = flamePosition(1);
+  SceneProp.ParticleEmitterPosition2 = flamePosition(2);
+  SceneProp.ParticleEmitterEnabled = m_torchEmitterCount;
   SceneProp.ParticleCount = torch.particle_count;
   SceneProp.ParticleLifetime = torch.particle_lifetime;
   SceneProp.ParticleRiseHeight = torch.particle_rise_height;
@@ -3161,6 +3547,8 @@ void MinecraftScene::InitVars() {
   }
 
   const auto& player = m_voxelSettings.player;
+  m_playerHealth.Configure(player.max_health, player.health_regeneration_seconds);
+  m_playerMobContacts.fill(false);
   m_playerSettings.collisionShape = t850::KinematicCharacterSettings::CollisionShape::Capsule;
   m_playerSettings.walkSpeed = player.walk_speed;
   m_playerSettings.sprintSpeed = player.sprint_speed;
@@ -3184,6 +3572,9 @@ void MinecraftScene::InitVars() {
   m_player.SetPosition(m_playerEye - XVECTOR3(0.0f, m_playerSettings.eyeHeight, 0.0f, 0.0f));
   m_playerYaw = Cam.Yaw;
   m_playerPitch = Cam.Pitch;
+  m_playerSpawnEye = m_playerEye;
+  m_playerSpawnYaw = m_playerYaw;
+  m_playerSpawnPitch = m_playerPitch;
 
     const auto& mob = m_voxelSettings.mob;
     const float mobHalfHeight = mob.height * 0.5f;
@@ -3324,6 +3715,7 @@ void MinecraftScene::CreateAssets() {
   // Generate the world and build chunk meshes
   GenerateWorld();
   RebuildDirtyChunks();
+  CreateStructureDecorationMesh();
   CreateTorchBaseMesh();
 
   // Recast remains available as an optional diagnostic overlay. Gameplay
@@ -3406,16 +3798,20 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
   if (m_cameraMode != 0)
     m_playerInput = {};
 
-  // Update player (input was captured in OnInput)
-  UpdatePlayer(DtSecs);
+  if (!m_playerHealth.IsDead()) {
+    // Update player (input was captured in OnInput).
+    UpdatePlayer(DtSecs);
+  } else {
+    m_playerInput = {};
+  }
 
   // Recenter the resident grid before accepting a completed navmesh so a
   // worker result can never publish against a center that changed this frame.
   UpdateChunkStreaming();
   ProcessNavigationMeshBuild();
 
-  // Update the first-person weapon (sword) position + swing
-  UpdateWeapon(DtSecs);
+  if (!m_playerHealth.IsDead())
+    UpdateWeapon(DtSecs);
 
   if (SceneProp.ParticleEmitterEnabled) {
     m_torchParticleTime = std::fmod(
@@ -3424,8 +3820,10 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
     SceneProp.ParticleTimeSeconds = m_torchParticleTime;
   }
 
-  // Update voxel-path enemies.
-  UpdateMobs(DtSecs);
+  if (!m_playerHealth.IsDead()) {
+    UpdateMobs(DtSecs);
+    UpdatePlayerHealth(DtSecs);
+  }
 
   // Update the day/night cycle (sun position, light color, ambient)
   UpdateDayNight(DtSecs);
@@ -3514,6 +3912,13 @@ void MinecraftScene::OnInput(InputManager* IManager) {
   if (gamepadActive && !m_gamepadControlsLogged) {
     m_gamepadControlsLogged = true;
     T8_LOG_INFO("[Minecraft] Gamepad controls active: '%s'", gamepad.name.c_str());
+  }
+  if (m_playerHealth.IsDead()) {
+    m_playerInput = {};
+    IManager->xDelta = 0;
+    IManager->yDelta = 0;
+    if (IManager->PressedOnceKey(T800K_SPACE)) RespawnPlayer();
+    return;
   }
 
   // Mouse look
@@ -4287,8 +4692,37 @@ void MinecraftScene::SaveSceneSettings() {
 void MinecraftScene::DrawGameplayHud() {
   ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImDrawList* drawList = ImGui::GetForegroundDrawList();
-  if (!viewport || !drawList || m_blockDefs.empty() ||
-      m_selectedBlock < 0 || m_selectedBlock >= static_cast<int>(m_blockDefs.size())) return;
+  if (!viewport || !drawList) return;
+
+  if (m_playerHealth.IsDead()) {
+    const ImVec2 screenMin = viewport->Pos;
+    const ImVec2 screenMax(screenMin.x + viewport->Size.x,
+                           screenMin.y + viewport->Size.y);
+    const ImVec2 screenCenter((screenMin.x + screenMax.x) * 0.5f,
+                              (screenMin.y + screenMax.y) * 0.5f);
+    drawList->AddRectFilled(screenMin, screenMax, IM_COL32(0, 0, 0, 255));
+    const char* gameOver = "Game over";
+    const char* instructions = "Press Space to respawn and Esc to exit";
+    constexpr float gameOverSize = 48.0f;
+    constexpr float instructionSize = 22.0f;
+    ImFont* font = ImGui::GetFont();
+    const ImVec2 gameOverBounds = font->CalcTextSizeA(
+      gameOverSize, FLT_MAX, 0.0f, gameOver);
+    const ImVec2 instructionBounds = font->CalcTextSizeA(
+      instructionSize, FLT_MAX, 0.0f, instructions);
+    drawList->AddText(font, gameOverSize,
+      ImVec2(screenCenter.x - gameOverBounds.x * 0.5f,
+             screenCenter.y - gameOverBounds.y - 8.0f),
+      IM_COL32(224, 28, 36, 255), gameOver);
+    drawList->AddText(font, instructionSize,
+      ImVec2(screenCenter.x - instructionBounds.x * 0.5f,
+             screenCenter.y + 12.0f),
+      IM_COL32(232, 52, 58, 255), instructions);
+    return;
+  }
+
+  if (m_blockDefs.empty() || m_selectedBlock < 0 ||
+      m_selectedBlock >= static_cast<int>(m_blockDefs.size())) return;
 
   const ImVec2 workMin = viewport->WorkPos;
   const ImVec2 workSize = viewport->WorkSize;
@@ -4378,6 +4812,36 @@ void MinecraftScene::DrawGameplayHud() {
   const ImVec2 barMax(barMin.x + barWidth, barMin.y + barHeight);
   drawList->AddRectFilled(barMin, barMax, IM_COL32(12, 15, 18, 215), 4.0f);
 
+  constexpr float heartSize = 18.0f;
+  constexpr float heartGap = 4.0f;
+  const float heartsY = barMin.y - heartSize - 8.0f;
+  const auto drawHeart = [&](float left, bool filled) {
+    const ImU32 heartOutline = IM_COL32(62, 8, 12, 255);
+    const ImU32 heartColor = filled
+      ? IM_COL32(224, 34, 48, 255)
+      : IM_COL32(58, 32, 36, 235);
+    const float radius = heartSize * 0.27f;
+    const ImVec2 leftCenter(left + heartSize * 0.31f, heartsY + heartSize * 0.31f);
+    const ImVec2 rightCenter(left + heartSize * 0.69f, heartsY + heartSize * 0.31f);
+    const ImVec2 bottom(left + heartSize * 0.5f, heartsY + heartSize);
+    drawList->AddCircleFilled(leftCenter, radius + 1.5f, heartOutline, 16);
+    drawList->AddCircleFilled(rightCenter, radius + 1.5f, heartOutline, 16);
+    drawList->AddTriangleFilled(
+      ImVec2(left, heartsY + heartSize * 0.34f),
+      ImVec2(left + heartSize, heartsY + heartSize * 0.34f),
+      ImVec2(bottom.x, bottom.y + 1.5f), heartOutline);
+    drawList->AddCircleFilled(leftCenter, radius, heartColor, 16);
+    drawList->AddCircleFilled(rightCenter, radius, heartColor, 16);
+    drawList->AddTriangleFilled(
+      ImVec2(left + 1.5f, heartsY + heartSize * 0.34f),
+      ImVec2(left + heartSize - 1.5f, heartsY + heartSize * 0.34f),
+      bottom, heartColor);
+  };
+  for (int heart = 0; heart < m_playerHealth.Maximum(); ++heart) {
+    drawHeart(barMin.x + 4.0f + heart * (heartSize + heartGap),
+              heart < m_playerHealth.Current());
+  }
+
   for (int slot = 0; slot < slotCount; ++slot) {
     const int blockIndex = m_hotbar[slot];
     if (blockIndex < 0 || blockIndex >= static_cast<int>(m_blockDefs.size())) continue;
@@ -4402,7 +4866,7 @@ void MinecraftScene::DrawGameplayHud() {
 
   const std::string selectedName = displayName(m_blockDefs[m_selectedBlock].name);
   const ImVec2 selectedSize = ImGui::CalcTextSize(selectedName.c_str());
-  const float selectedY = barMin.y - selectedSize.y - 8.0f;
+  const float selectedY = heartsY - selectedSize.y - 6.0f;
   drawList->AddText(ImVec2(center.x - selectedSize.x * 0.5f, selectedY),
                     textColor, selectedName.c_str());
   if (m_interactionMessageTime > 0.0f && !m_interactionMessage.empty()) {

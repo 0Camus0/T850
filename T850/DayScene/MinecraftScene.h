@@ -13,6 +13,7 @@
 #include <scene/TextRenderer.h>
 #include <physics/PhysicsTypes.h>
 #include <physics/CharacterController.h>
+#include <game/RegeneratingHealthState.h>
 #include <navigation/NavigationSystem.h>
 #include <navigation/NavigationDebugRenderer.h>
 #include <debug/FrameDumper.h>
@@ -58,7 +59,8 @@ constexpr int kMaxRenderDistance = 32;
 constexpr int kMaxChunkCount = kMaxRenderDistance * 2 + 1;
 constexpr int kMaxChunks = kMaxChunkCount * kMaxChunkCount;
 constexpr int kMaxMinecraftEnemies = 8;
-constexpr int kMaxRenderMeshCount = kMaxChunks + kMaxMinecraftEnemies + 2;
+constexpr int kMaxMinecraftTorchEmitters = 3;
+constexpr int kMaxRenderMeshCount = kMaxChunks + kMaxMinecraftEnemies + 3;
 
 struct MinecraftMob {
   XVECTOR3 position = XVECTOR3(24.5f, 40.0f, 24.5f, 1.0f);
@@ -93,6 +95,9 @@ public:
   void SaveSceneSettings();
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override;
+  bool AllowsMouseCapture() const override {
+    return !m_playerHealth.IsDead() && SceneProp.MouseCaptureAllowed;
+  }
 
     // Benchmark final-frame capture: dumps the backbuffer once the benchmark
     // duration elapses, then exits. (DayScene has its own capture path; other
@@ -202,6 +207,7 @@ public:
   int m_mobMeshStartIndex = 0;
   int m_weaponMeshIndex = 0;
   int m_torchMeshIndex = 0;
+  int m_structureMeshIndex = 0;
   int m_renderMeshCount = 0;
   int m_centerChunkX = 0;
   int m_centerChunkZ = 0;
@@ -270,9 +276,9 @@ public:
   bool m_weaponSwinging = false;
   float m_weaponBob = 0.0f;     // walk bob phase
 
-  // Static torch base. m_torchFlamePosition is the emitter anchor reserved
-  // for the compute-particle follow-up.
-  XVECTOR3 m_torchBasePosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  // Static torch bases and compute-particle emitter anchors.
+  std::array<XVECTOR3, kMaxMinecraftTorchEmitters> m_torchBasePositions;
+  int m_torchEmitterCount = 0;
   XVECTOR3 m_torchFlamePosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
   float m_torchParticleTime = 0.0f;
 
@@ -282,6 +288,11 @@ public:
   t850::KinematicCharacterSettings m_mobSettings;
   t850::terrain::VoxelNavigationSettings m_voxelNavigationSettings;
   t850::KinematicCharacterInput m_playerInput;
+  t850::game::RegeneratingHealthState m_playerHealth;
+  std::array<bool, kMaxMinecraftEnemies> m_playerMobContacts = {};
+  XVECTOR3 m_playerSpawnEye = XVECTOR3(0.0f, 40.0f, 0.0f, 1.0f);
+  float m_playerSpawnYaw = 0.0f;
+  float m_playerSpawnPitch = 0.0f;
   XVECTOR3 m_playerEye = XVECTOR3(0.0f, 40.0f, 0.0f, 1.0f);
   float m_playerYaw = 0.0f;
   float m_playerPitch = 0.0f;
@@ -316,6 +327,9 @@ public:
   void ProcessNavigationMeshBuild();
   void UpdateMobs(float dt);
   void UpdateMob(MinecraftMob& mob, int mobIndex, float dt);
+  void UpdatePlayerHealth(float dt);
+  bool PlayerTouchesMob(const MinecraftMob& mob, bool retainContact) const;
+  void RespawnPlayer();
   void CreateMobMesh(int mobIndex);
   void UpdateMobInstance(int mobIndex);
   void ResetMob(int mobIndex);
@@ -324,6 +338,7 @@ public:
   bool BuildMobSkin();
   void CreateWeaponMesh();
   void UpdateWeapon(float dt);
+  void CreateStructureDecorationMesh();
   void CreateTorchBaseMesh();
   void ApplyTorchParticleSettings();
   void UpdateDayNight(float dt);
@@ -332,6 +347,8 @@ public:
   void SetLightCameraEditMode(bool enabled);
   void GenerateChunk(int cx, int cz, bool markState = true);
   void GenerateChunkData(int cx, int cz, std::vector<uint8_t>& blocks) const;
+  void ApplyAuthoredStructuresToChunk(int cx, int cz, std::vector<uint8_t>& blocks) const;
+  bool IsAuthoredStructureVoxel(int wx, int wy, int wz) const;
   void GenerateChunkTrees(int cx, int cz, bool markState = true);
   void BuildChunkMesh(int cx, int cz);
   void RebuildDirtyChunks();

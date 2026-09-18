@@ -8,6 +8,7 @@
 #include <game/GameNavigationService.h>
 #include <game/GameObjectRegistry.h>
 #include <game/GamePhysicsService.h>
+#include <game/RegeneratingHealthState.h>
 #include <game/StateMachine.h>
 #include <game/GameValidation.h>
 #include <physics/JoltPhysicsSystem.h>
@@ -51,6 +52,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -2191,6 +2193,145 @@ void TestTextureMipmaps() {
     for (unsigned pixel = 0; pixel < 18; ++pixel) Require(output[face * 18 + pixel] == face * 31, "mip generation mixed cube faces");
 }
 
+void TestMinecraftSurvivalAuthoring() {
+  scene::EditorSceneFile authored;
+  std::string error;
+  Require(scene::LoadEditorSceneFile("Scenes/Minecraft.t8scene", authored, &error) &&
+    authored.voxel_world,
+    "cannot load authored Minecraft survival settings: " + error);
+  const auto& world = *authored.voxel_world;
+  Require(world.player.max_health == 5 && world.player.contact_damage == 1 &&
+    world.player.health_regeneration_seconds == 60.0f,
+    "Minecraft player health settings must be five hearts, one contact damage, and sixty-second regeneration");
+  Require(world.mob.player_avoidance_radius <=
+      world.player.capsule_radius + world.mob.half_width,
+    "Herobrine avoidance prevents contact damage");
+  Require(world.mob.glowing_eyes && world.mob.glowing_eye_color.x == 1.0f &&
+    world.mob.glowing_eye_color.y == 1.0f &&
+    world.mob.glowing_eye_color.z == 1.0f &&
+    world.mob.glowing_eye_intensity > 1.0f,
+    "Herobrine eyes are not authored as glowing white");
+
+  RegeneratingHealthState health;
+  Require(health.Configure(world.player.max_health,
+         world.player.health_regeneration_seconds) &&
+    health.Current() == 5 && health.Maximum() == 5,
+    "health state did not initialize to five hearts");
+    bool contactLatch = false;
+    Require(health.ApplyContact(true, world.player.contact_damage, contactLatch) &&
+      !health.ApplyContact(true, world.player.contact_damage, contactLatch) &&
+      health.Current() == 4,
+      "sustained Herobrine contact did not remove exactly one heart");
+    Require(!health.ApplyContact(false, world.player.contact_damage, contactLatch) &&
+      health.ApplyContact(true, world.player.contact_damage, contactLatch) &&
+      health.Current() == 3,
+      "Herobrine contact re-entry did not remove one heart");
+    Require(health.Update(60.0f) && health.Current() == 4 &&
+      health.Update(60.0f) && health.Current() == 5,
+      "health did not regenerate one heart per minute");
+    Require(health.ApplyDamage(world.player.contact_damage) && health.Current() == 4,
+      "direct damage did not remove one heart");
+  Require(!health.Update(59.0f) && !health.Update(0.5f) && health.Current() == 4,
+    "health regenerated before one minute");
+  Require(health.Update(0.5f) && health.Current() == 5,
+    "health did not regenerate after one minute");
+  Require(health.ApplyDamage(5) && health.IsDead() &&
+    !health.Update(120.0f) && health.Current() == 0,
+    "dead health state regenerated or remained alive");
+  health.Reset();
+  Require(!health.IsDead() && health.Current() == 5,
+    "respawn did not restore all five hearts");
+}
+
+void TestMinecraftHouseAuthoring() {
+  scene::EditorSceneFile authored;
+  std::string error;
+  Require(scene::LoadEditorSceneFile("Scenes/Minecraft.t8scene", authored, &error) &&
+          authored.voxel_world,
+          "cannot load authored Minecraft house: " + error);
+  const auto& world = *authored.voxel_world;
+  const auto house = std::find_if(
+    world.structures.begin(), world.structures.end(),
+    [](const scene::SceneVoxelStructureDesc& structure) {
+      return structure.name == "beach_house";
+    });
+  Require(house != world.structures.end(), "Minecraft beach house is missing");
+
+  const auto blockAt = [&](int x, int y, int z) {
+    std::string block;
+    for (const auto& region : house->voxel_regions) {
+      if (x >= region.min.x && x <= region.max.x &&
+          y >= region.min.y && y <= region.max.y &&
+          z >= region.min.z && z <= region.max.z) {
+        block = region.block;
+      }
+    }
+    return block;
+  };
+  for (int x = -8; x <= -4; ++x)
+    for (int z = -15; z <= -12; ++z)
+      Require(blockAt(x, 34, z) == "planks", "house floor is not 5x4 planks");
+
+  for (int y = 35; y <= 38; ++y) {
+    for (int x = -8; x <= -4; ++x) {
+      const std::string expectedFront = (x == -8 || x == -4 || y == 38)
+        ? "log" : (x == -6 && y == 36 ? "air" : "planks");
+      Require(blockAt(x, y, -15) == expectedFront,
+              "house front frame or centered window is invalid");
+      const std::string expectedRear = (x == -8 || x == -4 || y == 38)
+        ? "log" : (x == -6 && y <= 36 ? "air" : "planks");
+      Require(blockAt(x, y, -12) == expectedRear,
+              "house rear frame or centered 1x2 doorway is invalid");
+    }
+    for (int z = -14; z <= -13; ++z) {
+      Require(blockAt(-8, y, z) == (y == 38 ? "log" : "planks") &&
+              blockAt(-4, y, z) == (y == 38 ? "log" : "planks"),
+              "house side wall pattern is invalid");
+    }
+  }
+  for (int x = -7; x <= -5; ++x)
+    for (int z = -14; z <= -13; ++z)
+      for (int y = 35; y <= 38; ++y)
+        Require(blockAt(x, y, z) == "air", "house interior is obstructed");
+
+    for (int x = -8; x <= -4; ++x)
+      for (int z = -15; z <= -12; ++z)
+        Require(blockAt(x, 39, z) == "planks",
+          "house roof interior is not 5x4 full plank blocks");
+    std::size_t slabCount = 0;
+    std::set<std::pair<int, int>> slabCells;
+    for (const auto& roof : house->box_arrays) {
+      Require(roof.block == "planks" && roof.origin.y == 39.0f &&
+        roof.count.y == 1 && roof.size.x == 1.0f &&
+        roof.size.y == 0.5f && roof.size.z == 1.0f,
+        "house roof perimeter contains an invalid slab array");
+      for (int x = 0; x < roof.count.x; ++x) {
+        for (int z = 0; z < roof.count.z; ++z) {
+          const int worldX = static_cast<int>(roof.origin.x) + x;
+          const int worldZ = static_cast<int>(roof.origin.z) + z;
+          Require(worldX >= -9 && worldX <= -3 && worldZ >= -16 && worldZ <= -11 &&
+                  (worldX == -9 || worldX == -3 || worldZ == -16 || worldZ == -11) &&
+                  slabCells.emplace(worldX, worldZ).second,
+                  "house slab is duplicated or outside the 7x6 roof perimeter");
+          ++slabCount;
+        }
+      }
+    }
+    Require(house->box_arrays.size() == 4 && slabCount == 22,
+      "house roof must retain exactly the 7x6 outer slab perimeter");
+
+  Require(world.torch.positions.size() == 3,
+          "house requires two exterior torches and one interior torch");
+  const auto torchAt = [&](std::size_t index, float x, float y, float z) {
+    const auto& position = world.torch.positions[index];
+    return position.x == x && position.y == y && position.z == z;
+  };
+    Require(torchAt(0, -6.5f, 35.0f, -10.5f) &&
+      torchAt(1, -4.5f, 35.0f, -10.5f) &&
+      torchAt(2, -5.5f, 35.0f, -13.5f),
+      "house torch positions do not flank the rear door and face the front window");
+}
+
 void TestTypedComputeGraphValidation() {
   TempSceneFiles files;
   constexpr std::array<const char*, 8> maintainedGraphs = {
@@ -2374,6 +2515,8 @@ constexpr TestCase kTests[] = {
   {"T-COMPUTE-GRAPH-01", TestTypedComputeGraphValidation},
   {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
   {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
+  {"T-MINECRAFT-SURVIVAL-01", TestMinecraftSurvivalAuthoring},
+  {"T-MINECRAFT-HOUSE-01", TestMinecraftHouseAuthoring},
   {"T-SHADOW-LEGACY-01", TestLegacyShadowSampling},
   {"T-PLACEMENT-VISUAL-01", TestPlacementVisualFitting},
   {"T-PLACEMENT-01", TestTerrainPlacementGrid},

@@ -1,6 +1,7 @@
 struct TorchParticleConstants {
     viewProjection: mat4x4<f32>,
     emitterAndTime: vec4<f32>,
+    additionalEmitterXZ: vec4<f32>,
     outputSizeCountEnabled: vec4<f32>,
     motion: vec4<f32>,
     particleColor0: vec4<f32>,
@@ -33,6 +34,18 @@ fn ParticleColor(index: u32) -> vec3<f32> {
     return constants.particleColor2.rgb;
 }
 
+fn EmitterPosition(emitterIndex: u32) -> vec3<f32> {
+    if (emitterIndex == 0u) { return constants.emitterAndTime.xyz; }
+    if (emitterIndex == 1u) {
+        return vec3<f32>(constants.additionalEmitterXZ.x,
+                         constants.emitterAndTime.y,
+                         constants.additionalEmitterXZ.y);
+    }
+    return vec3<f32>(constants.additionalEmitterXZ.z,
+                     constants.emitterAndTime.y,
+                     constants.additionalEmitterXZ.w);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn CS(@builtin(global_invocation_id) dispatchId: vec3<u32>) {
     let outputSize = vec2<u32>(constants.outputSizeCountEnabled.xy);
@@ -50,37 +63,41 @@ fn CS(@builtin(global_invocation_id) dispatchId: vec3<u32>) {
     let sampledDepth = textureLoad(sceneDepth, dispatchId.xy, 0).r;
     var accumulated = vec3<f32>(0.0);
     var accumulatedAlpha = 0.0;
-    for (var index = 0u; index < particleCount; index++) {
-        let phase = Hash(index * 9781u + 17u);
-        let age = fract(time / lifetime + phase);
-        let angle = Hash(index * 6271u + 43u) * 6.28318530718;
-        let radialSeed = mix(constants.shapeTuning.x, 1.0, Hash(index * 3253u + 91u));
-        let radialDistance = spread * radialSeed * (constants.shapeTuning.y + age * constants.shapeTuning.z);
-        let wobble = sin(time * (constants.wobbleTuning.x +
-            Hash(index * 1877u + 7u) * constants.wobbleTuning.y) + angle) * spread * constants.shapeTuning.w;
-        var position = constants.emitterAndTime.xyz;
-        position.x += cos(angle) * radialDistance + wobble;
-        position.z += sin(angle) * radialDistance - wobble * constants.wobbleTuning.z;
-        position.y += age * constants.motion.y;
-        let clip = constants.viewProjection * vec4<f32>(position, 1.0);
-        if (clip.w <= 0.0001) { continue; }
-        let particleDepth = clip.z / clip.w;
-        if (particleDepth < 0.0 || particleDepth > 1.0 || particleDepth < sampledDepth) { continue; }
-        let ndc = clip.xy / clip.w;
-        let centerUv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-        var delta = uv - centerUv;
-        delta.x *= aspect;
-        let radius = constants.motion.w * mix(constants.fadeTuning.x, constants.fadeTuning.y, age) /
-            max(clip.w, constants.wobbleTuning.w);
-        let distanceToEdge = max(abs(delta.x), abs(delta.y));
-        let pixelWidth = 1.0 / max(f32(outputSize.y), 1.0);
-        let edgeSoftness = min(pixelWidth, radius * constants.fadeTuning.z);
-        let shape = 1.0 - smoothstep(max(radius - edgeSoftness, 0.0), radius, distanceToEdge);
-        let fadeIn = smoothstep(0.0, constants.fadeTuning.w, age);
-        let fadeOut = 1.0 - smoothstep(constants.intensityTuning.x, 1.0, age);
-        let intensity = shape * fadeIn * fadeOut;
-        accumulated += ParticleColor(index) * intensity * constants.intensityTuning.y;
-        accumulatedAlpha = max(accumulatedAlpha, intensity);
+    let emitterCount = min(u32(constants.outputSizeCountEnabled.w), 3u);
+    for (var emitterIndex = 0u; emitterIndex < emitterCount; emitterIndex++) {
+        for (var index = 0u; index < particleCount; index++) {
+            let seedIndex = index + emitterIndex * particleCount;
+            let phase = Hash(seedIndex * 9781u + 17u);
+            let age = fract(time / lifetime + phase);
+            let angle = Hash(seedIndex * 6271u + 43u) * 6.28318530718;
+            let radialSeed = mix(constants.shapeTuning.x, 1.0, Hash(seedIndex * 3253u + 91u));
+            let radialDistance = spread * radialSeed * (constants.shapeTuning.y + age * constants.shapeTuning.z);
+            let wobble = sin(time * (constants.wobbleTuning.x +
+                Hash(seedIndex * 1877u + 7u) * constants.wobbleTuning.y) + angle) * spread * constants.shapeTuning.w;
+            var position = EmitterPosition(emitterIndex);
+            position.x += cos(angle) * radialDistance + wobble;
+            position.z += sin(angle) * radialDistance - wobble * constants.wobbleTuning.z;
+            position.y += age * constants.motion.y;
+            let clip = constants.viewProjection * vec4<f32>(position, 1.0);
+            if (clip.w <= 0.0001) { continue; }
+            let particleDepth = clip.z / clip.w;
+            if (particleDepth < 0.0 || particleDepth > 1.0 || particleDepth < sampledDepth) { continue; }
+            let ndc = clip.xy / clip.w;
+            let centerUv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+            var delta = uv - centerUv;
+            delta.x *= aspect;
+            let radius = constants.motion.w * mix(constants.fadeTuning.x, constants.fadeTuning.y, age) /
+                max(clip.w, constants.wobbleTuning.w);
+            let distanceToEdge = max(abs(delta.x), abs(delta.y));
+            let pixelWidth = 1.0 / max(f32(outputSize.y), 1.0);
+            let edgeSoftness = min(pixelWidth, radius * constants.fadeTuning.z);
+            let shape = 1.0 - smoothstep(max(radius - edgeSoftness, 0.0), radius, distanceToEdge);
+            let fadeIn = smoothstep(0.0, constants.fadeTuning.w, age);
+            let fadeOut = 1.0 - smoothstep(constants.intensityTuning.x, 1.0, age);
+            let intensity = shape * fadeIn * fadeOut;
+            accumulated += ParticleColor(index) * intensity * constants.intensityTuning.y;
+            accumulatedAlpha = max(accumulatedAlpha, intensity);
+        }
     }
     textureStore(outputTexture, dispatchId.xy, vec4<f32>(accumulated, clamp(accumulatedAlpha, 0.0, 1.0)));
 }

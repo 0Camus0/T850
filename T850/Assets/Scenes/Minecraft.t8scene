@@ -78,9 +78,9 @@
             "z": 2.3280194
          },
          "target": {
-            "x": -0.09497875,
-            "y": 41.555042,
-            "z": 2.4203253
+            "x": -6,
+            "y": 36.5,
+            "z": -13.5
          },
          "fov_deg": 69.99999,
          "ortho_w": 1280,
@@ -352,6 +352,56 @@
             }
          ]
       },
+      "structures": [
+         {
+            "name": "beach_house",
+            "voxel_regions": [
+               { "min": { "x": -9, "y": 35, "z": -16 }, "max": { "x": -3, "y": 44, "z": -11 }, "block": "air" },
+               { "min": { "x": -8, "y": 34, "z": -15 }, "max": { "x": -4, "y": 34, "z": -12 }, "block": "planks" },
+               { "min": { "x": -8, "y": 35, "z": -15 }, "max": { "x": -8, "y": 38, "z": -15 }, "block": "log" },
+               { "min": { "x": -4, "y": 35, "z": -15 }, "max": { "x": -4, "y": 38, "z": -15 }, "block": "log" },
+               { "min": { "x": -7, "y": 35, "z": -15 }, "max": { "x": -5, "y": 37, "z": -15 }, "block": "planks" },
+               { "min": { "x": -7, "y": 38, "z": -15 }, "max": { "x": -5, "y": 38, "z": -15 }, "block": "log" },
+               { "min": { "x": -6, "y": 36, "z": -15 }, "max": { "x": -6, "y": 36, "z": -15 }, "block": "air" },
+               { "min": { "x": -8, "y": 35, "z": -12 }, "max": { "x": -8, "y": 38, "z": -12 }, "block": "log" },
+               { "min": { "x": -4, "y": 35, "z": -12 }, "max": { "x": -4, "y": 38, "z": -12 }, "block": "log" },
+               { "min": { "x": -7, "y": 35, "z": -12 }, "max": { "x": -5, "y": 37, "z": -12 }, "block": "planks" },
+               { "min": { "x": -7, "y": 38, "z": -12 }, "max": { "x": -5, "y": 38, "z": -12 }, "block": "log" },
+               { "min": { "x": -6, "y": 35, "z": -12 }, "max": { "x": -6, "y": 36, "z": -12 }, "block": "air" },
+               { "min": { "x": -8, "y": 35, "z": -14 }, "max": { "x": -8, "y": 37, "z": -13 }, "block": "planks" },
+               { "min": { "x": -8, "y": 38, "z": -14 }, "max": { "x": -8, "y": 38, "z": -13 }, "block": "log" },
+               { "min": { "x": -4, "y": 35, "z": -14 }, "max": { "x": -4, "y": 37, "z": -13 }, "block": "planks" },
+               { "min": { "x": -4, "y": 38, "z": -14 }, "max": { "x": -4, "y": 38, "z": -13 }, "block": "log" },
+               { "min": { "x": -8, "y": 39, "z": -15 }, "max": { "x": -4, "y": 39, "z": -12 }, "block": "planks" }
+            ],
+            "box_arrays": [
+               {
+                  "origin": { "x": -9, "y": 39, "z": -16 },
+                  "count": { "x": 7, "y": 1, "z": 1 },
+                  "size": { "x": 1, "y": 0.5, "z": 1 },
+                  "block": "planks"
+               },
+               {
+                  "origin": { "x": -9, "y": 39, "z": -11 },
+                  "count": { "x": 7, "y": 1, "z": 1 },
+                  "size": { "x": 1, "y": 0.5, "z": 1 },
+                  "block": "planks"
+               },
+               {
+                  "origin": { "x": -9, "y": 39, "z": -15 },
+                  "count": { "x": 1, "y": 1, "z": 4 },
+                  "size": { "x": 1, "y": 0.5, "z": 1 },
+                  "block": "planks"
+               },
+               {
+                  "origin": { "x": -3, "y": 39, "z": -15 },
+                  "count": { "x": 1, "y": 1, "z": 4 },
+                  "size": { "x": 1, "y": 0.5, "z": 1 },
+                  "block": "planks"
+               }
+            ]
+         }
+      ],
       "player": {
          "spawn": {
             "x": 0.898631,
@@ -377,7 +427,10 @@
          "mouse_sensitivity": 0.0025,
          "debug_camera_speed": 50,
          "look_pitch_limit": 1.55,
-         "collision_sweep_step": 0.25
+         "collision_sweep_step": 0.25,
+         "max_health": 5,
+         "contact_damage": 1,
+         "health_regeneration_seconds": 60
       },
       "day_night": {
          "enabled": false,
@@ -453,11 +506,14 @@
          "move_speed": 1.8,
          "repath_seconds": 1,
          "waypoint_distance": 0.2,
-         "player_avoidance_radius": 1.35,
+         "player_avoidance_radius": 0.55,
          "visual_ground_clearance": 0.001,
          "half_width": 0.25,
          "height": 1.4,
          "vertical_follow_speed": 8,
+         "glowing_eyes": true,
+         "glowing_eye_color": { "x": 1, "y": 1, "z": 1 },
+         "glowing_eye_intensity": 6,
          "parts": [
             {
                "min": {
@@ -668,6 +724,11 @@
       "torch": {
          "enabled": true,
          "distance_from_spawn": 2,
+         "positions": [
+            { "x": -6.5, "y": 35, "z": -10.5 },
+            { "x": -4.5, "y": 35, "z": -10.5 },
+            { "x": -5.5, "y": 35, "z": -13.5 }
+         ],
          "base_width": 0.125,
          "base_height": 0.625,
          "base_block": "log",

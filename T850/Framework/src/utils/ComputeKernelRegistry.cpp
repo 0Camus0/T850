@@ -48,6 +48,7 @@ static_assert(sizeof(PostProcessComputeConstants) == 32);
 struct ParticleComputeConstants {
   XMATRIX44 viewProjection;
   XVECTOR3 emitterAndTime;
+  XVECTOR3 additionalEmitterXZ;
   XVECTOR3 outputSizeCountEnabled;
   XVECTOR3 motion;
   XVECTOR3 color0;
@@ -58,7 +59,7 @@ struct ParticleComputeConstants {
   XVECTOR3 fade;
   XVECTOR3 intensity;
 };
-static_assert(sizeof(ParticleComputeConstants) == 224);
+static_assert(sizeof(ParticleComputeConstants) == 240);
 
 template <typename T>
 void CopyWords(const T& value, std::vector<uint32_t>& words) {
@@ -128,7 +129,7 @@ constexpr ComputeBindingLayoutDesc kHDRCompositeBindings[] = {
 };
 
 constexpr ComputeBindingLayoutDesc kTorchParticleBindings[] = {
-  {ComputeBindingType::Constants32, 0, 0, 56},
+  {ComputeBindingType::Constants32, 0, 0, 60},
   {ComputeBindingType::ReadWriteTexture, 0, 1, 0, ComputeStorageFormat::Rgba16Float},
   {ComputeBindingType::ReadOnlyTexture, 0, 2, 0, ComputeStorageFormat::Unspecified, true},
 };
@@ -288,11 +289,14 @@ bool BuildComputeConstants(const ComputeKernelDefinition& kernel,
     value.viewProjection = camera->VP;
     value.emitterAndTime = props.ParticleEmitterPosition;
     value.emitterAndTime.w = props.ParticleTimeSeconds;
+    value.additionalEmitterXZ = XVECTOR3(
+      props.ParticleEmitterPosition1.x, props.ParticleEmitterPosition1.z,
+      props.ParticleEmitterPosition2.x, props.ParticleEmitterPosition2.z);
     value.outputSizeCountEnabled = XVECTOR3(
       static_cast<float>(context.outputWidth),
       static_cast<float>(context.outputHeight),
       static_cast<float>(props.ParticleCount),
-      props.ParticleEmitterEnabled ? 1.0f : 0.0f);
+      static_cast<float>((std::max)(0, (std::min)(3, props.ParticleEmitterEnabled))));
     value.motion = XVECTOR3(props.ParticleLifetime, props.ParticleRiseHeight,
                             props.ParticleSpread, props.ParticleSize);
     value.color0 = props.ParticleColor0;

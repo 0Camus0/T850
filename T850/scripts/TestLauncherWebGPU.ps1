@@ -536,6 +536,17 @@ function Test-LauncherLayout {
     }
     $assignment = $ast.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$xaml' }, $false)
     $literal = $assignment.Right.Find({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -or $node -is [Management.Automation.Language.ExpandableStringExpressionAst] }, $true)
+    function Set-TestViewport($Window, $HostPanel, [double]$Height) {
+        Update-LauncherLayout $Window $Window.Width
+        $clientWidth = [Math]::Max(1, $Window.Width - 2 * [Windows.SystemParameters]::ResizeFrameVerticalBorderWidth)
+        $clientHeight = [Math]::Max(1, $Height - [Windows.SystemParameters]::WindowCaptionHeight - 2 * [Windows.SystemParameters]::ResizeFrameHorizontalBorderHeight)
+        $HostPanel.Width = $clientWidth
+        $HostPanel.Height = $clientHeight
+        $HostPanel.Measure([Windows.Size]::new($clientWidth, $clientHeight))
+        $HostPanel.Arrange([Windows.Rect]::new(0, 0, $clientWidth, $clientHeight))
+        $HostPanel.UpdateLayout()
+        Assert-True ([Math]::Abs($HostPanel.ActualHeight - $clientHeight) -lt 1) 'Synthetic viewport was constrained by the physical desktop'
+    }
     $cases = @(
         @{ Width = 1920; Height = 1080; Scale = 1.0 },
         @{ Width = 1920; Height = 1080; Scale = 1.25 },
@@ -569,23 +580,22 @@ function Test-LauncherLayout {
                 }
                 Initialize-LauncherWindow $window $area
                 Assert-True ($window.SizeToContent -eq [Windows.SizeToContent]::Height) 'Launcher must request content-based height before a manual resize'
-                $window.SizeToContent = [Windows.SizeToContent]::Manual
-                $window.Height = $window.MaxHeight
-                Update-LauncherLayout $window $window.Width
-                $window.Add_SizeChanged({ param($sender, $eventArgs) Update-LauncherLayout $sender $eventArgs.NewSize.Width })
-                $window.Show()
-                $window.UpdateLayout()
-                $window.Dispatcher.Invoke([Action]{}, [Windows.Threading.DispatcherPriority]::Background)
-                $liveArea = Get-LauncherWorkArea $window
-                Assert-True ($liveArea.Width -gt 0 -and $liveArea.Height -gt 0) 'Current monitor work-area conversion failed'
-                Assert-True ($window.ActualWidth -le $area.Width - 23 -and $window.ActualHeight -le $area.Height - 23) "$caseName exceeds its work area"
-                Assert-True ([Math]::Abs($window.ActualHeight - $window.Height) -lt 1) "$caseName did not receive its requested logical test viewport"
+                $root = $window.Content
+                $window.Content = $null
+                $hostPanel = [Windows.Controls.Border]::new()
+                $hostPanel.Resources = $window.Resources
+                $hostPanel.Background = $window.Background
+                [Windows.Documents.TextElement]::SetForeground($hostPanel, $window.Foreground)
+                [Windows.Documents.TextElement]::SetFontFamily($hostPanel, $window.FontFamily)
+                [Windows.Documents.TextElement]::SetFontSize($hostPanel, $window.FontSize)
+                $hostPanel.Child = $root
+                Set-TestViewport $window $hostPanel $window.MaxHeight
+                Assert-True ($window.Width -le $area.Width - 23 -and $window.MaxHeight -le $area.Height - 23) "$caseName exceeds its work area"
                 $scroll = $window.FindName('svSettings')
                 Assert-True ($scroll.ViewportHeight -gt 48 -and $scroll.ScrollableWidth -lt 1) "$caseName has unusable settings bounds"
                 if ($case.Height -ge 1080 -and $case.Scale -eq 1 -and $mode -eq 'native') {
-                    Assert-True ($scroll.ScrollableHeight -lt 1) "100% desktop unnecessarily scrolls the default settings (window=$($window.ActualHeight), viewport=$($scroll.ViewportHeight), extent=$($scroll.ExtentHeight))"
+                    Assert-True ($scroll.ScrollableHeight -lt 1) "100% desktop unnecessarily scrolls the default settings (host=$($hostPanel.ActualHeight), viewport=$($scroll.ViewportHeight), extent=$($scroll.ExtentHeight))"
                 }
-                $root = $window.FindName('launcherLayout')
                 foreach ($controlName in @('btnRebuild', 'btnBuild', 'btnRun', 'btnDownloadAssets', 'btnBenchmarkMatrix', 'btnEditor')) {
                     $button = $window.FindName($controlName)
                     $bounds = $button.TransformToAncestor($root).TransformBounds([Windows.Rect]::new($button.RenderSize))
@@ -593,29 +603,29 @@ function Test-LauncherLayout {
                 }
                 $before = $window.FindName('pnlActions').TranslatePoint([Windows.Point]::new(0, 0), $root)
                 $scroll.ScrollToEnd()
-                $window.UpdateLayout()
+                $hostPanel.UpdateLayout()
                 $after = $window.FindName('pnlActions').TranslatePoint([Windows.Point]::new(0, 0), $root)
                 Assert-True ($before -eq $after) "$caseName scrolls the action buttons"
                 $scroll.ScrollToTop()
-                $window.UpdateLayout()
+                $hostPanel.UpdateLayout()
                 $settingsScroll = [Math]::Round($scroll.ScrollableHeight)
                 if ($LayoutOutputDirectory) {
-                    $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new([int][Math]::Ceiling($window.ActualWidth * $case.Scale), [int][Math]::Ceiling($window.ActualHeight * $case.Scale), (96 * $case.Scale), (96 * $case.Scale), [Windows.Media.PixelFormats]::Pbgra32)
-                    $bitmap.Render($window)
+                    $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new([int][Math]::Ceiling($hostPanel.ActualWidth * $case.Scale), [int][Math]::Ceiling($hostPanel.ActualHeight * $case.Scale), (96 * $case.Scale), (96 * $case.Scale), [Windows.Media.PixelFormats]::Pbgra32)
+                    $bitmap.Render($hostPanel)
                     $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
                     $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
                     $stream = [IO.File]::Create((Join-Path $LayoutOutputDirectory "$caseName.png"))
                     try { $encoder.Save($stream) } finally { $stream.Dispose() }
                 }
                 Update-LauncherScreen $window ([Windows.Rect]::new(0, 0, 680, 500))
-                $window.UpdateLayout()
+                Set-TestViewport $window $hostPanel $window.MaxHeight
                 Assert-True ($window.MaxWidth -eq 656 -and $window.MaxHeight -eq 476 -and $window.FindName('pnlActions').Columns -eq 3) 'Monitor work-area change did not reflow the launcher'
                 $window.FindName('pnlBuildOutput').Visibility = 'Visible'
                 $window.FindName('txtBuildOutput').Text = ('Building Framework and DayScene...' + [Environment]::NewLine) * 80
                 $window.FindName('txtCmdPreview').Text = 'DayScene.exe --api webgpu --scene 4 --sceneFile "Scenes/Example Scene.t8scene" --telemetry --width 1920 --height 1080'
                 $window.SizeToContent = 'Manual'
                 $window.Height = 420
-                $window.UpdateLayout()
+                Set-TestViewport $window $hostPanel ([Math]::Max($window.MinHeight, $window.Height))
                 $actions = $window.FindName('pnlActions')
                 $actionBounds = $actions.TransformToAncestor($root).TransformBounds([Windows.Rect]::new($actions.RenderSize))
                 Assert-True ($actionBounds.Top -gt 48 -and $actionBounds.Bottom -le $root.ActualHeight + 1 -and $scroll.ViewportHeight -gt 48) 'Build output or manual resize displaced the action bar'
@@ -623,6 +633,22 @@ function Test-LauncherLayout {
             } finally { $window.Close() }
         }
     }
+    $window = [Windows.Markup.XamlReader]::Parse($literal.Value)
+    $window.ShowActivated = $false
+    $window.ShowInTaskbar = $false
+    try {
+        Initialize-LauncherWindow $window
+        Update-LauncherLayout $window $window.Width
+        $window.Add_SizeChanged({ param($sender, $eventArgs) Update-LauncherLayout $sender $eventArgs.NewSize.Width })
+        $window.Show()
+        $window.UpdateLayout()
+        $liveArea = Get-LauncherWorkArea $window
+        Assert-True ($liveArea.Width -gt 0 -and $liveArea.Height -gt 0) 'Current monitor work-area conversion failed'
+        Update-LauncherScreen $window $liveArea
+        $window.UpdateLayout()
+        Assert-True ($window.ActualHeight -le $liveArea.Height - 23 -and $window.ActualWidth -le $liveArea.Width - 23) 'Live launcher exceeds its actual monitor work area'
+        Write-Output 'Launcher live monitor sizing PASS'
+    } finally { $window.Close() }
 }
 
 if ($Ui) {

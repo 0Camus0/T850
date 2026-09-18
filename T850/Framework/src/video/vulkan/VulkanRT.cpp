@@ -105,6 +105,7 @@ namespace t850 {
       tex->m_image = vColorImages[i];
       tex->m_imageView = vColorImageViews[i];
       tex->m_format = attachmentFormat;
+      tex->m_storageUsage = AllowUnorderedAccess;
       tex->SetExternalLayout(&vColorLayouts[i]);
       tex->x = (unsigned int)w;
       tex->y = (unsigned int)h;

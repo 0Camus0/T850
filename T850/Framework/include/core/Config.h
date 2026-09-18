@@ -47,7 +47,11 @@ public:
     bool runtimeTelemetry : 1 = false;
   } flags;
 
+#ifdef __EMSCRIPTEN__
+  std::string api = "webgpu";
+#else
   std::string api = "d3d11";
+#endif
   std::string webgpuShaderFlow = "auto";
   int width = 1280;
   int height = 720;
@@ -82,6 +86,8 @@ public:
   std::string shaderPermutationOutputPath = "shader_permutations.json";
   std::string shaderPermutationInputPath = "Shaders/shader_permutations.json";
   std::string shaderCompileCancelFile;
+  std::string webShaderOutput;
+  std::string webAssetBaseUrl;
   int runtimeTelemetryFrequencyFrames = 60;
   std::string runtimeTelemetryOutputPath = "logs/perf_telemetry.json";
   bool orbitYawOverride = false;

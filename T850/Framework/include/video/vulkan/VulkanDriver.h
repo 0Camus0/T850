@@ -87,6 +87,7 @@ namespace t850 {
     void EndFrame() override;
     void WaitForGPU() override;
     void FlushGPUResources() override;
+    void RetireComputeResource(std::function<void()> release);
     void BeginResourceUploadBatch() override;
     void EndResourceUploadBatch() override;
     bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
@@ -317,6 +318,7 @@ namespace t850 {
       uint32_t framesRemaining = kBackBufferCount;
     };
     std::vector<RetiredEngineBuffer> m_retiredBuffers;
+    std::vector<std::function<void()>> m_retiredCompute[kBackBufferCount];
 
     int m_uploadBatchDepth = 0;
     VkCommandBuffer m_uploadBatchCmd = VK_NULL_HANDLE;

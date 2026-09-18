@@ -686,8 +686,8 @@ namespace t850 {
 
     GLenum err = glGetError();
     ok = (err == GL_NO_ERROR);
-    glReadBuffer((GLenum)prevReadBuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+    glReadBuffer((GLenum)prevReadBuffer);
     return ok;
   }
 

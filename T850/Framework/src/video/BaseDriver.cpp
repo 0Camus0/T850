@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <unordered_set>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -37,6 +38,74 @@
 #endif
 
 namespace t850 {
+  bool ComputePipeline::SetValidatedLayout(const ComputePipelineDesc& desc,
+      const std::vector<ComputeBindingLayoutDesc>& reflected, bool portableIndices) {
+    if (desc.bindings.size() != reflected.size()) return false;
+    std::unordered_set<uint32_t> indices;
+    std::unordered_set<uint64_t> registers;
+    auto validated = desc.bindings;
+    for (auto& declared : validated) {
+      const uint32_t nameSpace = declared.type == ComputeBindingType::Constants32 ? 0 :
+        declared.type == ComputeBindingType::Sampler ? 1 :
+        (declared.type == ComputeBindingType::ReadOnlyBuffer || declared.type == ComputeBindingType::ReadOnlyTexture) ? 2 : 3;
+      if (!indices.insert(declared.bindingIndex).second ||
+          !registers.insert((uint64_t(nameSpace) << 32) | declared.shaderRegister).second) return false;
+      const ComputeBindingLayoutDesc* match = nullptr;
+      for (const auto& resource : reflected) {
+        if (resource.type == declared.type && (portableIndices ? resource.bindingIndex == declared.bindingIndex :
+            resource.shaderRegister == declared.shaderRegister)) {
+          if (match) return false;
+          match = &resource;
+        }
+      }
+      if (!match || match->constantCount != declared.constantCount) return false;
+      if (match->storageFormat != ComputeStorageFormat::Unspecified) {
+        if (declared.storageFormat != ComputeStorageFormat::Unspecified && declared.storageFormat != match->storageFormat)
+          return false;
+        declared.storageFormat = match->storageFormat;
+      }
+      if (declared.type == ComputeBindingType::ReadWriteTexture &&
+          declared.storageFormat == ComputeStorageFormat::Unspecified) return false;
+    }
+    bindingLayout = std::move(validated);
+    return true;
+  }
+
+  bool ComputePipeline::ValidateBindings(const std::vector<ComputeBindingDesc>& bindings) const {
+    if (bindings.size() != bindingLayout.size()) return false;
+    std::unordered_set<const ComputeBindingLayoutDesc*> consumed;
+    std::unordered_set<const void*> reads, writes;
+    for (const auto& binding : bindings) {
+      const ComputeBindingLayoutDesc* layout = nullptr;
+      for (const auto& candidate : bindingLayout)
+        if (candidate.type == binding.type && candidate.shaderRegister == binding.shaderRegister) layout = &candidate;
+      if (!layout || !consumed.insert(layout).second) return false;
+      if (binding.type == ComputeBindingType::Constants32) {
+        if (!binding.constants || !binding.constantCount || binding.constantCount != layout->constantCount) return false;
+      } else if (binding.type == ComputeBindingType::ReadOnlyBuffer || binding.type == ComputeBindingType::ReadWriteBuffer) {
+        if (!binding.buffer || (binding.type == ComputeBindingType::ReadWriteBuffer &&
+            binding.buffer->descriptor.access != ComputeBufferAccess::ReadWrite)) return false;
+        if (binding.type == ComputeBindingType::ReadWriteBuffer) {
+          if (!writes.insert(binding.buffer).second) return false;
+        } else reads.insert(binding.buffer);
+      } else {
+        if (!binding.texture) return false;
+        if (binding.type == ComputeBindingType::ReadWriteTexture) {
+          if (!writes.insert(binding.texture).second) return false;
+        } else if (binding.type == ComputeBindingType::ReadOnlyTexture) reads.insert(binding.texture);
+        else {
+          bool paired = false;
+          for (const auto& sampled : bindings)
+            if (sampled.type == ComputeBindingType::ReadOnlyTexture && sampled.shaderRegister == binding.shaderRegister &&
+                sampled.texture == binding.texture) paired = true;
+          if (!paired) return false;
+        }
+      }
+    }
+    for (const void* resource : writes) if (reads.count(resource)) return false;
+    return true;
+  }
+
   BaseDriver*	g_pBaseDriver = 0;
   Device*           T8Device;	// Device for create resources
   DeviceContext*    T8DeviceContext; // Context to set and manipulate the resources

@@ -6,10 +6,13 @@ add_library(FrameworkImGui STATIC
   src/ImGuiD3D11Backend.cpp
   src/ImGuiD3D12Backend.cpp
   src/ImGuiOpenGLBackend.cpp
-  src/ImGuiVulkanBackend.cpp
   src/ImGuiWebGPUBackend.cpp
   src/DevGuiContext.cpp
   src/RagdollEditorGui.cpp)
+
+if(NOT EMSCRIPTEN)
+  target_sources(FrameworkImGui PRIVATE src/ImGuiVulkanBackend.cpp)
+endif()
 
 t850_apply_common(FrameworkImGui)
 t850_apply_library_output(FrameworkImGui)

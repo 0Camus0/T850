@@ -1,7 +1,14 @@
 [CmdletBinding()]
-param([switch]$Ui)
+param(
+    [switch]$Ui,
+    [switch]$BuildWeb,
+    [ValidateSet('Release', 'Debug')][string]$Configuration = 'Release',
+    [ValidateSet('Build', 'Rebuild')][string]$BuildTarget = 'Rebuild',
+    [string]$BuildLog = (Join-Path $env:LOCALAPPDATA 'T850Profiles\launcher-web-build.log')
+)
 
 $ErrorActionPreference = 'Stop'
+if ($BuildWeb -and -not $Ui) { throw '-BuildWeb requires -Ui to exercise the launcher build handler.' }
 
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
@@ -19,18 +26,26 @@ function Test-Launcher([string]$Name) {
     $path = Join-Path $PSScriptRoot $Name
     $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors)
     Assert-True ($parseErrors.Count -eq 0) "$Name has syntax errors: $parseErrors"
+    Assert-True ($ast.Extent.Text.Contains('Tag="webgpu-browser"') -and $ast.Extent.Text.Contains('Tag="webgpu"')) "$Name must offer separate browser and native WebGPU options"
     Assert-True ($ast.Extent.Text -notmatch 'fixture') "$Name retains fixture-specific UI or dispatch"
     Assert-True ($ast.Extent.Text -match 'forward and deferred runtime scenes' -and $ast.Extent.Text -notmatch 'forward scene support only|Full deferred scenes remain unsupported') "$Name has stale WebGPU runtime capability text"
-    foreach ($functionName in @('Test-WebGpuSelected', 'Test-WebGpuSupported', 'Get-LaunchCommand', 'Get-EditorLaunchCommand', 'Get-ShaderCompileCommands')) {
+    foreach ($functionName in @('Test-WebGpuSelected', 'Test-BrowserSelected', 'Get-InstalledBrowsers', 'Get-BrowserLaunchCommand', 'Test-WebGpuSupported', 'Get-LaunchCommand', 'Get-EditorLaunchCommand', 'Get-ShaderCompileCommands')) {
         $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
         Assert-True ($null -ne $definition) "Missing function $functionName in $Name"
         . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    if ($Name -eq 'Launcher.ps1') {
+        foreach ($functionName in @('Get-BrowserBuildCommand', 'Format-LauncherCommandLine')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
     }
     $rootDir = Join-Path ([IO.Path]::GetTempPath()) ("T850 launcher test " + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($rootDir)
     $cmbApi = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = 'webgpu' } }
     $cmbPostProcessMode = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = 'raster' } }
     $cmbShaderFlow = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = 'auto' } }
+    $cmbBrowser = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = '' } }
     $cmbArch = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Content = 'x64' } }
     $cmbConfig = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Content = 'Release' } }
     $cmbScene = [pscustomobject]@{ SelectedItem = [pscustomobject]@{ Tag = '4' } }
@@ -84,6 +99,64 @@ function Test-Launcher([string]$Name) {
             if ($api -eq 'webgpu') {
                 Assert-True ((Get-EditorLaunchCommand).Args[1] -eq 'webgpu') 'WebGPU editor silently remapped'
             }
+        }
+        $cmbApi.SelectedItem.Tag = 'webgpu-browser'
+        Assert-Rejected { Get-LaunchCommand } 'Missing browser build accepted'
+        foreach ($directory in @('web', 'build/web/site', 'build/web/WebShaders', 'Assets')) { [void][IO.Directory]::CreateDirectory((Join-Path $rootDir $directory)) }
+        foreach ($file in @('web/server.mjs', 'build/web/site/DayScene.html', 'build/web/site/DayScene.js', 'build/web/site/DayScene.wasm', 'build/web/site/scenes.json')) { [IO.File]::WriteAllText((Join-Path $rootDir $file), '') }
+        $browserCommand = Get-LaunchCommand
+        Assert-True ($browserCommand.ExePath -match 'node(\.exe)?$' -and $browserCommand.Args -contains '--open') 'Browser mode did not launch the HTTP server with Node'
+        Assert-True ($browserCommand.Display -match 'scene=4' -and $browserCommand.Display -match 'sceneFile=Scenes%2FTest.t8scene') 'Browser mode lost the selected scene/document'
+        Assert-True ($browserCommand.Args -notcontains '--api' -and $browserCommand.Args -notcontains '--shaderFlow') 'Native API/shader flow leaked into browser startup'
+        Assert-True ($browserCommand.Args -notcontains '--browser') 'Default browser unexpectedly specified an executable'
+        foreach ($mode in @('raster', 'compute')) {
+            $cmbPostProcessMode.SelectedItem.Tag = $mode
+            Assert-True ((Get-LaunchCommand).Display.Contains("postProcessMode=$mode")) 'Browser launch lost the selected post-process mode'
+        }
+        $cmbPostProcessMode.SelectedItem.Tag = 'raster'
+        foreach ($relativePath in @('Google/Chrome/Application/chrome.exe', 'Mozilla Firefox/firefox.exe')) {
+            $executable = Join-Path $rootDir $relativePath
+            [void][IO.Directory]::CreateDirectory((Split-Path $executable))
+            [IO.File]::WriteAllText($executable, '')
+        }
+        $installed = @(Get-InstalledBrowsers -RegistryRoots @() -InstallRoots @($rootDir, $rootDir))
+        Assert-True ($installed.Count -eq 2) 'Browser discovery included missing installs or duplicates'
+        foreach ($browser in $installed) {
+            $cmbBrowser.SelectedItem.Tag = $browser.Path
+            $browserCommand = Get-LaunchCommand
+            Assert-True ($browserCommand.Args -contains '--browser' -and $browserCommand.Args[-1] -eq ('"{0}"' -f $browser.Path)) 'Selected browser executable was lost or not quoted'
+        }
+        Remove-Item -LiteralPath $cmbBrowser.SelectedItem.Tag
+        Assert-Rejected { Get-LaunchCommand } 'Uninstalled selected browser accepted'
+        $cmbBrowser.SelectedItem.Tag = ''
+        Assert-Rejected { Get-EditorLaunchCommand } 'Browser editor was accepted'
+        $cmbArch.SelectedItem.Content = 'ARM64'
+        Assert-True ((Get-LaunchCommand).Args -contains '--open') 'Browser inherited the native x64 architecture restriction'
+        $cmbArch.SelectedItem.Content = 'x64'
+        if ($Name -eq 'Launcher_Release.ps1') {
+            Remove-Item (Join-Path $rootDir 'DayScene.exe')
+            Assert-True ((Get-LaunchCommand).Args -contains '--open') 'Browser incorrectly required the native executable'
+            Write-TestExecutable 0x8664
+        } else {
+            Assert-Rejected { Get-BrowserBuildCommand } 'Missing browser build script accepted'
+            [void][IO.Directory]::CreateDirectory((Join-Path $rootDir 'scripts'))
+            [IO.File]::WriteAllText((Join-Path $rootDir 'scripts/BuildWeb.ps1'), '')
+            foreach ($configuration in @('Release', 'Debug')) {
+                $cmbConfig.SelectedItem.Content = $configuration
+                foreach ($target in @('Build', 'Rebuild')) {
+                    $buildCommand = Get-BrowserBuildCommand -BuildTarget $target
+                    Assert-True ($buildCommand.ExePath -match 'powershell\.exe$' -and $buildCommand.Args -contains '-NonInteractive') 'Browser build must use a noninteractive PowerShell child, not the compiled launcher'
+                    $configIndex = [array]::IndexOf($buildCommand.Args, '-Configuration')
+                    Assert-True ($configIndex -ge 0 -and $buildCommand.Args[$configIndex + 1] -eq $configuration) 'Browser build ignored the selected configuration'
+                    Assert-True (($buildCommand.Args -contains '-Clean') -eq ($target -eq 'Rebuild')) 'Browser Build/Rebuild clean routing is incorrect'
+                    Assert-True ($buildCommand.WorkingDirectory -eq $rootDir -and $buildCommand.Display.Contains('"' + (Join-Path $rootDir 'scripts/BuildWeb.ps1') + '"')) 'Browser build path with spaces is not preserved'
+                }
+            }
+            $cmbConfig.SelectedItem.Content = 'Release'
+            $android = $true
+            Assert-Rejected { Get-LaunchCommand } 'Desktop browser mode accepted the Android install target'
+            Assert-Rejected { Get-BrowserBuildCommand } 'Browser build accepted the Android target'
+            $android = $false
         }
         $cmbApi.SelectedItem.Tag = 'webgpu'
         if ($Name -eq 'Launcher.ps1') {
@@ -144,6 +217,31 @@ function Test-DawnPreflight {
 }
 
 Test-DawnPreflight
+
+function Test-WebBuildLogging {
+    $parseErrors = $null
+    $tokens = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'BuildWeb.ps1'), [ref]$tokens, [ref]$parseErrors)
+    Assert-True ($parseErrors.Count -eq 0) 'Browser build script has syntax errors'
+    foreach ($functionName in @('Assert-CommandSucceeded', 'Invoke-LoggedNativeCommand')) {
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $false)
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('T850 build logging ' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($temporary)
+    try {
+        $log = Join-Path $temporary 'native.log'
+        $command = Join-Path $temporary 'native command.cmd'
+        [IO.File]::WriteAllText($command, "@echo off`r`necho informational stderr 1>&2`r`necho %~1`r`nexit /b 0`r`n")
+        Invoke-LoggedNativeCommand -FilePath $command -Arguments @('path with spaces') -LogPath $log -Operation 'Native stderr check'
+        Assert-True ((Get-Content $log -Raw) -match 'informational stderr' -and (Get-Content $log -Raw) -match 'path with spaces') 'Native stderr or quoted arguments were lost'
+        [IO.File]::WriteAllText($command, "@echo off`r`necho build failed 1>&2`r`nexit /b 7`r`n")
+        Assert-Rejected { Invoke-LoggedNativeCommand -FilePath $command -Arguments @() -LogPath $log -Operation 'Expected failure' } 'Nonzero native command exit was ignored'
+        Write-Output 'Browser native-command logging tests PASS'
+    } finally { Remove-Item $temporary -Recurse -Force }
+}
+
+Test-WebBuildLogging
 
 function Test-ShaderCompileQueue([string]$Name) {
     $tokens = $null
@@ -207,9 +305,13 @@ function Test-LauncherUi([string]$Name) {
     function Update-DownloadAssetsButton {}
     function Get-SelectedAndroidDeviceSerial { return '' }
     function Get-CachedSceneDependencyResult { return $sceneDependencies }
+    function Get-InstalledBrowsers { return [pscustomobject]@{ Name = 'Test Chrome'; Path = Join-Path $temporary 'Chrome & Test.exe' } }
     function Set-Api([string]$Tag) { $cmbApi.SelectedItem = @($cmbApi.Items | Where-Object Tag -eq $Tag)[0] }
     try {
         [void][IO.Directory]::CreateDirectory($temporary)
+        [IO.File]::WriteAllText((Join-Path $temporary 'Chrome & Test.exe'), '')
+        Update-InstalledBrowsers
+        Assert-True ($cmbBrowser.Items.Count -eq 2 -and $cmbBrowser.SelectedIndex -eq 0 -and $pnlBrowser.Visibility -eq 'Collapsed') 'Browser selector did not initialize hidden with default and installed entries'
         $bytes = New-Object byte[] 128
         $bytes[0] = 0x4D; $bytes[1] = 0x5A; $bytes[0x3C] = 64; $bytes[64] = 0x50; $bytes[65] = 0x45; $bytes[68] = 0x64; $bytes[69] = 0x86
         $runtime = if ($Name -eq 'Launcher.ps1') { Join-Path $rootDir 'bin/x64/Release' } else { $rootDir }
@@ -222,6 +324,9 @@ function Test-LauncherUi([string]$Name) {
         $flowEvent = $ast.Find({ param($node) $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Extent.Text -eq '$cmbShaderFlow.Add_SelectionChanged({ Update-Preview })' }, $true)
         Assert-True ($null -ne $flowEvent) 'Shader selector is not wired to refresh the command preview'
         . ([scriptblock]::Create($flowEvent.Extent.Text))
+        $browserEvent = $ast.Find({ param($node) $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Extent.Text -eq '$cmbBrowser.Add_SelectionChanged({ Update-Preview })' }, $true)
+        Assert-True ($null -ne $browserEvent) 'Browser selector is not wired to refresh the preview'
+        . ([scriptblock]::Create($browserEvent.Extent.Text))
         Set-Api 'webgpu'
         $chkDump.IsChecked = $true
         $chkReplaySnapshot.IsChecked = $true
@@ -285,6 +390,35 @@ function Test-LauncherUi([string]$Name) {
         Assert-True ($btnRun.IsEnabled -and $btnEditor.IsEnabled -and $txtStatus.Text -notmatch 'WebGPU') 'Native readiness behavior changed'
         Assert-True ((Get-LaunchCommand).Args -notcontains '--graphics-fixture') 'Native API became a fixture'
         Assert-True ((Get-EditorLaunchCommand).Args -contains 'd3d12') 'Native editor mapping changed'
+        Set-Api 'webgpu-browser'
+        Update-Preview
+        Assert-True (-not $btnRun.IsEnabled -and $txtStatus.Text -match 'Browser (build|bundle) missing') 'Missing browser runtime did not disable RUN'
+        foreach ($directory in @('web', 'web/site', 'web/WebShaders', 'web/assets', 'build/web/site', 'build/web/WebShaders', 'Assets')) { [void][IO.Directory]::CreateDirectory((Join-Path $rootDir $directory)) }
+        foreach ($file in @('web/server.mjs', 'web/site/DayScene.html', 'web/site/DayScene.js', 'web/site/DayScene.wasm', 'web/site/scenes.json', 'build/web/site/DayScene.html', 'build/web/site/DayScene.js', 'build/web/site/DayScene.wasm', 'build/web/site/scenes.json')) { [IO.File]::WriteAllText((Join-Path $rootDir $file), '') }
+        Update-Preview
+        Assert-True ($btnRun.IsEnabled -and $btnRun.Content -eq 'OPEN BROWSER') 'Browser RUN is unavailable with a prepared build'
+        Assert-True ($pnlBrowser.Visibility -eq 'Visible' -and $cmbBrowser.IsEnabled) 'Browser selector is unavailable in Emscripten mode'
+        if ($Name -eq 'Launcher.ps1') {
+            Assert-True ($cmbConfig.IsEnabled -and -not $cmbArch.IsEnabled) 'Browser configuration should be selectable independently of native architecture'
+            Assert-True ($btnBuild.Content -eq 'BUILD WEB' -and $btnRebuild.IsEnabled -and $btnRebuild.Content -eq 'REBUILD WEB') 'Browser Build/Rebuild controls are unavailable'
+        }
+        $cmbBrowser.SelectedIndex = 1
+        Assert-True ($txtCmdPreview.Text -match '--browser "' -and $txtCmdPreview.Text.Contains('Chrome & Test.exe')) 'Browser selection did not update the preview'
+        Assert-True (-not $btnEditor.IsEnabled -and -not $btnCompileShaders.IsEnabled) 'Browser mode enabled native editor or shader compilation'
+        Assert-True ($pnlShaderFlow.Visibility -eq 'Collapsed' -and -not $cmbShaderFlow.IsEnabled) 'Native shader flow is exposed for the browser'
+        foreach ($controlName in @('chkDump', 'chkTelemetry', 'chkReplaySnapshot', 'chkFullscreen', 'chkBenchmark')) { Assert-True (-not $window.FindName($controlName).IsEnabled) "Browser mode left $controlName enabled" }
+        Assert-True ($txtCmdPreview.Text -match '--open' -and $txtCmdPreview.Text -notmatch 'DayScene.exe|--telemetry|--profile') 'Browser command invoked the native runtime or profiling'
+        Save-Config
+        Assert-True ((Get-Content $configPath -Raw | ConvertFrom-Json).webBrowser -eq (Join-Path $temporary 'Chrome & Test.exe')) 'Selected browser was not persisted'
+        $cmbBrowser.SelectedIndex = 0
+        Set-Api 'd3d12'
+        Load-Config
+        Assert-True (Test-BrowserSelected) 'Browser API config round trip failed'
+        Assert-True ($cmbBrowser.SelectedIndex -eq 1) 'Browser selection config round trip failed'
+        Set-Api 'd3d12'
+        Update-Preview
+        Assert-True ($pnlBrowser.Visibility -eq 'Collapsed' -and -not $cmbBrowser.IsEnabled -and (Get-LaunchCommand).Args -notcontains '--browser') 'Browser selector or executable leaked into native mode'
+        Assert-True ($btnRun.IsEnabled -and $btnEditor.IsEnabled -and $chkTelemetry.IsEnabled -and $btnRun.Content -match 'RUN') 'Returning from browser changed native controls'
         Set-Api 'webgpu'
         Update-Preview
         Assert-True ($cmbShaderFlow.SelectedItem.Tag -eq 'spirv' -and $txtCmdPreview.Text.Contains('--shaderFlow spirv')) 'Switching APIs lost the selected shader flow'
@@ -305,6 +439,26 @@ function Test-LauncherUi([string]$Name) {
         Assert-True (-not $btnCompileShaders.IsEnabled) 'Missing executable did not disable shader compilation'
         if ($Name -eq 'Launcher_Release.ps1') {
             Assert-True (-not $cmbShaderFlow.IsEnabled) 'Missing portable executable enabled the shader selector'
+        }
+        if ($BuildWeb -and $Name -eq 'Launcher.ps1') {
+            $rootDir = Split-Path -Parent $PSScriptRoot
+            $cmbConfig.SelectedItem = @($cmbConfig.Items | Where-Object Content -eq $Configuration)[0]
+            $cmbBrowser.SelectedIndex = 0
+            Set-Api 'webgpu-browser'
+            Update-Preview
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent ([IO.Path]::GetFullPath($BuildLog))))
+            [IO.File]::WriteAllText($BuildLog, '')
+            function Append-BuildOutput([string]$Line) {
+                $txtBuildOutput.Text += $Line + [Environment]::NewLine
+                [IO.File]::AppendAllText($BuildLog, $Line + [Environment]::NewLine)
+                Write-Host $Line
+                $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+            }
+            Invoke-Build -buildTarget $BuildTarget
+            Assert-True ($txtBuildOutput.Text.Contains("Browser $Configuration $BuildTarget succeeded.")) "Launcher browser build failed. See $BuildLog"
+            Assert-True (-not $script:LauncherBusy -and $btnBuild.IsEnabled -and $btnRebuild.IsEnabled -and $cmbConfig.IsEnabled) 'Launcher did not recover its controls after building'
+            Assert-True $btnRun.IsEnabled 'Successful browser build did not enable OPEN BROWSER'
+            Write-Output "Launcher $Configuration $BuildTarget integration PASS"
         }
         Write-Output "$Name WPF/config/normal-routing tests PASS"
     } finally {

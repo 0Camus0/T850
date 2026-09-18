@@ -165,6 +165,11 @@ public:
   float m_cascadeDebugOpacity = 0.12f;
   std::array<XVECTOR3, 6> m_cascadeDebugColors;
   int   m_cameraMode = 0;             // 0=player, 1=free spectator, 2=light
+  bool m_invertY = false;
+  void SetCameraMode(int mode);
+#ifdef __EMSCRIPTEN__
+  unsigned m_cameraDiagnosticFrames = 0;
+#endif
   int   m_debugCascadeIndex = 0;
   bool  m_debugCameraOrtho = false;
   bool  m_lightCameraEditMode = false;
@@ -376,7 +381,7 @@ public:
   void UpdatePlayer(float dt);
   void HandleBlockInteraction(InputManager* IManager);
   void ApplyPendingCubemap();
-  void RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, float maxDist,
+  bool RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, float maxDist,
                      int& outX, int& outY, int& outZ, int& outPrevX, int& outPrevY, int& outPrevZ) const;
 
   t850::Texture* m_atlasTexture = nullptr;

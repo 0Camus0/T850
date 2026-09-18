@@ -342,6 +342,13 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
   T8_TELEMETRY_SCOPE("render.mutable_mesh.draw");
   if (transform) Transform(transform);
   if (!Ready() || !pScProp) return;
+  const uint8_t pass = gKey.getPass();
+  if (std::none_of(m_snapshot.sections.begin(), m_snapshot.sections.end(), [&](const auto& section) {
+        return DrawsInPass(m_snapshot.materials[section.materialIndex].alphaMode, pass);
+      })) {
+    RuntimeTelemetry::AddCounter("render.mutable_mesh.empty_pass", 1.0);
+    return;
+  }
   Camera* camera = pScProp->GetPrimaryCamera();
   if (!camera) return;
 
@@ -359,7 +366,6 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
 
   EngineContext& context = pEngineContext ? *pEngineContext : t850::GetEngineContext();
   if (!context.driver || !context.deviceContext) return;
-  const uint8_t pass = gKey.getPass();
   RenderMesh::MeshInstanceCBuffer instance;
   instance.World = m_transform;
   instance.WVP = m_transform * camera->VP;

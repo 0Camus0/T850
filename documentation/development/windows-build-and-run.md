@@ -696,6 +696,14 @@ controls, verify both shader choices, live preview changes, visibility and confi
 round trips, and keep config writes in temporary files. They do not establish
 WebGPU scene rendering or automate packaged-EXE mouse clicks.
 
+Both launchers also offer **WebGPU + Browser (Emscripten)** with an installed
+browser dropdown, hidden for native APIs. The developer launcher exposes
+BUILD WEB / REBUILD WEB and honors Debug/Release; the portable launcher runs a
+prepared bundle. See [Browser Runtime](../platform/browser.md#build-and-run) for
+prerequisites, clean-build behavior, browser discovery, and the opt-in launcher
+build integration test. Windows PowerShell 5.1 launcher command/WPF tests and
+fresh Release plus Debug/Release configuration-switch builds passed on 2026-09-16.
+
 ## Run DayScene
 
 Run from the chosen output directory:

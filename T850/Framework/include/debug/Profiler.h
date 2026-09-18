@@ -31,8 +31,8 @@ namespace t850 {
     double gpuTotalMs = 0.0;   // accumulated GPU time
     double cpuTotalMs = 0.0;   // accumulated CPU time
     int    sampleCount = 0;
-    int    drawCalls = 0;
-    int    triangles = 0;
+    uint64_t drawCalls = 0;
+    uint64_t triangles = 0;
 
     double GpuAvgMs() const { return sampleCount > 0 ? gpuTotalMs / sampleCount : 0.0; }
     double CpuAvgMs() const { return sampleCount > 0 ? cpuTotalMs / sampleCount : 0.0; }

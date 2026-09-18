@@ -206,6 +206,7 @@ $xaml = @"
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" IsSelected="True" Tag="d3d11"/>
                     <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
                     <ComboBoxItem Content="WebGPU (Dawn/D3D12)" Tag="webgpu"/>
+                    <ComboBoxItem Content="WebGPU + Browser (Emscripten)" Tag="webgpu-browser"/>
                     <ComboBoxItem Content="Vulkan" Tag="vulkan"/>
                     <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
@@ -216,6 +217,12 @@ $xaml = @"
                                       ToolTip="Use the authored graphics or clear fallback for every compute-capable render-graph pass."/>
                         <ComboBoxItem Content="Compute" Tag="compute"
                                       ToolTip="Use compute shaders for every supported render-graph compute pass, including Minecraft torch particles."/>
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Name="pnlBrowser" Margin="0,12,0,0" Visibility="Collapsed">
+                    <TextBlock Text="Browser" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbBrowser" IsEnabled="False">
+                        <ComboBoxItem Content="System default" Tag="" IsSelected="True"/>
                     </ComboBox>
                 </StackPanel>
                 <StackPanel Name="pnlShaderFlow" Margin="0,12,0,0" Visibility="Collapsed">
@@ -527,6 +534,8 @@ $btnCompileShaders = $window.FindName("btnCompileShaders")
 $cmbPostProcessMode = $window.FindName("cmbPostProcessMode")
 $pnlShaderFlow  = $window.FindName("pnlShaderFlow")
 $cmbShaderFlow  = $window.FindName("cmbShaderFlow")
+$cmbBrowser     = $window.FindName("cmbBrowser")
+$pnlBrowser     = $window.FindName("pnlBrowser")
 $pnlAndroidDevice = $window.FindName("pnlAndroidDevice")
 $cmbAndroidDevice = $window.FindName("cmbAndroidDevice")
 $txtAndroidDeviceStatus = $window.FindName("txtAndroidDeviceStatus")
@@ -1278,6 +1287,8 @@ function Set-CullingMode {
 function Load-Config {
     $cmbPostProcessMode.SelectedIndex = 0
     $cmbShaderFlow.SelectedIndex = 0
+    Update-InstalledBrowsers
+    $cmbBrowser.SelectedIndex = 0
     if (-not (Test-Path $configPath)) { return }
     try {
         $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -1320,6 +1331,11 @@ function Load-Config {
         foreach ($item in $cmbShaderFlow.Items) {
             if ($item.Tag -ieq $cfg.webgpuShaderFlow) {
                 $cmbShaderFlow.SelectedItem = $item; break
+            }
+        }
+        foreach ($item in $cmbBrowser.Items) {
+            if ($item.Tag -ieq $cfg.webBrowser) {
+                $cmbBrowser.SelectedItem = $item; break
             }
         }
         # Display
@@ -1456,6 +1472,7 @@ function Save-Config {
         api           = if (Test-AndroidTarget) { "vulkan" } else { ($cmbApi.SelectedItem).Tag.ToString() }
         postProcessMode = $cmbPostProcessMode.SelectedItem.Tag.ToString()
         webgpuShaderFlow = $cmbShaderFlow.SelectedItem.Tag.ToString()
+        webBrowser = [string]$cmbBrowser.SelectedItem.Tag
         display = $display
         debugFrames = [bool]$chkDebugFrames.IsChecked
         benchmark = ($sceneTag -eq "1" -and [bool]$chkBenchmark.IsChecked)
@@ -2064,14 +2081,155 @@ function Test-WebGpuSelected {
     return $cmbApi.SelectedItem -and $cmbApi.SelectedItem.Tag -eq "webgpu"
 }
 
+function Test-BrowserSelected {
+    return $cmbApi.SelectedItem -and $cmbApi.SelectedItem.Tag -eq "webgpu-browser"
+}
+
+function Get-InstalledBrowsers {
+    param(
+        [string[]]$RegistryRoots = @('HKCU:\Software\Clients\StartMenuInternet', 'HKLM:\Software\Clients\StartMenuInternet', 'HKLM:\Software\WOW6432Node\Clients\StartMenuInternet'),
+        [string[]]$InstallRoots = @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432)
+    )
+    $candidates = @()
+    foreach ($registryRoot in $RegistryRoots) {
+        foreach ($registration in @(Get-ChildItem -LiteralPath $registryRoot -ErrorAction SilentlyContinue)) {
+            $commandKey = Get-Item -LiteralPath ($registration.PSPath + '\shell\open\command') -ErrorAction SilentlyContinue
+            if ($commandKey -and $commandKey.GetValue('') -match '^\s*(?:"(?<path>[^"]+\.exe)"|(?<path>.+?\.exe))(?:\s|$)') {
+                $candidates += [pscustomobject]@{ Name = [string]$registration.GetValue(''); Path = [Environment]::ExpandEnvironmentVariables($Matches.path) }
+            }
+        }
+    }
+    foreach ($installRoot in $InstallRoots | Where-Object { $_ } | Select-Object -Unique) {
+        foreach ($browser in @(
+            @{ Name = 'Google Chrome'; RelativePath = 'Google\Chrome\Application\chrome.exe' },
+            @{ Name = 'Mozilla Firefox'; RelativePath = 'Mozilla Firefox\firefox.exe' },
+            @{ Name = 'Microsoft Edge'; RelativePath = 'Microsoft\Edge\Application\msedge.exe' }
+        )) {
+            $candidates += [pscustomobject]@{ Name = $browser.Name; Path = Join-Path $installRoot $browser.RelativePath }
+        }
+    }
+    $installed = @{}
+    foreach ($candidate in $candidates) {
+        if ([IO.Path]::GetFileName($candidate.Path) -ieq 'iexplore.exe') { continue }
+        if (-not (Test-Path -LiteralPath $candidate.Path -PathType Leaf)) { continue }
+        $path = [IO.Path]::GetFullPath($candidate.Path)
+        if (-not $installed.ContainsKey($path)) {
+            $name = if ($candidate.Name) { $candidate.Name } else { [IO.Path]::GetFileNameWithoutExtension($path) }
+            $installed[$path] = [pscustomobject]@{ Name = $name; Path = $path }
+        }
+    }
+    return @($installed.Values | Sort-Object Name, Path)
+}
+
+function Update-InstalledBrowsers {
+    $selectedPath = [string]$cmbBrowser.SelectedItem.Tag
+    $cmbBrowser.Items.Clear()
+    $default = [Windows.Controls.ComboBoxItem]::new()
+    $default.Content = 'System default'
+    $default.Tag = ''
+    [void]$cmbBrowser.Items.Add($default)
+    foreach ($browser in Get-InstalledBrowsers) {
+        $item = [Windows.Controls.ComboBoxItem]::new()
+        $item.Content = $browser.Name
+        $item.Tag = $browser.Path
+        $item.ToolTip = $browser.Path
+        [void]$cmbBrowser.Items.Add($item)
+    }
+    $cmbBrowser.SelectedIndex = 0
+    foreach ($item in $cmbBrowser.Items) {
+        if ($item.Tag -ieq $selectedPath) { $cmbBrowser.SelectedItem = $item; break }
+    }
+}
+
+function Get-BrowserLaunchCommand {
+    if (Test-AndroidTarget) { throw "Browser mode runs on the desktop, not the Android target." }
+    $browserRoot = $rootDir
+    $server = Join-Path $browserRoot "web\server.mjs"
+    foreach ($file in @('web\server.mjs', 'build\web\site\DayScene.html', 'build\web\site\DayScene.js', 'build\web\site\DayScene.wasm', 'build\web\site\scenes.json', 'build\web\WebShaders', 'Assets')) {
+        if (-not (Test-Path (Join-Path $browserRoot $file))) { throw "Browser build missing. Click BUILD WEB or run scripts\BuildWeb.ps1." }
+    }
+    $node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $node) { throw "Browser launch requires Node.js on PATH." }
+    $scene = $cmbScene.SelectedItem.Tag.ToString()
+    $parameters = [ordered]@{ scene = $scene; width = $txtWidth.Text; height = $txtHeight.Text; culling = (Get-CullingMode); logLevel = $cmbLogLevel.SelectedItem.Tag.ToString() }
+    $parameters.postProcessMode = $cmbPostProcessMode.SelectedItem.Tag.ToString()
+    if ($scene -eq '2' -or $scene -eq '4' -or ($scene -eq '0' -and (Get-SandboxInputMode) -eq 'scene')) {
+        $sceneFile = Get-SelectedSceneFilePath
+        if ($sceneFile) { $parameters.sceneFile = Get-SceneFileResourcePath $sceneFile }
+    } elseif (($scene -eq '0' -or $scene -eq '3') -and $cmbModel.SelectedItem) {
+        $parameters.model = $cmbModel.SelectedItem.Tag.ToString()
+    }
+    $query = ($parameters.GetEnumerator() | ForEach-Object { [uri]::EscapeDataString($_.Key) + '=' + [uri]::EscapeDataString([string]$_.Value) }) -join '&'
+    $arguments = @(('"{0}"' -f $server), '--open', '--query', ('"{0}"' -f $query))
+    $browserPath = [string]$cmbBrowser.SelectedItem.Tag
+    if ($browserPath) {
+        if (-not (Test-Path -LiteralPath $browserPath -PathType Leaf)) { throw "Selected browser is no longer installed: $browserPath" }
+        $arguments += @('--browser', ('"{0}"' -f $browserPath))
+    }
+    return @{ ExePath = $node.Source; Args = $arguments; WorkingDirectory = $browserRoot; Display = ('"{0}" {1}' -f $node.Source, ($arguments -join ' ')) }
+}
+
+function Get-BrowserBuildCommand {
+    param([ValidateSet('Build', 'Rebuild')][string]$BuildTarget = 'Build')
+    if (Test-AndroidTarget) { throw 'Browser builds require the Windows development target.' }
+    $buildScript = Join-Path $rootDir 'scripts\BuildWeb.ps1'
+    if (-not (Test-Path -LiteralPath $buildScript)) { throw "Browser build script missing: $buildScript" }
+    $powerShellExe = (Get-Command powershell.exe -CommandType Application -ErrorAction Stop).Source
+    $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $buildScript, '-Configuration', $cmbConfig.SelectedItem.Content.ToString())
+    if ($BuildTarget -eq 'Rebuild') { $arguments += '-Clean' }
+    return @{ ExePath = $powerShellExe; Args = $arguments; WorkingDirectory = $rootDir; Display = (Format-LauncherCommandLine -FilePath $powerShellExe -Arguments $arguments) }
+}
+
+function Update-BrowserPreview {
+    $btnEditor.IsEnabled = $false
+    $btnRun.Content = "OPEN BROWSER"
+    try {
+        $command = Get-BrowserLaunchCommand
+        $txtCmdPreview.Text = $command.Display
+        $btnRun.IsEnabled = $true
+        $txtStatus.Text = "Browser WebGPU: prepared shaders; editor and native diagnostics unavailable."
+        $txtStatus.Foreground = $window.FindResource("AccentBrush")
+    } catch {
+        $btnRun.IsEnabled = $false
+        $txtCmdPreview.Text = ""
+        $txtStatus.Text = $_.Exception.Message
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+    }
+    return $true
+}
+
+function Start-BrowserRuntime {
+    try {
+        $command = Get-BrowserLaunchCommand
+        Save-Config
+        Start-Process -FilePath $command.ExePath -ArgumentList $command.Args -WorkingDirectory $command.WorkingDirectory
+        $txtStatus.Text = "Opening browser; the server console reports its URL and startup errors."
+    } catch {
+        $txtStatus.Text = $_.Exception.Message
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+    }
+}
+
 function Test-WebGpuSupported {
     return -not (Test-AndroidTarget) -and $cmbArch.SelectedItem.Content -ieq "x64"
 }
 
 function Update-WebGpuControls {
     $selected = Test-WebGpuSelected
+    $browser = Test-BrowserSelected
+    $pnlBrowser.Visibility = if ($browser) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+    $cmbBrowser.IsEnabled = $browser -and -not $script:LauncherBusy
+    foreach ($name in @('cmbArch', 'chkFullscreen', 'chkDump', 'chkDebugFrames', 'chkReplaySnapshot', 'chkKeepRunning', 'chkTelemetry', 'chkLogToFile', 'chkBenchmark', 'btnBenchmarkMatrix')) {
+        $control = $window.FindName($name)
+        if ($control) { $control.IsEnabled = -not $browser -and -not $script:LauncherBusy }
+    }
+    if (Test-AndroidTarget) { $chkFullscreen.IsEnabled = $false }
+    $cmbConfig.IsEnabled = -not $script:LauncherBusy
+    $btnBuild.Content = if ($browser) { "BUILD WEB" } else { "BUILD" }
+    $btnRebuild.Content = if ($browser) { "REBUILD WEB" } else { "REBUILD" }
+    $btnRebuild.IsEnabled = -not $script:LauncherBusy
     $compileRoot = Join-Path $rootDir ("bin\{0}\{1}" -f (Get-ArchFolder), $cmbConfig.SelectedItem.Content)
-    $btnCompileShaders.IsEnabled = -not $script:LauncherBusy -and -not (Test-AndroidTarget) -and (Test-Path (Join-Path $compileRoot "DayScene.exe"))
+    $btnCompileShaders.IsEnabled = -not $browser -and -not $script:LauncherBusy -and -not (Test-AndroidTarget) -and (Test-Path (Join-Path $compileRoot "DayScene.exe"))
     $pnlShaderFlow.Visibility = if ($selected) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
     $cmbShaderFlow.IsEnabled = $selected -and (Test-WebGpuSupported)
     foreach ($item in $cmbApi.Items) {
@@ -2082,6 +2240,7 @@ function Update-WebGpuControls {
 }
 
 function Update-WebGpuPreview {
+    if (Test-BrowserSelected) { return Update-BrowserPreview }
     if (-not (Test-WebGpuSelected) -or (Test-WebGpuSupported)) { return $false }
     $btnRun.IsEnabled = $false
     $btnEditor.IsEnabled = $false
@@ -2092,6 +2251,7 @@ function Update-WebGpuPreview {
 }
 
 function Get-LaunchCommand {
+    if (Test-BrowserSelected) { return Get-BrowserLaunchCommand }
     $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
     $config = ($cmbConfig.SelectedItem).Content.ToString()
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
@@ -2308,6 +2468,7 @@ function Invoke-ShaderCompilation {
 }
 
 function Get-EditorLaunchCommand {
+    if (Test-BrowserSelected) { throw "The browser target does not support T8ditor." }
     if ((Test-WebGpuSelected) -and -not (Test-WebGpuSupported)) { throw "WebGPU requires Windows x64." }
     $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
     $config = ($cmbConfig.SelectedItem).Content.ToString()
@@ -2637,6 +2798,8 @@ $btnCompileShaders.Add_Click({
     try { Invoke-ShaderCompilation } catch { [System.Windows.MessageBox]::Show($_.Exception.Message, "Compile Shaders", "OK", "Error") }
 })
 $cmbShaderFlow.Add_SelectionChanged({ Update-Preview })
+$cmbBrowser.Add_SelectionChanged({ Update-Preview })
+$cmbBrowser.Add_DropDownOpened({ Update-InstalledBrowsers })
 $cmbScene.Add_SelectionChanged({
     Update-SceneOptionVisibility
     Select-PreferredSceneFileForScene
@@ -2674,6 +2837,9 @@ function Set-LauncherBusy {
     $btnBenchmarkMatrix.IsEnabled = -not $Busy
     $btnEditor.IsEnabled = -not $Busy
     $btnBuild.Content = $BuildText
+    if (Test-BrowserSelected) {
+        foreach ($control in @($cmbBrowser, $cmbConfig, $cmbApi, $cmbTarget)) { $control.IsEnabled = -not $Busy }
+    }
 }
 
 function Invoke-AndroidBuild {
@@ -2818,6 +2984,31 @@ function Invoke-AndroidDeploy {
 # Shared build function — $buildTarget is "Build" (incremental) or "Rebuild" (clean)
 function Invoke-Build {
     param([string]$buildTarget = "Build")
+
+    if (Test-BrowserSelected) {
+        Save-Config
+        $txtBuildOutput.Text = ""
+        $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+        $failureMessage = $null
+        Set-LauncherBusy $true "BUILDING WEB..."
+        try {
+            $command = Get-BrowserBuildCommand -BuildTarget $buildTarget
+            $result = Invoke-LoggedProcess -FilePath $command.ExePath -Arguments $command.Args -WorkingDirectory $command.WorkingDirectory -StatusPrefix "Building browser runtime"
+            if ($result -ne 0) { throw "Browser build failed (exit code $result)." }
+            Append-BuildOutput ("Browser {0} {1} succeeded." -f $cmbConfig.SelectedItem.Content, $buildTarget)
+        } catch {
+            $failureMessage = "Browser build failed: " + $_.Exception.Message
+            Append-BuildOutput $failureMessage
+        } finally {
+            Set-LauncherBusy $false
+            Update-Preview
+            if ($failureMessage) {
+                $txtStatus.Text = $failureMessage
+                $txtStatus.Foreground = $window.FindResource("RedBrush")
+            }
+        }
+        return
+    }
 
     if (Test-AndroidTarget) {
         Invoke-AndroidBuild -Clean:($buildTarget -eq "Rebuild") | Out-Null
@@ -3013,6 +3204,7 @@ $btnDownloadAssets.Add_Click({
 
 # RUN button — launch the app with current settings (no dump override)
 $btnRun.Add_Click({
+    if (Test-BrowserSelected) { Start-BrowserRuntime; return }
     Update-LauncherCloudAssetStatus | Out-Null
     Update-Preview
     $assetStatus = $script:CloudAssetStatus
@@ -3055,7 +3247,7 @@ $btnRun.Add_Click({
 
 # EDITOR button — launch T8ditor with current graphics/resolution/log settings
 $btnEditor.Add_Click({
-    if (Test-WebGpuSelected) {
+    if ((Test-WebGpuSelected) -or (Test-BrowserSelected)) {
         [System.Windows.MessageBox]::Show("WebGPU editor support is not implemented. Select another API for EDITOR.", "T850 Launcher", "OK", "Information") | Out-Null
         return
     }

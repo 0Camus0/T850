@@ -498,14 +498,18 @@ bool CheckComputeV1Shaders() {
     uint32_t constantWords;
     std::array<uint32_t, 3> workgroupSize;
     size_t bindingCount;
+    const char* defines = "";
   };
   constexpr ExpectedShader shaders[]{
     {"CS_Arithmetic.hlsl", 4, {64, 1, 1}, 2},
+    {"CS_Arithmetic.hlsl", 4, {64, 1, 1}, 3, "#define COMPUTE_READ_INPUT 1\n"},
+    {"CS_ImagePatternWrite.hlsl", 4, {8, 8, 1}, 2},
+    {"CS_ImagePatternRead.hlsl", 4, {8, 8, 1}, 3},
     {"CS_Blur.hlsl", 32, {8, 8, 1}, 4},
     {"CS_Bright.hlsl", 8, {8, 8, 1}, 6},
     {"CS_GodRays.hlsl", 52, {8, 8, 1}, 6},
     {"CS_HDRComposite.hlsl", 8, {8, 8, 1}, 8},
-    {"CS_TorchParticles.hlsl", 56, {8, 8, 1}, 2},
+    {"CS_TorchParticles.hlsl", 56, {8, 8, 1}, 3},
   };
 
   for (const ExpectedShader& expected : shaders) {
@@ -515,6 +519,7 @@ bool CheckComputeV1Shaders() {
     request.layout = BindingLayout::ComputeV1;
     request.entryPoint = "CS";
     request.flow = ShaderFlow::Spirv;
+    request.defines = expected.defines;
 
     ShaderArtifact artifact;
     ShaderFlowReport report;
@@ -531,8 +536,23 @@ bool CheckComputeV1Shaders() {
             std::string(expected.name) + ": unexpected ComputeV1 constant layout");
     Require(artifact.workgroupSize == expected.workgroupSize,
             std::string(expected.name) + ": unexpected ComputeV1 workgroup size");
+        {
+          request.flow = ShaderFlow::Wgsl;
+          ShaderArtifact direct;
+          Require(LoadShaderFiles(request, direct, report, diagnostic), diagnostic);
+          Require(report.attempts.size() == 1 && !report.fallbackAttempted &&
+            report.attempts.front().sourceLanguage == ShaderSourceLanguage::Wgsl,
+            "Strict compute WGSL flow fell back to HLSL");
+          const auto bindingOrder = [](const ShaderBinding& left, const ShaderBinding& right) {
+            return std::pair(left.group, left.binding) < std::pair(right.group, right.binding);
+          };
+          std::sort(direct.bindings.begin(), direct.bindings.end(), bindingOrder);
+          std::sort(artifact.bindings.begin(), artifact.bindings.end(), bindingOrder);
+          Require(direct.bindings == artifact.bindings && direct.workgroupSize == artifact.workgroupSize,
+            std::string(expected.name) + ": compute WGSL/SPIR-V interface mismatch");
+        }
   }
-  std::cout << "ComputeV1 shader contracts PASS: " << std::size(shaders) << " families\n";
+  std::cout << "ComputeV1 shader contracts PASS: " << std::size(shaders) << " variants, strict WGSL and HLSL/SPIR-V\n";
   return true;
 }
 

@@ -74,6 +74,7 @@ namespace t850 {
       return false;
     }
     threadGroupSize = {tx, ty, tz};
+    std::vector<ComputeBindingLayoutDesc> reflected;
     for (UINT i = 0; i < shaderDesc.BoundResources; ++i) {
       D3D11_SHADER_INPUT_BIND_DESC binding = {};
       if (FAILED(reflection->GetResourceBindingDesc(i, &binding)) || binding.BindCount != 1)
@@ -96,7 +97,25 @@ namespace t850 {
         case D3D_SIT_SAMPLER: samplers.insert(binding.BindPoint); break;
         default: return false;
       }
+      ComputeBindingLayoutDesc resource;
+      resource.shaderRegister = binding.BindPoint;
+      switch (binding.Type) {
+        case D3D_SIT_CBUFFER:
+          resource.type = ComputeBindingType::Constants32;
+          resource.constantCount = constantWordCounts.at(binding.BindPoint);
+          break;
+        case D3D_SIT_STRUCTURED: case D3D_SIT_BYTEADDRESS: resource.type = ComputeBindingType::ReadOnlyBuffer; break;
+        case D3D_SIT_UAV_RWSTRUCTURED: case D3D_SIT_UAV_RWBYTEADDRESS: resource.type = ComputeBindingType::ReadWriteBuffer; break;
+        case D3D_SIT_TEXTURE: resource.type = ComputeBindingType::ReadOnlyTexture; break;
+        case D3D_SIT_UAV_RWTYPED: resource.type = ComputeBindingType::ReadWriteTexture; break;
+        case D3D_SIT_SAMPLER: resource.type = ComputeBindingType::Sampler; break;
+        default: return false;
+      }
+      if ((resource.type == ComputeBindingType::ReadOnlyTexture || resource.type == ComputeBindingType::ReadWriteTexture) &&
+          binding.Dimension != D3D_SRV_DIMENSION_TEXTURE2D) return false;
+      reflected.push_back(resource);
     }
+    if (!SetValidatedLayout(desc, reflected, false)) return false;
 
     if (!desc.debugName.empty())
       shader->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(desc.debugName.size()), desc.debugName.data());
@@ -114,7 +133,7 @@ namespace t850 {
     bufferDesc.ByteWidth = desc.byteWidth;
     bufferDesc.Usage = D3D11_USAGE_DEFAULT;
     bufferDesc.BindFlags = desc.access == ComputeBufferAccess::ReadWrite
-      ? D3D11_BIND_UNORDERED_ACCESS : D3D11_BIND_SHADER_RESOURCE;
+      ? D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE : D3D11_BIND_SHADER_RESOURCE;
     bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
     bufferDesc.StructureByteStride = desc.structureStride;
     D3D11_SUBRESOURCE_DATA data = {};
@@ -128,7 +147,8 @@ namespace t850 {
       view.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
       view.Buffer.NumElements = elements;
       if (FAILED(device->CreateUnorderedAccessView(buffer.Get(), &view, &uav))) return false;
-    } else {
+    }
+    {
       D3D11_SHADER_RESOURCE_VIEW_DESC view = {};
       view.Format = DXGI_FORMAT_UNKNOWN;
       view.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
@@ -156,7 +176,7 @@ namespace t850 {
     auto* pipeline = dynamic_cast<D3D11ComputePipeline*>(&pipelineBase);
     ID3D11Device* device = GetDevice();
     ID3D11DeviceContext* context = GetContext();
-    if (!pipeline || !device || !context || !groupCountX || !groupCountY || !groupCountZ ||
+    if (!pipeline || !pipeline->ValidateBindings(bindings) || !device || !context || !groupCountX || !groupCountY || !groupCountZ ||
         groupCountX > 65535 || groupCountY > 65535 || groupCountZ > 65535) return false;
 
     struct ResolvedBinding {
@@ -170,6 +190,22 @@ namespace t850 {
     std::vector<ResolvedBinding> resolved;
     resolved.reserve(bindings.size());
     for (const ComputeBindingDesc& binding : bindings) {
+      if (binding.type == ComputeBindingType::ReadWriteTexture || binding.type == ComputeBindingType::ReadOnlyTexture) {
+        const auto* texture = dynamic_cast<D3DXTexture*>(binding.texture);
+        if (!texture || !texture->pSRVTex) return false;
+        D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+        texture->pSRVTex->GetDesc(&view);
+        if (view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) return false;
+        if (binding.type == ComputeBindingType::ReadWriteTexture) {
+          if (!texture->pUAVTex) return false;
+          D3D11_UNORDERED_ACCESS_VIEW_DESC output{};
+          texture->pUAVTex->GetDesc(&output);
+          for (const auto& layout : pipeline->bindingLayout)
+            if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
+                output.Format != (layout.storageFormat == ComputeStorageFormat::Rgba16Float
+                  ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
+        }
+      }
       ResolvedBinding item;
       item.binding = &binding;
       switch (binding.type) {
@@ -289,7 +325,7 @@ namespace t850 {
     auto* buffer = dynamic_cast<D3D11ComputeBuffer*>(&bufferBase);
     ID3D11Device* device = GetDevice();
     ID3D11DeviceContext* context = GetContext();
-    if (!buffer || !buffer->buffer || !destination || !byteCount || byteCount > buffer->descriptor.byteWidth)
+    if (!buffer || !buffer->buffer || !destination || !byteCount || byteCount % 4 || byteCount > buffer->descriptor.byteWidth)
       return false;
     D3D11_BUFFER_DESC source = {};
     buffer->buffer->GetDesc(&source);

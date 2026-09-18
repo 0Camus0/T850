@@ -13,7 +13,11 @@
 #ifndef T800_CONFIG_H
 #define T800_CONFIG_H
 
-#if defined(__ANDROID__)
+#if defined(__EMSCRIPTEN__)
+#ifndef OS_WEB
+#define OS_WEB
+#endif
+#elif defined(__ANDROID__)
 #ifndef OS_ANDROID
 #define OS_ANDROID
 #endif
@@ -57,7 +61,9 @@
 
 #define GL_DRIVER_SELECTED OGL
 
-#if   GL_DRIVER_SELECTED == OGLES20
+#if defined(OS_WEB)
+#define USING_WEBGPU_ONLY
+#elif GL_DRIVER_SELECTED == OGLES20
 	#define USING_OPENGL_ES20
 #elif GL_DRIVER_SELECTED == OGLES30
 	#define USING_OPENGL_ES30
@@ -101,7 +107,7 @@
 
 #define WINDOW_MANAGER WAYLAND_NATIVE
 
-#ifdef OS_LINUX
+#if defined(OS_LINUX) || defined(OS_WEB)
 #undef WINDOW_MANAGER
 #define WINDOW_MANAGER SDL
 #endif

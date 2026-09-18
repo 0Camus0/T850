@@ -10,6 +10,16 @@ checks automatic runtime loading, idle-camera stability, and forwarded movement.
 
 This document explains T850's input state, platform input translation, gamepad and handheld paths, runtime camera profiles, editor camera routing, hosted window input behavior, and Android virtual controls.
 
+2026-09-17 FPS grounding correction: the compute merge's jump fix skipped the
+post-movement ground probe whenever collision-resolved vertical velocity was
+positive. Collision overclip can produce a small positive velocity even at rest,
+causing repeated loss of ground contact and camera-height jitter. `UpdateFps`
+now distinguishes pre-collision ascent from that correction and clears vertical
+velocity after confirming ground contact. Genuine upward jumps remain airborne.
+`T-CTRL-JUMP-01` covers idle stability at 30/60/144 Hz as well as jumping/landing.
+The browser harness's `--camera-stability` checks idle height over 600 frames;
+Chrome Compute and Firefox Raster measured zero height drift after the fix.
+
 Related documents:
 
 - [Main architecture](../architecture/main-architecture.md)

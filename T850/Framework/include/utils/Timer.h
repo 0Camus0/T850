@@ -32,6 +32,8 @@ public:
 	LARGE_INTEGER	StartTime;
 	#elif defined(OS_LINUX) || defined(OS_ANDROID)
 	timeval	        StartTime;
+	#elif defined(OS_WEB)
+	double          StartTime;
 	#endif
 	double			Frequency;
 	double			Dt;

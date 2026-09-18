@@ -1,0 +1,13 @@
+{
+  "defaultScene": 6,
+  "arguments": ["--logLevel", "info"],
+  "scenes": [
+    { "id": 6, "name": "Minecraft" },
+    { "id": 0, "name": "Sandbox" },
+    { "id": 1, "name": "DayScene" },
+    { "id": 2, "name": "Quake3", "sceneFile": "Scenes/Q3/q3dm6_mod_3.t8scene", "arguments": ["--sceneProfile", "pc/x64"] },
+    { "id": 3, "name": "Ragdoll Editor", "arguments": ["--model", "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb", "--sceneProfile", "pc/x64"] },
+    { "id": 4, "name": "Scene Template", "sceneFile": "Scenes/Q3/q3dm6_mod_3_jolt.t8scene", "arguments": ["--sceneProfile", "pc/x64"] },
+    { "id": 5, "name": "Voxel Streaming" }
+  ]
+}

@@ -116,6 +116,12 @@ The save/restore behavior allows several `PrimitiveInst` objects to reference th
 
 `MutableMesh` is the procedural `PrimitiveBase` implementation. A worker or gameplay system builds a complete `MutableMeshSnapshot`, but `ReplaceSnapshot()` validates and commits it only on the render/main thread. The primitive reuses mesh shader permutations for forward, GBuffer, shadow-map, and radial-depth passes; it supports material sections, optional slot-0 `DiffuseTex`, and AABB frustum culling.
 
+Pass eligibility is checked before frustum extraction, constant preparation,
+or geometry binding. A mesh with no eligible material sections records
+`render.mutable_mesh.empty_pass` and returns without changing draw state.
+This avoids preparing opaque-only terrain for the transparent pass while
+preserving mixed opaque/transparent section behavior.
+
 `PrimitiveManager::CreateMutableMesh()` allocates and creates the primitive with the manager's `EngineContext`, stores it with the other owned primitives, and returns its index for `GetPrimitive()` access.
 
 Replacement creates the new vertex/index buffers before retiring the old pair. D3D11 and OpenGL use the default immediate `BaseDriver::RetireBuffer()` behavior. D3D12 and Vulkan override it to retain replaced buffers until every in-flight frame has advanced, preventing command buffers from referencing released resources.

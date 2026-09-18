@@ -7,6 +7,15 @@
 #include <iostream>
 #include <cstddef>
 #include <algorithm>
+#include <cstdint>
+#include <vector>
+
+namespace t850 {
+bool DecompressDXTToRGBA(const unsigned char* source, size_t sourceBytes,
+					   uint32_t width, uint32_t height, uint32_t mipCount,
+					   uint32_t faceCount, unsigned int properties,
+					   std::vector<unsigned char>& output, uint32_t firstMip = 0);
+}
 
 #define CIL_CALL_STB 1
 #define CIL_LOG_OUTPUT 1

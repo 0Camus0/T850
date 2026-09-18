@@ -352,21 +352,331 @@ initial CMake/setup options. For new captures, use a fresh output root and the
 [strict snapshot comparison workflow](../development/windows-build-and-run.md#strict-spir-v-visual-comparison).
 Never overwrite accepted reference evidence to obtain a passing comparison.
 
-## Remaining Work
+## Continuation Status (2026-09-17)
 
-1. Resolve or explicitly review the native Voxel checkpoint change. Preserve
-   residual metrics and accepted exceptions; do not reclassify them as pixel equality.
-2. T8ditor API parsing and rendering, hosted/multiple surfaces, platform viewports,
-   preview coverage and full editor workflows. The EDITOR guard stays enabled.
-3. Anonymous debug/helper WGSL counterparts for complete strict-WGSL normal startup.
-4. Cube render targets, comparison samplers, true border-color sampling and
-   render-target mip generation. Loaded texture mips are a different implemented path.
-5. Shared engine compute dispatch/resource contracts; standalone blur compute
-   tests prove shader execution, not an engine-wide compute API.
-6. GPU profiler timestamps, asynchronous telemetry and performance/overhead
-   measurements; upload/readback optimization and live-scene lifecycle coverage.
-7. Missing Nexus assets, guarded Vulkan cases, other GPUs and exhaustive material/
-   animation states; browser, Linux/Steam Deck, Android and Windows ARM64 WebGPU ports.
+This checkpoint reconciles the original seven-step plan with the later browser
+work. Earlier dated sections describe their own checkpoints, not today's backlog.
+The browser foundation was committed as `e00ea824`; the completed follow-ups
+through v0.1.7 were committed as `bf387f83`. Neither was pushed during this work.
+Public Minecraft was v0.1.2 at the original checkpoint. The subsequent
+v0.1.4 OnTop/isolation-guidance, v0.1.5 pointer-capture, v0.1.6 reduced-memory
+cubemap and v0.1.7 camera-control deployments are recorded in the
+[browser release notes](../platform/browser.md#published-wssi-demo); they do not
+change the stage or incoming compute-PR handoff below.
+
+| Original Step | Status | Evidence and Remaining Boundary |
+| --- | --- | --- |
+| 1. Dependency foundation | Complete | Pinned Dawn/D3D12, required Windows x64 build integration and package audits. |
+| 2. Shader feasibility | Complete | Native in-process translation, reflection, cold/warm cache tests, and the later maintained WGSL path. This is not exhaustive future-material coverage. |
+| 3. Driver lifecycle | Complete for milestone | Device/surface, submission, resize and bounded teardown/recreation tests. Full live-scene stress and device-loss recovery remain. |
+| 4. Minimal graphics integration | Complete and exceeded | Indexed/textured/depth fixture, readback and reuse tests; normal forward/deferred runtime scenes also work. |
+| 5. Shared compute | Awaiting PR #40 and rebase | The current PR includes native WebGPU/Dawn as well as D3D11/D3D12/Vulkan/desktop GL compute. Browser integration and combined-tree acceptance remain. |
+| 6. Full scene and editor coverage | Partial | Runtime scene coverage exists; T8ditor, hosted surfaces, missing renderer features and full workflow acceptance remain. |
+| 7. Release and measurements | Partial | Packaging, CPU-side comparisons and substantial optimization exist. GPU timestamp profiling, complete stress/portability gates and browser CI remain. |
+
+### Compute Handoff
+
+The owner initially expected non-WebGPU compute from another PR and will perform
+the rebase later. Inspection of PR #40 at `594d5cd1` supersedes that scope
+assumption: it also includes native WebGPU/Dawn and desktop OpenGL 4.3+ compute.
+Do not rebase now, duplicate those implementations, or invent a competing shared
+compute abstraction. Emscripten support is not established by native Dawn tests.
+
+After the owner rebases:
+
+1. Inspect the incoming compute/resource/shader and render-graph contracts and
+  their tests before editing WebGPU. Confirm which native backends and fallback
+  behavior actually landed rather than assuming the entire original scope.
+2. Reconcile the incoming WebGPU implementation with our browser shader packages,
+  texture/buffer ownership and asynchronous submission model. Cover pipeline
+  creation, bindings, dispatch, storage usages and graphics/compute ordering
+  without scene-specific branches.
+3. Run the same blur/reference tests across supported native backends and
+  WebGPU, including odd extents, resize, resource recreation and hazards. Keep
+  GL 3.3/ES graphics fallback distinct from the new desktop GL 4.3+ compute path.
+4. Add completion-valid GPU timestamps and matched CPU/GPU measurements so the
+  original native-D3D12-versus-Dawn overhead goal can be closed with evidence.
+
+GPU profiling and editor work can be scoped separately while waiting, but no
+new implementation is authorized merely by this saved continuation note.
+
+### Post-Merge Particle Depth and Camera Fixes (2026-09-17)
+
+The user found two regressions after integration. The torch kernel projected
+particles without reading scene depth on any API. Its graph now binds
+`GBuffer:DEPTH`; HLSL/GLSL use an unfiltered per-pixel reversed-Z comparison and
+reject particles outside clip depth. The portable layout and Dawn reflection
+probe include the added sampled texture. Browser shader packages were regenerated.
+
+The merged FPS jump fix treated collision overclip's small positive vertical
+velocity as upward jump motion, skipping the grounding probe and oscillating
+camera height. A new idle assertion reproduced `idle FPS controller lost ground
+contact` before the correction. The post-movement probe now uses pre-collision
+ascent as well as resolved velocity, and confirmed ground contact zeros vertical
+velocity. Jump ascent and landing tests remain green.
+
+Validation: exact production-kernel particle depth readbacks (visible, hidden,
+partial, near/far clip) passed all five native APIs plus Chrome/Firefox. Wasm
+shared tests and x64/ARM64 Debug/Release builds passed, including native x64
+self-tests. Full-scene 640x360 frame-61 compute captures passed all five native
+APIs and were visually inspected. Chrome Compute measured zero idle-height drift
+over 62 samples/600 frames; feature-removed Chrome touch measured zero over 60
+samples, and Firefox Raster zero over 61. Touch/OnTop/capture recovery and camera
+controls passed with actual BC and float32 filtering disabled.
+
+Evidence: `%LOCALAPPDATA%/T850Profiles/particle-depth-camera-20260917`.
+Early browser runs hit an old runtime/new graph mismatch and a stale server
+catalog; rebuild and restart the local server after changed shader exports.
+The first matrix launch used the wrong working directory for scene assets;
+`windows-matrix-final.log` is the successful four-cell result. The first mobile
+run's 360-pixel height cap conflicted with its OnTop assertion; the final
+`chrome-mobile-viewport-final` report uses viewport-sized limits and passed.
+Physical phones remain untested. These fixes are local and uncommitted; no push
+or deployment occurred, and production remains v0.1.7.
+
+### PR #40 Integration Completed (2026-09-17)
+
+Rebased `microsoft_daniel_branch` onto the merged upstream
+`91af57aaef3cad4787e90e1744ac7907d53d892f`. The two local web commits are now
+`4712f86f` and `c3ece587`. All rebase conflicts are resolved. Follow-up browser
+compute integration remains as working-tree changes; nothing was pushed or
+deployed. Production remains v0.1.7. The local config was restored byte-for-byte
+from its external backup; the pre-rebase stash is retained as a backup.
+
+The final PR head `e63096be` passed the required upstream CI before merge,
+including the corrected 56-DWORD TorchParticles ABI test. The earlier review
+below concerns the older `594d5cd1` revision, not current CI status.
+
+Integration preserves the context-owned uniform pages, epochs, cached graphics
+bindings, completion-tracked buffer reuse, browser scheduling, 512-face no-BC
+fallback, optional float filtering, touch/OnTop and View/InvertY controls.
+Compute uses that same uniform/submission owner, including standalone dispatch.
+Compute buffers now retire through the existing pool; sampled texture and sampler
+layouts select nonfiltering variants when required by the actual bound resource.
+Prepared shader package version 2 carries compute workgroups/storage formats;
+native export and browser loading share source/entry/defines/layout identity.
+Normal BuildWeb exports all seven scenes in both modes and the correctness kernels.
+Both launchers forward Raster/Compute to the browser. Minecraft-only packaging
+retains the authored skin without widening the model/scene allowlist.
+
+Verified locally on the RTX 4080 Laptop development host:
+
+- x64 and ARM64 Debug/Release builds: four cells passed; x64 shared tests passed.
+  ARM64 is compile-only on this host.
+- Native arithmetic and image correctness: D3D11, D3D12, Vulkan, GL and WebGPU
+  passed. Chrome 152 and Firefox 156 passed the same GPU readback tests, including
+  1x1, 7x5 and 257x129 textures.
+- Wasm shared tests, compute package identity/metadata tests, 11 Node web tests,
+  launcher WPF/config/routing tests in PowerShell 7 and 5.1 passed. Both launcher
+  executables were regenerated.
+- Chrome compute Minecraft passed touch, capture-error recovery, OnTop rotation,
+  block edits and camera controls with actual BC and float32 filtering removal.
+  Firefox compute mouse/camera/GUI/resize and default Raster input passed.
+- Browser compute telemetry: Minecraft 1,800 dispatches and DayScene 3,000 over
+  600 complete frames each, maximum three pending submissions; free-buffer pool
+  remained below 32 MiB. This is bounded coverage, not a phone OOM guarantee.
+- Native graphics fixture passed uniform rollover, readback, resize and renderer
+  recreation comparisons. Matched 640x360 frame-61 DayScene raster/compute dumps
+  were byte-identical for all 18 targets on each of D3D12 and WebGPU.
+- Minecraft's GBuffer and shadows matched between modes; its compute-only torch
+  particle layer changed the deferred/final result on both APIs (5,349 final
+  pixels above tolerance 2). The graph intentionally has no raster particle draw.
+  Cross-API compute final differences were 609 pixels/max delta 11 for Minecraft
+  and 294 pixels/max delta 4 for DayScene; this is not pixel-exact cross-API parity.
+- Restricted Pages preparation: 698 resources, 42 existing R2 routes, no pending
+  uploads. Local Node SVG MIME handling was corrected and regression-tested.
+
+Evidence: `%LOCALAPPDATA%/T850Profiles/compute-rebase-20260917`, including build
+logs, browser reports/telemetry and `captures/` render-target HTML comparisons.
+Physical phones, Android/SteamRT runtime and new hosted CI for this local tree
+were not run. Historical native Voxel lighting differences remain unresolved;
+this integration does not close that older comparison. No R2 objects/settings,
+public deployment, or remote Git branches changed.
+
+### Historical PR #40 Rebase Assessment (2026-09-17)
+
+This is a source/conflict assessment, not a completed rebase or a runtime
+validation of the combined code. No PR comments, approvals, remote writes,
+branch switches, merges, stashes or rebases were performed. Git object-only
+merge simulations left HEAD, index and the working tree unchanged.
+
+| Checkpoint | SHA / State |
+| --- | --- |
+| Our local release commit | `bf387f8303867b76fc8fb1b886e1d3023bbe75b7` on `microsoft_daniel_branch` |
+| Common ancestor | `8e31f4aab07b2b7a425890790e2bf1505b05def8` |
+| Intended future upstream | `origin/microsoft_webgpu_branch`, `70327f39fcd7140b00d0445521bd22ddf432b683` |
+| Incoming branch | `origin/microsoft_compute_shaders`, `594d5cd1e00baf605127bd44d22df240289bebf7` |
+| PR | [#40: Add cross-backend compute shaders](https://github.com/0Camus0/T850/pull/40), open, mergeable, checks unstable at inspection |
+| CI | [Build 35280243567](https://github.com/0Camus0/T850/actions/runs/35280243567): x64 Debug/Release failed; registration, Win32/ARM64 and both Android ABIs/Steam Deck passed; tag-only release skipped |
+
+Re-fetch before acting: a newer PR revision or merge strategy may change every
+conflict prediction below. The final rebase target is the real
+`origin/microsoft_webgpu_branch` after PR #40 lands, not the temporary compute
+branch. At this checkpoint our replay range contains exactly `e00ea824` followed
+by `bf387f83`; upstream's PR #39 merge already contains their parent.
+
+#### Findings to Resolve or Track Upstream
+
+1. **High: current x64 CI is deterministically failing.**
+   [ShaderProbe.cpp:508](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/cmake/dawn-package/ShaderProbe.cpp#L508)
+   expects 28 DWORDs for TorchParticles, while
+   [the HLSL constant block](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/Assets/Shaders/CS_TorchParticles.hlsl#L4)
+   contains a float4x4 plus ten float4 values: 56 DWORDs / 224 bytes. Both failed
+   jobs report `CS_TorchParticles.hlsl: unexpected ComputeV1 constant layout`.
+   Correct the expectation/ABI consistently and rerun both checks; this is not
+   a runner or dependency-download failure.
+2. **High: storage allocation can prevent the promised raster fallback.**
+   `RenderGraph::CreateRenderTargets` passes `rt.storage` directly to `CreateRT`
+   before `CreateComputePipelines` checks mode/capability.
+   [D3D11RT.cpp:103](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/Framework/src/video/d3d11/D3D11RT.cpp#L103)
+   unconditionally adds the UAV bind flag for these targets, then exits on
+   texture creation failure or returns false on UAV creation failure. Thus an
+   unsupported storage format can fail startup even in raster mode. Gate storage
+   allocation or retry a non-storage target consistently with graph selection;
+   validate with missing typed-UAV format support, not only the development GPU.
+3. **Medium: the compute self-test cannot validate non-Windows ports.**
+   [App.cpp:129](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/DayScene/App.cpp#L129)
+   rejects every non-Windows `--compute-selftest`, including explicit Vulkan.
+   Preserve the useful native harness, but adapt host selection/lifecycle before
+   counting Linux/Deck or browser compute execution as validated. Android/Deck
+   CI compilation does not close this runtime coverage gap.
+4. **Hardware risk: Vulkan queue selection changes without a present check.**
+   [VulkanDriver.cpp:475](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/Framework/src/video/vulkan/VulkanDriver.cpp#L475)
+   prefers a graphics+compute queue and assumes the same family can present.
+   Verify surface support or preserve separate presentation ownership before
+   claiming broader GPU compatibility. This was inspected, not reproduced on
+   split-queue hardware during this assessment.
+
+Do not apply automated review suggestions mechanically. For example, the claim
+that all GL samplers default to texture unit zero is contradicted by the shipped
+`CS_Bright.glsl` declarations at bindings 1/2 and `GLCompute` binding the textures
+to those units. General independent sampler-state support is a separate question.
+This review did not certify all 116 changed files or reproduce the PR author's
+reported GPU matrix; it checked CI evidence and the integration-critical paths.
+
+#### Predicted Conflicts
+
+The branches change 102 and 116 files from their common ancestor, with 20
+overlapping paths. The combined-tree simulation identifies six conflicted paths;
+the exact first-commit replay identifies five (all except Minecraft's include).
+The second replay still depends on how those first conflicts are resolved.
+
+| Path | Resolution Direction |
+| --- | --- |
+| `T850/Framework/src/video/webgpu/WebGPUDriver.cpp` | Highest risk. Keep our `WebGPUContext` uniform pages, `UniformEpoch`, dynamic offsets, cached bind entries, bounded queue and completion-based retirement. Integrate incoming compute/storage methods and RT signature; do not choose the entire incoming file or retain two competing uniform allocators. Both `<tuple>` and `<type_traits>` are needed. |
+| `T850/DayScene/App.cpp` | Combine the incoming compute-test AppBase selection/result with our `OS_WEB` framework branch, worker main loop and browser startup/error lifecycle. Do not drop the normal runtime or substitute the test app. |
+| `T850/DayScene/MinecraftScene.cpp` | Combined conflict is the Emscripten include versus removal of an empty Vulkan conditional. Retain the browser include. Verify auto-merged torch/skin work alongside our View/InvertY/gamepad logic and scene state. |
+| `T850/scripts/Launcher.ps1` | Retain both the browser selector/build/open logic and the new compute/raster selector plus scroll container. They collide at the same XAML insertion point. Check variable lookup, persistence and argument routing, not just XML validity. |
+| `T850/scripts/Launcher_Release.ps1` | Same combined UI/routing treatment as the developer launcher, preserving portable browser discovery. |
+| `T850/T850Launcher.exe` | Binary conflict: regenerate from the resolved launcher source after tests; never select an arbitrary side as the final artifact. |
+
+Local generated evidence is under `T850/build/pr40-rebase-scope/`:
+`merge-tree.txt` (combined tree `b7d199a011e19855c0c491e19ceae76dbbe71e73`) and
+`first-replayed-commit.txt` (tree `d8acbfd29d5c1bd78181c58009f5d79624ca7831`).
+These conflict-marked trees are diagnostic objects, not runnable source or refs.
+
+#### Clean-Merge Integration Work
+
+- **Browser shader compilation:** `WebGPUComputePipeline::Create` always calls
+  `LoadShaderFiles`, whose implementation is Windows-x64-only. Unlike graphics,
+  it has no `ReadShaderPackage` branch. The browser build has no Tint/glslang
+  runtime. Add native compute-package export and Wasm package loading with the
+  full `ComputeV1` identity, defines, entry point, workgroup size and storage
+  formats. Regenerate all WebShaders with matching artifact hashes/schema; a
+  raster-only setting does not remove compiled references to unavailable code.
+- **Uniform and compute-buffer lifetime:** incoming compute dispatch allocates
+  transient uniform buffers each time and bypasses our pooled upload path.
+  Route constants and submission through the existing owner and audit compute
+  buffer destruction/early failures. Preserve the rollover/reuse regression
+  tests that fixed browser memory growth and stale per-draw constants.
+- **Readback:** incoming `ReadComputeBuffer` uses direct queue submission and
+  `MapAsync(WaitAnyOnly)` plus blocking `WaitAny`. Adapt it to our asynchronous
+  browser completion path and submission/retirement bookkeeping. Do not add a
+  blocking wait to the browser frame loop.
+- **Optional filtering:** the incoming compute pipeline always declares sampled
+  textures as `Float` and samplers as `Filtering`. Our no-float32-filterable
+  depth/data path requires matching non-filtering layouts. Carry that distinction
+  into compute (especially depth-consuming God Rays), and rerun the actual
+  no-BC/no-float-feature tests rather than only checking adapter capabilities.
+- **Asset allowlist:** the new authored `voxel_world.mob.skin_texture` is
+  `herobrine_green.png`. Calling our selector with the incoming scene currently
+  rejects `Textures/herobrine_green.png`. Add this declared dependency and its
+  test while retaining the exclusion of unrelated models/scenes. The incoming
+  code has an atlas fallback, but that is not the intended new skin appearance.
+- **Configuration:** incoming default `postProcessMode` is raster. Explicitly
+  route compute/raster through browser URLs, shell argument parsing and browser
+  launcher construction before advertising the selector there. The current
+  browser path has no forwarding for that option. Do not silently change mobile
+  defaults or call a raster/clear fallback successful compute execution.
+- **Self-tests and registrations:** retain both branches' project/CMake source
+  additions and test cases. The Windows-only shader probe must test 56 torch
+  DWORDs; browser tests need compute package and dispatch/readback coverage. The
+  newly auto-merged `ShaderArtifact` fields require matching export/import data.
+- **Mobile budget:** the new RGBA16F torch layer is an additional screen-sized
+  allocation even when its fallback is selected. Measure startup peak, resize
+  and OnTop at phone limits before deployment; our 512-face cubemap reduction
+  does not budget the rest of the render graph or per-pixel particle workload.
+- **Local state:** incoming PR changes tracked `T850/config.json`, while our
+  working copy has separate personal settings. Back up/preserve them before the
+  eventual rebase and review the intended repository defaults independently.
+  Do not commit the local config, vcpkg working state, screenshot or videos.
+
+#### Execution Order After Merge Approval
+
+1. Re-fetch the actual target after PR #40 merges and record its SHA/status.
+   Preserve dirty local settings without dropping files. Inspect the new replay
+   range again; at this snapshot it is just `e00ea824`, then `bf387f83`.
+2. Rebase onto `origin/microsoft_webgpu_branch`, not the compute feature branch.
+   Resolve the driver/entry point first, then the paired launchers and the small
+   scene conflict. Rebuild the launcher binary from the resolved sources.
+3. Restore a compiling browser graphics path before enabling browser compute:
+   package export/load, resource ownership and no-filterable-float layouts are
+   prerequisites, not optional cleanup. Keep existing graphics tests intact.
+4. Run registration and launcher PS5.1/PS7 routing/WPF tests; native x64
+   Debug/Release compute tests at 1x1, 7x5 and 257x129; the corrected Dawn compute
+   probe; shader precompilation and native API regression captures. Require fresh
+   Windows/Android/SteamRT CI for the integrated SHA.
+5. Run a clean Emscripten build/export, Wasm compute correctness/readback,
+   compute/raster image comparisons on Minecraft and DayScene, and the existing
+   touch/OnTop/View/InvertY/capture-error/no-BC tests. Measure frame-time and
+   memory under repeated compute/graphics transitions, reload and resize.
+6. Only after those gates pass, consider a separate authorized deployment.
+   Current production v0.1.7 was not changed by this preparatory review.
+
+### Open Acceptance Work
+
+- T8ditor API parsing/rendering, hosted/multiple surfaces, platform viewports,
+  previews and editor workflows. The EDITOR guard remains enabled.
+- Cube render targets, comparison samplers, true border-color sampling and
+  render-target mip generation; loaded texture mip support already exists.
+- Anonymous debug/helper strict-WGSL coverage and broader material/animation
+  states. Resolve or explicitly review the historical native Voxel checkpoint
+  lighting difference; later same-API cleanup passes do not close that older delta.
+- WebGPU GPU timestamps, asynchronous telemetry and controlled GPU-overhead
+  measurements. CPU-side comparison, uniform upload pooling and browser
+  scheduling optimization are implemented, not future work.
+- Full live-scene API switching/reload, device-loss recovery, save/reload,
+  long-running memory/frame-time behavior, missing Nexus assets, guarded Vulkan
+  cases, other GPUs and physical mobile-device coverage.
+- Automated Emscripten build/browser CI and fresh hosted validation of subsequent
+  commits. Native Windows ARM64, Android and Linux/Steam Deck Dawn ports remain
+  separate future work; existing native Vulkan validation is not a WebGPU port.
+
+### Browser Work Already Delivered
+
+The Emscripten build, browser selection in both launchers, prepared shader
+packages, local seven-scene smoke coverage, responsive Minecraft welcome,
+touch controls, block-edit tests, BC/float-filtering fallbacks, restricted
+Cloudflare demo and reusable JSON-configured deploy script are implemented.
+See [browser implementation and evidence](../platform/browser.md). These were
+later additions beyond the original plan, not unfinished prerequisites.
+
+Remaining browser-specific work includes lower-limit GBuffer compatibility,
+physical-device testing, full authoring/gameplay workflows and the deferred
+public multi-scene launcher. The reported digging slowdown and `file:///`
+security warning were not reliably reproduced or fixed; their diagnostic
+probes remain available. Embedded-browser cross-origin isolation failures are
+a separate capability/access issue, not evidence of the same runtime bug.
 
 The PR commit includes implementation, maintained shader sources, pinned dependency
 recipes, simplecpp sources/license, Launcher and documentation. Generated dependency

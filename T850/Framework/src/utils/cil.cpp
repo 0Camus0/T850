@@ -11,6 +11,103 @@
 #include <filesystem>
 #include <sstream>
 #include <vector>
+#include <limits>
+
+bool t850::DecompressDXTToRGBA(const unsigned char* source, size_t sourceBytes,
+														 uint32_t width, uint32_t height, uint32_t mipCount,
+														 uint32_t faceCount, unsigned int properties,
+														 std::vector<unsigned char>& output, uint32_t firstMip) {
+	output.clear();
+	const auto format = properties & (CIL_DXT1 | CIL_DXT3 | CIL_DXT5);
+	if (!source || !width || !height || !mipCount || mipCount > 32 || firstMip >= mipCount || (faceCount != 1 && faceCount != 6) ||
+			(format != CIL_DXT1 && format != CIL_DXT3 && format != CIL_DXT5)) return false;
+	const size_t blockBytes = format == CIL_DXT1 ? 8 : 16;
+	size_t totalSource = 0;
+	size_t totalOutput = 0;
+	for (uint32_t mip = 0; mip < mipCount; ++mip) {
+		const size_t mipWidth = std::max(1u, width >> mip);
+		const size_t mipHeight = std::max(1u, height >> mip);
+		const size_t columns = (mipWidth + 3) / 4;
+		const size_t rows = (mipHeight + 3) / 4;
+		if (mipWidth > std::numeric_limits<size_t>::max() / mipHeight / 4 / faceCount ||
+				columns > std::numeric_limits<size_t>::max() / rows / blockBytes / faceCount) return false;
+		const size_t encoded = columns * rows * blockBytes * faceCount;
+		const size_t decoded = mipWidth * mipHeight * 4 * faceCount;
+		if (encoded > sourceBytes - totalSource || decoded > std::numeric_limits<size_t>::max() - totalOutput) return false;
+		totalSource += encoded;
+		if (mip >= firstMip) totalOutput += decoded;
+	}
+	output.resize(totalOutput);
+	const auto decode565 = [](uint16_t value, unsigned char* color) {
+		color[0] = static_cast<unsigned char>((((value >> 11) & 31) * 255 + 15) / 31);
+		color[1] = static_cast<unsigned char>((((value >> 5) & 63) * 255 + 31) / 63);
+		color[2] = static_cast<unsigned char>(((value & 31) * 255 + 15) / 31);
+		color[3] = 255;
+	};
+	size_t sourceOffset = 0;
+	size_t outputOffset = 0;
+	for (uint32_t face = 0; face < faceCount; ++face) {
+		for (uint32_t mip = 0; mip < mipCount; ++mip) {
+			const uint32_t mipWidth = std::max(1u, width >> mip);
+			const uint32_t mipHeight = std::max(1u, height >> mip);
+			const uint32_t columns = (mipWidth + 3) / 4;
+			const uint32_t rows = (mipHeight + 3) / 4;
+			if (mip < firstMip) {
+				sourceOffset += static_cast<size_t>(columns) * rows * blockBytes;
+				continue;
+			}
+			for (uint32_t row = 0; row < rows; ++row) {
+				for (uint32_t column = 0; column < columns; ++column) {
+					const auto* block = source + sourceOffset;
+					sourceOffset += blockBytes;
+					const auto* colorBlock = block + (format == CIL_DXT1 ? 0 : 8);
+					const uint16_t first = colorBlock[0] | (colorBlock[1] << 8);
+					const uint16_t second = colorBlock[2] | (colorBlock[3] << 8);
+					unsigned char colors[4][4] = {};
+					decode565(first, colors[0]);
+					decode565(second, colors[1]);
+					if (first > second || format != CIL_DXT1) {
+						for (unsigned channel = 0; channel < 3; ++channel) {
+							colors[2][channel] = static_cast<unsigned char>((2 * colors[0][channel] + colors[1][channel] + 1) / 3);
+							colors[3][channel] = static_cast<unsigned char>((colors[0][channel] + 2 * colors[1][channel] + 1) / 3);
+						}
+						colors[2][3] = colors[3][3] = 255;
+					} else {
+						for (unsigned channel = 0; channel < 3; ++channel)
+							colors[2][channel] = static_cast<unsigned char>((colors[0][channel] + colors[1][channel] + 1) / 2);
+						colors[2][3] = 255;
+					}
+					uint64_t alphaBits = 0;
+					unsigned char alpha[8] = {block[0], block[1]};
+					if (format == CIL_DXT5) {
+						const unsigned interpolated = alpha[0] > alpha[1] ? 6 : 4;
+						for (unsigned index = 0; index < interpolated; ++index)
+							alpha[index + 2] = static_cast<unsigned char>(((interpolated - index) * alpha[0] + (index + 1) * alpha[1] + (interpolated + 1) / 2) / (interpolated + 1));
+						if (interpolated == 4) { alpha[6] = 0; alpha[7] = 255; }
+						for (unsigned index = 0; index < 6; ++index) alphaBits |= static_cast<uint64_t>(block[index + 2]) << (index * 8);
+					}
+					const uint32_t codes = colorBlock[4] | (static_cast<uint32_t>(colorBlock[5]) << 8) |
+						(static_cast<uint32_t>(colorBlock[6]) << 16) | (static_cast<uint32_t>(colorBlock[7]) << 24);
+					for (unsigned localRow = 0; localRow < 4; ++localRow) {
+						const unsigned pixelRow = row * 4 + localRow;
+						if (pixelRow >= mipHeight) continue;
+						for (unsigned localColumn = 0; localColumn < 4; ++localColumn) {
+							const unsigned pixelColumn = column * 4 + localColumn;
+							if (pixelColumn >= mipWidth) continue;
+							const unsigned pixel = localRow * 4 + localColumn;
+							auto* destination = output.data() + outputOffset + (static_cast<size_t>(pixelRow) * mipWidth + pixelColumn) * 4;
+							std::memcpy(destination, colors[(codes >> (pixel * 2)) & 3], 4);
+							if (format == CIL_DXT3) destination[3] = static_cast<unsigned char>(((block[pixel / 2] >> ((pixel & 1) * 4)) & 15) * 17);
+							else if (format == CIL_DXT5) destination[3] = alpha[(alphaBits >> (pixel * 3)) & 7];
+						}
+					}
+				}
+			}
+			outputOffset += static_cast<size_t>(mipWidth) * mipHeight * 4;
+		}
+	}
+	return true;
+}
 
 #if defined(OS_WINDOWS)
 #include <Windows.h>

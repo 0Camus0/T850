@@ -63,7 +63,7 @@ std::string NormalizeShaderFlow(const std::string& value) {
 
 bool IsKnownGraphicsApi(const std::string& value) {
   std::string lowered = ToLower(value);
-#if defined(_WIN32) && defined(_M_X64)
+#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
   if (lowered == "webgpu") return true;
 #endif
   return lowered == "gl" || lowered == "opengl"
@@ -173,7 +173,7 @@ Config::PostProcessMode ParsePostProcessMode(const std::string& value) {
 
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback) {
   std::string lowered = ToLower(value);
-#if defined(_WIN32) && defined(_M_X64)
+#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
   if (lowered == "webgpu") return GraphicsApi::WEBGPU;
 #endif
   if (lowered == "gl" || lowered == "opengl") return GraphicsApi::OPENGL;
@@ -354,6 +354,11 @@ bool ValidateConfig(Config& cfg) {
   constexpr int kMaxDimension = 16384;
 
   cfg.webgpuShaderFlow = NormalizeShaderFlow(cfg.webgpuShaderFlow);
+
+#ifdef __EMSCRIPTEN__
+  if (cfg.api != "webgpu" || cfg.flags.benchmarkMatrix)
+    throw std::invalid_argument("Browser builds require WebGPU with prepared shaders; native API matrices are unavailable");
+#endif
 
   if (cfg.flags.compileShaders) {
     if (cfg.flags.recordShaderPermutations || cfg.flags.dumpShaderPermutations || cfg.flags.benchmarkMatrix)
@@ -756,6 +761,13 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--recordShaderPermutations") {
       cfg.flags.recordShaderPermutations = true;
     }
+    else if (arg == "--webShaderOutput" || arg == "--webAssetBaseUrl") {
+      if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--"))
+        throw std::invalid_argument(arg + " requires a path");
+      auto& value = arg == "--webShaderOutput" ? cfg.webShaderOutput : cfg.webAssetBaseUrl;
+      value = StripQuotes(argv[++i]);
+      if (value.empty()) throw std::invalid_argument(arg + " requires a nonempty path");
+    }
     else if (arg == "--shaderPermutationInput" || arg == "--shaderCompileCancelFile") {
       if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--"))
         throw std::invalid_argument(arg + " requires a path");
@@ -833,6 +845,7 @@ void PrintHelp() {
     << "  --shaderPermutationOutput <path>   JSON dictionary path for --dumpShaderPermutations\n"
     << "  --recordShaderPermutations         Record through runtime and flush at normal/snapshot exit\n"
     << "  --compileShaders                  Compile all recorded permutations, then exit\n"
+    << "  --webShaderOutput <path>           Export prepared WebGPU shader packages while compiling/running\n"
     << "  --shaderPermutationInput <path>    Manifest to compile (default: Shaders/shader_permutations.json)\n"
     << "  --shaderCompileCancelFile <path>   Stop between permutations when this file exists\n"
     << "  --validateGltf <path>              Validate and summarize glTF/GLB, then exit\n\n"

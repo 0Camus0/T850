@@ -145,6 +145,76 @@ Gameplay publishes stable counters on sampled frames:
 
 Gameplay scopes include `game.update`, component phases, event dispatch, state machines, groups, and `game.spatial_queries`. Telemetry flushes only on normal framework shutdown; direct `exit()` paths such as timed frame dumps do not write the JSON unless capture uses `--keepRunning` and the window closes normally.
 
+Exception: bounded DayScene `--profile --profileFrames N` now finalizes after
+the completed frame, flushes telemetry and the profile log, then exits natively
+or pauses in the browser. Pair it with `--telemetry --telemetryFrequencyFrames 1`
+to measure all frames, including periodic waits. The browser URL/test can enable
+this mode explicitly; see [browser profiling](../platform/browser.md#capturing-profiles).
+Ordinary browser launches keep profiling disabled.
+
+WebGPU CPU scopes separate `webgpu.buffer_upload`, `webgpu.create_buffer`,
+`webgpu.write_buffer`, `webgpu.uniform_snapshot`, `webgpu.uniform_upload`,
+`webgpu.draw`, `webgpu.create_bind_group`, `webgpu.queue_submit`,
+`webgpu.surface_acquire`, `webgpu.collect_completed`, and `webgpu.inflight_wait`.
+`webgpu.binding_prepare` covers descriptor/snapshot preparation;
+`webgpu.encoder_commands` covers the actual WebGPU command-encoder calls.
+Counters record allocations/reuses, uploaded bytes, bind groups, queued batches,
+evictions, and free-pool bytes. Buffer shadow-update bytes are not GPU traffic:
+uniform snapshots are batched later, with separate byte and queue-upload counts.
+These are inclusive CPU wall-time scopes, not GPU queries;
+do not sum parent and child scopes or interpret a wait as active CPU execution.
+WebGPU currently has no GPU profiler backend. Cumulative draw/triangle totals
+are 64-bit; normalize them by the sample count before comparing workloads.
+
+Browser `window.t850.workerTiming` reports ten-frame average callback intervals
+and work time without enabling per-draw profiling. The interval includes host
+scheduling gaps; work includes input and the application update/draw call.
+Use this to distinguish a frame cap or timer delay from rendering work, not to
+infer displayed refresh rate or GPU execution time.
+
+`window.t850.input` accompanies the ten-frame diagnostics: `keys`, `mouse`, and
+`focus` count SDL keyboard, mouse-motion, and window-focus events; `relative`
+reports SDL relative-mouse mode and `forward` reports the held W key. Combine
+these with DOM focus/pointer lock, frame progression, player movement and
+`window.t850.errors` when investigating apparent input loss. The browser harness
+supports repeated held input and focus cycles; see
+[input/resize regression](../platform/browser.md#input-and-resize-regression).
+
+`window.t850.touch` records active state, both stick axes, jump/sprint and block
+actions sampled by the engine worker. Verify actual player movement and accepted
+block/remesh logs as well as these input values. The touch harness requires
+`logLevel=info`; the production welcome intentionally launches with error-only
+logging. Test welcome navigation and log-based block verification separately.
+
+`window.t850.camera` reports Minecraft's active mode (0 player, 1 spectator,
+2 light), `invertY`, pitch, camera position and player position. The View/InvertY
+buttons reflect this scene-owned state. The harness's `--camera-controls` test
+measures pitch changes in both modes and spectator motion independent of the
+player; combine it with `--touch` for virtual controls or use desktop mouse input.
+These are functional checks, not input-latency or physical-device certification.
+
+WebGPU startup logs `Device optional features: BC=... float32-filterable=...`.
+The browser harness's `--disable-bc --disable-float-filtering` options modify
+device requests inside workers and assert both features are absent there.
+Adapter feature lists alone do not establish which features the device enabled.
+See [mobile GPU compatibility](../platform/browser.md#touch-and-optional-gpu-features-v012)
+for the release validation and precision/filtering tradeoffs.
+
+The browser shell displays its first recorded failure in an expandable runtime
+error panel, including the available JavaScript stack and last frame/input/size
+snapshot. It retains that bounded report in `window.t850.lastError` and this tab's
+`sessionStorage` under `t850:last-runtime-error:v1`. A reload labels retained data
+as a previous-run error instead of marking the new run failed. Follow-up errors
+cannot overwrite the first report; blocked storage does not prevent its display.
+This cannot recover a failure from an older build or record a hard page-thread
+hang that never reaches the error handler. Reports stay in the tab and are not
+automatically sent to a server.
+
+Browser C/C++ stacks are explicitly 2 MiB for the main application and pthreads,
+with stack-pointer checks enabled. The separate Asyncify stack remains 256 KiB.
+See [Wasm stack and block edits](../platform/browser.md#wasm-stack-and-block-edits)
+for the confirmed 64 KiB overflow reproduction and its regression tests.
+
 ## FrameDumper and replay snapshots
 
 `FrameDumper` captures render output and enough scene state to replay a frame.

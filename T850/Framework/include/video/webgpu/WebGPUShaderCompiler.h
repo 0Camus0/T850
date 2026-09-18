@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(_WIN32) && defined(_M_X64)
+#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
 #include <array>
 #include <cstdint>
 #include <string>
@@ -93,8 +93,23 @@ struct ShaderFlowReport {
   std::vector<ShaderFlowAttempt> attempts;
 };
 
-const char* ShaderFlowName(ShaderFlow flow);
-bool ParseShaderFlow(const std::string& name, ShaderFlow& flow);
+inline const char* ShaderFlowName(ShaderFlow flow) {
+  switch (flow) {
+    case ShaderFlow::Auto: return "auto";
+    case ShaderFlow::Wgsl: return "wgsl";
+    case ShaderFlow::Spirv: return "spirv";
+  }
+  return "invalid";
+}
+inline bool ParseShaderFlow(const std::string& name, ShaderFlow& flow) {
+  for (const auto candidate : {ShaderFlow::Auto, ShaderFlow::Wgsl, ShaderFlow::Spirv}) {
+    if (name == ShaderFlowName(candidate)) {
+      flow = candidate;
+      return true;
+    }
+  }
+  return false;
+}
 bool LoadShaderFiles(const ShaderFileRequest& request, ShaderArtifact& artifact,
                      ShaderFlowReport& report, std::string& diagnostic,
                      const std::string& specialization = {});
@@ -103,5 +118,11 @@ bool LoadOrTranslateShader(const ShaderRequest& request, ShaderArtifact& artifac
                            const std::string& specialization = {});
 bool TranslateShader(const ShaderRequest& request, ShaderArtifact& artifact, std::string& diagnostic);
 bool ReflectShader(const ShaderRequest& request, ShaderArtifact& artifact, std::string& diagnostic);
+bool WriteShaderPackage(const ShaderRequest& request, const ShaderArtifact& artifact,
+                        ShaderFlow flow, const ShaderFlowReport& report,
+                        const std::string& directory, std::string& diagnostic);
+bool ReadShaderPackage(const ShaderRequest& request, ShaderArtifact& artifact,
+                       ShaderFlow flow, ShaderFlowReport& report, std::string& diagnostic,
+                       const std::string& directory = "WebShaders");
 }
 #endif

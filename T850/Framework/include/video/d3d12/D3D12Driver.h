@@ -84,6 +84,7 @@ namespace t850 {
     void BeginFrame(FrameTargetMode target = FrameTargetMode::Swapchain) override;
     void EndFrame() override;
     void WaitForGPU() override;
+    void FlushGPUResources() override;
     void BeginResourceUploadBatch() override;
     void EndResourceUploadBatch() override;
     bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
@@ -245,6 +246,7 @@ namespace t850 {
       UINT framesRemaining = kBackBufferCount;
     };
     std::vector<RetiredBuffer> m_retiredBuffers;
+    std::unordered_map<IUnknown*, ComPtr<IUnknown>> m_computeKeepAlive[kBackBufferCount];
 
     // PSO cache: lazy-created per (shader × blend × depth × cull × RT config)
     std::unordered_map<D3D12PipelineKey, ComPtr<ID3D12PipelineState>, D3D12PipelineKeyHash> m_psoCache;

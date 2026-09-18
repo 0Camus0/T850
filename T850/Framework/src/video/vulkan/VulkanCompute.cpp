@@ -10,12 +10,14 @@
 #include <glslang/SPIRV/GlslangToSpv.h>
 #include <utils/Log.h>
 #include <utils/ShaderPermutationDump.h>
+#include <utils/SPIRVReflection.h>
 
 #include <cstring>
 #include <sstream>
 #include <unordered_set>
 
 namespace t850 {
+extern DeviceContext* T8DeviceContext;
 namespace {
   bool ReadLocalSize(const std::vector<uint32_t>& spirv,
                      std::array<uint32_t, 3>& threadGroupSize) {
@@ -42,7 +44,7 @@ namespace {
     static bool initialized = false;
     if (!initialized) { glslang::InitializeProcess(); initialized = true; }
     std::ostringstream combined;
-    combined << "#define T850_VULKAN 1\n";
+    combined << "#define T850_VULKAN 1\n#define T850_SPIRV 1\n";
     for (const std::string& define : desc.defines)
       if (!define.empty()) combined << "#define " << define << '\n';
     combined << desc.source;
@@ -103,9 +105,12 @@ namespace {
 
 VulkanComputePipeline::~VulkanComputePipeline() {
   if (!owner || !owner->GetDevice()) return;
-  if (pipeline) vkDestroyPipeline(owner->GetDevice(), pipeline, nullptr);
-  if (pipelineLayout) vkDestroyPipelineLayout(owner->GetDevice(), pipelineLayout, nullptr);
-  if (descriptorSetLayout) vkDestroyDescriptorSetLayout(owner->GetDevice(), descriptorSetLayout, nullptr);
+  owner->RetireComputeResource([device = owner->GetDevice(), nativePipeline = pipeline,
+      nativeLayout = pipelineLayout, nativeBindings = descriptorSetLayout] {
+    if (nativePipeline) vkDestroyPipeline(device, nativePipeline, nullptr);
+    if (nativeLayout) vkDestroyPipelineLayout(device, nativeLayout, nullptr);
+    if (nativeBindings) vkDestroyDescriptorSetLayout(device, nativeBindings, nullptr);
+  });
 }
 
 const ComputeBindingLayoutDesc* VulkanComputePipeline::Find(ComputeBindingType type, uint32_t shaderRegister) const {
@@ -133,6 +138,9 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
   }
   std::vector<uint32_t> spirv;
   if (!CompileCompute(desc, spirv, threadGroupSize)) return false;
+  std::vector<ComputeBindingLayoutDesc> reflected;
+  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize) ||
+      !SetValidatedLayout(desc, reflected, true)) return false;
   VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
   moduleInfo.codeSize = spirv.size() * sizeof(uint32_t);
   moduleInfo.pCode = spirv.data();
@@ -175,7 +183,10 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
 }
 
 VulkanComputeBuffer::~VulkanComputeBuffer() {
-  if (owner && buffer) vmaDestroyBuffer(owner->GetAllocator(), buffer, allocation);
+  if (owner && buffer) owner->RetireComputeResource(
+    [allocator = owner->GetAllocator(), nativeBuffer = buffer, nativeAllocation = allocation] {
+      vmaDestroyBuffer(allocator, nativeBuffer, nativeAllocation);
+    });
 }
 
 bool VulkanComputeBuffer::Create(VulkanDriver* driver, const ComputeBufferDesc& desc, const void* initialData) {
@@ -205,7 +216,29 @@ std::unique_ptr<ComputeBuffer> VulkanDriver::CreateComputeBuffer(const ComputeBu
 bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vector<ComputeBindingDesc>& bindings,
                                    uint32_t gx, uint32_t gy, uint32_t gz) {
   auto* pipeline = dynamic_cast<VulkanComputePipeline*>(&pipelineBase);
-  if (!pipeline || !gx || !gy || !gz || gx > 65535 || gy > 65535 || gz > 65535) return false;
+  if (!pipeline || pipeline->owner != this || !pipeline->ValidateBindings(bindings) ||
+      !gx || !gy || !gz || gx > 65535 || gy > 65535 || gz > 65535) return false;
+  for (const auto& binding : bindings) {
+    if (binding.buffer) {
+      const auto* buffer = dynamic_cast<VulkanComputeBuffer*>(binding.buffer);
+      if (!buffer || buffer->owner != this) return false;
+    }
+    if (binding.texture) {
+      const auto* texture = dynamic_cast<VulkanTexture*>(binding.texture);
+        if (!texture || !texture->m_imageView || !texture->m_image ||
+          (texture->cil_props & CIL_CUBE_MAP)) return false;
+      if (binding.type == ComputeBindingType::Sampler && !texture->m_sampler) return false;
+      if (binding.type == ComputeBindingType::ReadWriteTexture) {
+        if (!texture->m_storageUsage) return false;
+        for (const auto& layout : pipeline->bindingLayout) {
+          if (layout.type != binding.type || layout.shaderRegister != binding.shaderRegister) continue;
+          const auto format = layout.storageFormat == ComputeStorageFormat::Rgba16Float
+            ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+          if (texture->m_format != format) return false;
+        }
+      }
+    }
+  }
   BeginFrame(FrameTargetMode::Offscreen);
   VkCommandBuffer cmd = GetCmdBuffer();
   EndRenderPassIfActive(cmd);
@@ -226,7 +259,8 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
       info = AllocateCBData(binding.constants, binding.constantCount * sizeof(uint32_t));
     } else if (binding.type == ComputeBindingType::ReadOnlyBuffer || binding.type == ComputeBindingType::ReadWriteBuffer) {
       auto* buffer = dynamic_cast<VulkanComputeBuffer*>(binding.buffer);
-      if (!buffer) return false;
+        if (!buffer || (binding.type == ComputeBindingType::ReadWriteBuffer &&
+          buffer->descriptor.access != ComputeBufferAccess::ReadWrite)) return false;
       info.buffer = buffer->buffer; info.offset = 0; info.range = buffer->descriptor.byteWidth;
     }
     if (binding.type == ComputeBindingType::Constants32 ||
@@ -279,10 +313,10 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->pipelineLayout, 0, 1, &set, 0, nullptr);
   vkCmdDispatch(cmd, gx, gy, gz);
   VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-  barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-  barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
+  barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                       VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
                        0, 1, &barrier, 0, nullptr, 0, nullptr);
   for (VulkanTexture* texture : writtenTextures) {
     TransitionImageLayout(cmd, texture->m_image, texture->GetLayout(),
@@ -296,7 +330,7 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
 
 bool VulkanDriver::ReadComputeBuffer(ComputeBuffer& bufferBase, void* destination, size_t byteCount) {
   auto* source = dynamic_cast<VulkanComputeBuffer*>(&bufferBase);
-  if (!source || !destination || !byteCount || byteCount > source->descriptor.byteWidth) return false;
+  if (!source || source->owner != this || !destination || !byteCount || byteCount % 4 || byteCount > source->descriptor.byteWidth) return false;
   VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
   info.size = byteCount; info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
   VmaAllocationCreateInfo allocationInfo{};
@@ -304,10 +338,49 @@ bool VulkanDriver::ReadComputeBuffer(ComputeBuffer& bufferBase, void* destinatio
   allocationInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
   VkBuffer staging = VK_NULL_HANDLE; VmaAllocation allocation = VK_NULL_HANDLE; VmaAllocationInfo mapped{};
   if (vmaCreateBuffer(GetAllocator(), &info, &allocationInfo, &staging, &allocation, &mapped) != VK_SUCCESS) return false;
+  const bool frameOpen = m_frameStarted;
+  const bool passOpen = m_renderPassActive;
+  const int target = CurrentRT;
+  const auto viewport = m_viewport;
+  const auto scissor = m_scissorRect;
+  VkCommandBuffer cmd = frameOpen ? GetCmdBuffer() : GetTransientCommandBuffer();
+  if (frameOpen) EndRenderPassIfActive(cmd);
+  VkMemoryBarrier beforeCopy{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+  beforeCopy.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+  beforeCopy.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &beforeCopy, 0, nullptr, 0, nullptr);
   VkBufferCopy copy{0, 0, byteCount};
-  vkCmdCopyBuffer(GetCmdBuffer(), source->buffer, staging, 1, &copy);
-  CompleteFrame(FrameCompletionMode::SubmitNoPresent);
-  WaitForGPU();
+  vkCmdCopyBuffer(cmd, source->buffer, staging, 1, &copy);
+  VkMemoryBarrier hostRead{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+  hostRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  hostRead.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+    0, 1, &hostRead, 0, nullptr, 0, nullptr);
+  if (frameOpen) {
+    vkEndCommandBuffer(cmd);
+    SubmitCurrentFrameAndWait(cmd);
+    vkResetCommandBuffer(cmd, 0);
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &begin);
+    m_lastPipeline = VK_NULL_HANDLE;
+    m_lastPipelineLayout = VK_NULL_HANDLE;
+    T8DeviceContext->actualShaderSet = nullptr;
+    T8DeviceContext->actualConstantBuffer = nullptr;
+    T8DeviceContext->actualIndexBuffer = nullptr;
+    T8DeviceContext->actualVertexBuffer = nullptr;
+    if (passOpen) {
+      if (target >= 0) PushRTLoad(target);
+      else EnsureBackbufferRenderPass();
+    }
+    m_viewport = viewport;
+    m_scissorRect = scissor;
+    vkCmdSetViewport(cmd, 0, 1, &m_viewport);
+    vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
+  } else {
+    SubmitTransientCommandBuffer(cmd);
+  }
   const bool mappedHere = mapped.pMappedData == nullptr;
   if (mappedHere && vmaMapMemory(GetAllocator(), allocation, &mapped.pMappedData) != VK_SUCCESS) {
     vmaDestroyBuffer(GetAllocator(), staging, allocation);

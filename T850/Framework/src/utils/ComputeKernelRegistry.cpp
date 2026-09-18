@@ -82,12 +82,12 @@ constexpr ComputeBindingLayoutDesc kArithmeticBindings[] = {
 
 constexpr ComputeBindingLayoutDesc kImagePatternWriteBindings[] = {
   {ComputeBindingType::Constants32, 0, 0, 4},
-  {ComputeBindingType::ReadWriteTexture, 0, 1, 0},
+  {ComputeBindingType::ReadWriteTexture, 0, 1, 0, ComputeStorageFormat::Rgba8Unorm},
 };
 
 constexpr ComputeBindingLayoutDesc kImagePatternReadBindings[] = {
   {ComputeBindingType::Constants32, 0, 0, 4},
-  {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
+  {ComputeBindingType::ReadOnlyTexture, 0, 1, 0, ComputeStorageFormat::Unspecified, true},
   {ComputeBindingType::ReadWriteBuffer, 0, 2, 0},
 };
 
@@ -97,14 +97,14 @@ constexpr ComputeBindingLayoutDesc kGodRaysBindings[] = {
   {ComputeBindingType::ReadOnlyTexture, 1, 2, 0},
   {ComputeBindingType::Sampler, 0, 3, 0},
   {ComputeBindingType::Sampler, 1, 4, 0},
-  {ComputeBindingType::ReadWriteTexture, 0, 5, 0},
+  {ComputeBindingType::ReadWriteTexture, 0, 5, 0, ComputeStorageFormat::Rgba8Unorm},
 };
 
 constexpr ComputeBindingLayoutDesc kBlurBindings[] = {
   {ComputeBindingType::Constants32, 0, 0, 32},
   {ComputeBindingType::ReadOnlyTexture, 0, 1, 0},
   {ComputeBindingType::Sampler, 0, 2, 0},
-  {ComputeBindingType::ReadWriteTexture, 0, 3, 0},
+  {ComputeBindingType::ReadWriteTexture, 0, 3, 0, ComputeStorageFormat::Rgba8Unorm},
 };
 
 constexpr ComputeBindingLayoutDesc kBrightBindings[] = {
@@ -113,7 +113,7 @@ constexpr ComputeBindingLayoutDesc kBrightBindings[] = {
   {ComputeBindingType::ReadOnlyTexture, 1, 2, 0},
   {ComputeBindingType::Sampler, 0, 3, 0},
   {ComputeBindingType::Sampler, 1, 4, 0},
-  {ComputeBindingType::ReadWriteTexture, 0, 5, 0},
+  {ComputeBindingType::ReadWriteTexture, 0, 5, 0, ComputeStorageFormat::Rgba8Unorm},
 };
 
 constexpr ComputeBindingLayoutDesc kHDRCompositeBindings[] = {
@@ -124,21 +124,23 @@ constexpr ComputeBindingLayoutDesc kHDRCompositeBindings[] = {
   {ComputeBindingType::Sampler, 0, 4, 0},
   {ComputeBindingType::Sampler, 1, 5, 0},
   {ComputeBindingType::Sampler, 2, 6, 0},
-  {ComputeBindingType::ReadWriteTexture, 0, 7, 0},
+  {ComputeBindingType::ReadWriteTexture, 0, 7, 0, ComputeStorageFormat::Rgba8Unorm},
 };
 
 constexpr ComputeBindingLayoutDesc kTorchParticleBindings[] = {
   {ComputeBindingType::Constants32, 0, 0, 56},
-  {ComputeBindingType::ReadWriteTexture, 0, 1, 0},
+  {ComputeBindingType::ReadWriteTexture, 0, 1, 0, ComputeStorageFormat::Rgba16Float},
+  {ComputeBindingType::ReadOnlyTexture, 0, 2, 0, ComputeStorageFormat::Unspecified, true},
 };
 
 constexpr std::string_view kBasePermutation[] = {"base"};
+constexpr std::string_view kArithmeticPermutations[] = {"base", "read-input"};
 constexpr std::string_view kBlurPermutations[] = {"horizontal", "vertical"};
 
 constexpr ComputeKernelDefinition kKernels[] = {
   {ComputeKernelId::Arithmetic, "CS_Arithmetic.hlsl", "CS",
    kArithmeticBindings, std::size(kArithmeticBindings),
-   kBasePermutation, std::size(kBasePermutation)},
+    kArithmeticPermutations, std::size(kArithmeticPermutations)},
   {ComputeKernelId::ImagePatternWrite, "CS_ImagePatternWrite.hlsl", "CS",
    kImagePatternWriteBindings, std::size(kImagePatternWriteBindings),
    kBasePermutation, std::size(kBasePermutation)},
@@ -188,6 +190,8 @@ bool SupportsComputePermutation(const ComputeKernelDefinition& kernel,
 void ConfigureComputePipelineDesc(const ComputeKernelDefinition& kernel,
                                   ComputePipelineDesc& pipeline) {
   pipeline.bindings.assign(kernel.bindings, kernel.bindings + kernel.bindingCount);
+  if (kernel.id == ComputeKernelId::Arithmetic && pipeline.permutationName == "read-input")
+    pipeline.bindings.push_back({ComputeBindingType::ReadOnlyBuffer, 0, 2, 0});
 }
 
 bool BuildComputeConstants(const ComputeKernelDefinition& kernel,

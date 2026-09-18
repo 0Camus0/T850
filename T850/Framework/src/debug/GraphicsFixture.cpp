@@ -116,8 +116,8 @@ FixtureRun RunDriver(GraphicsApi::E api, webgpu::ShaderFlow flow, HWND window, c
       for (const auto dimensions : {std::array<int, 2>{320, 240}, {257, 193}}) {
         Require(driver->ResizeSwapchain(dimensions[0], dimensions[1]), "Resize failed");
         const int target = driver->CreateRT(1, BaseRT::RGBA8, BaseRT::F32, dimensions[0], dimensions[1]);
-        for (unsigned frame = 0; frame < 3; ++frame) {
-          const bool offscreen = frame == 2;
+        for (unsigned frame = 0; frame < 12; ++frame) {
+          const bool offscreen = frame % 3 == 2;
           driver->BeginFrame(offscreen ? BaseDriver::FrameTargetMode::Offscreen : BaseDriver::FrameTargetMode::Swapchain);
           driver->PushRT(target);
           driver->ClearWithColor(0.04f, 0.07f, 0.12f, 1);
@@ -144,6 +144,14 @@ FixtureRun RunDriver(GraphicsApi::E api, webgpu::ShaderFlow flow, HWND window, c
           driver->GetTexture(blueTexture)->Set(*T8DeviceContext, 0, "TextureRGB");
           driver->GetTexture(blueTexture)->SetSampler(*T8DeviceContext, 0);
           T8DeviceContext->DrawIndexed(3, 0, 0);
+          if (frame == 7) {
+            for (unsigned snapshot = 0; snapshot < 5000; ++snapshot) {
+              constants.wvp[12] = snapshot % 2 ? 0.05f : -0.05f;
+              constant->UpdateFromBuffer(*T8DeviceContext, &constants);
+              static_cast<ConstantBuffer*>(constant.get())->Set(*T8DeviceContext, 0);
+              T8DeviceContext->DrawIndexed(3, 0, 0);
+            }
+          }
           if (!offscreen) {
             driver->PopRT();
             driver->ClearWithColor(0, 0, 0, 1);
@@ -166,7 +174,13 @@ FixtureRun RunDriver(GraphicsApi::E api, webgpu::ShaderFlow flow, HWND window, c
           }
           driver->EndFrame();
           driver->CompleteFrame(offscreen ? BaseDriver::FrameCompletionMode::SubmitNoPresent : BaseDriver::FrameCompletionMode::Present);
-          driver->WaitForGPU();
+          if (frame == 7) {
+            driver->WaitForGPU();
+            const auto rollover = output / (std::to_string(run) + "-" + tag + "-rollover-" + std::to_string(dimensions[0]));
+            driver->SaveRTToFile(target, 0, rollover.string());
+            result.images.push_back(ReadImage(rollover.string() + ".ppm"));
+          }
+          if (frame == 11) driver->WaitForGPU();
           MSG message{};
           while (PeekMessageW(&message, window, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
         }

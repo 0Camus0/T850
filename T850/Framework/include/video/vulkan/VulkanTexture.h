@@ -59,6 +59,7 @@ namespace t850 {
     void SetExternalLayout(VkImageLayout* layout) { m_externalLayout = layout; }
     float           m_samplerMaxAnisotropy = 1.0f;
     bool            m_isFloatTex = false;  // true for CreateFloatTexture textures
+    bool            m_storageUsage = false;
   private:
     VkImageLayout m_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkImageLayout* m_externalLayout = nullptr;

@@ -21,7 +21,7 @@ endif()
 list(PREPEND CMAKE_PREFIX_PATH "${T850_DAWN_PACKAGE_ROOT}")
 find_package(Dawn CONFIG REQUIRED)
 add_executable(DawnSurfaceProbe SurfaceProbe.cpp ../../Framework/src/video/webgpu/WebGPUContext.cpp
-  ../../Framework/src/utils/Log.cpp)
+  ../../Framework/src/utils/Log.cpp ../../Framework/src/debug/RuntimeTelemetry.cpp)
 target_include_directories(DawnSurfaceProbe PRIVATE ../../Framework/include ../../Framework "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(DawnSurfaceProbe PRIVATE dawn::webgpu_dawn user32)
 target_compile_options(DawnSurfaceProbe PRIVATE /Zc:preprocessor)

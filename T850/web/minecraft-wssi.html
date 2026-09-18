@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#16231f">
+  <title>Hackathon 2026: WSSI Web GPU Minecraft Demo</title>
+  <style>
+    :root { --ink: #16231f; --paper: #f0f4f1; --muted: #53655b; --line: #b8c6be; --accent: #f3ca64; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font-family: Bahnschrift, "Segoe UI", sans-serif; letter-spacing: 0; }
+    .welcome { position: relative; isolation: isolate; min-height: 480px; height: 76svh; max-height: 860px; display: flex; flex-direction: column; justify-content: space-between; padding: 32px max(28px, calc((100% - 1200px) / 2)); color: #fff; overflow: hidden; }
+    .landscape { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+    .welcome::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, rgba(10,24,18,.82), rgba(10,24,18,.28) 58%, transparent); }
+    .identity { display: flex; justify-content: space-between; gap: 20px; align-items: baseline; font: 14px Consolas, monospace; }
+    .identity strong { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; color: var(--accent); font: 600 24px Bahnschrift, "Segoe UI", sans-serif; }
+    #demo-version { color: #fff; font: 14px Consolas, monospace; white-space: nowrap; }
+    h1 { max-width: 700px; margin: 80px 0 28px; font-size: 58px; line-height: 1.08; font-weight: 600; text-wrap: balance; animation: reveal .5s ease-out; }
+    h1 .event { display: block; margin-bottom: 20px; color: #d4e2d9; font-size: 26px; font-weight: 400; }
+    .controls { max-width: 1200px; margin: auto; padding: 28px 0 36px; }
+    form { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(180px, 1fr) minmax(180px, 1.1fr); gap: 24px; align-items: end; }
+    label { display: grid; gap: 10px; font-size: 14px; font-weight: 500; }
+    input, select, button { width: 100%; min-width: 0; height: 52px; border: 1px solid var(--line); border-radius: 4px; padding: 0 16px; color: var(--ink); background: #fff; font: 18px Bahnschrift, "Segoe UI", sans-serif; }
+    button { display: flex; align-items: center; justify-content: center; gap: 12px; background: var(--accent); border-color: var(--accent); font-weight: 600; cursor: pointer; }
+    button:hover:not(:disabled) { background: #ffdb7f; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    :focus-visible { outline: 3px solid #16705a; outline-offset: 4px; }
+    #status { min-height: 20px; margin: 18px 0 0; color: var(--muted); font: 13px Consolas, monospace; overflow-wrap: anywhere; }
+    #status[data-error="true"] { color: #a33322; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 1256px) { .controls { margin: 0 28px; } }
+    @media (max-width: 700px) { .welcome { height: 66svh; min-height: 360px; padding: 24px; } h1 { font-size: 38px; margin: 52px 0 12px; } h1 .event { font-size: 22px; margin-bottom: 16px; } .controls { margin: 0 24px; padding-top: 24px; } form { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 20px 16px; } button { grid-column: 1 / -1; } .identity { font-size: 12px; } }
+    @media (prefers-reduced-motion: reduce) { h1 { animation: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="welcome" aria-labelledby="welcome-title">
+      <img class="landscape" src="previews/minecraft-wssi.png" alt="Block-built Minecraft landscape with trees and water" width="1520" height="790" fetchpriority="high">
+      <div class="identity"><strong>WSSI <span id="demo-version">v0.1.7</span></strong><span>HACKATHON / 2026</span></div>
+      <h1 id="welcome-title"><span class="event">Hackathon 2026:</span> WSSI Web GPU Minecraft Demo</h1>
+    </section>
+    <section class="controls" aria-label="Demo settings">
+      <form id="launch-form" action="DayScene.html" method="get">
+        <label for="enemies">Enemies (0-8)<input id="enemies" name="minecraftEnemyCount" type="number" min="0" max="8" step="1" value="1" required></label>
+        <label for="resolution">Resolution<select id="resolution"><option value="960x540">960 x 540</option><option value="1280x720" selected>1280 x 720</option><option value="1920x1080">1920 x 1080</option></select></label>
+        <button id="launch" type="submit" disabled>Launch</button>
+      </form>
+      <p id="status" role="status" aria-live="polite">Checking WebGPU...</p>
+      <noscript>JavaScript is required to launch this demo.</noscript>
+    </section>
+  </main>
+  <script type="module" src="minecraft-wssi.mjs"></script>
+</body>
+</html>

@@ -51,11 +51,15 @@ namespace t850 {
     Sampler
   };
 
+  enum class ComputeStorageFormat { Unspecified, Rgba8Unorm, Rgba16Float };
+
   struct ComputeBindingLayoutDesc {
     ComputeBindingType type = ComputeBindingType::Constants32;
     uint32_t shaderRegister = 0;
     uint32_t bindingIndex = 0;
     uint32_t constantCount = 0;
+    ComputeStorageFormat storageFormat = ComputeStorageFormat::Unspecified;
+    bool matchOutputExtent = false;
   };
 
   struct ComputePipelineDesc {
@@ -74,9 +78,15 @@ namespace t850 {
     std::string debugName;
   };
 
+  struct ComputeBindingDesc;
+
   class ComputePipeline {
   public:
     virtual ~ComputePipeline() = default;
+    bool SetValidatedLayout(const ComputePipelineDesc& desc,
+      const std::vector<ComputeBindingLayoutDesc>& reflected, bool portableIndices);
+    bool ValidateBindings(const std::vector<ComputeBindingDesc>& bindings) const;
+    std::vector<ComputeBindingLayoutDesc> bindingLayout;
     std::array<uint32_t, 3> threadGroupSize = {0, 0, 0};
   };
 

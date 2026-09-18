@@ -84,7 +84,7 @@ namespace Log {
   }
 
   static size_t GetProcessRAM_MB() {
-#ifdef OS_ANDROID
+#if defined(OS_ANDROID) || defined(__EMSCRIPTEN__)
     return 0;
 #elif defined(OS_WINDOWS)
     PROCESS_MEMORY_COUNTERS pmc;

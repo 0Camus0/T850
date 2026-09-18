@@ -2,10 +2,43 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 namespace t850 {
+inline uint16_t FloatToHalf(float value) {
+  if (std::isnan(value)) return 0x7e00u;
+  value = std::clamp(value, -65504.0f, 65504.0f);
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  const uint32_t sign = (bits >> 16) & 0x8000u;
+  int exponent = static_cast<int>((bits >> 23) & 0xffu) - 127 + 15;
+  uint32_t mantissa = bits & 0x7fffffu;
+  if (exponent <= 0) {
+    if (exponent < -10) return static_cast<uint16_t>(sign);
+    mantissa = (mantissa | 0x800000u) >> (1 - exponent);
+    return static_cast<uint16_t>(sign | ((mantissa + 0x1000u) >> 13));
+  }
+  mantissa += 0x1000u;
+  if (mantissa & 0x800000u) { mantissa = 0; ++exponent; }
+  if (exponent >= 31) return static_cast<uint16_t>(sign | 0x7bffu);
+  return static_cast<uint16_t>(sign | (static_cast<uint32_t>(exponent) << 10) | (mantissa >> 13));
+}
+
+inline float HalfToFloat(uint16_t value) {
+  const float sign = (value & 0x8000u) ? -1.0f : 1.0f;
+  const int exponent = int((value >> 10u) & 0x1Fu);
+  const int mantissa = int(value & 0x03FFu);
+  if (exponent == 0)
+    return sign * std::ldexp(float(mantissa), -24);
+  if (exponent == 31)
+    return mantissa ? std::numeric_limits<float>::quiet_NaN() : sign * std::numeric_limits<float>::infinity();
+  return sign * std::ldexp(float(1024 + mantissa), exponent - 25);
+}
+
 inline unsigned CalculateFullMipCount(unsigned width, unsigned height) {
   unsigned levels = 1;
   while (width > 1 || height > 1) {

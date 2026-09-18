@@ -14,6 +14,11 @@ endif()
 
 option(HEADLESS "HEADLESS" OFF)
 
+if(EMSCRIPTEN)
+	include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/WebBuild.cmake)
+	return()
+endif()
+
 if(ANDROID)
 	include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidBuild.cmake)
 	return()

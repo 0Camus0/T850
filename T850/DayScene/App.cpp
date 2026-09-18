@@ -37,6 +37,9 @@
 #include <utils/ConfigRuntime.h>
 #include <utils/ShaderPermutationDump.h>
 #include <core/ShaderTools.h>
+#ifdef __EMSCRIPTEN__
+#include <core/WebFramework.h>
+#endif
 #include <debug/Profiler.h>
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
@@ -245,7 +248,9 @@ int main(int arg,char ** args) try {
     ? static_cast<t850::AppBase*>(new ComputeSelfTestApp())
     : static_cast<t850::AppBase*>(new App());
   int result = 0;
-#ifdef OS_LINUX
+#ifdef OS_WEB
+  pFrameWork = new t850::WebFramework(pApp);
+#elif defined(OS_LINUX)
   pFrameWork = new t850::LinuxFramework((t850::AppBase*)pApp);
 #elif defined(OS_WINDOWS)
   pFrameWork = new t850::Win32Framework((t850::AppBase*)pApp);

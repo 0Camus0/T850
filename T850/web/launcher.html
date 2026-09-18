@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>T850 | Scenes</title>
+  <style>
+    :root { --background: #151819; --surface: #202526; --line: #3b4546; --text: #eaf0ed; --muted: #a5b7b0; --accent: #bce876; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: linear-gradient(135deg, #151819, #202826); font-family: Bahnschrift, "Segoe UI", sans-serif; letter-spacing: 0; min-height: 100vh; }
+    header, main { max-width: 1256px; margin: auto; padding: 24px 28px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--line); }
+    h1 { margin: 0; font-size: 32px; font-weight: 600; }
+    h1 span { margin-left: 12px; font-size: 15px; font-weight: 400; color: var(--muted); }
+    .settings { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+    label { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+    select { font: inherit; padding: 8px 12px; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
+    #status { margin: 0; font: 12px Consolas, monospace; color: var(--muted); }
+    #scenes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+    .scene { color: inherit; text-decoration: none; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; transition: border-color .15s; }
+    .scene:hover, .scene:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 3px; }
+    .scene img { display: block; width: 100%; height: auto; aspect-ratio: 16/9; object-fit: cover; background: #303c38; }
+    .scene footer { display: flex; justify-content: space-between; gap: 12px; padding: 15px; align-items: center; }
+    h2 { margin: 0; font-size: 18px; font-weight: 500; }
+    .play { color: var(--accent); font-size: 14px; }
+    .scene[aria-disabled="true"] { opacity: .6; cursor: not-allowed; }
+    @media (max-width: 880px) { #scenes { grid-template-columns: repeat(2, minmax(0, 1fr)); } header { align-items: flex-start; flex-direction: column; gap: 16px; } }
+    @media (max-width: 520px) { #scenes { grid-template-columns: minmax(0, 1fr); } header, main { padding: 20px; } .settings { gap: 12px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>T850 <span>Scenes</span></h1>
+    <div class="settings">
+      <label for="resolution">Resolution <select id="resolution"><option value="960x540">960 x 540</option><option value="1280x720" selected>1280 x 720</option><option value="1920x1080">1920 x 1080</option></select></label>
+      <p id="status" role="status">Checking WebGPU</p>
+    </div>
+  </header>
+  <main><div id="scenes" aria-label="Scenes"></div></main>
+  <script type="module" src="launcher.mjs"></script>
+</body>
+</html>

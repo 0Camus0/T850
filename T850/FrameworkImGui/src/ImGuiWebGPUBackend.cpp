@@ -1,7 +1,7 @@
 #include <pch.h>
 #include <imgui/ImGuiRendererBackend.h>
 
-#if defined(_WIN32) && defined(_M_X64)
+#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
 #include <video/webgpu/WebGPUDriver.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_wgpu.h>
@@ -39,6 +39,11 @@ public:
   void NewFrame() override {
     ImGui_ImplWGPU_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+#ifdef __EMSCRIPTEN__
+    auto& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(m_driver->width), static_cast<float>(m_driver->height));
+    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+#endif
   }
   void RenderDrawData(ImDrawData* drawData) override {
     if (auto pass = m_driver->OverlayPass()) ImGui_ImplWGPU_RenderDrawData(drawData, pass);

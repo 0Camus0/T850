@@ -70,25 +70,6 @@ std::string CompilerSignature() {
   return std::string("T850_WGSL_V1;") + T850_DAWN_SHADER_ABI;
 }
 
-const char* ShaderFlowName(ShaderFlow flow) {
-  switch (flow) {
-  case ShaderFlow::Auto: return "auto";
-  case ShaderFlow::Wgsl: return "wgsl";
-  case ShaderFlow::Spirv: return "spirv";
-  }
-  return "invalid";
-}
-
-bool ParseShaderFlow(const std::string& name, ShaderFlow& flow) {
-  for (const auto candidate : {ShaderFlow::Auto, ShaderFlow::Wgsl, ShaderFlow::Spirv}) {
-    if (name == ShaderFlowName(candidate)) {
-      flow = candidate;
-      return true;
-    }
-  }
-  return false;
-}
-
 bool LoadShaderFiles(const ShaderFileRequest& request, ShaderArtifact& artifact,
                      ShaderFlowReport& report, std::string& diagnostic, const std::string& specialization) {
   artifact = {};

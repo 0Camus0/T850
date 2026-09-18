@@ -3,6 +3,9 @@
 
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
+#include <utils/ComputeKernelRegistry.h>
+#include <utils/Camera.h>
+#include <scene/SceneProp.h>
 #include <video/BaseDriver.h>
 
 #include <array>
@@ -29,6 +32,9 @@ namespace {
     pipelineDesc.debugName = shaderPath;
     pipelineDesc.permutationName = "base";
     pipelineDesc.bindings = std::move(bindings);
+    for (auto& binding : pipelineDesc.bindings)
+      if (binding.type == ComputeBindingType::ReadWriteTexture && binding.storageFormat == ComputeStorageFormat::Unspecified)
+        binding.storageFormat = ComputeStorageFormat::Rgba8Unorm;
     std::unique_ptr<ComputePipeline> pipeline = driver->CreateComputePipeline(pipelineDesc);
     if (!pipeline || !pipeline->threadGroupSize[0] ||
         !pipeline->threadGroupSize[1] || !pipeline->threadGroupSize[2]) {
@@ -158,6 +164,191 @@ namespace {
     T8_LOG_INFO("[ComputeImage] PASS: API=%s extent=%ux%u dispatch=%ux%u",
                 driver->ApiTag(), width, height, writeGroupsX, writeGroupsY);
     return true;
+  }
+
+  bool ValidateParticleDepth(BaseDriver* driver, ComputePipeline& reader) {
+    const auto* kernel = FindComputeKernel("CS_TorchParticles.hlsl");
+    if (!kernel) return false;
+    auto particles = CreateTestPipeline(driver, "Shaders/CS_TorchParticles.hlsl",
+      {kernel->bindings, kernel->bindings + kernel->bindingCount});
+    if (!particles) return false;
+
+    constexpr uint32_t width = 7;
+    constexpr uint32_t height = 5;
+    const int target = driver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING,
+      width, height, false, true);
+    if (target < 0) return false;
+    auto* texture = driver->GetRTTexture(target, BaseDriver::COLOR0_ATTACHMENT);
+    ComputeBufferDesc bufferDesc;
+    bufferDesc.byteWidth = width * height * sizeof(uint32_t);
+    bufferDesc.structureStride = sizeof(uint32_t);
+    bufferDesc.access = ComputeBufferAccess::ReadWrite;
+    bufferDesc.debugName = "T850 Particle Depth Readback";
+    auto output = driver->CreateComputeBuffer(bufferDesc);
+
+    Camera camera;
+    camera.VP.Identity();
+    SceneProps props;
+    props.AddCamera(&camera);
+    props.ParticleEmitterEnabled = 1;
+    props.ParticleCount = 1;
+    props.ParticleLifetime = 1.0f;
+    props.ParticleSize = 2.0f;
+    props.ParticleColor0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+    props.ParticleWobble.w = 1.0f;
+    props.ParticleFade = XVECTOR3(1.0f, 1.0f, 0.1f, 0.001f);
+    props.ParticleFadeOutStart = 0.999f;
+    props.ParticleIntensity = 1.0f;
+    const std::array<uint32_t, 4> readConstants = {width, height, 0, 0};
+    bool passed = texture && output;
+    for (unsigned scenario = 0; scenario < 5 && passed; ++scenario) {
+      std::vector<unsigned char> depthPixels(width * height * 4, 0);
+      for (uint32_t pixel = 0; pixel < width * height; ++pixel)
+        depthPixels[pixel * 4] = scenario == 1 || (scenario == 2 && pixel % width < 3) ? 255 : 0;
+      const int depthId = driver->CreateTextureFromMemory(
+        "particle-test-depth-" + std::to_string(scenario), depthPixels.data(), width, height, 4);
+      auto* depth = driver->GetTexture(depthId);
+      props.ParticleEmitterPosition = XVECTOR3(0.0f, 0.0f,
+        scenario == 3 ? -0.1f : scenario == 4 ? 1.1f : 0.5f, 1.0f);
+      std::vector<uint32_t> constants;
+      std::string error;
+      passed = depth && BuildComputeConstants(*kernel, {&props, width, height, "base"}, constants, error);
+      if (passed) {
+        const std::vector<ComputeBindingDesc> bindings = {
+          {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+          {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, texture},
+          {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, depth}
+        };
+        const std::vector<ComputeBindingDesc> readBindings = {
+          {ComputeBindingType::Constants32, 0, nullptr, readConstants.data(), 4},
+          {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, texture},
+          {ComputeBindingType::ReadWriteBuffer, 0, output.get(), nullptr, 0}
+        };
+        std::array<uint32_t, width * height> actual{};
+        passed = driver->DispatchCompute(*particles, bindings, 1, 1, 1) &&
+          driver->DispatchCompute(reader, readBindings, 1, 1, 1) &&
+          driver->ReadComputeBuffer(*output, actual.data(), sizeof(actual));
+        for (uint32_t pixel = 0; pixel < actual.size() && passed; ++pixel) {
+          const bool visible = scenario == 0 || (scenario == 2 && pixel % width >= 3);
+          const uint32_t expected = visible ? 0xff0000ffu : 0u;
+          if (actual[pixel] != expected) {
+            T8_LOG_ERROR("[ComputeParticleDepth] scenario=%u pixel=%u actual=0x%08X expected=0x%08X",
+              scenario, pixel, actual[pixel], expected);
+            passed = false;
+          }
+        }
+      }
+      driver->FlushGPUResources();
+      if (depthId >= 0) driver->DestroyTexture(depthId);
+    }
+    driver->FlushGPUResources();
+    output.reset();
+    driver->DestroyRT(target);
+    if (passed) T8_LOG_INFO("[ComputeParticleDepth] PASS: API=%s visible, occluded, partial and clip limits", driver->ApiTag());
+    else T8_LOG_ERROR("[ComputeParticleDepth] FAIL: API=%s", driver->ApiTag());
+    return passed;
+  }
+
+  bool ValidateBufferChain(BaseDriver* driver) {
+    ComputePipelineDesc desc;
+    desc.debugName = "Shaders/CS_Arithmetic.hlsl";
+    if (!ResourceLocator::Instance().ReadText(desc.debugName, desc.source)) return false;
+    desc.bindings = {{ComputeBindingType::Constants32, 0, 0, 4},
+                    {ComputeBindingType::ReadWriteBuffer, 0, 1, 0}};
+    for (unsigned scenario = 0; scenario < 4; ++scenario) {
+      auto invalid = desc;
+      if (scenario == 0) invalid.bindings[0].constantCount = 3;
+      if (scenario == 1) invalid.bindings.pop_back();
+      if (scenario == 2) invalid.bindings[1].type = ComputeBindingType::ReadOnlyBuffer;
+      if (scenario == 3) invalid.bindings[1].bindingIndex = 0;
+      if (driver->CreateComputePipeline(invalid)) return false;
+    }
+    auto producer = driver->CreateComputePipeline(desc);
+    desc.defines = {"COMPUTE_READ_INPUT 1"};
+    desc.permutationName = "read-input";
+    desc.bindings.push_back({ComputeBindingType::ReadOnlyBuffer, 0, 2, 0});
+    auto consumer = driver->CreateComputePipeline(desc);
+    if (!producer || !consumer) return false;
+    constexpr uint32_t count = 64;
+    std::array<uint32_t, count> initial{};
+    initial.fill(9);
+    ComputeBufferDesc bufferDesc;
+    bufferDesc.byteWidth = sizeof(initial);
+    bufferDesc.structureStride = sizeof(uint32_t);
+    auto intermediate = driver->CreateComputeBuffer(bufferDesc, initial.data());
+    auto output = driver->CreateComputeBuffer(bufferDesc);
+    bufferDesc.access = ComputeBufferAccess::ReadOnly;
+    auto readOnly = driver->CreateComputeBuffer(bufferDesc, initial.data());
+    if (!intermediate || !output || !readOnly) return false;
+    std::array<uint32_t, count> initialRead{};
+    if (driver->ReadComputeBuffer(*readOnly, initialRead.data(), 3)) return false;
+    if (!driver->ReadComputeBuffer(*readOnly, initialRead.data(), sizeof(initialRead)) || initialRead != initial)
+      return false;
+    std::array<uint32_t, 4> constants = {count, 3, 2, 17};
+    std::vector<ComputeBindingDesc> writeBindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, constants.data(), 4},
+      {ComputeBindingType::ReadWriteBuffer, 0, readOnly.get()}
+    };
+    bool passed = !driver->DispatchCompute(*producer, writeBindings, 1, 1, 1);
+    std::vector<ComputeBindingDesc> readBindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, constants.data(), 4},
+      {ComputeBindingType::ReadWriteBuffer, 0, output.get()},
+      {ComputeBindingType::ReadOnlyBuffer, 0, intermediate.get()}
+    };
+    auto aliased = readBindings;
+    aliased[2].buffer = output.get();
+    passed = passed && !driver->DispatchCompute(*consumer, aliased, 1, 1, 1);
+    auto incomplete = readBindings;
+    incomplete.pop_back();
+    passed = passed && !driver->DispatchCompute(*consumer, incomplete, 1, 1, 1);
+    for (uint32_t iteration = 0; iteration < 4 && passed; ++iteration) {
+      if (iteration != 0) {
+        writeBindings[1].buffer = intermediate.get();
+        passed = driver->DispatchCompute(*producer, writeBindings, 1, 1, 1);
+      }
+      std::array<uint32_t, count> actual{};
+      passed = passed && driver->DispatchCompute(*consumer, readBindings, 1, 1, 1);
+      if (iteration == 2) driver->CompleteFrame(BaseDriver::FrameCompletionMode::SubmitNoPresent);
+      passed = passed && driver->ReadComputeBuffer(*output, actual.data(), sizeof(actual));
+      for (uint32_t index = 0; index < count && passed; ++index) {
+        const uint32_t input = iteration == 0 ? 9 : ((index + 3) * 2) ^ 17;
+        passed = actual[index] == (((input + 3) * 2) ^ 17);
+      }
+    }
+    if (passed) {
+      driver->BeginFrame(BaseDriver::FrameTargetMode::Offscreen);
+      passed = driver->DispatchCompute(*consumer, readBindings, 1, 1, 1);
+      producer.reset();
+      consumer.reset();
+      intermediate.reset();
+      driver->CompleteFrame(BaseDriver::FrameCompletionMode::SubmitNoPresent);
+      std::array<uint32_t, count> actual{};
+      passed = passed && driver->ReadComputeBuffer(*output, actual.data(), sizeof(actual));
+      for (uint32_t index = 0; index < count && passed; ++index)
+        passed = actual[index] == ((((((index + 3) * 2) ^ 17) + 3) * 2) ^ 17);
+    }
+    auto stateProbe = driver->CreateComputePipeline(desc);
+    const int target = driver->CreateRT(1, BaseRT::RGBA8, BaseRT::NOTHING, 7, 5);
+    if (target < 0 || !stateProbe) passed = false;
+    if (passed) {
+      driver->BeginFrame(BaseDriver::FrameTargetMode::Offscreen);
+      driver->PushRT(target);
+      driver->ClearWithColor(1, 0, 0, 1);
+      passed = !driver->DispatchCompute(*stateProbe, {}, 1, 1, 1) && driver->CurrentRT == target;
+      passed = passed && driver->ReadComputeBuffer(*readOnly, initialRead.data(), sizeof(initialRead)) &&
+        initialRead == initial && driver->CurrentRT == target;
+      driver->ClearWithColor(0, 1, 0, 1);
+      driver->PopRT();
+      driver->CompleteFrame(BaseDriver::FrameCompletionMode::SubmitNoPresent);
+      float color[4] = {};
+      passed = passed && driver->ReadRTColorFloat(target, BaseDriver::COLOR0_ATTACHMENT, color) &&
+        color[0] == 0 && color[1] == 1;
+    }
+    driver->FlushGPUResources();
+    if (target >= 0) driver->DestroyRT(target);
+    T8_LOG_INFO("[ComputeBufferChain] %s: API=%s upload, read-only consumption and repeated writes",
+      passed ? "PASS" : "FAIL", driver->ApiTag());
+    return passed;
   }
 
 } // namespace
@@ -339,6 +530,19 @@ namespace {
     if (!writer || !reader)
       return 1;
 
+    const int wrongFormat = driver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING, 7, 5, false, true);
+    if (wrongFormat < 0) return 1;
+    const std::array<uint32_t, 4> constants = {7, 5, 1, 0};
+    const std::vector<ComputeBindingDesc> invalidBindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, constants.data(), 4},
+      {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0,
+        driver->GetRTTexture(wrongFormat, BaseDriver::COLOR0_ATTACHMENT)}
+    };
+    const bool rejected = !driver->DispatchCompute(*writer, invalidBindings, 1, 1, 1);
+    driver->FlushGPUResources();
+    driver->DestroyRT(wrongFormat);
+    if (!rejected) return 1;
+
     constexpr std::array<std::array<uint32_t, 2>, 3> extents = {{
       {1, 1}, {7, 5}, {257, 129}
     }};
@@ -348,11 +552,11 @@ namespace {
                                37u + static_cast<uint32_t>(index)))
         return 1;
     }
-    return 0;
+    return ValidateParticleDepth(driver, *reader) ? 0 : 1;
   }
 
   int RunComputeSelfTests(BaseDriver* driver) {
-    if (RunComputeArithmeticSelfTest(driver) != 0 ||
+    if (!ValidateBufferChain(driver) || RunComputeArithmeticSelfTest(driver) != 0 ||
         RunComputeImageSelfTest(driver) != 0) {
       T8_LOG_ERROR("[ComputeSelfTest] FAIL");
       return 1;

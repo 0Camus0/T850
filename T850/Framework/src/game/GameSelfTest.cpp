@@ -44,6 +44,7 @@
 #include <core/Core.h>
 #include <utils/XDataBase.h>
 #include <video/TextureAtlas.h>
+#include <glaze/glaze.hpp>
 
 #include <cstring>
 #include <filesystem>
@@ -54,6 +55,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace t850 { extern Device* T8Device; }
 
 namespace t850::game {
 namespace {
@@ -1817,11 +1820,50 @@ public:
   void PopRT() override {}
   void FlushGPUResources() override { events.push_back("flush"); }
   bool SupportsComputeShaders() const override { return true; }
+  bool SupportsComputeTextures() const override { return true; }
   std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override {
-    class NullComputePipeline final : public ComputePipeline {};
+    class NullComputePipeline final : public ComputePipeline {
+    public:
+      explicit NullComputePipeline(std::vector<std::string>& events) : events(events) { threadGroupSize = {8, 8, 1}; }
+      ~NullComputePipeline() override { events.push_back("retire-pipeline"); }
+    private:
+      std::vector<std::string>& events;
+    };
     computePipelines.push_back(desc);
-    return std::make_unique<NullComputePipeline>();
+    return std::make_unique<NullComputePipeline>(events);
   }
+};
+
+class LifecycleTestDevice final : public Device {
+public:
+  explicit LifecycleTestDevice(std::vector<std::string>& events) : events(events) {}
+  void* GetAPIObject() const override { return nullptr; }
+  void** GetAPIObjectReference() const override { return nullptr; }
+  void release() override {}
+  Buffer* CreateBuffer(BufferType::E, BufferDesc, void*) override { return nullptr; }
+  ShaderBase* CreateShader(std::string, std::string, ShaderKey, const std::string&, const std::string&) override { return nullptr; }
+  Texture* CreateTexture(std::string) override { return nullptr; }
+  Texture* CreateTextureFromMemory(const unsigned char*, int, int, int, std::string) override { return nullptr; }
+  Texture* CreateCubeMap(const unsigned char*, int, int) override { return nullptr; }
+  Texture* CreateFloatTexture(int, int, const float*) override { return nullptr; }
+  Texture* CreateFloatCubeMap(int, int, const float*) override { return nullptr; }
+  BaseRT* CreateRT(int count, int, int, int, int, bool, bool) override {
+    class NullRenderTarget final : public BaseRT {
+    public:
+      explicit NullRenderTarget(std::vector<std::string>& events) : events(events) { pDepthTexture = nullptr; }
+      bool LoadAPIRT() override { return true; }
+      void DestroyAPIRT() override { events.push_back("destroy-target"); }
+      void Set(const DeviceContext&) override {}
+      void ChangeCubeDepthTexture(int) override {}
+    private:
+      std::vector<std::string>& events;
+    };
+    auto* target = new NullRenderTarget(events);
+    target->vColorTextures.resize(count, nullptr);
+    return target;
+  }
+private:
+  std::vector<std::string>& events;
 };
 
 class LifecycleTestScene final : public SceneBase {
@@ -2203,6 +2245,37 @@ void TestTypedComputeGraphValidation() {
   RenderGraph graph;
   Require(graph.Load(writeGraph("_valid_compute_graph.json", validGraph).string()),
           "valid typed compute graph was rejected");
+
+  {
+    const auto shaderDirectory = files.Add("_graph_compute_sources");
+    std::filesystem::create_directories(shaderDirectory);
+    const auto shaderPath = shaderDirectory / "CS_Blur.hlsl";
+    { std::ofstream output(shaderPath); output << "[numthreads(8, 8, 1)] void CS() {}\n"; }
+    RenderGraph teardownGraph;
+    Require(teardownGraph.Load(writeGraph("_teardown_compute_graph.json",
+      replaceOnce(validGraph, "\"Shaders/CS_Blur.hlsl\"", glz::write_json(shaderPath.generic_string()).value())).string()),
+      "cannot load self-contained graph teardown fixture");
+    NullTestDriver driver;
+    LifecycleTestDevice device(driver.events);
+    struct StateGuard {
+      Device* previousDevice = T8Device;
+      Config::PostProcessMode previousMode = g_config.postProcessMode;
+      ~StateGuard() { T8Device = previousDevice; g_config.postProcessMode = previousMode; }
+    } guard;
+    T8Device = &device;
+    g_config.postProcessMode = Config::PostProcessMode::Compute;
+    SceneProps props;
+    for (int rebuild = 0; rebuild < 2; ++rebuild) {
+      teardownGraph.CreateRenderTargets(&driver, props);
+      driver.events.clear();
+      teardownGraph.DestroyRenderTargets(&driver);
+      Require(driver.events == std::vector<std::string>{"retire-pipeline", "flush", "destroy-target", "destroy-target"},
+              "graph must retire pipelines before flushing, then destroy target views");
+      driver.events.clear();
+      teardownGraph.DestroyRenderTargets(&driver);
+      Require(driver.events.empty(), "empty graph teardown must not flush or destroy resources twice");
+    }
+  }
 
   RenderGraphDesc descriptor;
   const std::string unknownKey = replaceOnce(

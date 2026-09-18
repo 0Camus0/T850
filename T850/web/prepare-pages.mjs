@@ -5,7 +5,7 @@ import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { minecraftAssetSelection } from './minecraft-assets.mjs';
-import { loadCloudflareConfig } from './cloudflare-config.mjs';
+import { loadCloudflareConfig, loadCloudResources } from './cloudflare-config.mjs';
 
 const { values } = parseArgs({ options: { config: { type: 'string' }, 'minecraft-only': { type: 'boolean' } } });
 const webRoot = dirname(fileURLToPath(import.meta.url));
@@ -16,25 +16,7 @@ const output = join(sourceRoot, minecraftOnly ? 'build/pages-minecraft' : 'build
 const payloads = join(sourceRoot, 'build/pages-r2');
 const limit = 25 * 1024 * 1024;
 const selection = minecraftOnly ? minecraftAssetSelection(JSON.parse(await readFile(join(sourceRoot, 'Assets/Scenes/Minecraft.t8scene'), 'utf8'))) : null;
-const origins = new Map(config.r2Buckets.map(bucket => [new URL(bucket.manifestUrl).origin, bucket]));
-const cloud = new Map();
-for (const bucket of config.r2Buckets) {
-  const response = await fetch(bucket.manifestUrl, { redirect: 'error' });
-  if (!response.ok) throw new Error(`Manifest unavailable: ${response.status}`);
-  const manifest = await response.json();
-  for (const entry of manifest.assets ?? []) {
-    const url = new URL(entry.url);
-    const location = origins.get(url.origin);
-    if (!location || url.username || url.password || url.search || url.hash) throw new Error('Manifest points outside the approved public R2 buckets');
-    const resource = entry.localRelativePath ?? `${entry.kind === 'texture' ? 'Textures' : 'Models'}/${entry.key}`;
-    if (!resource || resource.includes('\\') || resource.startsWith('/') || resource.split('/').some(part => part === '..' || part === '.'))
-      throw new Error('Unsafe cloud resource path');
-    cloud.set(resource, {
-      binding: location.binding, key: decodeURIComponent(url.pathname.slice(1)), url: url.href,
-      contentType: entry.contentType ?? 'application/octet-stream', size: entry.size,
-    });
-  }
-}
+const cloud = await loadCloudResources(config.r2Buckets);
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await mkdir(payloads, { recursive: true });

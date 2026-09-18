@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { createAssetHandler } from './pages-worker.mjs';
 import { minecraftAssetSelection } from './minecraft-assets.mjs';
-import { cloudflareWranglerConfig, validateCloudflareConfig } from './cloudflare-config.mjs';
+import { cloudflareWranglerConfig, loadCloudResources, validateCloudflareConfig } from './cloudflare-config.mjs';
 import { deployPages } from './deploy-pages.mjs';
 
 test('Cloudflare deploy refuses absent credentials before any child process and dry-run does no deployment', async () => {
@@ -51,6 +51,29 @@ test('Cloudflare deployment config requires explicit credentials and never seria
   }
   assert.throws(() => validateCloudflareConfig({ ...input, accountId: 'invalid' }, { env: {} }), /accountId/);
   assert.throws(() => validateCloudflareConfig({ ...input, r2Buckets: [input.r2Buckets[0], input.r2Buckets[0]] }, { env: {} }), /duplicate/);
+});
+
+test('cloud manifests reject duplicate resource paths before routes can be overwritten', async () => {
+  const buckets = [
+    { binding: 'MODELS', manifestUrl: 'https://models.example.com/manifest.json' },
+    { binding: 'TEXTURES', manifestUrl: 'https://textures.example.com/manifest.json' },
+  ];
+  const model = { localRelativePath: 'Models/test.glb', url: 'https://models.example.com/test.glb', size: 4 };
+  const texture = { kind: 'texture', key: 'test.png', url: 'https://textures.example.com/test.png' };
+  const load = assets => loadCloudResources(buckets, async (url, options) => {
+    assert.equal(options.redirect, 'error');
+    return { ok: true, json: async () => ({ assets: assets[buckets.findIndex(bucket => bucket.manifestUrl === url)] }) };
+  });
+  const routes = await load([[model], [texture]]);
+  assert.equal(routes.size, 2);
+  assert.equal(routes.get('Models/test.glb').binding, 'MODELS');
+  assert.equal(routes.get('Textures/test.png').binding, 'TEXTURES');
+  await assert.rejects(load([[model, model], []]), /Duplicate cloud resource/);
+  for (const path of ['Models/test.glb', 'models/TEST.glb']) {
+    await assert.rejects(load([[model], [{ ...texture, localRelativePath: path }]]), /Duplicate cloud resource/);
+  }
+  await assert.rejects(load([[{ ...model, url: 'https://unapproved.example.com/test.glb' }], []]), /approved public R2/);
+  await assert.rejects(load([[{ ...model, localRelativePath: '../private.glb' }], []]), /Unsafe cloud resource/);
 });
 
 test('Minecraft package rejects unrelated scene assets and retains declared dependencies', async () => {

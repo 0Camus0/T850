@@ -245,3 +245,33 @@ The particle depth omission and FPS camera-grounding jitter were fixed before
 this assessment. They should retain their regressions, not be reopened as pending.
 The initial review was read-only; the subsequent requested remediation implements
 C01-C06 before publication. No deployment or merge is part of this work.
+
+## PR Review Follow-Up
+
+The PR review correctly identified duplicate Pages manifest paths, an omitted
+server test in the documented npm command, and deferred Vulkan pipeline releases
+being enqueued after the graph flush. Manifest loading now rejects exact and
+case-insensitive duplicates before modifying staging output. The npm command runs
+both suites. Graph teardown retires pipelines before its existing flush, then
+destroys target views; shared tests cover the ordering and repeated teardown.
+
+Three proposed correctness fixes were not supported by the API contracts or
+implementation:
+
+- WebGPU texture destruction happens after queue submission. The
+      [WebGPU specification](https://www.w3.org/TR/webgpu/#dom-gputexture-destroy)
+      preserves previously submitted uses until completion; no extra completion
+      queue is needed for destruction (unlike buffer pooling and reuse).
+- D3D12 command-list reset does not require resetting the allocator first.
+      [Microsoft's recording guidance](https://learn.microsoft.com/en-us/windows/win32/direct3d12/recording-command-lists-and-bundles)
+      explicitly permits recording multiple lists into an allocator before reset.
+      The existing readback waits for submission and resets the closed list; the
+      frame allocator is reclaimed through the normal frame lifecycle.
+- The local server stores file paths and streams the file on every request,
+      not cached bytes. Regression coverage now replaces same-sized assets and
+      shader packages in place, reuses the server, and checks the updated contents.
+
+The persistent-asset-cache suggestion is a separate optimization, not a broken
+configured cache: `/persistent` is for generated runtime data. Authored assets
+use session-local `/assets`; persisting them without version validation would
+introduce stale data across rebuilds and deployments. That policy is unchanged.

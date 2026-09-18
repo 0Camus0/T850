@@ -17,6 +17,12 @@ struct Vec3f {
   float z = 0.0f;
 };
 
+struct Vec3i {
+  int x = 0;
+  int y = 0;
+  int z = 0;
+};
+
 struct SceneObjectPhysicsDesc {
   bool enabled = false;
   std::string body_type = "none";
@@ -572,6 +578,9 @@ struct SceneVoxelPlayerDesc {
   float debug_camera_speed = 50.0f;
   float look_pitch_limit = 1.55f;
   float collision_sweep_step = 0.25f;
+  int max_health = 5;
+  int contact_damage = 1;
+  float health_regeneration_seconds = 60.0f;
 };
 
 struct SceneVoxelDayNightDesc {
@@ -626,6 +635,9 @@ struct SceneVoxelMobDesc {
   float half_width = 0.25f;
   float height = 1.4f;
   float vertical_follow_speed = 8.0f;
+  bool glowing_eyes = false;
+  Vec3f glowing_eye_color = {1.0f, 1.0f, 1.0f};
+  float glowing_eye_intensity = 1.0f;
   std::vector<SceneVoxelBoxPartDesc> parts;
 };
 
@@ -689,6 +701,7 @@ struct SceneVoxelTorchParticleAppearanceDesc {
 struct SceneVoxelTorchDesc {
   bool enabled = false;
   float distance_from_spawn = 0.0f;
+  std::vector<Vec3f> positions;
   float base_width = 0.0f;
   float base_height = 0.0f;
   std::string base_block;
@@ -711,6 +724,25 @@ struct SceneVoxelTorchDesc {
   SceneVoxelControlRangeDesc particle_spread_control;
   SceneVoxelControlRangeDesc particle_size_control;
   SceneVoxelControlRangeDesc particle_spawn_offset_control;
+};
+
+struct SceneVoxelBlockRegionDesc {
+  Vec3i min;
+  Vec3i max;
+  std::string block;
+};
+
+struct SceneVoxelBoxArrayDesc {
+  Vec3f origin;
+  Vec3i count = {1, 1, 1};
+  Vec3f size = {1.0f, 1.0f, 1.0f};
+  std::string block;
+};
+
+struct SceneVoxelStructureDesc {
+  std::string name;
+  std::vector<SceneVoxelBlockRegionDesc> voxel_regions;
+  std::vector<SceneVoxelBoxArrayDesc> box_arrays;
 };
 
 struct SceneVoxelInteractionDesc {
@@ -772,6 +804,7 @@ struct SceneVoxelWorldDesc {
   SceneVoxelWeaponDesc weapon;
   SceneVoxelTorchDesc torch;
   SceneVoxelInteractionDesc interaction;
+  std::vector<SceneVoxelStructureDesc> structures;
   std::vector<SceneVoxelBlockDesc> blocks;
   std::vector<std::string> hotbar;
 };

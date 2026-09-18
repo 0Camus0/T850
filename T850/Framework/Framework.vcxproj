@@ -48,6 +48,7 @@
     <ClInclude Include="include\game\GameValidation.h" />
     <ClInclude Include="include\game\InputFrame.h" />
     <ClInclude Include="include\game\MovementComponent.h" />
+    <ClInclude Include="include\game\RegeneratingHealthState.h" />
     <ClInclude Include="include\game\StateMachine.h" />
     <ClInclude Include="include\game\examples\HealthComponent.h" />
     <ClInclude Include="include\game\examples\GroupManager.h" />

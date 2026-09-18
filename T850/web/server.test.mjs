@@ -16,6 +16,7 @@ test('browser launch isolates ports, reuses matching servers and preserves URL d
     for (const file of ['DayScene.html', 'DayScene.js', 'DayScene.wasm', 'scenes.json']) await writeFile(join(root, 'site', file), 'test');
     await writeFile(join(root, 'site', 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
     await writeFile(join(root, 'assets', 'model with spaces.glb'), 'asset');
+    await writeFile(join(root, 'shaders', 'test.json'), '{"version":1}');
     blocker.listen(0, '127.0.0.1');
     await once(blocker, 'listening');
     const port = blocker.address().port;
@@ -62,12 +63,22 @@ test('browser launch isolates ports, reuses matching servers and preserves URL d
     assert.match(reused.output, /Reusing T850/);
     assert.equal(reused.command.file, process.execPath);
     assert.deepEqual(reused.command.args, [reused.url.href]);
+    await writeFile(join(root, 'assets', 'model with spaces.glb'), 'fresh');
+    await writeFile(join(root, 'shaders', 'test.json'), '{"version":2}');
+    const updated = await launch(process.execPath);
+    assert.equal(updated.url.port, first.url.port);
+    assert.match(updated.output, /Reusing T850/);
+    const asset = await fetch(new URL('assets/model%20with%20spaces.glb', updated.url));
+    assert.equal(asset.headers.get('cache-control'), 'no-cache');
+    assert.equal(await asset.text(), 'fresh');
+    const shader = await fetch(new URL('assets/WebShaders/test.json', updated.url));
+    assert.deepEqual(await shader.json(), { version: 2 });
     await writeFile(join(root, 'assets', 'new.glb'), 'new asset');
     const refreshed = await launch(process.execPath);
     assert.notEqual(refreshed.url.port, first.url.port);
     assert.equal(refreshed.command.file, process.execPath);
     const index = await fetch(new URL('assets/index.json', refreshed.url)).then(result => result.json());
-    assert.deepEqual(index, ['model with spaces.glb', 'new.glb']);
+    assert.deepEqual(index, ['WebShaders/test.json', 'model with spaces.glb', 'new.glb']);
     await assert.rejects(launch(join(root, 'missing browser.exe')), /Browser executable missing/);
   } finally {
     for (const child of processes) {

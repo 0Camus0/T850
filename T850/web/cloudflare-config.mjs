@@ -39,6 +39,33 @@ export async function loadCloudflareConfig(path, options) {
   return validateCloudflareConfig(input, options);
 }
 
+export async function loadCloudResources(buckets, fetchManifest = fetch) {
+  const origins = new Map(buckets.map(bucket => [new URL(bucket.manifestUrl).origin, bucket]));
+  const cloud = new Map();
+  const names = new Set();
+  for (const bucket of buckets) {
+    const response = await fetchManifest(bucket.manifestUrl, { redirect: 'error' });
+    if (!response.ok) throw new Error(`Manifest unavailable: ${response.status}`);
+    const manifest = await response.json();
+    for (const entry of manifest.assets ?? []) {
+      const url = new URL(entry.url);
+      const location = origins.get(url.origin);
+      if (!location || url.username || url.password || url.search || url.hash) throw new Error('Manifest points outside the approved public R2 buckets');
+      const resource = entry.localRelativePath ?? `${entry.kind === 'texture' ? 'Textures' : 'Models'}/${entry.key}`;
+      if (!resource || resource.includes('\\') || resource.startsWith('/') || resource.split('/').some(part => part === '..' || part === '.'))
+        throw new Error('Unsafe cloud resource path');
+      const folded = resource.toLowerCase();
+      if (names.has(folded)) throw new Error(`Duplicate cloud resource: ${resource}`);
+      names.add(folded);
+      cloud.set(resource, {
+        binding: location.binding, key: decodeURIComponent(url.pathname.slice(1)), url: url.href,
+        contentType: entry.contentType ?? 'application/octet-stream', size: entry.size,
+      });
+    }
+  }
+  return cloud;
+}
+
 export function cloudflareWranglerConfig(config, output) {
   return { name: config.projectName,
     pages_build_output_dir: output, compatibility_date: '2026-09-16',

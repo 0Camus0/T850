@@ -697,8 +697,8 @@ Cloudflare references checked for this candidate:
   Paused applications use a 100 ms timer for input polling instead of a busy
   immediate loop; active rendering restores worker-local dispatch.
   Callback throughput is not the browser compositor's displayed refresh rate.
-- Replaced GPU buffers and textures retire through the WebGPU context. They
-  follow submission completion futures. Buffers are reused only after all
+- Replaced GPU buffers and textures retire through the WebGPU context. Buffers
+  follow submission completion futures and are reused only after all
   referencing commands complete, keyed by allocation size and usage, with a
   32 MiB cap on the free pool. Texture retirement still uses explicit Destroy
   after submission; WebGPU retains submitted uses until execution completes.
@@ -726,7 +726,13 @@ Cloudflare references checked for this candidate:
 - Browser runtime GUI panels are constrained to the current drawable viewport,
   retaining access to controls and close buttons after a window shrink.
 - ResourceLocator downloads only cataloged requested assets and caches them in
-  the virtual filesystem. The catalog includes all available authored scenes,
+  the session's `/assets` virtual filesystem, not the generated-data cache.
+  This avoids retaining outdated authored assets across reloads or deployments;
+  a persistent download cache would require content versioning or HTTP
+  revalidation before reuse. The local preview server streams current files on
+  each request with `Cache-Control: no-cache`; its reuse identity tracks paths
+  and catalog membership, not cached file contents.
+  The catalog includes all available authored scenes,
   assets and prepared shaders, excluding hidden native cache directories.
   Generated runtime data is rooted at `/persistent`, mounted as IDBFS with
   automatic persistence. Reload/save durability still needs explicit testing.

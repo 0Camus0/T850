@@ -755,8 +755,9 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
 }
 
 void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
-  if (driver && (!m_rtHandles.empty() || !m_computePipelines.empty())) driver->FlushGPUResources();
+  const bool hasResources = !m_rtHandles.empty() || !m_computePipelines.empty();
   m_computePipelines.clear();
+  if (driver && hasResources) driver->FlushGPUResources();
   m_loggedComputeDispatches.clear();
   if (!driver) {
     m_rtHandles.clear();

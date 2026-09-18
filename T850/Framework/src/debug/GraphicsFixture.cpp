@@ -68,6 +68,26 @@ FixtureRun RunDriver(GraphicsApi::E api, webgpu::ShaderFlow flow, HWND window, c
   try {
     driver->InitDriver();
     RefreshEngineContextFromGlobals();
+        const auto targetsBeforeValidation = driver->RTs.size();
+        for (const int invalidFormat : {-1, 999}) {
+          Require(driver->CreateRT(1, invalidFormat, BaseRT::F32, 8, 8) == -1,
+            "Invalid color format reached render-target allocation");
+          Require(driver->CreateRT(1, BaseRT::RGBA8, invalidFormat, 8, 8) == -1,
+            "Invalid depth format reached render-target allocation");
+        }
+        Require(driver->CreateRT(2, std::vector<int>{BaseRT::RGBA8}, BaseRT::F32, 8, 8) == -1,
+          "Mismatched attachment count was accepted");
+        if (!driver->SupportsRenderTargetDepthFormat(BaseRT::FD16))
+          Require(driver->CreateRT(0, BaseRT::NOTHING, BaseRT::FD16, 8, 8) == -1,
+            "Unsupported depth format was silently substituted");
+        if (!driver->SupportsCubeRenderTargets())
+          Require(driver->CreateRT(0, BaseRT::NOTHING, BaseRT::CUBE_F32, 8, 8) == -1,
+            "Unsupported cube target was accepted");
+        if (!driver->SupportsRenderTargetMipGeneration())
+          Require(driver->CreateRT(1, BaseRT::RGBA8, BaseRT::NOTHING, 8, 8, true) == -1,
+            "Unsupported direct mip request was silently accepted");
+        Require(driver->RTs.size() == targetsBeforeValidation, "Rejected descriptors allocated render targets");
+        std::cout << "Render-target capability rejection PASS: api=" << tag << '\n';
     if (api == GraphicsApi::WEBGPU) result.adapterLuid = static_cast<WebGPUDriver*>(driver.get())->AdapterLuid();
     else {
       const auto luid = static_cast<ID3D12Device*>(T8Device->GetAPIObject())->GetAdapterLuid();
@@ -112,6 +132,30 @@ FixtureRun RunDriver(GraphicsApi::E api, webgpu::ShaderFlow flow, HWND window, c
       Require(shaderIndex >= 0, "Fixture shader creation failed");
       auto* shader = driver->GetShaderIdx(shaderIndex);
       Require(shader != nullptr, "Fixture shader unavailable");
+      if (!driver->SupportsComparisonSamplers()) {
+        const auto comparisonPath = output / ("comparison-" + tag + ".hlsl");
+        auto wgslPath = comparisonPath;
+        wgslPath.replace_extension(".wgsl");
+        const std::string comparisonSource = R"(
+Texture2D<float> sourceDepth : register(t0);
+SamplerComparisonState comparisonSampler : register(s0);
+float4 FS(float4 position : SV_POSITION) : SV_TARGET {
+  float value = sourceDepth.SampleCmpLevelZero(comparisonSampler, position.xy * 0.001, 0.5);
+  return float4(value, value, value, 1);
+})";
+        { std::ofstream file(comparisonPath); file << comparisonSource; }
+        { std::ofstream file(wgslPath); file << R"(
+@group(0) @binding(0) var sourceDepth: texture_depth_2d;
+@group(0) @binding(32) var comparisonSampler: sampler_comparison;
+@fragment fn FS(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+  let value = textureSampleCompareLevel(sourceDepth, comparisonSampler, position.xy * 0.001, 0.5);
+  return vec4<f32>(value, value, value, 1.0);
+})"; }
+        Require(driver->CreateShader(vertexSource, comparisonSource, ShaderKey(), "Shaders/VS.hlsl",
+                                     comparisonPath.generic_string()) == -1,
+                "Unsupported comparison sampler did not fail at shader load");
+        std::cout << "Comparison sampler load rejection PASS: api=" << tag << '\n';
+      }
       driver->BuildPipelineObjects();
       for (const auto dimensions : {std::array<int, 2>{320, 240}, {257, 193}}) {
         Require(driver->ResizeSwapchain(dimensions[0], dimensions[1]), "Resize failed");

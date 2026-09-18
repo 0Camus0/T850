@@ -196,6 +196,7 @@ namespace t850 {
     bool			LoadTexture(const char *fn);
     bool			LoadFromMemory(const unsigned char *buff, int w, int h, int channels, const char* debugName = nullptr);
     bool      CreateCubeMap(const unsigned char *buff, int w, int h);
+    uint64_t UploadByteSize() const;
     void			release();
 
     virtual void	LoadAPITexture(DeviceContext* context, unsigned char* buffer) = 0;
@@ -257,6 +258,10 @@ namespace t850 {
       NOTHING
     };
 
+    static bool IsColorFormat(int format);
+    static bool IsDepthFormat(int format);
+    static bool ValidateDescriptor(int count, int color, int depth, int width, int height,
+                     const std::vector<int>& formats, std::string& diagnostic);
     bool			LoadRT(int nrt, int cf, int df, int w, int h, bool GenMips = false);
     // Per-attachment color formats (overrides single cf when non-empty)
     bool			LoadRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool GenMips = false);
@@ -281,6 +286,19 @@ namespace t850 {
     std::vector<Texture*>							vColorTextures;
     Texture*										pDepthTexture = nullptr;
   };
+  struct RenderTargetLayout {
+    std::array<int, 8> colorFormats{};
+    unsigned colorCount = 0;
+    int depthFormat = BaseRT::NOTHING;
+    unsigned sampleCount = 1;
+    bool surface = false;
+    bool operator==(const RenderTargetLayout&) const = default;
+    bool HasCompatibleAttachments(const RenderTargetLayout& other) const {
+      return colorFormats == other.colorFormats && colorCount == other.colorCount &&
+             depthFormat == other.depthFormat && sampleCount == other.sampleCount;
+    }
+  };
+
   class ShaderBase {
   public:
     ShaderBase() {}
@@ -352,10 +370,29 @@ namespace t850 {
     virtual bool UsesGLSL() const { return false; }
     virtual bool NeedsVFlip() const { return false; }
     virtual bool SupportsRenderTargetMipGeneration() const { return false; }
+    virtual int SurfaceColorFormat() const { return BaseRT::RGBA8; }
+    RenderTargetLayout GetRenderTargetLayout() const;
+    virtual bool SupportsCubeRenderTargets() const { return false; }
+    virtual bool SupportsComparisonSamplers() const { return false; }
+    virtual bool SupportsRenderTargetColorFormat(int format) const { return BaseRT::IsColorFormat(format); }
+    virtual bool SupportsRenderTargetDepthFormat(int format) const {
+      return format == BaseRT::NOTHING || format == BaseRT::F32 ||
+             (format == BaseRT::CUBE_F32 && SupportsCubeRenderTargets());
+    }
+    virtual unsigned MaxRenderTargetColorAttachments() const { return 8; }
+    bool ValidateRenderTarget(int count, int color, int depth, int targetWidth, int targetHeight,
+                              bool generateMips, const std::vector<int>& formats,
+                              std::string& diagnostic) const;
+    bool ValidateShaderComparisonSamplers(bool required, const std::string& shader,
+                                          const char* stage, uint64_t keyBits,
+                                          std::string& diagnostic) const;
     virtual bool SupportsDeferredRendering() const { return true; }
     virtual bool SupportsComputeShaders() const { return false; }
     virtual bool SupportsComputeTextures() const { return false; }
     virtual const char* ApiTag() const { return "unknown"; }
+    virtual const char* ProviderTag() const { return "native"; }
+    virtual const char* UnderlyingBackendTag() const { return ApiTag(); }
+    virtual uint64_t ProfilingAdapterId() const { return 0; }
     virtual	void	 InitDriver() = 0;
     virtual void	 CreateSurfaces() = 0;
     virtual void	 DestroySurfaces() = 0;

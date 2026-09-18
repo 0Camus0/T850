@@ -26,6 +26,11 @@ namespace t850 {
   bool D3D12RT::LoadAPIRT() {
     ID3D12Device* device = GetNativeDevice();
     auto* driver = GetD3D12Driver();
+    std::string diagnostic;
+    if (!driver->ValidateRenderTarget(number_RT, color_format, depth_format, w, h, GenMips, perColorFormats, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
 
     DXGI_FORMAT cfmt = DXGI_FORMAT_R8G8B8A8_UNORM;
     switch (color_format) {
@@ -33,10 +38,11 @@ namespace t850 {
       case BaseRT::R8:      cfmt = DXGI_FORMAT_R8_UNORM; break;
       case BaseRT::F16:     cfmt = DXGI_FORMAT_R16_FLOAT; break;
       case BaseRT::F32:     cfmt = DXGI_FORMAT_R32_FLOAT; break;
+      case BaseRT::RGB8:
       case BaseRT::RGBA8:   cfmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
       case BaseRT::RGBA16F: cfmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
       case BaseRT::RGBA32F: cfmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
-      default: break;
+      default: return false;
     }
 
     DXGI_FORMAT depthFmt = DXGI_FORMAT_R32_TYPELESS;
@@ -59,10 +65,11 @@ namespace t850 {
           case BaseRT::R8:      thisFmt = DXGI_FORMAT_R8_UNORM; break;
           case BaseRT::F16:     thisFmt = DXGI_FORMAT_R16_FLOAT; break;
           case BaseRT::F32:     thisFmt = DXGI_FORMAT_R32_FLOAT; break;
+          case BaseRT::RGB8:
           case BaseRT::RGBA8:   thisFmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
           case BaseRT::RGBA16F: thisFmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
           case BaseRT::RGBA32F: thisFmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
-          default: break;
+          default: return false;
         }
       }
       vColorFormats.push_back(thisFmt);

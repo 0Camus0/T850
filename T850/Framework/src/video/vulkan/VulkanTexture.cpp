@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * T850 Engine — Vulkan Backend
  * VulkanTexture.cpp: Texture implementation
@@ -128,6 +129,8 @@ namespace t850 {
   }
 
   void VulkanTexture::LoadAPITexture(DeviceContext* context, unsigned char* buffer) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, buffer ? UploadByteSize() : 0, 0);
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
     VmaAllocator allocator = driver->GetAllocator();
@@ -230,6 +233,7 @@ namespace t850 {
       }
     }
     memcpy(stagingAllocInfo.pMappedData, uploadBuf, static_cast<size_t>(totalSize));
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, totalSize, 1);
 
     // 3. Record transient command buffer
     const bool useUploadBatch = driver->IsResourceUploadBatchActive();
@@ -364,6 +368,8 @@ namespace t850 {
   }
 
   void VulkanTexture::LoadAPITextureCompressed(unsigned char* buffer) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, buffer ? UploadByteSize() : 0, 0);
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
     VmaAllocator allocator = driver->GetAllocator();
@@ -465,6 +471,7 @@ namespace t850 {
       }
     }
     memcpy(stagingAllocInfo.pMappedData, buffer, static_cast<size_t>(totalSize));
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, totalSize, 1);
 
     // Record copy
     const bool useUploadBatch = driver->IsResourceUploadBatchActive();
@@ -687,6 +694,7 @@ namespace t850 {
   }
 
   void VulkanTexture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * 16 : 0, 0);
     if (!m_image || !data || !m_isFloatTex) return;
     auto* driver = static_cast<VulkanDriver*>(g_pBaseDriver);
     VmaAllocator allocator = driver->GetAllocator();
@@ -711,6 +719,7 @@ namespace t850 {
       return;
     }
     memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(totalSize));
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, totalSize, 1);
     res = vmaFlushAllocation(allocator, stagingAlloc, 0, totalSize);
     if (res != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] Float texture staging buffer flush failed res=%d", res);

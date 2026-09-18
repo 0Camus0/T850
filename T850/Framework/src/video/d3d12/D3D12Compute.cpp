@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <video/d3d12/D3D12Compute.h>
 #include <video/d3d12/D3D12Device.h>
 #include <video/d3d12/D3D12Driver.h>
@@ -152,10 +153,12 @@ namespace t850 {
     std::vector<uint8_t> cachedShader;
     if (ShaderDiskCache::LoadArtifact(cacheKey, "cs.dxbc", cachedShader) &&
         CreateBlobFromBytes(cachedShader, m_shaderBlob)) {
+      T8_TELEMETRY_ADD("shader.cache.hits", 1);
       T8_LOG_DEBUG("[ShaderCache][D3D12] CS hit %s", cacheKey.sha1.c_str());
     } else {
       Microsoft::WRL::ComPtr<ID3DBlob> errors;
-      const HRESULT compileHr = D3DCompile(
+      T8_TELEMETRY_ADD("shader.cache.misses", 1);
+      const HRESULT compileHr = T8_TELEMETRY_CALL("shader.compile", D3DCompile(
         compiledSource.data(),
         compiledSource.size(),
         desc.debugName.empty() ? nullptr : desc.debugName.c_str(),
@@ -166,7 +169,7 @@ namespace t850 {
         compileFlags,
         0,
         &m_shaderBlob,
-        &errors);
+        &errors));
       if (FAILED(compileHr)) {
         T8_LOG_ERROR("[D3D12][Compute] Shader compile failed for '%s' (hr=0x%08X): %s",
                      desc.debugName.c_str(),
@@ -362,9 +365,9 @@ namespace t850 {
     pipelineDesc.pRootSignature = m_rootSignature.Get();
     pipelineDesc.CS.pShaderBytecode = m_shaderBlob->GetBufferPointer();
     pipelineDesc.CS.BytecodeLength = m_shaderBlob->GetBufferSize();
-    const HRESULT pipelineHr = device->CreateComputePipelineState(
+    const HRESULT pipelineHr = T8_TELEMETRY_CALL("pipeline.create.compute", device->CreateComputePipelineState(
       &pipelineDesc,
-      IID_PPV_ARGS(&m_pipelineState));
+      IID_PPV_ARGS(&m_pipelineState)));
     if (FAILED(pipelineHr)) {
       T8_LOG_ERROR("[D3D12][Compute] Pipeline creation failed (hr=0x%08X)",
                    static_cast<unsigned>(pipelineHr));

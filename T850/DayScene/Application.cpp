@@ -457,6 +457,7 @@ void App::LoadAssets()
 }
 
 void App::CreateAssets() {
+  m_creatingAssets = true;
   if (g_config.flags.profile && !t850::g_profiler) {
     t850::g_profiler = new t850::Profiler();
     t850::g_profiler->Init(pFramework->pVideoDriver);
@@ -524,6 +525,7 @@ void App::CreateAssets() {
     t850::g_profiler = new t850::Profiler();
     t850::g_profiler->Init(pFramework->pVideoDriver);
   }
+  m_creatingAssets = false;
 }
 
 void App::DestroyAssets() {
@@ -587,7 +589,8 @@ void App::OnUpdate() {
    }
    const auto benchmarkFrameStart = std::chrono::steady_clock::now();
    static uint64_t telemetryFrameIndex = 0;
-   t850::RuntimeTelemetry::BeginFrame(telemetryFrameIndex++, DtSecs);
+  const bool runtimeFrame = !m_creatingAssets && !fading;
+  if (runtimeFrame) t850::RuntimeTelemetry::BeginFrame(telemetryFrameIndex++, DtSecs);
    {
     T8_TELEMETRY_SCOPE("frame.total");
     {
@@ -643,8 +646,8 @@ void App::OnUpdate() {
       }
     }
    }
-   t850::RuntimeTelemetry::EndFrame();
-     if (t850::g_profiler && t850::g_profiler->GetFrameCount() >= g_config.profileFrames) {
+   if (runtimeFrame) t850::RuntimeTelemetry::EndFrame();
+     if (runtimeFrame && t850::g_profiler && t850::g_profiler->GetFrameCount() >= g_config.profileFrames) {
     pFramework->pVideoDriver->FlushGPUResources();
     t850::g_profiler->Report();
     t850::RuntimeTelemetry::Shutdown();
@@ -750,8 +753,11 @@ bool App::RunOffscreenBenchmarkFastPath(float initialDtSecs) {
 
 void App::OnDraw() {
   T8_TELEMETRY_SCOPE("frame.draw");
-  if (t850::g_profiler) t850::g_profiler->BeginFrame();
+  const bool profileFrame = t850::g_profiler && !m_creatingAssets && !fading;
+  if (profileFrame) t850::g_profiler->BeginFrame();
   static int frameCount = 0;
+  {
+  T8_TELEMETRY_SCOPE("gpu.encode");
 #ifdef T850_RENDER_TRACE
   EnsureRenderTracer(pFramework->pVideoDriver);
   if (t850::g_renderTracer) t850::g_renderTracer->ResetFrame(frameCount);
@@ -766,6 +772,7 @@ void App::OnDraw() {
   if (m_actualScene) m_actualScene->OnDraw();
 #endif
   if (fading) {
+    T8_DRAW_WORK("render.effects.fade");
     T8_LOG_TRACE("[Frame %d] Fade quad draw", frameCount);
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::READ);
@@ -783,9 +790,10 @@ void App::OnDraw() {
 
   DrawRuntimeGui();
 
+  }
   frameCount++;
 
-  if (t850::g_profiler) {
+  if (profileFrame) {
     t850::g_profiler->EndFrame();
   }
 

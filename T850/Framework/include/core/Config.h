@@ -69,6 +69,8 @@ public:
   std::string logFile;
 
   int profileFrames = 300;
+  bool profileCpuOnly = false;
+  int telemetryUploadBudgetMB = 64;
   int dumpMatricesFrames = 0;
   GLOffscreenFlushMode glOffscreenFlushMode = GLOffscreenFlushMode::Frame;
   CullingLoadMode cullingLoadMode = CullingLoadMode::FullOnLoad;
@@ -78,6 +80,7 @@ public:
   std::string benchmarkFinalFrameDir;
   int benchmarkDurationSeconds = 0;
   int benchmarkFrameLimit = 0;
+  bool benchmarkPaired = false;
   float benchmarkFixedDt = 0.0f;
   float regressionFixedDt = 0.0f;
   std::string modelPath = "Models/DamagedHelmet.glb";

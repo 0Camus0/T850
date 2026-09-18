@@ -41,6 +41,7 @@ struct DevToolsJson {
   std::optional<bool> d3d12Debug;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
+  std::optional<bool> profileCpuOnly;
   std::optional<bool> autoStartRagdoll;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
@@ -94,6 +95,8 @@ struct RuntimeConfigJson {
   std::optional<bool> d3d12Debug;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
+  std::optional<bool> profileCpuOnly;
+  std::optional<int> telemetryUploadBudgetMB;
   std::optional<bool> autoStartRagdoll;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;

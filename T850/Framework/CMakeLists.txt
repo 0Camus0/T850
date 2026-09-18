@@ -187,6 +187,8 @@ elseif(T850_PLATFORM_STEAM_DECK)
 endif()
 
 add_library(Framework STATIC ${FRAMEWORK_SOURCES})
+option(T850_ENABLE_PROFILING "Compile CPU profiling and upload accounting" ON)
+target_compile_definitions(Framework PUBLIC T850_ENABLE_PROFILING=$<BOOL:${T850_ENABLE_PROFILING}>)
 add_library(T800Framework ALIAS Framework)
 
 if(MSVC)

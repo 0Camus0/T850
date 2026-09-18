@@ -117,11 +117,13 @@ static const std::unordered_map<std::string, int> s_colorFormatMap = {
   {"RGBA32F", BaseRT::RGBA32F},
   {"R8",      BaseRT::R8},
   {"F16",     BaseRT::F16},
+  {"F32",     BaseRT::F32},
   {"RGB8",    BaseRT::RGB8},
 };
 
 static const std::unordered_map<std::string, int> s_depthFormatMap = {
   {"NONE",    BaseRT::NOTHING},
+  {"FD16",    BaseRT::FD16},
   {"F32",     BaseRT::F32},
   {"CUBE_F32", BaseRT::CUBE_F32},
 };
@@ -192,12 +194,12 @@ int RenderGraph::ResolveAttachment(const std::string& name) {
 
 int RenderGraph::ResolveColorFormat(const std::string& name) {
   auto it = s_colorFormatMap.find(name);
-  return (it != s_colorFormatMap.end()) ? it->second : BaseRT::RGBA8;
+  return (it != s_colorFormatMap.end()) ? it->second : -1;
 }
 
 int RenderGraph::ResolveDepthFormat(const std::string& name) {
   auto it = s_depthFormatMap.find(name);
-  return (it != s_depthFormatMap.end()) ? it->second : BaseRT::NOTHING;
+  return (it != s_depthFormatMap.end()) ? it->second : -1;
 }
 
 ShaderKey RenderGraph::ResolveSignature(const std::string& name) {
@@ -298,9 +300,40 @@ bool RenderGraph::Load(const std::string& path) {
                    renderTarget.name.c_str());
       return false;
     }
+    const auto invalid = [&](const std::string& feature) {
+      T8_LOG_ERROR("[RenderGraph][InvalidRenderTarget] target='%s' feature='%s'",
+                   renderTarget.name.c_str(), feature.c_str());
+      return false;
+    };
+    if (ResolveColorFormat(renderTarget.color_format) < 0)
+      return invalid("color_format=" + renderTarget.color_format);
+    if (ResolveDepthFormat(renderTarget.depth_format) < 0)
+      return invalid("depth_format=" + renderTarget.depth_format);
+    if (renderTarget.color_count < 0 || renderTarget.color_count > 8)
+      return invalid("color_count=" + std::to_string(renderTarget.color_count));
+    if (!renderTarget.color_formats.empty() &&
+        renderTarget.color_formats.size() != static_cast<size_t>(renderTarget.color_count))
+      return invalid("color_formats count does not match color_count");
+    for (const auto& format : renderTarget.color_formats) {
+      if (ResolveColorFormat(format) < 0 || format == "NONE")
+        return invalid("color_formats=" + format);
+    }
+    if (renderTarget.color_count > 0 && renderTarget.color_formats.empty() &&
+        renderTarget.color_format == "NONE")
+      return invalid("color attachments require a color format");
+    if (renderTarget.color_count == 0 && renderTarget.depth_format == "NONE")
+      return invalid("no color or depth attachments");
+    if (renderTarget.size[0] < 0 || renderTarget.size[1] < 0)
+      return invalid("negative extent");
   }
 
   for (const auto& pass : m_sourceDesc.passes) {
+    if (pass.cube_faces != 0 && (pass.cube_faces != 6 || !renderTargets.contains(pass.target) ||
+        renderTargets.at(pass.target)->depth_format != "CUBE_F32")) {
+      T8_LOG_ERROR("[RenderGraph][InvalidRenderTarget] pass='%s' target='%s' feature=cube_faces requires six faces and CUBE_F32",
+                   pass.name.c_str(), pass.target.c_str());
+      return false;
+    }
     if (pass.execution != "graphics" && pass.execution != "compute_if_supported") {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' has unknown execution mode '%s'",
                    pass.name.c_str(), pass.execution.c_str());
@@ -652,12 +685,30 @@ bool RenderGraph::Configure(
   return true;
 }
 
-void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props) {
-  CreateRenderTargets(driver, props, 0, 0);
+bool RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props) {
+  return CreateRenderTargets(driver, props, 0, 0);
 }
 
-void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride) {
-  m_rtHandles.clear();
+bool RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride) {
+  DestroyRenderTargets(driver);
+  if (!driver) return false;
+  struct TargetAllocation {
+    const RTDesc* descriptor;
+    int width;
+    int height;
+    int color;
+    int depth;
+    bool mips;
+    bool storage;
+    std::vector<int> formats;
+  };
+  std::vector<TargetAllocation> allocations;
+  const auto targetPass = [&](const std::string& target) {
+    for (const auto& pass : m_effectiveDesc.passes) {
+      if (pass.target == target) return pass.name;
+    }
+    return std::string("<unreferenced>");
+  };
 
 #if defined(OS_ANDROID)
   constexpr float kAndroidScreenRenderScale = 0.5f;
@@ -707,21 +758,42 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
     // CreateRT's final argument controls mip generation, not linear filtering.
     // Keep it opt-in per target so bloom/intermediate passes never sample
     // implicit mips unexpectedly.
-    const bool generateMips = rt.generate_mips;
+    const bool generateMips = rt.generate_mips && driver->SupportsRenderTargetMipGeneration();
+    if (rt.generate_mips && !generateMips) {
+      T8_LOG_INFO("[RenderGraph][CapabilityFallback] pass='%s' target='%s' backend=%s feature=generate_mips fallback=single_level",
+                  targetPass(rt.name).c_str(), rt.name.c_str(), driver->ApiTag());
+    }
     const bool allowStorage = rt.storage && driver->SupportsComputeTextures();
     if (rt.storage && !allowStorage) {
       T8_LOG_INFO("[RenderGraph] Creating RT '%s' without storage usage on API=%s",
                   rt.name.c_str(), driver->ApiTag());
     }
-    int handle;
-    if (!rt.color_formats.empty()) {
-      // Per-attachment formats specified in JSON
-      std::vector<int> perCF;
-      for (const auto& fmt : rt.color_formats)
-        perCF.push_back(ResolveColorFormat(fmt));
-      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, generateMips, allowStorage);
-    } else {
-      handle = driver->CreateRT(rt.color_count, cf, df, w, h, generateMips, allowStorage);
+    std::vector<int> perCF;
+    for (const auto& fmt : rt.color_formats) perCF.push_back(ResolveColorFormat(fmt));
+    if (w == 0) w = driver->width;
+    if (h == 0) h = driver->height;
+    std::string diagnostic;
+    if (!driver->ValidateRenderTarget(rt.color_count, cf, df, w, h, generateMips, perCF, diagnostic)) {
+      T8_LOG_ERROR("[RenderGraph] pass='%s' target='%s' backend=%s %s",
+                   targetPass(rt.name).c_str(), rt.name.c_str(), driver->ApiTag(), diagnostic.c_str());
+      return false;
+    }
+    allocations.push_back({&rt, w, h, cf, df, generateMips, allowStorage, std::move(perCF)});
+  }
+
+  for (const auto& allocation : allocations) {
+    const auto& rt = *allocation.descriptor;
+    const int w = allocation.width;
+    const int h = allocation.height;
+    const bool generateMips = allocation.mips;
+    const int handle = allocation.formats.empty()
+      ? driver->CreateRT(rt.color_count, allocation.color, allocation.depth, w, h, generateMips, allocation.storage)
+      : driver->CreateRT(rt.color_count, allocation.formats, allocation.depth, w, h, generateMips, allocation.storage);
+    if (handle < 0) {
+      T8_LOG_ERROR("[RenderGraph][AllocationFailed] pass='%s' target='%s' backend=%s",
+                   targetPass(rt.name).c_str(), rt.name.c_str(), driver->ApiTag());
+      DestroyRenderTargets(driver);
+      return false;
     }
     auto applyFilter = [&](Texture* tex) {
       if (!tex) return;
@@ -752,6 +824,7 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
   // Now that RT handles are resolved, build the DAG
   BuildGraph();
   CreateComputePipelines(driver);
+  return true;
 }
 
 void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
@@ -943,6 +1016,10 @@ void RenderGraph::BuildGraph() {
     auto& node = m_nodes[i];
     node.index = i;
     node.desc = &m_effectiveDesc.passes[i];
+    node.profileScope = Profiler::RegisterScope(passDesc.name.c_str());
+    node.telemetryScope = RuntimeTelemetry::RegisterScope("render.pass." + passDesc.name);
+    node.drawCounter = RuntimeTelemetry::RegisterCounter("render.pass." + passDesc.name + ".draws");
+    node.indexCounter = RuntimeTelemetry::RegisterCounter("render.pass." + passDesc.name + ".indices");
 
     // Resolve RT handle for this pass's target
     if (!passDesc.target.empty()) {
@@ -1104,9 +1181,12 @@ void RenderGraph::ExecutePass(
 {
   const auto& pass = *node.desc;
   ScopedPrimaryCameraOverride cameraScope(props);
-  T8_PROFILE_SCOPE(t850::g_profiler, pass.name.c_str());
-  RuntimeTelemetry::ScopedTimer telemetryPass("render.pass." + pass.name);
-  RuntimeTelemetry::AddCounter("render.pass.count", 1.0);
+#if T850_ENABLE_PROFILING
+  ProfileScopeGuard profilePass(t850::g_profiler, node.profileScope);
+  RuntimeTelemetry::ScopedTimer telemetryPass(node.telemetryScope);
+  RuntimeTelemetry::DrawCounterScope passWork(node.drawCounter, node.indexCounter);
+#endif
+  T8_TELEMETRY_ADD("render.pass.count", 1.0);
   const bool shadowsEnabled = props.ToogleShadow != 0;
   const bool ssaoEnabled = props.ToogleSSAO != 0;
 

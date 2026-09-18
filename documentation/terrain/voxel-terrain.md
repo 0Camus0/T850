@@ -17,6 +17,24 @@ the remaining reference-app integration and current validation.
 
 Status: implemented and verified against source, 43 self-tests, and four-backend captures on 2026-08-31.
 
+## Streaming profiling
+
+CPU telemetry records `terrain.voxel.stream_update`, worker
+`terrain.voxel.mesh_build` and the Minecraft streaming/upload phase. Mutable mesh
+replacement tags its vertex/index uploads with source `Streaming`. The shared
+resource/source matrix exposes logical bytes, observed staging bytes, calls,
+CPU time, known allocations and the largest upload. Existing voxel counters
+remain available through fixed-ID accumulation.
+
+Use telemetry frequency zero for upload spikes; sampled-out frames have no
+budget alert. `--telemetryUploadBudgetMB` controls the captured-frame warning
+threshold. High bytes plus GPU wait suggests backpressure; high CPU encode with
+flat wait suggests packing/format work. These are hypotheses requiring a focused
+capture, not diagnoses from upload bytes alone. See
+[CPU profiling](../debug/diagnostics.md#cpu-profiling-workstream) for report
+semantics and the finite comparison harness. The short implementation smoke
+verified streaming attribution, not a sub-percent performance target.
+
 This subsystem provides backend-neutral mutable geometry, voxel chunks, atlas-aware greedy meshing, bounded asynchronous streaming, voxel selection/player collision, per-chunk Jolt collision, and sparse persistent edits. `VoxelScene` is the executable reference integration.
 
 ## Key Files

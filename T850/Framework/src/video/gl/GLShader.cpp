@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <video/gl/GLShader.h>
 #include <utils/Utils.h>
 #include <utils/Log.h>
@@ -92,21 +93,22 @@ namespace t850 {
 
     const bool binarySupported = GLProgramBinarySupported();
     if (binarySupported && TryLoadProgramBinary(cacheKey, ShaderProg)) {
+      T8_TELEMETRY_ADD("shader.cache.hits", 1);
       T8_LOG_DEBUG("[ShaderCache][GL] Program binary hit %s", cacheKey.sha1.c_str());
     }
     else {
-
+      T8_TELEMETRY_ADD("shader.cache.misses", 1);
       ShaderProg = glCreateProgram();
       if (binarySupported)
         glProgramParameteri(ShaderProg, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 
-      vshader_id = createShader(GL_VERTEX_SHADER, (char*)src_vs.c_str());
-      fshader_id = createShader(GL_FRAGMENT_SHADER, (char*)src_fs.c_str());
+      vshader_id = T8_TELEMETRY_CALL("shader.compile", createShader(GL_VERTEX_SHADER, (char*)src_vs.c_str()));
+      fshader_id = T8_TELEMETRY_CALL("shader.compile", createShader(GL_FRAGMENT_SHADER, (char*)src_fs.c_str()));
 
       glAttachShader(ShaderProg, vshader_id);
       glAttachShader(ShaderProg, fshader_id);
 
-      glLinkProgram(ShaderProg);
+      T8_TELEMETRY_CALL("pipeline.create.graphics", glLinkProgram(ShaderProg));
 
       // Check link status
       GLint linkStatus = 0;

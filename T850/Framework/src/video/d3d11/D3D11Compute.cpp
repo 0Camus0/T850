@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <video/d3d11/D3D11Compute.h>
 #include <video/d3d11/D3D11Driver.h>
 #include <video/d3d11/D3D11Texture.h>
@@ -48,14 +49,15 @@ namespace t850 {
     const std::string source = BuildSource(desc);
     Microsoft::WRL::ComPtr<ID3DBlob> blob;
     Microsoft::WRL::ComPtr<ID3DBlob> errors;
-    HRESULT hr = D3DCompile(source.data(), source.size(), desc.debugName.c_str(), nullptr, nullptr,
-                            desc.entryPoint.c_str(), "cs_5_0", flags, 0, &blob, &errors);
+    T8_TELEMETRY_ADD("shader.cache.uncached", 1);
+    HRESULT hr = T8_TELEMETRY_CALL("shader.compile", D3DCompile(source.data(), source.size(), desc.debugName.c_str(), nullptr, nullptr,
+                desc.entryPoint.c_str(), "cs_5_0", flags, 0, &blob, &errors));
     if (FAILED(hr)) {
       T8_LOG_ERROR("[D3D11][Compute] Shader compile failed for '%s': %s", desc.debugName.c_str(),
                    errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown error");
       return false;
     }
-    hr = device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &shader);
+    hr = T8_TELEMETRY_CALL("shader.module.create", device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &shader));
     if (FAILED(hr)) {
       T8_LOG_ERROR("[D3D11][Compute] CreateComputeShader failed hr=0x%08X", hr);
       return false;

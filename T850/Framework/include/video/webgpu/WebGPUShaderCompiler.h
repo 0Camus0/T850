@@ -17,7 +17,8 @@ enum class ResourceKind {
   ReadWriteStorageBuffer,
   SampledTexture,
   Sampler,
-  WriteOnlyStorageTexture
+  WriteOnlyStorageTexture,
+  DepthTexture
 };
 enum class TextureDimension { None, D1, D2, D2Array, D3, Cube, CubeArray };
 enum class ShaderComponentType { Float, Unsigned, Signed, Half };

@@ -41,7 +41,7 @@ bool GamePhysicsService::LineOfSight(
     const XVECTOR3& to,
     const GameQueryFilter& filter,
     GameHit& out) const {
-  T8_TELEMETRY_SCOPE("game.spatial_queries");
+  T8_TELEMETRY_ADD("game.spatial_queries.calls", 1);
   out = GameHit{};
   if (!Available()) return false;
 
@@ -67,7 +67,7 @@ bool GamePhysicsService::LineOfSight(
   }
 
   t850::PhysicsCastHit hit;
-  t850::RuntimeTelemetry::AddCounter("game.physics.queries", 1.0);
+  T8_TELEMETRY_ADD("game.physics.queries", 1.0);
   if (!physics_->CastCapsule(cast, hit)) return false;
   const RuntimeGameObjectId runtimeId = FindRuntimeObjectByPrimitiveId(registry_, hit.entityId);
   if (!PassesGameFilter(registry_, runtimeId, filter)) return false;
@@ -84,12 +84,12 @@ int GamePhysicsService::OverlapSphere(
     float radius,
     const GameQueryFilter& filter,
     std::vector<GameHit>& out) const {
-  T8_TELEMETRY_SCOPE("game.spatial_queries");
+  T8_TELEMETRY_ADD("game.spatial_queries.calls", 1);
   out.clear();
   if (!Available()) return 0;
 
   std::vector<t850::PhysicsOverlapHit> physicsHits;
-  t850::RuntimeTelemetry::AddCounter("game.physics.queries", 1.0);
+  T8_TELEMETRY_ADD("game.physics.queries", 1.0);
   physics_->OverlapSphere(
       center, radius, filter.includeLayers, filter.excludeLayers, physicsHits);
   for (const t850::PhysicsOverlapHit& physicsHit : physicsHits) {

@@ -22,7 +22,57 @@ claimed. The additional native Voxel checkpoint difference below remains open.
 T8ditor, shared engine compute, GPU timestamp profiling, performance acceptance
 and new platform ports were not implemented as part of this close-out.
 
+## Offscreen Follow-Up, 2026-09-18
+
+The later R1 verification exposed an independent overlay bug: surface-format
+ImGui pipelines were being used on the shared RGBA8 offscreen targets. Vulkan
+and WebGPU adapters now select compatible pipelines at GUI frame boundaries,
+waiting for prior work only when the target mode/format changes. WebGPU renderer
+reinitialization preserves the ImGui context and SDL platform backend; Vulkan
+recreates only the main pipeline. Shared offscreen ring rotation does not cause
+per-frame pipeline rebuilds.
+
+`WebGPUDriver::CompleteFrame` suppresses presentation in configured offscreen
+mode and calls `CompleteOffscreenFrame` after submission. This restores shared
+target rotation and the post-overlay `--offscreenDebug` capture path.
+
+The [offscreen overlay regression](../testing/verification.md#offscreen-overlays)
+passes on all five desktop APIs in Debug, plus captured Vulkan/WebGPU Release
+runs and both strict WebGPU shader flows. The real-driver comparison fixture
+passes both flows at its unchanged tolerance 2. Full-scene Vulkan/WebGPU captures
+are nonuniform with readable overlays but are not pixel-identical: the Debug
+frame-340 comparison measured maximum channel delta 44, mean delta 1.5725 and
+57,290 of 230,400 pixels outside tolerance 2. That is recorded variance, not a
+passing whole-scene parity claim. No tolerance or baseline was changed.
+
+Evidence: `%LOCALAPPDATA%/T850Profiles/offscreen-overlay-20260918`, including
+`captures-final/frame340-comparison.json`, fixture reports, native build matrix,
+WebAssembly build/tests and both Android compile logs. SteamRT remains locally
+unavailable; no new CI validation or editor-parity claim is made.
+
 ## Implementation
+
+### Capability validation follow-up, 2026-09-18
+
+Shared render-target validation now runs before graph allocations. Unsupported
+cube/depth/mip requests no longer reach WebGPU `Require` sites during target
+creation: direct creation returns failure, and graph creation either reports a
+named capability failure or takes the explicit single-level mip fallback.
+Unknown formats are rejected rather than substituted. WebGPU reports its
+device's color-attachment limit and supports explicit single-channel F32 color.
+
+Reflected comparison samplers fail at shader load with backend, shader, stage
+and key in the diagnostic. Tint depth-texture metadata is retained as a distinct
+resource kind so the sampler requirement can be diagnosed before layout
+creation. This does not add comparison/depth sampler rendering support, and it
+does not implement R3's general device-loss or frame-loop error handling.
+
+Focused descriptor, capability, shader-flow, package and graphics-fixture checks
+pass. The broader scene matrix still exposes Vulkan sampler teardown errors and
+Minecraft overlay attachment incompatibility on Vulkan/WebGPU; the earlier
+DayScene overlay fix is not a claim of all-scene coverage. R2 remains blocked on
+that gate and unavailable SteamRT verification. See the
+[R2 evidence record](webgpu-compute-remediation-plan.md#r2-reconcile-strict-versus-lenient-backend-behavior).
 
 ### Dependencies and Build Integration
 

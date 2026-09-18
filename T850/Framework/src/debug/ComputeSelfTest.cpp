@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace t850 {
+extern Device* T8Device;
 namespace {
 
   std::unique_ptr<ComputePipeline> CreateTestPipeline(
@@ -556,6 +557,21 @@ namespace {
   }
 
   int RunComputeSelfTests(BaseDriver* driver) {
+    const std::array<float, 16> texels{};
+    for (unsigned cycle = 0; cycle < 4; ++cycle) {
+      Texture* texture = T8Device->CreateFloatTexture(2, 2, texels.data());
+      if (!texture) {
+        T8_LOG_ERROR("[SamplerLifetime] Float texture creation failed");
+        return 1;
+      }
+      for (const auto filter : {NEAREST_FILTER, LINEAR_FILTER, NEAREST_FILTER}) {
+        texture->params = CLAMP_TO_EDGE | filter;
+        texture->SetTextureParams();
+      }
+      driver->FlushGPUResources();
+      texture->release();
+    }
+    T8_LOG_INFO("[SamplerLifetime] PASS: API=%s repeated float texture sampler variants", driver->ApiTag());
     if (!ValidateBufferChain(driver) || RunComputeArithmeticSelfTest(driver) != 0 ||
         RunComputeImageSelfTest(driver) != 0) {
       T8_LOG_ERROR("[ComputeSelfTest] FAIL");

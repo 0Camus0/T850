@@ -298,10 +298,10 @@ void VoxelScene::UpdateStreaming() {
   for (auto& result : m_streaming.TakeCompleted()) CommitStreamedChunk(std::move(result));
   for (const t850::terrain::ChunkKey key : m_streaming.TakeUnloadRequests()) UnloadChunk(key);
   const auto& stats = m_streaming.Stats();
-  t850::RuntimeTelemetry::SetCounter("terrain.voxel.desired_chunks", static_cast<double>(stats.desired));
-  t850::RuntimeTelemetry::SetCounter("terrain.voxel.queued_chunks", static_cast<double>(stats.queued));
-  t850::RuntimeTelemetry::SetCounter("terrain.voxel.in_flight_chunks", static_cast<double>(stats.inFlight));
-  t850::RuntimeTelemetry::SetCounter("terrain.voxel.loaded_chunks", static_cast<double>(m_world.ChunkCount()));
+  T8_TELEMETRY_SET("terrain.voxel.desired_chunks", static_cast<double>(stats.desired));
+  T8_TELEMETRY_SET("terrain.voxel.queued_chunks", static_cast<double>(stats.queued));
+  T8_TELEMETRY_SET("terrain.voxel.in_flight_chunks", static_cast<double>(stats.inFlight));
+  T8_TELEMETRY_SET("terrain.voxel.loaded_chunks", static_cast<double>(m_world.ChunkCount()));
 }
 
 void VoxelScene::RebuildChunkMeshes() {
@@ -366,7 +366,7 @@ void VoxelScene::RebuildChunkMeshes() {
     }
   }
   m_remeshRequested = false;
-  t850::RuntimeTelemetry::SetCounter("terrain.voxel.loaded_chunks", static_cast<double>(m_world.ChunkCount()));
+  T8_TELEMETRY_SET("terrain.voxel.loaded_chunks", static_cast<double>(m_world.ChunkCount()));
 }
 
 void VoxelScene::OnUpdate(float deltaSeconds) {

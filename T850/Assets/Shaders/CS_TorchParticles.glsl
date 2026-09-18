@@ -5,6 +5,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(std140, binding = 0) uniform TorchParticleConstants {
     mat4 ViewProjection;
     vec4 EmitterAndTime;
+    vec4 AdditionalEmitterXZ;
     vec4 OutputSizeCountEnabled;
     vec4 Motion;
     vec4 ParticleColor0;
@@ -37,6 +38,14 @@ vec3 ParticleColor(uint index)
     return ParticleColor2.rgb;
 }
 
+vec3 EmitterPosition(uint emitterIndex)
+{
+    if (emitterIndex == 0u) return EmitterAndTime.xyz;
+    if (emitterIndex == 1u)
+        return vec3(AdditionalEmitterXZ.x, EmitterAndTime.y, AdditionalEmitterXZ.y);
+    return vec3(AdditionalEmitterXZ.z, EmitterAndTime.y, AdditionalEmitterXZ.w);
+}
+
 void main()
 {
     uvec2 dispatchId = gl_GlobalInvocationID.xy;
@@ -58,16 +67,19 @@ void main()
     vec3 accumulated = vec3(0.0);
     float accumulatedAlpha = 0.0;
 
-    for (uint index = 0u; index < particleCount; ++index) {
-        float phase = Hash(index * 9781u + 17u);
+    uint emitterCount = min(uint(OutputSizeCountEnabled.w), 3u);
+    for (uint emitterIndex = 0u; emitterIndex < emitterCount; ++emitterIndex) {
+      for (uint index = 0u; index < particleCount; ++index) {
+        uint seedIndex = index + emitterIndex * particleCount;
+        float phase = Hash(seedIndex * 9781u + 17u);
         float age = fract(time / lifetime + phase);
-        float angle = Hash(index * 6271u + 43u) * 6.28318530718;
-        float radialSeed = mix(ShapeTuning.x, 1.0, Hash(index * 3253u + 91u));
+        float angle = Hash(seedIndex * 6271u + 43u) * 6.28318530718;
+        float radialSeed = mix(ShapeTuning.x, 1.0, Hash(seedIndex * 3253u + 91u));
         float radialDistance = Motion.z * radialSeed * (ShapeTuning.y + age * ShapeTuning.z);
-        float wobble = sin(time * (WobbleTuning.x + Hash(index * 1877u + 7u) *
+        float wobble = sin(time * (WobbleTuning.x + Hash(seedIndex * 1877u + 7u) *
             WobbleTuning.y) + angle) * Motion.z * ShapeTuning.w;
 
-        vec3 position = EmitterAndTime.xyz;
+        vec3 position = EmitterPosition(emitterIndex);
         position.x += cos(angle) * radialDistance + wobble;
         position.z += sin(angle) * radialDistance - wobble * WobbleTuning.z;
         position.y += age * Motion.y;
@@ -93,6 +105,7 @@ void main()
         float intensity = shape * fadeIn * fadeOut;
         accumulated += ParticleColor(index) * intensity * IntensityTuning.y;
         accumulatedAlpha = max(accumulatedAlpha, intensity);
+            }
     }
 
     imageStore(OutputTexture, ivec2(dispatchId), vec4(accumulated, clamp(accumulatedAlpha, 0.0, 1.0)));

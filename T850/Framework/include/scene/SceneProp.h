@@ -184,6 +184,8 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	float FrameDeltaSec = 1.0f / 60.0f;
 	int ParticleEmitterEnabled = 0;
 	XVECTOR3 ParticleEmitterPosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+	XVECTOR3 ParticleEmitterPosition1 = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+	XVECTOR3 ParticleEmitterPosition2 = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
 	float ParticleTimeSeconds = 0.0f;
 	int ParticleCount = 0;
 	float ParticleLifetime = 0.0f;

@@ -509,7 +509,7 @@ bool CheckComputeV1Shaders() {
     {"CS_Bright.hlsl", 8, {8, 8, 1}, 6},
     {"CS_GodRays.hlsl", 52, {8, 8, 1}, 6},
     {"CS_HDRComposite.hlsl", 8, {8, 8, 1}, 8},
-    {"CS_TorchParticles.hlsl", 56, {8, 8, 1}, 3},
+    {"CS_TorchParticles.hlsl", 60, {8, 8, 1}, 3},
   };
 
   for (const ExpectedShader& expected : shaders) {

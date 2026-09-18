@@ -109,6 +109,11 @@ function Test-Launcher([string]$Name) {
         Assert-True ($browserCommand.Display -match 'scene=4' -and $browserCommand.Display -match 'sceneFile=Scenes%2FTest.t8scene') 'Browser mode lost the selected scene/document'
         Assert-True ($browserCommand.Args -notcontains '--api' -and $browserCommand.Args -notcontains '--shaderFlow') 'Native API/shader flow leaked into browser startup'
         Assert-True ($browserCommand.Args -notcontains '--browser') 'Default browser unexpectedly specified an executable'
+        foreach ($mode in @('raster', 'compute')) {
+            $cmbPostProcessMode.SelectedItem.Tag = $mode
+            Assert-True ((Get-LaunchCommand).Display.Contains("postProcessMode=$mode")) 'Browser launch lost the selected post-process mode'
+        }
+        $cmbPostProcessMode.SelectedItem.Tag = 'raster'
         foreach ($relativePath in @('Google/Chrome/Application/chrome.exe', 'Mozilla Firefox/firefox.exe')) {
             $executable = Join-Path $rootDir $relativePath
             [void][IO.Directory]::CreateDirectory((Split-Path $executable))

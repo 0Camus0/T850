@@ -14,6 +14,7 @@ const { values } = parseArgs({ allowNegative: true, options: {
   output: { type: 'string' },
   headless: { type: 'boolean', default: false },
   probe: { type: 'boolean', default: false },
+  'compute-selftest': { type: 'boolean', default: false },
   launcher: { type: 'boolean', default: false },
   'minecraft-welcome': { type: 'boolean', default: false },
   soak: { type: 'string', default: '0' },
@@ -30,6 +31,7 @@ const { values } = parseArgs({ allowNegative: true, options: {
   touch: { type: 'boolean', default: false },
   'capture-errors': { type: 'boolean', default: false },
   'camera-controls': { type: 'boolean', default: false },
+  'camera-stability': { type: 'boolean', default: false },
   'disable-bc': { type: 'boolean', default: false },
   'disable-float-filtering': { type: 'boolean', default: false },
   gui: { type: 'boolean', default: false },
@@ -37,6 +39,11 @@ const { values } = parseArgs({ allowNegative: true, options: {
   binary: { type: 'string' },
 } });
 if (!['firefox', 'chrome', 'edge'].includes(values.browser)) throw new Error('Unsupported browser');
+function unexpectedErrors(errors = []) {
+  if (!values['compute-selftest']) return errors;
+  const expected = /\[WebGPU\] (?:Compute constant layout does not match shader reflection|Compute binding declaration count does not match shader reflection|Compute binding 1 does not match its declaration|Duplicate compute bind-group binding 0)  \(WebGPUDriver\.cpp:\d+\)$/;
+  return errors.filter(line => !expected.test(line));
+}
 const inputRounds = Number(values['input-rounds']);
 if (!Number.isInteger(inputRounds) || inputRounds < 1 || inputRounds > 100) throw new Error('Invalid input round count');
 const holdFrames = Number(values['hold-frames']);
@@ -333,7 +340,15 @@ try {
   });
   console.log(JSON.stringify({ browser: report.browser, gpu: report.gpu }, null, 2));
   if (!report.gpu.available || !report.gpu.isolated) throw new Error(`${values.browser} WebGPU/isolation prerequisite failed`);
-  if (!values.probe) {
+  if (values['compute-selftest']) {
+    await driver.wait(async () => {
+      const state = await driver.executeScript('return window.t850');
+      const errors = unexpectedErrors(state?.errors);
+      if (errors.length) throw new Error(errors.join('\n'));
+      return state?.logs?.some(line => line.includes('[ComputeSelfTest] PASS: arithmetic and odd-sized image kernels'));
+    }, 180000, 'GPU compute correctness self-test did not complete');
+    report.computeSelfTest = true;
+  } else if (!values.probe) {
     await driver.wait(async () => {
       const state = await driver.executeScript('return { state: window.t850?.state, errors: window.t850?.errors }');
       if (state?.state === 'failed') throw new Error(state.errors.join('\n'));
@@ -409,6 +424,25 @@ try {
       }
     };
     await waitFrames(30);
+    if (values['camera-stability']) {
+      await waitFrames(120);
+      await driver.executeScript(`window.t850CameraSamples = [];
+        window.t850CameraUpdate = window.t850Touch.updateCamera;
+        window.t850Touch.updateCamera = function(camera) {
+          window.t850CameraSamples.push(camera);
+          return window.t850CameraUpdate.call(this, camera);
+        };`);
+      try {
+        await waitFrames(600);
+        const samples = await driver.executeScript('return window.t850CameraSamples');
+        const heights = samples.map(sample => sample.eye[1]);
+        report.cameraStability = { samples: samples.length, heightRange: Math.max(...heights) - Math.min(...heights) };
+        if (samples.length < 30 || samples.some(sample => sample.mode !== 0) || report.cameraStability.heightRange > 0.001)
+          throw new Error(`Idle camera jitter: ${JSON.stringify(report.cameraStability)}`);
+      } finally {
+        await driver.executeScript('window.t850Touch.updateCamera = window.t850CameraUpdate; delete window.t850CameraUpdate; delete window.t850CameraSamples;');
+      }
+    }
     report.initialRenderSize = await driver.executeScript('return window.t850.renderSize');
     const initialImage = await captureCanvas();
     await writeFile(resolve(output, 'initial.png'), Buffer.from(initialImage, 'base64'));
@@ -898,7 +932,16 @@ try {
     }
   }
   const finalState = await driver.executeScript('return { errors: window.t850?.errors }');
-  if (finalState?.errors?.length) throw new Error(finalState.errors.join('\n'));
+  const finalErrors = unexpectedErrors(finalState?.errors);
+  if (finalErrors.length) throw new Error(finalErrors.join('\n'));
+  const requestedFlow = new URL(report.url).searchParams.get('shaderFlow');
+  if (['wgsl', 'spirv'].includes(requestedFlow) &&
+      (values['compute-selftest'] || new URL(report.url).searchParams.get('postProcessMode') === 'compute')) {
+    report.computeFlows = await driver.executeScript(`return window.t850.logs
+      .filter(line => line.includes('[WebGPU][Compute] Pipeline') && line.includes('created (flow='));`);
+    if (!report.computeFlows.length || report.computeFlows.some(line => !line.includes('created (flow=' + requestedFlow + ' ')))
+      throw new Error('Compute did not use the requested strict shader flow: ' + requestedFlow);
+  }
   if (values['disable-bc'] || values['disable-float-filtering']) {
     report.deviceFeatures = await driver.executeScript(`return window.t850.logs.find(line => line.includes('[WebGPU] Device optional features:'));`);
     if (!report.deviceFeatures || report.featureEmulation.errors.length || !report.featureEmulation.attached ||

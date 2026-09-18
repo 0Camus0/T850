@@ -7,6 +7,10 @@
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 #include <utils/ShaderPermutationDump.h>
+#include <utils/SPIRVReflection.h>
+#include <glslang/Public/ResourceLimits.h>
+#include <glslang/Public/ShaderLang.h>
+#include <glslang/SPIRV/GlslangToSpv.h>
 
 #include <filesystem>
 #include <sstream>
@@ -97,7 +101,28 @@ bool GLComputePipeline::Create(const ComputePipelineDesc& desc) {
     }
   }
   std::string source;
-  if (!LoadComputeSource(desc, source) || !CompileComputeProgram(desc, source, program)) return false;
+  if (!LoadComputeSource(desc, source)) return false;
+  static const bool initialized = glslang::InitializeProcess();
+  if (!initialized) return false;
+  glslang::TShader reflectionShader(EShLangCompute);
+  const char* text = source.c_str();
+  reflectionShader.setStrings(&text, 1);
+  reflectionShader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientOpenGL, 430);
+  reflectionShader.setEnvClient(glslang::EShClientOpenGL, glslang::EShTargetOpenGL_450);
+  reflectionShader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
+  const auto messages = static_cast<EShMessages>(EShMsgSpvRules);
+  if (!reflectionShader.parse(GetDefaultResources(), 430, false, messages)) {
+    T8_LOG_ERROR("[GL][Compute] Reflection compile failed: %s", reflectionShader.getInfoLog());
+    return false;
+  }
+  glslang::TProgram reflectionProgram;
+  reflectionProgram.addShader(&reflectionShader);
+  if (!reflectionProgram.link(messages)) return false;
+  std::vector<uint32_t> spirv;
+  glslang::GlslangToSpv(*reflectionProgram.getIntermediate(EShLangCompute), spirv);
+  std::vector<ComputeBindingLayoutDesc> reflected;
+  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize, true) ||
+      !SetValidatedLayout(desc, reflected, true) || !CompileComputeProgram(desc, source, program)) return false;
   GLint reflectedGroupSize[3] = {};
   glGetProgramiv(program, GL_COMPUTE_WORK_GROUP_SIZE, reflectedGroupSize);
   if (reflectedGroupSize[0] <= 0 || reflectedGroupSize[1] <= 0 || reflectedGroupSize[2] <= 0) {
@@ -153,7 +178,8 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
                                const std::vector<ComputeBindingDesc>& dispatchBindings,
                                uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) {
   auto* pipeline = dynamic_cast<GLComputePipeline*>(&pipelineBase);
-  if (!pipeline || !SupportsComputeShaders() || !groupCountX || !groupCountY || !groupCountZ) return false;
+  if (!pipeline || !pipeline->ValidateBindings(dispatchBindings) || !SupportsComputeShaders() ||
+      !groupCountX || !groupCountY || !groupCountZ) return false;
 
   for (GLuint axis = 0; axis < 3; ++axis) {
     GLint limit = 0;
@@ -176,7 +202,9 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
       if (!binding.constants || binding.constantCount != layout->constantCount) return false;
     } else if (binding.type == ComputeBindingType::ReadOnlyBuffer ||
                binding.type == ComputeBindingType::ReadWriteBuffer) {
-      if (!dynamic_cast<GLComputeBuffer*>(binding.buffer)) return false;
+        if (!dynamic_cast<GLComputeBuffer*>(binding.buffer) ||
+          (binding.type == ComputeBindingType::ReadWriteBuffer &&
+           binding.buffer->descriptor.access != ComputeBufferAccess::ReadWrite)) return false;
     } else {
       auto* texture = dynamic_cast<GLTexture*>(binding.texture);
       if (!texture || texture->glTarget != GL_TEXTURE_2D) return false;
@@ -187,6 +215,13 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
       if (binding.type == ComputeBindingType::ReadWriteTexture &&
           (!SupportsComputeTextures() || layout->bindingIndex >= static_cast<uint32_t>(maxImageUnits) ||
            (texture->glInternalFormat != GL_RGBA8 && texture->glInternalFormat != GL_RGBA16F))) return false;
+      if (binding.type == ComputeBindingType::ReadWriteTexture) {
+        for (const auto& reflected : pipeline->bindingLayout) {
+          if (reflected.type == binding.type && reflected.shaderRegister == binding.shaderRegister &&
+              texture->glInternalFormat != (reflected.storageFormat == ComputeStorageFormat::Rgba16Float ? GL_RGBA16F : GL_RGBA8))
+            return false;
+        }
+      }
       if (binding.type == ComputeBindingType::Sampler) {
         const ComputeBindingLayoutDesc* textureLayout = pipeline->Find(
           ComputeBindingType::ReadOnlyTexture, binding.shaderRegister);
@@ -276,7 +311,7 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
 
 bool GLDriver::ReadComputeBuffer(ComputeBuffer& bufferBase, void* destination, size_t byteCount) {
   auto* buffer = dynamic_cast<GLComputeBuffer*>(&bufferBase);
-  if (!buffer || !destination || !byteCount || byteCount > buffer->descriptor.byteWidth) return false;
+  if (!buffer || !destination || !byteCount || byteCount % 4 || byteCount > buffer->descriptor.byteWidth) return false;
   GLint previous = 0;
   glGetIntegerv(GL_SHADER_STORAGE_BUFFER_BINDING, &previous);
   glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);

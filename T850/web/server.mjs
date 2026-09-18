@@ -57,6 +57,7 @@ const mime = new Map([
   ['.html', 'text/html; charset=utf-8'], ['.js', 'text/javascript'],
   ['.wasm', 'application/wasm'], ['.json', 'application/json'],
   ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.css', 'text/css'],
+  ['.svg', 'image/svg+xml'],
 ]);
 const server = createServer((request, response) => {
   response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');

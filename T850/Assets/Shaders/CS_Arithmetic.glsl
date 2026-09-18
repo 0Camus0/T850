@@ -13,11 +13,21 @@ layout(std430, binding = 1) buffer ArithmeticOutput {
     uint Output[];
 };
 
+#ifdef COMPUTE_READ_INPUT
+layout(std430, binding = 2) readonly buffer ArithmeticInput {
+    uint Input[];
+};
+#endif
+
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
     if (index >= ElementCount)
         return;
 
+#ifdef COMPUTE_READ_INPUT
+    Output[index] = ((Input[index] + Addend) * Multiplier) ^ XorMask;
+#else
     Output[index] = ((index + Addend) * Multiplier) ^ XorMask;
+#endif
 }

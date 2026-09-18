@@ -1181,7 +1181,12 @@ namespace t850 {
 
   void VulkanDriver::FlushGPUResources() {
     if (!m_device) return;
+    if (m_frameStarted) CompleteFrame(FrameCompletionMode::SubmitNoPresent);
     WaitForGPU();
+    for (auto& retired : m_retiredCompute) {
+      for (auto& release : retired) release();
+      retired.clear();
+    }
     // Reset all command buffers to release references to resources
     for (uint32_t i = 0; i < kBackBufferCount; i++) {
       if (m_commandBuffers[i])
@@ -1337,6 +1342,13 @@ namespace t850 {
 
   void VulkanDriver::WaitForFence(uint32_t frameIndex) {
     vkWaitForFences(m_device, 1, &m_inFlightFences[frameIndex], VK_TRUE, UINT64_MAX);
+    for (auto& release : m_retiredCompute[frameIndex]) release();
+    m_retiredCompute[frameIndex].clear();
+  }
+
+  void VulkanDriver::RetireComputeResource(std::function<void()> release) {
+    const uint32_t slot = m_frameStarted ? m_currentFrame : (m_currentFrame + kBackBufferCount - 1) % kBackBufferCount;
+    m_retiredCompute[slot].push_back(std::move(release));
   }
 
   void VulkanDriver::WaitForGPU() {
@@ -1915,6 +1927,12 @@ namespace t850 {
       }
 
       VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+      if (m_frameUsesSwapchain && !m_screenshotConsumedSemaphore) {
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &m_imageAvailableSemaphores[m_currentFrame];
+        submitInfo.pWaitDstStageMask = &waitStage;
+      }
       submitInfo.commandBufferCount = 1;
       submitInfo.pCommandBuffers = &cmd;
 
@@ -2598,13 +2616,15 @@ reopen:
       vkCmdCopyBuffer(cmd, stagingBuffer, dest, 1, &copyRegion);
       VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
       barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-      barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT |
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
       barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
       barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
       barrier.buffer = dest;
       barrier.offset = 0;
       barrier.size = dataSize;
-      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+               VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                            0, 0, nullptr, 1, &barrier, 0, nullptr);
     };
 

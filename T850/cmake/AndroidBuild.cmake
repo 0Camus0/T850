@@ -128,6 +128,8 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/video/webgpu/WebGPUShaderPackage.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/ShaderTools.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/SPIRVReflection.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ComputeReflection.cpp
+  ${T850_SOURCE_DIR}/Librerias/spirv-reflect/spirv_reflect.c
   ${T850_SOURCE_DIR}/Framework/src/utils/ThreadPool.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Spline.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Picking.cpp

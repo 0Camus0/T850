@@ -1060,6 +1060,12 @@
     <ClCompile Include="src\utils\SPIRVReflection.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
+    <ClCompile Include="src\utils\ComputeReflection.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Librerias\spirv-reflect\spirv_reflect.c">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
     <ClCompile Include="src\utils\ShaderDiskCache.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>

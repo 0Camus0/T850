@@ -143,6 +143,7 @@ include(CTest)
 add_executable(T850WebSelfTests "${T850_SOURCE_DIR}/cmake/web-tests/SelfTest.cpp")
 target_link_libraries(T850WebSelfTests PRIVATE FrameworkImGui)
 target_link_options(T850WebSelfTests PRIVATE -sASYNCIFY=1 -sENVIRONMENT=node,worker -sEXIT_RUNTIME=1
-  -sPTHREAD_POOL_SIZE=8 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456)
+  -sPTHREAD_POOL_SIZE=8 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456
+  "--embed-file=${T850_SOURCE_DIR}/Assets/Scenes@/Scenes")
 set_target_properties(T850WebSelfTests PROPERTIES SUFFIX ".js")
 add_test(NAME T850WebSelfTests COMMAND T850WebSelfTests)

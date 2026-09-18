@@ -341,7 +341,12 @@ bool RenderGraph::Load(const std::string& path) {
       std::set<std::pair<ComputeBindingType, uint32_t>> declaredBindings;
       std::unordered_set<std::string> sampledResources;
       std::unordered_set<std::string> writtenResources;
-      std::unordered_set<std::string> samplerResources;
+        std::unordered_map<int, std::string> sampledRegisters, samplerRegisters;
+        std::string extentName;
+        int extentIndex = 0;
+        if (!ParseRenderTargetReference(pass.compute_extent_from, extentName, extentIndex) ||
+          !renderTargets.count(extentName)) return false;
+        const RTDesc& extent = *renderTargets.at(extentName);
       for (const ComputeResourceDesc& resource : pass.compute_resources) {
         const std::optional<ComputeBindingType> type = ResolveComputeAccess(resource.access);
         if (!type || resource.shader_register < 0) {
@@ -388,14 +393,35 @@ bool RenderGraph::Load(const std::string& path) {
           return false;
         }
         const std::string identity = ResourceIdentity(renderTargetName, attachment);
+        const ComputeBindingLayoutDesc* layout = nullptr;
+        for (size_t index = 0; index < kernel->bindingCount; ++index)
+          if (kernel->bindings[index].type == *type && kernel->bindings[index].shaderRegister == resource.shader_register)
+            layout = &kernel->bindings[index];
+        if (!layout) return false;
+        if (attachment == BaseDriver::DEPTH_ATTACHMENT && renderTarget.depth_format == "CUBE_F32") return false;
+        if ((layout->matchOutputExtent || *type == ComputeBindingType::ReadWriteTexture) &&
+            (renderTarget.size != extent.size || renderTarget.size_ref != extent.size_ref)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' resource '%s' must match its dispatch extent", pass.name.c_str(), resource.resource.c_str());
+          return false;
+        }
         if (*type == ComputeBindingType::ReadOnlyTexture) {
           sampledResources.insert(identity);
+          sampledRegisters.emplace(resource.shader_register, identity);
         } else if (*type == ComputeBindingType::Sampler) {
-          samplerResources.insert(identity);
+          samplerRegisters.emplace(resource.shader_register, identity);
         } else if (*type == ComputeBindingType::ReadWriteTexture) {
           if (attachment == BaseDriver::DEPTH_ATTACHMENT || !renderTarget.storage) {
             T8_LOG_ERROR("[RenderGraph] Pass '%s' storage output '%s' is not a storage-enabled color target",
                          pass.name.c_str(), resource.resource.c_str());
+            return false;
+          }
+          if (!renderTarget.color_formats.empty() && attachment >= static_cast<int>(renderTarget.color_formats.size())) return false;
+          const std::string& format = renderTarget.color_formats.empty()
+            ? renderTarget.color_format : renderTarget.color_formats[attachment];
+          const char* required = layout->storageFormat == ComputeStorageFormat::Rgba16Float ? "RGBA16F" : "RGBA8";
+          if (layout->storageFormat == ComputeStorageFormat::Unspecified || format != required) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' storage format '%s' does not match kernel '%s'",
+              pass.name.c_str(), format.c_str(), required);
             return false;
           }
           if (!writtenResources.insert(identity).second) {
@@ -410,8 +436,8 @@ bool RenderGraph::Load(const std::string& path) {
                      pass.name.c_str());
         return false;
       }
-      for (const std::string& sampler : samplerResources) {
-        if (!sampledResources.count(sampler)) {
+      for (const auto& [shaderRegister, sampler] : samplerRegisters) {
+        if (!sampledRegisters.count(shaderRegister) || sampledRegisters.at(shaderRegister) != sampler) {
           T8_LOG_ERROR("[RenderGraph] Pass '%s' sampler '%s' has no matching sampled resource",
                        pass.name.c_str(), sampler.c_str());
           return false;
@@ -729,6 +755,7 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
 }
 
 void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
+  if (driver && (!m_rtHandles.empty() || !m_computePipelines.empty())) driver->FlushGPUResources();
   m_computePipelines.clear();
   m_loggedComputeDispatches.clear();
   if (!driver) {
@@ -869,6 +896,14 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
       binding.texture = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
       if (!binding.texture)
         return false;
+      for (size_t index = 0; index < kernel->bindingCount; ++index) {
+        const auto& layout = kernel->bindings[index];
+        if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
+            (layout.matchOutputExtent || layout.type == ComputeBindingType::ReadWriteTexture)) {
+          const auto* target = driver->RTs[resolved.rt_handle];
+          if (!target || target->w != outputRT->w || target->h != outputRT->h) return false;
+        }
+      }
     }
     bindings.push_back(binding);
   }

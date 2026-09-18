@@ -68,6 +68,10 @@ void WebFramework::ChangeAPI(GraphicsApi::E api) {
     throw std::invalid_argument("Only WebGPU is available in the browser");
   if (pVideoDriver) return;
   auto driver = std::make_unique<WebGPUDriver>();
+  webgpu::ShaderFlow flow;
+  if (!webgpu::ParseShaderFlow(g_config.webgpuShaderFlow, flow))
+    throw std::invalid_argument("Invalid browser shader flow");
+  driver->SetShaderFlow(flow);
   driver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
   driver->SetWindowHandle(WindowHandle::FromSDL(m_window));
   driver->InitDriver();

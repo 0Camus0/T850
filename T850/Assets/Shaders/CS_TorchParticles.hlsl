@@ -25,6 +25,11 @@ cbuffer TorchParticleConstants : register(b0)
 #endif
 RWTexture2D<float4> OutputTexture : register(u0);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(2, 0)]]
+#endif
+Texture2D<float> SceneDepth : register(t0);
+
 float Hash(uint value)
 {
     value ^= value >> 16;
@@ -65,6 +70,7 @@ void CS(uint3 dispatchId : SV_DispatchThreadID)
     const float time = EmitterAndTime.w;
     const float2 uv = (float2(dispatchId.xy) + 0.5f) / float2(outputSize);
     const float aspect = (float)outputSize.x / max((float)outputSize.y, 1.0f);
+    const float sceneDepth = SceneDepth.Load(int3(dispatchId.xy, 0));
 
     float3 accumulated = 0.0f.xxx;
     float accumulatedAlpha = 0.0f;
@@ -87,6 +93,10 @@ void CS(uint3 dispatchId : SV_DispatchThreadID)
 
         const float4 clip = mul(ViewProjection, float4(position, 1.0f));
         if (clip.w <= 0.0001f)
+            continue;
+
+        const float particleDepth = clip.z / clip.w;
+        if (particleDepth < 0.0f || particleDepth > 1.0f || particleDepth < sceneDepth)
             continue;
 
         const float2 ndc = clip.xy / clip.w;

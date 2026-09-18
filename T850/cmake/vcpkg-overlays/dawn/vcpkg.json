@@ -1,7 +1,7 @@
 {
   "name": "dawn",
   "version": "20260219.200501",
-  "port-version": 6,
+  "port-version": 7,
   "description": "T850 pinned Dawn runtime, Windows x64 D3D12 only.",
   "homepage": "https://dawn.googlesource.com/dawn",
   "license": "BSD-3-Clause",

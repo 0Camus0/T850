@@ -102,8 +102,9 @@ From the source root:
 
 The tracked [overlays](../../T850/cmake/vcpkg-overlays/RequirePinnedVcpkg.cmake)
 pin vcpkg to `77df67cfff9c12ccfdb52284e07c87c75092f723`, Dawn to
-`20260219.200501#6` and ImGui to `1.92.7#1`. The Dawn overlay includes guarded
-Tint matrix-transpose and operand-usage fixes. ImGui's WebGPU dependency disables
+`20260219.200501#7` and ImGui to `1.92.7#1`. The Dawn overlay includes guarded
+Tint matrix-transpose/operand-usage fixes and the DXGI tearing flag for
+non-exclusive Immediate presentation. ImGui's WebGPU dependency disables
 Dawn's default features and requests D3D12 explicitly. The Dawn overlay does not
 offer D3D11, Vulkan, GL or Metal features. Upstream's internal null/test backend
 remains compiled; the probe requests D3D12 and rejects software adapters, so it
@@ -632,6 +633,35 @@ The launcher can:
 - install and deploy the Android app when Android is selected.
 
 The launcher writes `config.json`. Runtime command-line arguments override values loaded from that file. Its Build/Rebuild buttons invoke `scripts\build.ps1`, the same entry point used by GitHub Actions. Windows output lookup uses `Win32`, `x64`, and `ARM64` exactly as MSBuild emits them.
+
+### Adaptive Developer Launcher
+
+`scripts/Launcher.ps1` sizes its initial height to the visible settings, bounded
+by the current monitor's usable work area in WPF units. It no longer imposes a
+760-unit height on a larger desktop. The settings columns flow independently
+and stack on narrow windows. Build, Rebuild, Run, Download Assets, Benchmark
+Matrix, and Editor stay in a fixed bottom action bar that reflows into rows.
+Only settings/output scroll when the screen or scaling leaves insufficient room.
+Short windows use a compact header without reducing text sizes. Monitor moves
+and DPI changes refresh the work-area limits; manual resizing remains available.
+
+When dependency setup is active for this checkout, the launcher displays a
+persistent update-in-progress notice and disables Build/Rebuild and shader
+compilation. Temporarily removed packages are not reported as missing, and the
+Windows/Dawn setup entry points recheck before starting another installer.
+The notice refreshes every five seconds and clears automatically when setup
+finishes. Read-only audits and installers using another vcpkg checkout do not
+block it. If process inspection fails, build/setup pauses with an explicit
+status rather than assuming another installation is safe.
+
+The existing launcher test suite includes 27 real WPF layout cases using work
+areas equivalent to 100%, 125%, 150%, 200%, and 250% scaling. It checks action
+bounds, scrolling, manual resizing, build-output expansion, and monitor-limit
+changes. These are simulated display sizes, not changes to Windows display settings.
+
+```powershell
+.\scripts\TestLauncherWebGPU.ps1 -Ui -LayoutOutputDirectory "$env:LOCALAPPDATA\T850Profiles\launcher-layout"
+```
 
 ### WebGPU Launcher Selection
 

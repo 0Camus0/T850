@@ -25,6 +25,7 @@ add_executable(DawnSurfaceProbe SurfaceProbe.cpp ../../Framework/src/video/webgp
 target_include_directories(DawnSurfaceProbe PRIVATE ../../Framework/include ../../Framework "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(DawnSurfaceProbe PRIVATE dawn::webgpu_dawn user32)
 target_compile_options(DawnSurfaceProbe PRIVATE /Zc:preprocessor)
+target_compile_definitions(DawnSurfaceProbe PRIVATE T850_ENABLE_PROFILING=0)
 add_executable(DawnPackageProbe Probe.cpp)
 target_link_libraries(DawnPackageProbe PRIVATE dawn::webgpu_dawn)
 add_executable(DawnMSBuildProbe Probe.cpp)

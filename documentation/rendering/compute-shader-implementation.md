@@ -322,12 +322,14 @@ target.
 
 ### Torch particles
 
-`CS_TorchParticles.hlsl` projects deterministic world-space particles from the authored torch
-emitter into a screen-sized RGBA16F texture. Lifetime, rise, spread, size, emitter position,
-particle count, and time are supplied through `SceneProps`. Every thread owns one output
-pixel, so no atomics or retained particle buffer are needed. Palette colors, radial motion,
-wobble, size evolution, edge softness, fade windows, intensity, and tip lighting are authored
-under `voxel_world.torch` rather than embedded in C++ or shader code.
+`CS_TorchParticles.hlsl` projects deterministic world-space particles from up to three
+authored torch emitters into a screen-sized RGBA16F texture. Lifetime, rise, spread, size,
+emitter positions, particle count, and time are supplied through `SceneProps`. Every thread
+owns one output pixel, so no atomics or retained particle buffer are needed. Palette colors,
+radial motion, wobble, size evolution, edge softness, fade windows, intensity, and tip
+lighting are authored under `voxel_world.torch` rather than embedded in C++ or shader code.
+The constant payload is 60 DWORDs: the original position/time vector plus one packed X/Z
+vector for the two additional emitters.
 
 The pass binds the same frame's `GBuffer:DEPTH` at sampled register `t0`
 (portable binding 2), alongside constants at binding 0 and the output at binding 1.
@@ -440,10 +442,12 @@ Generated frame dumps named in the result JSON files remain beside the matching 
 |---|---|
 | x64 Debug full solution build | PASS |
 | x64 Release full solution build | PASS |
-| Dawn `DawnComputeV1` Debug/Release | PASS, 6 shader families; Torch constants reflect as 56 DWORDs |
+| Dawn `DawnComputeV1` Release | PASS, 9 variants through strict WGSL and HLSL/SPIR-V; Torch constants reflect as 60 DWORDs with 3 bindings |
 | Framework build registration | PASS |
-| Release game self-tests | PASS, 61 tests |
-| Release compute self-tests | PASS on D3D11, D3D12, Vulkan, WebGPU/Dawn, and OpenGL; arithmetic plus `1x1`, `7x5`, and `257x129` image kernels |
+| x64 Debug/Release staged Minecraft demo builds | PASS |
+| Release game self-tests | PASS, 63 tests including Minecraft house and survival contracts |
+| Release compute self-tests | PASS on D3D11, D3D12, Vulkan, WebGPU/Dawn, and OpenGL; arithmetic, odd-sized image kernels, and production Torch depth cases |
+| Staged Minecraft renderer smoke | PASS on D3D12, strict-WGSL WebGPU, OpenGL, and Vulkan at 1023x577; 22 slabs, 3 torches, glowing eyes, zero engine errors |
 | JSON/permutation audit | PASS, 281 graphics entries, 9 compute entries, 6 compute graph identities, 8 graph files |
 | Arithmetic D3D11/D3D12/Vulkan | PASS, 96/96 values per API |
 | Arithmetic OpenGL | PASS, 96/96 values on desktop OpenGL 4.6 |

@@ -43,6 +43,7 @@ namespace t850 {
     virtual void Create() = 0;
     virtual void Transform(float *t) = 0;
     virtual void Draw(float *t, float *vp) = 0;
+    virtual bool MayDrawInPass(uint8_t) const { return true; }
     virtual void Destroy() = 0;
     friend class PrimitiveInst;
 

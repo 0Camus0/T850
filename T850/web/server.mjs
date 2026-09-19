@@ -23,9 +23,18 @@ if (values.browser && (!existsSync(values.browser) || !statSync(values.browser).
 let port = Number(values.port);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid port');
 const lastPort = Math.min(65535, port + 30);
-for (const file of ['DayScene.html', 'DayScene.js', 'DayScene.wasm', 'scenes.json']) {
-  if (!existsSync(join(values.site, file))) throw new Error(`Browser build missing: ${join(values.site, file)}. Run scripts/BuildWeb.ps1 or install the browser bundle.`);
+const runtimeFiles = ['DayScene.html', 'DayScene.js', 'DayScene.wasm'];
+function runtimeSignature() {
+  return JSON.stringify(runtimeFiles.map(file => {
+    const path = join(values.site, file);
+    if (!existsSync(path) || !statSync(path).isFile() || statSync(path).size === 0)
+      throw new Error(`Browser build missing or incomplete: ${path}. Finish BUILD WEB before launching.`);
+    const stat = statSync(path);
+    return [file, stat.size, stat.mtimeMs, stat.ctimeMs];
+  }));
 }
+const servedRuntime = runtimeSignature();
+if (!existsSync(join(values.site, 'scenes.json'))) throw new Error('Browser scene catalog is missing. Run scripts/BuildWeb.ps1.');
 function openBrowser(url) {
   const executable = values.browser ?? (process.platform === 'win32' ? 'rundll32.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open');
   const argumentsList = !values.browser && process.platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url];
@@ -52,7 +61,7 @@ function catalog(directory, prefix = '') {
 catalog(values.assets);
 catalog(values.shaders, 'WebShaders/');
 const assetIndex = JSON.stringify([...assets.keys()].sort());
-const identity = createHash('sha256').update(JSON.stringify([values.site, values.assets, values.shaders].map(path => resolve(path))) + assetIndex).digest('hex');
+const identity = createHash('sha256').update(JSON.stringify([values.site, values.assets, values.shaders].map(path => resolve(path))) + assetIndex + servedRuntime).digest('hex');
 const mime = new Map([
   ['.html', 'text/html; charset=utf-8'], ['.js', 'text/javascript'],
   ['.wasm', 'application/wasm'], ['.json', 'application/json'],
@@ -73,6 +82,13 @@ const server = createServer((request, response) => {
     if (path === '/__t850') {
       response.setHeader('Content-Type', 'application/json');
       response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ identity }));
+      return;
+    }
+    try {
+      if (runtimeSignature() !== servedRuntime) throw new Error('Runtime changed');
+    } catch {
+      response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      response.writeHead(503).end('Browser build changed or is incomplete. Finish BUILD WEB, reopen from the Launcher, and reload this tab.');
       return;
     }
     if (path === '/assets/index.json') {

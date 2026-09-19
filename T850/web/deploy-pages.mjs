@@ -18,7 +18,7 @@ function runNode(args, options) {
 
 export async function deployPages(configPath, { dryRun = false, dev = false, port = 8788, env = process.env, run = runNode } = {}) {
   configPath = resolve(configPath);
-  for (const directory of ['Assets', 'web/previews', 'web/icons', 'build/pages', 'build/pages-minecraft', 'build/web/site']) {
+  for (const directory of ['Assets', 'web/previews', 'web/icons', 'web/minecraft-resources', 'build/pages', 'build/pages-minecraft', 'build/web/site']) {
     const inside = relative(join(sourceRoot, directory), configPath);
     if (!inside.startsWith('..') && !inside.includes(':')) throw new Error('Keep Cloudflare configuration outside published asset directories');
   }
@@ -26,7 +26,7 @@ export async function deployPages(configPath, { dryRun = false, dev = false, por
   const output = join(sourceRoot, config.minecraftOnly ? 'build/pages-minecraft' : 'build/pages');
   const settings = cloudflareWranglerConfig(config, output);
   if (dryRun) return { mode: dev ? 'dev' : 'deploy', projectName: config.projectName, branch: config.branch,
-    output, bindings: config.r2Buckets.map(bucket => bucket.binding), credentialsIncluded: false };
+    output, bindings: (settings.r2_buckets ?? []).map(bucket => bucket.binding), credentialsIncluded: false };
   const wrangler = join(webRoot, 'node_modules/wrangler/bin/wrangler.js');
   try { await access(wrangler); await access(join(sourceRoot, 'build/web/site/DayScene.wasm')); }
   catch { throw new Error('Build the browser Release bundle and run npm ci in web before deployment'); }
@@ -42,7 +42,7 @@ export async function deployPages(configPath, { dryRun = false, dev = false, por
   try {
     await writeFile(join(work, 'wrangler.jsonc'), JSON.stringify(settings, null, 2));
     const args = dev
-      ? [wrangler, 'pages', 'dev', '--port', String(port), '--binding', 'ASSET_SOURCE=public-mirror']
+      ? [wrangler, 'pages', 'dev', '--port', String(port), ...(config.minecraftOnly ? [] : ['--binding', 'ASSET_SOURCE=public-mirror'])]
       : [wrangler, 'pages', 'deploy', output, '--project-name', config.projectName, '--branch', config.branch, '--commit-dirty=true'];
     await run(args, { cwd: work, env: { ...childEnv, CLOUDFLARE_API_TOKEN: dev ? '' : config.apiToken } });
     return { mode: dev ? 'dev' : 'deploy', projectName: config.projectName, output, credentialsIncluded: false };

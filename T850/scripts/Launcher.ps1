@@ -1289,6 +1289,9 @@ function Invoke-LoggedProcess {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $false
     $psi.CreateNoWindow = $true
+    if ([IO.Path]::GetFileName($FilePath) -ieq 'powershell.exe') {
+        $psi.EnvironmentVariables.Remove('PSModulePath')
+    }
 
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo = $psi

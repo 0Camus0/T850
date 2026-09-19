@@ -465,6 +465,7 @@ namespace t850 {
     void Create();
     void Transform(float *t);
     void Draw(float *t, float *vp);
+    bool MayDrawInPass(uint8_t pass) const override;
     void Destroy();
     void DrawWireframe();
     bool EnsureCullingMetadata();

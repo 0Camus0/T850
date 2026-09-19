@@ -1737,6 +1737,17 @@ namespace t850 {
     return true;
   }
 
+  bool RenderMesh::MayDrawInPass(uint8_t pass) const {
+    if (pass != PassType::FORWARD && pass != PassType::GBUFFER &&
+        pass != PassType::SHADOW_MAP && pass != PassType::RADIAL_DEPTH) return true;
+    for (const auto& geometry : Info) {
+      for (const auto& subset : geometry.SubSets) {
+        if (ShouldDrawSubsetInPass(subset, pass)) return true;
+      }
+    }
+    return false;
+  }
+
   static float SubsetViewDepth(const RenderMesh::SubSetInfo& subInfo, const XMATRIX44& world, const XVECTOR3& eye, const XVECTOR3& look) {
     float lx = (subInfo.bounds.min.x + subInfo.bounds.max.x) * 0.5f;
     float ly = (subInfo.bounds.min.y + subInfo.bounds.max.y) * 0.5f;
@@ -1935,9 +1946,8 @@ namespace t850 {
       pCullCamera = pScProp->pCullingCamera;
     const bool frustumCullingEnabled = !pScProp || pScProp->FrustumCullingEnabled;
 
-    // Extract frustum planes once per draw call
     XVECTOR3 frustumPlanes[6];
-    ExtractFrustumPlanes(pCullCamera->VP, frustumPlanes);
+    MeshDrawStateTracker::Get().GetFrustumPlanes(pCullCamera->VP, frustumPlanes);
 
     std::size_t numGeometries = xFile->MeshInfo.size();
     const bool trackCullStats = currentPass == PassType::GBUFFER;

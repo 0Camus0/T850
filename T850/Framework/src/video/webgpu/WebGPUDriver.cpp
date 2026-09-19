@@ -1129,7 +1129,12 @@ void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned first
       if (resource.kind == webgpu::ResourceKind::UniformBuffer) {
         Require(resource.binding >= 64 && resource.binding - 64 < constants.size(), "Unsupported uniform binding");
         auto* buffer = constants[resource.binding - 64];
-        Require(buffer && buffer->size >= resource.minimumBufferSize, "Required uniform buffer missing or too small");
+        if (!buffer || buffer->size < resource.minimumBufferSize) {
+          Require(false, "Required uniform buffer missing or too small: slot=" + std::to_string(resource.binding - 64)
+            + " required=" + std::to_string(resource.minimumBufferSize)
+            + " supplied=" + std::to_string(buffer ? buffer->size : 0)
+            + " shaderKey=" + std::to_string(shader->key.bits));
+        }
         if (buffer->uniformEpoch != context.UniformEpoch()) {
           buffer->gpu = context.UploadUniform(buffer->uniformShadow->data(), buffer->size, buffer->offset);
           buffer->uniformEpoch = context.UniformEpoch();

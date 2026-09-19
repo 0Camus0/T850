@@ -3,7 +3,7 @@ import firefox from 'selenium-webdriver/firefox.js';
 import chrome from 'selenium-webdriver/chrome.js';
 import edge from 'selenium-webdriver/edge.js';
 import { PNG } from 'pngjs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { openSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -17,6 +17,9 @@ const { values } = parseArgs({ allowNegative: true, options: {
   'compute-selftest': { type: 'boolean', default: false },
   launcher: { type: 'boolean', default: false },
   'minecraft-welcome': { type: 'boolean', default: false },
+  'console-logs': { type: 'boolean', default: false },
+  'asset-bundle': { type: 'boolean', default: false },
+  'bundle-cache': { type: 'boolean', default: false },
   soak: { type: 'string', default: '0' },
   interactions: { type: 'boolean', default: true },
   'input-rounds': { type: 'string', default: '1' },
@@ -29,9 +32,13 @@ const { values } = parseArgs({ allowNegative: true, options: {
   'block-edits': { type: 'boolean', default: false },
   'dig-seconds': { type: 'string', default: '0' },
   touch: { type: 'boolean', default: false },
+  'touch-desktop': { type: 'boolean', default: false },
   'capture-errors': { type: 'boolean', default: false },
   'camera-controls': { type: 'boolean', default: false },
   'camera-stability': { type: 'boolean', default: false },
+  'day-spectator': { type: 'boolean', default: false },
+  'pointer-lock-recovery': { type: 'boolean', default: false },
+  'wasm-fallback': { type: 'boolean', default: false },
   'disable-bc': { type: 'boolean', default: false },
   'disable-float-filtering': { type: 'boolean', default: false },
   gui: { type: 'boolean', default: false },
@@ -39,6 +46,9 @@ const { values } = parseArgs({ allowNegative: true, options: {
   binary: { type: 'string' },
 } });
 if (!['firefox', 'chrome', 'edge'].includes(values.browser)) throw new Error('Unsupported browser');
+if (values.touch && values['touch-desktop']) throw new Error('Choose mobile touch or desktop touch emulation, not both');
+if (values['bundle-cache'] && !values['asset-bundle']) throw new Error('Bundle cache testing requires --asset-bundle');
+if (values['console-logs'] && !values['minecraft-welcome']) throw new Error('Console checkbox testing requires --minecraft-welcome');
 function unexpectedErrors(errors = []) {
   if (!values['compute-selftest']) return errors;
   const expected = /\[WebGPU\] (?:Compute constant layout does not match shader reflection|Compute binding declaration count does not match shader reflection|Compute binding 1 does not match its declaration|Duplicate compute bind-group binding 0)  \(WebGPUDriver\.cpp:\d+\)$/;
@@ -53,6 +63,7 @@ if (!Number.isInteger(digSeconds) || digSeconds < 0 || digSeconds > 300) throw n
 const output = resolve(values.output ?? `../build/web/${values.browser}`);
 await mkdir(output, { recursive: true });
 const builder = new Builder().forBrowser(values.browser === 'edge' ? 'MicrosoftEdge' : values.browser);
+if (values['console-logs'] && values.browser === 'chrome') builder.setCapability('goog:loggingPrefs', { browser: 'ALL' });
 if (values['url-diagnostics']) builder.setCapability('webSocketUrl', true);
 const driverLog = openSync(resolve(output, values.browser === 'edge' ? 'msedgedriver.log' : values.browser === 'chrome' ? 'chromedriver.log' : 'geckodriver.log'), 'w');
 if (values.browser === 'edge') {
@@ -119,7 +130,46 @@ try {
   }
   await driver.manage().setTimeouts({ pageLoad: 180000, script: 120000 });
   await driver.manage().window().setRect({ width: 1280, height: 800 });
+  if (values['console-logs'] && values.browser === 'chrome')
+    await driver.sendDevToolsCommand('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: output });
   if (values.maximize) await driver.manage().window().maximize();
+  if (values['asset-bundle']) {
+    if (values.browser === 'firefox') throw new Error('Asset request blocking requires Chrome or Edge');
+    await driver.sendDevToolsCommand('Network.enable', {});
+    await driver.sendDevToolsCommand('Network.setBlockedURLs', { urls: ['*/assets/*', '*.r2.dev/*', '*.r2.cloudflarestorage.com/*'] });
+  }
+  if (values['pointer-lock-recovery']) {
+    if (values.browser === 'firefox') throw new Error('Pointer-lock rejection injection requires Chrome or Edge');
+    await driver.sendDevToolsCommand('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+      const requestPointerLock = Element.prototype.requestPointerLock;
+      let rejectNext = true;
+      Element.prototype.requestPointerLock = function(...options) {
+        if (this.id === 'canvas' && rejectNext) {
+          rejectNext = false;
+          return Promise.reject(new DOMException('The root document of this element is not valid for pointer lock.', 'WrongDocumentError'));
+        }
+        return requestPointerLock.apply(this, options);
+      };
+    })()` });
+  }
+  if (values['wasm-fallback']) {
+    if (values.browser === 'firefox') throw new Error('Wasm fetch failure injection requires Chrome or Edge');
+    await driver.sendDevToolsCommand('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+      const originalFetch = globalThis.fetch;
+      globalThis.t850WasmFetchAttempts = 0;
+      sessionStorage.setItem('t850:last-runtime-error:v1', JSON.stringify({
+        message: 'wasm streaming compile failed: TypeError: Load failed',
+        capturedAt: '2026-09-19T02:01:03.041Z',
+        recentLogs: ['wasm streaming compile failed: TypeError: Load failed'],
+      }));
+      globalThis.fetch = function(resource, ...options) {
+        const url = new URL(resource?.url ?? resource, location.href);
+        if (url.pathname.endsWith('/DayScene.wasm') && ++globalThis.t850WasmFetchAttempts === 1)
+          return Promise.reject(new TypeError('Load failed'));
+        return originalFetch.call(this, resource, ...options);
+      };
+    })()` });
+  }
   if (values['disable-bc'] || values['disable-float-filtering']) {
     if (values.browser === 'firefox') throw new Error('BC feature emulation requires Chrome or Edge');
     const override = `(() => {
@@ -170,8 +220,20 @@ try {
   }
   if (values.touch) {
     if (values.browser === 'firefox') throw new Error('Touch emulation requires Chrome or Edge');
+    const desktopAgent = await driver.executeScript('return navigator.userAgent');
+    const version = desktopAgent.match(/Chrome\/([\d.]+)/)?.[1] ?? '153.0.0.0';
+    await driver.sendDevToolsCommand('Network.setUserAgentOverride', {
+      userAgent: `Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version} Mobile Safari/537.36`,
+      platform: 'Linux armv8l',
+      userAgentMetadata: { brands: [{ brand: 'Chromium', version: version.split('.')[0] }], fullVersion: version,
+        platform: 'Android', platformVersion: '14.0.0', architecture: 'arm', model: 'Pixel 8', mobile: true },
+    });
     await driver.sendDevToolsCommand('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await driver.sendDevToolsCommand('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  }
+  if (values['touch-desktop']) {
+    if (values.browser === 'firefox') throw new Error('Desktop touch emulation requires Chrome or Edge');
+    await driver.sendDevToolsCommand('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 10 });
   }
   const capabilities = await driver.getCapabilities();
   report.browser = { name: capabilities.get('browserName'), version: capabilities.get('browserVersion') };
@@ -240,16 +302,19 @@ try {
       return driver.findElement(By.id('launch')).isEnabled();
     }, 30000, 'Minecraft welcome did not become ready');
     const inspectWelcome = () => driver.executeScript(`return {
+      version: document.getElementById('demo-version').textContent,
       title: document.title, heading: document.querySelector('h1').textContent.replace(/\\s+/g, ' ').trim(),
       engineRequested: performance.getEntriesByType('resource').some(entry => /DayScene\\.(js|wasm)/.test(entry.name)),
       width: innerWidth, contentWidth: document.documentElement.scrollWidth,
       controlsVisible: document.querySelector('.controls').getBoundingClientRect().top < innerHeight,
       imageReady: document.querySelector('.landscape').complete && document.querySelector('.landscape').naturalWidth > 0,
-      enemies: document.getElementById('enemies').value, resolution: document.getElementById('resolution').value
+      enemies: document.getElementById('enemies').value, resolution: document.getElementById('resolution').value,
+      consoleLogs: document.getElementById('console-logs').checked
     };`);
     report.welcome = { desktop: await inspectWelcome(), count, resolution };
     if (report.welcome.desktop.heading !== 'Hackathon 2026: WSSI Web GPU Minecraft Demo' || report.welcome.desktop.engineRequested)
       throw new Error('Invalid welcome title or eager engine download');
+    if (report.welcome.desktop.consoleLogs) throw new Error('Console logs must be unchecked on a fresh launch');
     await writeFile(resolve(output, 'welcome-desktop.png'), Buffer.from(await driver.takeScreenshot(), 'base64'));
     await driver.manage().window().setRect({ width: 480, height: 800 });
     await driver.wait(() => driver.executeScript('return document.getElementById("resolution").value === "720x1280"'),
@@ -266,6 +331,7 @@ try {
       10000, 'Desktop resolution options did not settle');
     await driver.executeScript(`document.getElementById('enemies').value = arguments[0];
       document.getElementById('resolution').value = arguments[1];`, count, resolution);
+    if (values['console-logs']) await driver.findElement(By.id('console-logs')).click();
     await driver.findElement(By.id('launch')).click();
     await driver.wait(async () => (await driver.getCurrentUrl()).includes('demo=wssi'), 30000, 'Welcome Launch did not navigate');
     report.url = await driver.getCurrentUrl();
@@ -357,11 +423,19 @@ try {
     if (values['minecraft-welcome']) {
       report.welcome.runtime = await driver.executeScript(`return { arguments: Module.arguments,
         scene: window.t850.scene, selectorHidden: document.getElementById('scene').hidden,
+        consoleVisible: !document.getElementById('runtime-console').hidden,
         home: document.querySelector('header a').getAttribute('href') };`);
       const runtime = report.welcome.runtime;
       const countIndex = runtime.arguments.indexOf('--minecraftEnemyCount');
       if (runtime.scene !== 'Minecraft' || !runtime.selectorHidden || countIndex < 0 || runtime.arguments[countIndex + 1] !== report.welcome.count)
         throw new Error('Minecraft welcome settings did not reach the runtime');
+      const postProcessIndex = runtime.arguments.indexOf('--postProcessMode');
+      if (postProcessIndex < 0 || runtime.arguments[postProcessIndex + 1] !== 'compute')
+        throw new Error('Minecraft welcome did not enable compute rendering');
+      const logLevelIndex = runtime.arguments.lastIndexOf('--logLevel');
+      if (logLevelIndex < 0 || runtime.arguments[logLevelIndex + 1] !== (values['console-logs'] ? 'trace' : 'error'))
+        throw new Error('Console logs checkbox did not select the expected engine log level');
+      if (runtime.consoleVisible !== values['console-logs']) throw new Error('On-page console visibility does not match the launcher choice');
     }
     if (values.launcher) {
       report.launchSelection = await driver.executeAsyncScript(function (done) {
@@ -424,6 +498,124 @@ try {
       }
     };
     await waitFrames(30);
+    if (values['wasm-fallback']) {
+      report.wasmFallback = await driver.executeScript(`return {
+        attempts: window.t850WasmFetchAttempts, fallback: window.t850.wasmStreamingFallback,
+        state: window.t850.state, errors: window.t850.errors,
+        messages: window.t850.logs.filter(line => line.startsWith('wasm streaming compile failed: ') || line === 'falling back to ArrayBuffer instantiation'),
+        previousError: window.t850.previousError, currentError: window.t850.lastError ?? null,
+        panelOpen: document.getElementById('runtime-error').open,
+        panelHidden: document.getElementById('runtime-error').hidden,
+        title: document.getElementById('runtime-error-title').textContent,
+        stored: JSON.parse(sessionStorage.getItem('t850:last-runtime-error:v1')),
+      }`);
+      const fallback = report.wasmFallback;
+      if (fallback.attempts < 2 || !fallback.fallback || fallback.state !== 'running' || fallback.errors.length ||
+          fallback.messages.length !== 2 || fallback.currentError || !fallback.panelHidden ||
+          fallback.stored.capturedAt !== fallback.previousError.capturedAt)
+        throw new Error('Wasm streaming retry was incorrectly treated as fatal or the old report obscures the scene');
+      const before = await driver.executeScript('return window.t850.frames');
+      await waitFrames(60);
+      const after = await driver.executeScript('return window.t850.frames');
+      if (after <= before) throw new Error('Rendering stopped after the recovered Wasm download');
+      report.wasmFallback.advancedFrames = after - before;
+      const consoleVisible = await driver.executeScript('return !document.getElementById("runtime-console").hidden');
+      if (consoleVisible) {
+        await driver.findElement(By.css('#console-previous-error summary')).click();
+        if (!(await driver.findElement(By.id('console-previous-error-text')).isDisplayed())) throw new Error('Saved diagnostic report is no longer accessible');
+        await driver.findElement(By.css('#console-previous-error summary')).click();
+      }
+    }
+    if (values['asset-bundle']) {
+      report.assetBundle = await driver.executeScript(`
+        const sky = Module.FS.readFile('/assets/Textures/sky/CubeMap_SkyWater_512.dds');
+        const header = new DataView(sky.buffer, sky.byteOffset, sky.byteLength);
+        return {
+        sky: { width: header.getUint32(16, true), height: header.getUint32(12, true), mips: header.getUint32(28, true),
+          compressed: !!(header.getUint32(80, true) & 4), bits: header.getUint32(88, true), faces: header.getUint32(112, true) & 0xfe00 },
+        ...window.t850.assetBundle, mode: Module.arguments[Module.arguments.indexOf('--webAssetBaseUrl') + 1],
+        requests: performance.getEntriesByType('resource').map(entry => entry.name),
+        lighting: Module.FS.analyzePath('/persistent/Textures/GeneratedIBLCache').exists
+          ? Module.FS.readdir('/persistent/Textures/GeneratedIBLCache').filter(name => /^(diffuse_cube|ggx_specular_cube|charlie_sheen_cube)_v1_[a-f0-9]{16}\\.t8ibl$/.test(name)) : []
+      }`);
+      if (report.assetBundle.mode !== 'embedded' || report.assetBundle.resources < 1 ||
+          report.assetBundle.requests.some(url => new URL(url).pathname.startsWith('/assets/')) ||
+          report.assetBundle.requests.filter(url => /minecraft-assets\.[a-f0-9]{64}\.zip$/.test(url)).length !== 1)
+        throw new Error('Scene did not use one self-contained asset bundle');
+      const sky = report.assetBundle.sky;
+      if (sky.width !== 512 || sky.height !== 512 || sky.mips !== 10 || sky.compressed || sky.bits !== 32 || sky.faces !== 0xfe00)
+        throw new Error('Bundled scene did not use the offline 512-face RGBA cubemap');
+      await mkdir(resolve(output, 'lighting'), { recursive: true });
+      for (const name of report.assetBundle.lighting) {
+        const data = await driver.executeScript(`const bytes = Module.FS.readFile('/persistent/Textures/GeneratedIBLCache/' + arguments[0]);
+          let text = ''; for (let offset = 0; offset < bytes.length; offset += 8192) text += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+          return btoa(text)`, name);
+        await writeFile(resolve(output, 'lighting', name), Buffer.from(data, 'base64'));
+      }
+    }
+    if (values['touch-desktop']) {
+      const touchState = () => driver.executeScript(`return {
+        points: navigator.maxTouchPoints, platform: navigator.userAgentData?.platform ?? navigator.platform,
+        panelHidden: document.getElementById('touch-controls').hidden,
+        overrideVisible: !document.getElementById('touch-toggle').hidden,
+        checked: document.getElementById('touch-enabled').checked, active: !!window.t850.touch?.active
+      }`);
+      report.touchDesktop = { initial: await touchState() };
+      if (report.touchDesktop.initial.points < 1 || !report.touchDesktop.initial.overrideVisible ||
+          !report.touchDesktop.initial.panelHidden || report.touchDesktop.initial.checked || report.touchDesktop.initial.active)
+        throw new Error('Touch-capable desktop incorrectly enabled mobile controls');
+      const location = await driver.executeScript('const bounds=document.getElementById("canvas").getBoundingClientRect();return {x:bounds.x+20,y:bounds.y+20}');
+      await driver.sendDevToolsCommand('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...location, id: 1, radiusX: 4, radiusY: 4 }] });
+      await driver.sendDevToolsCommand('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await waitFrames(30);
+      report.touchDesktop.afterTouch = await touchState();
+      if (!report.touchDesktop.afterTouch.panelHidden || report.touchDesktop.afterTouch.active)
+        throw new Error('First desktop finger touch auto-enabled the mobile gamepad');
+      await driver.executeScript('if(document.pointerLockElement)document.exitPointerLock()');
+      await driver.wait(() => driver.executeScript('return !document.pointerLockElement'), 10000, 'Could not release desktop mouse capture');
+      await waitFrames(30);
+      await driver.findElement(By.id('touch-enabled')).click();
+      await waitFrames(30);
+      report.touchDesktop.manualOn = await touchState();
+      if (report.touchDesktop.manualOn.panelHidden || !report.touchDesktop.manualOn.active)
+        throw new Error('Desktop touch manual override failed');
+      await driver.findElement(By.id('touch-enabled')).click();
+      await waitFrames(30);
+      report.touchDesktop.manualOff = await touchState();
+      if (!report.touchDesktop.manualOff.panelHidden || report.touchDesktop.manualOff.active)
+        throw new Error('Desktop touch manual override did not turn off');
+    }
+    if (values['day-spectator']) {
+      if (await driver.executeScript('return window.t850.scene') !== 'DayScene')
+        throw new Error('Spectator regression requires DayScene');
+      await canvas.click();
+      report.spectatorTransitions = [];
+      for (const enabled of [true, false, true, false]) {
+        const previous = await driver.executeScript('return window.t850.logs.filter(line => line.includes("[CAMERA] Spectator camera")).length');
+        await driver.actions().keyDown('5').perform();
+        try { await waitFrames(10); }
+        finally { await driver.actions().keyUp('5').perform(); }
+        await waitFrames(60);
+        const transitions = await driver.executeScript('return window.t850.logs.filter(line => line.includes("[CAMERA] Spectator camera"))');
+        if (transitions.length <= previous || !transitions.at(-1).includes(enabled ? 'enabled' : 'disabled'))
+          throw new Error('DayScene spectator toggle was not applied');
+        report.spectatorTransitions.push(enabled);
+        if (enabled) await writeFile(resolve(output, 'spectator.png'), Buffer.from(await captureCanvas(), 'base64'));
+      }
+    }
+    if (values['pointer-lock-recovery']) {
+      await driver.executeScript('document.getElementById("canvas").requestPointerLock()');
+      await driver.wait(() => driver.executeScript('return window.t850.pointerLock?.reason === "WrongDocumentError"'), 10000, 'Pointer-lock denial was not recorded');
+      await waitFrames(60);
+      report.pointerLockRecovery = await driver.executeScript('return { state: window.t850.state, errors: window.t850.errors, pointerLock: window.t850.pointerLock, panelHidden: document.getElementById("runtime-error").hidden }');
+      if (report.pointerLockRecovery.state !== 'running' || report.pointerLockRecovery.errors.length || !report.pointerLockRecovery.panelHidden)
+        throw new Error('Pointer-lock denial was treated as a renderer failure');
+      await canvas.click();
+      await driver.wait(() => driver.executeScript('return document.pointerLockElement === document.getElementById("canvas")'), 10000, 'Pointer-lock retry did not succeed');
+      await driver.executeScript('document.exitPointerLock()');
+      await waitFrames(30);
+      report.pointerLockRecovery.retrySucceeded = true;
+    }
     if (values['camera-stability']) {
       await waitFrames(120);
       await driver.executeScript(`window.t850CameraSamples = [];
@@ -735,9 +927,12 @@ try {
     if (profileFrames) {
       await driver.wait(() => driver.executeScript('return !!window.t850.telemetry'), 240000, 'Profile did not finish');
       const telemetry = await driver.executeScript('return window.t850.telemetry');
-      if (telemetry.sampleCount !== profileFrames) throw new Error(`Expected ${profileFrames} complete profile frames, received ${telemetry.sampleCount}`);
       await writeFile(resolve(output, 'telemetry.json'), JSON.stringify(telemetry, null, 2));
-      report.profileFrames = telemetry.sampleCount;
+      const runtimeFrames = telemetry.frames.filter(frame => !frame.startup && frame.detailed);
+      if (runtimeFrames.length !== profileFrames) throw new Error(`Expected ${profileFrames} complete runtime frames, received ${runtimeFrames.length}`);
+      if (telemetry.droppedRecords || telemetry.unfinishedWriters) throw new Error('Profile contains dropped or unfinished records');
+      report.profileFrames = runtimeFrames.length;
+      report.profileSamples = telemetry.sampleCount;
     } else {
     const soakSeconds = Number(values.soak);
     if (!Number.isFinite(soakSeconds) || soakSeconds < 0) throw new Error('Invalid soak duration');
@@ -951,29 +1146,116 @@ try {
   }
   if (values['disable-bc']) {
     report.bcFallback = await driver.executeScript(`return window.t850.logs.filter(line => line.includes('BC unavailable; decoded'));`);
-    if (!report.bcFallback.some(line => line.includes('faces=6'))) throw new Error('BC fallback was not exercised; use logLevel=info');
+    if (values['asset-bundle'] && report.bcFallback.length) throw new Error('Bundled RGBA sky unexpectedly required BC decoding');
+    if (!values['asset-bundle'] && !report.bcFallback.some(line => line.includes('faces=6'))) throw new Error('BC fallback was not exercised; use logLevel=info');
     report.bcCubemaps = report.bcFallback.map(line => line.match(/decoded (\d+)x(\d+) mips=(\d+) faces=6 to RGBA8 \(source=(\d+)x(\d+) firstMip=(\d+) bytes=(\d+)\)/))
       .filter(Boolean).map(match => ({ width: Number(match[1]), height: Number(match[2]), mips: Number(match[3]),
         sourceWidth: Number(match[4]), sourceHeight: Number(match[5]), firstMip: Number(match[6]), bytes: Number(match[7]) }));
-    if (!report.bcCubemaps.length || report.bcCubemaps.some(cube => cube.width > 512 || cube.height > 512 || cube.bytes > 8 * 1024 * 1024))
+    if ((!values['asset-bundle'] && !report.bcCubemaps.length) || report.bcCubemaps.some(cube => cube.width > 512 || cube.height > 512 || cube.bytes > 8 * 1024 * 1024))
       throw new Error('BC cubemap fallback did not stay within the 512-square/8-MiB texture budget');
     for (const cube of report.bcCubemaps) {
       if (cube.sourceWidth === 1024 && (cube.width !== 512 || cube.height !== 512 || cube.mips !== 10 || cube.firstMip !== 1 || cube.bytes !== 8388600))
         throw new Error('Default BC sky did not retain the expected 512-to-1 mip chain');
     }
   }
+  if (values['bundle-cache']) {
+    await driver.get(await driver.getCurrentUrl());
+    await driver.wait(async () => {
+      const state = await driver.executeScript('return { state: window.t850?.state, errors: window.t850?.errors }');
+      if (state.errors?.length) throw new Error(state.errors.join('\n'));
+      return state.state === 'running';
+    }, 180000, 'Cached scene did not start');
+    report.bundleCache = await driver.executeScript(`return performance.getEntriesByType('resource')
+      .filter(entry => /minecraft-assets\\.[a-f0-9]{64}\\.zip$/.test(entry.name))
+      .map(entry => ({ name: entry.name, transferSize: entry.transferSize, encodedBodySize: entry.encodedBodySize }))`);
+    if (report.bundleCache.length !== 1 || report.bundleCache[0].transferSize !== 0 || report.bundleCache[0].encodedBodySize !== report.assetBundle.archiveBytes)
+      throw new Error('Repeat visit did not reuse the cached asset archive');
+  }
   if (values['minecraft-welcome']) {
     report.runtime = await driver.executeScript('const { telemetry, ...runtime } = window.t850 ?? {}; return runtime');
+    if (values['console-logs']) {
+      report.consoleLogs = { engineMessages: report.runtime.logs.length,
+        recentMessages: report.runtime.logs.slice(-12) };
+      const verboseLog = /\[(?:TRACE|VERB|DEBUG|INFO)\s*\]/;
+      if (!report.runtime.logs.some(line => verboseLog.test(line))) throw new Error('Verbose engine logs were not emitted');
+      if (values.browser === 'chrome') {
+        const messages = await driver.manage().logs().get('browser');
+        report.consoleLogs.browserMessages = messages.filter(entry => verboseLog.test(entry.message));
+        if (!report.consoleLogs.browserMessages.length) throw new Error('Engine logs did not reach the browser console');
+      }
+      await driver.wait(() => driver.executeScript('return document.getElementById("console-output").textContent.length > 0'), 10000, 'On-page console stayed empty');
+      const inspectConsole = () => driver.executeScript(`
+        const panel = document.getElementById('runtime-console');
+        const output = document.getElementById('console-output');
+        const bounds = panel.getBoundingClientRect();
+        return { width: innerWidth, height: innerHeight, x: bounds.x, y: bounds.y, right: bounds.right, bottom: bounds.bottom,
+          open: panel.open, hidden: panel.hidden, characters: output.textContent.length,
+          following: document.getElementById('console-follow').checked,
+          messages: window.t850.logs.length, overflow: panel.scrollWidth > panel.clientWidth,
+          iconsReady: [...panel.querySelectorAll('img')].every(icon => icon.complete && icon.naturalWidth > 0),
+          buttonsFit: [...panel.querySelectorAll('button')].every(button => { const rect = button.getBoundingClientRect();
+            return rect.x >= bounds.x && rect.right <= bounds.right && rect.y >= bounds.y && rect.bottom <= bounds.bottom; }) };`);
+      report.consoleLogs.layouts = [];
+      for (const [name, width, height] of [['desktop', 1280, 800], ['phone', 390, 844], ['landscape', 844, 480]]) {
+        await driver.manage().window().setRect({ width, height });
+        if (values.browser !== 'firefox')
+          await driver.sendDevToolsCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+        const resizedFrame = await driver.executeScript('return window.t850.frames ?? 0');
+        await driver.wait(() => driver.executeScript('return (window.t850.frames ?? 0) > arguments[0] + 30', resizedFrame), 10000, 'Console resize stalled rendering');
+        const layout = await inspectConsole();
+        if (layout.hidden || !layout.open || !layout.characters || !layout.following || layout.messages > 4000 || layout.overflow ||
+            !layout.iconsReady || !layout.buttonsFit || layout.x < 0 || layout.y < 0 || layout.right > layout.width + 1 || layout.bottom > layout.height + 1)
+          throw new Error('Invalid on-page console layout: ' + name);
+        report.consoleLogs.layouts.push({ name, ...layout });
+        await writeFile(resolve(output, `console-${name}.png`), Buffer.from(await driver.takeScreenshot(), 'base64'));
+      }
+      await driver.findElement(By.css('#runtime-console summary')).click();
+      if (await driver.findElement(By.id('console-output')).isDisplayed()) throw new Error('Console did not collapse');
+      await driver.findElement(By.css('#runtime-console summary')).click();
+      if (!(await driver.findElement(By.id('console-output')).isDisplayed())) throw new Error('Console did not reopen');
+      await driver.findElement(By.id('console-follow')).click();
+      await driver.executeScript('document.getElementById("console-output").scrollTop = 0; Module.print("[ConsoleTest] keep reading position");');
+      await driver.wait(() => driver.executeScript('return document.getElementById("console-output").textContent.includes("[ConsoleTest] keep reading position")'), 10000, 'Console did not update with Follow off');
+      if (!(await driver.executeScript('return !document.getElementById("console-follow").checked && document.getElementById("console-output").scrollTop === 0')))
+        throw new Error('Console moved while Follow was disabled');
+      await driver.findElement(By.id('console-follow')).click();
+      if (!(await driver.executeScript('const output=document.getElementById("console-output"); return document.getElementById("console-follow").checked && output.scrollHeight-output.scrollTop-output.clientHeight < 24')))
+        throw new Error('Follow did not return to the latest message');
+      await driver.executeScript(`Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true,
+        value: async text => { window.t850ConsoleCopied = text; } });`);
+      await driver.findElement(By.id('console-copy')).click();
+      await driver.wait(() => driver.executeScript('return document.getElementById("console-feedback").textContent === "Copied"'), 10000, 'Copy logs did not complete');
+      report.consoleLogs.copied = await driver.executeScript('return window.t850ConsoleCopied.startsWith("T850 engine console") && window.t850ConsoleCopied.includes("Scene: Minecraft")');
+      if (!report.consoleLogs.copied) throw new Error('Copy logs omitted engine diagnostics');
+      if (values.browser === 'chrome') {
+        await driver.findElement(By.id('console-download')).click();
+        const file = resolve(output, 't850-engine-logs.txt');
+        await driver.wait(async () => {
+          try { return (await readFile(file, 'utf8')).startsWith('T850 engine console'); }
+          catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+        }, 10000, 'Log download was not created');
+        report.consoleLogs.downloaded = true;
+      }
+      await driver.executeScript('document.getElementById("console-clear").click();');
+      report.consoleLogs.cleared = await driver.executeScript('return window.t850.logs.length < 4000');
+      if (!report.consoleLogs.cleared) throw new Error('Clear logs did not release the captured history');
+      if (values.browser !== 'firefox') await driver.sendDevToolsCommand('Emulation.clearDeviceMetricsOverride', {});
+      await driver.manage().window().setRect({ width: 1280, height: 800 });
+      report.runtime = await driver.executeScript('const { telemetry, ...runtime } = window.t850 ?? {}; return runtime');
+      if (report.runtime.errors.length) throw new Error(report.runtime.errors.join('\n'));
+    }
     await driver.findElement(By.css('a[aria-label="Back to WSSI welcome"]')).click();
     await driver.wait(() => driver.findElement(By.id('launch')).isEnabled(), 30000, 'Return to welcome failed');
     report.welcome.returned = await driver.executeScript(`return {
       enemies: document.getElementById('enemies').value, resolution: document.getElementById('resolution').value,
+      consoleLogs: document.getElementById('console-logs').checked,
       portrait: matchMedia('(max-width: 700px) and (orientation: portrait)').matches,
       engineRequested: performance.getEntriesByType('resource').some(entry => /DayScene\\.(js|wasm)/.test(entry.name)) };`);
     const expectedDimensions = report.welcome.resolution.split('x').map(Number).sort((first, second) => second - first);
     if (report.welcome.returned.portrait) expectedDimensions.reverse();
     if (report.welcome.returned.enemies !== report.welcome.count || report.welcome.returned.resolution !== expectedDimensions.join('x') || report.welcome.returned.engineRequested)
       throw new Error('Returning to welcome lost settings or loaded the engine');
+    if (report.welcome.returned.consoleLogs !== values['console-logs']) throw new Error('Returning to welcome lost the console logging choice');
   } else if (values.launcher) {
     report.runtime = await driver.executeScript('const { telemetry, ...runtime } = window.t850 ?? {}; return runtime');
     await driver.findElement(By.css('a[aria-label="Back to scenes"]')).click();

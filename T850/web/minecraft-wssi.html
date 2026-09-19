@@ -21,12 +21,22 @@
     form { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(180px, 1fr) minmax(180px, 1.1fr); gap: 24px; align-items: end; }
     label { display: grid; gap: 10px; font-size: 14px; font-weight: 500; }
     input, select, button { width: 100%; min-width: 0; height: 52px; border: 1px solid var(--line); border-radius: 4px; padding: 0 16px; color: var(--ink); background: #fff; font: 18px Bahnschrift, "Segoe UI", sans-serif; }
+    .logging-option { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; min-height: 24px; cursor: pointer; }
+    .logging-option input { flex: 0 0 20px; width: 20px; height: 20px; margin: 0; padding: 0; accent-color: #16705a; }
     button { display: flex; align-items: center; justify-content: center; gap: 12px; background: var(--accent); border-color: var(--accent); font-weight: 600; cursor: pointer; }
     button:hover:not(:disabled) { background: #ffdb7f; }
     button:disabled { opacity: .55; cursor: not-allowed; }
     :focus-visible { outline: 3px solid #16705a; outline-offset: 4px; }
     #status { min-height: 20px; margin: 18px 0 0; color: var(--muted); font: 13px Consolas, monospace; overflow-wrap: anywhere; }
     #status[data-error="true"] { color: #a33322; }
+    #saved-report { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+    #saved-report[hidden] { display: none; }
+    #saved-report summary { cursor: pointer; font-size: 14px; }
+    .saved-report-actions { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+    #saved-report-download { width: 44px; height: 44px; flex: 0 0 44px; padding: 10px; background: #fff; border-color: var(--line); }
+    #saved-report-download img { width: 20px; height: 20px; pointer-events: none; }
+    #saved-report-feedback { font-size: 12px; overflow-wrap: anywhere; }
+    #saved-report-text { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 Consolas, monospace; }
     @keyframes reveal { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     @media (max-width: 1256px) { .controls { margin: 0 28px; } }
     @media (max-width: 700px) { .welcome { height: 66svh; min-height: 360px; padding: 24px; } h1 { font-size: 38px; margin: 52px 0 12px; } h1 .event { font-size: 22px; margin-bottom: 16px; } .controls { margin: 0 24px; padding-top: 24px; } form { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 20px 16px; } button { grid-column: 1 / -1; } .identity { font-size: 12px; } }
@@ -37,7 +47,7 @@
   <main>
     <section class="welcome" aria-labelledby="welcome-title">
       <img class="landscape" src="previews/minecraft-wssi.png" alt="Block-built Minecraft landscape with trees and water" width="1520" height="790" fetchpriority="high">
-      <div class="identity"><strong>WSSI <span id="demo-version">v0.1.7</span></strong><span>HACKATHON / 2026</span></div>
+      <div class="identity"><strong>WSSI <span id="demo-version">v0.1.10</span></strong><span>HACKATHON / 2026</span></div>
       <h1 id="welcome-title"><span class="event">Hackathon 2026:</span> WSSI Web GPU Minecraft Demo</h1>
     </section>
     <section class="controls" aria-label="Demo settings">
@@ -45,8 +55,17 @@
         <label for="enemies">Enemies (0-8)<input id="enemies" name="minecraftEnemyCount" type="number" min="0" max="8" step="1" value="1" required></label>
         <label for="resolution">Resolution<select id="resolution"><option value="960x540">960 x 540</option><option value="1280x720" selected>1280 x 720</option><option value="1920x1080">1920 x 1080</option></select></label>
         <button id="launch" type="submit" disabled>Launch</button>
+        <label class="logging-option" for="console-logs" title="Show engine logs on the game page"><input id="console-logs" type="checkbox" autocomplete="off">Show engine logs</label>
       </form>
       <p id="status" role="status" aria-live="polite">Checking WebGPU...</p>
+      <details id="saved-report" hidden>
+        <summary>Saved diagnostics</summary>
+        <div class="saved-report-actions">
+          <button id="saved-report-download" type="button" title="Download saved diagnostics" aria-label="Download saved diagnostics"><img src="icons/download.svg" alt=""></button>
+          <span id="saved-report-feedback" role="status" aria-live="polite"></span>
+        </div>
+        <pre id="saved-report-text" tabindex="0" aria-label="Saved session diagnostics"></pre>
+      </details>
       <noscript>JavaScript is required to launch this demo.</noscript>
     </section>
   </main>

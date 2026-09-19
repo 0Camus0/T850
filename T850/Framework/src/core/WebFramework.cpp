@@ -24,19 +24,27 @@ WebFramework::WebFramework(AppBase* app) : RootFramework(app) {
 void WebFramework::InitGlobalVars() {
   if (g_config.webAssetBaseUrl.empty())
     throw std::invalid_argument("Browser startup requires --webAssetBaseUrl");
-  void* data = nullptr;
-  int length = 0;
-  int error = 0;
-  emscripten_wget_data((g_config.webAssetBaseUrl + "/index.json").c_str(), &data, &length, &error);
-  std::unique_ptr<void, decltype(&std::free)> owned(data, &std::free);
-  if (error) throw std::runtime_error("Cannot download browser asset catalog");
-  std::vector<std::string> paths;
-  if (glz::read_json(paths, std::string_view(static_cast<const char*>(data), length)))
-    throw std::runtime_error("Invalid browser asset catalog");
   auto& resources = ResourceLocator::Instance();
   resources.SetBasePath("/assets");
   resources.SetCachePath("/persistent");
-  resources.SetWebAssets(g_config.webAssetBaseUrl, paths);
+  const bool embedded = g_config.webAssetBaseUrl == "embedded";
+  std::string catalog;
+  if (embedded) {
+    if (!resources.ReadText("index.json", catalog))
+      throw std::runtime_error("Cannot read bundled browser asset catalog");
+  } else {
+    void* data = nullptr;
+    int length = 0;
+    int error = 0;
+    emscripten_wget_data((g_config.webAssetBaseUrl + "/index.json").c_str(), &data, &length, &error);
+    std::unique_ptr<void, decltype(&std::free)> owned(data, &std::free);
+    if (error) throw std::runtime_error("Cannot download browser asset catalog");
+    catalog.assign(static_cast<const char*>(data), length);
+  }
+  std::vector<std::string> paths;
+  if (glz::read_json(paths, catalog))
+    throw std::runtime_error("Invalid browser asset catalog");
+  resources.SetWebAssets(embedded ? "" : g_config.webAssetBaseUrl, paths);
 }
 
 void WebFramework::OnCreateApplication(ApplicationDesc desc) {

@@ -79,6 +79,17 @@ test('browser launch isolates ports, reuses matching servers and preserves URL d
     assert.equal(refreshed.command.file, process.execPath);
     const index = await fetch(new URL('assets/index.json', refreshed.url)).then(result => result.json());
     assert.deepEqual(index, ['WebShaders/test.json', 'model with spaces.glb', 'new.glb']);
+    await writeFile(join(root, 'site', 'DayScene.wasm'), '');
+    const incomplete = await fetch(new URL('DayScene.wasm', refreshed.url));
+    assert.equal(incomplete.status, 503);
+    assert.match(await incomplete.text(), /Finish BUILD WEB/);
+    await assert.rejects(launch(process.execPath), /Browser build missing or incomplete/);
+    await writeFile(join(root, 'site', 'DayScene.wasm'), 'rebuilt wasm');
+    await writeFile(join(root, 'site', 'DayScene.js'), 'rebuilt javascript');
+    const rebuilt = await launch(process.execPath);
+    assert.notEqual(rebuilt.url.port, refreshed.url.port);
+    assert.equal((await fetch(new URL('DayScene.js', refreshed.url))).status, 503);
+    assert.equal(await fetch(new URL('DayScene.js', rebuilt.url)).then(result => result.text()), 'rebuilt javascript');
     await assert.rejects(launch(join(root, 'missing browser.exe')), /Browser executable missing/);
   } finally {
     for (const child of processes) {

@@ -432,6 +432,56 @@ worker; frame counts or changing animation alone do not prove walking works.
 
 Production: **https://wssi-minecraft-2026.pages.dev/**
 
+#### Published v0.1.11
+
+Published on 2026-09-18 as production deployment
+`251cd764-7093-4eb4-81c2-2019df8a13e2`:
+`https://251cd764.wssi-minecraft-2026.pages.dev`.
+
+Game over now has a centered **Continue** button usable with mouse or touch.
+Space, Enter and the controller's south button also respawn. Respawning resets
+health, damage feedback, weapon swing and enemies, returns to first person, and
+waits for block-action buttons to be released before accepting another action.
+
+Each successful enemy contact hit tints the entire game viewport red for one
+second, including a lethal hit. The browser header and touch-control footer are
+outside that viewport. Respawning clears the tint immediately.
+
+Both remove/place actions (mouse buttons or touch/controller triggers) attack
+the nearest eligible enemy instead of editing blocks. Targets must be in front,
+unobstructed and within three world units, further limited by authored interaction
+reach. Hits return the enemy to its authored spawn; there is no new enemy-health
+system. Attack cooldown is at least 0.25 seconds. The first-person weapon swings
+on impact using the authored `weapon.swing_angle` in radians.
+
+Native Windows x64 WebGPU/Dawn D3D12 checks passed Continue, contact damage and
+both attack buttons, with screenshots of the red tint and moved weapon. All
+test-owned windows were closed. Headless Chrome mouse and emulated touch checks
+passed Continue, both attacks without block edits, weapon animation and flash
+expiry (994/996 ms observed). Physical phones remain untested. Evidence and the
+temporary fixtures are under
+`%LOCALAPPDATA%/T850Profiles/minecraft-combat-20260918`; fixtures are not published.
+
+Windows x64/ARM64 Debug/Release compilation, 73 native self-tests, Wasm tests,
+19 web tests and build registration passed. Packaged touch validation also
+confirmed ordinary block removal/placement without an enemy, input recovery,
+portrait/landscape layouts and optional GPU-feature fallbacks. Native gameplay
+tests used ordinary input, not `--regressionFixedDt`, which disables scene input;
+raw mouse events were required for attacks in relative mouse mode.
+
+Cloudflare confirmed the new canonical deployment succeeded. All 27 public
+files matched preflight SHA-256 hashes; isolation headers and private/test-asset
+exclusions passed. Live Chrome passed welcome-to-game-to-welcome, mouse input,
+rendering and resize with the bundled assets. An initial combined console/input
+test hit the open console instead of the canvas; the ordinary mouse workflow
+passed with the optional panel closed. The touch suite likewise runs with
+`--no-interactions`, since its final Touch-enabled state intentionally prevents
+the separate desktop pointer-lock assertion.
+
+The asset archive is unchanged. No shader export, R2 upload, bucket change or
+old-deployment deletion was needed. v0.1.10 remains available for rollback.
+User configuration was preserved; this release made no Git commit or push.
+
 #### Published v0.1.10
 
 Published on 2026-09-18 as deployment

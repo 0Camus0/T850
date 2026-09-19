@@ -42,6 +42,21 @@
     #runtime-error { position: fixed; z-index: 10; top: 48px; left: 12px; right: 12px; max-height: calc(100dvh - 64px); overflow: auto; padding: 12px; border: 1px solid #de8172; border-radius: 4px; background: #241d1c; color: #ffe0d9; }
     #runtime-error summary { cursor: pointer; font-weight: bold; }
     #runtime-error pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 Consolas, monospace; }
+    #runtime-console { position: fixed; z-index: 11; left: 0; right: 0; bottom: 0; border-top: 1px solid #8a9c91; background: #171c19; color: #e5e8e6; padding-bottom: env(safe-area-inset-bottom); }
+    #runtime-console[hidden] { display: none; }
+    #runtime-console summary { height: 36px; padding: 9px 12px; cursor: pointer; font-size: 13px; }
+    .console-toolbar { display: flex; align-items: center; gap: 8px; height: 44px; padding: 4px 12px; border-top: 1px solid #404642; }
+    .console-toolbar label { display: flex; align-items: center; gap: 6px; margin-right: auto; font-size: 12px; }
+    .console-toolbar button { display: grid; place-items: center; width: 36px; height: 36px; padding: 8px; border: 1px solid #8a9c91; border-radius: 4px; background: #252a27; cursor: pointer; }
+    .console-toolbar img { width: 18px; height: 18px; filter: invert(1); pointer-events: none; }
+    #runtime-console :focus-visible { outline: 2px solid #f3ca64; outline-offset: -2px; }
+    #console-output { height: min(32dvh, 280px); margin: 0; padding: 8px 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 Consolas, monospace; user-select: text; -webkit-user-select: text; overscroll-behavior: contain; }
+    .console-footer { display: flex; justify-content: space-between; gap: 8px; min-height: 24px; padding: 4px 12px; font-size: 11px; color: #b8c6be; }
+    #console-feedback { overflow-wrap: anywhere; text-align: right; }
+    #runtime-console { max-height: calc(100dvh - 36px); overflow: auto; }
+    #console-previous-error { border-top: 1px solid #404642; }
+    #console-previous-error pre { max-height: 120px; overflow: auto; margin: 0; padding: 8px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 Consolas, monospace; }
+    body.console-visible:has(#runtime-console[open]) #runtime-error { max-height: max(32px, calc(68dvh - 168px - env(safe-area-inset-bottom))); }
     #canvas { display: block; width: 100%; height: 100%; min-height: 0; outline: none; }
     .wssi-demo #canvas { place-self: center; width: min(100%, var(--demo-long-side), calc((100dvh - 36px - var(--touch-footer, 0px)) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; }
     @media (max-width: 700px) and (orientation: portrait) {
@@ -92,14 +107,98 @@
     <summary id="runtime-error-title">Runtime error</summary>
     <pre id="runtime-error-text" role="alert"></pre>
   </details>
+  <details id="runtime-console" hidden open>
+    <summary>Engine console</summary>
+    <div class="console-toolbar">
+      <label><input id="console-follow" type="checkbox" checked>Follow</label>
+      <button id="console-copy" type="button" aria-label="Copy logs" title="Copy logs"><img src="icons/copy.svg" alt=""></button>
+      <button id="console-download" type="button" aria-label="Download logs" title="Download logs"><img src="icons/download.svg" alt=""></button>
+      <button id="console-clear" type="button" aria-label="Clear logs" title="Clear logs"><img src="icons/trash-2.svg" alt=""></button>
+    </div>
+    <pre id="console-output" tabindex="0" aria-label="Engine log output" aria-live="off"></pre>
+    <details id="console-previous-error" hidden>
+      <summary>Previous run diagnostics</summary>
+      <pre id="console-previous-error-text"></pre>
+    </details>
+    <div class="console-footer"><span id="console-count">0 messages</span><span id="console-feedback" role="status" aria-live="polite"></span></div>
+  </details>
   <script>
     const diagnostics = window.t850 = { state: 'loading', logs: [], errors: [] };
     const statusElement = document.getElementById('status');
     const canvas = document.getElementById('canvas');
     const argumentsList = [];
     const errorStorageKey = 't850:last-runtime-error:v1';
-    function showError(report, previous = false) {
-      document.getElementById('runtime-error-title').textContent = previous ? 'Previous run: runtime error' : 'Runtime error';
+    const checkpointStorageKey = 't850:last-session:v1';
+    const previousSessionStorageKey = 't850:previous-session:v1';
+    let wasmInitialized = false;
+    const consolePanel = document.getElementById('runtime-console');
+    const consoleEnabled = Boolean(consolePanel && typeof location !== 'undefined' && new URLSearchParams(location.search).get('logLevel') === 'trace');
+    let consoleTimer;
+    function renderConsole() {
+      consoleTimer = undefined;
+      const output = document.getElementById('console-output');
+      const scrollTop = output.scrollTop;
+      output.textContent = diagnostics.logs.join('\n');
+      output.scrollTop = document.getElementById('console-follow').checked ? output.scrollHeight : scrollTop;
+      document.getElementById('console-count').textContent = `${diagnostics.logs.length} / 4000 messages`;
+    }
+    function updateConsole(immediate = false) {
+      if (!consoleEnabled) return;
+      if (immediate) {
+        if (consoleTimer !== undefined) clearTimeout(consoleTimer);
+        renderConsole();
+      } else if (consoleTimer === undefined) {
+        consoleTimer = setTimeout(renderConsole, 250);
+      }
+    }
+    function consoleText() {
+      return ['T850 engine console', new Date().toISOString(), `Scene: ${diagnostics.scene ?? 'starting'}`,
+        `State: ${diagnostics.state}`, `Browser: ${navigator.userAgent}`,
+        `Render size: ${diagnostics.renderSize?.join(' x ') ?? 'not initialized'}`,
+        `Wasm memory bytes: ${diagnostics.memoryBytes ?? 'not reported'}`,
+        ...(diagnostics.previousSession ? ['Previous session checkpoint (reload cause unknown):', JSON.stringify(diagnostics.previousSession, null, 2), ''] : []),
+        ...(diagnostics.previousError ? ['Saved report from previous run:', JSON.stringify(diagnostics.previousError, null, 2), ''] : []),
+        `Recent messages: ${diagnostics.logs.length} / 4000`, '', ...diagnostics.logs].join('\n');
+    }
+    if (consoleEnabled) {
+      consolePanel.hidden = false;
+      document.body.classList.add('console-visible');
+      const feedback = document.getElementById('console-feedback');
+      document.getElementById('console-follow').addEventListener('change', () => updateConsole(true));
+      consolePanel.addEventListener('toggle', () => updateConsole(true));
+      document.getElementById('console-clear').addEventListener('click', () => {
+        diagnostics.logs.length = 0;
+        feedback.textContent = '';
+        updateConsole(true);
+      });
+      document.getElementById('console-copy').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(consoleText());
+          feedback.textContent = 'Copied';
+        } catch {
+          feedback.textContent = 'Clipboard unavailable';
+        }
+      });
+      document.getElementById('console-download').addEventListener('click', () => {
+        try {
+          const url = URL.createObjectURL(new Blob([consoleText()], { type: 'text/plain;charset=utf-8' }));
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = 't850-engine-logs.txt';
+          document.body.append(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          feedback.textContent = 'Download requested';
+        } catch {
+          feedback.textContent = 'Download unavailable';
+        }
+      });
+      for (const event of ['keydown', 'keyup', 'pointerdown', 'pointerup'])
+        consolePanel.addEventListener(event, event => event.stopPropagation());
+    }
+    function showError(report) {
+      document.getElementById('runtime-error-title').textContent = 'Runtime error';
       document.getElementById('runtime-error-text').textContent = JSON.stringify(report, null, 2);
       const panel = document.getElementById('runtime-error');
       panel.hidden = false;
@@ -111,10 +210,59 @@
         const previous = JSON.parse(stored);
         if (previous && typeof previous.message === 'string') {
           diagnostics.previousError = previous;
-          showError(previous, true);
         }
       }
     } catch {}
+    for (const key of [previousSessionStorageKey, checkpointStorageKey]) {
+      try {
+        const stored = sessionStorage.getItem(key);
+        if (stored && stored.length < 16000) {
+          const previous = JSON.parse(stored);
+          if (previous?.version === 1 && typeof previous.capturedAt === 'string') {
+            const meaningful = previous.frames > 0 || previous.state === 'failed';
+            if (!diagnostics.previousSession || meaningful) diagnostics.previousSession = previous;
+            if (key === checkpointStorageKey && meaningful) sessionStorage.setItem(previousSessionStorageKey, stored);
+          }
+        }
+      } catch {}
+    }
+    if (consoleEnabled && (diagnostics.previousError || diagnostics.previousSession)) {
+      document.getElementById('console-previous-error').hidden = false;
+      document.getElementById('console-previous-error-text').textContent = JSON.stringify({
+        error: diagnostics.previousError, checkpoint: diagnostics.previousSession,
+      }, null, 2);
+    }
+    function saveSessionCheckpoint(lifecycle = 'active') {
+      const checkpoint = {
+        version: 1,
+        capturedAt: new Date().toISOString(),
+        lifecycle,
+        state: diagnostics.state,
+        stage: String(statusElement.textContent ?? 'Loading').slice(0, 160),
+        scene: diagnostics.scene,
+        frames: diagnostics.frames,
+        wasmMemoryBytes: diagnostics.memoryBytes,
+        renderSize: diagnostics.renderSize?.slice(),
+        visibility: document.visibilityState,
+        consoleEnabled,
+        browser: typeof navigator !== 'undefined' ? String(navigator.userAgent ?? '').slice(0, 512) : undefined,
+        recentLogs: diagnostics.logs.slice(-8).map(line => line.slice(0, 512)),
+      };
+      try { sessionStorage.setItem(checkpointStorageKey, JSON.stringify(checkpoint)); } catch {}
+    }
+    let checkpointTimer;
+    function startSessionCheckpoints() {
+      if (checkpointTimer !== undefined || typeof window.setInterval !== 'function') return;
+      saveSessionCheckpoint();
+      checkpointTimer = window.setInterval(saveSessionCheckpoint, 2000);
+    }
+    window.addEventListener('pagehide', () => {
+      saveSessionCheckpoint('pagehide');
+      if (checkpointTimer !== undefined) window.clearInterval(checkpointTimer);
+      checkpointTimer = undefined;
+    });
+    window.addEventListener('pageshow', startSessionCheckpoints);
+    startSessionCheckpoints();
     function retainFirstError(message) {
       if (diagnostics.lastError) return;
       const report = diagnostics.lastError = {
@@ -131,18 +279,22 @@
       };
       showError(report);
       try { sessionStorage.setItem(errorStorageKey, JSON.stringify(report)); } catch {}
+      saveSessionCheckpoint('error');
     }
     function markReady() {
       if (diagnostics.state === 'failed') return;
+      wasmInitialized = true;
       diagnostics.state = 'running';
       statusElement.textContent = 'Running';
+      saveSessionCheckpoint();
     }
     window.addEventListener('t850-runtime-ready', markReady);
     function record(text, error = false) {
       text = String(text).replace(/\x1b\[[0-9;]*m/g, '');
       diagnostics.logs.push(text);
       if (diagnostics.logs.length > 4000) diagnostics.logs.shift();
-      if (error || text.includes('[ERROR]') || text.includes('[ERROR ')) {
+      const isError = error || text.includes('[ERROR]') || text.includes('[ERROR ');
+      if (isError) {
         diagnostics.errors.push(text);
         if (diagnostics.errors.length > 64) diagnostics.errors.shift();
         diagnostics.state = 'failed';
@@ -153,17 +305,43 @@
         markReady();
       }
       console.log(text);
+      updateConsole(isError);
     }
     window.addEventListener('error', event => {
       const source = event.filename ? `\n${event.filename}:${event.lineno ?? 0}:${event.colno ?? 0}` : '';
       record(event.error?.stack ?? `${event.message ?? 'Unknown browser error'}${source}`, true);
     });
     window.addEventListener('unhandledrejection', event => record(event.reason?.stack ?? String(event.reason), true));
+    if (typeof canvas.requestPointerLock === 'function') {
+      const requestPointerLock = canvas.requestPointerLock.bind(canvas);
+      const denied = error => {
+        if (!['WrongDocumentError', 'NotAllowedError', 'SecurityError', 'NotSupportedError', 'InvalidStateError', 'AbortError'].includes(error?.name)) throw error;
+        diagnostics.pointerLock = { state: 'denied', reason: error.name, message: error.message };
+        record(`[PointerLock] Mouse capture unavailable: ${error.name}. Rendering continues.`);
+      };
+      canvas.requestPointerLock = (...options) => {
+        try {
+          const request = requestPointerLock(...options);
+          if (request && typeof request.catch === 'function') return request.catch(denied);
+          return request;
+        } catch (error) { return denied(error); }
+      };
+      document.addEventListener('pointerlockchange', () => {
+        diagnostics.pointerLock = { state: document.pointerLockElement === canvas ? 'locked' : 'unlocked' };
+      });
+    }
     var Module = {
       canvas,
       arguments: argumentsList,
       print: (...text) => record(text.join(' ')),
-      printErr: (...text) => record(text.join(' '), true),
+      printErr: (...text) => {
+        const message = text.join(' ');
+        const streamingFallback = !wasmInitialized && diagnostics.state === 'loading' &&
+          (message.startsWith('wasm streaming compile failed: ') || message === 'falling back to ArrayBuffer instantiation');
+        if (streamingFallback) diagnostics.wasmStreamingFallback = true;
+        record(message, !streamingFallback);
+      },
+      onRuntimeInitialized: () => { wasmInitialized = true; },
       onAbort: reason => record(reason, true),
       preRun: [function () {
         Module.addRunDependency('web-launch');
@@ -198,6 +376,11 @@
           const requested = minecraftDemo ? 6 : Number(parameters.get('scene') ?? catalog.defaultScene);
           const selected = catalog.scenes.find(scene => scene.id === requested);
           if (!selected) throw new Error('Unknown scene');
+          if (catalog.assetBundle) {
+            statusElement.textContent = 'Loading bundled scene assets';
+            const { loadAssetBundle } = await import('./asset-bundle.mjs');
+            diagnostics.assetBundle = await loadAssetBundle(Module.FS, catalog.assetBundle);
+          }
           const selector = document.getElementById('scene');
           selector.hidden = minecraftDemo;
           const home = document.querySelector('header a');
@@ -205,6 +388,7 @@
             home.href = 'minecraft-wssi.html?' + new URLSearchParams({
               minecraftEnemyCount: String(enemyCount ?? 1),
               resolution: `${parameters.get('width') ?? 1280}x${parameters.get('height') ?? 720}`,
+              logLevel: parameters.get('logLevel') ?? 'error',
             });
             home.setAttribute('aria-label', 'Back to WSSI welcome');
             home.querySelector('strong').textContent = 'WSSI / Minecraft';
@@ -224,7 +408,7 @@
           argumentsList.push('--api', 'webgpu', '--scene', String(selected.id),
             '--width', minecraftDemo ? String(canvas.clientWidth) : parameters.get('width') ?? String(canvas.clientWidth),
             '--height', minecraftDemo ? String(canvas.clientHeight) : parameters.get('height') ?? String(canvas.clientHeight),
-            '--webAssetBaseUrl', new URL('assets', location.href).href);
+            '--webAssetBaseUrl', catalog.assetBundle ? 'embedded' : new URL('assets', location.href).href);
           argumentsList.push(...catalog.arguments);
           argumentsList.push(...(selected.arguments ?? []));
           if (selected.id === 6 && (minecraftDemo || enemyCount !== undefined))
@@ -235,8 +419,9 @@
             if (minecraftDemo && option === 'model') continue;
             if (parameters.has(option)) argumentsList.push('--' + option, parameters.get(option));
           }
-          if (parameters.has('postProcessMode')) {
-            const mode = parameters.get('postProcessMode');
+          const requestedPostProcessMode = parameters.get('postProcessMode') ?? (minecraftDemo ? 'compute' : null);
+          if (requestedPostProcessMode !== null) {
+            const mode = requestedPostProcessMode;
             if (!['raster', 'compute'].includes(mode)) throw new Error('Invalid post-process mode');
             argumentsList.push('--postProcessMode', mode);
           }
@@ -250,8 +435,12 @@
           if (parameters.has('profile')) {
             const frames = Number(parameters.get('profileFrames') ?? 1000);
             if (!Number.isInteger(frames) || frames < 60 || frames > 100000) throw new Error('Invalid profile frame count');
-            argumentsList.push('--profile', '--profileFrames', String(frames), '--telemetry',
+            argumentsList.push('--profileCpuOnly', '--profileFrames', String(frames), '--telemetry',
               '--telemetryFrequencyFrames', '1', '--telemetryOutput', '/persistent/web-profile.json');
+            if (parameters.has('benchmark')) {
+              if (selected.id !== 1) throw new Error('Deterministic profiling benchmark requires DayScene');
+              argumentsList.push('--benchmark', '--benchmarkFrames', String(frames + 1), '--benchmarkFixedDt', '0.0166666667');
+            }
             if (parameters.has('fixedDt')) {
               const fixedDt = Number(parameters.get('fixedDt'));
               if (!Number.isFinite(fixedDt) || fixedDt <= 0 || fixedDt > 1) throw new Error('Invalid profiling fixed timestep');

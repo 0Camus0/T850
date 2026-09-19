@@ -148,10 +148,36 @@ Renderer behavior:
 | D3D12 | Enabled only when `imgui_impl_dx12.h` is available. Uses `D3D12Driver`, native device, command queue, backbuffer count, RTV/DSV formats, and the driver's visible CBV/SRV/UAV heap. |
 | OpenGL | Desktop only. Calls `ImGui_ImplOpenGL3_Init("#version 300 es")`. |
 | Vulkan | Uses `VulkanDriver` instance/device/queue family/queue, descriptor pool size 64, backbuffer count, and the backbuffer render pass. |
+| WebGPU | Uses upstream `imgui_impl_wgpu` with the driver's device, surface color format and `Depth32Float`. Platform viewports remain disabled. |
 
 D3D12 uses custom descriptor allocation callbacks from `D3D12Heap::CBV_SRV_UAV_VISIBLE`. It also owns opaque preview descriptors for depth/single-channel render targets.
 
 Vulkan rendering calls `VulkanDriver::EnsureBackbufferRenderPass()` before rendering draw data, uses the current command buffer, and owns descriptor sets created by `ImGui_ImplVulkan_AddTexture()`.
+
+### Offscreen overlay compatibility
+
+The shared offscreen ring uses `RGBA8` color and `F32` depth, while a desktop
+surface can use BGRA. An ImGui pipeline built for that surface cannot be bound
+unchanged to the offscreen render pass. At `NewFrame`, the Vulkan adapter checks
+whether the current target is one of the shared offscreen targets and recreates
+its main pipeline against the current render pass on a mode transition. It uses
+the backbuffer render pass when returning to the surface. Equivalent offscreen
+ring entries do not trigger pipeline recreation.
+
+The WebGPU adapter similarly selects the shared offscreen `RGBA8Unorm` format
+or the actual surface format. The pinned upstream WebGPU backend does not expose
+pipeline-format replacement, so a format transition recreates only its renderer
+backend before starting the ImGui frame, preserving the ImGui context and SDL
+platform backend. Font textures are recreated through upstream texture handling.
+Engine texture IDs remain native texture views. Both adapters wait for prior
+submitted work before replacing renderer resources; they do not wait or rebuild
+for every draw or every offscreen ring rotation.
+
+This is main-window/shared-offscreen support, not general editor multi-viewport
+parity. The bound target must remain compatible between `NewFrame` and
+`RenderDrawData`. The normal runtime and loading-frame paths satisfy that
+contract. See [offscreen overlay checks](../testing/verification.md#offscreen-overlays)
+for the bounded regression and post-overlay capture procedure.
 
 ## NewFrame and rendering lifecycle
 

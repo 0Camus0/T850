@@ -4320,12 +4320,12 @@ void Quake3Mock::PlanNavTestAgentPaths() {
 
   if (requests.empty()) {
     if (t850::RuntimeTelemetry::IsFrameActive()) {
-      t850::RuntimeTelemetry::SetCounter("navigation.agents.path_requests", 0.0);
+      T8_TELEMETRY_SET("navigation.agents.path_requests", 0.0);
     }
     return;
   }
   if (t850::RuntimeTelemetry::IsFrameActive()) {
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_requests", static_cast<double>(requests.size()));
+    T8_TELEMETRY_SET("navigation.agents.path_requests", static_cast<double>(requests.size()));
   }
 
   std::vector<t850::navigation::NavPathResult> results;
@@ -4422,12 +4422,12 @@ void Quake3Mock::PlanNavTestAgentPaths() {
     agent.waypointIndex = agent.path.size() > 1 ? 1 : 0;
   }
   if (t850::RuntimeTelemetry::IsFrameActive()) {
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_success", static_cast<double>(successfulPaths));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_fail", static_cast<double>(failedPaths));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_points", static_cast<double>(totalPathPoints));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.drop", static_cast<double>(dropSegments));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.jump", static_cast<double>(jumpSegments));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.jump_pad", static_cast<double>(jumpPadSegments));
+    T8_TELEMETRY_SET("navigation.agents.path_success", static_cast<double>(successfulPaths));
+    T8_TELEMETRY_SET("navigation.agents.path_fail", static_cast<double>(failedPaths));
+    T8_TELEMETRY_SET("navigation.agents.path_points", static_cast<double>(totalPathPoints));
+    T8_TELEMETRY_SET("navigation.agents.path_segments.drop", static_cast<double>(dropSegments));
+    T8_TELEMETRY_SET("navigation.agents.path_segments.jump", static_cast<double>(jumpSegments));
+    T8_TELEMETRY_SET("navigation.agents.path_segments.jump_pad", static_cast<double>(jumpPadSegments));
   }
 }
 
@@ -4464,10 +4464,10 @@ void Quake3Mock::UpdateNavTestAgents(float dtSecs) {
         ++needsPathAgents;
       }
     }
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.count", static_cast<double>(m_navTestAgents.size()));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.active", static_cast<double>(activeAgents));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.physics_active", static_cast<double>(physicsAgents));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.needs_path", static_cast<double>(needsPathAgents));
+    T8_TELEMETRY_SET("navigation.agents.count", static_cast<double>(m_navTestAgents.size()));
+    T8_TELEMETRY_SET("navigation.agents.active", static_cast<double>(activeAgents));
+    T8_TELEMETRY_SET("navigation.agents.physics_active", static_cast<double>(physicsAgents));
+    T8_TELEMETRY_SET("navigation.agents.needs_path", static_cast<double>(needsPathAgents));
   }
 
   {
@@ -4856,15 +4856,15 @@ void Quake3Mock::UpdateNavTestAgents(float dtSecs) {
     }
 
     if (agent.physicsTraversalActive) {
-      T8_TELEMETRY_SCOPE("navigation.agents.physics_traversal");
+      T8_CPU_WORK("navigation.agents.physics_traversal");
       if (t850::RuntimeTelemetry::IsFrameActive()) {
-        t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.count", 1.0);
+        T8_TELEMETRY_ADD("navigation.agents.physics_traversal.count", 1.0);
         if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Drop) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.drop", 1.0);
+          T8_TELEMETRY_ADD("navigation.agents.physics_traversal.drop", 1.0);
         } else if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Jump) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.jump", 1.0);
+          T8_TELEMETRY_ADD("navigation.agents.physics_traversal.jump", 1.0);
         } else if (agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.jump_pad", 1.0);
+          T8_TELEMETRY_ADD("navigation.agents.physics_traversal.jump_pad", 1.0);
         }
       }
 
@@ -5011,7 +5011,7 @@ void Quake3Mock::UpdateNavTestAgents(float dtSecs) {
             1.0f);
         if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
           if (t850::RuntimeTelemetry::IsFrameActive()) {
-            t850::RuntimeTelemetry::AddCounter("navigation.agents.jump_pad_wait", 1.0);
+            T8_TELEMETRY_ADD("navigation.agents.jump_pad_wait", 1.0);
           }
           const XVECTOR3 queued = jumpPadQueuePosition(agent, jumpPadBase, agentIndex);
           jumpPadQueuedAgents[agentIndex] = 1;
@@ -5035,7 +5035,7 @@ void Quake3Mock::UpdateNavTestAgents(float dtSecs) {
 
     T8_TELEMETRY_SCOPE("navigation.agents.walk_follow");
     if (t850::RuntimeTelemetry::IsFrameActive()) {
-      t850::RuntimeTelemetry::AddCounter("navigation.agents.walk_follow.count", 1.0);
+      T8_TELEMETRY_ADD("navigation.agents.walk_follow.count", 1.0);
     }
     XVECTOR3 current = agent.navPosition;
     float remaining = maxStep;
@@ -5134,7 +5134,7 @@ void Quake3Mock::UpdateNavTestAgents(float dtSecs) {
         const t850::Q3BspCollisionWorld::JumpPad* pathJumpPad = findJumpPadForBase(jumpPadBase);
         if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
             if (t850::RuntimeTelemetry::IsFrameActive()) {
-              t850::RuntimeTelemetry::AddCounter("navigation.agents.jump_pad_wait", 1.0);
+              T8_TELEMETRY_ADD("navigation.agents.jump_pad_wait", 1.0);
             }
             current = jumpPadQueuePosition(agent, jumpPadBase, agentIndex);
             jumpPadQueuedAgents[agentIndex] = 1;
@@ -5186,7 +5186,7 @@ void Quake3Mock::UpdateNavTestAgents(float dtSecs) {
         agent.physicsTraversalActive = true;
         agent.physicsWasAirborne = false;
         if (t850::RuntimeTelemetry::IsFrameActive()) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.start", 1.0);
+          T8_TELEMETRY_ADD("navigation.agents.physics_traversal.start", 1.0);
         }
         proposedPositions[agentIndex] = current;
         movedAgents[agentIndex] = 1;
@@ -5312,7 +5312,7 @@ void Quake3Mock::UpdateNavTestAgents(float dtSecs) {
                                false,
                                !agentProtected)) {
           if (t850::RuntimeTelemetry::IsFrameActive()) {
-            t850::RuntimeTelemetry::AddCounter("navigation.agents.aabb.player_overlaps", 1.0);
+            T8_TELEMETRY_ADD("navigation.agents.aabb.player_overlaps", 1.0);
           }
         }
       }
@@ -5335,7 +5335,7 @@ void Quake3Mock::UpdateNavTestAgents(float dtSecs) {
                                  !protectA,
                                  !protectB)) {
             if (t850::RuntimeTelemetry::IsFrameActive()) {
-              t850::RuntimeTelemetry::AddCounter("navigation.agents.aabb.agent_overlaps", 1.0);
+              T8_TELEMETRY_ADD("navigation.agents.aabb.agent_overlaps", 1.0);
             }
           }
         }
@@ -6218,7 +6218,7 @@ void Quake3Mock::OnUpdate(float _DtSecs) {
       if (!Meshes[meshIndex].pBase) continue;
       RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
       if (!skinned || !skinned->HasSkinData()) continue;
-      T8_TELEMETRY_SCOPE("sandbox.update.skinned_animation.pose");
+      T8_TELEMETRY_ADD("sandbox.update.skinned_animation.pose.calls", 1);
       skinned->UpdateAnimationPose();
     }
   }

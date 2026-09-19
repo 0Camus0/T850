@@ -22,12 +22,107 @@ claimed. The additional native Voxel checkpoint difference below remains open.
 T8ditor, shared engine compute, GPU timestamp profiling, performance acceptance
 and new platform ports were not implemented as part of this close-out.
 
+## Immediate Presentation Investigation, 2026-09-18
+
+The pinned Dawn D3D swapchain creates immediate-mode swapchains with
+`DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING`, but its `PresentDXGISwapChain` called
+`Present(0, 0)`. The missing per-present `DXGI_PRESENT_ALLOW_TEARING` flag allows
+independent-flip presentation to throttle to refresh even though the engine logs
+`presentation=immediate`. Native D3D12 already passes the flag.
+
+Overlay revision `20260219.200501#7` adds an exact-match, idempotent source patch
+through the existing CMake overlay hook. It supplies the flag only for Immediate
+mode while not in exclusive fullscreen, retaining FIFO/mailbox behavior. The
+Windows HWND path disables DXGI Alt+Enter; the fullscreen guard also protects
+other D3D surfaces. This follows the
+[DXGI present requirements](https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/dxgi-present).
+Use `scripts/SetupDawn.ps1 -Mode Install` and relink the renderer; installed-library
+or build-tree hand edits are not the fix.
+
+Before-patch PresentMon evidence under
+`%LOCALAPPDATA%/T850Profiles/minecraft-compute-regression-20260918` records WebGPU
+at 16.67 ms with Hardware Composed Independent Flip versus native D3D12 at 2.87 ms
+with Composed Flip. Both use the same Release executable and 1920x1080 compute
+arguments. The capture pins the test window visible but did not obtain foreground
+focus; client-size queries in the PowerShell host are DPI-virtualized. A separate
+WebGPU composed run reached 4.70 ms, so the slow path is presentation-dependent,
+not proof of a universal 30 FPS shader cost.
+
+The rebuilt revision passes the package audit and Release Framework/DayScene
+build. `presentation-fixed-webgpu.csv` records 4.12 ms (about 242 FPS) versus
+native D3D12 at 3.09 ms (about 324 FPS). Both final windows were focused, with
+1920x1080 client areas, Hardware Composed Independent Flip, sync interval zero,
+`PresentFlags=512`, and `AllowsTearing=1` throughout the seven-second samples.
+The refresh-rate cap is absent. Earlier captures did not obtain foreground
+focus, so these are short diagnostic comparisons, not a controlled claim of a
+precise speedup or a return to the historical 500 FPS.
+
+The real-driver comparison fixture passes presentation, resize, recreation and
+readback at unchanged tolerance. All 71 shared tests pass. The tiled particle
+readbacks pass on D3D11, D3D12, Vulkan, GL and both native WebGPU shader flows;
+browser shader packages were not rebuilt or retested in this Windows fix.
+
+The separate tiled torch optimization retains all three emitters and their visual
+parameters. A short submit-only CPU capture changed from 4.36 to 3.04 ms at 1080p;
+this is diagnostic evidence, not a repeated performance acceptance result or a
+claim of restoring the historical 500 FPS in every view.
+
+## Offscreen Follow-Up, 2026-09-18
+
+The later R1 verification exposed an independent overlay bug: surface-format
+ImGui pipelines were being used on the shared RGBA8 offscreen targets. Vulkan
+and WebGPU adapters now select compatible pipelines at GUI frame boundaries,
+waiting for prior work only when the target mode/format changes. WebGPU renderer
+reinitialization preserves the ImGui context and SDL platform backend; Vulkan
+recreates only the main pipeline. Shared offscreen ring rotation does not cause
+per-frame pipeline rebuilds.
+
+`WebGPUDriver::CompleteFrame` suppresses presentation in configured offscreen
+mode and calls `CompleteOffscreenFrame` after submission. This restores shared
+target rotation and the post-overlay `--offscreenDebug` capture path.
+
+The [offscreen overlay regression](../testing/verification.md#offscreen-overlays)
+passes on all five desktop APIs in Debug, plus captured Vulkan/WebGPU Release
+runs and both strict WebGPU shader flows. The real-driver comparison fixture
+passes both flows at its unchanged tolerance 2. Full-scene Vulkan/WebGPU captures
+are nonuniform with readable overlays but are not pixel-identical: the Debug
+frame-340 comparison measured maximum channel delta 44, mean delta 1.5725 and
+57,290 of 230,400 pixels outside tolerance 2. That is recorded variance, not a
+passing whole-scene parity claim. No tolerance or baseline was changed.
+
+Evidence: `%LOCALAPPDATA%/T850Profiles/offscreen-overlay-20260918`, including
+`captures-final/frame340-comparison.json`, fixture reports, native build matrix,
+WebAssembly build/tests and both Android compile logs. SteamRT remains locally
+unavailable; no new CI validation or editor-parity claim is made.
+
 ## Implementation
+
+### Capability validation follow-up, 2026-09-18
+
+Shared render-target validation now runs before graph allocations. Unsupported
+cube/depth/mip requests no longer reach WebGPU `Require` sites during target
+creation: direct creation returns failure, and graph creation either reports a
+named capability failure or takes the explicit single-level mip fallback.
+Unknown formats are rejected rather than substituted. WebGPU reports its
+device's color-attachment limit and supports explicit single-channel F32 color.
+
+Reflected comparison samplers fail at shader load with backend, shader, stage
+and key in the diagnostic. Tint depth-texture metadata is retained as a distinct
+resource kind so the sampler requirement can be diagnosed before layout
+creation. This does not add comparison/depth sampler rendering support, and it
+does not implement R3's general device-loss or frame-loop error handling.
+
+Focused descriptor, capability, shader-flow, package and graphics-fixture checks
+pass. The broader scene matrix still exposes Vulkan sampler teardown errors and
+Minecraft overlay attachment incompatibility on Vulkan/WebGPU; the earlier
+DayScene overlay fix is not a claim of all-scene coverage. R2 remains blocked on
+that gate and unavailable SteamRT verification. See the
+[R2 evidence record](webgpu-compute-remediation-plan.md#r2-reconcile-strict-versus-lenient-backend-behavior).
 
 ### Dependencies and Build Integration
 
 - Pinned vcpkg `77df67cfff9c12ccfdb52284e07c87c75092f723`, Dawn
-  `20260219.200501#6`, ImGui `1.92.7#1`, glslang 16.2.0 and simplecpp 1.9.1.
+  `20260219.200501#7`, ImGui `1.92.7#1`, glslang 16.2.0 and simplecpp 1.9.1.
 - [SetupDawn.ps1](../../T850/scripts/SetupDawn.ps1) provides Plan/Install/Check,
   package audits, generated link properties and compiler identity metadata.
   Ordinary Windows x64 builds require a valid audit; native Vulkan stays separate.

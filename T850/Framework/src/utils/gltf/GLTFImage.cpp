@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * glTF 2.0 — image / texture resolution.
  *
@@ -426,6 +427,7 @@ void ResolveAllImages(const Document& doc,
 
   // Decode one encoded image byte buffer with stb_image (CPU-only, thread-safe).
   auto decodeImage = [&](int i) {
+    T8_CPU_WORK("asset.gltf.image_decode");
       DecodeResult& r = results[i];
       if (!r.ok || r.rawBytes.empty()) return;
 
@@ -544,6 +546,7 @@ void ResolveAllImages(const Document& doc,
 
   if (g_threadPool && numImages > 1) {
     LoadingProgress::SetDetail("Decoding " + std::to_string(numImages) + " texture images");
+    T8_TELEMETRY_SCOPE("asset.gltf.image_decode_batch");
     T8_LOG_INFO("[glTF] Decoding %d images with %u global worker threads", numImages, g_threadPool->NumWorkers());
     g_threadPool->ParallelFor(0, numImages, decodeImage);
   } else {
@@ -555,6 +558,8 @@ void ResolveAllImages(const Document& doc,
   }
 
   // Phase 3: Serial GPU upload + driver cache insertion
+  T8_CPU_WORK("gpu.upload_batch");
+  T8_UPLOAD_SOURCE(RuntimeTelemetry::UploadSource::AssetLoad);
   if (g_pBaseDriver)
     g_pBaseDriver->BeginResourceUploadBatch();
   for (int i = 0; i < numImages; i++) {

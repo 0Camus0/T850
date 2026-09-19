@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -114,6 +115,8 @@ namespace t850 {
   }
 
   void GLTexture::LoadAPITexture(DeviceContext* context, unsigned char* buffer) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, buffer ? UploadByteSize() : 0, 0);
     unsigned int glFormat = 0;
     unsigned int glInternalFormat = 0;
     unsigned int glChannel = GL_UNSIGNED_BYTE;
@@ -173,10 +176,13 @@ namespace t850 {
       params |= TextBasicParams::MIPMAPS;
     }
 
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, 0, 1);
     SetTextureParams();
   }
 
   void GLTexture::LoadAPITextureCompressed(unsigned char* buffer) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, buffer ? UploadByteSize() : 0, 0);
     unsigned int glFormat = CIL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
     int blockSize = 8;
     if (cil_props & CIL_DXT3) {
@@ -221,6 +227,7 @@ namespace t850 {
       }
     }
 
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, 0, 1);
     SetTextureParams();
   }
 
@@ -290,6 +297,7 @@ namespace t850 {
 
   void GLTexture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * 16 : 0, 0);
     glBindTexture(GL_TEXTURE_2D, id);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, data);
     glBindTexture(GL_TEXTURE_2D, 0);

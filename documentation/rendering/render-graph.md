@@ -1,6 +1,6 @@
 # Render Graph
 
-Status: verified against source on 2026-09-17.
+Status: capability-validation behavior verified against source and focused tests on 2026-09-18.
 
 This document explains T850's data-driven render graph: JSON descriptors, render target creation, pass execution, input/output edges, render-target push/pop behavior, state overrides, mesh and fullscreen-quad draws, post-processing, and final output routing.
 
@@ -92,7 +92,7 @@ Typical lifetime:
 
 1. Scene/editor calls `m_renderGraph.Load("Scenes/..._RenderGraph.json")`.
 2. Scene/editor calls `CreateRenderTargets()` after the driver and `SceneProps` are initialized.
-3. `CreateRenderTargets()` allocates every `RTDesc` through `BaseDriver::CreateRT()` and then calls `BuildGraph()`.
+3. `CreateRenderTargets()` preflights every resolved `RTDesc` against the driver before allocating through `BaseDriver::CreateRT()`, then calls `BuildGraph()` on success. It returns `false` on validation or allocation failure.
 4. Each frame calls `Execute()`.
 5. Resize or graph reload calls `DestroyRenderTargets()` and `CreateRenderTargets()` again.
 6. Scene shutdown calls `DestroyRenderTargets()`.
@@ -100,6 +100,62 @@ Typical lifetime:
 `RenderContainer` packages the same pattern for systems that want a reusable render target/graph container. It creates its own fullscreen quads, stores a `RenderGraph`, can own or borrow `SceneProps`, recreates RTs on resize, and executes the graph with either internally stored meshes or supplied mesh arrays.
 
 ## Descriptor JSON schema
+
+### Mesh Preparation Optimization
+
+Optimization published in web v0.1.10 on 2026-09-18: standard graphics passes use the conservative
+`PrimitiveBase::MayDrawInPass` query before preparing mesh bindings. Unknown
+primitives return true. Static/skinned meshes reuse their existing material
+classification, including shared material overrides and transmission; mutable
+meshes use their existing section alpha-mode rules and readiness check. The
+query does not replace frustum culling or cache eligibility across frames.
+
+When no mesh can participate, the pass skips its resource-binding and draw
+preparation. It still performs target binding, clears, viewport/scissor setup,
+target pop, camera restoration and post-state changes. Compute passes run before
+this check, callbacks and quad draws conservatively keep work enabled, and the
+cube-face path is unchanged. Thus a zero draw count is not treated as proof that
+a whole graph node has no side effects. Minecraft's transparent pass remains in
+the descriptor and automatically renders when eligible materials are present.
+
+Input textures and environment textures are resolved once per standard pass
+execution, then applied to eligible meshes from a fixed-size snapshot. The
+snapshot is discarded at the end of the pass, so resize, graph rebuild and
+environment changes cannot leave cross-frame pointers behind. A callback marks
+the snapshot dirty before subsequent mesh commands. Material texture bindings
+retain their original behavior. This deliberately avoids a persistent raw-pointer
+cache and removes string splitting/map lookup from the per-mesh loop.
+
+`MeshDrawStateTracker` also reuses extracted frustum planes within its pass scope
+when the view-projection matrix is byte-identical. Begin/End/Reset invalidate
+the snapshot, changed matrices recompute it, and calls outside a pass recompute
+unconditionally. Static and mutable mesh culling use this path. Cascade split
+distances, light camera construction, shadow-map resolution, cascade count and
+GPU shadow rendering are unchanged. Hardware CPU-cache misses were not measured;
+this optimization removes repeated calculations and lookups, not a proven
+hardware-cache pathology.
+
+Validation: `T-GRAPH-MESH-PREPARATION-01` covers empty-pass clear/pop/post-state
+semantics, mesh eligibility changes, hidden meshes, input/environment replacement,
+target reconstruction, callback mutation, shared materials, masking and transmission.
+`T-PASS-FRUSTUM-REUSE-01` compares all six planes exactly across repeated matrices,
+matrix changes and pass boundaries. Wasm shared tests and Windows x64/ARM64
+Debug/Release Framework/DayScene builds passed; x64 console self-tests passed.
+Headless Chrome passed Minecraft compute/raster, GUI/resize, mobile optional-feature
+fallbacks, touch/camera controls and Day Scene spectator transitions. Headless
+Firefox was environment-blocked because it exposed no WebGPU adapter.
+
+Matched 1,200-frame fixed-step Minecraft captures with zero and eight enemies
+retained identical per-frame draw/index/pass-counter hashes. In the zero-enemy
+comparison, 787,200 scene pixels outside the changing HUD were byte-identical.
+Empty transparent-pass CPU time in the eight-enemy instrumented comparison fell
+from 1.516 ms to 0.046 ms. Three alternating profiling-disabled runs measured
+baseline CPU work of 6.41/5.21/8.61 ms versus 3.55/3.12/4.81 ms locally; host-load
+variation is substantial, so these are not guaranteed FPS gains. No cascade
+quality reduction was performed. The tested build was subsequently published
+as web v0.1.10; deployment details are in the browser platform guide.
+
+Evidence: `%LOCALAPPDATA%/T850Profiles/render-graph-optimization-20260918`.
 
 The authored [ForwardScene graph](../../T850/Assets/Scenes/ForwardScene_RenderGraph.json)
 is a single-target example shared by native D3D12 and the first WebGPU scene.
@@ -145,13 +201,48 @@ Supported color format strings:
 - `RGBA32F`
 - `R8`
 - `F16`
+- `F32` (single-channel floating-point color)
 - `RGB8`
 
 Supported depth format strings:
 
 - `NONE`
+- `FD16` (requires backend support; currently D3D11)
 - `F32`
 - `CUBE_F32`
+
+### Validation and capabilities
+
+Unknown color/depth names, invalid attachment counts, mismatched per-attachment
+format counts, negative extents and targets with no attachments fail structural
+graph loading with `[InvalidRenderTarget]` and the target name. Format lookups
+never substitute RGBA8 or NONE for an unknown name. `cube_faces` must be zero,
+or six with a declared `CUBE_F32` target.
+
+Creation resolves screen/override/shadow extents and asks the shared
+`BaseDriver::ValidateRenderTarget` policy before allocating any graph target.
+The driver supplies `SupportsCubeRenderTargets`,
+`SupportsRenderTargetDepthFormat`, `SupportsRenderTargetColorFormat`,
+`SupportsRenderTargetMipGeneration` and `MaxRenderTargetColorAttachments`.
+A valid unsupported request produces `[UnsupportedRenderTarget]`, naming the
+backend and feature; the graph adds the pass and target. Cube targets must be
+square. A failed preflight leaves no executable nodes. An allocation failure
+releases already-created graph targets and returns `false`.
+
+Mips have one explicit graph fallback: `generate_mips: true` becomes a single
+level on a backend without render-target mip generation, with a
+`[CapabilityFallback]` diagnostic naming the pass, target, backend and feature.
+Capable D3D11/GL backends retain the request. Depth/color formats and cube targets
+are not silently substituted. Direct `BaseDriver::CreateRT` requests have no
+implicit fallback: unsupported requests return `-1`. `RenderContainer`
+initialization and resize propagate the graph result; other callers must check
+the boolean and stop using the failed graph.
+
+Shader-derived requirements are checked at shader load rather than inferred
+from graph JSON. `SupportsComparisonSamplers` describes the implemented engine
+sampler path. Unsupported reflected comparison sampling fails with
+`[UnsupportedShaderFeature]` containing backend, shader name, stage and key.
+See [format and sampler support](textures-and-ibl.md#render-target-format-contract).
 
 If the selected driver cannot support compute textures, an authored storage target is
 allocated without storage/UAV usage so graphics initialization and raster fallback remain

@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -94,6 +95,7 @@ namespace t850 {
 
   Texture * D3DXDevice::CreateFloatTexture(int w, int h, const float* data)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && w > 0 && h > 0 ? RuntimeTelemetry::TextureUploadBytes(w, h, 1, 1, 16) : 0, 0);
     D3DXTexture* tex = new D3DXTexture;
     D3D11_TEXTURE2D_DESC desc = {};
     desc.Width = w;
@@ -112,6 +114,7 @@ namespace t850 {
     HRESULT hr = reinterpret_cast<ID3D11Device*>(GetAPIObject())->CreateTexture2D(
         &desc, data ? &initData : nullptr, tex->Tex.GetAddressOf());
     if (FAILED(hr)) { delete tex; return nullptr; }
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, 0, 1);
 
     D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
     srvDesc.Format = desc.Format;
@@ -133,6 +136,8 @@ namespace t850 {
 
   Texture * D3DXDevice::CreateFloatCubeMap(int size, int mipCount, const float* data)
   {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && size > 0 && mipCount > 0 ? RuntimeTelemetry::TextureUploadBytes(size, size, mipCount, 6, 16) : 0, 0);
     if (size <= 0 || mipCount <= 0)
       return nullptr;
 
@@ -168,6 +173,7 @@ namespace t850 {
     HRESULT hr = reinterpret_cast<ID3D11Device*>(GetAPIObject())->CreateTexture2D(
         &desc, data ? initData.data() : nullptr, tex->Tex.GetAddressOf());
     if (FAILED(hr)) { delete tex; return nullptr; }
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, 0, 1);
 
     D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
     srvDesc.Format = desc.Format;

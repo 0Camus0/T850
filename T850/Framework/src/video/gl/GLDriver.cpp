@@ -642,7 +642,7 @@ namespace t850 {
 
   bool GLDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
     T8_TELEMETRY_SCOPE("gpu.gl.read_rt_color_float");
-    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
+    T8_TELEMETRY_ADD("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || !RTs[rtID])
       return false;
     if (attachment < 0 || attachment >= RTs[rtID]->number_RT)
@@ -795,7 +795,7 @@ namespace t850 {
   }
 
   void GLDriver::CompleteFrame(FrameCompletionMode mode) {
-    T8_TELEMETRY_SCOPE("gpu.gl.swap_buffers");
+    T8_TELEMETRY_SCOPE("gpu.present");
     T8_LOG_TRACE("[GLDriver] SwapBuffers");
     if (mode == FrameCompletionMode::SubmitNoPresent) {
       glFlush();

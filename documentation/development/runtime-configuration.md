@@ -36,9 +36,21 @@ Unknown JSON keys are ignored. A typo can therefore be silent; use documented fi
 | Culling | `full` |
 | Post-process mode | `raster` |
 | Profile frames | 300 |
+| CPU-only profiler | false; `--profileCpuOnly` enables it with bounded profile exit |
+| Captured-frame upload warning budget | 64 MB; `--telemetryUploadBudgetMB`, zero disables bytes threshold |
 | Telemetry frequency | 60 frames |
 | Telemetry output | `logs/perf_telemetry.json` |
 | Benchmark/regression fixed delta | disabled (`0`) |
+
+## Profiling Controls
+
+Root JSON `profileCpuOnly` (also under `devTools`) selects CPU-only timing without
+GPU queries. `telemetryUploadBudgetMB` is a root JSON field. `--benchmarkPaired`
+enables the D3D12/WebGPU matrix subset at the requested resolution in submit-only
+mode. Use [MeasureProfiling.ps1](../../T850/scripts/MeasureProfiling.ps1) for
+finite alternating runs; its report distinguishes workload mismatch from a
+timing conclusion. MSBuild `/p:T850EnableProfiling=0` and CMake
+`-DT850_ENABLE_PROFILING=OFF` compile instrumentation out.
 
 ## WebGPU Shader Flow
 

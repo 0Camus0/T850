@@ -1,5 +1,30 @@
 include_guard(GLOBAL)
 
+set(t850_present_source "${CMAKE_SOURCE_DIR}/src/dawn/native/d3d/SwapChainD3D.cpp")
+file(READ "${t850_present_source}" t850_present_text)
+set(t850_present_before "    HRESULT presentResult = mDXGISwapChain->Present(PresentModeToSwapInterval(GetPresentMode()), 0);")
+set(t850_present_after "    UINT presentFlags = 0;
+    if (GetPresentMode() == wgpu::PresentMode::Immediate) {
+        BOOL fullscreen = FALSE;
+        DAWN_TRY(CheckHRESULT(mDXGISwapChain->GetFullscreenState(&fullscreen, nullptr),
+                              \"Querying swapchain fullscreen state\"));
+        if (!fullscreen) {
+            presentFlags = DXGI_PRESENT_ALLOW_TEARING;
+        }
+    }
+    HRESULT presentResult =
+        mDXGISwapChain->Present(PresentModeToSwapInterval(GetPresentMode()), presentFlags);")
+string(FIND "${t850_present_text}" "${t850_present_before}" t850_present_position)
+if(NOT t850_present_position EQUAL -1)
+  string(REPLACE "${t850_present_before}" "${t850_present_after}" t850_present_text "${t850_present_text}")
+  file(WRITE "${t850_present_source}" "${t850_present_text}")
+else()
+  string(FIND "${t850_present_text}" "${t850_present_after}" t850_present_position)
+  if(t850_present_position EQUAL -1)
+    message(FATAL_ERROR "Pinned Dawn immediate presentation patch no longer matches its source.")
+  endif()
+endif()
+
 set(t850_matrix_source "${CMAKE_SOURCE_DIR}/src/tint/lang/spirv/reader/lower/transpose_row_major.cc")
 file(READ "${t850_matrix_source}" t850_matrix_text)
 set(t850_matrix_before "            if (new_access_ty != access->Result()->Type()) {

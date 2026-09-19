@@ -115,14 +115,19 @@ public:
   void* GetAPIObject() const override { return gpu.Get(); }
   void** GetAPIObjectReference() const override { return nullptr; }
   void Create(const Device&, BufferDesc desc, void* initialData) override {
+    T8_UPLOAD_SCOPE(UploadResourceType(), initialData ? desc.byteWidth : 0, 0);
     Require(desc.byteWidth > 0, "Buffer size must be positive");
     this->descriptor = desc;
     this->sysMemCpy.resize(desc.byteWidth);
     if (initialData) std::memcpy(this->sysMemCpy.data(), initialData, desc.byteWidth);
     Upload();
   }
-  void UpdateFromSystemCopy(const DeviceContext&) override { Upload(); }
+  void UpdateFromSystemCopy(const DeviceContext&) override {
+    T8_UPLOAD_SCOPE(UploadResourceType(), this->sysMemCpy.size(), 0);
+    Upload();
+  }
   void UpdateFromBuffer(const DeviceContext&, const void* data) override {
+    T8_UPLOAD_SCOPE(UploadResourceType(), data ? this->descriptor.byteWidth : 0, 0);
     Require(data != nullptr, "Buffer update requires data");
     this->sysMemCpy.assign(static_cast<const char*>(data), static_cast<const char*>(data) + this->descriptor.byteWidth);
     Upload();
@@ -151,11 +156,16 @@ public:
     const_cast<DeviceContext&>(context).actualConstantBuffer = dynamic_cast<ConstantBuffer*>(this);
   }
 private:
+  static constexpr RuntimeTelemetry::UploadResource UploadResourceType() {
+    if constexpr (Usage == wgpu::BufferUsage::Uniform) return RuntimeTelemetry::UploadResource::Uniform;
+    if constexpr (Usage == wgpu::BufferUsage::Vertex) return RuntimeTelemetry::UploadResource::Vertex;
+    return RuntimeTelemetry::UploadResource::Index;
+  }
   void Upload() {
-    T8_TELEMETRY_SCOPE("webgpu.buffer_upload");
+    T8_TELEMETRY_ADD("webgpu.buffer_upload.calls", 1);
     if (RuntimeTelemetry::IsFrameActive()) {
-      RuntimeTelemetry::AddCounter("webgpu.buffer_uploads", 1);
-      RuntimeTelemetry::AddCounter("webgpu.buffer_upload_bytes", this->sysMemCpy.size());
+      T8_TELEMETRY_ADD("webgpu.buffer_uploads", 1);
+      T8_TELEMETRY_ADD("webgpu.buffer_upload_bytes", this->sysMemCpy.size());
     }
     Require(this->sysMemCpy.size() == static_cast<size_t>(this->descriptor.byteWidth), "Buffer shadow size mismatch");
     if constexpr (Usage == wgpu::BufferUsage::Uniform) {
@@ -170,13 +180,14 @@ private:
     desc.size = (size + 3) & ~uint64_t(3);
     desc.usage = Usage | wgpu::BufferUsage::CopyDst;
     {
-      T8_TELEMETRY_SCOPE("webgpu.create_buffer");
+      T8_TELEMETRY_ADD("webgpu.create_buffer.calls", 1);
       gpu = m_state.context.AcquireBuffer(desc);
     }
     std::vector<char> aligned(desc.size);
+    RuntimeTelemetry::RecordStaging(UploadResourceType(), desc.size);
     std::memcpy(aligned.data(), this->sysMemCpy.data(), size);
     {
-      T8_TELEMETRY_SCOPE("webgpu.write_buffer");
+      T8_TELEMETRY_ADD("webgpu.write_buffer.calls", 1);
       m_state.context.queue.WriteBuffer(gpu, 0, aligned.data(), aligned.size());
     }
   }
@@ -223,7 +234,7 @@ public:
 )";
       wgpu::ShaderModuleDescriptor moduleDescriptor{};
       moduleDescriptor.nextInChain = &source;
-      auto module = state.context.device.CreateShaderModule(&moduleDescriptor);
+      auto module = T8_TELEMETRY_CALL("shader.module.create", state.context.device.CreateShaderModule(&moduleDescriptor));
       wgpu::ColorTargetState color{};
       color.format = wgpu::TextureFormat::R32Float;
       wgpu::FragmentState fragment{};
@@ -231,7 +242,7 @@ public:
       wgpu::RenderPipelineDescriptor pipeline{};
       pipeline.vertex.module = module; pipeline.vertex.entryPoint = "vertexMain";
       pipeline.fragment = &fragment;
-      state.depthSamplingCopyPipeline = state.context.device.CreateRenderPipeline(&pipeline);
+      state.depthSamplingCopyPipeline = T8_TELEMETRY_CALL("pipeline.create.graphics", state.context.device.CreateRenderPipeline(&pipeline));
     }
     wgpu::BindGroupEntry entry{};
     entry.binding = 0; entry.textureView = view;
@@ -274,6 +285,7 @@ public:
   void Upload(const unsigned char* data, int width, int height, wgpu::TextureFormat textureFormat,
               unsigned bytesPerBlock, unsigned levels, unsigned layers, unsigned blockSize = 1) {
     Allocate(width, height, textureFormat, wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst, levels, layers);
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, 0, 1);
     size_t offset = 0;
     for (unsigned face = 0; face < layers; ++face) {
       for (unsigned mip = 0; mip < levels; ++mip) {
@@ -298,6 +310,9 @@ public:
     state.context.CheckHealth();
   }
   void LoadAPITexture(DeviceContext*, unsigned char* data) override {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming
+      ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data ? UploadByteSize() : 0, 0);
     const unsigned layers = (cil_props & CIL_CUBE_MAP) ? 6 : 1;
     unsigned levels = std::max(1u, mipmaps);
     if (cil_props & CIL_HALF_FLOAT) {
@@ -310,6 +325,7 @@ public:
     std::vector<uint8_t> rgba;
     if (m_channels == 3) {
       rgba.resize(pixels * 4, 255);
+      RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, rgba.size());
       for (size_t pixel = 0; pixel < pixels; ++pixel) std::memcpy(rgba.data() + pixel * 4, data + pixel * 3, 3);
       data = rgba.data();
     }
@@ -325,6 +341,9 @@ public:
            m_channels == 1 ? 1 : 4, levels, layers);
   }
   void LoadAPITextureCompressed(unsigned char* data) override {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming
+      ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data ? UploadByteSize() : 0, 0);
     if (!state.context.device.HasFeature(wgpu::FeatureName::TextureCompressionBC)) {
       std::vector<unsigned char> rgba;
       const unsigned levels = std::max(1u, mipmaps);
@@ -352,6 +371,8 @@ public:
            std::max(1u, mipmaps), (cil_props & CIL_CUBE_MAP) ? 6 : 1, 4);
   }
   void UpdateFloatData(const DeviceContext&, int width, int height, const float* data) override {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture,
+      data && width > 0 && height > 0 ? static_cast<uint64_t>(width) * height * 16 : 0, 0);
     Require(data && gpu && format == wgpu::TextureFormat::RGBA32Float && !(cil_props & CIL_CUBE_MAP)
       && mipmaps == 1 && width == static_cast<int>(x) && height == static_cast<int>(y), "Float texture update requires matching RGBA32F 2D data");
     Upload(reinterpret_cast<const unsigned char*>(data), width, height, format, 16, 1, 1);
@@ -389,6 +410,27 @@ public:
     state.samplers[slot] = this;
   }
 };
+
+#ifndef __EMSCRIPTEN__
+bool RecordShaderPreparation(bool prepared, const webgpu::ShaderArtifact& artifact, const webgpu::ShaderFlowReport& report) {
+#if T850_ENABLE_PROFILING
+  static const auto translation = RuntimeTelemetry::RegisterScope("shader.translate.hlsl_spirv_wgsl");
+  static const auto wgsl = RuntimeTelemetry::RegisterScope("shader.prepare.wgsl");
+  const auto record = [&](bool cacheHit, double milliseconds, webgpu::ShaderSourceLanguage language, bool succeeded) {
+    if (cacheHit) { T8_TELEMETRY_ADD("shader.cache.hits", 1); }
+    else if (succeeded || milliseconds > 0) { T8_TELEMETRY_ADD("shader.cache.misses", 1); }
+    if (!succeeded) { T8_TELEMETRY_ADD("shader.preparation.failures", 1); }
+    if (milliseconds > 0)
+      RuntimeTelemetry::RecordScope(language == webgpu::ShaderSourceLanguage::Wgsl ? wgsl : translation, milliseconds);
+  };
+  if (report.attempts.empty())
+    record(artifact.cacheHit, artifact.translationMilliseconds, webgpu::ShaderSourceLanguage::Hlsl, prepared);
+  else for (const auto& attempt : report.attempts)
+    record(attempt.cacheHit, attempt.preparationMilliseconds, attempt.sourceLanguage, attempt.succeeded);
+#endif
+  return prepared;
+}
+#endif
 
 class WebGPUShader final : public ShaderBase {
 public:
@@ -431,7 +473,8 @@ public:
       packagedRequest.keyBits = request.keyBits;
       packagedRequest.source = isVertex ? vertexSource : fragmentSource;
     #ifdef __EMSCRIPTEN__
-      Require(webgpu::ReadShaderPackage(packagedRequest, artifact, state.flow, report, diagnostic), diagnostic);
+      Require(T8_TELEMETRY_CALL("shader.package.load", webgpu::ReadShaderPackage(packagedRequest, artifact, state.flow, report, diagnostic)), diagnostic);
+      T8_TELEMETRY_ADD("shader.packaged.stages", 1);
     #else
       if (request.name.empty()) {
         Require(state.flow != webgpu::ShaderFlow::Wgsl, "Anonymous HLSL shader has no direct WGSL source");
@@ -441,11 +484,11 @@ public:
         inlineRequest.entryPoint = request.entryPoint;
         inlineRequest.keyBits = key.bits;
         inlineRequest.source = isVertex ? vertexSource : fragmentSource;
-        Require(webgpu::LoadOrTranslateShader(inlineRequest, artifact, diagnostic), diagnostic);
+        Require(RecordShaderPreparation(T8_TELEMETRY_CALL("shader.load", webgpu::LoadOrTranslateShader(inlineRequest, artifact, diagnostic)), artifact, report), diagnostic);
         T8_LOG_INFO("[WebGPU] shader=%s actual=spirv inline-HLSL hit=%d", inlineRequest.name.c_str(), artifact.cacheHit);
       } else {
         if (!std::filesystem::path(request.name).has_parent_path()) request.name = "Shaders/" + request.name;
-        Require(webgpu::LoadShaderFiles(request, artifact, report, diagnostic), diagnostic);
+        Require(RecordShaderPreparation(T8_TELEMETRY_CALL("shader.load", webgpu::LoadShaderFiles(request, artifact, report, diagnostic)), artifact, report), diagnostic);
         T8_LOG_INFO("[WebGPU] shader=%s flow=%s actual=%s hit=%d fallback=%d prepare_ms=%.3f",
           request.name.c_str(), webgpu::ShaderFlowName(request.flow),
           report.attempts.back().sourceLanguage == webgpu::ShaderSourceLanguage::Wgsl ? "wgsl" : "spirv",
@@ -455,13 +498,20 @@ public:
         Require(webgpu::WriteShaderPackage(packagedRequest, artifact, state.flow, report, g_config.webShaderOutput, diagnostic), diagnostic);
 #endif
       if (!diagnostic.empty()) T8_LOG_INFO("[WebGPU] shader warning: %s", diagnostic.c_str());
+      const bool comparisonSampler = std::any_of(artifact.bindings.begin(), artifact.bindings.end(),
+        [](const auto& binding) { return binding.comparisonSampler; });
+      if (!state.driver->ValidateShaderComparisonSamplers(comparisonSampler,
+          request.name.empty() ? "inline" : request.name, isVertex ? "vertex" : "fragment", key.bits, diagnostic)) {
+        T8_LOG_ERROR("%s", diagnostic.c_str());
+        return false;
+      }
       wgpu::ShaderSourceWGSL source{};
       source.code = artifact.wgsl.c_str();
       wgpu::ShaderModuleDescriptor descriptor{};
       descriptor.nextInChain = &source;
       const auto label = request.name + " key=" + std::to_string(request.keyBits);
       descriptor.label = label.c_str();
-      (isVertex ? vertexModule : fragmentModule) = state.context.device.CreateShaderModule(&descriptor);
+      (isVertex ? vertexModule : fragmentModule) = T8_TELEMETRY_CALL("shader.module.create", state.context.device.CreateShaderModule(&descriptor));
 #ifdef __EMSCRIPTEN__
       std::string compilationError;
       const auto future = (isVertex ? vertexModule : fragmentModule).GetCompilationInfo(wgpu::CallbackMode::WaitAnyOnly,
@@ -501,7 +551,6 @@ public:
           entry.buffer.type = wgpu::BufferBindingType::Uniform;
           entry.buffer.minBindingSize = std::max(entry.buffer.minBindingSize, binding.minimumBufferSize);
         } else if (binding.kind == webgpu::ResourceKind::Sampler) {
-          Require(!binding.comparisonSampler, "Comparison samplers are not implemented");
           entry.sampler.type = wgpu::SamplerBindingType::Filtering;
         } else {
           Require(binding.kind == webgpu::ResourceKind::SampledTexture
@@ -566,13 +615,11 @@ public:
   explicit WebGPURT(WebGPUDriverState& state) : state(state) {}
   WebGPUDriverState& state;
   bool LoadAPIRT() override {
-    wgpu::Limits limits{};
-    Require(state.context.device.GetLimits(&limits) == wgpu::Status::Success, "Device limits unavailable");
-    Require(number_RT >= 0 && static_cast<uint32_t>(number_RT) <= limits.maxColorAttachments, "Render target exceeds device color attachment limit");
-    Require(!GenMips, "Render-target mip generation is not implemented");
-    Require(perColorFormats.empty() || perColorFormats.size() == static_cast<size_t>(number_RT), "Per-attachment format count mismatch");
-    Require(depth_format == F32 || depth_format == NOTHING, "Render target depth must be F32 or NOTHING");
-    Require(number_RT > 0 || depth_format != NOTHING, "Render target needs a color or depth attachment");
+    std::string diagnostic;
+    if (!state.driver->ValidateRenderTarget(number_RT, color_format, depth_format, w, h, GenMips, perColorFormats, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
     std::vector<std::unique_ptr<WebGPUTexture>> colors;
     for (int attachment = 0; attachment < number_RT; ++attachment) {
       const int format = perColorFormats.empty() ? color_format : perColorFormats[attachment];
@@ -583,10 +630,11 @@ public:
       case RGBA32F: nativeFormat = wgpu::TextureFormat::RGBA32Float; break;
       case R8: nativeFormat = wgpu::TextureFormat::R8Unorm; break;
       case F16: nativeFormat = wgpu::TextureFormat::R16Float; break;
-      default: throw std::runtime_error("[WebGPU] Unsupported render target color format " + std::to_string(format));
+      case F32: nativeFormat = wgpu::TextureFormat::R32Float; break;
+      default: return false;
       }
       auto color = std::make_unique<WebGPUTexture>(state);
-      color->m_channels = format == R8 || format == F16 ? 1 : 4;
+      color->m_channels = format == R8 || format == F16 || format == F32 ? 1 : 4;
       color->params = CLAMP_TO_EDGE | NEAREST_FILTER;
       wgpu::TextureUsage usage = wgpu::TextureUsage::RenderAttachment |
         wgpu::TextureUsage::TextureBinding |
@@ -614,7 +662,9 @@ public:
   }
   void Set(const DeviceContext&) override { Bind(true); }
   void SetLoad(const DeviceContext&) override { Bind(false); }
-  void ChangeCubeDepthTexture(int) override { throw std::runtime_error("[WebGPU] Cube render targets are not implemented"); }
+  void ChangeCubeDepthTexture(int) override {
+    T8_LOG_ERROR("[UnsupportedRenderTarget] backend=webgpu feature=cube render targets");
+  }
   void Bind(bool clear) const {
     std::vector<wgpu::Texture> colors;
     for (auto* color : vColorTextures) colors.push_back(static_cast<WebGPUTexture*>(color)->gpu);
@@ -683,7 +733,8 @@ public:
     descriptor.layout = variant.layout;
     descriptor.compute.module = module;
     descriptor.compute.entryPoint = entryPoint.c_str();
-    variant.pipeline = state.context.device.CreateComputePipeline(&descriptor);
+    variant.pipeline = T8_TELEMETRY_CALL("pipeline.create.compute", state.context.device.CreateComputePipeline(&descriptor));
+    T8_TELEMETRY_ADD("gpu.pipeline_creations", 1);
     state.context.CheckHealth();
     return variant;
   }
@@ -712,14 +763,21 @@ public:
       packagedRequest.defines = request.defines;
       packagedRequest.source = desc.source;
     #ifdef __EMSCRIPTEN__
-      Require(webgpu::ReadShaderPackage(packagedRequest, artifact, state.flow, report, diagnostic), diagnostic);
+      Require(T8_TELEMETRY_CALL("shader.package.load", webgpu::ReadShaderPackage(packagedRequest, artifact, state.flow, report, diagnostic)), diagnostic);
+      T8_TELEMETRY_ADD("shader.packaged.stages", 1);
     #else
-      Require(webgpu::LoadShaderFiles(request, artifact, report, diagnostic, desc.source),
+      Require(RecordShaderPreparation(T8_TELEMETRY_CALL("shader.load", webgpu::LoadShaderFiles(request, artifact, report, diagnostic, desc.source)), artifact, report),
               diagnostic.empty() ? "Compute shader preparation failed" : diagnostic);
       if (!g_config.webShaderOutput.empty())
         Require(webgpu::WriteShaderPackage(packagedRequest, artifact, state.flow, report, g_config.webShaderOutput, diagnostic), diagnostic);
     #endif
       if (!diagnostic.empty()) T8_LOG_INFO("[WebGPU][Compute] shader warning: %s", diagnostic.c_str());
+      const bool comparisonSampler = std::any_of(artifact.bindings.begin(), artifact.bindings.end(),
+        [](const auto& binding) { return binding.comparisonSampler; });
+      if (!state.driver->ValidateShaderComparisonSamplers(comparisonSampler, request.name, "compute", request.keyBits, diagnostic)) {
+        T8_LOG_ERROR("%s", diagnostic.c_str());
+        return false;
+      }
       Require(!artifact.wgsl.empty(), "Compute shader artifact is empty");
       Require(artifact.workgroupSize[0] && artifact.workgroupSize[1] && artifact.workgroupSize[2],
               "Compute shader has an invalid workgroup size");
@@ -769,7 +827,6 @@ public:
           entry.texture.viewDimension = wgpu::TextureViewDimension::e2D;
           break;
         case webgpu::ResourceKind::Sampler:
-          Require(!resource.comparisonSampler, "Comparison compute samplers are not implemented");
           entry.sampler.type = wgpu::SamplerBindingType::Filtering;
           break;
         case webgpu::ResourceKind::WriteOnlyStorageTexture:
@@ -782,6 +839,9 @@ public:
             ? wgpu::TextureFormat::RGBA16Float : wgpu::TextureFormat::RGBA8Unorm;
           entry.storageTexture.viewDimension = wgpu::TextureViewDimension::e2D;
           break;
+        case webgpu::ResourceKind::DepthTexture:
+          T8_LOG_ERROR("[UnsupportedShaderFeature] backend=webgpu shader=%s stage=compute feature=depth_texture", request.name.c_str());
+          return false;
         }
         resources.emplace(resource.binding, resource);
         auto reflectedBinding = expected->second;
@@ -797,7 +857,7 @@ public:
       source.code = artifact.wgsl.c_str();
       wgpu::ShaderModuleDescriptor moduleDescriptor{};
       moduleDescriptor.nextInChain = &source;
-      module = state.context.device.CreateShaderModule(&moduleDescriptor);
+      module = T8_TELEMETRY_CALL("shader.module.create", state.context.device.CreateShaderModule(&moduleDescriptor));
       bindingEntries = std::move(layoutEntries);
       entryPoint = desc.entryPoint;
       auto& variant = GetVariant(0);
@@ -874,7 +934,7 @@ public:
   }
   ShaderBase* CreateShader(std::string vertex, std::string fragment, ShaderKey key, const std::string& vertexName, const std::string& fragmentName) override {
     auto shader = std::make_unique<WebGPUShader>(state);
-    Require(shader->CreateShader(vertex, fragment, key, vertexName, fragmentName), "Shader creation failed");
+    if (!shader->CreateShader(vertex, fragment, key, vertexName, fragmentName)) return nullptr;
     return shader.release();
   }
   Texture* CreateTexture(std::string path) override {
@@ -895,6 +955,9 @@ public:
   Texture* CreateFloatTexture(int width, int height, const float* data) override { return CreateFloat(width, height, 1, 1, data); }
   Texture* CreateFloatCubeMap(int size, int mipCount, const float* data) override { return CreateFloat(size, size, mipCount, 6, data); }
   Texture* CreateFloat(int width, int height, int mipCount, unsigned layers, const float* data) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture,
+      data && width > 0 && height > 0 && mipCount > 0
+        ? RuntimeTelemetry::TextureUploadBytes(width, height, mipCount, layers, 16) : 0, 0);
     Require(width > 0 && height > 0 && mipCount > 0 && static_cast<unsigned>(mipCount) <= CalculateFullMipCount(width, height), "Invalid float texture dimensions or mip count");
     auto texture = std::make_unique<WebGPUTexture>(state);
     texture->m_channels = 4;
@@ -917,7 +980,7 @@ public:
                    bool mips, bool allowStorage) override {
     auto target = std::make_unique<WebGPURT>(state);
     target->AllowUnorderedAccess = allowStorage;
-    Require(target->LoadRT(count, color, depth, width, height, mips), "RT creation failed");
+    if (!target->LoadRT(count, color, depth, width, height, mips)) return nullptr;
     return target.release();
   }
 };
@@ -992,8 +1055,9 @@ void WebGPUDriverState::BeginPass() {
 }
 
 void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned firstVertex) {
-  T8_TELEMETRY_SCOPE("webgpu.draw");
-  if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::AddCounter("webgpu.draws", 1);
+  RuntimeTelemetry::RecordDraw(count);
+  T8_TELEMETRY_ADD("webgpu.draw.calls", 1);
+  if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.draws", 1);
   Require(active && shader && vertex && index, "Draw requires an active frame, shader, vertex and index buffers");
   BeginPass();
   const auto resourceLayoutKey = shader->ResourceLayoutKey();
@@ -1047,7 +1111,8 @@ void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned first
     descriptor.primitive.topology = topology; descriptor.primitive.cullMode = cull;
     descriptor.primitive.frontFace = wgpu::FrontFace::CW;
     if (topology == wgpu::PrimitiveTopology::TriangleStrip || topology == wgpu::PrimitiveTopology::LineStrip) descriptor.primitive.stripIndexFormat = indexFormat;
-    pipeline = context.device.CreateRenderPipeline(&descriptor);
+    pipeline = T8_TELEMETRY_CALL("pipeline.create.graphics", context.device.CreateRenderPipeline(&descriptor));
+    T8_TELEMETRY_ADD("gpu.pipeline_creations", 1);
     context.CheckHealth();
   }
   auto& entries = resourceLayout.entries;
@@ -1056,7 +1121,7 @@ void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned first
   std::array<uint32_t, 8> dynamicOffsets{};
   size_t dynamicOffsetCount = 0;
   {
-    T8_TELEMETRY_SCOPE("webgpu.binding_prepare");
+    T8_TELEMETRY_ADD("webgpu.binding_prepare.calls", 1);
     for (size_t resourceIndex = 0; resourceIndex < shader->resources.size(); ++resourceIndex) {
       const auto& resource = shader->resources[resourceIndex];
       auto& entry = entries[resourceIndex];
@@ -1064,7 +1129,12 @@ void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned first
       if (resource.kind == webgpu::ResourceKind::UniformBuffer) {
         Require(resource.binding >= 64 && resource.binding - 64 < constants.size(), "Unsupported uniform binding");
         auto* buffer = constants[resource.binding - 64];
-        Require(buffer && buffer->size >= resource.minimumBufferSize, "Required uniform buffer missing or too small");
+        if (!buffer || buffer->size < resource.minimumBufferSize) {
+          Require(false, "Required uniform buffer missing or too small: slot=" + std::to_string(resource.binding - 64)
+            + " required=" + std::to_string(resource.minimumBufferSize)
+            + " supplied=" + std::to_string(buffer ? buffer->size : 0)
+            + " shaderKey=" + std::to_string(shader->key.bits));
+        }
         if (buffer->uniformEpoch != context.UniformEpoch()) {
           buffer->gpu = context.UploadUniform(buffer->uniformShadow->data(), buffer->size, buffer->offset);
           buffer->uniformEpoch = context.UniformEpoch();
@@ -1104,15 +1174,16 @@ void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned first
     }
   }
   if (bindingsChanged) {
-    T8_TELEMETRY_SCOPE("webgpu.create_bind_group");
+    T8_TELEMETRY_ADD("webgpu.create_bind_group.calls", 1);
     wgpu::BindGroupDescriptor group{};
     group.layout = resourceLayout.bindings; group.entryCount = entries.size(); group.entries = entries.data();
     resourceLayout.group = context.device.CreateBindGroup(&group);
-    if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::AddCounter("webgpu.bind_group_allocations", 1);
+    if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.bind_group_allocations", 1);
+    T8_TELEMETRY_ADD("gpu.bind_group_creations", 1);
   }
   BeginPass();
   {
-    T8_TELEMETRY_SCOPE("webgpu.encoder_commands");
+    T8_TELEMETRY_ADD("webgpu.encoder_commands.calls", 1);
     pass.SetPipeline(pipeline);
     pass.SetBindGroup(0, resourceLayout.group, dynamicOffsetCount, dynamicOffsets.data());
     Require(vertexOffset < vertex->size && indexOffset < index->size, "Buffer offset out of range");
@@ -1132,7 +1203,19 @@ WebGPUDriver::WebGPUDriver() : m_state(std::make_unique<WebGPUDriverState>()) {
 }
 WebGPUDriver::~WebGPUDriver() { try { DestroyDriver(); } catch (const std::exception& error) { T8_LOG_ERROR("[WebGPU] %s", error.what()); } }
 WGPUDevice WebGPUDriver::NativeDevice() const { return m_state->context.device.Get(); }
+unsigned WebGPUDriver::MaxRenderTargetColorAttachments() const {
+  wgpu::Limits limits{};
+  return m_state->context.device && m_state->context.device.GetLimits(&limits) == wgpu::Status::Success
+    ? limits.maxColorAttachments : 0;
+}
 WGPUTextureFormat WebGPUDriver::SurfaceFormat() const { return static_cast<WGPUTextureFormat>(m_state->context.configuration.format); }
+int WebGPUDriver::SurfaceColorFormat() const {
+  switch (m_state->context.configuration.format) {
+  case wgpu::TextureFormat::RGBA8Unorm: return BaseRT::RGBA8;
+  case wgpu::TextureFormat::BGRA8Unorm: return BaseRT::BGRA8;
+  default: return BaseRT::NOTHING;
+  }
+}
 WGPURenderPassEncoder WebGPUDriver::OverlayPass() {
   if (!m_state->active) return nullptr;
   m_state->BeginPass();
@@ -1288,7 +1371,7 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
     pass.SetBindGroup(0, bindGroup);
     pass.DispatchWorkgroups(groupX, groupY, groupZ);
     pass.End();
-    if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::AddCounter("webgpu.compute_dispatches", 1);
+    if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.compute_dispatches", 1);
     if (commands.standalone) {
       auto command = m_state->context.commands.Finish();
       m_state->context.SubmitCommands(command);
@@ -1371,9 +1454,10 @@ void WebGPUDriver::CompleteFrame(FrameCompletionMode mode) {
   if (!m_state->active) return;
   EndFrame();
   m_state->targetColors.clear(); m_state->targetDepth = nullptr;
-  m_state->context.Submit(mode == FrameCompletionMode::Present && !m_state->offscreen);
+  m_state->context.Submit(mode == FrameCompletionMode::Present && !m_state->offscreen && !IsOffscreenEnabled());
   m_state->active = false;
   m_state->ResetBindings();
+  if (IsOffscreenEnabled()) CompleteOffscreenFrame();
 }
 void WebGPUDriver::SwapBuffers() { CompleteFrame(); }
 void WebGPUDriver::Clear() {

@@ -43,6 +43,7 @@ public:
     initInfo.MinImageCount = VulkanDriver::kBackBufferCount;
     initInfo.ImageCount = VulkanDriver::kBackBufferCount;
     initInfo.PipelineInfoMain.RenderPass = m_driver->GetBackbufferRenderPass();
+    m_targetLayout = m_driver->GetRenderTargetLayout();
     m_rendererInitialized = ImGui_ImplVulkan_Init(&initInfo);
     if (!m_rendererInitialized) Shutdown();
     return m_rendererInitialized;
@@ -54,9 +55,20 @@ public:
     ShutdownPlatform();
     m_driver = nullptr;
     m_rendererInitialized = false;
+    m_targetLayout = {};
   }
 
   void NewFrame() override {
+    const auto layout = m_driver->GetRenderTargetLayout();
+    m_targetReady = ValidateOverlayLayout(*m_driver, layout);
+    if (m_targetReady && layout != m_targetLayout) {
+      m_driver->WaitForGPU();
+      ImGui_ImplVulkan_PipelineInfo pipelineInfo{};
+      pipelineInfo.RenderPass = layout.surface
+        ? m_driver->GetBackbufferRenderPass() : m_driver->GetCurrentRenderPass();
+      ImGui_ImplVulkan_CreateMainPipeline(&pipelineInfo);
+      m_targetLayout = layout;
+    }
     ImGui_ImplVulkan_NewFrame();
 #ifdef OS_ANDROID
     ImGui_ImplAndroid_NewFrame();
@@ -66,6 +78,7 @@ public:
   }
 
   void RenderDrawData(ImDrawData* drawData) override {
+    if (!m_targetReady || !ValidateOverlayDraw(*m_driver, m_targetLayout)) return;
     std::memset(m_driver->m_pendingTextures, 0, sizeof(m_driver->m_pendingTextures));
     m_driver->EnsureBackbufferRenderPass();
     VkCommandBuffer commandBuffer = m_driver->GetCurrentCommandBuffer();
@@ -201,6 +214,8 @@ private:
   VulkanDriver* m_driver = nullptr;
   bool m_platformInitialized = false;
   bool m_rendererInitialized = false;
+  RenderTargetLayout m_targetLayout;
+  bool m_targetReady = false;
   std::unordered_map<Texture*, VkDescriptorSet> m_textureIDs;
 #ifdef OS_ANDROID
   ANativeWindow* m_nativeWindow = nullptr;

@@ -1058,9 +1058,9 @@ void JoltPhysicsSystem::Update(float deltaSeconds) {
   const double updateMs = std::chrono::duration<double, std::milli>(updateEnd - updateStart).count();
 
   const JPH::uint32 activeRigidBodies = m_impl->physicsSystem.GetNumActiveBodies(JPH::EBodyType::RigidBody);
-  RuntimeTelemetry::SetCounter("physics.jolt.activeRigidBodies", static_cast<double>(activeRigidBodies));
-  RuntimeTelemetry::SetCounter("physics.jolt.totalBodies", static_cast<double>(m_impl->physicsSystem.GetNumBodies()));
-  RuntimeTelemetry::SetCounter("physics.jolt.bodySlots", static_cast<double>(m_impl->bodies.size()));
+  T8_TELEMETRY_SET("physics.jolt.activeRigidBodies", static_cast<double>(activeRigidBodies));
+  T8_TELEMETRY_SET("physics.jolt.totalBodies", static_cast<double>(m_impl->physicsSystem.GetNumBodies()));
+  T8_TELEMETRY_SET("physics.jolt.bodySlots", static_cast<double>(m_impl->bodies.size()));
   uint32_t movingStaticContacts = 0;
   uint32_t movingMovingContacts = 0;
   uint64_t contactPairsChecked = 0;
@@ -1092,9 +1092,9 @@ void JoltPhysicsSystem::Update(float deltaSeconds) {
       }
     }
   }
-  RuntimeTelemetry::SetCounter("physics.jolt.contactPairsChecked", static_cast<double>(contactPairsChecked));
-  RuntimeTelemetry::SetCounter("physics.jolt.movingStaticContacts", static_cast<double>(movingStaticContacts));
-  RuntimeTelemetry::SetCounter("physics.jolt.movingMovingContacts", static_cast<double>(movingMovingContacts));
+  T8_TELEMETRY_SET("physics.jolt.contactPairsChecked", static_cast<double>(contactPairsChecked));
+  T8_TELEMETRY_SET("physics.jolt.movingStaticContacts", static_cast<double>(movingStaticContacts));
+  T8_TELEMETRY_SET("physics.jolt.movingMovingContacts", static_cast<double>(movingMovingContacts));
   constexpr uint32_t joltUpdates = 1;
   if (activeRigidBodies > 0) {
     ++m_impl->updateStatsFrames;
@@ -1490,8 +1490,9 @@ bool JoltPhysicsSystem::GetDebugBody(PhysicsBodyHandle handle, PhysicsDebugBody&
 }
 
 bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsCastHit& outHit) const {
-  T8_TELEMETRY_SCOPE("physics.jolt.cast_capsule");
-  RuntimeTelemetry::AddCounter("physics.jolt.castCapsule.count", 1.0);
+  T8_TELEMETRY_ADD("physics.jolt.cast_capsule.calls", 1);
+  T8_CPU_WORK("physics.queries");
+  T8_TELEMETRY_ADD("physics.jolt.castCapsule.count", 1.0);
   outHit = PhysicsCastHit{};
   if (!m_initialized || !m_impl) {
     return false;
@@ -1590,8 +1591,9 @@ bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsC
 }
 
 bool JoltPhysicsSystem::CastBox(const PhysicsBoxCastDesc& desc, PhysicsCastHit& outHit) const {
-  T8_TELEMETRY_SCOPE("physics.jolt.cast_box");
-  RuntimeTelemetry::AddCounter("physics.jolt.castBox.count", 1.0);
+  T8_TELEMETRY_ADD("physics.jolt.cast_box.calls", 1);
+  T8_CPU_WORK("physics.queries");
+  T8_TELEMETRY_ADD("physics.jolt.castBox.count", 1.0);
   outHit = PhysicsCastHit{};
   if (!m_initialized || !m_impl) {
     return false;
@@ -1698,8 +1700,9 @@ int JoltPhysicsSystem::OverlapSphere(
     uint32_t includeLayers,
     uint32_t excludeLayers,
     std::vector<PhysicsOverlapHit>& outHits) const {
-  T8_TELEMETRY_SCOPE("physics.jolt.overlap_sphere");
-  RuntimeTelemetry::AddCounter("physics.jolt.overlapSphere.count", 1.0);
+  T8_TELEMETRY_ADD("physics.jolt.overlap_sphere.calls", 1);
+  T8_CPU_WORK("physics.queries");
+  T8_TELEMETRY_ADD("physics.jolt.overlapSphere.count", 1.0);
   outHits.clear();
   if (!m_initialized || !m_impl) return 0;
   if (!IsUsablePhysicsCoordinate(center.x) ||

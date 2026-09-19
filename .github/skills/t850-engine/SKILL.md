@@ -30,12 +30,13 @@ Repository root contains `documentation/` and `LaunchSolution.bat`. Source root 
 | screenshots, RT dumps, replay, visual baselines, image comparison | `t850-visual-regression` skill |
 | Android, Steam Deck, install, deploy, package, release | `t850-platform-deploy` skill |
 | PresentMon, FPS/frame time, CPU/GPU bottlenecks, Deck performance loop | `t850-deck-performance` skill |
+| profiler scopes, telemetry counters, upload/streaming instrumentation, choosing built-in versus external tooling | `t850-profiling` skill |
 | runtime ImGui controls, scene/profile precedence, startup-vs-live settings | `t850-scene-runtime-controls` skill |
 | GPU uploads, staging, fences, retirement, resource lifetime, memory | `t850-gpu-resource-lifetime` skill |
 | current implementation status | `documentation/current-status-and-roadmap.md` |
 | subsystem owner/dependencies | `documentation/dependency-map.md` then one owning document |
 | runtime scene choice | `documentation/runtime/runtime-hosts.md` |
-| documentation maintenance | `documentation/stage-plan.md` and `doc-conventions.md` |
+| documentation maintenance | `documentation/doc-conventions.md` and `documentation/README.md` index |
 
 Use only the indexed documentation tree; superseded documents belong in Git history. Implementation prompts are completed maintenance contracts, not current status.
 
@@ -50,6 +51,9 @@ Use only the indexed documentation tree; superseded documents belong in Git hist
 | geometry/glTF | `geometry/loading-geometry.md` | `Framework/src/utils/gltf/`, mesh creation |
 | shaders/PSOs | `rendering/shader-management.md` | descriptors, shader/cache/backend classes |
 | render passes/RTs | `rendering/render-graph.md` | `RenderGraph.*`, JSON graphs |
+| compute shaders/kernels/dispatch | `rendering/compute-shader-implementation.md` | `*Compute.cpp`, `ComputeKernelRegistry.*` |
+| WebGPU/Dawn backend, shader flows | `rendering/webgpu-runtime-summary.md`, `rendering/shader-management.md` | `Framework/*/video/webgpu/` |
+| browser/Emscripten target | `platform/browser.md` | `Framework/src/core/WebFramework.cpp`, `T850/web/` |
 | draw path | `rendering/geometry-rendering-flow.md` | `PrimitiveInst`, mesh/skinned draw |
 | textures/IBL | `rendering/textures-and-ibl.md` | textures, `IBLResources`, material slots |
 | animation | `animation/animation-system.md` | `AnimationController`, `RenderSkinnedMesh` |
@@ -80,7 +84,8 @@ Use only the indexed documentation tree; superseded documents belong in Git hist
 - Every new Framework `.cpp`: add to `Framework.vcxproj`, filters, and `Framework/CMakeLists.txt`.
 - Use `ResourceLocator` for portable runtime resources.
 - Render-pass order belongs in render-graph JSON.
-- Treat D3D11, D3D12, OpenGL, and Vulkan as peer backends.
+- Treat D3D11, D3D12, OpenGL, Vulkan, and WebGPU as peer backends. A capability one backend lacks is resolved by a shared capability query and render-graph validation, never by one backend throwing where the others silently skip.
+- Profiling scopes mark phases, not calls. Never add a scope to a per-draw, per-query or per-upload path; see the `t850-profiling` skill.
 - Keep Framework independent of T8ditor/editor-only UI.
 - Keep gameplay core independent of `game/examples`, T8ditor, and ImGui.
 - Preserve fixed-tick phase ordering, deferred mutation, stable IDs, validation, and service boundaries.

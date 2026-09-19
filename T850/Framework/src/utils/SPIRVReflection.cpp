@@ -25,6 +25,16 @@ enum SpvOp_ {
   SpvOpVariable        = 59,
   SpvOpDecorate        = 71,
   SpvOpMemberDecorate  = 72,
+  SpvOpImageSampleDrefImplicitLod = 89,
+  SpvOpImageSampleDrefExplicitLod = 90,
+  SpvOpImageSampleProjDrefImplicitLod = 93,
+  SpvOpImageSampleProjDrefExplicitLod = 94,
+  SpvOpImageDrefGather = 97,
+  SpvOpImageSparseSampleDrefImplicitLod = 307,
+  SpvOpImageSparseSampleDrefExplicitLod = 308,
+  SpvOpImageSparseSampleProjDrefImplicitLod = 311,
+  SpvOpImageSparseSampleProjDrefExplicitLod = 312,
+  SpvOpImageSparseDrefGather = 315,
 };
 
 // SPIR-V decorations
@@ -47,6 +57,7 @@ enum SpvStorageClass_ {
 namespace t850 {
 
 bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
+  usesDepthComparison = false;
   if (wordCount < 5) return false;
 
   // SPIR-V header: magic, version, generator, bound, reserved
@@ -84,9 +95,21 @@ bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
     uint16_t opcode   = instrWord & 0xFFFF;
     uint16_t instrLen = (instrWord >> 16) & 0xFFFF;
 
-    if (instrLen == 0) break; // malformed
+    if (instrLen == 0 || instrLen > wordCount - i) return false;
 
     switch (opcode) {
+      case SpvOpImageSampleDrefImplicitLod:
+      case SpvOpImageSampleDrefExplicitLod:
+      case SpvOpImageSampleProjDrefImplicitLod:
+      case SpvOpImageSampleProjDrefExplicitLod:
+      case SpvOpImageDrefGather:
+      case SpvOpImageSparseSampleDrefImplicitLod:
+      case SpvOpImageSparseSampleDrefExplicitLod:
+      case SpvOpImageSparseSampleProjDrefImplicitLod:
+      case SpvOpImageSparseSampleProjDrefExplicitLod:
+      case SpvOpImageSparseDrefGather:
+        usesDepthComparison = true;
+        break;
       case SpvOpName: {
         if (instrLen >= 3) {
           uint32_t id = code[i + 1];

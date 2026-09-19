@@ -85,6 +85,8 @@ namespace t850 {
         bool UsesGLSL() const override { return true; }
         bool NeedsVFlip() const override { return true; }
         bool SupportsRenderTargetMipGeneration() const override { return true; }
+        bool SupportsCubeRenderTargets() const override { return true; }
+        bool SupportsComparisonSamplers() const override { return true; }
         bool SupportsDeferredRendering() const override { return false; }
     void	InitDriver();
     void	CreateSurfaces();

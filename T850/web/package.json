@@ -13,5 +13,8 @@
     "pngjs": "7.0.0",
     "selenium-webdriver": "4.35.0",
     "wrangler": "4.133.0"
+  },
+  "dependencies": {
+    "fflate": "0.8.3"
   }
 }

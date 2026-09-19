@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 
 #include <terrain/VoxelStreaming.h>
 
@@ -110,6 +111,7 @@ void VoxelStreamingManager::Update(ChunkKey focus,
                                    std::span<const ChunkKey> loadedChunks,
                                    ThreadPool* threadPool,
                                    const VoxelChunkBuildFunction& buildFunction) {
+  T8_TELEMETRY_SCOPE("terrain.voxel.stream_update");
   m_focus = focus;
   m_desired.clear();
   for (int y = -m_settings.verticalRadius; y <= m_settings.verticalRadius; ++y) {
@@ -191,6 +193,8 @@ void VoxelStreamingManager::Update(ChunkKey focus,
     }
 
     auto future = threadPool->Submit([request, buildFunction]() mutable {
+      T8_TELEMETRY_SCOPE("terrain.voxel.mesh_build");
+      T8_UPLOAD_SOURCE(RuntimeTelemetry::UploadSource::Streaming);
       if (request.IsCancelled()) {
         VoxelChunkBuildResult cancelled;
         cancelled.cancelled = true;

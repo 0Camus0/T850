@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * T850 Engine — Vulkan Backend
  * VulkanConstantBuffer.cpp: Constant Buffer implementation
@@ -28,6 +29,7 @@ namespace t850 {
   void** VulkanConstantBuffer::GetAPIObjectReference() const { return nullptr; }
 
   void VulkanConstantBuffer::Create(const Device& device, BufferDesc desc, void* initialData) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     auto* driver = GetVkDriver();
     VmaAllocator allocator = driver->GetAllocator();
@@ -65,6 +67,7 @@ namespace t850 {
       }
     }
     T8_LOG_DEBUG("[Vulkan] CB created: %d bytes (aligned=%u)", desc.byteWidth, m_alignedSize);
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, 0, 1);
   }
 
   void VulkanConstantBuffer::Set(const DeviceContext& deviceContext, unsigned int slot) {
@@ -91,6 +94,7 @@ namespace t850 {
   }
 
   void VulkanConstantBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, sysMemCpy.size(), 0);
     if (m_mappedData && !sysMemCpy.empty()) {
       memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
       vmaFlushAllocation(GetVkDriver()->GetAllocator(), m_allocation, 0, sysMemCpy.size());
@@ -98,6 +102,7 @@ namespace t850 {
   }
 
   void VulkanConstantBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, descriptor.byteWidth, 0);
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     if (m_mappedData) {
       memcpy(m_mappedData, buffer, descriptor.byteWidth);

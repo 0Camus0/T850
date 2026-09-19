@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -70,6 +71,7 @@ namespace t850 {
   }
   void GLVertexBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, sysMemCpy.size(), 0);
     glBindBuffer(GL_ARRAY_BUFFER, APIID);
     if (descriptor.usage == BufferUsage::DINAMIC) {
       glBufferSubData(GL_ARRAY_BUFFER, 0, descriptor.byteWidth, &sysMemCpy[0]);
@@ -85,6 +87,7 @@ namespace t850 {
   }
   void GLVertexBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, descriptor.byteWidth, 0);
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     UpdateFromSystemCopy(deviceContext);
@@ -101,6 +104,7 @@ namespace t850 {
   }
   void GLVertexBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     if (initialData) {
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
@@ -117,5 +121,6 @@ namespace t850 {
       g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "vb", "");
     }
 #endif
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Vertex, 0, 1);
   }
 }

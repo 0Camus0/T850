@@ -1,4 +1,11 @@
-export function minecraftAssetSelection(scene) {
+export function minecraftWebScene(scene) {
+  const result = structuredClone(scene);
+  result.voxel_world.environment_map = 'sky/CubeMap_SkyWater_512.dds';
+  result.voxel_world.environment_options = [result.voxel_world.environment_map];
+  return result;
+}
+
+export function minecraftAssetSelection(scene, { embedded = false } = {}) {
   const required = new Set([
     'Scenes/Minecraft.t8scene', scene.render_graph, scene.control_descriptor,
     'Fonts/Martius-LV9L4.ttf', 'Fonts/tahomabd.ttf',
@@ -16,8 +23,9 @@ export function minecraftAssetSelection(scene) {
     includes(resource) {
       if (resource.startsWith('Models/') || resource === 'model-cloud-manifest.json') return false;
       return required.has(resource) || resource.startsWith('Shaders/') || resource.startsWith('WebShaders/') ||
-        /^Textures\/GeneratedIBLCache\/[a-z0-9_]+\.t8ibl$/.test(resource) ||
-        /^Textures\/LUT\/lut_(charlie|ggx|sheen_E)\.dds$/.test(resource) ||
+        (embedded ? /^Textures\/GeneratedIBLCache\/(charlie_lut|ggx_brdf_lut|sheen_e_lut)_[a-z0-9_]+\.t8ibl$/.test(resource) :
+          /^Textures\/GeneratedIBLCache\/[a-z0-9_]+\.t8ibl$/.test(resource)) ||
+        (!embedded && /^Textures\/LUT\/lut_(charlie|ggx|sheen_E)\.dds$/.test(resource)) ||
         /^Textures\/lens[1-9]\.png$/.test(resource);
     },
   };

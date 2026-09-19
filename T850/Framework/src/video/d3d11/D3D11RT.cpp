@@ -21,6 +21,11 @@ namespace t850 {
   extern DeviceContext*     T8DeviceContext;
 
   bool D3DXRT::LoadAPIRT() {
+    std::string diagnostic;
+    if (!g_pBaseDriver->ValidateRenderTarget(number_RT, color_format, depth_format, w, h, GenMips, perColorFormats, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     DXGI_FORMAT cfmt;
@@ -50,6 +55,7 @@ namespace t850 {
     case BaseRT::RGBA32F: {
       cfmt = DXGI_FORMAT_R32G32B32A32_FLOAT;
     }break;
+    default: return false;
     }
 
     switch (this->depth_format) {
@@ -61,7 +67,7 @@ namespace t850 {
     case BaseRT::FD16: {
       depthFormat = DXGI_FORMAT_R16_TYPELESS;
       depthShaderViewFormat = DXGI_FORMAT_D16_UNORM;
-      depthResourceViewFormat = DXGI_FORMAT_R16_FLOAT;
+      depthResourceViewFormat = DXGI_FORMAT_R16_UNORM;
     }break;
     case BaseRT::F32: {
       depthFormat = DXGI_FORMAT_R32_TYPELESS;
@@ -74,6 +80,7 @@ namespace t850 {
       depthResourceViewFormat = DXGI_FORMAT_R32_FLOAT;
       isCubeDepth = true;
     }break;
+    default: return false;
     }
 
 
@@ -94,7 +101,7 @@ namespace t850 {
           case BaseRT::RGBA8:   thisFmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
           case BaseRT::RGBA16F: thisFmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
           case BaseRT::RGBA32F: thisFmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
-          default: break;
+          default: return false;
         }
       }
       desc.Format = thisFmt;

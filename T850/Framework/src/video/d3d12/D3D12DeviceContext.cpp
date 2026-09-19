@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12DeviceContext.cpp: Device context implementation
@@ -51,6 +52,7 @@ namespace t850 {
   }
 
   void D3D12DeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
+    RuntimeTelemetry::RecordDraw(vertexCount);
     T8_LOG_TRACE("[D3D12] DrawIndexed(%u, %u, %u)", vertexCount, startIndex, startVertex);
     m_commandList->DrawIndexedInstanced(vertexCount, 1, startIndex, startVertex, 0);
     if (t850::g_profiler) t850::g_profiler->AddDrawCall(vertexCount);

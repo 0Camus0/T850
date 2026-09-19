@@ -135,13 +135,11 @@ int main(int arg,char ** args) try {
 #endif
   t850::config::ValidateConfig(t850::g_config);
   if (t850::g_config.flags.benchmarkMatrix) {
-    if (t850::g_config.api == "webgpu") {
-      std::cerr << "WebGPU benchmark-matrix integration is not implemented.\n";
-      return 1;
+    t850::g_config.api = t850::g_config.benchmarkPaired ? "d3d12" : "d3d11";
+    if (!t850::g_config.benchmarkPaired) {
+      t850::g_config.width = 1920;
+      t850::g_config.height = 1080;
     }
-    t850::g_config.api = "d3d11";
-    t850::g_config.width = 1920;
-    t850::g_config.height = 1080;
     t850::g_config.flags.offscreen = false;
     t850::g_config.startScene = 1;
   }

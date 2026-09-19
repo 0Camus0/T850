@@ -37,6 +37,7 @@ namespace t850 {
   };
 
   struct SPIRVReflection {
+    bool usesDepthComparison = false;
     std::vector<SPIRVBinding> uniformBuffers;   // UBOs (cbuffer)
     std::vector<SPIRVBinding> sampledImages;    // combined image samplers / textures
     std::vector<SPIRVInput>   stageInputs;      // vertex inputs (for VS only)

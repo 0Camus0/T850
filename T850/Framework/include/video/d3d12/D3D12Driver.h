@@ -53,6 +53,8 @@ namespace t850 {
     const char* ApiTag() const override { return "d3d12"; }
     bool SupportsComputeShaders() const override { return true; }
     bool SupportsComputeTextures() const override { return true; }
+    bool SupportsCubeRenderTargets() const override { return true; }
+    uint64_t ProfilingAdapterId() const override;
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;

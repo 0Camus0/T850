@@ -25,18 +25,25 @@ namespace t850 {
 
   bool VulkanRT::LoadAPIRT() {
     auto* driver = GetVkDriver();
+    std::string diagnostic;
+    if (!driver->ValidateRenderTarget(number_RT, color_format, depth_format, w, h, GenMips, perColorFormats, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
     VkDevice device = driver->GetDevice();
     VmaAllocator allocator = driver->GetAllocator();
 
     // Helper to resolve BaseRT format enum to VkFormat
     auto resolveFormat = [](int fmt) -> VkFormat {
       switch (fmt) {
+        case BaseRT::RGB8:
         case BaseRT::RGBA8:    return VK_FORMAT_R8G8B8A8_UNORM;
         case BaseRT::RGBA16F:  return VK_FORMAT_R16G16B16A16_SFLOAT;
+        case BaseRT::RGBA32F:  return VK_FORMAT_R32G32B32A32_SFLOAT;
         case BaseRT::F16:      return VK_FORMAT_R16_SFLOAT;
         case BaseRT::R8:       return VK_FORMAT_R8_UNORM;
         case BaseRT::F32:      return VK_FORMAT_R32_SFLOAT;
-        default:               return VK_FORMAT_R8G8B8A8_UNORM;
+        default:              return VK_FORMAT_UNDEFINED;
       }
     };
 
@@ -120,8 +127,7 @@ namespace t850 {
     if (hasDepth) {
       switch (depth_format) {
         case BaseRT::F32:  m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
-        case BaseRT::FD16: m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
-        default:           m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
+        default: return false;
       }
 
       VkImageCreateInfo depthImgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };

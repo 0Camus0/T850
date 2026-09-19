@@ -174,6 +174,7 @@ public:
   void SetCameraMode(int mode);
 #ifdef __EMSCRIPTEN__
   unsigned m_cameraDiagnosticFrames = 0;
+  unsigned m_gameplayDiagnosticFrames = 0;
 #endif
   int   m_debugCascadeIndex = 0;
   bool  m_debugCameraOrtho = false;
@@ -289,6 +290,11 @@ public:
   t850::terrain::VoxelNavigationSettings m_voxelNavigationSettings;
   t850::KinematicCharacterInput m_playerInput;
   t850::game::RegeneratingHealthState m_playerHealth;
+  float m_damageFlashRemaining = 0.0f;
+  float m_attackCooldown = 0.0f;
+  bool m_waitForActionRelease = false;
+  unsigned m_attackCount = 0;
+  unsigned m_respawnCount = 0;
   std::array<bool, kMaxMinecraftEnemies> m_playerMobContacts = {};
   XVECTOR3 m_playerSpawnEye = XVECTOR3(0.0f, 40.0f, 0.0f, 1.0f);
   float m_playerSpawnYaw = 0.0f;
@@ -330,6 +336,7 @@ public:
   void UpdatePlayerHealth(float dt);
   bool PlayerTouchesMob(const MinecraftMob& mob, bool retainContact) const;
   void RespawnPlayer();
+  bool TryAttackMob();
   void CreateMobMesh(int mobIndex);
   void UpdateMobInstance(int mobIndex);
   void ResetMob(int mobIndex);

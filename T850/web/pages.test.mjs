@@ -173,7 +173,7 @@ test('bundle download verifies content identity and never mounts failed or corru
 
 test('WSSI welcome validates enemies, starts only on Launch, and handles unavailable WebGPU', async () => {
   const html = await readFile(new URL('./minecraft-wssi.html', import.meta.url), 'utf8');
-  assert.match(html, /<span id="demo-version">v0\.1\.10<\/span>/);
+  assert.match(html, /<span id="demo-version">v0\.1\.11<\/span>/);
   assert.match(html, /<input id="console-logs" type="checkbox" autocomplete="off">/);
   const source = await readFile(new URL('./minecraft-wssi.mjs', import.meta.url), 'utf8');
   const createWelcome = async (gpu, search = '', mobile = false, isolated = true, storage = new Map()) => {

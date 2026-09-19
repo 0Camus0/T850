@@ -23,6 +23,7 @@
 #include <scene/SceneConversions.h>
 #include <scene/SceneRegions.h>
 #include <scene/MutableMeshData.h>
+#include <scene/MutableMesh.h>
 #include <scene/RenderContainer.h>
 #include <scene/RenderGraph.h>
 #include <scene/RenderQuad.h>
@@ -62,7 +63,7 @@
 #include <string_view>
 #include <vector>
 
-namespace t850 { extern Device* T8Device; }
+namespace t850 { extern Device* T8Device; extern DeviceContext* T8DeviceContext; }
 
 namespace t850::game {
 namespace {
@@ -1829,13 +1830,13 @@ public:
   void DestroyDriver() override {}
   void SetWindow(void*) override {}
   void SetDimensions(int, int) override {}
-  void Clear() override {}
+  void Clear() override { events.push_back("clear"); }
   void SwapBuffers() override {}
-  void SetBlendState(BlendStates) override {}
+  void SetBlendState(BlendStates state) override { events.push_back("blend:" + std::to_string(state)); }
   void SetDepthStencilState(DepthStencilStates) override {}
   void SaveScreenshot(std::string) override {}
   void SetCullFace(FaceCulling) override {}
-  void PopRT() override {}
+  void PopRT() override { events.push_back("pop"); CurrentRT = -1; }
   void FlushGPUResources() override { events.push_back("flush"); }
   bool SupportsComputeShaders() const override { return true; }
   bool SupportsComputeTextures() const override { return true; }
@@ -2605,6 +2606,181 @@ void TestMinecraftHouseAuthoring() {
       "house torch positions do not flank the rear door and face the front window");
 }
 
+void TestPassFrustumReuse() {
+  auto& tracker = MeshDrawStateTracker::Get();
+  XMATRIX44 projection;
+  projection.Identity();
+  const auto check = [&]() {
+    XVECTOR3 expected[6], actual[6];
+    RenderMesh::ExtractFrustumPlanes(projection, expected);
+    tracker.GetFrustumPlanes(projection, actual);
+    for (int plane = 0; plane < 6; ++plane) {
+      Require(actual[plane].x == expected[plane].x && actual[plane].y == expected[plane].y &&
+        actual[plane].z == expected[plane].z && actual[plane].w == expected[plane].w,
+        "pass frustum cache changed a culling plane");
+    }
+  };
+  tracker.Begin();
+  check();
+  check();
+  projection.m11 = 2;
+  projection.m41 = 3;
+  check();
+  tracker.End();
+  projection.m22 = 3;
+  check();
+  tracker.Begin();
+  projection.Identity();
+  check();
+  tracker.End();
+}
+
+void TestGraphMeshPreparation() {
+  class TestTexture final : public Texture {
+  public:
+    void LoadAPITexture(DeviceContext*, unsigned char*) override {}
+    void LoadAPITextureCompressed(unsigned char*) override {}
+    void DestroyAPITexture() override {}
+    void SetTextureParams() override {}
+    void GetFormatBpp(unsigned int&, unsigned int&, unsigned int&) override {}
+    void Set(const DeviceContext&, unsigned int, std::string) override {}
+    void SetSampler(const DeviceContext&, unsigned int) override {}
+  } firstTexture, nextTexture;
+  class TestContext final : public DeviceContext {
+  public:
+    void* GetAPIObject() const override { return nullptr; }
+    void** GetAPIObjectReference() const override { return nullptr; }
+    void release() override {}
+    void SetPrimitiveTopology(Topology::E) override {}
+    void DrawIndexed(unsigned, unsigned, unsigned) override {}
+  } context;
+  class PassPrimitive final : public PrimitiveBase {
+  public:
+    bool eligible = false;
+    unsigned draws = 0;
+    Texture* sampled = nullptr;
+    Texture* environment = nullptr;
+    void Load(const char*) override {}
+    void Create() override {}
+    void Transform(float*) override {}
+    bool MayDrawInPass(uint8_t) const override { return eligible; }
+    void Draw(float*, float*) override { ++draws; sampled = Textures[7]; environment = EnvMap; }
+    void Destroy() override {}
+  } primitive;
+  NullTestDriver driver;
+  driver.width = 64;
+  driver.height = 64;
+  driver.Textures.push_back(&firstTexture);
+  driver.Textures.push_back(&nextTexture);
+  LifecycleTestDevice device(driver.events);
+  struct RestoreDevice {
+    Device* device = T8Device;
+    DeviceContext* context = T8DeviceContext;
+    ~RestoreDevice() { T8Device = device; T8DeviceContext = context; }
+  } restore;
+  T8Device = &device;
+  T8DeviceContext = &context;
+  XMATRIX44 viewProjection;
+  viewProjection.Identity();
+  PrimitiveInst meshes[2];
+  for (auto& mesh : meshes) mesh.CreateInstance(&primitive, &viewProjection);
+  PrimitiveInst quads[8];
+  SceneProps props;
+  EnvironmentMapSet environment;
+  environment.SetFallback(0);
+  TempSceneFiles files;
+  const auto graphPath = files.Add("_mesh_preparation.json");
+  const auto loadGraph = [&](RenderGraph& graph, bool callback) {
+    std::ofstream output(graphPath);
+    output << R"({"render_targets":[
+      {"name":"Input","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[64,64]},
+      {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[64,64]}],
+      "passes":[{"name":"Mesh Pass","target":"Output","clear":true,
+      "state":{"blend":"ALPHA_BLEND"},"post_state":{"blend":"BLEND_OPAQUE"},
+      "inputs":[{"source":"Input:COLOR0","slot":7}],"bind_environment_map":true,"draws":[)";
+    if (callback) output << R"({"type":"callback","callback":"replace-input"},)";
+    output << R"({"type":"mesh","mesh_indices":[],"signature":"FORWARD_PASS"}]}]})";
+    output.close();
+    Require(graph.Load(graphPath.string()), "graph preparation fixture did not load");
+    Require(graph.CreateRenderTargets(&driver, props), "graph preparation targets did not allocate");
+  };
+  const auto execute = [&](RenderGraph& graph, RenderGraph::CustomDrawCallback callback = {}) {
+    graph.Execute(&driver, props, meshes, 2, quads, nullptr, nullptr, nullptr, environment, -1, callback);
+  };
+  RenderGraph graph;
+  loadGraph(graph, false);
+  const int input = graph.GetRTHandle("Input");
+  driver.RTs[input]->vColorTextures[0] = &firstTexture;
+  meshes[0].SetTexture(&nextTexture, 7);
+  driver.events.clear();
+  execute(graph);
+  Require(primitive.draws == 0 && meshes[0].Textures[7] == &nextTexture,
+    "empty mesh pass performed resource binding or drawing");
+  Require(driver.events == std::vector<std::string>{"blend:" + std::to_string(BaseDriver::ALPHA_BLEND),
+      "clear", "pop", "blend:" + std::to_string(BaseDriver::BLEND_OPAQUE)},
+    "empty mesh pass lost clear, target-pop or post-state side effects");
+  primitive.eligible = true;
+  execute(graph);
+  Require(primitive.draws == 2 && primitive.sampled == &firstTexture && primitive.environment == &firstTexture,
+    "eligible meshes were skipped or shared inputs not bound");
+  driver.RTs[input]->vColorTextures[0] = &nextTexture;
+  environment.SetFallback(1);
+  execute(graph);
+  Require(primitive.draws == 4 && primitive.sampled == &nextTexture && primitive.environment == &nextTexture,
+    "per-pass binding cache retained a stale texture across executions");
+  meshes[0].Visible = false;
+  execute(graph);
+  Require(primitive.draws == 5, "invisible mesh reached draw preparation");
+  graph.DestroyRenderTargets(&driver);
+  loadGraph(graph, true);
+  const int recreatedInput = graph.GetRTHandle("Input");
+  driver.RTs[recreatedInput]->vColorTextures[0] = &firstTexture;
+  primitive.eligible = false;
+  unsigned callbacks = 0;
+  execute(graph, [&](const std::string&) {
+    ++callbacks;
+    primitive.eligible = true;
+    driver.RTs[recreatedInput]->vColorTextures[0] = &nextTexture;
+  });
+  Require(callbacks == 1 && primitive.draws == 6 && primitive.sampled == &nextTexture,
+    "callback side effects or post-callback resource replacement were skipped");
+  graph.DestroyRenderTargets(&driver);
+
+  RenderMesh classified;
+  classified.Info.resize(1);
+  classified.Info[0].SubSets.resize(1);
+  auto& subset = classified.Info[0].SubSets[0];
+  subset.AlphaMode = 0;
+  subset.TransmissionFactor = 0;
+  Require(!classified.MayDrawInPass(PassType::FORWARD) && classified.MayDrawInPass(PassType::GBUFFER),
+    "opaque mesh eligibility differs from its original material filter");
+  subset.AlphaMode = 1;
+  Require(!classified.MayDrawInPass(PassType::FORWARD) && classified.MayDrawInPass(PassType::SHADOW_MAP),
+    "masked material lost its shadow participation");
+  subset.AlphaMode = 2;
+  Require(classified.MayDrawInPass(PassType::FORWARD) && !classified.MayDrawInPass(PassType::GBUFFER),
+    "blended mesh eligibility differs from the rendering filter");
+  subset.AlphaMode = 0;
+  subset.TransmissionFactor = 1;
+  Require(classified.MayDrawInPass(PassType::FORWARD), "transmission mesh was rejected from forward rendering");
+  MaterialAsset material;
+  material.params.alphaMode = 0;
+  material.params.transmissionFactor = 0;
+  subset.matAsset = &material;
+  Require(!classified.MayDrawInPass(PassType::FORWARD), "legacy material fields overrode shared material eligibility");
+  material.params.alphaMode = 2;
+  Require(classified.MayDrawInPass(PassType::FORWARD), "updated shared blend material was ignored");
+  material.params.alphaMode = 0;
+  material.params.transmissionFactor = 0.5f;
+  Require(classified.MayDrawInPass(PassType::FORWARD), "shared transmission material was ignored");
+  subset.matAsset = nullptr;
+  MutableMesh emptyMutable;
+  Require(!emptyMutable.MayDrawInPass(PassType::FORWARD) && !emptyMutable.MayDrawInPass(PassType::SHADOW_MAP),
+    "unready mutable mesh claimed drawable work");
+  NullTestPrimitive unknown;
+  Require(unknown.MayDrawInPass(PassType::FORWARD), "unknown primitive must conservatively remain drawable");
+}
+
 void TestTypedComputeGraphValidation() {
   TempSceneFiles files;
   constexpr std::array<const char*, 8> maintainedGraphs = {
@@ -3136,6 +3312,8 @@ constexpr TestCase kTests[] = {
   {"T-SCENE-RUNTIME-OWNERSHIP-01", TestSceneRuntimeOwnership},
   {"T-SHADER-PRECOMPILER-01", TestShaderPrecompilerContract},
   {"T-COMPUTE-GRAPH-01", TestTypedComputeGraphValidation},
+  {"T-GRAPH-MESH-PREPARATION-01", TestGraphMeshPreparation},
+  {"T-PASS-FRUSTUM-REUSE-01", TestPassFrustumReuse},
   {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
   {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
   {"T-MINECRAFT-SURVIVAL-01", TestMinecraftSurvivalAuthoring},

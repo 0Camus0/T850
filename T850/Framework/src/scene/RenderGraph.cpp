@@ -1190,6 +1190,11 @@ void RenderGraph::ExecutePass(
   const bool shadowsEnabled = props.ToogleShadow != 0;
   const bool ssaoEnabled = props.ToogleSSAO != 0;
 
+  const auto mayDrawMesh = [&](int meshIndex, ShaderKey signature) {
+    return meshes && meshIndex >= 0 && meshIndex < meshCount && meshes[meshIndex].Visible &&
+      meshes[meshIndex].pBase && meshes[meshIndex].pBase->MayDrawInPass(signature.getPass());
+  };
+
   auto shouldSkipTextureInput = [&](const TextureInput& input) -> bool {
     if (!shadowsEnabled && input.source == "DepthPass:DEPTH") {
       return true;
@@ -1357,15 +1362,48 @@ void RenderGraph::ExecutePass(
       driver->SetScissorRect(0, 0, tw, th);
     }
 
+    const auto finishGraphicsPass = [&]() {
+      const bool didPush = ((node.rt_handle >= 0 || finalOutputPass) && pass.push);
+      const bool inheritedRT = (!pass.push && node.rt_handle >= 0);
+      if (pass.pop && (didPush || inheritedRT)) driver->PopRT();
+    };
+    bool hasDrawWork = false;
+    for (const auto& draw : pass.draws) {
+      if (draw.type != "mesh") { hasDrawWork = true; break; }
+      ShaderKey signature = ResolveSignature(draw.signature);
+      for (const auto& extra : draw.extra_signatures) signature.bits |= ResolveSignature(extra).bits;
+      if (draw.mesh_indices.empty()) {
+        for (int meshIndex = 0; meshIndex < meshCount && !hasDrawWork; ++meshIndex)
+          hasDrawWork = mayDrawMesh(meshIndex, signature);
+      } else {
+        for (const int meshIndex : draw.mesh_indices) {
+          if (mayDrawMesh(meshIndex, signature)) { hasDrawWork = true; break; }
+        }
+      }
+      if (hasDrawWork) break;
+    }
+    if (!hasDrawWork) {
+      T8_TELEMETRY_ADD("render.pass.empty_mesh_work", 1);
+      finishGraphicsPass();
+      applyPostState();
+      return;
+    }
+
     for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
       clearTextureSlot(quads[0], slot);
     }
     quads[0].SetEnvironmentMap(nullptr);
 
+    std::array<Texture*, MaxPrimitiveTextures> meshInputTextures{};
+    std::array<bool, MaxPrimitiveTextures> meshInputSlots{};
     // Bind input textures
     for (const auto& input : pass.inputs) {
       if (shouldSkipTextureInput(input)) {
         clearTextureSlot(quads[0], input.slot);
+        if (input.slot >= 0 && input.slot < MaxPrimitiveTextures) {
+          meshInputSlots[input.slot] = true;
+          meshInputTextures[input.slot] = nullptr;
+        }
         continue;
       }
 
@@ -1379,6 +1417,10 @@ void RenderGraph::ExecutePass(
       } else if (resolved.rt_handle >= 0) {
         Texture* tex = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
         quads[0].SetTexture(tex, input.slot);
+        if (input.slot >= 0 && input.slot < MaxPrimitiveTextures) {
+          meshInputSlots[input.slot] = true;
+          meshInputTextures[input.slot] = tex;
+        }
       }
     }
 
@@ -1386,22 +1428,25 @@ void RenderGraph::ExecutePass(
       return textureIndex >= 0 ? driver->GetTexture(textureIndex) : nullptr;
     };
 
+    std::array<Texture*, 7> environmentTextures{};
+    const auto refreshEnvironmentTextures = [&]() {
+      if (!pass.bind_environment_map) return;
+      const int charlieIndex = envMaps.CharlieIBL >= 0 ? envMaps.CharlieIBL : (envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
+      environmentTextures = {textureOrNull(envMaps.Sky),
+        textureOrNull(envMaps.DiffuseIBL >= 0 ? envMaps.DiffuseIBL : envMaps.Sky),
+        textureOrNull(envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky),
+        textureOrNull(envMaps.BrdfLUT), textureOrNull(charlieIndex),
+        textureOrNull(envMaps.CharlieLUT), textureOrNull(envMaps.SheenELUT)};
+    };
+    refreshEnvironmentTextures();
     auto bindEnvironmentResources = [&](PrimitiveInst& primitive) {
-      Texture* sky = textureOrNull(envMaps.Sky);
-      Texture* diffuse = textureOrNull(envMaps.DiffuseIBL >= 0 ? envMaps.DiffuseIBL : envMaps.Sky);
-      Texture* specular = textureOrNull(envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
-      Texture* brdfLut = textureOrNull(envMaps.BrdfLUT);
-      int charlieIndex = envMaps.CharlieIBL >= 0 ? envMaps.CharlieIBL : (envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
-      Texture* charlie = textureOrNull(charlieIndex);
-      Texture* charlieLut = textureOrNull(envMaps.CharlieLUT);
-      Texture* sheenELut = textureOrNull(envMaps.SheenELUT);
-      primitive.SetEnvironmentMap(sky);
-      primitive.SetTexture(diffuse, EnvironmentTextureSlot::DiffuseIBL);
-      primitive.SetTexture(specular, EnvironmentTextureSlot::SpecularIBL);
-      primitive.SetTexture(brdfLut, EnvironmentTextureSlot::BrdfLUT);
-      primitive.SetTexture(charlie, EnvironmentTextureSlot::CharlieIBL);
-      primitive.SetTexture(charlieLut, EnvironmentTextureSlot::CharlieLUT);
-      primitive.SetTexture(sheenELut, EnvironmentTextureSlot::SheenELUT);
+      primitive.SetEnvironmentMap(environmentTextures[0]);
+      primitive.SetTexture(environmentTextures[1], EnvironmentTextureSlot::DiffuseIBL);
+      primitive.SetTexture(environmentTextures[2], EnvironmentTextureSlot::SpecularIBL);
+      primitive.SetTexture(environmentTextures[3], EnvironmentTextureSlot::BrdfLUT);
+      primitive.SetTexture(environmentTextures[4], EnvironmentTextureSlot::CharlieIBL);
+      primitive.SetTexture(environmentTextures[5], EnvironmentTextureSlot::CharlieLUT);
+      primitive.SetTexture(environmentTextures[6], EnvironmentTextureSlot::SheenELUT);
     };
 
     auto clearEnvironmentResources = [](PrimitiveInst& primitive) {
@@ -1420,23 +1465,34 @@ void RenderGraph::ExecutePass(
       clearEnvironmentResources(quads[0]);
     }
 
+    bool meshResourcesDirty = false;
     auto bindMeshPassResources = [&](PrimitiveInst& mesh) {
+      if (meshResourcesDirty) {
+        meshInputSlots.fill(false);
+        for (const auto& input : pass.inputs) {
+          if (input.slot < 0 || input.slot >= MaxPrimitiveTextures) continue;
+          if (shouldSkipTextureInput(input)) {
+            meshInputSlots[input.slot] = true;
+            meshInputTextures[input.slot] = nullptr;
+          } else {
+            const auto resolved = ResolveTextureInput(input.source);
+            if (!resolved.is_builtin && resolved.rt_handle >= 0) {
+              meshInputSlots[input.slot] = true;
+              meshInputTextures[input.slot] = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
+            }
+          }
+        }
+        refreshEnvironmentTextures();
+        meshResourcesDirty = false;
+      }
       // Material maps are persistent instance state (slots 0-6 and 8).
       // Only clear the transient mesh-pass inputs before rebinding them.
       clearTextureSlot(mesh, 7);  // scene depth
       clearTextureSlot(mesh, 9);  // scene color
       mesh.SetEnvironmentMap(nullptr);
 
-      for (const auto& input : pass.inputs) {
-        if (shouldSkipTextureInput(input)) {
-          clearTextureSlot(mesh, input.slot);
-          continue;
-        }
-
-        auto resolved = ResolveTextureInput(input.source);
-        if (!resolved.is_builtin && resolved.rt_handle >= 0 && input.slot >= 0 && input.slot < MaxPrimitiveTextures) {
-          mesh.SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
-        }
+      for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
+        if (meshInputSlots[slot]) mesh.SetTexture(meshInputTextures[slot], slot);
       }
       if (pass.bind_environment_map) {
         bindEnvironmentResources(mesh);
@@ -1460,6 +1516,7 @@ void RenderGraph::ExecutePass(
         if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
         if (customDraw && !draw.callback.empty())
           customDraw(draw.callback);
+        meshResourcesDirty = true;
         continue;
       }
 
@@ -1474,6 +1531,7 @@ void RenderGraph::ExecutePass(
         if (draw.mesh_indices.empty()) {
           // Empty array = draw ALL meshes
           for (int mi = 0; mi < meshCount; ++mi) {
+            if (!mayDrawMesh(mi, sig)) continue;
             bindMeshPassResources(meshes[mi]);
             meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
@@ -1482,7 +1540,7 @@ void RenderGraph::ExecutePass(
           }
         } else {
           for (int mi : draw.mesh_indices) {
-            if (mi >= 0 && mi < meshCount) {
+            if (mayDrawMesh(mi, sig)) {
               bindMeshPassResources(meshes[mi]);
               meshes[mi].SetGlobalKey(sig);
               meshes[mi].Draw();
@@ -1522,11 +1580,7 @@ void RenderGraph::ExecutePass(
     if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
 
     // Pop RT
-    bool didPush = ((node.rt_handle >= 0 || finalOutputPass) && pass.push);
-    bool inheritedRT = (!pass.push && node.rt_handle >= 0);
-    if (pass.pop && (didPush || inheritedRT)) {
-      driver->PopRT();
-    }
+    finishGraphicsPass();
   }
 
   // Post-pass state restoration

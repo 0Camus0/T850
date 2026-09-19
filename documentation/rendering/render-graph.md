@@ -101,6 +101,62 @@ Typical lifetime:
 
 ## Descriptor JSON schema
 
+### Mesh Preparation Optimization
+
+Optimization published in web v0.1.10 on 2026-09-18: standard graphics passes use the conservative
+`PrimitiveBase::MayDrawInPass` query before preparing mesh bindings. Unknown
+primitives return true. Static/skinned meshes reuse their existing material
+classification, including shared material overrides and transmission; mutable
+meshes use their existing section alpha-mode rules and readiness check. The
+query does not replace frustum culling or cache eligibility across frames.
+
+When no mesh can participate, the pass skips its resource-binding and draw
+preparation. It still performs target binding, clears, viewport/scissor setup,
+target pop, camera restoration and post-state changes. Compute passes run before
+this check, callbacks and quad draws conservatively keep work enabled, and the
+cube-face path is unchanged. Thus a zero draw count is not treated as proof that
+a whole graph node has no side effects. Minecraft's transparent pass remains in
+the descriptor and automatically renders when eligible materials are present.
+
+Input textures and environment textures are resolved once per standard pass
+execution, then applied to eligible meshes from a fixed-size snapshot. The
+snapshot is discarded at the end of the pass, so resize, graph rebuild and
+environment changes cannot leave cross-frame pointers behind. A callback marks
+the snapshot dirty before subsequent mesh commands. Material texture bindings
+retain their original behavior. This deliberately avoids a persistent raw-pointer
+cache and removes string splitting/map lookup from the per-mesh loop.
+
+`MeshDrawStateTracker` also reuses extracted frustum planes within its pass scope
+when the view-projection matrix is byte-identical. Begin/End/Reset invalidate
+the snapshot, changed matrices recompute it, and calls outside a pass recompute
+unconditionally. Static and mutable mesh culling use this path. Cascade split
+distances, light camera construction, shadow-map resolution, cascade count and
+GPU shadow rendering are unchanged. Hardware CPU-cache misses were not measured;
+this optimization removes repeated calculations and lookups, not a proven
+hardware-cache pathology.
+
+Validation: `T-GRAPH-MESH-PREPARATION-01` covers empty-pass clear/pop/post-state
+semantics, mesh eligibility changes, hidden meshes, input/environment replacement,
+target reconstruction, callback mutation, shared materials, masking and transmission.
+`T-PASS-FRUSTUM-REUSE-01` compares all six planes exactly across repeated matrices,
+matrix changes and pass boundaries. Wasm shared tests and Windows x64/ARM64
+Debug/Release Framework/DayScene builds passed; x64 console self-tests passed.
+Headless Chrome passed Minecraft compute/raster, GUI/resize, mobile optional-feature
+fallbacks, touch/camera controls and Day Scene spectator transitions. Headless
+Firefox was environment-blocked because it exposed no WebGPU adapter.
+
+Matched 1,200-frame fixed-step Minecraft captures with zero and eight enemies
+retained identical per-frame draw/index/pass-counter hashes. In the zero-enemy
+comparison, 787,200 scene pixels outside the changing HUD were byte-identical.
+Empty transparent-pass CPU time in the eight-enemy instrumented comparison fell
+from 1.516 ms to 0.046 ms. Three alternating profiling-disabled runs measured
+baseline CPU work of 6.41/5.21/8.61 ms versus 3.55/3.12/4.81 ms locally; host-load
+variation is substantial, so these are not guaranteed FPS gains. No cascade
+quality reduction was performed. The tested build was subsequently published
+as web v0.1.10; deployment details are in the browser platform guide.
+
+Evidence: `%LOCALAPPDATA%/T850Profiles/render-graph-optimization-20260918`.
+
 The authored [ForwardScene graph](../../T850/Assets/Scenes/ForwardScene_RenderGraph.json)
 is a single-target example shared by native D3D12 and the first WebGPU scene.
 `DEFAULT_PASS` names `PassType::NONE` (the existing default mesh shading path),

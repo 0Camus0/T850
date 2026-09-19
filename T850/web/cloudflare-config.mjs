@@ -8,10 +8,12 @@ export function validateCloudflareConfig(input, { requireToken = false, env = pr
   const branch = input.branch ?? 'main';
   if (typeof branch !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/.test(branch)) fail('Invalid deployment branch');
   if (input.minecraftOnly !== undefined && typeof input.minecraftOnly !== 'boolean') fail('minecraftOnly must be a boolean');
-  if (!Array.isArray(input.r2Buckets) || input.r2Buckets.length !== 2) fail('Configure both MODELS and TEXTURES R2 buckets');
+  const configuredBuckets = input.r2Buckets ?? [];
+  if (!Array.isArray(configuredBuckets) || (configuredBuckets.length !== 2 && !(input.minecraftOnly !== false && configuredBuckets.length === 0)))
+    fail('Configure both MODELS and TEXTURES R2 buckets for the multi-scene site');
   const bindings = new Set();
   const origins = new Set();
-  const r2Buckets = input.r2Buckets.map(bucket => {
+  const r2Buckets = configuredBuckets.map(bucket => {
     if (!bucket || !['MODELS', 'TEXTURES'].includes(bucket.binding) || bindings.has(bucket.binding)) fail('Invalid or duplicate R2 binding');
     if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket.bucketName ?? '')) fail('Invalid R2 bucketName');
     let url;
@@ -39,7 +41,7 @@ export async function loadCloudflareConfig(path, options) {
   return validateCloudflareConfig(input, options);
 }
 
-export async function loadCloudResources(buckets, fetchManifest = fetch) {
+export async function loadCloudResources(buckets, fetchManifest = fetch, includeResource = () => true) {
   const origins = new Map(buckets.map(bucket => [new URL(bucket.manifestUrl).origin, bucket]));
   const cloud = new Map();
   const names = new Set();
@@ -54,6 +56,8 @@ export async function loadCloudResources(buckets, fetchManifest = fetch) {
       const resource = entry.localRelativePath ?? `${entry.kind === 'texture' ? 'Textures' : 'Models'}/${entry.key}`;
       if (!resource || resource.includes('\\') || resource.startsWith('/') || resource.split('/').some(part => part === '..' || part === '.'))
         throw new Error('Unsafe cloud resource path');
+      if (location.binding !== bucket.binding) continue;
+      if (!includeResource(resource)) continue;
       const folded = resource.toLowerCase();
       if (names.has(folded)) throw new Error(`Duplicate cloud resource: ${resource}`);
       names.add(folded);
@@ -69,5 +73,5 @@ export async function loadCloudResources(buckets, fetchManifest = fetch) {
 export function cloudflareWranglerConfig(config, output) {
   return { name: config.projectName,
     pages_build_output_dir: output, compatibility_date: '2026-09-16',
-    r2_buckets: config.r2Buckets.map(bucket => ({ binding: bucket.binding, bucket_name: bucket.bucketName })) };
+    ...(config.minecraftOnly ? {} : { r2_buckets: config.r2Buckets.map(bucket => ({ binding: bucket.binding, bucket_name: bucket.bucketName })) }) };
 }

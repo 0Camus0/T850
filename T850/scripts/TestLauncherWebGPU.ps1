@@ -184,6 +184,49 @@ function Test-Launcher([string]$Name) {
 Test-Launcher 'Launcher.ps1'
 Test-Launcher 'Launcher_Release.ps1'
 
+function Test-LoggedPowerShellEnvironment {
+    $parseErrors = $null
+    $tokens = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Launcher.ps1'), [ref]$tokens, [ref]$parseErrors)
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-LoggedProcess' }, $false)
+    . ([scriptblock]::Create($definition.Extent.Text))
+    $directory = Join-Path ([IO.Path]::GetTempPath()) ('T850 child environment ' + [guid]::NewGuid().ToString('N'))
+    $moduleDirectory = Join-Path $directory 'modules\Microsoft.PowerShell.Utility'
+    [void][IO.Directory]::CreateDirectory($moduleDirectory)
+    $parentModulePath = $env:PSModulePath
+    $captured = [Collections.Generic.List[string]]::new()
+    $txtStatus = [pscustomobject]@{ Text = '' }
+    function Append-BuildOutput([string]$Line) { $captured.Add($Line) }
+    try {
+        [IO.File]::WriteAllText((Join-Path $moduleDirectory 'Microsoft.PowerShell.Utility.psd1'), "@{ ModuleVersion = '99.0'; PowerShellVersion = '99.0' }")
+        [IO.File]::WriteAllText((Join-Path $directory 'hash input.txt'), 'abc')
+        $probe = Join-Path $directory 'probe.ps1'
+        [IO.File]::WriteAllText($probe, @'
+$ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Expected Windows PowerShell' }
+$hash = Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'hash input.txt') -Algorithm SHA256
+if ($hash.Hash -ne 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD') { throw 'SHA-256 verification failed' }
+Write-Output 'Windows PowerShell hashing PASS'
+'@)
+        $incompatiblePath = (Join-Path $directory 'modules') + ';' + $parentModulePath
+        $env:PSModulePath = $incompatiblePath
+        $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $exitCode = Invoke-LoggedProcess -FilePath $windowsPowerShell -Arguments @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $probe) -WorkingDirectory $directory
+        Assert-True ($exitCode -eq 0) ('Windows PowerShell inherited incompatible modules: ' + ($captured -join [Environment]::NewLine))
+        Assert-True ($captured.Contains('Windows PowerShell hashing PASS')) 'Logged Windows PowerShell child did not verify SHA-256'
+        Assert-True ($env:PSModulePath -eq $incompatiblePath) 'Child launch changed the parent module search path'
+        $captured.Clear()
+        $exitCode = Invoke-LoggedProcess -FilePath $env:ComSpec -Arguments @('/d', '/c', 'set', 'PSModulePath') -WorkingDirectory $directory
+        Assert-True ($exitCode -eq 0 -and $captured.Contains('PSModulePath=' + $incompatiblePath)) 'Non-PowerShell child environment was changed'
+        Write-Output 'Launcher logged-process module isolation PASS'
+    } finally {
+        $env:PSModulePath = $parentModulePath
+        Remove-Item -LiteralPath $directory -Recurse -Force
+    }
+}
+
+Test-LoggedPowerShellEnvironment
+
 function Test-DawnPreflight {
     $parseErrors = $null
     $tokens = $null

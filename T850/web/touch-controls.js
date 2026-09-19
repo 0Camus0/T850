@@ -12,8 +12,18 @@
   let enabled = false;
   let ready = false;
   let layout = '';
+  let userChoice = null;
+  let observedTouch = false;
   const coarse = matchMedia('(any-pointer: coarse)');
-  const supported = () => navigator.maxTouchPoints > 0 || coarse.matches;
+  const supported = () => observedTouch || navigator.maxTouchPoints > 0 || coarse.matches;
+  const mobileDevice = () => {
+    const agent = navigator.userAgent ?? '';
+    const platform = navigator.userAgentData?.platform ?? navigator.platform ?? '';
+    if (/Windows|Win32|Win64|CrOS|Chrome OS/i.test(platform + ' ' + agent)) return false;
+    if (/Android|iPhone|iPad|iPod/i.test(platform + ' ' + agent)) return true;
+    if (/MacIntel|Macintosh/.test((navigator.platform ?? '') + ' ' + agent) && navigator.maxTouchPoints > 1) return true;
+    return navigator.userAgentData?.mobile === true;
+  };
   function publish(pressed = 0) {
     if (!memory) return;
     let buttons = 0;
@@ -115,7 +125,7 @@
     for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) element.addEventListener(name, release);
     element.addEventListener('contextmenu', event => event.preventDefault());
   }
-  toggle.addEventListener('change', () => { enabled = toggle.checked; refresh(); });
+  toggle.addEventListener('change', () => { userChoice = toggle.checked; enabled = userChoice; refresh(); });
   for (const command of commands) {
     command.addEventListener('click', event => {
       event.preventDefault();
@@ -127,15 +137,14 @@
   }
   onTop.addEventListener('change', () => { reset(); refresh(); });
   const detect = () => {
-    toggleLabel.hidden = false;
-    enabled = supported();
+    toggleLabel.hidden = !supported() && userChoice === null;
+    enabled = userChoice ?? (supported() && mobileDevice());
     refresh();
   };
   const onTouch = event => {
-    if (event.pointerType === 'touch' && toggleLabel.hidden && window.t850?.scene === 'Minecraft') {
-      enabled = true;
-      toggleLabel.hidden = false;
-      refresh();
+    if (event.pointerType === 'touch' && !observedTouch && ready && window.t850?.scene === 'Minecraft') {
+      observedTouch = true;
+      detect();
     }
   };
   window.addEventListener('pointerdown', onTouch, { capture: true, passive: true });
@@ -143,8 +152,7 @@
   window.addEventListener('t850-runtime-ready', () => {
     if (window.t850?.scene !== 'Minecraft') return;
     ready = true;
-    if (supported()) detect();
-    refresh();
+    detect();
   });
   for (const name of ['blur', 'pagehide', 'resize']) window.addEventListener(name, reset);
   document.addEventListener('visibilitychange', reset);

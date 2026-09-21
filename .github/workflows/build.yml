@@ -320,42 +320,38 @@ jobs:
           "T850_EDGE_PATH=$edge" >> $env:GITHUB_ENV
           Write-Host "Native ${{ matrix.architecture }} Edge: $edge (${{ matrix.edge_machine }})"
 
-      - name: Start browser bundle server
+      - name: Run WebGPU compute self-test in native Edge
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $stdout = Join-Path $env:RUNNER_TEMP 't850-web-server.log'
           $stderr = Join-Path $env:RUNNER_TEMP 't850-web-server-error.log'
           $server = Start-Process node -ArgumentList 'T850/web/server.mjs', '--port', '8765' -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           $null = $server.Handle
-          "T850_WEB_SERVER_PID=$($server.Id)" >> $env:GITHUB_ENV
-          for ($attempt = 0; $attempt -lt 30; ++$attempt) {
-            if ($server.HasExited) {
-              Get-Content $stdout -ErrorAction SilentlyContinue
-              Get-Content $stderr -ErrorAction SilentlyContinue
-              throw "Browser bundle server exited with code $($server.ExitCode)."
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 30; ++$attempt) {
+              if ($server.HasExited) {
+                throw "Browser bundle server exited with code $($server.ExitCode)."
+              }
+              try {
+                $response = Invoke-RestMethod 'http://127.0.0.1:8765/__t850' -TimeoutSec 2
+                if ($response.identity) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                Start-Sleep -Seconds 1
+              }
             }
-            try {
-              $response = Invoke-RestMethod 'http://127.0.0.1:8765/__t850' -TimeoutSec 2
-              if ($response.identity) { exit 0 }
-            } catch {
-              Start-Sleep -Seconds 1
-            }
-          }
-          Get-Content $stdout -ErrorAction SilentlyContinue
-          Get-Content $stderr -ErrorAction SilentlyContinue
-          throw 'Browser bundle server did not become ready.'
-
-      - name: Run WebGPU compute self-test in native Edge
-        shell: pwsh
-        run: |
-          node T850/web/test-firefox.mjs --browser edge --binary "$env:T850_EDGE_PATH" --headless --software-webgpu --compute-selftest --no-interactions --url 'http://127.0.0.1:8765/?scene=6&width=960&height=540' --output "T850/build/web/ci-${{ matrix.architecture }}-edge"
-
-      - name: Stop browser bundle server
-        if: always()
-        shell: pwsh
-        run: |
-          if ($env:T850_WEB_SERVER_PID) {
-            Stop-Process -Id ([int]$env:T850_WEB_SERVER_PID) -Force -ErrorAction SilentlyContinue
+            if (-not $ready) { throw 'Browser bundle server did not become ready.' }
+            & node T850/web/test-firefox.mjs --browser edge --binary "$env:T850_EDGE_PATH" --headless --software-webgpu --compute-selftest --no-interactions --url 'http://127.0.0.1:8765/?scene=6&width=960&height=540' --output "T850/build/web/ci-${{ matrix.architecture }}-edge"
+            if ($LASTEXITCODE -ne 0) { throw "Edge WebGPU test failed with exit code $LASTEXITCODE." }
+          } finally {
+            if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
+            $server.Dispose()
+            Get-Content $stdout -ErrorAction SilentlyContinue
+            Get-Content $stderr -ErrorAction SilentlyContinue
           }
 
       - name: Upload browser WebGPU report

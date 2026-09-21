@@ -315,8 +315,28 @@ and reject engine error logs, not just nonzero exit codes. Exports require nativ
 assets and do not themselves validate browser rendering. `-CMake` and
 `-EmSdkRoot` select installed tool locations.
 
-Fresh builds require Git, CMake, Ninja, Node.js, the Windows x64 MSVC toolchain,
-the native project dependencies and scene assets. The script installs/activates
+Asset delivery is explicit:
+
+- `-AssetMode Embedded` is the default. It retains the full local scene-startup
+  shader export used by the existing embedded Minecraft package. The deployment
+  preparation step creates the content-addressed asset ZIP; asset binaries remain
+  ignored and are never committed.
+- `-AssetMode Cloud` compiles the checked-in graphics/compute permutation manifest
+  without launching asset-dependent native scenes. It writes only
+  `build/web/CloudAssets/routes.json`, a validated catalog of public model/texture
+  URLs. `server.mjs` proxies a resource only when the browser requests it, while
+  tracked scenes, shaders, fonts and small source assets remain local. No cloud
+  model or texture bytes are downloaded into the build or included in the package.
+
+CI uses `-AssetMode Cloud -Clean`, uploads `site/`, `WebShaders/` and the small
+route catalog, and runs the same package in native x64 and ARM64 Edge jobs. This
+keeps CI independent of the ignored local asset library and prevents the web
+artifact from carrying the 1.61 GiB runtime payload.
+
+Fresh builds require Git, CMake, Ninja, Node.js, the Windows x64 MSVC toolchain
+and the native project dependencies. Embedded mode also requires its local scene
+asset payloads; Cloud mode requires the tracked sources and access to the pinned
+public manifests, but does not download their payloads. The script installs/activates
 the pinned Emscripten SDK and runs native Dawn setup. SDK and shader-export stdout
 and stderr are captured together and checked by process exit code, avoiding
 PowerShell 5.1 treating informational native stderr as a failed build. Quoted
@@ -340,7 +360,8 @@ module search path, plus parent-environment and non-PowerShell isolation checks.
 ### Browser CI Architecture
 
 GitHub Actions builds the Release WebAssembly bundle once in the native x64
-Release cell and uploads `site/` plus `WebShaders/` as `T850-Web-Release`. Separate
+Release cell and uploads `site/`, `WebShaders/` and `CloudAssets/routes.json` as
+`T850-Web-Release`. Separate
 x64 and ARM64 jobs download that exact artifact, verify the PE machine type of
 their installed Edge executable (`0x8664` or `0xAA64`), serve the bundle locally,
 and run the same compute correctness test. There is no separately compiled ARM64

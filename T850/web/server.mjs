@@ -1,10 +1,13 @@
 import { createServer } from 'node:http';
-import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { parseCloudAssetCatalog } from './cloud-assets.mjs';
 
 const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bundleRoot = existsSync(join(sourceRoot, 'web/site/DayScene.html')) ? join(sourceRoot, 'web') : join(sourceRoot, 'build/web');
@@ -13,6 +16,7 @@ const { values } = parseArgs({ options: {
   site: { type: 'string', default: join(bundleRoot, 'site') },
   assets: { type: 'string', default: existsSync(join(sourceRoot, 'web/assets')) ? join(sourceRoot, 'web/assets') : join(sourceRoot, 'Assets') },
   shaders: { type: 'string', default: join(bundleRoot, 'WebShaders') },
+  'cloud-routes': { type: 'string', default: existsSync(join(bundleRoot, 'CloudAssets/routes.json')) ? join(bundleRoot, 'CloudAssets/routes.json') : '' },
   open: { type: 'boolean', default: false },
   browser: { type: 'string' },
   query: { type: 'string', default: '' },
@@ -60,15 +64,19 @@ function catalog(directory, prefix = '') {
 }
 catalog(values.assets);
 catalog(values.shaders, 'WebShaders/');
-const assetIndex = JSON.stringify([...assets.keys()].sort());
-const identity = createHash('sha256').update(JSON.stringify([values.site, values.assets, values.shaders].map(path => resolve(path))) + assetIndex + servedRuntime).digest('hex');
+const cloudAssets = values['cloud-routes']
+  ? parseCloudAssetCatalog(JSON.parse(readFileSync(values['cloud-routes'], 'utf8')))
+  : new Map();
+const assetIndex = JSON.stringify([...new Set([...assets.keys(), ...cloudAssets.keys()])].sort());
+const cloudIdentity = JSON.stringify([...cloudAssets]);
+const identity = createHash('sha256').update(JSON.stringify([values.site, values.assets, values.shaders, values['cloud-routes']].map(path => path ? resolve(path) : '')) + assetIndex + cloudIdentity + servedRuntime).digest('hex');
 const mime = new Map([
   ['.html', 'text/html; charset=utf-8'], ['.js', 'text/javascript'],
   ['.wasm', 'application/wasm'], ['.json', 'application/json'],
   ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.css', 'text/css'],
   ['.svg', 'image/svg+xml'],
 ]);
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   response.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
   response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
@@ -96,7 +104,32 @@ const server = createServer((request, response) => {
       response.end(request.method === 'HEAD' ? undefined : assetIndex);
       return;
     }
-    const file = path.startsWith('/assets/') ? assets.get(path.slice('/assets/'.length)) :
+    const resource = path.startsWith('/assets/') ? path.slice('/assets/'.length) : null;
+    const cloud = resource ? cloudAssets.get(resource) : null;
+    if (cloud) {
+      try {
+        const headers = new Headers();
+        for (const name of ['range', 'if-none-match', 'if-modified-since']) {
+          if (request.headers[name]) headers.set(name, request.headers[name]);
+        }
+        const upstream = await fetch(cloud.url, { method: request.method, headers, redirect: 'error' });
+        if (![200, 206, 304, 404, 416].includes(upstream.status)) throw new Error(`upstream status ${upstream.status}`);
+        response.statusCode = upstream.status;
+        response.setHeader('Content-Type', upstream.headers.get('content-type') ?? cloud.contentType);
+        response.setHeader('Cache-Control', 'public, max-age=300');
+        for (const name of ['content-length', 'content-range', 'etag', 'accept-ranges', 'last-modified']) {
+          const value = upstream.headers.get(name);
+          if (value) response.setHeader(name, value);
+        }
+        if (request.method === 'HEAD' || !upstream.body) response.end();
+        else await pipeline(Readable.fromWeb(upstream.body), response);
+      } catch (error) {
+        if (!response.headersSent) response.writeHead(502).end(`Cloud asset unavailable: ${error.message}`);
+        else response.destroy(error);
+      }
+      return;
+    }
+    const file = resource ? assets.get(resource) :
       join(values.site, path === '/' ? 'DayScene.html' : path.slice(1));
     const siteRelative = path === '/' || (!path.includes('..') && !path.includes('\\'));
     if (!file || (!path.startsWith('/assets/') && !siteRelative) || !existsSync(file) || !statSync(file).isFile()) {
@@ -120,7 +153,7 @@ for (;;) {
         resolveListen();
       });
     });
-    console.log(`T850 browser runtime: ${launchUrl()} (${assets.size} cataloged assets)`);
+    console.log(`T850 browser runtime: ${launchUrl()} (${JSON.parse(assetIndex).length} cataloged assets, ${cloudAssets.size} cloud routes)`);
     if (values.open) openBrowser(launchUrl());
     break;
   } catch (error) {

@@ -18,7 +18,7 @@ BaseDriver* CreateWindowsGraphicsDriver(GraphicsApi::E api, const std::string& s
   case GraphicsApi::OPENGL: return new GLDriver;
   case GraphicsApi::VULKAN: return new VulkanDriver;
   case GraphicsApi::WEBGPU:
-#if defined(_M_X64)
+#if defined(_M_X64) || defined(_M_ARM64)
     {
       webgpu::ShaderFlow selectedFlow;
       if (!webgpu::ParseShaderFlow(shaderFlow, selectedFlow))
@@ -29,7 +29,7 @@ BaseDriver* CreateWindowsGraphicsDriver(GraphicsApi::E api, const std::string& s
       return driver.release();
     }
 #else
-    throw std::runtime_error("WebGPU requires Windows x64");
+    throw std::runtime_error("WebGPU requires Windows x64 or ARM64");
 #endif
   }
   throw std::runtime_error("Unknown Windows graphics API");

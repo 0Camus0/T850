@@ -43,11 +43,11 @@ Required for Windows builds:
 
 - Visual Studio 2022 Community, Professional, Enterprise, or Build Tools;
 - Desktop development with C++ workload;
-- MSVC v143 toolset, including Host x64 to ARM64 tools for ARM64 builds;
+- MSVC v143 toolset, including an ARM64 target compiler hosted by x64 or ARM64 for ARM64 builds;
 - Windows SDK;
 - Git;
 - Windows PowerShell 5+ or PowerShell 7.
-- CMake 3.21 or newer on PATH for the required x64 Dawn package probe/link metadata.
+- CMake 3.21 or newer on PATH for the required x64/ARM64 Dawn package probe/link metadata.
 
 Internet access is required for first-time vcpkg setup and cloud assets. The setup script pins vcpkg to Visual Studio 2022 so dependencies use the same v143 ABI as the projects.
 
@@ -64,7 +64,7 @@ This command:
 1. finds Visual Studio 2022 C++ tools;
 2. sets `VCPKG_VISUAL_STUDIO_PATH` to that VS 2022 installation;
 3. clones/bootstrap vcpkg under `T850\Librerias\vcpkg` when needed;
-4. installs x64 dependencies and ImGui backends;
+4. installs the requested architecture dependencies and ImGui backends;
 5. downloads the runtime model and texture sets;
 6. exits without opening Visual Studio.
 
@@ -85,12 +85,12 @@ Stop if the script reports that Visual Studio 2022 C++ tools are missing. Do not
 
 ## Dawn Dependency Foundation
 
-Windows x64 setup and builds now require the pinned Dawn/D3D12 package. Dependency,
+Windows x64 and ARM64 setup and builds require the pinned Dawn/D3D12 package. Dependency,
 shader compilation, graphics fixtures and normal forward/deferred DayScene runtime
 rendering with `--api webgpu` are implemented. T8ditor is not supported yet.
-Win32 and ARM64 builds retain their existing dependencies; native Vulkan is
-unchanged. The standard setup command calls [SetupDawn.ps1](../../T850/scripts/SetupDawn.ps1)
-automatically for x64.
+Win32 retains its existing dependencies; native Vulkan is unchanged. The standard
+setup command calls [SetupDawn.ps1](../../T850/scripts/SetupDawn.ps1) automatically
+for x64 or ARM64 as selected.
 
 From the source root:
 
@@ -98,6 +98,8 @@ From the source root:
 .\scripts\SetupDawn.ps1 -Mode Plan   # inspect the package plan without installing
 .\scripts\SetupDawn.ps1              # install/audit packages and generate link properties
 .\scripts\SetupDawn.ps1 -Mode Check  # read-only build prerequisite check
+.\scripts\SetupDawn.ps1 -Architecture ARM64
+.\scripts\SetupDawn.ps1 -Mode Check -Architecture ARM64
 ```
 
 The tracked [overlays](../../T850/cmake/vcpkg-overlays/RequirePinnedVcpkg.cmake)
@@ -133,8 +135,9 @@ then writes local MSBuild property files under `build/dawn-package`. It does not
 parse CMake expressions or maintain a separate Abseil library list.
 
 [DawnPackage.targets](../../T850/cmake/DawnPackage.targets) is imported by Framework,
-FrameworkImGui, DayScene and the editor host targets. It validates x64 prerequisites,
-consumes the generated link properties, and stages `dxcompiler.dll`, `dxil.dll`
+FrameworkImGui, DayScene and the editor host targets. It validates architecture-matched
+prerequisites, consumes generated properties from `build/dawn-package` or
+`build/dawn-package-arm64`, and stages `dxcompiler.dll`, `dxil.dll`
 and license notices for executable outputs. These DLLs remain required even
 with the static Dawn triplet. The audit records the revision, package versions,
 features, ABI metadata hashes, recipe hashes, checkout location and generated
@@ -146,17 +149,19 @@ Generated properties, audit files and downloaded package content are not committ
 
 The CMake engine build uses the same pinned package and exported target directly.
 Turning off automatic dependency installation does not disable Dawn; configuration
-still requires the installed package audit to pass. CI provisions it for x64,
-builds the probe without claiming hardware execution, and retains runtime DLLs
-and licenses in release artifacts.
+still requires the installed package audit to pass. CI provisions x64 and ARM64
+on native GitHub runners, builds and runs the deterministic shader/package tests
+without claiming hardware execution, and retains runtime DLLs and licenses in
+release artifacts.
 
 All Windows DayScene and editor-host builds also stage the architecture-matched
 `vulkan-1.dll` and `licenses/vulkan-loader.txt` from vcpkg. The Vulkan loader is
 dynamic even in `*-windows-static` triplets and is imported at process startup,
 including for CPU-only `--game-selftest` runs. Do not rely on a GPU driver or SDK
 installation to supply it. PR CI verifies the staged files and runs the gameplay
-and terrain self-tests for Win32/x64 Debug and Release, reporting captured output
-and the native process exit code; ARM64 is cross-build-only on the x64 runner.
+and terrain self-tests for Win32/x64/ARM64 Debug and Release, reporting captured
+output and the native process exit code. ARM64 CI runs on `windows-11-arm` and
+verifies native ARM64 outputs rather than using x64 emulation.
 
 ### Probe and Validation
 
@@ -667,7 +672,7 @@ changes. These are simulated display sizes, not changes to Windows display setti
 
 Both Windows launchers also have a **Compile Shaders** button in the Graphics API
 section. It compiles every entry in `Shaders/shader_permutations.json` through
-D3D11, D3D12, Vulkan and OpenGL, plus WebGPU `auto` and `spirv` on x64. It uses the
+D3D11, D3D12, Vulkan and OpenGL, plus WebGPU `auto` and `spirv` on x64/ARM64. It uses the
 selected architecture/configuration in the developer launcher and the adjacent
 DayScene executable in the portable launcher. No scene assets or development
 compiler tools are required beyond the shipped shaders, manifest and runtime.
@@ -679,7 +684,7 @@ and retains per-job output/error logs and a completion `summary.json` under the
 runtime's `logs/shader-compile-<timestamp>` directory. A failed API is reported as
 a failure; cancellation finishes the current shader before exiting so it does
 not interrupt a cache write. Cancellation stops the remaining jobs. Otherwise,
-a compilation failure does not stop the remaining jobs. WebGPU is omitted on non-x64
+a compilation failure does not stop the remaining jobs. WebGPU is omitted on Win32
 runtimes. The button is disabled for the Android target; APK builds already run
 their own offline SPIR-V compilation task using the same manifest.
 
@@ -690,7 +695,7 @@ requests not represented in the manifest retain their normal runtime fallback.
 See [refreshing the permutation list](../rendering/shader-management.md#refreshing-and-compiling-permutations).
 
 Both the developer and portable Windows launchers offer **WebGPU (Dawn/D3D12)**
-for Windows x64 and persist the selected API. RUN and EDITOR use their normal
+for Windows x64 and ARM64 and persist the selected API. RUN and EDITOR use their normal
 argument builders with `--api webgpu`; the launcher does not remap that selection
 to native D3D12, inject `--graphics-fixture`, or launch an alternative workload.
 EDITOR remains explicitly unavailable until its CLI and renderer support WebGPU;
@@ -699,7 +704,7 @@ Scene, snapshot, logging and telemetry controls retain their regular behavior,
 including the normal executable and asset prerequisites. The portable launcher
 checks the adjacent DayScene executable's PE architecture, not the host's bitness.
 
-**WebGPU supports forward and deferred runtime scenes on Windows x64; editor
+**WebGPU supports forward and deferred runtime scenes on Windows x64 and ARM64; editor
 support is unavailable.** The Launcher displays that scope and retains normal
 controls and startup arguments. Existing native API routing is unchanged. See
 the [runtime handoff](../rendering/webgpu-runtime-summary.md) for measured image
@@ -729,9 +734,10 @@ includes `--postProcessMode raster|compute`. Select **Compute** to enable each
 supported render-graph compute pass, including Minecraft torch particles.
 
 Developer Build/Rebuild preflight now checks CMake availability and runs
-`SetupDawn.ps1 -Mode Check` for every Windows x64 build, regardless of selected API.
+`SetupDawn.ps1 -Mode Check -Architecture <x64|ARM64>` for every supported Windows
+WebGPU build, regardless of selected API.
 Missing or stale Dawn packages/metadata offer the existing logged setup workflow
-through `SetupDawn.ps1 -Mode Install`. Non-x64 builds skip the Dawn audit.
+through `SetupDawn.ps1 -Mode Install`. Win32 builds skip the Dawn audit.
 
 Hardware-free command, config, architecture, prerequisite, mocked Dawn-preflight
 and normal WPF control tests run in Windows CI:

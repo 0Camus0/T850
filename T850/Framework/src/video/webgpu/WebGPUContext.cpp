@@ -1,7 +1,7 @@
 #include <video/webgpu/WebGPUContext.h>
 #include <debug/RuntimeTelemetry.h>
 
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <utils/Log.h>
 #ifdef __EMSCRIPTEN__
 #include <SDL3/SDL.h>

@@ -1,7 +1,7 @@
 #pragma once
 #include <video/BaseDriver.h>
 
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <video/webgpu/WebGPUShaderCompiler.h>
 #include <webgpu/webgpu.h>
 #include <memory>

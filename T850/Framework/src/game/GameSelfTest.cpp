@@ -2369,7 +2369,7 @@ void TestShaderPrecompilerContract() {
     Require(ResourceLocator::Instance().WriteText(recorded, original) && ShaderPermutationDump::Flush(),
       "cannot recover recorder after failed merge");
     Require(rejectedMerge && preserved, "recorder overwrote malformed input");
-  #if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+  #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
     const auto packageRoot = files.Add("_web_packages");
     std::filesystem::create_directories(packageRoot);
     webgpu::ShaderRequest shaderRequest;

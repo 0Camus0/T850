@@ -13,7 +13,7 @@ std::unique_ptr<ImGuiRendererBackend> CreateImGuiRendererBackend(GraphicsApi::E 
   case GraphicsApi::OPENGL: return CreateImGuiOpenGLBackend();
   case GraphicsApi::VULKAN: return CreateImGuiVulkanBackend();
 #endif
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
   case GraphicsApi::WEBGPU: return CreateImGuiWebGPUBackend();
 #endif
   default:

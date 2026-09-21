@@ -2,6 +2,15 @@
 
 ## Current Runtime Status
 
+2026-09-19 superseding platform update: the delivered Windows Dawn/D3D12 scope
+now includes x64 and ARM64 with architecture-specific pinned packages, audits,
+runtime staging and native CI. Emscripten is also delivered: CI builds one
+architecture-neutral Wasm bundle and executes that same artifact in native x64
+and ARM64 Edge jobs using explicitly identified SwiftShader software WebGPU.
+This software correctness gate is not hardware or performance evidence. Android
+and Linux/Steam Deck Dawn/Vulkan remain future work. The proposal text below is
+historical design context where it still says x64-only or browser-out-of-scope.
+
 2026-09-15 close-out: Windows x64 Dawn/D3D12 supports normal forward and deferred
 DayScene runtime rendering. Both default WGSL-first and strict HLSL/SPIR-V/Tint
 flows captured all ten available cases. Compiler matrix, mutable float texture,

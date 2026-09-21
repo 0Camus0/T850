@@ -49,7 +49,7 @@ The server is loopback-only and never exposes arbitrary workspace files.
 
 Both Launcher and Launcher Release offer separate entries:
 
-- **WebGPU (Dawn/D3D12)** launches the native x64 executable.
+- **WebGPU (Dawn/D3D12)** launches the selected native x64 or ARM64 executable.
 - **WebGPU + Browser (Emscripten)** reveals a **Browser** dropdown, starts the
   Node server and opens the selected browser. RUN becomes OPEN BROWSER. Scene,
   model/document, maximum canvas dimensions, culling, post-process mode, and log level are passed
@@ -68,6 +68,8 @@ native APIs and is never passed to native executables.
 The development launcher provides **BUILD WEB** and **REBUILD WEB** using
 `scripts/BuildWeb.ps1`, including native shader export. The configuration selector
 chooses Release or Debug; native architecture does not affect the browser build.
+The Emscripten output is WebAssembly and JavaScript, not an x64 or ARM64 PE binary;
+one completed bundle runs unchanged in supported browsers on either host architecture.
 REBUILD WEB passes `-Clean`, removing only generated `build/web` output, then
 regenerating shaders and compiling dependencies and the runtime. The SDK, native
 builds, assets and saved config are retained. BUILD WEB can also initialize an
@@ -335,6 +337,24 @@ processes, and the pinned SDK SHA-256 check remains mandatory. Reopen
 includes a real child-process hashing check with an intentionally incompatible
 module search path, plus parent-environment and non-PowerShell isolation checks.
 
+### Browser CI Architecture
+
+GitHub Actions builds the Release WebAssembly bundle once in the native x64
+Release cell and uploads `site/` plus `WebShaders/` as `T850-Web-Release`. Separate
+x64 and ARM64 jobs download that exact artifact, verify the PE machine type of
+their installed Edge executable (`0x8664` or `0xAA64`), serve the bundle locally,
+and run the same compute correctness test. There is no separately compiled ARM64
+Wasm artifact.
+
+Standard hosted Windows runners do not provide a hardware GPU. CI therefore uses
+the explicit `--software-webgpu` harness mode, which selects Chromium's SwiftShader
+WebGPU adapter and fails unless adapter metadata identifies it as fallback/software.
+The JSON report records `webgpuMode`, browser version, adapter identity and limits.
+This gate validates browser/Wasm startup and arithmetic plus odd-sized image compute
+correctness on native x64 and ARM64 browser processes. It does not establish hardware
+adapter support, frame-time performance, presentation behavior or native Dawn GPU
+execution; those remain hardware-runner or local-machine tests.
+
 Launcher build validation on 2026-09-16 used an absent `build/web` directory:
 Release REBUILD WEB regenerated all shaders, compiled 637 build steps and passed
 Wasm self-tests. Debug BUILD WEB and a subsequent Release BUILD WEB also passed
@@ -361,6 +381,7 @@ To exercise the real launcher build handler with temporary config writes:
 ```powershell
 npm ci --prefix .\web
 node .\web\test-firefox.mjs --output .\build\web\firefox-validation
+node .\web\test-firefox.mjs --browser edge --headless --software-webgpu --compute-selftest --no-interactions --output .\build\web\edge-software-compute
 node .\web\test-firefox.mjs --soak 300 --gui --output .\build\web\minecraft-soak
 foreach ($scene in 0,1,2,3,4) {
   node .\web\test-firefox.mjs --url "http://127.0.0.1:8765/?scene=$scene" --no-interactions --gui --soak 30 --output ".\build\web\scene-$scene"
@@ -370,7 +391,9 @@ node .\web\test-firefox.mjs --url 'http://127.0.0.1:8765/?scene=5' --gui --soak 
 
 The shared test uses Selenium with a separate profile; `--browser firefox`
 (default), `--browser chrome`, and `--browser edge` select installed browsers.
-It does not enable unsafe WebGPU preferences. It checks WebGPU availability, cross-origin
+Normal runs do not enable unsafe WebGPU preferences. `--software-webgpu` is an
+explicit Chrome/Edge-only CI mode and is never reported as hardware coverage.
+The harness checks WebGPU availability, cross-origin
 isolation, runtime-ready state, advancing frames, pointer lock, changed output
 after movement input, resize, nonuniform canvas pixels and engine errors.
 Reports, GeckoDriver logs and screenshots are retained in the output directory.

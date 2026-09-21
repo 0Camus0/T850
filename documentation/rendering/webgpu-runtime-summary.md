@@ -1,8 +1,26 @@
 # WebGPU Runtime Handoff
 
-Status: Windows x64 runtime close-out, 2026-09-15. This summarizes the local work
+Status: Windows x64 runtime close-out, 2026-09-15, with the ARM64/CI update below.
+This summarizes the local work
 from dependency setup through compiler, renderer, real scenes and final validation.
 It is not a claim that the entire [WebGPU proposal](proposal-webgpu.md) is complete.
+
+## ARM64 and CI Update, 2026-09-19
+
+Windows ARM64 now uses the same Dawn-over-D3D12 runtime implementation as x64.
+The pinned Dawn/ImGui overlays support `arm64-windows-static`; setup generates a
+separate `build/dawn-package-arm64` audit/link contract, and MSBuild stages the
+matching DXC runtime and notices. Compile guards, driver factory routing, shader
+compiler/package code, ImGui WebGPU integration and self-tests include `_M_ARM64`.
+
+GitHub CI builds ARM64 natively on `windows-11-arm`, installs/audits the ARM64
+Dawn package, builds deterministic package/shader probes and runs ARM64 gameplay
+self-tests. The Emscripten bundle remains architecture-neutral: CI builds it once
+on x64 and runs that same artifact in native x64 and ARM64 Edge processes. Hosted
+browser correctness uses explicitly labeled SwiftShader software WebGPU because
+standard hosted runners have no hardware GPU; it is not hardware/performance evidence.
+The dated x64-only statements below remain historical evidence for their original
+checkpoints and are superseded for current platform availability by this section.
 
 ## Outcome
 
@@ -22,21 +40,117 @@ claimed. The additional native Voxel checkpoint difference below remains open.
 T8ditor, shared engine compute, GPU timestamp profiling, performance acceptance
 and new platform ports were not implemented as part of this close-out.
 
+## Immediate Presentation Investigation, 2026-09-18
+
+The pinned Dawn D3D swapchain creates immediate-mode swapchains with
+`DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING`, but its `PresentDXGISwapChain` called
+`Present(0, 0)`. The missing per-present `DXGI_PRESENT_ALLOW_TEARING` flag allows
+independent-flip presentation to throttle to refresh even though the engine logs
+`presentation=immediate`. Native D3D12 already passes the flag.
+
+Overlay revision `20260219.200501#7` adds an exact-match, idempotent source patch
+through the existing CMake overlay hook. It supplies the flag only for Immediate
+mode while not in exclusive fullscreen, retaining FIFO/mailbox behavior. The
+Windows HWND path disables DXGI Alt+Enter; the fullscreen guard also protects
+other D3D surfaces. This follows the
+[DXGI present requirements](https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/dxgi-present).
+Use `scripts/SetupDawn.ps1 -Mode Install` and relink the renderer; installed-library
+or build-tree hand edits are not the fix.
+
+Before-patch PresentMon evidence under
+`%LOCALAPPDATA%/T850Profiles/minecraft-compute-regression-20260918` records WebGPU
+at 16.67 ms with Hardware Composed Independent Flip versus native D3D12 at 2.87 ms
+with Composed Flip. Both use the same Release executable and 1920x1080 compute
+arguments. The capture pins the test window visible but did not obtain foreground
+focus; client-size queries in the PowerShell host are DPI-virtualized. A separate
+WebGPU composed run reached 4.70 ms, so the slow path is presentation-dependent,
+not proof of a universal 30 FPS shader cost.
+
+The rebuilt revision passes the package audit and Release Framework/DayScene
+build. `presentation-fixed-webgpu.csv` records 4.12 ms (about 242 FPS) versus
+native D3D12 at 3.09 ms (about 324 FPS). Both final windows were focused, with
+1920x1080 client areas, Hardware Composed Independent Flip, sync interval zero,
+`PresentFlags=512`, and `AllowsTearing=1` throughout the seven-second samples.
+The refresh-rate cap is absent. Earlier captures did not obtain foreground
+focus, so these are short diagnostic comparisons, not a controlled claim of a
+precise speedup or a return to the historical 500 FPS.
+
+The real-driver comparison fixture passes presentation, resize, recreation and
+readback at unchanged tolerance. All 71 shared tests pass. The tiled particle
+readbacks pass on D3D11, D3D12, Vulkan, GL and both native WebGPU shader flows;
+browser shader packages were not rebuilt or retested in this Windows fix.
+
+The separate tiled torch optimization retains all three emitters and their visual
+parameters. A short submit-only CPU capture changed from 4.36 to 3.04 ms at 1080p;
+this is diagnostic evidence, not a repeated performance acceptance result or a
+claim of restoring the historical 500 FPS in every view.
+
+## Offscreen Follow-Up, 2026-09-18
+
+The later R1 verification exposed an independent overlay bug: surface-format
+ImGui pipelines were being used on the shared RGBA8 offscreen targets. Vulkan
+and WebGPU adapters now select compatible pipelines at GUI frame boundaries,
+waiting for prior work only when the target mode/format changes. WebGPU renderer
+reinitialization preserves the ImGui context and SDL platform backend; Vulkan
+recreates only the main pipeline. Shared offscreen ring rotation does not cause
+per-frame pipeline rebuilds.
+
+`WebGPUDriver::CompleteFrame` suppresses presentation in configured offscreen
+mode and calls `CompleteOffscreenFrame` after submission. This restores shared
+target rotation and the post-overlay `--offscreenDebug` capture path.
+
+The [offscreen overlay regression](../testing/verification.md#offscreen-overlays)
+passes on all five desktop APIs in Debug, plus captured Vulkan/WebGPU Release
+runs and both strict WebGPU shader flows. The real-driver comparison fixture
+passes both flows at its unchanged tolerance 2. Full-scene Vulkan/WebGPU captures
+are nonuniform with readable overlays but are not pixel-identical: the Debug
+frame-340 comparison measured maximum channel delta 44, mean delta 1.5725 and
+57,290 of 230,400 pixels outside tolerance 2. That is recorded variance, not a
+passing whole-scene parity claim. No tolerance or baseline was changed.
+
+Evidence: `%LOCALAPPDATA%/T850Profiles/offscreen-overlay-20260918`, including
+`captures-final/frame340-comparison.json`, fixture reports, native build matrix,
+WebAssembly build/tests and both Android compile logs. SteamRT remains locally
+unavailable; no new CI validation or editor-parity claim is made.
+
 ## Implementation
+
+### Capability validation follow-up, 2026-09-18
+
+Shared render-target validation now runs before graph allocations. Unsupported
+cube/depth/mip requests no longer reach WebGPU `Require` sites during target
+creation: direct creation returns failure, and graph creation either reports a
+named capability failure or takes the explicit single-level mip fallback.
+Unknown formats are rejected rather than substituted. WebGPU reports its
+device's color-attachment limit and supports explicit single-channel F32 color.
+
+Reflected comparison samplers fail at shader load with backend, shader, stage
+and key in the diagnostic. Tint depth-texture metadata is retained as a distinct
+resource kind so the sampler requirement can be diagnosed before layout
+creation. This does not add comparison/depth sampler rendering support, and it
+does not implement R3's general device-loss or frame-loop error handling.
+
+Focused descriptor, capability, shader-flow, package and graphics-fixture checks
+pass. The broader scene matrix still exposes Vulkan sampler teardown errors and
+Minecraft overlay attachment incompatibility on Vulkan/WebGPU; the earlier
+DayScene overlay fix is not a claim of all-scene coverage. R2 remains blocked on
+that gate and unavailable SteamRT verification. See the
+[R2 evidence record](webgpu-compute-remediation-plan.md#r2-reconcile-strict-versus-lenient-backend-behavior).
 
 ### Dependencies and Build Integration
 
 - Pinned vcpkg `77df67cfff9c12ccfdb52284e07c87c75092f723`, Dawn
-  `20260219.200501#6`, ImGui `1.92.7#1`, glslang 16.2.0 and simplecpp 1.9.1.
+  `20260219.200501#7`, ImGui `1.92.7#1`, glslang 16.2.0 and simplecpp 1.9.1.
 - [SetupDawn.ps1](../../T850/scripts/SetupDawn.ps1) provides Plan/Install/Check,
   package audits, generated link properties and compiler identity metadata.
-  Ordinary Windows x64 builds require a valid audit; native Vulkan stays separate.
+  Ordinary Windows x64 and ARM64 builds require architecture-matched audits;
+  native Vulkan stays separate.
 - Installed-package probes exercise exported Dawn/Tint headers and libraries,
   not accidental build-tree dependencies. DX compiler DLLs and dependency licenses
   are deployed through build integration.
 - MSBuild remains authoritative; Framework, ImGui and platform source lists are
-  registered in MSBuild/filters and kept in CMake parity. CPU preprocessor
-  cross-builds were also exercised earlier on ARM64/Android, not WebGPU runtime ports.
+  registered in MSBuild/filters and kept in CMake parity. Android remains a
+  preprocessor/build portability target, not a native WebGPU runtime port.
 - [TintInstall.cmake](../../T850/cmake/vcpkg-overlays/dawn/TintInstall.cmake)
   applies guarded, repeatable upstream fixes. Square row-major matrix accesses
   must update their loads even when the transposed type is unchanged; popping
@@ -102,13 +216,13 @@ and new platform ports were not implemented as part of this close-out.
 - Normal `--api webgpu` and `--shaderFlow auto|wgsl|spirv` are parsed and validated
   before asset loading; CLI overrides the optional `webgpuShaderFlow` JSON field.
 - Main-window runtime ImGui is integrated. Platform viewports remain disabled.
-- Both launchers preserve ordinary scene/config/snapshot controls, enforce x64
+- Both launchers preserve ordinary scene/config/snapshot controls, enforce x64/ARM64
   prerequisites and audit Dawn during builds. They now advertise forward/deferred
   runtime support while retaining the EDITOR guard. The driver reports deferred
   support, with a matching fixture assertion.
 - Portable Launcher packaging was regenerated and copied to the four existing
   x64/ARM64 output folders, then the source-root developer Launcher was regenerated.
-  This does not enable WebGPU on ARM64 or validate packaged mouse-click workflows.
+  Packaged mouse-click workflows remain outside automated validation.
 
 ## Final Verification
 
@@ -658,9 +772,10 @@ These conflict-marked trees are diagnostic objects, not runnable source or refs.
 - Full live-scene API switching/reload, device-loss recovery, save/reload,
   long-running memory/frame-time behavior, missing Nexus assets, guarded Vulkan
   cases, other GPUs and physical mobile-device coverage.
-- Automated Emscripten build/browser CI and fresh hosted validation of subsequent
-  commits. Native Windows ARM64, Android and Linux/Steam Deck Dawn ports remain
-  separate future work; existing native Vulkan validation is not a WebGPU port.
+- Hardware-GPU browser CI and fresh hardware validation of subsequent commits.
+  The hosted x64/ARM64 browser jobs use explicitly labeled SwiftShader correctness
+  coverage. Android and Linux/Steam Deck Dawn ports remain separate future work;
+  existing native Vulkan validation is not a WebGPU port.
 
 ### Browser Work Already Delivered
 

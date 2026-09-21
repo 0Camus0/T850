@@ -115,6 +115,27 @@ Shared application, scene, editor, and diagnostic code does not downcast `BaseDr
 - `BaseDriver` virtual capabilities own API tags, shader dialect, UV origin, deferred-rendering support, render-target mip support, pre-present overlays, late-present sources, and native-surface suspend/resume.
 - API switches remain at composition boundaries only: driver/backend factories, configuration parsing, API selection UI, and benchmark scheduling.
 
+Profiler accounting remediation is implemented locally: nested scope tokens,
+separate CPU/GPU sample counts, reset generations and inclusive tree reporting
+have deterministic shared regression tests. R1 completion and remaining
+validation blockers are tracked in the
+[ordered remediation plan](rendering/webgpu-compute-remediation-plan.md#r1-fix-profiler-scope-accounting-and-remove-the-vulkan-leak);
+this does not mark the low-overhead profiling workstream complete.
+
+R2 shared render-target/capability validation is implemented locally, including
+strict format parsing, graph preflight/rollback and named comparison-sampler
+load rejection. Focused tests pass; the all-scenes gate remains blocked by
+Vulkan teardown diagnostics and Minecraft overlay incompatibility. See the
+[R2 completion record](rendering/webgpu-compute-remediation-plan.md#r2-reconcile-strict-versus-lenient-backend-behavior)
+for exact passing and unpassed gates.
+
+Profiling workstream R4-R8 now has local implementation: registered IDs, worker
+publication, upload matrices, phase/work aggregates, CPU-only/compile-out modes,
+and bounded paired reporting. Focused tests and short captures pass. Measurement
+acceptance (overhead targets, matched Release runs and external traces) remains
+open; rendering/platform follow-ups are intentionally parked per the current
+request. See [diagnostics](debug/diagnostics.md#cpu-profiling-workstream).
+
 ## Texture Atlas and Materials
 
 `BaseDriver::CreateTextureFromMemory(key, ...)` registers memory-backed textures in the same owned texture registry as file resources. `TextureAtlas` is immutable metadata over a stable managed texture ID and supports rectangular images/tiles, exact grid validation, content identity, and half-texel UV regions.

@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12Texture.cpp: Texture upload, SRV creation, binding
@@ -25,6 +26,8 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   void D3D12Texture::LoadAPITexture(DeviceContext* context, unsigned char* buffer) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, buffer ? UploadByteSize() : 0, 0);
     ID3D12Device* device = GetNativeDevice();
     auto* driver = GetD3D12Driver();
 
@@ -113,6 +116,7 @@ namespace t850 {
 
     driver->UploadTextureSubresources(pTexResource.Get(), uploadBuf.Get(), footprints.data(), totalSubresources,
                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, sourceOffset, 1);
 
     // Create SRV
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -147,6 +151,8 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   void D3D12Texture::LoadAPITextureCompressed(unsigned char* buffer) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, buffer ? UploadByteSize() : 0, 0);
     ID3D12Device* device = GetNativeDevice();
     auto* driver = GetD3D12Driver();
 
@@ -216,6 +222,7 @@ namespace t850 {
 
     driver->UploadTextureSubresources(pTexResource.Get(), uploadBuf.Get(), footprints.data(), totalSubs,
                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, pData - buffer, 1);
 
     // SRV
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -377,6 +384,7 @@ namespace t850 {
   }
 
   void D3D12Texture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * 16 : 0, 0);
     (void)deviceContext;
     if (m_floatUpdateDisabled) {
       return;
@@ -457,6 +465,7 @@ namespace t850 {
              static_cast<size_t>(rowBytes));
     }
     m_uploadBuffer->Unmap(0, nullptr);
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, static_cast<uint64_t>(w) * h * 16);
 
     const D3D12_RESOURCE_STATES shaderReadState =
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;

@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12ConstantBuffer.cpp: Constant buffer implementation
@@ -31,6 +32,7 @@ namespace t850 {
   void** D3D12ConstantBuffer::GetAPIObjectReference() const { return nullptr; }
 
   void D3D12ConstantBuffer::Create(const Device& device, BufferDesc desc, void* initialData) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     ID3D12Device* dev = GetNativeDevice();
     auto* driver = GetD3D12Driver();
@@ -67,6 +69,7 @@ namespace t850 {
     dev->CreateConstantBufferView(&cbvDesc, m_cpuHandle);
 
     T8_LOG_DEBUG("[D3D12] CB created: %d bytes (aligned=%d)", desc.byteWidth, m_alignedSize);
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, 0, 1);
   }
 
   void D3D12ConstantBuffer::Set(const DeviceContext& deviceContext, unsigned int slot) {
@@ -103,9 +106,11 @@ namespace t850 {
   }
 
   void D3D12ConstantBuffer::UpdateFromSystemCopy(const DeviceContext&) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, sysMemCpy.size(), 0);
     if (m_mappedData && !sysMemCpy.empty()) memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
   }
   void D3D12ConstantBuffer::UpdateFromBuffer(const DeviceContext&, const void* buffer) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, descriptor.byteWidth, 0);
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
   }

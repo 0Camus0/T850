@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12Device.cpp: Device implementation
@@ -72,6 +73,7 @@ namespace t850 {
   }
 
   Texture* D3D12Device::CreateFloatTexture(int w, int h, const float* data) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * 16 : 0, 0);
     auto* driver = static_cast<D3D12Driver*>(g_pBaseDriver);
     auto* device = reinterpret_cast<ID3D12Device*>(GetAPIObject());
     D3D12Texture* tex = new D3D12Texture;
@@ -160,6 +162,7 @@ namespace t850 {
                (const uint8_t*)data + r * w * 16, w * 16);
       }
       tex->m_uploadBuffer->Unmap(0, nullptr);
+      RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, static_cast<uint64_t>(w) * h * 16, 1);
 
       D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
       dst.pResource = tex->pTexResource.Get();
@@ -185,6 +188,8 @@ namespace t850 {
   }
 
   Texture* D3D12Device::CreateFloatCubeMap(int size, int mipCount, const float* data) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && size > 0 && mipCount > 0 ? RuntimeTelemetry::TextureUploadBytes(size, size, mipCount, 6, 16) : 0, 0);
     if (size <= 0 || mipCount <= 0)
       return nullptr;
 
@@ -263,6 +268,8 @@ namespace t850 {
       }
     }
     uploadBuf->Unmap(0, nullptr);
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture,
+      RuntimeTelemetry::TextureUploadBytes(size, size, mipCount, 6, 16), 1);
 
     ComPtr<ID3D12CommandAllocator> alloc;
     ComPtr<ID3D12GraphicsCommandList> cmd;

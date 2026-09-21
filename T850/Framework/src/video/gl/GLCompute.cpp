@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <video/gl/GLCompute.h>
 
 #if defined(USING_OPENGL)
@@ -44,7 +45,8 @@ namespace {
     const char* text = source.c_str();
     GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
     glShaderSource(shader, 1, &text, nullptr);
-    glCompileShader(shader);
+    T8_TELEMETRY_ADD("shader.cache.uncached", 1);
+    T8_TELEMETRY_CALL("shader.compile", glCompileShader(shader));
     GLint compiled = GL_FALSE;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
     if (compiled != GL_TRUE) {
@@ -59,7 +61,7 @@ namespace {
 
     program = glCreateProgram();
     glAttachShader(program, shader);
-    glLinkProgram(program);
+    T8_TELEMETRY_CALL("pipeline.create.compute", glLinkProgram(program));
     glDeleteShader(shader);
     GLint linked = GL_FALSE;
     glGetProgramiv(program, GL_LINK_STATUS, &linked);

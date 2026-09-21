@@ -1737,6 +1737,17 @@ namespace t850 {
     return true;
   }
 
+  bool RenderMesh::MayDrawInPass(uint8_t pass) const {
+    if (pass != PassType::FORWARD && pass != PassType::GBUFFER &&
+        pass != PassType::SHADOW_MAP && pass != PassType::RADIAL_DEPTH) return true;
+    for (const auto& geometry : Info) {
+      for (const auto& subset : geometry.SubSets) {
+        if (ShouldDrawSubsetInPass(subset, pass)) return true;
+      }
+    }
+    return false;
+  }
+
   static float SubsetViewDepth(const RenderMesh::SubSetInfo& subInfo, const XMATRIX44& world, const XVECTOR3& eye, const XVECTOR3& look) {
     float lx = (subInfo.bounds.min.x + subInfo.bounds.max.x) * 0.5f;
     float ly = (subInfo.bounds.min.y + subInfo.bounds.max.y) * 0.5f;
@@ -1914,7 +1925,7 @@ namespace t850 {
   }
 
   void RenderMesh::Draw(float *t, float *vp) {
-    T8_TELEMETRY_SCOPE("render.mesh.draw");
+    T8_TELEMETRY_ADD("render.mesh.draw.calls", 1);
     if (t)
       transform = t;
 
@@ -1935,9 +1946,8 @@ namespace t850 {
       pCullCamera = pScProp->pCullingCamera;
     const bool frustumCullingEnabled = !pScProp || pScProp->FrustumCullingEnabled;
 
-    // Extract frustum planes once per draw call
     XVECTOR3 frustumPlanes[6];
-    ExtractFrustumPlanes(pCullCamera->VP, frustumPlanes);
+    MeshDrawStateTracker::Get().GetFrustumPlanes(pCullCamera->VP, frustumPlanes);
 
     std::size_t numGeometries = xFile->MeshInfo.size();
     const bool trackCullStats = currentPass == PassType::GBUFFER;
@@ -1990,7 +2000,8 @@ namespace t850 {
       if (trackCullStats)
         m_cullingMeshTests += static_cast<unsigned long long>(numGeometries);
       timeCullWork([&]() -> bool {
-        T8_TELEMETRY_SCOPE("render.mesh.culling");
+        T8_CPU_WORK("render.cull");
+        T8_TELEMETRY_ADD("render.mesh.culling.calls", 1);
         threadPool->ParallelFor(0, static_cast<int>(numGeometries), [&](int i) {
           visible[i] = static_cast<uint8_t>(ClassifyAABBFrustum(Info[i].bounds, worldCopy, frustumPlanes));
         });
@@ -2000,7 +2011,8 @@ namespace t850 {
       if (trackCullStats)
         m_cullingMeshTests += static_cast<unsigned long long>(numGeometries);
       timeCullWork([&]() -> bool {
-        T8_TELEMETRY_SCOPE("render.mesh.culling");
+        T8_CPU_WORK("render.cull");
+        T8_TELEMETRY_ADD("render.mesh.culling.calls", 1);
         for (std::size_t i = 0; i < numGeometries; i++) {
           visible[i] = static_cast<uint8_t>(ClassifyAABBFrustum(Info[i].bounds, transform, frustumPlanes));
         }
@@ -2032,7 +2044,7 @@ namespace t850 {
     geometryOrder.resize(numGeometries);
     for (std::size_t i = 0; i < numGeometries; i++) geometryOrder[i] = i;
     if (currentPass == PassType::FORWARD) {
-      T8_TELEMETRY_SCOPE("render.mesh.geometry_sort");
+      T8_TELEMETRY_ADD("render.mesh.geometry_sort.calls", 1);
       std::stable_sort(geometryOrder.begin(), geometryOrder.end(),
         [&](std::size_t a, std::size_t b) {
           int groupA = GeometryForwardGroup(Info[a]);
@@ -2044,7 +2056,7 @@ namespace t850 {
           return da > db;
         });
       } else if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
-        T8_TELEMETRY_SCOPE("render.mesh.geometry_sort");
+        T8_TELEMETRY_ADD("render.mesh.geometry_sort.calls", 1);
         std::stable_sort(geometryOrder.begin(), geometryOrder.end(),
           [&](std::size_t a, std::size_t b) {
             return GeometryNonForwardGroup(Info[a], currentPass) < GeometryNonForwardGroup(Info[b], currentPass);
@@ -2116,7 +2128,7 @@ namespace t850 {
       RenderMesh::ExtractFrustumPlanes(pRenderCamera->VP, lightFrustumPlanes);
       unsigned int packedLights = 0;
       {
-        T8_TELEMETRY_SCOPE("render.mesh.light_pack");
+        T8_TELEMETRY_ADD("render.mesh.light_pack.calls", 1);
         for (unsigned int li = 0; li < numLights; li++) {
           Light& light = pScProp->Lights[li];
           if (!light.Enabled)
@@ -2148,7 +2160,7 @@ namespace t850 {
           else radiusPack.w = effectiveRadius;
         }
       }
-      RuntimeTelemetry::AddCounter("render.mesh.packedLights", static_cast<double>(packedLights));
+      T8_TELEMETRY_ADD("render.mesh.packedLights", static_cast<double>(packedLights));
       infoCam.w = static_cast<float>(packedLights);
       frameCB.CameraInfo = infoCam;
       frameCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
@@ -2186,7 +2198,7 @@ namespace t850 {
       drawOrder.resize(numSubsets);
       for (std::size_t k = 0; k < numSubsets; k++) drawOrder[k] = k;
       {
-        T8_TELEMETRY_SCOPE("render.mesh.subset_sort");
+        T8_TELEMETRY_ADD("render.mesh.subset_sort.calls", 1);
         std::stable_sort(drawOrder.begin(), drawOrder.end(),
           [&](std::size_t a, std::size_t b) {
             if (currentPass == PassType::FORWARD) {
@@ -2543,14 +2555,14 @@ namespace t850 {
     if (trackCullStats) {
       m_culledIndices = m_totalIndices > m_drawnIndices ? (m_totalIndices - m_drawnIndices) : 0;
       m_cullingCpuMs = static_cast<double>(cullingCpuNs) / 1000000.0;
-      RuntimeTelemetry::AddCounter("render.mesh.totalMeshes", static_cast<double>(m_totalMeshes));
-      RuntimeTelemetry::AddCounter("render.mesh.visibleMeshes", static_cast<double>(m_visibleMeshes));
-      RuntimeTelemetry::AddCounter("render.mesh.culledMeshes", static_cast<double>(m_culledMeshes));
-      RuntimeTelemetry::AddCounter("render.mesh.totalSubsets", static_cast<double>(m_totalSubsets));
-      RuntimeTelemetry::AddCounter("render.mesh.drawnSubsets", static_cast<double>(m_drawnSubsets));
-      RuntimeTelemetry::AddCounter("render.mesh.drawCalls", static_cast<double>(m_drawCalls));
-      RuntimeTelemetry::AddCounter("render.mesh.drawnIndices", static_cast<double>(m_drawnIndices));
-      RuntimeTelemetry::AddCounter("render.mesh.cullingCpuMs", m_cullingCpuMs);
+      T8_TELEMETRY_ADD("render.mesh.totalMeshes", static_cast<double>(m_totalMeshes));
+      T8_TELEMETRY_ADD("render.mesh.visibleMeshes", static_cast<double>(m_visibleMeshes));
+      T8_TELEMETRY_ADD("render.mesh.culledMeshes", static_cast<double>(m_culledMeshes));
+      T8_TELEMETRY_ADD("render.mesh.totalSubsets", static_cast<double>(m_totalSubsets));
+      T8_TELEMETRY_ADD("render.mesh.drawnSubsets", static_cast<double>(m_drawnSubsets));
+      T8_TELEMETRY_ADD("render.mesh.drawCalls", static_cast<double>(m_drawCalls));
+      T8_TELEMETRY_ADD("render.mesh.drawnIndices", static_cast<double>(m_drawnIndices));
+      T8_TELEMETRY_ADD("render.mesh.cullingCpuMs", m_cullingCpuMs);
     }
   }
 

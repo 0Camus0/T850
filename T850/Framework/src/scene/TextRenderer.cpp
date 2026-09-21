@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <scene/TextRenderer.h>
 #include <scene/RenderQueue.h>
 #include <utils/Log.h>
@@ -152,6 +153,7 @@ namespace t850 {
   }
   void TextRenderer::Draw(float x, float y,const XVECTOR3& color, std::string text)
   {
+    T8_DRAW_WORK("render.overlay.text");
     g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
     g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::READ);
     x = (x + 1)*0.5f * m_textureSize;
@@ -240,6 +242,7 @@ namespace t850 {
   float TextRenderer::DrawPixelScaled(float px, float py, float scaleX, float scaleY,
                                        int screenW, int screenH,
                                        const XVECTOR3& color, const std::string& text) {
+    T8_DRAW_WORK("render.overlay.text");
     g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
     g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::READ);
 

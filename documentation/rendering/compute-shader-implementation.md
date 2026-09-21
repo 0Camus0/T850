@@ -325,7 +325,14 @@ target.
 `CS_TorchParticles.hlsl` projects deterministic world-space particles from up to three
 authored torch emitters into a screen-sized RGBA16F texture. Lifetime, rise, spread, size,
 emitter positions, particle count, and time are supplied through `SceneProps`. Every thread
-owns one output pixel, so no atomics or retained particle buffer are needed. Palette colors,
+owns one output pixel. Each 8x8 workgroup projects a batch of 64 particles cooperatively,
+then uses two workgroup-local atomic bit masks to retain only particles overlapping
+that tile. Pixels evaluate those particles in original index order, preserving blending
+and the per-pixel reversed-Z test. Projection, hashes and trigonometry are no longer
+repeated for all 64 pixels. Partial edge workgroups still participate in every barrier;
+only their valid pixels load depth or write output. No global atomics, extra dispatch,
+retained particle buffer, resolution reduction, or particle-count reduction is needed.
+Palette colors,
 radial motion, wobble, size evolution, edge softness, fade windows, intensity, and tip
 lighting are authored under `voxel_world.torch` rather than embedded in C++ or shader code.
 The constant payload is 60 DWORDs: the original position/time vector plus one packed X/Z
@@ -339,10 +346,14 @@ because the engine uses reversed-Z. The camera-facing particle square uses its
 center depth across its pixels, so geometry can partially occlude a particle.
 Both HLSL and GLSL implement this test; no separate particle depth buffer is used.
 
-The shared `--compute-selftest` includes the production torch kernel with a 7x5
-depth mask and exact readback assertions for visible, hidden, partially occluded,
-and out-of-range particles. It passed D3D11, D3D12, Vulkan, GL, native WebGPU,
-Chrome and Firefox on 2026-09-17. The original merged kernel omitted depth entirely.
+The shared `--compute-selftest` includes the production torch kernel with a 17x13
+depth mask and readback assertions for visible, hidden, partially occluded,
+out-of-range, and offscreen particles, tile boundaries, partial groups, disabled/empty
+output, and three emitters with 99 particles spanning multiple batches. Solid cases
+are exact; the soft-edge CPU reference permits one byte for half-float rounding.
+The tiled version passed native D3D11, D3D12, Vulkan, GL, and both WebGPU shader flows on
+2026-09-18. Historical browser/depth tests predate this optimization; no new browser
+package validation is implied. The original merged kernel omitted depth entirely.
 
 ## Shader permutation inventory and cache
 

@@ -124,6 +124,51 @@ Texture creation entry points:
 
 Managed memory textures and file textures both live in `BaseDriver::Textures`. Direct `Device::CreateTextureFromMemory()` remains a low-level backend allocation API; Framework assets should prefer the managed driver entry point.
 
+## Render-target format contract
+
+R2 adds shared descriptor validation before GPU allocation. Invalid numeric
+formats and malformed attachment/extent declarations fail with
+`[InvalidRenderTarget]`; valid formats lacking an implementation on the active
+backend fail with `[UnsupportedRenderTarget]`. `BaseDriver::CreateRT` returns
+`-1`, and failed replacement requests preserve the old target. Backend format
+switches no longer silently substitute RGBA8 for unknown values. RGB8 is an
+explicit supported RGB-in-RGBA8 representation, not an unknown-format fallback.
+
+Implemented support, verified from the current allocation paths:
+
+| Feature | D3D11 | D3D12 | Vulkan | Desktop GL | WebGPU |
+|---|---|---|---|---|---|
+| RGBA8/RGBA16F/RGBA32F, R8/F16/F32 color | Yes | Yes | Yes | Yes | Yes |
+| F32 depth / NONE depth request | Yes | Yes | Yes | Yes | Yes |
+| FD16 depth | Yes | No | No | No | No |
+| CUBE_F32 depth target | Yes | Yes | No | Yes | No |
+| Render-target mip generation | Yes | No | No | Yes | No |
+| Engine comparison-sampler path | No | No | No | Depth-only GL path | No |
+
+These are engine-path capabilities, not promises about every adapter's format
+features or API-level functionality. Ordinary cube texture loading is distinct
+from cube render targets. D3D12/Vulkan/GL previously promoted FD16 requests to
+D32; such requests now receive a capability rejection. D3D11 retains D16 with
+an R16_UNORM sampled view. Vulkan RGBA32F is now explicitly mapped to
+`VK_FORMAT_R32G32B32A32_SFLOAT`, and RGB8 is explicitly mapped to RGBA8; neither
+falls through to an arbitrary default. The graph's optional mip request has a
+named single-level fallback; direct creation does not silently downgrade it.
+
+D3D11/12 sampler setup currently uses ordinary filtering, and Vulkan sets
+`compareEnable = false`; API support alone is not engine support. D3D resource
+reflection and Vulkan depth-comparison instruction reflection reject unsupported
+comparison-sampler use during shader load. WebGPU checks the corresponding
+Tint metadata before binding-layout creation. Diagnostics include shader name,
+stage and key. Reflection represents depth textures distinctly so they cannot
+be mistaken for ordinary sampled textures; existing shader-package fields and
+ordinary resource-kind values are unchanged.
+
+Shared tests cover malformed descriptors, supported/unsupported capabilities,
+graph preflight, mip fallback and allocation rollback. The real-driver fixture
+checks D3D12/WebGPU rejection without exceptions in strict WGSL and SPIR-V flows.
+R2's all-scene validation status is tracked in the
+[remediation plan](webgpu-compute-remediation-plan.md#r2-reconcile-strict-versus-lenient-backend-behavior).
+
 ## TextureAtlas
 
 `TextureAtlas` is immutable metadata over one managed texture ID. It is not a second texture owner or a voxel-specific loader.

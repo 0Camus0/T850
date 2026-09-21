@@ -18,6 +18,7 @@
 
 #include <physics/JoltPhysicsSystem.h>
 #include <scene/PrimitiveManager.h>
+#include <core/Config.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/SceneProp.h>
 #include <scene/TextRenderer.h>
@@ -113,6 +114,7 @@ public:
   SceneProps		SceneProp;
   Camera			Cam;
 
+  bool m_creatingAssets = true;
   bool fading;
   bool fadeOut;
   float totalFadeTime;
@@ -126,7 +128,8 @@ public:
     _fadeTime = time;
     while (totalFadeTime <= _fadeTime) {
       FadeTimer.Update();
-      float fadeSecsElapsed = FadeTimer.GetDTSecs();
+        float fadeSecsElapsed = t850::g_config.regressionFixedDt > 0.0f
+          ? t850::g_config.regressionFixedDt : FadeTimer.GetDTSecs();
       totalFadeTime += fadeSecsElapsed;
       OnUpdate();
     }

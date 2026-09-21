@@ -38,6 +38,10 @@ namespace t850 {
     D3DXDriver() { m_currentAPI = GraphicsApi::D3D11; }
     const char* ApiTag() const override { return "d3d11"; }
     bool SupportsRenderTargetMipGeneration() const override { return true; }
+    bool SupportsCubeRenderTargets() const override { return true; }
+    bool SupportsRenderTargetDepthFormat(int format) const override {
+      return format == BaseRT::FD16 || BaseDriver::SupportsRenderTargetDepthFormat(format);
+    }
     bool SupportsComputeShaders() const override { return m_featureLevel >= D3D_FEATURE_LEVEL_11_0; }
     bool SupportsComputeTextures() const override { return m_supportsComputeTextures; }
     void	InitDriver();

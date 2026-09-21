@@ -2,7 +2,55 @@
 
 Status: verified against `LaunchSolution.bat`, `DownloadModels.ps1`, `DownloadTextures.ps1`, and `ModelCloud.ps1` on 2026-08-19.
 
-Heavy model and texture binaries are intentionally not all tracked by Git. Setup, the launcher, Steam Deck runtime, and CI use manifests to obtain them.
+Heavy model and texture binaries are intentionally not all tracked by Git. Setup,
+the launcher and Steam Deck runtime use manifests to obtain them. Browser CI uses
+the same manifests only to generate runtime cloud routes.
+
+## Browser Delivery Modes
+
+The Emscripten runtime has two explicit asset delivery modes. Neither mode commits
+downloaded model, texture, IBL or archive payloads to Git.
+
+### A. Bundled Deployment
+
+```powershell
+.\scripts\BuildWeb.ps1 -AssetMode Embedded
+```
+
+`Embedded` is the default. It runs the full native scene-startup shader export
+against locally available assets. The existing deployment preparation command:
+
+```powershell
+node .\web\prepare-pages.mjs --minecraft-only
+```
+
+then creates a content-addressed ZIP containing
+the selected scene assets and prepared shaders. The browser verifies the ZIP hash
+and mounts it under `/assets` before starting Emscripten. This mode supports an
+offline, self-contained deployment package; source asset payloads remain ignored.
+
+### B. Runtime Cloud Delivery
+
+```powershell
+.\scripts\BuildWeb.ps1 -AssetMode Cloud -Clean
+```
+
+`Cloud` compiles the checked-in graphics/compute shader inventory without launching
+asset-dependent native scenes. It reads the two pinned public manifests and writes
+only `build/web/CloudAssets/routes.json`. This file contains validated public HTTPS
+URLs, content types and optional sizes; it contains no asset bytes.
+
+`web/server.mjs` detects the catalog and combines its paths with tracked local
+resources and `WebShaders`. When Emscripten requests `/assets/<resource>`, local
+files remain local and cataloged cloud models/textures are proxied from their public
+origin on demand. Path traversal, credentials, redirects and unapproved manifest
+origins are rejected. Internet access is required while uncached cloud resources
+are used.
+
+GitHub CI uses mode B. Its `T850-Web-Release` artifact contains only `site/`,
+`WebShaders/` and the small route catalog. Native x64 and ARM64 Edge jobs consume
+the same architecture-neutral artifact. CI does not download or upload the 1.61 GiB
+runtime model/texture payload.
 
 ## Normal Workflow
 

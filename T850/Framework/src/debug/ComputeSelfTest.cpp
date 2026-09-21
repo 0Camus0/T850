@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace t850 {
+extern Device* T8Device;
 namespace {
 
   std::unique_ptr<ComputePipeline> CreateTestPipeline(
@@ -173,8 +174,8 @@ namespace {
       {kernel->bindings, kernel->bindings + kernel->bindingCount});
     if (!particles) return false;
 
-    constexpr uint32_t width = 7;
-    constexpr uint32_t height = 5;
+    constexpr uint32_t width = 17;
+    constexpr uint32_t height = 13;
     const int target = driver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING,
       width, height, false, true);
     if (target < 0) return false;
@@ -195,21 +196,31 @@ namespace {
     props.ParticleLifetime = 1.0f;
     props.ParticleSize = 2.0f;
     props.ParticleColor0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+    props.ParticleColor1 = props.ParticleColor2 = props.ParticleColor0;
     props.ParticleWobble.w = 1.0f;
     props.ParticleFade = XVECTOR3(1.0f, 1.0f, 0.1f, 0.001f);
     props.ParticleFadeOutStart = 0.999f;
     props.ParticleIntensity = 1.0f;
     const std::array<uint32_t, 4> readConstants = {width, height, 0, 0};
     bool passed = texture && output;
-    for (unsigned scenario = 0; scenario < 5 && passed; ++scenario) {
+    for (unsigned scenario = 0; scenario < 10 && passed; ++scenario) {
       std::vector<unsigned char> depthPixels(width * height * 4, 0);
       for (uint32_t pixel = 0; pixel < width * height; ++pixel)
-        depthPixels[pixel * 4] = scenario == 1 || (scenario == 2 && pixel % width < 3) ? 255 : 0;
+        depthPixels[pixel * 4] = scenario == 1 || (scenario == 2 && pixel % width < width / 2) ? 255 : 0;
       const int depthId = driver->CreateTextureFromMemory(
         "particle-test-depth-" + std::to_string(scenario), depthPixels.data(), width, height, 4);
       auto* depth = driver->GetTexture(depthId);
       props.ParticleEmitterPosition = XVECTOR3(0.0f, 0.0f,
         scenario == 3 ? -0.1f : scenario == 4 ? 1.1f : 0.5f, 1.0f);
+      props.ParticleEmitterEnabled = scenario == 5 ? 3 : scenario == 8 ? 0 : 1;
+      props.ParticleCount = scenario == 5 ? 33 : scenario == 9 ? 0 : 1;
+      props.ParticleSize = scenario == 6 ? 0.18f : 2.0f;
+      if (scenario == 5) {
+        props.ParticleEmitterPosition.x = -20.0f;
+        props.ParticleEmitterPosition1 = XVECTOR3(20.0f, 0.0f, 0.5f, 1.0f);
+        props.ParticleEmitterPosition2 = XVECTOR3(0.0f, 0.0f, 0.5f, 1.0f);
+      }
+      if (scenario == 7) props.ParticleEmitterPosition.x = 20.0f;
       std::vector<uint32_t> constants;
       std::string error;
       passed = depth && BuildComputeConstants(*kernel, {&props, width, height, "base"}, constants, error);
@@ -225,13 +236,26 @@ namespace {
           {ComputeBindingType::ReadWriteBuffer, 0, output.get(), nullptr, 0}
         };
         std::array<uint32_t, width * height> actual{};
-        passed = driver->DispatchCompute(*particles, bindings, 1, 1, 1) &&
-          driver->DispatchCompute(reader, readBindings, 1, 1, 1) &&
+        passed = driver->DispatchCompute(*particles, bindings, (width + 7) / 8, (height + 7) / 8, 1) &&
+          driver->DispatchCompute(reader, readBindings, (width + 7) / 8, (height + 7) / 8, 1) &&
           driver->ReadComputeBuffer(*output, actual.data(), sizeof(actual));
         for (uint32_t pixel = 0; pixel < actual.size() && passed; ++pixel) {
-          const bool visible = scenario == 0 || (scenario == 2 && pixel % width >= 3);
-          const uint32_t expected = visible ? 0xff0000ffu : 0u;
-          if (actual[pixel] != expected) {
+          const bool visible = scenario == 0 || scenario == 5 || (scenario == 2 && pixel % width >= width / 2);
+          uint32_t expected = visible ? 0xff0000ffu : 0u;
+          if (scenario == 6) {
+            const float deltaX = std::abs((static_cast<float>(pixel % width) + 0.5f) / width - 0.5f) * width / height;
+            const float deltaY = std::abs((static_cast<float>(pixel / width) + 0.5f) / height - 0.5f);
+            const float softness = (std::min)(1.0f / height, props.ParticleSize * props.ParticleFade.z);
+            const float edge = std::clamp(((std::max)(deltaX, deltaY) - props.ParticleSize + softness) / softness, 0.0f, 1.0f);
+            const auto intensity = static_cast<uint32_t>(std::round((1.0f - edge * edge * (3.0f - 2.0f * edge)) * 255.0f));
+            expected = intensity | (intensity << 24u);
+          }
+          bool matches = true;
+          for (unsigned channel = 0; channel < 4; ++channel) {
+            const int difference = static_cast<int>((actual[pixel] >> (channel * 8u)) & 255u) - static_cast<int>((expected >> (channel * 8u)) & 255u);
+            if (std::abs(difference) > (scenario == 6 ? 1 : 0)) matches = false;
+          }
+          if (!matches) {
             T8_LOG_ERROR("[ComputeParticleDepth] scenario=%u pixel=%u actual=0x%08X expected=0x%08X",
               scenario, pixel, actual[pixel], expected);
             passed = false;
@@ -244,7 +268,7 @@ namespace {
     driver->FlushGPUResources();
     output.reset();
     driver->DestroyRT(target);
-    if (passed) T8_LOG_INFO("[ComputeParticleDepth] PASS: API=%s visible, occluded, partial and clip limits", driver->ApiTag());
+    if (passed) T8_LOG_INFO("[ComputeParticleDepth] PASS: API=%s depth, clip, tile edges, partial groups, 3 emitters, 99 particles and empty output", driver->ApiTag());
     else T8_LOG_ERROR("[ComputeParticleDepth] FAIL: API=%s", driver->ApiTag());
     return passed;
   }
@@ -556,6 +580,21 @@ namespace {
   }
 
   int RunComputeSelfTests(BaseDriver* driver) {
+    const std::array<float, 16> texels{};
+    for (unsigned cycle = 0; cycle < 4; ++cycle) {
+      Texture* texture = T8Device->CreateFloatTexture(2, 2, texels.data());
+      if (!texture) {
+        T8_LOG_ERROR("[SamplerLifetime] Float texture creation failed");
+        return 1;
+      }
+      for (const auto filter : {NEAREST_FILTER, LINEAR_FILTER, NEAREST_FILTER}) {
+        texture->params = CLAMP_TO_EDGE | filter;
+        texture->SetTextureParams();
+      }
+      driver->FlushGPUResources();
+      texture->release();
+    }
+    T8_LOG_INFO("[SamplerLifetime] PASS: API=%s repeated float texture sampler variants", driver->ApiTag());
     if (!ValidateBufferChain(driver) || RunComputeArithmeticSelfTest(driver) != 0 ||
         RunComputeImageSelfTest(driver) != 0) {
       T8_LOG_ERROR("[ComputeSelfTest] FAIL");

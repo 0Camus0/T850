@@ -163,6 +163,7 @@ namespace t850 {
     void Begin();
     void End();
     bool InScope() const { return m_passActive; }
+    void GetFrustumPlanes(const XMATRIX44& viewProjection, XVECTOR3 (&planes)[6]);
 
     // Reset all tracked binds. Called by Begin() and by RenderMesh's
     // private OpenScope() when no pass scope is active.
@@ -204,6 +205,9 @@ namespace t850 {
 
   private:
     bool                 m_passActive   = false;
+    bool                 m_frustumValid = false;
+    XMATRIX44            m_frustumViewProjection;
+    XVECTOR3             m_frustumPlanes[6];
     ShaderBase*          m_lastShader   = nullptr;
     Texture*             m_lastTex[kMaxTrackedSlots] = { nullptr };
     Texture*             m_lastEnv      = nullptr;

@@ -8,7 +8,9 @@ does not schedule implementation or claim renderer support.
 ## Scope and Backend Decision
 
 The current [Windows foundation](../development/windows-build-and-run.md#dawn-dependency-foundation)
-uses Dawn/D3D12 and is required for Windows x64. Android and native Linux/Steam
+uses Dawn/D3D12 and is required for Windows x64 and ARM64. The pinned overlays,
+architecture-specific static triplets, package audits and native CI cover both.
+Android and native Linux/Steam
 Deck cannot use that D3D12 path. Their proposed foundation would use **Dawn over
 Vulkan**, requiring explicit approval to expand the current platform/backend
 scope. Windows would remain Dawn/D3D12 only, not gain a Dawn/Vulkan option.
@@ -23,7 +25,7 @@ native platform ports cannot proceed.
 ## Shared Foundation Gaps
 
 - Extend the pinned Dawn/ImGui overlays with platform-specific Vulkan features.
-  The current overlays restrict WebGPU to Windows x64/D3D12. Do not simply enable
+  The current overlays restrict WebGPU to Windows x64/ARM64 D3D12. Do not simply enable
   upstream defaults: audit the resolved feature set and prevent ImGui from
   pulling unintended Dawn backends. Preserve the existing Windows package gate.
 - Separate portable pin/audit metadata from the Windows-only setup script.

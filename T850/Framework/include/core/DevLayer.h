@@ -37,7 +37,9 @@ namespace t850 {
 
     struct CullingDebugCBuffer {
       XMATRIX44 WVP;
+      XVECTOR3 LineColor = XVECTOR3(1.0f, 0.0f, 1.0f, 1.0f);
     };
+    static_assert(sizeof(CullingDebugCBuffer) == 80);
 
     bool EnsureCullingDebugResources();
     void DestroyCullingDebugResources();

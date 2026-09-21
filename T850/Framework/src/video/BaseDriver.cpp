@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <unordered_set>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
@@ -386,8 +387,13 @@ namespace t850 {
   #endif
 
     if (cil_props & CIL_COMPRESSED) {
+      T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+      T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, size, 0);
       LoadAPITextureCompressed(buffer);
     } else {
+      T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+      T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture,
+        size ? size : static_cast<uint64_t>(this->x) * this->y * m_channels, 0);
       LoadAPITexture(T8DeviceContext, buffer);
     }
     if (found) {
@@ -399,6 +405,9 @@ namespace t850 {
 
   bool Texture::LoadFromMemory(const unsigned char * buff, int w, int h, int channels, const char* debugName)
   {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture,
+      buff && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * channels : 0, 0);
     m_channels = channels;
     cil_props = 0;
 
@@ -436,6 +445,9 @@ namespace t850 {
 
   bool Texture::CreateCubeMap(const unsigned char * buff, int w, int h)
   {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture,
+      buff && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * 24 : 0, 0);
     m_channels = 4;
     cil_props = CIL_CUBE_MAP;
     bounded = 1;
@@ -459,12 +471,87 @@ namespace t850 {
     return true;
   }
 
+  uint64_t Texture::UploadByteSize() const {
+    if (cil_props & CIL_COMPRESSED) return size;
+    const unsigned bytesPerPixel = cil_props & CIL_HALF_FLOAT ? 8u : (std::max)(1u, m_channels);
+    return RuntimeTelemetry::TextureUploadBytes(x, y, mipmaps, cil_props & CIL_CUBE_MAP ? 6u : 1u, bytesPerPixel);
+  }
+
   void Texture::release() {
     DestroyAPITexture();
     delete this;
   }
 
+  bool BaseRT::IsColorFormat(int format) {
+    return format == RGB8 || format == RGBA8 || format == RGBA16F ||
+           format == RGBA32F || format == R8 || format == F16 || format == F32;
+  }
+
+  bool BaseRT::IsDepthFormat(int format) {
+    return format == NOTHING || format == FD16 || format == F32 || format == CUBE_F32;
+  }
+
+  bool BaseRT::ValidateDescriptor(int count, int color, int depth, int width, int height,
+                                 const std::vector<int>& formats, std::string& diagnostic) {
+    diagnostic.clear();
+    const auto invalid = [&](const std::string& feature) {
+      diagnostic = "[InvalidRenderTarget] " + feature;
+      return false;
+    };
+    if (count < 0 || count > 8) return invalid("color_count=" + std::to_string(count));
+    if (!IsColorFormat(color) && color != NOTHING) return invalid("color_format=" + std::to_string(color));
+    if (!IsDepthFormat(depth)) return invalid("depth_format=" + std::to_string(depth));
+    if (width <= 0 || height <= 0) return invalid("extent must be positive");
+    if (!formats.empty() && formats.size() != static_cast<size_t>(count))
+      return invalid("color_formats count does not match color_count");
+    for (const int format : formats) {
+      if (!IsColorFormat(format)) return invalid("color_format=" + std::to_string(format));
+    }
+    if (count > 0 && formats.empty() && color == NOTHING) return invalid("color attachment has no format");
+    if (count == 0 && depth == NOTHING) return invalid("no color or depth attachments");
+    if (depth == CUBE_F32 && width != height) return invalid("cube extent must be square");
+    return true;
+  }
+
+  bool BaseDriver::ValidateRenderTarget(int count, int color, int depth, int targetWidth, int targetHeight,
+                                       bool generateMips, const std::vector<int>& formats,
+                                       std::string& diagnostic) const {
+    if (!BaseRT::ValidateDescriptor(count, color, depth, targetWidth, targetHeight, formats, diagnostic)) return false;
+    const auto unsupported = [&](const std::string& feature) {
+      diagnostic = "[UnsupportedRenderTarget] backend=" + std::string(ApiTag()) + " feature=" + feature;
+      return false;
+    };
+    if (static_cast<unsigned>(count) > MaxRenderTargetColorAttachments()) return unsupported("color_count");
+    if (depth == BaseRT::CUBE_F32 && !SupportsCubeRenderTargets()) return unsupported("cube render targets");
+    if (!SupportsRenderTargetDepthFormat(depth)) return unsupported("depth_format=" + std::to_string(depth));
+    if (formats.empty()) {
+      if (count > 0 && !SupportsRenderTargetColorFormat(color)) return unsupported("color_format=" + std::to_string(color));
+    } else {
+      for (const int format : formats) {
+        if (!SupportsRenderTargetColorFormat(format)) return unsupported("color_format=" + std::to_string(format));
+      }
+    }
+    if (generateMips && !SupportsRenderTargetMipGeneration()) return unsupported("generate_mips");
+    return true;
+  }
+
+  bool BaseDriver::ValidateShaderComparisonSamplers(bool required, const std::string& shader,
+                                                   const char* stage, uint64_t keyBits,
+                                                   std::string& diagnostic) const {
+    diagnostic.clear();
+    if (!required || SupportsComparisonSamplers()) return true;
+    diagnostic = "[UnsupportedShaderFeature] backend=" + std::string(ApiTag()) +
+      " shader=" + shader + " stage=" + stage + " key=" + std::to_string(keyBits) +
+      " feature=comparison_sampler";
+    return false;
+  }
+
   bool BaseRT::LoadRT(int nrt, int cf, int df, int w, int h, bool GenMips) {
+    std::string diagnostic;
+    if (!ValidateDescriptor(nrt, cf, df, w, h, {}, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
     this->number_RT = nrt;
     this->color_format = cf;
     this->depth_format = df;
@@ -476,6 +563,11 @@ namespace t850 {
   }
 
   bool BaseRT::LoadRT(int nrt, const std::vector<int>& perCF, int df, int w, int h, bool GenMips) {
+    std::string diagnostic;
+    if (!ValidateDescriptor(nrt, perCF.empty() ? RGBA8 : perCF[0], df, w, h, perCF, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
     this->number_RT = nrt;
     this->color_format = perCF.empty() ? RGBA8 : perCF[0]; // fallback
     this->depth_format = df;
@@ -929,13 +1021,18 @@ namespace t850 {
       w = width;
     if (h == 0)
       h = height;
+    std::string diagnostic;
+    if (!ValidateRenderTarget(nrt, cf, df, w, h, genMips, {}, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return -1;
+    }
     LoadingProgress::ScopedStep loadingStep(
       "Creating render target",
       std::to_string(w) + "x" + std::to_string(h) + " (" + std::to_string(nrt) + " color)",
       0.3f);
     BaseRT	*pRT = T8Device->CreateRT(nrt,cf,df,w,h,genMips,allowStorage);
-    pRT->number_RT = nrt;
     if (pRT!= nullptr) {
+      pRT->number_RT = nrt;
       for (std::size_t i = 0; i < RTs.size(); ++i) {
         if (!RTs[i]) {
           RTs[i] = pRT;
@@ -956,16 +1053,24 @@ namespace t850 {
   {
     if (w == 0) w = width;
     if (h == 0) h = height;
+    const int cf = perColorFormats.empty() ? BaseRT::RGBA8 : perColorFormats[0];
+    std::string diagnostic;
+    if (!ValidateRenderTarget(nrt, cf, df, w, h, genMips, perColorFormats, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return -1;
+    }
     LoadingProgress::ScopedStep loadingStep(
       "Creating render target",
       std::to_string(w) + "x" + std::to_string(h) + " (" + std::to_string(nrt) + " color)",
       0.3f);
-    int cf = perColorFormats.empty() ? BaseRT::RGBA8 : perColorFormats[0];
     BaseRT* pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips, allowStorage);
     if (pRT) {
       // Reload with per-attachment formats
       pRT->DestroyAPIRT();
-      pRT->LoadRT(nrt, perColorFormats, df, w, h, genMips);
+      if (!pRT->LoadRT(nrt, perColorFormats, df, w, h, genMips)) {
+        pRT->release();
+        return -1;
+      }
       for (std::size_t i = 0; i < RTs.size(); ++i) {
         if (!RTs[i]) {
           RTs[i] = pRT;
@@ -983,14 +1088,43 @@ namespace t850 {
   }
   void BaseDriver::ModifyRT(int RTID, int nrt, int cf, int df, int w, int h, bool genMips)
   {
-    DestroyRT(RTID);
     if (w == 0)
       w = width;
     if (h == 0)
       h = height;
+    std::string diagnostic;
+    if (RTID < 0 || RTID >= static_cast<int>(RTs.size()) ||
+        !ValidateRenderTarget(nrt, cf, df, w, h, genMips, {}, diagnostic)) {
+      T8_LOG_ERROR("[ModifyRT] invalid target=%d %s", RTID, diagnostic.c_str());
+      return;
+    }
     BaseRT	*pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips);
+    if (!pRT) return;
     pRT->number_RT = nrt;
+    DestroyRT(RTID);
     RTs[RTID] = pRT;
+  }
+
+  RenderTargetLayout BaseDriver::GetRenderTargetLayout() const {
+    RenderTargetLayout layout;
+    if (CurrentRT < 0) {
+      layout.surface = true;
+      layout.colorCount = 1;
+      layout.colorFormats[0] = SurfaceColorFormat();
+      layout.depthFormat = BaseRT::F32;
+      return layout;
+    }
+    if (CurrentRT >= static_cast<int>(RTs.size()) || !RTs[CurrentRT]) return layout;
+    const auto& target = *RTs[CurrentRT];
+    if (target.number_RT < 0 || target.number_RT > static_cast<int>(layout.colorFormats.size())) return layout;
+    layout.colorCount = static_cast<unsigned>(target.number_RT);
+    for (unsigned attachment = 0; attachment < layout.colorCount; ++attachment) {
+      const int format = target.perColorFormats.empty() ? target.color_format : target.perColorFormats[attachment];
+      layout.colorFormats[attachment] = format == BaseRT::RGB8 ? BaseRT::RGBA8 : format;
+    }
+    if (target.pDepthTexture)
+      layout.depthFormat = target.depth_format == BaseRT::FD16 ? BaseRT::FD16 : BaseRT::F32;
+    return layout;
   }
 
   bool BaseDriver::IsOffscreenEnabled() const {

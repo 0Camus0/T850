@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -92,6 +93,7 @@ namespace t850 {
   }
   void GLDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex)
   {
+    RuntimeTelemetry::RecordDraw(vertexCount);
     // Convert startIndex (in elements) to a byte offset into the bound
     // IB, picking the size from the format set by IndexBuffer::Set().
     const unsigned indexStride = (internalIBFormat == GL_UNSIGNED_INT) ? 4u : 2u;

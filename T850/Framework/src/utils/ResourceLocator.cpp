@@ -364,6 +364,7 @@ bool ResourceLocator::ReadWebAsset(const std::string& normalized, std::vector<un
   if (found == m_webAssets.end()) return false;
   const auto local = m_basePath / found->second;
   if (ReadDiskBinary(local, out)) return true;
+  if (m_webAssetBaseUrl.empty()) return false;
   void* buffer = nullptr;
   int length = 0;
   if (!DownloadWebResource(m_webAssetBaseUrl.c_str(), found->second.c_str(), &buffer, &length)) return false;

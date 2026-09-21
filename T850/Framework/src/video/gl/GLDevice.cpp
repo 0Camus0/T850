@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -132,6 +133,7 @@ namespace t850 {
 
   Texture * GLDevice::CreateFloatTexture(int w, int h, const float* data)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && w > 0 && h > 0 ? RuntimeTelemetry::TextureUploadBytes(w, h, 1, 1, 16) : 0, 0);
     GLTexture* tex = new GLTexture;
     glGenTextures(1, &tex->id);
     glBindTexture(GL_TEXTURE_2D, tex->id);
@@ -153,12 +155,15 @@ namespace t850 {
     tex->m_channels = 4;
     tex->props = TextBasicFormat::CH_RGBA;
     tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::NEAREST_FILTER;
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, 0, 1);
     T8_LOG_INFO("[GL] CreateFloatTexture: id=%u %dx%d RGBA32F", tex->id, w, h);
     return tex;
   }
 
   Texture * GLDevice::CreateFloatCubeMap(int size, int mipCount, const float* data)
   {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && size > 0 && mipCount > 0 ? RuntimeTelemetry::TextureUploadBytes(size, size, mipCount, 6, 16) : 0, 0);
     if (size <= 0 || mipCount <= 0)
       return nullptr;
 
@@ -187,6 +192,7 @@ namespace t850 {
       GLenum err = UploadFloatCubeMapFaces(size, mipCount, data, internalFormat, failedFace, failedMip);
       if (err == GL_NO_ERROR) {
         tex->SetTextureParams();
+        RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, 0, 1);
         T8_LOG_INFO("[GL] CreateFloatCubeMap: id=%u %dx%d mips=%d %s", tex->id, size, size, mipCount, FloatCubeInternalFormatName(internalFormat));
         return tex;
       }

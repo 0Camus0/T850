@@ -1,6 +1,6 @@
 #pragma once
 
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <array>
 #include <cstdint>
 #include <string>
@@ -17,7 +17,8 @@ enum class ResourceKind {
   ReadWriteStorageBuffer,
   SampledTexture,
   Sampler,
-  WriteOnlyStorageTexture
+  WriteOnlyStorageTexture,
+  DepthTexture
 };
 enum class TextureDimension { None, D1, D2, D2Array, D3, Cube, CubeArray };
 enum class ShaderComponentType { Float, Unsigned, Signed, Half };

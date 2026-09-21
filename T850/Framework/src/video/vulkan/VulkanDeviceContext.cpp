@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * T850 Engine — Vulkan Backend
  * VulkanDeviceContext.cpp: DeviceContext implementation
@@ -41,6 +42,7 @@ namespace t850 {
   }
 
   void VulkanDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
+    RuntimeTelemetry::RecordDraw(vertexCount);
     if (!m_commandBuffer) return;
     T8_LOG_TRACE("[Vulkan] DrawIndexed(%u, %u, %u)", vertexCount, startIndex, startVertex);
 

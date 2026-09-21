@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * glTF 2.0 — accessor / bufferView decoding.
  *
@@ -252,6 +253,7 @@ bool ExtractDracoAttribute(const draco::Mesh& mesh, int dracoAttrId,
 bool DecodeDracoMesh(const Document& doc,
                      const DracoMeshCompression& draco,
                      DracoDecodeResult& result) {
+  T8_TELEMETRY_SCOPE("asset.gltf.draco");
   if (draco.bufferView < 0 ||
       draco.bufferView >= static_cast<int>(doc.bufferViews.size())) {
     T8_LOG_ERROR("[glTF] Draco: invalid bufferView %d", draco.bufferView);

@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <video/vulkan/VulkanDriver.h>
 #include <video/vulkan/VulkanCompute.h>
 #include <video/vulkan/VulkanTexture.h>
@@ -41,6 +42,8 @@ namespace {
   bool CompileCompute(const ComputePipelineDesc& desc,
                       std::vector<uint32_t>& spirv,
                       std::array<uint32_t, 3>& threadGroupSize) {
+    T8_TELEMETRY_SCOPE("shader.compile");
+    T8_TELEMETRY_ADD("shader.cache.uncached", 1);
     static bool initialized = false;
     if (!initialized) { glslang::InitializeProcess(); initialized = true; }
     std::ostringstream combined;
@@ -145,7 +148,7 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
   moduleInfo.codeSize = spirv.size() * sizeof(uint32_t);
   moduleInfo.pCode = spirv.data();
   VkShaderModule module = VK_NULL_HANDLE;
-  if (vkCreateShaderModule(driver->GetDevice(), &moduleInfo, nullptr, &module) != VK_SUCCESS) return false;
+  if (T8_TELEMETRY_CALL("shader.module.create", vkCreateShaderModule(driver->GetDevice(), &moduleInfo, nullptr, &module)) != VK_SUCCESS) return false;
 
   std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
   for (const auto& binding : bindings) {
@@ -174,7 +177,7 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
   pipelineInfo.stage.module = module;
   pipelineInfo.stage.pName = desc.entryPoint.c_str();
   pipelineInfo.layout = pipelineLayout;
-  const VkResult result = vkCreateComputePipelines(driver->GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
+  const VkResult result = T8_TELEMETRY_CALL("pipeline.create.compute", vkCreateComputePipelines(driver->GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
   vkDestroyShaderModule(driver->GetDevice(), module, nullptr);
   if (result != VK_SUCCESS) return false;
   ShaderPermutationDump::RecordCompute(desc.debugName, desc.entryPoint, desc.permutationName, desc.defines);

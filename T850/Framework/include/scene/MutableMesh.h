@@ -29,6 +29,7 @@ public:
   void Create() override;
   void Transform(float* transform) override;
   void Draw(float* transform, float* viewProjection) override;
+  bool MayDrawInPass(uint8_t pass) const override;
   void Destroy() override;
 
 private:

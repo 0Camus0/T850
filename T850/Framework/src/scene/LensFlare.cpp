@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <scene/LensFlare.h>
 
 namespace t850 {
@@ -67,6 +68,7 @@ namespace t850 {
   }
   void LensFlare::Draw()
   {
+    T8_DRAW_WORK("render.effects.lens_flare");
 
     XVECTOR3 pos = WorldToScreenPos(m_sunWorldPos, *pVP);
     const float visibilityMargin = 0.0f;

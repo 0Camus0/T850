@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 
 #include <utils/CameraProfiles.h>
 #include <utils/Log.h>
@@ -496,6 +497,7 @@ void CameraController::ClearInput() {
 }
 
 void CameraController::Update(float deltaSeconds, const CameraUpdateContext& context) {
+  T8_TELEMETRY_SCOPE("camera.controller.update");
   if (m_camera && GetActiveProfile()) {
     GetActiveProfile()->Update(*m_camera, deltaSeconds, context);
   }

@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -123,6 +124,7 @@ namespace t850 {
   }
   void GLConstantBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, descriptor.byteWidth, 0);
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
   }
@@ -132,6 +134,7 @@ namespace t850 {
   }
   void GLConstantBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Uniform, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     if (initialData) {
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);

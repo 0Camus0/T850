@@ -177,7 +177,7 @@ void StateMachine::Evaluate(GameObject& owner, GameLogicSystem& system, float fi
     event.params["from"] = previous;
     event.params["to"] = std::string(CurrentStateName());
     system.Events().Publish(std::move(event));
-    t850::RuntimeTelemetry::AddCounter("game.state_machines.transitions", 1.0);
+    T8_TELEMETRY_ADD("game.state_machines.transitions", 1.0);
     return;
   }
 }

@@ -90,7 +90,7 @@
     "wchar32": { "description": "Use WCHAR32 instead of WCHAR16" },
     "webgpu-binding": {
       "description": "Make available the pinned Dawn/D3D12 WebGPU binding",
-      "supports": "x64 & windows & !uwp & !mingw",
+      "supports": "(x64 | arm64) & windows & !uwp & !mingw",
       "dependencies": [ { "name": "dawn", "default-features": false, "features": [ "d3d12" ] } ]
     },
     "win32-binding": {

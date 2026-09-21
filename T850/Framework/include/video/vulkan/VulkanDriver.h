@@ -56,6 +56,11 @@ namespace t850 {
     const char* ApiTag() const override { return "vulkan"; }
     bool SupportsComputeShaders() const override { return m_supportsComputeShaders; }
     bool SupportsComputeTextures() const override { return m_supportsComputeTextures; }
+    int SurfaceColorFormat() const override {
+      if (m_swapChainFormat == VK_FORMAT_R8G8B8A8_UNORM) return BaseRT::RGBA8;
+      if (m_swapChainFormat == VK_FORMAT_B8G8R8A8_UNORM) return BaseRT::BGRA8;
+      return BaseRT::NOTHING;
+    }
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;

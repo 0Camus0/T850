@@ -136,11 +136,11 @@ bool GameLogicSystem::LoadFromScene(
 }
 
 void GameLogicSystem::Update(float deltaSeconds) {
-  t850::RuntimeTelemetry::SetCounter("game.components.updated", 0.0);
-  t850::RuntimeTelemetry::SetCounter("game.state_machines.transitions", 0.0);
-  t850::RuntimeTelemetry::SetCounter("game.physics.queries", 0.0);
-  t850::RuntimeTelemetry::SetCounter("game.nav.requests", 0.0);
-  t850::RuntimeTelemetry::SetCounter("game.nav.completed", 0.0);
+  T8_TELEMETRY_SET("game.components.updated", 0.0);
+  T8_TELEMETRY_SET("game.state_machines.transitions", 0.0);
+  T8_TELEMETRY_SET("game.physics.queries", 0.0);
+  T8_TELEMETRY_SET("game.nav.requests", 0.0);
+  T8_TELEMETRY_SET("game.nav.completed", 0.0);
   if (!context_ || !std::isfinite(deltaSeconds) || deltaSeconds < 0.0f) {
     RefreshStats(0);
     return;
@@ -264,7 +264,10 @@ void GameLogicSystem::Tick(float fixedDt) {
   }
   physics_.Flush(fixedDt);
   UpdateComponents(ComponentUpdatePhase::PostPhysics, fixedDt);
-  navigation_.ResolveCompleted();
+  {
+    T8_TELEMETRY_SCOPE("navigation.update");
+    navigation_.ResolveCompleted();
+  }
   {
     T8_TELEMETRY_SCOPE("game.components.logic");
     UpdateComponents(ComponentUpdatePhase::Logic, fixedDt);
@@ -276,7 +279,7 @@ void GameLogicSystem::Tick(float fixedDt) {
     }
   }
   if (groupSystem_) {
-    T8_TELEMETRY_SCOPE("game.groups");
+    T8_TELEMETRY_SCOPE("game.agents.groups");
     groupSystem_->Update(fixedDt);
   }
   UpdateComponents(ComponentUpdatePhase::Late, fixedDt);
@@ -290,7 +293,7 @@ void GameLogicSystem::UpdateComponents(ComponentUpdatePhase phase, float fixedDt
     for (const std::unique_ptr<Component>& component : object.components) {
       if (component && component->Enabled() && component->Phase() == phase) {
         component->Update(fixedDt);
-        t850::RuntimeTelemetry::AddCounter("game.components.updated", 1.0);
+        T8_TELEMETRY_ADD("game.components.updated", 1.0);
       }
     }
   }
@@ -367,13 +370,13 @@ void GameLogicSystem::RefreshStats(int lastFrameSteps) {
   for (const GameObject& object : registry_.Objects()) {
     if (object.enabled) ++activeObjects;
   }
-  t850::RuntimeTelemetry::SetCounter("game.entities.total", static_cast<double>(stats_.objectCount));
-  t850::RuntimeTelemetry::SetCounter("game.entities.active", static_cast<double>(activeObjects));
-  t850::RuntimeTelemetry::SetCounter("game.components.total", static_cast<double>(stats_.componentCount));
-  t850::RuntimeTelemetry::SetCounter("game.events.queued", static_cast<double>(stats_.eventsQueued));
-  t850::RuntimeTelemetry::SetCounter("game.events.dispatched", static_cast<double>(stats_.eventsDispatched));
-  t850::RuntimeTelemetry::SetCounter("game.validation.errors", static_cast<double>(stats_.validationErrors));
-  t850::RuntimeTelemetry::SetCounter("game.validation.warnings", static_cast<double>(stats_.validationWarnings));
+  T8_TELEMETRY_SET("game.entities.total", static_cast<double>(stats_.objectCount));
+  T8_TELEMETRY_SET("game.entities.active", static_cast<double>(activeObjects));
+  T8_TELEMETRY_SET("game.components.total", static_cast<double>(stats_.componentCount));
+  T8_TELEMETRY_SET("game.events.queued", static_cast<double>(stats_.eventsQueued));
+  T8_TELEMETRY_SET("game.events.dispatched", static_cast<double>(stats_.eventsDispatched));
+  T8_TELEMETRY_SET("game.validation.errors", static_cast<double>(stats_.validationErrors));
+  T8_TELEMETRY_SET("game.validation.warnings", static_cast<double>(stats_.validationWarnings));
 }
 
 } // namespace t850::game

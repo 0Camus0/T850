@@ -1,7 +1,7 @@
 #include <video/webgpu/WebGPUContext.h>
 #include <debug/RuntimeTelemetry.h>
 
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <utils/Log.h>
 #ifdef __EMSCRIPTEN__
 #include <SDL3/SDL.h>
@@ -219,7 +219,7 @@ void WebGPUContext::Resize(uint32_t newWidth, uint32_t newHeight) {
 )";
       wgpu::ShaderModuleDescriptor moduleDesc{};
       moduleDesc.nextInChain = &source;
-      const auto module = device.CreateShaderModule(&moduleDesc);
+      const auto module = T8_TELEMETRY_CALL("shader.module.create", device.CreateShaderModule(&moduleDesc));
       wgpu::ColorTargetState target{};
       target.format = configuration.format;
       wgpu::FragmentState fragment{};
@@ -231,7 +231,7 @@ void WebGPUContext::Resize(uint32_t newWidth, uint32_t newHeight) {
       pipeline.vertex.module = module;
       pipeline.vertex.entryPoint = "VS";
       pipeline.fragment = &fragment;
-      m_presentPipeline = device.CreateRenderPipeline(&pipeline);
+      m_presentPipeline = T8_TELEMETRY_CALL("pipeline.create.graphics", device.CreateRenderPipeline(&pipeline));
     }
   }
   m_configured = true;
@@ -304,6 +304,7 @@ void WebGPUContext::Submit(bool present) {
   commands = nullptr;
   SubmitCommands(command);
   if (present) {
+    T8_TELEMETRY_SCOPE("gpu.present");
     Require(static_cast<bool>(backbuffer), "Present requires a swapchain frame");
 #ifndef __EMSCRIPTEN__
     Require(surface.Present() == wgpu::Status::Success, "Presentation failed");
@@ -317,7 +318,7 @@ void WebGPUContext::Submit(bool present) {
 
 void WebGPUContext::WaitForGPU() {
   if (!queue) return;
-  T8_TELEMETRY_SCOPE("webgpu.queue_wait");
+  T8_TELEMETRY_SCOPE("gpu.gpu_wait");
   auto completed = std::make_shared<bool>(false);
   Wait(instance, queue.OnSubmittedWorkDone(wgpu::CallbackMode::WaitAnyOnly,
     [completed](wgpu::QueueWorkDoneStatus status, wgpu::StringView) { *completed = status == wgpu::QueueWorkDoneStatus::Success; }));
@@ -334,7 +335,8 @@ wgpu::Buffer WebGPUContext::AcquireBuffer(const wgpu::BufferDescriptor& descript
     available->second.pop_back();
     m_freeBufferBytes -= descriptor.size;
     if (available->second.empty()) m_freeBuffers.erase(available);
-    if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::AddCounter("webgpu.buffer_reuses", 1);
+    if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.buffer_reuses", 1);
+    T8_TELEMETRY_ADD("gpu.pool.hits", 1);
     return buffer;
   }
   if (descriptor.size <= maximumPoolBytes) {
@@ -344,15 +346,20 @@ wgpu::Buffer WebGPUContext::AcquireBuffer(const wgpu::BufferDescriptor& descript
       unused->second.pop_back();
       m_freeBufferBytes -= unused->first.first;
       if (unused->second.empty()) m_freeBuffers.erase(unused);
-      if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::AddCounter("webgpu.buffer_evictions", 1);
+      if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.buffer_evictions", 1);
+      T8_TELEMETRY_ADD("gpu.pool.evictions", 1);
     }
   }
-  if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::AddCounter("webgpu.buffer_allocations", 1);
+  if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.buffer_allocations", 1);
+  T8_TELEMETRY_ADD("gpu.pool.misses", 1);
+  RuntimeTelemetry::RecordStaging(descriptor.usage & wgpu::BufferUsage::Uniform
+    ? RuntimeTelemetry::UploadResource::Uniform : descriptor.usage & wgpu::BufferUsage::Index
+    ? RuntimeTelemetry::UploadResource::Index : RuntimeTelemetry::UploadResource::Vertex, 0, 1);
   return device.CreateBuffer(&descriptor);
 }
 
 wgpu::Buffer WebGPUContext::UploadUniform(const void* data, uint64_t size, uint64_t& offset) {
-  T8_TELEMETRY_SCOPE("webgpu.uniform_snapshot");
+  T8_TELEMETRY_ADD("webgpu.uniform_snapshot.calls", 1);
   Require(commands && data && size, "Uniform snapshot requires active commands and data");
   const uint64_t alignedSize = (size + 255) & ~uint64_t(255);
   if (m_uniformUploads.empty() || m_uniformUploads.back().data.size() + alignedSize > m_uniformUploads.back().capacity) {
@@ -366,9 +373,10 @@ wgpu::Buffer WebGPUContext::UploadUniform(const void* data, uint64_t size, uint6
   offset = upload.data.size();
   upload.data.resize(offset + alignedSize);
   std::memcpy(upload.data.data() + offset, data, size);
+  RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, size);
   if (RuntimeTelemetry::IsFrameActive()) {
-    RuntimeTelemetry::AddCounter("webgpu.uniform_snapshots", 1);
-    RuntimeTelemetry::AddCounter("webgpu.uniform_bytes", size);
+    T8_TELEMETRY_ADD("webgpu.uniform_snapshots", 1);
+    T8_TELEMETRY_ADD("webgpu.uniform_bytes", size);
   }
   return upload.buffer;
 }
@@ -382,7 +390,7 @@ void WebGPUContext::CollectCompletedBuffers(bool waitForOldest) {
   while (!m_submissions.empty()) {
     auto& submission = m_submissions.front();
     if (waitForOldest) {
-      T8_TELEMETRY_SCOPE("webgpu.inflight_wait");
+      T8_TELEMETRY_SCOPE("gpu.gpu_wait");
       Wait(instance, submission.completion);
       waitForOldest = false;
     } else {
@@ -397,13 +405,14 @@ void WebGPUContext::CollectCompletedBuffers(bool waitForOldest) {
         m_freeBuffers[retired.key].push_back(std::move(retired.buffer));
       } else {
         retired.buffer.Destroy();
+        T8_TELEMETRY_ADD("gpu.pool.evictions", 1);
       }
     }
     m_submissions.pop_front();
   }
   if (RuntimeTelemetry::IsFrameActive()) {
-    RuntimeTelemetry::SetCounter("webgpu.pending_submissions", m_submissions.size());
-    RuntimeTelemetry::SetCounter("webgpu.free_buffer_bytes", m_freeBufferBytes);
+    T8_TELEMETRY_SET("webgpu.pending_submissions", m_submissions.size());
+    T8_TELEMETRY_SET("webgpu.free_buffer_bytes", m_freeBufferBytes);
   }
 }
 
@@ -412,24 +421,28 @@ void WebGPUContext::Retire(wgpu::Texture texture) {
 }
 
 void WebGPUContext::SubmitCommands(const wgpu::CommandBuffer& command) {
+  T8_TELEMETRY_ADD("gpu.pool.hits", 0);
+  T8_TELEMETRY_ADD("gpu.pool.misses", 0);
+  T8_TELEMETRY_ADD("gpu.pool.evictions", 0);
   {
-    T8_TELEMETRY_SCOPE("webgpu.uniform_upload");
+    T8_TELEMETRY_ADD("webgpu.uniform_upload.calls", 1);
     for (auto& upload : m_uniformUploads) {
       queue.WriteBuffer(upload.buffer, 0, upload.data.data(), upload.data.size());
+      RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, upload.data.size());
       Retire(std::move(upload.buffer), upload.capacity, wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst);
-      if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::AddCounter("webgpu.uniform_upload_calls", 1);
+      if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.uniform_upload_calls", 1);
     }
     m_uniformUploads.clear();
     ++m_uniformEpoch;
   }
   {
-    T8_TELEMETRY_SCOPE("webgpu.queue_submit");
+    T8_TELEMETRY_SCOPE("gpu.submit");
     queue.Submit(1, &command);
   }
   T8_TELEMETRY_SCOPE("webgpu.resource_retirement");
   if (RuntimeTelemetry::IsFrameActive()) {
-    RuntimeTelemetry::AddCounter("webgpu.retired_buffers", m_retiredBuffers.size());
-    RuntimeTelemetry::AddCounter("webgpu.retired_textures", m_retiredTextures.size());
+    T8_TELEMETRY_ADD("webgpu.retired_buffers", m_retiredBuffers.size());
+    T8_TELEMETRY_ADD("webgpu.retired_textures", m_retiredTextures.size());
   }
   const auto health = m_health;
   const auto completion = queue.OnSubmittedWorkDone(wgpu::CallbackMode::WaitAnyOnly,

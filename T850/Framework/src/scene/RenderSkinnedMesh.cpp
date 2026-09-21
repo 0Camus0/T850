@@ -1116,7 +1116,8 @@ namespace t850 {
   // ── Animation update + bone texture upload (call BEFORE render passes) ──
 
   void RenderSkinnedMesh::UpdateAnimationPose() {
-    T8_TELEMETRY_SCOPE("animation.pose_update");
+    T8_CPU_WORK("animation.pose_update");
+    T8_TELEMETRY_ADD("animation.pose_update.calls", 1);
     if (!m_hasSkin) return;
 
     // Dump matrices on first frame for debugging
@@ -1136,7 +1137,8 @@ namespace t850 {
   }
 
   void RenderSkinnedMesh::UploadBoneTexture() {
-    T8_TELEMETRY_SCOPE("animation.bone_texture_upload");
+    T8_CPU_WORK("animation.bone_texture_upload");
+    T8_TELEMETRY_ADD("animation.bone_texture_upload.calls", 1);
     if (!m_hasSkin || !m_boneTexture) return;
     if (!T8DeviceContext) {
       T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: device context is unavailable");
@@ -1170,7 +1172,7 @@ namespace t850 {
 
     const int textureBoneCapacity = static_cast<int>(m_boneTexData.size() / 16u);
     int count = (std::min)((std::min)(numBones, kMaxBones), textureBoneCapacity);
-    RuntimeTelemetry::AddCounter("animation.bonesUploaded", static_cast<double>(count));
+    T8_TELEMETRY_ADD("animation.bonesUploaded", static_cast<double>(count));
     if (count <= 0) {
       T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: texture cannot hold any bone matrices");
       return;
@@ -1193,7 +1195,8 @@ namespace t850 {
   }
 
   void RenderSkinnedMesh::UpdateAnimationAndBones() {
-    T8_TELEMETRY_SCOPE("animation.update_and_upload");
+    T8_CPU_WORK("animation.update_and_upload");
+    T8_TELEMETRY_ADD("animation.update_and_upload.calls", 1);
     UpdateAnimationPose();
     UploadBoneTexture();
   }
@@ -1229,7 +1232,7 @@ namespace t850 {
   // ── Main draw ──────────────────────────────────────────
 
   void RenderSkinnedMesh::Draw(float *t, float *vp) {
-    T8_TELEMETRY_SCOPE("render.skinned_mesh.draw");
+    T8_TELEMETRY_ADD("render.skinned_mesh.draw.calls", 1);
     if (t) transform = t;  // Accept world transform from PrimitiveInstance
 
     if (!m_hasSkin) {

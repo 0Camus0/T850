@@ -1,6 +1,6 @@
 #pragma once
 
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <webgpu/webgpu_cpp.h>
 #include <memory>
 #include <vector>

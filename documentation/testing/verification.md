@@ -142,6 +142,38 @@ Focused voxel visual gate:
 
 Expected: four captured entries, zero engine errors, and nonuniform 1280x720 backbuffers.
 
+## Offscreen Overlays
+
+After building, run the surface/offscreen regression from the source root:
+
+```powershell
+.\scripts\TestOffscreenOverlays.ps1 -Config Debug -Apis d3d11,d3d12,vulkan,gl,webgpu
+.\scripts\TestOffscreenOverlays.ps1 -Config Release -Apis vulkan,webgpu -ProfileFrames 600 -Capture
+.\scripts\TestOffscreenOverlays.ps1 -Apis webgpu -ShaderFlow wgsl
+.\scripts\TestOffscreenOverlays.ps1 -Apis webgpu -ShaderFlow spirv
+```
+
+The script runs scene 1 at 640x360 with fixed delta and an explicit
+`--profileFrames` limit, enforces a per-process timeout, and requires exit 0,
+a populated report for exactly the requested frames, and no engine, profiler
+or validation errors. `--frames` is not a supported exit limit. Every run uses
+a new evidence directory under `%LOCALAPPDATA%/T850Profiles`; use
+`-OutputDirectory` to choose one explicitly.
+
+`-Capture` enables the timed `--offscreenDebug` path after overlays have been
+rendered. It moves only that run's new dump directories into its evidence
+folder, validates PPM dimensions/nonuniformity and creates PNGs for inspection.
+If a run is too short to produce a timed capture it fails rather than claiming
+visual coverage; use a fresh directory and a higher frame count. Inspect the
+PNGs for intact scene content and readable overlay text. These checks do not
+assert pixel parity between different APIs; use the real-driver fixture and
+matched visual baselines for that claim.
+
+On 2026-09-18 this gate reproduced and then closed Vulkan/WebGPU ImGui attachment
+incompatibility on the shared offscreen ring. The WebGPU completion path now
+also rotates the offscreen ring and emits its post-overlay debug captures.
+Build-only browser/Android results are not browser/device overlay runtime tests.
+
 ## Offline glTF Validation
 
 This does not create a graphics device:

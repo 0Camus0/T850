@@ -308,7 +308,9 @@ bool MinecraftScene::LoadAuthoredScene() {
       !m_voxelSettings.debug_render_targets[0].source.empty() ||
       m_voxelSettings.player.look_pitch_limit <= 0.0f ||
       m_voxelSettings.player.collision_sweep_step <= 0.0f ||
-      !validSurvival ||
+      !validSurvival || !finite(m_voxelSettings.weapon.swing_speed) ||
+      m_voxelSettings.weapon.swing_speed <= 0.0f ||
+      !finite(m_voxelSettings.weapon.swing_angle) ||
       m_voxelSettings.mob.count < 0 ||
       m_voxelSettings.mob.count > kMaxMinecraftEnemies ||
       m_voxelSettings.mob.move_speed <= 0.0f ||
@@ -1112,6 +1114,7 @@ void MinecraftScene::UpdateMob(MinecraftMob& mob, int mobIndex, float dt) {
 }
 
 void MinecraftScene::UpdateMobs(float dt) {
+  T8_CPU_WORK("game.agents.steer");
   for (int mobIndex = 0; mobIndex < m_mobCount; ++mobIndex)
     UpdateMob(m_mobs[mobIndex], mobIndex, dt);
 
@@ -1153,6 +1156,7 @@ void MinecraftScene::UpdatePlayerHealth(float dt) {
     if (m_playerHealth.ApplyContact(
           touching, m_voxelSettings.player.contact_damage,
           m_playerMobContacts[mobIndex])) {
+          m_damageFlashRemaining = 1.0f;
       T8_LOG_INFO("[Minecraft] Herobrine %d hit player: health=%d/%d",
                   mobIndex, m_playerHealth.Current(), m_playerHealth.Maximum());
     }
@@ -1164,7 +1168,15 @@ void MinecraftScene::UpdatePlayerHealth(float dt) {
 }
 
 void MinecraftScene::RespawnPlayer() {
+  ++m_respawnCount;
   m_playerHealth.Reset();
+  m_damageFlashRemaining = 0.0f;
+  m_attackCooldown = m_breakCooldown = m_placeCooldown = 0.0f;
+  m_weaponSwing = 0.0f;
+  m_weaponSwinging = false;
+  m_waitForActionRelease = true;
+  SetCameraMode(0);
+  ActiveCam = &Cam;
   m_player.Reset();
   m_player.SetPosition(m_playerSpawnEye -
     XVECTOR3(0.0f, m_playerSettings.eyeHeight, 0.0f, 0.0f));
@@ -1184,6 +1196,40 @@ void MinecraftScene::RespawnPlayer() {
   T8_LOG_INFO("[Minecraft] Player respawned: health=%d/%d spawn=(%.2f,%.2f,%.2f)",
               m_playerHealth.Current(), m_playerHealth.Maximum(),
               m_playerSpawnEye.x, m_playerSpawnEye.y, m_playerSpawnEye.z);
+}
+
+bool MinecraftScene::TryAttackMob() {
+  const float reach = (std::min)(3.0f, m_voxelSettings.interaction.reach);
+  int target = -1;
+  float nearest = reach;
+  for (int mobIndex = 0; mobIndex < m_mobCount; ++mobIndex) {
+    const XVECTOR3 center = m_mobs[mobIndex].position +
+      XVECTOR3(0.0f, m_voxelSettings.mob.height * 0.6f, 0.0f, 0.0f);
+    const XVECTOR3 offset = center - m_playerEye;
+    const float distance = Length3(offset);
+    if (distance > nearest || distance < 0.0001f) continue;
+    const XVECTOR3 direction = offset / distance;
+    if (Dot3(direction, Cam.Look) < 0.25f) continue;
+    int blockX, blockY, blockZ, previousX, previousY, previousZ;
+    if (RaycastBlocks(m_playerEye, direction, distance, blockX, blockY, blockZ,
+                      previousX, previousY, previousZ)) continue;
+    nearest = distance;
+    target = mobIndex;
+  }
+  if (target < 0) return false;
+  if (m_attackCooldown > 0.0f) return true;
+  m_attackCooldown = (std::max)(0.25f, 1.0f / m_voxelSettings.weapon.swing_speed);
+  m_breakCooldown = m_placeCooldown = m_attackCooldown;
+  m_weaponSwing = 0.0f;
+  m_weaponSwinging = true;
+  ++m_attackCount;
+  m_playerMobContacts[target] = false;
+  ResetMob(target);
+  m_interactionMessage = "Enemy hit";
+  m_interactionMessageTime = 1.0f;
+  T8_LOG_INFO("[Minecraft] Player attacked enemy %d: distance=%.2f attacks=%u; enemy returned to spawn",
+              target, nearest, m_attackCount);
+  return true;
 }
 
 void MinecraftScene::UpdateDayNight(float dt) {
@@ -1753,7 +1799,7 @@ void MinecraftScene::UpdateWeapon(float dt) {
     // axis so the blade swings forward/down.
     XMATRIX44 swing;
     swing.Identity();
-    const float sa = Deg2Rad(swingPitch);
+    const float sa = swingPitch;
     swing.m[1][1] = std::cos(sa); swing.m[1][2] = -std::sin(sa);
     swing.m[2][1] = std::sin(sa); swing.m[2][2] =  std::cos(sa);
 
@@ -2501,6 +2547,8 @@ void MinecraftScene::ReportRenderDistanceReady() {
 }
 
 void MinecraftScene::UpdateChunkStreaming() {
+  T8_TELEMETRY_SCOPE("terrain.voxel.upload");
+  T8_UPLOAD_SOURCE(t850::RuntimeTelemetry::UploadSource::Streaming);
   if (m_chunkGenerationFuture.valid()) return;
   // Rebuild chunks around the player as they move between chunk centers
   const int pcx = WorldToChunk((int)std::floor(m_playerEye.x));
@@ -3225,6 +3273,11 @@ void MinecraftScene::HandleBlockInteraction(InputManager* IManager) {
     (gamepadActive && IManager->Gamepad.rightTrigger > 0.5f);
   const bool placeInput = IManager->PressedMouseButton(2) ||
     (gamepadActive && IManager->Gamepad.leftTrigger > 0.5f);
+  if (m_waitForActionRelease) {
+    if (!breakInput && !placeInput) m_waitForActionRelease = false;
+    return;
+  }
+  if ((breakInput || placeInput) && TryAttackMob()) return;
 
   // Left click / right trigger: break block.
   if (breakInput && m_breakCooldown <= 0.0f) {
@@ -3548,6 +3601,9 @@ void MinecraftScene::InitVars() {
 
   const auto& player = m_voxelSettings.player;
   m_playerHealth.Configure(player.max_health, player.health_regeneration_seconds);
+  m_damageFlashRemaining = m_attackCooldown = 0.0f;
+  m_waitForActionRelease = false;
+  m_attackCount = m_respawnCount = 0;
   m_playerMobContacts.fill(false);
   m_playerSettings.collisionShape = t850::KinematicCharacterSettings::CollisionShape::Capsule;
   m_playerSettings.walkSpeed = player.walk_speed;
@@ -3794,6 +3850,8 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
   m_interactionMessageTime = (std::max)(0.0f, m_interactionMessageTime - DtSecs);
+  m_damageFlashRemaining = (std::max)(0.0f, m_damageFlashRemaining - DtSecs);
+  m_attackCooldown = (std::max)(0.0f, m_attackCooldown - DtSecs);
 
   if (m_cameraMode != 0)
     m_playerInput = {};
@@ -3824,6 +3882,20 @@ void MinecraftScene::OnUpdate(float _DtSecs) {
     UpdateMobs(DtSecs);
     UpdatePlayerHealth(DtSecs);
   }
+
+#ifdef __EMSCRIPTEN__
+  if (++m_gameplayDiagnosticFrames % 10 == 0) {
+    MAIN_THREAD_ASYNC_EM_ASM({
+      if (globalThis.t850) globalThis.t850.gameplay = Object.assign({}, {
+        health: $0, maxHealth: $1, dead: !!$2, damageFlashSeconds: $3,
+        weaponSwing: $4, weaponSwinging: !!$5, attacks: $6, respawns: $7,
+        firstEnemy: [$8, $9, $10]
+      });
+    }, m_playerHealth.Current(), m_playerHealth.Maximum(), m_playerHealth.IsDead(),
+      m_damageFlashRemaining, m_weaponSwing, m_weaponSwinging, m_attackCount, m_respawnCount,
+      m_mobs[0].position.x, m_mobs[0].position.y, m_mobs[0].position.z);
+  }
+#endif
 
   // Update the day/night cycle (sun position, light color, ambient)
   UpdateDayNight(DtSecs);
@@ -3917,7 +3989,8 @@ void MinecraftScene::OnInput(InputManager* IManager) {
     m_playerInput = {};
     IManager->xDelta = 0;
     IManager->yDelta = 0;
-    if (IManager->PressedOnceKey(T800K_SPACE)) RespawnPlayer();
+    if (IManager->PressedOnceKey(T800K_SPACE) || IManager->PressedOnceKey(T800K_RETURN) ||
+      (gamepadActive && gamepad.buttonSouthPressed)) RespawnPlayer();
     return;
   }
 
@@ -4694,30 +4767,37 @@ void MinecraftScene::DrawGameplayHud() {
   ImDrawList* drawList = ImGui::GetForegroundDrawList();
   if (!viewport || !drawList) return;
 
+  const ImVec2 screenMin = viewport->Pos;
+  const ImVec2 screenMax(screenMin.x + viewport->Size.x,
+                         screenMin.y + viewport->Size.y);
+  if (m_playerHealth.IsDead())
+    ImGui::GetBackgroundDrawList()->AddRectFilled(screenMin, screenMax, IM_COL32(0, 0, 0, 255));
+  if (m_damageFlashRemaining > 0.0f)
+    drawList->AddRectFilled(screenMin, screenMax, IM_COL32(224, 20, 28, 112));
   if (m_playerHealth.IsDead()) {
-    const ImVec2 screenMin = viewport->Pos;
-    const ImVec2 screenMax(screenMin.x + viewport->Size.x,
-                           screenMin.y + viewport->Size.y);
     const ImVec2 screenCenter((screenMin.x + screenMax.x) * 0.5f,
                               (screenMin.y + screenMax.y) * 0.5f);
-    drawList->AddRectFilled(screenMin, screenMax, IM_COL32(0, 0, 0, 255));
     const char* gameOver = "Game over";
-    const char* instructions = "Press Space to respawn and Esc to exit";
     constexpr float gameOverSize = 48.0f;
-    constexpr float instructionSize = 22.0f;
     ImFont* font = ImGui::GetFont();
     const ImVec2 gameOverBounds = font->CalcTextSizeA(
       gameOverSize, FLT_MAX, 0.0f, gameOver);
-    const ImVec2 instructionBounds = font->CalcTextSizeA(
-      instructionSize, FLT_MAX, 0.0f, instructions);
     drawList->AddText(font, gameOverSize,
       ImVec2(screenCenter.x - gameOverBounds.x * 0.5f,
-             screenCenter.y - gameOverBounds.y - 8.0f),
+             screenCenter.y - gameOverBounds.y - 48.0f),
       IM_COL32(224, 28, 36, 255), gameOver);
-    drawList->AddText(font, instructionSize,
-      ImVec2(screenCenter.x - instructionBounds.x * 0.5f,
-             screenCenter.y + 12.0f),
-      IM_COL32(232, 52, 58, 255), instructions);
+    const float buttonWidth = (std::min)(220.0f, viewport->Size.x - 32.0f);
+    ImGui::SetNextWindowPos(screenCenter, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(buttonWidth, 56.0f), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    if (ImGui::Begin("##MinecraftContinue", nullptr, ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+        ImGuiWindowFlags_NoBackground)) {
+      if (ImGui::Button("Continue", ImVec2(buttonWidth, 56.0f))) RespawnPlayer();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
     return;
   }
 

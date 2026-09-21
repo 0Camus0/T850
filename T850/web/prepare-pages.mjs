@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { minecraftAssetSelection } from './minecraft-assets.mjs';
+import { zipSync } from 'fflate';
+import { minecraftAssetSelection, minecraftWebScene } from './minecraft-assets.mjs';
 import { loadCloudflareConfig, loadCloudResources } from './cloudflare-config.mjs';
 
 const { values } = parseArgs({ options: { config: { type: 'string' }, 'minecraft-only': { type: 'boolean' } } });
@@ -15,13 +16,17 @@ const sourceRoot = resolve(webRoot, '..');
 const output = join(sourceRoot, minecraftOnly ? 'build/pages-minecraft' : 'build/pages');
 const payloads = join(sourceRoot, 'build/pages-r2');
 const limit = 25 * 1024 * 1024;
-const selection = minecraftOnly ? minecraftAssetSelection(JSON.parse(await readFile(join(sourceRoot, 'Assets/Scenes/Minecraft.t8scene'), 'utf8'))) : null;
-const cloud = await loadCloudResources(config.r2Buckets);
+const scene = minecraftOnly ? minecraftWebScene(JSON.parse(await readFile(join(sourceRoot, 'Assets/Scenes/Minecraft.t8scene'), 'utf8'))) : null;
+const selection = scene ? minecraftAssetSelection(scene, { embedded: true }) : null;
+const cloud = minecraftOnly ? new Map() : await loadCloudResources(config.r2Buckets);
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await mkdir(payloads, { recursive: true });
 const routes = Object.create(null);
 const uploads = [];
+const bundled = Object.create(null);
+let assetBundle;
+let obsoleteShaderPackages = 0;
 const folded = new Map();
 function register(resource, route) {
   const previous = folded.get(resource.toLowerCase());
@@ -34,6 +39,10 @@ async function copyStatic(file, target) {
   await mkdir(dirname(target), { recursive: true });
   await cp(file, target);
 }
+function bundleResource(resource, bytes) {
+  bundled[resource] = bytes;
+  register(resource, { bundled: true });
+}
 async function stageDirectory(directory, prefix = '') {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (entry.name.startsWith('.')) continue;
@@ -42,9 +51,20 @@ async function stageDirectory(directory, prefix = '') {
     if (entry.isDirectory()) { await stageDirectory(file, resource + '/'); continue; }
     if (!entry.isFile()) continue;
     if (selection && !selection.includes(resource)) continue;
+    if (resource.startsWith('WebShaders/') && extname(file) === '.json') {
+      const shader = JSON.parse(await readFile(file, 'utf8'));
+      if (shader.version !== 3) { obsoleteShaderPackages++; continue; }
+      if (resource !== `WebShaders/${shader.requestHash}.json` ||
+          !/^[a-f0-9]{40}$/.test(shader.artifactHash ?? '') ||
+          !shader.artifact?.wgsl?.trim() || !Array.isArray(shader.artifact.bindings)) {
+        throw new Error(`Invalid prepared shader package: ${resource}`);
+      }
+    }
     const size = (await stat(file)).size;
     const remote = cloud.get(resource);
-    if (remote) {
+    if (minecraftOnly) {
+      bundleResource(resource, resource === 'Scenes/Minecraft.t8scene' ? Buffer.from(JSON.stringify(scene)) : await readFile(file));
+    } else if (remote) {
       if (remote.size && remote.size !== size) throw new Error(`Cloud/local size mismatch: ${resource}`);
       register(resource, remote);
     } else if (size > limit) {
@@ -75,13 +95,42 @@ if (minecraftOnly) {
 }
 await stageDirectory(join(sourceRoot, 'Assets'));
 await stageDirectory(join(sourceRoot, 'build/web/WebShaders'), 'WebShaders/');
+if (minecraftOnly) {
+  bundleResource('Textures/sky/CubeMap_SkyWater_512.dds', await readFile(join(webRoot, 'minecraft-resources/CubeMap_SkyWater_512.dds')));
+  const lighting = join(webRoot, 'minecraft-resources/GeneratedIBLCache');
+  const lightingKinds = new Set();
+  for (const file of await readdir(lighting)) {
+    const match = /^(diffuse_cube|ggx_specular_cube|charlie_sheen_cube)_v1_[a-f0-9]{16}\.t8ibl$/.exec(file);
+    if (!match || lightingKinds.has(match[1])) throw new Error(`Unexpected web lighting cache: ${file}`);
+    lightingKinds.add(match[1]);
+    bundleResource('Textures/GeneratedIBLCache/' + file, await readFile(join(lighting, file)));
+  }
+  if (lightingKinds.size !== 3) throw new Error('The web sky requires all three baked lighting caches');
+}
 if (selection) {
   for (const resource of selection.required) {
     if (!Object.hasOwn(routes, resource)) throw new Error(`Missing Minecraft dependency: ${resource}`);
   }
 }
-await writeFile(join(output, 'assets/index.json'), JSON.stringify(Object.keys(routes).sort()));
-register('index.json', { static: true });
+if (minecraftOnly) {
+  bundled['index.json'] = Buffer.from(JSON.stringify(Object.keys(routes).sort()));
+  const archive = zipSync(Object.fromEntries(Object.entries(bundled).sort(([left], [right]) => left.localeCompare(right))),
+    { level: 6, mtime: new Date('2020-01-01T00:00:00Z') });
+  if (archive.byteLength > limit) throw new Error('Minecraft asset archive exceeds the Pages 25 MiB file limit');
+  const name = `minecraft-assets.${createHash('sha256').update(archive).digest('hex')}.zip`;
+  await writeFile(join(output, name), archive);
+  assetBundle = { name, resources: Object.keys(routes).length, bytes: archive.byteLength,
+    unpackedBytes: Object.values(bundled).reduce((total, bytes) => total + bytes.byteLength, 0) };
+  const catalog = JSON.parse(await readFile(join(output, 'scenes.json'), 'utf8'));
+  catalog.assetBundle = name;
+  await writeFile(join(output, 'scenes.json'), JSON.stringify(catalog));
+  await writeFile(join(output, 'asset-bundle.mjs'), (await readFile(join(webRoot, 'asset-bundle.mjs'), 'utf8')).replace("from 'fflate'", "from './fflate.mjs'"));
+  await copyStatic(join(webRoot, 'node_modules/fflate/esm/browser.js'), join(output, 'fflate.mjs'));
+  await copyStatic(join(webRoot, 'node_modules/fflate/LICENSE'), join(output, 'licenses/fflate.txt'));
+} else {
+  await writeFile(join(output, 'assets/index.json'), JSON.stringify(Object.keys(routes).sort()));
+  register('index.json', { static: true });
+}
 for (const [source, target] of [
   ['minecraft-wssi.html', 'index.html'], ['minecraft-wssi.html', 'minecraft-wssi.html'],
   ['minecraft-wssi.mjs', 'minecraft-wssi.mjs'],
@@ -95,11 +144,15 @@ if (minecraftOnly) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
 await writeFile(join(output, '404.html'), '<!doctype html><title>Not found</title><a href="/">T850 scenes</a>');
-await writeFile(join(output, '_headers'), '/*\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n  Cross-Origin-Resource-Policy: same-origin\n  X-Content-Type-Options: nosniff\n  Cache-Control: no-cache\n');
-await writeFile(join(output, '_routes.json'), JSON.stringify({ version: 1, include: ['/assets/*'], exclude: [] }));
-const handler = await readFile(join(webRoot, 'pages-worker.mjs'), 'utf8');
-await writeFile(join(output, '_worker.js'), handler + '\nexport default { fetch: createAssetHandler(' + JSON.stringify(routes) + ') };\n');
+await writeFile(join(output, '_headers'), '/*\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n  Cross-Origin-Resource-Policy: same-origin\n  X-Content-Type-Options: nosniff\n' +
+  (assetBundle ? `/${assetBundle.name}\n  Cache-Control: public, max-age=31536000, immutable\n` : '  Cache-Control: no-cache\n'));
+if (!minecraftOnly) {
+  await writeFile(join(output, '_routes.json'), JSON.stringify({ version: 1, include: ['/assets/*'], exclude: [] }));
+  const handler = await readFile(join(webRoot, 'pages-worker.mjs'), 'utf8');
+  await writeFile(join(output, '_worker.js'), handler + '\nexport default { fetch: createAssetHandler(' + JSON.stringify(routes) + ') };\n');
+}
 await writeFile(join(payloads, minecraftOnly ? 'minecraft-uploads.json' : 'uploads.json'), JSON.stringify(uploads, null, 2));
-console.log(JSON.stringify({ output, minecraftOnly, resources: Object.keys(routes).length - 1,
+console.log(JSON.stringify({ output, minecraftOnly, resources: Object.keys(routes).length - (minecraftOnly ? 0 : 1), assetBundle,
+  obsoleteShaderPackagesExcluded: obsoleteShaderPackages,
   existingR2: Object.values(routes).filter(route => route.url).length,
   pendingR2Uploads: uploads, credentialsIncluded: false }, null, 2));

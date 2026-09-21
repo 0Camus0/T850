@@ -1,6 +1,6 @@
 #include <video/webgpu/WebGPUShaderCompiler.h>
 
-#if defined(_WIN32) && defined(_M_X64)
+#if defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))
 #include <T850DawnShaderConfig.h>
 #include <utils/ShaderDiskCache.h>
 #include <utils/ShaderPreprocessor.h>
@@ -289,6 +289,9 @@ bool ReflectShader(const ShaderRequest& request, ShaderArtifact& artifact, std::
     case Binding::ResourceType::kSampledTexture:
       binding.kind = ResourceKind::SampledTexture;
       break;
+    case Binding::ResourceType::kDepthTexture:
+      binding.kind = ResourceKind::DepthTexture;
+      break;
     case Binding::ResourceType::kSampler:
       binding.kind = ResourceKind::Sampler;
       binding.comparisonSampler = resource.sampler_type == Binding::SamplerType::kComparison;
@@ -302,7 +305,8 @@ bool ReflectShader(const ShaderRequest& request, ShaderArtifact& artifact, std::
       diagnostic = Context(request, "Resource kind is not supported by the stage-two compiler");
       return false;
     }
-    if (binding.kind == ResourceKind::SampledTexture || binding.kind == ResourceKind::WriteOnlyStorageTexture) {
+    if (binding.kind == ResourceKind::SampledTexture || binding.kind == ResourceKind::DepthTexture ||
+      binding.kind == ResourceKind::WriteOnlyStorageTexture) {
       switch (resource.dim) {
       case Binding::TextureDimension::k1d: binding.dimension = TextureDimension::D1; break;
       case Binding::TextureDimension::k2d: binding.dimension = TextureDimension::D2; break;

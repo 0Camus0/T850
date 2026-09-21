@@ -3,22 +3,28 @@
   <PropertyGroup>
     <PreferredToolArchitecture Condition="'$(Platform)'=='x64'">x64</PreferredToolArchitecture>
     <T850DawnSourceRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\'))</T850DawnSourceRoot>
-    <T850DawnPackageRoot>$(T850DawnSourceRoot)Librerias\vcpkg\installed\x64-windows-static\</T850DawnPackageRoot>
-    <T850DawnLinkProps>$(T850DawnSourceRoot)build\dawn-package\Dawn.$(Configuration).props</T850DawnLinkProps>
+    <T850DawnArchitecture>x64</T850DawnArchitecture>
+    <T850DawnArchitecture Condition="'$(Platform)'=='ARM64'">ARM64</T850DawnArchitecture>
+    <T850DawnTriplet>x64-windows-static</T850DawnTriplet>
+    <T850DawnTriplet Condition="'$(Platform)'=='ARM64'">arm64-windows-static</T850DawnTriplet>
+    <T850DawnExportRoot>$(T850DawnSourceRoot)build\dawn-package\</T850DawnExportRoot>
+    <T850DawnExportRoot Condition="'$(Platform)'=='ARM64'">$(T850DawnSourceRoot)build\dawn-package-arm64\</T850DawnExportRoot>
+    <T850DawnPackageRoot>$(T850DawnSourceRoot)Librerias\vcpkg\installed\$(T850DawnTriplet)\</T850DawnPackageRoot>
+    <T850DawnLinkProps>$(T850DawnExportRoot)Dawn.$(Configuration).props</T850DawnLinkProps>
     <T850DawnRuntimeRoot>$(T850DawnPackageRoot)bin\</T850DawnRuntimeRoot>
     <T850DawnRuntimeRoot Condition="'$(Configuration)'=='Debug'">$(T850DawnPackageRoot)debug\bin\</T850DawnRuntimeRoot>
   </PropertyGroup>
-  <Import Project="$(T850DawnLinkProps)" Condition="'$(Platform)'=='x64' And Exists('$(T850DawnLinkProps)')" />
-  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
+  <Import Project="$(T850DawnLinkProps)" Condition="('$(Platform)'=='x64' Or '$(Platform)'=='ARM64') And Exists('$(T850DawnLinkProps)')" />
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64' Or '$(Platform)'=='ARM64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>$(T850DawnSourceRoot)build\dawn-package;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(T850DawnExportRoot);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
-  <Target Name="T850CheckDawnPackage" BeforeTargets="PrepareForBuild" Condition="'$(Platform)'=='x64' And '$(DesignTimeBuild)'!='true'">
-    <Error Condition="!Exists('$(T850DawnLinkProps)')" Text="Required Dawn package metadata is missing. Run $(T850DawnSourceRoot)scripts\SetupDawn.ps1 before building Windows x64." />
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(T850DawnSourceRoot)scripts\SetupDawn.ps1&quot; -Mode Check" />
+  <Target Name="T850CheckDawnPackage" BeforeTargets="PrepareForBuild" Condition="('$(Platform)'=='x64' Or '$(Platform)'=='ARM64') And '$(DesignTimeBuild)'!='true'">
+    <Error Condition="!Exists('$(T850DawnLinkProps)')" Text="Required Dawn package metadata is missing. Run $(T850DawnSourceRoot)scripts\SetupDawn.ps1 -Architecture $(T850DawnArchitecture) before building Windows $(Platform)." />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(T850DawnSourceRoot)scripts\SetupDawn.ps1&quot; -Mode Check -Architecture $(T850DawnArchitecture)" />
   </Target>
-  <Target Name="T850StageDawnRuntime" AfterTargets="Build" Condition="'$(Platform)'=='x64' And '$(ConfigurationType)'=='Application'">
+  <Target Name="T850StageDawnRuntime" AfterTargets="Build" Condition="('$(Platform)'=='x64' Or '$(Platform)'=='ARM64') And '$(ConfigurationType)'=='Application'">
     <ItemGroup>
       <T850DawnRuntime Include="$(T850DawnRuntimeRoot)dxcompiler.dll;$(T850DawnRuntimeRoot)dxil.dll" />
       <T850DawnLicense Include="dawn;directx-dxc;abseil;imgui" />

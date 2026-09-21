@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * T850 Engine — Vulkan Backend
  * VulkanVertexBuffer.cpp: Vertex Buffer implementation
@@ -28,6 +29,7 @@ namespace t850 {
   void** VulkanVertexBuffer::GetAPIObjectReference() const { return nullptr; }
 
   void VulkanVertexBuffer::Create(const Device& device, BufferDesc desc, void* initialData) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     auto* driver = GetVkDriver();
     VmaAllocator allocator = driver->GetAllocator();
@@ -67,6 +69,7 @@ namespace t850 {
       g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "vb", "");
     }
 #endif
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Vertex, 0, 1);
   }
 
   void VulkanVertexBuffer::Set(const DeviceContext& deviceContext, const unsigned stride, const unsigned offset) {
@@ -92,6 +95,7 @@ namespace t850 {
   }
 
   void VulkanVertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, sysMemCpy.size(), 0);
     if (m_mappedData && !sysMemCpy.empty()) {
       memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
       vmaFlushAllocation(GetVkDriver()->GetAllocator(), m_allocation, 0, sysMemCpy.size());
@@ -105,6 +109,7 @@ namespace t850 {
   }
 
   void VulkanVertexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, descriptor.byteWidth, 0);
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     // Allocate from per-frame ring buffer so each draw gets its own copy
     auto* driver = GetVkDriver();

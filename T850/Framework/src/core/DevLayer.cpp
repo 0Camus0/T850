@@ -81,7 +81,9 @@ bool DevLayer::EnsureCullingDebugResources() {
 #endif
   }
 
-  int shaderID = g_pBaseDriver->CreateShader(vertexSource, fragmentSource);
+  const char* vertexName = g_pBaseDriver->UsesGLSL() ? "Shaders/VS_W.glsl" : "Shaders/VS_W.hlsl";
+  const char* fragmentName = g_pBaseDriver->UsesGLSL() ? "Shaders/FS_W.glsl" : "Shaders/FS_W.hlsl";
+  int shaderID = g_pBaseDriver->CreateShader(vertexSource, fragmentSource, ShaderKey(), vertexName, fragmentName);
   m_cullingDebugShader = g_pBaseDriver->GetShaderIdx(shaderID);
   if (!m_cullingDebugShader) {
     T8_LOG_ERROR("[DevLayer] Failed to create culling debug shader");
@@ -191,7 +193,7 @@ void DevLayer::DrawCullingDebug(const SceneProps& props) {
   m_cullingDebugVB->Set(*T8DeviceContext, sizeof(CullingDebugVert), 0);
   T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
   m_cullingDebugShader->Set(*T8DeviceContext);
-  m_cullingDebugCB->UpdateFromBuffer(*T8DeviceContext, &m_cullingDebugCBuffer.WVP[0]);
+  m_cullingDebugCB->UpdateFromBuffer(*T8DeviceContext, &m_cullingDebugCBuffer);
   m_cullingDebugCB->Set(*T8DeviceContext);
   T8DeviceContext->DrawIndexed((unsigned)(sizeof(kCullingFrustumLineIndices) / sizeof(kCullingFrustumLineIndices[0])), 0, 0);
 

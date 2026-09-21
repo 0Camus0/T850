@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -87,6 +88,8 @@ namespace t850 {
   }
 
   void	D3DXTexture::LoadAPITexture(DeviceContext* context, unsigned char* buffer) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, buffer ? UploadByteSize() : 0, 0);
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     D3D11_TEXTURE2D_DESC desc = { 0 };
@@ -148,6 +151,7 @@ namespace t850 {
       this->id = -1;
       return;
     }
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, 0, 1);
 
     D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
     srvDesc.Format = desc.Format;
@@ -202,6 +206,8 @@ namespace t850 {
   }
 
   void	D3DXTexture::LoadAPITextureCompressed(unsigned char* buffer) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, buffer ? UploadByteSize() : 0, 0);
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
 
@@ -262,6 +268,7 @@ namespace t850 {
       this->id = -1;
       return;
     }
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, 0, 1);
 
     D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
     srvDesc.Format = format;
@@ -331,6 +338,7 @@ namespace t850 {
 
   void D3DXTexture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, data && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * 16 : 0, 0);
     auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
     ctx->UpdateSubresource(Tex.Get(), 0, nullptr, data, w * 16, 0);
   }

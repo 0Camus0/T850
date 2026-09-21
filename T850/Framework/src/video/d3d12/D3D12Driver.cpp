@@ -34,6 +34,11 @@ namespace t850 {
   //  Shared helpers — used by all D3D12 source files
   // ══════════════════════════════════════════════════════
   static D3D12Driver* GetD3D12Driver() { return static_cast<D3D12Driver*>(g_pBaseDriver); }
+  uint64_t D3D12Driver::ProfilingAdapterId() const {
+    if (!T8Device) return 0;
+    const auto luid = static_cast<D3D12Device*>(T8Device)->GetNativeDevice()->GetAdapterLuid();
+    return static_cast<uint64_t>(static_cast<uint32_t>(luid.HighPart)) << 32 | luid.LowPart;
+  }
   static ID3D12Device* GetNativeDevice() { return static_cast<D3D12Device*>(T8Device)->GetNativeDevice(); }
 
   namespace {
@@ -335,7 +340,8 @@ namespace t850 {
     }
 
     ComPtr<ID3D12PipelineState> psoObj;
-    HRESULT hr = device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj));
+    HRESULT hr = T8_TELEMETRY_CALL("pipeline.create.graphics", device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj)));
+    if (SUCCEEDED(hr)) T8_TELEMETRY_ADD("gpu.pipeline_creations", 1);
     if (FAILED(hr)) {
        T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d fmt0=%d",
          hr, shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs, key.rtvFormats[0]);
@@ -776,7 +782,7 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_FenceWait");
-      T8_TELEMETRY_SCOPE("gpu.d3d12.fence_wait");
+      T8_TELEMETRY_SCOPE("gpu.gpu_wait");
       // Wait for the specific backbuffer's fence to ensure its allocator is safe to reset
       const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
       if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
@@ -924,6 +930,9 @@ namespace t850 {
   }
 
   void D3D12Driver::CompleteFrame(FrameCompletionMode mode) {
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
+    T8_TELEMETRY_ADD("gpu.ring.overflows", 0);
     if (!m_frameStarted) {
       return;
     }
@@ -931,7 +940,7 @@ namespace t850 {
     if (mode == FrameCompletionMode::SubmitNoPresent || IsOffscreenEnabled()) {
       {
         T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_OffscreenCmdClose+Execute");
-        T8_TELEMETRY_SCOPE("gpu.d3d12.cmd_close_execute");
+        T8_TELEMETRY_SCOPE("gpu.submit");
         m_commandLists[m_currentBackBuffer]->Close();
         ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
         m_commandQueue->ExecuteCommandLists(1, lists);
@@ -961,7 +970,7 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_CmdClose+Execute");
-      T8_TELEMETRY_SCOPE("gpu.d3d12.cmd_close_execute");
+      T8_TELEMETRY_SCOPE("gpu.submit");
       TransitionBackBuffer(D3D12_RESOURCE_STATE_PRESENT);
       m_commandLists[m_currentBackBuffer]->Close();
       ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
@@ -970,7 +979,7 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_Present_Call");
-      T8_TELEMETRY_SCOPE("gpu.d3d12.present");
+      T8_TELEMETRY_SCOPE("gpu.present");
       UINT presentFlags = m_tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0;
       m_swapChain->Present(0, presentFlags);
     }
@@ -1269,7 +1278,7 @@ namespace t850 {
 
   bool D3D12Driver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
     T8_TELEMETRY_SCOPE("gpu.d3d12.read_rt_color_float");
-    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
+    T8_TELEMETRY_ADD("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || attachment < 0)
       return false;
     D3D12RT* rt = static_cast<D3D12RT*>(RTs[rtID]);
@@ -1564,6 +1573,7 @@ namespace t850 {
       return;
     }
     memcpy(mapped, data, dataSize);
+    RuntimeTelemetry::RecordActiveStaging(dataSize, 1);
     upload->Unmap(0, nullptr);
 
     if (IsResourceUploadBatchActive()) {
@@ -1634,6 +1644,7 @@ namespace t850 {
   D3D12_GPU_VIRTUAL_ADDRESS D3D12Driver::AllocateCBData(const void* data, UINT dataSize) {
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
+      RuntimeTelemetry::RecordRingOverflow();
       // Wrapping mid-frame would overwrite CB data still being read by earlier
       // draws in the same command list. Crash loud rather than corrupt rendering.
       T8_LOG_ERROR("[D3D12] CB ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
@@ -1647,9 +1658,12 @@ namespace t850 {
     UINT bufIdx = m_currentBackBuffer;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, dataSize);
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, dataSize);
 
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_cbRingBuffers[bufIdx]->GetGPUVirtualAddress() + m_cbRingOffset;
     m_cbRingOffset += alignedSize;
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
     if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return gpuAddr;
   }
@@ -1658,6 +1672,7 @@ namespace t850 {
     // Use 256-byte alignment to stay compatible with CBV allocations from the same ring buffer
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
+      RuntimeTelemetry::RecordRingOverflow();
       T8_LOG_ERROR("[D3D12] Ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
                    m_cbRingOffset, alignedSize, kCBRingBufferSize, m_cbRingPeakUsage);
       assert(false && "D3D12 ring buffer overflow — increase kCBRingBufferSize");
@@ -1667,9 +1682,12 @@ namespace t850 {
     UINT bufIdx = m_currentBackBuffer;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, dataSize);
+    RuntimeTelemetry::RecordActiveStaging(dataSize);
 
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_cbRingBuffers[bufIdx]->GetGPUVirtualAddress() + m_cbRingOffset;
     m_cbRingOffset += alignedSize;
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
     if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return gpuAddr;
   }

@@ -2,6 +2,10 @@
 
 #include <game/GameSelfTest.h>
 
+#include <debug/Profiler.h>
+#include <debug/RuntimeTelemetry.h>
+#include <future>
+#include <thread>
 #include <game/GameIds.h>
 #include <game/Controller.h>
 #include <game/GameLogicSystem.h>
@@ -19,6 +23,7 @@
 #include <scene/SceneConversions.h>
 #include <scene/SceneRegions.h>
 #include <scene/MutableMeshData.h>
+#include <scene/MutableMesh.h>
 #include <scene/RenderContainer.h>
 #include <scene/RenderGraph.h>
 #include <scene/RenderQuad.h>
@@ -58,7 +63,7 @@
 #include <string_view>
 #include <vector>
 
-namespace t850 { extern Device* T8Device; }
+namespace t850 { extern Device* T8Device; extern DeviceContext* T8DeviceContext; }
 
 namespace t850::game {
 namespace {
@@ -1804,6 +1809,18 @@ void TestShaderFlowConfiguration() {
 
 class NullTestDriver final : public BaseDriver {
 public:
+  const char* apiTag = "test";
+  bool mipGeneration = false;
+  bool cubeTargets = false;
+  bool depth16 = false;
+  bool comparisonSamplers = false;
+  const char* ApiTag() const override { return apiTag; }
+  bool SupportsRenderTargetMipGeneration() const override { return mipGeneration; }
+  bool SupportsCubeRenderTargets() const override { return cubeTargets; }
+  bool SupportsComparisonSamplers() const override { return comparisonSamplers; }
+  bool SupportsRenderTargetDepthFormat(int format) const override {
+    return (format == BaseRT::FD16 && depth16) || BaseDriver::SupportsRenderTargetDepthFormat(format);
+  }
   std::vector<std::string> events;
   std::vector<ComputePipelineDesc> computePipelines;
   void InitDriver() override {}
@@ -1813,13 +1830,13 @@ public:
   void DestroyDriver() override {}
   void SetWindow(void*) override {}
   void SetDimensions(int, int) override {}
-  void Clear() override {}
+  void Clear() override { events.push_back("clear"); }
   void SwapBuffers() override {}
-  void SetBlendState(BlendStates) override {}
+  void SetBlendState(BlendStates state) override { events.push_back("blend:" + std::to_string(state)); }
   void SetDepthStencilState(DepthStencilStates) override {}
   void SaveScreenshot(std::string) override {}
   void SetCullFace(FaceCulling) override {}
-  void PopRT() override {}
+  void PopRT() override { events.push_back("pop"); CurrentRT = -1; }
   void FlushGPUResources() override { events.push_back("flush"); }
   bool SupportsComputeShaders() const override { return true; }
   bool SupportsComputeTextures() const override { return true; }
@@ -1836,8 +1853,262 @@ public:
   }
 };
 
+void TestProfilerAccounting() {
+  NullTestDriver driver;
+  driver.m_currentAPI = GraphicsApi::WEBGPU;
+  Profiler profiler;
+  profiler.Init(&driver, 4);
+  profiler.BeginFrame();
+  profiler.BeginScope("Outer");
+  profiler.AddDrawCall(3);
+  profiler.BeginCPUScope("Inner");
+  profiler.AddDrawCall(6);
+  profiler.EndCPUScope();
+  profiler.AddDrawCall(9);
+  profiler.EndScope();
+  profiler.EndFrame();
+  const auto& scopes = profiler.GetScopes();
+  Require(scopes.size() == 2, "profiler did not register both nested scopes");
+  Require(scopes[0].cpuSampleCount == 1 && scopes[1].cpuSampleCount == 1,
+    "profiler did not close each nested scope exactly once");
+  Require(scopes[0].drawCalls == 2 && scopes[1].drawCalls == 1,
+    "profiler attributed a draw to a closed inner scope");
+  Require(scopes[0].CpuAvgMs() >= scopes[1].CpuAvgMs(),
+    "profiler outer inclusive duration is shorter than its child");
+}
+
+  int64_t gProfilerTestTicks = 0;
+
+  int64_t ProfilerTestClock() { return gProfilerTestTicks; }
+
+  class TestProfilerGpuBackend final : public ProfilerGpuBackend {
+  public:
+    bool ready = false;
+    bool drop = false;
+    std::vector<int> begins;
+    std::vector<int> ends;
+    std::vector<std::vector<ProfileFrameQuery>> pending;
+    std::vector<ProfileFrameQuery> lastFrame;
+
+    bool Init(BaseDriver*, int) override { return true; }
+    const char* Name() const override { return "test"; }
+    void BeginFrame() override {}
+    void BeginScope(int queryIndex) override { begins.push_back(queryIndex); }
+    void EndScope(int queryIndex) override { ends.push_back(queryIndex); }
+    void EndFrame(int count, const std::vector<ProfileFrameQuery>& queries) override {
+      lastFrame.assign(queries.begin(), queries.begin() + count);
+      pending.push_back(lastFrame);
+    }
+    void Resolve(std::vector<ProfileScope>& scopes) override {
+      if (!ready) return;
+      if (!drop) {
+        for (const auto& frame : pending) {
+    for (const auto& query : frame) {
+      if (query.cpuOnly || query.scopeIndex < 0 ||
+          query.scopeIndex >= static_cast<int>(scopes.size())) continue;
+      auto& scope = scopes[query.scopeIndex];
+      if (scope.generation != query.generation) continue;
+      scope.gpuTotalMs += 7.0;
+      ++scope.gpuSampleCount;
+    }
+        }
+      }
+      pending.clear();
+    }
+  };
+
+  void TestProfilerDeterministicSamples() {
+    const auto run = [](bool withGpu) {
+      Profiler profiler;
+      auto backend = withGpu ? std::make_unique<TestProfilerGpuBackend>() : nullptr;
+      auto* gpu = backend.get();
+      profiler.Init(nullptr, 8, std::move(backend), ProfilerTestClock, 1000);
+      gProfilerTestTicks = 0;
+      profiler.BeginFrame();
+      const auto outer = profiler.BeginScope("Outer");
+      profiler.AddDrawCall(3);
+      gProfilerTestTicks = 10;
+      const auto inner = profiler.BeginCPUScope("Inner");
+      profiler.AddDrawCall(6);
+      gProfilerTestTicks = 30;
+      profiler.EndCPUScope(inner);
+      profiler.AddDrawCall(9);
+      gProfilerTestTicks = 40;
+      const auto nestedGpu = profiler.BeginScope("NestedGPU");
+      gProfilerTestTicks = 50;
+      profiler.EndScope(nestedGpu);
+      gProfilerTestTicks = 90;
+      profiler.EndScope(outer);
+      gProfilerTestTicks = 95;
+      const auto sequential = profiler.BeginScope("Inner");
+      gProfilerTestTicks = 100;
+      profiler.EndScope(sequential);
+      profiler.AddDrawCall(300);
+      profiler.EndFrame();
+      const auto& scopes = profiler.GetScopes();
+      Require(scopes.size() == 4 && scopes[1].parentIndex == 0 && scopes[2].parentIndex == 0 &&
+        scopes[3].parentIndex == -1, "profiler lost the scope tree or merged different parents");
+      Require(scopes[0].CpuAvgMs() == 90.0 && scopes[1].CpuAvgMs() == 20.0 &&
+        scopes[2].CpuAvgMs() == 10.0 && scopes[3].CpuAvgMs() == 5.0,
+        "profiler inclusive or sequential timing is incorrect");
+      Require(scopes[0].drawCalls == 2 && scopes[0].triangles == 4 &&
+        scopes[1].drawCalls == 1 && scopes[1].triangles == 2 && scopes[3].drawCalls == 0,
+        "profiler draw attribution escaped the active scope");
+      for (const auto& scope : scopes) {
+        Require(scope.cpuSampleCount == 1 && scope.gpuSampleCount == 0,
+          "CPU samples depend on unavailable GPU results");
+      }
+      if (gpu) {
+        Require(gpu->begins == std::vector<int>({0, 2, 3}) &&
+          gpu->ends == std::vector<int>({2, 0, 3}),
+          "profiler reused a query slot or issued GPU timestamps for a CPU-only scope");
+        profiler.BeginFrame();
+        profiler.EndFrame();
+        Require(scopes[0].gpuSampleCount == 0 && scopes[0].CpuAvgMs() == 90.0,
+          "delayed GPU results changed CPU accounting");
+        gpu->ready = true;
+        profiler.BeginFrame();
+        profiler.EndFrame();
+        Require(scopes[0].gpuSampleCount == 1 && scopes[0].GpuAvgMs() == 7.0 &&
+          scopes[1].gpuSampleCount == 0 && scopes[0].CpuAvgMs() == 90.0,
+          "GPU and CPU sample denominators were mixed");
+        gpu->drop = true;
+        profiler.BeginFrame();
+        gProfilerTestTicks = 110;
+        profiler.BeginScope("Outer");
+        gProfilerTestTicks = 120;
+        profiler.EndScope();
+        profiler.EndFrame();
+        profiler.BeginFrame();
+        profiler.EndFrame();
+        Require(scopes[0].cpuSampleCount == 2 && scopes[0].gpuSampleCount == 1 &&
+          scopes[0].CpuAvgMs() == 50.0 && scopes[0].GpuAvgMs() == 7.0,
+          "dropping GPU results changed the CPU average");
+      }
+      Require(profiler.GetWarningCount() == 0, "balanced profiler scopes produced a warning");
+    };
+    run(false);
+    run(true);
+  }
+
+  void TestProfilerScopeGuards() {
+    Profiler profiler;
+    auto backend = std::make_unique<TestProfilerGpuBackend>();
+    auto* gpu = backend.get();
+    profiler.Init(nullptr, 2, std::move(backend), ProfilerTestClock, 1000);
+    gProfilerTestTicks = 0;
+    profiler.BeginFrame();
+    {
+      T8_PROFILE_SCOPE(&profiler, "Outer");
+      gProfilerTestTicks = 10;
+      {
+        T8_PROFILE_CPU_SCOPE(&profiler, "Inner");
+        {
+    T8_PROFILE_SCOPE(&profiler, "Overflow");
+    profiler.AddDrawCall(300);
+        }
+        gProfilerTestTicks = 20;
+      }
+      profiler.AddDrawCall(3);
+      gProfilerTestTicks = 30;
+    }
+    profiler.EndScope();
+    profiler.EndFrame();
+    Require(profiler.GetWarningCount() == 2, "overflow and unmatched end were not diagnosed");
+    Require(profiler.GetScopes()[0].CpuAvgMs() == 30.0 &&
+      profiler.GetScopes()[1].CpuAvgMs() == 10.0 &&
+      profiler.GetScopes()[0].drawCalls == 1 && profiler.GetScopes()[1].drawCalls == 0,
+      "overflow guard closed or attributed work to another scope");
+    Require(gpu->begins == std::vector<int>({0}) && gpu->ends == std::vector<int>({0}),
+      "overflow corrupted GPU begin/end pairing");
+    profiler.BeginFrame();
+    profiler.BeginScope("RawOuter");
+    profiler.BeginScope("RawInner");
+    profiler.BeginScope("RawOverflow");
+    profiler.EndScope();
+    profiler.EndScope();
+    profiler.EndScope();
+    profiler.EndFrame();
+    Require(profiler.GetScopes()[2].cpuSampleCount == 1 &&
+      profiler.GetScopes()[3].cpuSampleCount == 1,
+      "non-token overflow end closed the wrong scope");
+    profiler.BeginFrame();
+    const auto outer = profiler.BeginScope("MismatchOuter");
+    const auto inner = profiler.BeginCPUScope("MismatchInner");
+    const auto warnings = profiler.GetWarningCount();
+    profiler.EndScope(outer);
+    profiler.EndScope(inner);
+    profiler.EndCPUScope(inner);
+    profiler.EndScope(outer);
+    Require(profiler.GetWarningCount() == warnings + 2,
+      "out-of-order or wrong-kind scope end was not diagnosed");
+    profiler.EndFrame();
+    profiler.BeginFrame();
+    const auto unbalanced = profiler.BeginScope("Unbalanced");
+    profiler.EndFrame();
+    Require(profiler.GetScopes().back().cpuSampleCount == 0 &&
+      gpu->lastFrame.front().scopeIndex == -1 && profiler.GetWarningCount() == warnings + 3,
+      "unbalanced scope was not discarded and diagnosed");
+    profiler.BeginFrame();
+    const auto current = profiler.BeginScope("CurrentFrame");
+    profiler.EndScope(unbalanced);
+    profiler.EndScope(current);
+    profiler.EndFrame();
+    Require(profiler.GetScopes().back().cpuSampleCount == 1,
+      "a guard from an older frame closed the new frame scope");
+  }
+
+  void TestProfilerResetGeneration() {
+    Profiler profiler;
+    auto backend = std::make_unique<TestProfilerGpuBackend>();
+    auto* gpu = backend.get();
+    profiler.Init(nullptr, 8, std::move(backend), ProfilerTestClock, 1000);
+    gProfilerTestTicks = 0;
+    profiler.BeginFrame();
+    profiler.BeginScope("BeforeReset");
+    gProfilerTestTicks = 10;
+    profiler.EndScope();
+    profiler.EndFrame();
+    profiler.Reset();
+    profiler.BeginFrame();
+    {
+      ProfileScopeGuard staleGuard(&profiler, "DiscardedByReset");
+      gProfilerTestTicks = 20;
+      profiler.Reset();
+      gProfilerTestTicks = 30;
+      profiler.BeginScope("AfterReset");
+    }
+    gProfilerTestTicks = 50;
+    profiler.EndScope();
+    profiler.EndFrame();
+    Require(gpu->lastFrame.size() == 2 && gpu->lastFrame[0].scopeIndex == -1 &&
+      gpu->lastFrame[1].scopeIndex == 0, "reset reused an in-flight query slot");
+    gpu->ready = true;
+    profiler.BeginFrame();
+    profiler.EndFrame();
+    const auto& scope = profiler.GetScopes().front();
+    Require(profiler.GetScopes().size() == 1 && scope.name == "AfterReset" &&
+      scope.cpuSampleCount == 1 && scope.CpuAvgMs() == 20.0 &&
+      scope.gpuSampleCount == 1 && scope.GpuAvgMs() == 7.0,
+      "pre-reset GPU results or a stale guard were attributed to a new scope");
+    Require(gpu->begins == std::vector<int>({0, 0, 1}) &&
+      gpu->ends == std::vector<int>({0, 0, 1}), "reset left a GPU query open");
+    Require(profiler.GetWarningCount() == 0, "reset generation caused spurious warnings");
+    profiler.Destroy();
+    profiler.Init(nullptr, 2, nullptr, ProfilerTestClock, 1000);
+    profiler.BeginFrame();
+    profiler.BeginCPUScope("Reinitialized");
+    profiler.EndCPUScope();
+    profiler.EndFrame();
+    Require(profiler.GetScopes().size() == 1 && profiler.GetScopes()[0].cpuSampleCount == 1 &&
+      profiler.GetFrameCount() == 1, "profiler reinitialization retained stale records");
+  }
+
 class LifecycleTestDevice final : public Device {
 public:
+  unsigned allocations = 0;
+  unsigned failAllocation = 0;
+  std::vector<bool> requestedMips;
   explicit LifecycleTestDevice(std::vector<std::string>& events) : events(events) {}
   void* GetAPIObject() const override { return nullptr; }
   void** GetAPIObjectReference() const override { return nullptr; }
@@ -1849,7 +2120,10 @@ public:
   Texture* CreateCubeMap(const unsigned char*, int, int) override { return nullptr; }
   Texture* CreateFloatTexture(int, int, const float*) override { return nullptr; }
   Texture* CreateFloatCubeMap(int, int, const float*) override { return nullptr; }
-  BaseRT* CreateRT(int count, int, int, int, int, bool, bool) override {
+  BaseRT* CreateRT(int count, int, int, int, int, bool mips, bool) override {
+    ++allocations;
+    requestedMips.push_back(mips);
+    if (allocations == failAllocation) return nullptr;
     class NullRenderTarget final : public BaseRT {
     public:
       explicit NullRenderTarget(std::vector<std::string>& events) : events(events) { pDepthTexture = nullptr; }
@@ -2095,7 +2369,7 @@ void TestShaderPrecompilerContract() {
     Require(ResourceLocator::Instance().WriteText(recorded, original) && ShaderPermutationDump::Flush(),
       "cannot recover recorder after failed merge");
     Require(rejectedMerge && preserved, "recorder overwrote malformed input");
-  #if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+  #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
     const auto packageRoot = files.Add("_web_packages");
     std::filesystem::create_directories(packageRoot);
     webgpu::ShaderRequest shaderRequest;
@@ -2332,6 +2606,181 @@ void TestMinecraftHouseAuthoring() {
       "house torch positions do not flank the rear door and face the front window");
 }
 
+void TestPassFrustumReuse() {
+  auto& tracker = MeshDrawStateTracker::Get();
+  XMATRIX44 projection;
+  projection.Identity();
+  const auto check = [&]() {
+    XVECTOR3 expected[6], actual[6];
+    RenderMesh::ExtractFrustumPlanes(projection, expected);
+    tracker.GetFrustumPlanes(projection, actual);
+    for (int plane = 0; plane < 6; ++plane) {
+      Require(actual[plane].x == expected[plane].x && actual[plane].y == expected[plane].y &&
+        actual[plane].z == expected[plane].z && actual[plane].w == expected[plane].w,
+        "pass frustum cache changed a culling plane");
+    }
+  };
+  tracker.Begin();
+  check();
+  check();
+  projection.m11 = 2;
+  projection.m41 = 3;
+  check();
+  tracker.End();
+  projection.m22 = 3;
+  check();
+  tracker.Begin();
+  projection.Identity();
+  check();
+  tracker.End();
+}
+
+void TestGraphMeshPreparation() {
+  class TestTexture final : public Texture {
+  public:
+    void LoadAPITexture(DeviceContext*, unsigned char*) override {}
+    void LoadAPITextureCompressed(unsigned char*) override {}
+    void DestroyAPITexture() override {}
+    void SetTextureParams() override {}
+    void GetFormatBpp(unsigned int&, unsigned int&, unsigned int&) override {}
+    void Set(const DeviceContext&, unsigned int, std::string) override {}
+    void SetSampler(const DeviceContext&, unsigned int) override {}
+  } firstTexture, nextTexture;
+  class TestContext final : public DeviceContext {
+  public:
+    void* GetAPIObject() const override { return nullptr; }
+    void** GetAPIObjectReference() const override { return nullptr; }
+    void release() override {}
+    void SetPrimitiveTopology(Topology::E) override {}
+    void DrawIndexed(unsigned, unsigned, unsigned) override {}
+  } context;
+  class PassPrimitive final : public PrimitiveBase {
+  public:
+    bool eligible = false;
+    unsigned draws = 0;
+    Texture* sampled = nullptr;
+    Texture* environment = nullptr;
+    void Load(const char*) override {}
+    void Create() override {}
+    void Transform(float*) override {}
+    bool MayDrawInPass(uint8_t) const override { return eligible; }
+    void Draw(float*, float*) override { ++draws; sampled = Textures[7]; environment = EnvMap; }
+    void Destroy() override {}
+  } primitive;
+  NullTestDriver driver;
+  driver.width = 64;
+  driver.height = 64;
+  driver.Textures.push_back(&firstTexture);
+  driver.Textures.push_back(&nextTexture);
+  LifecycleTestDevice device(driver.events);
+  struct RestoreDevice {
+    Device* device = T8Device;
+    DeviceContext* context = T8DeviceContext;
+    ~RestoreDevice() { T8Device = device; T8DeviceContext = context; }
+  } restore;
+  T8Device = &device;
+  T8DeviceContext = &context;
+  XMATRIX44 viewProjection;
+  viewProjection.Identity();
+  PrimitiveInst meshes[2];
+  for (auto& mesh : meshes) mesh.CreateInstance(&primitive, &viewProjection);
+  PrimitiveInst quads[8];
+  SceneProps props;
+  EnvironmentMapSet environment;
+  environment.SetFallback(0);
+  TempSceneFiles files;
+  const auto graphPath = files.Add("_mesh_preparation.json");
+  const auto loadGraph = [&](RenderGraph& graph, bool callback) {
+    std::ofstream output(graphPath);
+    output << R"({"render_targets":[
+      {"name":"Input","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[64,64]},
+      {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[64,64]}],
+      "passes":[{"name":"Mesh Pass","target":"Output","clear":true,
+      "state":{"blend":"ALPHA_BLEND"},"post_state":{"blend":"BLEND_OPAQUE"},
+      "inputs":[{"source":"Input:COLOR0","slot":7}],"bind_environment_map":true,"draws":[)";
+    if (callback) output << R"({"type":"callback","callback":"replace-input"},)";
+    output << R"({"type":"mesh","mesh_indices":[],"signature":"FORWARD_PASS"}]}]})";
+    output.close();
+    Require(graph.Load(graphPath.string()), "graph preparation fixture did not load");
+    Require(graph.CreateRenderTargets(&driver, props), "graph preparation targets did not allocate");
+  };
+  const auto execute = [&](RenderGraph& graph, RenderGraph::CustomDrawCallback callback = {}) {
+    graph.Execute(&driver, props, meshes, 2, quads, nullptr, nullptr, nullptr, environment, -1, callback);
+  };
+  RenderGraph graph;
+  loadGraph(graph, false);
+  const int input = graph.GetRTHandle("Input");
+  driver.RTs[input]->vColorTextures[0] = &firstTexture;
+  meshes[0].SetTexture(&nextTexture, 7);
+  driver.events.clear();
+  execute(graph);
+  Require(primitive.draws == 0 && meshes[0].Textures[7] == &nextTexture,
+    "empty mesh pass performed resource binding or drawing");
+  Require(driver.events == std::vector<std::string>{"blend:" + std::to_string(BaseDriver::ALPHA_BLEND),
+      "clear", "pop", "blend:" + std::to_string(BaseDriver::BLEND_OPAQUE)},
+    "empty mesh pass lost clear, target-pop or post-state side effects");
+  primitive.eligible = true;
+  execute(graph);
+  Require(primitive.draws == 2 && primitive.sampled == &firstTexture && primitive.environment == &firstTexture,
+    "eligible meshes were skipped or shared inputs not bound");
+  driver.RTs[input]->vColorTextures[0] = &nextTexture;
+  environment.SetFallback(1);
+  execute(graph);
+  Require(primitive.draws == 4 && primitive.sampled == &nextTexture && primitive.environment == &nextTexture,
+    "per-pass binding cache retained a stale texture across executions");
+  meshes[0].Visible = false;
+  execute(graph);
+  Require(primitive.draws == 5, "invisible mesh reached draw preparation");
+  graph.DestroyRenderTargets(&driver);
+  loadGraph(graph, true);
+  const int recreatedInput = graph.GetRTHandle("Input");
+  driver.RTs[recreatedInput]->vColorTextures[0] = &firstTexture;
+  primitive.eligible = false;
+  unsigned callbacks = 0;
+  execute(graph, [&](const std::string&) {
+    ++callbacks;
+    primitive.eligible = true;
+    driver.RTs[recreatedInput]->vColorTextures[0] = &nextTexture;
+  });
+  Require(callbacks == 1 && primitive.draws == 6 && primitive.sampled == &nextTexture,
+    "callback side effects or post-callback resource replacement were skipped");
+  graph.DestroyRenderTargets(&driver);
+
+  RenderMesh classified;
+  classified.Info.resize(1);
+  classified.Info[0].SubSets.resize(1);
+  auto& subset = classified.Info[0].SubSets[0];
+  subset.AlphaMode = 0;
+  subset.TransmissionFactor = 0;
+  Require(!classified.MayDrawInPass(PassType::FORWARD) && classified.MayDrawInPass(PassType::GBUFFER),
+    "opaque mesh eligibility differs from its original material filter");
+  subset.AlphaMode = 1;
+  Require(!classified.MayDrawInPass(PassType::FORWARD) && classified.MayDrawInPass(PassType::SHADOW_MAP),
+    "masked material lost its shadow participation");
+  subset.AlphaMode = 2;
+  Require(classified.MayDrawInPass(PassType::FORWARD) && !classified.MayDrawInPass(PassType::GBUFFER),
+    "blended mesh eligibility differs from the rendering filter");
+  subset.AlphaMode = 0;
+  subset.TransmissionFactor = 1;
+  Require(classified.MayDrawInPass(PassType::FORWARD), "transmission mesh was rejected from forward rendering");
+  MaterialAsset material;
+  material.params.alphaMode = 0;
+  material.params.transmissionFactor = 0;
+  subset.matAsset = &material;
+  Require(!classified.MayDrawInPass(PassType::FORWARD), "legacy material fields overrode shared material eligibility");
+  material.params.alphaMode = 2;
+  Require(classified.MayDrawInPass(PassType::FORWARD), "updated shared blend material was ignored");
+  material.params.alphaMode = 0;
+  material.params.transmissionFactor = 0.5f;
+  Require(classified.MayDrawInPass(PassType::FORWARD), "shared transmission material was ignored");
+  subset.matAsset = nullptr;
+  MutableMesh emptyMutable;
+  Require(!emptyMutable.MayDrawInPass(PassType::FORWARD) && !emptyMutable.MayDrawInPass(PassType::SHADOW_MAP),
+    "unready mutable mesh claimed drawable work");
+  NullTestPrimitive unknown;
+  Require(unknown.MayDrawInPass(PassType::FORWARD), "unknown primitive must conservatively remain drawable");
+}
+
 void TestTypedComputeGraphValidation() {
   TempSceneFiles files;
   constexpr std::array<const char*, 8> maintainedGraphs = {
@@ -2508,11 +2957,363 @@ void TestTypedComputeGraphValidation() {
           "compute graph accepted an incomplete binding layout");
 }
 
+void TestRenderTargetDescriptors() {
+  TempSceneFiles files;
+  const auto load = [&](const std::string& target) {
+    const auto path = files.Add("_render_target_validation.json");
+    { std::ofstream output(path); output << "{\"render_targets\":[" << target << "],\"passes\":[]}"; }
+    RenderGraph graph;
+    return graph.Load(path.string());
+  };
+  Require(load(R"({"name":"Valid","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[8,8]})"),
+          "valid render target descriptor was rejected");
+  for (const auto* descriptor : {
+      R"({"name":"UnknownColor","color_count":1,"color_format":"TYPO","depth_format":"NONE","size":[8,8]})",
+      R"({"name":"UnknownDepth","color_count":1,"color_format":"RGBA8","depth_format":"TYPO","size":[8,8]})",
+      R"({"name":"UnknownAttachment","color_count":1,"color_formats":["TYPO"],"depth_format":"NONE","size":[8,8]})",
+      R"({"name":"WrongCount","color_count":2,"color_formats":["RGBA8"],"depth_format":"NONE","size":[8,8]})",
+      R"({"name":"NegativeCount","color_count":-1,"depth_format":"F32","size":[8,8]})"}) {
+    Require(!load(descriptor), std::string("malformed render target silently accepted: ") + descriptor);
+  }
+}
+
+void TestRenderTargetCapabilities() {
+  TempSceneFiles files;
+  NullTestDriver driver;
+  driver.width = driver.height = 16;
+  LifecycleTestDevice device(driver.events);
+  struct DeviceGuard {
+    Device* previous = T8Device;
+    ~DeviceGuard() { T8Device = previous; }
+  } guard;
+  T8Device = &device;
+  std::string diagnostic;
+  for (const auto* api : {"d3d11", "d3d12", "vulkan", "gl", "webgpu"}) {
+    driver.apiTag = api;
+    Require(!driver.ValidateRenderTarget(1, -7, BaseRT::F32, 16, 16, false, {}, diagnostic) &&
+      diagnostic == "[InvalidRenderTarget] color_format=-7", "invalid formats have backend-dependent diagnostics");
+    Require(driver.CreateRT(1, -7, BaseRT::F32, 16, 16) == -1 && device.allocations == 0,
+      "invalid direct target request reached GPU allocation");
+    Require(!driver.ValidateRenderTarget(0, BaseRT::NOTHING, BaseRT::CUBE_F32, 16, 16, false, {}, diagnostic) &&
+      diagnostic.find(std::string("backend=") + api) != std::string::npos &&
+      diagnostic.find("cube render targets") != std::string::npos,
+      "missing named cube capability diagnostic");
+    Require(!driver.ValidateShaderComparisonSamplers(true, "ComparisonFixture", "fragment", 42, diagnostic) &&
+      diagnostic.find("ComparisonFixture") != std::string::npos &&
+      diagnostic.find("stage=fragment key=42 feature=comparison_sampler") != std::string::npos,
+      "comparison sampler rejection lost shader context");
+  }
+  driver.cubeTargets = driver.depth16 = driver.comparisonSamplers = true;
+  Require(driver.ValidateRenderTarget(0, BaseRT::NOTHING, BaseRT::CUBE_F32, 16, 16, false, {}, diagnostic),
+    "shared validation removed supported cube targets");
+  Require(driver.ValidateRenderTarget(0, BaseRT::NOTHING, BaseRT::FD16, 16, 16, false, {}, diagnostic),
+    "shared validation removed supported depth16");
+  Require(driver.ValidateShaderComparisonSamplers(true, "ComparisonFixture", "fragment", 42, diagnostic),
+    "shared validation removed supported comparison samplers");
+  driver.cubeTargets = driver.depth16 = false;
+  const auto load = [&](RenderGraph& graph, const std::string& depth, bool mips) {
+    const auto path = files.Add("_capability_graph.json");
+    std::ofstream output(path);
+    output << "{\"render_targets\":["
+      "{\"name\":\"First\",\"color_count\":1,\"color_format\":\"RGBA8\",\"size\":[16,16]},"
+      "{\"name\":\"Second\",\"color_count\":1,\"color_format\":\"RGBA8\",\"size\":[16,16],"
+      "\"depth_format\":\"" << depth << "\",\"generate_mips\":" << (mips ? "true" : "false") << "}],"
+      "\"passes\":[{\"name\":\"CapabilityPass\",\"target\":\"Second\",\"draws\":[]}]}";
+    output.close();
+    Require(graph.Load(path.string()), "capability graph failed structural load");
+  };
+  SceneProps props;
+  RenderGraph graph;
+  load(graph, "FD16", false);
+  Require(!graph.CreateRenderTargets(&driver, props) && device.allocations == 0 && graph.GetNodes().empty(),
+    "graph did not preflight every target before allocating");
+  load(graph, "NONE", true);
+  Require(graph.CreateRenderTargets(&driver, props) && device.requestedMips == std::vector<bool>({false, false}),
+    "unsupported mip generation did not take the explicit single-level fallback");
+  graph.DestroyRenderTargets(&driver);
+  device.allocations = 0;
+  device.requestedMips.clear();
+  driver.mipGeneration = true;
+  Require(graph.CreateRenderTargets(&driver, props) && device.requestedMips == std::vector<bool>({false, true}),
+    "mip fallback disabled a capable backend");
+  graph.DestroyRenderTargets(&driver);
+  device.allocations = 0;
+  device.failAllocation = 2;
+  driver.events.clear();
+  Require(!graph.CreateRenderTargets(&driver, props) && graph.GetNodes().empty() &&
+    graph.GetRTHandle("First") == -1 &&
+    driver.events == std::vector<std::string>({"flush", "destroy-target"}),
+    "allocation failure did not roll back graph targets");
+}
+
+  class TestTexture final : public Texture {
+  public:
+    void LoadAPITexture(DeviceContext*, unsigned char*) override {}
+    void LoadAPITextureCompressed(unsigned char*) override {}
+    void DestroyAPITexture() override {}
+    void SetTextureParams() override {}
+    void GetFormatBpp(unsigned&, unsigned&, unsigned&) override {}
+    void Set(const DeviceContext&, unsigned, std::string) override {}
+    void SetSampler(const DeviceContext&, unsigned) override {}
+  };
+
+void TestRenderTargetLayout() {
+  TestTexture depth;
+  NullTestDriver driver;
+  LifecycleTestDevice device(driver.events);
+  std::unique_ptr<BaseRT> target(device.CreateRT(1, BaseRT::RGBA8, BaseRT::F32, 8, 8, false, false));
+  target->number_RT = 1;
+  target->color_format = BaseRT::RGBA8;
+  target->depth_format = BaseRT::F32;
+  target->pDepthTexture = &depth;
+  const auto surface = driver.GetRenderTargetLayout();
+  Require(surface.surface && surface.colorFormats[0] == BaseRT::RGBA8, "surface layout missing");
+  driver.RTs.push_back(target.get());
+  driver.CurrentRT = 0;
+  const auto privateTarget = driver.GetRenderTargetLayout();
+  Require(!driver.IsCurrentOffscreenTarget() && !privateTarget.surface &&
+          privateTarget.HasCompatibleAttachments(surface), "private RT compatibility depends on ring membership");
+  driver.RTs.push_back(target.get());
+  driver.CurrentRT = 1;
+  Require(driver.GetRenderTargetLayout() == privateTarget, "equivalent target slots changed pipeline compatibility");
+  target->color_format = BaseRT::RGB8;
+  Require(driver.GetRenderTargetLayout() == privateTarget, "RGB-in-RGBA target representation was not normalized");
+  target->perColorFormats = {BaseRT::RGBA16F};
+  Require(!driver.GetRenderTargetLayout().HasCompatibleAttachments(privateTarget), "HDR format change was ignored");
+  target->pDepthTexture = nullptr;
+  Require(driver.GetRenderTargetLayout().depthFormat == BaseRT::NOTHING, "absent native depth reported as present");
+  target->pDepthTexture = &depth;
+  target->depth_format = BaseRT::FD16;
+  Require(driver.GetRenderTargetLayout().depthFormat == BaseRT::FD16, "depth precision was ignored");
+  target->depth_format = BaseRT::NOTHING;
+  Require(driver.GetRenderTargetLayout().depthFormat == BaseRT::F32, "implicit native depth attachment was omitted");
+  target->number_RT = 2;
+  target->perColorFormats = {BaseRT::RGBA16F, BaseRT::R8};
+  Require(driver.GetRenderTargetLayout().colorCount == 2 && driver.GetRenderTargetLayout().colorFormats[1] == BaseRT::R8,
+          "MRT attachment layout was truncated");
+  driver.CurrentRT = 2;
+  Require(driver.GetRenderTargetLayout().colorCount == 0, "invalid target fabricated a surface layout");
+  driver.RTs.clear();
+}
+
+void TestTelemetryPublication() {
+  using Telemetry = RuntimeTelemetry;
+#if !T850_ENABLE_PROFILING
+  {
+    Config disabledConfig;
+    disabledConfig.flags.runtimeTelemetry = true;
+    Telemetry::InitializeFromConfig(disabledConfig);
+    unsigned sideEffects = 0;
+    T8_TELEMETRY_ADD("disabled.counter", ++sideEffects);
+    T8_UPLOAD_SCOPE(Telemetry::UploadResource::Vertex, ++sideEffects, 0);
+    const auto value = T8_TELEMETRY_CALL("disabled.operation", ++sideEffects);
+    Require(value == 1 && sideEffects == 1 && !Telemetry::IsEnabled() && Telemetry::Snapshot().empty(),
+            "compiled-out telemetry changed operation evaluation or recorded instrumentation");
+    return;
+  }
+#endif
+  TempSceneFiles files;
+  const auto directory = files.Add("_telemetry_output");
+  std::filesystem::create_directories(directory);
+  Config config;
+  config.flags.runtimeTelemetry = true;
+  config.runtimeTelemetryFrequencyFrames = 0;
+  config.runtimeTelemetryOutputPath = (directory / "report.json").string();
+  struct RestoreTelemetry {
+    ~RestoreTelemetry() { RuntimeTelemetry::InitializeFromConfig(g_config); }
+  } restore;
+  const auto scopeId = Telemetry::RegisterScope("test.telemetry.phase");
+  const auto counterId = Telemetry::RegisterCounter("test.telemetry.count");
+  Telemetry::InitializeFromConfig(config);
+    unsigned operationCalls = 0;
+    const auto result = T8_TELEMETRY_CALL("test.startup.operation", ++operationCalls);
+    Require(result == 1 && operationCalls == 1, "timed operation changed expression evaluation");
+    const auto startup = Telemetry::Snapshot();
+    Require(startup.size() == 1 && startup[0].frameIndex == UINT64_MAX && startup[0].scopes[0].second.count == 1,
+      "startup operation was not recorded outside runtime frames");
+  Telemetry::BeginFrame(10, 0.016);
+  Telemetry::AddCounter(counterId, 0);
+  const auto slowPaths = Telemetry::SlowPathEntries();
+  for (unsigned index = 0; index < 1000; ++index) {
+    Telemetry::RecordScope(scopeId, 0.25);
+    Telemetry::AddCounter(counterId, 1);
+  }
+  Require(Telemetry::SlowPathEntries() == slowPaths, "registered telemetry hot path entered allocation/locking registration");
+  {
+    Telemetry::UploadSourceGuard source(Telemetry::UploadSource::Streaming);
+    Telemetry::UploadGuard upload(Telemetry::UploadResource::Vertex, 64, 128);
+    upload.Reallocated();
+    Telemetry::UploadGuard nested(Telemetry::UploadResource::Vertex, 64, 128);
+  }
+  std::promise<void> entered;
+  std::promise<void> finish;
+  auto finishFuture = finish.get_future();
+  std::thread worker([&] {
+    Telemetry::ScopedTimer timer(scopeId);
+    Telemetry::UploadSourceGuard source(Telemetry::UploadSource::Streaming);
+    Telemetry::UploadGuard upload(Telemetry::UploadResource::Index, 32);
+    entered.set_value();
+    finishFuture.wait();
+    Telemetry::UploadSourceGuard changedSource(Telemetry::UploadSource::AssetLoad);
+    Telemetry::RecordActiveStaging(96, 1);
+  });
+  entered.get_future().wait();
+  Telemetry::EndFrame();
+  Telemetry::BeginFrame(11, 0.016);
+  finish.set_value();
+  worker.join();
+  Telemetry::EndFrame();
+  const auto snapshot = Telemetry::Snapshot();
+  const auto frame = std::find_if(snapshot.begin(), snapshot.end(), [](const auto& value) { return value.frameIndex == 10; });
+  Require(frame != snapshot.end() && frame->scopes.size() == 1 && frame->scopes[0].second.count == 1001,
+          "telemetry lost a nested/late worker sample");
+  const auto counterValue = [](const auto& frame, const char* name) {
+    const auto found = std::find_if(frame.counters.begin(), frame.counters.end(), [&](const auto& item) { return item.first == name; });
+    return found == frame.counters.end() ? -1.0 : found->second;
+  };
+  Require(frame->latePublications == 1 && counterValue(*frame, "test.telemetry.count") == 1000,
+          "telemetry reassigned late work or corrupted fixed-slot counters");
+  Require(frame->uploads[1].logicalBytes == 64 && frame->uploads[1].stagingBytes == 128 &&
+          frame->uploads[1].calls == 1 && frame->uploads[1].reallocations == 1 && frame->uploads[1].largestBytes == 64,
+          "telemetry upload resource/source matrix is incorrect");
+  Require(frame->uploads[4].logicalBytes == 32 && frame->uploads[4].stagingBytes == 96 &&
+          frame->uploads[4].calls == 1 && snapshot.back().uploads[4].calls == 0,
+          "late staging lost its original upload frame/source");
+  Require(Telemetry::DroppedRecords() == 0, "telemetry unexpectedly dropped records");
+  Telemetry::Shutdown();
+  std::string report;
+  for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+    std::ifstream input(entry.path());
+    report.assign(std::istreambuf_iterator<char>(input), {});
+  }
+  Require(!report.empty() && !glz::validate_json(report), "telemetry report is not valid JSON");
+  Require(report.find("\"startupTiming\"") != std::string::npos &&
+          report.find("\"firstRuntimeFrameStartMs\":null") == std::string::npos &&
+          report.find("\"firstRuntimeFrameCompleteMs\":null") == std::string::npos,
+          "telemetry omitted the first real frame startup milestones");
+  config.runtimeTelemetryFrequencyFrames = 2;
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(1, 0.016);
+  Telemetry::AddCounter(counterId, 99);
+  Telemetry::RecordScope(scopeId, 99);
+  Telemetry::EndFrame();
+  Telemetry::BeginFrame(2, 0.016);
+  Telemetry::AddCounter(counterId, 2);
+  Telemetry::EndFrame();
+  const auto reset = Telemetry::Snapshot();
+  Require(reset.size() == 2 && reset.back().frameIndex == 2 && counterValue(reset.back(), "test.telemetry.count") == 2,
+          "telemetry reset invalidated cached IDs or sampled a disabled frame");
+  config.telemetryUploadBudgetMB = 1;
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(1, 0.016);
+  Require(!Telemetry::IsFrameActive(), "unsampled frame enabled detailed timing");
+  {
+    Telemetry::UploadGuard upload(Telemetry::UploadResource::Vertex, 2 * 1024 * 1024);
+  }
+  Telemetry::EndFrame();
+  const auto budgetOnly = Telemetry::Snapshot();
+  Require(budgetOnly.size() == 2 && budgetOnly.back().frameIndex == 1 &&
+          !budgetOnly.back().detailed && budgetOnly.back().uploadBudgetExceeded && budgetOnly.back().scopes.empty(),
+          "upload budget skipped an unsampled frame or enabled detailed timing");
+  Telemetry::BeginFrame(3, 0.016);
+  Telemetry::RecordRingOverflow();
+  Telemetry::EndFrame();
+  Require(Telemetry::Snapshot().back().uploadBudgetExceeded, "ring overflow on unsampled frame was lost");
+  config.flags.runtimeTelemetry = false;
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::AddCounter("disabled.dynamic.counter", 1);
+  Require(!Telemetry::IsEnabled() && Telemetry::Snapshot().empty(), "disabled telemetry recorded data");
+  config.flags.runtimeTelemetry = true;
+  config.runtimeTelemetryFrequencyFrames = 0;
+  config.telemetryUploadBudgetMB = 1;
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(20, 0.016);
+  {
+    Telemetry::UploadSourceGuard source(Telemetry::UploadSource::Streaming);
+    Telemetry::UploadGuard upload(Telemetry::UploadResource::Index, 2 * 1024 * 1024);
+  }
+  Telemetry::EndFrame();
+  Require(Telemetry::Snapshot().back().uploadBudgetExceeded, "oversized dynamic upload did not trigger the budget");
+  std::promise<void> resetEntered;
+  std::promise<void> resetFinish;
+  auto resetFuture = resetFinish.get_future();
+  Telemetry::BeginFrame(21, 0.016);
+  std::thread resetWorker([&] {
+    Telemetry::ScopedTimer timer(scopeId);
+    resetEntered.set_value();
+    resetFuture.wait();
+  });
+  resetEntered.get_future().wait();
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(22, 0.016);
+  resetFinish.set_value();
+  resetWorker.join();
+  Telemetry::EndFrame();
+  Require(Telemetry::Snapshot().back().scopes.empty(), "old-session worker polluted a new frame");
+  Telemetry::BeginFrame(23, 0.016);
+  for (unsigned publication = 0; publication < 12; ++publication) {
+    Telemetry::AddCounter(counterId, 1);
+    Telemetry::PublishThread();
+  }
+  Telemetry::EndFrame();
+  Require(Telemetry::DroppedRecords() == 4 &&
+          counterValue(Telemetry::Snapshot().back(), "test.telemetry.count") == 8,
+          "bounded telemetry overflow overwrote published work or was not reported");
+  Require(Telemetry::TextureUploadBytes(4, 2, 3, 6, 16) == 1056 &&
+          Telemetry::TextureUploadBytes(0, 2, 1, 1, 4) == 0,
+          "mip-chain upload sizing is incorrect");
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(30, 0.016);
+  {
+    Telemetry::UploadSourceGuard source(Telemetry::UploadSource::Streaming);
+    TestTexture texture;
+    const unsigned char pixels[4] = {0, 0, 0, 255};
+    Require(texture.LoadFromMemory(pixels, 1, 1, 4, "telemetry-test"), "test texture load failed");
+    ThreadPool pool(1);
+    auto upload = pool.Submit([] {
+      RuntimeTelemetry::UploadGuard upload(RuntimeTelemetry::UploadResource::Vertex, 128);
+      RuntimeTelemetry::RecordActiveStaging(192, 1);
+    });
+    upload.get();
+    pool.WaitAll();
+  }
+  Telemetry::EndFrame();
+  const auto workerUpload = Telemetry::Snapshot().back().uploads[1];
+  Require(workerUpload.logicalBytes == 128 && workerUpload.stagingBytes == 192 && workerUpload.calls == 1,
+          "worker task lost upload provenance or duplicated staging");
+    const auto textureUpload = Telemetry::Snapshot().back().uploads[10];
+    Require(textureUpload.logicalBytes == 4 && textureUpload.calls == 1,
+      "shared texture wrapper overwrote streaming provenance");
+  Telemetry::InitializeFromConfig(config);
+  for (unsigned frameIndex = 0; frameIndex < 8191; ++frameIndex) {
+    Telemetry::BeginFrame(frameIndex, 0.016);
+    Telemetry::EndFrame();
+  }
+  Telemetry::BeginFrame(8191, 0.016);
+  Require(!Telemetry::IsFrameActive(), "full detailed storage did not fall back to budget monitoring");
+  Telemetry::RecordRingOverflow();
+  Telemetry::EndFrame();
+  Require(Telemetry::Snapshot().size() == 8192 && Telemetry::DroppedRecords() == 2,
+          "full detailed storage disabled upload monitoring or failed to report discarded records");
+}
+
 constexpr TestCase kTests[] = {
+  {"T-TELEMETRY-PUBLICATION-01", TestTelemetryPublication},
+  {"T-RENDER-TARGET-LAYOUT-01", TestRenderTargetLayout},
+  {"T-RENDER-TARGET-DESCRIPTOR-01", TestRenderTargetDescriptors},
+  {"T-RENDER-TARGET-CAPABILITY-01", TestRenderTargetCapabilities},
+#if T850_ENABLE_PROFILING
+  {"T-PROFILER-ACCOUNTING-01", TestProfilerAccounting},
+  {"T-PROFILER-SAMPLES-01", TestProfilerDeterministicSamples},
+  {"T-PROFILER-GUARDS-01", TestProfilerScopeGuards},
+  {"T-PROFILER-RESET-01", TestProfilerResetGeneration},
+#endif
   {"T-VOXEL-AUTHORING-01", TestAuthoredStreamedVoxels},
   {"T-SCENE-RUNTIME-OWNERSHIP-01", TestSceneRuntimeOwnership},
   {"T-SHADER-PRECOMPILER-01", TestShaderPrecompilerContract},
   {"T-COMPUTE-GRAPH-01", TestTypedComputeGraphValidation},
+  {"T-GRAPH-MESH-PREPARATION-01", TestGraphMeshPreparation},
+  {"T-PASS-FRUSTUM-REUSE-01", TestPassFrustumReuse},
   {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
   {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
   {"T-MINECRAFT-SURVIVAL-01", TestMinecraftSurvivalAuthoring},

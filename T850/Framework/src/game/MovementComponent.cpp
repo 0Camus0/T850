@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 
 #include <game/MovementComponent.h>
 
@@ -49,6 +50,7 @@ void MovementComponent::OnCreate() {
 }
 
 void MovementComponent::Update(float fixedDt) {
+  T8_CPU_WORK("game.agents.steer");
   if (!owner_ || !system_ || !owner_->links.primitive || fixedDt <= 0.0f) return;
   const MovementIntent& intent = system_->IntentFor(owner_->runtimeId);
   const XVECTOR3 targetVelocity = intent.moveDir * (maxSpeed_ * intent.speedScale);

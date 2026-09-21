@@ -1,7 +1,7 @@
 #include <pch.h>
 #include <imgui/ImGuiRendererBackend.h>
 
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <video/webgpu/WebGPUDriver.h>
 #include <utils/Log.h>
 #include <imgui_impl_sdl3.h>

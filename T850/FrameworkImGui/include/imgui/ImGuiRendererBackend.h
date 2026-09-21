@@ -57,7 +57,7 @@ std::unique_ptr<ImGuiRendererBackend> CreateImGuiD3D11Backend();
 std::unique_ptr<ImGuiRendererBackend> CreateImGuiD3D12Backend();
 std::unique_ptr<ImGuiRendererBackend> CreateImGuiOpenGLBackend();
 std::unique_ptr<ImGuiRendererBackend> CreateImGuiVulkanBackend();
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 std::unique_ptr<ImGuiRendererBackend> CreateImGuiWebGPUBackend();
 #endif
 

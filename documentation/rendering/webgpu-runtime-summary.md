@@ -1,8 +1,26 @@
 # WebGPU Runtime Handoff
 
-Status: Windows x64 runtime close-out, 2026-09-15. This summarizes the local work
+Status: Windows x64 runtime close-out, 2026-09-15, with the ARM64/CI update below.
+This summarizes the local work
 from dependency setup through compiler, renderer, real scenes and final validation.
 It is not a claim that the entire [WebGPU proposal](proposal-webgpu.md) is complete.
+
+## ARM64 and CI Update, 2026-09-19
+
+Windows ARM64 now uses the same Dawn-over-D3D12 runtime implementation as x64.
+The pinned Dawn/ImGui overlays support `arm64-windows-static`; setup generates a
+separate `build/dawn-package-arm64` audit/link contract, and MSBuild stages the
+matching DXC runtime and notices. Compile guards, driver factory routing, shader
+compiler/package code, ImGui WebGPU integration and self-tests include `_M_ARM64`.
+
+GitHub CI builds ARM64 natively on `windows-11-arm`, installs/audits the ARM64
+Dawn package, builds deterministic package/shader probes and runs ARM64 gameplay
+self-tests. The Emscripten bundle remains architecture-neutral: CI builds it once
+on x64 and runs that same artifact in native x64 and ARM64 Edge processes. Hosted
+browser correctness uses explicitly labeled SwiftShader software WebGPU because
+standard hosted runners have no hardware GPU; it is not hardware/performance evidence.
+The dated x64-only statements below remain historical evidence for their original
+checkpoints and are superseded for current platform availability by this section.
 
 ## Outcome
 
@@ -125,13 +143,14 @@ that gate and unavailable SteamRT verification. See the
   `20260219.200501#7`, ImGui `1.92.7#1`, glslang 16.2.0 and simplecpp 1.9.1.
 - [SetupDawn.ps1](../../T850/scripts/SetupDawn.ps1) provides Plan/Install/Check,
   package audits, generated link properties and compiler identity metadata.
-  Ordinary Windows x64 builds require a valid audit; native Vulkan stays separate.
+  Ordinary Windows x64 and ARM64 builds require architecture-matched audits;
+  native Vulkan stays separate.
 - Installed-package probes exercise exported Dawn/Tint headers and libraries,
   not accidental build-tree dependencies. DX compiler DLLs and dependency licenses
   are deployed through build integration.
 - MSBuild remains authoritative; Framework, ImGui and platform source lists are
-  registered in MSBuild/filters and kept in CMake parity. CPU preprocessor
-  cross-builds were also exercised earlier on ARM64/Android, not WebGPU runtime ports.
+  registered in MSBuild/filters and kept in CMake parity. Android remains a
+  preprocessor/build portability target, not a native WebGPU runtime port.
 - [TintInstall.cmake](../../T850/cmake/vcpkg-overlays/dawn/TintInstall.cmake)
   applies guarded, repeatable upstream fixes. Square row-major matrix accesses
   must update their loads even when the transposed type is unchanged; popping
@@ -197,13 +216,13 @@ that gate and unavailable SteamRT verification. See the
 - Normal `--api webgpu` and `--shaderFlow auto|wgsl|spirv` are parsed and validated
   before asset loading; CLI overrides the optional `webgpuShaderFlow` JSON field.
 - Main-window runtime ImGui is integrated. Platform viewports remain disabled.
-- Both launchers preserve ordinary scene/config/snapshot controls, enforce x64
+- Both launchers preserve ordinary scene/config/snapshot controls, enforce x64/ARM64
   prerequisites and audit Dawn during builds. They now advertise forward/deferred
   runtime support while retaining the EDITOR guard. The driver reports deferred
   support, with a matching fixture assertion.
 - Portable Launcher packaging was regenerated and copied to the four existing
   x64/ARM64 output folders, then the source-root developer Launcher was regenerated.
-  This does not enable WebGPU on ARM64 or validate packaged mouse-click workflows.
+  Packaged mouse-click workflows remain outside automated validation.
 
 ## Final Verification
 
@@ -753,9 +772,10 @@ These conflict-marked trees are diagnostic objects, not runnable source or refs.
 - Full live-scene API switching/reload, device-loss recovery, save/reload,
   long-running memory/frame-time behavior, missing Nexus assets, guarded Vulkan
   cases, other GPUs and physical mobile-device coverage.
-- Automated Emscripten build/browser CI and fresh hosted validation of subsequent
-  commits. Native Windows ARM64, Android and Linux/Steam Deck Dawn ports remain
-  separate future work; existing native Vulkan validation is not a WebGPU port.
+- Hardware-GPU browser CI and fresh hardware validation of subsequent commits.
+  The hosted x64/ARM64 browser jobs use explicitly labeled SwiftShader correctness
+  coverage. Android and Linux/Steam Deck Dawn ports remain separate future work;
+  existing native Vulkan validation is not a WebGPU port.
 
 ### Browser Work Already Delivered
 

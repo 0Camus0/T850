@@ -1,6 +1,6 @@
 #include <video/webgpu/WebGPUShaderCompiler.h>
 
-#if defined(_WIN32) && defined(_M_X64)
+#if defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))
 #include <T850DawnShaderConfig.h>
 #include <utils/ShaderDiskCache.h>
 #include <utils/ShaderPreprocessor.h>

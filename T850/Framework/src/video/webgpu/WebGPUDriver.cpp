@@ -3,7 +3,7 @@
 #endif
 #include <video/webgpu/WebGPUDriver.h>
 
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <video/webgpu/WebGPUContext.h>
 #include <core/Config.h>
 #include <debug/RuntimeTelemetry.h>

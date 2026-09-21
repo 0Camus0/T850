@@ -2,10 +2,10 @@
   "name": "dawn",
   "version": "20260219.200501",
   "port-version": 7,
-  "description": "T850 pinned Dawn runtime, Windows x64 D3D12 only.",
+  "description": "T850 pinned Dawn runtime, Windows x64/ARM64 D3D12 only.",
   "homepage": "https://dawn.googlesource.com/dawn",
   "license": "BSD-3-Clause",
-  "supports": "x64 & windows & !uwp & !mingw",
+  "supports": "(x64 | arm64) & windows & !uwp & !mingw",
   "dependencies": [
     "abseil",
     { "name": "vcpkg-cmake", "host": true },

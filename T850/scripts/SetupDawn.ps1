@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Install', 'Check', 'Plan', 'Bootstrap')][string]$Mode = 'Install',
-    [string]$SourceRoot
+    [string]$SourceRoot,
+    [ValidateSet('x64', 'ARM64')][string]$Architecture = 'x64'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,9 +39,10 @@ if (!(Test-Path -LiteralPath $vcpkg) -and $Mode -in @('Bootstrap','Install')) {
 if (!(Test-Path -LiteralPath $vcpkg)) { throw "Bootstrap the pinned vcpkg checkout first: $vcpkgRoot\bootstrap-vcpkg.bat" }
 if ($Mode -eq 'Bootstrap') { Write-Host "Pinned vcpkg ready: $pin"; return }
 
-$triplet = 'x64-windows-static'
+$triplet = "$($Architecture.ToLowerInvariant())-windows-static"
 $packageRoot = Join-Path $vcpkgRoot "installed\$triplet"
 $exportRoot = Join-Path $SourceRoot 'build\dawn-package'
+if ($Architecture -eq 'ARM64') { $exportRoot += '-arm64' }
 $auditPath = Join-Path $exportRoot 'package-audit.json'
 $dawnManifest = Get-Content (Join-Path $overlays 'dawn\vcpkg.json') -Raw | ConvertFrom-Json
 $imguiManifest = Get-Content (Join-Path $overlays 'imgui\vcpkg.json') -Raw | ConvertFrom-Json
@@ -57,12 +59,13 @@ foreach ($file in ($recipeFiles | Sort-Object FullName)) {
 if ($Mode -ne 'Check') {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (!(Test-Path $vswhere)) { throw 'VS2022 discovery tool is missing.' }
-    $installations = @(& $vswhere -products '*' -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
+    $compilerComponent = if ($Architecture -eq 'ARM64') { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
+    $installations = @(& $vswhere -products '*' -version '[17.0,18.0)' -requires $compilerComponent -property installationPath)
     $visualStudio = $installations | Where-Object {
         (Test-Path (Join-Path $_ 'VC\Auxiliary\Build\vcvarsall.bat')) -and
-        @(Get-ChildItem (Join-Path $_ 'VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe') -ErrorAction SilentlyContinue).Count -gt 0
+        @(Get-ChildItem (Join-Path $_ "VC\Tools\MSVC\*\bin\Host*\$Architecture\cl.exe") -ErrorAction SilentlyContinue).Count -gt 0
     } | Select-Object -First 1
-    if (!$visualStudio) { throw 'A usable VS2022/v143 x64 compiler is required.' }
+    if (!$visualStudio) { throw "A usable VS2022/v143 $Architecture compiler is required." }
     $env:VCPKG_VISUAL_STUDIO_PATH = $visualStudio
     if (!$env:VCPKG_MAX_CONCURRENCY) { $env:VCPKG_MAX_CONCURRENCY = '4' }
     $beforeText = & $vcpkg list --x-json
@@ -137,7 +140,7 @@ if ($Mode -eq 'Install') {
         Join-Path $visualStudio 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
     }
     if (!(Test-Path -LiteralPath $cmake)) { throw 'CMake is required to generate the Dawn exported-link contract.' }
-    & $cmake -S (Join-Path $SourceRoot 'cmake\dawn-package') -B $exportRoot -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_GENERATOR_INSTANCE=$visualStudio" "-DT850_DAWN_PACKAGE_ROOT=$packageRoot"
+    & $cmake -S (Join-Path $SourceRoot 'cmake\dawn-package') -B $exportRoot -G 'Visual Studio 17 2022' -A $Architecture "-DCMAKE_GENERATOR_INSTANCE=$visualStudio" "-DT850_DAWN_PACKAGE_ROOT=$packageRoot"
     if ($LASTEXITCODE -ne 0) { throw 'Dawn exported-link-contract generation failed.' }
     $replyRoot = Join-Path $exportRoot '.cmake\api\v1\reply'
     $indexFile = Get-ChildItem $replyRoot -Filter 'index-*.json' | Sort-Object Name -Descending | Select-Object -First 1

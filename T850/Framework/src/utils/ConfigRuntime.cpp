@@ -63,7 +63,7 @@ std::string NormalizeShaderFlow(const std::string& value) {
 
 bool IsKnownGraphicsApi(const std::string& value) {
   std::string lowered = ToLower(value);
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
   if (lowered == "webgpu") return true;
 #endif
   return lowered == "gl" || lowered == "opengl"
@@ -173,7 +173,7 @@ Config::PostProcessMode ParsePostProcessMode(const std::string& value) {
 
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback) {
   std::string lowered = ToLower(value);
-#if (defined(_WIN32) && defined(_M_X64)) || defined(__EMSCRIPTEN__)
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
   if (lowered == "webgpu") return GraphicsApi::WEBGPU;
 #endif
   if (lowered == "gl" || lowered == "opengl") return GraphicsApi::OPENGL;
@@ -814,7 +814,7 @@ void PrintHelp() {
     << "  --config <path>                    Load JSON config before applying CLI overrides\n\n"
     << "Renderer/window:\n"
     << "  --api <d3d11|d3d12|vulkan|gl>      Select graphics backend\n"
-  #if defined(_WIN32) && defined(_M_X64)
+  #if defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))
     << "  --api webgpu                       Select Dawn/D3D12 (scene parity still incomplete)\n"
   #endif
     << "  --shaderFlow <auto|wgsl|spirv>     Select WebGPU shader source flow before loading (default: auto)\n"

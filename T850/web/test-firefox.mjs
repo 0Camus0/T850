@@ -15,6 +15,7 @@ const { values } = parseArgs({ allowNegative: true, options: {
   headless: { type: 'boolean', default: false },
   probe: { type: 'boolean', default: false },
   'compute-selftest': { type: 'boolean', default: false },
+  'software-webgpu': { type: 'boolean', default: false },
   launcher: { type: 'boolean', default: false },
   'minecraft-welcome': { type: 'boolean', default: false },
   'console-logs': { type: 'boolean', default: false },
@@ -46,6 +47,7 @@ const { values } = parseArgs({ allowNegative: true, options: {
   binary: { type: 'string' },
 } });
 if (!['firefox', 'chrome', 'edge'].includes(values.browser)) throw new Error('Unsupported browser');
+if (values['software-webgpu'] && values.browser === 'firefox') throw new Error('Software WebGPU testing requires Chrome or Edge');
 if (values.touch && values['touch-desktop']) throw new Error('Choose mobile touch or desktop touch emulation, not both');
 if (values['bundle-cache'] && !values['asset-bundle']) throw new Error('Bundle cache testing requires --asset-bundle');
 if (values['console-logs'] && !values['minecraft-welcome']) throw new Error('Console checkbox testing requires --minecraft-welcome');
@@ -66,16 +68,27 @@ const builder = new Builder().forBrowser(values.browser === 'edge' ? 'MicrosoftE
 if (values['console-logs'] && values.browser === 'chrome') builder.setCapability('goog:loggingPrefs', { browser: 'ALL' });
 if (values['url-diagnostics']) builder.setCapability('webSocketUrl', true);
 const driverLog = openSync(resolve(output, values.browser === 'edge' ? 'msedgedriver.log' : values.browser === 'chrome' ? 'chromedriver.log' : 'geckodriver.log'), 'w');
+const chromiumSoftwareWebGpuArguments = [
+  '--disable-vulkan-surface',
+  '--enable-features=Vulkan',
+  '--enable-unsafe-webgpu',
+  '--enable-unsafe-swiftshader',
+  '--ignore-gpu-blocklist',
+  '--use-vulkan=swiftshader',
+  '--use-webgpu-adapter=swiftshader',
+];
 if (values.browser === 'edge') {
   const options = new edge.Options();
   if (values.binary) options.setEdgeChromiumBinaryPath(values.binary);
   if (values.headless) options.addArguments('--headless=new');
+  if (values['software-webgpu']) options.addArguments(...chromiumSoftwareWebGpuArguments);
   const service = new edge.ServiceBuilder().enableVerboseLogging().setStdio(['ignore', driverLog, driverLog]);
   builder.setEdgeOptions(options).setEdgeService(service);
 } else if (values.browser === 'chrome') {
   const options = new chrome.Options();
   if (values.binary) options.setChromeBinaryPath(values.binary);
   if (values.headless) options.addArguments('--headless=new');
+  if (values['software-webgpu']) options.addArguments(...chromiumSoftwareWebGpuArguments);
   const service = new chrome.ServiceBuilder().enableVerboseLogging().setStdio(['ignore', driverLog, driverLog]);
   builder.setChromeOptions(options).setChromeService(service);
 } else {
@@ -92,10 +105,15 @@ if (values.browser === 'edge') {
   builder.setFirefoxOptions(options).setFirefoxService(service);
 }
 const driver = await builder.build();
-const report = { url: values.url };
+const report = { url: values.url, webgpuMode: values['software-webgpu'] ? 'software' : 'default' };
 let captureWorkers;
 let finishWorkerDiagnostics;
 let finishFeatureEmulation;
+if (values['compute-selftest']) {
+  const computeUrl = new URL(report.url);
+  computeUrl.searchParams.set('computeSelfTest', '');
+  report.url = computeUrl.href;
+}
 const profileFrames = Number(values['profile-frames']);
 if (!Number.isInteger(profileFrames) || profileFrames < 0 || profileFrames > 100000) throw new Error('Invalid profile frame count');
 if (profileFrames) {
@@ -406,6 +424,11 @@ try {
   });
   console.log(JSON.stringify({ browser: report.browser, gpu: report.gpu }, null, 2));
   if (!report.gpu.available || !report.gpu.isolated) throw new Error(`${values.browser} WebGPU/isolation prerequisite failed`);
+  if (values['software-webgpu']) {
+    const adapterIdentity = Object.values(report.gpu.info ?? {}).join(' ');
+    if (report.gpu.info?.isFallbackAdapter !== true && !/swiftshader|software/i.test(adapterIdentity))
+      throw new Error(`Software WebGPU mode selected a non-software adapter: ${JSON.stringify(report.gpu.info)}`);
+  }
   if (values['compute-selftest']) {
     await driver.wait(async () => {
       const state = await driver.executeScript('return window.t850');

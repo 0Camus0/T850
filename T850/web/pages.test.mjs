@@ -10,6 +10,7 @@ import { minecraftAssetSelection, minecraftWebScene } from './minecraft-assets.m
 import { mountAssetBundle, loadAssetBundle } from './asset-bundle.mjs';
 import { zipSync } from 'fflate';
 import { cloudflareWranglerConfig, loadCloudResources, validateCloudflareConfig } from './cloudflare-config.mjs';
+import { createCloudAssetCatalog, parseCloudAssetCatalog, publicAssetManifests } from './cloud-assets.mjs';
 import { deployPages } from './deploy-pages.mjs';
 
 test('Cloudflare deploy refuses absent credentials before any child process and dry-run does no deployment', async () => {
@@ -882,4 +883,31 @@ test('touch gamepad defaults to mobile devices, preserves manual choice and hand
   const unexpected = load(5);
   unexpected.move.setPointerCapture = () => { throw new TypeError('Unexpected capture failure'); };
   assert.throws(() => unexpected.send(unexpected.move, 'pointerdown', 1), /Unexpected capture failure/);
+});
+
+test('cloud package catalog contains validated routes without asset payloads', async () => {
+  const manifests = new Map([
+    [publicAssetManifests[0].manifestUrl, { assets: [
+      { key: 'test model.glb', url: new URL('test%20model.glb', publicAssetManifests[0].manifestUrl).href },
+    ] }],
+    [publicAssetManifests[1].manifestUrl, { assets: [
+      { kind: 'texture', key: 'test.dds', localRelativePath: 'Textures/test.dds', size: 5,
+        contentType: 'image/vnd-ms.dds', url: new URL('test.dds', publicAssetManifests[1].manifestUrl).href },
+    ] }],
+  ]);
+  const catalog = await createCloudAssetCatalog(async (url, options) => {
+    assert.equal(options.redirect, 'error');
+    return new Response(JSON.stringify(manifests.get(url)), { headers: { 'Content-Type': 'application/json' } });
+  });
+  const routes = parseCloudAssetCatalog(catalog);
+  assert.deepEqual([...routes.keys()], ['Models/test model.glb', 'Textures/test.dds']);
+  assert.equal(routes.get('Textures/test.dds').size, 5);
+  assert.deepEqual(Object.keys(catalog).sort(), ['manifests', 'routes', 'version']);
+  assert.throws(() => parseCloudAssetCatalog({ version: 1, routes: { '../private': { url: 'https://example.com/private' } } }), /Unsafe/);
+  assert.throws(() => parseCloudAssetCatalog({ version: 1, routes: { test: { url: 'http://example.com/test' } } }), /public HTTPS/);
+  assert.throws(() => parseCloudAssetCatalog({ version: 1, routes: { test: { url: 'https://unapproved.example.com/test' } } }), /unapproved origin/);
+  assert.throws(() => parseCloudAssetCatalog({ version: 1, routes: {
+    'Models/Test.glb': { url: new URL('first', publicAssetManifests[0].manifestUrl).href },
+    'models/test.glb': { url: new URL('second', publicAssetManifests[0].manifestUrl).href },
+  } }), /Duplicate/);
 });

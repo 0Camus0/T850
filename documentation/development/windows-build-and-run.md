@@ -759,6 +759,9 @@ prepared bundle. See [Browser Runtime](../platform/browser.md#build-and-run) for
 prerequisites, clean-build behavior, browser discovery, and the opt-in launcher
 build integration test. Windows PowerShell 5.1 launcher command/WPF tests and
 fresh Release plus Debug/Release configuration-switch builds passed on 2026-09-16.
+`BuildWeb.ps1 -AssetMode Embedded|Cloud` selects embedded-package preparation or
+metadata-only runtime cloud routes. Cloud mode is used by CI and does not download
+or commit the remote model/texture payloads.
 
 ## Run DayScene
 

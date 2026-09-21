@@ -208,7 +208,7 @@ jobs:
         if: matrix.platform == 'x64' && matrix.configuration == 'Release'
         shell: pwsh
         run: |
-          & T850/scripts/BuildWeb.ps1 -EmSdkRoot (Join-Path $env:RUNNER_TEMP 'emsdk') -Configuration Release
+          & T850/scripts/BuildWeb.ps1 -EmSdkRoot (Join-Path $env:RUNNER_TEMP 'emsdk') -Configuration Release -AssetMode Cloud -Clean
 
       - name: Upload WebAssembly bundle
         if: matrix.platform == 'x64' && matrix.configuration == 'Release'
@@ -218,6 +218,7 @@ jobs:
           path: |
             T850/build/web/site
             T850/build/web/WebShaders
+            T850/build/web/CloudAssets
           if-no-files-found: error
 
       - name: Upload build artifacts
@@ -274,12 +275,18 @@ jobs:
             'T850/build/web/site/DayScene.html',
             'T850/build/web/site/DayScene.js',
             'T850/build/web/site/DayScene.wasm',
-            'T850/build/web/site/scenes.json'
+            'T850/build/web/site/scenes.json',
+            'T850/build/web/CloudAssets/routes.json'
           )) {
             if (-not (Test-Path -LiteralPath $path)) { throw "Downloaded browser artifact is missing: $path" }
           }
           if (-not (Get-ChildItem 'T850/build/web/WebShaders' -File -Filter '*.json' | Select-Object -First 1)) {
             throw 'Downloaded browser artifact contains no prepared shader packages.'
+          }
+          $payloads = @(Get-ChildItem 'T850/build/web/site', 'T850/build/web/WebShaders', 'T850/build/web/CloudAssets' -Recurse -File |
+            Where-Object Extension -In @('.glb', '.gltf', '.bin', '.dds', '.png', '.jpg', '.jpeg', '.t8ibl', '.zip'))
+          if ($payloads.Count) {
+            throw "Cloud browser artifact unexpectedly contains asset payloads: $($payloads.FullName -join ', ')"
           }
 
       - name: Verify native Edge architecture

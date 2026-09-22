@@ -669,6 +669,7 @@ namespace t850 {
     T8DeviceContext = new D3D12DeviceContext;
     T8_LOG_INFO("[D3D12] >> CreateDevice...");
     CreateDevice();
+    T8_LOG_INFO("[D3D12] adapter LUID=%llu", static_cast<unsigned long long>(ProfilingAdapterId()));
     T8_LOG_INFO("[D3D12] >> CreateCommandInfrastructure...");
     CreateCommandInfrastructure();
     T8_LOG_INFO("[D3D12] >> CreateSwapChain...");

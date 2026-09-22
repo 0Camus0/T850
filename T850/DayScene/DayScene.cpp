@@ -1025,6 +1025,9 @@ void DayScene::WriteBenchmarkResults(float durationSecs) const {
   const char* apiTag = g_pBaseDriver
     ? t850::config::ApiTag(g_pBaseDriver->m_currentAPI)
     : t850::config::ApiTag(t850::config::ParseGraphicsApi(g_config.api, GraphicsApi::D3D11));
+  const std::string provider = g_pBaseDriver ? g_pBaseDriver->ProviderTag() : "unavailable";
+  const std::string backend = g_pBaseDriver ? g_pBaseDriver->UnderlyingBackendTag() : "unavailable";
+  const uint64_t adapterId = g_pBaseDriver ? g_pBaseDriver->ProfilingAdapterId() : 0;
   const int benchmarkWidth = (g_pBaseDriver && g_pBaseDriver->width > 0) ? g_pBaseDriver->width : g_config.width;
   const int benchmarkHeight = (g_pBaseDriver && g_pBaseDriver->height > 0) ? g_pBaseDriver->height : g_config.height;
 
@@ -1032,6 +1035,10 @@ void DayScene::WriteBenchmarkResults(float durationSecs) const {
   file << "{\n";
   file << "  \"scene\": \"DayScene\",\n";
   file << "  \"api\": \"" << JsonEscape(apiTag) << "\",\n";
+  file << "  \"provider\": \"" << JsonEscape(provider) << "\",\n";
+  file << "  \"backend\": \"" << JsonEscape(backend) << "\",\n";
+  file << "  \"adapterId\": " << adapterId << ",\n";
+  file << "  \"shaderFlow\": \"" << JsonEscape(g_config.webgpuShaderFlow) << "\",\n";
   file << "  \"mode\": \"" << (m_benchmarkActiveOffscreen ? "offscreen" : "onscreen") << "\",\n";
   file << "  \"resolution\": { \"width\": " << benchmarkWidth << ", \"height\": " << benchmarkHeight << " },\n";
   file << "  \"offscreen\": " << (m_benchmarkActiveOffscreen ? "true" : "false") << ",\n";

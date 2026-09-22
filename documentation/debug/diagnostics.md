@@ -568,6 +568,104 @@ matched submit-only phase deltas, then attribute external CPU samples by module
 and symbol. PresentMon cannot identify passes, timestamps cannot measure CPU
 encoding, and built-in scopes cannot attribute work inside Dawn.
 
+### Shader-flow GPU comparison
+
+[MeasureShaderFlowGpuPerformance.ps1](../../T850/scripts/MeasureShaderFlowGpuPerformance.ps1)
+runs a presented, uninstrumented PresentMon matrix for these paths:
+
+| Case | Host | Shader path |
+|---|---|---|
+| `native-d3d12-hlsl` | DayScene D3D12 | native HLSL |
+| `native-webgpu-wgsl` | DayScene Dawn/D3D12 | direct WGSL |
+| `native-webgpu-spirv` | DayScene Dawn/D3D12 | HLSL -> SPIR-V -> Tint WGSL |
+| `edge-webgpu-wgsl` | Edge WebGPU | prepared direct WGSL package |
+| `edge-webgpu-spirv` | Edge WebGPU | prepared HLSL -> SPIR-V -> Tint WGSL package |
+
+Build native x64 Release and the Release browser bundle first. Keep the loopback
+server running in one shell:
+
+```powershell
+Set-Location $SourceRoot
+.\scripts\BuildWeb.ps1 -Configuration Release -ExportScenes 1
+node .\web\server.mjs
+```
+
+Run the comparison from a second shell with the official signed portable
+PresentMon executable outside the checkout. The shell must be elevated or the
+current user must belong to the Windows `Performance Log Users` group; the
+script reports an ETW environment block instead of requesting elevation:
+
+```powershell
+Set-Location $SourceRoot
+.\scripts\MeasureShaderFlowGpuPerformance.ps1 `
+  -PresentMonPath "$env:LOCALAPPDATA\T850Tools\PresentMon\2.6.0\PresentMon-2.6.0-x64.exe" `
+  -EdgeUrl 'http://127.0.0.1:8765/' `
+  -Width 1280 -Height 720 -Scene 1 `
+  -RunsPerCase 3 -WarmupSeconds 15 -CaptureSeconds 20
+```
+
+The script randomizes case order within each repetition, launches a fresh native
+process or isolated Edge profile, targets the exact native PID or Edge GPU child
+PID, and rejects captures with less than 80 percent `GPUTime` coverage. For Edge,
+it resizes the actual canvas to the requested dimensions, verifies the parsed
+strict shader flow and compute mode, records browser adapter information, selects
+the dominant swapchain, and records ignored rows. It writes raw CSV/log evidence
+plus `run-summary.csv`, `overhead.csv`, `comparison.json`, `Report.md`, and the
+self-contained `Shader-Flow-GPU-Performance-Report.html` under
+`%LOCALAPPDATA%\T850Profiles\shader-flow-gpu` by default. The HTML report follows
+the offline evidence-report format used by `DayScene-ARM64-Performance-Report`:
+inline styling and SVG charts, findings, detailed tables, raw-evidence links and
+expandable provenance, with no script or external stylesheet. An adjacent
+`README.txt` records the offline-opening instructions. Use `-GenerateOnly` to
+inspect the run order and `-SelfTest` to validate metric parsing, overhead
+calculations and HTML generation without PresentMon.
+
+`FrameTime` is the complete presented frame interval. `GPUTime` is the primary
+overhead metric; `GPUBusy` is retained as supporting active-work evidence. Case
+means give every run equal weight, while percentiles pool the accepted frames.
+No `CPUBusy` value is used as GPU cost. The primary shader-output comparison is
+`spirv-vs-wgsl-native`; the equivalent Edge row checks the shipping browser
+path. HLSL -> SPIR-V -> WGSL conversion and pipeline creation are CPU startup
+costs and occur before the warmed interval. The measured GPU delta therefore
+answers whether the generated shader runs differently, not how long conversion
+takes.
+
+Native WebGPU versus native D3D12 also includes Dawn validation, resource binding,
+robustness and command-generation differences. Edge comparisons additionally
+include browser and compositor work. Every comparison records whether all runs
+used the same populated runtime-owned adapter identity and is marked interpretable
+only when adapter identity matches, at least three runs exist, and the delta is
+larger than observed run-to-run spread. Native identities come from untimed exact
+DXGI LUID preflights. Browser identities use privacy-limited WebGPU adapter
+information and do not prove cross-host physical-GPU parity. Chromium on Windows
+can ignore WebGPU's high-performance preference and select an integrated GPU;
+configure the browser in Windows Graphics Settings when necessary. Establish
+visual/useful-work parity before choosing a backend.
+
+### Nsight pass timing
+
+NVIDIA Nsight Graphics can measure individual native D3D12 draws and dispatches.
+Launch `DayScene.exe` through Nsight with the same scene, resolution and compute
+mode used by the PresentMon matrix, wait through warmup, then capture GPU Trace
+or a frame:
+
+```text
+--api d3d12 --scene 1 --width 1280 --height 720 --culling full --postProcessMode compute --logLevel error
+```
+
+Use GPU Trace for queue-level duration and overlap, and Frame Debugger/API
+Inspector for individual `Draw*` and `Dispatch` events. D3D12 compute pipeline
+objects carry names such as `CS_GodRays.hlsl Compute PSO`, so dispatches can be
+mapped to kernels. RenderGraph also registers every authored pass as an engine
+GPU-profiler scope. The command list does not currently emit matching D3D12 event
+ranges, so Nsight may show the PSO/action name rather than the authored pass name.
+
+Nsight can attach to Edge's D3D12 GPU child process for diagnosis, but it observes
+the browser's translated D3D12 command stream and compositor work, not WGSL or
+SPIR-V as source-level GPU events. Use that capture to explain a PresentMon delta,
+not as the headline baseline: replay, counters and range profiling perturb the
+workload. PresentMon remains the total-frame comparison instrument.
+
 Functional evidence is under
 `%LOCALAPPDATA%/T850Profiles/profiling-workstream-20260918`: focused build/tests,
 compile-out build, short paired API capture and streaming/skinning smoke reports.

@@ -3,10 +3,11 @@
 Status: whole-frame profiling is implemented for D3D12, Vulkan, and native
 Dawn/WebGPU as an opt-in build. Local x64 Release validation passed on all three
 backends. Flat logical render-graph pass timing is also implemented on all three.
-The ARM64 1920x1080 held-frame pass matrix passed 720/720 frame batches and
-18,000 timestamp samples with zero drops and failures on 2026-09-22. External
-correlation, perturbation measurement, and device-loss stress remain completion
-gates.
+The final 1920x1080 held-frame pass matrix used five 600-frame repetitions for
+all six cells on each x64 and ARM64 host. Each host retained 18,000 frame
+batches and 450,000 frame/pass samples with zero accepted-run drops or failures.
+External correlation, perturbation measurement, and device-loss stress remain
+completion gates.
 
 ## Purpose
 
@@ -42,8 +43,8 @@ out of normal builds.
 - Treating summed pass durations as whole-frame GPU time.
 - Measuring CPU overhead with GPU profiling enabled.
 - Making WebGPU rendering depend on timestamp-query support.
-- Browser acceptance in the first implementation; native Dawn/D3D12 is the
-  immediate WebGPU target.
+- Browser pass timestamps when the browser does not implement
+   `GPUCommandEncoder.writeTimestamp`; browser throughput is measured separately.
 
 ## Implemented State
 
@@ -380,20 +381,23 @@ The WebGPU asynchronous lifetime work and Vulkan completion refactor are the
 largest uncertainty. A D3D12-only prototype is not an accepted architectural
 milestone because it would not validate the shared contract.
 
-## Tests
+## Verification
 
-### Shared deterministic tests
+### Shared deterministic coverage
 
-Add fake-backend tests for:
+The shared self-test covers:
 
 - batch state transitions;
 - no reuse before completion;
 - out-of-order completion;
 - generation reset and stale callback rejection;
 - dropped sample when the ring is full;
-- unavailable/failed samples never becoming zero;
-- shutdown with pending batches;
-- whole-frame and flat pass-region metadata.
+- ready/failed terminal accounting;
+- valid-bit timestamp wraparound;
+- JSON escaping for authored region names.
+
+Still required are backend-level feature-negative initialization, shutdown with
+pending Dawn callbacks, and device-loss/API-recreation stress.
 
 ### Build gates
 
@@ -404,15 +408,16 @@ msbuild T850.sln /t:Framework`;DayScene /p:Configuration=Release /p:Platform=x64
 msbuild T850.sln /t:Framework`;DayScene /p:Configuration=Release /p:Platform=x64 /p:T850EnableGpuProfiling=1
 ```
 
-Equivalent CMake gates:
+Equivalent CMake configurations are supported but still require an explicit
+ON/OFF closeout run:
 
 ```powershell
 cmake -S . -B build/gpu-profile-off -DT850_ENABLE_GPU_PROFILING=OFF
 cmake -S . -B build/gpu-profile-on  -DT850_ENABLE_GPU_PROFILING=ON
 ```
 
-When OFF, a binary/string/symbol check must show that backend query code and the
-WebGPU timestamp feature request are absent.
+The default-OFF MSBuild configuration and ordinary WebGPU feature isolation have
+passed. A retained binary/string/symbol check for both CMake states remains open.
 
 ### Runtime gates
 
@@ -475,10 +480,13 @@ Whole-frame GPU profiling is complete only when:
   completed-throughput time.
 
 Pass-level functional acceptance passed with matching logical pass names across
-all three backends. The ARM64 evidence contains 24 named pass rows plus
-`gpu.frame` for all six D3D12/WGSL/SPIR-V raster/compute cells. Result SHA-256:
-`879358E16B1E6A3AF4867A4CB8A94CDFC236CFAA43CA60C22AF67077AB66321C`.
-Perturbation measurement remains required before closing the overall item.
+all three backends. Final x64 and ARM64 evidence contains 24 named pass rows plus
+`gpu.frame` for all six D3D12/WGSL/SPIR-V raster/compute cells. Cross-machine
+analysis SHA-256:
+`ED876FEC95D4BE99CCCEF6677A03BFA1C1500BCACB944EC2FA31B2286DF59DD9`.
+Because Dawn pass profiling closes physical passes at logical boundaries,
+whole-frame-only comparison and perturbation measurement remain required before
+closing the overall validation item.
 
 ## Risks and Decisions
 
@@ -493,7 +501,7 @@ Perturbation measurement remains required before closing the overall item.
 | Instrumentation changes pass boundaries | Whole-frame stage first; disclose forced WebGPU pass closure in pass mode. |
 | Backend throughput mistaken for GPU execution | Timestamp JSON is canonical; CPU/completed throughput remain separate fields. |
 
-## Files Expected to Change
+## Implementation Files
 
 Core contract and configuration:
 
@@ -501,9 +509,8 @@ Core contract and configuration:
 - `T850/Framework/CMakeLists.txt` and applicable platform CMake helpers;
 - `T850/Framework/include/core/Config.h`;
 - `T850/Framework/src/utils/ConfigRuntime.cpp`;
-- `T850/Framework/include/debug/Profiler.h` or new focused GPU recorder header;
-- `T850/Framework/src/debug/ProfilerGpuBackend.cpp` and likely a split WebGPU
-  implementation file.
+- `T850/Framework/include/debug/GpuTimestampProfiler.h`;
+- `T850/Framework/src/debug/GpuTimestampProfiler.cpp`.
 
 Backend integration:
 
@@ -511,14 +518,14 @@ Backend integration:
 - Vulkan driver header/source for submission fence tokens and timestamp limits;
 - WebGPU context/driver header/source for feature request, query resources,
   resolve/copy/map, callback lifetime, and submission completion;
-- `RenderGraph.cpp/.h` for immutable logical pass IDs and optional regions.
+- `RenderGraph.cpp` for logical pass regions.
 
 Tests and workflow:
 
 - `GameSelfTest.cpp` fake-backend tests;
-- focused native GPU-profile test executable or DayScene bounded mode;
-- ARM64 GPU benchmark skill scripts;
-- diagnostics, runtime configuration, and verification documentation.
+- `GameSelfTest.cpp` for batch, wraparound, and JSON regression coverage;
+- the Windows GPU benchmark skill scripts;
+- diagnostics, runtime configuration, and profiling workflow documentation.
 
 ## Stop Conditions
 

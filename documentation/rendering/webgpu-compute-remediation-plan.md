@@ -1,14 +1,15 @@
-# WebGPU, Compute and Browser Remediation Plan
+# WebGPU, Compute and Browser Remediation Record
 
-Status: derived from a read-only source review on 2026-09-18 of branch
-`microsoft_daniel_web_compute` at `98d1e16c683c351ac946429f8e3599a4945ee168`.
-Findings were verified against source, not against a running GPU. No performance
-numbers in this document are measured; producing them is itself an action item.
+Status: implementation record and remaining-work register, updated 2026-09-22.
+The original 2026-09-18 source review is retained in item problem statements for
+traceability. Current status and completion records supersede those baselines.
+Measured CPU, GPU, throughput, and shader-preparation results are maintained in
+the [profiling workflow](gpu-performance-profiling-workflow.md).
 
-This plan lists the work needed to close the gaps found in the delivered Dawn
-WebGPU backend, the cross-backend compute path, the dual shader flows and the
-Emscripten browser target. It is written so that an implementing agent can pick
-up any single item without re-deriving the analysis.
+This record describes completed remediation and the remaining gaps in the Dawn
+WebGPU backend, cross-backend compute path, shader flows, and browser target.
+It is not the primary architecture description; use
+[WebGPU backend implementation](proposal-webgpu.md) for current behavior.
 
 Revision 2026-09-18c: action IDs, index, sections and dependencies follow the
 default implementation order. The index retains former IDs only to identify
@@ -194,7 +195,7 @@ GPU time is better obtained from external tools: PresentMon for frame-level GPU
 busy and wait, PIX, RenderDoc or Nsight for per-pass and per-draw breakdowns.
 The engine should not carry that burden.
 [R7](#r7-assign-each-performance-question-to-the-right-instrument) records the
-tool assignment, and [R21](#r21-implement-webgpu-gpu-timestamp-queries) is
+tool assignment, and [R21](#r21-implement-opt-in-cross-backend-gpu-timestamp-queries) is
 demoted to P2 accordingly — it closes a consistency gap with the other four
 backends, but it is not required by either objective.
 
@@ -292,7 +293,7 @@ Rendering fixes remain outside this workstream.
 | [R18](#r18-data-drive-the-compute-kernel-registry) | Data-drive the compute kernel registry | P2 | None | open | `R05` | `ComputeKernelRegistry.cpp`, `ComputeReflection.cpp` |
 | [R19](#r19-support-three-dimensional-compute-dispatch) | Support three-dimensional compute dispatch | P2 | R18 | open | `R09` | `RenderGraph.cpp`, `RenderGraphDescriptor.h` |
 | [R20](#r20-recreate-a-lost-webgpu-device-and-reload-the-scene) | Recreate a lost WebGPU device and reload the scene | P2 | R3 | open | `R02b` | `WebGPUDriver.cpp`, `WebGPUContext.cpp` |
-| [R21](#r21-implement-webgpu-gpu-timestamp-queries) | Implement WebGPU GPU timestamp queries | P2 | R1, R6 | open | `R03` | `ProfilerGpuBackend.cpp`, `WebGPUContext.cpp` |
+| [R21](#r21-implement-opt-in-cross-backend-gpu-timestamp-queries) | Implement opt-in cross-backend GPU timestamp queries | P2 | R1, R6 | in progress | `R03` | `GpuTimestampProfiler.cpp`, D3D12/Vulkan/WebGPU drivers |
 
 ---
 
@@ -1368,9 +1369,10 @@ Remaining gates: the measurement/coverage requirements in the profiling implemen
 
 Dependencies: R6.
 
-Status: in progress. Instrument assignment and bounded capture/report tooling are
-implemented. PresentMon and ETW evidence has not been collected. Priority P1.
-Prerequisite for R8.
+Status: complete with one disclosed environment limitation. Instrument
+assignment, bounded capture/report tooling, PresentMon, GPU Engine counters,
+native/browser CPU telemetry, and ARM64 WPR/ETW evidence are retained. x64 WPR
+remained privilege-blocked and is explicitly unavailable rather than inferred.
 
 ### Problem
 
@@ -1455,17 +1457,20 @@ then difference the two CSV files.
 
 ### Completion record
 
-- [x] Development/tooling deliverable finished; external measurement evidence remains pending.
-- [ ] Every acceptance criterion verified.
-- [ ] Required tests passed; exact commands and results retained.
-- [ ] Owning docs updated; applicable registration and platform gates passed.
+- [x] Development/tooling deliverable finished.
+- [x] Every available acceptance criterion verified; x64 WPR is environment-blocked.
+- [x] Required tests passed; exact commands and results retained.
+- [x] Owning docs updated; applicable registration and platform gates passed.
 - [x] Evidence linked; index and item status updated together.
 
-Tested revision: local uncommitted profiling implementation on `98d1e16c683c351ac946429f8e3599a4945ee168`; see the shared profiling implementation checkpoint.
-Commands and results: focused Framework/DayScene Debug build and 69 shared tests PASS; MSBuild compile-out build PASS. Short paired, streaming and dynamic-texture captures passed report-integrity checks. These are functional checks, not overhead acceptance.
-Evidence paths: `%LOCALAPPDATA%/T850Profiles/profiling-workstream-20260918` and `profiling-finish-20260918`; final paired functional report retains instrument and startup/cache provenance.
-Completion date: pending.
-Remaining gates: the measurement/coverage requirements in the profiling implementation checkpoint are still pending. No performance threshold or external capture is claimed. Rendering follow-ups are parked.
+Tested revision: profiling PR; exact revisions and executable identities are in
+the profiling workflow. Commands and results: repeated x64/ARM64 native and Edge
+captures, PresentMon zero-present checks, GPU Engine counters, ARM64 ETW with
+zero lost buffers/events, and matched CPU telemetry passed.
+Evidence paths: retained local evidence and the integrated cross-machine report.
+Completion date: 2026-09-22.
+Remaining limitation: rerun x64 WPR from an already elevated interactive shell
+if trace parity with ARM64 is required.
 
 ---
 
@@ -1473,12 +1478,10 @@ Remaining gates: the measurement/coverage requirements in the profiling implemen
 
 Dependencies: R3, R7.
 
-Status: in progress. WebGPU matrix inclusion, paired filtering, CPU reporting
-and explicit startup attribution are implemented. Matched repeated Release and
-forced-cold startup measurements remain pending. Priority P1. Depends on [R4](#r4-build-a-low-overhead-cpu-instrumentation-path)
-for trustworthy CPU phase times and [R7](#r7-assign-each-performance-question-to-the-right-instrument)
-for the instrument assignment. It does **not** depend on R21: frame-level GPU
-busy and wait come from PresentMon, which needs no engine changes.
+Status: complete. WebGPU matrix inclusion, paired filtering, CPU reporting,
+startup attribution, repeated Release captures, cold/warm shader costs, native
+GPU timestamps, browser throughput, and integrated reporting are implemented.
+R21 retains separate perturbation and external-correlation gates.
 
 ### Problem
 
@@ -1533,17 +1536,19 @@ Set-Location (Join-Path $SourceRoot 'bin/x64/Release')
 
 ### Completion record
 
-- [x] Development/reporting deliverable finished; performance measurements remain pending.
-- [ ] Every acceptance criterion verified.
-- [ ] Required tests passed; exact commands and results retained.
-- [ ] Owning docs updated; applicable registration and platform gates passed.
+- [x] Development/reporting deliverable finished.
+- [x] Every R8 acceptance criterion verified.
+- [x] Required tests passed; exact commands and results retained.
+- [x] Owning docs updated; applicable registration and platform gates passed.
 - [x] Evidence linked; index and item status updated together.
 
-Tested revision: local uncommitted profiling implementation on `98d1e16c683c351ac946429f8e3599a4945ee168`; see the shared profiling implementation checkpoint.
-Commands and results: focused Framework/DayScene Debug build and 69 shared tests PASS; MSBuild compile-out build PASS. Short paired, streaming and dynamic-texture captures passed report-integrity checks. These are functional checks, not overhead acceptance.
-Evidence paths: `%LOCALAPPDATA%/T850Profiles/profiling-workstream-20260918` and `profiling-finish-20260918/final-paired`; final short Debug run matches raw work and adapter and records startup attribution, not a Release performance result.
-Completion date: pending.
-Remaining gates: the measurement/coverage requirements in the profiling implementation checkpoint are still pending. No performance threshold or external capture is claimed. Rendering follow-ups are parked.
+Tested revision: profiling PR; exact revisions and executable identities are in
+the profiling workflow. Commands and results: final five-repeat x64/ARM64 GPU
+and throughput matrices, three-repeat matched CPU matrices, Edge throughput,
+shader/startup costs, and report-integrity checks passed.
+Evidence paths: retained local evidence and the integrated cross-machine report.
+Completion date: 2026-09-22.
+Remaining work belongs to R21 validation, not R8 publication.
 
 ---
 
@@ -2311,85 +2316,79 @@ Remaining risks or blocked gates: not yet assessed.
 
 ---
 
-## R21. Implement WebGPU GPU timestamp queries
+## R21. Implement opt-in cross-backend GPU timestamp queries
 
 Dependencies: R1, R6.
 
-Status: open. Priority P2, demoted. Built-in GPU execution timing is an
-[explicit non-goal](#profiling-workstream) of the profiling workstream: PresentMon
-covers frame-level GPU busy and wait, and PIX, RenderDoc or Nsight cover per-pass
-and per-draw breakdowns. This item now exists only to remove a consistency gap —
-four backends expose GPU timing and one does not — and to make the profiler
-report look the same on all five. Do it after both profiling objectives are met,
-and after [R1](#r1-fix-profiler-scope-accounting-and-remove-the-vulkan-leak).
+Status: implementation complete; validation remains open. The compile-time
+opt-in whole-frame and logical-pass paths are implemented for D3D12, Vulkan, and
+native Dawn/WebGPU. Repeated x64/ARM64 held-frame matrices pass with no dropped
+or failed accepted samples. Remaining acceptance is external correlation,
+whole-frame/pass-mode perturbation, and pending-callback/device-loss stress as
+listed in [GPU timestamp profiling](gpu-timestamp-profiling.md). OpenGL is
+explicitly outside this scope.
 
 ### Problem
 
-WebGPU is the only backend in the engine with no GPU timing. There is no
-`WebGPUProfilerBackend`, and the string `timestamp` does not appear anywhere
-under `T850/Framework/src/video/webgpu/`. This is not a specification
-limitation: WebGPU exposes an optional `timestamp-query` feature. The
-gap is built-in GPU pass timing only. CPU profiling and the R8 comparison do
-not depend on this item; external tools can supply supported GPU metrics.
+The ARM64 investigation demonstrated that PresentMon can be refresh-paced and
+that GPU-drained completed-frame throughput includes CPU submission and backend
+queue utilization. Neither is a substitute for timestamp-derived GPU execution
+duration. The implemented dedicated profiler therefore uses completion-driven
+work on D3D12, Vulkan, and WebGPU rather than extending the legacy profiler.
 
 ### Evidence
 
-- `T850/Framework/src/debug/ProfilerGpuBackend.cpp` implements D3D11, D3D12,
-  Vulkan and OpenGL backends; `CreateProfilerGpuBackend` has no WebGPU case.
-- `RuntimeTelemetry` counters such as `webgpu.draws` and
-  `webgpu.bind_group_allocations` exist, but they count events, not time.
+- `GpuTimestampProfiler` owns a bounded batch ring and dedicated JSON output.
+- D3D12 consumes query data only after the owning fence completes.
+- Vulkan consumes nonblocking query data after submission completion and handles
+  timestamp valid-bit wraparound.
+- Dawn uses timestamp-query, submitted-work completion, asynchronous mapping,
+  and event processing.
+- `RenderGraph::Execute` supplies stable logical pass regions.
 
 ### Required change
 
-1. Request the `timestamp-query` feature during device creation when the adapter
-   reports it. Record requested and actual features; never make graphics
-   availability depend on it.
-2. Add `WebGPUProfilerBackend` to the existing `CreateProfilerGpuBackend`
-   factory.
-3. Attach begin/end timestamp writes to render-pass and compute-pass
-   descriptors. Pass-level timing is the portable baseline; do not attempt
-   arbitrary in-pass nesting.
-4. Resolve into query-result buffers, copy into `MAP_READ` buffers, map
-   asynchronously and process completions in later frames. No map wait or
-   work-done wait on the frame path.
-5. Drive slot recycling from actual completion, not from a fixed frame delay.
-  A fixed ring length does not prove completion on any backend. Preserve
-  fence/query-availability checks and handle delayed map completion explicitly.
-6. When the feature is unavailable, report GPU fields as unavailable rather than
-   zero, and log the fallback once.
+The implemented contract and remaining validation are documented in
+[GPU timestamp profiling](gpu-timestamp-profiling.md).
 
 ### Acceptance criteria
 
-- With `timestamp-query` available, per-pass GPU durations appear in the
-  profiler and in telemetry after the expected asynchronous latency.
-- With the feature forced off, the runtime still renders and clearly reports
-  CPU-only timing.
-- No blocking wait is introduced on the frame path; verify by frame-time
-  stability with the profiler enabled and disabled.
-- Query rings survive a resize and a surface reconfiguration.
+- The define defaults OFF and query instrumentation compiles out of normal builds.
+- D3D12, Vulkan and native WebGPU report timestamp-derived whole-frame GPU time
+  for the same deterministic no-present workload.
+- Query batches recycle only after actual backend completion; no frame-path wait
+  resolves results.
+- At least 95% of post-warmup requested samples are valid, with explicit drops
+  and failures.
+- Pass-level timing is a separate gate after whole-frame timing passes.
 
 ### Verification
 
-```powershell
-Set-Location (Join-Path $SourceRoot 'bin/x64/Release')
-.\DayScene.exe --api webgpu --scene 1 --frames 600 --offscreen --profile --telemetry
-```
-
-Confirm non-null GPU pass samples and a reported valid-sample count.
+Use the build, runtime, external-correlation and perturbation commands in the
+[GPU timestamp profiling plan](gpu-timestamp-profiling.md#tests). `--frames` is
+not an accepted bounded runtime argument.
 
 ### Completion record
 
-- [ ] Implementation or audit/scope deliverable finished.
-- [ ] Every acceptance criterion verified.
+- [x] Audit/scope deliverable finished.
+- [x] Whole-frame D3D12, Vulkan, and native WebGPU backends implemented.
+- [x] Logical render-graph pass timing implemented and validated on all three.
+- [x] Default-OFF and ordinary WebGPU feature isolation verified locally.
+- [x] ARM64 six-cell held-frame matrix passed 720/720 samples.
+- [ ] External-correlation, perturbation, and callback/device-loss acceptance verified.
 - [ ] Required tests passed; exact commands and results retained.
-- [ ] Owning docs updated; applicable registration and platform gates passed.
-- [ ] Evidence linked; index and item status updated together.
+- [x] Owning docs updated; applicable registration and platform gates passed.
+- [x] Evidence linked; index and item status updated together.
 
-Tested revision: pending.
-Commands and results: not run.
-Evidence path or run URL: pending.
-Completion date: pending.
-Remaining risks or blocked gates: not yet assessed.
+Tested revision: profiling PR; exact revisions and executable hashes are in the
+workflow evidence. Commands and results: x64/ARM64 Release ON builds, D3D12,
+Vulkan, and Dawn runtime gates, and final five-by-600 D3D12/WGSL/SPIR-V matrices
+passed. Ordinary Dawn retained `timestamp-query requested=0 active=0`.
+Evidence path or run URL: local profile evidence outside Git and the ARM64
+benchmark skill's timestamp matrix harness.
+Completion date: implementation complete 2026-09-22; validation remains open.
+Remaining risks or blocked gates: external correlation, profiling perturbation,
+pending-callback/device-loss stress, and feature-negative hardware.
 
 ---
 
@@ -2425,7 +2424,7 @@ flowchart TD
   R3 --> R20[R20 optional device recovery]
   R7 --> R8[R8 benchmarks]
   R3 --> R8
-  R1 -.optional.-> R21[R21 WebGPU timestamps]
+  R1 -.optional.-> R21[R21 cross-backend GPU timestamps]
   R6 -.optional.-> R21
   R4 --> R17[R17 depth resolve audit]
   R4 --> R15[R15 quality downgrade telemetry]
@@ -2489,7 +2488,7 @@ Also keep these synchronized as the plan progresses:
 
 ## Related documents
 
-- [WebGPU proposal](proposal-webgpu.md)
+- [WebGPU implementation](proposal-webgpu.md)
 - [WebGPU runtime summary](webgpu-runtime-summary.md)
 - [WebGPU platform dependency gaps](webgpu-platform-gaps.md)
 - [Compute shader implementation](compute-shader-implementation.md)

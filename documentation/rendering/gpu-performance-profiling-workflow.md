@@ -135,7 +135,7 @@ Verified x64 host compiler fingerprints:
 Record these values again on another machine; do not assume Windows servicing
 or the staged Dawn package is identical.
 
-## Profile individual shader compilation stages on x64
+## Profile individual shader preparation stages on x64
 
 The aggregate cold/warm shader-cost capture answers startup and cache questions,
 but it cannot identify the slowest shader or compare compute and pixel stages.
@@ -144,6 +144,7 @@ For that question, build x64 Release and run:
 ```powershell
 & .\.github\skills\t850-arm64-gpu-benchmark\scripts\Capture-X64ShaderCompilationMatrix.ps1 `
   -RuntimeRoot .\T850\bin\x64\Release `
+  -ExpectedExecutableSha256 $expectedExecutableSha256 `
   -Repetitions 5
 ```
 
@@ -157,15 +158,29 @@ The structured event boundary is:
 | Flow | Per-stage duration |
 |---|---|
 | Native D3D12 | DXC compile plus DXC reflection |
-| WebGPU strict WGSL | Source load, WGSL preparation/reflection, and synchronous `CreateShaderModule` |
-| WebGPU strict SPIR-V | HLSL -> SPIR-V -> Tint/WGSL preparation/reflection, and synchronous `CreateShaderModule` |
+| WebGPU strict WGSL | WGSL preparation/reflection and synchronous `CreateShaderModule` |
+| WebGPU strict SPIR-V | HLSL -> SPIR-V -> Tint/WGSL preparation/reflection and synchronous `CreateShaderModule` |
 
-Graphics/compute pipeline creation, disk-cache writes, process startup, and
-whole-corpus wall time are reported separately or excluded. Report arithmetic
-mean, median, p95, maximum, and exact maximum shader/key for each flow/stage.
+For WebGPU, Dawn backend compilation performed during graphics/compute pipeline
+creation is outside this metric. Cross-flow percentages compare host-side shader
+preparation paths, not compiler speed. Pipeline creation, source loading,
+disk-cache writes, process startup, and whole-corpus wall time are reported
+separately or excluded. Report arithmetic mean, median, p95, maximum, and exact
+maximum shader/key for each flow/stage.
 Also report compute versus pixel mean and median, with the explicit caveat that
 the compute corpus has only nine distinct samples and different shader source;
 the ratio is descriptive, not a controlled causal stage comparison.
+
+Accepted evidence must use a clean source tree and pass
+`-ExpectedExecutableSha256`. The result records the source revision and dirty
+state. `-AllowDirtySource` exists only for diagnostic runs whose values will not
+be published.
+
+The retained 2026-09-22 matrix predates the clean-source enforcement and was
+captured from an explicitly hashed local binary. Keep it as historical report
+evidence, but rerun from a clean committed worktree before using its percentages
+as a release gate. Its WebGPU values also include the earlier broader attempt
+interval; future captures use preparation time that excludes cache writes.
 
 ## Fixed workload
 
@@ -881,6 +896,11 @@ intended for source control.
 The final matrix used five independent runs with 600 held samples/frames per
 cell at 1920x1080 and frame 3000. Normalize each host to its own native D3D12
 baseline; these machines have different GPUs, drivers, CPUs, and power behavior.
+These timestamps were captured in render-graph pass mode. Dawn closes physical
+passes at logical timestamp boundaries in that mode, so the table is accepted
+pass-profile evidence but not yet an uninstrumented backend-overhead result.
+Whole-frame-only and pass-mode perturbation measurements remain the closeout
+gate for cross-backend headline claims.
 
 Timestamp-derived whole-frame GPU medians:
 
@@ -941,75 +961,12 @@ Final outputs:
 
 - `D:\Code\QwenFlashT850\DayScene-x64-vs-ARM64-GPU-Report.html`
 - `D:\Code\QwenFlashT850\DayScene-x64-vs-ARM64-GPU-Comparison.json`
+- `D:\Code\QwenFlashT850\DayScene-x64-vs-ARM64-CPU-Comparison.json`
+- `D:\Code\QwenFlashT850\DayScene-x64-Shader-Compilation-Matrix.json`
+- `D:\Code\QwenFlashT850\DayScene-DXC-Cross-Machine-GPU-Report.zip`
+- `D:\Code\QwenFlashT850\DayScene-DXC-Cross-Machine-GPU-Manifest.json`
 - x64 manifest SHA-256 `E5AE8405578E16283E2A039EC8068A7AB7EC0F061DC7D63760B63FD0BBA4154C`;
 - ARM64 manifest SHA-256 `E0B192909FD36B09DB2246A9269C8E9C8074C691E60F4BBC271B4C93A7C2EA1F`.
-
-## Verified x64 execution record: 2026-09-22
-
-The full runnable suite was executed locally on:
-
-- machine `CAMUSSTRIX`, Windows 11 Pro build 26200, x64;
-- Intel Core i9-14900HX, 24 cores / 32 logical processors, 31.63 GiB RAM;
-- NVIDIA GeForce RTX 4080 Laptop GPU, driver `32.0.15.7652`;
-- active `Silent` power scheme, battery 100%;
-- official PresentMon 2.6.0 x64, SHA-256
-  `B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF`.
-
-WPR GPU ETW capture was environment-blocked because the shell was not elevated:
-`0xc5585011`, `Failed to enable the policy to profile system performance`.
-Timestamp, five-repeat throughput, zero-present PresentMon sanity, six sustained
-GPU Engine counter runs, compile-all, and all twelve startup cases passed. ETW
-must be rerun from an already elevated interactive shell for full trace parity.
-
-Timestamp-derived whole-frame medians:
-
-| Cell | x64 GPU ms | ARM64 GPU ms |
-|---|---:|---:|
-| D3D12 raster | 2.205 | 15.533 |
-| D3D12 compute | 2.583 | 16.355 |
-| WGSL raster | 3.345 | 15.204 |
-| WGSL compute | 3.743 | 15.925 |
-| SPIR-V raster | 4.034 | 15.008 |
-| SPIR-V compute | 4.205 | 15.991 |
-
-Behavior changed materially by platform. ARM64 Adreno slightly favored Dawn;
-x64 RTX favored native D3D12 GPU execution by 1.141 ms versus WGSL raster and
-1.830 ms versus SPIR-V raster. The x64 native advantage is distributed across
-DOF, GBuffer, Shadow Accumulation, God Rays, and other passes rather than the
-single ARM64 Shadow Depth anomaly. SPIR-V is also slower than WGSL on x64 by
-0.689 ms raster and 0.462 ms compute, while the ARM64 flows were effectively
-tied.
-
-Five-repeat completed-throughput medians are much closer:
-
-| Cell | Median ms/frame | Median FPS |
-|---|---:|---:|
-| D3D12 raster | 4.191 | 238.63 |
-| D3D12 compute | 4.360 | 229.35 |
-| WGSL raster | 4.134 | 241.91 |
-| WGSL compute | 4.154 | 240.74 |
-| SPIR-V raster | 4.069 | 245.78 |
-| SPIR-V compute | 4.170 | 239.78 |
-
-Sustained 3D-engine means are approximately 75.6% native D3D12 raster versus
-98.5% Dawn WGSL raster. Thus native D3D12 executes the GPU workload faster on
-this RTX system but underfeeds the GPU enough that end-to-end throughput remains
-near Dawn. This reproduces the distinction between GPU execution and completed
-backend throughput.
-
-Pre-switch compile-all 291-permutation wall times retained as historical
-baseline (the D3D12 row used FXC before DXC became the default):
-
-| Path | Cold | Warm |
-|---|---:|---:|
-| D3D12 legacy FXC | 32.812 s | 1.270 s |
-| WGSL | 6.082 s | 3.381 s |
-| HLSL -> SPIR-V -> WGSL | 10.120 s | 3.422 s |
-
-Evidence root:
-`%LOCALAPPDATA%\T850Profiles\gpu-x64-full-20260922`. The suite manifest SHA-256
-is `6585EBE0C1E4445C067EDD18575F8C04754DFB2CBD1AEFB4D997C171A7F514D1`.
-The x64 report is `D:\Code\QwenFlashT850\DayScene-x64-GPU-Performance-Report.html`.
 
 ## Related documents
 

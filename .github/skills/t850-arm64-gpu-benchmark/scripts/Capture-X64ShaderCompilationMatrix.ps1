@@ -1,8 +1,10 @@
 [CmdletBinding()]
 param(
-    [string]$RuntimeRoot = "$(Split-Path -Parent $PSScriptRoot)\..\..\..\..\T850\bin\x64\Release",
+    [string]$RuntimeRoot = "$PSScriptRoot\..\..\..\..\T850\bin\x64\Release",
     [string]$OutputRoot = "$env:LOCALAPPDATA\T850Profiles\shader-compilation-x64-$(Get-Date -Format yyyyMMdd-HHmmss)",
-    [ValidateRange(1, 20)][int]$Repetitions = 5
+    [ValidateRange(1, 20)][int]$Repetitions = 5,
+    [string]$ExpectedExecutableSha256,
+    [switch]$AllowDirtySource
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +20,21 @@ if (!(Test-Path -LiteralPath $exe)) { throw "Missing x64 DayScene executable: $e
 if (!(Test-Path -LiteralPath $manifest)) { throw "Missing shader permutation manifest: $manifest" }
 if (Test-Path -LiteralPath $OutputRoot) { throw "Use a fresh output root: $OutputRoot" }
 if (Get-Process DayScene -ErrorAction SilentlyContinue) { throw 'DayScene is already running.' }
+$executableSha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+if ($ExpectedExecutableSha256 -and $executableSha256 -ne $ExpectedExecutableSha256) {
+    throw "Executable hash mismatch: expected $ExpectedExecutableSha256, found $executableSha256"
+}
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\..'))
+$sourceRevision = $null
+$sourceDirty = $null
+if (Test-Path -LiteralPath (Join-Path $repositoryRoot '.git')) {
+    $sourceRevision = (& git -C $repositoryRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read source revision.' }
+    $sourceDirty = @(& git -C $repositoryRoot status --porcelain --untracked-files=no -- . ':(exclude)T850/Librerias/vcpkg').Count -gt 0
+    if ($sourceDirty -and !$AllowDirtySource) {
+        throw 'Source tree is dirty. Use a clean worktree for accepted evidence or pass -AllowDirtySource for an explicitly diagnostic run.'
+    }
+}
 [void][IO.Directory]::CreateDirectory($OutputRoot)
 
 $cases = @(
@@ -71,10 +88,16 @@ $events = [Collections.Generic.List[object]]::new()
 $runs = [Collections.Generic.List[object]]::new()
 $expectedCounts = @{}
 
+$orderPatterns = @(
+    @(0, 1, 2), @(2, 1, 0), @(1, 2, 0),
+    @(0, 2, 1), @(1, 0, 2), @(2, 0, 1)
+)
 for ($repetition = 1; $repetition -le $Repetitions; ++$repetition) {
-    $orderedCases = if ($repetition % 2) { $cases } else { @($cases[2], $cases[1], $cases[0]) }
+    $pattern = $orderPatterns[($repetition - 1) % $orderPatterns.Count]
+    $orderedCases = @($pattern | ForEach-Object { $cases[$_] })
     foreach ($case in $orderedCases) {
         if (Test-Path -LiteralPath $cache) { Remove-Item -LiteralPath $cache -Recurse -Force }
+        if (Test-Path -LiteralPath $cache) { throw "Shader cache deletion failed: $cache" }
         $runDirectory = Join-Path $OutputRoot ("raw\{0}-run-{1:D2}" -f $case.Name, $repetition)
         [void][IO.Directory]::CreateDirectory($runDirectory)
         $stdout = Join-Path $runDirectory 'stdout.log'
@@ -98,7 +121,13 @@ for ($repetition = 1; $repetition -le $Repetitions; ++$repetition) {
             $process.Dispose()
             $stopwatch.Stop()
         }
-        if ($exitCode -ne 0) { throw "Shader compilation failed with exit ${exitCode}: $runDirectory" }
+        if ($exitCode -ne 0) {
+            $excerpt = @(
+                Get-Content -LiteralPath $stdout -Tail 20 -ErrorAction SilentlyContinue
+                Get-Content -LiteralPath $stderr -Tail 20 -ErrorAction SilentlyContinue
+            ) -join "`n"
+            throw "Shader compilation failed with exit ${exitCode}: $runDirectory`n$excerpt"
+        }
 
         $text = [IO.File]::ReadAllText($stdout) + "`n" + [IO.File]::ReadAllText($stderr)
         $complete = [regex]::Match($text, '\[ShaderPrecompile\] complete: (\d+) succeeded, (\d+) failed')
@@ -208,7 +237,7 @@ $result = [ordered]@{
         corpus = 'Shaders/shader_permutations.json'
         metric = 'per-stage synchronous CPU duration'
         d3d12Metric = 'DXC compile plus reflection'
-        webgpuMetric = 'source load/prepare/reflect plus CreateShaderModule call'
+        webgpuMetric = 'source translation/preparation/reflection plus CreateShaderModule call'
         excluded = @('graphics pipeline creation', 'compute pipeline creation', 'disk cache writes', 'whole-process startup')
     }
     machine = [ordered]@{
@@ -217,7 +246,8 @@ $result = [ordered]@{
         gpu = @((Get-CimInstance Win32_VideoController | ForEach-Object { [pscustomobject]@{ name = $_.Name; driverVersion = $_.DriverVersion } }))
         os = (Get-CimInstance Win32_OperatingSystem).Caption
     }
-    executable = [ordered]@{ path = $exe; sha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash }
+    source = [ordered]@{ repositoryRoot = $repositoryRoot; revision = $sourceRevision; dirty = $sourceDirty }
+    executable = [ordered]@{ path = $exe; sha256 = $executableSha256 }
     manifestSha256 = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
     runs = $runs
     summary = $summary
@@ -257,9 +287,9 @@ $computeRows = foreach ($row in $computeVsPixel) {
 }
 
 $html = @"
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DayScene x64 Shader Compilation Matrix</title><style>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DayScene x64 Shader Preparation Matrix</title><style>
 :root{color-scheme:light;--ink:#1b252d;--muted:#58656e;--line:#cad2d8;--paper:#f4f6f7;--accent:#006c67;--warm:#9b4d16}*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#eef2f3,#fff 45%,#f5eee7);color:var(--ink);font-family:Georgia,'Times New Roman',serif;line-height:1.45}main{max-width:1500px;margin:auto;padding:32px 24px 64px}h1,h2{letter-spacing:0}h1{font-size:clamp(2rem,4vw,4rem);margin:0 0 8px}h2{border-bottom:2px solid var(--accent);padding-bottom:6px;margin-top:36px}.meta{color:var(--muted);max-width:1000px}.band{background:#17333a;color:#fff;padding:18px 22px;margin:24px 0}.scroll{overflow-x:auto;border:1px solid var(--line);background:#fff}table{border-collapse:collapse;width:100%;min-width:900px;font-family:'Segoe UI',sans-serif;font-size:14px}th,td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}th:first-child,td:first-child,td:nth-last-child(n+4){text-align:left}thead th{background:#e4ecec;color:#183238;position:sticky;top:0}tbody tr:nth-child(even){background:#f8fafb}code{font-family:Consolas,monospace;font-size:12px;overflow-wrap:anywhere;word-break:break-word}.note{border-left:4px solid var(--warm);padding:10px 14px;background:#fff8f1}.small{font-size:13px;color:var(--muted)}@media(max-width:700px){main{padding:20px 12px 48px}h1{font-size:2rem}}
-</style></head><body><main><h1>DayScene x64 Shader Compilation Matrix</h1><p class="meta">Cold Release compilation of the recorded shader corpus on $(ConvertTo-HtmlText $env:COMPUTERNAME). $Repetitions independent launches per flow; arithmetic mean, median and maximum are calculated from individual stage compiler events.</p><div class="band"><strong>Metric boundary:</strong> native D3D12 measures DXC compile plus reflection. WebGPU measures source load/preparation/reflection plus the synchronous <code>CreateShaderModule</code> call. Pipeline creation and disk-cache writes are excluded.</div>
+</style></head><body><main><h1>DayScene x64 Shader Preparation Matrix</h1><p class="meta">Cold Release preparation of the recorded shader corpus on $(ConvertTo-HtmlText $env:COMPUTERNAME). $Repetitions independent launches per flow; arithmetic mean, median and maximum are calculated from individual stage events.</p><div class="band"><strong>Metric boundary:</strong> native D3D12 measures DXC compile plus reflection. WebGPU measures source translation/preparation/reflection plus the synchronous <code>CreateShaderModule</code> call. Dawn backend compilation performed during pipeline creation is excluded, so cross-flow percentages compare host-side preparation paths, not compiler speed. Pipeline creation and disk-cache writes are excluded.</div>
 <h2>Timing Matrix</h2><div class="scroll"><table><thead><tr><th rowspan="2">Stage</th><th colspan="3">Native D3D12 DXC (ms)</th><th colspan="3">WebGPU WGSL (ms)</th><th colspan="3">WebGPU SPIR-V flow (ms)</th></tr><tr><th>Mean</th><th>Median</th><th>Max</th><th>Mean</th><th>Median</th><th>Max</th><th>Mean</th><th>Median</th><th>Max</th></tr></thead><tbody>$($matrixRows -join '')</tbody></table></div>
 <h2>Backend Comparison</h2><div class="scroll"><table><thead><tr><th>Stage</th><th>D3D12 mean</th><th>WGSL mean</th><th>WGSL vs D3D12</th><th>SPIR-V mean</th><th>SPIR-V vs D3D12</th><th>SPIR-V vs WGSL</th></tr></thead><tbody>$($comparisonRows -join '')</tbody></table></div>
 <h2>Compute Versus Pixel</h2><div class="scroll"><table><thead><tr><th>Flow</th><th>Pixel mean</th><th>Compute mean</th><th>Compute vs pixel mean</th><th>Pixel median</th><th>Compute median</th><th>Compute vs pixel median</th></tr></thead><tbody>$($computeRows -join '')</tbody></table></div><p class="note">The compute and pixel corpora contain different source programs and different sample counts. These ratios answer whether this recorded corpus took the same time; they do not isolate shader stage as the cause.</p>
@@ -270,7 +300,7 @@ $htmlPath = Join-Path $OutputRoot 'DayScene-x64-Shader-Compilation-Report.html'
 [IO.File]::WriteAllText($htmlPath, $html, [Text.UTF8Encoding]::new($false))
 
 $markdown = [Collections.Generic.List[string]]::new()
-$markdown.Add('# DayScene x64 Shader Compilation Matrix')
+$markdown.Add('# DayScene x64 Shader Preparation Matrix')
 $markdown.Add('')
 $markdown.Add('| Stage | D3D12 mean | WGSL mean | WGSL vs D3D12 | SPIR-V mean | SPIR-V vs D3D12 | SPIR-V vs WGSL |')
 $markdown.Add('|---|---:|---:|---:|---:|---:|---:|')

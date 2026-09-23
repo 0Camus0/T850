@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <core/Config.h>
 #include <debug/RuntimeTelemetry.h>
 #include <video/d3d12/D3D12Compute.h>
 #include <video/d3d12/D3D12Device.h>
@@ -149,12 +150,20 @@ namespace t850 {
       T8_LOG_DEBUG("[ShaderCache][D3D12] CS hit %s", cacheKey.sha1.c_str());
     } else {
       T8_TELEMETRY_ADD("shader.cache.misses", 1);
+      const auto compileStarted = std::chrono::steady_clock::now();
       if (!T8_TELEMETRY_CALL("shader.compile", CompileD3D12Shader(
             device, compiledSource, desc.debugName, desc.entryPoint,
             D3D12ShaderStage::Compute, compiled, diagnostic))) {
         T8_LOG_ERROR("[D3D12][Compute] Shader compile failed for '%s': %s",
                      desc.debugName.c_str(), diagnostic.c_str());
         return false;
+      }
+      const double compileMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - compileStarted).count();
+      if (g_config.flags.compileShaders) {
+        T8_LOG_INFO("[ShaderCompileProfile] backend=d3d12 flow=%s stage=compute shader=\"%s\" entry=%s permutation=\"%s\" cache=miss elapsedMs=%.6f",
+          legacy ? "legacyHLSL" : "dxc", desc.debugName.c_str(), desc.entryPoint.c_str(),
+          desc.permutationName.c_str(), compileMs);
       }
       ShaderDiskCache::StoreArtifact(
         cacheKey, artifact, compiled.bytecode->GetBufferPointer(), compiled.bytecode->GetBufferSize());

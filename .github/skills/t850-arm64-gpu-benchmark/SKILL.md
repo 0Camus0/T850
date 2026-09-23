@@ -102,6 +102,21 @@ commands outside graph nodes remain visible only in the whole-frame interval.
 
 Cold means the selected API cache under `Shaders/.t8shadercache` is absent before launch. Warm immediately repeats the same command without clearing it. Record wall time and telemetry shader compile/cache scopes separately.
 
+For an x64 per-stage compilation matrix, use
+[Capture-X64ShaderCompilationMatrix.ps1](./scripts/Capture-X64ShaderCompilationMatrix.ps1).
+It runs five alternating cold launches for native D3D12 DXC, strict WGSL, and
+strict HLSL -> SPIR-V -> WGSL. The engine emits one structured event for every
+cache-miss vertex, pixel, or compute stage. Report arithmetic mean, median, p95,
+maximum, exact maximum shader/key, and compute-versus-pixel deltas.
+
+Native D3D12 events measure DXC compile plus reflection. WebGPU events measure
+source load/preparation/reflection plus the synchronous `CreateShaderModule`
+call and retain preparation/module components separately. Pipeline creation,
+cache writes, process startup, and warm cache hits are outside the per-stage
+metric. The compute corpus is smaller and contains different programs than the
+pixel corpus, so a compute-versus-pixel delta describes this recorded corpus;
+it does not isolate shader stage as the causal variable.
+
 For Microsoft Edge, first require both the adapter `timestamp-query` feature and
 `GPUCommandEncoder.prototype.writeTimestamp`. If the method is absent, classify
 browser timestamps as `capability-blocked` and stop those cells. Use

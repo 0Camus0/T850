@@ -1,5 +1,6 @@
 #include <video/webgpu/WebGPUContext.h>
 #include <debug/RuntimeTelemetry.h>
+#include <core/Config.h>
 
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <utils/Log.h>
@@ -160,12 +161,28 @@ void WebGPUContext::Initialize(void* hwnd, uint32_t newWidth, uint32_t newHeight
   configuration.device = device;
   configuration.format = capabilities.formats[0];
   for (size_t index = 0; index < capabilities.formatCount; ++index) {
+#if T850_ENABLE_GPU_PROFILING && !defined(__EMSCRIPTEN__)
+  const char* gpuProfilingToggles[] = {"allow_unsafe_apis"};
+  wgpu::DawnTogglesDescriptor gpuProfilingToggleDescriptor{};
+  if (g_config.profileGpu) {
+    gpuProfilingToggleDescriptor.enabledToggleCount = std::size(gpuProfilingToggles);
+    gpuProfilingToggleDescriptor.enabledToggles = gpuProfilingToggles;
+    deviceDesc.nextInChain = &gpuProfilingToggleDescriptor;
+  }
+#endif
     if (capabilities.formats[index] == wgpu::TextureFormat::BGRA8Unorm) configuration.format = capabilities.formats[index];
   }
   m_directReadback = (capabilities.usages & wgpu::TextureUsage::CopySrc) != wgpu::TextureUsage::None;
   configuration.usage = wgpu::TextureUsage::RenderAttachment;
   if (m_directReadback) configuration.usage |= wgpu::TextureUsage::CopySrc;
   configuration.presentMode = wgpu::PresentMode::Fifo;
+#if T850_ENABLE_GPU_PROFILING
+  if (g_config.profileGpu) {
+    Require(adapter.HasFeature(wgpu::FeatureName::TimestampQuery),
+            "GPU timestamp profiling requested but timestamp-query is unavailable");
+    features.push_back(wgpu::FeatureName::TimestampQuery);
+  }
+#endif
 #ifndef __EMSCRIPTEN__
   for (size_t index = 0; index < capabilities.presentModeCount; ++index) {
     if (capabilities.presentModes[index] == wgpu::PresentMode::Immediate)
@@ -186,6 +203,11 @@ void WebGPUContext::Resize(uint32_t newWidth, uint32_t newHeight) {
   if (depth) depth.Destroy();
   m_captureTarget = nullptr;
   depth = nullptr;
+#if T850_ENABLE_GPU_PROFILING
+  T8_LOG_INFO("[WebGPU] timestamp-query requested=%d active=%d",
+    g_config.profileGpu ? 1 : 0,
+    device.HasFeature(wgpu::FeatureName::TimestampQuery) ? 1 : 0);
+#endif
   if (m_configured) surface.Unconfigure();
   m_configured = false;
   width = newWidth;

@@ -53,6 +53,7 @@ $frameworkSources = @(
     Get-ChildItem (Join-Path $frameworkRoot "src\game") -Recurse -Filter "*.cpp"
     Get-ChildItem (Join-Path $frameworkRoot "src\terrain") -Recurse -Filter "*.cpp"
     Get-Item (Join-Path $frameworkRoot "src\debug\CrashDiagnostics.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\debug\GpuTimestampProfiler.cpp")
     Get-Item (Join-Path $frameworkRoot "src\physics\GameplayLayers.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMesh.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMeshData.cpp")
@@ -70,6 +71,7 @@ $frameworkHeaders = @(
     Get-ChildItem (Join-Path $frameworkRoot "include\game") -Recurse -Filter "*.h"
     Get-ChildItem (Join-Path $frameworkRoot "include\terrain") -Recurse -Filter "*.h"
     Get-Item (Join-Path $frameworkRoot "include\debug\CrashDiagnostics.h")
+    Get-Item (Join-Path $frameworkRoot "include\debug\GpuTimestampProfiler.h")
     Get-Item (Join-Path $frameworkRoot "include\physics\GameplayLayers.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\MutableMesh.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\MutableMeshData.h")

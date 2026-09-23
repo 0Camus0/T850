@@ -59,6 +59,7 @@ set(FRAMEWORK_SOURCES
   src/debug/CrashDiagnostics.cpp
   src/debug/ComputeSelfTest.cpp
   src/debug/FrameDumperIO.cpp
+  src/debug/GpuTimestampProfiler.cpp
   src/debug/Profiler.cpp
   src/debug/ProfilerGpuBackend.cpp
   src/debug/RuntimeTelemetry.cpp
@@ -188,7 +189,9 @@ endif()
 
 add_library(Framework STATIC ${FRAMEWORK_SOURCES})
 option(T850_ENABLE_PROFILING "Compile CPU profiling and upload accounting" ON)
+option(T850_ENABLE_GPU_PROFILING "Compile opt-in GPU timestamp profiling" OFF)
 target_compile_definitions(Framework PUBLIC T850_ENABLE_PROFILING=$<BOOL:${T850_ENABLE_PROFILING}>)
+target_compile_definitions(Framework PUBLIC T850_ENABLE_GPU_PROFILING=$<BOOL:${T850_ENABLE_GPU_PROFILING}>)
 add_library(T800Framework ALIAS Framework)
 
 if(MSVC)

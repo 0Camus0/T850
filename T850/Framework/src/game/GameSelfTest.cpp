@@ -3,6 +3,7 @@
 #include <game/GameSelfTest.h>
 
 #include <debug/Profiler.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <debug/RuntimeTelemetry.h>
 #include <future>
 #include <thread>
@@ -1766,10 +1767,12 @@ void TestShaderFlowConfiguration() {
     config::ApplyCommandLine(static_cast<int>(pointers.size()), pointers.data(), config);
   };
   Config defaults;
-  Require(defaults.webgpuShaderFlow == "auto", "WebGPU shader flow must default to auto");
+  Require(defaults.webgpuShaderFlow == "auto", "Shader flow must default to auto/DXC");
   const auto modes = {"auto", "wgsl", "spirv"};
 #ifdef __EMSCRIPTEN__
   const std::string expectedApi = "webgpu";
+#elif defined(_M_IX86)
+  const std::string expectedApi = "d3d11";
 #else
   const std::string expectedApi = "d3d12";
 #endif
@@ -1794,6 +1797,26 @@ void TestShaderFlowConfiguration() {
 #endif
   parse(defaults, {"DayScene", "--shaderFlow", "SPIRV", "--shaderFlow", "WGSL"});
   Require(defaults.webgpuShaderFlow == "wgsl", "Shader flow case normalization or last override failed");
+#ifndef __EMSCRIPTEN__
+    Config legacyD3D12;
+    legacyD3D12.api = "d3d12";
+    parse(legacyD3D12, {"DayScene", "--shaderFlow", "legacyHLSL"});
+    Require(legacyD3D12.webgpuShaderFlow == "legacyhlsl" && config::ValidateConfig(legacyD3D12),
+      "legacyHLSL D3D12 flow was not normalized/accepted");
+    Config invalidLegacyApi;
+    invalidLegacyApi.api = "webgpu";
+    parse(invalidLegacyApi, {"DayScene", "--shaderFlow", "legacyHLSL"});
+    bool rejectedLegacyApi = false;
+    try { config::ValidateConfig(invalidLegacyApi); } catch (const std::invalid_argument&) { rejectedLegacyApi = true; }
+    Require(rejectedLegacyApi, "legacyHLSL was accepted outside native D3D12");
+  #if defined(_M_IX86)
+    Config invalidWin32Dxc;
+    invalidWin32Dxc.api = "d3d12";
+    bool rejectedWin32Dxc = false;
+    try { config::ValidateConfig(invalidWin32Dxc); } catch (const std::invalid_argument&) { rejectedWin32Dxc = true; }
+    Require(rejectedWin32Dxc, "Win32 D3D12 accepted unavailable DXC default");
+  #endif
+  #endif
   for (const auto& arguments : std::vector<std::vector<std::string>>{
          {"DayScene", "--shaderFlow"}, {"DayScene", "--shaderFlow", "--api", "webgpu"},
          {"DayScene", "--shaderFlow", "invalid"}, {"DayScene", "--shaderFlow", ""}}) {
@@ -1805,7 +1828,93 @@ void TestShaderFlowConfiguration() {
   bool rejected = false;
   try { config::ValidateConfig(defaults); } catch (const std::invalid_argument&) { rejected = true; }
   Require(rejected, "Invalid configured shader flow silently defaulted");
+
+    Config heldFrame;
+    parse(heldFrame, {"DayScene", "--benchmarkHoldFrame", "3000", "--regressionFixedDt", "0.0166666667"});
+    Require(heldFrame.benchmarkHoldFrame == 3000 && heldFrame.regressionFixedDt > 0.016f,
+      "Benchmark hold frame CLI parsing failed");
+    Require(config::ValidateConfig(heldFrame), "Valid benchmark hold frame config rejected");
+    heldFrame.benchmarkHoldFrame = -1;
+    Require(!config::ValidateConfig(heldFrame) && heldFrame.benchmarkHoldFrame == 0,
+      "Invalid benchmark hold frame was not normalized");
+
+      Config gpuProfile;
+      parse(gpuProfile, {"DayScene", "--api", expectedApi, "--profileGpu",
+             "--profileGpuFrames", "42", "--profileGpuOutput", "logs/test gpu.json",
+             "--profileGpuPasses", "render-graph"});
+      Require(gpuProfile.profileGpu && gpuProfile.profileGpuFrames == 42 &&
+        gpuProfile.profileGpuOutputPath == "logs/test gpu.json" &&
+        gpuProfile.profileGpuGranularity == Config::GpuProfileGranularity::RenderGraphPasses,
+        "GPU profile CLI arguments were not parsed independently");
+    #if T850_ENABLE_GPU_PROFILING
+      Require(config::ValidateConfig(gpuProfile), "GPU profile build rejected a supported API request");
+      Config conflicting = gpuProfile;
+      conflicting.profileCpuOnly = true;
+      bool conflictRejected = false;
+      try { config::ValidateConfig(conflicting); } catch (const std::invalid_argument&) { conflictRejected = true; }
+      Require(conflictRejected, "GPU and CPU-only profiling were accepted together");
+    #else
+      bool compiledOutRejected = false;
+      try { config::ValidateConfig(gpuProfile); } catch (const std::invalid_argument&) { compiledOutRejected = true; }
+      Require(compiledOutRejected, "GPU profiling request was accepted when compiled out");
+    #endif
+      bool granularityRejected = false;
+      try { parse(gpuProfile, {"DayScene", "--profileGpuPasses", "draws"}); }
+      catch (const std::invalid_argument&) { granularityRejected = true; }
+      Require(granularityRejected, "Unknown GPU profile granularity was accepted");
 }
+
+    void TestGpuTimestampBatchRing() {
+      GpuTimestampBatchRing ring(2);
+      const auto first = ring.Acquire(10, 0);
+      const auto second = ring.Acquire(11, 0);
+      Require(first && second && *first != *second && ring.PendingCount() == 2,
+        "GPU timestamp ring did not allocate distinct bounded batches");
+      Require(!ring.Acquire(12, 0) && ring.Stats().dropped == 1,
+        "Full GPU timestamp ring did not report a dropped sample");
+      Require(ring.MarkSubmitted(*first, 0, 100, 2) &&
+        ring.MarkResultsPending(*first, 0) &&
+        ring.MarkSubmitted(*second, 0, 101, 4) &&
+        ring.MarkReady(*second, 0),
+        "GPU timestamp batch transitions failed");
+      auto terminal = ring.ConsumeTerminal(0);
+      Require(terminal.size() == 1 && terminal[0].frame == 11 &&
+        terminal[0].submissionToken == 101 && terminal[0].queryCount == 4 &&
+        ring.PendingCount() == 1,
+        "Out-of-order GPU timestamp completion released the wrong batch");
+
+      const auto third = ring.Acquire(12, 0);
+      Require(third && ring.MarkSubmitted(*third, 0, 102, 2) &&
+        ring.MarkFailed(*third, 0) && ring.MarkReady(*first, 0),
+        "Ready/failed GPU timestamp terminal states failed");
+      terminal = ring.ConsumeTerminal(0);
+      Require(terminal.size() == 2 && ring.PendingCount() == 0 &&
+        ring.Stats().completed == 2 && ring.Stats().failed == 1,
+        "GPU timestamp terminal batches were not counted or recycled");
+
+      const auto oldGeneration = ring.Acquire(20, 0);
+      Require(oldGeneration.has_value(), "GPU timestamp ring could not reacquire a recycled slot");
+      ring.Reset(1);
+      Require(ring.PendingCount() == 0 && ring.Stats().cancelled == 1,
+        "GPU timestamp generation reset did not cancel pending work");
+      const auto staleBefore = ring.Stats().staleCallbacks;
+      Require(!ring.MarkReady(*oldGeneration, 0) &&
+        ring.Stats().staleCallbacks == staleBefore + 1,
+        "Stale GPU timestamp callback was accepted after generation reset");
+      const auto current = ring.Acquire(21, 1);
+      Require(current && ring.MarkSubmitted(*current, 1, 200, 2) &&
+        ring.MarkReady(*current, 1) && ring.ConsumeTerminal(1).size() == 1,
+        "GPU timestamp ring did not recover after generation reset");
+
+      Require(ComputeGpuTimestampDelta(10, 20, 64) == 10 &&
+        !ComputeGpuTimestampDelta(20, 10, 64) &&
+        ComputeGpuTimestampDelta(250, 5, 8) == 11 &&
+        !ComputeGpuTimestampDelta(0, 1, 0),
+        "GPU timestamp valid-bit wrap handling failed");
+      Require(EscapeGpuTimestampJson("pass\"\\\n\t") == "pass\\\"\\\\\\n\\t" &&
+        EscapeGpuTimestampJson(std::string(1, '\x01')) == "\\u0001",
+        "GPU timestamp JSON escaping failed");
+    }
 
 class NullTestDriver final : public BaseDriver {
 public:
@@ -3315,6 +3424,7 @@ constexpr TestCase kTests[] = {
   {"T-GRAPH-MESH-PREPARATION-01", TestGraphMeshPreparation},
   {"T-PASS-FRUSTUM-REUSE-01", TestPassFrustumReuse},
   {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
+  {"T-GPU-PROFILE-BATCH-01", TestGpuTimestampBatchRing},
   {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
   {"T-MINECRAFT-SURVIVAL-01", TestMinecraftSurvivalAuthoring},
   {"T-MINECRAFT-HOUSE-01", TestMinecraftHouseAuthoring},

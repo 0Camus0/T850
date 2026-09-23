@@ -1,8 +1,10 @@
 #include <pch.h>
+#include <core/Config.h>
 #include <debug/RuntimeTelemetry.h>
 #include <video/d3d12/D3D12Compute.h>
 #include <video/d3d12/D3D12Device.h>
 #include <video/d3d12/D3D12Driver.h>
+#include <video/d3d12/D3D12Shader.h>
 #include <video/d3d12/D3D12Texture.h>
 
 #ifdef OS_WINDOWS
@@ -23,8 +25,6 @@ namespace t850 {
   extern DeviceContext* T8DeviceContext;
 
   namespace {
-    constexpr const char* kComputeShaderProfile = "cs_5_0";
-
     bool BuildComputeSource(const ComputePipelineDesc& desc, std::string& source) {
       std::ostringstream prefix;
       for (const std::string& define : desc.defines) {
@@ -41,18 +41,6 @@ namespace t850 {
         prefix << '\n';
       prefix << desc.source;
       source = prefix.str();
-      return true;
-    }
-
-    bool CreateBlobFromBytes(const std::vector<uint8_t>& bytes,
-                             Microsoft::WRL::ComPtr<ID3DBlob>& blob) {
-      if (bytes.empty())
-        return false;
-      Microsoft::WRL::ComPtr<ID3DBlob> created;
-      if (FAILED(D3DCreateBlob(bytes.size(), &created)))
-        return false;
-      std::memcpy(created->GetBufferPointer(), bytes.data(), bytes.size());
-      blob = created;
       return true;
     }
 
@@ -129,70 +117,63 @@ namespace t850 {
       return false;
     }
 
-    UINT compileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
-#ifdef _DEBUG
-    compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#else
-    compileFlags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
-#endif
-
     std::string compiledSource;
     if (!BuildComputeSource(desc, compiledSource))
       return false;
 
     const std::string driverSignature = GetD3D12ShaderCacheDriverSignature(device);
-    const std::string cacheProfile = std::string(kComputeShaderProfile) + ";flags=" + std::to_string(compileFlags);
+    const bool legacy = UseLegacyD3D12ShaderCompiler();
+  #ifdef _DEBUG
+    const std::string cacheApi = legacy ? "d3d12-legacy-debug" : "d3d12-debug";
+  #else
+    const std::string cacheApi = legacy ? "d3d12-legacy" : "d3d12";
+  #endif
+    const std::string shaderProfile = GetD3D12ShaderProfile(device, D3D12ShaderStage::Compute);
+    const std::string cacheProfile = shaderProfile + ";flow=" + (legacy ? "legacyHLSL" : "dxc");
     const ShaderDiskCacheKey cacheKey = ShaderDiskCache::MakeComputeKey(
-      "d3d12",
+      cacheApi,
       driverSignature,
       desc.debugName,
       desc.entryPoint,
       cacheProfile,
       compiledSource);
 
-    std::vector<uint8_t> cachedShader;
-    if (ShaderDiskCache::LoadArtifact(cacheKey, "cs.dxbc", cachedShader) &&
-        CreateBlobFromBytes(cachedShader, m_shaderBlob)) {
+    const std::string artifact = legacy ? "cs.dxbc" : "cs.dxil";
+    const std::string reflectionArtifact = "cs.reflection";
+    std::vector<uint8_t> cachedShader, cachedReflection;
+    D3D12CompiledShader compiled;
+    std::string diagnostic;
+    if (ShaderDiskCache::LoadArtifact(cacheKey, artifact, cachedShader) &&
+        (legacy || ShaderDiskCache::LoadArtifact(cacheKey, reflectionArtifact, cachedReflection)) &&
+        RestoreD3D12Shader(cachedShader, cachedReflection, legacy, compiled, diagnostic)) {
       T8_TELEMETRY_ADD("shader.cache.hits", 1);
       T8_LOG_DEBUG("[ShaderCache][D3D12] CS hit %s", cacheKey.sha1.c_str());
     } else {
-      Microsoft::WRL::ComPtr<ID3DBlob> errors;
       T8_TELEMETRY_ADD("shader.cache.misses", 1);
-      const HRESULT compileHr = T8_TELEMETRY_CALL("shader.compile", D3DCompile(
-        compiledSource.data(),
-        compiledSource.size(),
-        desc.debugName.empty() ? nullptr : desc.debugName.c_str(),
-        nullptr,
-        nullptr,
-        desc.entryPoint.c_str(),
-        kComputeShaderProfile,
-        compileFlags,
-        0,
-        &m_shaderBlob,
-        &errors));
-      if (FAILED(compileHr)) {
-        T8_LOG_ERROR("[D3D12][Compute] Shader compile failed for '%s' (hr=0x%08X): %s",
-                     desc.debugName.c_str(),
-                     static_cast<unsigned>(compileHr),
-                     errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown error");
+      const auto compileStarted = std::chrono::steady_clock::now();
+      if (!T8_TELEMETRY_CALL("shader.compile", CompileD3D12Shader(
+            device, compiledSource, desc.debugName, desc.entryPoint,
+            D3D12ShaderStage::Compute, compiled, diagnostic))) {
+        T8_LOG_ERROR("[D3D12][Compute] Shader compile failed for '%s': %s",
+                     desc.debugName.c_str(), diagnostic.c_str());
         return false;
       }
+      const double compileMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - compileStarted).count();
+      if (g_config.flags.compileShaders) {
+        T8_LOG_INFO("[ShaderCompileProfile] backend=d3d12 flow=%s stage=compute shader=\"%s\" entry=%s permutation=\"%s\" cache=miss elapsedMs=%.6f",
+          legacy ? "legacyHLSL" : "dxc", desc.debugName.c_str(), desc.entryPoint.c_str(),
+          desc.permutationName.c_str(), compileMs);
+      }
       ShaderDiskCache::StoreArtifact(
-        cacheKey, "cs.dxbc", m_shaderBlob->GetBufferPointer(), m_shaderBlob->GetBufferSize());
+        cacheKey, artifact, compiled.bytecode->GetBufferPointer(), compiled.bytecode->GetBufferSize());
+      if (!legacy) ShaderDiskCache::StoreArtifact(
+        cacheKey, reflectionArtifact, compiled.reflectionData->GetBufferPointer(), compiled.reflectionData->GetBufferSize());
       ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
       T8_LOG_DEBUG("[ShaderCache][D3D12] CS stored %s", cacheKey.sha1.c_str());
     }
-
-    Microsoft::WRL::ComPtr<ID3D12ShaderReflection> reflection;
-    const HRESULT reflectHr = D3DReflect(
-      m_shaderBlob->GetBufferPointer(),
-      m_shaderBlob->GetBufferSize(),
-      IID_PPV_ARGS(&reflection));
-    if (FAILED(reflectHr)) {
-      T8_LOG_ERROR("[D3D12][Compute] Shader reflection failed (hr=0x%08X)",
-                   static_cast<unsigned>(reflectHr));
-      return false;
-    }
+    m_shaderBlob = compiled.bytecode;
+    Microsoft::WRL::ComPtr<ID3D12ShaderReflection> reflection = compiled.reflection;
 
     D3D12_SHADER_DESC shaderDesc = {};
     if (FAILED(reflection->GetDesc(&shaderDesc))) {
@@ -385,9 +366,10 @@ namespace t850 {
     ShaderPermutationDump::RecordCompute(
       desc.debugName, desc.entryPoint, desc.permutationName, desc.defines);
 
-    T8_LOG_INFO("[D3D12][Compute] Pipeline '%s' created (permutation=%s profile=cs_5_0 threads=%ux%ux%u constants=%zu bufferSRVs=%zu bufferUAVs=%zu textureSRVs=%zu textureUAVs=%zu samplers=%zu)",
+    T8_LOG_INFO("[D3D12][Compute] Pipeline '%s' created (permutation=%s profile=%s flow=%s threads=%ux%ux%u constants=%zu bufferSRVs=%zu bufferUAVs=%zu textureSRVs=%zu textureUAVs=%zu samplers=%zu)",
                 desc.debugName.c_str(),
                 desc.permutationName.c_str(),
+          shaderProfile.c_str(), legacy ? "legacyHLSL" : "dxc",
                 threadGroupX, threadGroupY, threadGroupZ,
                 m_constantRootIndices.size(),
           m_bufferSrvRootIndices.size(),

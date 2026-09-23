@@ -22,6 +22,7 @@
 #include <utils/ResourceLocator.h>
 #include <utils/Utils.h>
 #include <debug/Profiler.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <debug/RenderTrace.h>
 #include <debug/LoadingProgress.h>
 #include <debug/RuntimeTelemetry.h>
@@ -33,6 +34,9 @@
 #include <imgui.h>
 #if defined(OS_LINUX) || defined(OS_WEB)
 #include <unistd.h>
+#endif
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
 #endif
 #ifndef OS_ANDROID
 
@@ -525,10 +529,37 @@ void App::CreateAssets() {
     t850::g_profiler = new t850::Profiler();
     t850::g_profiler->Init(pFramework->pVideoDriver);
   }
+#if T850_ENABLE_GPU_PROFILING
+  if (g_config.benchmarkHoldFrame <= 0) EnsureGpuTimestampProfiler(0);
+#endif
   m_creatingAssets = false;
 }
 
+#if T850_ENABLE_GPU_PROFILING
+void App::EnsureGpuTimestampProfiler(uint64_t workloadFrame) {
+  if (!g_config.profileGpu || t850::g_gpuTimestampProfiler) return;
+  t850::g_gpuTimestampProfiler = new t850::GpuTimestampProfiler();
+  if (!t850::g_gpuTimestampProfiler->Init(
+        pFramework->pVideoDriver, static_cast<uint64_t>(g_config.profileGpuFrames),
+      g_config.profileGpuOutputPath, 8,
+      g_config.profileGpuGranularity == t850::Config::GpuProfileGranularity::RenderGraphPasses)) {
+    delete t850::g_gpuTimestampProfiler;
+    t850::g_gpuTimestampProfiler = nullptr;
+    throw std::runtime_error(std::string("GPU timestamp backend unavailable for API ") +
+                             pFramework->pVideoDriver->ApiTag());
+  }
+  T8_LOG_INFO("[GpuTimestamp] armed workloadFrame=%llu samples=%d",
+              static_cast<unsigned long long>(workloadFrame), g_config.profileGpuFrames);
+}
+#endif
+
 void App::DestroyAssets() {
+   if (t850::g_gpuTimestampProfiler) {
+     if (t850::g_gpuTimestampProfiler->SubmittedFrames() > 0)
+       t850::g_gpuTimestampProfiler->Finish();
+     delete t850::g_gpuTimestampProfiler;
+     t850::g_gpuTimestampProfiler = nullptr;
+   }
    if (t850::g_profiler) {
      delete t850::g_profiler;
      t850::g_profiler = nullptr;
@@ -563,17 +594,55 @@ void App::DestroyAssets() {
 }
 
 void App::OnUpdate() {
+#if T850_ENABLE_GPU_PROFILING
+   if (t850::g_gpuTimestampProfiler) {
+     t850::g_gpuTimestampProfiler->Poll();
+     if (t850::g_gpuTimestampProfiler->IsComplete()) {
+       if (!t850::g_gpuTimestampProfiler->Finish())
+         throw std::runtime_error("Failed to write GPU timestamp report");
+       delete t850::g_gpuTimestampProfiler;
+       t850::g_gpuTimestampProfiler = nullptr;
+#ifdef __EMSCRIPTEN__
+       bPaused = true;
+       EM_ASM({
+         try {
+           const text = Module.FS.readFile('/persistent/gpu-profile.json', { encoding: 'utf8' });
+           window.t850 = window.t850 || {};
+           window.t850.gpuProfile = JSON.parse(text);
+           window.dispatchEvent(new CustomEvent('t850-gpu-profile-ready'));
+         } catch (error) {
+           window.dispatchEvent(new CustomEvent('t850-gpu-profile-error', { detail: String(error) }));
+         }
+       });
+#else
+       DestroyAssets();
+       pFramework->pVideoDriver->DestroyDriver();
+       t850::Log::Shutdown();
+       std::fflush(nullptr);
+       _exit(0);
+#endif
+     }
+   }
+#endif
+   const bool benchmarkFrameHeld = !m_creatingAssets && !fading &&
+       g_config.benchmarkHoldFrame > 0 &&
+       m_runtimeFrameIndex >= static_cast<uint64_t>(g_config.benchmarkHoldFrame);
+#if T850_ENABLE_GPU_PROFILING
+  if (benchmarkFrameHeld) EnsureGpuTimestampProfiler(m_runtimeFrameIndex);
+#endif
    if (g_config.regressionFixedDt > 0.0f) {
      using Clock = std::chrono::steady_clock;
      static Clock::time_point nextRegressionFrame = Clock::now();
      const auto frameDuration = std::chrono::duration_cast<Clock::duration>(
          std::chrono::duration<float>(g_config.regressionFixedDt));
-     nextRegressionFrame += frameDuration;
-     const auto now = Clock::now();
-     if (nextRegressionFrame > now) {
-       std::this_thread::sleep_until(nextRegressionFrame);
-     } else if (now - nextRegressionFrame > frameDuration * 4) {
-       nextRegressionFrame = now;
+     if (!benchmarkFrameHeld) {
+       nextRegressionFrame += frameDuration;
+       const auto now = Clock::now();
+       if (nextRegressionFrame > now) {
+         std::this_thread::sleep_until(nextRegressionFrame);
+       } else if (now - nextRegressionFrame > frameDuration * 4) {
+         nextRegressionFrame = now;
+       }
      }
      DtTimer.Update();
      DtSecs = g_config.regressionFixedDt;
@@ -590,6 +659,16 @@ void App::OnUpdate() {
    const auto benchmarkFrameStart = std::chrono::steady_clock::now();
    static uint64_t telemetryFrameIndex = 0;
   const bool runtimeFrame = !m_creatingAssets && !fading;
+  if (benchmarkFrameHeld) {
+    DtSecs = 0.0f;
+    if (!m_benchmarkHoldLogged) {
+      const double qpcMs = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now().time_since_epoch()).count();
+      T8_LOG_INFO("[BenchmarkHold] runtimeFrame=%llu simulationDt=0 rendering continues uncapped=1 qpcMs=%.4f",
+                  static_cast<unsigned long long>(m_runtimeFrameIndex), qpcMs);
+      m_benchmarkHoldLogged = true;
+    }
+  }
   if (runtimeFrame) t850::RuntimeTelemetry::BeginFrame(telemetryFrameIndex++, DtSecs);
    {
     T8_TELEMETRY_SCOPE("frame.total");
@@ -646,7 +725,10 @@ void App::OnUpdate() {
       }
     }
    }
-   if (runtimeFrame) t850::RuntimeTelemetry::EndFrame();
+  if (runtimeFrame) {
+   t850::RuntimeTelemetry::EndFrame();
+   ++m_runtimeFrameIndex;
+  }
      if (runtimeFrame && t850::g_profiler && t850::g_profiler->GetFrameCount() >= g_config.profileFrames) {
     pFramework->pVideoDriver->FlushGPUResources();
     t850::g_profiler->Report();
@@ -671,15 +753,38 @@ bool App::RunOffscreenBenchmarkFastPath(float initialDtSecs) {
   if (!pFramework || !pFramework->pVideoDriver) {
     return false;
   }
+  if (g_config.benchmarkNoPresent && m_offlineBenchmarkComplete) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    return true;
+  }
 
   constexpr float kProgressPresentIntervalSec = 0.1f;
   constexpr int kMaxOffscreenFramesPerPresent = 512;
   const auto batchStart = std::chrono::steady_clock::now();
-  float frameDt = initialDtSecs > 0.0f ? initialDtSecs : 1.0f / 1000000.0f;
+  float frameDt = g_config.benchmarkFixedDt > 0.0f
+    ? g_config.benchmarkFixedDt
+    : (initialDtSecs > 0.0f ? initialDtSecs : 1.0f / 1000000.0f);
   int batchFrames = 0;
 
   while (batchFrames < kMaxOffscreenFramesPerPresent) {
     const auto benchmarkFrameStart = std::chrono::steady_clock::now();
+    dayScene = dynamic_cast<DayScene*>(m_actualScene);
+    if (dayScene && dayScene->IsBenchmarkSimulationHeld()) {
+      frameDt = 0.0f;
+    #if T850_ENABLE_GPU_PROFILING
+      EnsureGpuTimestampProfiler(static_cast<uint64_t>(g_config.benchmarkHoldFrame));
+    #endif
+      if (g_config.benchmarkNoPresent && !m_offlineBenchmarkTiming) {
+        m_offlineBenchmarkTiming = true;
+        m_offlineBenchmarkStart = benchmarkFrameStart;
+        const double qpcMs = std::chrono::duration<double, std::milli>(
+            benchmarkFrameStart.time_since_epoch()).count();
+        T8_LOG_INFO("[BenchmarkOffline] start simulationFrame=%d qpcMs=%.4f",
+                    g_config.benchmarkHoldFrame, qpcMs);
+      }
+    } else if (g_config.benchmarkFixedDt > 0.0f) {
+      frameDt = g_config.benchmarkFixedDt;
+    }
     DtSecs = frameDt;
 
 #ifndef OS_ANDROID
@@ -707,11 +812,41 @@ bool App::RunOffscreenBenchmarkFastPath(float initialDtSecs) {
     }
 #endif
     pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::SubmitNoPresent);
+  #if T850_ENABLE_GPU_PROFILING
+    if (t850::g_gpuTimestampProfiler) t850::g_gpuTimestampProfiler->Poll();
+  #endif
     dayScene = dynamic_cast<DayScene*>(m_actualScene);
     if (dayScene && t850::g_config.flags.benchmark) {
       const double frameMs = std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - benchmarkFrameStart).count();
       dayScene->RecordBenchmarkRenderedFrame(frameMs);
+    }
+    if (g_config.benchmarkNoPresent && dayScene && dayScene->IsBenchmarkFinishPending() &&
+        m_offlineBenchmarkTiming && !m_offlineBenchmarkComplete) {
+      pFramework->pVideoDriver->WaitForGPU();
+      const auto completed = std::chrono::steady_clock::now();
+      const double elapsedMs = std::chrono::duration<double, std::milli>(
+          completed - m_offlineBenchmarkStart).count();
+      const std::size_t frames = dayScene->GetBenchmarkMeasuredFrameCount();
+      const double completedFps = elapsedMs > 0.0
+        ? 1000.0 * static_cast<double>(frames) / elapsedMs : 0.0;
+      const double qpcMs = std::chrono::duration<double, std::milli>(
+          completed.time_since_epoch()).count();
+      T8_LOG_INFO("[BenchmarkOffline] completed frames=%zu elapsedMs=%.4f completedFps=%.4f qpcMs=%.4f presents=0",
+                  frames, elapsedMs, completedFps, qpcMs);
+#ifdef __EMSCRIPTEN__
+      MAIN_THREAD_EM_ASM({
+        window.t850 = window.t850 || {};
+        window.t850.offlineBenchmark = {};
+        window.t850.offlineBenchmark.frames = $0;
+        window.t850.offlineBenchmark.elapsedMs = $1;
+        window.t850.offlineBenchmark.completedFps = $2;
+        window.t850.offlineBenchmark.presents = 0;
+        window.dispatchEvent(new CustomEvent('t850-offline-benchmark-ready'));
+      }, static_cast<int>(frames), elapsedMs, completedFps);
+#endif
+      m_offlineBenchmarkComplete = true;
+      break;
     }
     FirstFrame = false;
     ++batchFrames;
@@ -726,10 +861,10 @@ bool App::RunOffscreenBenchmarkFastPath(float initialDtSecs) {
       break;
     }
 
-    DtTimer.Update();
-    frameDt = DtTimer.GetDTSecs();
-    if (frameDt <= 0.0f) {
-      frameDt = 1.0f / 1000000.0f;
+    if (g_config.benchmarkFixedDt <= 0.0f) {
+      DtTimer.Update();
+      frameDt = DtTimer.GetDTSecs();
+      if (frameDt <= 0.0f) frameDt = 1.0f / 1000000.0f;
     }
   }
 
@@ -742,6 +877,10 @@ bool App::RunOffscreenBenchmarkFastPath(float initialDtSecs) {
   }
   if (batchFrames > 0) {
     m_fpsString = "FPS " + std::to_string((int)(1.0f / (DtSecs > 0.0f ? DtSecs : 1.0f)));
+  }
+
+  if (g_config.benchmarkNoPresent) {
+    return true;
   }
 
   OnInput();
@@ -801,6 +940,9 @@ void App::OnDraw() {
   {
     T8_TELEMETRY_SCOPE("frame.swap_buffers");
     pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::Present);
+#if T850_ENABLE_GPU_PROFILING
+    if (t850::g_gpuTimestampProfiler) t850::g_gpuTimestampProfiler->Poll();
+#endif
   }
 }
 

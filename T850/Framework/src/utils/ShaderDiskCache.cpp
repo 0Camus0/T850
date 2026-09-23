@@ -195,7 +195,10 @@ namespace {
     std::unordered_map<std::string, std::string> drivers;
     const std::filesystem::path metadataPath = RootDirectory() / "metadata.json";
     const std::string metadata = ReadTextFile(metadataPath);
-    static const char* knownApis[] = { "d3d11", "d3d12", "opengl", "vulkan", "webgpu" };
+    static const char* knownApis[] = {
+      "d3d11", "d3d12", "d3d12-debug", "d3d12-legacy", "d3d12-legacy-debug",
+      "opengl", "vulkan", "webgpu"
+    };
     for (const char* knownApi : knownApis) {
       std::string value = ExtractDriverSignature(metadata, knownApi);
       if (!value.empty())

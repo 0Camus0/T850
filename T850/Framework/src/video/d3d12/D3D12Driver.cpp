@@ -13,6 +13,7 @@
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <debug/RuntimeTelemetry.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <core/Config.h>
 #include <iostream>
 #include <string>
@@ -827,6 +828,9 @@ namespace t850 {
     m_lastRootSig = nullptr;
     static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     m_frameStarted = true;
+  #if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->BeginFrame();
+  #endif
   }
 
   void D3D12Driver::EndFrame() {}
@@ -936,6 +940,9 @@ namespace t850 {
     if (!m_frameStarted) {
       return;
     }
+#if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->EndFrame();
+#endif
 
     if (mode == FrameCompletionMode::SubmitNoPresent || IsOffscreenEnabled()) {
       {
@@ -949,6 +956,9 @@ namespace t850 {
       const UINT64 fenceVal = m_nextFenceValue++;
       m_commandQueue->Signal(m_fence.Get(), fenceVal);
       m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+    #if T850_ENABLE_GPU_PROFILING
+      if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(fenceVal);
+    #endif
 
       m_frameStarted = false;
       if (IsOffscreenEnabled()) {
@@ -990,6 +1000,9 @@ namespace t850 {
     const UINT64 fenceVal = m_nextFenceValue++;
     m_commandQueue->Signal(m_fence.Get(), fenceVal);
     m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+  #if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(fenceVal);
+  #endif
 
     m_currentBackBuffer = m_swapChain->GetCurrentBackBufferIndex();
     m_frameStarted = false;

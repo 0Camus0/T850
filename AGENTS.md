@@ -99,6 +99,7 @@ Use the focused workspace skills for exact procedures:
 - `t850-voxel-terrain`
 - `t850-visual-regression`
 - `t850-profiling` (profiler scopes, telemetry counters, upload instrumentation, external tooling)
+- `t850-arm64-gpu-benchmark` (Windows x64/ARM64 GPU, CPU, shader-cost capture and reporting)
 - `t850-platform-deploy`
 
 ### Solution structure (`T850.sln`)

@@ -23,6 +23,11 @@ public:
     Raster
   };
 
+  enum class GpuProfileGranularity {
+    WholeFrame,
+    RenderGraphPasses
+  };
+
   struct BooleanFlags {
     bool dumpEnabled : 1 = false;
     bool dumpByFrame : 1 = false;
@@ -70,6 +75,10 @@ public:
 
   int profileFrames = 300;
   bool profileCpuOnly = false;
+  bool profileGpu = false;
+  int profileGpuFrames = 600;
+  std::string profileGpuOutputPath = "logs/gpu_profile.json";
+  GpuProfileGranularity profileGpuGranularity = GpuProfileGranularity::WholeFrame;
   int telemetryUploadBudgetMB = 64;
   int dumpMatricesFrames = 0;
   GLOffscreenFlushMode glOffscreenFlushMode = GLOffscreenFlushMode::Frame;
@@ -81,7 +90,9 @@ public:
   int benchmarkDurationSeconds = 0;
   int benchmarkFrameLimit = 0;
   bool benchmarkPaired = false;
+  bool benchmarkNoPresent = false;
   float benchmarkFixedDt = 0.0f;
+  int benchmarkHoldFrame = 0;
   float regressionFixedDt = 0.0f;
   std::string modelPath = "Models/DamagedHelmet.glb";
   std::string sceneFilePath;

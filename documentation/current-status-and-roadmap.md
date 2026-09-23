@@ -129,12 +129,17 @@ Vulkan teardown diagnostics and Minecraft overlay incompatibility. See the
 [R2 completion record](rendering/webgpu-compute-remediation-plan.md#r2-reconcile-strict-versus-lenient-backend-behavior)
 for exact passing and unpassed gates.
 
-Profiling workstream R4-R8 now has local implementation: registered IDs, worker
-publication, upload matrices, phase/work aggregates, CPU-only/compile-out modes,
-and bounded paired reporting. Focused tests and short captures pass. Measurement
-acceptance (overhead targets, matched Release runs and external traces) remains
-open; rendering/platform follow-ups are intentionally parked per the current
-request. See [diagnostics](debug/diagnostics.md#cpu-profiling-workstream).
+Profiling workstream R4-R8 and R21 now has committed implementation: registered
+IDs, worker publication, upload matrices, phase/work aggregates, CPU-only and
+compile-out modes, completion-qualified D3D12/Vulkan/Dawn timestamps, pass-level
+capture, no-present throughput, matched x64/ARM64 CPU matrices, x64 shader
+preparation timing, and integrated reporting. Full repeated Release captures are
+retained. The shader matrix is diagnostic evidence from a hashed dirty-tree
+binary and must be rerun from a clean committed worktree before release use.
+Remaining GPU timestamp acceptance is limited to perturbation/external
+correlation and pending-callback/device-loss stress. See
+[diagnostics](debug/diagnostics.md#cpu-profiling-workstream) and the
+[profiling workflow](rendering/gpu-performance-profiling-workflow.md).
 
 ## Texture Atlas and Materials
 

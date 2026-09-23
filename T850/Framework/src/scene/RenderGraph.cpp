@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <scene/RenderGraph.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <scene/RenderGraphDescriptor.h>
 #include <scene/SceneProp.h>
 #include <scene/ShadowSystem.h>
@@ -1158,8 +1159,11 @@ void RenderGraph::Execute(
          node.desc->name == "Shadow Blur H")) {
       continue;
     }
+  #if T850_ENABLE_GPU_PROFILING
+    GpuTimestampRegionGuard gpuPass(g_gpuTimestampProfiler, node.desc->name);
+  #endif
     ExecutePass(node, driver, props, meshes, meshCount, quads,
-                mainCam, lightCam, omniCams, envMaps, finalOutputRT, customDraw);
+          mainCam, lightCam, omniCams, envMaps, finalOutputRT, customDraw);
   }
   if (mainCam && !props.pCameras.empty()) {
     props.SetPrimaryCamera(mainCam);
@@ -1180,6 +1184,9 @@ void RenderGraph::ExecutePass(
   const CustomDrawCallback& customDraw)
 {
   const auto& pass = *node.desc;
+  T8_LOG_TRACE("[RenderGraph] Begin pass='%s' target=%d finalOutput=%d push=%d pop=%d execution=%s currentRT=%d",
+               pass.name.c_str(), node.rt_handle, finalOutputRT, pass.push ? 1 : 0,
+               pass.pop ? 1 : 0, pass.execution.c_str(), driver ? driver->CurrentRT : -1);
   ScopedPrimaryCameraOverride cameraScope(props);
 #if T850_ENABLE_PROFILING
   ProfileScopeGuard profilePass(t850::g_profiler, node.profileScope);

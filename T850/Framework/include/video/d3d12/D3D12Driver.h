@@ -108,6 +108,7 @@ namespace t850 {
     D3D12Heap& GetHeap(D3D12Heap::Type type) { return m_heaps[type]; }
     ID3D12GraphicsCommandList* GetCmdList() const { return m_commandLists[m_currentBackBuffer].Get(); }
     ID3D12CommandQueue*        GetCmdQueue() const { return m_commandQueue.Get(); }
+    uint64_t GetCompletedFenceValue() const { return m_fence ? m_fence->GetCompletedValue() : 0; }
 
     // Upload helper: copies data to GPU using a temp command list
     void UploadBufferData(ID3D12Resource* dest, const void* data, size_t dataSize,

@@ -82,6 +82,7 @@
     <ClInclude Include="include\debug\CrashDiagnostics.h" />
     <ClInclude Include="include\debug\ComputeSelfTest.h" />
     <ClInclude Include="include\debug\LoadingProgress.h" />
+    <ClInclude Include="include\debug\GpuTimestampProfiler.h" />
     <ClInclude Include="include\debug\Profiler.h" />
     <ClInclude Include="include\debug\RuntimeTelemetry.h" />
     <ClInclude Include="include\scene\EditorSceneFile.h" />
@@ -278,6 +279,7 @@
     <ClCompile Include="src\debug\CrashDiagnostics.cpp" />
     <ClCompile Include="src\debug\ComputeSelfTest.cpp" />
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />
+    <ClCompile Include="src\debug\GpuTimestampProfiler.cpp" />
     <ClCompile Include="src\debug\Profiler.cpp" />
     <ClCompile Include="src\debug\ProfilerGpuBackend.cpp" />
     <ClCompile Include="src\debug\RuntimeTelemetry.cpp" />

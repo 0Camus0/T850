@@ -7,6 +7,7 @@
 #include <video/webgpu/WebGPUContext.h>
 #include <core/Config.h>
 #include <debug/RuntimeTelemetry.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 #include <utils/ShaderPermutationDump.h>
@@ -90,6 +91,7 @@ struct WebGPUDriverState {
   std::array<WebGPUTexture*, 32> samplers{};
   WebGPUShader* shader = nullptr;
   unsigned draws = 0;
+  uint64_t gpuProfileSubmissionSerial = 0;
   void EndPass() { if (pass) { pass.End(); pass = nullptr; } }
   void BeginPass();
   void SetTarget(std::vector<wgpu::Texture> colors, wgpu::Texture depthTexture, uint32_t width, uint32_t height, bool clear, WebGPUTexture* depthResource = nullptr);
@@ -511,7 +513,20 @@ public:
       descriptor.nextInChain = &source;
       const auto label = request.name + " key=" + std::to_string(request.keyBits);
       descriptor.label = label.c_str();
+      const auto moduleStarted = std::chrono::steady_clock::now();
       (isVertex ? vertexModule : fragmentModule) = T8_TELEMETRY_CALL("shader.module.create", state.context.device.CreateShaderModule(&descriptor));
+      const double moduleMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - moduleStarted).count();
+    #ifndef __EMSCRIPTEN__
+      if (g_config.flags.compileShaders) {
+        const auto& attempt = report.attempts.back();
+        T8_LOG_INFO("[ShaderCompileProfile] backend=webgpu flow=%s stage=%s shader=\"%s\" entry=%s key=0x%016llX cache=%s prepareMs=%.6f moduleMs=%.6f elapsedMs=%.6f",
+          attempt.sourceLanguage == webgpu::ShaderSourceLanguage::Wgsl ? "wgsl" : "spirv",
+          isVertex ? "vertex" : "pixel", attempt.sourceName.c_str(), request.entryPoint.c_str(),
+          static_cast<unsigned long long>(request.keyBits), attempt.cacheHit ? "hit" : "miss",
+          attempt.preparationMilliseconds, moduleMs, attempt.preparationMilliseconds + moduleMs);
+      }
+    #endif
 #ifdef __EMSCRIPTEN__
       std::string compilationError;
       const auto future = (isVertex ? vertexModule : fragmentModule).GetCompilationInfo(wgpu::CallbackMode::WaitAnyOnly,
@@ -857,7 +872,20 @@ public:
       source.code = artifact.wgsl.c_str();
       wgpu::ShaderModuleDescriptor moduleDescriptor{};
       moduleDescriptor.nextInChain = &source;
+      const auto moduleStarted = std::chrono::steady_clock::now();
       module = T8_TELEMETRY_CALL("shader.module.create", state.context.device.CreateShaderModule(&moduleDescriptor));
+      const double moduleMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - moduleStarted).count();
+    #ifndef __EMSCRIPTEN__
+      if (g_config.flags.compileShaders) {
+        const auto& attempt = report.attempts.back();
+        T8_LOG_INFO("[ShaderCompileProfile] backend=webgpu flow=%s stage=compute shader=\"%s\" entry=%s permutation=\"%s\" cache=%s prepareMs=%.6f moduleMs=%.6f elapsedMs=%.6f",
+          attempt.sourceLanguage == webgpu::ShaderSourceLanguage::Wgsl ? "wgsl" : "spirv",
+          attempt.sourceName.c_str(), request.entryPoint.c_str(), desc.permutationName.c_str(),
+          attempt.cacheHit ? "hit" : "miss", attempt.preparationMilliseconds, moduleMs,
+          attempt.preparationMilliseconds + moduleMs);
+      }
+    #endif
       bindingEntries = std::move(layoutEntries);
       entryPoint = desc.entryPoint;
       auto& variant = GetVariant(0);
@@ -1448,17 +1476,28 @@ void WebGPUDriver::BeginFrame(FrameTargetMode target) {
   m_state->draws = 0;
   m_state->ResetBindings();
   if (m_state->active && !m_state->offscreen) PopRT();
+#if T850_ENABLE_GPU_PROFILING
+  if (m_state->active && g_gpuTimestampProfiler) g_gpuTimestampProfiler->BeginFrame();
+#endif
 }
 void WebGPUDriver::EndFrame() { m_state->EndPass(); }
 void WebGPUDriver::CompleteFrame(FrameCompletionMode mode) {
   if (!m_state->active) return;
   EndFrame();
+#if T850_ENABLE_GPU_PROFILING
+  if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->EndFrame();
+#endif
   m_state->targetColors.clear(); m_state->targetDepth = nullptr;
   m_state->context.Submit(mode == FrameCompletionMode::Present && !m_state->offscreen && !IsOffscreenEnabled());
+#if T850_ENABLE_GPU_PROFILING
+  if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(++m_state->gpuProfileSubmissionSerial);
+#endif
   m_state->active = false;
   m_state->ResetBindings();
   if (IsOffscreenEnabled()) CompleteOffscreenFrame();
 }
+
+webgpu::WebGPUContext& WebGPUDriver::TimestampContext() { return m_state->context; }
 void WebGPUDriver::SwapBuffers() { CompleteFrame(); }
 void WebGPUDriver::Clear() {
   if (!m_state->active) BeginFrame();

@@ -199,8 +199,11 @@ For x64/ARM64 comparison, use
 and [Generate-CrossMachineGpuReport.ps1](./scripts/Generate-CrossMachineGpuReport.ps1).
 Normalize each machine to its own native D3D12 and each flow to its own raster
 baseline. Do not treat absolute x64-versus-ARM64 time as CPU-ISA causality.
-Retain raw JSON/ETL files outside Git and mark prior 60 Hz presented results as
-superseded.
+Pass a dedicated `-ChartDirectory` and an authored DayScene
+`-ScreenshotPath`; package that directory beside the combined HTML. Also package
+the x64 and ARM64 single-machine chart directories so every HTML image reference
+resolves after extraction. Retain raw JSON/ETL files outside Git and mark prior
+60 Hz presented results as superseded.
 
 ## Cleanup
 

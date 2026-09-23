@@ -735,6 +735,8 @@ ETLs. To normalize x64 and ARM64 independently and include optional Edge rows:
   -AnalysisPath $crossAnalysis `
   -CpuAnalysisPath $crossCpuAnalysis `
   -ShaderCompilationPath $x64ShaderCompilation `
+  -ChartDirectory $crossChartDirectory `
+  -ScreenshotPath .\T850\web\previews\1.png `
   -ReportPath $crossReport
 ```
 
@@ -743,6 +745,13 @@ native D3D12, compute overhead relative to that flow's raster result, matched
 CPU overhead when supplied, and the x64 per-stage compilation matrix when
 supplied. It does not treat absolute x64-versus-ARM64 time as CPU-architecture
 causality.
+
+The cross-machine generator creates normalized GPU execution and completed-
+throughput charts, absolute and normalized CPU charts, a shader-stage chart, and
+a three-scene screenshot gallery. Package the generated chart directory beside
+the HTML. The two single-machine HTML reports also require their matching
+`DayScene-{x64,ARM64}-GPU-Performance-Charts` directories; validate every `<img>`
+reference after extracting the final ZIP.
 
 The generator name and current report title retain ARM64 history. The JSON
 artifacts contain the authoritative machine and architecture identity; do not

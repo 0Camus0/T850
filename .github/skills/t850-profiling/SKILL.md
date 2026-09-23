@@ -11,7 +11,8 @@ Two systems exist and they are not interchangeable.
 | System | Files | Purpose |
 |---|---|---|
 | `Profiler` | `Framework/include/debug/Profiler.h`, `src/debug/Profiler.cpp` | API-neutral named CPU/GPU scopes, draw counts, log report. Enabled with `--profile`. |
-| `ProfilerGpuBackend` | `src/debug/ProfilerGpuBackend.cpp` | Per-API timestamp strategy chosen by one factory. D3D11, D3D12, OpenGL, Vulkan. **No WebGPU backend.** |
+| `ProfilerGpuBackend` | `src/debug/ProfilerGpuBackend.cpp` | Legacy profiler timestamp strategy for D3D11, D3D12, OpenGL, and Vulkan. |
+| `GpuTimestampProfiler` | `include/debug/GpuTimestampProfiler.h`, `src/debug/GpuTimestampProfiler.cpp` | Opt-in, completion-qualified whole-frame and render-graph-pass timestamps for D3D12, Vulkan, and native Dawn/WebGPU. |
 | `RuntimeTelemetry` | `include/debug/RuntimeTelemetry.h`, `src/debug/RuntimeTelemetry.cpp` | Sampled per-frame scopes and numeric counters, JSON output. `T8_TELEMETRY_SCOPE`, `AddCounter`, `SetCounter`. |
 
 The layering is correct: `Profiler` is API-neutral and the GPU strategy is
@@ -66,7 +67,8 @@ and repeated matched runs rather than assuming a particular nanosecond cost.
 | Question | Instrument |
 |---|---|
 | Frame pacing, present latency, GPU busy versus wait | PresentMon over ETW, out of process |
-| Per-pass or per-draw GPU execution time | PIX, RenderDoc or Nsight, out of process |
+| Whole-frame or logical render-graph-pass GPU execution time | Opt-in `GpuTimestampProfiler` |
+| Per-draw GPU execution time | PIX, RenderDoc or Nsight, out of process |
 | CPU cost per frame phase | Built-in markers |
 | Texture and geometry upload volume, stalls, spikes | Built-in per-frame aggregates |
 | Where CPU time goes inside Dawn versus D3D12 | ETW sampling profile with module attribution |
@@ -154,7 +156,12 @@ Check these before trusting a number:
   into frame time.
 - The Vulkan timestamp resolve uses `VK_QUERY_RESULT_WAIT_BIT` and can block the
   render thread.
-- WebGPU has no `ProfilerGpuBackend`; GPU fields are unavailable, not zero.
+- `GpuTimestampProfiler` reads only completion-qualified batches. D3D12 uses
+  fence completion, Vulkan uses submission completion and query availability,
+  and Dawn uses submitted-work completion plus asynchronous mapping.
+- Browser timestamps require both the `timestamp-query` feature and
+  `GPUCommandEncoder.writeTimestamp`. Report unsupported cells as
+  `capability-blocked`, never as zero or CPU-derived GPU time.
 
 ## Commands
 
@@ -168,6 +175,11 @@ Check these before trusting a number:
 # External presentation metrics, no engine changes
 & "$env:LOCALAPPDATA\T850Tools\PresentMon\v2.5.1\PresentMon-2.5.1-x64.exe" `
   -process_name DayScene.exe -output_file presentmon.csv -timed 60
+
+# Completion-qualified GPU timestamps; requires /p:T850EnableGpuProfiling=1
+.\DayScene.exe --api d3d12 --scene 1 --profileGpu `
+  --profileGpuFrames 600 --profileGpuPasses render-graph `
+  --benchmarkNoPresent --benchmarkHoldFrame 3000 --benchmarkFrames 660
 ```
 
 Scene 6 is draw and streaming heavy and shows upload behavior most clearly.
@@ -208,6 +220,9 @@ them under `%LOCALAPPDATA%\T850Profiles\<topic>-<date>`; never commit them.
 ## Related
 
 - `documentation/debug/diagnostics.md` — profiler, telemetry, dumps, tracing
+- `documentation/rendering/gpu-performance-profiling-workflow.md` — canonical
+  x64/ARM64 CPU/GPU capture, analysis, and reporting workflow
+- `t850-arm64-gpu-benchmark` skill — deterministic Windows x64/ARM64 GPU and CPU matrices
 - `documentation/rendering/webgpu-compute-remediation-plan.md` — R1 and R4-R7
   own profiling work; R8 owns the benchmark report
 - `t850-deck-performance` skill — Steam Deck PresentMon loop

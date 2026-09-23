@@ -61,6 +61,7 @@ flowchart LR
 | `Framework/include/debug/RenderTrace.h` / `Framework/src/debug/RenderTrace.cpp` | Optional compile-time render event/resource tracer, guarded by `T850_RENDER_TRACE`. |
 | `Framework/include/debug/Profiler.h` / `Framework/src/debug/Profiler.cpp` | API-neutral CPU timing, scope accounting, draw-call counting, and reporting. |
 | `Framework/src/debug/ProfilerGpuBackend.cpp` | D3D11, D3D12, OpenGL, and Vulkan timestamp-query strategies selected by one factory. |
+| `Framework/include/debug/GpuTimestampProfiler.h` / `Framework/src/debug/GpuTimestampProfiler.cpp` | Opt-in completion-driven D3D12/Vulkan/WebGPU whole-frame and logical render-graph pass timestamps. |
 | `DayScene/Application.cpp` | Runtime frame lifecycle, render tracer init, telemetry frame boundaries, profiler frame boundaries. |
 | `T8ditor/EditorApp.cpp` | Loading progress console/render frame, editor frame dumps, hosted window diagnostics. |
 | `FrameworkImGui/src/ImGuiSystem.cpp` | Installs `LoadingProgress` frame callback and renders loading frames. |
@@ -163,8 +164,11 @@ evictions, and free-pool bytes. Buffer shadow-update bytes are not GPU traffic:
 uniform snapshots are batched later, with separate byte and queue-upload counts.
 These are inclusive CPU wall-time scopes, not GPU queries;
 do not sum parent and child scopes or interpret a wait as active CPU execution.
-WebGPU currently has no GPU profiler backend. Cumulative draw/triangle totals
-are 64-bit; normalize them by the sample count before comparing workloads.
+Opt-in GPU timestamp builds provide separate whole-frame and render-graph-pass
+queries for D3D12, Vulkan, and WebGPU; see the
+[GPU performance profiling workflow](../rendering/gpu-performance-profiling-workflow.md).
+Cumulative draw/triangle totals are 64-bit; normalize them by the sample count
+before comparing workloads.
 
 Browser `window.t850.workerTiming` reports ten-frame average callback intervals
 and work time without enabling per-draw profiling. The interval includes host

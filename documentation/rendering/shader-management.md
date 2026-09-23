@@ -35,7 +35,7 @@ reproducible export/build commands, Minecraft evidence and remaining coverage.
 
 Status: verified against source on 2026-09-14.
 
-This document explains how T850 selects shader source files, builds graphics and compute permutations, prepends compile-time defines, compiles/caches shaders for D3D11, D3D12, OpenGL, and Vulkan, reflects resource/input layouts, and resolves explicit PSO objects on D3D12 and Vulkan. D3D11, D3D12, and Vulkan execute the shared structured-buffer arithmetic kernel plus texture kernels for God Rays, separable blur, Bright, and HDR composition. D3D12 additionally caches `cs.dxbc` artifacts.
+This document explains how T850 selects shader source files, builds graphics and compute permutations, prepends compile-time defines, compiles/caches shaders for D3D11, D3D12, OpenGL, and Vulkan, reflects resource/input layouts, and resolves explicit PSO objects on D3D12 and Vulkan. D3D11, D3D12, and Vulkan execute the shared structured-buffer arithmetic kernel plus texture kernels for God Rays, separable blur, Bright, and HDR composition. D3D12 defaults to DXC/DXIL and retains explicit `legacyHLSL` FXC/DXBC artifacts.
 
 Related documents:
 
@@ -63,7 +63,8 @@ flowchart LR
   Mesh["Geometry/material/pass state"] --> Key["ShaderKey bits"]
   Key --> Defines["ShaderBase::CreateShader prepends defines"]
   Defines --> Source{"Backend"}
-  Source -->|D3D11/D3D12| HLSL["HLSL -> DXBC"]
+  Source -->|D3D11| HLSL11["HLSL -> FXC/DXBC"]
+  Source -->|D3D12| HLSL12["HLSL -> DXC/DXIL"]
   Source -->|Vulkan| SPV["HLSL -> SPIR-V"]
   Source -->|OpenGL| GLSL["GLSL -> GL program"]
   HLSL --> ReflectD3D["D3D reflection"]
@@ -86,7 +87,7 @@ flowchart LR
 | `Framework/src/scene/RenderSkinnedMesh.cpp` | Adds skinning key bits and compiles skinned variants. |
 | `Framework/src/video/d3d11/D3D11Shader.cpp` | D3D11 HLSL compile/cache/reflection/input-layout path. |
 | `Framework/src/video/d3d12/D3D12Shader.cpp` | D3D12 HLSL compile/cache/reflection/root-signature path. |
-| `Framework/src/video/d3d12/D3D12Compute.cpp` | D3D12 compute define, DXBC cache, reflection, root-signature, PSO, dispatch, and readback path. |
+| `Framework/src/video/d3d12/D3D12Compute.cpp` | D3D12 compute define, shared DXC/legacy compiler flow, cache, reflection, root-signature, PSO, dispatch, and readback path. |
 | `Framework/src/video/gl/GLShader.cpp` | OpenGL GLSL compile/link or GL program-binary cache path. |
 | `Framework/src/video/vulkan/VulkanShader.cpp` | Vulkan HLSL-to-SPIR-V compile/cache/reflection/descriptor-layout path. |
 | `Framework/src/utils/ShaderDiskCache.cpp` | Cross-API on-disk shader artifact cache under `Shaders/.t8shadercache`. |
@@ -112,7 +113,8 @@ The default file-loading path is `LoadShaderFiles(ShaderFileRequest, ...)`, with
 `ShaderFileRequest::flow = ShaderFlow::Auto`: prefer handwritten WGSL and fall
 back to the matching HLSL/SPIR-V source if WGSL cannot be prepared. Both flows
 remain built in and independently selectable at runtime; no rebuild is required
-to choose one. The native compiler paths are unchanged; the shared HLSL sampling
+to choose one. Native D3D12 independently uses DXC/DXIL by default and exposes
+the old FXC path as `--shaderFlow legacyHLSL`; the shared HLSL sampling
 corrections and their D3D12/Vulkan image checks are recorded below.
 Maintaining matching HLSL and WGSL behavior is a testable source-maintenance
 obligation.
@@ -716,11 +718,11 @@ For OpenGL, `ShaderBase::CreateShader()` also prepends `#version 330` or `#versi
 | Backend | Source files | Compile path |
 |---|---|---|
 | D3D11 | HLSL, e.g. `Shaders/VS_Mesh.hlsl`, `Shaders/FS_Mesh.hlsl` | `D3DCompile()` to `vs_5_0` / `ps_5_0`. |
-| D3D12 | HLSL | `D3DCompile()` to `vs_5_0` / `ps_5_0`, then root signature and PSO from reflection. |
+| D3D12 | HLSL | Default DXC to the highest supported SM6 profile (up to 6.6) and DXIL; `legacyHLSL` uses `D3DCompile()` SM5/DXBC. |
 | Vulkan | HLSL | glslang with `EShSourceHlsl` to SPIR-V, entry points `VS` and `FS`. |
 | OpenGL | GLSL, e.g. `Shaders/VS_Mesh.glsl`, `Shaders/FS_Mesh.glsl` | GL shader compile/link or program-binary cache. |
 
-Although D3D12 and Vulkan share the same HLSL source files, they do not share the same compiler or final shader representation. D3D12 compiles HLSL to DXBC through `D3DCompile()`, while Vulkan compiles HLSL to SPIR-V through glslang with automatic binding/location mapping and SPIR-V reflection. Treat shared HLSL as shared intent, not proof of identical raster/depth behavior.
+Although D3D12 and Vulkan share the same HLSL source files, they do not share the same compiler or final shader representation. D3D12 defaults to DXIL through DXC, while Vulkan compiles HLSL to SPIR-V through glslang with automatic binding/location mapping and SPIR-V reflection. Treat shared HLSL as shared intent, not proof of identical raster/depth behavior.
 
 Depth-sensitive shaders need extra care across these two backends. Prefer API-rasterized fragment depth (`SV_POSITION.z` in the pixel shader, or `gl_FragCoord.z` in GLSL) when comparing against sampled depth textures. Avoid manually passing clip depth through a regular interpolated varying and recomputing `z / w` for overlay depth tests; tiny meshes can expose Vulkan/D3D differences as shell-like wireframe artifacts.
 
@@ -751,7 +753,11 @@ Important shader assets:
 
 ### D3D12
 
-`D3D12Shader.cpp` also compiles HLSL to SM5 DXBC, but reflection is used more heavily:
+`D3D12Shader.cpp` loads the staged `dxcompiler.dll`, selects the highest reported
+SM6 profile up to 6.6, compiles HLSL through `IDxcCompiler3`, and stores DXIL plus
+DXC reflection data. `IDxcUtils::CreateReflection` restores reflected input and
+resource layouts from cold or warm artifacts. `--shaderFlow legacyHLSL` retains
+the prior SM5 FXC/DXBC path. In both flows reflection is used heavily:
 
 - VS reflection builds the input layout and vertex stride.
 - VS/FS reflection collects CBV/SRV/sampler resources.
@@ -839,8 +845,9 @@ The cache stores API-specific artifacts:
 | API | Artifact |
 |---|---|
 | D3D11 | `vs.dxbc`, `fs.dxbc` |
-| D3D12 | `vs.dxbc`, `fs.dxbc` |
-| D3D12 compute | `cs.dxbc` |
+| D3D12 default | `vs.dxil`, `fs.dxil`, plus stage reflection artifacts |
+| D3D12 compute default | `cs.dxil`, plus reflection artifact |
+| D3D12 `legacyHLSL` | `vs.dxbc`, `fs.dxbc`, `cs.dxbc` |
 | Vulkan | `vs.spv`, `fs.spv` |
 | OpenGL | `program.glbin` |
 
@@ -873,8 +880,12 @@ continue through `BaseDriver::CreateShader`, while compute entries resolve their
 source identity and complete binding layout through the Framework
 `ComputeKernelRegistry` before calling `BaseDriver::CreateComputePipeline`.
 This validates the same API-neutral descriptor each backend uses at runtime.
-D3D12 stores or loads its `cs.dxbc` artifact from the same driver-qualified cache
-hierarchy used by graphics shaders.
+D3D12 stores or loads DXIL/reflection or legacy DXBC artifacts from the same
+driver-qualified cache hierarchy used by graphics shaders. Default DXC uses the
+`d3d12` namespace; FXC uses `d3d12-legacy`, so both warm caches coexist. Compiler
+flow, DXC version, shader model policy, adapter, and driver participate in cache
+identity. Debug equivalents use `d3d12-debug` and `d3d12-legacy-debug` so debug
+symbols/no-optimization flags never reuse Release artifacts.
 
 The D3D12 compute path records an entry only after shader compilation/cache loading, reflection, root-signature creation, and compute PSO creation succeed. `ComputePipelineDesc::permutationName` names the variant, while `ComputePipelineDesc::defines` supplies deterministic compile-time defines. The checked-in compute inventory contains arithmetic, God Rays, horizontal/vertical `CS_Blur`, Bright, HDR-composition, and Minecraft torch-particle identities.
 

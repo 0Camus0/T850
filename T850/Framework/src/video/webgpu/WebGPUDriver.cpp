@@ -7,6 +7,7 @@
 #include <video/webgpu/WebGPUContext.h>
 #include <core/Config.h>
 #include <debug/RuntimeTelemetry.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 #include <utils/ShaderPermutationDump.h>
@@ -90,6 +91,7 @@ struct WebGPUDriverState {
   std::array<WebGPUTexture*, 32> samplers{};
   WebGPUShader* shader = nullptr;
   unsigned draws = 0;
+  uint64_t gpuProfileSubmissionSerial = 0;
   void EndPass() { if (pass) { pass.End(); pass = nullptr; } }
   void BeginPass();
   void SetTarget(std::vector<wgpu::Texture> colors, wgpu::Texture depthTexture, uint32_t width, uint32_t height, bool clear, WebGPUTexture* depthResource = nullptr);
@@ -1448,17 +1450,28 @@ void WebGPUDriver::BeginFrame(FrameTargetMode target) {
   m_state->draws = 0;
   m_state->ResetBindings();
   if (m_state->active && !m_state->offscreen) PopRT();
+#if T850_ENABLE_GPU_PROFILING
+  if (m_state->active && g_gpuTimestampProfiler) g_gpuTimestampProfiler->BeginFrame();
+#endif
 }
 void WebGPUDriver::EndFrame() { m_state->EndPass(); }
 void WebGPUDriver::CompleteFrame(FrameCompletionMode mode) {
   if (!m_state->active) return;
   EndFrame();
+#if T850_ENABLE_GPU_PROFILING
+  if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->EndFrame();
+#endif
   m_state->targetColors.clear(); m_state->targetDepth = nullptr;
   m_state->context.Submit(mode == FrameCompletionMode::Present && !m_state->offscreen && !IsOffscreenEnabled());
+#if T850_ENABLE_GPU_PROFILING
+  if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(++m_state->gpuProfileSubmissionSerial);
+#endif
   m_state->active = false;
   m_state->ResetBindings();
   if (IsOffscreenEnabled()) CompleteOffscreenFrame();
 }
+
+webgpu::WebGPUContext& WebGPUDriver::TimestampContext() { return m_state->context; }
 void WebGPUDriver::SwapBuffers() { CompleteFrame(); }
 void WebGPUDriver::Clear() {
   if (!m_state->active) BeginFrame();

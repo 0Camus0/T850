@@ -3,6 +3,7 @@
 
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <video/webgpu/WebGPUShaderCompiler.h>
+#include <video/webgpu/WebGPUContext.h>
 #include <webgpu/webgpu.h>
 #include <memory>
 
@@ -70,6 +71,7 @@ public:
   WGPUTextureFormat SurfaceFormat() const;
   WGPURenderPassEncoder OverlayPass();
   WGPUTextureView TextureView(Texture* texture) const;
+  webgpu::WebGPUContext& TimestampContext();
 private:
   std::unique_ptr<WebGPUDriverState> m_state;
 };

@@ -448,6 +448,38 @@
             }
           }
           Module.FS.mkdirTree('/persistent');
+          if (parameters.has('benchmarkNoPresent') && !parameters.has('profileGpu')) {
+            if (selected.id !== 1) throw new Error('No-present benchmark requires DayScene');
+            const frames = Number(parameters.get('benchmarkFrames') ?? 600);
+            const holdFrame = Number(parameters.get('benchmarkHoldFrame') ?? 3000);
+            if (!Number.isInteger(frames) || frames < 30 || frames > 10000)
+              throw new Error('Invalid no-present benchmark frame count');
+            if (!Number.isInteger(holdFrame) || holdFrame < 1 || holdFrame > 20000)
+              throw new Error('Invalid no-present benchmark hold frame');
+            argumentsList.push('--benchmarkNoPresent', '--benchmarkHoldFrame', String(holdFrame),
+              '--benchmarkFrames', String(frames), '--benchmarkFixedDt', '0.0166666667');
+          }
+          if (parameters.has('profileGpu')) {
+            if (selected.id !== 1) throw new Error('GPU timestamp profiling requires DayScene');
+            if (typeof GPUCommandEncoder === 'undefined' ||
+                typeof GPUCommandEncoder.prototype.writeTimestamp !== 'function')
+              throw new Error('Browser WebGPU GPU timestamps are unavailable: GPUCommandEncoder.writeTimestamp is not implemented');
+            const frames = Number(parameters.get('profileGpuFrames') ?? 600);
+            const holdFrame = Number(parameters.get('benchmarkHoldFrame') ?? 3000);
+            const granularity = parameters.get('profileGpuPasses') ?? 'render-graph';
+            if (!Number.isInteger(frames) || frames < 1 || frames > 100000)
+              throw new Error('Invalid GPU profile frame count');
+            if (!Number.isInteger(holdFrame) || holdFrame < 1 || holdFrame > 20000)
+              throw new Error('Invalid GPU profile hold frame');
+            if (!['whole-frame', 'render-graph'].includes(granularity))
+              throw new Error('Invalid GPU profile granularity');
+            argumentsList.push('--profileGpu', '--profileGpuFrames', String(frames),
+              '--profileGpuOutput', '/persistent/gpu-profile.json',
+              '--profileGpuPasses', granularity,
+              '--benchmarkNoPresent', '--benchmarkHoldFrame', String(holdFrame),
+              '--benchmarkFrames', String(frames + 60),
+              '--benchmarkFixedDt', '0.0166666667');
+          }
           Module.FS.mount(Module.IDBFS, { autoPersist: true }, '/persistent');
           await new Promise((resolve, reject) => Module.FS.syncfs(true, error => error ? reject(error) : resolve()));
           statusElement.textContent = 'Starting ' + selected.name;

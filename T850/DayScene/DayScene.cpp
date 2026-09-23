@@ -1151,7 +1151,7 @@ void DayScene::InitializeBenchmarkMatrix() {
     {t850::GraphicsApi::D3D12, "d3d12"},
     {t850::GraphicsApi::VULKAN, "vulkan"},
     {t850::GraphicsApi::OPENGL, "gl"}
-  #if defined(OS_WINDOWS) && defined(_M_X64)
+  #if defined(OS_WINDOWS) && (defined(_M_X64) || defined(_M_ARM64))
     ,{t850::GraphicsApi::WEBGPU, "webgpu"}
   #endif
   };
@@ -1206,6 +1206,11 @@ void DayScene::InitializeBenchmarkMatrix() {
 
 bool DayScene::IsBenchmarkMatrixActive() const {
   return g_config.flags.benchmarkMatrix && m_benchmarkMatrixInitialized && !m_benchmarkMatrixRuns.empty();
+}
+
+bool DayScene::IsBenchmarkSimulationHeld() const {
+  return g_config.benchmarkHoldFrame > 0 &&
+    m_benchmarkSimulationFrame >= g_config.benchmarkHoldFrame;
 }
 
 void DayScene::RebindRenderGraphOutputs() {
@@ -1322,7 +1327,8 @@ void DayScene::ResetBenchmarkRunCapture() {
   m_benchmarkWallClockStarted = false;
   m_benchmarkWallClockStart = {};
   m_benchmarkSimulationFrame = 0;
-  m_benchmarkWarmupFrames = kBenchmarkDefaultWarmupFrames;
+  m_benchmarkWarmupFrames = g_config.benchmarkHoldFrame > 0
+    ? g_config.benchmarkHoldFrame : kBenchmarkDefaultWarmupFrames;
   if (g_config.benchmarkFrameLimit > 0) {
     m_benchmarkTargetFrames = g_config.benchmarkFrameLimit;
   } else if (g_config.benchmarkDurationSeconds > 0) {
@@ -2028,6 +2034,9 @@ void DayScene::OnUpdate(float _DtSecs) {
   const bool benchmarkWallClockTimeline =
       benchmarkMode && m_benchmarkTargetDurationSeconds > 0.0f && m_benchmarkTargetFrames <= 0;
   float effectiveDt = benchmarkMode ? benchmarkFixedDt : _DtSecs;
+  if (benchmarkMode && IsBenchmarkSimulationHeld()) {
+    effectiveDt = 0.0f;
+  }
   if (m_benchmarkFinishPending && g_config.flags.benchmark) {
     DtSecs = effectiveDt;
     SceneProp.FrameDeltaSec = DtSecs;
@@ -2399,6 +2408,11 @@ void DayScene::OnDraw() {
     finalOutputRT
   );
 
+  const bool lateOffscreenOverlays = finalOutputRT >= 0;
+  if (lateOffscreenOverlays) {
+    pFramework->pVideoDriver->PushRTLoad(finalOutputRT);
+  }
+
   if (m_benchmarkFinishPending && g_config.flags.benchmarkFinalFrameDump && m_benchmarkPendingFinalFramePath.empty()) {
     m_benchmarkPendingFinalFramePath = CaptureBenchmarkFinalFrame();
   }
@@ -2585,6 +2599,10 @@ void DayScene::OnDraw() {
     };
     m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
     if (m_dumper.ShouldExit() && !g_config.flags.profile) exit(0);
+  }
+
+  if (lateOffscreenOverlays) {
+    pFramework->pVideoDriver->PopRT();
   }
 
 #endif

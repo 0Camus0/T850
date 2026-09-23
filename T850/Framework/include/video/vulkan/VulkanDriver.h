@@ -117,6 +117,7 @@ namespace t850 {
     uint32_t           GetGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
     VkRenderPass       GetBackbufferRenderPass() const { return m_backbufferRenderPass; }
     VkCommandPool      GetTransientCommandPool() const { return m_transientCommandPool; }
+    uint64_t GetCompletedGpuSubmissionSerial() const { return m_gpuCompletedSubmissionSerial; }
 
     // Transient command buffer helpers for one-shot GPU operations
     VkCommandBuffer GetTransientCommandBuffer();
@@ -290,6 +291,9 @@ namespace t850 {
     std::vector<VkSemaphore> m_imageRenderFinishedSemaphores;
     VkFence         m_inFlightFences[kBackBufferCount] = {};
     uint32_t        m_currentFrame = 0;
+    uint64_t        m_gpuSubmissionSerial = 0;
+    uint64_t        m_gpuCompletedSubmissionSerial = 0;
+    uint64_t        m_frameGpuSubmissionSerial[kBackBufferCount] = {};
     bool            m_renderPassActive = false;
 
     // Descriptors — one pool per frame in flight to avoid resetting in-use pools

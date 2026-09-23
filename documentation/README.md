@@ -57,6 +57,8 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Geometry/glTF/.x loading | [geometry/loading-geometry.md](geometry/loading-geometry.md) | Verified 2026-08-19 |
 | Shader keys/cache/reflection/PSOs | [rendering/shader-management.md](rendering/shader-management.md) | Verified 2026-08-19 |
 | Cross-backend compute shaders and RenderDoc validation | [rendering/compute-shader-implementation.md](rendering/compute-shader-implementation.md) | Verified 2026-09-15 |
+| Reproducible Windows GPU/ETW profiling workflow | [rendering/gpu-performance-profiling-workflow.md](rendering/gpu-performance-profiling-workflow.md) | Verified x64/ARM64 2026-09-22 |
+| Opt-in D3D12/Vulkan/WebGPU GPU timestamp profiling | [rendering/gpu-timestamp-profiling.md](rendering/gpu-timestamp-profiling.md) | Whole-frame and pass-level implementation verified 2026-09-22 |
 | WebGPU/compute/browser remediation backlog | [rendering/webgpu-compute-remediation-plan.md](rendering/webgpu-compute-remediation-plan.md) | Ordered R1-R21 action items with test-evidence completion records, revised 2026-09-18 |
 | JSON render graph | [rendering/render-graph.md](rendering/render-graph.md) | Verified 2026-08-19 |
 | Mesh draw path/state tracking | [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md) | Verified 2026-08-19 |

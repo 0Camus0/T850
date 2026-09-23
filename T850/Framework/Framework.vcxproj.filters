@@ -605,6 +605,9 @@
     <ClInclude Include="include\debug\Profiler.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\debug\GpuTimestampProfiler.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
     <ClInclude Include="include\debug\RuntimeTelemetry.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
@@ -1043,6 +1046,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\Profiler.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\GpuTimestampProfiler.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\ProfilerGpuBackend.cpp">

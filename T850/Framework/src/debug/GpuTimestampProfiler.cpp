@@ -29,6 +29,44 @@ namespace t850 {
 GpuTimestampProfiler* g_gpuTimestampProfiler = nullptr;
 extern Device* T8Device;
 
+std::optional<uint64_t> ComputeGpuTimestampDelta(uint64_t begin, uint64_t end,
+                                                  uint32_t validBits) {
+  if (validBits == 0 || validBits > 64) return std::nullopt;
+  if (validBits == 64) {
+    if (end < begin) return std::nullopt;
+    return end - begin;
+  }
+  const uint64_t mask = (uint64_t{1} << validBits) - 1;
+  return (end - begin) & mask;
+}
+
+std::string EscapeGpuTimestampJson(std::string_view value) {
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string escaped;
+  escaped.reserve(value.size());
+  for (const unsigned char character : value) {
+    switch (character) {
+      case '"': escaped += "\\\""; break;
+      case '\\': escaped += "\\\\"; break;
+      case '\b': escaped += "\\b"; break;
+      case '\f': escaped += "\\f"; break;
+      case '\n': escaped += "\\n"; break;
+      case '\r': escaped += "\\r"; break;
+      case '\t': escaped += "\\t"; break;
+      default:
+        if (character < 0x20) {
+          escaped += "\\u00";
+          escaped += hex[character >> 4];
+          escaped += hex[character & 0x0f];
+        } else {
+          escaped += static_cast<char>(character);
+        }
+        break;
+    }
+  }
+  return escaped;
+}
+
 GpuTimestampBatchRing::GpuTimestampBatchRing(std::size_t capacity)
     : m_batches((std::max)(capacity, std::size_t{1})) {
   for (std::size_t slot = 0; slot < m_batches.size(); ++slot)
@@ -200,19 +238,25 @@ bool AppendTimestampSamples(const GpuTimestampBatch& batch,
                             uint64_t currentFrame,
                             ConvertDelta convertDelta,
                             std::vector<GpuTimestampSample>& samples) {
-  if (!values || layout.frameEndQuery == 0 ||
-      values[layout.frameEndQuery] < values[0]) return false;
+  if (!values || layout.frameEndQuery == 0) return false;
+  const auto frameDelta = convertDelta(values[layout.frameEndQuery], values[0]);
+  if (!frameDelta) return false;
   const std::size_t sampleStart = samples.size();
   const uint64_t latency = currentFrame >= batch.frame ? currentFrame - batch.frame : 0;
   samples.push_back({batch.frame, "gpu.frame",
-                     convertDelta(values[layout.frameEndQuery], values[0]), latency, true});
+                     *frameDelta, latency, true});
   for (const GpuTimestampRegionRange& region : layout.regions) {
-    if (region.endQuery <= region.beginQuery || values[region.endQuery] < values[region.beginQuery]) {
+    if (region.endQuery <= region.beginQuery) {
+      samples.resize(sampleStart);
+      return false;
+    }
+    const auto regionDelta = convertDelta(values[region.endQuery], values[region.beginQuery]);
+    if (!regionDelta) {
       samples.resize(sampleStart);
       return false;
     }
     samples.push_back({batch.frame, region.name,
-                       convertDelta(values[region.endQuery], values[region.beginQuery]), latency, true});
+                       *regionDelta, latency, true});
   }
   return true;
 }
@@ -323,7 +367,9 @@ public:
       const bool valid = m_frequency != 0 && AppendTimestampSamples(
         batch, m_layouts[slot], batchValues, currentFrame,
         [this](uint64_t end, uint64_t begin) {
-          return static_cast<double>(end - begin) * 1000.0 / static_cast<double>(m_frequency);
+          const auto delta = ComputeGpuTimestampDelta(begin, end, 64);
+          return delta ? std::optional<double>(static_cast<double>(*delta) * 1000.0 /
+                                                static_cast<double>(m_frequency)) : std::nullopt;
         }, samples);
       D3D12_RANGE written{0, 0};
       m_readback->Unmap(0, &written);
@@ -483,7 +529,8 @@ public:
       const bool valid = AppendTimestampSamples(
         batch, slot.layout, values, currentFrame,
         [](uint64_t end, uint64_t begin) {
-          return static_cast<double>(end - begin) / 1000000.0;
+          const auto delta = ComputeGpuTimestampDelta(begin, end, 64);
+          return delta ? std::optional<double>(static_cast<double>(*delta) / 1000000.0) : std::nullopt;
         }, samples);
       if (!valid) {
         slot.staging.Unmap();
@@ -625,12 +672,9 @@ public:
       const bool valid = AppendTimestampSamples(
         batch, m_layouts[slot], values.data(), currentFrame,
         [this](uint64_t end, uint64_t begin) {
-          uint64_t delta = end - begin;
-          if (m_validBits < 64) {
-            const uint64_t mask = (uint64_t{1} << m_validBits) - 1;
-            delta &= mask;
-          }
-          return static_cast<double>(delta) * static_cast<double>(m_timestampPeriod) / 1000000.0;
+          const auto delta = ComputeGpuTimestampDelta(begin, end, m_validBits);
+          return delta ? std::optional<double>(static_cast<double>(*delta) *
+                                                static_cast<double>(m_timestampPeriod) / 1000000.0) : std::nullopt;
         }, samples);
       if (!valid) {
         m_ring->MarkFailed(slot, batch.generation);
@@ -760,9 +804,9 @@ bool GpuTimestampProfiler::WriteReport() const {
   const auto& stats = m_backend->Stats();
   out << std::fixed << std::setprecision(6)
       << "{\n  \"schema\":1,\n  \"mode\":\"gpu-timestamps\",\n"
-      << "  \"api\":\"" << m_driver->ApiTag() << "\",\n"
-      << "  \"provider\":\"" << m_driver->ProviderTag() << "\",\n"
-      << "  \"backend\":\"" << m_driver->UnderlyingBackendTag() << "\",\n"
+      << "  \"api\":\"" << EscapeGpuTimestampJson(m_driver->ApiTag()) << "\",\n"
+      << "  \"provider\":\"" << EscapeGpuTimestampJson(m_driver->ProviderTag()) << "\",\n"
+      << "  \"backend\":\"" << EscapeGpuTimestampJson(m_driver->UnderlyingBackendTag()) << "\",\n"
       << "  \"granularity\":\"" << (m_captureRegions ? "render-graph" : "whole-frame") << "\",\n"
       << "  \"framesRequested\":" << m_targetFrames << ",\n"
       << "  \"framesSubmitted\":" << m_submittedFrames << ",\n"
@@ -772,7 +816,7 @@ bool GpuTimestampProfiler::WriteReport() const {
       << "  \"samples\":[\n";
   for (std::size_t index = 0; index < m_samples.size(); ++index) {
     const auto& sample = m_samples[index];
-    out << "    {\"frame\":" << sample.frame << ",\"region\":\"" << sample.region << "\",\"gpuMs\":"
+    out << "    {\"frame\":" << sample.frame << ",\"region\":\"" << EscapeGpuTimestampJson(sample.region) << "\",\"gpuMs\":"
         << sample.gpuMs << ",\"completionLatencyFrames\":" << sample.completionLatencyFrames
         << ",\"valid\":" << (sample.valid ? "true" : "false") << "}"
         << (index + 1 < m_samples.size() ? "," : "") << "\n";

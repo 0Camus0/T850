@@ -81,6 +81,10 @@ struct GpuTimestampSample {
   bool valid = false;
 };
 
+std::optional<uint64_t> ComputeGpuTimestampDelta(uint64_t begin, uint64_t end,
+                                                  uint32_t validBits);
+std::string EscapeGpuTimestampJson(std::string_view value);
+
 class BaseDriver;
 
 class GpuTimestampBackend {

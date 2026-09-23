@@ -1905,6 +1905,15 @@ void TestShaderFlowConfiguration() {
       Require(current && ring.MarkSubmitted(*current, 1, 200, 2) &&
         ring.MarkReady(*current, 1) && ring.ConsumeTerminal(1).size() == 1,
         "GPU timestamp ring did not recover after generation reset");
+
+      Require(ComputeGpuTimestampDelta(10, 20, 64) == 10 &&
+        !ComputeGpuTimestampDelta(20, 10, 64) &&
+        ComputeGpuTimestampDelta(250, 5, 8) == 11 &&
+        !ComputeGpuTimestampDelta(0, 1, 0),
+        "GPU timestamp valid-bit wrap handling failed");
+      Require(EscapeGpuTimestampJson("pass\"\\\n\t") == "pass\\\"\\\\\\n\\t" &&
+        EscapeGpuTimestampJson(std::string(1, '\x01')) == "\\u0001",
+        "GPU timestamp JSON escaping failed");
     }
 
 class NullTestDriver final : public BaseDriver {

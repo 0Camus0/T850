@@ -1,12 +1,12 @@
 ---
 name: t850-profiling
-description: "Use when adding, removing, or interpreting T850 CPU profiling scopes, telemetry counters, upload/streaming instrumentation, or when deciding between built-in instrumentation and an external tool such as PresentMon, PIX or ETW."
+description: "Use when adding, removing, or interpreting T850 CPU scopes, telemetry counters, upload/streaming instrumentation, GPU timestamps, shader preparation timings, or external PresentMon, PIX and ETW evidence."
 argument-hint: "Describe the subsystem to instrument, the bottleneck suspected, or the measurement question."
 ---
 
 # T850 Profiling
 
-Two systems exist and they are not interchangeable.
+Four systems exist and they are not interchangeable.
 
 | System | Files | Purpose |
 |---|---|---|
@@ -18,22 +18,12 @@ Two systems exist and they are not interchangeable.
 The layering is correct: `Profiler` is API-neutral and the GPU strategy is
 API-specific. Preserve that split.
 
-Use the current IDs and completion checklists in
-`documentation/rendering/webgpu-compute-remediation-plan.md`. The profiling
-chain is R1 accounting, R4 infrastructure, R5 upload aggregates, R6 phase
-migration and R7 measurements. Development is implemented locally; measurement
-acceptance is not complete. Read the current evidence before continuing;
-mark an item complete only after its implementation, acceptance tests and docs
-are verified. Former IDs are recorded only in the plan's index.
-
-2026-09-18 implementation checkpoint: ID-based recording, worker-owned bounded
-publication, CPU-only/compile-out modes, upload matrices, marker migration and
-paired reporting, sampling-independent upload budgets, source/staging coverage
-and startup attribution now exist locally. Overhead targets and external capture
-evidence remain unverified. The user's current instruction is profiling-first:
-park rendering fixes and do not run full scene/platform matrices repeatedly.
-Use a focused Framework/DayScene build, shared telemetry tests and narrowly
-selected captures only when they discriminate a profiling defect.
+The CPU/telemetry implementation, matched CPU matrix, no-present throughput,
+native GPU timestamps, pass matrix, and x64 shader-preparation matrix are
+implemented and have accepted 2026-09-22 evidence. The remaining GPU timestamp
+closure gates are external correlation, instrumentation perturbation, and
+pending-callback/device-loss stress. Do not describe those gates as complete.
+Use focused Framework/DayScene builds and the owning benchmark skill for reruns.
 
 ## The two rules
 
@@ -72,6 +62,7 @@ and repeated matched runs rather than assuming a particular nanosecond cost.
 | CPU cost per frame phase | Built-in markers |
 | Texture and geometry upload volume, stalls, spikes | Built-in per-frame aggregates |
 | Where CPU time goes inside Dawn versus D3D12 | ETW sampling profile with module attribution |
+| Cold per-stage native DXC or WebGPU source-preparation cost | `Capture-X64ShaderCompilationMatrix.ps1`; do not call the WebGPU value backend compiler time because pipeline creation is excluded |
 | Did two runs do the same work | Counters |
 
 Upload volume is the one case where built-in instrumentation beats an external
@@ -154,8 +145,9 @@ Check these before trusting a number:
 - Deferred GPU query reset is exposed as `FlushDeferredQueryReset`; backend
   details remain in the strategy. Inclusive report nodes must not be summed
   into frame time.
-- The Vulkan timestamp resolve uses `VK_QUERY_RESULT_WAIT_BIT` and can block the
-  render thread.
+- The legacy `ProfilerGpuBackend` Vulkan resolve uses
+  `VK_QUERY_RESULT_WAIT_BIT`; the opt-in `GpuTimestampProfiler` uses completion
+  serials and nonblocking query reads instead.
 - `GpuTimestampProfiler` reads only completion-qualified batches. D3D12 uses
   fence completion, Vulkan uses submission completion and query availability,
   and Dawn uses submitted-work completion plus asynchronous mapping.
@@ -180,6 +172,9 @@ Check these before trusting a number:
 .\DayScene.exe --api d3d12 --scene 1 --profileGpu `
   --profileGpuFrames 600 --profileGpuPasses render-graph `
   --benchmarkNoPresent --benchmarkHoldFrame 3000 --benchmarkFrames 660
+
+# Cold x64 per-stage preparation matrix; native DXC and WebGPU boundaries differ
+& ..\..\..\.github\skills\t850-arm64-gpu-benchmark\scripts\Capture-X64ShaderCompilationMatrix.ps1
 ```
 
 Scene 6 is draw and streaming heavy and shows upload behavior most clearly.

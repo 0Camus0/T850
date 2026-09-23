@@ -1,9 +1,9 @@
 # WebGPU Platform Dependency Gaps
 
-Status: future work, scoped on 2026-09-14. No Android, Linux or Steam Deck Dawn
-package build or device probe has been validated. This document extends the
-[WebGPU proposal](proposal-webgpu.md) with dependency-foundation gaps only; it
-does not schedule implementation or claim renderer support.
+Status: remaining platform work, reviewed 2026-09-22. No Android, Linux or Steam
+Deck Dawn package build or device probe has been validated. This document
+extends the [WebGPU implementation record](proposal-webgpu.md) with
+dependency-foundation gaps only; it does not claim renderer support.
 
 ## Scope and Backend Decision
 

@@ -522,9 +522,9 @@ public:
         const auto& attempt = report.attempts.back();
         T8_LOG_INFO("[ShaderCompileProfile] backend=webgpu flow=%s stage=%s shader=\"%s\" entry=%s key=0x%016llX cache=%s prepareMs=%.6f moduleMs=%.6f elapsedMs=%.6f",
           attempt.sourceLanguage == webgpu::ShaderSourceLanguage::Wgsl ? "wgsl" : "spirv",
-          isVertex ? "vertex" : "pixel", request.name.c_str(), request.entryPoint.c_str(),
+          isVertex ? "vertex" : "pixel", attempt.sourceName.c_str(), request.entryPoint.c_str(),
           static_cast<unsigned long long>(request.keyBits), attempt.cacheHit ? "hit" : "miss",
-          report.elapsedMilliseconds, moduleMs, report.elapsedMilliseconds + moduleMs);
+          attempt.preparationMilliseconds, moduleMs, attempt.preparationMilliseconds + moduleMs);
       }
     #endif
 #ifdef __EMSCRIPTEN__
@@ -881,9 +881,9 @@ public:
         const auto& attempt = report.attempts.back();
         T8_LOG_INFO("[ShaderCompileProfile] backend=webgpu flow=%s stage=compute shader=\"%s\" entry=%s permutation=\"%s\" cache=%s prepareMs=%.6f moduleMs=%.6f elapsedMs=%.6f",
           attempt.sourceLanguage == webgpu::ShaderSourceLanguage::Wgsl ? "wgsl" : "spirv",
-          request.name.c_str(), request.entryPoint.c_str(), desc.permutationName.c_str(),
-          attempt.cacheHit ? "hit" : "miss", report.elapsedMilliseconds, moduleMs,
-          report.elapsedMilliseconds + moduleMs);
+          attempt.sourceName.c_str(), request.entryPoint.c_str(), desc.permutationName.c_str(),
+          attempt.cacheHit ? "hit" : "miss", attempt.preparationMilliseconds, moduleMs,
+          attempt.preparationMilliseconds + moduleMs);
       }
     #endif
       bindingEntries = std::move(layoutEntries);

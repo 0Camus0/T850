@@ -34,6 +34,7 @@
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <debug/RuntimeTelemetry.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -1352,7 +1353,10 @@ namespace t850 {
   }
 
   void VulkanDriver::WaitForGPU() {
-    if (m_device) vkDeviceWaitIdle(m_device);
+    if (m_device) {
+      vkDeviceWaitIdle(m_device);
+      m_gpuCompletedSubmissionSerial = m_gpuSubmissionSerial;
+    }
   }
 
   // ══════════════════════════════════════════════════════
@@ -1374,6 +1378,11 @@ namespace t850 {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "VK_FenceWait");
       T8_TELEMETRY_SCOPE("gpu.gpu_wait");
       WaitForFence(m_currentFrame);
+    #if T850_ENABLE_GPU_PROFILING
+      m_gpuCompletedSubmissionSerial = (std::max)(
+        m_gpuCompletedSubmissionSerial, m_frameGpuSubmissionSerial[m_currentFrame]);
+      if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->Poll();
+    #endif
       vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
     }
 
@@ -1474,6 +1483,9 @@ namespace t850 {
     m_lastPipelineLayout = VK_NULL_HANDLE;
     m_screenshotConsumedSemaphore = false;
     m_frameStarted = true;
+  #if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->BeginFrame();
+  #endif
 
     // Reset topology to triangle list at the start of each frame
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -1645,6 +1657,9 @@ namespace t850 {
     }
 
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+  #if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->EndFrame();
+  #endif
     std::vector<VkClearAttachment> attachments;
     VkClearRect clearRect = {};
     clearRect.rect.offset = { 0, 0 };
@@ -1951,6 +1966,13 @@ namespace t850 {
           vkDeviceWaitIdle(m_device);
         }
       }
+            if (submitRes == VK_SUCCESS) {
+        const uint64_t serial = ++m_gpuSubmissionSerial;
+        m_frameGpuSubmissionSerial[m_currentFrame] = serial;
+      #if T850_ENABLE_GPU_PROFILING
+        if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(serial);
+      #endif
+            }
 
       m_frameStarted = false;
       if (IsOffscreenEnabled()) {
@@ -2032,6 +2054,13 @@ namespace t850 {
         vkDeviceWaitIdle(m_device);
       }
     }
+        if (submitRes == VK_SUCCESS) {
+      const uint64_t serial = ++m_gpuSubmissionSerial;
+      m_frameGpuSubmissionSerial[m_currentFrame] = serial;
+    #if T850_ENABLE_GPU_PROFILING
+      if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(serial);
+    #endif
+        }
 
     // Present
     VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };

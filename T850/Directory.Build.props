@@ -1,10 +1,11 @@
 <Project>
   <PropertyGroup>
     <T850EnableProfiling Condition="'$(T850EnableProfiling)' == ''">1</T850EnableProfiling>
+    <T850EnableGpuProfiling Condition="'$(T850EnableGpuProfiling)' == ''">0</T850EnableGpuProfiling>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <PreprocessorDefinitions>T850_ENABLE_PROFILING=$(T850EnableProfiling);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>T850_ENABLE_PROFILING=$(T850EnableProfiling);T850_ENABLE_GPU_PROFILING=$(T850EnableGpuProfiling);%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
 </Project>

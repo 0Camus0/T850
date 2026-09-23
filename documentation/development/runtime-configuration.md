@@ -2,8 +2,9 @@
 
 Status: verified against `Config.h`, `ConfigRuntime.h/.cpp`, `DayScene/App.cpp`, and `Launcher.ps1` on 2026-09-14.
 
-2026-09-15: normal DayScene startup also accepts `--shaderFlow auto|wgsl|spirv`
-for WebGPU, applied before driver initialization and asset/shader loading.
+2026-09-22: `--shaderFlow auto` uses DXC/DXIL for native D3D12;
+`--shaderFlow legacyHLSL` explicitly selects the previous D3DCompile/FXC/DXBC
+path. WebGPU retains `auto|wgsl|spirv` source-flow selection.
 
 ## Configuration Precedence
 
@@ -28,7 +29,7 @@ Unknown JSON keys are ignored. A typo can therefore be silent; use documented fi
 | Field | Default |
 |---|---|
 | API | `d3d11` |
-| WebGPU shader flow | `auto` (WGSL first, HLSL/SPIR-V fallback on preparation failure) |
+| Shader flow | `auto` (DXC for native D3D12; WGSL first with HLSL/SPIR-V fallback for WebGPU) |
 | Window | 1280x720, windowed |
 | Scene | 0 (Sandbox) |
 | Model | `Models/DamagedHelmet.glb` |
@@ -105,6 +106,40 @@ See the [runtime handoff](../rendering/webgpu-runtime-summary.md) for current
 measurements, accepted exceptions, native checkpoint caveats and remaining work.
 
 ## JSON Shape
+
+## Native D3D12 Shader Compiler Flow
+
+Native D3D12 uses DXC and emits DXIL by default:
+
+```powershell
+.\DayScene.exe --api d3d12 --shaderFlow auto --scene 1
+```
+
+`auto` selects the highest Shader Model 6 profile reported by the adapter, up to
+SM 6.6 in the current build. Graphics and compute use the same compiler helper,
+DXC reflection, profile/version-qualified cache identity, `.dxil` bytecode, and
+separate reflection artifacts. If the adapter does not expose Shader Model 6,
+startup fails with guidance to choose the legacy path rather than silently
+changing compilers.
+
+The repository packages native DXC for x64 and ARM64. Win32 D3D12 requires
+`--shaderFlow legacyHLSL`; validation rejects `auto` there with a named
+diagnostic. D3D11 is unchanged.
+
+The previous compiler remains available explicitly:
+
+```powershell
+.\DayScene.exe --api d3d12 --shaderFlow legacyHLSL --scene 1
+```
+
+`legacyHLSL` is case-insensitive, valid only with native D3D12, and uses
+`D3DCompile`/FXC with `vs_5_0`, `ps_5_0`, and `cs_5_0` DXBC artifacts. DXC and
+legacy cache identities cannot collide: default artifacts live under the
+`d3d12` cache namespace and fallback artifacts under `d3d12-legacy`. Switching
+flows does not evict the other flow's warm cache. Debug builds use
+`d3d12-debug` and `d3d12-legacy-debug`, preventing `-Zi/-Od` artifacts from
+colliding with optimized Release bytecode. Runtime logs identify the selected
+flow, profile, and bytecode kind.
 
 Root fields accepted by `RuntimeConfigJson` include:
 
@@ -281,9 +316,20 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 --benchmarkFixedDt SECONDS
 ```
 
+--benchmarkHoldFrame N
+--benchmarkNoPresent
 Benchmark matrix mode forces DayScene, D3D11 startup, 1920x1080, and onscreen start settings before the internal matrix runs.
 
 ### Logging, Profiling, and Telemetry
+`--benchmarkHoldFrame N` freezes simulation and physics at runtime frame `N` by
+setting their effective delta to zero while rendering and presentation continue
+without the fixed-delta wall-clock pacer. The runtime logs the held frame, uncapped
+state and its QPC-backed timestamp once. Combine it with `--regressionFixedDt`
+for deterministic external GPU measurements; it is a benchmark control, not an
+ordinary gameplay pause.
+`--benchmarkNoPresent` forces the offscreen submit path and suppresses progress
+presentation entirely. The completion marker is emitted only after `WaitForGPU`,
+so its throughput includes the final queue drain and excludes DWM/swapchain pacing.
 
 ```text
 --logLevel error|info|debug|verbose|trace|0..4

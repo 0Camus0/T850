@@ -56,8 +56,8 @@ std::filesystem::path ResolveConfigPath(const std::string& value, const char* ex
 
 std::string NormalizeShaderFlow(const std::string& value) {
   const auto flow = ToLower(StripQuotes(value));
-  if (flow != "auto" && flow != "wgsl" && flow != "spirv")
-    throw std::invalid_argument("Invalid WebGPU shader flow '" + value + "'; expected auto, wgsl or spirv");
+  if (flow != "auto" && flow != "wgsl" && flow != "spirv" && flow != "legacyhlsl")
+    throw std::invalid_argument("Invalid shader flow '" + value + "'; expected auto, wgsl, spirv or legacyHLSL");
   return flow;
 }
 
@@ -171,6 +171,15 @@ Config::PostProcessMode ParsePostProcessMode(const std::string& value) {
   throw std::invalid_argument("Invalid post-process mode '" + value + "': expected compute or raster");
 }
 
+Config::GpuProfileGranularity ParseGpuProfileGranularity(const std::string& value) {
+  const std::string lowered = ToLower(value);
+  if (lowered == "whole-frame" || lowered == "frame")
+    return Config::GpuProfileGranularity::WholeFrame;
+  if (lowered == "render-graph" || lowered == "passes")
+    return Config::GpuProfileGranularity::RenderGraphPasses;
+  throw std::invalid_argument("Unknown GPU profile granularity: " + value);
+}
+
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback) {
   std::string lowered = ToLower(value);
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
@@ -230,6 +239,10 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.profile) cfg.flags.profile = *json.profile;
   if (json.profileFrames) cfg.profileFrames = *json.profileFrames;
   if (json.profileCpuOnly) cfg.profileCpuOnly = *json.profileCpuOnly;
+  if (json.profileGpu) cfg.profileGpu = *json.profileGpu;
+  if (json.profileGpuFrames) cfg.profileGpuFrames = *json.profileGpuFrames;
+  if (json.profileGpuOutputPath) cfg.profileGpuOutputPath = StripQuotes(*json.profileGpuOutputPath);
+  if (json.profileGpuPasses) cfg.profileGpuGranularity = ParseGpuProfileGranularity(*json.profileGpuPasses);
   if (json.telemetryUploadBudgetMB) cfg.telemetryUploadBudgetMB = (std::max)(0, *json.telemetryUploadBudgetMB);
   if (json.autoStartRagdoll) cfg.flags.autoStartRagdoll = *json.autoStartRagdoll;
   if (json.dumpMatrices) cfg.flags.dumpMatrices = *json.dumpMatrices;
@@ -300,6 +313,10 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (devTools.profile) cfg.flags.profile = *devTools.profile;
     if (devTools.profileFrames) cfg.profileFrames = *devTools.profileFrames;
     if (devTools.profileCpuOnly) cfg.profileCpuOnly = *devTools.profileCpuOnly;
+    if (devTools.profileGpu) cfg.profileGpu = *devTools.profileGpu;
+    if (devTools.profileGpuFrames) cfg.profileGpuFrames = *devTools.profileGpuFrames;
+    if (devTools.profileGpuOutputPath) cfg.profileGpuOutputPath = StripQuotes(*devTools.profileGpuOutputPath);
+    if (devTools.profileGpuPasses) cfg.profileGpuGranularity = ParseGpuProfileGranularity(*devTools.profileGpuPasses);
     if (devTools.autoStartRagdoll) cfg.flags.autoStartRagdoll = *devTools.autoStartRagdoll;
     if (devTools.dumpMatrices) cfg.flags.dumpMatrices = *devTools.dumpMatrices;
     if (devTools.dumpMatricesFrames) cfg.dumpMatricesFrames = *devTools.dumpMatricesFrames;
@@ -358,6 +375,17 @@ bool ValidateConfig(Config& cfg) {
 
   cfg.webgpuShaderFlow = NormalizeShaderFlow(cfg.webgpuShaderFlow);
 
+  if (cfg.profileGpu) {
+#if !T850_ENABLE_GPU_PROFILING
+    throw std::invalid_argument("GPU timestamp profiling is not compiled into this build; rebuild with T850_ENABLE_GPU_PROFILING=1");
+#else
+    if (cfg.profileCpuOnly)
+      throw std::invalid_argument("Choose GPU timestamp profiling or CPU-only profiling, not both");
+    if (cfg.api != "d3d12" && cfg.api != "vulkan" && cfg.api != "webgpu")
+      throw std::invalid_argument("GPU timestamp profiling supports only D3D12, Vulkan, and WebGPU");
+#endif
+  }
+
 #ifdef __EMSCRIPTEN__
   if (cfg.api != "webgpu" || cfg.flags.benchmarkMatrix)
     throw std::invalid_argument("Browser builds require WebGPU with prepared shaders; native API matrices are unavailable");
@@ -377,6 +405,12 @@ bool ValidateConfig(Config& cfg) {
   } else {
     cfg.api = ApiTag(ParseGraphicsApi(cfg.api, GraphicsApi::D3D11));
   }
+  if (cfg.webgpuShaderFlow == "legacyhlsl" && cfg.api != "d3d12")
+    throw std::invalid_argument("legacyHLSL shader flow is available only with native D3D12");
+#if defined(_WIN32) && defined(_M_IX86)
+  if (cfg.api == "d3d12" && cfg.webgpuShaderFlow != "legacyhlsl")
+    throw std::invalid_argument("Win32 D3D12 requires --shaderFlow legacyHLSL because DXC is packaged only for x64 and ARM64");
+#endif
 
   if (cfg.width <= 0) {
     WarnConfigAdjusted("width", "must be positive, using " + std::to_string(defaults.width));
@@ -455,6 +489,18 @@ bool ValidateConfig(Config& cfg) {
     valid = false;
   }
 
+  if (cfg.profileGpuFrames <= 0) {
+    WarnConfigAdjusted("profileGpuFrames", "must be positive, using " + std::to_string(defaults.profileGpuFrames));
+    cfg.profileGpuFrames = defaults.profileGpuFrames;
+    valid = false;
+  }
+  cfg.profileGpuOutputPath = StripQuotes(cfg.profileGpuOutputPath);
+  if (cfg.profileGpuOutputPath.empty()) {
+    WarnConfigAdjusted("profileGpuOutputPath", "must not be empty, using " + defaults.profileGpuOutputPath);
+    cfg.profileGpuOutputPath = defaults.profileGpuOutputPath;
+    valid = false;
+  }
+
   if (cfg.dumpMatricesFrames < 0) {
     WarnConfigAdjusted("dumpMatricesFrames", "must be non-negative, using 0");
     cfg.dumpMatricesFrames = 0;
@@ -483,6 +529,17 @@ bool ValidateConfig(Config& cfg) {
     WarnConfigAdjusted("benchmarkFixedDt", "must be finite and non-negative, using 0");
     cfg.benchmarkFixedDt = 0.0f;
     valid = false;
+  }
+
+  if (cfg.benchmarkHoldFrame < 0) {
+    WarnConfigAdjusted("benchmarkHoldFrame", "must be non-negative, using 0");
+    cfg.benchmarkHoldFrame = 0;
+    valid = false;
+  }
+
+  if (cfg.benchmarkNoPresent) {
+    cfg.flags.benchmark = true;
+    cfg.flags.offscreen = true;
   }
 
   if (cfg.regressionFixedDt < 0.0f || cfg.regressionFixedDt > 1.0f || !std::isfinite(cfg.regressionFixedDt)) {
@@ -567,7 +624,7 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     }
     else if (arg == "--shaderFlow") {
       if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("-"))
-        throw std::invalid_argument("--shaderFlow requires auto, wgsl or spirv");
+        throw std::invalid_argument("--shaderFlow requires auto, wgsl, spirv or legacyHLSL");
       cfg.webgpuShaderFlow = NormalizeShaderFlow(argv[++i]);
     }
     else if (arg == "--dump-frame" || arg == "--dumpFrame" || arg == "--dumpSnapshot-frame") {
@@ -648,6 +705,19 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--profileCpuOnly") {
       cfg.flags.profile = true;
       cfg.profileCpuOnly = true;
+    }
+    else if (arg == "--profileGpu") {
+      cfg.profileGpu = true;
+    }
+    else if (arg == "--profileGpuFrames") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) cfg.profileGpuFrames = value;
+    }
+    else if (arg == "--profileGpuOutput" && i + 1 < argc) {
+      cfg.profileGpuOutputPath = StripQuotes(argv[++i]);
+    }
+    else if (arg == "--profileGpuPasses" && i + 1 < argc) {
+      cfg.profileGpuGranularity = ParseGpuProfileGranularity(argv[++i]);
     }
     else if (arg == "--benchmarkPaired") {
       cfg.flags.benchmark = true;
@@ -745,6 +815,17 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
         cfg.benchmarkFixedDt = value;
       }
     }
+    else if (arg == "--benchmarkHoldFrame") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) {
+        cfg.benchmarkHoldFrame = value;
+      }
+    }
+    else if (arg == "--benchmarkNoPresent") {
+      cfg.flags.benchmark = true;
+      cfg.flags.offscreen = true;
+      cfg.benchmarkNoPresent = true;
+    }
     else if (arg == "--regressionFixedDt") {
       float value = 0.0f;
       if (ReadFloatArgument(arg, argc, argv, i, value)) {
@@ -817,7 +898,8 @@ void PrintHelp() {
   #if defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))
     << "  --api webgpu                       Select Dawn/D3D12 (scene parity still incomplete)\n"
   #endif
-    << "  --shaderFlow <auto|wgsl|spirv>     Select WebGPU shader source flow before loading (default: auto)\n"
+    << "  --shaderFlow <auto|wgsl|spirv|legacyHLSL>\n"
+    << "                                      auto uses DXC for native D3D12; legacyHLSL selects FXC/D3DCompile\n"
     << "  --width <pixels>                   Window width\n"
     << "  --height <pixels>                  Window height\n"
     << "  --fullscreen                       Launch fullscreen\n"
@@ -848,6 +930,8 @@ void PrintHelp() {
     << "  --benchmarkSeconds <seconds>        Run benchmark unthrottled for this many seconds\n"
     << "  --benchmarkFrames <N>               End benchmark after N update frames instead of duration\n"
     << "  --benchmarkFixedDt <seconds>        Use a fixed dt for benchmark updates\n"
+    << "  --benchmarkHoldFrame <N>            Freeze simulation after N runtime frames; keep rendering\n"
+    << "  --benchmarkNoPresent                Offscreen submit-only benchmark with no compositor presents\n"
     << "  --regressionFixedDt <seconds>       Fixed dt with real-time pacing for deterministic captures\n"
     << "  --culling <full|lazy|disabled>      Culling metadata load policy\n"
     << "  --cullDisabled                      Legacy alias for --culling disabled\n"
@@ -875,6 +959,11 @@ void PrintHelp() {
     << "  --profile                          Enable GPU+CPU profiling\n"
     << "  --profileFrames <frames>           Frames to profile before report\n"
     << "  --profileCpuOnly                  CPU scopes without GPU queries\n"
+    << "  --profileGpu                      Enable opt-in GPU timestamp profiling\n"
+    << "  --profileGpuFrames <frames>        GPU timestamp samples to collect\n"
+    << "  --profileGpuOutput <path>          GPU timestamp JSON output\n"
+    << "  --profileGpuPasses <whole-frame|render-graph>\n"
+    << "                                      GPU timestamp granularity\n"
     << "  --benchmarkPaired                 D3D12/WebGPU submit-only at configured resolution\n"
     << "  --telemetryUploadBudgetMB <MB>     Dynamic upload warning budget (0 disables)\n"
     << "  --telemetry                        Enable lightweight sampled runtime telemetry\n"

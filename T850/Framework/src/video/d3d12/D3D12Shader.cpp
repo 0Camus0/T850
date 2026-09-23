@@ -489,10 +489,18 @@ namespace t850 {
       }
       else {
         T8_TELEMETRY_ADD("shader.cache.misses", 1);
+        const auto compileStarted = std::chrono::steady_clock::now();
         if (!T8_TELEMETRY_CALL("shader.compile", CompileD3D12Shader(
               device, src_vs, vs_name, "VS", D3D12ShaderStage::Vertex, compiled, diagnostic))) {
           T8_LOG_ERROR("[D3D12] VS compile error: %s", diagnostic.c_str());
           return false;
+        }
+        const double compileMs = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - compileStarted).count();
+        if (g_config.flags.compileShaders) {
+          T8_LOG_INFO("[ShaderCompileProfile] backend=d3d12 flow=%s stage=vertex shader=\"%s\" entry=VS key=0x%016llX cache=miss elapsedMs=%.6f",
+            legacy ? "legacyHLSL" : "dxc", vs_name.c_str(),
+            static_cast<unsigned long long>(key.bits), compileMs);
         }
         ShaderDiskCache::StoreArtifact(cacheKey, artifact,
           compiled.bytecode->GetBufferPointer(), compiled.bytecode->GetBufferSize());
@@ -522,10 +530,18 @@ namespace t850 {
       }
       else {
         T8_TELEMETRY_ADD("shader.cache.misses", 1);
+        const auto compileStarted = std::chrono::steady_clock::now();
         if (!T8_TELEMETRY_CALL("shader.compile", CompileD3D12Shader(
               device, src_fs, fs_name, "FS", D3D12ShaderStage::Fragment, compiled, diagnostic))) {
           T8_LOG_ERROR("[D3D12] FS compile error: %s", diagnostic.c_str());
           return false;
+        }
+        const double compileMs = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - compileStarted).count();
+        if (g_config.flags.compileShaders) {
+          T8_LOG_INFO("[ShaderCompileProfile] backend=d3d12 flow=%s stage=pixel shader=\"%s\" entry=FS key=0x%016llX cache=miss elapsedMs=%.6f",
+            legacy ? "legacyHLSL" : "dxc", fs_name.c_str(),
+            static_cast<unsigned long long>(key.bits), compileMs);
         }
         ShaderDiskCache::StoreArtifact(cacheKey, artifact,
           compiled.bytecode->GetBufferPointer(), compiled.bytecode->GetBufferSize());

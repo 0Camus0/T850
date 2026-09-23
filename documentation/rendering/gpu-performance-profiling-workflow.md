@@ -34,6 +34,7 @@ other.
 - `.github/skills/t850-arm64-gpu-benchmark/scripts/Capture-Arm64GpuTimestampMatrix.ps1`
 - `.github/skills/t850-arm64-gpu-benchmark/scripts/Capture-Arm64GpuOfflineMatrix.ps1`
 - `.github/skills/t850-arm64-gpu-benchmark/scripts/Capture-Arm64ShaderCosts.ps1`
+- `.github/skills/t850-arm64-gpu-benchmark/scripts/Capture-X64ShaderCompilationMatrix.ps1`
 - `.github/skills/t850-arm64-gpu-benchmark/scripts/Run-WindowsGpuProfileSuite.ps1`
 - `.github/skills/t850-arm64-gpu-benchmark/scripts/Analyze-Arm64GpuOfflineMatrix.ps1`
 - `.github/skills/t850-arm64-gpu-benchmark/scripts/Generate-Arm64GpuOfflineReport.ps1`
@@ -133,6 +134,38 @@ Verified x64 host compiler fingerprints:
 
 Record these values again on another machine; do not assume Windows servicing
 or the staged Dawn package is identical.
+
+## Profile individual shader compilation stages on x64
+
+The aggregate cold/warm shader-cost capture answers startup and cache questions,
+but it cannot identify the slowest shader or compare compute and pixel stages.
+For that question, build x64 Release and run:
+
+```powershell
+& .\.github\skills\t850-arm64-gpu-benchmark\scripts\Capture-X64ShaderCompilationMatrix.ps1 `
+  -RuntimeRoot .\T850\bin\x64\Release `
+  -Repetitions 5
+```
+
+The harness removes `Shaders/.t8shadercache` before every launch and alternates
+the three flow orders. Every run must compile the same 281 vertex, 281 pixel,
+and 9 compute stages from `shader_permutations.json`. Intra-launch WebGPU cache
+hits are retained as diagnostics but excluded from compiler statistics.
+
+The structured event boundary is:
+
+| Flow | Per-stage duration |
+|---|---|
+| Native D3D12 | DXC compile plus DXC reflection |
+| WebGPU strict WGSL | Source load, WGSL preparation/reflection, and synchronous `CreateShaderModule` |
+| WebGPU strict SPIR-V | HLSL -> SPIR-V -> Tint/WGSL preparation/reflection, and synchronous `CreateShaderModule` |
+
+Graphics/compute pipeline creation, disk-cache writes, process startup, and
+whole-corpus wall time are reported separately or excluded. Report arithmetic
+mean, median, p95, maximum, and exact maximum shader/key for each flow/stage.
+Also report compute versus pixel mean and median, with the explicit caveat that
+the compute corpus has only nine distinct samples and different shader source;
+the ratio is descriptive, not a controlled causal stage comparison.
 
 ## Fixed workload
 

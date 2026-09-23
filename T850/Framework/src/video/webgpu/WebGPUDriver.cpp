@@ -513,7 +513,20 @@ public:
       descriptor.nextInChain = &source;
       const auto label = request.name + " key=" + std::to_string(request.keyBits);
       descriptor.label = label.c_str();
+      const auto moduleStarted = std::chrono::steady_clock::now();
       (isVertex ? vertexModule : fragmentModule) = T8_TELEMETRY_CALL("shader.module.create", state.context.device.CreateShaderModule(&descriptor));
+      const double moduleMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - moduleStarted).count();
+    #ifndef __EMSCRIPTEN__
+      if (g_config.flags.compileShaders) {
+        const auto& attempt = report.attempts.back();
+        T8_LOG_INFO("[ShaderCompileProfile] backend=webgpu flow=%s stage=%s shader=\"%s\" entry=%s key=0x%016llX cache=%s prepareMs=%.6f moduleMs=%.6f elapsedMs=%.6f",
+          attempt.sourceLanguage == webgpu::ShaderSourceLanguage::Wgsl ? "wgsl" : "spirv",
+          isVertex ? "vertex" : "pixel", request.name.c_str(), request.entryPoint.c_str(),
+          static_cast<unsigned long long>(request.keyBits), attempt.cacheHit ? "hit" : "miss",
+          report.elapsedMilliseconds, moduleMs, report.elapsedMilliseconds + moduleMs);
+      }
+    #endif
 #ifdef __EMSCRIPTEN__
       std::string compilationError;
       const auto future = (isVertex ? vertexModule : fragmentModule).GetCompilationInfo(wgpu::CallbackMode::WaitAnyOnly,
@@ -859,7 +872,20 @@ public:
       source.code = artifact.wgsl.c_str();
       wgpu::ShaderModuleDescriptor moduleDescriptor{};
       moduleDescriptor.nextInChain = &source;
+      const auto moduleStarted = std::chrono::steady_clock::now();
       module = T8_TELEMETRY_CALL("shader.module.create", state.context.device.CreateShaderModule(&moduleDescriptor));
+      const double moduleMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - moduleStarted).count();
+    #ifndef __EMSCRIPTEN__
+      if (g_config.flags.compileShaders) {
+        const auto& attempt = report.attempts.back();
+        T8_LOG_INFO("[ShaderCompileProfile] backend=webgpu flow=%s stage=compute shader=\"%s\" entry=%s permutation=\"%s\" cache=%s prepareMs=%.6f moduleMs=%.6f elapsedMs=%.6f",
+          attempt.sourceLanguage == webgpu::ShaderSourceLanguage::Wgsl ? "wgsl" : "spirv",
+          request.name.c_str(), request.entryPoint.c_str(), desc.permutationName.c_str(),
+          attempt.cacheHit ? "hit" : "miss", report.elapsedMilliseconds, moduleMs,
+          report.elapsedMilliseconds + moduleMs);
+      }
+    #endif
       bindingEntries = std::move(layoutEntries);
       entryPoint = desc.entryPoint;
       auto& variant = GetVariant(0);

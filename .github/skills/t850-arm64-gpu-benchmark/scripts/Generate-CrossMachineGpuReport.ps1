@@ -3,18 +3,58 @@ param(
   [Parameter(Mandatory=$true)][string]$AnalysisPath,
   [Parameter(Mandatory=$true)][string]$ReportPath,
   [string]$CpuAnalysisPath,
-  [string]$ShaderCompilationPath
+  [string]$ShaderCompilationPath,
+  [string]$ChartDirectory,
+  [string]$ScreenshotPath
 )
 $ErrorActionPreference='Stop'
+$ReportPath=[IO.Path]::GetFullPath($ReportPath)
+if(!$ChartDirectory){$ChartDirectory=Join-Path (Split-Path $ReportPath -Parent) 'DayScene-DXC-Cross-Machine-GPU-Charts'}
+$ChartDirectory=[IO.Path]::GetFullPath($ChartDirectory)
+if(!$ScreenshotPath){$ScreenshotPath=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\..\T850\web\previews\1.png'))}
 $analysis=Get-Content $AnalysisPath -Raw|ConvertFrom-Json
 if($analysis.schema-ne2-or@($analysis.machines).Count-ne2){throw 'Expected cross-machine analysis schema 2'}
 $cpuAnalysis=if($CpuAnalysisPath){Get-Content $CpuAnalysisPath -Raw|ConvertFrom-Json}else{$null}
 if($cpuAnalysis-and($cpuAnalysis.schema-ne1-or@($cpuAnalysis.machines).Count-ne2)){throw 'Expected cross-machine CPU analysis schema 1'}
 $shaderAnalysis=if($ShaderCompilationPath){Get-Content $ShaderCompilationPath -Raw|ConvertFrom-Json}else{$null}
 if($shaderAnalysis-and($shaderAnalysis.schema-ne1-or@($shaderAnalysis.runs).Count-lt3-or@($shaderAnalysis.summary).Count-ne12)){throw 'Expected x64 shader compilation analysis schema 1'}
+$reportDirectory=Split-Path $ReportPath -Parent
+$chartRel=[IO.Path]::GetRelativePath($reportDirectory,$ChartDirectory).Replace('\','/')
 function Html($value){[Net.WebUtility]::HtmlEncode([string]$value)}
 function F($value,[int]$digits=3){if($null-eq$value){return '-'};([double]$value).ToString("F$digits",[Globalization.CultureInfo]::InvariantCulture)}
 function SignedPercent($value){if($null-eq$value){return '-'};$number=[double]$value;"$($(if($number-ge0){'+'}else{''}))$(F $number 2)%"}
+function New-ReportBarChart([string]$Path,[string]$Title,[string]$Subtitle,[object[]]$Items,[double]$Maximum,[string]$Unit){
+  Add-Type -AssemblyName System.Drawing
+  $width=2200;$left=720;$right=2070;$top=170;$rowHeight=92;$height=$top+$Items.Count*$rowHeight+120
+  $bitmap=[Drawing.Bitmap]::new($width,$height)
+  $graphics=[Drawing.Graphics]::FromImage($bitmap)
+  $graphics.SmoothingMode=[Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $graphics.Clear([Drawing.ColorTranslator]::FromHtml('#F7F9FA'))
+  $titleFont=[Drawing.Font]::new('Segoe UI',28,[Drawing.FontStyle]::Bold)
+  $subtitleFont=[Drawing.Font]::new('Segoe UI',14)
+  $labelFont=[Drawing.Font]::new('Segoe UI',15,[Drawing.FontStyle]::Bold)
+  $valueFont=[Drawing.Font]::new('Consolas',14,[Drawing.FontStyle]::Bold)
+  $gridPen=[Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml('#D4DDE1'),1)
+  $graphics.DrawString($Title,$titleFont,[Drawing.Brushes]::Black,55,38)
+  $graphics.DrawString($Subtitle,$subtitleFont,[Drawing.Brushes]::DimGray,58,92)
+  foreach($tick in 0..5){
+    $value=$Maximum*$tick/5;$x=$left+($right-$left)*$tick/5
+    $graphics.DrawLine($gridPen,$x,$top-15,$x,$height-75)
+    $graphics.DrawString("$(F $value 1) $Unit",$subtitleFont,[Drawing.Brushes]::DimGray,$x-28,$height-62)
+  }
+  for($index=0;$index-lt$Items.Count;$index++){
+    $item=$Items[$index];$y=$top+$index*$rowHeight
+    $graphics.DrawString([string]$item.label,$labelFont,[Drawing.Brushes]::Black,55,$y+16)
+    $barWidth=if($Maximum-gt0){($right-$left)*[Math]::Max(0,[double]$item.value)/$Maximum}else{0}
+    $brush=[Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml([string]$item.color))
+    $graphics.FillRectangle($brush,$left,$y+12,$barWidth,44)
+    $brush.Dispose()
+    $graphics.DrawString("$(F $item.value 3) $Unit",$valueFont,[Drawing.Brushes]::Black,[Math]::Min($left+$barWidth+14,$right-5),$y+18)
+  }
+  [IO.Directory]::CreateDirectory((Split-Path $Path -Parent))|Out-Null
+  $bitmap.Save($Path,[Drawing.Imaging.ImageFormat]::Png)
+  $gridPen.Dispose();$titleFont.Dispose();$subtitleFont.Dispose();$labelFont.Dispose();$valueFont.Dispose();$graphics.Dispose();$bitmap.Dispose()
+}
 function Find-Throughput($machine,[string]$cell){@($machine.throughput.cells|Where-Object cell -eq $cell)[0]}
 function Find-Frame($machine){@($machine.relativeOverhead|Where-Object pass -eq 'gpu.frame')[0]}
 function Find-Trace($machine,[string]$cell){@($machine.throughput.traces|Where-Object cell -eq $cell)[0]}
@@ -151,7 +191,7 @@ if($x64Cpu-and$arm64Cpu){
     "<div class='bar-pair'><strong>$(Html $backend.label)</strong><div class='bar-row'><span>x64</span><div class='bar-track'><i class='bar x64-bar' style='width:$(F $x64Width 2)%'></i></div><b>$(SignedPercent $backend.x64.nonWaitOverD3D12Percent)</b></div><div class='bar-row'><span>ARM64</span><div class='bar-track'><i class='bar arm-bar' style='width:$(F $armWidth 2)%'></i></div><b>$(SignedPercent $backend.arm.nonWaitOverD3D12Percent)</b></div></div>"
   }
   $cpuComparisonSection=@"
-<section class="cpu-comparison"><h2>CPU Overhead: x64 versus ARM64</h2><p>Matched current-DXC CPU scenario on both hosts. Absolute cross-machine time reflects the complete systems, not CPU ISA alone; normalized columns compare each backend with native D3D12 on the same host.</p><div class="scroll"><table><thead><tr><th>Backend</th><th>x64 non-wait CPU (ms)</th><th>x64 vs D3D12</th><th>ARM64 non-wait CPU (ms)</th><th>ARM64 vs D3D12</th><th>ARM64 / x64</th></tr></thead><tbody>$($cpuMatrixRows-join'')</tbody></table></div><div class="chart-grid"><figure class="cpu-chart"><figcaption>Absolute non-wait CPU time</figcaption>$($absoluteBars-join'')</figure><figure class="cpu-chart"><figcaption>Backend overhead versus native D3D12</figcaption>$($overheadBars-join'')</figure></div><p class="note">All runs use compute post-processing, 1920x1080, 1,800 profiled frames, frames 300-1799 analyzed, three repetitions per backend, and the same frame-by-frame work hash on both hosts.</p></section>
+<section class="cpu-comparison"><h2>CPU Overhead: x64 versus ARM64</h2><p>Matched current-DXC CPU scenario on both hosts. Absolute cross-machine time reflects the complete systems, not CPU ISA alone; normalized columns compare each backend with native D3D12 on the same host.</p><div class="scroll"><table><thead><tr><th>Backend</th><th>x64 non-wait CPU (ms)</th><th>x64 vs D3D12</th><th>ARM64 non-wait CPU (ms)</th><th>ARM64 vs D3D12</th><th>ARM64 / x64</th></tr></thead><tbody>$($cpuMatrixRows-join'')</tbody></table></div><div class="report-chart-grid"><figure><figcaption>Absolute non-wait CPU time</figcaption><img class="report-chart" src="$chartRel/cpu-nonwait-absolute.png" alt="Absolute non-wait CPU time chart"></figure><figure><figcaption>Normalized backend cost</figcaption><img class="report-chart" src="$chartRel/cpu-overhead-normalized.png" alt="Normalized CPU backend overhead chart"></figure></div><div class="chart-grid"><figure class="cpu-chart"><figcaption>Absolute non-wait CPU time</figcaption>$($absoluteBars-join'')</figure><figure class="cpu-chart"><figcaption>Backend overhead versus native D3D12</figcaption>$($overheadBars-join'')</figure></div><p class="note">All runs use compute post-processing, 1920x1080, 1,800 profiled frames, frames 300-1799 analyzed, three repetitions per backend, and the same frame-by-frame work hash on both hosts.</p></section>
 "@
 }else{
   $systemBalanceText="ARM64 sustains $(F $arm64D3dTrace.engine3d.mean 1)% to $(F $arm64WgslTrace.engine3d.mean 1)% 3D-engine utilization, while x64 raster runs sustain only $(F $x64D3dTrace.engine3d.mean 1)% to $(F $x64WgslTrace.engine3d.mean 1)%. The RTX GPU finishes its work much sooner, so CPU recording and submission matter more."
@@ -191,12 +231,71 @@ if($shaderAnalysis){
   $shaderConclusion="<li><strong>x64 cold shader preparation is dominated by pixel variants, especially <code>FS_Mesh</code>.</strong> Across five cold launches per flow, native DXC compile/reflection averages $(F $d3dPixel.meanMs) ms for pixel stages, strict WGSL preparation averages $(F $wgslPixel.meanMs) ms, and HLSL -> SPIR-V -> WGSL preparation averages $(F $spirvPixel.meanMs) ms. The all-stage means are $(F $d3dAll.meanMs), $(F $wgslAll.meanMs), and $(F $spirvAll.meanMs) ms, respectively. These percentages compare different host-side preparation paths, not compiler speed, because Dawn backend compilation during pipeline creation is excluded. Compute means are $(SignedPercent $d3dComputeDelta.computeVsPixelMeanPercent), $(SignedPercent $wgslComputeDelta.computeVsPixelMeanPercent), and $(SignedPercent $spirvComputeDelta.computeVsPixelMeanPercent) versus pixel for D3D12, WGSL, and SPIR-V. This describes the recorded corpus rather than proving compute stages intrinsically cheaper: each run has 281 pixel variants but only 9 compute programs.</li>"
   $shaderCompilationSection=@"
 <section class="shader-compilation"><h2>x64 Shader Preparation</h2><p>Five independent cold Release launches per flow, balanced across launch positions, against <code>Shaders/shader_permutations.json</code>. Every launch must produce 281 vertex, 281 pixel, and 9 compute cache-miss events. Arithmetic mean (average), median, p95, maximum, and exact maximum shader are calculated over all repetitions.</p><p class="note"><strong>Metric boundary:</strong> native D3D12 measures DXC compile plus reflection. WebGPU measures translation/preparation/reflection plus the synchronous <code>CreateShaderModule</code> call. Dawn backend compilation during pipeline creation is excluded, so cross-flow percentages are not compiler-speed comparisons. Pipeline creation, source loading, cache writes, process startup, and warm cache hits are excluded from per-stage values.</p>
-<h3>Per-stage Timing Matrix</h3><div class="scroll"><table><thead><tr><th rowspan="2">Stage</th><th colspan="3">Native D3D12 DXC (ms)</th><th colspan="3">WebGPU WGSL (ms)</th><th colspan="3">WebGPU HLSL -> SPIR-V -> WGSL (ms)</th></tr><tr><th>Mean</th><th>Median</th><th>Max</th><th>Mean</th><th>Median</th><th>Max</th><th>Mean</th><th>Median</th><th>Max</th></tr></thead><tbody>$($shaderMatrixRows-join'')</tbody></table></div>
+<h3>Per-stage Timing Matrix</h3><div class="scroll"><table><thead><tr><th rowspan="2">Stage</th><th colspan="3">Native D3D12 DXC (ms)</th><th colspan="3">WebGPU WGSL (ms)</th><th colspan="3">WebGPU HLSL -> SPIR-V -> WGSL (ms)</th></tr><tr><th>Mean</th><th>Median</th><th>Max</th><th>Mean</th><th>Median</th><th>Max</th><th>Mean</th><th>Median</th><th>Max</th></tr></thead><tbody>$($shaderMatrixRows-join'')</tbody></table></div><figure class="single-chart"><figcaption>Mean cold preparation time by stage and flow</figcaption><img class="report-chart" src="$chartRel/shader-preparation-stage-means.png" alt="Shader preparation stage means chart"></figure>
 <h3>Compiler-flow Comparison</h3><div class="scroll"><table><thead><tr><th>Stage</th><th>D3D12 mean (ms)</th><th>WGSL mean (ms)</th><th>WGSL vs D3D12</th><th>SPIR-V mean (ms)</th><th>SPIR-V vs D3D12</th><th>SPIR-V vs WGSL</th></tr></thead><tbody>$($shaderComparisonRows-join'')</tbody></table></div>
 <h3>Compute versus Pixel</h3><div class="scroll"><table><thead><tr><th>Flow</th><th>Pixel mean (ms)</th><th>Compute mean (ms)</th><th>Compute vs pixel mean</th><th>Pixel median (ms)</th><th>Compute median (ms)</th><th>Compute vs pixel median</th></tr></thead><tbody>$($shaderComputeRows-join'')</tbody></table></div><p>The compute and pixel corpora contain different programs and unequal sample counts. These ratios describe this recorded corpus and do not isolate shader stage as the causal variable.</p>
 <h3>Maximum Shader Detail</h3><div class="scroll"><table><thead><tr><th>Flow</th><th>Stage</th><th>Samples</th><th>Mean (ms)</th><th>Median (ms)</th><th>P95 (ms)</th><th>Max (ms)</th><th>Maximum shader</th><th>Key/permutation</th><th>Run</th></tr></thead><tbody>$($shaderMaximumRows-join'')</tbody></table></div><p>Executable <code>$(Html $shaderAnalysis.executable.sha256)</code>; manifest <code>$(Html $shaderAnalysis.manifestSha256)</code>.</p></section>
 "@
 }
+[IO.Directory]::CreateDirectory($ChartDirectory)|Out-Null
+Get-ChildItem $ChartDirectory -File -Filter '*.png' -ErrorAction SilentlyContinue|Remove-Item -Force
+if(!(Test-Path -LiteralPath $ScreenshotPath)){throw "Missing report screenshot: $ScreenshotPath"}
+$screenshotDirectory=Split-Path $ScreenshotPath -Parent
+$screenshots=@(
+  [pscustomobject]@{source=$ScreenshotPath;name='day-scene.png'},
+  [pscustomobject]@{source=(Join-Path $screenshotDirectory '0.png');name='sandbox-scene.png'},
+  [pscustomobject]@{source=(Join-Path $screenshotDirectory '6.png');name='minecraft-scene.png'}
+)
+foreach($screenshot in $screenshots){if(!(Test-Path -LiteralPath $screenshot.source)){throw "Missing report screenshot: $($screenshot.source)"};Copy-Item -LiteralPath $screenshot.source -Destination (Join-Path $ChartDirectory $screenshot.name) -Force}
+$palette=@{d3d12='#24758A';wgsl='#3A7D72';spirv='#C46A32';edge='#9B4F78';x64='#24758A';arm='#C46A32'}
+$gpuExecutionItems=@(
+  [pscustomobject]@{label='x64 / Native D3D12';value=100;color=$palette.d3d12},
+  [pscustomobject]@{label='x64 / Dawn WGSL';value=100*$x64Frame.wgslRasterMs/$x64Frame.d3d12RasterMs;color=$palette.wgsl},
+  [pscustomobject]@{label='x64 / Dawn SPIR-V';value=100*$x64Frame.spirvRasterMs/$x64Frame.d3d12RasterMs;color=$palette.spirv},
+  [pscustomobject]@{label='ARM64 / Native D3D12';value=100;color=$palette.d3d12},
+  [pscustomobject]@{label='ARM64 / Dawn WGSL';value=100*$arm64Frame.wgslRasterMs/$arm64Frame.d3d12RasterMs;color=$palette.wgsl},
+  [pscustomobject]@{label='ARM64 / Dawn SPIR-V';value=100*$arm64Frame.spirvRasterMs/$arm64Frame.d3d12RasterMs;color=$palette.spirv}
+)
+New-ReportBarChart (Join-Path $ChartDirectory 'gpu-execution-normalized.png') 'Raster GPU execution time by host' 'Each host is normalized to its own native D3D12 raster result. Lower is better.' $gpuExecutionItems 140 'index'
+$throughputItems=@(
+  [pscustomobject]@{label='x64 / Native D3D12';value=100;color=$palette.d3d12},
+  [pscustomobject]@{label='x64 / Native Dawn WGSL';value=100*$x64Wgsl.medianFrameMs/$x64Native.medianFrameMs;color=$palette.wgsl},
+  [pscustomobject]@{label='x64 / Native Dawn SPIR-V';value=100*$x64Spirv.medianFrameMs/$x64Native.medianFrameMs;color=$palette.spirv},
+  [pscustomobject]@{label='x64 / Edge WebGPU';value=100*$x64Edge.medianFrameMs/$x64Native.medianFrameMs;color=$palette.edge},
+  [pscustomobject]@{label='ARM64 / Native D3D12';value=100;color=$palette.d3d12},
+  [pscustomobject]@{label='ARM64 / Native Dawn WGSL';value=100*$arm64Wgsl.medianFrameMs/$arm64Native.medianFrameMs;color=$palette.wgsl},
+  [pscustomobject]@{label='ARM64 / Native Dawn SPIR-V';value=100*$arm64Spirv.medianFrameMs/$arm64Native.medianFrameMs;color=$palette.spirv},
+  [pscustomobject]@{label='ARM64 / Edge WebGPU';value=100*$arm64Edge.medianFrameMs/$arm64Native.medianFrameMs;color=$palette.edge}
+)
+New-ReportBarChart (Join-Path $ChartDirectory 'completed-throughput-normalized.png') 'Queue-drained completed throughput by host' 'CPU recording, submission, queueing, and final GPU drain. Each host is normalized to native D3D12. Lower is better.' $throughputItems 140 'index'
+if($x64Cpu-and$arm64Cpu){
+  $cpuAbsoluteItems=@(
+    [pscustomobject]@{label='x64 / Native D3D12';value=$x64CpuD3d.metrics.nonWait.mean;color=$palette.x64},
+    [pscustomobject]@{label='x64 / Native Dawn WGSL';value=$x64CpuWgsl.metrics.nonWait.mean;color=$palette.wgsl},
+    [pscustomobject]@{label='x64 / Edge WebGPU';value=$x64CpuEdge.metrics.nonWait.mean;color=$palette.edge},
+    [pscustomobject]@{label='ARM64 / Native D3D12';value=$armCpuD3d.metrics.nonWait.mean;color=$palette.arm},
+    [pscustomobject]@{label='ARM64 / Native Dawn WGSL';value=$armCpuWgsl.metrics.nonWait.mean;color=$palette.wgsl},
+    [pscustomobject]@{label='ARM64 / Edge WebGPU';value=$armCpuEdge.metrics.nonWait.mean;color=$palette.edge}
+  )
+  New-ReportBarChart (Join-Path $ChartDirectory 'cpu-nonwait-absolute.png') 'Matched non-wait CPU time' 'Compute post-processing, frames 300-1799, three runs per backend. Lower is better.' $cpuAbsoluteItems 4 'ms'
+  $cpuNormalizedItems=@(
+    [pscustomobject]@{label='x64 / Native D3D12';value=100;color=$palette.x64},
+    [pscustomobject]@{label='x64 / Native Dawn WGSL';value=100+$x64CpuWgsl.nonWaitOverD3D12Percent;color=$palette.wgsl},
+    [pscustomobject]@{label='x64 / Edge WebGPU';value=100+$x64CpuEdge.nonWaitOverD3D12Percent;color=$palette.edge},
+    [pscustomobject]@{label='ARM64 / Native D3D12';value=100;color=$palette.arm},
+    [pscustomobject]@{label='ARM64 / Native Dawn WGSL';value=100+$armCpuWgsl.nonWaitOverD3D12Percent;color=$palette.wgsl},
+    [pscustomobject]@{label='ARM64 / Edge WebGPU';value=100+$armCpuEdge.nonWaitOverD3D12Percent;color=$palette.edge}
+  )
+  New-ReportBarChart (Join-Path $ChartDirectory 'cpu-overhead-normalized.png') 'CPU backend cost normalized per host' 'Native D3D12 is 100 on each host. Lower is better.' $cpuNormalizedItems 400 'index'
+}
+if($shaderAnalysis){
+  $shaderChartItems=@()
+  foreach($stage in @('vertex','pixel','compute')){foreach($flow in @('d3d12','wgsl','spirv')){$stats=Find-ShaderSummary $flow $stage;$shaderChartItems+=[pscustomobject]@{label="$($stageLabels[$stage]) / $($shaderLabels[$flow])";value=$stats.meanMs;color=$palette[$flow]}}}
+  New-ReportBarChart (Join-Path $ChartDirectory 'shader-preparation-stage-means.png') 'x64 cold shader preparation by stage' 'Native D3D12 is DXC compile plus reflection; WebGPU is source preparation plus CreateShaderModule. Lower is better.' $shaderChartItems 30 'ms'
+}
+$visualOverviewSection=@"
+<section class="visual-overview"><h2>Visual Overview</h2><p>The profiling workload uses authored engine content. GPU timing runs render the held DayScene state offscreen; these screenshots provide visual context and are not measured frames copied from <code>SubmitNoPresent</code>.</p><div class="scene-gallery"><figure><img src="$chartRel/day-scene.png" alt="DayScene rendered benchmark scene"><figcaption>DayScene benchmark scene</figcaption></figure><figure><img src="$chartRel/sandbox-scene.png" alt="Sandbox rendered scene"><figcaption>Sandbox rendering coverage</figcaption></figure><figure><img src="$chartRel/minecraft-scene.png" alt="Minecraft rendered scene"><figcaption>Minecraft streaming workload</figcaption></figure></div><div class="report-chart-grid"><figure><figcaption>GPU execution</figcaption><img class="report-chart" src="$chartRel/gpu-execution-normalized.png" alt="Normalized raster GPU execution chart"></figure><figure><figcaption>Completed throughput</figcaption><img class="report-chart" src="$chartRel/completed-throughput-normalized.png" alt="Normalized completed throughput chart"></figure></div></section>
+"@
 $executiveSummary=@"
 <section class="executive"><h2>Executive Summary</h2><div class="summary-grid">
 <article class="finding"><span>GPU execution</span><strong>Native D3D12 is fastest on both GPUs</strong><p>Dawn WGSL adds $(SignedPercent $x64Frame.wgslRasterOverNativePercent) raster GPU time on x64 and $(SignedPercent $arm64Frame.wgslRasterOverNativePercent) on ARM64. The backend gap is much larger on the RTX host.</p></article>
@@ -231,9 +330,12 @@ $html=@"
 $reportCss=@'
 header{padding-left:max(20px,calc((100% - 1780px)/2));padding-right:max(20px,calc((100% - 1780px)/2))}.wrap{max-width:1780px}.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}.finding{min-width:0;padding:16px 18px;border-left:4px solid var(--accent);background:#fff}.finding span{display:block;margin-bottom:5px;color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase}.finding strong{display:block;font-size:18px;line-height:1.3}.finding p{margin:9px 0 0}.conclusions{display:grid;gap:12px;padding-left:26px}.conclusions li{padding-left:5px}.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin:20px 0}.cpu-chart{margin:0;padding:18px;background:#fff;border:1px solid var(--line)}.cpu-chart figcaption{margin-bottom:14px;font-size:18px;font-weight:700}.bar-pair{margin:0 0 16px}.bar-pair:last-child{margin-bottom:0}.bar-pair>strong{display:block;margin-bottom:5px}.bar-row{display:grid;grid-template-columns:52px minmax(100px,1fr) 86px;gap:8px;align-items:center;margin:4px 0;font-size:13px}.bar-row b{text-align:right;font-variant-numeric:tabular-nums}.bar-track{height:15px;background:#e4eaec;overflow:hidden}.bar{display:block;height:100%;min-width:2px}.x64-bar{background:#24758a}.arm-bar{background:#c46a32}.pass-scroll{border:1px solid var(--line);background:#fff}.scroll .pass-table{display:table;width:100%;min-width:1580px;table-layout:fixed;font-size:13px}.pass-table col.pass-name{width:205px}.pass-table col.pass-metric{width:125px}.pass-table th{white-space:normal;vertical-align:bottom;line-height:1.25;text-align:center}.pass-table td{white-space:nowrap}.pass-table th:first-child,.pass-table td:first-child{position:sticky;left:0;z-index:2;background:#fff;font-weight:650}.pass-table thead th:first-child{z-index:4;background:#d6e2e5}.pass-table .api-groups th{padding-top:12px;padding-bottom:12px;background:#d6e2e5;border-bottom:2px solid #9eb1b8;font-size:14px}.pass-table .api-groups th span{color:#455960;font-size:12px;font-weight:500}.pass-table .api-groups th:not(:last-child){border-right:2px solid #9eb1b8}.pass-table thead tr:nth-child(2) th:nth-child(3),.pass-table thead tr:nth-child(2) th:nth-child(7),.pass-table tbody td:nth-child(4),.pass-table tbody td:nth-child(8){border-right:2px solid #c0cdd1}.pass-table tbody tr:first-child{font-weight:700;background:#edf4f5}.pass-table tbody tr:first-child td:first-child{background:#edf4f5}@media(max-width:1100px){.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.summary-grid,.chart-grid{grid-template-columns:1fr}.finding strong{font-size:16px}.bar-row{grid-template-columns:46px minmax(70px,1fr) 78px}.scroll .pass-table{min-width:1500px;font-size:12px}.pass-table col.pass-name{width:190px}.pass-table col.pass-metric{width:119px}}
 '@
-$html=$html.Replace('</style>',"$reportCss</style>")
+$visualCss=@'
+.report-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin:20px 0}.report-chart-grid figure,.single-chart,.scene-gallery figure{margin:0;padding:18px;background:#fff;border:1px solid var(--line)}.report-chart-grid figcaption,.single-chart figcaption,.scene-gallery figcaption{margin-top:10px;font-size:18px;font-weight:700}.report-chart{display:block;width:100%;height:auto}.scene-gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin:20px 0}.scene-gallery img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}.single-chart{margin-top:20px}@media(max-width:980px){.report-chart-grid,.scene-gallery{grid-template-columns:1fr}}@media(max-width:700px){.report-chart-grid figure,.single-chart,.scene-gallery figure{padding:10px}}
+'@
+$html=$html.Replace('</style>',"$reportCss$visualCss</style>")
 $html=$html.Replace('grid-template-columns:repeat(4,minmax(0,1fr))','grid-template-columns:repeat(auto-fit,minmax(250px,1fr))')
-$html=$html.Replace('<section><h2>Normalized Summary</h2>',"$executiveSummary<section><h2>Normalized Summary</h2>")
+$html=$html.Replace('<section><h2>Normalized Summary</h2>',"$executiveSummary$visualOverviewSection<section><h2>Normalized Summary</h2>")
 $html=$html.Replace('<section><h2>x64</h2>',"$conclusions<section><h2>x64</h2>")
 $html=$html.Replace('<section class="conclusion-section">',$cpuComparisonSection+$shaderCompilationSection+'<section class="conclusion-section">')
 [IO.Directory]::CreateDirectory((Split-Path $ReportPath -Parent))|Out-Null

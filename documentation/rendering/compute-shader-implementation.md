@@ -638,4 +638,4 @@ kernel. On older desktop GL or OpenGL ES, the correct result remains the raster 
 - [Diagnostics](../debug/diagnostics.md)
 - [Scene format and runtime](../scenes/scene-format-and-runtime.md)
 - [Verification and release gates](../testing/verification.md)
-- [WebGPU proposal](proposal-webgpu.md)
+- [WebGPU implementation](proposal-webgpu.md)

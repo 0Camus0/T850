@@ -201,6 +201,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelCollision.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/CrashDiagnostics.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/ComputeSelfTest.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/GpuTimestampProfiler.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/Profiler.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/ProfilerGpuBackend.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/RuntimeTelemetry.cpp

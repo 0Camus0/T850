@@ -1,9 +1,9 @@
-# WebGPU Runtime Handoff
+# WebGPU Runtime Implementation Summary
 
-Status: Windows x64 runtime close-out, 2026-09-15, with the ARM64/CI update below.
-This summarizes the local work
-from dependency setup through compiler, renderer, real scenes and final validation.
-It is not a claim that the entire [WebGPU proposal](proposal-webgpu.md) is complete.
+Status: implemented DayScene runtime on Windows x64, Windows ARM64, and
+Emscripten, updated 2026-09-22. This summarizes dependency setup, compiler,
+renderer, compute, browser, profiling, real scenes, and validation. See the
+[WebGPU implementation reference](proposal-webgpu.md) for the current contract.
 
 ## ARM64 and CI Update, 2026-09-19
 
@@ -25,7 +25,7 @@ checkpoints and are superseded for current platform availability by this section
 ## Outcome
 
 Normal DayScene forward and deferred rendering now runs on **Dawn over D3D12,
-Windows x64**, through the existing scene, material and render-graph paths.
+Windows x64 and ARM64**, through the existing scene, material and render-graph paths.
 All ten available cases captured successfully with both default WGSL-first
 `auto` and strict HLSL/SPIR-V/Tint `spirv` flow. No fixture substitution, scene
 replacement or native-backend remapping occurs in Launcher RUN.
@@ -37,8 +37,10 @@ differences remain: the two explicitly reviewed cases are visually accepted,
 but neither universal pixel parity nor a fully passing native regression gate is
 claimed. The additional native Voxel checkpoint difference below remains open.
 
-T8ditor, shared engine compute, GPU timestamp profiling, performance acceptance
-and new platform ports were not implemented as part of this close-out.
+Shared engine compute, GPU timestamp profiling, and matched CPU/GPU performance
+capture were implemented after the original runtime close-out. T8ditor WebGPU,
+native Dawn ports for Android/Linux/Steam Deck, timestamp perturbation/external
+correlation, and full device-loss stress remain outside the accepted scope.
 
 ## Immediate Presentation Investigation, 2026-09-18
 

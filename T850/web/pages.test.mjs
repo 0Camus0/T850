@@ -350,6 +350,13 @@ test('WSSI runtime forwards validated enemy counts and stays on Minecraft', asyn
   assert.equal(profiling.args[profiling.args.indexOf('--benchmarkFrames') + 1], '1201');
   assert.equal(profiling.args.includes('--regressionFixedDt'), false);
   assert.equal((await execute('?scene=6&profile&benchmark')).diagnostics.state, 'failed');
+  const offline = await execute('?scene=1&benchmarkNoPresent&benchmarkFrames=600&benchmarkHoldFrame=3000');
+  assert.equal(offline.args.includes('--benchmarkNoPresent'), true);
+  assert.equal(offline.args[offline.args.indexOf('--benchmarkFrames') + 1], '600');
+  assert.equal(offline.args[offline.args.indexOf('--benchmarkHoldFrame') + 1], '3000');
+  assert.equal((await execute('?scene=6&benchmarkNoPresent')).diagnostics.state, 'failed');
+  for (const query of ['?scene=1&benchmarkNoPresent&benchmarkFrames=29', '?scene=1&benchmarkNoPresent&benchmarkHoldFrame=0'])
+    assert.equal((await execute(query)).diagnostics.state, 'failed');
 });
 
 test('runtime errors show and retain the first failure across reloads without hiding current status', async () => {

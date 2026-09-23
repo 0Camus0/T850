@@ -17,6 +17,34 @@ using Microsoft::WRL::ComPtr;
 
 namespace t850 {
 
+  enum class D3D12ShaderStage {
+    Vertex,
+    Fragment,
+    Compute
+  };
+
+  struct D3D12CompiledShader {
+    ComPtr<ID3DBlob> bytecode;
+    ComPtr<ID3DBlob> reflectionData;
+    ComPtr<ID3D12ShaderReflection> reflection;
+    std::string profile;
+    bool legacy = false;
+  };
+
+  bool UseLegacyD3D12ShaderCompiler();
+  std::string GetD3D12ShaderProfile(ID3D12Device* device, D3D12ShaderStage stage);
+  bool CompileD3D12Shader(ID3D12Device* device,
+                          const std::string& source,
+                          const std::string& sourceName,
+                          const std::string& entryPoint,
+                          D3D12ShaderStage stage,
+                          D3D12CompiledShader& output,
+                          std::string& diagnostic);
+  bool RestoreD3D12Shader(const std::vector<uint8_t>& bytecode,
+                          const std::vector<uint8_t>& reflectionData,
+                          bool legacy,
+                          D3D12CompiledShader& output,
+                          std::string& diagnostic);
   std::string GetD3D12ShaderCacheDriverSignature(ID3D12Device* device);
 
   class D3D12Shader : public ShaderBase {

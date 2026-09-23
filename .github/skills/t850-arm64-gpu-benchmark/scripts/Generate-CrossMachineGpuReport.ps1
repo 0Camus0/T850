@@ -2,13 +2,16 @@
 param(
   [Parameter(Mandatory=$true)][string]$AnalysisPath,
   [Parameter(Mandatory=$true)][string]$ReportPath,
-  [string]$CpuAnalysisPath
+  [string]$CpuAnalysisPath,
+  [string]$ShaderCompilationPath
 )
 $ErrorActionPreference='Stop'
 $analysis=Get-Content $AnalysisPath -Raw|ConvertFrom-Json
 if($analysis.schema-ne2-or@($analysis.machines).Count-ne2){throw 'Expected cross-machine analysis schema 2'}
 $cpuAnalysis=if($CpuAnalysisPath){Get-Content $CpuAnalysisPath -Raw|ConvertFrom-Json}else{$null}
 if($cpuAnalysis-and($cpuAnalysis.schema-ne1-or@($cpuAnalysis.machines).Count-ne2)){throw 'Expected cross-machine CPU analysis schema 1'}
+$shaderAnalysis=if($ShaderCompilationPath){Get-Content $ShaderCompilationPath -Raw|ConvertFrom-Json}else{$null}
+if($shaderAnalysis-and($shaderAnalysis.schema-ne1-or@($shaderAnalysis.runs).Count-lt3-or@($shaderAnalysis.summary).Count-ne12)){throw 'Expected x64 shader compilation analysis schema 1'}
 function Html($value){[Net.WebUtility]::HtmlEncode([string]$value)}
 function F($value,[int]$digits=3){if($null-eq$value){return '-'};([double]$value).ToString("F$digits",[Globalization.CultureInfo]::InvariantCulture)}
 function SignedPercent($value){if($null-eq$value){return '-'};$number=[double]$value;"$($(if($number-ge0){'+'}else{''}))$(F $number 2)%"}
@@ -17,6 +20,7 @@ function Find-Frame($machine){@($machine.relativeOverhead|Where-Object pass -eq 
 function Find-Trace($machine,[string]$cell){@($machine.throughput.traces|Where-Object cell -eq $cell)[0]}
 function Find-ComputeDelta($machine,[string]$flow){@($machine.throughput.computeOverRaster|Where-Object flow -eq $flow)[0]}
 function Find-CpuMachine([string]$label){if(!$cpuAnalysis){return $null};@($cpuAnalysis.machines|Where-Object label -eq $label)[0]}
+function Find-ShaderSummary([string]$flow,[string]$stage){if(!$shaderAnalysis){return $null};@($shaderAnalysis.summary|Where-Object{$_.flow-eq$flow-and$_.stage-eq$stage})[0].statistics}
 function Pass-Delta($machine,[string]$candidate,[string]$reference,[bool]$descending){
   $rows=@($machine.relativeOverhead|Where-Object pass -ne 'gpu.frame'|ForEach-Object{
     [pscustomobject]@{pass=$_.pass;deltaMs=[double]$_.$candidate-[double]$_.$reference}
@@ -152,12 +156,55 @@ if($x64Cpu-and$arm64Cpu){
 }else{
   $systemBalanceText="ARM64 sustains $(F $arm64D3dTrace.engine3d.mean 1)% to $(F $arm64WgslTrace.engine3d.mean 1)% 3D-engine utilization, while x64 raster runs sustain only $(F $x64D3dTrace.engine3d.mean 1)% to $(F $x64WgslTrace.engine3d.mean 1)%. The RTX GPU finishes its work much sooner, so CPU recording and submission matter more."
 }
+$shaderConclusion=''
+$shaderExecutive=''
+$shaderCompilationSection=''
+if($shaderAnalysis){
+  $shaderLabels=@{d3d12='Native D3D12 DXC';wgsl='Native Dawn WGSL';spirv='Native Dawn HLSL -> SPIR-V -> WGSL'}
+  $stageLabels=@{vertex='Vertex';pixel='Pixel';compute='Compute';all='All stages'}
+  $shaderMatrixRows=foreach($stage in @('vertex','pixel','compute','all')){
+    $cells=foreach($flow in @('d3d12','wgsl','spirv')){
+      $stats=Find-ShaderSummary $flow $stage
+      "<td>$(F $stats.meanMs)</td><td>$(F $stats.medianMs)</td><td>$(F $stats.maxMs)</td>"
+    }
+    "<tr><th>$(Html $stageLabels[$stage])</th>$($cells-join'')</tr>"
+  }
+  $shaderComparisonRows=foreach($row in $shaderAnalysis.comparisons){
+    "<tr><th>$(Html $stageLabels[$row.stage])</th><td>$(F $row.d3d12MeanMs)</td><td>$(F $row.wgslMeanMs)</td><td>$(SignedPercent $row.wgslVsD3D12Percent)</td><td>$(F $row.spirvMeanMs)</td><td>$(SignedPercent $row.spirvVsD3D12Percent)</td><td>$(SignedPercent $row.spirvVsWgslPercent)</td></tr>"
+  }
+  $shaderComputeRows=foreach($row in $shaderAnalysis.computeVsPixel){
+    "<tr><td>$(Html $shaderLabels[$row.flow])</td><td>$(F $row.pixelMeanMs)</td><td>$(F $row.computeMeanMs)</td><td>$(SignedPercent $row.computeVsPixelMeanPercent)</td><td>$(F $row.pixelMedianMs)</td><td>$(F $row.computeMedianMs)</td><td>$(SignedPercent $row.computeVsPixelMedianPercent)</td></tr>"
+  }
+  $shaderMaximumRows=foreach($flow in @('d3d12','wgsl','spirv')){
+    foreach($stage in @('vertex','pixel','compute')){
+      $stats=Find-ShaderSummary $flow $stage
+      $identity=if($stats.maxKey){$stats.maxKey}elseif($stats.maxPermutation){$stats.maxPermutation}else{'-'}
+      "<tr><td>$(Html $shaderLabels[$flow])</td><td>$(Html $stageLabels[$stage])</td><td>$($stats.count)</td><td>$(F $stats.meanMs)</td><td>$(F $stats.medianMs)</td><td>$(F $stats.p95Ms)</td><td>$(F $stats.maxMs)</td><td><code>$(Html $stats.maxShader)</code></td><td><code>$(Html $identity)</code></td><td>$($stats.maxRun)</td></tr>"
+    }
+  }
+  $d3dPixel=Find-ShaderSummary 'd3d12' 'pixel';$wgslPixel=Find-ShaderSummary 'wgsl' 'pixel';$spirvPixel=Find-ShaderSummary 'spirv' 'pixel'
+  $d3dAll=Find-ShaderSummary 'd3d12' 'all';$wgslAll=Find-ShaderSummary 'wgsl' 'all';$spirvAll=Find-ShaderSummary 'spirv' 'all'
+  $d3dComputeDelta=@($shaderAnalysis.computeVsPixel|Where-Object flow -eq 'd3d12')[0]
+  $wgslComputeDelta=@($shaderAnalysis.computeVsPixel|Where-Object flow -eq 'wgsl')[0]
+  $spirvComputeDelta=@($shaderAnalysis.computeVsPixel|Where-Object flow -eq 'spirv')[0]
+  $allComparison=@($shaderAnalysis.comparisons|Where-Object stage -eq 'all')[0]
+  $shaderExecutive="<article class='finding'><span>x64 shader compilation</span><strong>Pixel variants dominate cold compiler time</strong><p>Pixel-stage means are $(F $d3dPixel.meanMs) ms for native DXC, $(F $wgslPixel.meanMs) ms for strict WGSL, and $(F $spirvPixel.meanMs) ms for the SPIR-V flow. Compute-stage means are 71-76% lower for this corpus.</p></article>"
+  $shaderConclusion="<li><strong>x64 cold shader compilation is dominated by pixel variants, especially <code>FS_Mesh</code>.</strong> Across five cold launches per flow, native DXC pixel stages average $(F $d3dPixel.meanMs) ms, strict WGSL averages $(F $wgslPixel.meanMs) ms, and HLSL -> SPIR-V -> WGSL averages $(F $spirvPixel.meanMs) ms. The all-stage means are $(F $d3dAll.meanMs), $(F $wgslAll.meanMs), and $(F $spirvAll.meanMs) ms, respectively. Strict WGSL is $(SignedPercent $allComparison.wgslVsD3D12Percent) versus native DXC; the SPIR-V flow is $(SignedPercent $allComparison.spirvVsD3D12Percent) versus native DXC and $(SignedPercent $allComparison.spirvVsWgslPercent) versus WGSL. Compute means are $(SignedPercent $d3dComputeDelta.computeVsPixelMeanPercent), $(SignedPercent $wgslComputeDelta.computeVsPixelMeanPercent), and $(SignedPercent $spirvComputeDelta.computeVsPixelMeanPercent) versus pixel for D3D12, WGSL, and SPIR-V. This describes the recorded corpus rather than proving compute stages intrinsically cheaper: each run has 281 pixel variants but only 9 compute programs.</li>"
+  $shaderCompilationSection=@"
+<section class="shader-compilation"><h2>x64 Shader Compilation</h2><p>Five independent cold Release launches per flow, alternating order, against <code>Shaders/shader_permutations.json</code>. Every launch produced 281 vertex, 281 pixel, and 9 compute cache-miss events. Arithmetic mean (average), median, p95, maximum, and exact maximum shader are calculated over all five repetitions.</p><p class="note"><strong>Metric boundary:</strong> native D3D12 measures DXC compile plus reflection. WebGPU measures source loading/preparation/reflection plus the synchronous <code>CreateShaderModule</code> call. Pipeline creation, cache writes, process startup, and warm cache hits are excluded from per-stage values.</p>
+<h3>Per-stage Timing Matrix</h3><div class="scroll"><table><thead><tr><th rowspan="2">Stage</th><th colspan="3">Native D3D12 DXC (ms)</th><th colspan="3">WebGPU WGSL (ms)</th><th colspan="3">WebGPU HLSL -> SPIR-V -> WGSL (ms)</th></tr><tr><th>Mean</th><th>Median</th><th>Max</th><th>Mean</th><th>Median</th><th>Max</th><th>Mean</th><th>Median</th><th>Max</th></tr></thead><tbody>$($shaderMatrixRows-join'')</tbody></table></div>
+<h3>Compiler-flow Comparison</h3><div class="scroll"><table><thead><tr><th>Stage</th><th>D3D12 mean (ms)</th><th>WGSL mean (ms)</th><th>WGSL vs D3D12</th><th>SPIR-V mean (ms)</th><th>SPIR-V vs D3D12</th><th>SPIR-V vs WGSL</th></tr></thead><tbody>$($shaderComparisonRows-join'')</tbody></table></div>
+<h3>Compute versus Pixel</h3><div class="scroll"><table><thead><tr><th>Flow</th><th>Pixel mean (ms)</th><th>Compute mean (ms)</th><th>Compute vs pixel mean</th><th>Pixel median (ms)</th><th>Compute median (ms)</th><th>Compute vs pixel median</th></tr></thead><tbody>$($shaderComputeRows-join'')</tbody></table></div><p>The compute and pixel corpora contain different programs and unequal sample counts. These ratios describe this recorded corpus and do not isolate shader stage as the causal variable.</p>
+<h3>Maximum Shader Detail</h3><div class="scroll"><table><thead><tr><th>Flow</th><th>Stage</th><th>Samples</th><th>Mean (ms)</th><th>Median (ms)</th><th>P95 (ms)</th><th>Max (ms)</th><th>Maximum shader</th><th>Key/permutation</th><th>Run</th></tr></thead><tbody>$($shaderMaximumRows-join'')</tbody></table></div><p>Executable <code>$(Html $shaderAnalysis.executable.sha256)</code>; manifest <code>$(Html $shaderAnalysis.manifestSha256)</code>.</p></section>
+"@
+}
 $executiveSummary=@"
 <section class="executive"><h2>Executive Summary</h2><div class="summary-grid">
 <article class="finding"><span>GPU execution</span><strong>Native D3D12 is fastest on both GPUs</strong><p>Dawn WGSL adds $(SignedPercent $x64Frame.wgslRasterOverNativePercent) raster GPU time on x64 and $(SignedPercent $arm64Frame.wgslRasterOverNativePercent) on ARM64. The backend gap is much larger on the RTX host.</p></article>
 <article class="finding"><span>System balance</span><strong>ARM64 is GPU-bound; x64 is relatively feed-bound</strong><p>$systemBalanceText</p></article>
 <article class="finding"><span>Compute post-processing</span><strong>Compute is platform- and flow-specific</strong><p>On x64, WGSL compute reduces GPU time by $(F ([math]::Abs($x64Frame.wgslComputeOverRasterPercent)) 2)%; on ARM64 every native flow is slower in compute mode by $(F $arm64Frame.nativeComputeOverRasterPercent 2)% to $(F $arm64Frame.wgslComputeOverRasterPercent 2)%.</p></article>
 <article class="finding"><span>Microsoft Edge WebGPU</span><strong>Browser throughput reverses direction by host</strong><p>Edge raster is $(SignedPercent $x64Edge.overNativeD3D12Percent) versus native D3D12 on x64 and $(SignedPercent $arm64Edge.overNativeD3D12Percent) on ARM64. Browser pass timestamps remain unavailable.</p></article>
+$shaderExecutive
 </div></section>
 "@
 $conclusions=@"
@@ -167,6 +214,7 @@ $conclusions=@"
 <li><strong>ARM64 native D3D12 appears to underfeed the GPU relative to Dawn.</strong> D3D12 executes the raster command stream faster on the GPU ($(F $arm64Frame.d3d12RasterMs) versus $(F $arm64Frame.wgslRasterMs) ms), yet its completed throughput is slower ($(F $arm64Native.medianFrameMs) versus $(F $arm64Wgsl.medianFrameMs) ms/frame) and its sustained 3D utilization is lower ($(F $arm64D3dTrace.engine3d.mean 1)% versus $(F $arm64WgslTrace.engine3d.mean 1)%). Dawn's fuller queue occupancy overcomes its slower GPU code. This points to batching, command feeding, synchronization, queue-depth, or Adreno D3D12-driver interaction; these measurements do not isolate which mechanism is responsible.</li>
 <li><strong>GPU timestamps and completed throughput must remain separate.</strong> The timestamp result isolates submitted GPU execution, while completed throughput also includes CPU command generation, submission, queueing, and the final drain. On x64, native D3D12's larger GPU-time advantage survives end to end ($(F $x64Native.medianFrameMs) versus $(F $x64Wgsl.medianFrameMs) ms/frame). On ARM64, Dawn's scheduling/occupancy advantage reverses the timestamp ordering.</li>
 $cpuConclusion
+$shaderConclusion
 <li><strong>The pass-level cause is GPU-specific.</strong> On x64, the largest WGSL raster penalties are distributed, led by $(Html $x64Top.pass) (+$(F $x64Top.deltaMs) ms), followed by GBuffer and DOF. On ARM64, $(Html $arm64Top.pass) dominates at +$(F $arm64Top.deltaMs) ms, partly offset by $(Html $arm64Offset.pass) ($(F $arm64Offset.deltaMs) ms).</li>
 <li><strong>Compute is not a universal optimization.</strong> Native D3D12 and SPIR-V compute are $(SignedPercent $x64Frame.nativeComputeOverRasterPercent) and $(SignedPercent $x64Frame.spirvComputeOverRasterPercent) on x64, while WGSL compute is $(SignedPercent $x64Frame.wgslComputeOverRasterPercent). On ARM64 all three native flows regress by $(F $arm64Frame.nativeComputeOverRasterPercent 2)% to $(F $arm64Frame.wgslComputeOverRasterPercent 2)%. Edge compute is $(SignedPercent $x64EdgeCompute.computeOverRasterPercent) on x64 but $(SignedPercent $arm64EdgeCompute.computeOverRasterPercent) on ARM64.</li>
 <li><strong>Authored WGSL versus the SPIR-V detour has no universal winner.</strong> SPIR-V raster GPU time is $(SignedPercent $x64SourceGap) versus WGSL on x64 and $(SignedPercent $arm64SourceGap) on ARM64; completed throughput is $(SignedPercent $x64SourceThroughputGap) and $(SignedPercent $arm64SourceThroughputGap), respectively. These source-flow deltas are smaller and less consistent than the API/backend effect.</li>
@@ -185,9 +233,10 @@ $reportCss=@'
 header{padding-left:max(20px,calc((100% - 1780px)/2));padding-right:max(20px,calc((100% - 1780px)/2))}.wrap{max-width:1780px}.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}.finding{min-width:0;padding:16px 18px;border-left:4px solid var(--accent);background:#fff}.finding span{display:block;margin-bottom:5px;color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase}.finding strong{display:block;font-size:18px;line-height:1.3}.finding p{margin:9px 0 0}.conclusions{display:grid;gap:12px;padding-left:26px}.conclusions li{padding-left:5px}.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin:20px 0}.cpu-chart{margin:0;padding:18px;background:#fff;border:1px solid var(--line)}.cpu-chart figcaption{margin-bottom:14px;font-size:18px;font-weight:700}.bar-pair{margin:0 0 16px}.bar-pair:last-child{margin-bottom:0}.bar-pair>strong{display:block;margin-bottom:5px}.bar-row{display:grid;grid-template-columns:52px minmax(100px,1fr) 86px;gap:8px;align-items:center;margin:4px 0;font-size:13px}.bar-row b{text-align:right;font-variant-numeric:tabular-nums}.bar-track{height:15px;background:#e4eaec;overflow:hidden}.bar{display:block;height:100%;min-width:2px}.x64-bar{background:#24758a}.arm-bar{background:#c46a32}.pass-scroll{border:1px solid var(--line);background:#fff}.scroll .pass-table{display:table;width:100%;min-width:1580px;table-layout:fixed;font-size:13px}.pass-table col.pass-name{width:205px}.pass-table col.pass-metric{width:125px}.pass-table th{white-space:normal;vertical-align:bottom;line-height:1.25;text-align:center}.pass-table td{white-space:nowrap}.pass-table th:first-child,.pass-table td:first-child{position:sticky;left:0;z-index:2;background:#fff;font-weight:650}.pass-table thead th:first-child{z-index:4;background:#d6e2e5}.pass-table .api-groups th{padding-top:12px;padding-bottom:12px;background:#d6e2e5;border-bottom:2px solid #9eb1b8;font-size:14px}.pass-table .api-groups th span{color:#455960;font-size:12px;font-weight:500}.pass-table .api-groups th:not(:last-child){border-right:2px solid #9eb1b8}.pass-table thead tr:nth-child(2) th:nth-child(3),.pass-table thead tr:nth-child(2) th:nth-child(7),.pass-table tbody td:nth-child(4),.pass-table tbody td:nth-child(8){border-right:2px solid #c0cdd1}.pass-table tbody tr:first-child{font-weight:700;background:#edf4f5}.pass-table tbody tr:first-child td:first-child{background:#edf4f5}@media(max-width:1100px){.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.summary-grid,.chart-grid{grid-template-columns:1fr}.finding strong{font-size:16px}.bar-row{grid-template-columns:46px minmax(70px,1fr) 78px}.scroll .pass-table{min-width:1500px;font-size:12px}.pass-table col.pass-name{width:190px}.pass-table col.pass-metric{width:119px}}
 '@
 $html=$html.Replace('</style>',"$reportCss</style>")
+$html=$html.Replace('grid-template-columns:repeat(4,minmax(0,1fr))','grid-template-columns:repeat(auto-fit,minmax(250px,1fr))')
 $html=$html.Replace('<section><h2>Normalized Summary</h2>',"$executiveSummary<section><h2>Normalized Summary</h2>")
 $html=$html.Replace('<section><h2>x64</h2>',"$conclusions<section><h2>x64</h2>")
-$html=$html.Replace('<section class="conclusion-section">',$cpuComparisonSection+'<section class="conclusion-section">')
+$html=$html.Replace('<section class="conclusion-section">',$cpuComparisonSection+$shaderCompilationSection+'<section class="conclusion-section">')
 [IO.Directory]::CreateDirectory((Split-Path $ReportPath -Parent))|Out-Null
 [IO.File]::WriteAllText($ReportPath,$html,[Text.UTF8Encoding]::new($false))
 Write-Output "Cross-machine report written: $ReportPath"

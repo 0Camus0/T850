@@ -718,12 +718,16 @@ ETLs. To normalize x64 and ARM64 independently and include optional Edge rows:
 
 & "$skillScripts\Generate-CrossMachineGpuReport.ps1" `
   -AnalysisPath $crossAnalysis `
+  -CpuAnalysisPath $crossCpuAnalysis `
+  -ShaderCompilationPath $x64ShaderCompilation `
   -ReportPath $crossReport
 ```
 
 The cross-machine output reports Dawn overhead relative to that machine's
-native D3D12 and compute overhead relative to that flow's raster result. It does
-not treat absolute x64-versus-ARM64 time as CPU-architecture causality.
+native D3D12, compute overhead relative to that flow's raster result, matched
+CPU overhead when supplied, and the x64 per-stage compilation matrix when
+supplied. It does not treat absolute x64-versus-ARM64 time as CPU-architecture
+causality.
 
 The generator name and current report title retain ARM64 history. The JSON
 artifacts contain the authoritative machine and architecture identity; do not

@@ -361,6 +361,10 @@ namespace t850 {
 #endif
 
   void	GLDriver::DestroyDriver() {
+    T8_LOG_INFO("[GL] Mutable state cache: requests=%llu changes=%llu redundant=%llu objects=0",
+          static_cast<unsigned long long>(m_stateCache.Requests()),
+          static_cast<unsigned long long>(m_stateCache.Changes()),
+          static_cast<unsigned long long>(m_stateCache.Redundant()));
 #if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     DestroyOffscreenFences();
 #endif
@@ -435,6 +439,9 @@ namespace t850 {
 
   void GLDriver::SetBlendState(BlendStates state)
   {
+    const BlendStates selected = state == BLEND_DEFAULT ? BLEND_OPAQUE : state;
+    T8_TRACE(EvSetBlend((int)state));
+    if (!m_stateCache.Select(MutableGraphicsStateCache::Slot::Blend, static_cast<uint8_t>(selected))) return;
     static const char* names[] = {"BLEND_DEFAULT","BLEND_OPAQUE","ADDITIVE","ALPHA_BLEND","NON_PREMULTIPLIED"};
     T8_LOG_TRACE("[GL] SetBlendState(%s)", (state >= 0 && state <= 4) ? names[state] : "?");
     switch (state)
@@ -460,7 +467,6 @@ namespace t850 {
     default:
       break;
     }
-    T8_TRACE(EvSetBlend((int)state));
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
 #endif
@@ -468,6 +474,9 @@ namespace t850 {
 
   void GLDriver::SetDepthStencilState(DepthStencilStates state)
   {
+    const DepthStencilStates selected = state == DEPTH_DEFAULT ? READ_WRITE : state;
+    T8_TRACE(EvSetDepth((int)state));
+    if (!m_stateCache.Select(MutableGraphicsStateCache::Slot::Depth, static_cast<uint8_t>(selected))) return;
     static const char* names[] = {"DEPTH_DEFAULT","READ_WRITE","NONE","READ"};
     T8_LOG_TRACE("[GL] SetDepthStencilState(%s)", (state >= 0 && state <= 3) ? names[state] : "?");
     switch (state)
@@ -494,7 +503,6 @@ namespace t850 {
     default:
       break;
     }
-    T8_TRACE(EvSetDepth((int)state));
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
 #endif
@@ -693,6 +701,8 @@ namespace t850 {
 
   void GLDriver::SetCullFace(FaceCulling state) {
     m_FaceCulling = state;
+    T8_TRACE(EvSetCull((int)state));
+    if (!m_stateCache.Select(MutableGraphicsStateCache::Slot::Cull, static_cast<uint8_t>(state))) return;
     switch (m_FaceCulling) {
       case t850::BaseDriver::FRONT_FACES:
         glEnable(GL_CULL_FACE);
@@ -707,7 +717,6 @@ namespace t850 {
         glCullFace(GL_FRONT_AND_BACK);
         break;
     }
-    T8_TRACE(EvSetCull((int)state));
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
 #endif

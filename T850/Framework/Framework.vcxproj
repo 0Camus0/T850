@@ -158,6 +158,8 @@
     <ClInclude Include="include\utils\gltf\GLTFImage.h" />
     <ClInclude Include="include\utils\gltf\GLTFMaterial.h" />
     <ClInclude Include="include\video\BaseDriver.h" />
+    <ClInclude Include="include\video\MutableGraphicsStateCache.h" />
+    <ClInclude Include="include\video\ShaderProgramCache.h" />
     <ClInclude Include="include\video\WindowHandle.h" />
     <ClInclude Include="include\video\gl\GLCompute.h" />
     <ClInclude Include="include\video\gl\GLDriver.h" />
@@ -359,6 +361,7 @@
     <ClCompile Include="src\video\WindowsDriverFactory.cpp" />
     <ClCompile Include="src\debug\GraphicsFixture.cpp" />
     <ClCompile Include="src\video\BaseDriver.cpp" />
+    <ClCompile Include="src\video\ShaderProgramCache.cpp" />
     <ClCompile Include="src\video\gl\GLCompute.cpp" />
     <ClCompile Include="src\video\gl\GLDriver.cpp" />
     <ClCompile Include="src\video\gl\GLDeviceContext.cpp" />

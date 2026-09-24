@@ -1367,6 +1367,10 @@ void RenderGraph::ExecutePass(
       const int th = driver->RTs[finalOutputRT]->h;
       driver->SetViewport(0.0f, 0.0f, (float)tw, (float)th);
       driver->SetScissorRect(0, 0, tw, th);
+    } else if (node.rt_handle < 0) {
+      // Default-output passes must not inherit a viewport from the previous RT.
+      driver->SetViewport(0.0f, 0.0f, (float)driver->width, (float)driver->height);
+      driver->SetScissorRect(0, 0, driver->width, driver->height);
     }
 
     const auto finishGraphicsPass = [&]() {

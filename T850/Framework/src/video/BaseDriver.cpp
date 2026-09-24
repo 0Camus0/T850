@@ -39,6 +39,34 @@
 #endif
 
 namespace t850 {
+  namespace {
+    uint64_t HashShaderStage(const std::string& source, const std::string& name) {
+      constexpr uint64_t offsetBasis = 14695981039346656037ull;
+      constexpr uint64_t prime = 1099511628211ull;
+      uint64_t hash = offsetBasis;
+      const auto append = [&](const std::string& value) {
+        for (const unsigned char byte : value) {
+          hash ^= byte;
+          hash *= prime;
+        }
+        hash ^= 0xff;
+        hash *= prime;
+      };
+      append(name);
+      append(source);
+      return hash;
+    }
+
+  }
+
+  ShaderFamilyId BaseDriver::IdentifyShaderFamily(const std::string& vertexSource,
+                                                   const std::string& fragmentSource,
+                                                   const std::string& vertexName,
+                                                   const std::string& fragmentName) {
+    return {HashShaderStage(vertexSource, vertexName),
+            HashShaderStage(fragmentSource, fragmentName)};
+  }
+
   bool ComputePipeline::SetValidatedLayout(const ComputePipelineDesc& desc,
       const std::vector<ComputeBindingLayoutDesc>& reflected, bool portableIndices) {
     if (desc.bindings.size() != reflected.size()) return false;
@@ -718,13 +746,27 @@ namespace t850 {
       return RTs[id]->vColorTextures[index];
     }
   }
-  ShaderBase * BaseDriver::GetShader(ShaderKey key)
+  ShaderBase* BaseDriver::GetShader(ShaderKey key, ShaderFamilyId family)
   {
-    auto it = m_shaderCache.find(key.bits);
-    if (it != m_shaderCache.end())
-      return it->second;
-    fprintf(stderr, "[ShaderKey] GetShader miss: key 0x%016llX (pass=%d)\n", static_cast<unsigned long long>(key.bits), key.getPass());
-    T8_LOG_ERROR("GetShader miss: key 0x%016llX (pass=%d)", static_cast<unsigned long long>(key.bits), key.getPass());
+    const ShaderProgramKey programKey{family, key.bits, GetShaderProgramFlow()};
+    return GetShader(programKey);
+  }
+  ShaderBase* BaseDriver::GetShader(const ShaderProgramKey& programKey)
+  {
+    if (ShaderBase* shader = m_shaderPrograms.Find(programKey))
+      return shader;
+    fprintf(stderr, "[ShaderProgramKey] GetShader miss: family 0x%016llX:0x%016llX key 0x%016llX (pass=%d) flow=%llu\n",
+            static_cast<unsigned long long>(programKey.family.vertex),
+            static_cast<unsigned long long>(programKey.family.fragment),
+            static_cast<unsigned long long>(programKey.permutation),
+            ShaderKey(programKey.permutation).getPass(),
+            static_cast<unsigned long long>(programKey.flow));
+    T8_LOG_ERROR("GetShader miss: family 0x%016llX:0x%016llX key 0x%016llX (pass=%d) flow=%llu",
+                 static_cast<unsigned long long>(programKey.family.vertex),
+                 static_cast<unsigned long long>(programKey.family.fragment),
+                 static_cast<unsigned long long>(programKey.permutation),
+                 ShaderKey(programKey.permutation).getPass(),
+                 static_cast<unsigned long long>(programKey.flow));
     return nullptr;
   }
   ShaderBase * BaseDriver::GetShaderIdx(int id)
@@ -748,11 +790,14 @@ namespace t850 {
   void BaseDriver::DestroyShaders()
   {
     for (unsigned int i = 0; i < m_shaders.size(); i++) {
+      if (!m_shaders[i])
+        continue;
+      OnShaderDestroying(*m_shaders[i]);
       m_shaders[i]->release();
       m_shaders[i] = nullptr;
     }
     m_shaders.clear();
-    m_shaderCache.clear();
+    m_shaderPrograms.Clear();
   }
   void BaseDriver::DestroyRTs()
   {
@@ -877,8 +922,10 @@ namespace t850 {
   {
     if (id >= 0 && id < (int)m_shaders.size()) {
       if (m_shaders[id] != nullptr) {
-        if (m_shaders[id]->key.isValid())
-          m_shaderCache.erase(m_shaders[id]->key.bits);
+        if (m_shaders[id]->key.isValid()) {
+          m_shaderPrograms.Erase(m_shaders[id]->programKey);
+        }
+        OnShaderDestroying(*m_shaders[id]);
         m_shaders[id]->release();
         m_shaders[id] = nullptr;
       }
@@ -984,12 +1031,13 @@ namespace t850 {
   }
   int BaseDriver::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name)
   {
+    const ShaderProgramKey programKey{
+      IdentifyShaderFamily(src_vs, src_fs, vs_name, fs_name), key.bits, GetShaderProgramFlow()};
     if (key.isValid()) {
-      auto it = m_shaderCache.find(key.bits);
-      if (it != m_shaderCache.end()) {
+      if (ShaderBase* cached = m_shaderPrograms.Find(programKey)) {
         // Already compiled — find its index
         for (int i = 0; i < (int)m_shaders.size(); i++) {
-          if (m_shaders[i] == it->second)
+          if (m_shaders[i] == cached)
             return i;
         }
       }
@@ -1002,10 +1050,11 @@ namespace t850 {
     LoadingProgress::ScopedStep loadingStep("Compiling shader", shaderName, 0.45f, false);
     ShaderBase* shader = T8Device->CreateShader(src_vs, src_fs, key, vs_name, fs_name);
     if (shader != nullptr) {
+      shader->programKey = programKey;
       m_shaders.push_back(shader);
       int idx = static_cast<int>(m_shaders.size() - 1);
       if (key.isValid()) {
-        m_shaderCache[key.bits] = shader;
+        m_shaderPrograms.Insert(programKey, shader);
         T8_LOG_DEBUG("Shader compiled: key=0x%016llX pass=%d -> idx %d", static_cast<unsigned long long>(key.bits), key.getPass(), idx);
       }
       T8_TRACE_REGISTER_SHADER(shader, key.bits, vs_name, fs_name);

@@ -4,6 +4,7 @@
 #ifdef __EMSCRIPTEN__
 #include <core/Config.h>
 #include <core/EngineContext.h>
+#include <debug/Profiler.h>
 #include <debug/RuntimeTelemetry.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
@@ -123,6 +124,11 @@ void WebFramework::Tick(void* context) {
     framework.ProcessInput();
     if (framework.m_inited && !framework.pBaseApp->bPaused) {
       framework.pBaseApp->OnUpdate();
+      if (framework.m_deviceRecoveryPending) {
+        T8_LOG_INFO("[WebFramework][DeviceLoss] WebGPU recovery completed after a successful frame");
+        framework.m_deviceRecoveryPending = false;
+        framework.m_deviceRecoveryAttempts = 0;
+      }
       framework.m_workTotal += emscripten_get_now() - started;
       ++framework.m_frames;
       if (framework.m_frames % 10 == 0) {
@@ -157,9 +163,42 @@ void WebFramework::Tick(void* context) {
       framework.m_lastTick = framework.m_intervalTotal = framework.m_workTotal = 0;
     }
   } catch (const std::exception& error) {
+    if (framework.HandleGraphicsFailure(error)) return;
     T8_LOG_ERROR("[WebFramework] Runtime failure: %s", error.what());
     emscripten_cancel_main_loop();
   }
+}
+
+bool WebFramework::HandleGraphicsFailure(const std::exception& error) {
+  std::string deviceFailure;
+  if (!pVideoDriver || !pVideoDriver->GetDeviceFailure(deviceFailure)) return false;
+  if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::EndFrame();
+  if (g_profiler) g_profiler->EndFrame();
+  T8_LOG_ERROR("[WebFramework][DeviceLoss] Frame failed: %s; device=%s",
+               error.what(), deviceFailure.c_str());
+  if (m_deviceRecoveryAttempts >= 1) {
+    T8_LOG_ERROR("[WebFramework][DeviceLoss] Recovery exhausted; stopping cleanly");
+    m_inited = false;
+    emscripten_cancel_main_loop();
+    return true;
+  }
+  ++m_deviceRecoveryAttempts;
+  m_deviceRecoveryPending = true;
+  try {
+    pVideoDriver->FlushGPUResources();
+    pBaseApp->DestroyAssets();
+    delete pVideoDriver;
+    pVideoDriver = g_pBaseDriver = nullptr;
+    ClearEngineContext();
+    m_inited = false;
+    ChangeAPI(GraphicsApi::WEBGPU);
+    T8_LOG_INFO("[WebFramework][DeviceLoss] Recreated WebGPU renderer and scene; validating next frame");
+  } catch (const std::exception& recoveryError) {
+    T8_LOG_ERROR("[WebFramework][DeviceLoss] Recovery failed: %s", recoveryError.what());
+    m_inited = false;
+    emscripten_cancel_main_loop();
+  }
+  return true;
 }
 
 void WebFramework::ClearInput() {
@@ -277,7 +316,13 @@ void WebFramework::OnDestroyApplication() {
   emscripten_cancel_main_loop();
   MAIN_THREAD_EM_ASM({ if (globalThis.t850Touch) globalThis.t850Touch.detach(); });
   if (pVideoDriver) {
-    pVideoDriver->FlushGPUResources();
+    std::string deviceFailure;
+    const bool deviceLost = pVideoDriver->GetDeviceFailure(deviceFailure);
+    try { pVideoDriver->FlushGPUResources(); }
+    catch (const std::exception& error) {
+      if (!deviceLost) throw;
+      T8_LOG_ERROR("[WebFramework][DeviceLoss] Flush during shutdown: %s", error.what());
+    }
     pBaseApp->DestroyAssets();
     delete pVideoDriver;
     pVideoDriver = g_pBaseDriver = nullptr;

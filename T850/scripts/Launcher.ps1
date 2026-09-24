@@ -246,6 +246,8 @@ $xaml = @"
                     <ComboBox Name="cmbShaderFlow" IsEnabled="False">
                         <ComboBoxItem Content="WGSL preferred (auto)" Tag="auto" IsSelected="True"
                                       ToolTip="Prefer WGSL; allow HLSL translation for missing WGSL sources and unnamed helpers."/>
+                        <ComboBoxItem Content="WGSL only (strict)" Tag="wgsl"
+                                      ToolTip="Require maintained WGSL sources; anonymous inline HLSL helpers remain unsupported."/>
                         <ComboBoxItem Content="SPIR-V (HLSL translation)" Tag="spirv"
                                       ToolTip="Use HLSL through glslang/SPIR-V and Tint/WGSL, with no source-language fallback."/>
                     </ComboBox>
@@ -2059,21 +2061,22 @@ function Refresh-DependencySetupActivity {
 }
 
 function Invoke-DawnPackageCheck {
+    param([ValidateSet('x64', 'ARM64')][string]$Architecture = 'x64')
     $ErrorActionPreference = "Continue"
-    $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $rootDir "scripts\SetupDawn.ps1") -Mode Check 2>&1
+    $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $rootDir "scripts\SetupDawn.ps1") -Mode Check -Architecture $Architecture 2>&1
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output | Out-String).Trim() }
 }
 
 function Get-DawnSetupStatus {
     param([string]$TargetPlatform)
-    if ($TargetPlatform -ine "x64") { return [pscustomobject]@{ Missing = @(); Diagnostic = "" } }
+    if ($TargetPlatform -notin @('x64', 'ARM64')) { return [pscustomobject]@{ Missing = @(); Diagnostic = "" } }
     if (-not (Test-CommandExists "cmake")) {
-        return [pscustomobject]@{ Missing = @("CMake 3.21+ on PATH (required for Windows x64 Dawn setup)"); Diagnostic = "Install CMake and restart the Launcher." }
+        return [pscustomobject]@{ Missing = @("CMake 3.21+ on PATH (required for Windows $TargetPlatform Dawn setup)"); Diagnostic = "Install CMake and restart the Launcher." }
     }
     if (-not (Test-Path -LiteralPath (Join-Path $rootDir "scripts\SetupDawn.ps1"))) {
         return [pscustomobject]@{ Missing = @("Dawn setup script"); Diagnostic = "scripts\SetupDawn.ps1 is missing." }
     }
-    $check = Invoke-DawnPackageCheck
+    $check = Invoke-DawnPackageCheck -Architecture $TargetPlatform
     if ($check.ExitCode -ne 0) {
         return [pscustomobject]@{ Missing = @("Dawn package or generated metadata (missing/stale)"); Diagnostic = $check.Output }
     }
@@ -2081,12 +2084,13 @@ function Get-DawnSetupStatus {
 }
 
 function Invoke-DawnPackageSetup {
+    param([ValidateSet('x64', 'ARM64')][string]$Architecture = 'x64')
     if (-not (Test-DependencySetupAvailable)) { return $false }
     $txtBuildOutput.Text = ""
     $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
     Set-LauncherBusy $true "SETUP..."
     try {
-        $arguments = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $rootDir "scripts\SetupDawn.ps1"))
+        $arguments = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $rootDir "scripts\SetupDawn.ps1"), "-Architecture", $Architecture)
         $exitCode = Invoke-LoggedProcess -FilePath "powershell.exe" -Arguments $arguments -WorkingDirectory $rootDir -StatusPrefix "Dawn dependency setup"
         return $exitCode -eq 0
     } finally {
@@ -2226,7 +2230,7 @@ function Ensure-WindowsToolchain {
     if ($status.Dawn.Missing.Count -gt 0) {
         $answer = [System.Windows.MessageBox]::Show(("The required Dawn package or build metadata is missing/stale." + "`n`n" + $status.Dawn.Diagnostic + "`n`nRun Dawn setup now?"), "T850 Launcher", "YesNo", "Warning")
         if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return $false }
-        if (-not (Invoke-DawnPackageSetup)) { return $false }
+        if (-not (Invoke-DawnPackageSetup -Architecture $TargetPlatform)) { return $false }
         $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
     }
     if ($status.DependencyActivity.State -ne 'Idle') {
@@ -2374,7 +2378,7 @@ function Start-BrowserRuntime {
 }
 
 function Test-WebGpuSupported {
-    return -not (Test-AndroidTarget) -and $cmbArch.SelectedItem.Content -ieq "x64"
+    return -not (Test-AndroidTarget) -and $cmbArch.SelectedItem.Content -in @('x64', 'ARM64')
 }
 
 function Update-WebGpuControls {
@@ -2398,7 +2402,7 @@ function Update-WebGpuControls {
     foreach ($item in $cmbApi.Items) {
         if ($item.Tag -eq "webgpu") { $item.IsEnabled = Test-WebGpuSupported }
     }
-    $btnRun.ToolTip = if ($selected) { "WebGPU supports forward and deferred runtime scenes on Windows x64. Editor support is unavailable." } else { $null }
+    $btnRun.ToolTip = if ($selected) { "WebGPU supports forward and deferred runtime scenes on Windows x64 and ARM64. Editor support is unavailable." } else { $null }
     $btnEditor.ToolTip = if ($selected) { "WebGPU editor support is not implemented." } else { $null }
 }
 
@@ -2408,7 +2412,7 @@ function Update-WebGpuPreview {
     $btnRun.IsEnabled = $false
     $btnEditor.IsEnabled = $false
     $txtCmdPreview.Text = ""
-    $txtStatus.Text = "WebGPU requires Windows x64."
+    $txtStatus.Text = "WebGPU requires Windows x64 or ARM64."
     $txtStatus.Foreground = $window.FindResource("RedBrush")
     return $true
 }
@@ -2422,7 +2426,7 @@ function Get-LaunchCommand {
     $archFolder = Get-ArchFolder
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\DayScene.exe"
-    if ($apiTag -eq "webgpu" -and -not (Test-WebGpuSupported)) { throw "WebGPU requires Windows x64." }
+    if ($apiTag -eq "webgpu" -and -not (Test-WebGpuSupported)) { throw "WebGPU requires Windows x64 or ARM64." }
     $argList = @("--api", $apiTag)
     $argList += @("--postProcessMode", $cmbPostProcessMode.SelectedItem.Tag.ToString())
     if ($apiTag -eq "webgpu") {
@@ -2526,7 +2530,7 @@ function Get-ShaderCompileCommands {
     $exe = Join-Path $runtime "DayScene.exe"
     foreach ($api in @("d3d11", "d3d12", "vulkan", "gl", "webgpu")) {
         if ($api -eq "webgpu" -and -not (Test-WebGpuSupported)) { continue }
-        $flows = if ($api -eq "webgpu") { @("auto", "spirv") } else { @("native") }
+        $flows = if ($api -eq "webgpu") { @("auto", "wgsl", "spirv") } else { @("native") }
         foreach ($flow in $flows) {
             $arguments = @("--compileShaders", "--api", $api, "--logLevel", "info")
             if ($api -eq "webgpu") { $arguments += @("--shaderFlow", $flow) }
@@ -2603,7 +2607,7 @@ function Invoke-ShaderCompilation {
     $dialog.Owner = $window
     $state = [pscustomobject]@{ Jobs = $jobs; Index = 0; Process = $null; Stdout = ""; Directory = $directory; CancelFile = (Join-Path $directory "cancel.request"); CancelRequested = $false; Failures = 0; Results = [Collections.ArrayList]::new(); Timer = [Windows.Threading.DispatcherTimer]::new(); Status = $dialog.FindName("status"); Progress = $dialog.FindName("progress"); Output = $dialog.FindName("output"); Cancel = $dialog.FindName("cancel") }
     $state.Progress.Maximum = $jobs.Count
-    $state.Status.Text = if ($jobs.Count -eq 6) { "6 API/flow jobs" } else { "4 API jobs; WebGPU requires an x64 runtime" }
+    $state.Status.Text = if ($jobs.Count -eq 7) { "7 API/flow jobs" } else { "4 API jobs; WebGPU requires an x64 or ARM64 runtime" }
     $state.Timer.Interval = [TimeSpan]::FromMilliseconds(300)
     $updateQueue = ${function:Update-ShaderCompileQueue}
     $state.Timer.Add_Tick({
@@ -2632,7 +2636,7 @@ function Invoke-ShaderCompilation {
 
 function Get-EditorLaunchCommand {
     if (Test-BrowserSelected) { throw "The browser target does not support T8ditor." }
-    if ((Test-WebGpuSelected) -and -not (Test-WebGpuSupported)) { throw "WebGPU requires Windows x64." }
+    if (Test-WebGpuSelected) { throw "WebGPU editor support is not implemented." }
     $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
     $config = ($cmbConfig.SelectedItem).Content.ToString()
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
@@ -2830,8 +2834,10 @@ function Update-Preview {
     $txtCmdPreview.Text = $cmd.Display
 
     $sceneOk = Test-Path $cmd.ExePath
-    $editorCmd = Get-EditorLaunchCommand
-    $editorOk = Test-Path $editorCmd.ExePath
+    $editorOk = if (Test-WebGpuSelected) { $false } else {
+        $editorCmd = Get-EditorLaunchCommand
+        Test-Path $editorCmd.ExePath
+    }
 
     if (-not $sceneDeps.Ok) {
         $txtStatus.Text = "Scene missing: $($sceneDeps.Missing -join ', ')"

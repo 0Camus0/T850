@@ -23,6 +23,7 @@ public:
 #endif
   }
   uint64_t ProfilingAdapterId() const override { return AdapterLuid(); }
+  bool GetDeviceFailure(std::string& diagnostic) const override;
   bool SupportsDeferredRendering() const override { return true; }
   bool SupportsComputeShaders() const override { return true; }
   bool SupportsComputeTextures() const override { return true; }
@@ -73,6 +74,7 @@ public:
   WGPUTextureView TextureView(Texture* texture) const;
   webgpu::WebGPUContext& TimestampContext();
 private:
+  ShaderProgramFlow GetShaderProgramFlow() const override;
   std::unique_ptr<WebGPUDriverState> m_state;
 };
 }

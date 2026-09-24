@@ -13,6 +13,7 @@
 #endif
 #include <atomic>
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <mutex>
@@ -22,6 +23,27 @@
 
 namespace t850::webgpu {
 namespace {
+std::atomic<uint64_t> g_frameAttempts{0};
+std::atomic<bool> g_forcedDeviceLossInjected{false};
+std::atomic<uint64_t> g_configuredDeviceLossFrame{0};
+
+bool ShouldInjectDeviceLoss() {
+  static const uint64_t environmentFrame = [] {
+#ifdef __EMSCRIPTEN__
+    return uint64_t{0};
+#else
+    const char* value = std::getenv("T850_WEBGPU_FORCE_DEVICE_LOSS_FRAME");
+    if (!value || !*value) return uint64_t{0};
+    char* end = nullptr;
+    const auto parsed = std::strtoull(value, &end, 10);
+    return end && *end == '\0' ? parsed : uint64_t{0};
+#endif
+  }();
+  const uint64_t configuredFrame = g_configuredDeviceLossFrame.load(std::memory_order_acquire);
+  const uint64_t frame = configuredFrame ? configuredFrame : environmentFrame;
+  return frame && g_frameAttempts.fetch_add(1, std::memory_order_relaxed) + 1 == frame;
+}
+
 std::string Message(wgpu::StringView text) {
   if (!text.data) return {};
   return text.length == WGPU_STRLEN ? std::string(text.data) : std::string(text.data, text.length);
@@ -36,6 +58,12 @@ void Wait(const wgpu::Instance& instance, wgpu::Future future) {
   Require(instance.WaitAny(future, 30'000'000'000ULL) == wgpu::WaitStatus::Success, "GPU operation timed out");
 #endif
 }
+}
+
+void ConfigureDeviceLossTestFrame(uint64_t frame) {
+  g_frameAttempts.store(0, std::memory_order_release);
+  g_forcedDeviceLossInjected.store(false, std::memory_order_release);
+  g_configuredDeviceLossFrame.store(frame, std::memory_order_release);
 }
 
 struct WebGPUContext::Health {
@@ -55,8 +83,14 @@ WebGPUContext::~WebGPUContext() {
 }
 
 void WebGPUContext::CheckHealth() const {
+  std::string diagnostic;
+  if (GetHealthError(diagnostic)) throw std::runtime_error("[WebGPU] " + diagnostic);
+}
+
+bool WebGPUContext::GetHealthError(std::string& diagnostic) const {
   std::lock_guard<std::mutex> lock(m_health->mutex);
-  if (!m_health->error.empty()) throw std::runtime_error("[WebGPU] " + m_health->error);
+  diagnostic = m_health->error;
+  return !diagnostic.empty();
 }
 
 void WebGPUContext::Initialize(void* hwnd, uint32_t newWidth, uint32_t newHeight) {
@@ -127,12 +161,28 @@ void WebGPUContext::Initialize(void* hwnd, uint32_t newWidth, uint32_t newHeight
   requiredLimits.maxColorAttachments = adapterLimits.maxColorAttachments;
   requiredLimits.maxColorAttachmentBytesPerSample = adapterLimits.maxColorAttachmentBytesPerSample;
   deviceDesc.requiredLimits = &requiredLimits;
+#if T850_ENABLE_GPU_PROFILING && !defined(__EMSCRIPTEN__)
+  const char* gpuProfilingToggles[] = {"allow_unsafe_apis"};
+  wgpu::DawnTogglesDescriptor gpuProfilingToggleDescriptor{};
+  if (g_config.profileGpu) {
+    gpuProfilingToggleDescriptor.enabledToggleCount = std::size(gpuProfilingToggles);
+    gpuProfilingToggleDescriptor.enabledToggles = gpuProfilingToggles;
+    deviceDesc.nextInChain = &gpuProfilingToggleDescriptor;
+  }
+#endif
   T8_LOG_INFO("[WebGPU] color attachment limits: count=%u bytesPerSample=%u",
     requiredLimits.maxColorAttachments, requiredLimits.maxColorAttachmentBytesPerSample);
   std::vector<wgpu::FeatureName> features;
   for (const auto optional : {wgpu::FeatureName::Float32Filterable, wgpu::FeatureName::TextureCompressionBC}) {
     if (adapter.HasFeature(optional)) features.push_back(optional);
   }
+#if T850_ENABLE_GPU_PROFILING
+  if (g_config.profileGpu) {
+    Require(adapter.HasFeature(wgpu::FeatureName::TimestampQuery),
+            "GPU timestamp profiling requested but timestamp-query is unavailable");
+    features.push_back(wgpu::FeatureName::TimestampQuery);
+  }
+#endif
   deviceDesc.requiredFeatureCount = features.size();
   deviceDesc.requiredFeatures = features.data();
   deviceDesc.SetUncapturedErrorCallback(
@@ -153,6 +203,11 @@ void WebGPUContext::Initialize(void* hwnd, uint32_t newWidth, uint32_t newHeight
   T8_LOG_INFO("[WebGPU] Device optional features: BC=%d float32-filterable=%d",
     device.HasFeature(wgpu::FeatureName::TextureCompressionBC) ? 1 : 0,
     device.HasFeature(wgpu::FeatureName::Float32Filterable) ? 1 : 0);
+#if T850_ENABLE_GPU_PROFILING
+  T8_LOG_INFO("[WebGPU] timestamp-query requested=%d active=%d",
+    g_config.profileGpu ? 1 : 0,
+    device.HasFeature(wgpu::FeatureName::TimestampQuery) ? 1 : 0);
+#endif
   Require(static_cast<bool>(device), "Device unavailable");
   queue = device.GetQueue();
   wgpu::SurfaceCapabilities capabilities{};
@@ -161,28 +216,12 @@ void WebGPUContext::Initialize(void* hwnd, uint32_t newWidth, uint32_t newHeight
   configuration.device = device;
   configuration.format = capabilities.formats[0];
   for (size_t index = 0; index < capabilities.formatCount; ++index) {
-#if T850_ENABLE_GPU_PROFILING && !defined(__EMSCRIPTEN__)
-  const char* gpuProfilingToggles[] = {"allow_unsafe_apis"};
-  wgpu::DawnTogglesDescriptor gpuProfilingToggleDescriptor{};
-  if (g_config.profileGpu) {
-    gpuProfilingToggleDescriptor.enabledToggleCount = std::size(gpuProfilingToggles);
-    gpuProfilingToggleDescriptor.enabledToggles = gpuProfilingToggles;
-    deviceDesc.nextInChain = &gpuProfilingToggleDescriptor;
-  }
-#endif
     if (capabilities.formats[index] == wgpu::TextureFormat::BGRA8Unorm) configuration.format = capabilities.formats[index];
   }
   m_directReadback = (capabilities.usages & wgpu::TextureUsage::CopySrc) != wgpu::TextureUsage::None;
   configuration.usage = wgpu::TextureUsage::RenderAttachment;
   if (m_directReadback) configuration.usage |= wgpu::TextureUsage::CopySrc;
   configuration.presentMode = wgpu::PresentMode::Fifo;
-#if T850_ENABLE_GPU_PROFILING
-  if (g_config.profileGpu) {
-    Require(adapter.HasFeature(wgpu::FeatureName::TimestampQuery),
-            "GPU timestamp profiling requested but timestamp-query is unavailable");
-    features.push_back(wgpu::FeatureName::TimestampQuery);
-  }
-#endif
 #ifndef __EMSCRIPTEN__
   for (size_t index = 0; index < capabilities.presentModeCount; ++index) {
     if (capabilities.presentModes[index] == wgpu::PresentMode::Immediate)
@@ -203,11 +242,6 @@ void WebGPUContext::Resize(uint32_t newWidth, uint32_t newHeight) {
   if (depth) depth.Destroy();
   m_captureTarget = nullptr;
   depth = nullptr;
-#if T850_ENABLE_GPU_PROFILING
-  T8_LOG_INFO("[WebGPU] timestamp-query requested=%d active=%d",
-    g_config.profileGpu ? 1 : 0,
-    device.HasFeature(wgpu::FeatureName::TimestampQuery) ? 1 : 0);
-#endif
   if (m_configured) surface.Unconfigure();
   m_configured = false;
   width = newWidth;
@@ -262,6 +296,10 @@ void WebGPUContext::Resize(uint32_t newWidth, uint32_t newHeight) {
 
 bool WebGPUContext::BeginFrame(bool swapchain) {
   T8_TELEMETRY_SCOPE("webgpu.begin_frame");
+  if (ShouldInjectDeviceLoss() && !g_forcedDeviceLossInjected.exchange(true, std::memory_order_acq_rel)) {
+    m_health->Fail("Injected device loss for recovery validation");
+    device.Destroy();
+  }
   CheckHealth();
   Require(!commands, "Frame is already active");
   instance.ProcessEvents();

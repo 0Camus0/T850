@@ -230,6 +230,8 @@ $xaml = @"
                     <ComboBox Name="cmbShaderFlow" IsEnabled="False">
                         <ComboBoxItem Content="WGSL preferred (auto)" Tag="auto" IsSelected="True"
                                       ToolTip="Prefer WGSL; allow HLSL translation for missing WGSL sources and unnamed helpers."/>
+                        <ComboBoxItem Content="WGSL only (strict)" Tag="wgsl"
+                                      ToolTip="Require maintained WGSL sources; anonymous inline HLSL helpers remain unsupported."/>
                         <ComboBoxItem Content="SPIR-V (HLSL translation)" Tag="spirv"
                                       ToolTip="Use HLSL through glslang/SPIR-V and Tint/WGSL, with no source-language fallback."/>
                     </ComboBox>
@@ -1284,7 +1286,8 @@ function Test-WebGpuSupported {
         $offset = $reader.ReadUInt32()
         if ($offset -gt $reader.BaseStream.Length - 6) { return $false }
         $reader.BaseStream.Position = $offset
-        return $reader.ReadUInt32() -eq 0x00004550 -and $reader.ReadUInt16() -eq 0x8664
+        if ($reader.ReadUInt32() -ne 0x00004550) { return $false }
+        return $reader.ReadUInt16() -in @(0x8664, 0xAA64)
     } catch {
         return $false
     } finally {
@@ -1308,7 +1311,7 @@ function Update-WebGpuControls {
     foreach ($item in $cmbApi.Items) {
         if ($item.Tag -eq "webgpu") { $item.IsEnabled = Test-WebGpuSupported }
     }
-    $btnRun.ToolTip = if ($selected) { "WebGPU supports forward and deferred runtime scenes on Windows x64. Editor support is unavailable." } else { $null }
+    $btnRun.ToolTip = if ($selected) { "WebGPU supports forward and deferred runtime scenes on Windows x64 and ARM64. Editor support is unavailable." } else { $null }
     $btnEditor.ToolTip = if ($selected) { "WebGPU editor support is not implemented." } else { $null }
 }
 
@@ -1318,7 +1321,7 @@ function Update-WebGpuPreview {
     $btnRun.IsEnabled = $false
     $btnEditor.IsEnabled = $false
     $txtCmdPreview.Text = ""
-    $txtStatus.Text = "WebGPU requires an x64 DayScene.exe in this folder."
+    $txtStatus.Text = "WebGPU requires an x64 or ARM64 DayScene.exe in this folder."
     $txtStatus.Foreground = $window.FindResource("RedBrush")
     return $true
 }
@@ -1328,7 +1331,7 @@ function Get-LaunchCommand {
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
 
     $exePath = Join-Path $rootDir "DayScene.exe"
-    if ($apiTag -eq "webgpu" -and -not (Test-WebGpuSupported)) { throw "WebGPU requires an x64 DayScene.exe in this folder." }
+    if ($apiTag -eq "webgpu" -and -not (Test-WebGpuSupported)) { throw "WebGPU requires an x64 or ARM64 DayScene.exe in this folder." }
     $argList = @("--api", $apiTag)
     $argList += @("--postProcessMode", $cmbPostProcessMode.SelectedItem.Tag.ToString())
     if ($apiTag -eq "webgpu") {
@@ -1419,7 +1422,7 @@ function Get-ShaderCompileCommands {
     $exe = Join-Path $runtime "DayScene.exe"
     foreach ($api in @("d3d11", "d3d12", "vulkan", "gl", "webgpu")) {
         if ($api -eq "webgpu" -and -not (Test-WebGpuSupported)) { continue }
-        $flows = if ($api -eq "webgpu") { @("auto", "spirv") } else { @("native") }
+        $flows = if ($api -eq "webgpu") { @("auto", "wgsl", "spirv") } else { @("native") }
         foreach ($flow in $flows) {
             $arguments = @("--compileShaders", "--api", $api, "--logLevel", "info")
             if ($api -eq "webgpu") { $arguments += @("--shaderFlow", $flow) }
@@ -1496,7 +1499,7 @@ function Invoke-ShaderCompilation {
     $dialog.Owner = $window
     $state = [pscustomobject]@{ Jobs = $jobs; Index = 0; Process = $null; Stdout = ""; Directory = $directory; CancelFile = (Join-Path $directory "cancel.request"); CancelRequested = $false; Failures = 0; Results = [Collections.ArrayList]::new(); Timer = [Windows.Threading.DispatcherTimer]::new(); Status = $dialog.FindName("status"); Progress = $dialog.FindName("progress"); Output = $dialog.FindName("output"); Cancel = $dialog.FindName("cancel") }
     $state.Progress.Maximum = $jobs.Count
-    $state.Status.Text = if ($jobs.Count -eq 6) { "6 API/flow jobs" } else { "4 API jobs; WebGPU requires an x64 runtime" }
+    $state.Status.Text = if ($jobs.Count -eq 7) { "7 API/flow jobs" } else { "4 API jobs; WebGPU requires an x64 or ARM64 runtime" }
     $state.Timer.Interval = [TimeSpan]::FromMilliseconds(300)
     $updateQueue = ${function:Update-ShaderCompileQueue}
     $state.Timer.Add_Tick({
@@ -1525,7 +1528,7 @@ function Invoke-ShaderCompilation {
 
 function Get-EditorLaunchCommand {
     if (Test-BrowserSelected) { throw "The browser target does not support T8ditor." }
-    if ((Test-WebGpuSelected) -and -not (Test-WebGpuSupported)) { throw "WebGPU requires an x64 DayScene.exe in this folder." }
+    if (Test-WebGpuSelected) { throw "WebGPU editor support is not implemented." }
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
     $exePath = Join-Path $rootDir "T8ditor.exe"
     $argList = @()
@@ -1571,8 +1574,10 @@ function Update-Preview {
     $txtCmdPreview.Text = $cmd.Display
 
     $sceneOk = Test-Path $cmd.ExePath
-    $editorCmd = Get-EditorLaunchCommand
-    $editorOk = Test-Path $editorCmd.ExePath
+    $editorOk = if (Test-WebGpuSelected) { $false } else {
+        $editorCmd = Get-EditorLaunchCommand
+        Test-Path $editorCmd.ExePath
+    }
     $sceneDeps = Get-CachedSceneDependencyResult
     $assetStatus = $script:CloudAssetStatus
     $assetsMissing = ($assetStatus -and $assetStatus.Configured -and $assetStatus.Ok -and $assetStatus.Missing -gt 0)
@@ -1762,7 +1767,6 @@ $btnRun.Add_Click({
             "T850 Launcher", "OK", "Warning") | Out-Null
         return
     }
-
     $cmd = Get-LaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {
         [System.Windows.MessageBox]::Show(

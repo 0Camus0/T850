@@ -124,10 +124,30 @@ namespace t850 {
   //  VulkanDriver — Pipeline Management & Rendering
   // ══════════════════════════════════════════════════════
 
+  void VulkanDriver::OnShaderDestroying(ShaderBase& shader) {
+    for (auto it = m_pipelineCache.begin(); it != m_pipelineCache.end();) {
+      if (it->first.program == shader.programKey) {
+        if (m_device && it->second)
+          vkDestroyPipeline(m_device, it->second, nullptr);
+        it = m_pipelineCache.erase(it);
+        ++m_pipelineCacheEvictions;
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  void VulkanDriver::ClearPipelineCache() {
+    for (auto& entry : m_pipelineCache)
+      if (m_device && entry.second) vkDestroyPipeline(m_device, entry.second, nullptr);
+    m_pipelineCacheEvictions += m_pipelineCache.size();
+    m_pipelineCache.clear();
+  }
+
   VkPipeline VulkanDriver::GetOrCreatePipeline(VulkanShader* shader, uint8_t numColorAttachments,
                                                 VkFormat colorFormat, VkFormat depthFormat) {
     VulkanPipelineKey key = {};
-    key.shaderPtr = reinterpret_cast<uintptr_t>(shader);
+    key.program = shader->programKey;
     key.blend = (uint8_t)m_currentBlend;
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
@@ -150,10 +170,12 @@ namespace t850 {
 
     auto it = m_pipelineCache.find(key);
     if (it != m_pipelineCache.end()) {
+      ++m_pipelineCacheHits;
       T8_LOG_TRACE("[Vulkan] Pipeline cache hit: shader=%p topo=%d blend=%d depth=%d",
                    shader, key.topology, key.blend, key.depth);
       return it->second;
     }
+    ++m_pipelineCacheMisses;
 
     // Shader stages
     VkPipelineShaderStageCreateInfo stages[2] = {};
@@ -616,9 +638,7 @@ namespace t850 {
         }
       }
 
-      for (auto& pair : m_pipelineCache)
-        vkDestroyPipeline(m_device, pair.second, nullptr);
-      m_pipelineCache.clear();
+      ClearPipelineCache();
 
       for (auto& fb : m_backbufferFramebuffers)
         if (fb) { vkDestroyFramebuffer(m_device, fb, nullptr); fb = VK_NULL_HANDLE; }
@@ -1223,13 +1243,15 @@ namespace t850 {
     }
 
     DestroyShaders();
+    T8_LOG_INFO("[Vulkan] Pipeline cache: entries=%zu hits=%llu misses=%llu evictions=%llu",
+          m_pipelineCache.size(), static_cast<unsigned long long>(m_pipelineCacheHits),
+          static_cast<unsigned long long>(m_pipelineCacheMisses),
+          static_cast<unsigned long long>(m_pipelineCacheEvictions));
     DestroyRTs();
     DestroyTextures();
 
     // Destroy pipeline cache entries
-    for (auto& pair : m_pipelineCache)
-      vkDestroyPipeline(m_device, pair.second, nullptr);
-    m_pipelineCache.clear();
+    ClearPipelineCache();
 
     if (m_vkPipelineCache) {
       size_t cacheSize = 0;

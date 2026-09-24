@@ -174,6 +174,8 @@ void MutableMesh::Create() {
   }
   free(vertexSource);
   free(fragmentSource);
+  m_shaderFamily = BaseDriver::IdentifyShaderFamily(
+      m_vertexShaderSource, m_fragmentShaderSource, m_vertexShaderName, m_fragmentShaderName);
 
   m_created = m_combinedCB && m_frameCB && m_instanceCB && m_materialCB &&
       !m_vertexShaderSource.empty() && !m_fragmentShaderSource.empty();
@@ -195,7 +197,7 @@ bool MutableMesh::CompileShaders() {
       key.setPass(pass);
       context.driver->CreateShader(
           m_vertexShaderSource, m_fragmentShaderSource, key, m_vertexShaderName, m_fragmentShaderName);
-      if (!context.driver->GetShader(key)) return false;
+      if (!context.driver->GetShader(key, m_shaderFamily)) return false;
     }
   }
   m_shadersCompiled = true;
@@ -394,7 +396,7 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
       ? m_materialTextures[section.materialIndex] : Textures[0];
     if (material.usesBaseColorTexture && baseColor) key.bits |= ShaderKey::DIFFUSE_MAP;
     key.setPass(pass == PassType::NONE ? PassType::FORWARD : pass);
-    ShaderBase* shader = context.driver->GetShader(key);
+    ShaderBase* shader = context.driver->GetShader(key, m_shaderFamily);
     if (!shader) continue;
     const BaseDriver::FaceCulling previousCull = context.driver->m_FaceCulling;
     const bool changedCull = material.doubleSided && previousCull != BaseDriver::FRONT_AND_BACK;

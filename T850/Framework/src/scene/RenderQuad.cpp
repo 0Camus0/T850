@@ -201,6 +201,7 @@ namespace t850 {
 
     free(vsSourceP);
     free(fsSourceP);
+    m_shaderFamily = BaseDriver::IdentifyShaderFamily(vstr, fstr, vsName, fsName);
 
     g_pBaseDriver->CreateShader(vstr, fstr, sigBase, vsName, fsName);
 
@@ -265,7 +266,7 @@ namespace t850 {
       if (gr) k.bits |= ShaderKey::GOD_RAYS;
       g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
     }
-    T8_LOG_INFO("RenderQuad created: %zu shader variants compiled", g_pBaseDriver->m_shaderCache.size());
+    T8_LOG_INFO("RenderQuad created: %zu shader variants compiled", g_pBaseDriver->GetShaderProgramCount());
 
 
     t850::BufferDesc bdesc;
@@ -331,7 +332,7 @@ namespace t850 {
       if (pScProp->ToogleGodRays) finalKey.bits |= ShaderKey::GOD_RAYS;
     }
 
-    ShaderBase * s = g_pBaseDriver->GetShader(finalKey);
+    ShaderBase * s = g_pBaseDriver->GetShader(finalKey, m_shaderFamily);
     if (!s) return;
 
     Camera *pActualCamera = pScProp->GetPrimaryCamera();

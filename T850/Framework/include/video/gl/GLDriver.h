@@ -15,6 +15,7 @@
 
 #include <Config.h>
 #include <video/BaseDriver.h>
+#include <video/MutableGraphicsStateCache.h>
 #ifdef T850_HEADLESS
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -143,6 +144,7 @@ namespace t850 {
     std::string					Extensions;
 
     private:
+    MutableGraphicsStateCache m_stateCache;
 #if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
         void FenceOffscreenTarget(int rt);
         void WaitForOffscreenTargetFence(int rt);

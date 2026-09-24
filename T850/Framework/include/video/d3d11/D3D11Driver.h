@@ -16,6 +16,7 @@
 #include <Config.h>
 
 #include <video\BaseDriver.h>
+#include <video/MutableGraphicsStateCache.h>
 #include <video/d3d11/D3D11DeviceContext.h>
 #include <video/d3d11/D3D11Device.h>
 #include <video/d3d11/D3D11VertexBuffer.h>
@@ -103,6 +104,7 @@ namespace t850 {
     ComPtr<ID3D11RasterizerState> m_RasterStateCullNone;
     ComPtr<ID3D11RasterizerState> m_RasterStateCullClockWise;
     ComPtr<ID3D11RasterizerState> m_RasterStateCullCounterClockwise;
+    MutableGraphicsStateCache m_stateCache;
   };
 }
 

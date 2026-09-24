@@ -58,9 +58,8 @@ namespace t850 {
     uint64_t        sortKey       = 0;
 
     // ── Shader / PSO ─────────────────────────────────────────────
-    // Final pass-merged ShaderKey. The executor calls
-    // BaseDriver::GetShader(finalKey) once per change. Cached
-    // dense psoId for sort packing arrives in step 3.
+    // Final pass-merged permutation. Program resolution also requires
+    // the renderer's shader family and active flow identity.
     ShaderKey       finalKey;
 
     // ── Geometry (Tier 1 pool refs) ──────────────────────────────

@@ -26,6 +26,7 @@
 #include <array>
 #include <Descriptors.h>
 #include <utils/Technique.h>
+#include <video/ShaderProgramCache.h>
 #include <video/WindowHandle.h>
 
 
@@ -36,7 +37,6 @@ namespace t850 {
   class ConstantBuffer;
   class Texture;
   class BaseRT;
-
   enum class ComputeBufferAccess {
     ReadOnly,
     ReadWrite
@@ -310,6 +310,7 @@ namespace t850 {
     void release();
 
     ShaderKey key;
+    ShaderProgramKey programKey;
   protected:
     std::string m_sourceDefines;
   };
@@ -509,8 +510,14 @@ namespace t850 {
 
 
     Texture* GetRTTexture(int id, int index);
-    ShaderBase*	GetShader(ShaderKey key);
+    static ShaderFamilyId IdentifyShaderFamily(const std::string& vertexSource,
+                          const std::string& fragmentSource,
+                          const std::string& vertexName = "",
+                          const std::string& fragmentName = "");
+    ShaderBase* GetShader(const ShaderProgramKey& key);
+    ShaderBase* GetShader(ShaderKey key, ShaderFamilyId family);
     ShaderBase*	GetShaderIdx(int id);
+    size_t GetShaderProgramCount() const { return m_shaderPrograms.Size(); }
     Texture* GetTexture(int id);
     Technique* GetTechnique(int id);
 
@@ -530,7 +537,6 @@ namespace t850 {
 
     std::vector<Technique*> m_techniques;
     std::vector<ShaderBase*>	m_shaders;
-    std::unordered_map<uint64_t, ShaderBase*> m_shaderCache;
     std::vector<BaseRT*>		RTs;
     std::vector<Texture*>		Textures;
     int							CurrentRT;
@@ -538,7 +544,12 @@ namespace t850 {
 	FaceCulling	m_FaceCulling;
     int	width, height;
 
+  protected:
+    virtual void OnShaderDestroying(ShaderBase&) {}
+    virtual ShaderProgramFlow GetShaderProgramFlow() const { return ShaderProgramFlow::Default; }
+
   private:
+    ShaderProgramCache m_shaderPrograms;
     std::string BuildOffscreenDebugDirectory();
     std::string BuildOffscreenDebugPath(unsigned long long frameNumber);
 

@@ -143,6 +143,8 @@ namespace t850 {
     D3D12_GPU_DESCRIPTOR_HANDLE AllocateDynamicCBV(const void* data, UINT dataSize);
 
   private:
+    void OnShaderDestroying(ShaderBase& shader) override;
+    ShaderProgramFlow GetShaderProgramFlow() const override;
     friend class D3D12Shader;
     void CreateDevice();
     void CreateCommandInfrastructure();
@@ -253,6 +255,9 @@ namespace t850 {
 
     // PSO cache: lazy-created per (shader × blend × depth × cull × RT config)
     std::unordered_map<D3D12PipelineKey, ComPtr<ID3D12PipelineState>, D3D12PipelineKeyHash> m_psoCache;
+    uint64_t m_psoCacheHits = 0;
+    uint64_t m_psoCacheMisses = 0;
+    uint64_t m_psoCacheEvictions = 0;
 
     // ── Debug layer InfoQueue polling thread ──
     void StartDebugMessageThread();

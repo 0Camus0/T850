@@ -1464,6 +1464,7 @@ namespace t850 {
 
     free(vsSourceP);
     free(fsSourceP);
+    m_shaderFamily = BaseDriver::IdentifyShaderFamily(vstr, fstr, vsName, fsName);
 
     for (std::size_t i = 0; i < xFile->MeshInfo.size(); i++) {
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
@@ -2347,7 +2348,7 @@ namespace t850 {
           }
         }
 
-        s = driver->GetShader(finalKey);
+        s = driver->GetShader(finalKey, m_shaderFamily);
         if (!s) continue;
 
      //   if (s != last)

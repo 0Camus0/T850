@@ -223,6 +223,8 @@ namespace t850 {
     VBRingAlloc AllocateVBRing(const void* data, uint32_t size);
 
   private:
+    void OnShaderDestroying(ShaderBase& shader) override;
+    void ClearPipelineCache();
     friend class VulkanShader;
     friend class VulkanDeviceContext;
 
@@ -370,6 +372,9 @@ namespace t850 {
 
     // Pipeline cache: lazy-created per (shader × blend × depth × cull × attachment config)
     std::unordered_map<VulkanPipelineKey, VkPipeline, VulkanPipelineKeyHash> m_pipelineCache;
+    uint64_t m_pipelineCacheHits = 0;
+    uint64_t m_pipelineCacheMisses = 0;
+    uint64_t m_pipelineCacheEvictions = 0;
     VkPipelineCache m_vkPipelineCache = VK_NULL_HANDLE;  // Vulkan driver-level cache
     std::function<void()> m_prePresentOverlayCallback;
 

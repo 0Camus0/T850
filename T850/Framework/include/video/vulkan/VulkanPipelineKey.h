@@ -8,6 +8,7 @@
 #define T800_VULKANPIPELINEKEY_H
 
 #include <Config.h>
+#include <video/BaseDriver.h>
 
 #if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 
@@ -35,7 +36,7 @@ namespace t850 {
   }
 
   struct VulkanPipelineKey {
-    uintptr_t shaderPtr;
+    ShaderProgramKey program;
     uint8_t   blend;
     uint8_t   depth;
     uint8_t   cull;
@@ -46,7 +47,7 @@ namespace t850 {
     VkFormat  colorFormat;
     VkFormat  depthFormat;
     bool operator==(const VulkanPipelineKey& o) const {
-      return shaderPtr == o.shaderPtr && blend == o.blend &&
+      return program == o.program && blend == o.blend &&
              depth == o.depth && cull == o.cull &&
              numColorAttachments == o.numColorAttachments &&
              topology == o.topology &&
@@ -58,7 +59,7 @@ namespace t850 {
 
   struct VulkanPipelineKeyHash {
     size_t operator()(const VulkanPipelineKey& k) const {
-      size_t h = std::hash<uintptr_t>()(k.shaderPtr);
+      size_t h = ShaderProgramKeyHash()(k.program);
       h ^= std::hash<uint8_t>()(k.blend)    << 1;
       h ^= std::hash<uint8_t>()(k.depth)    << 2;
       h ^= std::hash<uint8_t>()(k.cull)     << 3;

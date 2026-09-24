@@ -143,6 +143,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/gltf/GLTFMesh.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/gltf/GLTFAnimation.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/BaseDriver.cpp
+  ${T850_SOURCE_DIR}/Framework/src/video/ShaderProgramCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanDriver.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanCompute.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanVertexBuffer.cpp

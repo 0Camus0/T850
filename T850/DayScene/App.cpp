@@ -47,6 +47,9 @@
 #include <debug/ComputeSelfTest.h>
 #include <debug/CrashDiagnostics.h>
 #include <debug/GraphicsFixture.h>
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
+#include <video/webgpu/WebGPUContext.h>
+#endif
 
 std::vector<std::string> g_args;
 
@@ -68,6 +71,24 @@ namespace {
     void OnReset() override {}
     void LoadScene(int) override {}
   };
+
+  class WebGPURecoverySelfTestApp final : public t850::AppBase {
+  public:
+    void InitVars() override {}
+    void CreateAssets() override {}
+    void LoadAssets() override {}
+    void DestroyAssets() override {}
+    void OnUpdate() override {
+      pFramework->pVideoDriver->ClearBackbufferWithColor(0.05f, 0.1f, 0.15f, 1.0f);
+      pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::Present);
+    }
+    void OnDraw() override {}
+    void OnInput() override {}
+    void OnPause() override {}
+    void OnResume() override {}
+    void OnReset() override {}
+    void LoadScene(int) override {}
+  };
 }
 
 int main(int arg,char ** args) try {
@@ -80,6 +101,7 @@ int main(int arg,char ** args) try {
     }
 
   bool computeSelfTest = false;
+  bool webgpuRecoverySelfTest = false;
   bool computeSelfTestApiExplicit = false;
   int computeSelfTestWaitSeconds = 0;
   for (int i = 1; i < arg; ++i) {
@@ -97,6 +119,9 @@ int main(int arg,char ** args) try {
     }
     if (std::string_view(args[i]) == "--compute-selftest") {
       computeSelfTest = true;
+    }
+    if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
+      webgpuRecoverySelfTest = true;
     }
     if (std::string_view(args[i]) == "--api" && i + 1 < arg) {
       computeSelfTestApiExplicit = true;
@@ -122,6 +147,17 @@ int main(int arg,char ** args) try {
   }
 
   t850::config::ApplyCommandLine(arg, args, t850::g_config);
+  if (computeSelfTest && webgpuRecoverySelfTest) {
+    throw std::invalid_argument("Choose compute or WebGPU recovery self-test, not both");
+  }
+  if (webgpuRecoverySelfTest) {
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
+    t850::g_config.api = "webgpu";
+    t850::webgpu::ConfigureDeviceLossTestFrame(60);
+#else
+    throw std::invalid_argument("The WebGPU recovery self-test is unavailable on this platform");
+#endif
+  }
 #ifdef OS_WINDOWS
   if (computeSelfTest && !computeSelfTestApiExplicit) {
     // Preserve the original deterministic default while allowing an explicit
@@ -243,8 +279,10 @@ int main(int arg,char ** args) try {
   t850::BeginShaderPermutationRecording(t850::g_config);
 
 	pApp = computeSelfTest
-    ? static_cast<t850::AppBase*>(new ComputeSelfTestApp())
-    : static_cast<t850::AppBase*>(new App());
+  ? static_cast<t850::AppBase*>(new ComputeSelfTestApp())
+  : webgpuRecoverySelfTest
+  ? static_cast<t850::AppBase*>(new WebGPURecoverySelfTestApp())
+  : static_cast<t850::AppBase*>(new App());
   int result = 0;
 #ifdef OS_WEB
   pFrameWork = new t850::WebFramework(pApp);

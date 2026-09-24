@@ -5730,6 +5730,14 @@ void SceneTemplate::DestroyAssets() {
   if (pFramework && pFramework->pVideoDriver) {
     m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
   }
+  EnvMaps = {};
+  EnvMapTexIndex = -1;
+  DiffuseIBLTexIndex = -1;
+  SpecularIBLTexIndex = -1;
+  BrdfLUTTexIndex = -1;
+  SheenIBLTexIndex = -1;
+  CharlieLUTTexIndex = -1;
+  SheenELUTTexIndex = -1;
 }
 
 void SceneTemplate::OnUpdate(float _DtSecs) {

@@ -129,6 +129,13 @@ Vulkan teardown diagnostics and Minecraft overlay incompatibility. See the
 [R2 completion record](rendering/webgpu-compute-remediation-plan.md#r2-reconcile-strict-versus-lenient-backend-behavior)
 for exact passing and unpassed gates.
 
+WebGPU follow-up on 2026-09-21 enables native launcher and benchmark routing for
+x64/ARM64, adds strict WGSL to both launchers and their precompile queue, and
+keeps T8ditor explicitly outside the WebGPU scope. Confirmed native/browser
+device loss now receives one full framework-owned recreation attempt; native
+scene and Edge/SwiftShader recovery tests pass. Visual/leak equivalence and an
+injected failed-recovery case remain open in R20.
+
 Profiling workstream R4-R8 and R21 now has committed implementation: registered
 IDs, worker publication, upload matrices, phase/work aggregates, CPU-only and
 compile-out modes, completion-qualified D3D12/Vulkan/Dawn timestamps, pass-level

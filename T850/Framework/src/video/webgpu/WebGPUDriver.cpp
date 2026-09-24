@@ -1257,6 +1257,7 @@ WebGPUDriver::WebGPUDriver() : m_state(std::make_unique<WebGPUDriverState>()) {
   m_state->driver = this;
 }
 WebGPUDriver::~WebGPUDriver() { try { DestroyDriver(); } catch (const std::exception& error) { T8_LOG_ERROR("[WebGPU] %s", error.what()); } }
+bool WebGPUDriver::GetDeviceFailure(std::string& diagnostic) const { return m_state->context.GetHealthError(diagnostic); }
 WGPUDevice WebGPUDriver::NativeDevice() const { return m_state->context.device.Get(); }
 unsigned WebGPUDriver::MaxRenderTargetColorAttachments() const {
   wgpu::Limits limits{};
@@ -1539,8 +1540,23 @@ void WebGPUDriver::ClearBackbufferWithColor(float red, float green, float blue, 
   PopRT();
   ClearWithColor(red, green, blue, alpha);
 }
-void WebGPUDriver::WaitForGPU() { m_state->context.WaitForGPU(); }
-void WebGPUDriver::FlushGPUResources() { if (m_state->active) CompleteFrame(FrameCompletionMode::SubmitNoPresent); WaitForGPU(); }
+void WebGPUDriver::WaitForGPU() {
+  std::string deviceFailure;
+  if (GetDeviceFailure(deviceFailure)) return;
+  m_state->context.WaitForGPU();
+}
+void WebGPUDriver::FlushGPUResources() {
+  std::string deviceFailure;
+  if (GetDeviceFailure(deviceFailure)) {
+    m_state->EndPass();
+    m_state->context.commands = nullptr;
+    m_state->active = false;
+    m_state->ResetBindings();
+    return;
+  }
+  if (m_state->active) CompleteFrame(FrameCompletionMode::SubmitNoPresent);
+  WaitForGPU();
+}
 void WebGPUDriver::SetBlendState(BlendStates state) { m_state->blend = state; }
 void WebGPUDriver::SetDepthStencilState(DepthStencilStates state) { m_state->depth = state; }
 void WebGPUDriver::SetCullFace(FaceCulling state) {

@@ -3,11 +3,14 @@
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <webgpu/webgpu_cpp.h>
 #include <memory>
+#include <string>
 #include <vector>
 #include <deque>
 #include <map>
 
 namespace t850::webgpu {
+void ConfigureDeviceLossTestFrame(uint64_t frame);
+
 class WebGPUContext {
 public:
   WebGPUContext();
@@ -26,6 +29,7 @@ public:
   void Retire(wgpu::Buffer buffer, uint64_t size, wgpu::BufferUsage usage);
   void Retire(wgpu::Texture texture);
   void WaitForGPU();
+  bool GetHealthError(std::string& diagnostic) const;
   void CheckHealth() const;
   void Shutdown();
 

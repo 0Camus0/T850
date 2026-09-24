@@ -224,6 +224,12 @@
     <ClInclude Include="include\video\BaseDriver.h">
       <Filter>Header Files\video</Filter>
     </ClInclude>
+    <ClInclude Include="include\video\MutableGraphicsStateCache.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\ShaderProgramCache.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
     <ClInclude Include="include\video\gl\GLCompute.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
@@ -725,6 +731,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\video\BaseDriver.cpp">
+      <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\ShaderProgramCache.cpp">
       <Filter>Source Files\video</Filter>
     </ClCompile>
     <ClCompile Include="src\video\gl\GLCompute.cpp">

@@ -101,6 +101,7 @@ namespace t850 {
     void UploadShadowSamplingCB(const SceneProps& props);
 
     ShaderKey	sigBase;
+    ShaderFamilyId m_shaderFamily;
     ConstantBuffer* pd3dConstantBuffer = nullptr;
     ConstantBuffer* FrameCBGPU = nullptr;
     ConstantBuffer* PassCBGPU = nullptr;

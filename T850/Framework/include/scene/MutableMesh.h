@@ -54,6 +54,7 @@ private:
   std::string m_fragmentShaderSource;
   std::string m_vertexShaderName;
   std::string m_fragmentShaderName;
+  ShaderFamilyId m_shaderFamily;
   bool m_created = false;
   bool m_shadersCompiled = false;
 };

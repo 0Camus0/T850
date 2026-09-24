@@ -81,13 +81,15 @@ The Windows host applies the setting on every WebGPU driver creation through
 `[WebGPU] startup shaderFlow=... (before asset loading)`; per-shader logs report
 the actual successful flow and cache state. Source-language cache identities stay
 separate. Both Windows launchers show a **Shader Flow** selector only for WebGPU:
-**WGSL preferred (auto)** or **SPIR-V (HLSL translation)**. They persist
+**WGSL preferred (auto)**, **WGSL only (strict)** or
+**SPIR-V (HLSL translation)**. They persist
 `webgpuShaderFlow` and pass it explicitly on the next RUN; no engine rebuild is
 needed, and changing the selection does not switch an already-running process.
 Older launcher configs without a supported selection default to `auto`.
-Strict `wgsl` remains available from the CLI, not the launcher, because normal
-startup still needs anonymous HLSL helpers. No fixture is injected, and T8ditor
-does not use this CLI parser or support WebGPU rendering yet.
+The Compile Shaders action also runs all three WebGPU flows. Strict `wgsl`
+intentionally fails if a selected runtime path requests anonymous HLSL without a
+paired WGSL source. No fixture is injected, and T8ditor does not use this CLI
+parser or support WebGPU rendering.
 
 **Normal runtime selection works in `auto` and `spirv`; strict `wgsl` still has an anonymous-source limitation.**
 The known DOF, CoC, shadow/SSAO, refraction and lightmap derivative-uniformity
@@ -104,8 +106,6 @@ resource defects, including VoxelScene's missing environment binding. Those
 defects are fixed; residual image differences are not silently treated as passes.
 See the [runtime handoff](../rendering/webgpu-runtime-summary.md) for current
 measurements, accepted exceptions, native checkpoint caveats and remaining work.
-
-## JSON Shape
 
 ## Native D3D12 Shader Compiler Flow
 
@@ -140,6 +140,8 @@ flows does not evict the other flow's warm cache. Debug builds use
 `d3d12-debug` and `d3d12-legacy-debug`, preventing `-Zi/-Od` artifacts from
 colliding with optimized Release bytecode. Runtime logs identify the selected
 flow, profile, and bytecode kind.
+
+## JSON Shape
 
 Root fields accepted by `RuntimeConfigJson` include:
 
@@ -314,13 +316,11 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 --benchmarkSeconds N
 --benchmarkFrames N
 --benchmarkFixedDt SECONDS
-```
-
 --benchmarkHoldFrame N
 --benchmarkNoPresent
-Benchmark matrix mode forces DayScene, D3D11 startup, 1920x1080, and onscreen start settings before the internal matrix runs.
+```
 
-### Logging, Profiling, and Telemetry
+Benchmark matrix mode forces DayScene, D3D11 startup, 1920x1080, and onscreen start settings before the internal matrix runs.
 `--benchmarkHoldFrame N` freezes simulation and physics at runtime frame `N` by
 setting their effective delta to zero while rendering and presentation continue
 without the fixed-delta wall-clock pacer. The runtime logs the held frame, uncapped
@@ -330,6 +330,8 @@ ordinary gameplay pause.
 `--benchmarkNoPresent` forces the offscreen submit path and suppresses progress
 presentation entirely. The completion marker is emitted only after `WaitForGPU`,
 so its throughput includes the final queue drain and excludes DWM/swapchain pacing.
+
+### Logging, Profiling, and Telemetry
 
 ```text
 --logLevel error|info|debug|verbose|trace|0..4

@@ -8,6 +8,7 @@
 #define T800_D3D12PIPELINEKEY_H
 
 #include <Config.h>
+#include <video/BaseDriver.h>
 
 #ifdef OS_WINDOWS
 
@@ -22,7 +23,7 @@ namespace t850 {
   //  D3D12 Pipeline State cache key
   // ══════════════════════════════════════════════════════
   struct D3D12PipelineKey {
-    uintptr_t shaderPtr;   // shader object address — unique per shader
+    ShaderProgramKey program;
     uint8_t  blend;
     uint8_t  depth;
     uint8_t  cull;
@@ -31,7 +32,7 @@ namespace t850 {
     std::array<DXGI_FORMAT, 8> rtvFormats;
     DXGI_FORMAT dsvFormat;
     bool operator==(const D3D12PipelineKey& o) const {
-      return shaderPtr == o.shaderPtr && blend == o.blend &&
+      return program == o.program && blend == o.blend &&
              depth == o.depth && cull == o.cull && topology == o.topology &&
              numRTVs == o.numRTVs &&
              rtvFormats == o.rtvFormats && dsvFormat == o.dsvFormat;
@@ -40,7 +41,7 @@ namespace t850 {
 
   struct D3D12PipelineKeyHash {
     size_t operator()(const D3D12PipelineKey& k) const {
-      size_t h = std::hash<uintptr_t>()(k.shaderPtr);
+      size_t h = ShaderProgramKeyHash()(k.program);
       h ^= std::hash<uint8_t>()(k.blend)    << 1;
       h ^= std::hash<uint8_t>()(k.depth)    << 2;
       h ^= std::hash<uint8_t>()(k.cull)     << 3;

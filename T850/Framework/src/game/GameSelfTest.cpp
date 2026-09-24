@@ -47,6 +47,11 @@
 #include <utils/ShaderPermutationDump.h>
 #include <utils/ResourceLocator.h>
 #include <video/webgpu/WebGPUShaderCompiler.h>
+#include <video/MutableGraphicsStateCache.h>
+#if defined(OS_WINDOWS)
+#include <video/d3d12/D3D12PipelineKey.h>
+#include <video/vulkan/VulkanPipelineKey.h>
+#endif
 #include <scene/SceneSetup.h>
 #include <core/Core.h>
 #include <utils/XDataBase.h>
@@ -1923,10 +1928,12 @@ public:
   bool cubeTargets = false;
   bool depth16 = false;
   bool comparisonSamplers = false;
+  ShaderProgramFlow shaderFlow = ShaderProgramFlow::Default;
   const char* ApiTag() const override { return apiTag; }
   bool SupportsRenderTargetMipGeneration() const override { return mipGeneration; }
   bool SupportsCubeRenderTargets() const override { return cubeTargets; }
   bool SupportsComparisonSamplers() const override { return comparisonSamplers; }
+  ShaderProgramFlow GetShaderProgramFlow() const override { return shaderFlow; }
   bool SupportsRenderTargetDepthFormat(int format) const override {
     return (format == BaseRT::FD16 && depth16) || BaseDriver::SupportsRenderTargetDepthFormat(format);
   }
@@ -1961,6 +1968,125 @@ public:
     return std::make_unique<NullComputePipeline>(events);
   }
 };
+
+class ShaderIdentityTestShader final : public ShaderBase {
+public:
+  bool CreateShaderAPI(std::string, std::string, const std::string&, const std::string&) override { return true; }
+  void Set(const DeviceContext&) override {}
+  void DestroyAPIShader() override {}
+};
+
+class ShaderIdentityTestDevice final : public Device {
+public:
+  void* GetAPIObject() const override { return nullptr; }
+  void** GetAPIObjectReference() const override { return nullptr; }
+  void release() override {}
+  Buffer* CreateBuffer(BufferType::E, BufferDesc, void*) override { return nullptr; }
+  ShaderBase* CreateShader(std::string vertex, std::string fragment, ShaderKey key,
+                           const std::string& vertexName, const std::string& fragmentName) override {
+    auto* shader = new ShaderIdentityTestShader();
+    if (!shader->CreateShader(std::move(vertex), std::move(fragment), key, vertexName, fragmentName)) {
+      delete shader;
+      return nullptr;
+    }
+    return shader;
+  }
+  Texture* CreateTexture(std::string) override { return nullptr; }
+  Texture* CreateTextureFromMemory(const unsigned char*, int, int, int, std::string) override { return nullptr; }
+  Texture* CreateCubeMap(const unsigned char*, int, int) override { return nullptr; }
+  Texture* CreateFloatTexture(int, int, const float*) override { return nullptr; }
+  Texture* CreateFloatCubeMap(int, int, const float*) override { return nullptr; }
+  BaseRT* CreateRT(int, int, int, int, int, bool, bool) override { return nullptr; }
+};
+
+void TestShaderProgramIdentity() {
+  NullTestDriver driver;
+  ShaderIdentityTestDevice device;
+  struct DeviceGuard {
+    Device* previous = T8Device;
+    BaseDriver* previousDriver = g_pBaseDriver;
+    ~DeviceGuard() { T8Device = previous; g_pBaseDriver = previousDriver; }
+  } guard;
+  T8Device = &device;
+  g_pBaseDriver = &driver;
+
+  const ShaderKey permutation(42);
+  const int mesh = driver.CreateShader("mesh vertex", "mesh fragment", permutation,
+                                       "Shaders/VS_Mesh.hlsl", "Shaders/FS_Mesh.hlsl");
+  const int duplicate = driver.CreateShader("mesh vertex", "mesh fragment", permutation,
+                                            "Shaders/VS_Mesh.hlsl", "Shaders/FS_Mesh.hlsl");
+  const int quad = driver.CreateShader("quad vertex", "quad fragment", permutation,
+                                       "Shaders/VS_Quad.hlsl", "Shaders/FS_Quad.hlsl");
+
+  Require(mesh >= 0 && duplicate == mesh, "identical shader program identity was not deduplicated");
+  Require(quad >= 0 && quad != mesh, "different shader families with equal permutations were aliased");
+  Require(driver.m_shaders.size() == 2, "shader program cache created an unexpected program count");
+  const ShaderFamilyId meshFamily = BaseDriver::IdentifyShaderFamily(
+      "mesh vertex", "mesh fragment", "Shaders/VS_Mesh.hlsl", "Shaders/FS_Mesh.hlsl");
+  const ShaderFamilyId quadFamily = BaseDriver::IdentifyShaderFamily(
+      "quad vertex", "quad fragment", "Shaders/VS_Quad.hlsl", "Shaders/FS_Quad.hlsl");
+  Require(driver.GetShader(permutation, meshFamily) == driver.GetShaderIdx(mesh) &&
+          driver.GetShader(permutation, quadFamily) == driver.GetShaderIdx(quad) &&
+          driver.GetShader(driver.GetShaderIdx(mesh)->programKey) == driver.GetShaderIdx(mesh),
+          "family-qualified lookup did not resolve each shader program");
+    driver.shaderFlow = ShaderProgramFlow::WebGPUWgsl;
+    const int meshWgsl = driver.CreateShader("mesh vertex", "mesh fragment", permutation,
+               "Shaders/VS_Mesh.hlsl", "Shaders/FS_Mesh.hlsl");
+    Require(meshWgsl >= 0 && meshWgsl != mesh && driver.m_shaders.size() == 3,
+      "different shader flows with equal family and permutation were aliased");
+    Require(driver.GetShader(permutation, meshFamily) == driver.GetShaderIdx(meshWgsl),
+      "flow-qualified lookup did not resolve the selected shader program");
+  driver.DestroyShader(mesh);
+    Require(driver.GetShader(driver.GetShaderIdx(quad)->programKey) == driver.GetShaderIdx(quad) &&
+      driver.GetShader(driver.GetShaderIdx(meshWgsl)->programKey) == driver.GetShaderIdx(meshWgsl),
+      "destroying one shader program removed another family or flow");
+  driver.DestroyShaders();
+}
+
+void TestGraphicsPipelineProgramIdentity() {
+#if defined(OS_WINDOWS)
+  const ShaderProgramKey mesh{{11, 22}, 33, ShaderProgramFlow::Default};
+  const ShaderProgramKey quad{{44, 55}, 33, ShaderProgramFlow::Default};
+
+  D3D12PipelineKey d3dA{};
+  d3dA.program = mesh;
+  d3dA.rtvFormats.fill(DXGI_FORMAT_UNKNOWN);
+  D3D12PipelineKey d3dB = d3dA;
+  Require(d3dA == d3dB && D3D12PipelineKeyHash()(d3dA) == D3D12PipelineKeyHash()(d3dB),
+          "D3D12 pipeline key is not stable for one shader program");
+  d3dB.program = quad;
+  Require(!(d3dA == d3dB), "D3D12 pipeline key aliased different shader programs");
+
+  VulkanPipelineKey vkA{};
+  vkA.program = mesh;
+  VulkanPipelineKey vkB = vkA;
+  Require(vkA == vkB && VulkanPipelineKeyHash()(vkA) == VulkanPipelineKeyHash()(vkB),
+          "Vulkan pipeline key is not stable for one shader program");
+  vkB.program = quad;
+  Require(!(vkA == vkB), "Vulkan pipeline key aliased different shader programs");
+#endif
+}
+
+void TestMutableGraphicsStateCache() {
+  MutableGraphicsStateCache cache;
+  Require(cache.Select(MutableGraphicsStateCache::Slot::Blend, 1) &&
+    !cache.Select(MutableGraphicsStateCache::Slot::Blend, 1) &&
+    cache.Select(MutableGraphicsStateCache::Slot::Depth, 2) &&
+    !cache.Select(MutableGraphicsStateCache::Slot::Depth, 2) &&
+    cache.Select(MutableGraphicsStateCache::Slot::Cull, 0) &&
+    cache.Select(MutableGraphicsStateCache::Slot::Cull, 1),
+    "mutable graphics state cache did not distinguish changes from redundant requests");
+  Require(cache.Requests() == 6 && cache.Changes() == 4 && cache.Redundant() == 2,
+    "mutable graphics state cache accounting is inconsistent");
+    Require(cache.Requests(MutableGraphicsStateCache::Slot::Cull) == 2 &&
+      cache.Changes(MutableGraphicsStateCache::Slot::Cull) == 2 &&
+      cache.Redundant(MutableGraphicsStateCache::Slot::Blend) == 1,
+      "mutable graphics state cache per-slot accounting is inconsistent");
+  cache.Reset();
+  Require(cache.Requests() == 0 && cache.Changes() == 0 && cache.Redundant() == 0 &&
+    cache.Select(MutableGraphicsStateCache::Slot::Blend, 1),
+    "mutable graphics state cache reset retained stale state");
+}
 
 void TestProfilerAccounting() {
   NullTestDriver driver;
@@ -3420,6 +3546,9 @@ constexpr TestCase kTests[] = {
   {"T-VOXEL-AUTHORING-01", TestAuthoredStreamedVoxels},
   {"T-SCENE-RUNTIME-OWNERSHIP-01", TestSceneRuntimeOwnership},
   {"T-SHADER-PRECOMPILER-01", TestShaderPrecompilerContract},
+  {"T-SHADER-PROGRAM-IDENTITY-01", TestShaderProgramIdentity},
+  {"T-GRAPHICS-PIPELINE-IDENTITY-01", TestGraphicsPipelineProgramIdentity},
+  {"T-MUTABLE-GRAPHICS-STATE-CACHE-01", TestMutableGraphicsStateCache},
   {"T-COMPUTE-GRAPH-01", TestTypedComputeGraphValidation},
   {"T-GRAPH-MESH-PREPARATION-01", TestGraphMeshPreparation},
   {"T-PASS-FRUSTUM-REUSE-01", TestPassFrustumReuse},

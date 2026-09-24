@@ -320,7 +320,7 @@ jobs:
           "T850_EDGE_PATH=$edge" >> $env:GITHUB_ENV
           Write-Host "Native ${{ matrix.architecture }} Edge: $edge (${{ matrix.edge_machine }})"
 
-      - name: Run WebGPU compute self-test in native Edge
+      - name: Run WebGPU compute and recovery self-tests in native Edge
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -347,6 +347,8 @@ jobs:
             if (-not $ready) { throw 'Browser bundle server did not become ready.' }
             & node T850/web/test-firefox.mjs --browser edge --binary "$env:T850_EDGE_PATH" --headless --software-webgpu --compute-selftest --no-interactions --url 'http://127.0.0.1:8765/?scene=6&width=960&height=540' --output "T850/build/web/ci-${{ matrix.architecture }}-edge"
             if ($LASTEXITCODE -ne 0) { throw "Edge WebGPU test failed with exit code $LASTEXITCODE." }
+            & node T850/web/test-firefox.mjs --browser edge --binary "$env:T850_EDGE_PATH" --headless --software-webgpu --device-loss-recovery --no-interactions --url 'http://127.0.0.1:8765/?scene=4&width=640&height=360' --output "T850/build/web/ci-${{ matrix.architecture }}-edge-recovery"
+            if ($LASTEXITCODE -ne 0) { throw "Edge WebGPU recovery test failed with exit code $LASTEXITCODE." }
           } finally {
             if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
             $server.Dispose()
@@ -359,7 +361,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: T850-Web-${{ matrix.architecture }}-Edge-Report
-          path: T850/build/web/ci-${{ matrix.architecture }}-edge
+          path: T850/build/web/ci-${{ matrix.architecture }}-edge*
           if-no-files-found: warn
 
   android:

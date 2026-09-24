@@ -69,22 +69,22 @@ function Test-Launcher([string]$Name) {
     try {
         if ($Name -eq 'Launcher_Release.ps1') {
             Assert-True (-not (Test-WebGpuSupported)) 'Missing release executable accepted'
-            foreach ($machine in @(0xAA64, 0x014C)) {
-                Write-TestExecutable $machine
-                Assert-True (-not (Test-WebGpuSupported)) 'Non-x64 release binary accepted'
-            }
+            Write-TestExecutable 0x014C
+            Assert-True (-not (Test-WebGpuSupported)) 'Win32 release binary accepted WebGPU'
+            Write-TestExecutable 0xAA64
+            Assert-True (Test-WebGpuSupported) 'Portable launcher rejected ARM64 WebGPU runtime'
             Write-TestExecutable 0x8664
         }
         Assert-True (Test-WebGpuSupported) "$Name rejected x64"
         $compileJobs = @(Get-ShaderCompileCommands)
-        Assert-True (($compileJobs.Name -join ',') -eq 'd3d11-native,d3d12-native,vulkan-native,gl-native,webgpu-auto,webgpu-spirv') 'Shader compilation must include all APIs and both working WebGPU flows'
+        Assert-True (($compileJobs.Name -join ',') -eq 'd3d11-native,d3d12-native,vulkan-native,gl-native,webgpu-auto,webgpu-wgsl,webgpu-spirv') 'Shader compilation must include all APIs and all three WebGPU flows'
         foreach ($job in $compileJobs) {
             Assert-True ($job.Args[0] -eq '--compileShaders' -and $job.Args -notcontains '--scene' -and $job.Args -notcontains '--graphics-fixture') 'Shader precompile must not load a scene or fixture'
             Assert-True ($job.WorkingDirectory -eq (Split-Path $job.ExePath)) 'Shader precompile working directory differs from normal runtime'
         }
         foreach ($api in @('webgpu', 'd3d12', 'd3d11', 'vulkan', 'gl')) {
             $cmbApi.SelectedItem.Tag = $api
-            foreach ($flow in @('auto', 'spirv')) {
+            foreach ($flow in @('auto', 'wgsl', 'spirv')) {
                 $cmbShaderFlow.SelectedItem.Tag = $flow
                 foreach ($postProcessMode in @('raster', 'compute')) {
                     $cmbPostProcessMode.SelectedItem.Tag = $postProcessMode
@@ -94,11 +94,12 @@ function Test-Launcher([string]$Name) {
                     Assert-True (($command.Args -join ' ') -eq "--api $api --postProcessMode $postProcessMode$flowArgs --scene 4 --culling frustum --sceneFile `"Scenes/Test.t8scene`" --width 960 --height 540 --logLevel info") "$Name did not preserve normal arguments, post-process mode, and WebGPU-only shader flow $flow for $api"
                     Assert-True ($command.Display.StartsWith('"' + $command.ExePath + '" ')) 'Executable path with spaces is not quoted'
                     Assert-True ($command.ExePath.StartsWith($rootDir)) 'Unexpected executable location'
-                    Assert-True ((Get-EditorLaunchCommand).Args -notcontains '--shaderFlow') 'Runtime shader flow leaked into editor startup'
+                    if ($api -eq 'webgpu') {
+                        Assert-Rejected { Get-EditorLaunchCommand } 'WebGPU editor command was accepted'
+                    } else {
+                        Assert-True ((Get-EditorLaunchCommand).Args -notcontains '--shaderFlow') 'Runtime shader flow leaked into editor startup'
+                    }
                 }
-            }
-            if ($api -eq 'webgpu') {
-                Assert-True ((Get-EditorLaunchCommand).Args[1] -eq 'webgpu') 'WebGPU editor silently remapped'
             }
         }
         $cmbApi.SelectedItem.Tag = 'webgpu-browser'
@@ -161,19 +162,23 @@ function Test-Launcher([string]$Name) {
         }
         $cmbApi.SelectedItem.Tag = 'webgpu'
         if ($Name -eq 'Launcher.ps1') {
-            foreach ($architecture in @('x86', 'ARM64')) {
-                $cmbArch.SelectedItem.Content = $architecture
-                Assert-Rejected { Get-LaunchCommand } 'Unsupported Windows architecture accepted'
-                Assert-Rejected { Get-EditorLaunchCommand } 'Unsupported editor architecture accepted'
-                Assert-True (@(Get-ShaderCompileCommands).Count -eq 4) 'Non-x64 shader precompile must omit WebGPU only'
-            }
+            $cmbArch.SelectedItem.Content = 'x86'
+            Assert-Rejected { Get-LaunchCommand } 'Win32 WebGPU runtime accepted'
+            Assert-Rejected { Get-EditorLaunchCommand } 'Win32 WebGPU editor accepted'
+            Assert-True (@(Get-ShaderCompileCommands).Count -eq 4) 'Win32 shader precompile must omit WebGPU only'
+            $cmbArch.SelectedItem.Content = 'ARM64'
+            Assert-True ((Get-LaunchCommand).Args -contains 'webgpu') 'ARM64 WebGPU runtime rejected'
+            Assert-Rejected { Get-EditorLaunchCommand } 'ARM64 WebGPU editor accepted'
+            Assert-True (@(Get-ShaderCompileCommands).Count -eq 7) 'ARM64 shader precompile omitted WebGPU flows'
             $cmbArch.SelectedItem.Content = 'x64'
             $android = $true
             Assert-Rejected { Get-LaunchCommand } 'Android WebGPU accepted'
             Assert-Rejected { Get-ShaderCompileCommands } 'Android target accepted desktop precompile jobs'
         } else {
             Write-TestExecutable 0xAA64
-            Assert-True (@(Get-ShaderCompileCommands).Count -eq 4) 'Portable non-x64 shader precompile must omit WebGPU'
+            Assert-True (Test-WebGpuSupported) 'Portable ARM64 WebGPU runtime rejected'
+            Assert-True (@(Get-ShaderCompileCommands).Count -eq 7) 'Portable ARM64 shader precompile omitted WebGPU flows'
+            Assert-Rejected { Get-EditorLaunchCommand } 'Portable ARM64 WebGPU editor accepted'
         }
         Write-Output "$Name WebGPU command tests PASS"
     } finally {
@@ -239,21 +244,26 @@ function Test-DawnPreflight {
     $script:TestDawnCheckCalls = 0
     function Test-CommandExists { param([string]$Command) return $cmakeAvailable }
     function Invoke-DawnPackageCheck {
+        param([string]$Architecture)
         $script:TestDawnCheckCalls++
-        return [pscustomobject]@{ ExitCode = $checkExitCode; Output = 'stale ABI fixture' }
+        return [pscustomobject]@{ ExitCode = $checkExitCode; Output = "stale $Architecture ABI fixture" }
     }
     try {
-        foreach ($platform in @('x86', 'ARM64')) { Assert-True ((Get-DawnSetupStatus $platform).Missing.Count -eq 0) 'Non-x64 requires Dawn' }
+        Assert-True ((Get-DawnSetupStatus 'x86').Missing.Count -eq 0) 'Win32 requires Dawn'
         Assert-True ((Get-DawnSetupStatus 'x64').Missing[0] -like 'CMake*') 'Missing CMake not detected'
+        Assert-True ((Get-DawnSetupStatus 'ARM64').Missing[0] -like 'CMake*') 'Missing ARM64 CMake not detected'
         Assert-True ($script:TestDawnCheckCalls -eq 0) 'Dawn audit ran without prerequisites'
         $cmakeAvailable = $true
         Assert-True ((Get-DawnSetupStatus 'x64').Missing[0] -eq 'Dawn setup script') 'Missing setup script not detected'
         [void][IO.Directory]::CreateDirectory((Join-Path $rootDir 'scripts'))
         [IO.File]::WriteAllText((Join-Path $rootDir 'scripts/SetupDawn.ps1'), '')
         $status = Get-DawnSetupStatus 'x64'
-        Assert-True ($status.Missing.Count -eq 1 -and $status.Diagnostic -eq 'stale ABI fixture') 'Dawn audit failure was discarded'
+        Assert-True ($status.Missing.Count -eq 1 -and $status.Diagnostic -eq 'stale x64 ABI fixture') 'Dawn audit failure was discarded'
+        $status = Get-DawnSetupStatus 'ARM64'
+        Assert-True ($status.Missing.Count -eq 1 -and $status.Diagnostic -eq 'stale ARM64 ABI fixture') 'ARM64 Dawn audit failure was discarded'
         $checkExitCode = 0
         Assert-True ((Get-DawnSetupStatus 'x64').Missing.Count -eq 0) 'Valid Dawn audit rejected'
+        Assert-True ((Get-DawnSetupStatus 'ARM64').Missing.Count -eq 0) 'Valid ARM64 Dawn audit rejected'
         Write-Output 'Launcher Dawn preflight tests PASS'
     } finally {
         if (Test-Path $rootDir) { Remove-Item $rootDir -Recurse -Force }
@@ -410,7 +420,7 @@ function Test-LauncherUi([string]$Name) {
         [IO.File]::WriteAllBytes((Join-Path $runtime 'DayScene.exe'), $bytes)
         [IO.File]::WriteAllBytes((Join-Path $runtime 'T8ditor.exe'), $bytes)
         Assert-True ($cmbPostProcessMode.Items.Count -eq 2 -and $cmbPostProcessMode.SelectedItem.Tag -eq 'raster') 'Post-process selector must default to raster and offer both execution modes'
-        Assert-True ($cmbShaderFlow.Items.Count -eq 2 -and $cmbShaderFlow.SelectedItem.Tag -eq 'auto') 'Shader selector must default to WGSL-first and offer the two working runtime flows'
+        Assert-True ($cmbShaderFlow.Items.Count -eq 3 -and $cmbShaderFlow.SelectedItem.Tag -eq 'auto') 'Shader selector must default to WGSL-first and offer all three runtime flows'
         Assert-True ($pnlShaderFlow.Visibility -eq 'Collapsed') 'Shader selector must initially be hidden for native APIs'
         $flowEvent = $ast.Find({ param($node) $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Extent.Text -eq '$cmbShaderFlow.Add_SelectionChanged({ Update-Preview })' }, $true)
         Assert-True ($null -ne $flowEvent) 'Shader selector is not wired to refresh the command preview'
@@ -442,14 +452,14 @@ function Test-LauncherUi([string]$Name) {
         Assert-True $btnCompileShaders.IsEnabled 'Shader compile button unavailable with an executable'
         Assert-True (-not $btnEditor.IsEnabled) 'Unimplemented editor API could silently fall through to native D3D12'
         Assert-True ($txtStatus.Text -eq 'WebGPU: runtime forward/deferred rendering; editor unavailable.') 'WebGPU runtime/editor capabilities were reported incorrectly'
-        Assert-True ((Get-EditorLaunchCommand).Args[1] -eq 'webgpu') 'WebGPU editor selection was remapped'
-        foreach ($flow in @('spirv', 'auto')) {
+        Assert-Rejected { Get-EditorLaunchCommand } 'WebGPU editor selection was accepted'
+        foreach ($flow in @('spirv', 'wgsl', 'auto')) {
             $cmbShaderFlow.SelectedItem = @($cmbShaderFlow.Items | Where-Object Tag -eq $flow)[0]
             Assert-True ($txtCmdPreview.Text.Contains("--shaderFlow $flow")) 'Changing shader flow did not immediately refresh the preview'
             Save-Config
             $savedConfig = Get-Content $configPath -Raw | ConvertFrom-Json
             Assert-True ($savedConfig.webgpuShaderFlow -eq $flow) 'Shader flow was not persisted'
-            $cmbShaderFlow.SelectedIndex = 1 - $cmbShaderFlow.SelectedIndex
+            $cmbShaderFlow.SelectedIndex = 0
             Set-Api 'd3d12'
             Load-Config
             Assert-True ((Test-WebGpuSelected) -and $cmbShaderFlow.SelectedItem.Tag -eq $flow) 'WebGPU API/shader flow config round trip failed'
@@ -465,13 +475,13 @@ function Test-LauncherUi([string]$Name) {
             Load-Config
             Assert-True ($cmbPostProcessMode.SelectedItem.Tag -eq $postProcessMode) 'Post-process mode config round trip failed'
         }
-        foreach ($configuredFlow in @($null, 'unknown', 'SPIRV')) {
+        foreach ($configuredFlow in @($null, 'unknown', 'SPIRV', 'WGSL')) {
             $savedConfig = @{ api = 'webgpu' }
             if ($null -ne $configuredFlow) { $savedConfig.webgpuShaderFlow = $configuredFlow }
             $savedConfig | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
             $cmbShaderFlow.SelectedIndex = 1
             Load-Config
-            $expectedFlow = if ($configuredFlow -eq 'SPIRV') { 'spirv' } else { 'auto' }
+            $expectedFlow = if ($configuredFlow -eq 'SPIRV') { 'spirv' } elseif ($configuredFlow -eq 'WGSL') { 'wgsl' } else { 'auto' }
             Assert-True ($cmbShaderFlow.SelectedItem.Tag -eq $expectedFlow) 'Legacy/default or case-insensitive shader-flow loading failed'
         }
         Set-Api 'd3d12'
@@ -512,14 +522,20 @@ function Test-LauncherUi([string]$Name) {
         Assert-True ($btnRun.IsEnabled -and $btnEditor.IsEnabled -and $chkTelemetry.IsEnabled -and $btnRun.Content -match 'RUN') 'Returning from browser changed native controls'
         Set-Api 'webgpu'
         Update-Preview
-        Assert-True ($cmbShaderFlow.SelectedItem.Tag -eq 'spirv' -and $txtCmdPreview.Text.Contains('--shaderFlow spirv')) 'Switching APIs lost the selected shader flow'
+        Assert-True ($cmbShaderFlow.SelectedItem.Tag -eq 'wgsl' -and $txtCmdPreview.Text.Contains('--shaderFlow wgsl')) 'Switching APIs lost the selected shader flow'
         if ($Name -eq 'Launcher.ps1') {
-            foreach ($architecture in @('ARM64', 'x86')) {
-                $cmbArch.SelectedItem = @($cmbArch.Items | Where-Object Content -eq $architecture)[0]
-                Update-Preview
-                Assert-True (-not $btnRun.IsEnabled -and -not $btnEditor.IsEnabled -and $txtStatus.Text -match 'requires Windows x64') 'Unsupported architecture was not blocked'
-                Assert-True (-not $cmbShaderFlow.IsEnabled) 'Unsupported architecture enabled the shader selector'
-            }
+            $armRuntime = Join-Path $rootDir 'bin/ARM64/Release'
+            [void][IO.Directory]::CreateDirectory($armRuntime)
+            $armBytes = [byte[]]$bytes.Clone()
+            $armBytes[68] = 0x64; $armBytes[69] = 0xAA
+            [IO.File]::WriteAllBytes((Join-Path $armRuntime 'DayScene.exe'), $armBytes)
+            $cmbArch.SelectedItem = @($cmbArch.Items | Where-Object Content -eq 'ARM64')[0]
+            Update-Preview
+            Assert-True ($btnRun.IsEnabled -and -not $btnEditor.IsEnabled -and $cmbShaderFlow.IsEnabled) 'ARM64 WebGPU runtime selection was blocked'
+            $cmbArch.SelectedItem = @($cmbArch.Items | Where-Object Content -eq 'x86')[0]
+            Update-Preview
+            Assert-True (-not $btnRun.IsEnabled -and -not $btnEditor.IsEnabled -and $txtStatus.Text -match 'requires Windows x64 or ARM64') 'Unsupported Win32 architecture was not blocked'
+            Assert-True (-not $cmbShaderFlow.IsEnabled) 'Unsupported architecture enabled the shader selector'
             $cmbArch.SelectedItem = @($cmbArch.Items | Where-Object Content -eq 'x64')[0]
             Update-Preview
             Assert-True $btnRun.IsEnabled 'Returning to x64 did not restore RUN'

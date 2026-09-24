@@ -32,6 +32,7 @@
 #include <utils/ThreadPool.h>
 #include <utils/Log.h>
 #include <utils/ConfigRuntime.h>
+#include <debug/Profiler.h>
 #include <debug/RuntimeTelemetry.h>
 #include <navigation/NavigationSystem.h>
 
@@ -419,11 +420,25 @@ namespace t850 {
   void Win32Framework::OnDestroyApplication() {
     ReleaseMouseMode();
     ShutdownGamepads();
-    pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
-    pBaseApp->DestroyAssets();
+    std::string deviceFailure;
+    const bool deviceLost = pVideoDriver && pVideoDriver->GetDeviceFailure(deviceFailure);
+    if (pVideoDriver) {
+      try { pVideoDriver->FlushGPUResources(); }
+      catch (const std::exception& error) {
+        if (!deviceLost) throw;
+        T8_LOG_ERROR("[Framework][DeviceLoss] Flush during shutdown: %s", error.what());
+      }
+    }
+    if (pVideoDriver) pBaseApp->DestroyAssets();
     RuntimeTelemetry::Shutdown();
-    pVideoDriver->DestroyDriver();
-    delete pVideoDriver;
+    if (pVideoDriver) {
+      try { pVideoDriver->DestroyDriver(); }
+      catch (const std::exception& error) {
+        if (!deviceLost) throw;
+        T8_LOG_ERROR("[Framework][DeviceLoss] Driver shutdown: %s", error.what());
+      }
+      delete pVideoDriver;
+    }
     pVideoDriver = nullptr;
     g_pBaseDriver = nullptr;
     ShutdownGlobalThreadPool();
@@ -445,10 +460,44 @@ namespace t850 {
   }
   void Win32Framework::UpdateApplication() {
     while (m_alive) {
-      ProcessInput();
-      pBaseApp->OnUpdate();
+      try {
+        ProcessInput();
+        pBaseApp->OnUpdate();
+        if (m_deviceRecoveryPending) {
+          T8_LOG_INFO("[Framework][DeviceLoss] WebGPU recovery completed after a successful frame");
+          m_deviceRecoveryPending = false;
+          m_deviceRecoveryAttempts = 0;
+        }
+      } catch (const std::exception& error) {
+        if (!HandleGraphicsFailure(error)) throw;
+      }
     }
     ReleaseMouseMode();
+  }
+
+  bool Win32Framework::HandleGraphicsFailure(const std::exception& error) {
+    std::string deviceFailure;
+    if (!pVideoDriver || pVideoDriver->m_currentAPI != GraphicsApi::WEBGPU ||
+        !pVideoDriver->GetDeviceFailure(deviceFailure)) return false;
+    if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::EndFrame();
+    if (g_profiler) g_profiler->EndFrame();
+    T8_LOG_ERROR("[Framework][DeviceLoss] Frame failed: %s; device=%s",
+                 error.what(), deviceFailure.c_str());
+    if (m_deviceRecoveryAttempts >= 1) {
+      T8_LOG_ERROR("[Framework][DeviceLoss] Recovery exhausted; shutting down cleanly");
+      m_alive = false;
+      return true;
+    }
+    ++m_deviceRecoveryAttempts;
+    m_deviceRecoveryPending = true;
+    try {
+      ChangeAPI(GraphicsApi::WEBGPU);
+      T8_LOG_INFO("[Framework][DeviceLoss] Recreated WebGPU renderer and scene; validating next frame");
+    } catch (const std::exception& recoveryError) {
+      T8_LOG_ERROR("[Framework][DeviceLoss] Recovery failed: %s", recoveryError.what());
+      m_alive = false;
+    }
+    return true;
   }
   void Win32Framework::ProcessInput() {
     pBaseApp->IManager.scrollDelta = 0.0f;
@@ -671,12 +720,22 @@ namespace t850 {
                 t850::config::ApiTag(api));
     if (m_inited) {
       ReleaseMouseMode();
-      pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
+      std::string deviceFailure;
+      const bool deviceLost = pVideoDriver && pVideoDriver->GetDeviceFailure(deviceFailure);
+      try { pVideoDriver->FlushGPUResources(); }
+      catch (const std::exception& error) {
+        if (!deviceLost) throw;
+        T8_LOG_ERROR("[Framework][DeviceLoss] Flush before recreation: %s", error.what());
+      }
       pBaseApp->DestroyAssets();
       MeshAssetCache::Get().Clear();
       MaterialAssetCache::Get().Clear();
       pBaseApp->resourceManager.Release();
-      pVideoDriver->DestroyDriver();
+      try { pVideoDriver->DestroyDriver(); }
+      catch (const std::exception& error) {
+        if (!deviceLost) throw;
+        T8_LOG_ERROR("[Framework][DeviceLoss] Driver teardown before recreation: %s", error.what());
+      }
       delete pVideoDriver;
       pVideoDriver = nullptr;
       g_pBaseDriver = nullptr;

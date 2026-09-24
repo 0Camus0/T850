@@ -672,8 +672,8 @@ changes. These are simulated display sizes, not changes to Windows display setti
 
 Both Windows launchers also have a **Compile Shaders** button in the Graphics API
 section. It compiles every entry in `Shaders/shader_permutations.json` through
-D3D11, D3D12, Vulkan and OpenGL, plus WebGPU `auto` and `spirv` on x64/ARM64. It uses the
-selected architecture/configuration in the developer launcher and the adjacent
+D3D11, D3D12, Vulkan and OpenGL, plus WebGPU `auto`, `wgsl` and `spirv` on
+x64/ARM64. It uses the selected architecture/configuration in the developer launcher and the adjacent
 DayScene executable in the portable launcher. No scene assets or development
 compiler tools are required beyond the shipped shaders, manifest and runtime.
 The engine itself must include the `--compileShaders` mode. This mode currently
@@ -714,14 +714,16 @@ Selecting WebGPU reveals the **Shader Flow** dropdown in both launchers:
 
 - **WGSL preferred (auto)**: the default, preferring named WGSL sources with HLSL
 	translation available for missing sources and anonymous helpers.
+- **WGSL only (strict)**: direct WGSL only; missing paired WGSL is a hard failure.
 - **SPIR-V (HLSL translation)**: strict HLSL -> glslang/SPIR-V -> Tint/WGSL.
 
 The choice is saved as `webgpuShaderFlow` and appears as `--shaderFlow` in the
 runtime command preview. It takes effect on the next RUN without rebuilding the
 engine. Switching away from WebGPU hides the control and omits the argument while
 retaining the choice. Unsupported targets disable the selector. Old configs
-without a supported value default to `auto`. Strict `wgsl` is CLI-only until
-anonymous HLSL helpers have WGSL counterparts.
+without a supported value default to `auto`. Strict `wgsl` remains deliberately
+strict: runtime paths that require anonymous HLSL helpers without WGSL counterparts
+fail rather than translating or falling back.
 
 Automatic fixture capture directories and completion UI remain removed; the
 selector uses normal scene startup. Explicit command-line developer tests remain

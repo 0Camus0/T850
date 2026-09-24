@@ -511,6 +511,7 @@ namespace t850 {
     mutable double m_cullingCpuMs = 0.0;
 
     Texture*	d3dxEnvMap;
+    ShaderFamilyId m_shaderFamily;
 
     XMATRIX44	transform;
     XDataBase*	xFile;

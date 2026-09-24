@@ -208,7 +208,19 @@ namespace t850 {
     device->CreateDepthStencilState(&BlendDesc, m_depthStateRead.ReleaseAndGetAddressOf());
 
     /*RASTERIZER STATES*/
-
+    const auto createRasterizerState = [&](D3D11_CULL_MODE cullMode, ComPtr<ID3D11RasterizerState>& result) {
+      D3D11_RASTERIZER_DESC desc = {};
+      desc.FillMode = D3D11_FILL_SOLID;
+      desc.CullMode = cullMode;
+      desc.DepthClipEnable = TRUE;
+      return device->CreateRasterizerState(&desc, result.ReleaseAndGetAddressOf());
+    };
+    if (FAILED(createRasterizerState(D3D11_CULL_NONE, m_RasterStateCullNone)) ||
+        FAILED(createRasterizerState(D3D11_CULL_BACK, m_RasterStateCullClockWise)) ||
+        FAILED(createRasterizerState(D3D11_CULL_FRONT, m_RasterStateCullCounterClockwise))) {
+      T8_LOG_ERROR("[D3D11] Failed to create immutable rasterizer state cache");
+    }
+    m_stateCache.Reset();
 
     //SetBlendState(BlendStates::BLEND_DEFAULT);
     //SetDepthStencilState(DepthStencilStates::DEPTH_DEFAULT);
@@ -227,6 +239,12 @@ namespace t850 {
   }
 
   void D3DXDriver::DestroyDriver() {
+    T8_LOG_INFO("[D3D11] Mutable state cache: requests=%llu changes=%llu redundant=%llu objects=10 cullRequests=%llu cullChanges=%llu",
+                static_cast<unsigned long long>(m_stateCache.Requests()),
+                static_cast<unsigned long long>(m_stateCache.Changes()),
+          static_cast<unsigned long long>(m_stateCache.Redundant()),
+          static_cast<unsigned long long>(m_stateCache.Requests(MutableGraphicsStateCache::Slot::Cull)),
+          static_cast<unsigned long long>(m_stateCache.Changes(MutableGraphicsStateCache::Slot::Cull)));
     DestroyShaders();
     DestroyRTs();
     DestroyTextures();
@@ -360,6 +378,9 @@ namespace t850 {
 
   void D3DXDriver::SetBlendState(BlendStates state)
   {
+    const BlendStates selected = state == BLEND_DEFAULT ? BLEND_OPAQUE : state;
+    T8_TRACE(EvSetBlend((int)state));
+    if (!m_stateCache.Select(MutableGraphicsStateCache::Slot::Blend, static_cast<uint8_t>(selected))) return;
     static const char* names[] = {"BLEND_DEFAULT","BLEND_OPAQUE","ADDITIVE","ALPHA_BLEND","NON_PREMULTIPLIED"};
     T8_LOG_TRACE("[D3D11] SetBlendState(%s)", (state >= 0 && state <= 4) ? names[state] : "?");
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
@@ -383,7 +404,6 @@ namespace t850 {
     default:
       break;
     }
-    T8_TRACE(EvSetBlend((int)state));
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
 #endif
@@ -391,6 +411,9 @@ namespace t850 {
 
   void D3DXDriver::SetDepthStencilState(DepthStencilStates state)
   {
+    const DepthStencilStates selected = state == DEPTH_DEFAULT ? READ_WRITE : state;
+    T8_TRACE(EvSetDepth((int)state));
+    if (!m_stateCache.Select(MutableGraphicsStateCache::Slot::Depth, static_cast<uint8_t>(selected))) return;
     static const char* names[] = {"DEPTH_DEFAULT","READ_WRITE","NONE","READ"};
     T8_LOG_TRACE("[D3D11] SetDepthStencilState(%s)", (state >= 0 && state <= 3) ? names[state] : "?");
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
@@ -411,7 +434,6 @@ namespace t850 {
     default:
       break;
     }
-    T8_TRACE(EvSetDepth((int)state));
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
 #endif
@@ -419,29 +441,17 @@ namespace t850 {
 
   void D3DXDriver::SetCullFace(FaceCulling state) {
     m_FaceCulling = state;
-
-    ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
-    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
-
-    D3D11_RASTERIZER_DESC rd = {};
-    rd.FillMode = D3D11_FILL_SOLID;
-    rd.DepthClipEnable = TRUE;
-    rd.MultisampleEnable = FALSE;
-    rd.AntialiasedLineEnable = FALSE;
-
-    switch (state) {
-      case FRONT_FACES:       rd.CullMode = D3D11_CULL_BACK;  break;
-      case BACK_FACES:        rd.CullMode = D3D11_CULL_FRONT; break;
-      case FRONT_AND_BACK:    rd.CullMode = D3D11_CULL_NONE;  break;
-      default:                rd.CullMode = D3D11_CULL_BACK;  break;
-    }
-
-    ID3D11RasterizerState* rs = nullptr;
-    if (SUCCEEDED(device->CreateRasterizerState(&rd, &rs))) {
-      deviceContext->RSSetState(rs);
-      rs->Release();
-    }
     T8_TRACE(EvSetCull((int)state));
+    if (!m_stateCache.Select(MutableGraphicsStateCache::Slot::Cull, static_cast<uint8_t>(state))) return;
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    ID3D11RasterizerState* rasterizer = nullptr;
+    switch (state) {
+      case FRONT_FACES: rasterizer = m_RasterStateCullClockWise.Get(); break;
+      case BACK_FACES: rasterizer = m_RasterStateCullCounterClockwise.Get(); break;
+      case FRONT_AND_BACK: rasterizer = m_RasterStateCullNone.Get(); break;
+      default: rasterizer = m_RasterStateCullClockWise.Get(); break;
+    }
+    deviceContext->RSSetState(rasterizer);
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
 #endif

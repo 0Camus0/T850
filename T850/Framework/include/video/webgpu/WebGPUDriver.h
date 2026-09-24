@@ -73,6 +73,7 @@ public:
   WGPUTextureView TextureView(Texture* texture) const;
   webgpu::WebGPUContext& TimestampContext();
 private:
+  ShaderProgramFlow GetShaderProgramFlow() const override;
   std::unique_ptr<WebGPUDriverState> m_state;
 };
 }

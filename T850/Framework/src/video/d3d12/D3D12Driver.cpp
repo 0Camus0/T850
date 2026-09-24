@@ -235,6 +235,18 @@ namespace t850 {
   //  D3D12Driver — PSO Cache
   // ══════════════════════════════════════════════════════
 
+  void D3D12Driver::OnShaderDestroying(ShaderBase& shader) {
+    m_psoCacheEvictions += std::erase_if(m_psoCache, [&](const auto& entry) {
+      return entry.first.program == shader.programKey;
+    });
+  }
+
+  ShaderProgramFlow D3D12Driver::GetShaderProgramFlow() const {
+    return g_config.webgpuShaderFlow == "legacyhlsl"
+      ? ShaderProgramFlow::D3D12LegacyHlsl
+      : ShaderProgramFlow::D3D12Dxc;
+  }
+
   ID3D12PipelineState* D3D12Driver::GetOrCreatePSO(D3D12Shader* shader, uint8_t numRTVs,
                                                      const DXGI_FORMAT* rtvFormats, DXGI_FORMAT dsvFormat) {
     if (numRTVs > 0 && rtvFormats && rtvFormats[0] == DXGI_FORMAT_UNKNOWN)
@@ -244,7 +256,7 @@ namespace t850 {
     // (the depth test/write is disabled in the PSO's DepthStencilState already)
 
     D3D12PipelineKey key = {};
-    key.shaderPtr = reinterpret_cast<uintptr_t>(shader);
+    key.program = shader->programKey;
     key.blend = (uint8_t)m_currentBlend;
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
@@ -257,7 +269,11 @@ namespace t850 {
     key.dsvFormat = dsvFormat;
 
     auto it = m_psoCache.find(key);
-    if (it != m_psoCache.end()) return it->second.Get();
+    if (it != m_psoCache.end()) {
+      ++m_psoCacheHits;
+      return it->second.Get();
+    }
+    ++m_psoCacheMisses;
 
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
 
@@ -668,6 +684,8 @@ namespace t850 {
   void D3D12Driver::InitDriver() {
     T8Device = new D3D12Device;
     T8DeviceContext = new D3D12DeviceContext;
+    T8_LOG_INFO("[D3D12] Shader program flow: %s",
+                GetShaderProgramFlow() == ShaderProgramFlow::D3D12LegacyHlsl ? "legacyHLSL" : "dxc");
     T8_LOG_INFO("[D3D12] >> CreateDevice...");
     CreateDevice();
     T8_LOG_INFO("[D3D12] >> CreateCommandInfrastructure...");
@@ -724,6 +742,10 @@ namespace t850 {
       if (retired.buffer) retired.buffer->release();
     m_retiredBuffers.clear();
     DestroyShaders(); DestroyRTs(); DestroyTextures();
+    T8_LOG_INFO("[D3D12] Pipeline cache: entries=%zu hits=%llu misses=%llu evictions=%llu",
+          m_psoCache.size(), static_cast<unsigned long long>(m_psoCacheHits),
+          static_cast<unsigned long long>(m_psoCacheMisses),
+          static_cast<unsigned long long>(m_psoCacheEvictions));
     m_psoCache.clear();
     for (UINT i = 0; i < kBackBufferCount; i++) {
       if (m_cbRingMapped[i]) { m_cbRingBuffers[i]->Unmap(0, nullptr); m_cbRingMapped[i] = nullptr; }

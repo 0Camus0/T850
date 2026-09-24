@@ -631,9 +631,10 @@ namespace t850 {
         wireKey.bits |= skinBit;
         if (!Info.empty() && !Info[0].SubSets.empty())
           wireKey.bits |= (Info[0].SubSets[0].key.bits & ShaderKey::VERTEX_ATTRIB_MASK);
-        wireKey.setPass(32); // unused pass type — avoids collision with mesh shaders
         g_pBaseDriver->CreateShader(vsWStr, fsWStr, wireKey, vsWireName, fsWireName);
-        m_wireShader = g_pBaseDriver->GetShader(wireKey);
+        const ShaderFamilyId wireFamily = BaseDriver::IdentifyShaderFamily(
+          vsWStr, fsWStr, vsWireName, fsWireName);
+        m_wireShader = g_pBaseDriver->GetShader(wireKey, wireFamily);
       }
     }
 
@@ -1500,7 +1501,7 @@ namespace t850 {
           }
         }
 
-        s = g_pBaseDriver->GetShader(finalKey);
+        s = g_pBaseDriver->GetShader(finalKey, m_shaderFamily);
         if (!s) continue;
 
         BaseDriver::FaceCulling prevCull = g_pBaseDriver->m_FaceCulling;

@@ -53,6 +53,27 @@ class WebGPUShader;
 class WebGPUDevice;
 class WebGPUDeviceContext;
 class WebGPURT;
+
+struct WebGPUPipelineKey {
+  ShaderProgramKey program;
+  uint64_t resourceLayout = 0;
+  unsigned vertexStride = 0;
+  std::vector<wgpu::TextureFormat> targetFormats;
+  bool hasDepth = false;
+  wgpu::PrimitiveTopology topology = wgpu::PrimitiveTopology::TriangleList;
+  wgpu::IndexFormat indexFormat = wgpu::IndexFormat::Undefined;
+  BaseDriver::BlendStates blend = BaseDriver::BLEND_OPAQUE;
+  BaseDriver::DepthStencilStates depth = BaseDriver::READ_WRITE;
+  wgpu::CullMode cull = wgpu::CullMode::None;
+  bool operator<(const WebGPUPipelineKey& other) const {
+    return std::tie(program.family.vertex, program.family.fragment, program.permutation, program.flow,
+                    resourceLayout, vertexStride, targetFormats, hasDepth, topology, indexFormat, blend, depth, cull) <
+           std::tie(other.program.family.vertex, other.program.family.fragment,
+                    other.program.permutation, other.program.flow, other.resourceLayout,
+                    other.vertexStride, other.targetFormats, other.hasDepth, other.topology,
+                    other.indexFormat, other.blend, other.depth, other.cull);
+  }
+};
 }
 
 struct WebGPUDriverState {
@@ -91,6 +112,10 @@ struct WebGPUDriverState {
   std::array<WebGPUTexture*, 32> samplers{};
   WebGPUShader* shader = nullptr;
   unsigned draws = 0;
+  uint64_t pipelineCacheHits = 0;
+  uint64_t pipelineCacheMisses = 0;
+  uint64_t pipelineCacheEvictions = 0;
+  std::map<WebGPUPipelineKey, wgpu::RenderPipeline> pipelines;
   uint64_t gpuProfileSubmissionSerial = 0;
   void EndPass() { if (pass) { pass.End(); pass = nullptr; } }
   void BeginPass();
@@ -451,9 +476,6 @@ public:
   std::vector<wgpu::BindGroupLayoutEntry> bindingEntries;
   std::map<uint64_t, ResourceLayout> resourceLayouts;
   std::vector<webgpu::ShaderBinding> resources;
-  using PipelineKey = std::tuple<uint64_t, unsigned, std::vector<wgpu::TextureFormat>, bool,
-    wgpu::PrimitiveTopology, wgpu::IndexFormat, BaseDriver::BlendStates, BaseDriver::DepthStencilStates, wgpu::CullMode>;
-  std::map<PipelineKey, wgpu::RenderPipeline> pipelines;
   std::array<bool, 16> dynamicUniforms{};
   bool CreateShaderAPI(std::string vertexSource, std::string fragmentSource, const std::string& vertexName, const std::string& fragmentName) override {
     for (const bool isVertex : {true, false}) {
@@ -621,7 +643,10 @@ public:
   void Set(const DeviceContext& context) override { state.shader = this; const_cast<DeviceContext&>(context).actualShaderSet = this; }
   void DestroyAPIShader() override {
     if (state.shader == this) state.shader = nullptr;
-    pipelines.clear(); resourceLayouts.clear(); bindingEntries.clear(); vertexModule = nullptr; fragmentModule = nullptr;
+    state.pipelineCacheEvictions += std::erase_if(state.pipelines, [&](const auto& entry) {
+      return entry.first.program == programKey;
+    });
+    resourceLayouts.clear(); bindingEntries.clear(); vertexModule = nullptr; fragmentModule = nullptr;
   }
 };
 
@@ -1090,9 +1115,11 @@ void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned first
   BeginPass();
   const auto resourceLayoutKey = shader->ResourceLayoutKey();
   auto& resourceLayout = shader->GetResourceLayout(resourceLayoutKey);
-  const WebGPUShader::PipelineKey pipelineKey{resourceLayoutKey, stride, targetFormats, static_cast<bool>(targetDepth),
-    topology, indexFormat, blend, depth, cull};
-  auto& pipeline = shader->pipelines[pipelineKey];
+  const WebGPUPipelineKey pipelineKey{shader->programKey, resourceLayoutKey, stride, targetFormats,
+    static_cast<bool>(targetDepth), topology, indexFormat, blend, depth, cull};
+  auto& pipeline = pipelines[pipelineKey];
+  if (pipeline) ++pipelineCacheHits;
+  else ++pipelineCacheMisses;
   if (!pipeline) {
     std::vector<wgpu::VertexAttribute> attributes;
     uint64_t offset = 0;
@@ -1543,6 +1570,13 @@ void WebGPUDriver::PopRT() {
   CurrentRT = -1;
 }
 void WebGPUDriver::SetShaderFlow(webgpu::ShaderFlow flow) { Require(m_shaders.empty(), "Select shader flow before creating shaders"); m_state->flow = flow; }
+ShaderProgramFlow WebGPUDriver::GetShaderProgramFlow() const {
+  switch (m_state->flow) {
+    case webgpu::ShaderFlow::Wgsl: return ShaderProgramFlow::WebGPUWgsl;
+    case webgpu::ShaderFlow::Spirv: return ShaderProgramFlow::WebGPUSpirv;
+    default: return ShaderProgramFlow::WebGPUAuto;
+  }
+}
 unsigned WebGPUDriver::DrawCount() const { return m_state->draws; }
 uint64_t WebGPUDriver::AdapterLuid() const { return m_state->context.adapterLuid; }
 void WebGPUDriver::SaveScreenshot(std::string path) {
@@ -1670,6 +1704,10 @@ void WebGPUDriver::DestroyDriver() {
     m_state->active = false;
   }
   DestroyOffscreenTargets(); DestroyShaders(); DestroyRTs(); DestroyTextures(); DestroyTechniques();
+  T8_LOG_INFO("[WebGPU] Pipeline cache: entries=%zu hits=%llu misses=%llu evictions=%llu",
+              m_state->pipelines.size(), static_cast<unsigned long long>(m_state->pipelineCacheHits),
+              static_cast<unsigned long long>(m_state->pipelineCacheMisses),
+              static_cast<unsigned long long>(m_state->pipelineCacheEvictions));
   m_state->ResetBindings();
   if (T8Device == m_state->device.get()) T8Device = nullptr;
   if (T8DeviceContext == m_state->deviceContext.get()) T8DeviceContext = nullptr;

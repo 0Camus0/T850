@@ -122,6 +122,7 @@ set(FRAMEWORK_SOURCES
   src/video/WindowsDriverFactory.cpp
   src/debug/GraphicsFixture.cpp
   src/video/BaseDriver.cpp
+  src/video/ShaderProgramCache.cpp
   src/utils/gltf/GLTFLoader.cpp
   src/utils/gltf/GLTFJson.cpp
   src/utils/gltf/GLTFAccessor.cpp

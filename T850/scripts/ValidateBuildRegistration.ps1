@@ -64,6 +64,7 @@ $frameworkSources = @(
     Get-Item (Join-Path $frameworkRoot "src\core\ShaderTools.cpp")
     Get-Item (Join-Path $frameworkRoot "src\core\WebFramework.cpp")
     Get-Item (Join-Path $frameworkRoot "src\video\webgpu\WebGPUShaderPackage.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\video\ShaderProgramCache.cpp")
     Get-Item (Join-Path $frameworkRoot "src\utils\ShaderPrecompiler.cpp")
 ) | Sort-Object FullName -Unique
 
@@ -79,6 +80,8 @@ $frameworkHeaders = @(
     Get-Item (Join-Path $frameworkRoot "include\scene\SceneRegions.h")
     Get-Item (Join-Path $frameworkRoot "include\core\ShaderTools.h")
     Get-Item (Join-Path $frameworkRoot "include\core\WebFramework.h")
+    Get-Item (Join-Path $frameworkRoot "include\video\MutableGraphicsStateCache.h")
+    Get-Item (Join-Path $frameworkRoot "include\video\ShaderProgramCache.h")
     Get-Item (Join-Path $frameworkRoot "include\utils\ShaderPrecompiler.h")
 ) | Sort-Object FullName -Unique
 

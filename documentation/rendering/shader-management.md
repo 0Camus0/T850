@@ -33,9 +33,9 @@ reproducible export/build commands, Minecraft evidence and remaining coverage.
 
 # Shader Management
 
-Status: verified against source on 2026-09-14.
+Status: verified against source on 2026-09-23.
 
-This document explains how T850 selects shader source files, builds graphics and compute permutations, prepends compile-time defines, compiles/caches shaders for D3D11, D3D12, OpenGL, and Vulkan, reflects resource/input layouts, and resolves explicit PSO objects on D3D12 and Vulkan. D3D11, D3D12, and Vulkan execute the shared structured-buffer arithmetic kernel plus texture kernels for God Rays, separable blur, Bright, and HDR composition. D3D12 defaults to DXC/DXIL and retains explicit `legacyHLSL` FXC/DXBC artifacts.
+This document explains how T850 selects shader source files, builds graphics and compute permutations, prepends compile-time defines, compiles/caches shaders, reflects resource/input layouts, and resolves backend pipeline or mutable-state objects. D3D11, D3D12, and Vulkan execute the shared structured-buffer arithmetic kernel plus texture kernels for God Rays, separable blur, Bright, and HDR composition. D3D12 defaults to DXC/DXIL and retains explicit `legacyHLSL` FXC/DXBC artifacts.
 
 Related documents:
 
@@ -51,12 +51,12 @@ Related documents:
 
 The shader system is responsible for:
 
-1. Turning engine state into a stable `ShaderKey`.
+1. Turning engine state into a `ShaderKey` permutation within a stable shader family and compiler flow.
 2. Generating compile-time `#define` blocks from that key.
 3. Selecting HLSL or GLSL source based on backend.
 4. Creating backend shader objects and reflected input/resource layouts.
-5. Caching compiled artifacts on disk and compiled shader objects in memory.
-6. Feeding explicit pipeline-state caches on D3D12 and Vulkan.
+5. Caching compiled artifacts on disk and immutable shader programs by `ShaderProgramKey` in memory.
+6. Feeding explicit pipeline caches on D3D12, Vulkan, and WebGPU, and mutable state caches on D3D11/OpenGL.
 
 ```mermaid
 flowchart LR
@@ -73,7 +73,8 @@ flowchart LR
   ReflectD3D --> Runtime["ShaderBase in BaseDriver cache"]
   ReflectSPV --> Runtime
   ReflectGL --> Runtime
-  Runtime --> PSO["D3D12/Vulkan PSO cache"]
+  Runtime --> PSO["D3D12/Vulkan/WebGPU pipeline cache"]
+  Runtime --> State["D3D11/OpenGL mutable state cache"]
 ```
 
 ## Key files and classes
@@ -81,8 +82,10 @@ flowchart LR
 | File/class | Role |
 |---|---|
 | `T850/Framework/Descriptors.h` | Defines `PassType`, `ShaderKey`, render formats, topology, buffer types, and related descriptors. |
-| `Framework/include/video/BaseDriver.h` | Declares `ShaderBase`, `BaseDriver::CreateShader()`, `GetShader()`, and the in-memory shader cache. |
-| `Framework/src/video/BaseDriver.cpp` | Builds `#define` strings from `ShaderKey`, creates backend shaders, records permutation dumps, and manages `m_shaderCache`. |
+| `Framework/include/video/BaseDriver.h` | Declares `ShaderBase`, program creation/lookup, and backend flow selection. |
+| `Framework/include/video/ShaderProgramCache.h` | Defines `ShaderFamilyId`, `ShaderProgramFlow`, `ShaderProgramKey`, and the API-neutral in-memory program cache. |
+| `Framework/include/video/MutableGraphicsStateCache.h` | Tracks changed versus redundant blend/depth/cull requests for mutable-state APIs. |
+| `Framework/src/video/BaseDriver.cpp` | Builds `#define` strings from `ShaderKey`, creates backend programs, records permutation dumps, and delegates strong-key ownership to `ShaderProgramCache`. |
 | `Framework/src/scene/RenderMesh.cpp` | Builds material/attribute keys for static meshes and requests common pass permutations. |
 | `Framework/src/scene/RenderSkinnedMesh.cpp` | Adds skinning key bits and compiles skinned variants. |
 | `Framework/src/video/d3d11/D3D11Shader.cpp` | D3D11 HLSL compile/cache/reflection/input-layout path. |
@@ -622,14 +625,16 @@ See [commands](../development/windows-build-and-run.md#strict-spir-v-visual-comp
 
 ## `ShaderKey`
 
-`ShaderKey` is a 64-bit bitfield in `T850/Framework/Descriptors.h`. It combines vertex layout, material features, global toggles, and pass type into one lookup key.
+`ShaderKey` is a 64-bit permutation bitfield in `T850/Framework/Descriptors.h`. It combines vertex layout, material features, global toggles, and pass type, but it is not a complete shader-program or pipeline identity.
 
 Important details:
 
 - `ShaderKey(0)` means an empty valid key.
 - `ShaderKey()` means `0xFFFFFFFFFFFFFFFF` and is an invalid sentinel.
-- `BaseDriver::m_shaderCache` stores compiled `ShaderBase*` by `ShaderKey::bits`.
-- `BaseDriver::GetShader()` logs a cache miss with key bits and pass number.
+- `ShaderProgramCache` stores compiled `ShaderBase*` by shader family, permutation, and compiler/translation flow.
+- `ShaderFamilyId` hashes vertex/fragment source names and source contents.
+- `ShaderProgramFlow` distinguishes D3D12 DXC from `legacyHLSL` and WebGPU auto/WGSL/SPIR-V flows.
+- Family-qualified lookup logs family, permutation, pass, and flow on a miss.
 - Pass type uses bits 20-25: `PASS_SHIFT = 20`, `PASS_MASK = 0x3F << 20`.
 
 | Bit group | Meaning |
@@ -677,7 +682,7 @@ flowchart TD
   FeatureBits --> SubsetKey
   SubsetKey --> Compile["BaseDriver::CreateShader"]
   Compile --> Variants["FORWARD, GBUFFER, SHADOW_MAP, RADIAL_DEPTH"]
-  Variants --> Cache["BaseDriver::m_shaderCache"]
+  Variants --> Cache["ShaderProgramCache"]
 ```
 
 During draw, the final key is recomposed:
@@ -686,9 +691,9 @@ During draw, the final key is recomposed:
 2. Set the current global pass from `gKey.getPass()`.
 3. OR in low feature bits from `gKey` using `(1 << PASS_SHIFT) - 1`.
 4. If the subset has `HEIGHT_MAP` and runtime parallax is enabled, add `PARALLAX` for `FORWARD` or `GBUFFER`.
-5. Call `BaseDriver::GetShader(finalKey)`.
+5. Resolve the program from the renderer's retained `ShaderFamilyId`, final permutation, and active backend flow.
 
-`RenderSkinnedMesh` adds `HAS_SKINNING_TEX` to each subset key, creates a bone texture, and recompiles the same mesh shader sources with skinning defines enabled. It also creates pass variants for `FORWARD`, `GBUFFER`, `SHADOW_MAP`, and `RADIAL_DEPTH`.
+`RenderSkinnedMesh` adds `HAS_SKINNING_TEX` to each subset key, creates a bone texture, and recompiles the same mesh shader sources with skinning defines enabled. It also creates pass variants for `FORWARD`, `GBUFFER`, `SHADOW_MAP`, and `RADIAL_DEPTH`. Its wireframe family uses its natural permutation; no reserved pass value is needed to avoid collisions.
 
 ## Defines generated from `ShaderKey`
 
@@ -766,7 +771,7 @@ the prior SM5 FXC/DXBC path. In both flows reflection is used heavily:
 
 The D3D12 PSO key includes:
 
-- shader pointer,
+- stable `ShaderProgramKey`,
 - blend/depth/cull state,
 - topology,
 - color attachment count and formats,
@@ -804,7 +809,7 @@ UBO bindings are shifted by `VulkanShader::kMaxTextureSlots` through `SPIRVRefle
 
 The Vulkan pipeline key includes:
 
-- shader pointer,
+- stable `ShaderProgramKey`,
 - blend/depth/cull state,
 - topology,
 - vertex stride,
@@ -822,6 +827,27 @@ The Vulkan pipeline key includes:
 - `Set()` calls `glUseProgram()`, enables active vertex attributes, and disables stale attributes from a previous shader.
 
 OpenGL does not use engine SPIR-V, D3D reflection, root signatures, or explicit PSO objects.
+It uses a mutable blend/depth/cull state cache and skips native GL calls when the requested logical state is already active.
+
+### Pipeline and state ownership
+
+- D3D12 owns graphics PSOs in the driver, keyed by program plus fixed render state and attachment formats.
+- Vulkan owns graphics pipelines in the driver, keyed by program, render pass, vertex stride, fixed state, and attachment formats. The native `VkPipelineCache` remains a separate driver artifact.
+- WebGPU owns render pipelines in `WebGPUDriverState`, keyed by program, resource layout, vertex layout, targets, topology, blend, depth, and cull state.
+- D3D11 owns four blend, three depth, and three rasterizer state objects. No state object is allocated from a draw-time setter.
+- OpenGL owns no fake PSO; it deduplicates mutable state transitions only.
+
+When a shader program is destroyed, D3D12, Vulkan, and WebGPU evict all pipelines for that exact `ShaderProgramKey` before backend shader layouts/modules are released. Shutdown cache accounting requires `entries + evictions == misses`.
+
+### Measured refactor impact
+
+Matched baseline-versus-refactor evidence is stored outside the repository under `shader-refactor-performance`.
+
+- Warm D3D12 and WebGPU frame CPU, process duration, first-frame timing, and pipeline creation stayed within observed run spread.
+- Cold compile wall medians were 2.3-3.6% slower in a three-run diagnostic matrix, while compiler work was unchanged; this is retained as a regression gate, not claimed as causal.
+- In a 30-frame DayScene profile, D3D11 skipped 32.58% and OpenGL skipped 32.76% of requested mutable state calls.
+- D3D11 replaced 33,444 potential draw-time rasterizer allocations with three immutable startup objects in that profile; 2,792 redundant rasterizer binds were also skipped.
+- Five-API comparison retained exact parity across 80 render-target dumps.
 
 ## Shader disk cache
 
@@ -941,8 +967,8 @@ render-state pipeline combination or final GPU machine code.
 Compute entries require the canonical bare filename identity, `kind=compute`, a
 sorted unique define list, and the exact `<filename>:<entry>:<permutation>` key.
 The registry rejects an unrecognized kernel or entry-point mismatch before asking
-a backend to compile it. On 2026-09-16 the checked-in manifest completed all 288
-records, including the seven compute entries numbered 282 through 288, with
+a backend to compile it. The current checked-in manifest contains 291 records:
+281 graphics permutations and ten compute permutations. It completes with
 `DayScene.exe --compileShaders --api webgpu --shaderFlow spirv`.
 
 The **Compile Shaders** button in both Windows launchers runs all four native APIs
@@ -1014,22 +1040,22 @@ When adding shader features:
 - `ShaderKey()` is invalid by design. Use `ShaderKey(0)` when constructing a new key to set bits.
 - `EMISSIVE_MAP` aliases `REFLECT_MAP`, so emissive/reflect behavior shares one bit and define path.
 - `ShaderKey::VERTEX_ATTRIB_MASK` covers UV0-UV3 only; adding more UV channels requires new bits and layout handling.
-- D3D11/D3D12 shader model targets are hard-coded to `vs_5_0` and `ps_5_0`.
-- D3D11 and D3D12 compute target `cs_5_0`; Vulkan compute compiles the same HLSL entry point to SPIR-V 1.0 with an explicit API-neutral binding layout.
+- D3D11 targets SM5. D3D12 defaults to the highest supported packaged DXC SM6 profile up to 6.6; `legacyHLSL` retains FXC SM5.
+- D3D11 compute targets `cs_5_0`; D3D12 compute follows the selected DXC/legacy flow. Vulkan compute compiles the same HLSL entry point to SPIR-V 1.0 with an explicit API-neutral binding layout.
 - D3D11 enables texture compute only at feature level 11 or newer when RGBA8 and RGBA16F expose typed UAV support. Vulkan requires a present-capable graphics queue that also supports compute and explicitly formatted storage-image support for both formats. D3D12 supports the required bindings directly. A failed capability gate selects the raster fallback.
 - Desktop OpenGL compute requires a 4.3 or newer compatibility context. The GL backend gates both compute capability reporting and its pipeline/buffer/dispatch methods on `GLEW_VERSION_4_3`; the Windows 3.3 context and OpenGL ES are raster-only fallbacks.
 - D3D12 and Vulkan share HLSL sources, but Vulkan's HLSL-to-SPIR-V path can expose differences in interpolation, semantics, resource mapping, and depth behavior.
 - Vulkan desktop can compile HLSL at runtime when the SPIR-V cache misses. Android tries precompiled SPIR-V names first, then falls back to runtime compile.
 - OpenGL program binary caching only works if the driver reports program-binary support.
-- D3D12 and Vulkan PSO caches are keyed by shader pointer, not just `ShaderKey` bits, so destroying/recreating shaders invalidates PSO reuse.
+- Pipeline reuse is scoped to one backend device lifetime. Program destruction evicts matching D3D12, Vulkan, and WebGPU entries before backend layouts/modules are released.
 - Input layout is reflected from active shader inputs. If a define removes an input, the reflected stride/layout can change.
 - Adding a texture/resource changes D3D12 root signature and Vulkan descriptor set layout, not only shader source.
 
 ## Debugging checklist
 
 1. Log or inspect the final `ShaderKey::bits` and `getPass()` used at draw time.
-2. Confirm `BaseDriver::CreateShader()` was called for that exact key before `GetShader()`.
-3. Check for `GetShader miss` logs.
+2. Confirm `BaseDriver::CreateShader()` was called for the same family, permutation, and flow before lookup.
+3. Check family/permutation/flow fields in `GetShader miss` logs.
 4. For mesh shaders, compare `xMeshGeometry::VertexAttributes`, `SubSetInfo::key`, `MeshAsset::vertexAttribMask`, and the reflected shader input layout.
 5. Check shader-cache logs: `[ShaderCache][D3D11]`, `[ShaderCache][D3D12]`, `[ShaderCache][Vulkan]`, `[ShaderCache][GL]`.
 6. For D3D compile failures, inspect the logged HLSL compiler error and the dumped define block.

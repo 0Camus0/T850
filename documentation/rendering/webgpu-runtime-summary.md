@@ -22,6 +22,24 @@ standard hosted runners have no hardware GPU; it is not hardware/performance evi
 The dated x64-only statements below remain historical evidence for their original
 checkpoints and are superseded for current platform availability by this section.
 
+## Runtime Follow-Up, 2026-09-21
+
+The developer and portable launchers now route native WebGPU on both x64 and
+ARM64, audit the matching Dawn package, accept matching x64/ARM64 PE files and
+include WebGPU in the benchmark subset on both architectures. WebGPU remains a
+DayScene runtime backend; EDITOR is explicitly unavailable and is not remapped to
+D3D12. Both launchers expose strict direct WGSL and compile `auto`, `wgsl` and
+`spirv` cache jobs.
+
+Windows and browser frame loops now recognize confirmed WebGPU device failure,
+abandon lost-device submissions and attempt one full driver/application asset
+recreation through the existing lifecycle. A second failure exits cleanly rather
+than retrying indefinitely. Native Dawn `device.Destroy()` injection recovered a
+normal scene, and the asset-free Emscripten recovery app recovered under headless
+Edge/SwiftShader. Recovered-versus-fresh visual parity, leak accounting and an
+injected failed-recovery case remain acceptance work; this is not a claim that all
+runtime exceptions are recoverable.
+
 ## Outcome
 
 Normal DayScene forward and deferred rendering now runs on **Dawn over D3D12,
@@ -409,12 +427,12 @@ This is native Vulkan validation, not WebGPU on Linux.
 
 ### Launcher and Shader Cache Follow-Up
 
-Both launchers now offer a WebGPU-only source-flow selector (`auto` or `spirv`)
+Both launchers now offer a WebGPU-only source-flow selector (`auto`, `wgsl` or `spirv`)
 and a **Compile Shaders** button. The button uses the shipped Windows runtime,
 not an external developer compiler, to populate the normal caches for D3D11,
-D3D12, Vulkan, OpenGL and both WebGPU flows on x64. It preserves per-job logs and
-results and supports cooperative cancellation between permutations. Non-x64
-runtimes omit WebGPU; Android retains its offline APK shader task. The compile
+D3D12, Vulkan, OpenGL and all three WebGPU flows on x64/ARM64. It preserves per-job logs and
+results and supports cooperative cancellation between permutations. Win32 omits
+WebGPU; Android retains its offline APK shader task. The compile
 mode explicitly rejects non-Windows hosts before renderer startup.
 
 `--recordShaderPermutations` and the capture script's `-PermutationOutput` option

@@ -24,6 +24,7 @@ struct SDL_GLContextState;
 typedef struct SDL_GLContextState *SDL_GLContext;
 
 #include <memory>
+#include <exception>
 #include <string>
 namespace t850 {
   class Win32Framework : public RootFramework {
@@ -58,6 +59,7 @@ namespace t850 {
     void OpenGamepad(int instanceId);
     void CloseGamepad(int instanceId);
     void RefreshGamepadState();
+    bool HandleGraphicsFailure(const std::exception& error);
     bool m_cursorConfined = false;
     bool m_relativeMouseMode = false;
     int m_lastAbsMouseX = 0;
@@ -67,6 +69,8 @@ namespace t850 {
     int m_gamepadInstanceId = 0;
     bool m_handheldDetected = false;
     std::string m_handheldReason;
+    unsigned m_deviceRecoveryAttempts = 0;
+    bool m_deviceRecoveryPending = false;
   };
 }
 

@@ -394,6 +394,7 @@ namespace t850 {
     virtual const char* ProviderTag() const { return "native"; }
     virtual const char* UnderlyingBackendTag() const { return ApiTag(); }
     virtual uint64_t ProfilingAdapterId() const { return 0; }
+    virtual bool GetDeviceFailure(std::string& diagnostic) const { diagnostic.clear(); return false; }
     virtual	void	 InitDriver() = 0;
     virtual void	 CreateSurfaces() = 0;
     virtual void	 DestroySurfaces() = 0;

@@ -275,7 +275,7 @@ Rendering fixes remain outside this workstream.
 |---|---|---|---|---|---|---|
 | [R1](#r1-fix-profiler-scope-accounting-and-remove-the-vulkan-leak) | Fix profiler scope accounting and remove the Vulkan leak | P1 | None | blocked | `R16` | `Profiler.h`, `Profiler.cpp` |
 | [R2](#r2-reconcile-strict-versus-lenient-backend-behavior) | Reconcile strict versus lenient backend behavior | P0 | None | blocked | `R01` | `WebGPUDriver.cpp`, `RenderGraph.cpp`, `BaseDriver.h` |
-| [R3](#r3-remove-exceptions-from-the-frame-loop-and-add-device-loss-handling) | Remove exceptions from the frame loop and add device-loss handling | P0 | R2 | open | `R02a` | `WebGPUDriver.cpp`, `WebGPUContext.cpp` |
+| [R3](#r3-remove-exceptions-from-the-frame-loop-and-add-device-loss-handling) | Remove exceptions from the frame loop and add device-loss handling | P0 | R2 | in progress | `R02a` | `WebGPUDriver.cpp`, `WebGPUContext.cpp` |
 | [R4](#r4-build-a-low-overhead-cpu-instrumentation-path) | Build a low-overhead CPU instrumentation path | P1 | R1 | in progress | `R17 (infrastructure)` | `Profiler.cpp`, `RuntimeTelemetry.cpp` |
 | [R5](#r5-instrument-memory-upload-and-streaming-as-per-frame-aggregates) | Instrument memory upload and streaming as per-frame aggregates | P1 | R4 | in progress | `R20` | `BaseDriver.h`, per-backend buffer/texture update paths |
 | [R6](#r6-delete-per-call-profiling-and-replace-it-with-phase-markers) | Delete per-call profiling and replace it with phase markers | P1 | R4, R5 | in progress | `R19 + R17 (marker migration)` | `WebGPUDriver.cpp`, `RenderMesh.cpp`, `NavigationSystem.cpp`, `JoltPhysicsSystem.cpp` |
@@ -292,7 +292,7 @@ Rendering fixes remain outside this workstream.
 | [R17](#r17-resolve-the-filtered-depth-copy-once-per-depth-version) | Resolve the filtered-depth copy once per depth version | P2 | R4 | open | `R14` | `WebGPUDriver.cpp` |
 | [R18](#r18-data-drive-the-compute-kernel-registry) | Data-drive the compute kernel registry | P2 | None | open | `R05` | `ComputeKernelRegistry.cpp`, `ComputeReflection.cpp` |
 | [R19](#r19-support-three-dimensional-compute-dispatch) | Support three-dimensional compute dispatch | P2 | R18 | open | `R09` | `RenderGraph.cpp`, `RenderGraphDescriptor.h` |
-| [R20](#r20-recreate-a-lost-webgpu-device-and-reload-the-scene) | Recreate a lost WebGPU device and reload the scene | P2 | R3 | open | `R02b` | `WebGPUDriver.cpp`, `WebGPUContext.cpp` |
+| [R20](#r20-recreate-a-lost-webgpu-device-and-reload-the-scene) | Recreate a lost WebGPU device and reload the scene | P2 | R3 | in progress | `R02b` | `WebGPUDriver.cpp`, `WebGPUContext.cpp` |
 | [R21](#r21-implement-opt-in-cross-backend-gpu-timestamp-queries) | Implement opt-in cross-backend GPU timestamp queries | P2 | R1, R6 | in progress | `R03` | `GpuTimestampProfiler.cpp`, D3D12/Vulkan/WebGPU drivers |
 
 ---
@@ -702,7 +702,8 @@ this item.
 
 Dependencies: R2.
 
-Status: open. Priority P0. Do after R2, which removes most throw sites.
+Status: in progress. Priority P0. Confirmed device-failure containment is
+implemented; the broader no-frame-loop-throw criterion remains open.
 
 ### Problem
 
@@ -2270,8 +2271,8 @@ Remaining risks or blocked gates: not yet assessed.
 
 Dependencies: R3.
 
-Status: open. Priority P2. Depends on R3 containment. This is optional recovery
-work, separate from the required clean-failure path and profiling objectives.
+Status: in progress. Priority P2. One-attempt native and browser recreation is
+implemented; visual/leak and failed-recovery acceptance remain open.
 
 ### Problem
 
@@ -2302,17 +2303,20 @@ and fresh-start captures, and retain the exact injection options and commands.
 
 ### Completion record
 
-- [ ] Implementation or audit/scope deliverable finished.
+- [x] One-attempt framework-owned recreation implemented for Windows and browser.
 - [ ] Every acceptance criterion verified.
-- [ ] Required tests passed; exact commands and results retained.
-- [ ] Owning docs updated; applicable registration and platform gates passed.
+- [x] Native scene and asset-free browser successful-recovery tests passed.
+- [x] Owning docs updated; focused platform gates passed.
 - [ ] Evidence linked; index and item status updated together.
 
 Tested revision: pending.
-Commands and results: not run.
-Evidence path or run URL: pending.
-Completion date: pending.
-Remaining risks or blocked gates: not yet assessed.
+Commands and results: native x64 Debug forced `device.Destroy()` recovery PASS;
+Emscripten Release self-tests PASS; Edge/SwiftShader browser recovery PASS.
+Evidence path or run URL: `T850/bin/x64/Debug/logs/device-recovery-actual-loss-final.log`
+and `T850/build/web/edge-device-recovery-final/report.json`.
+Completion date: partial implementation validated 2026-09-21.
+Remaining risks or blocked gates: recovered/fresh image comparison, live-object
+leak accounting, stale-callback assertion and injected failed-recovery validation.
 
 ---
 

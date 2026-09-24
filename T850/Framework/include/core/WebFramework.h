@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <exception>
 struct SDL_Window;
 union SDL_Event;
 
@@ -29,6 +30,7 @@ public:
 
 private:
   static void Tick(void* context);
+  bool HandleGraphicsFailure(const std::exception& error);
   void ClearInput();
   void ReadTouchInput();
   std::array<std::atomic<int32_t>, 8> m_touchInput{};
@@ -43,6 +45,8 @@ private:
   double m_intervalTotal = 0;
   double m_workTotal = 0;
   bool m_idleLoop = false;
+  unsigned m_deviceRecoveryAttempts = 0;
+  bool m_deviceRecoveryPending = false;
 };
 }
 #endif

@@ -15,6 +15,7 @@ const { values } = parseArgs({ allowNegative: true, options: {
   headless: { type: 'boolean', default: false },
   probe: { type: 'boolean', default: false },
   'compute-selftest': { type: 'boolean', default: false },
+  'device-loss-recovery': { type: 'boolean', default: false },
   'software-webgpu': { type: 'boolean', default: false },
   launcher: { type: 'boolean', default: false },
   'minecraft-welcome': { type: 'boolean', default: false },
@@ -52,9 +53,10 @@ if (values.touch && values['touch-desktop']) throw new Error('Choose mobile touc
 if (values['bundle-cache'] && !values['asset-bundle']) throw new Error('Bundle cache testing requires --asset-bundle');
 if (values['console-logs'] && !values['minecraft-welcome']) throw new Error('Console checkbox testing requires --minecraft-welcome');
 function unexpectedErrors(errors = []) {
-  if (!values['compute-selftest']) return errors;
+  if (!values['compute-selftest'] && !values['device-loss-recovery']) return errors;
   const expected = /\[WebGPU\] (?:Compute constant layout does not match shader reflection|Compute binding declaration count does not match shader reflection|Compute binding 1 does not match its declaration|Duplicate compute bind-group binding 0)  \(WebGPUDriver\.cpp:\d+\)$/;
-  return errors.filter(line => !expected.test(line));
+  const expectedRecovery = /(?:Injected device loss for recovery validation|\[(?:Web)?Framework\]\[DeviceLoss\] Frame failed:|Queue submission failed|Driver teardown before recreation)/;
+  return errors.filter(line => !expected.test(line) && !(values['device-loss-recovery'] && expectedRecovery.test(line)));
 }
 const inputRounds = Number(values['input-rounds']);
 if (!Number.isInteger(inputRounds) || inputRounds < 1 || inputRounds > 100) throw new Error('Invalid input round count');
@@ -113,6 +115,11 @@ if (values['compute-selftest']) {
   const computeUrl = new URL(report.url);
   computeUrl.searchParams.set('computeSelfTest', '');
   report.url = computeUrl.href;
+}
+if (values['device-loss-recovery']) {
+  const recoveryUrl = new URL(report.url);
+  recoveryUrl.searchParams.set('deviceLossRecovery', '');
+  report.url = recoveryUrl.href;
 }
 const profileFrames = Number(values['profile-frames']);
 if (!Number.isInteger(profileFrames) || profileFrames < 0 || profileFrames > 100000) throw new Error('Invalid profile frame count');
@@ -429,6 +436,15 @@ try {
     if (report.gpu.info?.isFallbackAdapter !== true && !/swiftshader|software/i.test(adapterIdentity))
       throw new Error(`Software WebGPU mode selected a non-software adapter: ${JSON.stringify(report.gpu.info)}`);
   }
+  if (values['device-loss-recovery']) {
+    await driver.wait(async () => {
+      const state = await driver.executeScript('return window.t850');
+      const errors = unexpectedErrors(state?.errors);
+      if (errors.length) throw new Error(errors.join('\n'));
+      return state?.logs?.some(line => line.includes('WebGPU recovery completed after a successful frame'));
+    }, 180000, 'WebGPU device-loss recovery did not complete');
+    report.deviceLossRecovery = true;
+  }
   if (values['compute-selftest']) {
     await driver.wait(async () => {
       const state = await driver.executeScript('return window.t850');
@@ -437,7 +453,7 @@ try {
       return state?.logs?.some(line => line.includes('[ComputeSelfTest] PASS: arithmetic and odd-sized image kernels'));
     }, 180000, 'GPU compute correctness self-test did not complete');
     report.computeSelfTest = true;
-  } else if (!values.probe) {
+  } else if (!values.probe && !values['device-loss-recovery']) {
     await driver.wait(async () => {
       const state = await driver.executeScript('return { state: window.t850?.state, errors: window.t850?.errors }');
       if (state?.state === 'failed') throw new Error(state.errors.join('\n'));

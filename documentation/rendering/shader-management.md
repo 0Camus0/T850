@@ -112,7 +112,7 @@ historical; residual image differences and case-specific visual acceptance are
 not proof of universal pixel parity. T8ditor remains unavailable.
 The stage-two detour adds maintained WGSL counterparts for all 17 HLSL stage
 files under `Assets/Shaders`, including the mesh and fullscreen pass families.
-The default file-loading path is `LoadShaderFiles(ShaderFileRequest, ...)`, with
+The default WebGPU file-loading path is `LoadShaderFiles(ShaderFileRequest, ...)`, with
 `ShaderFileRequest::flow = ShaderFlow::Auto`: prefer handwritten WGSL and fall
 back to the matching HLSL/SPIR-V source if WGSL cannot be prepared. Both flows
 remain built in and independently selectable at runtime; no rebuild is required
@@ -176,8 +176,9 @@ values fail before loading; the Windows host sets the driver policy before
 initialization and shader creation on every WebGPU driver recreation. Logs record
 the selected startup policy, then each shader's actual flow. Both Windows launchers
 retain normal startup behavior and offer a WebGPU-only shader-flow selector for
-WGSL preferred (`auto`) or HLSL translation (`spirv`). The saved choice is passed
-on the next runtime launch; strict `wgsl` remains CLI-only. No fixture is injected. See
+WGSL preferred (`auto`), WGSL only (`wgsl`) or HLSL translation (`spirv`). The
+saved choice is passed on the next runtime launch, and the compile action prepares
+all three flows. No fixture is injected. See
 [runtime commands and strict-mode limitations](../development/runtime-configuration.md#webgpu-shader-flow).
 All ten available runtime cases captured with the default policy; editor coverage
 remains pending. Named engine shaders resolve through `Shaders/`; anonymous HLSL

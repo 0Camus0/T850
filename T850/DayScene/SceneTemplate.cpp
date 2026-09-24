@@ -68,6 +68,7 @@ namespace {
   constexpr int kNavTestModeFollowPlayer = 2;
   constexpr float kNavTestDiagIntervalSec = 1.0f / 60.0f;
   constexpr float kNavTestFailedPathRetrySec = 0.25f;
+  constexpr float kNavTestPartialPathRetrySec = 1.0f;
   constexpr uint64_t kJoltNavLinkValidationCacheKey = 0x4a4f4c544e41564cull; // JOLT NAVL
 
   float ClampMouseSensitivity(float value) {
@@ -4501,9 +4502,11 @@ void SceneTemplate::PlanNavTestAgentPaths() {
       ++failedPaths;
       const PrimitiveInst& instance = Meshes[agent.meshIndex];
       const XVECTOR3 current(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
+      const bool partialPath = i < results.size() && results[i].partial;
+      const bool repeatedPartialPath = partialPath && agent.lastPathError == results[i].error;
       agent.lastPathSuccess = false;
       agent.lastPathError = i < results.size() ? results[i].error : "missing result";
-      agent.repathCooldownSec = kNavTestFailedPathRetrySec;
+      agent.repathCooldownSec = partialPath ? kNavTestPartialPathRetrySec : kNavTestFailedPathRetrySec;
       agent.path.clear();
       agent.pathSegmentTypes.clear();
       agent.waypointIndex = 0;
@@ -4533,7 +4536,13 @@ void SceneTemplate::PlanNavTestAgentPaths() {
       } else {
         agent.active = false;
       }
-      T8_LOG_ERROR("[NavigationTest] Agent mesh %d failed to find path gen=%u start=(%.2f,%.2f,%.2f) end=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) player=(%.2f,%.2f,%.2f) nav=(%.2f,%.2f,%.2f) visual=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f): %s",
+      if (partialPath) {
+        if (!repeatedPartialPath) {
+          T8_LOG_INFO("[NavigationTest] Agent mesh %d target is unreachable from its current navmesh island; waiting for the follow target to change",
+                      agent.meshIndex);
+        }
+      } else {
+        T8_LOG_ERROR("[NavigationTest] Agent mesh %d failed to find path gen=%u start=(%.2f,%.2f,%.2f) end=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) player=(%.2f,%.2f,%.2f) nav=(%.2f,%.2f,%.2f) visual=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f): %s",
                    agent.meshIndex,
                    agent.pathGeneration,
                    agent.lastPathStart.x, agent.lastPathStart.y, agent.lastPathStart.z,
@@ -4544,6 +4553,7 @@ void SceneTemplate::PlanNavTestAgentPaths() {
                    current.x, current.y, current.z,
                    agent.visualOffset.x, agent.visualOffset.y, agent.visualOffset.z,
                    agent.lastPathError.c_str());
+              }
       continue;
     }
 

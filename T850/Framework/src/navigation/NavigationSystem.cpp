@@ -1159,6 +1159,7 @@ NavPathResult FindPathWithQuery(dtNavMeshQuery* query,
   }
   if (pathPolys[pathPolyCount - 1] != endRef) {
     T8_TELEMETRY_ADD("navigation.detour.find_path.fail", 1.0);
+    result.partial = true;
     result.error = "Detour returned a partial path";
     return result;
   }

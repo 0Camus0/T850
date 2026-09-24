@@ -181,6 +181,7 @@ struct NavPathRequest {
 
 struct NavPathResult {
   bool success = false;
+  bool partial = false;
   std::vector<XVECTOR3> points;
   struct Segment {
     int startPointIndex = 0;

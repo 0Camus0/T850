@@ -19,10 +19,11 @@
 namespace t850 {
 
   class D3D12Driver;
+  class D3D12ShaderCacheSession;
 
   class D3D12ComputePipeline final : public ComputePipeline {
   public:
-    bool Create(ID3D12Device* device, const ComputePipelineDesc& desc);
+    bool Create(ID3D12Device* device, D3D12ShaderCacheSession* cacheSession, const ComputePipelineDesc& desc);
 
     ID3D12RootSignature* GetRootSignature() const { return m_rootSignature.Get(); }
     ID3D12PipelineState* GetPipelineState() const { return m_pipelineState.Get(); }

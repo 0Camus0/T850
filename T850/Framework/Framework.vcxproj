@@ -190,7 +190,9 @@
     <ClInclude Include="include\video\d3d12\D3D12ConstantBuffer.h" />
     <ClInclude Include="include\video\d3d12\D3D12DeviceContext.h" />
     <ClInclude Include="include\video\d3d12\D3D12Device.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Pipeline.h" />
     <ClInclude Include="include\video\d3d12\D3D12PipelineKey.h" />
+    <ClInclude Include="include\video\d3d12\D3D12ShaderCacheSession.h" />
     <ClInclude Include="include\video\d3d12\D3D12Shader.h" />
     <ClInclude Include="include\video\d3d12\D3D12Compute.h" />
     <ClInclude Include="include\video\d3d12\D3D12RT.h" />
@@ -390,6 +392,8 @@
     <ClCompile Include="src\video\d3d12\D3D12ConstantBuffer.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12DeviceContext.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Device.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Pipeline.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12ShaderCacheSession.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Shader.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Compute.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12RT.cpp" />

@@ -1,6 +1,8 @@
 #include <pch.h>
 #include <utils/ShaderPrecompiler.h>
 #include <utils/ComputeKernelRegistry.h>
+#include <core/Config.h>
+#include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 #include <video/BaseDriver.h>
 #include <glaze/glaze.hpp>
@@ -8,6 +10,7 @@
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
+#include <iostream>
 #include <map>
 #include <stdexcept>
 
@@ -100,6 +103,7 @@ ShaderPrecompileResult PrecompileShaders(BaseDriver& driver, const ShaderPrecomp
     ShaderPrecompileProgress progress;
     progress.key = identity;
     progress.total = total;
+    const auto pipelineStarted = std::chrono::steady_clock::now();
     try {
       const std::filesystem::path recordedPath(entry.computeShader);
       const std::string shaderName = recordedPath.filename().string();
@@ -128,8 +132,19 @@ ShaderPrecompileResult PrecompileShaders(BaseDriver& driver, const ShaderPrecomp
       pipeline.permutationName = entry.permutation;
       pipeline.defines = entry.defines;
       ConfigureComputePipelineDesc(*kernel, pipeline);
-      if (!driver.CreateComputePipeline(pipeline))
+      auto readyPipeline = driver.CreateComputePipeline(pipeline);
+      if (!readyPipeline)
         throw std::runtime_error("Compute shader compilation failed");
+      const double pipelineReadyMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - pipelineStarted).count();
+      const std::string flow = driver.ApiTag() == std::string("d3d12")
+        ? (g_config.webgpuShaderFlow == "legacyhlsl" ? "legacyHLSL" : "dxc")
+        : g_config.webgpuShaderFlow;
+      if (g_config.flags.compileShaders) {
+        std::cout << "[PipelineReadyProfile] backend=" << driver.ApiTag()
+                  << " flow=" << flow << " kind=compute identity=\"" << identity
+                  << "\" elapsedMs=" << pipelineReadyMs << std::endl;
+      }
       ++result.succeeded;
     } catch (const std::exception& error) {
       ++result.failed;

@@ -5,6 +5,7 @@
 #include <video/d3d12/D3D12Device.h>
 #include <video/d3d12/D3D12Driver.h>
 #include <video/d3d12/D3D12Shader.h>
+#include <video/d3d12/D3D12ShaderCacheSession.h>
 #include <video/d3d12/D3D12Texture.h>
 
 #ifdef OS_WINDOWS
@@ -111,7 +112,7 @@ namespace t850 {
     return found == m_constantWordCounts.end() ? 0u : found->second;
   }
 
-  bool D3D12ComputePipeline::Create(ID3D12Device* device, const ComputePipelineDesc& desc) {
+  bool D3D12ComputePipeline::Create(ID3D12Device* device, D3D12ShaderCacheSession* cacheSession, const ComputePipelineDesc& desc) {
     if (!device || desc.source.empty() || desc.entryPoint.empty()) {
       T8_LOG_ERROR("[D3D12][Compute] Invalid pipeline descriptor");
       return false;
@@ -346,13 +347,28 @@ namespace t850 {
     pipelineDesc.pRootSignature = m_rootSignature.Get();
     pipelineDesc.CS.pShaderBytecode = m_shaderBlob->GetBufferPointer();
     pipelineDesc.CS.BytecodeLength = m_shaderBlob->GetBufferSize();
-    const HRESULT pipelineHr = T8_TELEMETRY_CALL("pipeline.create.compute", device->CreateComputePipelineState(
-      &pipelineDesc,
-      IID_PPV_ARGS(&m_pipelineState)));
+    const std::string persistentKey = "t850-compute-pso-v1:" + cacheKey.sha1;
+    std::vector<uint8_t> cachedPipeline;
+    bool restoredPipeline = cacheSession && cacheSession->Find(
+      std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(persistentKey.data()), persistentKey.size()), cachedPipeline);
+    if (restoredPipeline) pipelineDesc.CachedPSO = {cachedPipeline.data(), cachedPipeline.size()};
+    HRESULT pipelineHr = T8_TELEMETRY_CALL("pipeline.create.compute", device->CreateComputePipelineState(
+      &pipelineDesc, IID_PPV_ARGS(&m_pipelineState)));
+    if (FAILED(pipelineHr) && restoredPipeline) {
+      cacheSession->RecordRejected();
+      pipelineDesc.CachedPSO = {};
+      restoredPipeline = false;
+      pipelineHr = T8_TELEMETRY_CALL("pipeline.create.compute", device->CreateComputePipelineState(
+        &pipelineDesc, IID_PPV_ARGS(&m_pipelineState)));
+    }
     if (FAILED(pipelineHr)) {
       T8_LOG_ERROR("[D3D12][Compute] Pipeline creation failed (hr=0x%08X)",
                    static_cast<unsigned>(pipelineHr));
       return false;
+    }
+    if (cacheSession && !restoredPipeline) {
+      cacheSession->Store(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(persistentKey.data()), persistentKey.size()),
+                          m_pipelineState.Get());
     }
 
     if (!desc.debugName.empty()) {
@@ -446,7 +462,7 @@ namespace t850 {
   std::unique_ptr<ComputePipeline> D3D12Driver::CreateComputePipeline(const ComputePipelineDesc& desc) {
     auto pipeline = std::make_unique<D3D12ComputePipeline>();
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
-    if (!pipeline->Create(device, desc))
+    if (!pipeline->Create(device, &m_shaderCacheSession, desc))
       return {};
     return pipeline;
   }

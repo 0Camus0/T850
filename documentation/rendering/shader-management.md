@@ -832,7 +832,7 @@ It uses a mutable blend/depth/cull state cache and skips native GL calls when th
 
 ### Pipeline and state ownership
 
-- D3D12 owns graphics PSOs in the driver, keyed by program plus fixed render state and attachment formats.
+- D3D12 owns typed `D3D12Pipeline` graphics objects in the driver, keyed by program plus fixed render state and attachment formats. Cached graphics and compute PSO blobs persist through a driver-versioned `ID3D12ShaderCacheSession`; stale blobs are rejected and recreated without failing the draw. Set `T850_D3D12_SHADER_CACHE_SESSION=off` for an uncached control or `reset` to delete and repopulate the application session.
 - Vulkan owns graphics pipelines in the driver, keyed by program, render pass, vertex stride, fixed state, and attachment formats. The native `VkPipelineCache` remains a separate driver artifact.
 - WebGPU owns render pipelines in `WebGPUDriverState`, keyed by program, resource layout, vertex layout, targets, topology, blend, depth, and cull state.
 - D3D11 owns four blend, three depth, and three rasterizer state objects. No state object is allocated from a draw-time setter.
@@ -880,6 +880,8 @@ The cache stores API-specific artifacts:
 
 `metadata.json` stores driver signatures per API. If the signature for an API changes, that API's cache directory is cleared. This prevents reusing binaries across driver/device/compiler changes.
 
+The filesystem `ShaderDiskCache` and the D3D12 shader-cache session cover different artifacts. `ShaderDiskCache` restores compiled stage bytecode and reflection. `D3D12ShaderCacheSession` restores graphics and compute cached PSO blobs after root-signature and descriptor construction. Session keys include stable program/pipeline state and shader bytecode hashes; the D3D12 runtime additionally versions storage by driver, and the engine increments its session version when the schema changes.
+
 ## Shader permutation dump
 
 `ShaderPermutationDump` records permutations requested through `BaseDriver::CreateShader()`. This is useful for prewarm/offline workflows and for checking whether a runtime draw key has actually been requested.
@@ -915,6 +917,19 @@ identity. Debug equivalents use `d3d12-debug` and `d3d12-legacy-debug` so debug
 symbols/no-optimization flags never reuse Release artifacts.
 
 The D3D12 compute path records an entry only after shader compilation/cache loading, reflection, root-signature creation, and compute PSO creation succeed. `ComputePipelineDesc::permutationName` names the variant, while `ComputePipelineDesc::defines` supplies deterministic compile-time defines. The checked-in compute inventory contains arithmetic, God Rays, horizontal/vertical `CS_Blur`, Bright, HDR-composition, and Minecraft torch-particle identities.
+
+### Equal-boundary pipeline-ready measurements
+
+`scripts/CapturePipelineReadyMatrix.ps1` measures the ten controlled compute permutations from manifest validation and source loading through successful usable pipeline creation. Engine logging is restricted to `error`; the structured timing line is emitted to stdout only after the measured interval. Five alternating cold runs clear the selected T850 artifact cache before every process. Warm runs start new processes after all flow caches are primed. D3D12 warm runs compare the same DXIL/reflection artifacts with the application shader-cache session on and off.
+
+| Host | D3D12 DXC cold | WGSL cold | SPIR-V cold | D3D12 session warm | D3D12 no-session warm | WGSL new-process warm | SPIR-V new-process warm |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| x64 RTX 4080 Laptop | 108.202 ms | 126.737 ms | 159.008 ms | 15.256 ms | 16.368 ms | 93.073 ms | 110.447 ms |
+| ARM64 Adreno X1-85 | 79.598 ms | 104.959 ms | 136.882 ms | 8.888 ms | 9.082 ms | 84.920 ms | 102.906 ms |
+
+Values are medians of the summed ten pipeline-ready intervals in each of five independent processes. At this equivalent boundary, WGSL is 17.1% above native D3D12 on x64 and 31.9% above it on ARM64; the SPIR-V detour is 47.0% and 72.0% above native, respectively. The application cache session reduces the already-warm native total by 6.8% on x64 and 2.1% on ARM64. Median session lookup for all ten PSOs is 0.285 ms on x64 and 0.210 ms on ARM64, with 50/50 measured hits per host and zero rejected blobs.
+
+The small session-on versus session-off delta is important: the D3D12 driver can retain implicit driver-managed pipeline data even when the application session is disabled. The much larger native-versus-Dawn warm difference therefore cannot be attributed solely to `ID3D12ShaderCacheSession`. These results demonstrate a safe application-managed persistence path and its incremental benefit on the tested drivers; they do not prove that adding the same mechanism to Dawn would reproduce T850's complete native warm-path advantage.
 
 Graphics and compute alternatives are independent inventory entries, not a Cartesian product. A graphics `ShaderKey` continues to identify the VS/PS implementation; a compute manifest identity uses `(file, entry point, permutation)` with one invariant normalized define set. The render graph selects the stage implementation per pass through capability and `--postProcessMode compute|raster`. This avoids multiplying unrelated PS and CS combinations while still allowing any declared pass to retain both implementations.
 

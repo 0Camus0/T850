@@ -271,7 +271,7 @@ namespace t850 {
     auto it = m_psoCache.find(key);
     if (it != m_psoCache.end()) {
       ++m_psoCacheHits;
-      return it->second.Get();
+      return it->second->Get();
     }
     ++m_psoCacheMisses;
 
@@ -356,18 +356,18 @@ namespace t850 {
       }
     }
 
-    ComPtr<ID3D12PipelineState> psoObj;
-    HRESULT hr = T8_TELEMETRY_CALL("pipeline.create.graphics", device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj)));
-    if (SUCCEEDED(hr)) T8_TELEMETRY_ADD("gpu.pipeline_creations", 1);
-    if (FAILED(hr)) {
-       T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d fmt0=%d",
-         hr, shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs, key.rtvFormats[0]);
+    auto pipeline = std::make_unique<D3D12Pipeline>();
+    if (!pipeline->Create(device, key, pso, &m_shaderCacheSession)) {
+       T8_LOG_ERROR("[D3D12] CreatePSO failed shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d fmt0=%d",
+         shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs, key.rtvFormats[0]);
       return nullptr;
     }
+    T8_TELEMETRY_ADD("gpu.pipeline_creations", 1);
+    ID3D12PipelineState* psoState = pipeline->Get();
 
         T8_LOG_DEBUG("[D3D12] PSO created: shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d",
             shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs);
-    m_psoCache[key] = psoObj;
+    m_psoCache[key] = std::move(pipeline);
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       TracePSORec rec;
@@ -387,7 +387,7 @@ namespace t850 {
       g_renderTracer->EvCreatePSO(rec);
     }
 #endif
-    return psoObj.Get();
+    return psoState;
   }
 
   // ══════════════════════════════════════════════════════
@@ -688,6 +688,7 @@ namespace t850 {
                 GetShaderProgramFlow() == ShaderProgramFlow::D3D12LegacyHlsl ? "legacyHLSL" : "dxc");
     T8_LOG_INFO("[D3D12] >> CreateDevice...");
     CreateDevice();
+    m_shaderCacheSession.Initialize(static_cast<D3D12Device*>(T8Device)->GetNativeDevice());
     T8_LOG_INFO("[D3D12] >> CreateCommandInfrastructure...");
     CreateCommandInfrastructure();
     T8_LOG_INFO("[D3D12] >> CreateSwapChain...");
@@ -747,6 +748,7 @@ namespace t850 {
           static_cast<unsigned long long>(m_psoCacheMisses),
           static_cast<unsigned long long>(m_psoCacheEvictions));
     m_psoCache.clear();
+    m_shaderCacheSession.Shutdown();
     for (UINT i = 0; i < kBackBufferCount; i++) {
       if (m_cbRingMapped[i]) { m_cbRingBuffers[i]->Unmap(0, nullptr); m_cbRingMapped[i] = nullptr; }
       m_cbRingBuffers[i].Reset();

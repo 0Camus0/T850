@@ -305,7 +305,13 @@
     <ClInclude Include="include\video\d3d12\D3D12Device.h">
       <Filter>Header Files\video\d3d12</Filter>
     </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Pipeline.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
     <ClInclude Include="include\video\d3d12\D3D12PipelineKey.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12ShaderCacheSession.h">
       <Filter>Header Files\video\d3d12</Filter>
     </ClInclude>
     <ClInclude Include="include\video\d3d12\D3D12Shader.h">
@@ -791,6 +797,12 @@
       <Filter>Source Files\video\d3d12</Filter>
     </ClCompile>
     <ClCompile Include="src\video\d3d12\D3D12Device.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Pipeline.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12ShaderCacheSession.cpp">
       <Filter>Source Files\video\d3d12</Filter>
     </ClCompile>
     <ClCompile Include="src\video\d3d12\D3D12Shader.cpp">

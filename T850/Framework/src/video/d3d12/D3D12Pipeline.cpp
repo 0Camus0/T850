@@ -67,9 +67,21 @@ std::array<uint8_t, sizeof(PersistentGraphicsPipelineKey)> MakePersistentKey(
 bool D3D12Pipeline::Create(ID3D12Device* device,
                            const D3D12PipelineKey& key,
                            const D3D12_GRAPHICS_PIPELINE_STATE_DESC& descriptor,
+                           D3D12PipelineLibrary* pipelineLibrary,
                            D3D12ShaderCacheSession* cacheSession) {
   if (!device) return false;
   const auto persistentKey = MakePersistentKey(key, descriptor);
+  if (pipelineLibrary && pipelineLibrary->IsEnabled()) {
+    if (pipelineLibrary->LoadGraphics(persistentKey, descriptor, m_state)) {
+      m_restoredFromSession = true;
+      return true;
+    }
+    const HRESULT hr = T8_TELEMETRY_CALL("pipeline.create.graphics",
+      device->CreateGraphicsPipelineState(&descriptor, IID_PPV_ARGS(&m_state)));
+    if (FAILED(hr)) return false;
+    pipelineLibrary->Store(persistentKey, m_state.Get());
+    return true;
+  }
   std::vector<uint8_t> cachedBlob;
   D3D12_GRAPHICS_PIPELINE_STATE_DESC candidate = descriptor;
   if (cacheSession && cacheSession->Find(persistentKey, cachedBlob)) {

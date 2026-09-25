@@ -58,6 +58,7 @@ function Invoke-Cell {
         [Parameter(Mandatory = $true)][ValidateSet('d3d12', 'webgpu')][string]$Api,
         [string]$Flow,
         [ValidateSet('off', 'reset', 'on', 'none')][string]$SessionMode = 'none',
+        [ValidateSet('off', 'reset', 'on', 'none')][string]$LibraryMode = 'none',
         [switch]$ClearShaderCache
     )
 
@@ -66,6 +67,8 @@ function Invoke-Cell {
     }
     if ($SessionMode -eq 'none') { Remove-Item Env:T850_D3D12_SHADER_CACHE_SESSION -ErrorAction SilentlyContinue }
     else { $env:T850_D3D12_SHADER_CACHE_SESSION = $SessionMode }
+    if ($LibraryMode -eq 'none') { Remove-Item Env:T850_D3D12_PIPELINE_LIBRARY -ErrorAction SilentlyContinue }
+    else { $env:T850_D3D12_PIPELINE_LIBRARY = $LibraryMode }
 
     $stdout = Join-Path $evidenceRoot "$Name.stdout.log"
     $stderr = Join-Path $evidenceRoot "$Name.stderr.log"
@@ -89,11 +92,15 @@ function Invoke-Cell {
     $session = [regex]::Matches($text,
         '(?:Shader cache session:|D3D12ShaderCacheSessionProfile\]) hits=(\d+) misses=(\d+) stores=(\d+) rejected=(\d+) lookupMs=(\d+(?:\.\d+)?) storeMs=(\d+(?:\.\d+)?)') |
         Select-Object -Last 1
+    $library = [regex]::Matches($text,
+        'D3D12PipelineLibraryProfile\] hits=(\d+) misses=(\d+) stores=(\d+) rejected=(\d+) bytes=(\d+)') |
+        Select-Object -Last 1
     $record = [ordered]@{
         name = $Name
         api = $Api
         flow = if ($Api -eq 'd3d12') { 'dxc' } else { $Flow }
         sessionMode = $SessionMode
+        libraryMode = $LibraryMode
         shaderCacheCleared = [bool]$ClearShaderCache
         exitCode = $exitCode
         wallMs = $stopwatch.Elapsed.TotalMilliseconds
@@ -106,6 +113,11 @@ function Invoke-Cell {
             stores=[int]$session.Groups[3].Value; rejected=[int]$session.Groups[4].Value
             lookupMs=[double]$session.Groups[5].Value; storeMs=[double]$session.Groups[6].Value
         }} else { $null }
+        library = if ($library) { [ordered]@{
+            hits=[int]$library.Groups[1].Value; misses=[int]$library.Groups[2].Value
+            stores=[int]$library.Groups[3].Value; rejected=[int]$library.Groups[4].Value
+            bytes=[int64]$library.Groups[5].Value
+        }} else { $null }
         errors = @([regex]::Matches($text, '\[ERROR[^\]]*\]') | ForEach-Object Value).Count
         timedOut = -not $completed
     }
@@ -116,7 +128,7 @@ function Invoke-Cell {
 }
 
 $result = [ordered]@{
-    schema = 1
+    schema = 2
     startedUtc = [DateTime]::UtcNow.ToString('o')
     machine = $env:COMPUTERNAME
     architecture = $env:PROCESSOR_ARCHITECTURE
@@ -146,20 +158,22 @@ try {
     # Prime each engine artifact cache and the native PSO session outside measured warm repetitions.
     if (Test-Path -LiteralPath $cacheRoot) { Remove-Item -LiteralPath $cacheRoot -Recurse -Force }
     [void](Invoke-Cell -Name 'prime-d3d12-session' -Api d3d12 -SessionMode reset)
+    [void](Invoke-Cell -Name 'prime-d3d12-library' -Api d3d12 -SessionMode on -LibraryMode reset)
     [void](Invoke-Cell -Name 'prime-wgsl' -Api webgpu -Flow wgsl -SessionMode none)
     [void](Invoke-Cell -Name 'prime-spirv' -Api webgpu -Flow spirv -SessionMode none)
 
     for ($repetition = 1; $repetition -le $Repetitions; ++$repetition) {
         $cacheCells = @(
-            [pscustomobject]@{Name='d3d12-session';Api='d3d12';Flow='';Session='on'},
-            [pscustomobject]@{Name='d3d12-no-session';Api='d3d12';Flow='';Session='off'},
-            [pscustomobject]@{Name='wgsl-new-process';Api='webgpu';Flow='wgsl';Session='none'},
-            [pscustomobject]@{Name='spirv-new-process';Api='webgpu';Flow='spirv';Session='none'}
+            [pscustomobject]@{Name='d3d12-library';Api='d3d12';Flow='';Session='on';Library='on'},
+            [pscustomobject]@{Name='d3d12-session';Api='d3d12';Flow='';Session='on';Library='off'},
+            [pscustomobject]@{Name='d3d12-no-session';Api='d3d12';Flow='';Session='off';Library='off'},
+            [pscustomobject]@{Name='wgsl-new-process';Api='webgpu';Flow='wgsl';Session='none';Library='none'},
+            [pscustomobject]@{Name='spirv-new-process';Api='webgpu';Flow='spirv';Session='none';Library='none'}
         )
         if (($repetition % 2) -eq 0) { [array]::Reverse($cacheCells) }
         foreach ($cell in $cacheCells) {
             $result.runs += Invoke-Cell -Name "warm-$($cell.Name)-r$repetition" -Api $cell.Api `
-                -Flow $cell.Flow -SessionMode $cell.Session
+                -Flow $cell.Flow -SessionMode $cell.Session -LibraryMode $cell.Library
             Save-Result $result
         }
     }
@@ -168,6 +182,7 @@ try {
     Save-Result $result
 } finally {
     Remove-Item Env:T850_D3D12_SHADER_CACHE_SESSION -ErrorAction SilentlyContinue
+    Remove-Item Env:T850_D3D12_PIPELINE_LIBRARY -ErrorAction SilentlyContinue
 }
 
 Write-Host "PASS: pipeline-ready matrix -> $OutputPath"

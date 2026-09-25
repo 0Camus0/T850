@@ -19,6 +19,7 @@ public:
   void Shutdown();
 
   bool Find(std::span<const uint8_t> key, std::vector<uint8_t>& value);
+  bool Store(std::span<const uint8_t> key, std::span<const uint8_t> value);
   bool Store(std::span<const uint8_t> key, ID3D12PipelineState* pipeline);
 
   bool IsEnabled() const { return static_cast<bool>(m_session); }

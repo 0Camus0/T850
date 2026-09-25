@@ -49,7 +49,17 @@ function Get-Statistics([double[]]$Values) {
 function Save-Result($Result) {
     $directory = Split-Path -Parent $OutputPath
     if ($directory) { [void][IO.Directory]::CreateDirectory($directory) }
-    $Result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
+    $json = $Result | ConvertTo-Json -Depth 10
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+    $stream = [IO.File]::Open($OutputPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::Write,
+        [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+    try {
+        $stream.SetLength(0)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally {
+        $stream.Dispose()
+    }
 }
 
 function Invoke-Cell {
@@ -59,6 +69,7 @@ function Invoke-Cell {
         [string]$Flow,
         [ValidateSet('off', 'reset', 'on', 'none')][string]$SessionMode = 'none',
         [ValidateSet('off', 'reset', 'on', 'none')][string]$LibraryMode = 'none',
+        [ValidateSet('off', 'reset', 'on', 'none')][string]$DawnCacheMode = 'none',
         [switch]$ClearShaderCache
     )
 
@@ -69,6 +80,8 @@ function Invoke-Cell {
     else { $env:T850_D3D12_SHADER_CACHE_SESSION = $SessionMode }
     if ($LibraryMode -eq 'none') { Remove-Item Env:T850_D3D12_PIPELINE_LIBRARY -ErrorAction SilentlyContinue }
     else { $env:T850_D3D12_PIPELINE_LIBRARY = $LibraryMode }
+    if ($DawnCacheMode -eq 'none') { Remove-Item Env:T850_WEBGPU_DAWN_CACHE -ErrorAction SilentlyContinue }
+    else { $env:T850_WEBGPU_DAWN_CACHE = $DawnCacheMode }
 
     $stdout = Join-Path $evidenceRoot "$Name.stdout.log"
     $stderr = Join-Path $evidenceRoot "$Name.stderr.log"
@@ -95,12 +108,16 @@ function Invoke-Cell {
     $library = [regex]::Matches($text,
         'D3D12PipelineLibraryProfile\] hits=(\d+) misses=(\d+) stores=(\d+) rejected=(\d+) bytes=(\d+)') |
         Select-Object -Last 1
+    $dawnCache = [regex]::Matches($text,
+        'DawnPersistentCacheProfile\] hits=(\d+) misses=(\d+) stores=(\d+) loadBytes=(\d+) storeBytes=(\d+) lookupMs=(\d+(?:\.\d+)?) storeMs=(\d+(?:\.\d+)?)') |
+        Select-Object -Last 1
     $record = [ordered]@{
         name = $Name
         api = $Api
         flow = if ($Api -eq 'd3d12') { 'dxc' } else { $Flow }
         sessionMode = $SessionMode
         libraryMode = $LibraryMode
+        dawnCacheMode = $DawnCacheMode
         shaderCacheCleared = [bool]$ClearShaderCache
         exitCode = $exitCode
         wallMs = $stopwatch.Elapsed.TotalMilliseconds
@@ -118,6 +135,12 @@ function Invoke-Cell {
             stores=[int]$library.Groups[3].Value; rejected=[int]$library.Groups[4].Value
             bytes=[int64]$library.Groups[5].Value
         }} else { $null }
+        dawnCache = if ($dawnCache) { [ordered]@{
+            hits=[int]$dawnCache.Groups[1].Value; misses=[int]$dawnCache.Groups[2].Value
+            stores=[int]$dawnCache.Groups[3].Value; loadBytes=[int64]$dawnCache.Groups[4].Value
+            storeBytes=[int64]$dawnCache.Groups[5].Value; lookupMs=[double]$dawnCache.Groups[6].Value
+            storeMs=[double]$dawnCache.Groups[7].Value
+        }} else { $null }
         errors = @([regex]::Matches($text, '\[ERROR[^\]]*\]') | ForEach-Object Value).Count
         timedOut = -not $completed
     }
@@ -128,7 +151,7 @@ function Invoke-Cell {
 }
 
 $result = [ordered]@{
-    schema = 2
+    schema = 3
     startedUtc = [DateTime]::UtcNow.ToString('o')
     machine = $env:COMPUTERNAME
     architecture = $env:PROCESSOR_ARCHITECTURE
@@ -136,44 +159,48 @@ $result = [ordered]@{
     repetitions = $Repetitions
     boundary = 'manifest entry validation and source load through successful usable compute pipeline creation'
     passed = $false
+    primes = @()
     runs = @()
 }
 
 try {
     $coldCells = @(
-        [pscustomobject]@{Name='d3d12';Api='d3d12';Flow='';Session='off'},
-        [pscustomobject]@{Name='wgsl';Api='webgpu';Flow='wgsl';Session='none'},
-        [pscustomobject]@{Name='spirv';Api='webgpu';Flow='spirv';Session='none'}
+        [pscustomobject]@{Name='d3d12';Api='d3d12';Flow='';Session='off';DawnCache='none'},
+        [pscustomobject]@{Name='wgsl';Api='webgpu';Flow='wgsl';Session='none';DawnCache='off'},
+        [pscustomobject]@{Name='spirv';Api='webgpu';Flow='spirv';Session='none';DawnCache='off'}
     )
     for ($repetition = 1; $repetition -le $Repetitions; ++$repetition) {
         $order = @($coldCells)
         if (($repetition % 2) -eq 0) { [array]::Reverse($order) }
         foreach ($cell in $order) {
             $result.runs += Invoke-Cell -Name "cold-$($cell.Name)-r$repetition" -Api $cell.Api `
-                -Flow $cell.Flow -SessionMode $cell.Session -ClearShaderCache
+                -Flow $cell.Flow -SessionMode $cell.Session -DawnCacheMode $cell.DawnCache -ClearShaderCache
             Save-Result $result
         }
     }
 
     # Prime each engine artifact cache and the native PSO session outside measured warm repetitions.
     if (Test-Path -LiteralPath $cacheRoot) { Remove-Item -LiteralPath $cacheRoot -Recurse -Force }
-    [void](Invoke-Cell -Name 'prime-d3d12-session' -Api d3d12 -SessionMode reset)
-    [void](Invoke-Cell -Name 'prime-d3d12-library' -Api d3d12 -SessionMode on -LibraryMode reset)
-    [void](Invoke-Cell -Name 'prime-wgsl' -Api webgpu -Flow wgsl -SessionMode none)
-    [void](Invoke-Cell -Name 'prime-spirv' -Api webgpu -Flow spirv -SessionMode none)
+    $result.primes += Invoke-Cell -Name 'prime-d3d12-session' -Api d3d12 -SessionMode reset
+    $result.primes += Invoke-Cell -Name 'prime-d3d12-library' -Api d3d12 -SessionMode on -LibraryMode reset
+    $result.primes += Invoke-Cell -Name 'prime-wgsl' -Api webgpu -Flow wgsl -SessionMode none -DawnCacheMode reset
+    $result.primes += Invoke-Cell -Name 'prime-spirv' -Api webgpu -Flow spirv -SessionMode none -DawnCacheMode on
+    Save-Result $result
 
     for ($repetition = 1; $repetition -le $Repetitions; ++$repetition) {
         $cacheCells = @(
-            [pscustomobject]@{Name='d3d12-library';Api='d3d12';Flow='';Session='on';Library='on'},
-            [pscustomobject]@{Name='d3d12-session';Api='d3d12';Flow='';Session='on';Library='off'},
-            [pscustomobject]@{Name='d3d12-no-session';Api='d3d12';Flow='';Session='off';Library='off'},
-            [pscustomobject]@{Name='wgsl-new-process';Api='webgpu';Flow='wgsl';Session='none';Library='none'},
-            [pscustomobject]@{Name='spirv-new-process';Api='webgpu';Flow='spirv';Session='none';Library='none'}
+            [pscustomobject]@{Name='d3d12-library';Api='d3d12';Flow='';Session='on';Library='on';DawnCache='none'},
+            [pscustomobject]@{Name='d3d12-session';Api='d3d12';Flow='';Session='on';Library='off';DawnCache='none'},
+            [pscustomobject]@{Name='d3d12-no-session';Api='d3d12';Flow='';Session='off';Library='off';DawnCache='none'},
+            [pscustomobject]@{Name='wgsl-dawn-cache';Api='webgpu';Flow='wgsl';Session='none';Library='none';DawnCache='on'},
+            [pscustomobject]@{Name='wgsl-no-dawn-cache';Api='webgpu';Flow='wgsl';Session='none';Library='none';DawnCache='off'},
+            [pscustomobject]@{Name='spirv-dawn-cache';Api='webgpu';Flow='spirv';Session='none';Library='none';DawnCache='on'},
+            [pscustomobject]@{Name='spirv-no-dawn-cache';Api='webgpu';Flow='spirv';Session='none';Library='none';DawnCache='off'}
         )
         if (($repetition % 2) -eq 0) { [array]::Reverse($cacheCells) }
         foreach ($cell in $cacheCells) {
             $result.runs += Invoke-Cell -Name "warm-$($cell.Name)-r$repetition" -Api $cell.Api `
-                -Flow $cell.Flow -SessionMode $cell.Session -LibraryMode $cell.Library
+                -Flow $cell.Flow -SessionMode $cell.Session -LibraryMode $cell.Library -DawnCacheMode $cell.DawnCache
             Save-Result $result
         }
     }
@@ -183,6 +210,7 @@ try {
 } finally {
     Remove-Item Env:T850_D3D12_SHADER_CACHE_SESSION -ErrorAction SilentlyContinue
     Remove-Item Env:T850_D3D12_PIPELINE_LIBRARY -ErrorAction SilentlyContinue
+    Remove-Item Env:T850_WEBGPU_DAWN_CACHE -ErrorAction SilentlyContinue
 }
 
 Write-Host "PASS: pipeline-ready matrix -> $OutputPath"

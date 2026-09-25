@@ -1,6 +1,10 @@
 #include <video/webgpu/WebGPUContext.h>
 #include <debug/RuntimeTelemetry.h>
 #include <core/Config.h>
+#ifndef __EMSCRIPTEN__
+#include <utils/ResourceLocator.h>
+#include <utils/ShaderDiskCache.h>
+#endif
 
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
 #include <utils/Log.h>
@@ -13,6 +17,12 @@
 #endif
 #include <atomic>
 #include <algorithm>
+#ifndef __EMSCRIPTEN__
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -75,6 +85,120 @@ struct WebGPUContext::Health {
     T8_LOG_ERROR("[WebGPU] %s", message.c_str());
   }
 };
+
+#ifndef __EMSCRIPTEN__
+struct WebGPUContext::PersistentCache {
+  static constexpr const char* kCachePath = "Shaders/.t8shadercache/dawn-native";
+
+  PersistentCache() {
+    const char* mode = std::getenv("T850_WEBGPU_DAWN_CACHE");
+    m_enabled = !mode || _stricmp(mode, "off") != 0;
+    if (!m_enabled) return;
+    m_root = ResourceLocator::Instance().ResolveCachePath(kCachePath);
+    if (mode && _stricmp(mode, "reset") == 0) {
+      std::error_code error;
+      std::filesystem::remove_all(m_root, error);
+      if (error) {
+        T8_LOG_ERROR("[WebGPU] Dawn persistent cache reset failed: %s", error.message().c_str());
+        m_enabled = false;
+        return;
+      }
+    }
+    std::error_code error;
+    std::filesystem::create_directories(m_root, error);
+    if (error) {
+      T8_LOG_ERROR("[WebGPU] Dawn persistent cache unavailable: %s", error.message().c_str());
+      m_enabled = false;
+    }
+  }
+
+  bool IsEnabled() const { return m_enabled; }
+
+  static size_t Load(const void* key, size_t keySize, void* value, size_t valueSize, void* userdata) {
+    return static_cast<PersistentCache*>(userdata)->Load(key, keySize, value, valueSize);
+  }
+
+  static void Store(const void* key, size_t keySize, const void* value, size_t valueSize, void* userdata) {
+    static_cast<PersistentCache*>(userdata)->Store(key, keySize, value, valueSize);
+  }
+
+  void Report() {
+    if (!m_enabled) {
+      T8_LOG_INFO("[WebGPU] Dawn persistent cache disabled");
+      return;
+    }
+    T8_LOG_INFO("[WebGPU] Dawn persistent cache: hits=%llu misses=%llu stores=%llu loadBytes=%llu storeBytes=%llu lookupMs=%.4f storeMs=%.4f",
+      static_cast<unsigned long long>(m_hits), static_cast<unsigned long long>(m_misses),
+      static_cast<unsigned long long>(m_stores), static_cast<unsigned long long>(m_loadBytes),
+      static_cast<unsigned long long>(m_storeBytes), m_lookupMilliseconds, m_storeMilliseconds);
+    if (g_config.flags.compileShaders) {
+      std::cout << "[DawnPersistentCacheProfile] hits=" << m_hits << " misses=" << m_misses
+                << " stores=" << m_stores << " loadBytes=" << m_loadBytes
+                << " storeBytes=" << m_storeBytes << " lookupMs=" << m_lookupMilliseconds
+                << " storeMs=" << m_storeMilliseconds << std::endl;
+    }
+  }
+
+private:
+  std::filesystem::path Path(const void* key, size_t keySize) const {
+    const std::string bytes(static_cast<const char*>(key), keySize);
+    return m_root / (ShaderDiskCache::ContentHash(bytes) + ".blob");
+  }
+
+  size_t Load(const void* key, size_t keySize, void* value, size_t valueSize) {
+    if (!m_enabled || !key || keySize == 0) return 0;
+    const auto started = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const std::filesystem::path path = Path(key, keySize);
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+      if (!value) ++m_misses;
+      m_lookupMilliseconds += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+      return 0;
+    }
+    const std::streamsize size = file.tellg();
+    if (size <= 0 || static_cast<uint64_t>(size) > SIZE_MAX) return 0;
+    if (!value || valueSize == 0) {
+      ++m_hits;
+      m_lookupMilliseconds += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+      return static_cast<size_t>(size);
+    }
+    if (valueSize < static_cast<size_t>(size)) return 0;
+    file.seekg(0, std::ios::beg);
+    file.read(static_cast<char*>(value), size);
+    if (!file.good()) return 0;
+    m_loadBytes += static_cast<uint64_t>(size);
+    m_lookupMilliseconds += std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - started).count();
+    return static_cast<size_t>(size);
+  }
+
+  void Store(const void* key, size_t keySize, const void* value, size_t valueSize) {
+    if (!m_enabled || !key || keySize == 0 || !value || valueSize == 0) return;
+    const auto started = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto bytes = std::span<const unsigned char>(static_cast<const unsigned char*>(value), valueSize);
+    if (!ResourceLocator::Instance().WriteBinaryAtomic(Path(key, keySize).string(), bytes)) return;
+    ++m_stores;
+    m_storeBytes += valueSize;
+    m_storeMilliseconds += std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - started).count();
+  }
+
+  bool m_enabled = false;
+  std::filesystem::path m_root;
+  std::mutex m_mutex;
+  uint64_t m_hits = 0;
+  uint64_t m_misses = 0;
+  uint64_t m_stores = 0;
+  uint64_t m_loadBytes = 0;
+  uint64_t m_storeBytes = 0;
+  double m_lookupMilliseconds = 0.0;
+  double m_storeMilliseconds = 0.0;
+};
+#endif
 
 WebGPUContext::WebGPUContext() : m_health(std::make_shared<Health>()) {}
 WebGPUContext::~WebGPUContext() {
@@ -168,6 +292,18 @@ void WebGPUContext::Initialize(void* hwnd, uint32_t newWidth, uint32_t newHeight
     gpuProfilingToggleDescriptor.enabledToggleCount = std::size(gpuProfilingToggles);
     gpuProfilingToggleDescriptor.enabledToggles = gpuProfilingToggles;
     deviceDesc.nextInChain = &gpuProfilingToggleDescriptor;
+  }
+#endif
+#ifndef __EMSCRIPTEN__
+  m_persistentCache = std::make_unique<PersistentCache>();
+  wgpu::DawnCacheDeviceDescriptor cacheDescriptor{};
+  if (m_persistentCache->IsEnabled()) {
+    cacheDescriptor.nextInChain = deviceDesc.nextInChain;
+    cacheDescriptor.isolationKey = "t850-dawn-d3d12-v1";
+    cacheDescriptor.loadDataFunction = &PersistentCache::Load;
+    cacheDescriptor.storeDataFunction = &PersistentCache::Store;
+    cacheDescriptor.functionUserdata = m_persistentCache.get();
+    deviceDesc.nextInChain = &cacheDescriptor;
   }
 #endif
   T8_LOG_INFO("[WebGPU] color attachment limits: count=%u bytesPerSample=%u",
@@ -545,6 +681,10 @@ void WebGPUContext::Shutdown() {
   device = nullptr;
   adapter = nullptr;
   if (instance) instance.ProcessEvents();
+#ifndef __EMSCRIPTEN__
+  if (m_persistentCache) m_persistentCache->Report();
+  m_persistentCache.reset();
+#endif
   instance = nullptr;
   if (failure) std::rethrow_exception(failure);
   CheckHealth();

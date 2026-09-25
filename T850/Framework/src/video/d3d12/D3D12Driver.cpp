@@ -357,7 +357,7 @@ namespace t850 {
     }
 
     auto pipeline = std::make_unique<D3D12Pipeline>();
-    if (!pipeline->Create(device, key, pso, &m_shaderCacheSession)) {
+    if (!pipeline->Create(device, key, pso, &m_pipelineLibrary, &m_shaderCacheSession)) {
        T8_LOG_ERROR("[D3D12] CreatePSO failed shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d fmt0=%d",
          shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs, key.rtvFormats[0]);
       return nullptr;
@@ -689,6 +689,7 @@ namespace t850 {
     T8_LOG_INFO("[D3D12] >> CreateDevice...");
     CreateDevice();
     m_shaderCacheSession.Initialize(static_cast<D3D12Device*>(T8Device)->GetNativeDevice());
+    m_pipelineLibrary.Initialize(static_cast<D3D12Device*>(T8Device)->GetNativeDevice(), &m_shaderCacheSession);
     T8_LOG_INFO("[D3D12] >> CreateCommandInfrastructure...");
     CreateCommandInfrastructure();
     T8_LOG_INFO("[D3D12] >> CreateSwapChain...");
@@ -748,6 +749,7 @@ namespace t850 {
           static_cast<unsigned long long>(m_psoCacheMisses),
           static_cast<unsigned long long>(m_psoCacheEvictions));
     m_psoCache.clear();
+    m_pipelineLibrary.Shutdown(&m_shaderCacheSession);
     m_shaderCacheSession.Shutdown();
     for (UINT i = 0; i < kBackBufferCount; i++) {
       if (m_cbRingMapped[i]) { m_cbRingBuffers[i]->Unmap(0, nullptr); m_cbRingMapped[i] = nullptr; }

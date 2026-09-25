@@ -131,9 +131,14 @@ bool D3D12ShaderCacheSession::Store(std::span<const uint8_t> key, ID3D12Pipeline
   if (!m_session || key.empty() || key.size() > UINT_MAX || !pipeline) return false;
   Microsoft::WRL::ComPtr<ID3DBlob> blob;
   if (FAILED(pipeline->GetCachedBlob(&blob)) || !blob || blob->GetBufferSize() > UINT_MAX) return false;
+  return Store(key, std::span<const uint8_t>(static_cast<const uint8_t*>(blob->GetBufferPointer()), blob->GetBufferSize()));
+}
+
+bool D3D12ShaderCacheSession::Store(std::span<const uint8_t> key, std::span<const uint8_t> value) {
+  if (!m_session || key.empty() || key.size() > UINT_MAX || value.empty() || value.size() > UINT_MAX) return false;
   const auto started = std::chrono::steady_clock::now();
   const HRESULT hr = m_session->StoreValue(key.data(), static_cast<UINT>(key.size()),
-    blob->GetBufferPointer(), static_cast<UINT>(blob->GetBufferSize()));
+    value.data(), static_cast<UINT>(value.size()));
   if (FAILED(hr)) return false;
   m_storeMilliseconds += std::chrono::duration<double, std::milli>(
     std::chrono::steady_clock::now() - started).count();

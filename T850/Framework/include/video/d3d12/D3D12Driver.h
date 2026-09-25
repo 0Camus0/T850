@@ -36,6 +36,7 @@ using Microsoft::WRL::ComPtr;
 #include <video/d3d12/D3D12Device.h>
 #include <video/d3d12/D3D12PipelineKey.h>
 #include <video/d3d12/D3D12Pipeline.h>
+#include <video/d3d12/D3D12PipelineLibrary.h>
 #include <video/d3d12/D3D12ShaderCacheSession.h>
 #include <video/d3d12/D3D12Shader.h>
 #include <video/d3d12/D3D12Compute.h>
@@ -258,6 +259,7 @@ namespace t850 {
     // PSO cache: lazy-created per (shader × blend × depth × cull × RT config)
     std::unordered_map<D3D12PipelineKey, std::unique_ptr<D3D12Pipeline>, D3D12PipelineKeyHash> m_psoCache;
     D3D12ShaderCacheSession m_shaderCacheSession;
+    D3D12PipelineLibrary m_pipelineLibrary;
     uint64_t m_psoCacheHits = 0;
     uint64_t m_psoCacheMisses = 0;
     uint64_t m_psoCacheEvictions = 0;

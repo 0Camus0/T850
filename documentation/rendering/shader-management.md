@@ -832,9 +832,9 @@ It uses a mutable blend/depth/cull state cache and skips native GL calls when th
 
 ### Pipeline and state ownership
 
-- D3D12 owns graphics PSOs in the driver, keyed by program plus fixed render state and attachment formats.
+- D3D12 owns typed `D3D12Pipeline` graphics objects in the driver, keyed by program plus fixed render state and attachment formats. Cached graphics and compute PSO blobs persist through a driver-versioned `ID3D12ShaderCacheSession`; stale blobs are rejected and recreated without failing the draw. Set `T850_D3D12_SHADER_CACHE_SESSION=off` for an uncached control or `reset` to delete and repopulate the application session. An experimental `ID3D12PipelineLibrary` layer groups named graphics and compute PSOs into one serialized library. It is opt-in with `T850_D3D12_PIPELINE_LIBRARY=on`; `reset` creates and repopulates a new library. Unsupported drivers fall back to the per-PSO session path. Invalid serialized libraries are rejected and repopulated from an empty library. Cross-process library persistence requires `T850_D3D12_SHADER_CACHE_SESSION` to remain enabled.
 - Vulkan owns graphics pipelines in the driver, keyed by program, render pass, vertex stride, fixed state, and attachment formats. The native `VkPipelineCache` remains a separate driver artifact.
-- WebGPU owns render pipelines in `WebGPUDriverState`, keyed by program, resource layout, vertex layout, targets, topology, blend, depth, and cull state.
+- WebGPU owns render pipelines in `WebGPUDriverState`, keyed by program, resource layout, vertex layout, targets, topology, blend, depth, and cull state. Native Dawn/D3D12 receives a `DawnCacheDeviceDescriptor` with thread-safe disk callbacks under `Shaders/.t8shadercache/dawn-native`; Dawn's opaque keys and payload validation remain authoritative. Persistence defaults on. Set `T850_WEBGPU_DAWN_CACHE=off` for the uncached control or `reset` to delete and repopulate Dawn's BlobCache. Browser WebGPU keeps browser-managed caching and does not use these native callbacks.
 - D3D11 owns four blend, three depth, and three rasterizer state objects. No state object is allocated from a draw-time setter.
 - OpenGL owns no fake PSO; it deduplicates mutable state transitions only.
 
@@ -880,6 +880,8 @@ The cache stores API-specific artifacts:
 
 `metadata.json` stores driver signatures per API. If the signature for an API changes, that API's cache directory is cleared. This prevents reusing binaries across driver/device/compiler changes.
 
+The filesystem `ShaderDiskCache` and backend persistence layers cover different artifacts. `ShaderDiskCache` restores T850's compiled stage bytecode, reflection, WGSL, and SPIR-V artifacts. `D3D12ShaderCacheSession` restores individual graphics and compute cached PSO blobs after root-signature and descriptor construction. `D3D12PipelineLibrary` restores named PSOs from one driver-native library stored as a value in that session. Dawn's BlobCache callbacks restore Dawn's compiled shader and D3D12 PSO blobs from per-key files. Session keys include stable program/pipeline state and shader bytecode hashes; the D3D12 runtime additionally versions storage by driver, and the engine increments its session version when the schema changes. Dawn includes its version and backend identity in its opaque keys and validates cached payload hashes. The serialized PipelineLibrary input remains owned by the wrapper for the library's lifetime, as required by `CreatePipelineLibrary`.
+
 ## Shader permutation dump
 
 `ShaderPermutationDump` records permutations requested through `BaseDriver::CreateShader()`. This is useful for prewarm/offline workflows and for checking whether a runtime draw key has actually been requested.
@@ -915,6 +917,33 @@ identity. Debug equivalents use `d3d12-debug` and `d3d12-legacy-debug` so debug
 symbols/no-optimization flags never reuse Release artifacts.
 
 The D3D12 compute path records an entry only after shader compilation/cache loading, reflection, root-signature creation, and compute PSO creation succeed. `ComputePipelineDesc::permutationName` names the variant, while `ComputePipelineDesc::defines` supplies deterministic compile-time defines. The checked-in compute inventory contains arithmetic, God Rays, horizontal/vertical `CS_Blur`, Bright, HDR-composition, and Minecraft torch-particle identities.
+
+### Equal-boundary pipeline-ready measurements
+
+`scripts/CapturePipelineReadyMatrix.ps1` measures the ten controlled compute permutations from manifest validation and source loading through successful usable pipeline creation. Engine logging is restricted to `error`; the structured timing line is emitted to stdout only after the measured interval. Five alternating cold runs clear the selected T850 artifact cache before every process. Warm runs start new processes after all flow caches are primed. D3D12 warm runs compare the same DXIL/reflection artifacts with PipelineLibrary, per-PSO application session, and both application caches disabled. Native WebGPU warm runs compare the same T850 WGSL/SPIR-V artifacts with Dawn's persistent BlobCache callbacks on and off. Schema 3 also retains the four priming-process records so cross-process stores and subsequent hits are auditable.
+
+| Host | D3D12 DXC cold | WGSL cold | SPIR-V cold | D3D12 session warm | D3D12 no-session warm | WGSL new-process warm | SPIR-V new-process warm |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| x64 RTX 4080 Laptop | 108.202 ms | 126.737 ms | 159.008 ms | 15.256 ms | 16.368 ms | 93.073 ms | 110.447 ms |
+| ARM64 Adreno X1-85 | 79.598 ms | 104.959 ms | 136.882 ms | 8.888 ms | 9.082 ms | 84.920 ms | 102.906 ms |
+
+Values are medians of the summed ten pipeline-ready intervals in each of five independent processes. At this equivalent boundary, WGSL is 17.1% above native D3D12 on x64 and 31.9% above it on ARM64; the SPIR-V detour is 47.0% and 72.0% above native, respectively. The application cache session reduces the already-warm native total by 6.8% on x64 and 2.1% on ARM64. Median session lookup for all ten PSOs is 0.285 ms on x64 and 0.210 ms on ARM64, with 50/50 measured hits per host and zero rejected blobs.
+
+The historical table predates T850's Dawn persistence callbacks: its WGSL/SPIR-V new-process cells therefore rebuilt Dawn shader/PSO blobs in every process even though T850's source artifacts were warm. Schema 3 corrects that application integration and adds explicit callback-on/off controls.
+
+| x64 warm mode | Ten-pipeline median | Range | Process wall median | Cache evidence |
+|---|---:|---:|---:|---|
+| D3D12 PipelineLibrary | 14.307 ms | 14.074-14.464 ms | 861.5 ms | 50/50 named PSO hits |
+| D3D12 per-PSO session | 15.533 ms | 15.301-16.238 ms | 864.2 ms | 50/50 cached-PSO hits |
+| D3D12 application caches off | 15.299 ms | 14.863-16.359 ms | 865.3 ms | implicit driver caching remains possible |
+| Dawn WGSL BlobCache | 18.341 ms | 17.803-18.623 ms | 1811.0 ms | 1250/1250 callback hits |
+| Dawn WGSL BlobCache off | 95.864 ms | 94.513-99.161 ms | 2478.6 ms | no persistent Dawn callbacks |
+| Dawn SPIR-V BlobCache | 20.155 ms | 19.948-23.201 ms | 2016.9 ms | 1250/1250 callback hits |
+| Dawn SPIR-V BlobCache off | 114.787 ms | 111.505-131.841 ms | 2769.3 ms | no persistent Dawn callbacks |
+
+Values are medians of five new processes; all 50 schema-3 cells passed against executable SHA-256 `2D48B0400E0FC054E9A3CB24DA6C8E425B95750E05B9811A373E0892DD00D350`. Dawn persistence reduced the WGSL ten-pipeline interval by 80.9% and SPIR-V by 82.4%. Native PipelineLibrary was still 22.0% below persistent Dawn WGSL and 29.0% below persistent Dawn SPIR-V at the equal pipeline-ready boundary. The wider process boundary also favored native PipelineLibrary: 861.5 ms versus 1811.0 ms for Dawn WGSL, but this includes device initialization and eager processing of the full 291-permutation corpus rather than only the ten timed pipelines.
+
+This proxy supports the opportunity behind Adobe's suggestion: Dawn's existing BlobCache is valuable when the application actually persists it, but T850's native PipelineLibrary stack remains faster on the same D3D12 adapter and workload. It does not prove that adding `ID3D12PipelineLibrary` or `ID3D12ShaderCacheSession` inside Dawn would recover the 4.034 ms pipeline-ready gap. Dawn and native T850 cache different internal artifacts, perform different validation and layout work, and use different persistence granularity: Dawn loaded 250 per-key blobs (about 425 KB) per process, while native restored one 24,952-byte compute library during device initialization. A causal Dawn claim still requires a direct same-revision Dawn A/B implementation.
 
 Graphics and compute alternatives are independent inventory entries, not a Cartesian product. A graphics `ShaderKey` continues to identify the VS/PS implementation; a compute manifest identity uses `(file, entry point, permutation)` with one invariant normalized define set. The render graph selects the stage implementation per pass through capability and `--postProcessMode compute|raster`. This avoids multiplying unrelated PS and CS combinations while still allowing any declared pass to retain both implementations.
 

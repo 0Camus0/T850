@@ -177,6 +177,9 @@ if(WIN32)
     src/video/d3d12/D3D12ConstantBuffer.cpp
     src/video/d3d12/D3D12DeviceContext.cpp
     src/video/d3d12/D3D12Device.cpp
+    src/video/d3d12/D3D12Pipeline.cpp
+    src/video/d3d12/D3D12PipelineLibrary.cpp
+    src/video/d3d12/D3D12ShaderCacheSession.cpp
     src/video/d3d12/D3D12Shader.cpp
     src/video/d3d12/D3D12Compute.cpp
     src/video/d3d12/D3D12RT.cpp

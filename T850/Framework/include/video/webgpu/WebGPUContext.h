@@ -48,6 +48,10 @@ public:
 
 private:
   struct Health;
+#ifndef __EMSCRIPTEN__
+  struct PersistentCache;
+  std::unique_ptr<PersistentCache> m_persistentCache;
+#endif
   std::shared_ptr<Health> m_health;
   bool m_configured = false;
   bool m_directReadback = false;

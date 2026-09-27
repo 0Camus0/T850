@@ -256,9 +256,12 @@ readback vector and triggered the Debug CRT heap check. `ReadFBOToPPM` now sets
 | `compute_entry` | Entry point, normally `CS` |
 | `compute_permutation` | Stable source-permutation identity |
 | `compute_extent_from` | Storage output that supplies dispatch dimensions |
+| `compute_depth` | Positive logical Z extent; defaults to 1 |
 | `compute_resources` | Complete typed constants/sample/sampler/storage binding list |
 
-`RTDesc::storage` requests backend storage/UAV usage. `RenderGraph` creates optional pipelines
+`RTDesc::storage` requests backend storage/UAV usage. Inputs without a prior
+graph writer require `RTDesc::initialized`, which performs one deterministic
+zero clear after allocation/recreation. `RenderGraph` creates optional pipelines
 after render targets and graph edges are resolved. Selection uses the global
 `postProcessMode`:
 
@@ -274,14 +277,16 @@ division, so odd dimensions exercise shader bounds checks. A successful compute 
 before the fullscreen draw but still applies `post_state`; failed dispatch falls through to
 the authored draw.
 
-Kernel-specific constant packing stays in Framework `ComputeKernelRegistry`, not in
-`RenderGraph` or scene classes. The generic graph executor resolves typed resources, asks the
-registry for constant words, and calls the shared driver API. Scene code does not create API
-pipelines, bind descriptors, issue dispatches, or branch on graphics API.
+Kernel metadata lives in `Assets/Shaders/compute_kernels.json`: source name,
+entry point, permutations, typed bindings, storage formats and extent matching.
+The manifest is parsed strictly once through `ResourceLocator`. Kernels without
+scene-derived constants can be added without rebuilding the engine. Named typed
+callbacks remain in Framework only for kernels whose constants are computed from
+camera or `SceneProps` state; their packed size is checked against the manifest.
+The generic graph executor resolves resources and calls the shared driver API.
 
-`Framework/ComputeKernelRegistry` owns each registered kernel's canonical source
-name, entry point, post-process policy, and API-neutral binding layout. RenderGraph
-looks up that definition before it creates a runtime pipeline, and ShaderPrecompiler
+`Framework/ComputeKernelRegistry` validates and owns the loaded manifest records.
+RenderGraph looks up that definition before it creates a runtime pipeline, and ShaderPrecompiler
 uses the same lookup when it prewarms a `compute_permutations` record. This keeps
 binding ABI validation shared by offline and runtime creation. RenderGraph retains only
 generic typed resource resolution and dispatch.
@@ -456,7 +461,7 @@ Generated frame dumps named in the result JSON files remain beside the matching 
 | Dawn `DawnComputeV1` Release | PASS, 9 variants through strict WGSL and HLSL/SPIR-V; Torch constants reflect as 60 DWORDs with 3 bindings |
 | Framework build registration | PASS |
 | x64 Debug/Release staged Minecraft demo builds | PASS |
-| Release game self-tests | PASS, 63 tests including Minecraft house and survival contracts |
+| Release game self-tests | PASS, 78 tests including navigation cancellation, graph lifetime, Minecraft house and survival contracts |
 | Release compute self-tests | PASS on D3D11, D3D12, Vulkan, WebGPU/Dawn, and OpenGL; arithmetic, odd-sized image kernels, and production Torch depth cases |
 | Staged Minecraft renderer smoke | PASS on D3D12, strict-WGSL WebGPU, OpenGL, and Vulkan at 1023x577; 22 slabs, 3 torches, glowing eyes, zero engine errors |
 | JSON/permutation audit | PASS, 281 graphics entries, 9 compute entries, 6 compute graph identities, 8 graph files |

@@ -314,7 +314,7 @@ Before returning, it assigns any missing stable entity/component/group IDs, migr
 
 Transient editor objects are excluded.
 
-`EditorSceneFile.cpp` uses Glaze JSON. Unknown keys are ignored on load. Mesh paths are normalized, and missing glTF mesh paths can be resolved by recursive fallback search using the scene directory, mesh directory, first resource directory, and `Models`.
+`EditorSceneFile.cpp` uses strict Glaze JSON for the owned `.t8scene` schema; unknown keys fail with a source-position diagnostic. Opaque component `config_json` remains extensible. Mesh paths are normalized, and missing glTF mesh paths can be resolved by recursive fallback search using the scene directory, mesh directory, first resource directory, and `Models`.
 
 ## ImGui, menu, toolbar, and panels
 

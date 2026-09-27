@@ -58,6 +58,7 @@ public:
   std::string api = "d3d11";
 #endif
   std::string webgpuShaderFlow = "auto";
+  int webgpuDeviceRecoveryAttempts = 3;
   int width = 1280;
   int height = 720;
   std::string title = "T850 Project";

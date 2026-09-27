@@ -171,7 +171,7 @@ namespace {
     const auto* kernel = FindComputeKernel("CS_TorchParticles.hlsl");
     if (!kernel) return false;
     auto particles = CreateTestPipeline(driver, "Shaders/CS_TorchParticles.hlsl",
-      {kernel->bindings, kernel->bindings + kernel->bindingCount});
+      kernel->bindings);
     if (!particles) return false;
 
     constexpr uint32_t width = 17;

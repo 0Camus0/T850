@@ -192,7 +192,7 @@ private:
     T8_TELEMETRY_ADD("webgpu.buffer_upload.calls", 1);
     if (RuntimeTelemetry::IsFrameActive()) {
       T8_TELEMETRY_ADD("webgpu.buffer_uploads", 1);
-      T8_TELEMETRY_ADD("webgpu.buffer_upload_bytes", this->sysMemCpy.size());
+      T8_TELEMETRY_ADD("webgpu.buffer_upload_bytes", static_cast<double>(this->sysMemCpy.size()));
     }
     Require(this->sysMemCpy.size() == static_cast<size_t>(this->descriptor.byteWidth), "Buffer shadow size mismatch");
     if constexpr (Usage == wgpu::BufferUsage::Uniform) {

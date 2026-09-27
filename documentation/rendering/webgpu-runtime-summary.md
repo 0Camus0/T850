@@ -32,13 +32,14 @@ D3D12. Both launchers expose strict direct WGSL and compile `auto`, `wgsl` and
 `spirv` cache jobs.
 
 Windows and browser frame loops now recognize confirmed WebGPU device failure,
-abandon lost-device submissions and attempt one full driver/application asset
-recreation through the existing lifecycle. A second failure exits cleanly rather
-than retrying indefinitely. Native Dawn `device.Destroy()` injection recovered a
-normal scene, and the asset-free Emscripten recovery app recovered under headless
-Edge/SwiftShader. Recovered-versus-fresh visual parity, leak accounting and an
-injected failed-recovery case remain acceptance work; this is not a claim that all
-runtime exceptions are recoverable.
+abandon lost-device submissions and attempt a bounded full driver/application asset
+recreation through the existing lifecycle. The default budget is three consecutive recreations;
+a successful frame resets it. Native Dawn `device.Destroy()` injection recovered
+a normal scene, a four-loss stress test exhausted cleanly, and the asset-free
+Emscripten recovery app recovered under headless Edge/SwiftShader.
+Recovered-versus-fresh visual parity, long-run leak accounting and browser
+repeated-loss stress remain acceptance work; this is not a claim that all runtime
+exceptions are recoverable.
 
 ## Outcome
 
@@ -228,8 +229,10 @@ that gate and unavailable SteamRT verification. See the
   The last formulation did not improve the reviewed Ragdoll final-image metric;
   the displayed residual was accepted, not hidden by a wider threshold.
 - Surface acquisition, explicit resize, zero-size suspension/resume and controlled
-  failure paths are implemented. Driver recreation is tested native -> WebGPU ->
-  native. This is not full live-scene API-switch or transparent device-loss recovery.
+  failure paths are implemented. Confirmed device loss performs bounded full
+  driver/scene recreation (default three attempts); native single-loss recovery,
+  native repeated-loss exhaustion and browser single-loss recovery are tested.
+  Recovered-versus-fresh visual/leak equivalence remains open.
 
 ### Runtime and Launcher
 
@@ -247,7 +250,7 @@ that gate and unavailable SteamRT verification. See the
 ## Final Verification
 
 Final local evidence root:
-[webgpu-runtime-closeout-20260915](../../T850/build/webgpu-runtime-closeout-20260915).
+`T850/build/webgpu-runtime-closeout-20260915` (ignored local artifact).
 Generated build evidence is local and ignored by Git; archive it separately when
 sharing this report. Commands completed locally, not on remote CI.
 
@@ -268,7 +271,8 @@ sharing this report. Commands completed locally, not on remote CI.
 The final build matrix is four cells, not the full six-cell Win32/x64/ARM64 CI
 matrix. ARM64 is compile-only on this x64 host and does not include Dawn rendering.
 Full CMake engine builds, remote CI, new APK builds and other-GPU testing were not
-rerun for this close-out. See [logs](../../T850/build/webgpu-runtime-closeout-20260915/logs).
+rerun for this close-out. Logs are under the ignored local artifact path
+`T850/build/webgpu-runtime-closeout-20260915/logs`.
 
 ### Final Scene Metrics
 
@@ -299,11 +303,10 @@ tolerance, 119 byte-identical. Its three differences are Ragdoll final (50 pixel
 max 6), Ragdoll ShadowAccum (1,348, max 8), and SceneTemplate Day ShadowAccum
 (8, max 3). Nine of ten final images agree within tolerance across the two flows.
 
-See [all-target JSON](../../T850/build/webgpu-runtime-closeout-20260915/all-target-comparison.json)
-and the per-scene HTML/JSON reports under
-[reports](../../T850/build/webgpu-runtime-closeout-20260915/reports).
-The [flow/snapshot audit](../../T850/build/webgpu-runtime-closeout-20260915/flow-snapshot-audit.json)
-confirms no WGSL selection in strict runs and no fallback events. Named shaders
+The ignored local evidence includes `all-target-comparison.json`, per-scene
+HTML/JSON reports under `reports/`, and `flow-snapshot-audit.json` beneath
+`T850/build/webgpu-runtime-closeout-20260915`. The flow/snapshot audit confirms
+no WGSL selection in strict runs and no fallback events. Named shaders
 use WGSL in auto; remaining translated stages are explicitly logged anonymous
 HLSL helpers. Both manifests record the same Release executable SHA-256:
 `D8913A49D9F53D807B0018FAFE5BE1D28C4D87A5564CB47B7D0C2A1005F6BC10`.
@@ -332,8 +335,8 @@ verified identical, so different random seeds are not an established explanation
 The earlier isolated derivative-uniformity change had 228/232 native D3D12/Vulkan
 target pairs byte-identical, 230 within tolerance; the only failures were one
 D3D12 and two Vulkan Minecraft final pixels. Original references, source backup
-and executable remain under
-[uniformity-native-20260915](../../T850/build/uniformity-native-20260915).
+and executable remain under the ignored local artifact path
+`T850/build/uniformity-native-20260915`.
 That result applies to that change, not every subsequent shared shader edit.
 
 Comparing the previous full native D3D12 checkpoint (`spirv-final-fixes-20260915`)
@@ -344,7 +347,8 @@ Minecraft final changes at nine pixels/max 4. Saved snapshot properties match.
 
 **Unaccepted native Voxel checkpoint delta:** the timed native backbuffer changes
 at 309,535 pixels (33.5867%), max 245, with changes in Deferred and HDR_Final too.
-The [before/after pair](../../T850/build/webgpu-runtime-closeout-20260915/reports/native-before-after/voxel-streaming/pair.png)
+The ignored local artifact
+`T850/build/webgpu-runtime-closeout-20260915/reports/native-before-after/voxel-streaming/pair.png`
 shows substantially changed lighting. Saved snapshots match, but the captures span
 different build/shader checkpoints and do not establish the cause. This was not
 causally isolated or approved. Do not report a clean native regression gate.
@@ -502,11 +506,11 @@ change the stage or incoming compute-PR handoff below.
 | --- | --- | --- |
 | 1. Dependency foundation | Complete | Pinned Dawn/D3D12, required Windows x64 build integration and package audits. |
 | 2. Shader feasibility | Complete | Native in-process translation, reflection, cold/warm cache tests, and the later maintained WGSL path. This is not exhaustive future-material coverage. |
-| 3. Driver lifecycle | Complete for milestone | Device/surface, submission, resize and bounded teardown/recreation tests. Full live-scene stress and device-loss recovery remain. |
+| 3. Driver lifecycle | Complete and exceeded | Device/surface, submission, resize, bounded device/scene recreation, native repeated-loss exhaustion and browser single-loss recovery. Long-run leak parity remains. |
 | 4. Minimal graphics integration | Complete and exceeded | Indexed/textured/depth fixture, readback and reuse tests; normal forward/deferred runtime scenes also work. |
-| 5. Shared compute | Awaiting PR #40 and rebase | The current PR includes native WebGPU/Dawn as well as D3D11/D3D12/Vulkan/desktop GL compute. Browser integration and combined-tree acceptance remain. |
+| 5. Shared compute | Complete | D3D11/D3D12/Vulkan/desktop GL/WebGPU runtime compute, browser integration, strict manifest registry and five-backend self-tests are integrated. Multi-slice 3D hardware acceptance remains. |
 | 6. Full scene and editor coverage | Partial | Runtime scene coverage exists; T8ditor, hosted surfaces, missing renderer features and full workflow acceptance remain. |
-| 7. Release and measurements | Partial | Packaging, CPU-side comparisons and substantial optimization exist. GPU timestamp profiling, complete stress/portability gates and browser CI remain. |
+| 7. Release and measurements | Partial | Packaging validation, CPU matrices, completion-qualified GPU timestamps, shader preparation and substantial optimization exist. External correlation, long-run stress and broader hardware coverage remain. |
 
 ### Compute Handoff
 
@@ -786,11 +790,11 @@ These conflict-marked trees are diagnostic objects, not runnable source or refs.
 - Anonymous debug/helper strict-WGSL coverage and broader material/animation
   states. Resolve or explicitly review the historical native Voxel checkpoint
   lighting difference; later same-API cleanup passes do not close that older delta.
-- WebGPU GPU timestamps, asynchronous telemetry and controlled GPU-overhead
-  measurements. CPU-side comparison, uniform upload pooling and browser
+- GPU timestamp external correlation and perturbation checks. Completion-qualified
+  native timestamps, CPU-side comparison, uniform upload pooling and browser
   scheduling optimization are implemented, not future work.
-- Full live-scene API switching/reload, device-loss recovery, save/reload,
-  long-running memory/frame-time behavior, missing Nexus assets, guarded Vulkan
+- Recovered-versus-fresh visual/leak comparison, browser repeated-loss stress,
+  save/reload, long-running memory/frame-time behavior, missing Nexus assets, guarded Vulkan
   cases, other GPUs and physical mobile-device coverage.
 - Hardware-GPU browser CI and fresh hardware validation of subsequent commits.
   The hosted x64/ARM64 browser jobs use explicitly labeled SwiftShader correctness

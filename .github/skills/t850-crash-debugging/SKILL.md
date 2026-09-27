@@ -120,6 +120,18 @@ Classify common native exit codes:
 
 A missing frame dump after a timed capture is not itself a diagnosis. Check the native exit code and CDB stack.
 
+For a confirmed WebGPU device-loss error, use the framework recovery harness
+before treating the clean shutdown as an ordinary crash:
+
+```powershell
+.\DayScene.exe --webgpu-recovery-selftest --offscreen
+.\DayScene.exe --webgpu-recovery-stress-selftest --offscreen
+```
+
+The default budget is three consecutive recreations. The stress case must
+recreate three times, report exhaustion on the fourth injected loss, and exit
+without an unhandled exception. Use CDB when teardown/recreation itself faults.
+
 ## 6. Analyze an Existing Dump
 
 ```powershell

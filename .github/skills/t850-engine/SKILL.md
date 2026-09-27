@@ -84,14 +84,17 @@ Use only the indexed documentation tree; superseded documents belong in Git hist
 - Every new Framework `.cpp`: add to `Framework.vcxproj`, filters, and `Framework/CMakeLists.txt`.
 - Use `ResourceLocator` for portable runtime resources.
 - Render-pass order belongs in render-graph JSON.
+- Compute graph X/Y extent comes from `compute_extent_from`; authored `compute_depth` is a positive logical Z extent and defaults to 1.
 - Treat D3D11, D3D12, OpenGL, Vulkan, and WebGPU as peer backends. A capability one backend lacks is resolved by a shared capability query and render-graph validation, never by one backend throwing where the others silently skip.
 - Profiling scopes mark phases, not calls. Never add a scope to a per-draw, per-query or per-upload path; see the `t850-profiling` skill.
 - Keep Framework independent of T8ditor/editor-only UI.
 - Keep gameplay core independent of `game/examples`, T8ditor, and ImGui.
 - Preserve fixed-tick phase ordering, deferred mutation, stable IDs, validation, and service boundaries.
+- Async navigation requests remain owned by their runtime object through queued, in-flight and completed states; component/object teardown must call `CancelRequestsForObject` so late worker results stay discarded.
 - DetourCrowd is not the gameplay navigation path.
 - Match the existing lifecycle hook spelling `OnDestoryScene`.
-- Unknown JSON keys are ignored; schema edits require migration and validation.
+- T850-owned runtime config, scene descriptors, `.t8scene`, render-graph and compute-kernel JSON reject unknown keys. glTF extensions and opaque component `config_json` remain permissive; schema edits still require migration and validation.
+- GPU drivers, resource registries and `ShaderProgramCache` are render-thread-affine. Workers prepare CPU data and return it to the owning thread for API creation/mutation/destruction.
 - Never loosen/rebaseline visual acceptance merely to hide a failure.
 
 ## Validation Routing

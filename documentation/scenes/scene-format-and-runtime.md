@@ -347,9 +347,12 @@ fallback, and historical blur accumulation. Minecraft sets it from `voxel_world.
 the normalized path. Shared shaders receive the mode explicitly for CoC, CoC combination,
 and both DOF passes; do not infer compatibility mode from stale pass constants.
 
-Unknown JSON keys are ignored by Glaze on load, so game schema changes require
-`MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()` rather than relying on
-parser errors.
+T850-owned runtime configuration, scene descriptors, `.t8scene` documents and
+render graphs reject unknown JSON keys, so misspelled authored fields fail with
+a source-position diagnostic. External glTF remains permissive because
+extensions are part of that format's compatibility model; component
+`config_json` remains an opaque extension payload. Game schema migrations still
+use `MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()`.
 
 ## Object records
 
@@ -494,7 +497,7 @@ flowchart TD
 `LoadEditorSceneFile()`:
 
 1. Reads JSON through `ResourceLocator`.
-2. Parses with Glaze, ignoring unknown keys.
+2. Parses with Glaze using strict unknown-key rejection.
 3. Resolves missing glTF mesh paths using fallback directories.
 4. Logs object/camera/light counts.
 
@@ -710,7 +713,7 @@ When extending scene formats:
 ## Known limitations and gotchas
 
 - `.t8scene` and `SceneDescriptor` are different formats and are both actively used.
-- Unknown `.t8scene` keys are ignored, so typos may silently do nothing.
+- Unknown `.t8scene` keys are rejected, so typos cannot silently select defaults.
 - SceneTemplate skips invisible render objects, but hidden explicitly included navigation sources can still matter when authored correctly.
 - SceneTemplate caps runtime mesh slots through `kMaxSandboxMeshes`.
 - `render_graph` is optional; empty means default graph.

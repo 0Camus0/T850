@@ -15202,7 +15202,6 @@ void SceneTemplate::OnDraw() {
       if (meshIndex == 0) {
         UpdateSkeletonFromRagdollPhysics();
       }
-      skinned->UploadBoneTexture();
     }
   }
 

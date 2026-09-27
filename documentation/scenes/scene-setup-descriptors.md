@@ -94,7 +94,7 @@ flowchart TD
 7. Builds owned splines and spline agents.
 8. Logs object counts.
 
-`LoadSceneDescriptor()` uses `ResourceLocator::ReadText()` and Glaze with `error_on_unknown_keys = false`. Unknown JSON keys are ignored.
+`LoadSceneDescriptor()` uses `ResourceLocator::ReadText()` and strict Glaze parsing with `error_on_unknown_keys = true`. Unknown JSON keys fail the load with a source-position diagnostic.
 
 ## Built object mapping
 
@@ -419,7 +419,7 @@ When adding a new UI control:
 
 ## Known limitations and gotchas
 
-- Unknown descriptor JSON keys are ignored by Glaze, so typos can be silent.
+- Unknown descriptor JSON keys are rejected by Glaze, so typos fail during load.
 - `CameraDesc::eye` is saved but currently ignored on load; `position` drives runtime `Camera::Eye`.
 - UI metadata is not self-binding. Each scene must map control names manually.
 - Descriptor profiles and `.t8scene` profiles overlap conceptually but are applied by scene-specific code.

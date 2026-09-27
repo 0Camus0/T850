@@ -33,7 +33,7 @@ flowchart LR
   Tracker --> API["DeviceContext + buffers"]
   Static --> Shader["BaseDriver::GetShader"]
   Skin --> Shader
-  Shader --> PSO["D3D12/Vulkan PSO or GL/D3D11 shader bind"]
+  Shader --> PSO["D3D12/Vulkan/WebGPU pipeline or GL/D3D11 shader bind"]
   API --> Draw["DrawIndexed"]
 ```
 
@@ -124,7 +124,10 @@ preserving mixed opaque/transparent section behavior.
 
 `PrimitiveManager::CreateMutableMesh()` allocates and creates the primitive with the manager's `EngineContext`, stores it with the other owned primitives, and returns its index for `GetPrimitive()` access.
 
-Replacement creates the new vertex/index buffers before retiring the old pair. D3D11 and OpenGL use the default immediate `BaseDriver::RetireBuffer()` behavior. D3D12 and Vulkan override it to retain replaced buffers until every in-flight frame has advanced, preventing command buffers from referencing released resources.
+Replacement creates the new vertex/index buffers before retiring the old pair.
+D3D11 and OpenGL use the default immediate `BaseDriver::RetireBuffer()` behavior.
+D3D12 and Vulkan retain replacements until their in-flight frames advance;
+WebGPU retirement is submission-completion-driven inside `WebGPUContext`.
 
 `RenderContainer` stores instances in reusable slots addressed by `RenderInstanceHandle {index,generation}`. Removal invalidates the old generation, and stale handles cannot access a replacement instance. Before `RenderGraph::Execute()`, the container compacts active slots into a contiguous scratch array because the graph still consumes `PrimitiveInst* + count`.
 
@@ -282,6 +285,7 @@ After `s->Set(*deviceContext)`:
 - OpenGL binds a linked program and enables shader-reflected attributes.
 - D3D12 resolves and binds a PSO from shader, current RT formats, blend/depth/cull, and topology.
 - Vulkan resolves and binds a graphics pipeline from shader, render pass/format, topology, vertex stride, blend/depth/cull.
+- WebGPU resolves a driver-owned render pipeline from program/layout/render state and binds it on the active render-pass encoder.
 
 `MeshDrawStateTracker::OnShaderChanged(s)` is called after shader bind. This invalidates cached texture and CB bindings when the shader changes, which is required because D3D12 texture/root-parameter mappings are per shader.
 
@@ -320,13 +324,14 @@ Backend mappings:
 | D3D12 | `ID3D12GraphicsCommandList::DrawIndexedInstanced(indexCount, 1, startIndex, baseVertex, 0)` |
 | OpenGL | `glDrawElements()` or `glDrawElementsBaseVertex()`; `startIndex` becomes a byte offset using the bound index format. |
 | Vulkan | `vkCmdDrawIndexed(commandBuffer, indexCount, 1, startIndex, baseVertex, 0)` |
+| WebGPU | `wgpu::RenderPassEncoder::DrawIndexed(indexCount, 1, startIndex, baseVertex, 0)` |
 
 ## Skinned mesh draw path
 
 `RenderSkinnedMesh::Draw()` mirrors much of `RenderMesh::Draw()` but adds skinning requirements:
 
 - If `m_hasSkin` is false, it falls back to `RenderMesh::Draw()`.
-- It expects animation/bone update and bone texture upload to have happened before rendering.
+- It expects scene simulation to have evaluated the CPU pose. `RenderGraph::Execute()` uploads visible skinned bone textures before opening any render pass.
 - It uses the same mesh pool lookup and final key composition.
 - The subset key includes `HAS_SKINNING_TEX`, which generates `USE_SKINNING_TEXTURE`.
 - It binds the bone texture to vertex-shader slot 24 through `Texture::SetVS()`.
@@ -437,7 +442,7 @@ When extending geometry rendering:
 - `PrimitiveInst::SetTexture()` does not bounds-check the texture slot.
 - `RenderMesh` still carries legacy VB/IB and material fields as fallbacks.
 - Skinned meshes do not currently perform conservative animation-aware frustum culling.
-- `Shader::Set()` must still be called for every subset/draw on D3D12/Vulkan because PSO/pipeline state depends on render state and RT formats.
+- `Shader::Set()` must still be called for every subset/draw on D3D12/Vulkan/WebGPU because pipeline state depends on render state and RT formats.
 - Unknown or uncompiled final shader keys cause `GetShader` misses and skipped subsets.
 - Mesh pool accessors return null and log when pools are dirty or not uploaded.
 - GL shared-pool drawing with nonzero base vertex relies on `glDrawElementsBaseVertex()` on the desktop GL path.
@@ -452,7 +457,7 @@ When extending geometry rendering:
 6. Look for `[RenderMesh] Skipped geometry/subset: no uploaded vertex/index buffer`.
 7. Check `MaterialAsset*` and fallback `SubSetInfo` material fields.
 8. Check `BaseDriver::GetShader(finalKey)` misses.
-9. For D3D12/Vulkan, inspect PSO/pipeline creation logs if `Shader::Set()` succeeds but drawing fails.
+9. For D3D12/Vulkan/WebGPU, inspect pipeline creation logs if `Shader::Set()` succeeds but drawing fails.
 10. For texture issues, verify feature bits in `s->key` match the texture slots actually bound.
 11. For culling issues, temporarily disable frustum culling or check geometry/subset/cluster bounds.
 12. For skinned meshes disappearing, remember bind-pose bounds are not conservative for GPU skinning and the current skinned path avoids subset AABB culling.

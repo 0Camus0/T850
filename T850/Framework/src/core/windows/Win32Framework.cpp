@@ -483,12 +483,14 @@ namespace t850 {
     if (g_profiler) g_profiler->EndFrame();
     T8_LOG_ERROR("[Framework][DeviceLoss] Frame failed: %s; device=%s",
                  error.what(), deviceFailure.c_str());
-    if (m_deviceRecoveryAttempts >= 1) {
+    if (m_deviceRecoveryAttempts >= static_cast<unsigned>(g_config.webgpuDeviceRecoveryAttempts)) {
+      T8_TELEMETRY_ADD("device.recovery.exhausted", 1.0);
       T8_LOG_ERROR("[Framework][DeviceLoss] Recovery exhausted; shutting down cleanly");
       m_alive = false;
       return true;
     }
     ++m_deviceRecoveryAttempts;
+    T8_TELEMETRY_ADD("device.recovery.attempts", 1.0);
     m_deviceRecoveryPending = true;
     try {
       ChangeAPI(GraphicsApi::WEBGPU);

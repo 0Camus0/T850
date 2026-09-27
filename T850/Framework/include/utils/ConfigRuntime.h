@@ -78,6 +78,7 @@ struct RuntimeTelemetryJson {
 struct RuntimeConfigJson {
   std::optional<std::string> api;
   std::optional<std::string> webgpuShaderFlow;
+  std::optional<int> webgpuDeviceRecoveryAttempts;
   std::optional<int> width;
   std::optional<int> height;
   std::optional<bool> fullscreen;

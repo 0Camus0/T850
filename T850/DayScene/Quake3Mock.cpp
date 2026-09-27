@@ -15493,7 +15493,6 @@ void Quake3Mock::OnDraw() {
       if (meshIndex == 0) {
         UpdateSkeletonFromRagdollPhysics();
       }
-      skinned->UploadBoneTexture();
     }
   }
 

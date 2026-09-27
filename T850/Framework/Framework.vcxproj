@@ -351,6 +351,7 @@
     </ClCompile>
     <ClCompile Include="..\Librerias\simplecpp\simplecpp.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <DisableSpecificWarnings>4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="src\video\webgpu\WebGPUShaderCompiler.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>

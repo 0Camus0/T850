@@ -212,9 +212,10 @@ parts of the original implementation plan:
 - Browser per-pass timestamps depend on browser API support and are currently
   capability-blocked on the tested Edge versions.
 - GPU timestamp external correlation, instrumentation perturbation, and
-  pending-callback/device-loss stress remain validation work.
-- Full device-loss recovery and recovered-versus-fresh visual/leak equivalence
-  are not part of the committed profiling implementation.
+  pending-callback stress remain validation work.
+- Configurable bounded device-loss recovery is implemented with native
+  repeated-loss exhaustion coverage; browser repeated-loss and
+  recovered-versus-fresh visual/leak equivalence remain validation work.
 
 Do not describe these limits as completed, but do not use the superseded
 proposal milestones as the current implementation status.
@@ -245,8 +246,8 @@ These are the current actionable items:
    whole-frame-only result for cross-backend headline comparisons.
 2. Correlate timestamp boundaries with PIX/RenderDoc or equivalent ETW evidence,
    including a Vulkan run.
-3. Complete pending-callback teardown, feature-negative, and device-loss stress
-   for `GpuTimestampProfiler`.
+3. Complete pending-callback teardown, feature-negative, browser repeated-loss,
+  and long-run recovery leak stress for `GpuTimestampProfiler`.
 4. Decide whether T8ditor will support WebGPU; it is currently excluded rather
    than partially supported.
 5. Resolve or formally accept the remaining visual-difference cases.

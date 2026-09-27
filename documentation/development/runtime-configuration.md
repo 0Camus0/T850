@@ -22,7 +22,7 @@ DayScene starts from a fresh `Config` object every process. The effective order 
 .\DayScene.exe --config config.json --api d3d12 --width 1920 --height 1080
 ```
 
-Unknown JSON keys are ignored. A typo can therefore be silent; use documented field names and inspect `[config]` warnings.
+Unknown JSON keys are rejected with a source-position diagnostic. Use documented field names and treat a failed config load as an authoring error.
 
 ## Hardcoded Defaults
 
@@ -91,6 +91,18 @@ intentionally fails if a selected runtime path requests anonymous HLSL without a
 paired WGSL source. No fixture is injected, and T8ditor does not use this CLI
 parser or support WebGPU rendering.
 
+## WebGPU Device Recovery
+
+The root `webgpuDeviceRecoveryAttempts` setting and
+`--webgpuRecoveryAttempts <1..10>` select the consecutive full device/scene
+recreation budget. The default is 3. One successful frame resets the count.
+Recovery records `device.recovery.attempts`; exhausting the budget records
+`device.recovery.exhausted` and shuts down cleanly.
+
+`--webgpu-recovery-selftest` injects one loss. The developer-only
+`--webgpu-recovery-stress-selftest` injects four consecutive losses and expects
+three recreations followed by bounded exhaustion.
+
 **Normal runtime selection works in `auto` and `spirv`; strict `wgsl` still has an anonymous-source limitation.**
 The known DOF, CoC, shadow/SSAO, refraction and lightmap derivative-uniformity
 failures were corrected on 2026-09-15. All 538 recorded/additional stages now pass
@@ -149,6 +161,7 @@ Root fields accepted by `RuntimeConfigJson` include:
 {
   "api": "d3d11",
   "webgpuShaderFlow": "auto",
+  "webgpuDeviceRecoveryAttempts": 3,
   "width": 1280,
   "height": 720,
   "fullscreen": false,

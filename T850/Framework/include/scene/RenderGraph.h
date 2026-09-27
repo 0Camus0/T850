@@ -181,8 +181,10 @@ namespace t850 {
     std::unordered_map<std::string, int> m_rtHandles;  // RT name -> driver RT handle
     std::unordered_map<int, std::unique_ptr<ComputePipeline>> m_computePipelines;
     std::unordered_set<int> m_loggedComputeDispatches;
+    bool m_initializedTargetsPending = true;
 
     // Build the DAG (nodes + edges) from the descriptor.
+    bool ValidateResourceLifetimes(const RenderGraphDesc& desc) const;
     void BuildGraph();
     void CreateComputePipelines(BaseDriver* driver);
     bool ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props);

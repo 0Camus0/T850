@@ -79,7 +79,7 @@ Scopes are engine-wide and must use identical names on all five backends.
 | Physics | `physics.jolt.update_total`, `physics.jolt.simulate`, `physics.queries`, `character.fps_update` |
 | Navigation | `navigation.update`, `navigation.find_paths_batch`, `navigation.build`, `navigation.rebuild` |
 | Streaming | `terrain.voxel.stream_update`, `terrain.voxel.mesh_build`, `terrain.voxel.upload`, `terrain.heightmap.commit` |
-| Animation | `animation.update_and_upload`, `animation.bone_texture_upload` |
+| Animation | `animation.pose_update`, `animation.bone_texture_upload` (`animation.update_and_upload` only for standalone combined paths) |
 | Render | `render.cull`, `render.pass.<name>` |
 | Driver, same names where the phase exists | `gpu.encode`, `gpu.submit`, `gpu.present`, `gpu.gpu_wait`, `gpu.upload_batch` |
 | Assets, event-scoped | `asset.gltf.parse`, `asset.gltf.image_decode`, `asset.gltf.draco` |
@@ -178,7 +178,7 @@ Check these before trusting a number:
 ```
 
 Scene 6 is draw and streaming heavy and shows upload behavior most clearly.
-Scene 3 exercises per-frame bone texture upload.
+Scene 3 exercises graph-owned pre-pass bone texture upload after scene-owned pose/ragdoll updates.
 
 `--frames` is not a runtime limit. Telemetry-only runs need a verified stop
 condition and a process timeout; do not leave a diagnostic process running.

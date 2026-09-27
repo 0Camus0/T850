@@ -10,6 +10,7 @@
 
 namespace t850::webgpu {
 void ConfigureDeviceLossTestFrame(uint64_t frame);
+void ConfigureDeviceLossTestSequence(uint64_t firstFrame, uint32_t count, uint64_t intervalFrames);
 
 class WebGPUContext {
 public:

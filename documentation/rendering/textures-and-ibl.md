@@ -31,7 +31,7 @@ It is responsible for:
 ```mermaid
 flowchart LR
   Asset["texture path / memory buffer / generated floats"] --> TextureBase["Texture base helpers"]
-  TextureBase --> API["D3D11 / D3D12 / GL / Vulkan Texture"]
+  TextureBase --> API["D3D11 / D3D12 / GL / Vulkan / WebGPU Texture"]
   API --> Driver["BaseDriver::Textures slots"]
   Driver --> Atlas["TextureAtlas immutable grid metadata"]
   Driver --> Material["RenderMesh material slots"]
@@ -51,6 +51,7 @@ flowchart LR
 | `Framework/src/video/d3d12/D3D12Texture.cpp` / `Framework/src/video/d3d12/D3D12Device.cpp` | D3D12 texture upload resources, SRV/sampler descriptors, compressed support, generated mip upload, float textures/cubemaps, update path. |
 | `Framework/src/video/gl/GLTexture.cpp` / `Framework/src/video/gl/GLDevice.cpp` | OpenGL texture upload, compressed support, GL sampler parameters, float texture/cubemap creation, shader uniform binding. |
 | `Framework/src/video/vulkan/VulkanTexture.cpp` / `Framework/src/video/vulkan/VulkanDevice.cpp` | Vulkan image/upload/sampler/image-view handling, BC decompression path, descriptor pending texture state, float textures/cubemaps. |
+| `Framework/src/video/webgpu/WebGPUDriver.cpp` / `Framework/src/video/webgpu/WebGPUContext.cpp` | Dawn texture creation/upload, feature-aware BC/float fallbacks, bind-group resources, completion retirement and browser/native surface ownership. |
 | `Framework/include/scene/IBLResources.h` / `Framework/src/scene/IBLResources.cpp` | Environment IBL resource paths, generated IBL filters/LUTs, cache load/save, IBL texture creation, `SceneProps` IBL settings. |
 | `Framework/include/scene/RenderGraph.h` / `Framework/src/scene/RenderGraph.cpp` | Environment texture slots, material extension slots, pass input binding, environment binding to mesh/quad primitives. |
 | `Framework/include/scene/MaterialAsset.h` | Material texture slot enum and cached material texture ID/pointer records. |
@@ -316,15 +317,15 @@ Float resources:
 
 Sampler state is rebuilt from `Texture::params` by each backend.
 
-| `Texture::params` | D3D11/D3D12 | GL | Vulkan |
-|---|---|---|---|
-| default | anisotropic, max 16 for regular 2D textures | linear mipmap linear, clamp, anisotropy for non-cubemaps | linear + linear mipmap, anisotropy when supported and not cube/special filter |
-| cubemap default | linear mipmap, anisotropy disabled | linear mipmap, clamp | linear mipmap, anisotropy disabled |
-| `NEAREST_FILTER` | point filter, `MaxLOD = 0` | nearest min/mag | nearest, nearest mip, `maxLod = 0` |
-| `LINEAR_FILTER` | linear min/mag with mip point, `MaxLOD = 0` | linear without mip chain when no mips | linear, nearest mip, `maxLod = 0` |
-| `TILED` | wrap | repeat | repeat |
-| `CLAMP_TO_EDGE` | clamp | clamp to edge | clamp to edge |
-| `CLAMP_TO_BORDER` | border, opaque white, linear mip | clamp to border, white border | clamp to border, opaque white |
+| `Texture::params` | D3D11/D3D12 | GL | Vulkan | WebGPU |
+|---|---|---|---|---|
+| default | anisotropic, max 16 for regular 2D textures | linear mipmap linear, clamp, anisotropy for non-cubemaps | linear + linear mipmap, anisotropy when supported and not cube/special filter | linear + linear mipmap, anisotropy 16 for regular 2D textures |
+| cubemap default | linear mipmap, anisotropy disabled | linear mipmap, clamp | linear mipmap, anisotropy disabled | linear mipmap, anisotropy disabled |
+| `NEAREST_FILTER` | point filter, `MaxLOD = 0` | nearest min/mag | nearest, nearest mip, `maxLod = 0` | nearest min/mag/mip, `lodMaxClamp = 0` |
+| `LINEAR_FILTER` | linear min/mag with mip point, `MaxLOD = 0` | linear without mip chain when no mips | linear, nearest mip, `maxLod = 0` | linear min/mag, nearest mip, `lodMaxClamp = 0` |
+| `TILED` | wrap | repeat | repeat | repeat |
+| `CLAMP_TO_EDGE` | clamp | clamp to edge | clamp to edge | clamp to edge |
+| `CLAMP_TO_BORDER` | border, opaque white, linear mip | clamp to border, white border | clamp to border, opaque white | clamp-to-edge approximation; true border color is unavailable |
 
 `RenderMesh::LoadTex()` sets `MIPMAPS` plus either `TILED` or `CLAMP_TO_EDGE`, then calls `SetTextureParams()` after the texture is loaded.
 
@@ -514,7 +515,7 @@ Useful logs and diagnostics:
 
 - `Texture creation failed: '<path>'` from `BaseDriver::CreateTexture()`.
 - `Texture '<path>' not found, loading checker` from `Texture::LoadTexture()`.
-- backend-specific upload/SRV/sampler errors from D3D11/D3D12/GL/Vulkan texture files;
+- backend-specific upload/SRV/sampler errors from D3D11/D3D12/GL/Vulkan/WebGPU texture paths;
 - `[IBL] Loaded cached...`, `[IBL] Generated...`, or stale/truncated cache logs;
 - `T850_DUMP_TEXTURE_UPLOADS`, which writes uploaded textures as DDS plus metadata;
 - `RenderTrace`, which records texture/sampler binds and logical sampler signatures across APIs.

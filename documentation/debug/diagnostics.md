@@ -642,3 +642,5 @@ When adding a new diagnostic:
 7. For render trace, ensure `g_renderTracer` is initialized and `FrameDumper` saved trace output.
 8. For profiler, check the `Profiler initialized (API=..., GPU=...)` log and that `BeginFrame()` / `EndFrame()` bracket the frame.
 9. For cross-API mismatches, compare render target outputs first, then shader/PSO/resource/draw snapshots.
+10. For WebGPU device loss, record `device.recovery.attempts` and `device.recovery.exhausted`; use `--webgpu-recovery-selftest` for one loss or `--webgpu-recovery-stress-selftest` for bounded exhaustion.
+11. For a shader-cache race assertion, treat `ShaderProgramCache` as render-thread-affine and move GPU registry access back to the owning thread rather than adding a local mutex.

@@ -104,6 +104,7 @@ int main(int arg,char ** args) try {
   bool webgpuRecoverySelfTest = false;
   bool computeSelfTestApiExplicit = false;
   int computeSelfTestWaitSeconds = 0;
+  bool webgpuRecoveryStressSelfTest = false;
   for (int i = 1; i < arg; ++i) {
       if (std::string_view(args[i]) == "--graphics-fixture") {
   #if defined(_WIN32) && defined(_M_X64)
@@ -122,6 +123,10 @@ int main(int arg,char ** args) try {
     }
     if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
       webgpuRecoverySelfTest = true;
+    }
+    if (std::string_view(args[i]) == "--webgpu-recovery-stress-selftest") {
+      webgpuRecoverySelfTest = true;
+      webgpuRecoveryStressSelfTest = true;
     }
     if (std::string_view(args[i]) == "--api" && i + 1 < arg) {
       computeSelfTestApiExplicit = true;
@@ -153,7 +158,12 @@ int main(int arg,char ** args) try {
   if (webgpuRecoverySelfTest) {
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
     t850::g_config.api = "webgpu";
-    t850::webgpu::ConfigureDeviceLossTestFrame(60);
+    if (webgpuRecoveryStressSelfTest) {
+      t850::g_config.webgpuDeviceRecoveryAttempts = 3;
+      t850::webgpu::ConfigureDeviceLossTestSequence(60, 4, 1);
+    } else {
+      t850::webgpu::ConfigureDeviceLossTestFrame(60);
+    }
 #else
     throw std::invalid_argument("The WebGPU recovery self-test is unavailable on this platform");
 #endif

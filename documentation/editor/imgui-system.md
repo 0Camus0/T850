@@ -30,7 +30,7 @@ It is responsible for:
 
 1. Creating and destroying the Dear ImGui context.
 2. Initializing the correct platform backend: SDL3 on desktop/Linux, Android backend on Android.
-3. Initializing the correct renderer backend: D3D11, D3D12, OpenGL, or Vulkan.
+3. Initializing the correct renderer backend: D3D11, D3D12, OpenGL, Vulkan, or WebGPU for supported runtime hosts.
 4. Driving `NewFrame()`, draw-data build, draw-data render, and optional platform windows.
 5. Routing manual gamepad navigation into ImGui.
 6. Rendering loading-progress frames while long asset loads run.
@@ -41,7 +41,7 @@ flowchart LR
   App["DayScene App / T8ditor wrapper"] --> ImGuiSystem["ImGuiSystem"]
   ImGuiSystem --> Factory["CreateImGuiRendererBackend"]
   Factory --> Renderer["ImGuiRendererBackend"]
-  Renderer --> APIs["D3D11 / D3D12 / OpenGL / Vulkan"]
+  Renderer --> APIs["D3D11 / D3D12 / OpenGL / Vulkan / WebGPU"]
   ImGuiSystem --> DevGui["DevGuiContext"]
   DevGui --> SceneGui["SceneBase::DrawDevGui"]
   ImGuiSystem --> Loading["LoadingProgress frame callback"]
@@ -56,7 +56,7 @@ flowchart LR
 | `FrameworkImGui/include/imgui/ImGuiSystem.h` | Public UI-system wrapper: init/shutdown, frame lifecycle, draw data, loading frame renderer, capture queries, wheel/gamepad input, Android event/native-window APIs. |
 | `FrameworkImGui/include/imgui/ImGuiRendererBackend.h` | Polymorphic backend contract for initialization, frame hooks, draw submission, texture IDs, descriptor cleanup, platform windows, and native input/window integration. |
 | `FrameworkImGui/src/ImGuiRendererBackend.cpp` | The single graphics-API factory boundary. |
-| `FrameworkImGui/src/ImGuiD3D11Backend.cpp`, `ImGuiD3D12Backend.cpp`, `ImGuiOpenGLBackend.cpp`, `ImGuiVulkanBackend.cpp` | Per-API ImGui platform/renderer integration and API-specific preview texture ownership. |
+| `FrameworkImGui/src/ImGuiD3D11Backend.cpp`, `ImGuiD3D12Backend.cpp`, `ImGuiOpenGLBackend.cpp`, `ImGuiVulkanBackend.cpp`, `ImGuiWebGPUBackend.cpp` | Per-API ImGui platform/renderer integration and API-specific preview texture ownership. |
 | `FrameworkImGui/src/ImGuiSystem.cpp` | API-neutral context coordinator, dockspace/platform windows, SDL event watcher, loading screen, and gamepad navigation. |
 | `FrameworkImGui/include/imgui/DevGuiContext.h` | Shared scene/dev GUI facade around ImGui panels, sections, descriptor widgets, hosted viewport docking IDs, embedded panels, and navigation focus. |
 | `FrameworkImGui/src/DevGuiContext.cpp` | `DevGuiContext` implementation: scoped labels, panel begin/end, slider/checkbox/combo/button helpers, frame stats overlay, navigation focus. |
@@ -214,12 +214,13 @@ OpenGL preserves/restores the current SDL GL window/context around platform-wind
 - D3D12 -> binds the D3D12 SRV heap and calls `ImGui_ImplDX12_RenderDrawData` with the current command list.
 - OpenGL -> `ImGui_ImplOpenGL3_RenderDrawData`.
 - Vulkan -> clears pending texture slots, ensures the backbuffer render pass, gets the current command buffer, then calls `ImGui_ImplVulkan_RenderDrawData`.
+- WebGPU -> uses `ImGui_ImplWGPU_RenderDrawData` inside the active runtime render pass; platform viewports remain disabled.
 
 On Android, runtime code normally calls `BuildDrawData()` in `DrawRuntimeGui()`, then installs a `BaseDriver::SetPrePresentOverlayCallback()` callback that calls `RenderDrawData()` at the correct point. Vulkan implements that virtual hook; shared UI code does not downcast the driver.
 
 ## Preview texture IDs
 
-`ImGuiSystem::GetTextureID(texture, mode)` delegates texture interoperability to the selected backend. D3D11 returns its SRV, OpenGL returns the texture object ID, D3D12 returns a native SRV or creates an opaque preview descriptor, and Vulkan creates/caches a combined-image descriptor set. `PruneTextureIDs()` and `ReleaseTextureIDs()` keep descriptor lifetime inside the backend. Runtime and T8ditor no longer switch on `GraphicsApi` or cast texture subclasses.
+`ImGuiSystem::GetTextureID(texture, mode)` delegates texture interoperability to the selected backend. D3D11 returns its SRV, OpenGL returns the texture object ID, D3D12 returns a native SRV or creates an opaque preview descriptor, Vulkan creates/caches a combined-image descriptor set, and WebGPU returns backend-owned texture-view/bind-group state. `PruneTextureIDs()` and `ReleaseTextureIDs()` keep descriptor lifetime inside the backend. Runtime and T8ditor no longer switch on `GraphicsApi` or cast texture subclasses.
 
 ## Capture queries and wheel input
 

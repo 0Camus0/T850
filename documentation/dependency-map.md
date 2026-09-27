@@ -301,11 +301,13 @@ flowchart TD
   Platform["RootFramework platform loop"] --> AppUpdate["AppBase::OnUpdate"]
   AppUpdate --> SceneUpdate["Scene or Editor update"]
   SceneUpdate --> Physics["JoltPhysicsSystem::Update"]
-  SceneUpdate --> Animation["RenderSkinnedMesh::UpdateAnimationAndBones"]
+  SceneUpdate --> Animation["RenderSkinnedMesh::UpdateAnimationPose"]
   AppUpdate --> AppDraw["AppBase::OnDraw"]
   AppDraw --> BeginFrame["BaseDriver::BeginFrame"]
   BeginFrame --> RenderGraph["RenderGraph::Execute"]
-  RenderGraph --> MeshDraw["RenderMesh / RenderSkinnedMesh draws"]
+  Animation --> RenderGraph
+  RenderGraph --> GraphUpload["Pre-pass UploadBoneTexture"]
+  GraphUpload --> MeshDraw["RenderMesh / RenderSkinnedMesh draws"]
   MeshDraw --> ShaderSet["ShaderBase::Set"]
   ShaderSet --> PSO["D3D12/Vulkan PSO or GL/D3D11 shader state"]
   PSO --> DrawIndexed["DeviceContext::DrawIndexed"]
@@ -318,6 +320,27 @@ Key documents:
 - [Platform event loop](architecture/platform-event-loop.md)
 - [Render graph](rendering/render-graph.md)
 - [Geometry rendering flow](rendering/geometry-rendering-flow.md)
+
+## Compute graph flow
+
+```mermaid
+flowchart LR
+  Manifest["Shaders/compute_kernels.json"] --> Registry["ComputeKernelRegistry"]
+  Registry --> Layout["Typed bindings + permutations + callbacks"]
+  GraphJson["Render graph compute pass"] --> Validation["Strict binding/lifetime validation"]
+  Layout --> Validation
+  Validation --> Pipeline["Backend ComputePipeline"]
+  Pipeline --> Threads["Reflected local size X/Y/Z"]
+  GraphJson --> Depth["compute_depth (default 1)"]
+  Threads --> Dispatch["Ceiling-divided DispatchCompute X/Y/Z"]
+  Depth --> Dispatch
+```
+
+Key documents:
+
+- [Compute shader implementation](rendering/compute-shader-implementation.md)
+- [Render graph](rendering/render-graph.md)
+- [Shader management](rendering/shader-management.md)
 
 ## Editor-to-runtime scene flow
 

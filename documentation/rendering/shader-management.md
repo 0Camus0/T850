@@ -633,6 +633,7 @@ Important details:
 - `ShaderKey(0)` means an empty valid key.
 - `ShaderKey()` means `0xFFFFFFFFFFFFFFFF` and is an invalid sentinel.
 - `ShaderProgramCache` stores compiled `ShaderBase*` by shader family, permutation, and compiler/translation flow.
+- `ShaderProgramCache` is non-owning and render-thread-affine; `BaseDriver` owns shader destruction and Debug builds assert cache access from the creating thread.
 - `ShaderFamilyId` hashes vertex/fragment source names and source contents.
 - `ShaderProgramFlow` distinguishes D3D12 DXC from `legacyHLSL` and WebGPU auto/WGSL/SPIR-V flows.
 - Family-qualified lookup logs family, permutation, pass, and flow on a miss.
@@ -695,6 +696,11 @@ During draw, the final key is recomposed:
 5. Resolve the program from the renderer's retained `ShaderFamilyId`, final permutation, and active backend flow.
 
 `RenderSkinnedMesh` adds `HAS_SKINNING_TEX` to each subset key, creates a bone texture, and recompiles the same mesh shader sources with skinning defines enabled. It also creates pass variants for `FORWARD`, `GBUFFER`, `SHADOW_MAP`, and `RADIAL_DEPTH`. Its wireframe family uses its natural permutation; no reserved pass value is needed to avoid collisions.
+
+Compute kernel metadata is separate from graphics permutation identity. The
+strict packaged `Shaders/compute_kernels.json` manifest owns compute source
+names, entry points, permutations, typed bindings, storage formats and extent
+rules; `ComputeKernelRegistry` loads it through `ResourceLocator`.
 
 ## Defines generated from `ShaderKey`
 

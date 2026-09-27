@@ -23,6 +23,7 @@ public:
   std::string_view Type() const override { return "path_follow"; }
   ComponentUpdatePhase Phase() const override { return ComponentUpdatePhase::Logic; }
   void OnCreate() override;
+  void OnDestroy() override;
   void Update(float fixedDt) override;
   bool TryGetFloat(std::string_view name, float& value) const override;
 

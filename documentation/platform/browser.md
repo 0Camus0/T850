@@ -88,7 +88,9 @@ OPEN BROWSER launches the last completed Emscripten build; building native
 Debug/Release or updating the launcher executable does not update it. After
 pulling scene-code, schema, or compute-shader changes, use BUILD WEB before
 launching. The Wasm executable and prepared shader packages must come from the
-same source version. Do not use `-SkipShaderExport` for that refresh.
+same source version. `Shaders/compute_kernels.json` is also a required packaged
+runtime input and is embedded in the Wasm self-test target. Do not use
+`-SkipShaderExport` for a shader/manifest refresh.
 
 An older browser executable may ignore newer scene fields, so structures added
 in native code can be absent. A newer shader source without matching exports
@@ -1609,7 +1611,7 @@ failures for agent mesh 4. Those failures have not been suppressed or fixed.
 Map inspection is validated; that authored NPC workflow is not.
 
 Remaining work: performance and memory tuning, explicit save/reload and block
-edit tests, gamepad/touch integration, device-loss recovery, portable GBuffer
+edit tests, gamepad/touch integration, repeated-loss/leak recovery stress, portable GBuffer
 limits, exhaustive per-scene authoring/gameplay workflows, and shipped deployment
 packaging. All-scene source compilation is not all-scene runtime acceptance.
 The development server supplies COOP/COEP headers; deployed threaded builds need

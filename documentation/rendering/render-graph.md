@@ -27,7 +27,7 @@ flowchart LR
   Execute --> Mesh["mesh draw commands"]
   Execute --> Quad["fullscreen/final quad commands"]
   Execute --> Driver["BaseDriver PushRT/PopRT/SetState"]
-  Driver --> API["D3D11/D3D12/GL/Vulkan backends"]
+  Driver --> API["D3D11/D3D12/GL/Vulkan/WebGPU backends"]
 ```
 
 ## Key files and classes
@@ -191,6 +191,7 @@ Top-level shape:
 | `linear_filter` | bool | Sets RT texture filtering to linear or nearest. |
 | `generate_mips` | bool | Requests mip generation where supported. |
 | `storage` | bool | Requests storage/UAV creation usage on D3D11, D3D12, Vulkan, WebGPU, and desktop OpenGL 4.3+. |
+| `initialized` | bool | Requests a deterministic one-time zero clear before the first graph execution after allocation/recreation; defaults to false. |
 | `size_ref` | string | Named dynamic size such as `$shadow_resolution` or `$god_rays_resolution`. |
 
 Supported color format strings:
@@ -268,6 +269,7 @@ On Android, screen-sized render targets can be scaled by the hard-coded Android 
 | `compute_entry` | string | Compute entry point; defaults to `CS`. |
 | `compute_permutation` | string | Stable compute permutation name; defaults to `base`. |
 | `compute_extent_from` | string | Storage output whose dimensions determine dispatch counts. |
+| `compute_depth` | integer | Logical Z extent; defaults to 1 and must be positive. |
 | `compute_resources` | array | Complete typed binding list for constants, sampled textures, samplers, and storage outputs. |
 | `clear` | bool | Whether to clear after target binding. |
 | `clear_color` | `[float,float,float,float]` | Clear color used when `clear` is true. |
@@ -322,7 +324,8 @@ permutations, missing attachments, writes to non-storage targets, sampler entrie
 without a matching sampled texture, and read/write feedback on the same subresource.
 `compute_extent_from` must name one declared storage output. Workgroup dimensions
 are reflected from the compiled pipeline on every backend; they are not authored in
-JSON. Dispatch uses ceiling division against the selected output extent.
+JSON. Dispatch uses ceiling division against the selected output width/height and
+the authored `compute_depth`, producing X, Y and Z group counts.
 
 `RenderGraphDescriptor.h` mentions `@environment_map`, but the current execution path binds environment maps through `bind_environment_map`, not through this input string.
 
@@ -387,11 +390,11 @@ other backends appear to work through undefined or stale bindings.
 
 ## Graph construction
 
-`BuildGraph()` creates one `GraphNode` per pass and one `GraphEdge` per RT input dependency.
+`BuildGraph()` creates one `GraphNode` per pass and one `GraphEdge` per render-target attachment dependency.
 
 ```mermaid
 flowchart TD
-  Passes["Pass array in JSON order"] --> LastWriter["Track last writer per RT name"]
+  Passes["Pass array in JSON order"] --> LastWriter["Track last writer per RT attachment"]
   LastWriter --> Inputs["For each input RTName:ATTACHMENT"]
   Inputs --> Edge["Create GraphEdge from last writer to consumer"]
   Edge --> NodeAdj["Fill inputs_from / outputs_to"]
@@ -402,7 +405,9 @@ Important behavior:
 
 - The graph stores dependency edges for inspection/debugging.
 - Execution still happens in JSON pass order; there is no topological sort.
-- Dependencies are resolved against the last writer seen so far, so pass ordering in JSON is meaningful.
+- Dependencies are resolved against the last writer of the exact color/depth attachment, so pass ordering in JSON is meaningful.
+- Reads before a writer are rejected unless the render-target declaration sets `initialized: true`; those targets receive a one-time zero clear before graph passes and previous-frame history targets use this explicit contract.
+- Pass names must be nonempty and unique, and every nonempty pass target must name a declared render target.
 - Built-in inputs beginning with `@` do not create graph edges.
 
 ## Execution flow
@@ -640,8 +645,8 @@ from this run are local ignored outputs under `bin/x64/Release` and
 ## Known limitations and gotchas
 
 - Execution is JSON order, not topologically sorted graph order.
-- Dependency edges only reflect RT inputs from the most recent prior writer.
-- Unknown JSON keys are ignored; typos in unused fields may not fail parsing.
+- Dependency edges reflect declared sampled RT attachments from their most recent prior writer; execution remains authored JSON order.
+- Unknown render-graph JSON keys are rejected during strict parsing.
 - Unknown signatures log an error but resolve to an empty valid `ShaderKey`, which may cause a later shader miss rather than a parse failure.
 - `clear_depth` exists in the descriptor but is not directly used by the current clear call.
 - State restoration is explicit. If a pass sets blend/depth/cull without `post_state`, later passes inherit that state.

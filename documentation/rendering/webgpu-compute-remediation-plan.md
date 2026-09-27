@@ -290,8 +290,8 @@ Rendering fixes remain outside this workstream.
 | [R15](#r15-surface-silent-quality-downgrades) | Surface silent quality downgrades | P2 | R4 | open | `R11` | `WebGPUDriver.cpp` |
 | [R16](#r16-add-a-content-security-policy-to-the-browser-target) | Add a Content-Security-Policy to the browser target | P2 | None | open | `R13` | `pages-worker.mjs`, `server.mjs` |
 | [R17](#r17-resolve-the-filtered-depth-copy-once-per-depth-version) | Resolve the filtered-depth copy once per depth version | P2 | R4 | open | `R14` | `WebGPUDriver.cpp` |
-| [R18](#r18-data-drive-the-compute-kernel-registry) | Data-drive the compute kernel registry | P2 | None | open | `R05` | `ComputeKernelRegistry.cpp`, `ComputeReflection.cpp` |
-| [R19](#r19-support-three-dimensional-compute-dispatch) | Support three-dimensional compute dispatch | P2 | R18 | open | `R09` | `RenderGraph.cpp`, `RenderGraphDescriptor.h` |
+| [R18](#r18-data-drive-the-compute-kernel-registry) | Data-drive the compute kernel registry | P2 | None | completed | `R05` | `ComputeKernelRegistry.cpp`, `ComputeReflection.cpp` |
+| [R19](#r19-support-three-dimensional-compute-dispatch) | Support three-dimensional compute dispatch | P2 | R18 | in progress | `R09` | `RenderGraph.cpp`, `RenderGraphDescriptor.h` |
 | [R20](#r20-recreate-a-lost-webgpu-device-and-reload-the-scene) | Recreate a lost WebGPU device and reload the scene | P2 | R3 | in progress | `R02b` | `WebGPUDriver.cpp`, `WebGPUContext.cpp` |
 | [R21](#r21-implement-opt-in-cross-backend-gpu-timestamp-queries) | Implement opt-in cross-backend GPU timestamp queries | P2 | R1, R6 | in progress | `R03` | `GpuTimestampProfiler.cpp`, D3D12/Vulkan/WebGPU drivers |
 
@@ -2141,45 +2141,27 @@ Remaining risks or blocked gates: not yet assessed.
 
 Dependencies: none.
 
-Status: open. Priority P2.
+Status: completed. Priority P2.
 
-### Problem
+### Current implementation
 
-The render graph is data-driven but compute kernels are not. Adding a kernel
-requires four C++ edits and a rebuild, even though the engine already vendors
-and uses SPIRV-Reflect and can derive the same information.
+`Assets/Shaders/compute_kernels.json` is the strict packaged source of truth for
+kernel IDs, source names, entry points, permutations, typed binding layouts,
+storage formats and extent matching. `ComputeKernelRegistry` validates the
+manifest once through `ResourceLocator`; the former compiled `ComputeKernelId`
+enum, `kKernels[]` table and central constant-packing branch are gone.
 
-### Evidence
-
-- `T850/Framework/src/utils/ComputeKernelRegistry.cpp:140` — `kKernels[]` is a
-  `constexpr` table; each entry points at a hand-written binding array.
-- `BuildComputeConstants` branches on `kernel.id` to pack constants per kernel.
-- `T850/Framework/src/utils/ComputeReflection.cpp` already derives binding
-  index, type, storage format and workgroup size from SPIR-V, and rejects
-  anything it does not recognize.
-- `T850/Assets/Scenes/MinecraftScene_RenderGraph.json:187-193` already declares
-  `compute_shader`, `compute_entry`, `compute_permutation`,
-  `compute_extent_from` and `compute_resources` in data.
-
-### Required change
-
-1. Derive the binding layout from reflection at load, and keep the hand-written
-   table only as an optional expected-layout assertion during development.
-2. Move the constants contract into data. The graph already names resources and
-   registers; extend it so a kernel declares its constant fields and their
-   sources instead of requiring a C++ branch.
-3. Keep the validation strictness. Reflection currently fails closed on unknown
-   descriptor types, non-2D images and unsupported storage formats; preserve
-   that behavior.
-4. Reduce `ComputeKernelId` to identifiers still required by code paths that
-   genuinely differ, and delete the rest.
-5. Preserve both strict shader flows and package reflection metadata for the
-  browser. Do not require a runtime HLSL or SPIR-V compiler in Emscripten.
+Optional named callbacks retain type-safe C++ packing only where constants are
+derived from camera or `SceneProps` state. A kernel without such scene-derived
+constants can be added through shader, manifest and render-graph data without
+an engine rebuild. Backend shader reflection remains the ABI check against the
+manifest-declared layout.
 
 ### Acceptance criteria
 
-- A new compute kernel can be added by adding a shader file and a render-graph
-  entry, with no change to `ComputeKernelRegistry.cpp` and no engine rebuild.
+- A new compute kernel without custom scene-derived constants can be added by
+  adding a shader file, `compute_kernels.json` entry and render-graph entry,
+  with no change to `ComputeKernelRegistry.cpp` and no engine rebuild.
 - All existing kernels keep byte-identical dispatch behavior; prove with the
   existing compute self-test on all five APIs.
 - A kernel whose reflected layout disagrees with its declared graph resources
@@ -2194,17 +2176,15 @@ foreach ($api in 'd3d11','d3d12','vulkan','gl','webgpu') { .\DayScene.exe --comp
 
 ### Completion record
 
-- [ ] Implementation or audit/scope deliverable finished.
-- [ ] Every acceptance criterion verified.
-- [ ] Required tests passed; exact commands and results retained.
-- [ ] Owning docs updated; applicable registration and platform gates passed.
-- [ ] Evidence linked; index and item status updated together.
+- [x] Strict packaged kernel metadata manifest implemented.
+- [x] Central kernel-ID routing removed; optional typed constant callbacks are registered by name.
+- [x] Existing kernels pass the five-backend compute self-test.
+- [x] Graph, shader-precompiler, Web/Wasm and Android package gates passed.
 
-Tested revision: pending.
-Commands and results: not run.
-Evidence path or run URL: pending.
-Completion date: pending.
-Remaining risks or blocked gates: not yet assessed.
+Tested revision: working tree based on `ee03de54`.
+Commands and results: x64 Release build/self-tests; D3D11, D3D12, Vulkan, OpenGL and WebGPU compute self-tests; Web/Wasm and Android Release builds passed.
+Completion date: 2026-09-26.
+Remaining risks or blocked gates: custom scene-derived constants still require a named typed C++ builder; kernels without them are manifest-only.
 
 ---
 
@@ -2212,34 +2192,20 @@ Remaining risks or blocked gates: not yet assessed.
 
 Dependencies: R18.
 
-Status: open. Priority P2.
+Status: in progress. Priority P2. Implementation is complete; a real 3D kernel
+has not yet exercised the multi-slice path on all five backends.
 
-### Problem
+### Current implementation
 
-The render graph computes the Z group count from a literal, so every dispatch is
-a single slice. Volumetric work, 3D textures and array processing are
-unreachable from the graph.
-
-### Evidence
-
-`T850/Framework/src/scene/RenderGraph.cpp:914` —
-`const uint32_t groupsZ = (1u + threads[2] - 1u) / threads[2];`
-
-The X and Y group counts derive from the resolved output extent; Z does not.
-
-### Required change
-
-1. Extend the resolved compute extent to three dimensions. Source Z from the
-   bound resource's depth or array layer count, or from an explicit
-   `compute_extent` field in the pass.
-2. Extend the extent-match validation that already exists for X and Y.
-3. Validate the resulting group counts against each backend's per-dimension
-   dispatch limits, which are already queried.
-4. Leave existing 2D graphs byte-identical: an absent Z resolves to one.
+Every compute pass has an optional positive `compute_depth` logical Z extent
+that defaults to one. The graph computes X, Y and Z group counts with ceiling
+division against the backend-reflected local size. Existing 2D graphs therefore
+remain single-slice without edits, while authored 3D work can request a larger
+Z extent. Backend dispatch-limit checks remain authoritative.
 
 ### Acceptance criteria
 
-- An existing 2D graph produces an identical dispatch log line.
+- An existing 2D graph preserves identical X/Y work and reports a Z extent/group count of one.
 - A kernel declaring a Z extent dispatches the expected group count on D3D11,
   D3D12, Vulkan, GL and WebGPU.
 - An out-of-range Z fails validation with a named diagnostic.
@@ -2253,17 +2219,16 @@ foreach ($api in 'd3d11','d3d12','vulkan','gl','webgpu') { .\DayScene.exe --comp
 
 ### Completion record
 
-- [ ] Implementation or audit/scope deliverable finished.
-- [ ] Every acceptance criterion verified.
-- [ ] Required tests passed; exact commands and results retained.
-- [ ] Owning docs updated; applicable registration and platform gates passed.
-- [ ] Evidence linked; index and item status updated together.
+- [x] `compute_depth` extends graph dispatch extent to three dimensions and defaults to one.
+- [x] Group counts use reflected X/Y/Z local sizes; backend dispatch-limit checks remain authoritative.
+- [x] Strict graph tests accept depth five and reject non-positive depth.
+- [x] Existing maintained 2D graphs retain the default single-slice behavior.
+- [ ] A production or dedicated 3D kernel verifies multi-slice dispatch on all five backends.
 
-Tested revision: pending.
-Commands and results: not run.
-Evidence path or run URL: pending.
-Completion date: pending.
-Remaining risks or blocked gates: not yet assessed.
+Tested revision: working tree based on `ee03de54`.
+Commands and results: x64 Release build and `T-COMPUTE-GRAPH-01` passed; five-backend 2D compute matrix passed.
+Completion date: 2026-09-26.
+Remaining risks or blocked gates: no production 3D texture kernel is currently authored, so five-backend multi-slice execution remains unverified.
 
 ---
 
@@ -2271,8 +2236,8 @@ Remaining risks or blocked gates: not yet assessed.
 
 Dependencies: R3.
 
-Status: in progress. Priority P2. One-attempt native and browser recreation is
-implemented; visual/leak and failed-recovery acceptance remain open.
+Status: in progress. Priority P2. Configurable bounded native/browser recreation
+is implemented; browser repeated-loss and long-run visual/leak acceptance remain open.
 
 ### Problem
 
@@ -2303,20 +2268,23 @@ and fresh-start captures, and retain the exact injection options and commands.
 
 ### Completion record
 
-- [x] One-attempt framework-owned recreation implemented for Windows and browser.
+- [x] Configurable bounded framework-owned recreation implemented for Windows and browser.
+- [x] Native four-loss stress test proves three recreations followed by clean exhaustion.
 - [ ] Every acceptance criterion verified.
 - [x] Native scene and asset-free browser successful-recovery tests passed.
 - [x] Owning docs updated; focused platform gates passed.
 - [ ] Evidence linked; index and item status updated together.
 
-Tested revision: pending.
-Commands and results: native x64 Debug forced `device.Destroy()` recovery PASS;
-Emscripten Release self-tests PASS; Edge/SwiftShader browser recovery PASS.
+Tested revision: working tree based on `ee03de54` plus prior browser recovery evidence.
+Commands and results: native x64 Release
+`--webgpu-recovery-stress-selftest` performed three recreations and cleanly
+exhausted on the fourth loss; Emscripten Release self-tests PASS;
+Edge/SwiftShader single-loss browser recovery PASS.
 Evidence path or run URL: `T850/bin/x64/Debug/logs/device-recovery-actual-loss-final.log`
 and `T850/build/web/edge-device-recovery-final/report.json`.
-Completion date: partial implementation validated 2026-09-21.
-Remaining risks or blocked gates: recovered/fresh image comparison, live-object
-leak accounting, stale-callback assertion and injected failed-recovery validation.
+Completion date: partial acceptance updated 2026-09-26.
+Remaining risks or blocked gates: recovered/fresh image comparison, browser
+repeated-loss stress, long-run live-object leak accounting and stale-callback assertion.
 
 ---
 

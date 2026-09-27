@@ -335,6 +335,7 @@ void GameLogicSystem::ApplyDeferredDestroys() {
   for (RuntimeGameObjectId id : pendingObjectDestroys_) {
     if (GameObject* object = registry_.Get(id)) {
       if (object->controller) object->controller->OnUnpossess();
+      navigation_.CancelRequestsForObject(id);
       intents_.erase(id);
       DestroyComponents(*object);
     }

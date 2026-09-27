@@ -28,6 +28,7 @@ public:
                        const XVECTOR3& start,
                        const XVECTOR3& goal);
   bool TryGetResult(uint64_t requestId, t850::navigation::NavPathResult& out);
+  std::size_t CancelRequestsForObject(RuntimeGameObjectId requester);
   bool ProjectToNavmesh(const XVECTOR3& point, XVECTOR3& out) const;
   bool Available() const;
 
@@ -57,6 +58,7 @@ private:
   std::vector<QueuedRequest> queuedRequests_;
   std::vector<PendingBatch> pendingBatches_;
   std::unordered_map<uint64_t, t850::navigation::NavPathResult> completedResults_;
+  std::unordered_map<uint64_t, RuntimeGameObjectId> requestOwners_;
 };
 
 } // namespace t850::game

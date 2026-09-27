@@ -36,6 +36,8 @@ namespace {
 std::atomic<uint64_t> g_frameAttempts{0};
 std::atomic<bool> g_forcedDeviceLossInjected{false};
 std::atomic<uint64_t> g_configuredDeviceLossFrame{0};
+std::atomic<uint64_t> g_configuredDeviceLossInterval{1};
+std::atomic<uint32_t> g_configuredDeviceLossRemaining{0};
 
 bool ShouldInjectDeviceLoss() {
   static const uint64_t environmentFrame = [] {
@@ -49,9 +51,19 @@ bool ShouldInjectDeviceLoss() {
     return end && *end == '\0' ? parsed : uint64_t{0};
 #endif
   }();
+  const uint64_t attempt = g_frameAttempts.fetch_add(1, std::memory_order_relaxed) + 1;
   const uint64_t configuredFrame = g_configuredDeviceLossFrame.load(std::memory_order_acquire);
-  const uint64_t frame = configuredFrame ? configuredFrame : environmentFrame;
-  return frame && g_frameAttempts.fetch_add(1, std::memory_order_relaxed) + 1 == frame;
+  if (configuredFrame && attempt == configuredFrame) {
+    uint32_t remaining = g_configuredDeviceLossRemaining.load(std::memory_order_acquire);
+    if (remaining > 0 && g_configuredDeviceLossRemaining.compare_exchange_strong(
+          remaining, remaining - 1, std::memory_order_acq_rel)) {
+      g_configuredDeviceLossFrame.fetch_add(
+        g_configuredDeviceLossInterval.load(std::memory_order_relaxed), std::memory_order_release);
+      return true;
+    }
+  }
+  return environmentFrame && attempt == environmentFrame &&
+    !g_forcedDeviceLossInjected.exchange(true, std::memory_order_acq_rel);
 }
 
 std::string Message(wgpu::StringView text) {
@@ -71,9 +83,15 @@ void Wait(const wgpu::Instance& instance, wgpu::Future future) {
 }
 
 void ConfigureDeviceLossTestFrame(uint64_t frame) {
+  ConfigureDeviceLossTestSequence(frame, frame ? 1u : 0u, 1);
+}
+
+void ConfigureDeviceLossTestSequence(uint64_t firstFrame, uint32_t count, uint64_t intervalFrames) {
   g_frameAttempts.store(0, std::memory_order_release);
   g_forcedDeviceLossInjected.store(false, std::memory_order_release);
-  g_configuredDeviceLossFrame.store(frame, std::memory_order_release);
+  g_configuredDeviceLossFrame.store(firstFrame, std::memory_order_release);
+  g_configuredDeviceLossInterval.store((std::max)(uint64_t{1}, intervalFrames), std::memory_order_release);
+  g_configuredDeviceLossRemaining.store(firstFrame ? count : 0u, std::memory_order_release);
 }
 
 struct WebGPUContext::Health {
@@ -432,7 +450,7 @@ void WebGPUContext::Resize(uint32_t newWidth, uint32_t newHeight) {
 
 bool WebGPUContext::BeginFrame(bool swapchain) {
   T8_TELEMETRY_SCOPE("webgpu.begin_frame");
-  if (ShouldInjectDeviceLoss() && !g_forcedDeviceLossInjected.exchange(true, std::memory_order_acq_rel)) {
+  if (ShouldInjectDeviceLoss()) {
     m_health->Fail("Injected device loss for recovery validation");
     device.Destroy();
   }
@@ -572,7 +590,7 @@ wgpu::Buffer WebGPUContext::UploadUniform(const void* data, uint64_t size, uint6
   RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, size);
   if (RuntimeTelemetry::IsFrameActive()) {
     T8_TELEMETRY_ADD("webgpu.uniform_snapshots", 1);
-    T8_TELEMETRY_ADD("webgpu.uniform_bytes", size);
+    T8_TELEMETRY_ADD("webgpu.uniform_bytes", static_cast<double>(size));
   }
   return upload.buffer;
 }
@@ -607,8 +625,8 @@ void WebGPUContext::CollectCompletedBuffers(bool waitForOldest) {
     m_submissions.pop_front();
   }
   if (RuntimeTelemetry::IsFrameActive()) {
-    T8_TELEMETRY_SET("webgpu.pending_submissions", m_submissions.size());
-    T8_TELEMETRY_SET("webgpu.free_buffer_bytes", m_freeBufferBytes);
+    T8_TELEMETRY_SET("webgpu.pending_submissions", static_cast<double>(m_submissions.size()));
+    T8_TELEMETRY_SET("webgpu.free_buffer_bytes", static_cast<double>(m_freeBufferBytes));
   }
 }
 
@@ -637,8 +655,8 @@ void WebGPUContext::SubmitCommands(const wgpu::CommandBuffer& command) {
   }
   T8_TELEMETRY_SCOPE("webgpu.resource_retirement");
   if (RuntimeTelemetry::IsFrameActive()) {
-    T8_TELEMETRY_ADD("webgpu.retired_buffers", m_retiredBuffers.size());
-    T8_TELEMETRY_ADD("webgpu.retired_textures", m_retiredTextures.size());
+    T8_TELEMETRY_ADD("webgpu.retired_buffers", static_cast<double>(m_retiredBuffers.size()));
+    T8_TELEMETRY_ADD("webgpu.retired_textures", static_cast<double>(m_retiredTextures.size()));
   }
   const auto health = m_health;
   const auto completion = queue.OnSubmittedWorkDone(wgpu::CallbackMode::WaitAnyOnly,

@@ -4,7 +4,7 @@
     { "name": "Deferred",         "color_count": 1, "color_format": "RGBA16F", "depth_format": "F32",  "size": [0,0], "linear_filter": true },
     { "name": "Extra16F",         "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "AdaptedLumCurrent", "color_count": 1, "color_format": "F16",    "depth_format": "NONE", "size": [1,1], "linear_filter": false },
-    { "name": "AdaptedLumPrev",   "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false },
+    { "name": "AdaptedLumPrev",   "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false, "initialized": true },
     { "name": "DepthPass",        "color_count": 0, "color_format": "NONE",    "depth_format": "F32",  "size": [0,0], "linear_filter": false, "size_ref": "$shadow_resolution" },
     { "name": "ShadowAccum",      "color_count": 1, "color_format": "R8",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "ExtraHelper",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "storage": true },

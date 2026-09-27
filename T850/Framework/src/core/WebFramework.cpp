@@ -176,13 +176,15 @@ bool WebFramework::HandleGraphicsFailure(const std::exception& error) {
   if (g_profiler) g_profiler->EndFrame();
   T8_LOG_ERROR("[WebFramework][DeviceLoss] Frame failed: %s; device=%s",
                error.what(), deviceFailure.c_str());
-  if (m_deviceRecoveryAttempts >= 1) {
+  if (m_deviceRecoveryAttempts >= static_cast<unsigned>(g_config.webgpuDeviceRecoveryAttempts)) {
+    T8_TELEMETRY_ADD("device.recovery.exhausted", 1.0);
     T8_LOG_ERROR("[WebFramework][DeviceLoss] Recovery exhausted; stopping cleanly");
     m_inited = false;
     emscripten_cancel_main_loop();
     return true;
   }
   ++m_deviceRecoveryAttempts;
+  T8_TELEMETRY_ADD("device.recovery.attempts", 1.0);
   m_deviceRecoveryPending = true;
   try {
     pVideoDriver->FlushGPUResources();

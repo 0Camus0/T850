@@ -655,6 +655,10 @@ jobs:
             Copy-Item $steamDeckPackage.FullName -Destination (Join-Path $releaseDir $steamDeckPackage.Name) -Force
           }
 
+      - name: Validate assembled release packages
+        shell: pwsh
+        run: T850/scripts/ValidateReleasePackages.ps1 -ReleaseDirectory release-assets -RequireSignedAndroid
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

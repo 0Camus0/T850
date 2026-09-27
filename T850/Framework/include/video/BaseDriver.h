@@ -317,6 +317,9 @@ namespace t850 {
 
   class BaseDriver {
   public:
+    // BaseDriver and its GPU resource registries are render-thread-affine.
+    // Worker threads may prepare CPU data, but creation, lookup, mutation and
+    // destruction of API objects must return to the thread that owns the driver.
     virtual ~BaseDriver() = default;
     enum {
       DEPTH_ATTACHMENT = -1,

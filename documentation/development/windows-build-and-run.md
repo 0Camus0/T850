@@ -774,7 +774,9 @@ Set-Location .\bin\x64\Release
 .\DayScene.exe --api d3d11 --scene 0 --model Models/DamagedHelmet.glb
 ```
 
-Graphics API values are `d3d11`, `d3d12`, `gl`, and `vulkan`.
+DayScene graphics API values are `d3d11`, `d3d12`, `gl`, `vulkan`, and
+`webgpu` on x64/ARM64. T8ditor accepts the first four only. Win32 native D3D12
+requires `--shaderFlow legacyHLSL`; WebGPU is unavailable on Win32.
 
 Scene indices:
 

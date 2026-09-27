@@ -135,7 +135,7 @@ bool LoadEditorSceneFile(const std::string& path, EditorSceneFile& output, std::
   }
 
   EditorSceneFile scene;
-  auto err = glz::read<glz::opts{.error_on_unknown_keys = false}>(scene, content);
+  auto err = glz::read<glz::opts{.error_on_unknown_keys = true}>(scene, content);
   if (err) {
     std::string message = glz::format_error(err, content);
     SetError(error, message);

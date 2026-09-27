@@ -4463,13 +4463,10 @@ void EditorApp::UpdateSkinnedAnimationAndRagdolls() {
   }
 }
 
-void EditorApp::UploadSkinnedBoneTextures() {
+void EditorApp::UploadPreRenderGeometryData() {
   for (SceneObject& obj : g_objects) {
     if (obj.primId < 0 || !obj.visible) continue;
     if (auto* terrain = dynamic_cast<t850::HeightmapMesh*>(obj.litInst.pBase)) terrain->UploadPlacementBones();
-    t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
-    if (skinned && skinned->HasSkinData())
-      skinned->UploadBoneTexture();
   }
 }
 
@@ -10777,7 +10774,7 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
 
   // Update all mesh transforms
   SyncSceneObjectTransforms();
-  UploadSkinnedBoneTextures();
+  UploadPreRenderGeometryData();
 
   // Render meshes: deferred via render graph on D3D11/D3D12, forward on GL
   bool useDeferred = g_deferredReady

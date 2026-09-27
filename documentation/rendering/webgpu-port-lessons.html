@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>T850 WebGPU Port: Lessons and Performance Findings</title>
+  <style>
+    :root {
+      --ink: #202426;
+      --muted: #596267;
+      --paper: #f7f8f5;
+      --surface: #ffffff;
+      --line: #cbd2ce;
+      --teal: #087f75;
+      --coral: #d84a35;
+      --gold: #d59b1b;
+      --soft-teal: #dff3ef;
+      --soft-coral: #fbe7e2;
+      --soft-gold: #fff2cb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(rgba(32, 36, 38, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(32, 36, 38, 0.035) 1px, transparent 1px);
+      background-size: 28px 28px;
+      font-family: Charter, Georgia, serif;
+      line-height: 1.55;
+    }
+
+    header {
+      border-top: 8px solid var(--coral);
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .header-inner,
+    main,
+    footer {
+      width: min(1100px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .header-inner { padding: 44px 0 34px; }
+
+    .eyebrow,
+    h2,
+    h3,
+    th,
+    .label,
+    .metric strong {
+      font-family: Bahnschrift, "Trebuchet MS", sans-serif;
+      letter-spacing: 0;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--coral);
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(2.1rem, 6vw, 4.4rem);
+      line-height: 1.02;
+      font-weight: 700;
+    }
+
+    .lede {
+      max-width: 760px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 1.14rem;
+    }
+
+    main { padding: 16px 0 56px; }
+
+    section {
+      padding: 42px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h2 {
+      margin: 0 0 18px;
+      font-size: 1.65rem;
+    }
+
+    h3 {
+      margin: 24px 0 8px;
+      font-size: 1.05rem;
+    }
+
+    p { max-width: 850px; }
+
+    .answer {
+      max-width: 880px;
+      margin: 0 0 24px;
+      font-size: 1.08rem;
+    }
+
+    .answer strong { color: var(--teal); }
+
+    .learning-grid,
+    .metric-grid,
+    .improvement-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .learning-grid { grid-template-columns: repeat(3, 1fr); }
+    .metric-grid { grid-template-columns: repeat(4, 1fr); }
+    .improvement-grid { grid-template-columns: repeat(2, 1fr); }
+
+    .note,
+    .metric,
+    .improvement {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      padding: 18px;
+    }
+
+    .note:nth-child(3n + 1) { border-top: 4px solid var(--teal); }
+    .note:nth-child(3n + 2) { border-top: 4px solid var(--coral); }
+    .note:nth-child(3n) { border-top: 4px solid var(--gold); }
+
+    .note h3,
+    .improvement h3 { margin-top: 0; }
+    .note p,
+    .improvement p { margin-bottom: 0; color: var(--muted); }
+
+    .execution-model {
+      display: grid;
+      grid-template-columns: 1fr 54px 1fr;
+      gap: 14px;
+      align-items: stretch;
+      margin-top: 24px;
+    }
+
+    .lane {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      padding: 20px;
+    }
+
+    .lane.native { border-top: 5px solid var(--coral); }
+    .lane.webgpu { border-top: 5px solid var(--teal); }
+
+    .lane h3 { margin-top: 0; }
+
+    .flow {
+      display: grid;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .flow span {
+      display: block;
+      min-height: 44px;
+      padding: 10px 12px;
+      border-left: 4px solid var(--line);
+      background: #f1f3f0;
+      font-family: Bahnschrift, "Trebuchet MS", sans-serif;
+      font-size: 0.88rem;
+    }
+
+    .versus {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-family: Bahnschrift, "Trebuchet MS", sans-serif;
+      font-weight: 700;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 18px 0;
+      background: var(--surface);
+      font-size: 0.94rem;
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th { background: #e9ece8; }
+    td.number { font-family: Bahnschrift, "Trebuchet MS", sans-serif; white-space: nowrap; }
+
+    .metric { min-height: 132px; }
+    .metric strong { display: block; font-size: 1.45rem; color: var(--coral); }
+    .metric span { color: var(--muted); font-size: 0.9rem; }
+
+    .callout {
+      margin: 22px 0 0;
+      padding: 16px 18px;
+      border-left: 5px solid var(--gold);
+      background: var(--soft-gold);
+    }
+
+    .improvement:nth-child(4n + 1) { background: var(--soft-teal); }
+    .improvement:nth-child(4n + 2) { background: var(--soft-coral); }
+
+    .tag {
+      display: inline-block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-family: Bahnschrift, "Trebuchet MS", sans-serif;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .source-list { margin: 0; padding-left: 20px; }
+    .source-list li { margin: 7px 0; }
+    a { color: var(--teal); text-underline-offset: 3px; }
+
+    footer {
+      padding: 24px 0 40px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    @media (max-width: 820px) {
+      .learning-grid,
+      .metric-grid,
+      .improvement-grid { grid-template-columns: 1fr 1fr; }
+      .execution-model { grid-template-columns: 1fr; }
+      .versus { min-height: 34px; }
+    }
+
+    @media (max-width: 560px) {
+      .header-inner,
+      main,
+      footer { width: min(100% - 24px, 1100px); }
+      .header-inner { padding: 30px 0 26px; }
+      .learning-grid,
+      .metric-grid,
+      .improvement-grid { grid-template-columns: 1fr; }
+      section { padding: 32px 0; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <p class="eyebrow">T850 engineering report</p>
+      <h1>What the WebGPU port taught us</h1>
+      <p class="lede">A concise comparison of native D3D12 and Dawn/WebGPU, where the measured CPU cost occurs, and which improvements would make Dawn a better fit for high-throughput engines.</p>
+    </div>
+  </header>
+
+  <main>
+    <section id="learnings">
+      <h2>1. What did we learn?</h2>
+      <p class="answer"><strong>WebGPU is a viable engine backend, but it is not a thin D3D12 wrapper.</strong> Porting successfully required treating it as a stricter execution and validation model, then separating correctness, CPU cost, GPU cost, startup cost, and presentation behavior in the evidence.</p>
+      <div class="learning-grid">
+        <article class="note">
+          <h3>Correctness first</h3>
+          <p>Black frames were usually contract defects: binding layouts, resource formats, pass compatibility, matrix translation, derivative uniformity, or lifetime errors. WebGPU exposed assumptions that native APIs sometimes tolerated.</p>
+        </article>
+        <article class="note">
+          <h3>Measure distinct boundaries</h3>
+          <p>GPU timestamps, queue-drained throughput, non-wait CPU time, shader preparation, startup, and PresentMon answer different questions. FPS alone repeatedly produced the wrong diagnosis.</p>
+        </article>
+        <article class="note">
+          <h3>Presentation can dominate</h3>
+          <p>An immediate-mode Dawn swapchain omitted the DXGI tearing present flag. Fixing that removed a refresh-rate throttle; it was not a shader or command-encoding problem.</p>
+        </article>
+        <article class="note">
+          <h3>Stable identities matter</h3>
+          <p>Shader family, permutation, compiler flow, attachment formats, and render state must all participate in cache identity. Pointer-based or partial keys create collisions and expensive recreation.</p>
+        </article>
+        <article class="note">
+          <h3>Both shader routes need tests</h3>
+          <p>Direct WGSL and HLSL-to-SPIR-V-to-WGSL can both work, but auto fallback can hide missing WGSL coverage. Strict-flow tests and reflection parity made the source paths auditable.</p>
+        </article>
+        <article class="note">
+          <h3>Recovery is an application lifecycle</h3>
+          <p>Device loss cannot be solved by retrying one submission. The engine must abandon the failed device, recreate driver-owned state, reload assets, and bound the number of recovery attempts.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="execution">
+      <h2>2. D3D12 versus WebGPU execution</h2>
+      <p class="answer">D3D12 exposes the scheduling machinery. WebGPU exposes a <strong>single portable device queue and validated command-buffer model</strong>; Dawn translates that model into D3D12 queues, lists, barriers, descriptors, and synchronization internally.</p>
+
+      <div class="execution-model" aria-label="D3D12 and WebGPU command flow comparison">
+        <article class="lane native">
+          <h3>Native D3D12</h3>
+          <div class="flow">
+            <span>Application owns command allocators and command lists</span>
+            <span>Worker threads can record independent lists in parallel</span>
+            <span>Direct, compute, and copy queues are explicitly available</span>
+            <span>Application emits barriers and manages descriptor heaps</span>
+            <span>Fences signal and synchronize queue timelines</span>
+          </div>
+        </article>
+        <div class="versus">VS</div>
+        <article class="lane webgpu">
+          <h3>WebGPU through Dawn</h3>
+          <div class="flow">
+            <span>Application creates command encoders and render/compute passes</span>
+            <span>Encoders finish into immutable command buffers</span>
+            <span>One logical GPUQueue is exposed per device</span>
+            <span>Dawn validates state and derives barriers/descriptors</span>
+            <span>Queue submit preserves order; completion is asynchronous</span>
+          </div>
+        </article>
+      </div>
+
+      <table>
+        <thead>
+          <tr><th>Area</th><th>D3D12</th><th>WebGPU / Dawn</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Queue types</td><td>Direct, compute, copy; video queues also exist.</td><td>One public queue. Dawn may use backend machinery internally, but the application cannot target separate copy or async-compute queues.</td></tr>
+          <tr><td>Recording</td><td>Command lists can be recorded concurrently with separate allocators and submitted in batches.</td><td>Independent encoders can prepare command buffers, but the public model has one ordered submission timeline. Browser objects are normally owned within one JS agent; work can instead run in a dedicated worker.</td></tr>
+          <tr><td>Synchronization</td><td>Explicit resource barriers, queue waits/signals, and fences.</td><td>Hazards are inferred from pass/resource declarations. Completion uses callbacks such as submitted-work completion and asynchronous mapping.</td></tr>
+          <tr><td>Binding</td><td>Root signatures, descriptor heaps/tables, and descriptor lifetime are application controlled.</td><td>Bind-group layouts and bind groups are validated. Dawn maps them to native root signatures and descriptors.</td></tr>
+          <tr><td>Pipelines</td><td>The engine directly creates and caches PSOs.</td><td>The engine creates WebGPU pipelines; Dawn validates and lowers WGSL through Tint, then creates backend PSOs.</td></tr>
+          <tr><td>Bundles</td><td>Bundles and command-list reuse are available within D3D12's model.</td><td>Render bundles can reuse draw encoding. There is no equivalent compute bundle or public secondary command-buffer API.</td></tr>
+          <tr><td>Control trade-off</td><td>Maximum scheduling control and maximum correctness burden.</td><td>Portability, safety, and deterministic validation in exchange for less scheduling control and more CPU work in the implementation layer.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="overhead">
+      <h2>3. Where is the CPU overhead?</h2>
+      <p class="answer"><strong>It is not uniform across the engine.</strong> The accepted non-wait CPU study found that native Dawn's largest controllable delta is submission. Render-graph encoding contributes on x64, but it does not explain the ARM64 result. Browser WebGPU adds a much larger browser/Wasm execution layer.</p>
+
+      <div class="metric-grid">
+        <div class="metric"><strong>+72.02%</strong><span>Native Dawn non-wait CPU versus D3D12 on x64: 1.470 ms versus 0.855 ms.</span></div>
+        <div class="metric"><strong>+25.68%</strong><span>Native Dawn non-wait CPU versus D3D12 on ARM64: 2.581 ms versus 2.053 ms.</span></div>
+        <div class="metric"><strong>+0.409 ms</strong><span>Principal native Dawn submission tax over D3D12 on x64.</span></div>
+        <div class="metric"><strong>+0.733 ms</strong><span>Principal native Dawn submission tax over D3D12 on ARM64.</span></div>
+      </div>
+
+      <table>
+        <thead>
+          <tr><th>CPU region</th><th>x64 finding</th><th>ARM64 finding</th><th>Interpretation</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Native Dawn submission</td><td class="number">+0.409 ms</td><td class="number">+0.733 ms</td><td>The most consistent native Dawn cost: validation, command translation/finalization, backend submission, and completion bookkeeping.</td></tr>
+          <tr><td>Native Dawn render graph</td><td class="number">+0.190 ms</td><td class="number">-0.086 ms</td><td>Not an across-the-board penalty. Engine recording differences and measurement variance are platform dependent.</td></tr>
+          <tr><td>Edge render graph</td><td class="number">+2.244 ms</td><td class="number">+1.742 ms</td><td>Includes browser, JavaScript/Wasm boundary, validation, and browser GPU-process architecture; it must not be attributed to Dawn alone.</td></tr>
+          <tr><td>Shader/pipeline startup</td><td colspan="2">Separate cold/warm metric</td><td>Tint translation, reflection, shader-module creation, and backend pipeline compilation affect startup or cache misses, not every steady-state frame when caches are effective.</td></tr>
+          <tr><td>Resource upload/readback</td><td colspan="2">Workload dependent</td><td>Staging, copies, map callbacks, and event processing matter when streaming or reading back; they are not a fixed cost on draws without those operations.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout"><strong>Do not equate CPU overhead with GPU overhead.</strong> Pass-profiled GPU timestamps showed larger Dawn deltas, but the measurement itself splits physical passes. Queue-drained native WGSL throughput was only +2.27% on x64 and -3.72% on ARM64 versus native D3D12. Whole-frame, uninstrumented correlation remains the safer headline gate.</div>
+    </section>
+
+    <section id="dawn-improvements">
+      <h2>4. What could improve in Dawn?</h2>
+      <p class="answer">The highest-value work is reducing CPU cost while preserving WebGPU's safety contract. Some opportunities belong in Dawn; others require WebGPU specification extensions or engine-side discipline.</p>
+
+      <div class="improvement-grid">
+        <article class="improvement">
+          <span class="tag">Highest impact</span>
+          <h3>Reduce submit-path overhead</h3>
+          <p>Profile validation, command-buffer finalization, descriptor realization, barrier generation, and backend queue submission. Cache invariant validation and batch native work without adding hidden queue drains.</p>
+        </article>
+        <article class="improvement">
+          <span class="tag">High impact</span>
+          <h3>Improve descriptor and state reuse</h3>
+          <p>Reuse backend root signatures, descriptor allocations, bind-group translations, command allocators, and barrier plans more aggressively when immutable WebGPU objects repeat across frames.</p>
+        </article>
+        <article class="improvement">
+          <span class="tag">Startup</span>
+          <h3>Expose stronger persistent pipeline caches</h3>
+          <p>Make backend pipeline cache identity, persistence, diagnostics, and asynchronous creation easier to control. Avoid repeating Tint/DXC/backend PSO work after a verified warm start.</p>
+        </article>
+        <article class="improvement">
+          <span class="tag">Profiling</span>
+          <h3>Make timestamps consistently usable</h3>
+          <p>Native timestamp writes currently require an unsafe feature in the pinned Dawn package, while tested browsers advertise timestamp queries without exposing encoder writeTimestamp. A stable, portable capability contract would remove ambiguity.</p>
+        </article>
+        <article class="improvement">
+          <span class="tag">Diagnostics</span>
+          <h3>Provide phase-level telemetry</h3>
+          <p>Expose low-overhead counters for validation, encoding, barrier synthesis, descriptor allocation, pipeline compilation, queue submission, and waits. Engines need attribution without wrapping every Dawn call and perturbing the result.</p>
+        </article>
+        <article class="improvement">
+          <span class="tag">Windows presentation</span>
+          <h3>Upstream immediate-mode tearing behavior</h3>
+          <p>The project had to patch Dawn's DXGI present path to pass DXGI_PRESENT_ALLOW_TEARING for eligible immediate-mode swapchains. This behavior should be correct upstream and covered by a regression test.</p>
+        </article>
+        <article class="improvement">
+          <span class="tag">Scheduling</span>
+          <h3>Use backend queues more effectively</h3>
+          <p>WebGPU intentionally exposes one logical queue, so public direct/compute/copy selection needs specification work. Dawn can still improve internal upload scheduling and overlap without changing observable ordering.</p>
+        </article>
+        <article class="improvement">
+          <span class="tag">Reliability</span>
+          <h3>Strengthen loss and recovery diagnostics</h3>
+          <p>Provide clearer device-loss causes, object lifetime traces, in-flight work state, and recreation guidance. T850 now supports a configurable bounded recovery budget and native repeated-loss exhaustion testing; browser repeated-loss coverage and long-run leak accounting remain application responsibilities.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="scope">
+      <h2>Evidence and limits</h2>
+      <p>The accepted CPU matrix used scene 1, compute post-processing, fixed simulation, 1,800 profiled frames, frames 300-1799 analyzed, and three repetitions per backend. GPU matrices used five 600-frame held runs at 1920x1080. Results are specific to the tested x64 RTX 4080 Laptop and ARM64 Adreno X1-85 systems.</p>
+      <ul class="source-list">
+        <li><a href="gpu-performance-profiling-workflow.md">GPU performance profiling workflow and accepted measurements</a></li>
+        <li><a href="proposal-webgpu.md">Current WebGPU architecture and supported scope</a></li>
+        <li><a href="webgpu-runtime-summary.md">Runtime implementation summary and presentation investigation</a></li>
+        <li><a href="webgpu-compute-remediation-plan.md">Remediation record and remaining work</a></li>
+        <li><a href="shader-management.md">Shader flows, cache identity, and pipeline ownership</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    T850 WebGPU port review. Updated 2026-09-26 from project evidence and engine hardening follow-up.
+  </footer>
+</body>
+</html>

@@ -307,6 +307,11 @@ Steam Deck does not consume Visual Studio project source lists. Every new Framew
 | runtime misses assets | run wrapper, deploy/package assets, or inspect cloud download log |
 | Vulkan startup fails | verify Deck drivers/Vulkan tools and inspect runtime log |
 
+Tagged release assembly runs `scripts/ValidateReleasePackages.ps1`. For the
+Steam tarball it verifies `DayScene`, `T8ditor`, libc++/libc++abi/libunwind and
+`steamdeck/T850.sh`, then includes the archive in `SHA256SUMS.txt`. Archive
+inspection does not replace a desktop/game-mode launch on real Deck hardware.
+
 ## Related Documents
 
 - [Windows setup and build](../development/windows-build-and-run.md)

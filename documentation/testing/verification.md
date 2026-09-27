@@ -1,6 +1,7 @@
 # Verification and Release Gates
 
-Status: verified against scripts, local matrix runs, deterministic captures, and PR CI on 2026-08-30.
+Status: commands and current self-test expectations verified on 2026-09-26.
+Historical capture and PR-CI evidence retains the date stated in its section.
 
 Use the narrowest gate that can falsify the change, then broaden according to blast radius. Do not report success from compilation alone when the change has a runtime or visual contract.
 
@@ -41,7 +42,11 @@ GitHub Actions uses the same script with `-Action Build`. Run the exact local Wi
 .\scripts\RunWindowsBuildMatrix.ps1
 ```
 
-This runs registration validation, full-solution Win32/x64/ARM64 Debug+Release builds, verifies `DayScene.exe` and `T8ditor.exe` in every cell, and runs the 43 self-tests for Win32/x64 Debug and Release. ARM64 is compile/link-only on the x64 runner.
+The local script runs registration validation, full-solution Win32/x64/ARM64
+Debug+Release builds, verifies `DayScene.exe` and `T8ditor.exe` in every cell,
+and runs the 78 self-tests for Win32/x64 Debug and Release. Local ARM64 remains
+compile/link-only on an x64 host. GitHub Actions uses native `windows-11-arm`
+runners for ARM64 and runs the same self-test suite in every Windows cell.
 
 ## Gameplay Self-Tests
 
@@ -96,10 +101,12 @@ For a PIX GPU capture, use D3D12 compute mode, hide the runtime controls after s
 
 For an external capture tool, add `--compute-selftest-wait 10`. The process waits ten seconds before and after the dispatch so a PIX timing capture can start and stop around the GPU work without adding the compute operation to a scene.
 
-The suite currently has 63 checks. In addition to gameplay, scene, terrain, physics,
+The suite currently has 78 checks. In addition to gameplay, scene, terrain, physics,
 navigation, material, and lifecycle contracts, `T-COMPUTE-GRAPH-01` loads every maintained
 render graph under strict parsing and rejects unknown keys, missing storage usage, read/write
-feedback, invalid permutations, and incomplete typed binding layouts.
+feedback, invalid permutations, non-positive `compute_depth`, read-before-write
+resources, and incomplete typed binding layouts. `T-NAV-02` verifies that queued,
+completed and worker-in-flight navigation requests stay canceled after owner destruction.
 `T-MINECRAFT-HOUSE-01` resolves ordered structure regions and verifies the floor, swapped
 door/window openings, full-block roof center, 22-slab perimeter, and three supported torch
 positions. `T-MINECRAFT-SURVIVAL-01` verifies five-heart contact-entry damage, one-heart
@@ -328,6 +335,16 @@ See [Steam Deck build and deployment](../platform/steam-deck.md).
 - Android: arm64-v8a and x86_64 Release APK builds;
 - Steam Deck: SteamRT Release build and tarball package;
 - tagged `v*` release: Windows ZIPs, Android APKs, Steam Deck tarball, and compiled launcher.
+
+Before a tagged release is published, `scripts/ValidateReleasePackages.ps1`
+opens every assembled Windows ZIP and Android APK, lists every Steam Deck
+tarball, verifies the required executables, native libraries and asset roots,
+rejects unsigned release APK names, and writes `SHA256SUMS.txt`.
+
+Android and Steam Deck runtime acceptance still requires equipped hardware.
+Retain the device model, OS/driver version, package checksum, launch command,
+exit result, validation log and a nonblank frame capture with the release
+candidate; a hosted compile/package job is not a substitute for this evidence.
 
 CI builds and verifies both `DayScene.exe` and `T8ditor.exe` in all six Windows cells. PR #33 run [33325073153](https://github.com/0Camus0/T850/actions/runs/33325073153) passed registration, Win32/x64/ARM64 Debug+Release, Android arm64-v8a/x86_64, and Steam Deck.
 

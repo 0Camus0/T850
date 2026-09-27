@@ -851,7 +851,7 @@ TASK: Add the navigation service and a path-follow example per spec §10.
 
 CREATE (register BOTH build systems):
 - include/game/GameNavigationService.h -> GameNavigationService (§10)
-- src/game/GameNavigationService.cpp   -> RequestPath/TryGetResult/ProjectToNavmesh backed by
+- src/game/GameNavigationService.cpp   -> RequestPath/TryGetResult/CancelRequestsForObject/ProjectToNavmesh backed by
                                           NavMesh::FindPath(NavPathRequest)/FindPaths (§10).
 - include/game/examples/PathFollowComponent.h + src/game/examples/PathFollowComponent.cpp
   -> consume nav result, emit MovementIntent.navGoal; reuse SceneObjectDesc.nav_agent_* fields.
@@ -859,9 +859,11 @@ CREATE (register BOTH build systems):
 EDIT: src/game/GameLogicSystem.cpp
 - Bind GameNavigationService to the scene NavMesh in LoadFromScene; resolve completed
   path requests in the ResolveNavigationResults phase (§5.8).
+- Cancel queued, in-flight and completed requests when the requester component or object is destroyed; late worker results must remain discarded.
 - AIController uses GameNavigationService for its nav goal.
 
-ADD TEST: T-NAV-01 (§13) — RequestPath with no navmesh fails gracefully.
+ADD TESTS: T-NAV-01 (§13) — RequestPath with no navmesh fails gracefully;
+T-NAV-02 — queued, completed and worker-in-flight cancellation remains final.
 
 BUILD GATE: x64 + ARM64 Debug, then --game-selftest (exit 0).
 DONE WHEN: both build; selftest passes; an ai entity paths on an authored navmesh and

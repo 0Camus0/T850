@@ -1,14 +1,14 @@
 # Runtime Hosts and Scene Selection
 
-Status: verified against DayScene and T8ditor entry points on 2026-08-19.
+Status: verified against DayScene and T8ditor entry points on 2026-09-26.
 
-The executable is named `DayScene.exe`, but it hosts six different runtime scene classes. Choose the host before changing code or selecting a regression case.
+The executable is named `DayScene.exe`, but it hosts seven runtime scene classes. Choose the host before changing code or selecting a regression case.
 
 ## Executables
 
 | Executable | Purpose |
 |---|---|
-| `DayScene.exe` | Runtime shell containing Sandbox, DayScene, Quake3Mock, RagdollEditor, SceneTemplate, and VoxelScene |
+| `DayScene.exe` | Runtime shell containing Sandbox, DayScene, Quake3Mock, RagdollEditor, SceneTemplate, VoxelScene, and MinecraftScene |
 | `T8ditor.exe` | Authored scene editor and hosted Play/Mesh/Ragdoll tools |
 
 Framework libraries are not standalone applications.
@@ -23,6 +23,7 @@ Framework libraries are not standalone applications.
 | 3 | `RagdollEditor` | animated `--model` | runtime ragdoll/animation authoring behavior |
 | 4 | `SceneTemplate` | authored `--sceneFile` | long-term `.t8scene` runtime, gameplay, physics, navigation, profiles |
 | 5 | `VoxelScene` | generated chunks + persisted deltas | mutable block terrain, FPS traversal, streaming, place/remove reference |
+| 6 | `MinecraftScene` | authored `Scenes/Minecraft.t8scene` block world | production atlas, streamed chunks, voxel navigation/collision, enemies, HUD and browser demo |
 
 ## Which Host to Change
 
@@ -34,6 +35,7 @@ Framework libraries are not standalone applications.
 - Full-skeleton runtime ragdoll tooling: `RagdollEditor` and shared ragdoll Framework code.
 - Authoring UI, undo, validation, overlays, or Play Scene: T8ditor.
 - Mutable/procedural block worlds: Framework terrain module plus `VoxelScene` reference integration.
+- Authored Minecraft behavior: `MinecraftScene`, `Minecraft.t8scene`, voxel systems and shared gameplay services.
 
 Do not add new general runtime behavior to all legacy scene copies when `SceneTemplate` is the owning path. Audit duplicates only when a shared input/camera/rendering change requires parity.
 
@@ -60,6 +62,9 @@ From `bin/x64/Release`:
 
 # Streamed mutable voxel terrain
 .\DayScene.exe --api d3d12 --scene 5 --width 1280 --height 720
+
+# Authored Minecraft runtime through native WebGPU
+.\DayScene.exe --api webgpu --scene 6 --width 1280 --height 720
 ```
 
 ## SceneTemplate Ownership

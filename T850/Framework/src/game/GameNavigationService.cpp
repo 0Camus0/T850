@@ -43,6 +43,7 @@ uint64_t GameNavigationService::RequestPath(RuntimeGameObjectId requester,
   request.start = start;
   request.end = goal;
   queuedRequests_.push_back(QueuedRequest{requestId, requester, request});
+  requestOwners_.insert_or_assign(requestId, requester);
   T8_TELEMETRY_ADD("game.nav.requests", 1.0);
   return requestId;
 }
@@ -55,7 +56,29 @@ bool GameNavigationService::TryGetResult(
   if (found == completedResults_.end()) return false;
   out = std::move(found->second);
   completedResults_.erase(found);
+  requestOwners_.erase(requestId);
   return true;
+}
+
+std::size_t GameNavigationService::CancelRequestsForObject(RuntimeGameObjectId requester) {
+  if (requester == kInvalidRuntimeGameObjectId) return 0;
+  std::size_t canceled = 0;
+  for (auto owner = requestOwners_.begin(); owner != requestOwners_.end();) {
+    if (owner->second != requester) {
+      ++owner;
+      continue;
+    }
+    completedResults_.erase(owner->first);
+    owner = requestOwners_.erase(owner);
+    ++canceled;
+  }
+  std::erase_if(queuedRequests_, [&](const QueuedRequest& request) {
+    return request.requester == requester;
+  });
+  if (canceled > 0) {
+    t850::RuntimeTelemetry::AddCounter("game.nav.canceled", static_cast<double>(canceled));
+  }
+  return canceled;
 }
 
 bool GameNavigationService::ProjectToNavmesh(const XVECTOR3& point, XVECTOR3& out) const {
@@ -129,6 +152,7 @@ void GameNavigationService::Reset() {
   navMesh_ = nullptr;
   pool_ = nullptr;
   nextRequestId_ = 1;
+  requestOwners_.clear();
 }
 
 void GameNavigationService::PrepareForNavMeshMutation() {
@@ -175,6 +199,7 @@ void GameNavigationService::DrainPending() {
   queuedRequests_.clear();
   pendingBatches_.clear();
   completedResults_.clear();
+  requestOwners_.clear();
 }
 
 void GameNavigationService::StoreBatchResults(
@@ -183,11 +208,14 @@ void GameNavigationService::StoreBatchResults(
   if (results.size() < requestIds.size()) {
     results.resize(requestIds.size(), FailedPathResult("navigation batch returned no result"));
   }
+  std::size_t stored = 0;
   for (std::size_t index = 0; index < requestIds.size(); ++index) {
+    if (!requestOwners_.contains(requestIds[index])) continue;
     completedResults_.insert_or_assign(requestIds[index], std::move(results[index]));
+    ++stored;
   }
   t850::RuntimeTelemetry::AddCounter(
-      "game.nav.completed", static_cast<double>(requestIds.size()));
+      "game.nav.completed", static_cast<double>(stored));
 }
 
 } // namespace t850::game

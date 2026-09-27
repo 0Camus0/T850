@@ -43,7 +43,7 @@ flowchart TD
 
 ## Windows lifecycle
 
-`Win32Framework` is the most flexible platform implementation. It supports D3D11, D3D12, OpenGL, and Vulkan.
+`Win32Framework` is the most flexible platform implementation. DayScene supports D3D11, D3D12, OpenGL, Vulkan, and native Dawn/WebGPU. T8ditor intentionally excludes WebGPU.
 
 ### Creation flow
 
@@ -63,7 +63,7 @@ sequenceDiagram
   FW->>FW: InitializeGamepads()
   FW->>FW: ChangeAPI(desc.api)
   FW->>SDL: SDL_CreateWindow(...)
-  FW->>Driver: new D3D11/D3D12/GL/Vulkan driver
+  FW->>Driver: new D3D11/D3D12/GL/Vulkan/WebGPU driver
   FW->>Driver: InitDriver()
   FW->>FW: RefreshEngineContextFromGlobals()
   FW->>App: CreateAssets()
@@ -131,9 +131,26 @@ flowchart LR
   D3D12 --> ChangeAPI
   GL --> ChangeAPI
   Vulkan --> ChangeAPI
+  WebGPU --> ChangeAPI
   ChangeAPI --> DestroyOld["Destroy old API resources"]
   DestroyOld --> CreateNew["Create new window + driver"]
   CreateNew --> RecreateAssets["AppBase::CreateAssets"]
+```
+
+Confirmed WebGPU device loss follows the same composition boundary. Windows and
+browser hosts end active telemetry/profiler frames, recreate the driver and app
+assets, and validate the next frame. `webgpuDeviceRecoveryAttempts` defaults to
+three consecutive attempts (valid range 1-10); one successful frame resets the
+count and exhaustion shuts down cleanly.
+
+```mermaid
+flowchart LR
+  Failure["Confirmed WebGPU device failure"] --> Budget{"Recovery budget left?"}
+  Budget -->|yes| ChangeAPI["Recreate driver + app assets"]
+  ChangeAPI --> NextFrame["Validate next frame"]
+  NextFrame -->|success| Reset["Reset consecutive count"]
+  NextFrame -->|failure| Budget
+  Budget -->|no| Stop["Clean shutdown + exhausted telemetry"]
 ```
 
 ## Linux / Steam Deck lifecycle
@@ -331,7 +348,7 @@ The editor also has its own `CheckResize()` and hosted viewport/render-target ma
 
 | Platform | API behavior |
 |---|---|
-| Windows | Can select D3D11, D3D12, OpenGL, Vulkan. Runtime scenes also expose API switching hotkeys in some scenes. |
+| Windows | DayScene can select D3D11, D3D12, OpenGL, Vulkan, or WebGPU. T8ditor selects D3D11/D3D12/OpenGL/Vulkan. Runtime scenes also expose API switching hotkeys in some scenes. |
 | Linux/Steam Deck | Vulkan-only. Non-Vulkan requests are forced to Vulkan. |
 | Android | Vulkan-only. Native window controls surface creation/suspend/resume. |
 

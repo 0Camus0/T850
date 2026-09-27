@@ -209,6 +209,8 @@ const char* CullingLoadModeTag(Config::CullingLoadMode mode) {
 void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.api) cfg.api = *json.api;
   if (json.webgpuShaderFlow) cfg.webgpuShaderFlow = *json.webgpuShaderFlow;
+  if (json.webgpuDeviceRecoveryAttempts)
+    cfg.webgpuDeviceRecoveryAttempts = *json.webgpuDeviceRecoveryAttempts;
   if (json.width) cfg.width = *json.width;
   if (json.height) cfg.height = *json.height;
   if (json.fullscreen) cfg.flags.fullscreen = *json.fullscreen;
@@ -357,7 +359,7 @@ bool LoadRuntimeConfig(const std::filesystem::path& path, Config& cfg) {
   }
 
   RuntimeConfigJson json;
-  auto err = glz::read<glz::opts{.error_on_unknown_keys = false}>(json, content);
+  auto err = glz::read<glz::opts{.error_on_unknown_keys = true}>(json, content);
   if (err) {
     std::cerr << "[config] Invalid JSON in '" << path.string() << "': "
               << glz::format_error(err, content) << "\n";
@@ -374,6 +376,8 @@ bool ValidateConfig(Config& cfg) {
   constexpr int kMaxDimension = 16384;
 
   cfg.webgpuShaderFlow = NormalizeShaderFlow(cfg.webgpuShaderFlow);
+  if (cfg.webgpuDeviceRecoveryAttempts < 1 || cfg.webgpuDeviceRecoveryAttempts > 10)
+    throw std::invalid_argument("webgpuDeviceRecoveryAttempts must be between 1 and 10");
 
   if (cfg.profileGpu) {
 #if !T850_ENABLE_GPU_PROFILING
@@ -626,6 +630,11 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("-"))
         throw std::invalid_argument("--shaderFlow requires auto, wgsl, spirv or legacyHLSL");
       cfg.webgpuShaderFlow = NormalizeShaderFlow(argv[++i]);
+    }
+    else if (arg == "--webgpuRecoveryAttempts") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value))
+        cfg.webgpuDeviceRecoveryAttempts = value;
     }
     else if (arg == "--dump-frame" || arg == "--dumpFrame" || arg == "--dumpSnapshot-frame") {
       int value = 0;
@@ -900,6 +909,7 @@ void PrintHelp() {
   #endif
     << "  --shaderFlow <auto|wgsl|spirv|legacyHLSL>\n"
     << "                                      auto uses DXC for native D3D12; legacyHLSL selects FXC/D3DCompile\n"
+    << "  --webgpuRecoveryAttempts <1..10>  Consecutive device recreation budget\n"
     << "  --width <pixels>                   Window width\n"
     << "  --height <pixels>                  Window height\n"
     << "  --fullscreen                       Launch fullscreen\n"

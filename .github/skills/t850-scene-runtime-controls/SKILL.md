@@ -44,7 +44,7 @@ Assets/Scenes/*Scene.json
 Assets/Scenes/*RenderGraph.json
 ```
 
-Unknown JSON keys may be ignored. A typo can look like a valid save while having no runtime effect. Verify the parsed member or startup log.
+T850-owned runtime config and scene documents reject unknown JSON keys. Treat a parse failure as an authoring error; glTF extensions and opaque component `config_json` remain permissive.
 
 ## 2. Classify the Change
 
@@ -224,7 +224,7 @@ For Deck behavior, use `t850-deck-performance` and repeat the live transition on
 | panel value changes, image does not | consumer still reads authored/other runtime field |
 | startup works, live change does not | live path missed allocation/instance creation/delta work |
 | value snaps back | getter reads different source than setter writes |
-| JSON edit has no effect | profile override or ignored/unknown key |
+| JSON edit has no effect | profile override, wrong file, or rejected unknown key in the load log |
 | outer chunks never appear | upload path assumes pre-existing mesh; pending queues not drained |
 | nav errors after moving | active navmesh center/version does not match streamed world |
 | brief device loss after control | GPU resources destroyed before in-flight frames retire |

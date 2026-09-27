@@ -20,6 +20,7 @@ namespace t850 {
     bool linear_filter = true;
     bool generate_mips = false;
     bool storage = false;                    // create with storage/UAV usage where supported
+    bool initialized = false;                // contents are valid before the first graph pass
     std::string size_ref;                  // e.g. "$shadow_resolution", "$god_rays_resolution"
     std::string shadow_projection;          // source JSON ID; empty for ordinary targets
   };
@@ -71,6 +72,7 @@ namespace t850 {
     std::string compute_entry = "CS";
     std::string compute_permutation = "base";
     std::string compute_extent_from;
+    int compute_depth = 1;
     std::vector<ComputeResourceDesc> compute_resources;
     bool clear = false;
     std::array<float, 4> clear_color = {0, 0, 0, 0};  // RGBA clear color (used when clear=true)

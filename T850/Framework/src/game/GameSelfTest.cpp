@@ -1487,10 +1487,56 @@ void TestHeightmapNavigationExclusion() {
     "navigation did not route around the exclusion zone");
 }
 
+void TestNavigationRequestCancellation() {
+  scene::SceneHeightmapDesc desc;
+  desc.samples_x = 17;
+  desc.samples_z = 17;
+  desc.size_x = 16;
+  desc.size_z = 16;
+  const std::array<float, 4> heights{};
+  MutableMeshSnapshot mesh;
+  std::string error;
+  Require(BuildHeightmapTerrain(desc, heights, 2, 2, mesh, &error), error);
+  auto database = BuildMeshDatabase(mesh, &error);
+  Require(database != nullptr, error);
+  navigation::NavMeshGeometry geometry;
+  Require(navigation::BuildGeometryFromXDataBase(*database, geometry, &error), error);
+  navigation::NavMeshBuildSettings settings;
+  settings.regionMinSize = 1;
+  settings.regionMergeSize = 2;
+  navigation::NavMesh navMesh;
+  Require(navMesh.Build(geometry, settings, &error), error);
+
+  GameNavigationService navigation;
+  navigation.Bind(&navMesh, nullptr);
+  const XVECTOR3 start(2.0f, 0.0f, 2.0f, 1.0f);
+  const XVECTOR3 goal(14.0f, 0.0f, 14.0f, 1.0f);
+  const uint64_t queued = navigation.RequestPath(11, start, goal);
+  Require(navigation.CancelRequestsForObject(11) == 1, "queued navigation request was not canceled");
+  navigation.ResolveCompleted();
+  navigation::NavPathResult result;
+  Require(!navigation.TryGetResult(queued, result), "canceled queued request produced a result");
+
+  const uint64_t completed = navigation.RequestPath(12, start, goal);
+  navigation.ResolveCompleted();
+  Require(navigation.CancelRequestsForObject(12) == 1, "completed navigation request was not canceled");
+  Require(!navigation.TryGetResult(completed, result), "canceled completed request remained retrievable");
+
+  ThreadPool pool(1);
+  navigation.Bind(&navMesh, &pool);
+  const uint64_t inFlight = navigation.RequestPath(13, start, goal);
+  navigation.ResolveCompleted();
+  Require(navigation.CancelRequestsForObject(13) == 1, "in-flight navigation request was not canceled");
+  pool.WaitAll();
+  navigation.ResolveCompleted();
+  Require(!navigation.TryGetResult(inFlight, result), "late worker result revived a canceled request");
+}
+
 void TestSceneLoadIsolation() {
   TempSceneFiles files;
   const auto emptyPath = files.Add("_empty.t8scene");
   const auto invalidPath = files.Add("_invalid.t8scene");
+  const auto unknownPath = files.Add("_unknown.t8scene");
   {
     std::ofstream stream(emptyPath);
     stream << "{\"version\":1}";
@@ -1498,6 +1544,10 @@ void TestSceneLoadIsolation() {
   {
     std::ofstream stream(invalidPath);
     stream << "{\"version\":999,\"objects\":[";
+  }
+  {
+    std::ofstream stream(unknownPath);
+    stream << "{\"version\":1,\"objectz\":[]}";
   }
   scene::EditorSceneFile document;
   document.render_graph = "previous-graph";
@@ -1508,6 +1558,8 @@ void TestSceneLoadIsolation() {
   Require(document.objects.empty() && document.render_graph.empty(), "loading a scene retained data from the previous file");
   Require(!scene::LoadEditorSceneFile(invalidPath.string(), document, &error), "malformed scene accepted");
   Require(document.version == 1 && document.objects.empty(), "failed scene load partially mutated the destination");
+  Require(!scene::LoadEditorSceneFile(unknownPath.string(), document, &error),
+    "scene with an unknown field was accepted");
 }
 
 void TestTerrainEditing() {
@@ -1773,6 +1825,23 @@ void TestShaderFlowConfiguration() {
   };
   Config defaults;
   Require(defaults.webgpuShaderFlow == "auto", "Shader flow must default to auto/DXC");
+  Require(defaults.webgpuDeviceRecoveryAttempts == 3,
+    "WebGPU recovery budget must default to three attempts");
+  TempSceneFiles files;
+  const auto unknownConfigPath = files.Add("_unknown_config.json");
+  {
+    std::ofstream stream(unknownConfigPath);
+    stream << "{\"widht\":640}";
+  }
+  Config unknownConfig;
+  Require(!config::LoadRuntimeConfig(unknownConfigPath, unknownConfig),
+    "runtime config with an unknown field was accepted");
+  Config invalidRecoveryBudget;
+  invalidRecoveryBudget.webgpuDeviceRecoveryAttempts = 0;
+  bool rejectedRecoveryBudget = false;
+  try { config::ValidateConfig(invalidRecoveryBudget); }
+  catch (const std::invalid_argument&) { rejectedRecoveryBudget = true; }
+  Require(rejectedRecoveryBudget, "invalid WebGPU recovery budget was accepted");
   const auto modes = {"auto", "wgsl", "spirv"};
 #ifdef __EMSCRIPTEN__
   const std::string expectedApi = "webgpu";
@@ -2930,7 +2999,8 @@ void TestGraphMeshPreparation() {
     output << R"({"render_targets":[
       {"name":"Input","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[64,64]},
       {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[64,64]}],
-      "passes":[{"name":"Mesh Pass","target":"Output","clear":true,
+      "passes":[{"name":"Input Init","target":"Input","clear":true,"draws":[]},
+      {"name":"Mesh Pass","target":"Output","clear":true,
       "state":{"blend":"ALPHA_BLEND"},"post_state":{"blend":"BLEND_OPAQUE"},
       "inputs":[{"source":"Input:COLOR0","slot":7}],"bind_environment_map":true,"draws":[)";
     if (callback) output << R"({"type":"callback","callback":"replace-input"},)";
@@ -2951,7 +3021,8 @@ void TestGraphMeshPreparation() {
   execute(graph);
   Require(primitive.draws == 0 && meshes[0].Textures[7] == &nextTexture,
     "empty mesh pass performed resource binding or drawing");
-  Require(driver.events == std::vector<std::string>{"blend:" + std::to_string(BaseDriver::ALPHA_BLEND),
+    Require(driver.events == std::vector<std::string>{"clear", "pop",
+      "blend:" + std::to_string(BaseDriver::ALPHA_BLEND),
       "clear", "pop", "blend:" + std::to_string(BaseDriver::BLEND_OPAQUE)},
     "empty mesh pass lost clear, target-pop or post-state side effects");
   primitive.eligible = true;
@@ -3036,7 +3107,7 @@ void TestTypedComputeGraphValidation() {
 
   const std::string validGraph = R"({
     "render_targets": [
-      {"name":"Input","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5]},
+      {"name":"Input","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"initialized":true},
       {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"storage":true}
     ],
     "passes": [{
@@ -3070,6 +3141,20 @@ void TestTypedComputeGraphValidation() {
   RenderGraph graph;
   Require(graph.Load(writeGraph("_valid_compute_graph.json", validGraph).string()),
           "valid typed compute graph was rejected");
+    const std::string threeDimensional = replaceOnce(
+      validGraph, "\"compute_extent_from\":\"Output:COLOR0\"",
+      "\"compute_extent_from\":\"Output:COLOR0\",\"compute_depth\":5");
+    Require(graph.Load(writeGraph("_compute_3d.json", threeDimensional).string()) &&
+      graph.GetSourceDescriptor().passes[0].compute_depth == 5,
+      "valid three-dimensional compute extent was rejected");
+    const std::string invalidDepth = replaceOnce(
+      validGraph, "\"compute_extent_from\":\"Output:COLOR0\"",
+      "\"compute_extent_from\":\"Output:COLOR0\",\"compute_depth\":0");
+    Require(!graph.Load(writeGraph("_compute_bad_depth.json", invalidDepth).string()),
+      "non-positive compute depth was accepted");
+    const std::string uninitializedInput = replaceOnce(validGraph, ",\"initialized\":true", "");
+    Require(!graph.Load(writeGraph("_uninitialized_compute_input.json", uninitializedInput).string()),
+      "graph accepted a read before the resource was initialized or written");
 
   {
     const auto shaderDirectory = files.Add("_graph_compute_sources");
@@ -3124,8 +3209,8 @@ void TestTypedComputeGraphValidation() {
 
   const std::string twoInputs = R"({
     "render_targets":[
-      {"name":"First","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5]},
-      {"name":"Second","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5]},
+      {"name":"First","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"initialized":true},
+      {"name":"Second","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"initialized":true},
       {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"storage":true}
     ],
     "passes":[{"name":"Bright","target":"Output","execution":"compute_if_supported",
@@ -3151,7 +3236,7 @@ void TestTypedComputeGraphValidation() {
 
   const std::string particles = R"({
     "render_targets":[
-      {"name":"Depth","color_count":0,"color_format":"NONE","depth_format":"F32","size":[7,5]},
+      {"name":"Depth","color_count":0,"color_format":"NONE","depth_format":"F32","size":[7,5],"initialized":true},
       {"name":"Output","color_count":1,"color_format":"RGBA16F","depth_format":"NONE","size":[7,5],"storage":true}
     ],
     "passes":[{"name":"Particles","target":"Output","execution":"compute_if_supported",
@@ -3612,6 +3697,7 @@ constexpr TestCase kTests[] = {
     {"T-VOXEL-07", TestVoxelNavigationAvoidsSolidsAndRejectsPartialPaths},
     {"T-VOXEL-08", TestVoxelCollisionPreventsTunneling},
     {"T-NAV-01", TestNavigationUnavailable},
+    {"T-NAV-02", TestNavigationRequestCancellation},
 };
 
 } // namespace

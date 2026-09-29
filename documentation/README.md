@@ -60,6 +60,7 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Current WebGPU architecture and support boundary | [rendering/proposal-webgpu.md](rendering/proposal-webgpu.md) | Bounded recovery status refreshed 2026-09-26 |
 | WebGPU implementation/runtime handoff | [rendering/webgpu-runtime-summary.md](rendering/webgpu-runtime-summary.md) | Runtime, compute, profiling and recovery state refreshed 2026-09-26 |
 | WebGPU port lessons | [rendering/webgpu-port-lessons.html](rendering/webgpu-port-lessons.html) | Narrative architecture/performance reference refreshed 2026-09-26 |
+| Proposed Dawn D3D12 native pipeline persistence | [rendering/dawn-d3d12-native-pipeline-cache-proposal.md](rendering/dawn-d3d12-native-pipeline-cache-proposal.md) | PipelineLibrary/ShaderCacheSession design verified against Dawn and T850 source 2026-09-28 |
 | Future WebGPU platform ports | [rendering/webgpu-platform-gaps.md](rendering/webgpu-platform-gaps.md) | Windows remains Dawn/D3D12; Android/Deck remain native Vulkan |
 | Cross-backend compute shaders, manifest registry and 3D dispatch | [rendering/compute-shader-implementation.md](rendering/compute-shader-implementation.md) | Implementation verified 2026-09-26; multi-slice hardware gate pending |
 | Reproducible Windows GPU/ETW profiling workflow | [rendering/gpu-performance-profiling-workflow.md](rendering/gpu-performance-profiling-workflow.md) | Verified x64/ARM64 2026-09-22 |

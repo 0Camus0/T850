@@ -45,7 +45,7 @@ This is a **C++23 rendering/game engine** with two primary desktop executables (
 
 ### Prerequisites
 
-- **Visual Studio 2022** (Community / Professional / Enterprise / Build Tools) with C++ workload
+- **Visual Studio with the v143 C++ toolset** (VS 2022 normally; VS 2026 is accepted for ARM64 CI only with its v143 compatibility component)
 - **Windows SDK** (auto-included with VS)
 - **PowerShell 5+** (ships with Windows)
 

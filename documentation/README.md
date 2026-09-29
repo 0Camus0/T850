@@ -30,6 +30,7 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Area | Document | Status |
 |---|---|---|
 | Windows setup/build/run/release packaging | [development/windows-build-and-run.md](development/windows-build-and-run.md) | Five-runtime-API scope refreshed 2026-09-26 |
+| Cross-platform build and compile-time assessment | [development/compile-time-assessment-2026-09-28.md](development/compile-time-assessment-2026-09-28.md) | Final platform matrix and measured compile bottlenecks on 2026-09-28 |
 | Runtime JSON and CLI | [development/runtime-configuration.md](development/runtime-configuration.md) | Strict config/recovery fields verified 2026-09-26 |
 | Cloud models/textures | [development/cloud-assets.md](development/cloud-assets.md) | Verified 2026-08-19 |
 | Verification, CI, self-tests, smoke gates | [testing/verification.md](testing/verification.md) | Current 78-test and release-package gates verified 2026-09-26 |

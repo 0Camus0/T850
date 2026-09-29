@@ -201,10 +201,10 @@ Order: defaults, JSON root fields, nested JSON fields, CLI, validation. The laun
 
 | Symptom | Next check |
 |---|---|
-| MSBuild missing | install VS 2022 C++ workload/v143 |
+| MSBuild missing | install a Visual Studio C++ host with v143; VS 2022 is preferred, while VS 2026 requires the v143 compatibility toolset |
 | ARM64 compiler missing | install Host x64 to ARM64 tools |
 | unresolved external after new file | `.vcxproj` and CMake registration |
-| newer MSVC ABI in vcpkg library | rerun `LaunchSolution.bat`, verify VS 2022 pin |
+| newer MSVC ABI in vcpkg library | rerun setup and verify the v143 host/toolset pin; ARM64 CI also requires the tracked v143 overlay triplets |
 | missing DLL | run from output dir and inspect post-build copies |
 | missing asset | cloud status/dependency list; use resource-relative path |
 | device lost/black frame | log + visual capture; do not accept image |

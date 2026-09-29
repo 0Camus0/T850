@@ -81,7 +81,7 @@ $env:T850_BUILD_WORKERS = '4'
 
 ### Toolchain selection
 
-Use the repository scripts rather than manually selecting MSBuild. If direct ARM64 diagnosis is required, locate a Visual Studio 2022 installation that actually has Host x64 to ARM64 tools:
+Use the repository scripts rather than manually selecting MSBuild. If direct ARM64 diagnosis is required, locate a Visual Studio installation that actually has v143 Host x64/ARM64 to ARM64 tools. VS 2022 provides them directly; VS 2026 requires its v143 compatibility component:
 
 ```powershell
 $VsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"

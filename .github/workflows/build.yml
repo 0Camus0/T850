@@ -71,12 +71,14 @@ jobs:
             'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
           }
           $versionRange = if ('${{ matrix.platform }}' -eq 'ARM64') { '[17.0,19.0)' } else { '[17.0,18.0)' }
-          $visualStudio = & $vswhere -latest -products * -version $versionRange `
+          $visualStudioInstance = @(& $vswhere -latest -products * -version $versionRange `
             -requires $component `
-            -property installationPath
-          if ([string]::IsNullOrWhiteSpace($visualStudio)) {
+            -format json | ConvertFrom-Json) | Select-Object -First 1
+          if (-not $visualStudioInstance) {
             throw 'A Visual Studio host with the required C++ tools was not found.'
           }
+          $visualStudio = $visualStudioInstance.installationPath
+          $visualStudioMajor = ([version]$visualStudioInstance.installationVersion).Major
           if ('${{ matrix.platform }}' -eq 'ARM64') {
             $v143Compiler = Get-ChildItem (Join-Path $visualStudio 'VC\Tools\MSVC') -Directory -ErrorAction SilentlyContinue |
               Where-Object {
@@ -91,7 +93,9 @@ jobs:
             Write-Host "v143 ARM64 compiler: $($v143Compiler.FullName)"
           }
           "VCPKG_VISUAL_STUDIO_PATH=$visualStudio" >> $env:GITHUB_ENV
+          "VisualStudioVersion=$visualStudioMajor.0" >> $env:GITHUB_ENV
           Write-Host "vcpkg Visual Studio host: $visualStudio"
+          Write-Host "Visual Studio host version: $visualStudioMajor"
 
       - name: Clone vcpkg
         shell: pwsh

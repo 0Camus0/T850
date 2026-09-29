@@ -161,7 +161,11 @@ including for CPU-only `--game-selftest` runs. Do not rely on a GPU driver or SD
 installation to supply it. PR CI verifies the staged files and runs the gameplay
 and terrain self-tests for Win32/x64/ARM64 Debug and Release, reporting captured
 output and the native process exit code. ARM64 CI runs on `windows-11-arm` and
-verifies native ARM64 outputs rather than using x64 emulation.
+verifies native ARM64 outputs rather than using x64 emulation. GitHub may route
+that label to either a Visual Studio 2022 or Visual Studio 2026 host image. The
+workflow accepts either host only when a v143 ARM64 compatibility compiler is
+installed, and sets `VCPKG_OVERLAY_TRIPLETS` to the tracked ARM64 triplets under
+`cmake/vcpkg-triplets` so dependencies never fall forward to the VS 2026 ABI.
 
 ### Probe and Validation
 

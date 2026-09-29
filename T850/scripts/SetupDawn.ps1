@@ -58,15 +58,32 @@ foreach ($file in ($recipeFiles | Sort-Object FullName)) {
 
 if ($Mode -ne 'Check') {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (!(Test-Path $vswhere)) { throw 'VS2022 discovery tool is missing.' }
+    if (!(Test-Path $vswhere)) { throw 'Visual Studio discovery tool is missing.' }
     $compilerComponent = if ($Architecture -eq 'ARM64') { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
-    $installations = @(& $vswhere -products '*' -version '[17.0,18.0)' -requires $compilerComponent -property installationPath)
-    $visualStudio = $installations | Where-Object {
-        (Test-Path (Join-Path $_ 'VC\Auxiliary\Build\vcvarsall.bat')) -and
-        @(Get-ChildItem (Join-Path $_ "VC\Tools\MSVC\*\bin\Host*\$Architecture\cl.exe") -ErrorAction SilentlyContinue).Count -gt 0
+    $versionRange = if ($Architecture -eq 'ARM64') { '[17.0,19.0)' } else { '[17.0,18.0)' }
+    $installations = @(& $vswhere -products '*' -version $versionRange -requires $compilerComponent -format json | ConvertFrom-Json)
+    $visualStudioInstance = $installations | Where-Object {
+        if (!(Test-Path (Join-Path $_.installationPath 'VC\Auxiliary\Build\vcvarsall.bat'))) { return $false }
+        $compilers = @(Get-ChildItem (Join-Path $_.installationPath "VC\Tools\MSVC\*\bin\Host*\$Architecture\cl.exe") -ErrorAction SilentlyContinue |
+            Where-Object {
+                $toolset = [version]$_.FullName.Split([IO.Path]::DirectorySeparatorChar)[-5]
+                $toolset -ge [version]'14.30' -and $toolset -lt [version]'14.50'
+            })
+        return $compilers.Count -gt 0
     } | Select-Object -First 1
-    if (!$visualStudio) { throw "A usable VS2022/v143 $Architecture compiler is required." }
+    if (!$visualStudioInstance) { throw "A Visual Studio host with a usable v143 $Architecture compiler is required." }
+    $visualStudio = $visualStudioInstance.installationPath
+    $visualStudioMajor = ([version]$visualStudioInstance.installationVersion).Major
+    $generator = switch ($visualStudioMajor) {
+        17 { 'Visual Studio 17 2022' }
+        18 { 'Visual Studio 18 2026' }
+        default { throw "Unsupported Visual Studio host version: $($visualStudioInstance.installationVersion)" }
+    }
     $env:VCPKG_VISUAL_STUDIO_PATH = $visualStudio
+    $env:VisualStudioVersion = "$visualStudioMajor.0"
+    if ($Architecture -eq 'ARM64') {
+        $env:VCPKG_OVERLAY_TRIPLETS = Join-Path $SourceRoot 'cmake\vcpkg-triplets'
+    }
     if (!$env:VCPKG_MAX_CONCURRENCY) { $env:VCPKG_MAX_CONCURRENCY = '4' }
     $beforeText = & $vcpkg list --x-json
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect installed package versions.' }
@@ -140,7 +157,8 @@ if ($Mode -eq 'Install') {
         Join-Path $visualStudio 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
     }
     if (!(Test-Path -LiteralPath $cmake)) { throw 'CMake is required to generate the Dawn exported-link contract.' }
-    & $cmake -S (Join-Path $SourceRoot 'cmake\dawn-package') -B $exportRoot -G 'Visual Studio 17 2022' -A $Architecture "-DCMAKE_GENERATOR_INSTANCE=$visualStudio" "-DT850_DAWN_PACKAGE_ROOT=$packageRoot"
+    $toolsetArguments = if ($visualStudioMajor -ge 18) { @('-T', 'v143') } else { @() }
+    & $cmake -S (Join-Path $SourceRoot 'cmake\dawn-package') -B $exportRoot -G $generator -A $Architecture @toolsetArguments "-DCMAKE_GENERATOR_INSTANCE=$visualStudio" "-DT850_DAWN_PACKAGE_ROOT=$packageRoot"
     if ($LASTEXITCODE -ne 0) { throw 'Dawn exported-link-contract generation failed.' }
     $replyRoot = Join-Path $exportRoot '.cmake\api\v1\reply'
     $indexFile = Get-ChildItem $replyRoot -Filter 'index-*.json' | Sort-Object Name -Descending | Select-Object -First 1

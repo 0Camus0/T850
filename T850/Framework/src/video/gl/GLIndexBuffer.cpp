@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -80,6 +81,7 @@ namespace t850 {
   }
   void GLIndexBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Index, sysMemCpy.size(), 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, APIID);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
 #ifdef T850_RENDER_TRACE
@@ -91,6 +93,7 @@ namespace t850 {
   }
   void GLIndexBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Index, descriptor.byteWidth, 0);
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     UpdateFromSystemCopy(deviceContext);
@@ -107,6 +110,7 @@ namespace t850 {
   }
   void GLIndexBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Index, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     if (initialData) {
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
@@ -121,5 +125,6 @@ namespace t850 {
       g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "ib", "");
     }
 #endif
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Index, 0, 1);
   }
 }

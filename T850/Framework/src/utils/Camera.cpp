@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -162,6 +163,7 @@ void	Camera::MoveRoll(float f) {
 
 
 void	Camera::Update(float dt) {
+	T8_CPU_WORK("camera.update");
 	 XMATRIX44	X_, Y_, Z_, T_;
    if (m_externalControl) {
      Eye = m_agent->m_actualPoint;

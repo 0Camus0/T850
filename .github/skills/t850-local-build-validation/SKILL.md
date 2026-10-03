@@ -81,7 +81,7 @@ $env:T850_BUILD_WORKERS = '4'
 
 ### Toolchain selection
 
-Use the repository scripts rather than manually selecting MSBuild. If direct ARM64 diagnosis is required, locate a Visual Studio 2022 installation that actually has Host x64 to ARM64 tools:
+Use the repository scripts rather than manually selecting MSBuild. If direct ARM64 diagnosis is required, locate a Visual Studio installation that actually has v143 Host x64/ARM64 to ARM64 tools. VS 2022 provides them directly; VS 2026 requires its v143 compatibility component:
 
 ```powershell
 $VsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -114,7 +114,7 @@ Run from a built output or use the matrix result:
 if ($LASTEXITCODE -ne 0) { throw 'Game self-tests failed' }
 ```
 
-Expected current result: 39 `PASS` lines and exit 0. Any failure blocks completion.
+Expected current result: 78 `PASS` lines and exit 0. Any failure blocks completion.
 
 ## 5. Build Android ABIs Sequentially
 
@@ -219,16 +219,25 @@ git status --short
 Get-Process DayScene,T8ditor -ErrorAction SilentlyContinue
 ```
 
+When validating assembled release artifacts, also run:
+
+```powershell
+& .\T850\scripts\ValidateReleasePackages.ps1 `
+  -ReleaseDirectory .\release-assets `
+  -RequireSignedAndroid
+```
+
 Require:
 
 - registration passed;
 - all six Windows cells passed;
-- 43/43 tests passed on supported hosts;
+- all 78 current tests passed on supported hosts;
 - Android arm64-v8a and x86_64 passed sequentially;
 - SteamRT passed locally or is explicitly blocked;
 - requested runtime/visual checks passed;
 - no test process remains;
 - no accidental generated files are staged;
+- assembled release archives pass structural validation when release assets were produced;
 - no unrelated worktree changes were reverted.
 
 Report every platform/configuration separately, including blocked/skipped cells and exact reasons. Do not compress "all healthy" over an unavailable target.

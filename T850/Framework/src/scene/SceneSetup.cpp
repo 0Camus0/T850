@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <scene/SceneSetup.h>
+#include <scene/EditorSceneFile.h>
 #include <core/Core.h>
 #include <cstdio>
 #include <utils/Log.h>
@@ -15,7 +16,18 @@ bool DefaultPointLightsEnabled() {
 }
 
 bool SceneSetup::Load(const std::string& jsonPath) {
-  descriptor = SceneDescriptor{};
+  SceneDescriptor source;
+  if (!LoadSceneDescriptor(jsonPath, source)) {
+    T8_LOG_ERROR("[SceneSetup] Failed to load '%s'", jsonPath.c_str());
+    return false;
+  }
+  return Load(source);
+}
+
+bool SceneSetup::Load(const SceneDescriptor& source) {
+  m_mouseCaptureAllowed = true;
+  descriptor = source;
+  runtimeScene.reset();
   name.clear();
   meshPaths.clear();
   environmentMap.clear();
@@ -31,12 +43,16 @@ bool SceneSetup::Load(const std::string& jsonPath) {
   splines.clear();
   agents.clear();
 
-  if (!LoadSceneDescriptor(jsonPath, descriptor)) {
-    T8_LOG_ERROR("[SceneSetup] Failed to load '%s'", jsonPath.c_str());
-    return false;
-  }
-
   name = descriptor.name;
+  if (!descriptor.runtime_scene.empty()) {
+    runtimeScene.emplace();
+    std::string error;
+    if (!scene::LoadEditorSceneFile(descriptor.runtime_scene, *runtimeScene, &error)) {
+      T8_LOG_ERROR("[SceneSetup] Failed to load runtime scene '%s': %s", descriptor.runtime_scene.c_str(), error.c_str());
+      return false;
+    }
+    m_mouseCaptureAllowed = runtimeScene->mouse_capture.value_or(true);
+  }
   meshPaths = descriptor.meshes;
   environmentMap = descriptor.environment_map;
   environmentDiffuseIBL = descriptor.environment_diffuse_ibl;
@@ -114,7 +130,12 @@ bool SceneSetup::Load(const std::string& jsonPath) {
   return true;
 }
 
+void SceneSetup::ApplyInputSettings(SceneProps& props, std::optional<bool> overridePolicy) const {
+  props.MouseCaptureAllowed = overridePolicy.value_or(m_mouseCaptureAllowed);
+}
+
 void SceneSetup::Apply(SceneProps& props) {
+  ApplyInputSettings(props);
   // Wire cameras
   for (auto& cam : cameras)
     props.AddCamera(&cam);

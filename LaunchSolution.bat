@@ -70,8 +70,10 @@ if %SKIP_VCPKG%==1 (
 :: Without this pin, vcpkg selects the newest installed Visual Studio instance.
 set "VCPKG_VISUAL_STUDIO_PATH="
 if exist "%VSWHERE%" (
-    "%VSWHERE%" -latest -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath > "%TEMP%\t850-vs2022-path.txt"
-    if not errorlevel 1 set /p VCPKG_VISUAL_STUDIO_PATH=<"%TEMP%\t850-vs2022-path.txt"
+    "%VSWHERE%" -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath > "%TEMP%\t850-vs2022-path.txt"
+    for /f "usebackq delims=" %%v in ("%TEMP%\t850-vs2022-path.txt") do (
+        if not defined VCPKG_VISUAL_STUDIO_PATH if exist "%%v\VC\Auxiliary\Build\vcvarsall.bat" set "VCPKG_VISUAL_STUDIO_PATH=%%v"
+    )
     del /q "%TEMP%\t850-vs2022-path.txt" >nul 2>nul
 )
 if not defined VCPKG_VISUAL_STUDIO_PATH (
@@ -82,27 +84,8 @@ if not defined VCPKG_VISUAL_STUDIO_PATH (
 echo [T850] vcpkg compiler: %VCPKG_VISUAL_STUDIO_PATH% ^(v143^)
 echo [T850] vcpkg workers:  %VCPKG_MAX_CONCURRENCY%
 
-:: ── Clone vcpkg if not present ──
-if not exist "%VCPKG_DIR%\bootstrap-vcpkg.bat" (
-    echo [T850] Cloning vcpkg...
-    git clone https://github.com/microsoft/vcpkg.git "%VCPKG_DIR%"
-    if errorlevel 1 (
-        echo [ERROR] Failed to clone vcpkg. Is git installed?
-        pause
-        exit /b 1
-    )
-)
-
-:: ── Bootstrap vcpkg if executable doesn't exist ──
-if not exist "%VCPKG_EXE%" (
-    echo [T850] Bootstrapping vcpkg...
-    call "%VCPKG_DIR%\bootstrap-vcpkg.bat" -disableMetrics
-    if errorlevel 1 (
-        echo [ERROR] vcpkg bootstrap failed.
-        pause
-        exit /b 1
-    )
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%T850\scripts\SetupDawn.ps1" -Mode Bootstrap
+if errorlevel 1 exit /b 1
 
 echo.
 echo ════════════════════════════════════════
@@ -240,6 +223,10 @@ exit /b 0
 :install_imgui
 set "IMGUI_TRIPLET=%~1"
 set "IMGUI_DX12_MODE=%~2"
+if /i "%IMGUI_TRIPLET%"=="x64-windows-static" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%T850\scripts\SetupDawn.ps1"
+    exit /b !errorlevel!
+)
 
 :: Dear ImGui is required by both the editor and runtime dev panels.
 :: vcpkg classic mode will not add features to an already-installed port, so

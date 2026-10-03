@@ -1,6 +1,7 @@
 # Verification and Release Gates
 
-Status: verified against scripts, local matrix runs, deterministic captures, and PR CI on 2026-08-30.
+Status: commands and current self-test expectations verified on 2026-09-26.
+Historical capture and PR-CI evidence retains the date stated in its section.
 
 Use the narrowest gate that can falsify the change, then broaden according to blast radius. Do not report success from compilation alone when the change has a runtime or visual contract.
 
@@ -41,7 +42,11 @@ GitHub Actions uses the same script with `-Action Build`. Run the exact local Wi
 .\scripts\RunWindowsBuildMatrix.ps1
 ```
 
-This runs registration validation, full-solution Win32/x64/ARM64 Debug+Release builds, verifies `DayScene.exe` and `T8ditor.exe` in every cell, and runs the 43 self-tests for Win32/x64 Debug and Release. ARM64 is compile/link-only on the x64 runner.
+The local script runs registration validation, full-solution Win32/x64/ARM64
+Debug+Release builds, verifies `DayScene.exe` and `T8ditor.exe` in every cell,
+and runs the 78 self-tests for Win32/x64 Debug and Release. Local ARM64 remains
+compile/link-only on an x64 host. GitHub Actions uses native `windows-11-arm`
+runners for ARM64 and runs the same self-test suite in every Windows cell.
 
 ## Gameplay Self-Tests
 
@@ -54,7 +59,58 @@ Build x64, then run the matching executable:
 
 Expected result: every line begins with `PASS` and process exit code is 0. Any `FAIL` or nonzero exit blocks the next milestone.
 
-The suite currently has 43 checks covering schema/migration/IDs, validation, groups, stable registry ownership, fixed tick/pause, controllers, components, events, state machines, physics handle reuse, generated triangle-mesh body creation, mutable mesh validation, stable render handles, chunks, greedy meshing, negative coordinates, DDA, streaming budgets, atomic voxel persistence, voxel path completeness and clearance, exact voxel box collision, atlas UV/bounds behavior, immutable material variants, and unavailable navigation.
+## Cross-Backend Compute Self-Test
+
+Run the standalone arithmetic dispatch after an x64 build:
+
+```powershell
+& .\bin\x64\Debug\DayScene.exe --compute-selftest --d3d12debug
+```
+
+The command creates a minimal application without scene assets. It first compiles
+`Shaders/CS_Arithmetic.hlsl`, dispatches over 96 integers, and validates structured-buffer
+readback. It then runs paired image-write/image-read kernels at `1x1`, `7x5`, and
+`257x129`; each pair writes an RGBA8 storage texture, samples it in a second dispatch,
+writes packed pixels to a structured buffer, and checks every pixel on the CPU. Require three
+`[ComputeImage] PASS` lines, final `PASS: arithmetic and odd-sized image kernels`, and exit
+code 0. D3D12 remains the default; add `--api d3d11`, `--api vulkan`, `--api webgpu`, or
+`--api gl` for the other implementations. Desktop GL requires an OpenGL 4.3+ context;
+the 3.3 fallback is raster-only and correctly rejects this compute-only self-test.
+
+To verify compute permutation recording and D3D12 artifact caching, add `--dumpShaderPermutations --shaderPermutationOutput <temporary-json> --logLevel debug`. Require a version-2 `compute_permutations` entry named `CS_Arithmetic.hlsl:CS:base` with a matching `key`, `kind=compute`, entry point `CS`, permutation `base`, and no defines. The graphics `permutations` section must contain only hexadecimal keys. Backend profiles are intentionally artifact metadata rather than source-permutation identity. On a cold D3D12 cache, require `CS stored`; on the next identical run, require `CS hit`.
+
+The arithmetic workload is standalone-only; normal DayScene no longer records its diagnostic `Dispatch(2, 1, 1)`. Use `--compute-selftest` when validating structured-buffer compute and use the real God Rays dispatch for live PIX inspection.
+
+DayScene's God Rays calculation uses compute on D3D11, D3D12, Vulkan, WebGPU, and desktop OpenGL 4.3+ when `--postProcessMode compute` is selected. At 1280x720, require `Pass 'God Rays' dispatched compute 160 x 90 x 1`. D3D12 PIX must show `CS_GodRays.hlsl Compute PSO`, two sampled depth textures, two samplers, and the `GodRaysCalc` storage UAV. `--postProcessMode raster` must suppress every graph compute pipeline on each supported API. Desktop GL below 4.3 and OpenGL ES must use the raster fallback.
+
+Post-processing uses `--postProcessMode compute|raster`. `compute` selects every declared alternative for A/B testing, and `raster` suppresses all graph compute pipelines, including Minecraft TorchParticles. At 1280x720, forced compute requires 160x90 God Rays/blur/HDR dispatches and a 64x64 Bright dispatch. Shadow and bloom blur remain raster. On desktop GL 4.3+, forcing compute must create and dispatch every declared GL compute pipeline; older desktop GL and OpenGL ES must log the raster fallback. Matched D3D11, D3D12, Vulkan, WebGPU, and desktop GL replay comparisons should retain every intermediate target within tolerance 2; record and review any backend-specific final backbuffer variance.
+
+All maintained render graphs must create and dispatch `CS_Bright` and `CS_HDRComposite` when compute is forced. Validate DayScene scenes 0-3 and 5-6 directly; SceneTemplate scene 4 requires an explicit `--sceneFile`. Also run T8ditor separately because it has its own CLI/parser and graph. D3D11, D3D12, Vulkan, WebGPU, and desktop GL 4.3+ shared-graph plus Minecraft smoke tests must dispatch both kernels; older desktop GL and OpenGL ES must log raster fallbacks, zero compute dispatches, and complete a nonuniform frame dump.
+
+For visual parity, capture matched fixed-time compute and raster frames on D3D11, D3D12, and Vulkan and compare all targets with tolerance 2. The first three-backend comparison matched all 18 targets exactly on each API, including `RT_Dump_GodRays.ppm`. Also run an odd output size such as 1023x577 and require a `128 x 73 x 1` dispatch to exercise bounds checking.
+
+### Manual God Rays compute/raster validation
+
+Run from `bin/x64/Debug` with `--logLevel info` and a unique log per API/mode. Test `compute` and `raster` on D3D11, D3D12, Vulkan, WebGPU, and desktop GL 4.3+. For older desktop GL or OpenGL ES, request `compute` and require the logged raster fallback.
+
+In every interactive run, press and release `G` once to open runtime controls, select `GodRays` in the Debug RT selector, and inspect the isolated target. Press and release `G` again to hide the controls while leaving the selected target visible. Compare the compute and raster images using the same camera and settings.
+
+Expected compute log evidence on each supported API is pipeline creation followed by `Pass 'God Rays' dispatched compute 320 x 180 x 1 for 2560x1440 output`. `--postProcessMode raster` must report the graphics implementation and must not mention `CS_GodRays` or `dispatched compute`. Older desktop GL and OpenGL ES compute mode must report `using raster fallback on API=gl`.
+
+For a PIX GPU capture, use D3D12 compute mode, hide the runtime controls after selecting the God Rays debug target, then capture a frame. Search Events for `Dispatch`; normal DayScene should contain the God Rays `Dispatch(320,180,1)`, not the standalone arithmetic `Dispatch(2,1,1)`. Select it and require Pipeline/State to reference `Shaders/CS_GodRays.hlsl Compute PSO`, root constants at `b0`, sampled scene/shadow depth at `t0`/`t1`, samplers at `s0`/`s1`, and the `GodRaysCalc` storage UAV at `u0`. A following UAV/resource barrier is expected. Missing standalone `Set*` rows in PIX Events is not a failure because Pipeline/State reconstructs the bound state at the selected dispatch.
+
+For an external capture tool, add `--compute-selftest-wait 10`. The process waits ten seconds before and after the dispatch so a PIX timing capture can start and stop around the GPU work without adding the compute operation to a scene.
+
+The suite currently has 78 checks. In addition to gameplay, scene, terrain, physics,
+navigation, material, and lifecycle contracts, `T-COMPUTE-GRAPH-01` loads every maintained
+render graph under strict parsing and rejects unknown keys, missing storage usage, read/write
+feedback, invalid permutations, non-positive `compute_depth`, read-before-write
+resources, and incomplete typed binding layouts. `T-NAV-02` verifies that queued,
+completed and worker-in-flight navigation requests stay canceled after owner destruction.
+`T-MINECRAFT-HOUSE-01` resolves ordered structure regions and verifies the floor, swapped
+door/window openings, full-block roof center, 22-slab perimeter, and three supported torch
+positions. `T-MINECRAFT-SURVIVAL-01` verifies five-heart contact-entry damage, one-heart
+minute regeneration, death lockout, respawn reset, and glowing-white Herobrine settings.
 
 Validate the authored Minecraft block-to-atlas contract without creating a graphics device:
 
@@ -92,6 +148,38 @@ Focused voxel visual gate:
 ```
 
 Expected: four captured entries, zero engine errors, and nonuniform 1280x720 backbuffers.
+
+## Offscreen Overlays
+
+After building, run the surface/offscreen regression from the source root:
+
+```powershell
+.\scripts\TestOffscreenOverlays.ps1 -Config Debug -Apis d3d11,d3d12,vulkan,gl,webgpu
+.\scripts\TestOffscreenOverlays.ps1 -Config Release -Apis vulkan,webgpu -ProfileFrames 600 -Capture
+.\scripts\TestOffscreenOverlays.ps1 -Apis webgpu -ShaderFlow wgsl
+.\scripts\TestOffscreenOverlays.ps1 -Apis webgpu -ShaderFlow spirv
+```
+
+The script runs scene 1 at 640x360 with fixed delta and an explicit
+`--profileFrames` limit, enforces a per-process timeout, and requires exit 0,
+a populated report for exactly the requested frames, and no engine, profiler
+or validation errors. `--frames` is not a supported exit limit. Every run uses
+a new evidence directory under `%LOCALAPPDATA%/T850Profiles`; use
+`-OutputDirectory` to choose one explicitly.
+
+`-Capture` enables the timed `--offscreenDebug` path after overlays have been
+rendered. It moves only that run's new dump directories into its evidence
+folder, validates PPM dimensions/nonuniformity and creates PNGs for inspection.
+If a run is too short to produce a timed capture it fails rather than claiming
+visual coverage; use a fresh directory and a higher frame count. Inspect the
+PNGs for intact scene content and readable overlay text. These checks do not
+assert pixel parity between different APIs; use the real-driver fixture and
+matched visual baselines for that claim.
+
+On 2026-09-18 this gate reproduced and then closed Vulkan/WebGPU ImGui attachment
+incompatibility on the shared offscreen ring. The WebGPU completion path now
+also rotates the offscreen ring and emits its post-overlay debug captures.
+Build-only browser/Android results are not browser/device overlay runtime tests.
 
 ## Offline glTF Validation
 
@@ -247,6 +335,16 @@ See [Steam Deck build and deployment](../platform/steam-deck.md).
 - Android: arm64-v8a and x86_64 Release APK builds;
 - Steam Deck: SteamRT Release build and tarball package;
 - tagged `v*` release: Windows ZIPs, Android APKs, Steam Deck tarball, and compiled launcher.
+
+Before a tagged release is published, `scripts/ValidateReleasePackages.ps1`
+opens every assembled Windows ZIP and Android APK, lists every Steam Deck
+tarball, verifies the required executables, native libraries and asset roots,
+rejects unsigned release APK names, and writes `SHA256SUMS.txt`.
+
+Android and Steam Deck runtime acceptance still requires equipped hardware.
+Retain the device model, OS/driver version, package checksum, launch command,
+exit result, validation log and a nonblank frame capture with the release
+candidate; a hosted compile/package job is not a substitute for this evidence.
 
 CI builds and verifies both `DayScene.exe` and `T8ditor.exe` in all six Windows cells. PR #33 run [33325073153](https://github.com/0Camus0/T850/actions/runs/33325073153) passed registration, Win32/x64/ARM64 Debug+Release, Android arm64-v8a/x86_64, and Steam Deck.
 

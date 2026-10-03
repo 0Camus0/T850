@@ -74,7 +74,22 @@ bool DevGuiContext::BeginPanel(const char* title, bool* open, ImGuiWindowFlags f
   if (m_dockId != 0) {
     ImGui::SetNextWindowDockID(m_dockId, ImGuiCond_FirstUseEver);
   }
+#ifdef __EMSCRIPTEN__
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  const ImVec2 available((std::max)(1.0f, viewport->WorkSize.x - 16.0f),
+                        (std::max)(1.0f, viewport->WorkSize.y - 16.0f));
+  ImGui::SetNextWindowSizeConstraints(ImVec2(1.0f, 1.0f), available);
+  const bool begun = ImGui::Begin(scopedTitle.c_str(), open, flags);
+  const ImVec2 position = ImGui::GetWindowPos();
+  const ImVec2 size = ImGui::GetWindowSize();
+  const ImVec2 minimum(viewport->WorkPos.x + 8.0f, viewport->WorkPos.y + 8.0f);
+  ImGui::SetWindowPos(ImVec2(
+      std::clamp(position.x, minimum.x, minimum.x + (std::max)(0.0f, available.x - size.x)),
+      std::clamp(position.y, minimum.y, minimum.y + (std::max)(0.0f, available.y - size.y))));
+  return begun;
+#else
   return ImGui::Begin(scopedTitle.c_str(), open, flags);
+#endif
 }
 
 void DevGuiContext::EndPanel() {

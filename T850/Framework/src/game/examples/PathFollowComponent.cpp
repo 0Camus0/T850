@@ -47,6 +47,14 @@ void PathFollowComponent::OnCreate() {
   formationSlot_ = settings.formationSlot;
 }
 
+void PathFollowComponent::OnDestroy() {
+  if (owner_ && system_) {
+    system_->Navigation().CancelRequestsForObject(owner_->runtimeId);
+  }
+  requestId_ = GameNavigationService::kInvalidRequestId;
+  supersededRequestIds_.clear();
+}
+
 void PathFollowComponent::Update(float fixedDt) {
   if (!owner_ || !system_ || !owner_->links.primitive ||
       !owner_->controller || owner_->controller->Kind() != ControllerKind::AI) {

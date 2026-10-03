@@ -29,6 +29,9 @@
     <ClCompile Include="src\ImGuiVulkanBackend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\ImGuiWebGPUBackend.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\DevGuiContext.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

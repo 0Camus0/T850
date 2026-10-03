@@ -12,8 +12,14 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <array>
 
 namespace t850 {
+  struct ComputePipelineDesc;
+  struct ComputeBindingLayoutDesc;
+  bool ReflectComputeBindings(const std::vector<uint32_t>& spirv, const ComputePipelineDesc& desc,
+    std::vector<ComputeBindingLayoutDesc>& bindings, std::array<uint32_t, 3>& groupSize,
+    bool combinedSamplers = false);
 
   struct SPIRVBinding {
     std::string name;
@@ -31,6 +37,7 @@ namespace t850 {
   };
 
   struct SPIRVReflection {
+    bool usesDepthComparison = false;
     std::vector<SPIRVBinding> uniformBuffers;   // UBOs (cbuffer)
     std::vector<SPIRVBinding> sampledImages;    // combined image samplers / textures
     std::vector<SPIRVInput>   stageInputs;      // vertex inputs (for VS only)

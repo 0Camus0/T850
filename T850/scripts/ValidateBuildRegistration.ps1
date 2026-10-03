@@ -53,6 +53,7 @@ $frameworkSources = @(
     Get-ChildItem (Join-Path $frameworkRoot "src\game") -Recurse -Filter "*.cpp"
     Get-ChildItem (Join-Path $frameworkRoot "src\terrain") -Recurse -Filter "*.cpp"
     Get-Item (Join-Path $frameworkRoot "src\debug\CrashDiagnostics.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\debug\GpuTimestampProfiler.cpp")
     Get-Item (Join-Path $frameworkRoot "src\physics\GameplayLayers.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMesh.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\MutableMeshData.cpp")
@@ -60,17 +61,28 @@ $frameworkSources = @(
     Get-Item (Join-Path $frameworkRoot "src\scene\SceneConversions.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\SceneRegions.cpp")
     Get-Item (Join-Path $frameworkRoot "src\scene\ShadowSystem.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\core\ShaderTools.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\core\WebFramework.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\video\webgpu\WebGPUShaderPackage.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\video\ShaderProgramCache.cpp")
+    Get-Item (Join-Path $frameworkRoot "src\utils\ShaderPrecompiler.cpp")
 ) | Sort-Object FullName -Unique
 
 $frameworkHeaders = @(
     Get-ChildItem (Join-Path $frameworkRoot "include\game") -Recurse -Filter "*.h"
     Get-ChildItem (Join-Path $frameworkRoot "include\terrain") -Recurse -Filter "*.h"
     Get-Item (Join-Path $frameworkRoot "include\debug\CrashDiagnostics.h")
+    Get-Item (Join-Path $frameworkRoot "include\debug\GpuTimestampProfiler.h")
     Get-Item (Join-Path $frameworkRoot "include\physics\GameplayLayers.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\MutableMesh.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\MutableMeshData.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\SceneConversions.h")
     Get-Item (Join-Path $frameworkRoot "include\scene\SceneRegions.h")
+    Get-Item (Join-Path $frameworkRoot "include\core\ShaderTools.h")
+    Get-Item (Join-Path $frameworkRoot "include\core\WebFramework.h")
+    Get-Item (Join-Path $frameworkRoot "include\video\MutableGraphicsStateCache.h")
+    Get-Item (Join-Path $frameworkRoot "include\video\ShaderProgramCache.h")
+    Get-Item (Join-Path $frameworkRoot "include\utils\ShaderPrecompiler.h")
 ) | Sort-Object FullName -Unique
 
 foreach ($source in $frameworkSources) {

@@ -24,27 +24,74 @@
 #include <Application.h>
 
 #include <iostream>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <chrono>
+#include <thread>
 
 #include <Descriptors.h>
 #include <core/Config.h>
 #include <utils/Log.h>
 #include <utils/ConfigRuntime.h>
 #include <utils/ShaderPermutationDump.h>
+#include <core/ShaderTools.h>
+#ifdef __EMSCRIPTEN__
+#include <core/WebFramework.h>
+#endif
 #include <debug/Profiler.h>
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
 #include <game/GameSelfTest.h>
+#include <debug/ComputeSelfTest.h>
 #include <debug/CrashDiagnostics.h>
+#include <debug/GraphicsFixture.h>
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
+#include <video/webgpu/WebGPUContext.h>
+#endif
 
 std::vector<std::string> g_args;
 
 t850::AppBase		  *pApp = 0;
 t850::RootFramework *pFrameWork = 0;
 
-int main(int arg,char ** args){
+namespace {
+  class ComputeSelfTestApp final : public t850::AppBase {
+  public:
+    void InitVars() override {}
+    void CreateAssets() override {}
+    void LoadAssets() override {}
+    void DestroyAssets() override {}
+    void OnUpdate() override {}
+    void OnDraw() override {}
+    void OnInput() override {}
+    void OnPause() override {}
+    void OnResume() override {}
+    void OnReset() override {}
+    void LoadScene(int) override {}
+  };
+
+  class WebGPURecoverySelfTestApp final : public t850::AppBase {
+  public:
+    void InitVars() override {}
+    void CreateAssets() override {}
+    void LoadAssets() override {}
+    void DestroyAssets() override {}
+    void OnUpdate() override {
+      pFramework->pVideoDriver->ClearBackbufferWithColor(0.05f, 0.1f, 0.15f, 1.0f);
+      pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::Present);
+    }
+    void OnDraw() override {}
+    void OnInput() override {}
+    void OnPause() override {}
+    void OnResume() override {}
+    void OnReset() override {}
+    void LoadScene(int) override {}
+  };
+}
+
+int main(int arg,char ** args) try {
   t850::InstallUnattendedCrtReportHook();
   t850::Config defaultConfig;
   t850::g_config = defaultConfig;
@@ -53,10 +100,45 @@ int main(int arg,char ** args){
         g_args.push_back( std::string( args[i] ) );
     }
 
+  bool computeSelfTest = false;
+  bool webgpuRecoverySelfTest = false;
+  bool computeSelfTestApiExplicit = false;
+  int computeSelfTestWaitSeconds = 0;
+  bool webgpuRecoveryStressSelfTest = false;
   for (int i = 1; i < arg; ++i) {
+      if (std::string_view(args[i]) == "--graphics-fixture") {
+  #if defined(_WIN32) && defined(_M_X64)
+    return t850::RunGraphicsFixture(arg, args);
+  #else
+    std::cerr << "The graphics fixture currently requires Windows x64.\n";
+    return 1;
+  #endif
+      }
     if (std::string_view(args[i]) == "--game-selftest") {
       const int failures = t850::game::RunGameSelfTests();
       return failures == 0 ? 0 : 1;
+    }
+    if (std::string_view(args[i]) == "--compute-selftest") {
+      computeSelfTest = true;
+    }
+    if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
+      webgpuRecoverySelfTest = true;
+    }
+    if (std::string_view(args[i]) == "--webgpu-recovery-stress-selftest") {
+      webgpuRecoverySelfTest = true;
+      webgpuRecoveryStressSelfTest = true;
+    }
+    if (std::string_view(args[i]) == "--api" && i + 1 < arg) {
+      computeSelfTestApiExplicit = true;
+    }
+    if (std::string_view(args[i]) == "--compute-selftest-wait" && i + 1 < arg) {
+      computeSelfTest = true;
+      try {
+        computeSelfTestWaitSeconds = (std::max)(0, (std::min)(60, std::stoi(args[++i])));
+      } catch (...) {
+        std::cerr << "[ComputeSelfTest] Invalid --compute-selftest-wait value\n";
+        return 1;
+      }
     }
   }
 
@@ -70,11 +152,40 @@ int main(int arg,char ** args){
   }
 
   t850::config::ApplyCommandLine(arg, args, t850::g_config);
+  if (computeSelfTest && webgpuRecoverySelfTest) {
+    throw std::invalid_argument("Choose compute or WebGPU recovery self-test, not both");
+  }
+  if (webgpuRecoverySelfTest) {
+#if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
+    t850::g_config.api = "webgpu";
+    if (webgpuRecoveryStressSelfTest) {
+      t850::g_config.webgpuDeviceRecoveryAttempts = 3;
+      t850::webgpu::ConfigureDeviceLossTestSequence(60, 4, 1);
+    } else {
+      t850::webgpu::ConfigureDeviceLossTestFrame(60);
+    }
+#else
+    throw std::invalid_argument("The WebGPU recovery self-test is unavailable on this platform");
+#endif
+  }
+#ifdef OS_WINDOWS
+  if (computeSelfTest && !computeSelfTestApiExplicit) {
+    // Preserve the original deterministic default while allowing an explicit
+    // backend for cross-API compute validation.
+    t850::g_config.api = "d3d12";
+  }
+#elif defined(OS_LINUX)
+  if (computeSelfTest && !computeSelfTestApiExplicit) {
+    t850::g_config.api = "vulkan";
+  }
+#endif
   t850::config::ValidateConfig(t850::g_config);
   if (t850::g_config.flags.benchmarkMatrix) {
-    t850::g_config.api = "d3d11";
-    t850::g_config.width = 1920;
-    t850::g_config.height = 1080;
+    t850::g_config.api = t850::g_config.benchmarkPaired ? "d3d12" : "d3d11";
+    if (!t850::g_config.benchmarkPaired) {
+      t850::g_config.width = 1920;
+      t850::g_config.height = 1080;
+    }
     t850::g_config.flags.offscreen = false;
     t850::g_config.startScene = 1;
   }
@@ -171,31 +282,60 @@ int main(int arg,char ** args){
     t850::g_config.logFile.empty() ? nullptr : t850::g_config.logFile.c_str()
   );
   t850::Log::SetSessionTag(apiTag);
-  if (t850::g_config.flags.dumpShaderPermutations) {
-    t850::ShaderPermutationDump::Begin(t850::g_config.shaderPermutationOutputPath);
+  if (auto result = t850::RunShaderPrecompileCommand(t850::g_config)) {
+    t850::Log::Shutdown();
+    return *result;
   }
+  t850::BeginShaderPermutationRecording(t850::g_config);
 
-	pApp = new App;
-#ifdef OS_LINUX
-    pFrameWork = new t850::LinuxFramework((t850::AppBase*)pApp);
-    pFrameWork->InitGlobalVars();
-	pFrameWork->OnCreateApplication(desc);
+	pApp = computeSelfTest
+  ? static_cast<t850::AppBase*>(new ComputeSelfTestApp())
+  : webgpuRecoverySelfTest
+  ? static_cast<t850::AppBase*>(new WebGPURecoverySelfTestApp())
+  : static_cast<t850::AppBase*>(new App());
+  int result = 0;
+#ifdef OS_WEB
+  pFrameWork = new t850::WebFramework(pApp);
+#elif defined(OS_LINUX)
+  pFrameWork = new t850::LinuxFramework((t850::AppBase*)pApp);
 #elif defined(OS_WINDOWS)
-	pFrameWork = new t850::Win32Framework((t850::AppBase*)pApp);
-	pFrameWork->InitGlobalVars();
-	pFrameWork->OnCreateApplication(desc);
-  if (t850::g_config.flags.dumpShaderPermutations) {
-    t850::ShaderPermutationDump::Flush();
-  } else {
+  pFrameWork = new t850::Win32Framework((t850::AppBase*)pApp);
+#endif
+  pFrameWork->InitGlobalVars();
+  pFrameWork->OnCreateApplication(desc);
+  if (computeSelfTest) {
+    T8_LOG_INFO("[ComputeSelfTest] Starting standalone arithmetic validation on API=%s",
+          pFrameWork->pVideoDriver->ApiTag());
+    if (computeSelfTestWaitSeconds > 0) {
+      T8_LOG_INFO("[ComputeSelfTest] Waiting %d seconds before dispatch for capture tools",
+                  computeSelfTestWaitSeconds);
+      std::this_thread::sleep_for(std::chrono::seconds(computeSelfTestWaitSeconds));
+    }
+    result = t850::RunComputeSelfTests(pFrameWork->pVideoDriver);
+    if (computeSelfTestWaitSeconds > 0) {
+      T8_LOG_INFO("[ComputeSelfTest] Waiting %d seconds after dispatch for capture tools",
+                  computeSelfTestWaitSeconds);
+      std::this_thread::sleep_for(std::chrono::seconds(computeSelfTestWaitSeconds));
+    }
+  } else if (!t850::g_config.flags.dumpShaderPermutations) {
 	  pFrameWork->UpdateApplication();
   }
-	pFrameWork->OnDestroyApplication();
-#endif
+  if (t850::g_config.flags.dumpShaderPermutations)
+    t850::ShaderPermutationDump::Flush();
+  pFrameWork->OnDestroyApplication();
 
-	delete pFrameWork;
+  delete pFrameWork;
 	delete pApp;
 
+  if (!t850::ShaderPermutationDump::Flush()) {
+    t850::Log::Shutdown();
+    return 1;
+  }
 	t850::Log::Shutdown();
 
-    return 0;
+  return result;
+} catch (const std::exception& error) {
+  T8_LOG_ERROR("[App] Startup/runtime failure: %s", error.what());
+  std::cerr << "Engine failure: " << error.what() << '\n';
+  return 1;
 }

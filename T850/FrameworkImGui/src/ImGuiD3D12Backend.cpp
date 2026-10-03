@@ -65,44 +65,72 @@ public:
     initInfo.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     initInfo.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     initInfo.SrvDescriptorHeap = m_srvHeap;
-    initInfo.UserData = &srvHeap;
+    initInfo.UserData = this;
     initInfo.SrvDescriptorAllocFn =
       [](ImGui_ImplDX12_InitInfo* info,
          D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
          D3D12_GPU_DESCRIPTOR_HANDLE* outGpu) {
-        auto* heap = static_cast<D3D12Heap*>(info ? info->UserData : nullptr);
-        if (!heap || !outCpu || !outGpu) {
+        auto* backend = static_cast<ImGuiD3D12Backend*>(info ? info->UserData : nullptr);
+        if (!backend || !outCpu || !outGpu) {
           if (outCpu) *outCpu = D3D12_CPU_DESCRIPTOR_HANDLE{0};
           if (outGpu) *outGpu = D3D12_GPU_DESCRIPTOR_HANDLE{0};
           return;
         }
-        *outCpu = heap->AllocateCPU();
-        *outGpu = heap->AllocateGPU();
+        if (!backend->m_freeTextureDescriptors.empty()) {
+          const auto descriptor = backend->m_freeTextureDescriptors.back();
+          backend->m_freeTextureDescriptors.pop_back();
+          *outCpu = descriptor.first;
+          *outGpu = descriptor.second;
+        } else {
+          auto& heap = backend->m_driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE);
+          *outCpu = heap.AllocateCPU();
+          *outGpu = heap.AllocateGPU();
+        }
       };
     initInfo.SrvDescriptorFreeFn =
-      [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE,
-         D3D12_GPU_DESCRIPTOR_HANDLE) {};
+      [](ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE cpu,
+        D3D12_GPU_DESCRIPTOR_HANDLE gpu) {
+        auto* backend = static_cast<ImGuiD3D12Backend*>(info->UserData);
+        if (cpu.ptr && gpu.ptr) backend->m_freeTextureDescriptors.emplace_back(cpu, gpu);
+      };
 
-    m_rendererInitialized = ImGui_ImplDX12_Init(&initInfo);
+    m_initInfo = initInfo;
+    m_rendererInitialized = InitRenderer(m_driver->GetRenderTargetLayout());
     if (!m_rendererInitialized) Shutdown();
     return m_rendererInitialized;
   }
 
   void Shutdown() override {
-    if (m_rendererInitialized) ImGui_ImplDX12_Shutdown();
+    if (m_rendererInitialized) {
+      m_driver->WaitForGPU();
+      ImGui_ImplDX12_Shutdown();
+    }
     if (m_platformInitialized) ImGui_ImplSDL3_Shutdown();
     m_driver = nullptr;
     m_srvHeap = nullptr;
     m_rendererInitialized = false;
     m_platformInitialized = false;
+    m_freeTextureDescriptors.clear();
+    m_targetLayout = {};
+    m_targetReady = false;
   }
 
   void NewFrame() override {
-    ImGui_ImplDX12_NewFrame();
+    const auto layout = m_driver->GetRenderTargetLayout();
+    m_targetReady = ValidateOverlayLayout(*m_driver, layout);
+    if (m_targetReady && !layout.HasCompatibleAttachments(m_targetLayout)) {
+      m_driver->WaitForGPU();
+      if (m_rendererInitialized) ImGui_ImplDX12_Shutdown();
+      m_rendererInitialized = InitRenderer(layout);
+      if (!m_rendererInitialized) T8_LOG_ERROR("[ImGui] Failed to configure D3D12 overlay target");
+    }
+    if (m_targetReady && m_rendererInitialized) m_targetLayout = layout;
+    if (m_rendererInitialized) ImGui_ImplDX12_NewFrame();
     ImGui_ImplSDL3_NewFrame();
   }
 
   void RenderDrawData(ImDrawData* drawData) override {
+    if (!m_rendererInitialized || !m_targetReady || !ValidateOverlayDraw(*m_driver, m_targetLayout)) return;
     ID3D12GraphicsCommandList* commandList = m_driver->GetCmdList();
     ID3D12DescriptorHeap* heaps[] = {m_srvHeap};
     commandList->SetDescriptorHeaps(1, heaps);
@@ -159,7 +187,29 @@ public:
   void ReleaseTextureIDs() override { m_opaqueTextureIDs.clear(); }
 
 private:
+  bool InitRenderer(const RenderTargetLayout& layout) {
+    if (!ValidateOverlayLayout(*m_driver, layout)) return false;
+    switch (layout.colorFormats[0]) {
+    case BaseRT::RGBA8: m_initInfo.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+    case BaseRT::BGRA8: m_initInfo.RTVFormat = DXGI_FORMAT_B8G8R8A8_UNORM; break;
+    case BaseRT::RGBA16F: m_initInfo.RTVFormat = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+    case BaseRT::RGBA32F: m_initInfo.RTVFormat = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+    case BaseRT::R8: m_initInfo.RTVFormat = DXGI_FORMAT_R8_UNORM; break;
+    case BaseRT::F16: m_initInfo.RTVFormat = DXGI_FORMAT_R16_FLOAT; break;
+    case BaseRT::F32: m_initInfo.RTVFormat = DXGI_FORMAT_R32_FLOAT; break;
+    default: return false;
+    }
+    m_initInfo.DSVFormat = layout.depthFormat == BaseRT::NOTHING ? DXGI_FORMAT_UNKNOWN
+      : layout.depthFormat == BaseRT::FD16 ? DXGI_FORMAT_D16_UNORM : DXGI_FORMAT_D32_FLOAT;
+    if (!ImGui_ImplDX12_Init(&m_initInfo)) return false;
+    m_targetLayout = layout;
+    return true;
+  }
   D3D12Driver* m_driver = nullptr;
+  ImGui_ImplDX12_InitInfo m_initInfo{};
+  std::vector<std::pair<D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_GPU_DESCRIPTOR_HANDLE>> m_freeTextureDescriptors;
+  RenderTargetLayout m_targetLayout;
+  bool m_targetReady = false;
   ID3D12DescriptorHeap* m_srvHeap = nullptr;
   bool m_platformInitialized = false;
   bool m_rendererInitialized = false;

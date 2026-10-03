@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <iterator>
 #include <fstream>
+#include <stdexcept>
 #include <utils/Log.h>
 #include <debug/RenderTrace.h>
 
@@ -212,6 +213,13 @@ namespace t850 {
     else {
       T8_LOG_INFO("GLEW OK");
     }
+    m_computeShadersSupported = GLEW_VERSION_4_3 != 0;
+    m_computeTexturesSupported = m_computeShadersSupported;
+    T8_LOG_INFO("[GL][Compute] shaders=%d textures=%d (desktop OpenGL 4.3 required)",
+                m_computeShadersSupported, m_computeTexturesSupported);
+    if (!m_computeShadersSupported) {
+      T8_LOG_INFO("[GL][Compute] OpenGL 3.3 context is raster-only; compute graph passes use their raster implementations");
+    }
     SDL_GetWindowSizeInPixels((SDL_Window*)m_sdlWindow, &width, &height);
     if ((width <= 0 || height <= 0) && requestedWidth > 0 && requestedHeight > 0) {
       T8_LOG_INFO("[GL] SDL reported %dx%d pixels during init; using requested %dx%d",
@@ -221,15 +229,33 @@ namespace t850 {
     }
 #endif
 #endif//HEADLESS
-    std::string GL_Version = std::string((const char*)glGetString(GL_VERSION));
-    std::string GL_Extensions = std::string((const char*)glGetString(GL_EXTENSIONS));
-
-    std::istringstream iss(GL_Extensions);
-    std::vector<std::string> tokens{ std::istream_iterator<std::string>{iss},
-      std::istream_iterator<std::string>{} };
+    const unsigned char* versionText = glGetString(GL_VERSION);
+    if (!versionText)
+      throw std::runtime_error("OpenGL context is not current or does not expose GL_VERSION");
+    std::string GL_Version = reinterpret_cast<const char*>(versionText);
+    std::vector<std::string> tokens;
+#if defined(USING_OPENGL)
+    GLint extensionCount = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
+    for (GLint index = 0; index < extensionCount; ++index) {
+      const unsigned char* extension = glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(index));
+      if (extension)
+        tokens.emplace_back(reinterpret_cast<const char*>(extension));
+    }
+#else
+    const unsigned char* extensionText = glGetString(GL_EXTENSIONS);
+    if (extensionText) {
+      std::istringstream iss(reinterpret_cast<const char*>(extensionText));
+      tokens.assign(std::istream_iterator<std::string>{iss}, std::istream_iterator<std::string>{});
+    }
+#endif
 
     ExtensionsTok = tokens;
-    Extensions = GL_Extensions;
+    Extensions.clear();
+    for (const std::string& extension : ExtensionsTok) {
+      if (!Extensions.empty()) Extensions += ' ';
+      Extensions += extension;
+    }
 
     T8_LOG_INFO("GL Version: %s", GL_Version.c_str());
 
@@ -237,8 +263,11 @@ namespace t850 {
       T8_LOG_VERBOSE("[%s]", ExtensionsTok[i].c_str());
     }
 
-    const unsigned char *version = glGetString(GL_SHADING_LANGUAGE_VERSION);
-    T8_LOG_INFO("GLSL Ver: %s", version);
+    const unsigned char* shadingLanguageVersion = glGetString(GL_SHADING_LANGUAGE_VERSION);
+    const char* glslVersion = shadingLanguageVersion
+      ? reinterpret_cast<const char*>(shadingLanguageVersion)
+      : "unavailable";
+    T8_LOG_INFO("GLSL Ver: %s", glslVersion);
 
 #if defined(USING_OPENGL)
     if (GLEW_VERSION_4_5 || GLEW_ARB_clip_control) {
@@ -332,6 +361,10 @@ namespace t850 {
 #endif
 
   void	GLDriver::DestroyDriver() {
+    T8_LOG_INFO("[GL] Mutable state cache: requests=%llu changes=%llu redundant=%llu objects=0",
+          static_cast<unsigned long long>(m_stateCache.Requests()),
+          static_cast<unsigned long long>(m_stateCache.Changes()),
+          static_cast<unsigned long long>(m_stateCache.Redundant()));
 #if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     DestroyOffscreenFences();
 #endif
@@ -406,6 +439,9 @@ namespace t850 {
 
   void GLDriver::SetBlendState(BlendStates state)
   {
+    const BlendStates selected = state == BLEND_DEFAULT ? BLEND_OPAQUE : state;
+    T8_TRACE(EvSetBlend((int)state));
+    if (!m_stateCache.Select(MutableGraphicsStateCache::Slot::Blend, static_cast<uint8_t>(selected))) return;
     static const char* names[] = {"BLEND_DEFAULT","BLEND_OPAQUE","ADDITIVE","ALPHA_BLEND","NON_PREMULTIPLIED"};
     T8_LOG_TRACE("[GL] SetBlendState(%s)", (state >= 0 && state <= 4) ? names[state] : "?");
     switch (state)
@@ -431,7 +467,6 @@ namespace t850 {
     default:
       break;
     }
-    T8_TRACE(EvSetBlend((int)state));
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
 #endif
@@ -439,6 +474,9 @@ namespace t850 {
 
   void GLDriver::SetDepthStencilState(DepthStencilStates state)
   {
+    const DepthStencilStates selected = state == DEPTH_DEFAULT ? READ_WRITE : state;
+    T8_TRACE(EvSetDepth((int)state));
+    if (!m_stateCache.Select(MutableGraphicsStateCache::Slot::Depth, static_cast<uint8_t>(selected))) return;
     static const char* names[] = {"DEPTH_DEFAULT","READ_WRITE","NONE","READ"};
     T8_LOG_TRACE("[GL] SetDepthStencilState(%s)", (state >= 0 && state <= 3) ? names[state] : "?");
     switch (state)
@@ -465,7 +503,6 @@ namespace t850 {
     default:
       break;
     }
-    T8_TRACE(EvSetDepth((int)state));
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
 #endif
@@ -481,6 +518,9 @@ namespace t850 {
     std::vector<unsigned char> rgbBuf(w * h * 3);
 
     int channels = (readFormat == GL_RGBA) ? 4 : 1;
+    GLint previousPackAlignment = 4;
+    glGetIntegerv(GL_PACK_ALIGNMENT, &previousPackAlignment);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
     if (readType == GL_UNSIGNED_BYTE) {
       std::vector<unsigned char> pixels(w * h * channels);
@@ -524,6 +564,7 @@ namespace t850 {
       }
     }
 
+    glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
     WritePPM(path, w, h, rgbBuf);
   }
 
@@ -609,7 +650,7 @@ namespace t850 {
 
   bool GLDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
     T8_TELEMETRY_SCOPE("gpu.gl.read_rt_color_float");
-    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
+    T8_TELEMETRY_ADD("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || !RTs[rtID])
       return false;
     if (attachment < 0 || attachment >= RTs[rtID]->number_RT)
@@ -653,13 +694,15 @@ namespace t850 {
 
     GLenum err = glGetError();
     ok = (err == GL_NO_ERROR);
-    glReadBuffer((GLenum)prevReadBuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+    glReadBuffer((GLenum)prevReadBuffer);
     return ok;
   }
 
   void GLDriver::SetCullFace(FaceCulling state) {
     m_FaceCulling = state;
+    T8_TRACE(EvSetCull((int)state));
+    if (!m_stateCache.Select(MutableGraphicsStateCache::Slot::Cull, static_cast<uint8_t>(state))) return;
     switch (m_FaceCulling) {
       case t850::BaseDriver::FRONT_FACES:
         glEnable(GL_CULL_FACE);
@@ -674,7 +717,6 @@ namespace t850 {
         glCullFace(GL_FRONT_AND_BACK);
         break;
     }
-    T8_TRACE(EvSetCull((int)state));
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
 #endif
@@ -762,7 +804,7 @@ namespace t850 {
   }
 
   void GLDriver::CompleteFrame(FrameCompletionMode mode) {
-    T8_TELEMETRY_SCOPE("gpu.gl.swap_buffers");
+    T8_TELEMETRY_SCOPE("gpu.present");
     T8_LOG_TRACE("[GLDriver] SwapBuffers");
     if (mode == FrameCompletionMode::SubmitNoPresent) {
       glFlush();

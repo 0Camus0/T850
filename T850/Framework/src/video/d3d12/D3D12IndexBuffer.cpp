@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12IndexBuffer.cpp: Index buffer implementation
@@ -30,6 +31,7 @@ namespace t850 {
   void** D3D12IndexBuffer::GetAPIObjectReference() const { return nullptr; }
 
   void D3D12IndexBuffer::Create(const Device& device, BufferDesc desc, void* initialData) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Index, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     ID3D12Device* dev = GetNativeDevice();
     auto* driver = GetD3D12Driver();
@@ -78,6 +80,7 @@ namespace t850 {
       g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "ib", "");
     }
 #endif
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Index, 0, 1);
   }
 
   void D3D12IndexBuffer::Set(const DeviceContext& deviceContext, const unsigned offset, IndexBufferFormat::E format) {
@@ -94,6 +97,7 @@ namespace t850 {
   }
 
   void D3D12IndexBuffer::UpdateFromSystemCopy(const DeviceContext&) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Index, sysMemCpy.size(), 0);
     if (m_mappedData && !sysMemCpy.empty()) memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
@@ -103,6 +107,7 @@ namespace t850 {
 #endif
   }
   void D3D12IndexBuffer::UpdateFromBuffer(const DeviceContext&, const void* buffer) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Index, descriptor.byteWidth, 0);
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
 #ifdef T850_RENDER_TRACE

@@ -29,7 +29,8 @@ namespace t850 {
     Texture* CreateCubeMap(const unsigned char * buff, int w, int h) override;
     Texture* CreateFloatTexture(int w, int h, const float* data = nullptr) override;
     Texture* CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr) override;
-    BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) override;
+    BaseRT* CreateRT(int nrt, int cf, int df, int w, int h,
+             bool genMips = false, bool allowStorage = false) override;
   private:
   };
 }

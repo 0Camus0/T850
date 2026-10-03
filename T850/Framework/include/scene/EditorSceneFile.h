@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <scene/SceneDescriptor.h>
+#include <terrain/VoxelStreaming.h>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,12 @@ struct Vec3f {
   float x = 0.0f;
   float y = 0.0f;
   float z = 0.0f;
+};
+
+struct Vec3i {
+  int x = 0;
+  int y = 0;
+  int z = 0;
 };
 
 struct SceneObjectPhysicsDesc {
@@ -494,6 +501,29 @@ struct SceneVoxelOreDesc {
   int min_depth = 0;
 };
 
+struct SceneVoxelPaletteEntry {
+  std::string name;
+  std::array<float, 4> color = {1, 1, 1, 1};
+  std::array<float, 4> atlas_rect = {0, 0, 1, 1};
+  float roughness = 0.8f;
+};
+
+struct SceneStreamedVoxelsDesc {
+  terrain::ChunkDimensions chunk_dimensions;
+  terrain::VoxelStreamingSettings streaming;
+  terrain::LayeredVoxelTerrainSettings terrain;
+  std::vector<SceneVoxelPaletteEntry> palette;
+  std::string surface_block;
+  std::string fill_block;
+  std::string deep_block;
+  std::string edits_path;
+  int camera_profile = 0;
+  float interaction_reach = 0;
+  int atlas_width = 0;
+  int atlas_height = 0;
+  std::vector<uint8_t> atlas_rgba;
+};
+
 struct SceneVoxelTerrainDesc {
   float base_frequency = 0.01f;
   int base_octaves = 4;
@@ -548,6 +578,9 @@ struct SceneVoxelPlayerDesc {
   float debug_camera_speed = 50.0f;
   float look_pitch_limit = 1.55f;
   float collision_sweep_step = 0.25f;
+  int max_health = 5;
+  int contact_damage = 1;
+  float health_regeneration_seconds = 60.0f;
 };
 
 struct SceneVoxelDayNightDesc {
@@ -576,10 +609,23 @@ struct SceneVoxelBoxPartDesc {
   Vec3f min;
   Vec3f max;
   std::string block;
+  // Optional image-space rectangles in engine face order:
+  // +X, -X, +Y, -Y, +Z, -Z.
+  struct SkinFace {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+  };
+  std::vector<SkinFace> skin_faces;
 };
 
 struct SceneVoxelMobDesc {
   Vec3f spawn = {24.5f, 40.0f, 24.5f};
+  std::string skin_texture;
+  int skin_width = 0;
+  int skin_height = 0;
+  int skin_pixelation_factor = 0;
   int count = 1;
   float move_speed = 1.8f;
   float repath_seconds = 1.0f;
@@ -589,6 +635,9 @@ struct SceneVoxelMobDesc {
   float half_width = 0.25f;
   float height = 1.4f;
   float vertical_follow_speed = 8.0f;
+  bool glowing_eyes = false;
+  Vec3f glowing_eye_color = {1.0f, 1.0f, 1.0f};
+  float glowing_eye_intensity = 1.0f;
   std::vector<SceneVoxelBoxPartDesc> parts;
 };
 
@@ -621,6 +670,79 @@ struct SceneVoxelWeaponDesc {
   float swing_speed = 6.0f;
   float swing_angle = 1.2f;
   std::vector<SceneVoxelBoxPartDesc> parts;
+};
+
+struct SceneVoxelControlRangeDesc {
+  std::string name;
+  std::string label;
+  float min = 0.0f;
+  float max = 0.0f;
+  float step = 0.0f;
+};
+
+struct SceneVoxelTorchParticleAppearanceDesc {
+  std::vector<Vec3f> colors;
+  float radial_seed_min = 0.0f;
+  float radial_start_scale = 0.0f;
+  float radial_age_scale = 0.0f;
+  float wobble_frequency = 0.0f;
+  float wobble_frequency_variation = 0.0f;
+  float wobble_strength = 0.0f;
+  float wobble_z_scale = 0.0f;
+  float start_size_scale = 0.0f;
+  float end_size_scale = 0.0f;
+  float minimum_projection_depth = 0.0f;
+  float edge_softness_scale = 0.0f;
+  float fade_in_end = 0.0f;
+  float fade_out_start = 0.0f;
+  float intensity = 0.0f;
+};
+
+struct SceneVoxelTorchDesc {
+  bool enabled = false;
+  float distance_from_spawn = 0.0f;
+  std::vector<Vec3f> positions;
+  float base_width = 0.0f;
+  float base_height = 0.0f;
+  std::string base_block;
+  float tip_height = 0.0f;
+  Vec3f tip_color = {0.0f, 0.0f, 0.0f};
+  float tip_roughness = 0.0f;
+  bool tip_unlit = false;
+  float particle_spawn_offset_y = 0.0f;
+  int particle_count = 0;
+  float particle_lifetime = 0.0f;
+  float particle_rise_height = 0.0f;
+  float particle_spread = 0.0f;
+  float particle_size = 0.0f;
+  float particle_time_wrap_seconds = 0.0f;
+  SceneVoxelTorchParticleAppearanceDesc particle_appearance;
+  std::string particle_controls_label;
+  SceneVoxelControlRangeDesc particle_count_control;
+  SceneVoxelControlRangeDesc particle_lifetime_control;
+  SceneVoxelControlRangeDesc particle_rise_height_control;
+  SceneVoxelControlRangeDesc particle_spread_control;
+  SceneVoxelControlRangeDesc particle_size_control;
+  SceneVoxelControlRangeDesc particle_spawn_offset_control;
+};
+
+struct SceneVoxelBlockRegionDesc {
+  Vec3i min;
+  Vec3i max;
+  std::string block;
+};
+
+struct SceneVoxelBoxArrayDesc {
+  Vec3f origin;
+  Vec3i count = {1, 1, 1};
+  Vec3f size = {1.0f, 1.0f, 1.0f};
+  std::string block;
+};
+
+struct SceneVoxelStructureDesc {
+  std::string name;
+  std::vector<SceneVoxelBlockRegionDesc> voxel_regions;
+  std::vector<SceneVoxelBoxArrayDesc> box_arrays;
 };
 
 struct SceneVoxelInteractionDesc {
@@ -680,7 +802,9 @@ struct SceneVoxelWorldDesc {
   SceneVoxelDofDesc dof;
   SceneVoxelMobDesc mob;
   SceneVoxelWeaponDesc weapon;
+  SceneVoxelTorchDesc torch;
   SceneVoxelInteractionDesc interaction;
+  std::vector<SceneVoxelStructureDesc> structures;
   std::vector<SceneVoxelBlockDesc> blocks;
   std::vector<std::string> hotbar;
 };
@@ -699,7 +823,10 @@ struct EditorSceneFile {
   int version = 2;  // v2 adds stable light IDs; v1 still loads (migrated in memory)
   std::string collision;
   std::string render_graph;
+  std::vector<std::string> disabled_render_passes;
   std::string control_descriptor;
+  std::optional<bool> mouse_capture;
+  std::optional<::t850::SceneDescriptor> runtime_setup;
   EditorStateDesc editor;
   std::vector<SceneObjectDesc> objects;
   std::vector<SceneRegionDesc> regions;
@@ -714,6 +841,7 @@ struct EditorSceneFile {
   std::vector<SceneCameraAnimationDesc> camera_animations;
   std::optional<SceneGodRaysVolumeDesc> god_rays_volume;
   std::optional<SceneVoxelWorldDesc> voxel_world;
+  std::optional<SceneStreamedVoxelsDesc> streamed_voxels;
   std::vector<SceneLightDesc> lights;
   std::vector<::t850::SandboxProfileDesc> profiles;
 };

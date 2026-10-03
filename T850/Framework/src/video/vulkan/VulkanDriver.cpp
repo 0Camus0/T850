@@ -34,6 +34,7 @@
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <debug/RuntimeTelemetry.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -123,10 +124,30 @@ namespace t850 {
   //  VulkanDriver — Pipeline Management & Rendering
   // ══════════════════════════════════════════════════════
 
+  void VulkanDriver::OnShaderDestroying(ShaderBase& shader) {
+    for (auto it = m_pipelineCache.begin(); it != m_pipelineCache.end();) {
+      if (it->first.program == shader.programKey) {
+        if (m_device && it->second)
+          vkDestroyPipeline(m_device, it->second, nullptr);
+        it = m_pipelineCache.erase(it);
+        ++m_pipelineCacheEvictions;
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  void VulkanDriver::ClearPipelineCache() {
+    for (auto& entry : m_pipelineCache)
+      if (m_device && entry.second) vkDestroyPipeline(m_device, entry.second, nullptr);
+    m_pipelineCacheEvictions += m_pipelineCache.size();
+    m_pipelineCache.clear();
+  }
+
   VkPipeline VulkanDriver::GetOrCreatePipeline(VulkanShader* shader, uint8_t numColorAttachments,
                                                 VkFormat colorFormat, VkFormat depthFormat) {
     VulkanPipelineKey key = {};
-    key.shaderPtr = reinterpret_cast<uintptr_t>(shader);
+    key.program = shader->programKey;
     key.blend = (uint8_t)m_currentBlend;
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
@@ -149,10 +170,12 @@ namespace t850 {
 
     auto it = m_pipelineCache.find(key);
     if (it != m_pipelineCache.end()) {
+      ++m_pipelineCacheHits;
       T8_LOG_TRACE("[Vulkan] Pipeline cache hit: shader=%p topo=%d blend=%d depth=%d",
                    shader, key.topology, key.blend, key.depth);
       return it->second;
     }
+    ++m_pipelineCacheMisses;
 
     // Shader stages
     VkPipelineShaderStageCreateInfo stages[2] = {};
@@ -290,7 +313,7 @@ namespace t850 {
     pipelineCI.subpass = 0;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VkResult res = vkCreateGraphicsPipelines(m_device, m_vkPipelineCache, 1, &pipelineCI, nullptr, &pipeline);
+    VkResult res = T8_TELEMETRY_CALL("pipeline.create.graphics", vkCreateGraphicsPipelines(m_device, m_vkPipelineCache, 1, &pipelineCI, nullptr, &pipeline));
     if (res != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] CreateGraphicsPipelines failed res=%d shader=%p blend=%d depth=%d cull=%d",
                    res, shader, key.blend, key.depth, key.cull);
@@ -464,24 +487,51 @@ namespace t850 {
     SetRuntimeGpuInfo(selectedProps.deviceName, selectedProps.vendorID, selectedProps.deviceID);
     T8_LOG_INFO("[Vulkan] GPU: %s (vendor=0x%04x device=0x%04x)", selectedProps.deviceName, selectedProps.vendorID, selectedProps.deviceID);
 
-    // Find graphics queue family
+    // Find a present-capable graphics queue, preferring one that also supports compute.
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, nullptr);
     std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, queueFamilies.data());
 
-    m_graphicsQueueFamily = 0;
+    uint32_t firstGraphicsPresentQueueFamily = UINT32_MAX;
+    m_graphicsQueueFamily = UINT32_MAX;
     for (uint32_t i = 0; i < queueFamilyCount; i++) {
+      VkBool32 supportsPresent = VK_FALSE;
+      if (vkGetPhysicalDeviceSurfaceSupportKHR(m_physicalDevice, i, m_surface,
+                                               &supportsPresent) != VK_SUCCESS ||
+          supportsPresent != VK_TRUE) {
+        continue;
+      }
       if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-        m_graphicsQueueFamily = i;
-        break;
+        if (firstGraphicsPresentQueueFamily == UINT32_MAX)
+          firstGraphicsPresentQueueFamily = i;
+        if (queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
+          m_graphicsQueueFamily = i;
+          break;
+        }
       }
     }
+    if (m_graphicsQueueFamily == UINT32_MAX)
+      m_graphicsQueueFamily = firstGraphicsPresentQueueFamily;
+    if (m_graphicsQueueFamily == UINT32_MAX) {
+      T8_LOG_ERROR("[Vulkan] No graphics queue family supports surface presentation");
+      return;
+    }
     m_presentQueueFamily = m_graphicsQueueFamily;
+    m_supportsComputeShaders =
+      (queueFamilies[m_graphicsQueueFamily].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
 
     // Query features before creating device (best practice)
     VkPhysicalDeviceFeatures supportedFeatures = {};
     vkGetPhysicalDeviceFeatures(m_physicalDevice, &supportedFeatures);
+    const auto supportsStorageImage = [&](VkFormat format) {
+      VkFormatProperties properties = {};
+      vkGetPhysicalDeviceFormatProperties(m_physicalDevice, format, &properties);
+      return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
+    };
+    m_supportsComputeTextures = m_supportsComputeShaders &&
+      supportsStorageImage(VK_FORMAT_R8G8B8A8_UNORM) &&
+      supportsStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT);
 
     float queuePriority = 1.0f;
     VkDeviceQueueCreateInfo queueCI = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -513,7 +563,11 @@ namespace t850 {
 
     vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &m_graphicsQueue);
     m_presentQueue = m_graphicsQueue;
-    T8_LOG_INFO("[Vulkan] Logical device created, graphics queue family=%u", m_graphicsQueueFamily);
+    T8_LOG_INFO(
+      "[Vulkan] Logical device created, graphics queue family=%u compute=%s computeTextures=%s",
+      m_graphicsQueueFamily,
+      m_supportsComputeShaders ? "yes" : "no",
+      m_supportsComputeTextures ? "yes" : "no");
   }
 
   void VulkanDriver::CreateAllocator() {
@@ -584,9 +638,7 @@ namespace t850 {
         }
       }
 
-      for (auto& pair : m_pipelineCache)
-        vkDestroyPipeline(m_device, pair.second, nullptr);
-      m_pipelineCache.clear();
+      ClearPipelineCache();
 
       for (auto& fb : m_backbufferFramebuffers)
         if (fb) { vkDestroyFramebuffer(m_device, fb, nullptr); fb = VK_NULL_HANDLE; }
@@ -964,12 +1016,17 @@ namespace t850 {
     constexpr uint32_t kCombinedImageDescriptorsPerFrame = 65536;
     VkDescriptorPoolSize poolSizes[] = {
       { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_SAMPLER, kUniformDescriptorsPerFrame },
       { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kCombinedImageDescriptorsPerFrame },
     };
 
     VkDescriptorPoolCreateInfo dpCI = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpCI.maxSets = kDescriptorSetsPerFrame;
-    dpCI.poolSizeCount = 2;
+    dpCI.poolSizeCount = static_cast<uint32_t>(std::size(poolSizes));
     dpCI.pPoolSizes = poolSizes;
     dpCI.flags = 0;
 
@@ -1145,7 +1202,12 @@ namespace t850 {
 
   void VulkanDriver::FlushGPUResources() {
     if (!m_device) return;
+    if (m_frameStarted) CompleteFrame(FrameCompletionMode::SubmitNoPresent);
     WaitForGPU();
+    for (auto& retired : m_retiredCompute) {
+      for (auto& release : retired) release();
+      retired.clear();
+    }
     // Reset all command buffers to release references to resources
     for (uint32_t i = 0; i < kBackBufferCount; i++) {
       if (m_commandBuffers[i])
@@ -1181,13 +1243,15 @@ namespace t850 {
     }
 
     DestroyShaders();
+    T8_LOG_INFO("[Vulkan] Pipeline cache: entries=%zu hits=%llu misses=%llu evictions=%llu",
+          m_pipelineCache.size(), static_cast<unsigned long long>(m_pipelineCacheHits),
+          static_cast<unsigned long long>(m_pipelineCacheMisses),
+          static_cast<unsigned long long>(m_pipelineCacheEvictions));
     DestroyRTs();
     DestroyTextures();
 
     // Destroy pipeline cache entries
-    for (auto& pair : m_pipelineCache)
-      vkDestroyPipeline(m_device, pair.second, nullptr);
-    m_pipelineCache.clear();
+    ClearPipelineCache();
 
     if (m_vkPipelineCache) {
       size_t cacheSize = 0;
@@ -1301,10 +1365,20 @@ namespace t850 {
 
   void VulkanDriver::WaitForFence(uint32_t frameIndex) {
     vkWaitForFences(m_device, 1, &m_inFlightFences[frameIndex], VK_TRUE, UINT64_MAX);
+    for (auto& release : m_retiredCompute[frameIndex]) release();
+    m_retiredCompute[frameIndex].clear();
+  }
+
+  void VulkanDriver::RetireComputeResource(std::function<void()> release) {
+    const uint32_t slot = m_frameStarted ? m_currentFrame : (m_currentFrame + kBackBufferCount - 1) % kBackBufferCount;
+    m_retiredCompute[slot].push_back(std::move(release));
   }
 
   void VulkanDriver::WaitForGPU() {
-    if (m_device) vkDeviceWaitIdle(m_device);
+    if (m_device) {
+      vkDeviceWaitIdle(m_device);
+      m_gpuCompletedSubmissionSerial = m_gpuSubmissionSerial;
+    }
   }
 
   // ══════════════════════════════════════════════════════
@@ -1324,8 +1398,13 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "VK_FenceWait");
-      T8_TELEMETRY_SCOPE("gpu.vulkan.fence_wait");
+      T8_TELEMETRY_SCOPE("gpu.gpu_wait");
       WaitForFence(m_currentFrame);
+    #if T850_ENABLE_GPU_PROFILING
+      m_gpuCompletedSubmissionSerial = (std::max)(
+        m_gpuCompletedSubmissionSerial, m_frameGpuSubmissionSerial[m_currentFrame]);
+      if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->Poll();
+    #endif
       vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
     }
 
@@ -1395,7 +1474,7 @@ namespace t850 {
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_commandBuffer = cmd;
 
     // Flush profiler query pool reset (must happen before any render pass)
-    if (t850::g_profiler) t850::g_profiler->FlushVulkanQueryReset(cmd);
+    if (t850::g_profiler) t850::g_profiler->FlushDeferredQueryReset(cmd);
 
     // Reset per-frame descriptor pool and pending state
     vkResetDescriptorPool(m_device, m_descriptorPools[m_currentFrame], 0);
@@ -1426,6 +1505,9 @@ namespace t850 {
     m_lastPipelineLayout = VK_NULL_HANDLE;
     m_screenshotConsumedSemaphore = false;
     m_frameStarted = true;
+  #if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->BeginFrame();
+  #endif
 
     // Reset topology to triangle list at the start of each frame
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -1597,6 +1679,9 @@ namespace t850 {
     }
 
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+  #if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->EndFrame();
+  #endif
     std::vector<VkClearAttachment> attachments;
     VkClearRect clearRect = {};
     clearRect.rect.offset = { 0, 0 };
@@ -1860,6 +1945,9 @@ namespace t850 {
   }
 
   void VulkanDriver::CompleteFrame(FrameCompletionMode mode) {
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
+    T8_TELEMETRY_ADD("gpu.ring.overflows", 0);
     T8_LOG_TRACE("[Vulkan] SwapBuffers");
     if (!m_frameStarted) {
       return;
@@ -1879,12 +1967,18 @@ namespace t850 {
       }
 
       VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+      if (m_frameUsesSwapchain && !m_screenshotConsumedSemaphore) {
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &m_imageAvailableSemaphores[m_currentFrame];
+        submitInfo.pWaitDstStageMask = &waitStage;
+      }
       submitInfo.commandBufferCount = 1;
       submitInfo.pCommandBuffers = &cmd;
 
       VkResult submitRes;
       {
-        T8_TELEMETRY_SCOPE("gpu.vulkan.queue_submit");
+        T8_TELEMETRY_SCOPE("gpu.submit");
         submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
       }
       if (submitRes != VK_SUCCESS) {
@@ -1894,6 +1988,13 @@ namespace t850 {
           vkDeviceWaitIdle(m_device);
         }
       }
+            if (submitRes == VK_SUCCESS) {
+        const uint64_t serial = ++m_gpuSubmissionSerial;
+        m_frameGpuSubmissionSerial[m_currentFrame] = serial;
+      #if T850_ENABLE_GPU_PROFILING
+        if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(serial);
+      #endif
+            }
 
       m_frameStarted = false;
       if (IsOffscreenEnabled()) {
@@ -1965,7 +2066,7 @@ namespace t850 {
 
     VkResult submitRes;
     {
-      T8_TELEMETRY_SCOPE("gpu.vulkan.queue_submit");
+      T8_TELEMETRY_SCOPE("gpu.submit");
       submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
     }
     if (submitRes != VK_SUCCESS) {
@@ -1975,6 +2076,13 @@ namespace t850 {
         vkDeviceWaitIdle(m_device);
       }
     }
+        if (submitRes == VK_SUCCESS) {
+      const uint64_t serial = ++m_gpuSubmissionSerial;
+      m_frameGpuSubmissionSerial[m_currentFrame] = serial;
+    #if T850_ENABLE_GPU_PROFILING
+      if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(serial);
+    #endif
+        }
 
     // Present
     VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
@@ -1986,7 +2094,7 @@ namespace t850 {
 
     VkResult presentRes;
     {
-      T8_TELEMETRY_SCOPE("gpu.vulkan.present");
+      T8_TELEMETRY_SCOPE("gpu.present");
       presentRes = vkQueuePresentKHR(m_presentQueue, &presentInfo);
     }
     if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_ERROR_SURFACE_LOST_KHR ||
@@ -2389,7 +2497,7 @@ reopen:
 
   bool VulkanDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
     T8_TELEMETRY_SCOPE("gpu.vulkan.read_rt_color_float");
-    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
+    T8_TELEMETRY_ADD("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || !RTs[rtID] || attachment < 0)
       return false;
     VulkanRT* rt = static_cast<VulkanRT*>(RTs[rtID]);
@@ -2554,6 +2662,7 @@ reopen:
     VmaAllocationInfo stagingAllocInfo;
     vmaCreateBuffer(m_allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
     memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(dataSize));
+    RuntimeTelemetry::RecordActiveStaging(dataSize, 1);
     vmaFlushAllocation(m_allocator, stagingAlloc, 0, dataSize);
 
     auto recordCopy = [&](VkCommandBuffer cmd) {
@@ -2562,13 +2671,15 @@ reopen:
       vkCmdCopyBuffer(cmd, stagingBuffer, dest, 1, &copyRegion);
       VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
       barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-      barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT |
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
       barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
       barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
       barrier.buffer = dest;
       barrier.offset = 0;
       barrier.size = dataSize;
-      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+               VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                            0, 0, nullptr, 1, &barrier, 0, nullptr);
     };
 
@@ -2610,6 +2721,7 @@ reopen:
   VkDescriptorBufferInfo VulkanDriver::AllocateCBData(const void* data, uint32_t dataSize) {
     uint32_t alignedSize = (dataSize + 255) & ~255u;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
+      RuntimeTelemetry::RecordRingOverflow();
       // Wrapping mid-frame would overwrite UBO data still being read by earlier
       // draws in the same command buffer (descriptor sets point at fixed offsets
       // via dynamic offset). The result looks like flicker / z-fighting because
@@ -2631,6 +2743,7 @@ reopen:
     uint32_t bufIdx = m_currentFrame;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, dataSize);
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, dataSize);
     vmaFlushAllocation(m_allocator, m_cbRingAllocations[bufIdx], m_cbRingOffset, alignedSize);
 
     VkDescriptorBufferInfo info = {};
@@ -2639,6 +2752,8 @@ reopen:
     info.range = alignedSize;
 
     m_cbRingOffset += alignedSize;
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
     if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return info;
   }
@@ -2647,6 +2762,7 @@ reopen:
     // Must align to 256 so subsequent UBO allocations from the same ring stay aligned
     uint32_t aligned = (size + 255) & ~255u;
     if (m_cbRingOffset + aligned > kCBRingBufferSize) {
+      RuntimeTelemetry::RecordRingOverflow();
       T8_LOG_ERROR("[Vulkan] CB ring buffer overflow in VB path! offset=%u + size=%u > %u (peak so far=%u)",
                    m_cbRingOffset, aligned, kCBRingBufferSize, m_cbRingPeakUsage);
       assert(false && "Vulkan CB ring buffer overflow (VB path) — increase kCBRingBufferSize");
@@ -2655,12 +2771,15 @@ reopen:
     uint32_t bufIdx = m_currentFrame;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, size);
+    RuntimeTelemetry::RecordActiveStaging(size);
     vmaFlushAllocation(m_allocator, m_cbRingAllocations[bufIdx], m_cbRingOffset, aligned);
     VBRingAlloc alloc;
     alloc.buffer = m_cbRingBuffers[bufIdx];
     alloc.offset = m_cbRingOffset;
     alloc.valid = true;
     m_cbRingOffset += aligned;
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
     if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return alloc;
   }

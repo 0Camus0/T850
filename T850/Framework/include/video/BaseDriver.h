@@ -20,8 +20,13 @@
 #include <unordered_map>
 #include <chrono>
 #include <functional>
+#include <memory>
+#include <cstddef>
+#include <cstdint>
+#include <array>
 #include <Descriptors.h>
 #include <utils/Technique.h>
+#include <video/ShaderProgramCache.h>
 #include <video/WindowHandle.h>
 
 
@@ -32,6 +37,73 @@ namespace t850 {
   class ConstantBuffer;
   class Texture;
   class BaseRT;
+  enum class ComputeBufferAccess {
+    ReadOnly,
+    ReadWrite
+  };
+
+  enum class ComputeBindingType {
+    Constants32,
+    ReadOnlyBuffer,
+    ReadWriteBuffer,
+    ReadOnlyTexture,
+    ReadWriteTexture,
+    Sampler
+  };
+
+  enum class ComputeStorageFormat { Unspecified, Rgba8Unorm, Rgba16Float };
+
+  struct ComputeBindingLayoutDesc {
+    ComputeBindingType type = ComputeBindingType::Constants32;
+    uint32_t shaderRegister = 0;
+    uint32_t bindingIndex = 0;
+    uint32_t constantCount = 0;
+    ComputeStorageFormat storageFormat = ComputeStorageFormat::Unspecified;
+    bool matchOutputExtent = false;
+  };
+
+  struct ComputePipelineDesc {
+    std::string source;
+    std::string entryPoint = "CS";
+    std::string debugName;
+    std::string permutationName = "base";
+    std::vector<std::string> defines;
+    std::vector<ComputeBindingLayoutDesc> bindings;
+  };
+
+  struct ComputeBufferDesc {
+    uint32_t byteWidth = 0;
+    uint32_t structureStride = 0;
+    ComputeBufferAccess access = ComputeBufferAccess::ReadWrite;
+    std::string debugName;
+  };
+
+  struct ComputeBindingDesc;
+
+  class ComputePipeline {
+  public:
+    virtual ~ComputePipeline() = default;
+    bool SetValidatedLayout(const ComputePipelineDesc& desc,
+      const std::vector<ComputeBindingLayoutDesc>& reflected, bool portableIndices);
+    bool ValidateBindings(const std::vector<ComputeBindingDesc>& bindings) const;
+    std::vector<ComputeBindingLayoutDesc> bindingLayout;
+    std::array<uint32_t, 3> threadGroupSize = {0, 0, 0};
+  };
+
+  class ComputeBuffer {
+  public:
+    virtual ~ComputeBuffer() = default;
+    ComputeBufferDesc descriptor;
+  };
+
+  struct ComputeBindingDesc {
+    ComputeBindingType type = ComputeBindingType::Constants32;
+    uint32_t shaderRegister = 0;
+    ComputeBuffer* buffer = nullptr;
+    const uint32_t* constants = nullptr;
+    uint32_t constantCount = 0;
+    Texture* texture = nullptr;
+  };
 
   class DeviceContext {
   public:
@@ -67,7 +139,8 @@ namespace t850 {
     // face 0 mip 0..N, face 1 mip 0..N, etc.; each texel is four floats.
     // Backends may choose RGBA16F internally on mobile GPUs.
     virtual Texture* CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr) = 0;
-    virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) = 0;
+    virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h,
+                 bool genMips = false, bool allowStorage = false) = 0;
   };
   /* BUFFERS */
   class Buffer {
@@ -123,6 +196,7 @@ namespace t850 {
     bool			LoadTexture(const char *fn);
     bool			LoadFromMemory(const unsigned char *buff, int w, int h, int channels, const char* debugName = nullptr);
     bool      CreateCubeMap(const unsigned char *buff, int w, int h);
+    uint64_t UploadByteSize() const;
     void			release();
 
     virtual void	LoadAPITexture(DeviceContext* context, unsigned char* buffer) = 0;
@@ -184,6 +258,10 @@ namespace t850 {
       NOTHING
     };
 
+    static bool IsColorFormat(int format);
+    static bool IsDepthFormat(int format);
+    static bool ValidateDescriptor(int count, int color, int depth, int width, int height,
+                     const std::vector<int>& formats, std::string& diagnostic);
     bool			LoadRT(int nrt, int cf, int df, int w, int h, bool GenMips = false);
     // Per-attachment color formats (overrides single cf when non-empty)
     bool			LoadRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool GenMips = false);
@@ -202,11 +280,25 @@ namespace t850 {
     int color_format;
     int depth_format;
     bool GenMips;
+    bool AllowUnorderedAccess = false;
     std::vector<int> perColorFormats;  // per-attachment formats (empty = use color_format for all)
 
     std::vector<Texture*>							vColorTextures;
     Texture*										pDepthTexture = nullptr;
   };
+  struct RenderTargetLayout {
+    std::array<int, 8> colorFormats{};
+    unsigned colorCount = 0;
+    int depthFormat = BaseRT::NOTHING;
+    unsigned sampleCount = 1;
+    bool surface = false;
+    bool operator==(const RenderTargetLayout&) const = default;
+    bool HasCompatibleAttachments(const RenderTargetLayout& other) const {
+      return colorFormats == other.colorFormats && colorCount == other.colorCount &&
+             depthFormat == other.depthFormat && sampleCount == other.sampleCount;
+    }
+  };
+
   class ShaderBase {
   public:
     ShaderBase() {}
@@ -218,10 +310,16 @@ namespace t850 {
     void release();
 
     ShaderKey key;
+    ShaderProgramKey programKey;
+  protected:
+    std::string m_sourceDefines;
   };
 
   class BaseDriver {
   public:
+    // BaseDriver and its GPU resource registries are render-thread-affine.
+    // Worker threads may prepare CPU data, but creation, lookup, mutation and
+    // destruction of API objects must return to the thread that owns the driver.
     virtual ~BaseDriver() = default;
     enum {
       DEPTH_ATTACHMENT = -1,
@@ -276,8 +374,30 @@ namespace t850 {
     virtual bool UsesGLSL() const { return false; }
     virtual bool NeedsVFlip() const { return false; }
     virtual bool SupportsRenderTargetMipGeneration() const { return false; }
+    virtual int SurfaceColorFormat() const { return BaseRT::RGBA8; }
+    RenderTargetLayout GetRenderTargetLayout() const;
+    virtual bool SupportsCubeRenderTargets() const { return false; }
+    virtual bool SupportsComparisonSamplers() const { return false; }
+    virtual bool SupportsRenderTargetColorFormat(int format) const { return BaseRT::IsColorFormat(format); }
+    virtual bool SupportsRenderTargetDepthFormat(int format) const {
+      return format == BaseRT::NOTHING || format == BaseRT::F32 ||
+             (format == BaseRT::CUBE_F32 && SupportsCubeRenderTargets());
+    }
+    virtual unsigned MaxRenderTargetColorAttachments() const { return 8; }
+    bool ValidateRenderTarget(int count, int color, int depth, int targetWidth, int targetHeight,
+                              bool generateMips, const std::vector<int>& formats,
+                              std::string& diagnostic) const;
+    bool ValidateShaderComparisonSamplers(bool required, const std::string& shader,
+                                          const char* stage, uint64_t keyBits,
+                                          std::string& diagnostic) const;
     virtual bool SupportsDeferredRendering() const { return true; }
+    virtual bool SupportsComputeShaders() const { return false; }
+    virtual bool SupportsComputeTextures() const { return false; }
     virtual const char* ApiTag() const { return "unknown"; }
+    virtual const char* ProviderTag() const { return "native"; }
+    virtual const char* UnderlyingBackendTag() const { return ApiTag(); }
+    virtual uint64_t ProfilingAdapterId() const { return 0; }
+    virtual bool GetDeviceFailure(std::string& diagnostic) const { diagnostic.clear(); return false; }
     virtual	void	 InitDriver() = 0;
     virtual void	 CreateSurfaces() = 0;
     virtual void	 DestroySurfaces() = 0;
@@ -339,6 +459,27 @@ namespace t850 {
       (void)nativeWindow; (void)newW; (void)newH; return false;
     }
 
+    // Initial compute contract: shader creation, structured buffers, dispatch,
+    // and explicit diagnostic readback. Unsupported backends fail explicitly.
+    virtual std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) {
+      (void)desc; return {};
+    }
+    virtual std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                                                                const void* initialData = nullptr) {
+      (void)desc; (void)initialData; return {};
+    }
+    virtual bool DispatchCompute(ComputePipeline& pipeline,
+                                 const std::vector<ComputeBindingDesc>& bindings,
+                                 uint32_t groupCountX,
+                                 uint32_t groupCountY,
+                                 uint32_t groupCountZ) {
+      (void)pipeline; (void)bindings; (void)groupCountX; (void)groupCountY; (void)groupCountZ;
+      return false;
+    }
+    virtual bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) {
+      (void)buffer; (void)destination; (void)byteCount; return false;
+    }
+
     // Resize the swapchain, back-buffer RTVs, and depth buffer to the new
     // pixel dimensions. Returns true on success. Implementations must flush
     // the GPU before releasing/recreating resources.
@@ -351,8 +492,10 @@ namespace t850 {
     int    CreateFloatTexture(int w, int h, const float* data = nullptr);
     int    CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr);
     int	   CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
-    int 	 CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false);
-    int    CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool genMips = false);
+    int 	 CreateRT(int nrt, int cf, int df, int w, int h,
+            bool genMips = false, bool allowStorage = false);
+    int    CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h,
+            bool genMips = false, bool allowStorage = false);
     void 	 ModifyRT(int RTID, int nrt, int cf, int df, int w, int h, bool genMips = false);
     int    CreateTechnique(std::string path);
 
@@ -371,8 +514,14 @@ namespace t850 {
 
 
     Texture* GetRTTexture(int id, int index);
-    ShaderBase*	GetShader(ShaderKey key);
+    static ShaderFamilyId IdentifyShaderFamily(const std::string& vertexSource,
+                          const std::string& fragmentSource,
+                          const std::string& vertexName = "",
+                          const std::string& fragmentName = "");
+    ShaderBase* GetShader(const ShaderProgramKey& key);
+    ShaderBase* GetShader(ShaderKey key, ShaderFamilyId family);
     ShaderBase*	GetShaderIdx(int id);
+    size_t GetShaderProgramCount() const { return m_shaderPrograms.Size(); }
     Texture* GetTexture(int id);
     Technique* GetTechnique(int id);
 
@@ -392,7 +541,6 @@ namespace t850 {
 
     std::vector<Technique*> m_techniques;
     std::vector<ShaderBase*>	m_shaders;
-    std::unordered_map<uint64_t, ShaderBase*> m_shaderCache;
     std::vector<BaseRT*>		RTs;
     std::vector<Texture*>		Textures;
     int							CurrentRT;
@@ -400,7 +548,12 @@ namespace t850 {
 	FaceCulling	m_FaceCulling;
     int	width, height;
 
+  protected:
+    virtual void OnShaderDestroying(ShaderBase&) {}
+    virtual ShaderProgramFlow GetShaderProgramFlow() const { return ShaderProgramFlow::Default; }
+
   private:
+    ShaderProgramCache m_shaderPrograms;
     std::string BuildOffscreenDebugDirectory();
     std::string BuildOffscreenDebugPath(unsigned long long frameNumber);
 

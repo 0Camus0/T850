@@ -68,6 +68,7 @@ namespace {
   constexpr int kNavTestModeFollowPlayer = 2;
   constexpr float kNavTestDiagIntervalSec = 1.0f / 60.0f;
   constexpr float kNavTestFailedPathRetrySec = 0.25f;
+  constexpr float kNavTestPartialPathRetrySec = 1.0f;
   constexpr uint64_t kJoltNavLinkValidationCacheKey = 0x4a4f4c544e41564cull; // JOLT NAVL
 
   float ClampMouseSensitivity(float value) {
@@ -3124,6 +3125,7 @@ void SceneTemplate::InitVars() {
     m_sceneDocumentError = "Failed to load control descriptor: " + controlPath;
     T8_LOG_ERROR("[SceneTemplate] %s", m_sceneDocumentError.c_str());
   }
+  m_controlSetup.ApplyInputSettings(SceneProp, m_sceneDocument ? m_sceneDocument->mouse_capture : std::nullopt);
   SceneProp.FrustumCullingToggleAllowed = g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
   SceneProp.FrustumCullingEnabled = g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad;
 
@@ -4471,12 +4473,12 @@ void SceneTemplate::PlanNavTestAgentPaths() {
 
   if (requests.empty()) {
     if (t850::RuntimeTelemetry::IsFrameActive()) {
-      t850::RuntimeTelemetry::SetCounter("navigation.agents.path_requests", 0.0);
+      T8_TELEMETRY_SET("navigation.agents.path_requests", 0.0);
     }
     return;
   }
   if (t850::RuntimeTelemetry::IsFrameActive()) {
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_requests", static_cast<double>(requests.size()));
+    T8_TELEMETRY_SET("navigation.agents.path_requests", static_cast<double>(requests.size()));
   }
 
   std::vector<t850::navigation::NavPathResult> results;
@@ -4500,9 +4502,11 @@ void SceneTemplate::PlanNavTestAgentPaths() {
       ++failedPaths;
       const PrimitiveInst& instance = Meshes[agent.meshIndex];
       const XVECTOR3 current(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
+      const bool partialPath = i < results.size() && results[i].partial;
+      const bool repeatedPartialPath = partialPath && agent.lastPathError == results[i].error;
       agent.lastPathSuccess = false;
       agent.lastPathError = i < results.size() ? results[i].error : "missing result";
-      agent.repathCooldownSec = kNavTestFailedPathRetrySec;
+      agent.repathCooldownSec = partialPath ? kNavTestPartialPathRetrySec : kNavTestFailedPathRetrySec;
       agent.path.clear();
       agent.pathSegmentTypes.clear();
       agent.waypointIndex = 0;
@@ -4532,7 +4536,13 @@ void SceneTemplate::PlanNavTestAgentPaths() {
       } else {
         agent.active = false;
       }
-      T8_LOG_ERROR("[NavigationTest] Agent mesh %d failed to find path gen=%u start=(%.2f,%.2f,%.2f) end=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) player=(%.2f,%.2f,%.2f) nav=(%.2f,%.2f,%.2f) visual=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f): %s",
+      if (partialPath) {
+        if (!repeatedPartialPath) {
+          T8_LOG_INFO("[NavigationTest] Agent mesh %d target is unreachable from its current navmesh island; waiting for the follow target to change",
+                      agent.meshIndex);
+        }
+      } else {
+        T8_LOG_ERROR("[NavigationTest] Agent mesh %d failed to find path gen=%u start=(%.2f,%.2f,%.2f) end=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) player=(%.2f,%.2f,%.2f) nav=(%.2f,%.2f,%.2f) visual=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f): %s",
                    agent.meshIndex,
                    agent.pathGeneration,
                    agent.lastPathStart.x, agent.lastPathStart.y, agent.lastPathStart.z,
@@ -4543,6 +4553,7 @@ void SceneTemplate::PlanNavTestAgentPaths() {
                    current.x, current.y, current.z,
                    agent.visualOffset.x, agent.visualOffset.y, agent.visualOffset.z,
                    agent.lastPathError.c_str());
+              }
       continue;
     }
 
@@ -4579,12 +4590,12 @@ void SceneTemplate::PlanNavTestAgentPaths() {
     agent.waypointIndex = agent.path.size() > 1 ? 1 : 0;
   }
   if (t850::RuntimeTelemetry::IsFrameActive()) {
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_success", static_cast<double>(successfulPaths));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_fail", static_cast<double>(failedPaths));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_points", static_cast<double>(totalPathPoints));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.drop", static_cast<double>(dropSegments));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.jump", static_cast<double>(jumpSegments));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.jump_pad", static_cast<double>(jumpPadSegments));
+    T8_TELEMETRY_SET("navigation.agents.path_success", static_cast<double>(successfulPaths));
+    T8_TELEMETRY_SET("navigation.agents.path_fail", static_cast<double>(failedPaths));
+    T8_TELEMETRY_SET("navigation.agents.path_points", static_cast<double>(totalPathPoints));
+    T8_TELEMETRY_SET("navigation.agents.path_segments.drop", static_cast<double>(dropSegments));
+    T8_TELEMETRY_SET("navigation.agents.path_segments.jump", static_cast<double>(jumpSegments));
+    T8_TELEMETRY_SET("navigation.agents.path_segments.jump_pad", static_cast<double>(jumpPadSegments));
   }
 }
 
@@ -4621,10 +4632,10 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
         ++needsPathAgents;
       }
     }
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.count", static_cast<double>(m_navTestAgents.size()));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.active", static_cast<double>(activeAgents));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.physics_active", static_cast<double>(physicsAgents));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.needs_path", static_cast<double>(needsPathAgents));
+    T8_TELEMETRY_SET("navigation.agents.count", static_cast<double>(m_navTestAgents.size()));
+    T8_TELEMETRY_SET("navigation.agents.active", static_cast<double>(activeAgents));
+    T8_TELEMETRY_SET("navigation.agents.physics_active", static_cast<double>(physicsAgents));
+    T8_TELEMETRY_SET("navigation.agents.needs_path", static_cast<double>(needsPathAgents));
   }
 
   {
@@ -4806,15 +4817,15 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
     }
 
     if (agent.physicsTraversalActive) {
-      T8_TELEMETRY_SCOPE("navigation.agents.physics_traversal");
+      T8_CPU_WORK("navigation.agents.physics_traversal");
       if (t850::RuntimeTelemetry::IsFrameActive()) {
-        t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.count", 1.0);
+        T8_TELEMETRY_ADD("navigation.agents.physics_traversal.count", 1.0);
         if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Drop) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.drop", 1.0);
+          T8_TELEMETRY_ADD("navigation.agents.physics_traversal.drop", 1.0);
         } else if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Jump) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.jump", 1.0);
+          T8_TELEMETRY_ADD("navigation.agents.physics_traversal.jump", 1.0);
         } else if (agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.jump_pad", 1.0);
+          T8_TELEMETRY_ADD("navigation.agents.physics_traversal.jump_pad", 1.0);
         }
       }
 
@@ -4953,7 +4964,7 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
 
     T8_TELEMETRY_SCOPE("navigation.agents.walk_follow");
     if (t850::RuntimeTelemetry::IsFrameActive()) {
-      t850::RuntimeTelemetry::AddCounter("navigation.agents.walk_follow.count", 1.0);
+      T8_TELEMETRY_ADD("navigation.agents.walk_follow.count", 1.0);
     }
     XVECTOR3 current = agent.navPosition;
     float remaining = maxStep;
@@ -4991,7 +5002,7 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
         agent.physicsTraversalActive = true;
         agent.physicsWasAirborne = false;
         if (t850::RuntimeTelemetry::IsFrameActive()) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.start", 1.0);
+          T8_TELEMETRY_ADD("navigation.agents.physics_traversal.start", 1.0);
         }
         proposedPositions[agentIndex] = current;
         movedAgents[agentIndex] = 1;
@@ -5108,7 +5119,7 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
                                false,
                                !agentProtected)) {
           if (t850::RuntimeTelemetry::IsFrameActive()) {
-            t850::RuntimeTelemetry::AddCounter("navigation.agents.aabb.player_overlaps", 1.0);
+            T8_TELEMETRY_ADD("navigation.agents.aabb.player_overlaps", 1.0);
           }
         }
       }
@@ -5131,7 +5142,7 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
                                  !protectA,
                                  !protectB)) {
             if (t850::RuntimeTelemetry::IsFrameActive()) {
-              t850::RuntimeTelemetry::AddCounter("navigation.agents.aabb.agent_overlaps", 1.0);
+              T8_TELEMETRY_ADD("navigation.agents.aabb.agent_overlaps", 1.0);
             }
           }
         }
@@ -5492,11 +5503,6 @@ void SceneTemplate::CreateAssets() {
   // Fullscreen quad setup
   m.Identity();
   Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[0], 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[1], 1);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[2], 2);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[3], 3);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->pDepthTexture, 4);
   Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
 
   for (int i = 1; i <= 7; i++)
@@ -5724,6 +5730,14 @@ void SceneTemplate::DestroyAssets() {
   if (pFramework && pFramework->pVideoDriver) {
     m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
   }
+  EnvMaps = {};
+  EnvMapTexIndex = -1;
+  DiffuseIBLTexIndex = -1;
+  SpecularIBLTexIndex = -1;
+  BrdfLUTTexIndex = -1;
+  SheenIBLTexIndex = -1;
+  CharlieLUTTexIndex = -1;
+  SheenELUTTexIndex = -1;
 }
 
 void SceneTemplate::OnUpdate(float _DtSecs) {
@@ -5932,7 +5946,7 @@ void SceneTemplate::OnUpdate(float _DtSecs) {
       if (auto* terrain = dynamic_cast<t850::HeightmapMesh*>(Meshes[meshIndex].pBase)) terrain->UpdatePlacementAnimations(DtSecs);
       RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
       if (!skinned || !skinned->HasSkinData()) continue;
-      T8_TELEMETRY_SCOPE("sandbox.update.skinned_animation.pose");
+      T8_TELEMETRY_ADD("sandbox.update.skinned_animation.pose.calls", 1);
       skinned->UpdateAnimationPose();
     }
   }
@@ -15188,7 +15202,6 @@ void SceneTemplate::OnDraw() {
       if (meshIndex == 0) {
         UpdateSkeletonFromRagdollPhysics();
       }
-      skinned->UploadBoneTexture();
     }
   }
 

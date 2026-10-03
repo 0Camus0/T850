@@ -1,0 +1,6 @@
+{
+  "version": 2,
+  "mouse_capture": false,
+  "control_descriptor": "Scenes/SandboxScene.json",
+  "render_graph": "Scenes/SandboxScene_RenderGraph.json"
+}

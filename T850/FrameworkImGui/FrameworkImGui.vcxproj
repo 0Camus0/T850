@@ -172,6 +172,7 @@
     <ClCompile Include="src\ImGuiD3D12Backend.cpp" />
     <ClCompile Include="src\ImGuiOpenGLBackend.cpp" />
     <ClCompile Include="src\ImGuiVulkanBackend.cpp" />
+    <ClCompile Include="src\ImGuiWebGPUBackend.cpp" />
     <ClCompile Include="src\DevGuiContext.cpp" />
     <ClCompile Include="src\RagdollEditorGui.cpp" />
   </ItemGroup>
@@ -181,6 +182,7 @@
     <ClInclude Include="include\imgui\DevGuiContext.h" />
     <ClInclude Include="include\imgui\RagdollEditorGui.h" />
   </ItemGroup>
+  <Import Project="..\cmake\DawnPackage.targets" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

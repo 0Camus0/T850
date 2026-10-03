@@ -65,6 +65,7 @@ Do not fix a frame-index mismatch by adding an unexplained extra buffer slot. Pr
 
 ## 3. Ownership Rules
 
+- `BaseDriver`, backend API objects, resource registries and `ShaderProgramCache` are render-thread-affine. Debug builds assert shader-cache access from the creating thread; a mutex does not make backend API calls safe from workers.
 - Resource registry owns managed textures; scenes do not destroy registry-owned textures.
 - Cache entries are immutable after acquisition; create variants instead of mutating shared materials.
 - Backend upload staging must remain alive until its submission fence signals.
@@ -72,6 +73,7 @@ Do not fix a frame-index mismatch by adding an unexplained extra buffer slot. Pr
 - Descriptor handles/ImGui texture IDs are backend-owned and released through that backend.
 - CPU snapshots are optional only when no caller needs their geometry after upload; retain counts, bounds, sections, materials, and version explicitly.
 - Never destroy a Vulkan/D3D12 resource merely because recording finished; GPU execution is asynchronous.
+- Render-graph resources read before a graph writer must declare `initialized: true`; the graph performs one deterministic zero clear after allocation/recreation before the first pass.
 
 ## 4. Upload Path
 

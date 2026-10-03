@@ -147,6 +147,19 @@ Set-Location $SourceRoot
 
 The authoritative distributable packaging is the `v*` GitHub Actions release job. It compiles `T850Launcher.exe`, stages executables/DLLs/tracked lightweight assets/cloud downloader/config, emits Windows ZIPs, and includes Android/Steam artifacts.
 
+Before publishing, the release job runs:
+
+```powershell
+.\T850\scripts\ValidateReleasePackages.ps1 `
+	-ReleaseDirectory .\release-assets `
+	-RequireSignedAndroid
+```
+
+This opens every ZIP/APK/tarball, verifies required executables, native
+libraries and asset roots, rejects unsigned tagged APKs, and writes
+`SHA256SUMS.txt`. Structural package validation does not replace an installed
+launch on equipped Android and Steam Deck hardware.
+
 To build the Release launcher locally:
 
 ```powershell

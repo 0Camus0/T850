@@ -18,6 +18,16 @@ public:
     Disabled
   };
 
+  enum class PostProcessMode {
+    Compute,
+    Raster
+  };
+
+  enum class GpuProfileGranularity {
+    WholeFrame,
+    RenderGraphPasses
+  };
+
   struct BooleanFlags {
     bool dumpEnabled : 1 = false;
     bool dumpByFrame : 1 = false;
@@ -36,11 +46,19 @@ public:
     bool offscreenDebug : 1 = false;
     bool benchmarkFinalFrameDump : 1 = false;
     bool dumpShaderPermutations : 1 = false;
+    bool recordShaderPermutations : 1 = false;
+    bool compileShaders : 1 = false;
     bool autoStartRagdoll : 1 = false;
     bool runtimeTelemetry : 1 = false;
   } flags;
 
+#ifdef __EMSCRIPTEN__
+  std::string api = "webgpu";
+#else
   std::string api = "d3d11";
+#endif
+  std::string webgpuShaderFlow = "auto";
+  int webgpuDeviceRecoveryAttempts = 3;
   int width = 1280;
   int height = 720;
   std::string title = "T850 Project";
@@ -57,20 +75,34 @@ public:
   std::string logFile;
 
   int profileFrames = 300;
+  bool profileCpuOnly = false;
+  bool profileGpu = false;
+  int profileGpuFrames = 600;
+  std::string profileGpuOutputPath = "logs/gpu_profile.json";
+  GpuProfileGranularity profileGpuGranularity = GpuProfileGranularity::WholeFrame;
+  int telemetryUploadBudgetMB = 64;
   int dumpMatricesFrames = 0;
   GLOffscreenFlushMode glOffscreenFlushMode = GLOffscreenFlushMode::Frame;
   CullingLoadMode cullingLoadMode = CullingLoadMode::FullOnLoad;
+  PostProcessMode postProcessMode = PostProcessMode::Raster;
   std::string benchmarkOutputPath;
   std::string benchmarkReportPath;
   std::string benchmarkFinalFrameDir;
   int benchmarkDurationSeconds = 0;
   int benchmarkFrameLimit = 0;
+  bool benchmarkPaired = false;
+  bool benchmarkNoPresent = false;
   float benchmarkFixedDt = 0.0f;
+  int benchmarkHoldFrame = 0;
   float regressionFixedDt = 0.0f;
   std::string modelPath = "Models/DamagedHelmet.glb";
   std::string sceneFilePath;
   std::string sceneProfile;
   std::string shaderPermutationOutputPath = "shader_permutations.json";
+  std::string shaderPermutationInputPath = "Shaders/shader_permutations.json";
+  std::string shaderCompileCancelFile;
+  std::string webShaderOutput;
+  std::string webAssetBaseUrl;
   int runtimeTelemetryFrequencyFrames = 60;
   std::string runtimeTelemetryOutputPath = "logs/perf_telemetry.json";
   bool orbitYawOverride = false;

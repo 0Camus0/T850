@@ -198,12 +198,44 @@ $xaml = @"
             <StackPanel>
                 <TextBlock Text="GRAPHICS API" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
+                <Button Name="btnCompileShaders" Content="Compile Shaders" Height="30" Margin="0,0,0,10"
+                    FontSize="13" Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
+                    BorderThickness="0" Cursor="Hand"
+                    ToolTip="Compile all recorded permutations for every supported desktop API, including both WebGPU flows."/>
                 <ComboBox Name="cmbApi">
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" Tag="d3d11"/>
                     <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
+                    <ComboBoxItem Content="WebGPU (Dawn/D3D12)" Tag="webgpu"/>
+                    <ComboBoxItem Content="WebGPU + Browser (Emscripten)" Tag="webgpu-browser"/>
                     <ComboBoxItem Content="Vulkan" IsSelected="True" Tag="vulkan"/>
                     <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
+                <StackPanel Margin="0,12,0,0">
+                    <TextBlock Text="Post-process Mode" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbPostProcessMode">
+                        <ComboBoxItem Content="Raster" Tag="raster" IsSelected="True"
+                                      ToolTip="Use the authored graphics or clear fallback for every compute-capable render-graph pass."/>
+                        <ComboBoxItem Content="Compute" Tag="compute"
+                                      ToolTip="Use compute shaders for every supported render-graph compute pass, including Minecraft torch particles."/>
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Name="pnlBrowser" Margin="0,12,0,0" Visibility="Collapsed">
+                    <TextBlock Text="Browser" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbBrowser" IsEnabled="False">
+                        <ComboBoxItem Content="System default" Tag="" IsSelected="True"/>
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Name="pnlShaderFlow" Margin="0,12,0,0" Visibility="Collapsed">
+                    <TextBlock Text="Shader Flow" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbShaderFlow" IsEnabled="False">
+                        <ComboBoxItem Content="WGSL preferred (auto)" Tag="auto" IsSelected="True"
+                                      ToolTip="Prefer WGSL; allow HLSL translation for missing WGSL sources and unnamed helpers."/>
+                        <ComboBoxItem Content="WGSL only (strict)" Tag="wgsl"
+                                      ToolTip="Require maintained WGSL sources; anonymous inline HLSL helpers remain unsupported."/>
+                        <ComboBoxItem Content="SPIR-V (HLSL translation)" Tag="spirv"
+                                      ToolTip="Use HLSL through glslang/SPIR-V and Tint/WGSL, with no source-language fallback."/>
+                    </ComboBox>
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -416,6 +448,12 @@ $window.Width = [Math]::Min($window.Width, $window.MaxWidth)
 
 # Get controls
 $cmbApi         = $window.FindName("cmbApi")
+$btnCompileShaders = $window.FindName("btnCompileShaders")
+$cmbPostProcessMode = $window.FindName("cmbPostProcessMode")
+$pnlShaderFlow  = $window.FindName("pnlShaderFlow")
+$cmbShaderFlow  = $window.FindName("cmbShaderFlow")
+$cmbBrowser     = $window.FindName("cmbBrowser")
+$pnlBrowser     = $window.FindName("pnlBrowser")
 $chkDump        = $window.FindName("chkDump")
 $chkDebugFrames = $window.FindName("chkDebugFrames")
 $chkKeepRunning = $window.FindName("chkKeepRunning")
@@ -907,6 +945,10 @@ function Set-CullingMode {
 }
 
 function Load-Config {
+    $cmbPostProcessMode.SelectedIndex = 0
+    $cmbShaderFlow.SelectedIndex = 0
+    Update-InstalledBrowsers
+    $cmbBrowser.SelectedIndex = 0
     if (-not (Test-Path $configPath)) { return }
     try {
         $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -915,6 +957,21 @@ function Load-Config {
         foreach ($item in $cmbApi.Items) {
             if ($item.Tag -ieq $cfg.api) {
                 $cmbApi.SelectedItem = $item; break
+            }
+        }
+        foreach ($item in $cmbPostProcessMode.Items) {
+            if ($item.Tag -ieq $cfg.postProcessMode) {
+                $cmbPostProcessMode.SelectedItem = $item; break
+            }
+        }
+        foreach ($item in $cmbShaderFlow.Items) {
+            if ($item.Tag -ieq $cfg.webgpuShaderFlow) {
+                $cmbShaderFlow.SelectedItem = $item; break
+            }
+        }
+        foreach ($item in $cmbBrowser.Items) {
+            if ($item.Tag -ieq $cfg.webBrowser) {
+                $cmbBrowser.SelectedItem = $item; break
             }
         }
         # Display
@@ -1048,6 +1105,9 @@ function Save-Config {
     }
     $cfg = @{
         api           = ($cmbApi.SelectedItem).Tag.ToString()
+        postProcessMode = $cmbPostProcessMode.SelectedItem.Tag.ToString()
+        webgpuShaderFlow = $cmbShaderFlow.SelectedItem.Tag.ToString()
+        webBrowser = [string]$cmbBrowser.SelectedItem.Tag
         display = $display
         debugFrames = [bool]$chkDebugFrames.IsChecked
         benchmark = ($sceneTag -eq "1" -and [bool]$chkBenchmark.IsChecked)
@@ -1090,11 +1150,193 @@ function Format-LauncherCommandLine {
     return (('"' + $FilePath + '" ' + ($quotedArgs -join ' ')).Trim())
 }
 
+function Test-WebGpuSelected {
+    return $cmbApi.SelectedItem -and $cmbApi.SelectedItem.Tag -eq "webgpu"
+}
+
+function Test-BrowserSelected {
+    return $cmbApi.SelectedItem -and $cmbApi.SelectedItem.Tag -eq "webgpu-browser"
+}
+
+function Get-InstalledBrowsers {
+    param(
+        [string[]]$RegistryRoots = @('HKCU:\Software\Clients\StartMenuInternet', 'HKLM:\Software\Clients\StartMenuInternet', 'HKLM:\Software\WOW6432Node\Clients\StartMenuInternet'),
+        [string[]]$InstallRoots = @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432)
+    )
+    $candidates = @()
+    foreach ($registryRoot in $RegistryRoots) {
+        foreach ($registration in @(Get-ChildItem -LiteralPath $registryRoot -ErrorAction SilentlyContinue)) {
+            $commandKey = Get-Item -LiteralPath ($registration.PSPath + '\shell\open\command') -ErrorAction SilentlyContinue
+            if ($commandKey -and $commandKey.GetValue('') -match '^\s*(?:"(?<path>[^"]+\.exe)"|(?<path>.+?\.exe))(?:\s|$)') {
+                $candidates += [pscustomobject]@{ Name = [string]$registration.GetValue(''); Path = [Environment]::ExpandEnvironmentVariables($Matches.path) }
+            }
+        }
+    }
+    foreach ($installRoot in $InstallRoots | Where-Object { $_ } | Select-Object -Unique) {
+        foreach ($browser in @(
+            @{ Name = 'Google Chrome'; RelativePath = 'Google\Chrome\Application\chrome.exe' },
+            @{ Name = 'Mozilla Firefox'; RelativePath = 'Mozilla Firefox\firefox.exe' },
+            @{ Name = 'Microsoft Edge'; RelativePath = 'Microsoft\Edge\Application\msedge.exe' }
+        )) {
+            $candidates += [pscustomobject]@{ Name = $browser.Name; Path = Join-Path $installRoot $browser.RelativePath }
+        }
+    }
+    $installed = @{}
+    foreach ($candidate in $candidates) {
+        if ([IO.Path]::GetFileName($candidate.Path) -ieq 'iexplore.exe') { continue }
+        if (-not (Test-Path -LiteralPath $candidate.Path -PathType Leaf)) { continue }
+        $path = [IO.Path]::GetFullPath($candidate.Path)
+        if (-not $installed.ContainsKey($path)) {
+            $name = if ($candidate.Name) { $candidate.Name } else { [IO.Path]::GetFileNameWithoutExtension($path) }
+            $installed[$path] = [pscustomobject]@{ Name = $name; Path = $path }
+        }
+    }
+    return @($installed.Values | Sort-Object Name, Path)
+}
+
+function Update-InstalledBrowsers {
+    $selectedPath = [string]$cmbBrowser.SelectedItem.Tag
+    $cmbBrowser.Items.Clear()
+    $default = [Windows.Controls.ComboBoxItem]::new()
+    $default.Content = 'System default'
+    $default.Tag = ''
+    [void]$cmbBrowser.Items.Add($default)
+    foreach ($browser in Get-InstalledBrowsers) {
+        $item = [Windows.Controls.ComboBoxItem]::new()
+        $item.Content = $browser.Name
+        $item.Tag = $browser.Path
+        $item.ToolTip = $browser.Path
+        [void]$cmbBrowser.Items.Add($item)
+    }
+    $cmbBrowser.SelectedIndex = 0
+    foreach ($item in $cmbBrowser.Items) {
+        if ($item.Tag -ieq $selectedPath) { $cmbBrowser.SelectedItem = $item; break }
+    }
+}
+
+function Get-BrowserLaunchCommand {
+    $browserRoot = $rootDir
+    if (-not (Test-Path (Join-Path $browserRoot 'web\server.mjs'))) {
+        $sourceRoot = [IO.Path]::GetFullPath((Join-Path $rootDir '..\..\..'))
+        if (Test-Path (Join-Path $sourceRoot 'T850.sln')) { $browserRoot = $sourceRoot }
+    }
+    $server = Join-Path $browserRoot 'web\server.mjs'
+    $bundle = if (Test-Path (Join-Path $browserRoot 'web\site\DayScene.html')) { 'web' } else { 'build\web' }
+    $assets = if (Test-Path (Join-Path $browserRoot 'web\assets')) { 'web\assets' } else { 'Assets' }
+    foreach ($file in @('web\server.mjs', "$bundle\site\DayScene.html", "$bundle\site\DayScene.js", "$bundle\site\DayScene.wasm", "$bundle\site\scenes.json", "$bundle\WebShaders", $assets)) {
+        if (-not (Test-Path (Join-Path $browserRoot $file))) { throw "Browser bundle missing. Install web\server.mjs, web\site, web\WebShaders and web\assets beside the launcher." }
+    }
+    $node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $node) { throw "Browser launch requires Node.js on PATH." }
+    $scene = $cmbScene.SelectedItem.Tag.ToString()
+    $parameters = [ordered]@{ scene = $scene; width = $txtWidth.Text; height = $txtHeight.Text; culling = (Get-CullingMode); logLevel = $cmbLogLevel.SelectedItem.Tag.ToString() }
+    $parameters.postProcessMode = $cmbPostProcessMode.SelectedItem.Tag.ToString()
+    if ($scene -eq '2' -or $scene -eq '4' -or ($scene -eq '0' -and (Get-SandboxInputMode) -eq 'scene')) {
+        $sceneFile = Get-SelectedSceneFilePath
+        if ($sceneFile) { $parameters.sceneFile = Get-SceneFileResourcePath $sceneFile }
+    } elseif (($scene -eq '0' -or $scene -eq '3') -and $cmbModel.SelectedItem) {
+        $parameters.model = $cmbModel.SelectedItem.Tag.ToString()
+    }
+    $query = ($parameters.GetEnumerator() | ForEach-Object { [uri]::EscapeDataString($_.Key) + '=' + [uri]::EscapeDataString([string]$_.Value) }) -join '&'
+    $arguments = @(('"{0}"' -f $server), '--open', '--query', ('"{0}"' -f $query))
+    $browserPath = [string]$cmbBrowser.SelectedItem.Tag
+    if ($browserPath) {
+        if (-not (Test-Path -LiteralPath $browserPath -PathType Leaf)) { throw "Selected browser is no longer installed: $browserPath" }
+        $arguments += @('--browser', ('"{0}"' -f $browserPath))
+    }
+    return @{ ExePath = $node.Source; Args = $arguments; WorkingDirectory = $browserRoot; Display = ('"{0}" {1}' -f $node.Source, ($arguments -join ' ')) }
+}
+
+function Update-BrowserPreview {
+    $btnEditor.IsEnabled = $false
+    $btnRun.Content = "OPEN BROWSER"
+    try {
+        $command = Get-BrowserLaunchCommand
+        $txtCmdPreview.Text = $command.Display
+        $btnRun.IsEnabled = $true
+        $txtStatus.Text = "Browser WebGPU: prepared shaders; editor and native diagnostics unavailable."
+        $txtStatus.Foreground = $window.FindResource("AccentBrush")
+    } catch {
+        $btnRun.IsEnabled = $false
+        $txtCmdPreview.Text = ""
+        $txtStatus.Text = $_.Exception.Message
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+    }
+    return $true
+}
+
+function Start-BrowserRuntime {
+    try {
+        $command = Get-BrowserLaunchCommand
+        Save-Config
+        Start-Process -FilePath $command.ExePath -ArgumentList $command.Args -WorkingDirectory $command.WorkingDirectory
+        $txtStatus.Text = "Opening browser; the server console reports its URL and startup errors."
+    } catch {
+        $txtStatus.Text = $_.Exception.Message
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+    }
+}
+
+function Test-WebGpuSupported {
+    $reader = $null
+    try {
+        $reader = [IO.BinaryReader]::new([IO.File]::OpenRead((Join-Path $rootDir "DayScene.exe")))
+        if ($reader.BaseStream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5A4D) { return $false }
+        $reader.BaseStream.Position = 0x3C
+        $offset = $reader.ReadUInt32()
+        if ($offset -gt $reader.BaseStream.Length - 6) { return $false }
+        $reader.BaseStream.Position = $offset
+        if ($reader.ReadUInt32() -ne 0x00004550) { return $false }
+        return $reader.ReadUInt16() -in @(0x8664, 0xAA64)
+    } catch {
+        return $false
+    } finally {
+        if ($reader) { $reader.Dispose() }
+    }
+}
+
+function Update-WebGpuControls {
+    $selected = Test-WebGpuSelected
+    $browser = Test-BrowserSelected
+    $pnlBrowser.Visibility = if ($browser) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+    $cmbBrowser.IsEnabled = $browser -and -not $script:LauncherBusy
+    $btnRun.Content = if ($browser) { "OPEN BROWSER" } else { ([char]0x25B6).ToString() + "  RUN" }
+    foreach ($name in @('chkFullscreen', 'chkDump', 'chkDebugFrames', 'chkReplaySnapshot', 'chkKeepRunning', 'chkTelemetry', 'chkLogToFile', 'chkBenchmark', 'btnBenchmarkMatrix')) {
+        $control = $window.FindName($name)
+        if ($control) { $control.IsEnabled = -not $browser -and -not $script:LauncherBusy }
+    }
+    $btnCompileShaders.IsEnabled = -not $browser -and -not $script:LauncherBusy -and (Test-Path (Join-Path $rootDir "DayScene.exe"))
+    $pnlShaderFlow.Visibility = if ($selected) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+    $cmbShaderFlow.IsEnabled = $selected -and (Test-WebGpuSupported)
+    foreach ($item in $cmbApi.Items) {
+        if ($item.Tag -eq "webgpu") { $item.IsEnabled = Test-WebGpuSupported }
+    }
+    $btnRun.ToolTip = if ($selected) { "WebGPU supports forward and deferred runtime scenes on Windows x64 and ARM64. Editor support is unavailable." } else { $null }
+    $btnEditor.ToolTip = if ($selected) { "WebGPU editor support is not implemented." } else { $null }
+}
+
+function Update-WebGpuPreview {
+    if (Test-BrowserSelected) { return Update-BrowserPreview }
+    if (-not (Test-WebGpuSelected) -or (Test-WebGpuSupported)) { return $false }
+    $btnRun.IsEnabled = $false
+    $btnEditor.IsEnabled = $false
+    $txtCmdPreview.Text = ""
+    $txtStatus.Text = "WebGPU requires an x64 or ARM64 DayScene.exe in this folder."
+    $txtStatus.Foreground = $window.FindResource("RedBrush")
+    return $true
+}
+
 function Get-LaunchCommand {
+    if (Test-BrowserSelected) { return Get-BrowserLaunchCommand }
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
 
     $exePath = Join-Path $rootDir "DayScene.exe"
+    if ($apiTag -eq "webgpu" -and -not (Test-WebGpuSupported)) { throw "WebGPU requires an x64 or ARM64 DayScene.exe in this folder." }
     $argList = @("--api", $apiTag)
+    $argList += @("--postProcessMode", $cmbPostProcessMode.SelectedItem.Tag.ToString())
+    if ($apiTag -eq "webgpu") {
+        $argList += @("--shaderFlow", $cmbShaderFlow.SelectedItem.Tag.ToString())
+    }
 
     if ($chkDebugFrames.IsChecked) {
         $argList += "--debugFrames"
@@ -1175,13 +1417,126 @@ function Get-LaunchCommand {
     }
 }
 
+function Get-ShaderCompileCommands {
+    $runtime = $rootDir
+    $exe = Join-Path $runtime "DayScene.exe"
+    foreach ($api in @("d3d11", "d3d12", "vulkan", "gl", "webgpu")) {
+        if ($api -eq "webgpu" -and -not (Test-WebGpuSupported)) { continue }
+        $flows = if ($api -eq "webgpu") { @("auto", "wgsl", "spirv") } else { @("native") }
+        foreach ($flow in $flows) {
+            $arguments = @("--compileShaders", "--api", $api, "--logLevel", "info")
+            if ($api -eq "webgpu") { $arguments += @("--shaderFlow", $flow) }
+            [pscustomobject]@{ Name = "$api-$flow"; ExePath = $exe; WorkingDirectory = $runtime; Args = $arguments }
+        }
+    }
+}
+
+function Update-ShaderCompileQueue($State) {
+    if ($State.Process) {
+        if (Test-Path $State.Stdout) {
+            $stream = [IO.File]::Open($State.Stdout, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            $reader = [IO.StreamReader]::new($stream)
+            try { $State.Output.Text = $reader.ReadToEnd(); $State.Output.ScrollToEnd() } finally { $reader.Dispose() }
+        }
+        if (-not $State.Process.HasExited) { return }
+        $State.Process.WaitForExit()
+        if (Test-Path $State.Stdout) {
+            $State.Output.Text = [IO.File]::ReadAllText($State.Stdout)
+            $State.Output.ScrollToEnd()
+        }
+        $passed = $State.Process.ExitCode -eq 0 -and $State.Output.Text -match '\[ShaderPrecompile\] complete: \d+ succeeded, 0 failed'
+        if (-not $passed) { $State.Failures++ }
+        [void]$State.Results.Add([pscustomobject]@{ Job = $State.Jobs[$State.Index - 1].Name; ExitCode = $State.Process.ExitCode; Passed = $passed })
+        $State.Process.Dispose()
+        $State.Process = $null
+        $State.Progress.Value = $State.Index
+    }
+    if ($State.CancelRequested) {
+        $State.Timer.Stop()
+        $State.Status.Text = "Cancelled. Logs: $($State.Directory)"
+        $State.Cancel.Content = "Close"
+        $State.Cancel.IsEnabled = $true
+        $State.Results | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $State.Directory "summary.json") -Encoding UTF8
+        return
+    }
+    if ($State.Index -ge $State.Jobs.Count) {
+        $State.Timer.Stop()
+        $State.Status.Text = "Completed: $($State.Jobs.Count - $State.Failures) passed, $($State.Failures) failed. Logs: $($State.Directory)"
+        $State.Cancel.Content = "Close"
+        $State.Results | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $State.Directory "summary.json") -Encoding UTF8
+        return
+    }
+    $job = $State.Jobs[$State.Index]
+    $State.Stdout = Join-Path $State.Directory "$($job.Name).log"
+    $stderr = Join-Path $State.Directory "$($job.Name)-errors.log"
+    $State.Status.Text = "[$($State.Index + 1)/$($State.Jobs.Count)] $($job.Name)"
+    $State.Output.Text = ""
+    $arguments = $job.Args + @("--shaderCompileCancelFile", ('"{0}"' -f $State.CancelFile))
+    $State.Process = Start-Process -FilePath $job.ExePath -ArgumentList $arguments -WorkingDirectory $job.WorkingDirectory -RedirectStandardOutput $State.Stdout -RedirectStandardError $stderr -PassThru
+    $null = $State.Process.Handle
+    $State.Index++
+}
+
+function Invoke-ShaderCompilation {
+    $jobs = @(Get-ShaderCompileCommands)
+    if (-not $jobs.Count -or -not (Test-Path $jobs[0].ExePath)) { throw "Build DayScene before compiling shaders." }
+    $help = & $jobs[0].ExePath --help 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or $help -notmatch '--shaderCompileCancelFile') { throw "This DayScene build does not support cancellable shader precompilation. Rebuild or update the engine." }
+    $manifest = Join-Path $jobs[0].WorkingDirectory "Shaders\shader_permutations.json"
+    if (-not (Test-Path $manifest)) { throw "Missing shader permutation manifest: $manifest" }
+    $directory = Join-Path $jobs[0].WorkingDirectory ("logs\shader-compile-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+    [void][IO.Directory]::CreateDirectory($directory)
+    $dialog = [Windows.Markup.XamlReader]::Parse(@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Title="Compile Shaders" Width="760" Height="480" MinWidth="480" MinHeight="320" WindowStartupLocation="CenterOwner" Background="#1E1E2E" Foreground="#CDD6F4">
+  <DockPanel Margin="16">
+    <TextBlock Name="status" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,12"/>
+    <ProgressBar Name="progress" DockPanel.Dock="Top" Height="8" Margin="0,0,0,12"/>
+    <Button Name="cancel" DockPanel.Dock="Bottom" Content="Cancel" Width="100" Height="30" HorizontalAlignment="Right" Margin="0,12,0,0"/>
+    <TextBox Name="output" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12" Background="#0D1117" Foreground="#C9D1D9"/>
+  </DockPanel>
+</Window>
+'@)
+    $dialog.Owner = $window
+    $state = [pscustomobject]@{ Jobs = $jobs; Index = 0; Process = $null; Stdout = ""; Directory = $directory; CancelFile = (Join-Path $directory "cancel.request"); CancelRequested = $false; Failures = 0; Results = [Collections.ArrayList]::new(); Timer = [Windows.Threading.DispatcherTimer]::new(); Status = $dialog.FindName("status"); Progress = $dialog.FindName("progress"); Output = $dialog.FindName("output"); Cancel = $dialog.FindName("cancel") }
+    $state.Progress.Maximum = $jobs.Count
+    $state.Status.Text = if ($jobs.Count -eq 7) { "7 API/flow jobs" } else { "4 API jobs; WebGPU requires an x64 or ARM64 runtime" }
+    $state.Timer.Interval = [TimeSpan]::FromMilliseconds(300)
+    $updateQueue = ${function:Update-ShaderCompileQueue}
+    $state.Timer.Add_Tick({
+        try { & $updateQueue $state } catch {
+            $state.Timer.Stop()
+            $state.Status.Text = "Compilation stopped: $($_.Exception.Message). Logs: $($state.Directory)"
+        }
+    }.GetNewClosure())
+    $state.Cancel.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $dialog.Add_Closing({
+        param($sender, $eventArgs)
+        if ($state.Process) {
+            $eventArgs.Cancel = $true
+            $state.CancelRequested = $true
+            [IO.File]::WriteAllText($state.CancelFile, "cancel")
+            $state.Status.Text = "Cancelling after the current shader..."
+            $state.Cancel.IsEnabled = $false
+            $state.Timer.Start()
+        } else {
+            $state.Timer.Stop()
+        }
+    }.GetNewClosure())
+    $state.Timer.Start()
+    [void]$dialog.ShowDialog()
+}
+
 function Get-EditorLaunchCommand {
+    if (Test-BrowserSelected) { throw "The browser target does not support T8ditor." }
+    if (Test-WebGpuSelected) { throw "WebGPU editor support is not implemented." }
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
     $exePath = Join-Path $rootDir "T8ditor.exe"
     $argList = @()
 
     # Win32 ImGui is provisioned without the D3D12 backend; use D3D11 there.
-    $editorApi = if (-not [Environment]::Is64BitProcess) {
+    $editorApi = if ($apiTag -eq "webgpu") {
+        "webgpu"
+    } elseif (-not [Environment]::Is64BitProcess) {
         if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d11" }
     } else {
         if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d12" }
@@ -1211,13 +1566,18 @@ function Get-EditorLaunchCommand {
 }
 
 function Update-Preview {
+    Update-WebGpuControls
     Update-DownloadAssetsButton
+    if ($script:LauncherBusy) { return }
+    if (Update-WebGpuPreview) { return }
     $cmd = Get-LaunchCommand
     $txtCmdPreview.Text = $cmd.Display
 
     $sceneOk = Test-Path $cmd.ExePath
-    $editorCmd = Get-EditorLaunchCommand
-    $editorOk = Test-Path $editorCmd.ExePath
+    $editorOk = if (Test-WebGpuSelected) { $false } else {
+        $editorCmd = Get-EditorLaunchCommand
+        Test-Path $editorCmd.ExePath
+    }
     $sceneDeps = Get-CachedSceneDependencyResult
     $assetStatus = $script:CloudAssetStatus
     $assetsMissing = ($assetStatus -and $assetStatus.Configured -and $assetStatus.Ok -and $assetStatus.Missing -gt 0)
@@ -1252,6 +1612,13 @@ function Update-Preview {
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
         $btnEditor.IsEnabled = $editorOk
+    }
+    if (Test-WebGpuSelected) {
+        $btnEditor.IsEnabled = $false
+        if ($sceneOk -and $sceneDeps.Ok -and -not $assetsMissing) {
+            $txtStatus.Text = "WebGPU: runtime forward/deferred rendering; editor unavailable."
+            $txtStatus.Foreground = $window.FindResource("AccentBrush")
+        }
     }
 }
 
@@ -1328,6 +1695,13 @@ $cmbSandboxInput.Add_SelectionChanged({
 })
 
 $cmbApi.Add_SelectionChanged({ Update-Preview })
+$cmbPostProcessMode.Add_SelectionChanged({ Update-Preview })
+$btnCompileShaders.Add_Click({
+    try { Invoke-ShaderCompilation } catch { [System.Windows.MessageBox]::Show($_.Exception.Message, "Compile Shaders", "OK", "Error") }
+})
+$cmbShaderFlow.Add_SelectionChanged({ Update-Preview })
+$cmbBrowser.Add_SelectionChanged({ Update-Preview })
+$cmbBrowser.Add_DropDownOpened({ Update-InstalledBrowsers })
 $cmbScene.Add_SelectionChanged({
     Update-SceneOptionVisibility
     Select-PreferredSceneFileForScene
@@ -1380,6 +1754,7 @@ $btnDownloadAssets.Add_Click({
 
 # RUN button
 $btnRun.Add_Click({
+    if (Test-BrowserSelected) { Start-BrowserRuntime; return }
     Populate-ModelList
     Populate-SceneFileList
     Update-SceneDependencyCache
@@ -1392,7 +1767,6 @@ $btnRun.Add_Click({
             "T850 Launcher", "OK", "Warning") | Out-Null
         return
     }
-
     $cmd = Get-LaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {
         [System.Windows.MessageBox]::Show(
@@ -1416,6 +1790,10 @@ $btnRun.Add_Click({
 
 # EDITOR button
 $btnEditor.Add_Click({
+    if ((Test-WebGpuSelected) -or (Test-BrowserSelected)) {
+        [System.Windows.MessageBox]::Show("WebGPU editor support is not implemented. Select another API for EDITOR.", "T850 Launcher", "OK", "Information") | Out-Null
+        return
+    }
     Populate-ModelList
     $cmd = Get-EditorLaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {

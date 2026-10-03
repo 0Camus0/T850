@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "kernels": [
+    {
+      "id": "arithmetic",
+      "source": "CS_Arithmetic.hlsl",
+      "entry": "CS",
+      "permutations": ["base", "read-input"],
+      "pipeline_configurator": "arithmetic",
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 4},
+        {"type": "read_write_buffer", "shader_register": 0, "binding_index": 1}
+      ]
+    },
+    {
+      "id": "image_pattern_write",
+      "source": "CS_ImagePatternWrite.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 4},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 1, "storage_format": "rgba8unorm"}
+      ]
+    },
+    {
+      "id": "image_pattern_read",
+      "source": "CS_ImagePatternRead.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 4},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "match_output_extent": true},
+        {"type": "read_write_buffer", "shader_register": 0, "binding_index": 2}
+      ]
+    },
+    {
+      "id": "god_rays",
+      "source": "CS_GodRays.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "constants_builder": "god_rays",
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 52},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1},
+        {"type": "sampled_texture", "shader_register": 1, "binding_index": 2},
+        {"type": "sampler", "shader_register": 0, "binding_index": 3},
+        {"type": "sampler", "shader_register": 1, "binding_index": 4},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 5, "storage_format": "rgba8unorm"}
+      ]
+    },
+    {
+      "id": "blur",
+      "source": "CS_Blur.hlsl",
+      "entry": "CS",
+      "permutations": ["horizontal", "vertical"],
+      "constants_builder": "blur",
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 32},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1},
+        {"type": "sampler", "shader_register": 0, "binding_index": 2},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 3, "storage_format": "rgba8unorm"}
+      ]
+    },
+    {
+      "id": "bright",
+      "source": "CS_Bright.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "constants_builder": "bright",
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 8},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1},
+        {"type": "sampled_texture", "shader_register": 1, "binding_index": 2},
+        {"type": "sampler", "shader_register": 0, "binding_index": 3},
+        {"type": "sampler", "shader_register": 1, "binding_index": 4},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 5, "storage_format": "rgba8unorm"}
+      ]
+    },
+    {
+      "id": "hdr_composite",
+      "source": "CS_HDRComposite.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "constants_builder": "hdr_composite",
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 8},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1},
+        {"type": "sampled_texture", "shader_register": 1, "binding_index": 2},
+        {"type": "sampled_texture", "shader_register": 2, "binding_index": 3},
+        {"type": "sampler", "shader_register": 0, "binding_index": 4},
+        {"type": "sampler", "shader_register": 1, "binding_index": 5},
+        {"type": "sampler", "shader_register": 2, "binding_index": 6},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 7, "storage_format": "rgba8unorm"}
+      ]
+    },
+    {
+      "id": "torch_particles",
+      "source": "CS_TorchParticles.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "constants_builder": "torch_particles",
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 60},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 1, "storage_format": "rgba16float"},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 2, "match_output_extent": true}
+      ]
+    }
+  ]
+}

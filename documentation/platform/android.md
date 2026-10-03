@@ -280,6 +280,12 @@ GitHub Actions builds arm64-v8a and x86_64 Release APKs. It allows unsigned Grad
 - uploads unsigned artifacts for non-tag builds when secrets are absent;
 - requires signing secrets for `v*` release tags.
 
+The tagged release job then runs `scripts/ValidateReleasePackages.ps1` against
+the assembled artifacts. It opens each APK, verifies `AndroidManifest.xml`, the
+ABI-specific `libT850Android.so` and packaged assets, and rejects filenames that
+identify an unsigned release. This structural check does not replace install,
+launch, logcat and frame-capture evidence on equipped hardware.
+
 ## Stop Conditions and Failures
 
 | Failure | Classification/action |

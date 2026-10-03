@@ -1,6 +1,6 @@
 ---
 name: t850-visual-regression
-description: "Use when asked to capture screenshots or render targets, create/replay frame dumps, generate visual baselines, compare PPM dumps, diagnose image differences, or verify D3D11/D3D12/GL/Vulkan rendering in T850."
+description: "Use when asked to capture screenshots or render targets, create/replay frame dumps, generate visual baselines, compare PPM dumps, diagnose image differences, or verify D3D11/D3D12/GL/Vulkan/WebGPU rendering in T850."
 argument-hint: "State case/scene, APIs, reference or candidate, dimensions, and whether exact comparison is required."
 ---
 
@@ -108,6 +108,10 @@ Defaults:
 - fixed 1/60 delta with real-time pacing;
 - timeout 240 seconds per case;
 - output `VisualBaselines/<RunSet>`.
+
+WebGPU is supported but is not part of the four-API default. Add
+`-Apis d3d11,d3d12,gl,vulkan,webgpu` explicitly and record
+`-ShaderFlow auto|wgsl|spirv` when WebGPU evidence is required.
 
 ### Focused candidate
 

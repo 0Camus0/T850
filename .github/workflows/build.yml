@@ -97,6 +97,47 @@ jobs:
           Write-Host "vcpkg Visual Studio host: $visualStudio"
           Write-Host "Visual Studio host version: $visualStudioMajor"
 
+      - name: Ensure v143 ATL
+        if: matrix.platform == 'x64' || matrix.platform == 'ARM64'
+        shell: pwsh
+        run: |
+          $isArm64 = '${{ matrix.platform }}' -eq 'ARM64'
+          $compilerPath = if ($isArm64) { 'bin\Hostarm64\arm64\cl.exe' } else { 'bin\Hostx64\x64\cl.exe' }
+          $v143Toolset = Get-ChildItem (Join-Path $env:VCPKG_VISUAL_STUDIO_PATH 'VC\Tools\MSVC') -Directory |
+            Where-Object {
+              $version = [version]$_.Name
+              $version -ge [version]'14.30' -and $version -lt [version]'14.50' -and
+                (Test-Path (Join-Path $_.FullName $compilerPath))
+            } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $v143Toolset) { throw "The selected Visual Studio host has no v143 ${{ matrix.platform }} toolset." }
+
+          $atlHeader = Join-Path $v143Toolset.FullName 'atlmfc\include\atlbase.h'
+          if (-not (Test-Path $atlHeader)) {
+            $toolsetVersion = [version]$v143Toolset.Name
+            $visualStudio2022Minor = $toolsetVersion.Minor - 30
+            $atlArchitecture = if ($isArm64) { '.ARM64' } else { '' }
+            $atlComponent = "Microsoft.VisualStudio.Component.VC.14.$($toolsetVersion.Minor).17.$visualStudio2022Minor.ATL$atlArchitecture"
+            $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+            if (-not (Test-Path $installer)) { throw "Visual Studio Installer not found: $installer" }
+
+            Write-Host "Installing $atlComponent for v143 ${{ matrix.platform }} cold-cache builds."
+            $arguments = @(
+              'modify',
+              '--installPath', "`"$env:VCPKG_VISUAL_STUDIO_PATH`"",
+              '--add', $atlComponent,
+              '--quiet', '--norestart', '--nocache'
+            )
+            $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
+            try {
+              if ($process.ExitCode -notin @(0, 3010)) { throw "Visual Studio Installer failed with exit code $($process.ExitCode)." }
+            } finally {
+              $process.Dispose()
+            }
+          }
+
+          if (-not (Test-Path $atlHeader)) { throw "v143 ${{ matrix.platform }} ATL header not found after setup: $atlHeader" }
+          Write-Host "v143 ${{ matrix.platform }} ATL header: $atlHeader"
+
       - name: Clone vcpkg
         shell: pwsh
         run: |

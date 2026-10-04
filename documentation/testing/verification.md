@@ -48,6 +48,28 @@ and runs the 78 self-tests for Win32/x64 Debug and Release. Local ARM64 remains
 compile/link-only on an x64 host. GitHub Actions uses native `windows-11-arm`
 runners for ARM64 and runs the same self-test suite in every Windows cell.
 
+## Portable Browser Release
+
+After a completed Release browser build, assemble and validate the same
+cloud-backed archive produced by pull-request CI:
+
+```powershell
+.\scripts\PackageWebRelease.ps1 `
+  -BundleDirectory .\build\web `
+  -OutputPath .\artifacts\web\T850-Web-Release.zip
+.\scripts\ValidateWebReleasePackage.ps1 `
+  -Archive .\artifacts\web\T850-Web-Release.zip
+```
+
+Require nonempty HTML, JavaScript and Wasm runtime files, the lightweight scene
+launcher, prepared shaders, tracked runtime metadata and a version-1 cloud route
+catalog. Validation must reject credential-bearing/non-HTTPS routes and bundled
+GLB, glTF, binary, DDS, IBL or ZIP payloads. Start the extracted candidate with
+`node web/server.mjs --open --launcher`; require the launcher to report WebGPU
+ready and launch a scene while heavy resources are served through `/assets/*`.
+The aggregate tagged-release gate revalidates this ZIP before generating
+`SHA256SUMS.txt` and publishing any release assets.
+
 ## Gameplay Self-Tests
 
 Build x64, then run the matching executable:

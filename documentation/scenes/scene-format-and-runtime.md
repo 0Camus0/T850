@@ -115,8 +115,56 @@ The `.t8scene` root maps to `EditorSceneFile`.
 `voxel_world` makes procedural voxel content authored scene data rather than C++ scene
 constants. It contains bounded runtime dimensions, terrain/noise parameters, named block
 roles, ore rules, block face tiles/colors, hotbar entries, player movement/collision,
-streaming limits, day/night behavior, environment choices, mob/weapon box parts, interaction
-reach/cooldowns, and debug defaults.
+health and regeneration, streaming limits, day/night behavior, environment choices,
+mob/weapon box parts, authored structures and torches, interaction reach/cooldowns, and
+debug defaults.
+
+`voxel_world.structures` applies ordered, inclusive block regions during deterministic chunk
+generation. Later regions override earlier regions, allowing a structure to clear terrain,
+place floors and walls, then cut doors or windows. Box arrays add atlas-textured fractional
+decorations such as the beach house's half-height slab perimeter without changing voxel
+collision. The shipped house uses a 5x4 plank floor and roof center, framed four-block walls,
+a centered rear doorway, a front window, and a one-block-overhang slab perimeter.
+
+`voxel_world.torch.positions` authors up to three static torch bases. Each position must have
+solid voxel support one block below it. When `positions` is empty, Minecraft retains the
+spawn-relative fallback: project the player camera's authored look direction onto the ground
+plane, move `distance_from_spawn` blocks along it, and find the first solid support below the
+player spawn. Every non-colliding `base_width` by `base_height` box is textured from
+`base_block`.
+The upper `tip_height` section uses an unlit `tip_color`, guaranteeing a solid charred
+cap without depending on lighting or an atlas tile. The flame emitter starts at the box
+top plus `particle_spawn_offset_y`;
+the shipped negative offset starts particles slightly inside and around the cap.
+`particle_count`, `particle_lifetime`, `particle_rise_height`, `particle_spread`, and
+`particle_size` author the deterministic fire. `particle_appearance` owns the three-color
+palette, radial motion, wobble, size evolution, projection-depth floor, edge softness, fade
+windows, and intensity. `tip_unlit` controls the cap material. D3D11, D3D12, Vulkan,
+WebGPU, and desktop OpenGL 4.3+ run the same `CS_TorchParticles` intent. A desktop OpenGL
+3.3 fallback is raster-only, clears the particle target, and retains the base-only result.
+
+The torch also authors `tip_roughness`, `particle_time_wrap_seconds`, and one
+`min`/`max`/`step` control range for each live particle slider. Runtime UI therefore uses
+scene data rather than embedding effect tuning limits in `MinecraftScene.cpp`.
+
+`voxel_world.player.max_health`, `contact_damage`, and `health_regeneration_seconds` own the
+five-heart survival loop. Herobrine contact removes one heart on contact entry, health
+regenerates one heart per configured interval up to the maximum, and death replaces the
+normal HUD with the respawn/exit prompt. Space resets health and the player controller at the
+authored spawn; Escape follows the platform's normal application-exit path.
+
+`voxel_world.mob.skin_texture`, `skin_width`, `skin_height`, and
+`skin_pixelation_factor` select a character skin. Every authored mob box stores six
+`skin_faces` rectangles in engine face order (`+X`, `-X`, `+Y`, `-Y`, `+Z`, `-Z`), so
+MinecraftScene does not embed a model-specific 64x64 UV table. Missing skin art falls back
+to each part's block tile.
+The shipped `herobrine_green.png` is an original green-shirt, black-trouser, white-eye skin.
+`glowing_eyes`, `glowing_eye_color`, and `glowing_eye_intensity` add a separate emissive,
+unlit eye subset without replacing the skin material. The gameplay HUD draws current and
+empty hearts directly above and left-aligned with the hotbar.
+Opening the developer panel with **G** exposes live torch-particle count, lifetime, rise,
+spread, size, and spawn-height controls. Saving the scene persists them under
+`voxel_world.torch`.
 
 Atlas fields:
 
@@ -299,9 +347,12 @@ fallback, and historical blur accumulation. Minecraft sets it from `voxel_world.
 the normalized path. Shared shaders receive the mode explicitly for CoC, CoC combination,
 and both DOF passes; do not infer compatibility mode from stale pass constants.
 
-Unknown JSON keys are ignored by Glaze on load, so game schema changes require
-`MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()` rather than relying on
-parser errors.
+T850-owned runtime configuration, scene descriptors, `.t8scene` documents and
+render graphs reject unknown JSON keys, so misspelled authored fields fail with
+a source-position diagnostic. External glTF remains permissive because
+extensions are part of that format's compatibility model; component
+`config_json` remains an opaque extension payload. Game schema migrations still
+use `MigrateEditorSceneGameLogic()` and `ValidateEditorSceneGameLogic()`.
 
 ## Object records
 
@@ -446,7 +497,7 @@ flowchart TD
 `LoadEditorSceneFile()`:
 
 1. Reads JSON through `ResourceLocator`.
-2. Parses with Glaze, ignoring unknown keys.
+2. Parses with Glaze using strict unknown-key rejection.
 3. Resolves missing glTF mesh paths using fallback directories.
 4. Logs object/camera/light counts.
 
@@ -662,7 +713,7 @@ When extending scene formats:
 ## Known limitations and gotchas
 
 - `.t8scene` and `SceneDescriptor` are different formats and are both actively used.
-- Unknown `.t8scene` keys are ignored, so typos may silently do nothing.
+- Unknown `.t8scene` keys are rejected, so typos cannot silently select defaults.
 - SceneTemplate skips invisible render objects, but hidden explicitly included navigation sources can still matter when authored correctly.
 - SceneTemplate caps runtime mesh slots through `kMaxSandboxMeshes`.
 - `render_graph` is optional; empty means default graph.

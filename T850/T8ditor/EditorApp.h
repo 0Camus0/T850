@@ -167,7 +167,7 @@ namespace t8ditor {
     bool StartObjectRagdollSimulation(struct SceneObject& obj);
     bool ResetObjectRagdollToAnimation(struct SceneObject& obj);
     void UpdateSkinnedAnimationAndRagdolls();
-    void UploadSkinnedBoneTextures();
+    void UploadPreRenderGeometryData();
     void DrawRagdollInspector(struct SceneObject& obj);
     void OpenMeshEditor(int objectIndex);
     void CloseMeshEditor();

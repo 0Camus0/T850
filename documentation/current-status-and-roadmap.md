@@ -1,13 +1,23 @@
 # Current Status and Remaining Work
 
-Status: editor/terrain local-worktree update on 2026-09-07; historical CI/rendering
-evidence below remains dated 2026-08-30 and does not validate later uncommitted work.
+Status: engine wrap-up update on 2026-09-26. Historical evidence sections retain
+their original dates and validate only the revisions named in those sections.
 
 This is the single source of truth for implementation maturity, verified gates, known limits, and remaining engineering work. Subsystem documents own behavior and commands; Git history preserves completed plans and superseded reviews.
 
 ## Engine Status
 
-2026-09-09 editor SDK update: [T8ditorCore/static extensions](editor/editor-sdk.md)
+2026-09-26 engine hardening adds requester-aware navigation cancellation,
+strict T850-owned JSON schemas, attachment-level render-graph lifetime checks,
+deterministic initialization for declared history targets, graph-owned pre-pass
+bone uploads, configurable bounded WebGPU recovery, a strict manifest-backed
+compute registry, authored three-dimensional dispatch depth, render-thread
+cache assertions and assembled release-package validation. The x64 Release
+suite passes 78/78 checks; Win32/x64/ARM64 Release, Web/Wasm and Android arm64
+Release builds pass. D3D11, D3D12, Vulkan, OpenGL and WebGPU compute self-tests
+pass. Physical Android and Steam Deck runtime execution remains a hardware gate.
+
+Historical editor-build slice (2026-09-09): [T8ditorCore/static extensions](editor/editor-sdk.md)
 now supports an external host, panels/commands, component inspectors/validators,
 revision-checked gameplay edits, and shared factory registration for default Play.
 x64/ARM64 Debug/Release solution builds pass (ARM64 compile/link only). The x64
@@ -20,7 +30,7 @@ not replaceable Play, full document transactions, or a completed SceneWorld refa
 
 | Area | State |
 |---|---|
-| D3D11, D3D12, OpenGL, Vulkan | Implemented peer backends on Windows |
+| D3D11, D3D12, OpenGL, Vulkan, WebGPU | Implemented peer DayScene runtime backends on supported Windows targets; T8ditor intentionally remains on the first four APIs |
 | Graphics backend dispatch | Implemented: shared callers use `BaseDriver` capabilities; ImGui and GPU profiling use per-API strategies |
 | JSON render graph/deferred/PBR/post processing | Implemented |
 | Texture atlas framework | Implemented: managed memory textures, stable IDs, immutable rectangular atlas metadata, validated half-texel UVs, explicit pixelation |
@@ -62,7 +72,9 @@ validation is clean after retaining immutable sampler variants for shared textur
 OpenGL lifecycle checks run, but the close-up editor capture is overexposed and
 does not pass visual acceptance. This is not a cross-API pixel-parity result.
 
-All six Windows configurations build with 52 self-tests on Win32/x64 Debug/Release.
+For this 2026-09-09 editor slice, all six Windows configurations built with 52
+self-tests on Win32/x64 Debug/Release. See the 2026-09-26 engine status above
+for the current 78-test full suite.
 ARM64 is cross-compiled, not executed; its clean Debug/Release rebuild required
 `PreferredToolArchitecture=x64`, four workers and `/FS` after mixed-host PDB/linker
 failures. Release terrain workflow regressions pass on D3D12/Vulkan. Android, Steam
@@ -110,10 +122,44 @@ Successful full CI run for the backend refactor and ARM64 fix: [GitHub Actions r
 
 Shared application, scene, editor, and diagnostic code does not downcast `BaseDriver` to perform backend work.
 
-- `ImGuiRendererBackend` has D3D11, D3D12, OpenGL, and Vulkan implementations for platform/renderer initialization, frame hooks, draw submission, preview texture IDs, descriptor ownership, Android native-window rebinding, and shutdown.
+- `ImGuiRendererBackend` has D3D11, D3D12, OpenGL, Vulkan, and WebGPU implementations for platform/renderer initialization, frame hooks, draw submission, preview texture IDs, descriptor ownership, Android native-window rebinding where applicable, and shutdown. WebGPU platform viewports remain disabled and T8ditor does not select that backend.
 - `ProfilerGpuBackend` has per-API timestamp-query strategies. `Profiler` retains API-neutral CPU timing, scope accounting, and reporting.
 - `BaseDriver` virtual capabilities own API tags, shader dialect, UV origin, deferred-rendering support, render-target mip support, pre-present overlays, late-present sources, and native-surface suspend/resume.
 - API switches remain at composition boundaries only: driver/backend factories, configuration parsing, API selection UI, and benchmark scheduling.
+
+Profiler accounting remediation is implemented locally: nested scope tokens,
+separate CPU/GPU sample counts, reset generations and inclusive tree reporting
+have deterministic shared regression tests. R1 completion and remaining
+validation blockers are tracked in the
+[ordered remediation plan](rendering/webgpu-compute-remediation-plan.md#r1-fix-profiler-scope-accounting-and-remove-the-vulkan-leak);
+this does not mark the low-overhead profiling workstream complete.
+
+R2 shared render-target/capability validation is implemented locally, including
+strict format parsing, graph preflight/rollback and named comparison-sampler
+load rejection. Focused tests pass; the all-scenes gate remains blocked by
+Vulkan teardown diagnostics and Minecraft overlay incompatibility. See the
+[R2 completion record](rendering/webgpu-compute-remediation-plan.md#r2-reconcile-strict-versus-lenient-backend-behavior)
+for exact passing and unpassed gates.
+
+WebGPU follow-up on 2026-09-21 enables native launcher and benchmark routing for
+x64/ARM64, adds strict WGSL to both launchers and their precompile queue, and
+keeps T8ditor explicitly outside the WebGPU scope. Confirmed native/browser
+device loss now receives a configurable bounded framework-owned recreation
+budget (three consecutive attempts by default); native single-loss recovery and
+repeated-loss exhaustion tests pass. Browser repeated-loss and long-run leak
+equivalence remain open in R20.
+
+Profiling workstream R4-R8 and R21 now has committed implementation: registered
+IDs, worker publication, upload matrices, phase/work aggregates, CPU-only and
+compile-out modes, completion-qualified D3D12/Vulkan/Dawn timestamps, pass-level
+capture, no-present throughput, matched x64/ARM64 CPU matrices, x64 shader
+preparation timing, and integrated reporting. Full repeated Release captures are
+retained. The shader matrix is diagnostic evidence from a hashed dirty-tree
+binary and must be rerun from a clean committed worktree before release use.
+Remaining GPU timestamp acceptance is limited to perturbation/external
+correlation and pending-callback/device-loss stress. See
+[diagnostics](debug/diagnostics.md#cpu-profiling-workstream) and the
+[profiling workflow](rendering/gpu-performance-profiling-workflow.md).
 
 ## Texture Atlas and Materials
 
@@ -149,8 +195,8 @@ Use:
 2. Add GPU-equipped retained visual reports as CI artifacts.
 3. Create reviewed 100/1,000-entity Release benchmark scenes and measure budgets.
 4. Expand headless success-path physics/navigation/editor save-reload tests.
-5. Add release-package extraction/install smoke tests.
-6. Add render-graph resource-lifetime validation and shader-cache operation tooling.
+5. Add installed-package launch smoke tests on equipped Android and Steam Deck hardware; assembled archives are now structurally inspected before tagged publication.
+6. Add shader-cache operation tooling; render-graph attachment lifetime and explicit-initialization validation are implemented.
 7. Add named atlas-region descriptors and mip-safe edge extrusion for filtered atlases.
 8. Add voxel sunlight/emissive propagation, ambient occlusion, fluid simulation, and transparent sorting when required.
 9. Add asynchronous chunk collision cooking, hierarchical voxel path regions for large crowds, LOD, indirect drawing, and floating origin based on measured project needs.
@@ -163,7 +209,7 @@ Use:
 - Runtime telemetry flushes on normal shutdown; direct process termination can lose output.
 - Android device install/launch and on-device performance still require equipped hardware evidence even though local and CI builds pass.
 - Steam Deck runtime performance still requires device evidence even though SteamRT CI builds pass.
-- JSON readers ignore unknown keys; scene/config spelling and validation remain important.
+- T850-owned config, scene, render-graph and compute-manifest readers reject unknown keys; glTF extensions and opaque component payloads remain permissive.
 - Minecraft water currently uses a static authored atlas frame; animated fluids and simulation are not implemented.
 - Generic `VoxelScene` still uses a generated atlas; Minecraft demonstrates the production file-backed atlas path.
 

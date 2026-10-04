@@ -56,7 +56,7 @@ void WireframeArrow::Create(int circleSegments, int numRays) {
   free(vsSourceP);
   free(fsSourceP);
 
-  int shaderID = g_pBaseDriver->CreateShader(vstr, fstr);
+  int shaderID = g_pBaseDriver->CreateShader(vstr, fstr, ShaderKey(), vsName, fsName);
   s = g_pBaseDriver->GetShaderIdx(shaderID);
 
   // Build geometry in local space:

@@ -41,6 +41,7 @@ public:
     m_records.resize(kFrameDelay);
     for (FrameRecord& record : m_records) {
       record.scopeIndices.resize(maxScopes, -1);
+      record.generations.resize(maxScopes, 0);
       record.cpuOnly.resize(maxScopes, false);
     }
 
@@ -92,15 +93,16 @@ public:
     record.activeCount = activeQueryCount;
     for (int index = 0; index < activeQueryCount; ++index) {
       record.scopeIndices[index] = frameQueries[index].scopeIndex;
+      record.generations[index] = frameQueries[index].generation;
       record.cpuOnly[index] = frameQueries[index].cpuOnly;
     }
 
-    const int queryCount = activeQueryCount * 2;
-    if (queryCount > 0) {
-      const int baseQuery = frameSlot * m_maxQueries;
+    for (int index = 0; index < activeQueryCount; ++index) {
+      if (record.cpuOnly[index]) continue;
+      const int baseQuery = frameSlot * m_maxQueries + index * 2;
       m_driver->GetCmdList()->ResolveQueryData(
         m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP,
-        baseQuery, queryCount, m_readbackBuffer.Get(),
+        baseQuery, 2, m_readbackBuffer.Get(),
         baseQuery * sizeof(uint64_t));
     }
     ++m_writeFrame;
@@ -122,11 +124,12 @@ public:
       if (record.cpuOnly[index]) continue;
       const int scopeIndex = record.scopeIndices[index];
       if (scopeIndex < 0 || scopeIndex >= static_cast<int>(scopes.size())) continue;
+      if (scopes[scopeIndex].generation != record.generations[index]) continue;
       const uint64_t begin = data[baseOffset + index * 2];
       const uint64_t end = data[baseOffset + index * 2 + 1];
       scopes[scopeIndex].gpuTotalMs +=
         static_cast<double>(end - begin) * 1000.0 / static_cast<double>(m_gpuFrequency);
-      ++scopes[scopeIndex].sampleCount;
+      ++scopes[scopeIndex].gpuSampleCount;
     }
     D3D12_RANGE written = {0, 0};
     m_readbackBuffer->Unmap(0, &written);
@@ -136,6 +139,7 @@ private:
   struct FrameRecord {
     int activeCount = 0;
     std::vector<int> scopeIndices;
+    std::vector<uint64_t> generations;
     std::vector<bool> cpuOnly;
   };
   static constexpr int kFrameDelay = 3;
@@ -194,6 +198,7 @@ public:
     for (int index = 0; index < activeQueryCount; ++index) {
       QueryPair& pair = m_querySets[m_writeSet][index];
       pair.scopeIndex = frameQueries[index].scopeIndex;
+      pair.generation = frameQueries[index].generation;
       if (frameQueries[index].cpuOnly) pair.pending = false;
     }
   }
@@ -213,10 +218,11 @@ public:
                            D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK ||
           context->GetData(pair.end.Get(), &end, sizeof(end),
                            D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) continue;
-      if (pair.scopeIndex >= 0 && pair.scopeIndex < static_cast<int>(scopes.size())) {
+        if (pair.scopeIndex >= 0 && pair.scopeIndex < static_cast<int>(scopes.size()) &&
+          scopes[pair.scopeIndex].generation == pair.generation) {
         scopes[pair.scopeIndex].gpuTotalMs +=
           static_cast<double>(end - begin) * 1000.0 / static_cast<double>(disjointData.Frequency);
-        ++scopes[pair.scopeIndex].sampleCount;
+        ++scopes[pair.scopeIndex].gpuSampleCount;
       }
       pair.pending = false;
     }
@@ -228,6 +234,7 @@ private:
     ComPtr<ID3D11Query> end;
     ComPtr<ID3D11Query> disjoint;
     int scopeIndex = -1;
+    uint64_t generation = 0;
     bool pending = false;
   };
   std::vector<QueryPair> m_querySets[2];
@@ -277,6 +284,7 @@ public:
     for (int index = 0; index < activeQueryCount; ++index) {
       QueryPair& pair = m_querySets[m_writeSet][index];
       pair.scopeIndex = frameQueries[index].scopeIndex;
+      pair.generation = frameQueries[index].generation;
       if (frameQueries[index].cpuOnly) pair.pending = false;
     }
   }
@@ -291,9 +299,10 @@ public:
       GLuint64 end = 0;
       glGetQueryObjectui64v(pair.beginQuery, GL_QUERY_RESULT, &begin);
       glGetQueryObjectui64v(pair.endQuery, GL_QUERY_RESULT, &end);
-      if (pair.scopeIndex >= 0 && pair.scopeIndex < static_cast<int>(scopes.size())) {
+        if (pair.scopeIndex >= 0 && pair.scopeIndex < static_cast<int>(scopes.size()) &&
+          scopes[pair.scopeIndex].generation == pair.generation) {
         scopes[pair.scopeIndex].gpuTotalMs += static_cast<double>(end - begin) / 1000000.0;
-        ++scopes[pair.scopeIndex].sampleCount;
+        ++scopes[pair.scopeIndex].gpuSampleCount;
       }
       pair.pending = false;
     }
@@ -304,6 +313,7 @@ private:
     GLuint beginQuery = 0;
     GLuint endQuery = 0;
     int scopeIndex = -1;
+    uint64_t generation = 0;
     bool pending = false;
   };
   std::vector<QueryPair> m_querySets[2];
@@ -327,6 +337,7 @@ public:
     m_records.resize(kFrameDelay);
     for (FrameRecord& record : m_records) {
       record.scopeIndices.resize(maxScopes, -1);
+      record.generations.resize(maxScopes, 0);
       record.cpuOnly.resize(maxScopes, false);
     }
 
@@ -370,6 +381,7 @@ public:
     record.activeCount = activeQueryCount;
     for (int index = 0; index < activeQueryCount; ++index) {
       record.scopeIndices[index] = frameQueries[index].scopeIndex;
+      record.generations[index] = frameQueries[index].generation;
       record.cpuOnly[index] = frameQueries[index].cpuOnly;
     }
     ++m_writeFrame;
@@ -385,6 +397,7 @@ public:
       if (record.cpuOnly[index]) continue;
       const int scopeIndex = record.scopeIndices[index];
       if (scopeIndex < 0 || scopeIndex >= static_cast<int>(scopes.size())) continue;
+      if (scopes[scopeIndex].generation != record.generations[index]) continue;
       uint64_t timestamps[2] = {};
       const VkResult result = vkGetQueryPoolResults(
         m_driver->GetDevice(), m_queryPool, baseQuery + index * 2, 2,
@@ -394,7 +407,7 @@ public:
         scopes[scopeIndex].gpuTotalMs +=
           static_cast<double>(timestamps[1] - timestamps[0]) *
           static_cast<double>(m_timestampPeriod) / 1000000.0;
-        ++scopes[scopeIndex].sampleCount;
+        ++scopes[scopeIndex].gpuSampleCount;
       }
     }
   }
@@ -412,6 +425,7 @@ private:
   struct FrameRecord {
     int activeCount = 0;
     std::vector<int> scopeIndices;
+    std::vector<uint64_t> generations;
     std::vector<bool> cpuOnly;
   };
   static constexpr int kFrameDelay = 3;

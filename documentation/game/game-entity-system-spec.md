@@ -95,13 +95,13 @@ All rows reverified against the implementation worktree on 2026-08-19.
 | Top-level game data | Schema v2 `game_entities`, `game_groups`, and optional settings with migration/validation | [GameValidation.cpp](../../T850/Framework/src/game/GameValidation.cpp) |
 | Runtime consumption | `SceneTemplate` owns and loads `GameLogicSystem` | [SceneTemplate.cpp](../../T850/DayScene/SceneTemplate.cpp) |
 | Runtime game module | Core plus optional examples under `Framework/include/game` and `Framework/src/game` | [GameLogicSystem.h](../../T850/Framework/include/game/GameLogicSystem.h) |
-| Serialization | Glaze pure reflection; unknown keys ignored on load | [EditorSceneFile.cpp#L134](../../T850/Framework/src/scene/EditorSceneFile.cpp) |
+| Serialization | Strict Glaze reflection for owned scene fields; opaque component `config_json` remains extensible | [EditorSceneFile.cpp](../../T850/Framework/src/scene/EditorSceneFile.cpp) |
 | Selection types | `0..10`, including game entity and game group | [EditorWorld.h](../../T850/T8ditor/EditorWorld.h) |
 | Physics collision layers | Nine gameplay object layers over static/moving broadphase buckets | [GameplayLayers.h](../../T850/Framework/include/physics/GameplayLayers.h) |
 | Physics queries | Filtered casts and sphere overlap with stable hit-to-entity mapping | [JoltPhysicsSystem.h](../../T850/Framework/include/physics/JoltPhysicsSystem.h) |
 | Navigation API | `NavMesh::FindPath(NavPathRequest)` + batch `FindPaths` | [NavigationSystem.h#L203](../../T850/Framework/include/navigation/NavigationSystem.h) |
 | Gameplay navigation | Batched `GameNavigationService` plus `PathFollowComponent`; DetourCrowd remains inactive | [GameNavigationService.h](../../T850/Framework/include/game/GameNavigationService.h) |
-| Tests | `DayScene --game-selftest`, 39 tests across gameplay, physics, mutable mesh, terrain, and navigation | [GameSelfTest.cpp](../../T850/Framework/src/game/GameSelfTest.cpp) |
+| Tests | `DayScene --game-selftest`: 39-test v1 baseline on 2026-08-19; current full engine suite is 78 tests as of 2026-09-26 | [GameSelfTest.cpp](../../T850/Framework/src/game/GameSelfTest.cpp) |
 
 ### 3.1 Footholds to reuse (not rebuild)
 
@@ -536,7 +536,7 @@ flowchart TD
 
 ## 6. Schema specification
 
-All types are added to `Framework/include/scene/EditorSceneFile.h` in namespace `t850::scene`. Glaze serializes by reflection — no macros — so adding fields is source-compatible. Because load uses `error_on_unknown_keys = false`, older and newer readers interoperate, which makes **explicit validation and migration mandatory** (typos are silent otherwise).
+All types are added to `Framework/include/scene/EditorSceneFile.h` in namespace `t850::scene`. Glaze serializes by reflection with strict unknown-key rejection for owned fields. Version migrations remain mandatory for intentional schema evolution; component `config_json` is retained as the explicit extension boundary.
 
 ### 6.1 Game descriptors
 
@@ -838,6 +838,7 @@ sequenceDiagram
   U-->>MOVE: MovementIntent{ navGoal }
   MOVE->>MOVE: velocity toward next corner
   MOVE->>Physics: EnqueueKinematicMove
+  U-->>NAV: CancelRequestsForObject on component/object destruction
 ```
 
 ### 8.4 FPS control flow
@@ -940,6 +941,7 @@ public:
   // Async: returns a request id; result resolved in ResolveNavigationResults phase.
   uint64_t RequestPath(RuntimeGameObjectId requester, const XVECTOR3& start, const XVECTOR3& goal);
   bool TryGetResult(uint64_t requestId, t850::navigation::NavPathResult& out);
+  size_t CancelRequestsForObject(RuntimeGameObjectId requester);
   bool ProjectToNavmesh(const XVECTOR3& p, XVECTOR3& out) const;
   bool Available() const;               // false if no baked/authored navmesh
 };
@@ -949,6 +951,7 @@ public:
 - A `PathFollowComponent` (example) consumes results and emits `MovementIntent.navGoal`.
 - Reuse `SceneObjectDesc.nav_agent_*` authoring fields for follow distance / formation slot rather than duplicating them.
 - If no navmesh exists, `RequestPath` fails gracefully and the requester falls back to direct steering.
+- Request ownership is retained through queued, worker-in-flight and completed states. Component and object destruction cancel every request for that runtime object; late worker results cannot revive canceled requests.
 
 ---
 
@@ -999,7 +1002,7 @@ Use existing `LineRenderer`/wireframe/`TextRenderer` in the `RenderEditorSceneFr
 
 Use existing `RuntimeTelemetry` + `Profiler` from slice 0.
 
-**Counters:** `game.entities.total`, `game.entities.active`, `game.components.total`, `game.components.updated`, `game.events.queued`, `game.events.dispatched`, `game.state_machines.transitions`, `game.physics.queries`, `game.nav.requests`, `game.nav.completed`, `game.validation.errors`, `game.validation.warnings`.
+**Counters:** `game.entities.total`, `game.entities.active`, `game.components.total`, `game.components.updated`, `game.events.queued`, `game.events.dispatched`, `game.state_machines.transitions`, `game.physics.queries`, `game.nav.requests`, `game.nav.completed`, `game.nav.canceled`, `game.validation.errors`, `game.validation.warnings`.
 
 **Scopes:** `game.update`, `game.events.dispatch`, `game.components.pre_physics`, `game.components.logic`, `game.state_machines`, `game.groups`, `game.spatial_queries`.
 
@@ -1048,6 +1051,7 @@ Run: `DayScene.exe --game-selftest` (exit code `0` = all pass).
 | T-CTRL-01 | Control | player vs ai controller produce distinct intents from same state |
 | T-PHYS-01 | Physics | queries return empty and commands no-op when Jolt unavailable |
 | T-NAV-01 | Nav | RequestPath with no navmesh fails gracefully |
+| T-NAV-02 | Nav | queued, completed and worker-in-flight requests remain canceled after owner destruction |
 | T-LIFE-01 | Integration | load 1-entity scene → registry=1; unload → registry=0 |
 | T-TICK-01 | Tick | large dt runs ≤ `maxStepsPerFrame` ticks |
 | T-TICK-02 | Tick | pause does not advance/accumulate ticks; resume advances normally |
@@ -1129,7 +1133,7 @@ Added fixed-tick pause, complete `game.*` telemetry, deterministic visual toolin
 | Per-frame string condition evaluation | Medium | Compile transitions at load (§5.7) |
 | Future Fast Play diverges from file load | Medium | Fidelity remains authoritative; any fast path must consume an owned copy and be cross-checked (§11.5) |
 | Worker-thread races | Medium | Main-thread tick; buffered physics; per-request Detour queries; mutation barrier |
-| Silent schema typos (`error_on_unknown_keys=false`) | Medium | Mandatory validation (§6.5) |
+| Schema evolution rejected by strict parsing | Medium | Versioned migration plus validation (§6.5); keep extension data inside `config_json` |
 | Two "group" concepts confuse authors | Low | Gameplay groups named Squad/Team (Appendix D) |
 | Build drift between `.vcxproj` and CMake | Medium | §14 requires both; use the registration audit in the verification guide |
 | Networking not addressed | Deferred | Out of scope v1; fixed tick is a compatible foundation |

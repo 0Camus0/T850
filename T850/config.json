@@ -1,39 +1,41 @@
-{
-  "targetPlatform": "android",
-  "dump": {
-    "frame": -1,
-    "enabled": false,
-    "trigger": "frame",
-    "seconds": -1
-  },
-  "keepRunning": false,
-  "architecture": "arm64",
-  "androidDeviceSerial": "R52XC058WKA",
-  "benchmark": false,
-  "cullingMode": "full",
-  "devTools": {
-    "d3d12Debug": false,
-    "logLevel": "error",
-    "logToFile": false
-  },
-  "configuration": "Release",
-  "replaySnapshot": {
-    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json",
-    "enabled": false
-  },
-  "cullDisabled": false,
-  "display": {
-    "model": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
-    "fullscreen": false,
-    "height": 1440,
-    "width": 2560,
-    "scene": 1
-  },
-  "debugFrames": false,
-  "telemetry": {
-    "outputPath": "logs\\perf_telemetry.json",
-    "enabled": false,
-    "frequencyFrames": 20
-  },
-  "api": "vulkan"
+﻿{
+    "telemetry":  {
+                      "frequencyFrames":  20,
+                      "outputPath":  "logs\\perf_telemetry.json",
+                      "enabled":  false
+                  },
+    "dump":  {
+                 "seconds":  -1,
+                 "trigger":  "frame",
+                 "frame":  -1,
+                 "enabled":  false
+             },
+    "configuration":  "Release",
+    "androidDeviceSerial":  "",
+    "debugFrames":  false,
+    "cullDisabled":  false,
+    "devTools":  {
+                     "logLevel":  "error",
+                     "logToFile":  false,
+                     "d3d12Debug":  false
+                 },
+    "display":  {
+                    "scene":  6,
+                    "width":  2560,
+                    "model":  "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+                    "height":  1440,
+                    "fullscreen":  false
+                },
+    "cullingMode":  "full",
+    "api":  "vulkan",
+    "targetPlatform":  "windows",
+    "benchmark":  false,
+    "postProcessMode":  "compute",
+    "keepRunning":  false,
+    "replaySnapshot":  {
+                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json",
+                           "enabled":  false
+                       },
+    "architecture":  "x64",
+    "webgpuShaderFlow":  "auto"
 }

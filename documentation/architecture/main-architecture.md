@@ -30,7 +30,7 @@ The key architectural idea is that platform loops and graphics APIs are behind `
 | Application contract | `T850/Framework/include/core/Core.h` — `AppBase` | Executable-level lifecycle: `InitVars`, `CreateAssets`, `LoadAssets`, `DestroyAssets`, `OnUpdate`, `OnDraw`, `OnInput`, pause/resume/reset. |
 | Scene contract | `T850/Framework/include/core/Core.h` — `SceneBase` | Runtime scene lifecycle and per-frame functions. Owns a `SceneProps` instance. |
 | Platform framework | `T850/Framework/include/core/Core.h` — `RootFramework` | Abstract platform/application loop and API switching interface. |
-| Windows framework | `T850/Framework/src/core/windows/Win32Framework.cpp` | SDL window, Win32 details, D3D11/D3D12/GL/Vulkan selection, input polling, resize, gamepads. |
+| Windows framework | `T850/Framework/src/core/windows/Win32Framework.cpp` | SDL window, Win32 details, D3D11/D3D12/GL/Vulkan/WebGPU runtime selection, input polling, resize, gamepads. |
 | Linux/Steam Deck framework | `T850/Framework/src/core/LinuxFramework.cpp` | SDL + Vulkan-only runtime for Linux/Steam Deck. |
 | Android framework | `T850/Framework/src/core/android/AndroidFramework.cpp` | Native activity glue, Vulkan-only runtime, native window lifecycle, touch/key input. |
 | Global context | `T850/Framework/include/core/EngineContext.h`, `T850/Framework/src/core/EngineContext.cpp` | Lightweight global access to driver/device/context/physics/thread pool/config. |
@@ -51,7 +51,7 @@ flowchart TD
   FrameworkSystems --> Physics["Jolt physics"]
   FrameworkSystems --> Navigation["Recast/Detour navigation"]
   FrameworkSystems --> Resources["ResourceManager / MeshAssetCache / MaterialAssetCache"]
-  Graphics --> GPU["D3D11 / D3D12 / GL / Vulkan"]
+  Graphics --> GPU["D3D11 / D3D12 / GL / Vulkan / WebGPU"]
 
   T8ditor["T8ditor EditorApp"] --> App
   DayScene["DayScene App"] --> App
@@ -147,7 +147,7 @@ Graphics API switches remain only at composition boundaries where an implementat
 
 Platform implementations:
 
-- `Win32Framework` supports D3D11, D3D12, OpenGL, and Vulkan.
+- `Win32Framework` supports D3D11, D3D12, OpenGL, Vulkan, and native Dawn/WebGPU for DayScene. T8ditor intentionally supports only the first four.
 - `LinuxFramework` forces Vulkan and is used for Steam Deck/Linux.
 - `AndroidFramework` forces Vulkan and is driven by native app glue events.
 
@@ -235,6 +235,7 @@ Important details:
 - `Win32Framework::OnCreateApplication()` initializes SDL, input/gamepads, thread pool, telemetry, navigation backend logging, then calls `ChangeAPI`.
 - `ChangeAPI()` creates or recreates the graphics driver/window and calls `AppBase::CreateAssets()`.
 - Runtime app may enter `UpdateApplication()` immediately; the editor is also driven by the framework loop.
+- `BaseDriver`, API objects, resource registries and `ShaderProgramCache` are render-thread-affine. Worker jobs prepare owned CPU data and return it to this thread for GPU creation, mutation and destruction; Debug builds assert shader-cache affinity.
 
 ## Per-frame flow: runtime app
 
@@ -252,7 +253,8 @@ flowchart TD
 
   Draw --> Clear["BaseDriver::Clear"]
   Clear --> SceneDraw["DevLayer.Draw or Scene.OnDraw on Android"]
-  SceneDraw --> RuntimeGUI["Runtime ImGui/dev UI"]
+  SceneDraw --> BoneUpload["RenderGraph pre-pass bone uploads"]
+  BoneUpload --> RuntimeGUI["Runtime ImGui/dev UI"]
   RuntimeGUI --> Present["Driver present path"]
 ```
 
@@ -374,7 +376,7 @@ This is why GPU-owned resources should be created in `CreateAssets()` or later a
 
 | Platform | Framework | Graphics APIs | Notes |
 |---|---|---|---|
-| Windows | `Win32Framework` | D3D11, D3D12, OpenGL, Vulkan | SDL window, Win32 icon/mouse confinement, gamepad handling, API switching. |
+| Windows | `Win32Framework` | D3D11, D3D12, OpenGL, Vulkan, WebGPU runtime | SDL window, Win32 icon/mouse confinement, gamepad handling, API switching; T8ditor excludes WebGPU. |
 | Linux / Steam Deck | `LinuxFramework` | Vulkan only | SDL window, Steam Deck detection, Vulkan-only backend. |
 | Android | `AndroidFramework` | Vulkan only | Native activity window lifecycle, `ANativeWindow`, Android input/touch/back handling. |
 

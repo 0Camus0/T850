@@ -1,8 +1,8 @@
 # Cascaded Shadow Maps Detailed Implementation Specification
 
 **Status:** Implementation specification
-**Scope:** Directional CSM design and integration for D3D11, D3D12, OpenGL, and Vulkan
-**Shader split:** HLSL for D3D11, D3D12, and Vulkan; dedicated GLSL for OpenGL
+**Scope:** Directional CSM design and integration for D3D11, D3D12, OpenGL, Vulkan, and the shared WebGPU runtime path
+**Shader split:** HLSL for D3D11/D3D12/Vulkan and WebGPU translation; dedicated GLSL for OpenGL; direct WGSL where packaged
 **Primary audience:** Implementation agent; this document is intended to remove design guesswork
 **Implementation state:** Specification only; the source, shaders, assets, and schemas are not yet changed
 
@@ -1603,7 +1603,7 @@ Add tests for code that does not need a GPU:
 
 ### 24.5 Cross-API visual matrix
 
-Run on D3D11, D3D12, OpenGL, and Vulkan:
+Run on D3D11, D3D12, OpenGL, Vulkan, and WebGPU runtime:
 
 1. Legacy one-map graph.
 2. Generated counts 1 through 6.

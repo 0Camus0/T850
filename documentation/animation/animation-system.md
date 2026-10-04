@@ -21,8 +21,8 @@ At runtime:
 1. glTF import fills `xF::xSkeleton`, `xF::xAnimationInfo`, and `xF::xSkinWeights`.
 2. `PrimitiveManager` detects skin/animation data and creates `RenderSkinnedMesh`.
 3. `RenderSkinnedMesh::Create()` initializes `AnimationController` and compiles skinned shader variants.
-4. Each frame, scene/editor code calls `UpdateAnimationPose()` or `UpdateAnimationAndBones()` before rendering.
-5. `RenderSkinnedMesh` uploads final bone matrices to a texture.
+4. Scene/editor simulation updates CPU poses with `UpdateAnimationPose()` before physics/ragdoll integration.
+5. `RenderGraph::Execute()` uploads every visible skinned mesh's final bone matrices immediately before opening a render pass.
 6. `VS_Mesh` samples the bone texture and skins vertices on the GPU.
 
 ```mermaid
@@ -238,9 +238,11 @@ The bone texture width is chosen as `ceil(sqrt(numBones * 4))`, because every bo
 `RenderSkinnedMesh` exposes two update calls:
 
 - `UpdateAnimationPose()` updates the CPU animation pose only.
-- `UpdateAnimationAndBones()` updates the pose and uploads the bone texture.
+- `UpdateAnimationAndBones()` updates the pose and uploads the bone texture for standalone render paths.
 
-The header explicitly notes that `UpdateAnimationAndBones()` must run before the render graph and outside any render pass. This is important for Vulkan because texture uploads/copy commands must not happen inside a render pass.
+Bone texture uploads must run outside any render pass. Graph-driven rendering
+enforces this at the beginning of `RenderGraph::Execute()`; special standalone
+preview paths remain responsible for calling `UploadBoneTexture()` themselves.
 
 `UpdateAnimationPose()`:
 
@@ -265,10 +267,11 @@ sequenceDiagram
   participant Tex as BoneTexture
   participant Shader as VS_Mesh
 
-  Scene->>Mesh: UpdateAnimationAndBones()
+  Scene->>Mesh: UpdateAnimationPose()
   Mesh->>Ctrl: Update(deltaTime)
   Ctrl-->>Mesh: final bone matrices
-  Mesh->>Tex: UpdateFloatData(RGBA32F rows)
+  Scene->>Mesh: RenderGraph::Execute()
+  Mesh->>Tex: pre-pass UpdateFloatData(RGBA32F rows)
   Scene->>Mesh: Draw()
   Mesh->>Shader: bind bone texture at t24 / u_BoneTex
   Shader->>Shader: sample 4 texels per bone
@@ -363,13 +366,13 @@ To extend animation:
 3. Add new playback controls to `AnimationController`, then expose them through `RenderSkinnedMesh`.
 4. If adding a new GPU skinning mode, add a `ShaderKey` bit, define mapping, shader code, and draw-time buffer/texture binding.
 5. If changing bone count limits, update `kMaxBones`, shader array/texture assumptions, debug buffers, and validation logs.
-6. Keep `UpdateAnimationAndBones()` before render graph execution to avoid backend upload hazards.
+6. Keep CPU pose evaluation before physics/ragdoll integration; graph-driven rendering uploads visible bone textures at the start of `RenderGraph::Execute()`.
 
 ## Known limitations and gotchas
 
 - Bone count is capped at 256.
 - GL uniform matrix fallback is capped lower in shader comments; texture skinning avoids that limit.
-- `UpdateAnimationAndBones()` must run outside render passes.
+- Standalone paths using `UpdateAnimationAndBones()` must run outside render passes; graph-driven paths receive the same guarantee automatically.
 - Keyframe stepping assumes a shared time axis across channels.
 - Imported keys are assumed sorted.
 - `CUBICSPLINE` interpolation is not evaluated as cubic; the importer uses the value record and runtime interpolates linearly/SLERP.
@@ -382,7 +385,7 @@ To extend animation:
 1. Confirm the glTF imported skin attributes: `HAS_SKINWEIGHTS0` and `HAS_SKININDEXES0`.
 2. Check logs for `[glTF] Building skeleton`, `Skin weights applied`, and `Converted animations`.
 3. Confirm `RenderSkinnedMesh::Create()` reports a nonzero bone count and animation set count.
-4. Verify `UpdateAnimationAndBones()` runs before the render graph.
+4. Verify CPU pose evaluation precedes physics/ragdoll integration and `RenderGraph::Execute()` performs the bone upload before opening a pass.
 5. If animation is frozen, check playing state, keyframe mode, snapshot pose state, speed, and `FrameDeltaSec`.
 6. Inspect `anim_debug_bindpose.txt` for skeleton hierarchy, inverse bind matrices, and final matrices.
 7. Confirm bone texture width/data has enough capacity and `animation.bonesUploaded` telemetry is nonzero.

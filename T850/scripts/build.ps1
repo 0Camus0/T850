@@ -60,7 +60,7 @@ function Test-MSBuildSupportsPlatform {
     if (-not (Test-Path $vcRoot)) { return $false }
 
     $arm64Compiler = Get-ChildItem -Path $vcRoot -Recurse -Filter cl.exe -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -match '\\bin\\Hostx64\\arm64\\cl\.exe$' } |
+        Where-Object { $_.FullName -match '\\bin\\Host(?:x64|arm64)\\arm64\\cl\.exe$' } |
         Select-Object -First 1
     return [bool]$arm64Compiler
 }

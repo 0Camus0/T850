@@ -19,6 +19,7 @@
 #include <utils/cil.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
+#include <utils/TextureMipmaps.h>
 
 namespace t850 {
 namespace {
@@ -448,17 +449,6 @@ namespace {
         offset += size_t(mipSize) * size_t(mipSize) * 4u;
       }
     }
-  }
-
-  float HalfToFloat(uint16_t value) {
-    float sign = (value & 0x8000u) ? -1.0f : 1.0f;
-    int exponent = int((value >> 10u) & 0x1Fu);
-    int mantissa = int(value & 0x03FFu);
-    if (exponent == 0)
-      return sign * std::ldexp(float(mantissa), -24);
-    if (exponent == 31)
-      return mantissa ? std::numeric_limits<float>::quiet_NaN() : sign * std::numeric_limits<float>::infinity();
-    return sign * std::ldexp(float(1024 + mantissa), exponent - 25);
   }
 
   float RadicalInverseVdC(uint32_t bits) {

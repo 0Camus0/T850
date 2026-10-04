@@ -49,7 +49,8 @@ This glossary captures engine terms used across the documentation.
 | Primitive | Engine render object abstraction. Common path: `PrimitiveInst` references a `PrimitiveBase` implementation such as `RenderMesh`. |
 | RenderGraph | Data-driven render pipeline loaded from JSON, with passes, render targets, inputs, draw commands, and state changes. |
 | Render graph pass | One JSON-declared render step that can bind a render target, set state, bind inputs, and issue mesh or quad draws. |
-| Render graph edge | Runtime dependency record from a prior RT writer pass to a later pass that samples that RT attachment. |
+| Render graph edge | Runtime dependency record from the most recent prior writer of one exact RT attachment to a later sampler. |
+| Initialized render target | Graph target declared with `initialized: true`; it receives one deterministic zero clear after allocation/recreation before any graph read. |
 
 ## Rendering terms
 
@@ -65,9 +66,11 @@ This glossary captures engine terms used across the documentation.
 | `RenderQueue` | Future flat draw-list abstraction with sortable `DrawItem` entries; current mesh rendering still walks `RenderMesh::Draw`. |
 | `DrawIndexed` | Backend draw call using index count, start index, and base vertex to draw a submesh or cluster. |
 | `ShaderKey` | Bitfield describing shader permutation features and pass type. |
+| `ShaderProgramCache` | Render-thread-affine, non-owning map from stable shader family/permutation/flow identity to a driver-owned compiled program. |
 | `PassType` | Six-bit render pass selector stored inside `ShaderKey`, used to compile pass-specific shader variants. |
 | Shader disk cache | API-specific compiled shader artifact cache stored under `Shaders/.t8shadercache`. |
 | SPIR-V reflection | Vulkan helper that parses SPIR-V modules for descriptor bindings and vertex input locations. |
+| Compute kernel manifest | Strict packaged `Shaders/compute_kernels.json` registry for compute sources, entry points, permutations, typed bindings, formats and extent rules. |
 | PSO | Pipeline State Object, especially relevant for D3D12/Vulkan where shader/state/topology combine into a pipeline. |
 | PSO cache | D3D12/Vulkan runtime cache keyed by shader pointer plus render state, topology, and render target formats/render pass. |
 | VB | Vertex Buffer. |
@@ -173,7 +176,7 @@ This glossary captures engine terms used across the documentation.
 | `EventBus` | Queued gameplay event system; handler-published events dispatch on a later cycle rather than recursively. |
 | `StateMachine` | Load-compiled state/transition runtime with priority, descriptor-order ties, cooldown, and event conditions. |
 | `GamePhysicsService` | Gameplay-facing filtered query and buffered write facade over Jolt. |
-| `GameNavigationService` | Batched path request/result facade over NavMesh/Detour with async completion and mutation barrier. |
+| `GameNavigationService` | Batched path request/result facade over NavMesh/Detour with async completion, mutation barrier, and requester-aware cancellation that rejects late worker results. |
 | `PathFollowComponent` | Example component that consumes path results and steers AI through waypoints with direct fallback. |
 | Gameplay group | Stable-ID Squad/Team record with formation/flock settings; unrelated to editor mesh-index groups. |
 | Fidelity Play | T8ditor Play path that exports a temporary `.t8scene`, validates it, and uses the real SceneTemplate file loader. |

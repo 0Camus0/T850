@@ -61,7 +61,7 @@ void WireframeSphere::Create(int rings, int segments) {
   free(vsSourceP);
   free(fsSourceP);
 
-  int shaderID = g_pBaseDriver->CreateShader(vstr, fstr);
+  int shaderID = g_pBaseDriver->CreateShader(vstr, fstr, ShaderKey(), vsName, fsName);
   s = g_pBaseDriver->GetShaderIdx(shaderID);
 
   const float PI = 3.14159265358979323846f;

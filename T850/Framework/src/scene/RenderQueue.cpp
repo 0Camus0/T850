@@ -1,6 +1,7 @@
 #include <pch.h>
 
 #include <scene/RenderQueue.h>
+#include <scene/RenderMesh.h>
 #include <video/BaseDriver.h>
 
 #include <algorithm>
@@ -33,6 +34,7 @@ namespace t850 {
   }
 
   void MeshDrawStateTracker::Reset() {
+    m_frustumValid = false;
     m_lastShader = nullptr;
     for (int i = 0; i < kMaxTrackedSlots; ++i) m_lastTex[i] = nullptr;
     for (int i = 0; i < kMaxTrackedSlots; ++i) m_lastCB[i] = nullptr;
@@ -45,6 +47,16 @@ namespace t850 {
     m_lastIBFmtSet = false;
     m_lastTopology = Topology::TRIANLE_LIST;
     m_lastTopologySet = false;
+  }
+
+  void MeshDrawStateTracker::GetFrustumPlanes(const XMATRIX44& viewProjection, XVECTOR3 (&planes)[6]) {
+    if (!m_passActive || !m_frustumValid ||
+        std::memcmp(m_frustumViewProjection.m, viewProjection.m, sizeof(viewProjection.m)) != 0) {
+      RenderMesh::ExtractFrustumPlanes(viewProjection, m_frustumPlanes);
+      m_frustumViewProjection = viewProjection;
+      m_frustumValid = true;
+    }
+    std::copy(std::begin(m_frustumPlanes), std::end(m_frustumPlanes), planes);
   }
 
   void MeshDrawStateTracker::OnShaderChanged(ShaderBase* s) {

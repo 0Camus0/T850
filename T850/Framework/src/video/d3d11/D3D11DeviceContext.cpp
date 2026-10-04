@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -57,6 +58,7 @@ namespace t850 {
 
   void D3DXDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex)
   {
+    RuntimeTelemetry::RecordDraw(vertexCount);
     APIContext->DrawIndexed(vertexCount, startIndex, startVertex);
     T8_TRACE(EvDrawIndexed(vertexCount, startIndex, startVertex));
   }

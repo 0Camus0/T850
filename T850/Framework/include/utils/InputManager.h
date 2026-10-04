@@ -325,6 +325,8 @@ public:
 	bool	KeyStates[2][MAXKEYS];
 	bool	MouseButtonStates[2][MAXMOUSEBUTTONS];
 	GamepadInputState Gamepad;
+	bool toggleCameraView = false;
+	bool toggleInvertY = false;
 
 	int		xDelta;
 	int 	yDelta;

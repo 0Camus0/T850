@@ -13,6 +13,7 @@
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <debug/RuntimeTelemetry.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <core/Config.h>
 #include <iostream>
 #include <string>
@@ -34,6 +35,11 @@ namespace t850 {
   //  Shared helpers — used by all D3D12 source files
   // ══════════════════════════════════════════════════════
   static D3D12Driver* GetD3D12Driver() { return static_cast<D3D12Driver*>(g_pBaseDriver); }
+  uint64_t D3D12Driver::ProfilingAdapterId() const {
+    if (!T8Device) return 0;
+    const auto luid = static_cast<D3D12Device*>(T8Device)->GetNativeDevice()->GetAdapterLuid();
+    return static_cast<uint64_t>(static_cast<uint32_t>(luid.HighPart)) << 32 | luid.LowPart;
+  }
   static ID3D12Device* GetNativeDevice() { return static_cast<D3D12Device*>(T8Device)->GetNativeDevice(); }
 
   namespace {
@@ -229,6 +235,18 @@ namespace t850 {
   //  D3D12Driver — PSO Cache
   // ══════════════════════════════════════════════════════
 
+  void D3D12Driver::OnShaderDestroying(ShaderBase& shader) {
+    m_psoCacheEvictions += std::erase_if(m_psoCache, [&](const auto& entry) {
+      return entry.first.program == shader.programKey;
+    });
+  }
+
+  ShaderProgramFlow D3D12Driver::GetShaderProgramFlow() const {
+    return g_config.webgpuShaderFlow == "legacyhlsl"
+      ? ShaderProgramFlow::D3D12LegacyHlsl
+      : ShaderProgramFlow::D3D12Dxc;
+  }
+
   ID3D12PipelineState* D3D12Driver::GetOrCreatePSO(D3D12Shader* shader, uint8_t numRTVs,
                                                      const DXGI_FORMAT* rtvFormats, DXGI_FORMAT dsvFormat) {
     if (numRTVs > 0 && rtvFormats && rtvFormats[0] == DXGI_FORMAT_UNKNOWN)
@@ -238,7 +256,7 @@ namespace t850 {
     // (the depth test/write is disabled in the PSO's DepthStencilState already)
 
     D3D12PipelineKey key = {};
-    key.shaderPtr = reinterpret_cast<uintptr_t>(shader);
+    key.program = shader->programKey;
     key.blend = (uint8_t)m_currentBlend;
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
@@ -251,7 +269,11 @@ namespace t850 {
     key.dsvFormat = dsvFormat;
 
     auto it = m_psoCache.find(key);
-    if (it != m_psoCache.end()) return it->second.Get();
+    if (it != m_psoCache.end()) {
+      ++m_psoCacheHits;
+      return it->second->Get();
+    }
+    ++m_psoCacheMisses;
 
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
 
@@ -334,17 +356,18 @@ namespace t850 {
       }
     }
 
-    ComPtr<ID3D12PipelineState> psoObj;
-    HRESULT hr = device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj));
-    if (FAILED(hr)) {
-       T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d fmt0=%d",
-         hr, shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs, key.rtvFormats[0]);
+    auto pipeline = std::make_unique<D3D12Pipeline>();
+    if (!pipeline->Create(device, key, pso, &m_pipelineLibrary, &m_shaderCacheSession)) {
+       T8_LOG_ERROR("[D3D12] CreatePSO failed shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d fmt0=%d",
+         shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs, key.rtvFormats[0]);
       return nullptr;
     }
+    T8_TELEMETRY_ADD("gpu.pipeline_creations", 1);
+    ID3D12PipelineState* psoState = pipeline->Get();
 
         T8_LOG_DEBUG("[D3D12] PSO created: shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d",
             shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs);
-    m_psoCache[key] = psoObj;
+    m_psoCache[key] = std::move(pipeline);
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       TracePSORec rec;
@@ -364,7 +387,7 @@ namespace t850 {
       g_renderTracer->EvCreatePSO(rec);
     }
 #endif
-    return psoObj.Get();
+    return psoState;
   }
 
   // ══════════════════════════════════════════════════════
@@ -436,6 +459,7 @@ namespace t850 {
       for (UINT i = 0; i < kBackBufferCount; i++) {
         if (!m_backBuffers[i] && SUCCEEDED(m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i])))) {
           device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRTVs[i]);
+          m_backBufferStates[i] = D3D12_RESOURCE_STATE_PRESENT;
         }
       }
       return false;
@@ -446,6 +470,7 @@ namespace t850 {
     for (UINT i = 0; i < kBackBufferCount; i++) {
       m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i]));
       device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRTVs[i]);
+      m_backBufferStates[i] = D3D12_RESOURCE_STATE_PRESENT;
     }
 
     // Recreate depth buffer at the same DSV descriptor slot
@@ -595,6 +620,7 @@ namespace t850 {
       m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i]));
       m_backBufferRTVs[i] = m_heaps[D3D12Heap::RTV].AllocateCPU();
       device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRTVs[i]);
+      m_backBufferStates[i] = D3D12_RESOURCE_STATE_PRESENT;
     }
     T8_LOG_INFO("[D3D12] Back buffer RTVs created");
   }
@@ -658,8 +684,12 @@ namespace t850 {
   void D3D12Driver::InitDriver() {
     T8Device = new D3D12Device;
     T8DeviceContext = new D3D12DeviceContext;
+    T8_LOG_INFO("[D3D12] Shader program flow: %s",
+                GetShaderProgramFlow() == ShaderProgramFlow::D3D12LegacyHlsl ? "legacyHLSL" : "dxc");
     T8_LOG_INFO("[D3D12] >> CreateDevice...");
     CreateDevice();
+    m_shaderCacheSession.Initialize(static_cast<D3D12Device*>(T8Device)->GetNativeDevice());
+    m_pipelineLibrary.Initialize(static_cast<D3D12Device*>(T8Device)->GetNativeDevice(), &m_shaderCacheSession);
     T8_LOG_INFO("[D3D12] >> CreateCommandInfrastructure...");
     CreateCommandInfrastructure();
     T8_LOG_INFO("[D3D12] >> CreateSwapChain...");
@@ -709,12 +739,18 @@ namespace t850 {
 
   void D3D12Driver::DestroyDriver() {
     StopDebugMessageThread();
-    WaitForGPU();
+    FlushGPUResources();
     for (const RetiredBuffer& retired : m_retiredBuffers)
       if (retired.buffer) retired.buffer->release();
     m_retiredBuffers.clear();
     DestroyShaders(); DestroyRTs(); DestroyTextures();
+    T8_LOG_INFO("[D3D12] Pipeline cache: entries=%zu hits=%llu misses=%llu evictions=%llu",
+          m_psoCache.size(), static_cast<unsigned long long>(m_psoCacheHits),
+          static_cast<unsigned long long>(m_psoCacheMisses),
+          static_cast<unsigned long long>(m_psoCacheEvictions));
     m_psoCache.clear();
+    m_pipelineLibrary.Shutdown(&m_shaderCacheSession);
+    m_shaderCacheSession.Shutdown();
     for (UINT i = 0; i < kBackBufferCount; i++) {
       if (m_cbRingMapped[i]) { m_cbRingBuffers[i]->Unmap(0, nullptr); m_cbRingMapped[i] = nullptr; }
       m_cbRingBuffers[i].Reset();
@@ -756,6 +792,12 @@ namespace t850 {
     m_pendingUploadBatches.clear();
   }
 
+  void D3D12Driver::FlushGPUResources() {
+    if (m_frameStarted) CompleteFrame(FrameCompletionMode::SubmitNoPresent);
+    WaitForGPU();
+    for (auto& resources : m_computeKeepAlive) resources.clear();
+  }
+
   // ══════════════════════════════════════════════════════
   //  D3D12Driver — Frame lifecycle
   // ══════════════════════════════════════════════════════
@@ -767,13 +809,14 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_FenceWait");
-      T8_TELEMETRY_SCOPE("gpu.d3d12.fence_wait");
+      T8_TELEMETRY_SCOPE("gpu.gpu_wait");
       // Wait for the specific backbuffer's fence to ensure its allocator is safe to reset
       const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
       if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
         m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);
         WaitForSingleObject(m_fenceEvent, INFINITE);
       }
+      m_computeKeepAlive[m_currentBackBuffer].clear();
       for (auto iterator = m_retiredBuffers.begin(); iterator != m_retiredBuffers.end();) {
         if (iterator->framesRemaining > 0) --iterator->framesRemaining;
         if (iterator->framesRemaining == 0) {
@@ -811,6 +854,9 @@ namespace t850 {
     m_lastRootSig = nullptr;
     static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     m_frameStarted = true;
+  #if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->BeginFrame();
+  #endif
   }
 
   void D3D12Driver::EndFrame() {}
@@ -826,25 +872,32 @@ namespace t850 {
                 (unsigned long long)m_dynamicDescriptorBase);
   }
 
+  void D3D12Driver::TransitionBackBuffer(D3D12_RESOURCE_STATES nextState) {
+    if (m_currentBackBuffer >= kBackBufferCount ||
+        !m_backBuffers[m_currentBackBuffer] ||
+        m_backBufferStates[m_currentBackBuffer] == nextState)
+      return;
+
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
+    barrier.Transition.StateBefore = m_backBufferStates[m_currentBackBuffer];
+    barrier.Transition.StateAfter = nextState;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &barrier);
+    m_backBufferStates[m_currentBackBuffer] = nextState;
+  }
+
   void D3D12Driver::Clear() {
     if (!m_frameStarted) {
       BeginFrame();
-      m_frameStarted = true;
-
-      if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
-        return;
-
-      D3D12_RESOURCE_BARRIER b = {};
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
-      b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
     }
 
     if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
       return;
+
+    if (CurrentRT < 0)
+      TransitionBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET);
 
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       const float cc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -879,6 +932,7 @@ namespace t850 {
                          (rt->number_RT > 0 ? 1u : 0u) | (rt->depthResource ? 2u : 0u),
                          cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     } else {
+      TransitionBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET);
       m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
       m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
       T8_TRACE(EvClearRT(-1, 1u | 2u, cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
@@ -888,16 +942,9 @@ namespace t850 {
   void D3D12Driver::ClearBackbufferWithColor(float r, float g, float b, float a) {
     if (!m_frameStarted) {
       BeginFrame(FrameTargetMode::Swapchain);
-
-      D3D12_RESOURCE_BARRIER b = {};
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
-      b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
     }
 
+    TransitionBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET);
     CurrentRT = -1;
     m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
     m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
@@ -913,14 +960,20 @@ namespace t850 {
   }
 
   void D3D12Driver::CompleteFrame(FrameCompletionMode mode) {
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
+    T8_TELEMETRY_ADD("gpu.ring.overflows", 0);
     if (!m_frameStarted) {
       return;
     }
+#if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->EndFrame();
+#endif
 
     if (mode == FrameCompletionMode::SubmitNoPresent || IsOffscreenEnabled()) {
       {
         T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_OffscreenCmdClose+Execute");
-        T8_TELEMETRY_SCOPE("gpu.d3d12.cmd_close_execute");
+        T8_TELEMETRY_SCOPE("gpu.submit");
         m_commandLists[m_currentBackBuffer]->Close();
         ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
         m_commandQueue->ExecuteCommandLists(1, lists);
@@ -929,6 +982,9 @@ namespace t850 {
       const UINT64 fenceVal = m_nextFenceValue++;
       m_commandQueue->Signal(m_fence.Get(), fenceVal);
       m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+    #if T850_ENABLE_GPU_PROFILING
+      if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(fenceVal);
+    #endif
 
       m_frameStarted = false;
       if (IsOffscreenEnabled()) {
@@ -950,14 +1006,8 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_CmdClose+Execute");
-      T8_TELEMETRY_SCOPE("gpu.d3d12.cmd_close_execute");
-      D3D12_RESOURCE_BARRIER b = {};
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
-      b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
+      T8_TELEMETRY_SCOPE("gpu.submit");
+      TransitionBackBuffer(D3D12_RESOURCE_STATE_PRESENT);
       m_commandLists[m_currentBackBuffer]->Close();
       ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
       m_commandQueue->ExecuteCommandLists(1, lists);
@@ -965,7 +1015,7 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_Present_Call");
-      T8_TELEMETRY_SCOPE("gpu.d3d12.present");
+      T8_TELEMETRY_SCOPE("gpu.present");
       UINT presentFlags = m_tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0;
       m_swapChain->Present(0, presentFlags);
     }
@@ -976,6 +1026,9 @@ namespace t850 {
     const UINT64 fenceVal = m_nextFenceValue++;
     m_commandQueue->Signal(m_fence.Get(), fenceVal);
     m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+  #if T850_ENABLE_GPU_PROFILING
+    if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(fenceVal);
+  #endif
 
     m_currentBackBuffer = m_swapChain->GetCurrentBackBufferIndex();
     m_frameStarted = false;
@@ -1052,6 +1105,7 @@ namespace t850 {
     if (BindOffscreenTarget(false))
       return;
 
+    TransitionBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET);
     m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
     m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
     m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
@@ -1263,7 +1317,7 @@ namespace t850 {
 
   bool D3D12Driver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
     T8_TELEMETRY_SCOPE("gpu.d3d12.read_rt_color_float");
-    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
+    T8_TELEMETRY_ADD("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || attachment < 0)
       return false;
     D3D12RT* rt = static_cast<D3D12RT*>(RTs[rtID]);
@@ -1558,6 +1612,7 @@ namespace t850 {
       return;
     }
     memcpy(mapped, data, dataSize);
+    RuntimeTelemetry::RecordActiveStaging(dataSize, 1);
     upload->Unmap(0, nullptr);
 
     if (IsResourceUploadBatchActive()) {
@@ -1628,6 +1683,7 @@ namespace t850 {
   D3D12_GPU_VIRTUAL_ADDRESS D3D12Driver::AllocateCBData(const void* data, UINT dataSize) {
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
+      RuntimeTelemetry::RecordRingOverflow();
       // Wrapping mid-frame would overwrite CB data still being read by earlier
       // draws in the same command list. Crash loud rather than corrupt rendering.
       T8_LOG_ERROR("[D3D12] CB ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
@@ -1641,9 +1697,12 @@ namespace t850 {
     UINT bufIdx = m_currentBackBuffer;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, dataSize);
+    RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, dataSize);
 
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_cbRingBuffers[bufIdx]->GetGPUVirtualAddress() + m_cbRingOffset;
     m_cbRingOffset += alignedSize;
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
     if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return gpuAddr;
   }
@@ -1652,6 +1711,7 @@ namespace t850 {
     // Use 256-byte alignment to stay compatible with CBV allocations from the same ring buffer
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
+      RuntimeTelemetry::RecordRingOverflow();
       T8_LOG_ERROR("[D3D12] Ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
                    m_cbRingOffset, alignedSize, kCBRingBufferSize, m_cbRingPeakUsage);
       assert(false && "D3D12 ring buffer overflow — increase kCBRingBufferSize");
@@ -1661,9 +1721,12 @@ namespace t850 {
     UINT bufIdx = m_currentBackBuffer;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, dataSize);
+    RuntimeTelemetry::RecordActiveStaging(dataSize);
 
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_cbRingBuffers[bufIdx]->GetGPUVirtualAddress() + m_cbRingOffset;
     m_cbRingOffset += alignedSize;
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
     if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return gpuAddr;
   }

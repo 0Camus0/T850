@@ -41,6 +41,11 @@ struct DevToolsJson {
   std::optional<bool> d3d12Debug;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
+  std::optional<bool> profileCpuOnly;
+  std::optional<bool> profileGpu;
+  std::optional<int> profileGpuFrames;
+  std::optional<std::string> profileGpuOutputPath;
+  std::optional<std::string> profileGpuPasses;
   std::optional<bool> autoStartRagdoll;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
@@ -72,6 +77,8 @@ struct RuntimeTelemetryJson {
 
 struct RuntimeConfigJson {
   std::optional<std::string> api;
+  std::optional<std::string> webgpuShaderFlow;
+  std::optional<int> webgpuDeviceRecoveryAttempts;
   std::optional<int> width;
   std::optional<int> height;
   std::optional<bool> fullscreen;
@@ -93,6 +100,12 @@ struct RuntimeConfigJson {
   std::optional<bool> d3d12Debug;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
+  std::optional<bool> profileCpuOnly;
+  std::optional<bool> profileGpu;
+  std::optional<int> profileGpuFrames;
+  std::optional<std::string> profileGpuOutputPath;
+  std::optional<std::string> profileGpuPasses;
+  std::optional<int> telemetryUploadBudgetMB;
   std::optional<bool> autoStartRagdoll;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
@@ -118,6 +131,7 @@ struct RuntimeConfigJson {
   std::optional<std::string> runtimeTelemetryOutputPath;
   std::optional<float> orbitYaw;
   std::optional<std::string> sceneProfile;
+  std::optional<std::string> postProcessMode;
 
   std::optional<DisplayJson> display;
   std::optional<ReplaySnapshotJson> replaySnapshot;
@@ -130,6 +144,8 @@ std::string StripQuotes(std::string value);
 int ParseLogLevel(const std::string& value, int fallback);
 Config::GLOffscreenFlushMode ParseGLOffscreenFlushMode(const std::string& value, Config::GLOffscreenFlushMode fallback);
 Config::CullingLoadMode ParseCullingLoadMode(const std::string& value, Config::CullingLoadMode fallback);
+Config::PostProcessMode ParsePostProcessMode(const std::string& value);
+Config::GpuProfileGranularity ParseGpuProfileGranularity(const std::string& value);
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback);
 const char* ApiTag(GraphicsApi::E api);
 const char* CullingLoadModeTag(Config::CullingLoadMode mode);

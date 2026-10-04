@@ -174,6 +174,8 @@ void MutableMesh::Create() {
   }
   free(vertexSource);
   free(fragmentSource);
+  m_shaderFamily = BaseDriver::IdentifyShaderFamily(
+      m_vertexShaderSource, m_fragmentShaderSource, m_vertexShaderName, m_fragmentShaderName);
 
   m_created = m_combinedCB && m_frameCB && m_instanceCB && m_materialCB &&
       !m_vertexShaderSource.empty() && !m_fragmentShaderSource.empty();
@@ -195,7 +197,7 @@ bool MutableMesh::CompileShaders() {
       key.setPass(pass);
       context.driver->CreateShader(
           m_vertexShaderSource, m_fragmentShaderSource, key, m_vertexShaderName, m_fragmentShaderName);
-      if (!context.driver->GetShader(key)) return false;
+      if (!context.driver->GetShader(key, m_shaderFamily)) return false;
     }
   }
   m_shadersCompiled = true;
@@ -204,6 +206,8 @@ bool MutableMesh::CompileShaders() {
 
 bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* error,
                                   bool retainCpuGeometry) {
+  T8_CPU_WORK("gpu.upload_batch");
+  T8_UPLOAD_SOURCE(RuntimeTelemetry::UploadSource::Streaming);
   if (!m_created) Create();
   if (!m_created || !CompileShaders()) {
     if (error) *error = "mutable mesh GPU resources are unavailable";
@@ -271,8 +275,8 @@ bool MutableMesh::ReplaceSnapshot(MutableMeshSnapshot snapshot, std::string* err
     std::vector<char>().swap(m_vertexBuffer->sysMemCpy);
     std::vector<char>().swap(m_indexBuffer->sysMemCpy);
   }
-  RuntimeTelemetry::AddCounter("render.mutable_mesh.commits", 1.0);
-  RuntimeTelemetry::AddCounter("render.mutable_mesh.upload_bytes",
+  T8_TELEMETRY_ADD("render.mutable_mesh.commits", 1.0);
+  T8_TELEMETRY_ADD("render.mutable_mesh.upload_bytes",
       static_cast<double>(vertexDesc.byteWidth + indexDesc.byteWidth));
   return true;
 }
@@ -337,11 +341,22 @@ void MutableMesh::FillMaterialConstants(
   SetIdentityUVTransforms(constants);
 }
 
+bool MutableMesh::MayDrawInPass(uint8_t pass) const {
+  return Ready() && std::any_of(m_snapshot.sections.begin(), m_snapshot.sections.end(), [&](const auto& section) {
+    return DrawsInPass(m_snapshot.materials[section.materialIndex].alphaMode, pass);
+  });
+}
+
 void MutableMesh::Draw(float* transform, float* viewProjection) {
   (void)viewProjection;
-  T8_TELEMETRY_SCOPE("render.mutable_mesh.draw");
+  T8_TELEMETRY_ADD("render.mutable_mesh.draw.calls", 1);
   if (transform) Transform(transform);
   if (!Ready() || !pScProp) return;
+  const uint8_t pass = gKey.getPass();
+  if (!MayDrawInPass(pass)) {
+    T8_TELEMETRY_ADD("render.mutable_mesh.empty_pass", 1.0);
+    return;
+  }
   Camera* camera = pScProp->GetPrimaryCamera();
   if (!camera) return;
 
@@ -350,16 +365,15 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
     bounds.min = m_snapshot.localBounds.vMin;
     bounds.max = m_snapshot.localBounds.vMax;
     XVECTOR3 planes[6];
-    RenderMesh::ExtractFrustumPlanes(camera->VP, planes);
+    MeshDrawStateTracker::Get().GetFrustumPlanes(camera->VP, planes);
     if (RenderMesh::ClassifyAABBFrustum(bounds, m_transform, planes) == RenderMesh::FrustumResult::Outside) {
-      RuntimeTelemetry::AddCounter("render.mutable_mesh.culled", 1.0);
+      T8_TELEMETRY_ADD("render.mutable_mesh.culled", 1.0);
       return;
     }
   }
 
   EngineContext& context = pEngineContext ? *pEngineContext : t850::GetEngineContext();
   if (!context.driver || !context.deviceContext) return;
-  const uint8_t pass = gKey.getPass();
   RenderMesh::MeshInstanceCBuffer instance;
   instance.World = m_transform;
   instance.WVP = m_transform * camera->VP;
@@ -382,7 +396,7 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
       ? m_materialTextures[section.materialIndex] : Textures[0];
     if (material.usesBaseColorTexture && baseColor) key.bits |= ShaderKey::DIFFUSE_MAP;
     key.setPass(pass == PassType::NONE ? PassType::FORWARD : pass);
-    ShaderBase* shader = context.driver->GetShader(key);
+    ShaderBase* shader = context.driver->GetShader(key, m_shaderFamily);
     if (!shader) continue;
     const BaseDriver::FaceCulling previousCull = context.driver->m_FaceCulling;
     const bool changedCull = material.doubleSided && previousCull != BaseDriver::FRONT_AND_BACK;
@@ -413,7 +427,7 @@ void MutableMesh::Draw(float* transform, float* viewProjection) {
     }
     context.deviceContext->DrawIndexed(section.indexCount, section.firstIndex, 0);
     if (changedCull) context.driver->SetCullFace(previousCull);
-    RuntimeTelemetry::AddCounter("render.mutable_mesh.draw_calls", 1.0);
+    T8_TELEMETRY_ADD("render.mutable_mesh.draw_calls", 1.0);
   }
   if (ownsScope) tracker.End();
 }

@@ -24,7 +24,7 @@ bool LoadSceneDescriptor(const std::string& path, SceneDescriptor& desc) {
     return false;
   }
 
-  auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, json);
+  auto ec = glz::read<glz::opts{.error_on_unknown_keys = true}>(desc, json);
   if (ec) {
     std::string err = glz::format_error(ec, json);
     T8_LOG_ERROR("[SceneDescriptor] Parse error '%s': %s", path.c_str(), err.c_str());

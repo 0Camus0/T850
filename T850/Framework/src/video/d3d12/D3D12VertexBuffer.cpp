@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12VertexBuffer.cpp: Vertex buffer implementation
@@ -30,6 +31,7 @@ namespace t850 {
   void** D3D12VertexBuffer::GetAPIObjectReference() const { return nullptr; }
 
   void D3D12VertexBuffer::Create(const Device& device, BufferDesc desc, void* initialData) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     ID3D12Device* dev = GetNativeDevice();
     auto* driver = GetD3D12Driver();
@@ -79,6 +81,7 @@ namespace t850 {
       g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "vb", "");
     }
 #endif
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Vertex, 0, 1);
   }
 
   void D3D12VertexBuffer::Set(const DeviceContext& deviceContext, const unsigned stride, const unsigned offset) {
@@ -96,6 +99,7 @@ namespace t850 {
   }
 
   void D3D12VertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, sysMemCpy.size(), 0);
     if (!sysMemCpy.empty()) {
       // D3D12: suballocate from the per-frame ring buffer so each draw
       // within the same command list sees its own vertex data.
@@ -116,6 +120,7 @@ namespace t850 {
     }
   }
   void D3D12VertexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, descriptor.byteWidth, 0);
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     // D3D12: suballocate from the per-frame ring buffer so each draw
     // within the same command list sees its own vertex data.

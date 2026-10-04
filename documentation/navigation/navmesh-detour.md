@@ -374,11 +374,15 @@ The scene-owned `GameLogicSystem` binds `GameNavigationService` to SceneTemplate
 - Worker-backed batches call `NavMesh::FindPaths()` over the ready, immutable query mesh.
 - `ResolveCompleted()` runs after post-physics components in the fixed-tick phase order.
 - `TryGetResult()` transfers a completed result to `PathFollowComponent`.
+- `CancelRequestsForObject()` removes queued and completed requests by stable runtime object ID; in-flight workers may finish, but ownership filtering discards their late results.
 - `ProjectToNavmesh()` and `Available()` fail cleanly when no authored/baked mesh is ready.
 - `PathFollowComponent` steers AI controllers through returned corners and keeps direct steering as the unavailable/failed-path fallback.
 - `PrepareForNavMeshMutation()` waits for worker batches and invalidates queued, running, and unconsumed results before editor/runtime NavMesh rebuilds or asset destruction.
 
-The service drains pending futures before unbinding, and SceneTemplate shuts game logic down before destroying navigation assets. DetourCrowd remains linked but is not used by this path.
+`PathFollowComponent::OnDestroy()` and deferred object destruction both cancel
+owned requests. The service drains pending futures before unbinding, and
+SceneTemplate shuts game logic down before destroying navigation assets.
+DetourCrowd remains linked but is not used by this path.
 
 ## Editor authoring workflow
 

@@ -74,7 +74,7 @@ namespace t850 {
                    m_renderGraphPath.c_str(), m_name.c_str());
       return false;
     }
-    m_renderGraph.CreateRenderTargets(driver, Props(), m_width, m_height);
+    if (!m_renderGraph.CreateRenderTargets(driver, Props(), m_width, m_height)) return false;
 
     if (!CreateQuads(engineContext)) {
       Destroy(driver);
@@ -122,8 +122,7 @@ namespace t850 {
     m_width = width;
     m_height = height;
     m_renderGraph.DestroyRenderTargets(driver);
-    m_renderGraph.CreateRenderTargets(driver, Props(), m_width, m_height);
-    return true;
+    return m_renderGraph.CreateRenderTargets(driver, Props(), m_width, m_height);
   }
 
   bool RenderContainer::CreateQuads(EngineContext* engineContext) {

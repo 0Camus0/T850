@@ -25,11 +25,11 @@ This is a **C++23 rendering/game engine** with two primary desktop executables (
 
 1. **Architecture** — Platform event loop, RootFramework/AppBase lifecycle, ResourceLocator (path + cache abstraction)
 2. **Geometry loading** — glTF/.x → XDataBase → RenderMesh/XFinalGeometry → PrimitiveManager → GPU meshes
-3. **Shader management** — ShaderKey bitfield → feature permutation compilation → `.t8shadercache` disk cache
+3. **Shader management** — ShaderKey bitfield → feature permutation compilation → `.t8shadercache`; compute metadata comes from strict `Assets/Shaders/compute_kernels.json`
 4. **Render graph** — JSON-driven render passes (render targets, inputs, draws). No hardcoded pass order.
 5. **Geometry rendering flow** — RenderMesh/RenderSkinnedMesh draw, MeshDrawStateTracker skip-redundant-binds, PSO management
 6. **Textures & IBL** — CIL loader, slots 10-15 (IBL), extended material slots 16-23/25, bone texture t24
-7. **Animation** — AnimationController → bone matrices → bone texture (t24) → skinned draw; ragdoll bridge to Jolt
+7. **Animation** — AnimationController → CPU pose/ragdoll → RenderGraph pre-pass bone texture upload (t24) → skinned draw
 8. **Physics (Jolt)** — JoltPhysicsSystem wrapper, static triangle meshes from render geometry, ragdolls, `.t8jolt` caches
 9. **Navigation** — Recast build + Detour query, NavMeshGeometry, off-mesh links, `.t8nav` baked assets
 10. **Gameplay** — schema v2, GameLogicSystem fixed tick, components/events/state, physics/nav facades, examples
@@ -45,7 +45,7 @@ This is a **C++23 rendering/game engine** with two primary desktop executables (
 
 ### Prerequisites
 
-- **Visual Studio 2022** (Community / Professional / Enterprise / Build Tools) with C++ workload
+- **Visual Studio with the v143 C++ toolset** (VS 2022 normally; VS 2026 is accepted for ARM64 CI only with its v143 compatibility component)
 - **Windows SDK** (auto-included with VS)
 - **PowerShell 5+** (ships with Windows)
 
@@ -91,6 +91,8 @@ WPF-based launcher that lets you pick target (Windows/Android), architecture, co
 .\scripts\CompareVisualBaselines.ps1 -Tolerance 2 -OutputPath .\VisualBaselines\final-comparison.json
 ```
 
+Current expected gameplay result: 78 PASS lines and exit code 0.
+
 Use the focused workspace skills for exact procedures:
 
 - `t850-build-run`
@@ -98,6 +100,8 @@ Use the focused workspace skills for exact procedures:
 - `t850-crash-debugging`
 - `t850-voxel-terrain`
 - `t850-visual-regression`
+- `t850-profiling` (profiler scopes, telemetry counters, upload instrumentation, external tooling)
+- `t850-arm64-gpu-benchmark` (Windows x64/ARM64 GPU, CPU, shader-cost capture and reporting)
 - `t850-platform-deploy`
 
 ### Solution structure (`T850.sln`)
@@ -134,6 +138,9 @@ Platform mapping in MSBuild: `x64` → `x64`, `x86` → `Win32`, `ARM64` → `AR
 - **Read docs before code.** When a user asks about a feature, first search `documentation/` for that subsystem doc (`grep` or MCP `search_docs`).
 - **Use the dependency map** (`documentation/dependency-map.md`) to find what else changes. Every row tells you "read first" and "then read".
 - **Use ResourceLocator**, never raw filesystem paths (must work on Android packaged assets).
+- T850-owned config/scene/render-graph/compute-manifest JSON rejects unknown keys; preserve permissive parsing only for external extension formats and opaque component payloads.
+- GPU drivers, API resources, registries and `ShaderProgramCache` are render-thread-affine. Workers return CPU-owned results for render-thread commit.
+- Tagged release assets must pass `T850/scripts/ValidateReleasePackages.ps1` before publication.
 - **Use operational docs/skills for commands.** Build/run, visual capture, and deployment have separate verified procedures.
 - **Distinguish pass, skip, and environment block.** Never report an unavailable platform toolchain as a passing source gate.
 - **AGENTS.md is your cheat sheet.** Full docs are in `documentation/` — use MCP tools or targeted reads when you need detail.

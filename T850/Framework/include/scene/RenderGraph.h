@@ -3,11 +3,13 @@
 
 #include <scene/RenderGraphDescriptor.h>
 #include <scene/SceneProp.h>
+#include <debug/RuntimeTelemetry.h>
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
+#include <memory>
 
 class Camera;
 
@@ -16,6 +18,7 @@ namespace t850 {
   class BaseDriver;
   class Texture;
   class PrimitiveInst;
+  class ComputePipeline;
 
   namespace EnvironmentTextureSlot {
     constexpr int DiffuseIBL = 10;
@@ -69,6 +72,10 @@ namespace t850 {
 
   // Runtime node: a resolved pass with its adjacency.
   struct GraphNode {
+    RuntimeTelemetry::ScopeId profileScope = RuntimeTelemetry::InvalidId;
+    RuntimeTelemetry::ScopeId telemetryScope = RuntimeTelemetry::InvalidId;
+    RuntimeTelemetry::ScopeId drawCounter = RuntimeTelemetry::InvalidId;
+    RuntimeTelemetry::ScopeId indexCounter = RuntimeTelemetry::InvalidId;
     int index;
     const RenderPassDesc* desc;
     int rt_handle;                   // resolved RT handle from BaseDriver (-1 if none)
@@ -84,6 +91,11 @@ namespace t850 {
   public:
     using CustomDrawCallback = std::function<void(const std::string&)>;
     RenderGraph() = default;
+    ~RenderGraph();
+    RenderGraph(RenderGraph&&) noexcept;
+    RenderGraph& operator=(RenderGraph&&) noexcept;
+    RenderGraph(const RenderGraph&) = delete;
+    RenderGraph& operator=(const RenderGraph&) = delete;
 
     // Load the graph descriptor from JSON and build the DAG.
     bool Load(const std::string& path);
@@ -100,8 +112,8 @@ namespace t850 {
 
     // Create all render targets declared in the graph.
     // Call after Load(), before Execute().
-    void CreateRenderTargets(BaseDriver* driver, const SceneProps& props);
-    void CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride);
+    bool CreateRenderTargets(BaseDriver* driver, const SceneProps& props);
+    bool CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride);
     void DestroyRenderTargets(BaseDriver* driver);
 
     // Execute all passes in order.
@@ -167,9 +179,15 @@ namespace t850 {
     std::vector<GraphNode> m_nodes;
     std::vector<GraphEdge> m_edges;
     std::unordered_map<std::string, int> m_rtHandles;  // RT name -> driver RT handle
+    std::unordered_map<int, std::unique_ptr<ComputePipeline>> m_computePipelines;
+    std::unordered_set<int> m_loggedComputeDispatches;
+    bool m_initializedTargetsPending = true;
 
     // Build the DAG (nodes + edges) from the descriptor.
+    bool ValidateResourceLifetimes(const RenderGraphDesc& desc) const;
     void BuildGraph();
+    void CreateComputePipelines(BaseDriver* driver);
+    bool ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props);
 
     // Resolve a "Source:ATTACHMENT" string into (rt_handle, attachment_enum).
     struct ResolvedTexture {

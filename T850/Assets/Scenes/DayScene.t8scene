@@ -1,5 +1,6 @@
 {
    "version": 1,
+   "mouse_capture": false,
    "render_graph": "Scenes/DayScene_RenderGraph.json",
    "editor": {
       "camera_target": { "x": 0, "y": 20, "z": 0 },

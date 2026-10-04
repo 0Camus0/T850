@@ -193,7 +193,7 @@ Build and self-tests:
 .\bin\x64\Debug\DayScene.exe --game-selftest
 ```
 
-Expected: 43 PASS lines, exit 0.
+Expected current result: 78 PASS lines, exit 0.
 
 Focused Release visuals:
 

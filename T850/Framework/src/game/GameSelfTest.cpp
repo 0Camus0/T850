@@ -2,22 +2,32 @@
 
 #include <game/GameSelfTest.h>
 
+#include <debug/Profiler.h>
+#include <debug/GpuTimestampProfiler.h>
+#include <debug/RuntimeTelemetry.h>
+#include <future>
+#include <thread>
 #include <game/GameIds.h>
 #include <game/Controller.h>
 #include <game/GameLogicSystem.h>
 #include <game/GameNavigationService.h>
 #include <game/GameObjectRegistry.h>
 #include <game/GamePhysicsService.h>
+#include <game/RegeneratingHealthState.h>
 #include <game/StateMachine.h>
 #include <game/GameValidation.h>
 #include <physics/JoltPhysicsSystem.h>
+#include <physics/CharacterController.h>
 #include <physics/PhysicsAuthoring.h>
 #include <scene/RenderMesh.h>
 #include <scene/EditorSceneFile.h>
 #include <scene/SceneConversions.h>
 #include <scene/SceneRegions.h>
 #include <scene/MutableMeshData.h>
+#include <scene/MutableMesh.h>
 #include <scene/RenderContainer.h>
+#include <scene/RenderGraph.h>
+#include <scene/RenderQuad.h>
 #include <scene/MaterialAsset.h>
 #include <terrain/BlockRegistry.h>
 #include <terrain/HeightmapTerrain.h>
@@ -31,17 +41,35 @@
 #include <terrain/VoxelNavigation.h>
 #include <terrain/VoxelCollision.h>
 #include <utils/ThreadPool.h>
+#include <utils/TextureMipmaps.h>
+#include <utils/ConfigRuntime.h>
+#include <utils/ShaderPrecompiler.h>
+#include <utils/ShaderPermutationDump.h>
+#include <utils/ResourceLocator.h>
+#include <video/webgpu/WebGPUShaderCompiler.h>
+#include <video/MutableGraphicsStateCache.h>
+#if defined(OS_WINDOWS)
+#include <video/d3d12/D3D12PipelineKey.h>
+#include <video/vulkan/VulkanPipelineKey.h>
+#endif
+#include <scene/SceneSetup.h>
+#include <core/Core.h>
 #include <utils/XDataBase.h>
 #include <video/TextureAtlas.h>
+#include <glaze/glaze.hpp>
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace t850 { extern Device* T8Device; extern DeviceContext* T8DeviceContext; }
 
 namespace t850::game {
 namespace {
@@ -109,6 +137,29 @@ public:
   void Destroy() override {}
 };
 
+class GroundPlaneCollisionWorld final : public CharacterCollisionWorld {
+public:
+  bool SweepCapsule(const CharacterCollisionSweep& sweep,
+                    CharacterCollisionHit& outHit) const override {
+    outHit = {};
+    if (sweep.displacement.y >= 0.0f)
+      return false;
+
+    const float startFeet = sweep.startCenter.y - sweep.halfHeight - sweep.radius;
+    const float endFeet = startFeet + sweep.displacement.y;
+    if (endFeet > 0.0f)
+      return false;
+
+    const float fraction = (std::max)(
+      0.0f, (std::min)(1.0f, startFeet / -sweep.displacement.y));
+    outHit.hit = true;
+    outHit.fraction = fraction;
+    outHit.position = sweep.startCenter + sweep.displacement * fraction;
+    outHit.normal = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+    return true;
+  }
+};
+
 std::unique_ptr<Component> CreateLifecycleTestComponent(
     const scene::SceneComponentDesc& descriptor, ComponentLoadContext& context) {
   (void)descriptor;
@@ -135,7 +186,7 @@ public:
   ~TempSceneFiles() {
     for (const std::filesystem::path& path : paths_) {
       std::error_code error;
-      std::filesystem::remove(path, error);
+      std::filesystem::remove_all(path, error);
     }
   }
 
@@ -590,6 +641,51 @@ void TestControllerIntentsDiffer() {
   Require(aiIntent.moveDir.x > 0.9f, "AI controller did not steer toward navigation goal");
   Require(aiIntent.hasNavGoal && aiIntent.navGoal.has_value(), "AI intent did not preserve navigation goal");
   Require(playerIntent.moveDir != aiIntent.moveDir, "player and AI intents were not distinct");
+}
+
+void TestFpsJumpRemainsAirborne() {
+  KinematicCharacterSettings settings;
+  settings.gravity = 24.0f;
+  settings.jumpSpeed = 8.0f;
+  settings.capsuleRadius = 0.3f;
+  settings.capsuleHalfHeight = 0.9f;
+  settings.groundProbeDistance = 0.25f;
+
+  GroundPlaneCollisionWorld world;
+  CharacterControllerContext context;
+  context.collisionWorld = &world;
+  KinematicCharacterController controller(settings);
+  const float groundedCenterY = settings.capsuleHalfHeight + settings.capsuleRadius;
+  controller.SetPosition(XVECTOR3(0.0f, groundedCenterY, 0.0f, 1.0f));
+
+  KinematicCharacterInput input;
+  for (float deltaSeconds : {1.0f / 30.0f, 1.0f / 60.0f, 1.0f / 144.0f}) {
+    for (int frame = 0; frame < 120; ++frame) {
+      controller.UpdateFps(deltaSeconds, input, context);
+      Require(controller.IsGrounded(), "idle FPS controller lost ground contact");
+      Require(std::fabs(controller.GetPosition().y - groundedCenterY) < 0.001f,
+        "idle FPS camera height oscillated on the ground plane");
+    }
+  }
+  input.jump = true;
+  controller.UpdateFps(1.0f / 60.0f, input, context);
+  Require(!controller.IsGrounded(),
+    "FPS jump reacquired the ground while moving upward");
+  Require(controller.GetVelocity().y > 0.0f &&
+    controller.GetPosition().y > groundedCenterY,
+    "FPS jump did not produce upward motion");
+
+  const float firstJumpY = controller.GetPosition().y;
+  controller.UpdateFps(1.0f / 60.0f, input, context);
+  Require(!controller.IsGrounded() && controller.GetPosition().y > firstJumpY,
+    "held FPS jump was snapped back to the ground");
+
+  input.jump = false;
+  for (int frame = 0; frame < 180 && !controller.IsGrounded(); ++frame)
+    controller.UpdateFps(1.0f / 60.0f, input, context);
+  Require(controller.IsGrounded(), "FPS controller did not land after jumping");
+  Require(std::fabs(controller.GetPosition().y - groundedCenterY) < 0.001f,
+          "FPS controller landed above or below the ground plane");
 }
 
 void ConfigureLifecycleSystem(
@@ -1391,10 +1487,56 @@ void TestHeightmapNavigationExclusion() {
     "navigation did not route around the exclusion zone");
 }
 
+void TestNavigationRequestCancellation() {
+  scene::SceneHeightmapDesc desc;
+  desc.samples_x = 17;
+  desc.samples_z = 17;
+  desc.size_x = 16;
+  desc.size_z = 16;
+  const std::array<float, 4> heights{};
+  MutableMeshSnapshot mesh;
+  std::string error;
+  Require(BuildHeightmapTerrain(desc, heights, 2, 2, mesh, &error), error);
+  auto database = BuildMeshDatabase(mesh, &error);
+  Require(database != nullptr, error);
+  navigation::NavMeshGeometry geometry;
+  Require(navigation::BuildGeometryFromXDataBase(*database, geometry, &error), error);
+  navigation::NavMeshBuildSettings settings;
+  settings.regionMinSize = 1;
+  settings.regionMergeSize = 2;
+  navigation::NavMesh navMesh;
+  Require(navMesh.Build(geometry, settings, &error), error);
+
+  GameNavigationService navigation;
+  navigation.Bind(&navMesh, nullptr);
+  const XVECTOR3 start(2.0f, 0.0f, 2.0f, 1.0f);
+  const XVECTOR3 goal(14.0f, 0.0f, 14.0f, 1.0f);
+  const uint64_t queued = navigation.RequestPath(11, start, goal);
+  Require(navigation.CancelRequestsForObject(11) == 1, "queued navigation request was not canceled");
+  navigation.ResolveCompleted();
+  navigation::NavPathResult result;
+  Require(!navigation.TryGetResult(queued, result), "canceled queued request produced a result");
+
+  const uint64_t completed = navigation.RequestPath(12, start, goal);
+  navigation.ResolveCompleted();
+  Require(navigation.CancelRequestsForObject(12) == 1, "completed navigation request was not canceled");
+  Require(!navigation.TryGetResult(completed, result), "canceled completed request remained retrievable");
+
+  ThreadPool pool(1);
+  navigation.Bind(&navMesh, &pool);
+  const uint64_t inFlight = navigation.RequestPath(13, start, goal);
+  navigation.ResolveCompleted();
+  Require(navigation.CancelRequestsForObject(13) == 1, "in-flight navigation request was not canceled");
+  pool.WaitAll();
+  navigation.ResolveCompleted();
+  Require(!navigation.TryGetResult(inFlight, result), "late worker result revived a canceled request");
+}
+
 void TestSceneLoadIsolation() {
   TempSceneFiles files;
   const auto emptyPath = files.Add("_empty.t8scene");
   const auto invalidPath = files.Add("_invalid.t8scene");
+  const auto unknownPath = files.Add("_unknown.t8scene");
   {
     std::ofstream stream(emptyPath);
     stream << "{\"version\":1}";
@@ -1402,6 +1544,10 @@ void TestSceneLoadIsolation() {
   {
     std::ofstream stream(invalidPath);
     stream << "{\"version\":999,\"objects\":[";
+  }
+  {
+    std::ofstream stream(unknownPath);
+    stream << "{\"version\":1,\"objectz\":[]}";
   }
   scene::EditorSceneFile document;
   document.render_graph = "previous-graph";
@@ -1412,6 +1558,8 @@ void TestSceneLoadIsolation() {
   Require(document.objects.empty() && document.render_graph.empty(), "loading a scene retained data from the previous file");
   Require(!scene::LoadEditorSceneFile(invalidPath.string(), document, &error), "malformed scene accepted");
   Require(document.version == 1 && document.objects.empty(), "failed scene load partially mutated the destination");
+  Require(!scene::LoadEditorSceneFile(unknownPath.string(), document, &error),
+    "scene with an unknown field was accepted");
 }
 
 void TestTerrainEditing() {
@@ -1612,7 +1760,1889 @@ void TestPlacementVisualFitting() {
     Require(!CheckTerrainPlacement(terrain, placement).allowed, "negative placement animation speed accepted");
 }
 
+void TestLegacyShadowSampling() {
+  SceneProps props;
+  props.ShadowMapResolution = 2048;
+  props.ShadowBias = 0.000005f;
+  props.ShadowMin = 0.2f;
+  RenderQuad quad;
+  XMATRIX44 legacyLightVP;
+  XMatTranslation(legacyLightVP, 4.0f, 5.0f, 6.0f);
+  quad.CnstBuffer.WVPLight = legacyLightVP;
+
+  const auto requireLegacyPayload = [&]() {
+    const auto& payload = quad.ShadowSamplingCB;
+    Require(payload.Params0.x == 1.0f && payload.Params0.y == 2048.0f &&
+        payload.Params0.z == 2048.0f, "legacy shadow view or dimensions missing");
+    Require(std::memcmp(&payload.ViewProjection[0], &legacyLightVP, sizeof(legacyLightVP)) == 0,
+        "legacy light matrix was not preserved");
+    Require(payload.AtlasScaleBias[0].x == 1.0f && payload.AtlasScaleBias[0].y == 1.0f &&
+        payload.AtlasScaleBias[0].z == 0.0f && payload.AtlasScaleBias[0].w == 0.0f,
+        "legacy shadow does not cover the whole texture");
+    Require(payload.Params1.z == props.ShadowBias && payload.Params1.w == props.ShadowMin,
+        "legacy shadow bias or minimum light lost");
+    XMATRIX44 emptyMatrix;
+    std::memset(&emptyMatrix, 0, sizeof(emptyMatrix));
+    for (int view = 1; view < kMaxShadowViewsPerProjection; ++view) {
+      Require(std::memcmp(&payload.ViewProjection[view], &emptyMatrix, sizeof(emptyMatrix)) == 0,
+          "stale cascade matrix survived legacy fallback");
+    }
+    Require(payload.SplitDepths[0].x == 0.0f, "stale cascade boundary survived legacy fallback");
+  };
+
+  quad.UploadShadowSamplingCB(props);
+  requireLegacyPayload();
+
+  auto& projection = props.Shadows.projections.emplace_back();
+  projection.resolvedDesc.technique = "csm";
+  projection.viewCount = 2;
+  projection.atlasWidth = 4096;
+  projection.atlasHeight = 2048;
+  projection.splitBoundaries[0] = 40.0f;
+  XMatIdentity(projection.views[0].viewProjection);
+  projection.views[1].viewProjection = legacyLightVP;
+  projection.views[0].atlasScaleBias = {0.5f, 1.0f, 0.0f, 0.0f};
+  projection.views[1].atlasScaleBias = {0.5f, 1.0f, 0.5f, 0.0f};
+  quad.UploadShadowSamplingCB(props);
+  Require(quad.ShadowSamplingCB.Params0.x == 2.0f &&
+      quad.ShadowSamplingCB.Params0.y == 4096.0f &&
+      quad.ShadowSamplingCB.SplitDepths[0].x == 40.0f &&
+      quad.ShadowSamplingCB.AtlasScaleBias[1].z == 0.5f &&
+      std::memcmp(&quad.ShadowSamplingCB.ViewProjection[1], &legacyLightVP, sizeof(legacyLightVP)) == 0,
+      "explicit cascade sampling payload changed");
+
+  props.Shadows.Reset();
+  quad.CnstBuffer.WVPLight = legacyLightVP;
+  quad.UploadShadowSamplingCB(props);
+  requireLegacyPayload();
+}
+
+void TestShaderFlowConfiguration() {
+  const auto parse = [](Config& config, std::vector<std::string> arguments) {
+    std::vector<char*> pointers;
+    for (auto& argument : arguments) pointers.push_back(argument.data());
+    config::ApplyCommandLine(static_cast<int>(pointers.size()), pointers.data(), config);
+  };
+  Config defaults;
+  Require(defaults.webgpuShaderFlow == "auto", "Shader flow must default to auto/DXC");
+  Require(defaults.webgpuDeviceRecoveryAttempts == 3,
+    "WebGPU recovery budget must default to three attempts");
+  TempSceneFiles files;
+  const auto unknownConfigPath = files.Add("_unknown_config.json");
+  {
+    std::ofstream stream(unknownConfigPath);
+    stream << "{\"widht\":640}";
+  }
+  Config unknownConfig;
+  Require(!config::LoadRuntimeConfig(unknownConfigPath, unknownConfig),
+    "runtime config with an unknown field was accepted");
+  Config invalidRecoveryBudget;
+  invalidRecoveryBudget.webgpuDeviceRecoveryAttempts = 0;
+  bool rejectedRecoveryBudget = false;
+  try { config::ValidateConfig(invalidRecoveryBudget); }
+  catch (const std::invalid_argument&) { rejectedRecoveryBudget = true; }
+  Require(rejectedRecoveryBudget, "invalid WebGPU recovery budget was accepted");
+  const auto modes = {"auto", "wgsl", "spirv"};
+#ifdef __EMSCRIPTEN__
+  const std::string expectedApi = "webgpu";
+#elif defined(_M_IX86)
+  const std::string expectedApi = "d3d11";
+#else
+  const std::string expectedApi = "d3d12";
+#endif
+  for (const auto* mode : modes) {
+    Config selected;
+    selected.api = expectedApi;
+    config::RuntimeConfigJson json;
+    json.webgpuShaderFlow = "wgsl";
+    config::ApplyConfigJson(json, selected);
+    Require(selected.webgpuShaderFlow == "wgsl", "Shader flow JSON setting ignored");
+    parse(selected, {"DayScene", "--shaderFlow", mode, "--width", "640"});
+    Require(config::ValidateConfig(selected), "Valid shader flow config rejected");
+    Require(selected.webgpuShaderFlow == mode && selected.width == 640 && selected.api == expectedApi,
+            "Shader flow override changed API or consumed another option");
+  }
+#ifdef __EMSCRIPTEN__
+  Config nativeOnly;
+  nativeOnly.api = "vulkan";
+  bool rejectedNativeApi = false;
+  try { config::ValidateConfig(nativeOnly); } catch (const std::invalid_argument&) { rejectedNativeApi = true; }
+  Require(rejectedNativeApi, "Browser accepted an unavailable native graphics API");
+#endif
+  parse(defaults, {"DayScene", "--shaderFlow", "SPIRV", "--shaderFlow", "WGSL"});
+  Require(defaults.webgpuShaderFlow == "wgsl", "Shader flow case normalization or last override failed");
+#ifndef __EMSCRIPTEN__
+    Config legacyD3D12;
+    legacyD3D12.api = "d3d12";
+    parse(legacyD3D12, {"DayScene", "--shaderFlow", "legacyHLSL"});
+    Require(legacyD3D12.webgpuShaderFlow == "legacyhlsl" && config::ValidateConfig(legacyD3D12),
+      "legacyHLSL D3D12 flow was not normalized/accepted");
+    Config invalidLegacyApi;
+    invalidLegacyApi.api = "webgpu";
+    parse(invalidLegacyApi, {"DayScene", "--shaderFlow", "legacyHLSL"});
+    bool rejectedLegacyApi = false;
+    try { config::ValidateConfig(invalidLegacyApi); } catch (const std::invalid_argument&) { rejectedLegacyApi = true; }
+    Require(rejectedLegacyApi, "legacyHLSL was accepted outside native D3D12");
+  #if defined(_M_IX86)
+    Config invalidWin32Dxc;
+    invalidWin32Dxc.api = "d3d12";
+    bool rejectedWin32Dxc = false;
+    try { config::ValidateConfig(invalidWin32Dxc); } catch (const std::invalid_argument&) { rejectedWin32Dxc = true; }
+    Require(rejectedWin32Dxc, "Win32 D3D12 accepted unavailable DXC default");
+  #endif
+  #endif
+  for (const auto& arguments : std::vector<std::vector<std::string>>{
+         {"DayScene", "--shaderFlow"}, {"DayScene", "--shaderFlow", "--api", "webgpu"},
+         {"DayScene", "--shaderFlow", "invalid"}, {"DayScene", "--shaderFlow", ""}}) {
+    bool rejected = false;
+    try { parse(defaults, arguments); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "Invalid or missing shader flow silently accepted");
+  }
+  defaults.webgpuShaderFlow = "invalid";
+  bool rejected = false;
+  try { config::ValidateConfig(defaults); } catch (const std::invalid_argument&) { rejected = true; }
+  Require(rejected, "Invalid configured shader flow silently defaulted");
+
+    Config heldFrame;
+    parse(heldFrame, {"DayScene", "--benchmarkHoldFrame", "3000", "--regressionFixedDt", "0.0166666667"});
+    Require(heldFrame.benchmarkHoldFrame == 3000 && heldFrame.regressionFixedDt > 0.016f,
+      "Benchmark hold frame CLI parsing failed");
+    Require(config::ValidateConfig(heldFrame), "Valid benchmark hold frame config rejected");
+    heldFrame.benchmarkHoldFrame = -1;
+    Require(!config::ValidateConfig(heldFrame) && heldFrame.benchmarkHoldFrame == 0,
+      "Invalid benchmark hold frame was not normalized");
+
+      Config gpuProfile;
+      parse(gpuProfile, {"DayScene", "--api", expectedApi, "--profileGpu",
+             "--profileGpuFrames", "42", "--profileGpuOutput", "logs/test gpu.json",
+             "--profileGpuPasses", "render-graph"});
+      Require(gpuProfile.profileGpu && gpuProfile.profileGpuFrames == 42 &&
+        gpuProfile.profileGpuOutputPath == "logs/test gpu.json" &&
+        gpuProfile.profileGpuGranularity == Config::GpuProfileGranularity::RenderGraphPasses,
+        "GPU profile CLI arguments were not parsed independently");
+    #if T850_ENABLE_GPU_PROFILING
+      Require(config::ValidateConfig(gpuProfile), "GPU profile build rejected a supported API request");
+      Config conflicting = gpuProfile;
+      conflicting.profileCpuOnly = true;
+      bool conflictRejected = false;
+      try { config::ValidateConfig(conflicting); } catch (const std::invalid_argument&) { conflictRejected = true; }
+      Require(conflictRejected, "GPU and CPU-only profiling were accepted together");
+    #else
+      bool compiledOutRejected = false;
+      try { config::ValidateConfig(gpuProfile); } catch (const std::invalid_argument&) { compiledOutRejected = true; }
+      Require(compiledOutRejected, "GPU profiling request was accepted when compiled out");
+    #endif
+      bool granularityRejected = false;
+      try { parse(gpuProfile, {"DayScene", "--profileGpuPasses", "draws"}); }
+      catch (const std::invalid_argument&) { granularityRejected = true; }
+      Require(granularityRejected, "Unknown GPU profile granularity was accepted");
+}
+
+    void TestGpuTimestampBatchRing() {
+      GpuTimestampBatchRing ring(2);
+      const auto first = ring.Acquire(10, 0);
+      const auto second = ring.Acquire(11, 0);
+      Require(first && second && *first != *second && ring.PendingCount() == 2,
+        "GPU timestamp ring did not allocate distinct bounded batches");
+      Require(!ring.Acquire(12, 0) && ring.Stats().dropped == 1,
+        "Full GPU timestamp ring did not report a dropped sample");
+      Require(ring.MarkSubmitted(*first, 0, 100, 2) &&
+        ring.MarkResultsPending(*first, 0) &&
+        ring.MarkSubmitted(*second, 0, 101, 4) &&
+        ring.MarkReady(*second, 0),
+        "GPU timestamp batch transitions failed");
+      auto terminal = ring.ConsumeTerminal(0);
+      Require(terminal.size() == 1 && terminal[0].frame == 11 &&
+        terminal[0].submissionToken == 101 && terminal[0].queryCount == 4 &&
+        ring.PendingCount() == 1,
+        "Out-of-order GPU timestamp completion released the wrong batch");
+
+      const auto third = ring.Acquire(12, 0);
+      Require(third && ring.MarkSubmitted(*third, 0, 102, 2) &&
+        ring.MarkFailed(*third, 0) && ring.MarkReady(*first, 0),
+        "Ready/failed GPU timestamp terminal states failed");
+      terminal = ring.ConsumeTerminal(0);
+      Require(terminal.size() == 2 && ring.PendingCount() == 0 &&
+        ring.Stats().completed == 2 && ring.Stats().failed == 1,
+        "GPU timestamp terminal batches were not counted or recycled");
+
+      const auto oldGeneration = ring.Acquire(20, 0);
+      Require(oldGeneration.has_value(), "GPU timestamp ring could not reacquire a recycled slot");
+      ring.Reset(1);
+      Require(ring.PendingCount() == 0 && ring.Stats().cancelled == 1,
+        "GPU timestamp generation reset did not cancel pending work");
+      const auto staleBefore = ring.Stats().staleCallbacks;
+      Require(!ring.MarkReady(*oldGeneration, 0) &&
+        ring.Stats().staleCallbacks == staleBefore + 1,
+        "Stale GPU timestamp callback was accepted after generation reset");
+      const auto current = ring.Acquire(21, 1);
+      Require(current && ring.MarkSubmitted(*current, 1, 200, 2) &&
+        ring.MarkReady(*current, 1) && ring.ConsumeTerminal(1).size() == 1,
+        "GPU timestamp ring did not recover after generation reset");
+
+      Require(ComputeGpuTimestampDelta(10, 20, 64) == 10 &&
+        !ComputeGpuTimestampDelta(20, 10, 64) &&
+        ComputeGpuTimestampDelta(250, 5, 8) == 11 &&
+        !ComputeGpuTimestampDelta(0, 1, 0),
+        "GPU timestamp valid-bit wrap handling failed");
+      Require(EscapeGpuTimestampJson("pass\"\\\n\t") == "pass\\\"\\\\\\n\\t" &&
+        EscapeGpuTimestampJson(std::string(1, '\x01')) == "\\u0001",
+        "GPU timestamp JSON escaping failed");
+    }
+
+class NullTestDriver final : public BaseDriver {
+public:
+  const char* apiTag = "test";
+  bool mipGeneration = false;
+  bool cubeTargets = false;
+  bool depth16 = false;
+  bool comparisonSamplers = false;
+  ShaderProgramFlow shaderFlow = ShaderProgramFlow::Default;
+  const char* ApiTag() const override { return apiTag; }
+  bool SupportsRenderTargetMipGeneration() const override { return mipGeneration; }
+  bool SupportsCubeRenderTargets() const override { return cubeTargets; }
+  bool SupportsComparisonSamplers() const override { return comparisonSamplers; }
+  ShaderProgramFlow GetShaderProgramFlow() const override { return shaderFlow; }
+  bool SupportsRenderTargetDepthFormat(int format) const override {
+    return (format == BaseRT::FD16 && depth16) || BaseDriver::SupportsRenderTargetDepthFormat(format);
+  }
+  std::vector<std::string> events;
+  std::vector<ComputePipelineDesc> computePipelines;
+  void InitDriver() override {}
+  void CreateSurfaces() override {}
+  void DestroySurfaces() override {}
+  void Update() override {}
+  void DestroyDriver() override {}
+  void SetWindow(void*) override {}
+  void SetDimensions(int, int) override {}
+  void Clear() override { events.push_back("clear"); }
+  void SwapBuffers() override {}
+  void SetBlendState(BlendStates state) override { events.push_back("blend:" + std::to_string(state)); }
+  void SetDepthStencilState(DepthStencilStates) override {}
+  void SaveScreenshot(std::string) override {}
+  void SetCullFace(FaceCulling) override {}
+  void PopRT() override { events.push_back("pop"); CurrentRT = -1; }
+  void FlushGPUResources() override { events.push_back("flush"); }
+  bool SupportsComputeShaders() const override { return true; }
+  bool SupportsComputeTextures() const override { return true; }
+  std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override {
+    class NullComputePipeline final : public ComputePipeline {
+    public:
+      explicit NullComputePipeline(std::vector<std::string>& events) : events(events) { threadGroupSize = {8, 8, 1}; }
+      ~NullComputePipeline() override { events.push_back("retire-pipeline"); }
+    private:
+      std::vector<std::string>& events;
+    };
+    computePipelines.push_back(desc);
+    return std::make_unique<NullComputePipeline>(events);
+  }
+};
+
+class ShaderIdentityTestShader final : public ShaderBase {
+public:
+  bool CreateShaderAPI(std::string, std::string, const std::string&, const std::string&) override { return true; }
+  void Set(const DeviceContext&) override {}
+  void DestroyAPIShader() override {}
+};
+
+class ShaderIdentityTestDevice final : public Device {
+public:
+  void* GetAPIObject() const override { return nullptr; }
+  void** GetAPIObjectReference() const override { return nullptr; }
+  void release() override {}
+  Buffer* CreateBuffer(BufferType::E, BufferDesc, void*) override { return nullptr; }
+  ShaderBase* CreateShader(std::string vertex, std::string fragment, ShaderKey key,
+                           const std::string& vertexName, const std::string& fragmentName) override {
+    auto* shader = new ShaderIdentityTestShader();
+    if (!shader->CreateShader(std::move(vertex), std::move(fragment), key, vertexName, fragmentName)) {
+      delete shader;
+      return nullptr;
+    }
+    return shader;
+  }
+  Texture* CreateTexture(std::string) override { return nullptr; }
+  Texture* CreateTextureFromMemory(const unsigned char*, int, int, int, std::string) override { return nullptr; }
+  Texture* CreateCubeMap(const unsigned char*, int, int) override { return nullptr; }
+  Texture* CreateFloatTexture(int, int, const float*) override { return nullptr; }
+  Texture* CreateFloatCubeMap(int, int, const float*) override { return nullptr; }
+  BaseRT* CreateRT(int, int, int, int, int, bool, bool) override { return nullptr; }
+};
+
+void TestShaderProgramIdentity() {
+  NullTestDriver driver;
+  ShaderIdentityTestDevice device;
+  struct DeviceGuard {
+    Device* previous = T8Device;
+    BaseDriver* previousDriver = g_pBaseDriver;
+    ~DeviceGuard() { T8Device = previous; g_pBaseDriver = previousDriver; }
+  } guard;
+  T8Device = &device;
+  g_pBaseDriver = &driver;
+
+  const ShaderKey permutation(42);
+  const int mesh = driver.CreateShader("mesh vertex", "mesh fragment", permutation,
+                                       "Shaders/VS_Mesh.hlsl", "Shaders/FS_Mesh.hlsl");
+  const int duplicate = driver.CreateShader("mesh vertex", "mesh fragment", permutation,
+                                            "Shaders/VS_Mesh.hlsl", "Shaders/FS_Mesh.hlsl");
+  const int quad = driver.CreateShader("quad vertex", "quad fragment", permutation,
+                                       "Shaders/VS_Quad.hlsl", "Shaders/FS_Quad.hlsl");
+
+  Require(mesh >= 0 && duplicate == mesh, "identical shader program identity was not deduplicated");
+  Require(quad >= 0 && quad != mesh, "different shader families with equal permutations were aliased");
+  Require(driver.m_shaders.size() == 2, "shader program cache created an unexpected program count");
+  const ShaderFamilyId meshFamily = BaseDriver::IdentifyShaderFamily(
+      "mesh vertex", "mesh fragment", "Shaders/VS_Mesh.hlsl", "Shaders/FS_Mesh.hlsl");
+  const ShaderFamilyId quadFamily = BaseDriver::IdentifyShaderFamily(
+      "quad vertex", "quad fragment", "Shaders/VS_Quad.hlsl", "Shaders/FS_Quad.hlsl");
+  Require(driver.GetShader(permutation, meshFamily) == driver.GetShaderIdx(mesh) &&
+          driver.GetShader(permutation, quadFamily) == driver.GetShaderIdx(quad) &&
+          driver.GetShader(driver.GetShaderIdx(mesh)->programKey) == driver.GetShaderIdx(mesh),
+          "family-qualified lookup did not resolve each shader program");
+    driver.shaderFlow = ShaderProgramFlow::WebGPUWgsl;
+    const int meshWgsl = driver.CreateShader("mesh vertex", "mesh fragment", permutation,
+               "Shaders/VS_Mesh.hlsl", "Shaders/FS_Mesh.hlsl");
+    Require(meshWgsl >= 0 && meshWgsl != mesh && driver.m_shaders.size() == 3,
+      "different shader flows with equal family and permutation were aliased");
+    Require(driver.GetShader(permutation, meshFamily) == driver.GetShaderIdx(meshWgsl),
+      "flow-qualified lookup did not resolve the selected shader program");
+  driver.DestroyShader(mesh);
+    Require(driver.GetShader(driver.GetShaderIdx(quad)->programKey) == driver.GetShaderIdx(quad) &&
+      driver.GetShader(driver.GetShaderIdx(meshWgsl)->programKey) == driver.GetShaderIdx(meshWgsl),
+      "destroying one shader program removed another family or flow");
+  driver.DestroyShaders();
+}
+
+void TestGraphicsPipelineProgramIdentity() {
+#if defined(OS_WINDOWS)
+  const ShaderProgramKey mesh{{11, 22}, 33, ShaderProgramFlow::Default};
+  const ShaderProgramKey quad{{44, 55}, 33, ShaderProgramFlow::Default};
+
+  D3D12PipelineKey d3dA{};
+  d3dA.program = mesh;
+  d3dA.rtvFormats.fill(DXGI_FORMAT_UNKNOWN);
+  D3D12PipelineKey d3dB = d3dA;
+  Require(d3dA == d3dB && D3D12PipelineKeyHash()(d3dA) == D3D12PipelineKeyHash()(d3dB),
+          "D3D12 pipeline key is not stable for one shader program");
+  d3dB.program = quad;
+  Require(!(d3dA == d3dB), "D3D12 pipeline key aliased different shader programs");
+
+  VulkanPipelineKey vkA{};
+  vkA.program = mesh;
+  VulkanPipelineKey vkB = vkA;
+  Require(vkA == vkB && VulkanPipelineKeyHash()(vkA) == VulkanPipelineKeyHash()(vkB),
+          "Vulkan pipeline key is not stable for one shader program");
+  vkB.program = quad;
+  Require(!(vkA == vkB), "Vulkan pipeline key aliased different shader programs");
+#endif
+}
+
+void TestMutableGraphicsStateCache() {
+  MutableGraphicsStateCache cache;
+  Require(cache.Select(MutableGraphicsStateCache::Slot::Blend, 1) &&
+    !cache.Select(MutableGraphicsStateCache::Slot::Blend, 1) &&
+    cache.Select(MutableGraphicsStateCache::Slot::Depth, 2) &&
+    !cache.Select(MutableGraphicsStateCache::Slot::Depth, 2) &&
+    cache.Select(MutableGraphicsStateCache::Slot::Cull, 0) &&
+    cache.Select(MutableGraphicsStateCache::Slot::Cull, 1),
+    "mutable graphics state cache did not distinguish changes from redundant requests");
+  Require(cache.Requests() == 6 && cache.Changes() == 4 && cache.Redundant() == 2,
+    "mutable graphics state cache accounting is inconsistent");
+    Require(cache.Requests(MutableGraphicsStateCache::Slot::Cull) == 2 &&
+      cache.Changes(MutableGraphicsStateCache::Slot::Cull) == 2 &&
+      cache.Redundant(MutableGraphicsStateCache::Slot::Blend) == 1,
+      "mutable graphics state cache per-slot accounting is inconsistent");
+  cache.Reset();
+  Require(cache.Requests() == 0 && cache.Changes() == 0 && cache.Redundant() == 0 &&
+    cache.Select(MutableGraphicsStateCache::Slot::Blend, 1),
+    "mutable graphics state cache reset retained stale state");
+}
+
+void TestProfilerAccounting() {
+  NullTestDriver driver;
+  driver.m_currentAPI = GraphicsApi::WEBGPU;
+  Profiler profiler;
+  profiler.Init(&driver, 4);
+  profiler.BeginFrame();
+  profiler.BeginScope("Outer");
+  profiler.AddDrawCall(3);
+  profiler.BeginCPUScope("Inner");
+  profiler.AddDrawCall(6);
+  profiler.EndCPUScope();
+  profiler.AddDrawCall(9);
+  profiler.EndScope();
+  profiler.EndFrame();
+  const auto& scopes = profiler.GetScopes();
+  Require(scopes.size() == 2, "profiler did not register both nested scopes");
+  Require(scopes[0].cpuSampleCount == 1 && scopes[1].cpuSampleCount == 1,
+    "profiler did not close each nested scope exactly once");
+  Require(scopes[0].drawCalls == 2 && scopes[1].drawCalls == 1,
+    "profiler attributed a draw to a closed inner scope");
+  Require(scopes[0].CpuAvgMs() >= scopes[1].CpuAvgMs(),
+    "profiler outer inclusive duration is shorter than its child");
+}
+
+  int64_t gProfilerTestTicks = 0;
+
+  int64_t ProfilerTestClock() { return gProfilerTestTicks; }
+
+  class TestProfilerGpuBackend final : public ProfilerGpuBackend {
+  public:
+    bool ready = false;
+    bool drop = false;
+    std::vector<int> begins;
+    std::vector<int> ends;
+    std::vector<std::vector<ProfileFrameQuery>> pending;
+    std::vector<ProfileFrameQuery> lastFrame;
+
+    bool Init(BaseDriver*, int) override { return true; }
+    const char* Name() const override { return "test"; }
+    void BeginFrame() override {}
+    void BeginScope(int queryIndex) override { begins.push_back(queryIndex); }
+    void EndScope(int queryIndex) override { ends.push_back(queryIndex); }
+    void EndFrame(int count, const std::vector<ProfileFrameQuery>& queries) override {
+      lastFrame.assign(queries.begin(), queries.begin() + count);
+      pending.push_back(lastFrame);
+    }
+    void Resolve(std::vector<ProfileScope>& scopes) override {
+      if (!ready) return;
+      if (!drop) {
+        for (const auto& frame : pending) {
+    for (const auto& query : frame) {
+      if (query.cpuOnly || query.scopeIndex < 0 ||
+          query.scopeIndex >= static_cast<int>(scopes.size())) continue;
+      auto& scope = scopes[query.scopeIndex];
+      if (scope.generation != query.generation) continue;
+      scope.gpuTotalMs += 7.0;
+      ++scope.gpuSampleCount;
+    }
+        }
+      }
+      pending.clear();
+    }
+  };
+
+  void TestProfilerDeterministicSamples() {
+    const auto run = [](bool withGpu) {
+      Profiler profiler;
+      auto backend = withGpu ? std::make_unique<TestProfilerGpuBackend>() : nullptr;
+      auto* gpu = backend.get();
+      profiler.Init(nullptr, 8, std::move(backend), ProfilerTestClock, 1000);
+      gProfilerTestTicks = 0;
+      profiler.BeginFrame();
+      const auto outer = profiler.BeginScope("Outer");
+      profiler.AddDrawCall(3);
+      gProfilerTestTicks = 10;
+      const auto inner = profiler.BeginCPUScope("Inner");
+      profiler.AddDrawCall(6);
+      gProfilerTestTicks = 30;
+      profiler.EndCPUScope(inner);
+      profiler.AddDrawCall(9);
+      gProfilerTestTicks = 40;
+      const auto nestedGpu = profiler.BeginScope("NestedGPU");
+      gProfilerTestTicks = 50;
+      profiler.EndScope(nestedGpu);
+      gProfilerTestTicks = 90;
+      profiler.EndScope(outer);
+      gProfilerTestTicks = 95;
+      const auto sequential = profiler.BeginScope("Inner");
+      gProfilerTestTicks = 100;
+      profiler.EndScope(sequential);
+      profiler.AddDrawCall(300);
+      profiler.EndFrame();
+      const auto& scopes = profiler.GetScopes();
+      Require(scopes.size() == 4 && scopes[1].parentIndex == 0 && scopes[2].parentIndex == 0 &&
+        scopes[3].parentIndex == -1, "profiler lost the scope tree or merged different parents");
+      Require(scopes[0].CpuAvgMs() == 90.0 && scopes[1].CpuAvgMs() == 20.0 &&
+        scopes[2].CpuAvgMs() == 10.0 && scopes[3].CpuAvgMs() == 5.0,
+        "profiler inclusive or sequential timing is incorrect");
+      Require(scopes[0].drawCalls == 2 && scopes[0].triangles == 4 &&
+        scopes[1].drawCalls == 1 && scopes[1].triangles == 2 && scopes[3].drawCalls == 0,
+        "profiler draw attribution escaped the active scope");
+      for (const auto& scope : scopes) {
+        Require(scope.cpuSampleCount == 1 && scope.gpuSampleCount == 0,
+          "CPU samples depend on unavailable GPU results");
+      }
+      if (gpu) {
+        Require(gpu->begins == std::vector<int>({0, 2, 3}) &&
+          gpu->ends == std::vector<int>({2, 0, 3}),
+          "profiler reused a query slot or issued GPU timestamps for a CPU-only scope");
+        profiler.BeginFrame();
+        profiler.EndFrame();
+        Require(scopes[0].gpuSampleCount == 0 && scopes[0].CpuAvgMs() == 90.0,
+          "delayed GPU results changed CPU accounting");
+        gpu->ready = true;
+        profiler.BeginFrame();
+        profiler.EndFrame();
+        Require(scopes[0].gpuSampleCount == 1 && scopes[0].GpuAvgMs() == 7.0 &&
+          scopes[1].gpuSampleCount == 0 && scopes[0].CpuAvgMs() == 90.0,
+          "GPU and CPU sample denominators were mixed");
+        gpu->drop = true;
+        profiler.BeginFrame();
+        gProfilerTestTicks = 110;
+        profiler.BeginScope("Outer");
+        gProfilerTestTicks = 120;
+        profiler.EndScope();
+        profiler.EndFrame();
+        profiler.BeginFrame();
+        profiler.EndFrame();
+        Require(scopes[0].cpuSampleCount == 2 && scopes[0].gpuSampleCount == 1 &&
+          scopes[0].CpuAvgMs() == 50.0 && scopes[0].GpuAvgMs() == 7.0,
+          "dropping GPU results changed the CPU average");
+      }
+      Require(profiler.GetWarningCount() == 0, "balanced profiler scopes produced a warning");
+    };
+    run(false);
+    run(true);
+  }
+
+  void TestProfilerScopeGuards() {
+    Profiler profiler;
+    auto backend = std::make_unique<TestProfilerGpuBackend>();
+    auto* gpu = backend.get();
+    profiler.Init(nullptr, 2, std::move(backend), ProfilerTestClock, 1000);
+    gProfilerTestTicks = 0;
+    profiler.BeginFrame();
+    {
+      T8_PROFILE_SCOPE(&profiler, "Outer");
+      gProfilerTestTicks = 10;
+      {
+        T8_PROFILE_CPU_SCOPE(&profiler, "Inner");
+        {
+    T8_PROFILE_SCOPE(&profiler, "Overflow");
+    profiler.AddDrawCall(300);
+        }
+        gProfilerTestTicks = 20;
+      }
+      profiler.AddDrawCall(3);
+      gProfilerTestTicks = 30;
+    }
+    profiler.EndScope();
+    profiler.EndFrame();
+    Require(profiler.GetWarningCount() == 2, "overflow and unmatched end were not diagnosed");
+    Require(profiler.GetScopes()[0].CpuAvgMs() == 30.0 &&
+      profiler.GetScopes()[1].CpuAvgMs() == 10.0 &&
+      profiler.GetScopes()[0].drawCalls == 1 && profiler.GetScopes()[1].drawCalls == 0,
+      "overflow guard closed or attributed work to another scope");
+    Require(gpu->begins == std::vector<int>({0}) && gpu->ends == std::vector<int>({0}),
+      "overflow corrupted GPU begin/end pairing");
+    profiler.BeginFrame();
+    profiler.BeginScope("RawOuter");
+    profiler.BeginScope("RawInner");
+    profiler.BeginScope("RawOverflow");
+    profiler.EndScope();
+    profiler.EndScope();
+    profiler.EndScope();
+    profiler.EndFrame();
+    Require(profiler.GetScopes()[2].cpuSampleCount == 1 &&
+      profiler.GetScopes()[3].cpuSampleCount == 1,
+      "non-token overflow end closed the wrong scope");
+    profiler.BeginFrame();
+    const auto outer = profiler.BeginScope("MismatchOuter");
+    const auto inner = profiler.BeginCPUScope("MismatchInner");
+    const auto warnings = profiler.GetWarningCount();
+    profiler.EndScope(outer);
+    profiler.EndScope(inner);
+    profiler.EndCPUScope(inner);
+    profiler.EndScope(outer);
+    Require(profiler.GetWarningCount() == warnings + 2,
+      "out-of-order or wrong-kind scope end was not diagnosed");
+    profiler.EndFrame();
+    profiler.BeginFrame();
+    const auto unbalanced = profiler.BeginScope("Unbalanced");
+    profiler.EndFrame();
+    Require(profiler.GetScopes().back().cpuSampleCount == 0 &&
+      gpu->lastFrame.front().scopeIndex == -1 && profiler.GetWarningCount() == warnings + 3,
+      "unbalanced scope was not discarded and diagnosed");
+    profiler.BeginFrame();
+    const auto current = profiler.BeginScope("CurrentFrame");
+    profiler.EndScope(unbalanced);
+    profiler.EndScope(current);
+    profiler.EndFrame();
+    Require(profiler.GetScopes().back().cpuSampleCount == 1,
+      "a guard from an older frame closed the new frame scope");
+  }
+
+  void TestProfilerResetGeneration() {
+    Profiler profiler;
+    auto backend = std::make_unique<TestProfilerGpuBackend>();
+    auto* gpu = backend.get();
+    profiler.Init(nullptr, 8, std::move(backend), ProfilerTestClock, 1000);
+    gProfilerTestTicks = 0;
+    profiler.BeginFrame();
+    profiler.BeginScope("BeforeReset");
+    gProfilerTestTicks = 10;
+    profiler.EndScope();
+    profiler.EndFrame();
+    profiler.Reset();
+    profiler.BeginFrame();
+    {
+      ProfileScopeGuard staleGuard(&profiler, "DiscardedByReset");
+      gProfilerTestTicks = 20;
+      profiler.Reset();
+      gProfilerTestTicks = 30;
+      profiler.BeginScope("AfterReset");
+    }
+    gProfilerTestTicks = 50;
+    profiler.EndScope();
+    profiler.EndFrame();
+    Require(gpu->lastFrame.size() == 2 && gpu->lastFrame[0].scopeIndex == -1 &&
+      gpu->lastFrame[1].scopeIndex == 0, "reset reused an in-flight query slot");
+    gpu->ready = true;
+    profiler.BeginFrame();
+    profiler.EndFrame();
+    const auto& scope = profiler.GetScopes().front();
+    Require(profiler.GetScopes().size() == 1 && scope.name == "AfterReset" &&
+      scope.cpuSampleCount == 1 && scope.CpuAvgMs() == 20.0 &&
+      scope.gpuSampleCount == 1 && scope.GpuAvgMs() == 7.0,
+      "pre-reset GPU results or a stale guard were attributed to a new scope");
+    Require(gpu->begins == std::vector<int>({0, 0, 1}) &&
+      gpu->ends == std::vector<int>({0, 0, 1}), "reset left a GPU query open");
+    Require(profiler.GetWarningCount() == 0, "reset generation caused spurious warnings");
+    profiler.Destroy();
+    profiler.Init(nullptr, 2, nullptr, ProfilerTestClock, 1000);
+    profiler.BeginFrame();
+    profiler.BeginCPUScope("Reinitialized");
+    profiler.EndCPUScope();
+    profiler.EndFrame();
+    Require(profiler.GetScopes().size() == 1 && profiler.GetScopes()[0].cpuSampleCount == 1 &&
+      profiler.GetFrameCount() == 1, "profiler reinitialization retained stale records");
+  }
+
+class LifecycleTestDevice final : public Device {
+public:
+  unsigned allocations = 0;
+  unsigned failAllocation = 0;
+  std::vector<bool> requestedMips;
+  explicit LifecycleTestDevice(std::vector<std::string>& events) : events(events) {}
+  void* GetAPIObject() const override { return nullptr; }
+  void** GetAPIObjectReference() const override { return nullptr; }
+  void release() override {}
+  Buffer* CreateBuffer(BufferType::E, BufferDesc, void*) override { return nullptr; }
+  ShaderBase* CreateShader(std::string, std::string, ShaderKey, const std::string&, const std::string&) override { return nullptr; }
+  Texture* CreateTexture(std::string) override { return nullptr; }
+  Texture* CreateTextureFromMemory(const unsigned char*, int, int, int, std::string) override { return nullptr; }
+  Texture* CreateCubeMap(const unsigned char*, int, int) override { return nullptr; }
+  Texture* CreateFloatTexture(int, int, const float*) override { return nullptr; }
+  Texture* CreateFloatCubeMap(int, int, const float*) override { return nullptr; }
+  BaseRT* CreateRT(int count, int, int, int, int, bool mips, bool) override {
+    ++allocations;
+    requestedMips.push_back(mips);
+    if (allocations == failAllocation) return nullptr;
+    class NullRenderTarget final : public BaseRT {
+    public:
+      explicit NullRenderTarget(std::vector<std::string>& events) : events(events) { pDepthTexture = nullptr; }
+      bool LoadAPIRT() override { return true; }
+      void DestroyAPIRT() override { events.push_back("destroy-target"); }
+      void Set(const DeviceContext&) override {}
+      void ChangeCubeDepthTexture(int) override {}
+    private:
+      std::vector<std::string>& events;
+    };
+    auto* target = new NullRenderTarget(events);
+    target->vColorTextures.resize(count, nullptr);
+    return target;
+  }
+private:
+  std::vector<std::string>& events;
+};
+
+class LifecycleTestScene final : public SceneBase {
+public:
+  explicit LifecycleTestScene(std::vector<std::string>& events) : events(events) {}
+  void OnUpdate(float) override {}
+  void OnDraw() override {}
+  void OnInput(InputManager*) override {}
+  void OnLoadScene() override { events.push_back("load"); }
+  void OnDestoryScene() override { events.push_back("destroy"); }
+  void InitVars() override {}
+  void CreateAssets() override {}
+  void DestroyAssets() override {}
+private:
+  std::vector<std::string>& events;
+};
+
+class LifecycleTestFramework final : public RootFramework {
+public:
+  LifecycleTestFramework() : RootFramework(nullptr) {}
+  void InitGlobalVars() override {}
+  void OnCreateApplication(ApplicationDesc) override {}
+  void OnDestroyApplication() override {}
+  void OnInterruptApplication() override {}
+  void OnResumeApplication() override {}
+  void UpdateApplication() override {}
+  void ProcessInput() override {}
+  void ResetApplication() override {}
+  void ChangeAPI(GraphicsApi::E) override {}
+};
+
+void TestSceneRuntimeOwnership() {
+  TempSceneFiles files;
+  const auto scenePath = files.Add("_policy.t8scene");
+  const auto descriptorPath = files.Add("_policy.json");
+  scene::EditorSceneFile authored;
+  authored.mouse_capture = false;
+  authored.runtime_setup = SceneDescriptor{};
+  authored.runtime_setup->cameras.push_back(CameraDesc{});
+  authored.runtime_setup->cameras.front().position = {3, 4, 5};
+  Require(scene::SaveEditorSceneFile(authored, scenePath.string()), "cannot save scene input policy");
+  scene::EditorSceneFile loaded;
+  Require(scene::LoadEditorSceneFile(scenePath.string(), loaded) && loaded.mouse_capture == false,
+          "scene input policy did not survive round trip");
+  SceneDescriptor descriptor;
+  descriptor.runtime_scene = scenePath.string();
+  Require(SaveSceneDescriptor(descriptorPath.string(), descriptor), "cannot save descriptor policy reference");
+  SceneSetup setup;
+  Require(loaded.runtime_setup && setup.Load(*loaded.runtime_setup) && setup.GetCamera()->Eye.x == 3,
+      "embedded runtime setup did not round-trip or construct authored camera");
+  Require(setup.Load(descriptorPath.string()), "cannot load authored runtime policy");
+  NullTestDriver driver;
+  LifecycleTestScene runtime(driver.events);
+  setup.ApplyInputSettings(runtime.SceneProp);
+  Require(!runtime.AllowsMouseCapture(), "scene ignored authored capture policy");
+  setup.ApplyInputSettings(runtime.SceneProp, true);
+  Require(runtime.AllowsMouseCapture(), "explicit scene policy did not override descriptor default");
+  authored.mouse_capture = true;
+  Require(scene::SaveEditorSceneFile(authored, scenePath.string()) && setup.Load(descriptorPath.string()),
+          "cannot reload changed input policy");
+  setup.ApplyInputSettings(runtime.SceneProp);
+  Require(runtime.AllowsMouseCapture(), "scene hardcoded capture instead of loading updated data");
+  authored.mouse_capture.reset();
+  Require(scene::SaveEditorSceneFile(authored, scenePath.string()) && setup.Load(descriptorPath.string()),
+          "legacy scene did not load");
+  setup.ApplyInputSettings(runtime.SceneProp);
+  Require(runtime.AllowsMouseCapture(), "legacy scene retained stale input policy");
+  LifecycleTestFramework framework;
+  framework.pVideoDriver = &driver;
+  framework.UnloadScene(runtime);
+  Require(driver.events == std::vector<std::string>{"flush", "destroy"}, "GPU drain must precede scene destruction");
+}
+
+void TestAuthoredStreamedVoxels() {
+  TempSceneFiles files;
+  const auto path = files.Add("_voxels.t8scene");
+  scene::EditorSceneFile authored;
+  authored.streamed_voxels.emplace();
+  auto& fixture = *authored.streamed_voxels;
+  fixture.chunk_dimensions = {16, 16, 16};
+  fixture.terrain = {3, 3, 13, 7, 2};
+  fixture.palette = {{"stone"}, {"dirt"}, {"grass"}};
+  fixture.deep_block = "stone";
+  fixture.fill_block = "dirt";
+  fixture.surface_block = "grass";
+  fixture.edits_path = "VoxelWorlds/test/edits.t8vox";
+  fixture.interaction_reach = 8;
+  fixture.atlas_width = fixture.atlas_height = 1;
+  fixture.atlas_rgba = {255, 255, 255, 255};
+  Require(scene::SaveEditorSceneFile(authored, path.string()) &&
+          scene::LoadEditorSceneFile(path.string(), authored) && authored.streamed_voxels,
+          "cannot load authored streamed voxel asset");
+  auto data = *authored.streamed_voxels;
+  terrain::BlockRegistry registry;
+  scene::BuildStreamedVoxelPalette(data, registry);
+  Require(registry.Find("stone") == 1 && registry.Find("dirt") == 2 && registry.Find("grass") == 3,
+          "authored palette changed persisted block IDs");
+  terrain::VoxelChunkBuildRequest request;
+  request.key = {-1, 0, -1};
+  request.dimensions = data.chunk_dimensions;
+  auto chunk = terrain::GenerateLayeredVoxelChunk(request, data.terrain, 3, 2, 1);
+  Require(chunk && chunk->Get(0, 0, 0) == 1 && chunk->Get(0, 3, 0) == 3 && chunk->Get(0, 4, 0) == 0,
+          "layered generator changed negative-coordinate terrain");
+  request.cancelled = std::make_shared<std::atomic_bool>(true);
+  Require(!terrain::GenerateLayeredVoxelChunk(request, data.terrain, 3, 2, 1), "generator ignored cancellation");
+  for (int invalidCase = 0; invalidCase < 4; ++invalidCase) {
+    auto invalid = data;
+    if (invalidCase == 0) invalid.atlas_rgba.pop_back();
+    if (invalidCase == 1) invalid.palette.push_back(invalid.palette.front());
+    if (invalidCase == 2) invalid.surface_block = "unknown";
+    if (invalidCase == 3) invalid.edits_path = "../outside.t8vox";
+    bool rejected = false;
+    try { scene::BuildStreamedVoxelPalette(invalid, registry); } catch (const std::runtime_error&) { rejected = true; }
+    Require(rejected && registry.Count() == 4, "invalid voxel data was accepted or partially replaced palette");
+  }
+  terrain::VoxelStreamingManager streaming;
+  streaming.Reset(data.chunk_dimensions);
+  auto settings = data.streaming;
+  settings.horizontalRadius = 0;
+  streaming.SetSettings(settings);
+  bool receivedDimensions = false;
+  const auto build = [&](const terrain::VoxelChunkBuildRequest& job) {
+    receivedDimensions = job.dimensions.y == data.chunk_dimensions.y;
+    terrain::VoxelChunkBuildResult result;
+    result.key = job.key;
+    result.epoch = job.epoch;
+    result.chunk = terrain::GenerateLayeredVoxelChunk(job, data.terrain, 3, 2, 1);
+    return result;
+  };
+  streaming.Update({}, {}, nullptr, build);
+  Require(receivedDimensions, "streaming reset retained stale chunk dimensions");
+}
+
+void TestShaderPrecompilerContract() {
+  TempSceneFiles files;
+  const auto manifest = files.Add("_permutations.json");
+  const auto computeSourceDirectory = files.Add("_compute_sources");
+  std::filesystem::create_directories(computeSourceDirectory);
+  {
+    std::ofstream output(computeSourceDirectory / "CS_Arithmetic.hlsl");
+    output << "[numthreads(1, 1, 1)] void CS() {}\n";
+  }
+  {
+    std::ofstream output(manifest);
+    output << R"({"version":2,"permutations":{"0x0000000000000001":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"},"0x0000000000000002":{"vertexShader":"missing.vs","fragmentShader":"missing.fs"}},"compute_permutations":{"CS_Arithmetic.hlsl:CS:base":{"key":"CS_Arithmetic.hlsl:CS:base","kind":"compute","computeShader":"CS_Arithmetic.hlsl","entryPoint":"CS","permutation":"base","defines":[]}}})";
+  }
+  NullTestDriver driver;
+  ShaderPrecompileRequest request;
+  request.manifestPath = manifest.string();
+  request.sourceDirectory = computeSourceDirectory.string();
+  size_t reports = 0;
+  request.onProgress = [&](const ShaderPrecompileProgress& progress) {
+    ++reports;
+    Require(progress.completed == reports && progress.total == 3,
+            "precompiler reported an invalid permutation total");
+    if (progress.key.starts_with("0x"))
+      Require(!progress.error.empty(), "precompiler omitted graphics-entry diagnostics");
+    else
+      Require(progress.error.empty(), "precompiler rejected a registered compute entry");
+  };
+  auto result = PrecompileShaders(driver, request);
+  Require(!result.Succeeded() && result.failed == 2 && result.succeeded == 1 && reports == 3 &&
+          driver.computePipelines.size() == 1 &&
+          driver.computePipelines.front().debugName.ends_with("CS_Arithmetic.hlsl") &&
+          driver.computePipelines.front().bindings.size() == 2 &&
+          driver.computePipelines.front().bindings.front().constantCount == 4,
+          "precompiler did not compile the registered compute permutation");
+  reports = 0;
+  request.cancelRequested = [&] { return reports == 1; };
+  result = PrecompileShaders(driver, request);
+  Require(result.cancelled && result.failed == 1 && reports == 1, "precompiler did not stop between permutations");
+  request.manifestPath = files.Add("_missing.json").string();
+  bool rejected = false;
+  try { PrecompileShaders(driver, request); } catch (const std::runtime_error&) { rejected = true; }
+  Require(rejected, "precompiler accepted a missing manifest");
+
+  const auto invalidComputeManifest = files.Add("_invalid_compute_permutation.json");
+  {
+    std::ofstream output(invalidComputeManifest);
+    output << R"({"version":2,"permutations":{},"compute_permutations":{"CS_Arithmetic.hlsl:CS:typo":{"key":"CS_Arithmetic.hlsl:CS:typo","kind":"compute","computeShader":"CS_Arithmetic.hlsl","entryPoint":"CS","permutation":"typo","defines":[]}}})";
+  }
+  request.manifestPath = invalidComputeManifest.string();
+  request.cancelRequested = {};
+  std::string invalidComputeError;
+  request.onProgress = [&](const ShaderPrecompileProgress& progress) {
+    invalidComputeError = progress.error;
+  };
+  result = PrecompileShaders(driver, request);
+  Require(result.failed == 1 && result.succeeded == 0 &&
+          invalidComputeError.find("Unsupported compute permutation") != std::string::npos &&
+          driver.computePipelines.size() == 1,
+          "precompiler accepted an unregistered compute permutation");
+
+    const auto recorded = files.Add("_recorded.json").string();
+    ShaderPermutationDump::Begin(recorded);
+    ShaderKey key;
+    key.bits = 1;
+    ShaderPermutationDump::Record(key, "quoted\"vertex.hlsl", "fragment.hlsl", "#define FORWARD_PASS\n");
+    Require(ShaderPermutationDump::Flush(), "cannot flush recorded manifest");
+    std::string original;
+    Require(ResourceLocator::Instance().ReadText(recorded, original), "cannot read recorded manifest");
+    ShaderPermutationDump::Begin(recorded);
+    key.bits = 2;
+    ShaderPermutationDump::Record(key, "second.hlsl", "fragment.hlsl", "");
+    Require(ShaderPermutationDump::Flush(), "cannot merge recorded manifest");
+    std::string merged;
+    Require(ResourceLocator::Instance().ReadText(recorded, merged) &&
+      merged.find("0x0000000000000001") != std::string::npos &&
+      merged.find("0x0000000000000002") != std::string::npos,
+      "recording discarded earlier permutations");
+    ShaderPermutationDump::Begin(recorded);
+    ShaderPermutationDump::RecordCompute("Shaders/CS_Blur.hlsl", "CS", "horizontal", {"B", "A", "A"});
+    ShaderPermutationDump::RecordCompute("CS_Blur.hlsl", "CS", "horizontal", {"A", "B"});
+    bool rejectedDefineConflict = false;
+    try {
+      ShaderPermutationDump::RecordCompute("CS_Blur.hlsl", "CS", "horizontal", {"C"});
+    } catch (const std::runtime_error&) {
+      rejectedDefineConflict = true;
+    }
+    Require(rejectedDefineConflict && ShaderPermutationDump::Flush(),
+      "recorder accepted conflicting defines for one compute permutation");
+    Require(ResourceLocator::Instance().WriteText(recorded, "{broken"), "cannot prepare malformed manifest");
+    ShaderPermutationDump::Begin(recorded);
+    const bool rejectedMerge = !ShaderPermutationDump::Flush();
+    std::string unchanged;
+    const bool preserved = ResourceLocator::Instance().ReadText(recorded, unchanged) && unchanged == "{broken";
+    Require(ResourceLocator::Instance().WriteText(recorded, original) && ShaderPermutationDump::Flush(),
+      "cannot recover recorder after failed merge");
+    Require(rejectedMerge && preserved, "recorder overwrote malformed input");
+  #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
+    const auto packageRoot = files.Add("_web_packages");
+    std::filesystem::create_directories(packageRoot);
+    webgpu::ShaderRequest shaderRequest;
+    shaderRequest.name = "Shaders/test.hlsl";
+    shaderRequest.source = "test source";
+    shaderRequest.keyBits = 8;
+    webgpu::ShaderArtifact shaderArtifact;
+    shaderArtifact.wgsl = "@vertex fn VS() -> @builtin(position) vec4f { return vec4f(0); }";
+    shaderArtifact.translationMilliseconds = 15;
+    std::string diagnostic;
+    webgpu::ShaderFlowReport packageReport;
+    const auto packageFlow = webgpu::ShaderFlow::Auto;
+    const bool wrotePackage = webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, packageFlow, packageReport, packageRoot.string(), diagnostic);
+    webgpu::ShaderArtifact restoredArtifact;
+    const bool readPackage = webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, packageFlow, packageReport, diagnostic, packageRoot.string());
+    shaderRequest.source += " changed";
+    const bool rejectedStale = !webgpu::ReadShaderPackage(shaderRequest, shaderArtifact, packageFlow, packageReport, diagnostic, packageRoot.string());
+    const auto packagePath = std::filesystem::directory_iterator(packageRoot)->path();
+    ResourceLocator::Instance().WriteText(packagePath.string(), "{corrupt");
+    shaderRequest.source = "test source";
+    const bool rejectedCorrupt = !webgpu::ReadShaderPackage(shaderRequest, shaderArtifact, packageFlow, packageReport, diagnostic, packageRoot.string());
+    std::filesystem::remove_all(packageRoot);
+    Require(wrotePackage && readPackage && restoredArtifact.cacheHit && restoredArtifact.translationMilliseconds == 0 &&
+            rejectedStale && rejectedCorrupt, "browser shader package integrity or invalidation failed");
+        shaderRequest.stage = webgpu::ShaderStage::Compute;
+        shaderRequest.layout = webgpu::BindingLayout::ComputeV1;
+        shaderRequest.entryPoint = "CS";
+        shaderRequest.defines = "#define COMPUTE_TEST\n";
+        shaderArtifact = {};
+        shaderArtifact.wgsl = "@compute @workgroup_size(8, 4, 1) fn CS() {}";
+        shaderArtifact.workgroupSize = {8, 4, 1};
+        webgpu::ShaderBinding storage{};
+        storage.kind = webgpu::ResourceKind::WriteOnlyStorageTexture;
+        storage.binding = 5;
+        storage.dimension = webgpu::TextureDimension::D2;
+        storage.storageRgba16Float = true;
+        shaderArtifact.bindings.push_back(storage);
+        Require(webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, packageFlow, packageReport, packageRoot.string(), diagnostic) &&
+          webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, packageFlow, packageReport, diagnostic, packageRoot.string()) &&
+          restoredArtifact.workgroupSize == shaderArtifact.workgroupSize &&
+          restoredArtifact.bindings == shaderArtifact.bindings,
+          "compute package lost workgroup or storage format metadata");
+        for (int field = 0; field < 3; ++field) {
+          auto changed = shaderRequest;
+          if (field == 0) changed.entryPoint = "Other";
+          if (field == 1) changed.defines.clear();
+          if (field == 2) changed.layout = webgpu::BindingLayout::GraphicsV1;
+          Require(!webgpu::ReadShaderPackage(changed, restoredArtifact, packageFlow, packageReport, diagnostic, packageRoot.string()),
+            "compute package accepted a different entry point, defines or binding layout");
+        }
+        for (const auto strictFlow : {webgpu::ShaderFlow::Wgsl, webgpu::ShaderFlow::Spirv})
+          Require(!webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, strictFlow, packageReport, diagnostic, packageRoot.string()),
+            "strict compute flow accepted an auto package");
+        packageReport.attempts = {webgpu::ShaderFlowAttempt{}};
+        packageReport.attempts.front().sourceLanguage = webgpu::ShaderSourceLanguage::Wgsl;
+        Require(!webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, webgpu::ShaderFlow::Spirv,
+          packageReport, packageRoot.string(), diagnostic), "SPIR-V package accepted direct WGSL provenance");
+        auto directArtifact = shaderArtifact;
+        directArtifact.wgsl += "\n";
+        Require(webgpu::WriteShaderPackage(shaderRequest, directArtifact, webgpu::ShaderFlow::Wgsl,
+          packageReport, packageRoot.string(), diagnostic), "cannot write strict WGSL package");
+        packageReport.attempts.front().sourceLanguage = webgpu::ShaderSourceLanguage::Hlsl;
+        Require(webgpu::WriteShaderPackage(shaderRequest, shaderArtifact, webgpu::ShaderFlow::Spirv,
+          packageReport, packageRoot.string(), diagnostic), "cannot write strict SPIR-V package");
+        for (const auto strictFlow : {webgpu::ShaderFlow::Wgsl, webgpu::ShaderFlow::Spirv}) {
+          const bool direct = strictFlow == webgpu::ShaderFlow::Wgsl;
+          Require(webgpu::ReadShaderPackage(shaderRequest, restoredArtifact, strictFlow, packageReport, diagnostic, packageRoot.string()) &&
+            restoredArtifact.wgsl == (direct ? directArtifact.wgsl : shaderArtifact.wgsl) &&
+            packageReport.attempts.front().sourceLanguage == (direct ? webgpu::ShaderSourceLanguage::Wgsl : webgpu::ShaderSourceLanguage::Hlsl),
+            "strict compute packages collided or lost source provenance");
+        }
+        std::filesystem::remove_all(packageRoot);
+  #endif
+}
+
+void TestTextureMipmaps() {
+  Require(HalfToFloat(0x3c00) == 1.0f && HalfToFloat(0xc000) == -2.0f &&
+          HalfToFloat(1) == std::ldexp(1.0f, -24) && std::signbit(HalfToFloat(0x8000)) &&
+          std::isinf(HalfToFloat(0x7c00)) && std::isnan(HalfToFloat(0x7e00)),
+          "half-float conversion changed");
+  Require(CalculateFullMipCount(1, 1) == 1 && CalculateFullMipCount(5, 3) == 3, "mip count mismatch");
+  std::vector<unsigned char> output;
+  const std::array<unsigned char, 16> alphaPixels{255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 0, 255, 255, 255, 0};
+  GenerateMipChain8(alphaPixels.data(), 2, 2, 1, 4, output);
+  Require(output.size() == 20 && output[16] == 255 && output[17] == 0 && output[18] == 0 && output[19] == 64,
+          "alpha-weighted mip filtering changed");
+  const std::array<unsigned char, 3> column{10, 30, 200};
+  GenerateMipChain8(column.data(), 1, 3, 1, 1, output);
+  Require(output.size() == 4 && output[3] == 20, "odd single-column mip policy changed");
+  std::vector<unsigned char> faces(5 * 3 * 6);
+  for (unsigned face = 0; face < 6; ++face) std::fill_n(faces.begin() + face * 15, 15, static_cast<unsigned char>(face * 31));
+  GenerateMipChain8(faces.data(), 5, 3, 6, 1, output);
+  Require(output.size() == 18 * 6, "cube mip chain size mismatch");
+  for (unsigned face = 0; face < 6; ++face)
+    for (unsigned pixel = 0; pixel < 18; ++pixel) Require(output[face * 18 + pixel] == face * 31, "mip generation mixed cube faces");
+}
+
+void TestMinecraftSurvivalAuthoring() {
+  scene::EditorSceneFile authored;
+  std::string error;
+  Require(scene::LoadEditorSceneFile("Scenes/Minecraft.t8scene", authored, &error) &&
+    authored.voxel_world,
+    "cannot load authored Minecraft survival settings: " + error);
+  const auto& world = *authored.voxel_world;
+  Require(world.player.max_health == 5 && world.player.contact_damage == 1 &&
+    world.player.health_regeneration_seconds == 60.0f,
+    "Minecraft player health settings must be five hearts, one contact damage, and sixty-second regeneration");
+  Require(world.mob.player_avoidance_radius <=
+      world.player.capsule_radius + world.mob.half_width,
+    "Herobrine avoidance prevents contact damage");
+  Require(world.mob.glowing_eyes && world.mob.glowing_eye_color.x == 1.0f &&
+    world.mob.glowing_eye_color.y == 1.0f &&
+    world.mob.glowing_eye_color.z == 1.0f &&
+    world.mob.glowing_eye_intensity > 1.0f,
+    "Herobrine eyes are not authored as glowing white");
+
+  RegeneratingHealthState health;
+  Require(health.Configure(world.player.max_health,
+         world.player.health_regeneration_seconds) &&
+    health.Current() == 5 && health.Maximum() == 5,
+    "health state did not initialize to five hearts");
+    bool contactLatch = false;
+    Require(health.ApplyContact(true, world.player.contact_damage, contactLatch) &&
+      !health.ApplyContact(true, world.player.contact_damage, contactLatch) &&
+      health.Current() == 4,
+      "sustained Herobrine contact did not remove exactly one heart");
+    Require(!health.ApplyContact(false, world.player.contact_damage, contactLatch) &&
+      health.ApplyContact(true, world.player.contact_damage, contactLatch) &&
+      health.Current() == 3,
+      "Herobrine contact re-entry did not remove one heart");
+    Require(health.Update(60.0f) && health.Current() == 4 &&
+      health.Update(60.0f) && health.Current() == 5,
+      "health did not regenerate one heart per minute");
+    Require(health.ApplyDamage(world.player.contact_damage) && health.Current() == 4,
+      "direct damage did not remove one heart");
+  Require(!health.Update(59.0f) && !health.Update(0.5f) && health.Current() == 4,
+    "health regenerated before one minute");
+  Require(health.Update(0.5f) && health.Current() == 5,
+    "health did not regenerate after one minute");
+  Require(health.ApplyDamage(5) && health.IsDead() &&
+    !health.Update(120.0f) && health.Current() == 0,
+    "dead health state regenerated or remained alive");
+  health.Reset();
+  Require(!health.IsDead() && health.Current() == 5,
+    "respawn did not restore all five hearts");
+}
+
+void TestMinecraftHouseAuthoring() {
+  scene::EditorSceneFile authored;
+  std::string error;
+  Require(scene::LoadEditorSceneFile("Scenes/Minecraft.t8scene", authored, &error) &&
+          authored.voxel_world,
+          "cannot load authored Minecraft house: " + error);
+  const auto& world = *authored.voxel_world;
+  const auto house = std::find_if(
+    world.structures.begin(), world.structures.end(),
+    [](const scene::SceneVoxelStructureDesc& structure) {
+      return structure.name == "beach_house";
+    });
+  Require(house != world.structures.end(), "Minecraft beach house is missing");
+
+  const auto blockAt = [&](int x, int y, int z) {
+    std::string block;
+    for (const auto& region : house->voxel_regions) {
+      if (x >= region.min.x && x <= region.max.x &&
+          y >= region.min.y && y <= region.max.y &&
+          z >= region.min.z && z <= region.max.z) {
+        block = region.block;
+      }
+    }
+    return block;
+  };
+  for (int x = -8; x <= -4; ++x)
+    for (int z = -15; z <= -12; ++z)
+      Require(blockAt(x, 34, z) == "planks", "house floor is not 5x4 planks");
+
+  for (int y = 35; y <= 38; ++y) {
+    for (int x = -8; x <= -4; ++x) {
+      const std::string expectedFront = (x == -8 || x == -4 || y == 38)
+        ? "log" : (x == -6 && y == 36 ? "air" : "planks");
+      Require(blockAt(x, y, -15) == expectedFront,
+              "house front frame or centered window is invalid");
+      const std::string expectedRear = (x == -8 || x == -4 || y == 38)
+        ? "log" : (x == -6 && y <= 36 ? "air" : "planks");
+      Require(blockAt(x, y, -12) == expectedRear,
+              "house rear frame or centered 1x2 doorway is invalid");
+    }
+    for (int z = -14; z <= -13; ++z) {
+      Require(blockAt(-8, y, z) == (y == 38 ? "log" : "planks") &&
+              blockAt(-4, y, z) == (y == 38 ? "log" : "planks"),
+              "house side wall pattern is invalid");
+    }
+  }
+  for (int x = -7; x <= -5; ++x)
+    for (int z = -14; z <= -13; ++z)
+      for (int y = 35; y <= 38; ++y)
+        Require(blockAt(x, y, z) == "air", "house interior is obstructed");
+
+    for (int x = -8; x <= -4; ++x)
+      for (int z = -15; z <= -12; ++z)
+        Require(blockAt(x, 39, z) == "planks",
+          "house roof interior is not 5x4 full plank blocks");
+    std::size_t slabCount = 0;
+    std::set<std::pair<int, int>> slabCells;
+    for (const auto& roof : house->box_arrays) {
+      Require(roof.block == "planks" && roof.origin.y == 39.0f &&
+        roof.count.y == 1 && roof.size.x == 1.0f &&
+        roof.size.y == 0.5f && roof.size.z == 1.0f,
+        "house roof perimeter contains an invalid slab array");
+      for (int x = 0; x < roof.count.x; ++x) {
+        for (int z = 0; z < roof.count.z; ++z) {
+          const int worldX = static_cast<int>(roof.origin.x) + x;
+          const int worldZ = static_cast<int>(roof.origin.z) + z;
+          Require(worldX >= -9 && worldX <= -3 && worldZ >= -16 && worldZ <= -11 &&
+                  (worldX == -9 || worldX == -3 || worldZ == -16 || worldZ == -11) &&
+                  slabCells.emplace(worldX, worldZ).second,
+                  "house slab is duplicated or outside the 7x6 roof perimeter");
+          ++slabCount;
+        }
+      }
+    }
+    Require(house->box_arrays.size() == 4 && slabCount == 22,
+      "house roof must retain exactly the 7x6 outer slab perimeter");
+
+  Require(world.torch.positions.size() == 3,
+          "house requires two exterior torches and one interior torch");
+  const auto torchAt = [&](std::size_t index, float x, float y, float z) {
+    const auto& position = world.torch.positions[index];
+    return position.x == x && position.y == y && position.z == z;
+  };
+    Require(torchAt(0, -6.5f, 35.0f, -10.5f) &&
+      torchAt(1, -4.5f, 35.0f, -10.5f) &&
+      torchAt(2, -5.5f, 35.0f, -13.5f),
+      "house torch positions do not flank the rear door and face the front window");
+}
+
+void TestPassFrustumReuse() {
+  auto& tracker = MeshDrawStateTracker::Get();
+  XMATRIX44 projection;
+  projection.Identity();
+  const auto check = [&]() {
+    XVECTOR3 expected[6], actual[6];
+    RenderMesh::ExtractFrustumPlanes(projection, expected);
+    tracker.GetFrustumPlanes(projection, actual);
+    for (int plane = 0; plane < 6; ++plane) {
+      Require(actual[plane].x == expected[plane].x && actual[plane].y == expected[plane].y &&
+        actual[plane].z == expected[plane].z && actual[plane].w == expected[plane].w,
+        "pass frustum cache changed a culling plane");
+    }
+  };
+  tracker.Begin();
+  check();
+  check();
+  projection.m11 = 2;
+  projection.m41 = 3;
+  check();
+  tracker.End();
+  projection.m22 = 3;
+  check();
+  tracker.Begin();
+  projection.Identity();
+  check();
+  tracker.End();
+}
+
+void TestGraphMeshPreparation() {
+  class TestTexture final : public Texture {
+  public:
+    void LoadAPITexture(DeviceContext*, unsigned char*) override {}
+    void LoadAPITextureCompressed(unsigned char*) override {}
+    void DestroyAPITexture() override {}
+    void SetTextureParams() override {}
+    void GetFormatBpp(unsigned int&, unsigned int&, unsigned int&) override {}
+    void Set(const DeviceContext&, unsigned int, std::string) override {}
+    void SetSampler(const DeviceContext&, unsigned int) override {}
+  } firstTexture, nextTexture;
+  class TestContext final : public DeviceContext {
+  public:
+    void* GetAPIObject() const override { return nullptr; }
+    void** GetAPIObjectReference() const override { return nullptr; }
+    void release() override {}
+    void SetPrimitiveTopology(Topology::E) override {}
+    void DrawIndexed(unsigned, unsigned, unsigned) override {}
+  } context;
+  class PassPrimitive final : public PrimitiveBase {
+  public:
+    bool eligible = false;
+    unsigned draws = 0;
+    Texture* sampled = nullptr;
+    Texture* environment = nullptr;
+    void Load(const char*) override {}
+    void Create() override {}
+    void Transform(float*) override {}
+    bool MayDrawInPass(uint8_t) const override { return eligible; }
+    void Draw(float*, float*) override { ++draws; sampled = Textures[7]; environment = EnvMap; }
+    void Destroy() override {}
+  } primitive;
+  NullTestDriver driver;
+  driver.width = 64;
+  driver.height = 64;
+  driver.Textures.push_back(&firstTexture);
+  driver.Textures.push_back(&nextTexture);
+  LifecycleTestDevice device(driver.events);
+  struct RestoreDevice {
+    Device* device = T8Device;
+    DeviceContext* context = T8DeviceContext;
+    ~RestoreDevice() { T8Device = device; T8DeviceContext = context; }
+  } restore;
+  T8Device = &device;
+  T8DeviceContext = &context;
+  XMATRIX44 viewProjection;
+  viewProjection.Identity();
+  PrimitiveInst meshes[2];
+  for (auto& mesh : meshes) mesh.CreateInstance(&primitive, &viewProjection);
+  PrimitiveInst quads[8];
+  SceneProps props;
+  EnvironmentMapSet environment;
+  environment.SetFallback(0);
+  TempSceneFiles files;
+  const auto graphPath = files.Add("_mesh_preparation.json");
+  const auto loadGraph = [&](RenderGraph& graph, bool callback) {
+    std::ofstream output(graphPath);
+    output << R"({"render_targets":[
+      {"name":"Input","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[64,64]},
+      {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[64,64]}],
+      "passes":[{"name":"Input Init","target":"Input","clear":true,"draws":[]},
+      {"name":"Mesh Pass","target":"Output","clear":true,
+      "state":{"blend":"ALPHA_BLEND"},"post_state":{"blend":"BLEND_OPAQUE"},
+      "inputs":[{"source":"Input:COLOR0","slot":7}],"bind_environment_map":true,"draws":[)";
+    if (callback) output << R"({"type":"callback","callback":"replace-input"},)";
+    output << R"({"type":"mesh","mesh_indices":[],"signature":"FORWARD_PASS"}]}]})";
+    output.close();
+    Require(graph.Load(graphPath.string()), "graph preparation fixture did not load");
+    Require(graph.CreateRenderTargets(&driver, props), "graph preparation targets did not allocate");
+  };
+  const auto execute = [&](RenderGraph& graph, RenderGraph::CustomDrawCallback callback = {}) {
+    graph.Execute(&driver, props, meshes, 2, quads, nullptr, nullptr, nullptr, environment, -1, callback);
+  };
+  RenderGraph graph;
+  loadGraph(graph, false);
+  const int input = graph.GetRTHandle("Input");
+  driver.RTs[input]->vColorTextures[0] = &firstTexture;
+  meshes[0].SetTexture(&nextTexture, 7);
+  driver.events.clear();
+  execute(graph);
+  Require(primitive.draws == 0 && meshes[0].Textures[7] == &nextTexture,
+    "empty mesh pass performed resource binding or drawing");
+    Require(driver.events == std::vector<std::string>{"clear", "pop",
+      "blend:" + std::to_string(BaseDriver::ALPHA_BLEND),
+      "clear", "pop", "blend:" + std::to_string(BaseDriver::BLEND_OPAQUE)},
+    "empty mesh pass lost clear, target-pop or post-state side effects");
+  primitive.eligible = true;
+  execute(graph);
+  Require(primitive.draws == 2 && primitive.sampled == &firstTexture && primitive.environment == &firstTexture,
+    "eligible meshes were skipped or shared inputs not bound");
+  driver.RTs[input]->vColorTextures[0] = &nextTexture;
+  environment.SetFallback(1);
+  execute(graph);
+  Require(primitive.draws == 4 && primitive.sampled == &nextTexture && primitive.environment == &nextTexture,
+    "per-pass binding cache retained a stale texture across executions");
+  meshes[0].Visible = false;
+  execute(graph);
+  Require(primitive.draws == 5, "invisible mesh reached draw preparation");
+  graph.DestroyRenderTargets(&driver);
+  loadGraph(graph, true);
+  const int recreatedInput = graph.GetRTHandle("Input");
+  driver.RTs[recreatedInput]->vColorTextures[0] = &firstTexture;
+  primitive.eligible = false;
+  unsigned callbacks = 0;
+  execute(graph, [&](const std::string&) {
+    ++callbacks;
+    primitive.eligible = true;
+    driver.RTs[recreatedInput]->vColorTextures[0] = &nextTexture;
+  });
+  Require(callbacks == 1 && primitive.draws == 6 && primitive.sampled == &nextTexture,
+    "callback side effects or post-callback resource replacement were skipped");
+  graph.DestroyRenderTargets(&driver);
+
+  RenderMesh classified;
+  classified.Info.resize(1);
+  classified.Info[0].SubSets.resize(1);
+  auto& subset = classified.Info[0].SubSets[0];
+  subset.AlphaMode = 0;
+  subset.TransmissionFactor = 0;
+  Require(!classified.MayDrawInPass(PassType::FORWARD) && classified.MayDrawInPass(PassType::GBUFFER),
+    "opaque mesh eligibility differs from its original material filter");
+  subset.AlphaMode = 1;
+  Require(!classified.MayDrawInPass(PassType::FORWARD) && classified.MayDrawInPass(PassType::SHADOW_MAP),
+    "masked material lost its shadow participation");
+  subset.AlphaMode = 2;
+  Require(classified.MayDrawInPass(PassType::FORWARD) && !classified.MayDrawInPass(PassType::GBUFFER),
+    "blended mesh eligibility differs from the rendering filter");
+  subset.AlphaMode = 0;
+  subset.TransmissionFactor = 1;
+  Require(classified.MayDrawInPass(PassType::FORWARD), "transmission mesh was rejected from forward rendering");
+  MaterialAsset material;
+  material.params.alphaMode = 0;
+  material.params.transmissionFactor = 0;
+  subset.matAsset = &material;
+  Require(!classified.MayDrawInPass(PassType::FORWARD), "legacy material fields overrode shared material eligibility");
+  material.params.alphaMode = 2;
+  Require(classified.MayDrawInPass(PassType::FORWARD), "updated shared blend material was ignored");
+  material.params.alphaMode = 0;
+  material.params.transmissionFactor = 0.5f;
+  Require(classified.MayDrawInPass(PassType::FORWARD), "shared transmission material was ignored");
+  subset.matAsset = nullptr;
+  MutableMesh emptyMutable;
+  Require(!emptyMutable.MayDrawInPass(PassType::FORWARD) && !emptyMutable.MayDrawInPass(PassType::SHADOW_MAP),
+    "unready mutable mesh claimed drawable work");
+  NullTestPrimitive unknown;
+  Require(unknown.MayDrawInPass(PassType::FORWARD), "unknown primitive must conservatively remain drawable");
+}
+
+void TestTypedComputeGraphValidation() {
+  TempSceneFiles files;
+  constexpr std::array<const char*, 8> maintainedGraphs = {
+    "Scenes/DayScene_RenderGraph.json",
+    "Scenes/ForwardScene_RenderGraph.json",
+    "Scenes/MinecraftScene_RenderGraph.json",
+    "Scenes/Quake3Mock_RenderGraph.json",
+    "Scenes/RagdollEditor_RenderGraph.json",
+    "Scenes/SandboxScene_RenderGraph.json",
+    "Scenes/SceneTemplate_RenderGraph.json",
+    "Scenes/T8ditor_RenderGraph.json"
+  };
+  for (const char* path : maintainedGraphs) {
+    RenderGraph maintained;
+    Require(maintained.Load(path),
+            std::string("maintained render graph failed strict validation: ") + path);
+  }
+
+  const std::string validGraph = R"({
+    "render_targets": [
+      {"name":"Input","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"initialized":true},
+      {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"storage":true}
+    ],
+    "passes": [{
+      "name":"Typed Blur","target":"Output","execution":"compute_if_supported",
+      "compute_shader":"Shaders/CS_Blur.hlsl","compute_entry":"CS",
+      "compute_permutation":"horizontal","compute_extent_from":"Output:COLOR0",
+      "compute_resources":[
+        {"resource":"@kernel_constants","access":"constants","shader_register":0},
+        {"resource":"Input:COLOR0","access":"sampled","shader_register":0},
+        {"resource":"Input:COLOR0","access":"sampler","shader_register":0},
+        {"resource":"Output:COLOR0","access":"storage_write","shader_register":0}
+      ],"draws":[]
+    }]
+  })";
+  const auto writeGraph = [&](std::string_view suffix, const std::string& json) {
+    const std::filesystem::path path = files.Add(suffix);
+    std::ofstream output(path);
+    output << json;
+    output.close();
+    return path;
+  };
+  const auto replaceOnce = [](std::string input,
+                              std::string_view oldValue,
+                              std::string_view newValue) {
+    const size_t position = input.find(oldValue);
+    Require(position != std::string::npos, "compute graph fixture mutation target missing");
+    input.replace(position, oldValue.size(), newValue);
+    return input;
+  };
+
+  RenderGraph graph;
+  Require(graph.Load(writeGraph("_valid_compute_graph.json", validGraph).string()),
+          "valid typed compute graph was rejected");
+    const std::string threeDimensional = replaceOnce(
+      validGraph, "\"compute_extent_from\":\"Output:COLOR0\"",
+      "\"compute_extent_from\":\"Output:COLOR0\",\"compute_depth\":5");
+    Require(graph.Load(writeGraph("_compute_3d.json", threeDimensional).string()) &&
+      graph.GetSourceDescriptor().passes[0].compute_depth == 5,
+      "valid three-dimensional compute extent was rejected");
+    const std::string invalidDepth = replaceOnce(
+      validGraph, "\"compute_extent_from\":\"Output:COLOR0\"",
+      "\"compute_extent_from\":\"Output:COLOR0\",\"compute_depth\":0");
+    Require(!graph.Load(writeGraph("_compute_bad_depth.json", invalidDepth).string()),
+      "non-positive compute depth was accepted");
+    const std::string uninitializedInput = replaceOnce(validGraph, ",\"initialized\":true", "");
+    Require(!graph.Load(writeGraph("_uninitialized_compute_input.json", uninitializedInput).string()),
+      "graph accepted a read before the resource was initialized or written");
+
+  {
+    const auto shaderDirectory = files.Add("_graph_compute_sources");
+    std::filesystem::create_directories(shaderDirectory);
+    const auto shaderPath = shaderDirectory / "CS_Blur.hlsl";
+    { std::ofstream output(shaderPath); output << "[numthreads(8, 8, 1)] void CS() {}\n"; }
+    RenderGraph teardownGraph;
+    Require(teardownGraph.Load(writeGraph("_teardown_compute_graph.json",
+      replaceOnce(validGraph, "\"Shaders/CS_Blur.hlsl\"", glz::write_json(shaderPath.generic_string()).value())).string()),
+      "cannot load self-contained graph teardown fixture");
+    NullTestDriver driver;
+    LifecycleTestDevice device(driver.events);
+    struct StateGuard {
+      Device* previousDevice = T8Device;
+      Config::PostProcessMode previousMode = g_config.postProcessMode;
+      ~StateGuard() { T8Device = previousDevice; g_config.postProcessMode = previousMode; }
+    } guard;
+    T8Device = &device;
+    g_config.postProcessMode = Config::PostProcessMode::Compute;
+    SceneProps props;
+    for (int rebuild = 0; rebuild < 2; ++rebuild) {
+      teardownGraph.CreateRenderTargets(&driver, props);
+      driver.events.clear();
+      teardownGraph.DestroyRenderTargets(&driver);
+      Require(driver.events == std::vector<std::string>{"retire-pipeline", "flush", "destroy-target", "destroy-target"},
+              "graph must retire pipelines before flushing, then destroy target views");
+      driver.events.clear();
+      teardownGraph.DestroyRenderTargets(&driver);
+      Require(driver.events.empty(), "empty graph teardown must not flush or destroy resources twice");
+    }
+  }
+
+  RenderGraphDesc descriptor;
+  const std::string unknownKey = replaceOnce(
+    validGraph, "\"compute_extent_from\"", "\"compute_extent_typo\"");
+  Require(!LoadRenderGraphDescriptor(
+            writeGraph("_unknown_compute_key.json", unknownKey).string(), descriptor),
+          "unknown compute graph key was ignored");
+
+  const std::string noStorage = replaceOnce(validGraph, ",\"storage\":true", "");
+  Require(!graph.Load(writeGraph("_compute_no_storage.json", noStorage).string()),
+          "compute graph accepted a non-storage output");
+  const std::string wrongFormat = replaceOnce(validGraph,
+    "\"name\":\"Output\",\"color_count\":1,\"color_format\":\"RGBA8\"",
+    "\"name\":\"Output\",\"color_count\":1,\"color_format\":\"RGBA16F\"");
+  Require(!graph.Load(writeGraph("_compute_wrong_format.json", wrongFormat).string()),
+          "compute graph accepted a storage format incompatible with its kernel");
+  const std::string wrongSampler = replaceOnce(validGraph,
+    "\"Input:COLOR0\",\"access\":\"sampler\"", "\"Output:COLOR0\",\"access\":\"sampler\"");
+  Require(!graph.Load(writeGraph("_compute_wrong_sampler.json", wrongSampler).string()),
+          "compute graph accepted a sampler bound to a different resource");
+
+  const std::string twoInputs = R"({
+    "render_targets":[
+      {"name":"First","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"initialized":true},
+      {"name":"Second","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"initialized":true},
+      {"name":"Output","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[7,5],"storage":true}
+    ],
+    "passes":[{"name":"Bright","target":"Output","execution":"compute_if_supported",
+      "compute_shader":"Shaders/CS_Bright.hlsl","compute_extent_from":"Output:COLOR0",
+      "compute_resources":[
+        {"resource":"@kernel_constants","access":"constants","shader_register":0},
+        {"resource":"First:COLOR0","access":"sampled","shader_register":0},
+        {"resource":"Second:COLOR0","access":"sampled","shader_register":1},
+        {"resource":"First:COLOR0","access":"sampler","shader_register":0},
+        {"resource":"Second:COLOR0","access":"sampler","shader_register":1},
+        {"resource":"Output:COLOR0","access":"storage_write","shader_register":0}
+      ],"draws":[]}
+    ]})";
+  Require(graph.Load(writeGraph("_compute_two_inputs.json", twoInputs).string()),
+          "valid two-input compute graph was rejected");
+  auto swappedSamplers = replaceOnce(twoInputs,
+    "\"First:COLOR0\",\"access\":\"sampler\"", "\"Second:COLOR0\",\"access\":\"sampler\"");
+  swappedSamplers = replaceOnce(swappedSamplers,
+    "\"Second:COLOR0\",\"access\":\"sampler\",\"shader_register\":1",
+    "\"First:COLOR0\",\"access\":\"sampler\",\"shader_register\":1");
+  Require(!graph.Load(writeGraph("_compute_swapped_samplers.json", swappedSamplers).string()),
+          "compute graph accepted samplers swapped between valid sampled resources");
+
+  const std::string particles = R"({
+    "render_targets":[
+      {"name":"Depth","color_count":0,"color_format":"NONE","depth_format":"F32","size":[7,5],"initialized":true},
+      {"name":"Output","color_count":1,"color_format":"RGBA16F","depth_format":"NONE","size":[7,5],"storage":true}
+    ],
+    "passes":[{"name":"Particles","target":"Output","execution":"compute_if_supported",
+      "compute_shader":"Shaders/CS_TorchParticles.hlsl","compute_extent_from":"Output:COLOR0",
+      "compute_resources":[
+        {"resource":"@kernel_constants","access":"constants","shader_register":0},
+        {"resource":"Depth:DEPTH","access":"sampled","shader_register":0},
+        {"resource":"Output:COLOR0","access":"storage_write","shader_register":0}
+      ],"draws":[]}
+    ]})";
+  Require(graph.Load(writeGraph("_compute_particle_extent.json", particles).string()),
+          "valid pixel-indexed particle depth was rejected");
+  const auto wrongExtent = replaceOnce(particles, "\"size\":[7,5]", "\"size\":[3,2]");
+  Require(!graph.Load(writeGraph("_compute_wrong_extent.json", wrongExtent).string()),
+          "compute graph accepted mismatched pixel-indexed depth extents");
+
+  std::string feedback = replaceOnce(
+    validGraph, "\"Input:COLOR0\",\"access\":\"sampled\"",
+    "\"Output:COLOR0\",\"access\":\"sampled\"");
+  feedback = replaceOnce(
+    feedback, "\"Input:COLOR0\",\"access\":\"sampler\"",
+    "\"Output:COLOR0\",\"access\":\"sampler\"");
+  Require(!graph.Load(writeGraph("_compute_feedback.json", feedback).string()),
+          "compute graph accepted read/write feedback");
+
+  const std::string invalidPermutation = replaceOnce(
+    validGraph, "\"compute_permutation\":\"horizontal\"",
+    "\"compute_permutation\":\"diagonal\"");
+  Require(!graph.Load(
+            writeGraph("_compute_bad_permutation.json", invalidPermutation).string()),
+          "compute graph accepted an unknown permutation");
+
+  const std::string missingBinding = replaceOnce(
+    validGraph,
+    "        {\"resource\":\"Input:COLOR0\",\"access\":\"sampler\",\"shader_register\":0},\n",
+    "");
+  Require(!graph.Load(writeGraph("_compute_missing_binding.json", missingBinding).string()),
+          "compute graph accepted an incomplete binding layout");
+}
+
+void TestRenderTargetDescriptors() {
+  TempSceneFiles files;
+  const auto load = [&](const std::string& target) {
+    const auto path = files.Add("_render_target_validation.json");
+    { std::ofstream output(path); output << "{\"render_targets\":[" << target << "],\"passes\":[]}"; }
+    RenderGraph graph;
+    return graph.Load(path.string());
+  };
+  Require(load(R"({"name":"Valid","color_count":1,"color_format":"RGBA8","depth_format":"NONE","size":[8,8]})"),
+          "valid render target descriptor was rejected");
+  for (const auto* descriptor : {
+      R"({"name":"UnknownColor","color_count":1,"color_format":"TYPO","depth_format":"NONE","size":[8,8]})",
+      R"({"name":"UnknownDepth","color_count":1,"color_format":"RGBA8","depth_format":"TYPO","size":[8,8]})",
+      R"({"name":"UnknownAttachment","color_count":1,"color_formats":["TYPO"],"depth_format":"NONE","size":[8,8]})",
+      R"({"name":"WrongCount","color_count":2,"color_formats":["RGBA8"],"depth_format":"NONE","size":[8,8]})",
+      R"({"name":"NegativeCount","color_count":-1,"depth_format":"F32","size":[8,8]})"}) {
+    Require(!load(descriptor), std::string("malformed render target silently accepted: ") + descriptor);
+  }
+}
+
+void TestRenderTargetCapabilities() {
+  TempSceneFiles files;
+  NullTestDriver driver;
+  driver.width = driver.height = 16;
+  LifecycleTestDevice device(driver.events);
+  struct DeviceGuard {
+    Device* previous = T8Device;
+    ~DeviceGuard() { T8Device = previous; }
+  } guard;
+  T8Device = &device;
+  std::string diagnostic;
+  for (const auto* api : {"d3d11", "d3d12", "vulkan", "gl", "webgpu"}) {
+    driver.apiTag = api;
+    Require(!driver.ValidateRenderTarget(1, -7, BaseRT::F32, 16, 16, false, {}, diagnostic) &&
+      diagnostic == "[InvalidRenderTarget] color_format=-7", "invalid formats have backend-dependent diagnostics");
+    Require(driver.CreateRT(1, -7, BaseRT::F32, 16, 16) == -1 && device.allocations == 0,
+      "invalid direct target request reached GPU allocation");
+    Require(!driver.ValidateRenderTarget(0, BaseRT::NOTHING, BaseRT::CUBE_F32, 16, 16, false, {}, diagnostic) &&
+      diagnostic.find(std::string("backend=") + api) != std::string::npos &&
+      diagnostic.find("cube render targets") != std::string::npos,
+      "missing named cube capability diagnostic");
+    Require(!driver.ValidateShaderComparisonSamplers(true, "ComparisonFixture", "fragment", 42, diagnostic) &&
+      diagnostic.find("ComparisonFixture") != std::string::npos &&
+      diagnostic.find("stage=fragment key=42 feature=comparison_sampler") != std::string::npos,
+      "comparison sampler rejection lost shader context");
+  }
+  driver.cubeTargets = driver.depth16 = driver.comparisonSamplers = true;
+  Require(driver.ValidateRenderTarget(0, BaseRT::NOTHING, BaseRT::CUBE_F32, 16, 16, false, {}, diagnostic),
+    "shared validation removed supported cube targets");
+  Require(driver.ValidateRenderTarget(0, BaseRT::NOTHING, BaseRT::FD16, 16, 16, false, {}, diagnostic),
+    "shared validation removed supported depth16");
+  Require(driver.ValidateShaderComparisonSamplers(true, "ComparisonFixture", "fragment", 42, diagnostic),
+    "shared validation removed supported comparison samplers");
+  driver.cubeTargets = driver.depth16 = false;
+  const auto load = [&](RenderGraph& graph, const std::string& depth, bool mips) {
+    const auto path = files.Add("_capability_graph.json");
+    std::ofstream output(path);
+    output << "{\"render_targets\":["
+      "{\"name\":\"First\",\"color_count\":1,\"color_format\":\"RGBA8\",\"size\":[16,16]},"
+      "{\"name\":\"Second\",\"color_count\":1,\"color_format\":\"RGBA8\",\"size\":[16,16],"
+      "\"depth_format\":\"" << depth << "\",\"generate_mips\":" << (mips ? "true" : "false") << "}],"
+      "\"passes\":[{\"name\":\"CapabilityPass\",\"target\":\"Second\",\"draws\":[]}]}";
+    output.close();
+    Require(graph.Load(path.string()), "capability graph failed structural load");
+  };
+  SceneProps props;
+  RenderGraph graph;
+  load(graph, "FD16", false);
+  Require(!graph.CreateRenderTargets(&driver, props) && device.allocations == 0 && graph.GetNodes().empty(),
+    "graph did not preflight every target before allocating");
+  load(graph, "NONE", true);
+  Require(graph.CreateRenderTargets(&driver, props) && device.requestedMips == std::vector<bool>({false, false}),
+    "unsupported mip generation did not take the explicit single-level fallback");
+  graph.DestroyRenderTargets(&driver);
+  device.allocations = 0;
+  device.requestedMips.clear();
+  driver.mipGeneration = true;
+  Require(graph.CreateRenderTargets(&driver, props) && device.requestedMips == std::vector<bool>({false, true}),
+    "mip fallback disabled a capable backend");
+  graph.DestroyRenderTargets(&driver);
+  device.allocations = 0;
+  device.failAllocation = 2;
+  driver.events.clear();
+  Require(!graph.CreateRenderTargets(&driver, props) && graph.GetNodes().empty() &&
+    graph.GetRTHandle("First") == -1 &&
+    driver.events == std::vector<std::string>({"flush", "destroy-target"}),
+    "allocation failure did not roll back graph targets");
+}
+
+  class TestTexture final : public Texture {
+  public:
+    void LoadAPITexture(DeviceContext*, unsigned char*) override {}
+    void LoadAPITextureCompressed(unsigned char*) override {}
+    void DestroyAPITexture() override {}
+    void SetTextureParams() override {}
+    void GetFormatBpp(unsigned&, unsigned&, unsigned&) override {}
+    void Set(const DeviceContext&, unsigned, std::string) override {}
+    void SetSampler(const DeviceContext&, unsigned) override {}
+  };
+
+void TestRenderTargetLayout() {
+  TestTexture depth;
+  NullTestDriver driver;
+  LifecycleTestDevice device(driver.events);
+  std::unique_ptr<BaseRT> target(device.CreateRT(1, BaseRT::RGBA8, BaseRT::F32, 8, 8, false, false));
+  target->number_RT = 1;
+  target->color_format = BaseRT::RGBA8;
+  target->depth_format = BaseRT::F32;
+  target->pDepthTexture = &depth;
+  const auto surface = driver.GetRenderTargetLayout();
+  Require(surface.surface && surface.colorFormats[0] == BaseRT::RGBA8, "surface layout missing");
+  driver.RTs.push_back(target.get());
+  driver.CurrentRT = 0;
+  const auto privateTarget = driver.GetRenderTargetLayout();
+  Require(!driver.IsCurrentOffscreenTarget() && !privateTarget.surface &&
+          privateTarget.HasCompatibleAttachments(surface), "private RT compatibility depends on ring membership");
+  driver.RTs.push_back(target.get());
+  driver.CurrentRT = 1;
+  Require(driver.GetRenderTargetLayout() == privateTarget, "equivalent target slots changed pipeline compatibility");
+  target->color_format = BaseRT::RGB8;
+  Require(driver.GetRenderTargetLayout() == privateTarget, "RGB-in-RGBA target representation was not normalized");
+  target->perColorFormats = {BaseRT::RGBA16F};
+  Require(!driver.GetRenderTargetLayout().HasCompatibleAttachments(privateTarget), "HDR format change was ignored");
+  target->pDepthTexture = nullptr;
+  Require(driver.GetRenderTargetLayout().depthFormat == BaseRT::NOTHING, "absent native depth reported as present");
+  target->pDepthTexture = &depth;
+  target->depth_format = BaseRT::FD16;
+  Require(driver.GetRenderTargetLayout().depthFormat == BaseRT::FD16, "depth precision was ignored");
+  target->depth_format = BaseRT::NOTHING;
+  Require(driver.GetRenderTargetLayout().depthFormat == BaseRT::F32, "implicit native depth attachment was omitted");
+  target->number_RT = 2;
+  target->perColorFormats = {BaseRT::RGBA16F, BaseRT::R8};
+  Require(driver.GetRenderTargetLayout().colorCount == 2 && driver.GetRenderTargetLayout().colorFormats[1] == BaseRT::R8,
+          "MRT attachment layout was truncated");
+  driver.CurrentRT = 2;
+  Require(driver.GetRenderTargetLayout().colorCount == 0, "invalid target fabricated a surface layout");
+  driver.RTs.clear();
+}
+
+void TestTelemetryPublication() {
+  using Telemetry = RuntimeTelemetry;
+#if !T850_ENABLE_PROFILING
+  {
+    Config disabledConfig;
+    disabledConfig.flags.runtimeTelemetry = true;
+    Telemetry::InitializeFromConfig(disabledConfig);
+    unsigned sideEffects = 0;
+    T8_TELEMETRY_ADD("disabled.counter", ++sideEffects);
+    T8_UPLOAD_SCOPE(Telemetry::UploadResource::Vertex, ++sideEffects, 0);
+    const auto value = T8_TELEMETRY_CALL("disabled.operation", ++sideEffects);
+    Require(value == 1 && sideEffects == 1 && !Telemetry::IsEnabled() && Telemetry::Snapshot().empty(),
+            "compiled-out telemetry changed operation evaluation or recorded instrumentation");
+    return;
+  }
+#endif
+  TempSceneFiles files;
+  const auto directory = files.Add("_telemetry_output");
+  std::filesystem::create_directories(directory);
+  Config config;
+  config.flags.runtimeTelemetry = true;
+  config.runtimeTelemetryFrequencyFrames = 0;
+  config.runtimeTelemetryOutputPath = (directory / "report.json").string();
+  struct RestoreTelemetry {
+    ~RestoreTelemetry() { RuntimeTelemetry::InitializeFromConfig(g_config); }
+  } restore;
+  const auto scopeId = Telemetry::RegisterScope("test.telemetry.phase");
+  const auto counterId = Telemetry::RegisterCounter("test.telemetry.count");
+  Telemetry::InitializeFromConfig(config);
+    unsigned operationCalls = 0;
+    const auto result = T8_TELEMETRY_CALL("test.startup.operation", ++operationCalls);
+    Require(result == 1 && operationCalls == 1, "timed operation changed expression evaluation");
+    const auto startup = Telemetry::Snapshot();
+    Require(startup.size() == 1 && startup[0].frameIndex == UINT64_MAX && startup[0].scopes[0].second.count == 1,
+      "startup operation was not recorded outside runtime frames");
+  Telemetry::BeginFrame(10, 0.016);
+  Telemetry::AddCounter(counterId, 0);
+  const auto slowPaths = Telemetry::SlowPathEntries();
+  for (unsigned index = 0; index < 1000; ++index) {
+    Telemetry::RecordScope(scopeId, 0.25);
+    Telemetry::AddCounter(counterId, 1);
+  }
+  Require(Telemetry::SlowPathEntries() == slowPaths, "registered telemetry hot path entered allocation/locking registration");
+  {
+    Telemetry::UploadSourceGuard source(Telemetry::UploadSource::Streaming);
+    Telemetry::UploadGuard upload(Telemetry::UploadResource::Vertex, 64, 128);
+    upload.Reallocated();
+    Telemetry::UploadGuard nested(Telemetry::UploadResource::Vertex, 64, 128);
+  }
+  std::promise<void> entered;
+  std::promise<void> finish;
+  auto finishFuture = finish.get_future();
+  std::thread worker([&] {
+    Telemetry::ScopedTimer timer(scopeId);
+    Telemetry::UploadSourceGuard source(Telemetry::UploadSource::Streaming);
+    Telemetry::UploadGuard upload(Telemetry::UploadResource::Index, 32);
+    entered.set_value();
+    finishFuture.wait();
+    Telemetry::UploadSourceGuard changedSource(Telemetry::UploadSource::AssetLoad);
+    Telemetry::RecordActiveStaging(96, 1);
+  });
+  entered.get_future().wait();
+  Telemetry::EndFrame();
+  Telemetry::BeginFrame(11, 0.016);
+  finish.set_value();
+  worker.join();
+  Telemetry::EndFrame();
+  const auto snapshot = Telemetry::Snapshot();
+  const auto frame = std::find_if(snapshot.begin(), snapshot.end(), [](const auto& value) { return value.frameIndex == 10; });
+  Require(frame != snapshot.end() && frame->scopes.size() == 1 && frame->scopes[0].second.count == 1001,
+          "telemetry lost a nested/late worker sample");
+  const auto counterValue = [](const auto& frame, const char* name) {
+    const auto found = std::find_if(frame.counters.begin(), frame.counters.end(), [&](const auto& item) { return item.first == name; });
+    return found == frame.counters.end() ? -1.0 : found->second;
+  };
+  Require(frame->latePublications == 1 && counterValue(*frame, "test.telemetry.count") == 1000,
+          "telemetry reassigned late work or corrupted fixed-slot counters");
+  Require(frame->uploads[1].logicalBytes == 64 && frame->uploads[1].stagingBytes == 128 &&
+          frame->uploads[1].calls == 1 && frame->uploads[1].reallocations == 1 && frame->uploads[1].largestBytes == 64,
+          "telemetry upload resource/source matrix is incorrect");
+  Require(frame->uploads[4].logicalBytes == 32 && frame->uploads[4].stagingBytes == 96 &&
+          frame->uploads[4].calls == 1 && snapshot.back().uploads[4].calls == 0,
+          "late staging lost its original upload frame/source");
+  Require(Telemetry::DroppedRecords() == 0, "telemetry unexpectedly dropped records");
+  Telemetry::Shutdown();
+  std::string report;
+  for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+    std::ifstream input(entry.path());
+    report.assign(std::istreambuf_iterator<char>(input), {});
+  }
+  Require(!report.empty() && !glz::validate_json(report), "telemetry report is not valid JSON");
+  Require(report.find("\"startupTiming\"") != std::string::npos &&
+          report.find("\"firstRuntimeFrameStartMs\":null") == std::string::npos &&
+          report.find("\"firstRuntimeFrameCompleteMs\":null") == std::string::npos,
+          "telemetry omitted the first real frame startup milestones");
+  config.runtimeTelemetryFrequencyFrames = 2;
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(1, 0.016);
+  Telemetry::AddCounter(counterId, 99);
+  Telemetry::RecordScope(scopeId, 99);
+  Telemetry::EndFrame();
+  Telemetry::BeginFrame(2, 0.016);
+  Telemetry::AddCounter(counterId, 2);
+  Telemetry::EndFrame();
+  const auto reset = Telemetry::Snapshot();
+  Require(reset.size() == 2 && reset.back().frameIndex == 2 && counterValue(reset.back(), "test.telemetry.count") == 2,
+          "telemetry reset invalidated cached IDs or sampled a disabled frame");
+  config.telemetryUploadBudgetMB = 1;
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(1, 0.016);
+  Require(!Telemetry::IsFrameActive(), "unsampled frame enabled detailed timing");
+  {
+    Telemetry::UploadGuard upload(Telemetry::UploadResource::Vertex, 2 * 1024 * 1024);
+  }
+  Telemetry::EndFrame();
+  const auto budgetOnly = Telemetry::Snapshot();
+  Require(budgetOnly.size() == 2 && budgetOnly.back().frameIndex == 1 &&
+          !budgetOnly.back().detailed && budgetOnly.back().uploadBudgetExceeded && budgetOnly.back().scopes.empty(),
+          "upload budget skipped an unsampled frame or enabled detailed timing");
+  Telemetry::BeginFrame(3, 0.016);
+  Telemetry::RecordRingOverflow();
+  Telemetry::EndFrame();
+  Require(Telemetry::Snapshot().back().uploadBudgetExceeded, "ring overflow on unsampled frame was lost");
+  config.flags.runtimeTelemetry = false;
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::AddCounter("disabled.dynamic.counter", 1);
+  Require(!Telemetry::IsEnabled() && Telemetry::Snapshot().empty(), "disabled telemetry recorded data");
+  config.flags.runtimeTelemetry = true;
+  config.runtimeTelemetryFrequencyFrames = 0;
+  config.telemetryUploadBudgetMB = 1;
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(20, 0.016);
+  {
+    Telemetry::UploadSourceGuard source(Telemetry::UploadSource::Streaming);
+    Telemetry::UploadGuard upload(Telemetry::UploadResource::Index, 2 * 1024 * 1024);
+  }
+  Telemetry::EndFrame();
+  Require(Telemetry::Snapshot().back().uploadBudgetExceeded, "oversized dynamic upload did not trigger the budget");
+  std::promise<void> resetEntered;
+  std::promise<void> resetFinish;
+  auto resetFuture = resetFinish.get_future();
+  Telemetry::BeginFrame(21, 0.016);
+  std::thread resetWorker([&] {
+    Telemetry::ScopedTimer timer(scopeId);
+    resetEntered.set_value();
+    resetFuture.wait();
+  });
+  resetEntered.get_future().wait();
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(22, 0.016);
+  resetFinish.set_value();
+  resetWorker.join();
+  Telemetry::EndFrame();
+  Require(Telemetry::Snapshot().back().scopes.empty(), "old-session worker polluted a new frame");
+  Telemetry::BeginFrame(23, 0.016);
+  for (unsigned publication = 0; publication < 12; ++publication) {
+    Telemetry::AddCounter(counterId, 1);
+    Telemetry::PublishThread();
+  }
+  Telemetry::EndFrame();
+  Require(Telemetry::DroppedRecords() == 4 &&
+          counterValue(Telemetry::Snapshot().back(), "test.telemetry.count") == 8,
+          "bounded telemetry overflow overwrote published work or was not reported");
+  Require(Telemetry::TextureUploadBytes(4, 2, 3, 6, 16) == 1056 &&
+          Telemetry::TextureUploadBytes(0, 2, 1, 1, 4) == 0,
+          "mip-chain upload sizing is incorrect");
+  Telemetry::InitializeFromConfig(config);
+  Telemetry::BeginFrame(30, 0.016);
+  {
+    Telemetry::UploadSourceGuard source(Telemetry::UploadSource::Streaming);
+    TestTexture texture;
+    const unsigned char pixels[4] = {0, 0, 0, 255};
+    Require(texture.LoadFromMemory(pixels, 1, 1, 4, "telemetry-test"), "test texture load failed");
+    ThreadPool pool(1);
+    auto upload = pool.Submit([] {
+      RuntimeTelemetry::UploadGuard upload(RuntimeTelemetry::UploadResource::Vertex, 128);
+      RuntimeTelemetry::RecordActiveStaging(192, 1);
+    });
+    upload.get();
+    pool.WaitAll();
+  }
+  Telemetry::EndFrame();
+  const auto workerUpload = Telemetry::Snapshot().back().uploads[1];
+  Require(workerUpload.logicalBytes == 128 && workerUpload.stagingBytes == 192 && workerUpload.calls == 1,
+          "worker task lost upload provenance or duplicated staging");
+    const auto textureUpload = Telemetry::Snapshot().back().uploads[10];
+    Require(textureUpload.logicalBytes == 4 && textureUpload.calls == 1,
+      "shared texture wrapper overwrote streaming provenance");
+  Telemetry::InitializeFromConfig(config);
+  for (unsigned frameIndex = 0; frameIndex < 8191; ++frameIndex) {
+    Telemetry::BeginFrame(frameIndex, 0.016);
+    Telemetry::EndFrame();
+  }
+  Telemetry::BeginFrame(8191, 0.016);
+  Require(!Telemetry::IsFrameActive(), "full detailed storage did not fall back to budget monitoring");
+  Telemetry::RecordRingOverflow();
+  Telemetry::EndFrame();
+  Require(Telemetry::Snapshot().size() == 8192 && Telemetry::DroppedRecords() == 2,
+          "full detailed storage disabled upload monitoring or failed to report discarded records");
+}
+
 constexpr TestCase kTests[] = {
+  {"T-TELEMETRY-PUBLICATION-01", TestTelemetryPublication},
+  {"T-RENDER-TARGET-LAYOUT-01", TestRenderTargetLayout},
+  {"T-RENDER-TARGET-DESCRIPTOR-01", TestRenderTargetDescriptors},
+  {"T-RENDER-TARGET-CAPABILITY-01", TestRenderTargetCapabilities},
+#if T850_ENABLE_PROFILING
+  {"T-PROFILER-ACCOUNTING-01", TestProfilerAccounting},
+  {"T-PROFILER-SAMPLES-01", TestProfilerDeterministicSamples},
+  {"T-PROFILER-GUARDS-01", TestProfilerScopeGuards},
+  {"T-PROFILER-RESET-01", TestProfilerResetGeneration},
+#endif
+  {"T-VOXEL-AUTHORING-01", TestAuthoredStreamedVoxels},
+  {"T-SCENE-RUNTIME-OWNERSHIP-01", TestSceneRuntimeOwnership},
+  {"T-SHADER-PRECOMPILER-01", TestShaderPrecompilerContract},
+  {"T-SHADER-PROGRAM-IDENTITY-01", TestShaderProgramIdentity},
+  {"T-GRAPHICS-PIPELINE-IDENTITY-01", TestGraphicsPipelineProgramIdentity},
+  {"T-MUTABLE-GRAPHICS-STATE-CACHE-01", TestMutableGraphicsStateCache},
+  {"T-COMPUTE-GRAPH-01", TestTypedComputeGraphValidation},
+  {"T-GRAPH-MESH-PREPARATION-01", TestGraphMeshPreparation},
+  {"T-PASS-FRUSTUM-REUSE-01", TestPassFrustumReuse},
+  {"T-SHADER-FLOW-CONFIG-01", TestShaderFlowConfiguration},
+  {"T-GPU-PROFILE-BATCH-01", TestGpuTimestampBatchRing},
+  {"T-TEXTURE-MIPS-01", TestTextureMipmaps},
+  {"T-MINECRAFT-SURVIVAL-01", TestMinecraftSurvivalAuthoring},
+  {"T-MINECRAFT-HOUSE-01", TestMinecraftHouseAuthoring},
+  {"T-SHADOW-LEGACY-01", TestLegacyShadowSampling},
   {"T-PLACEMENT-VISUAL-01", TestPlacementVisualFitting},
   {"T-PLACEMENT-01", TestTerrainPlacementGrid},
   {"T-TERRAIN-16BIT-01", TestTerrain16BitImage},
@@ -1640,6 +3670,7 @@ constexpr TestCase kTests[] = {
     {"T-TICK-01", TestFixedTickCap},
     {"T-TICK-02", TestFixedTickPause},
     {"T-CTRL-01", TestControllerIntentsDiffer},
+    {"T-CTRL-JUMP-01", TestFpsJumpRemainsAirborne},
     {"T-COMP-01", TestComponentLifecycleOrder},
     {"T-COMP-02", TestDeferredComponentRemoval},
     {"T-EVENT-01", TestEventFifo},
@@ -1666,6 +3697,7 @@ constexpr TestCase kTests[] = {
     {"T-VOXEL-07", TestVoxelNavigationAvoidsSolidsAndRejectsPartialPaths},
     {"T-VOXEL-08", TestVoxelCollisionPreventsTunneling},
     {"T-NAV-01", TestNavigationUnavailable},
+    {"T-NAV-02", TestNavigationRequestCancellation},
 };
 
 } // namespace

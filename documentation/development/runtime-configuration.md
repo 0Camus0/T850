@@ -1,6 +1,10 @@
 # Runtime Configuration and CLI
 
-Status: verified against `Config.h`, `ConfigRuntime.h/.cpp`, `DayScene/App.cpp`, and `Launcher.ps1` on 2026-08-19.
+Status: verified against `Config.h`, `ConfigRuntime.h/.cpp`, `DayScene/App.cpp`, and `Launcher.ps1` on 2026-09-14.
+
+2026-09-22: `--shaderFlow auto` uses DXC/DXIL for native D3D12;
+`--shaderFlow legacyHLSL` explicitly selects the previous D3DCompile/FXC/DXBC
+path. WebGPU retains `auto|wgsl|spirv` source-flow selection.
 
 ## Configuration Precedence
 
@@ -18,22 +22,136 @@ DayScene starts from a fresh `Config` object every process. The effective order 
 .\DayScene.exe --config config.json --api d3d12 --width 1920 --height 1080
 ```
 
-Unknown JSON keys are ignored. A typo can therefore be silent; use documented field names and inspect `[config]` warnings.
+Unknown JSON keys are rejected with a source-position diagnostic. Use documented field names and treat a failed config load as an authoring error.
 
 ## Hardcoded Defaults
 
 | Field | Default |
 |---|---|
 | API | `d3d11` |
+| Shader flow | `auto` (DXC for native D3D12; WGSL first with HLSL/SPIR-V fallback for WebGPU) |
 | Window | 1280x720, windowed |
 | Scene | 0 (Sandbox) |
 | Model | `Models/DamagedHelmet.glb` |
 | Log level | 3 (`verbose`) |
 | Culling | `full` |
+| Post-process mode | `raster` |
 | Profile frames | 300 |
+| CPU-only profiler | false; `--profileCpuOnly` enables it with bounded profile exit |
+| Captured-frame upload warning budget | 64 MB; `--telemetryUploadBudgetMB`, zero disables bytes threshold |
 | Telemetry frequency | 60 frames |
 | Telemetry output | `logs/perf_telemetry.json` |
 | Benchmark/regression fixed delta | disabled (`0`) |
+
+## Profiling Controls
+
+Root JSON `profileCpuOnly` (also under `devTools`) selects CPU-only timing without
+GPU queries. `telemetryUploadBudgetMB` is a root JSON field. `--benchmarkPaired`
+enables the D3D12/WebGPU matrix subset at the requested resolution in submit-only
+mode. Use [MeasureProfiling.ps1](../../T850/scripts/MeasureProfiling.ps1) for
+finite alternating runs; its report distinguishes workload mismatch from a
+timing conclusion. MSBuild `/p:T850EnableProfiling=0` and CMake
+`-DT850_ENABLE_PROFILING=OFF` compile instrumentation out.
+
+## WebGPU Shader Flow
+
+From the selected Windows x64 executable directory:
+
+```powershell
+.\DayScene.exe --api webgpu --shaderFlow auto --scene 4 --sceneFile Scenes/ForwardScene.t8scene
+.\DayScene.exe --api webgpu --shaderFlow wgsl --scene 4 --sceneFile Scenes/ForwardScene.t8scene
+.\DayScene.exe --api webgpu --shaderFlow spirv --scene 4 --sceneFile Scenes/ForwardScene.t8scene
+```
+
+`auto` is the unchanged default. `wgsl` requires handwritten WGSL for engine
+shader requests; `spirv` requires HLSL -> glslang/SPIR-V -> Tint/WGSL. Strict modes
+never fall back to the other source language. The choice does not change the
+graphics API, scene or render graph, and does not affect native backend compilers.
+Dawn and upstream ImGui/internal renderer utility shaders keep their own shader
+implementation; this option selects the engine shader-source flow.
+
+The root JSON field `webgpuShaderFlow` supplies the same setting when `--config`
+is used; CLI overrides it. Values are case-insensitive. Unknown, empty or missing
+CLI values fail before asset loading, rather than silently choosing `auto`.
+Invalid configured values also fail validation unless a valid CLI override replaces
+them. Unlike older recoverable config fields, invalid flow selection is fatal.
+
+The Windows host applies the setting on every WebGPU driver creation through
+`ChangeAPI`, before `InitDriver()` and `CreateAssets()`. Startup logs
+`[WebGPU] startup shaderFlow=... (before asset loading)`; per-shader logs report
+the actual successful flow and cache state. Source-language cache identities stay
+separate. Both Windows launchers show a **Shader Flow** selector only for WebGPU:
+**WGSL preferred (auto)**, **WGSL only (strict)** or
+**SPIR-V (HLSL translation)**. They persist
+`webgpuShaderFlow` and pass it explicitly on the next RUN; no engine rebuild is
+needed, and changing the selection does not switch an already-running process.
+Older launcher configs without a supported selection default to `auto`.
+The Compile Shaders action also runs all three WebGPU flows. Strict `wgsl`
+intentionally fails if a selected runtime path requests anonymous HLSL without a
+paired WGSL source. No fixture is injected, and T8ditor does not use this CLI
+parser or support WebGPU rendering.
+
+## WebGPU Device Recovery
+
+The root `webgpuDeviceRecoveryAttempts` setting and
+`--webgpuRecoveryAttempts <1..10>` select the consecutive full device/scene
+recreation budget. The default is 3. One successful frame resets the count.
+Recovery records `device.recovery.attempts`; exhausting the budget records
+`device.recovery.exhausted` and shuts down cleanly.
+
+`--webgpu-recovery-selftest` injects one loss. The developer-only
+`--webgpu-recovery-stress-selftest` injects four consecutive losses and expects
+three recreations followed by bounded exhaustion.
+
+**Normal runtime selection works in `auto` and `spirv`; strict `wgsl` still has an anonymous-source limitation.**
+The known DOF, CoC, shadow/SSAO, refraction and lightmap derivative-uniformity
+failures were corrected on 2026-09-15. All 538 recorded/additional stages now pass
+strict translation in both paths; all ten available runtime cases captured in
+both `auto` and `spirv`. Native D3D12/Vulkan per-target before/after
+checks are recorded in the shader notes. Strict `wgsl` still stops at anonymous
+HLSL debug shaders without paired WGSL sources. Full rendering parity and broader
+material coverage remain separate acceptance requirements. See
+[shader flow and blockers](../rendering/shader-management.md#shader-flow-selection).
+
+The initial strict-SPIR-V scene comparison exposed matrix translation and runtime
+resource defects, including VoxelScene's missing environment binding. Those
+defects are fixed; residual image differences are not silently treated as passes.
+See the [runtime handoff](../rendering/webgpu-runtime-summary.md) for current
+measurements, accepted exceptions, native checkpoint caveats and remaining work.
+
+## Native D3D12 Shader Compiler Flow
+
+Native D3D12 uses DXC and emits DXIL by default:
+
+```powershell
+.\DayScene.exe --api d3d12 --shaderFlow auto --scene 1
+```
+
+`auto` selects the highest Shader Model 6 profile reported by the adapter, up to
+SM 6.6 in the current build. Graphics and compute use the same compiler helper,
+DXC reflection, profile/version-qualified cache identity, `.dxil` bytecode, and
+separate reflection artifacts. If the adapter does not expose Shader Model 6,
+startup fails with guidance to choose the legacy path rather than silently
+changing compilers.
+
+The repository packages native DXC for x64 and ARM64. Win32 D3D12 requires
+`--shaderFlow legacyHLSL`; validation rejects `auto` there with a named
+diagnostic. D3D11 is unchanged.
+
+The previous compiler remains available explicitly:
+
+```powershell
+.\DayScene.exe --api d3d12 --shaderFlow legacyHLSL --scene 1
+```
+
+`legacyHLSL` is case-insensitive, valid only with native D3D12, and uses
+`D3DCompile`/FXC with `vs_5_0`, `ps_5_0`, and `cs_5_0` DXBC artifacts. DXC and
+legacy cache identities cannot collide: default artifacts live under the
+`d3d12` cache namespace and fallback artifacts under `d3d12-legacy`. Switching
+flows does not evict the other flow's warm cache. Debug builds use
+`d3d12-debug` and `d3d12-legacy-debug`, preventing `-Zi/-Od` artifacts from
+colliding with optimized Release bytecode. Runtime logs identify the selected
+flow, profile, and bytecode kind.
 
 ## JSON Shape
 
@@ -42,6 +160,8 @@ Root fields accepted by `RuntimeConfigJson` include:
 ```json
 {
   "api": "d3d11",
+  "webgpuShaderFlow": "auto",
+  "webgpuDeviceRecoveryAttempts": 3,
   "width": 1280,
   "height": 720,
   "fullscreen": false,
@@ -50,6 +170,7 @@ Root fields accepted by `RuntimeConfigJson` include:
   "model": "Models/DamagedHelmet.glb",
   "sceneFile": "",
   "sceneProfile": "",
+  "postProcessMode": "raster",
   "gui": false,
   "logLevel": "verbose",
   "logFile": "",
@@ -160,11 +281,14 @@ Always prefer the binary's own help for the current list:
 --model PATH
 --sceneFile PATH | --t8scene PATH
 --sceneProfile NAME
+--postProcessMode compute|raster
 --orbitYaw RADIANS
 --gui
 ```
 
 Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTemplate, and 5 VoxelScene.
+
+`postProcessMode=compute` selects every `compute_if_supported` graph pass. `raster` selects the authored graphics draw or clear fallback, including Minecraft's transparent torch-particle target. `auto` is rejected. Desktop OpenGL enables compute only with an OpenGL 4.3 or newer context; older desktop GL and OpenGL ES use the retained fallbacks.
 
 ### Dumps, Replay, and Diagnostics
 
@@ -183,6 +307,9 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 --offscreenDebug
 --glOffscreenFlushMode frame|wait|none
 --dumpShaderPermutations
+--recordShaderPermutations
+--compileShaders
+--shaderPermutationInput PATH
 --shaderPermutationOutput PATH
 ```
 
@@ -202,9 +329,20 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 --benchmarkSeconds N
 --benchmarkFrames N
 --benchmarkFixedDt SECONDS
+--benchmarkHoldFrame N
+--benchmarkNoPresent
 ```
 
 Benchmark matrix mode forces DayScene, D3D11 startup, 1920x1080, and onscreen start settings before the internal matrix runs.
+`--benchmarkHoldFrame N` freezes simulation and physics at runtime frame `N` by
+setting their effective delta to zero while rendering and presentation continue
+without the fixed-delta wall-clock pacer. The runtime logs the held frame, uncapped
+state and its QPC-backed timestamp once. Combine it with `--regressionFixedDt`
+for deterministic external GPU measurements; it is a benchmark control, not an
+ordinary gameplay pause.
+`--benchmarkNoPresent` forces the offscreen submit path and suppresses progress
+presentation entirely. The completion marker is emitted only after `WaitForGPU`,
+so its throughput includes the final queue drain and excludes DWM/swapchain pacing.
 
 ### Logging, Profiling, and Telemetry
 
@@ -269,6 +407,7 @@ T8ditor has a separate minimal parser and defaults to D3D12:
 --logFile PATH
 --logLevel error|info|debug|verbose|trace|0..4
 --d3d12debug
+--postProcessMode compute|raster
 ```
 
 The developer launcher maps D3D11/D3D12 editor launches to D3D12 on x64 and ARM64, but to D3D11 on Win32 because that ImGui triplet omits the D3D12 backend. GL/Vulkan selections map to Vulkan. Direct T8ditor invocation accepts all four Windows APIs when the selected backend is available in that build.

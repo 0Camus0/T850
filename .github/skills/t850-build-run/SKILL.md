@@ -140,9 +140,16 @@ Use it for interactive build/run/config/device selection. For automated evidence
 & (Join-Path $SourceRoot 'bin\x64\Debug\DayScene.exe') --game-selftest
 ```
 
-Expected: all registered checks pass (53 after the first editor SDK slice), exit 0.
+Expected current result: 78 registered checks pass, exit 0.
 Any fail blocks completion. For external editor hosts, also use the
 `t850-editor-extensions` skill and the external sample self-test/native workflow.
+
+### WebGPU recovery
+
+The default consecutive recreation budget is 3. Override it with
+`--webgpuRecoveryAttempts <1..10>`. Use `--webgpu-recovery-selftest` for one
+recoverable loss and `--webgpu-recovery-stress-selftest` to prove three
+recreations followed by clean exhaustion on the fourth loss.
 
 ### Offline glTF
 
@@ -194,10 +201,10 @@ Order: defaults, JSON root fields, nested JSON fields, CLI, validation. The laun
 
 | Symptom | Next check |
 |---|---|
-| MSBuild missing | install VS 2022 C++ workload/v143 |
+| MSBuild missing | install a Visual Studio C++ host with v143; VS 2022 is preferred, while VS 2026 requires the v143 compatibility toolset |
 | ARM64 compiler missing | install Host x64 to ARM64 tools |
 | unresolved external after new file | `.vcxproj` and CMake registration |
-| newer MSVC ABI in vcpkg library | rerun `LaunchSolution.bat`, verify VS 2022 pin |
+| newer MSVC ABI in vcpkg library | rerun setup and verify the v143 host/toolset pin; ARM64 CI also requires the tracked v143 overlay triplets |
 | missing DLL | run from output dir and inspect post-build copies |
 | missing asset | cloud status/dependency list; use resource-relative path |
 | device lost/black frame | log + visual capture; do not accept image |

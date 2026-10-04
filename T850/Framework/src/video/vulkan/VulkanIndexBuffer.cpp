@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * T850 Engine — Vulkan Backend
  * VulkanIndexBuffer.cpp: Index Buffer implementation
@@ -28,6 +29,7 @@ namespace t850 {
   void** VulkanIndexBuffer::GetAPIObjectReference() const { return nullptr; }
 
   void VulkanIndexBuffer::Create(const Device& device, BufferDesc desc, void* initialData) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Index, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     auto* driver = GetVkDriver();
     VmaAllocator allocator = driver->GetAllocator();
@@ -67,6 +69,7 @@ namespace t850 {
       g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "ib", "");
     }
 #endif
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Index, 0, 1);
   }
 
   void VulkanIndexBuffer::Set(const DeviceContext& deviceContext, const unsigned offset, IndexBufferFormat::E format) {
@@ -83,6 +86,7 @@ namespace t850 {
   }
 
   void VulkanIndexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Index, sysMemCpy.size(), 0);
     if (m_mappedData && !sysMemCpy.empty()) {
       memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
       vmaFlushAllocation(GetVkDriver()->GetAllocator(), m_allocation, 0, sysMemCpy.size());
@@ -96,6 +100,7 @@ namespace t850 {
   }
 
   void VulkanIndexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Index, descriptor.byteWidth, 0);
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     if (m_mappedData) {
       memcpy(m_mappedData, buffer, descriptor.byteWidth);

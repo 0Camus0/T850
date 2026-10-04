@@ -14,6 +14,7 @@
 #include <core/windows/Win32Framework.h>
 #include <core/EngineContext.h>
 #include <core/Config.h>
+#include <video/WindowsDriverFactory.h>
 
 #include <video/gl/GLDriver.h>
 #if defined(OS_WINDOWS)
@@ -31,6 +32,7 @@
 #include <utils/ThreadPool.h>
 #include <utils/Log.h>
 #include <utils/ConfigRuntime.h>
+#include <debug/Profiler.h>
 #include <debug/RuntimeTelemetry.h>
 #include <navigation/NavigationSystem.h>
 
@@ -320,7 +322,7 @@ namespace t850 {
   }
 
   void Win32Framework::UpdateMouseMode() {
-    if (!m_pWindow) {
+    if (!m_pWindow || !pBaseApp || !pBaseApp->AllowsMouseCapture()) {
       ReleaseMouseMode();
       return;
     }
@@ -418,11 +420,25 @@ namespace t850 {
   void Win32Framework::OnDestroyApplication() {
     ReleaseMouseMode();
     ShutdownGamepads();
-    pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
-    pBaseApp->DestroyAssets();
+    std::string deviceFailure;
+    const bool deviceLost = pVideoDriver && pVideoDriver->GetDeviceFailure(deviceFailure);
+    if (pVideoDriver) {
+      try { pVideoDriver->FlushGPUResources(); }
+      catch (const std::exception& error) {
+        if (!deviceLost) throw;
+        T8_LOG_ERROR("[Framework][DeviceLoss] Flush during shutdown: %s", error.what());
+      }
+    }
+    if (pVideoDriver) pBaseApp->DestroyAssets();
     RuntimeTelemetry::Shutdown();
-    pVideoDriver->DestroyDriver();
-    delete pVideoDriver;
+    if (pVideoDriver) {
+      try { pVideoDriver->DestroyDriver(); }
+      catch (const std::exception& error) {
+        if (!deviceLost) throw;
+        T8_LOG_ERROR("[Framework][DeviceLoss] Driver shutdown: %s", error.what());
+      }
+      delete pVideoDriver;
+    }
     pVideoDriver = nullptr;
     g_pBaseDriver = nullptr;
     ShutdownGlobalThreadPool();
@@ -444,10 +460,46 @@ namespace t850 {
   }
   void Win32Framework::UpdateApplication() {
     while (m_alive) {
-      ProcessInput();
-      pBaseApp->OnUpdate();
+      try {
+        ProcessInput();
+        pBaseApp->OnUpdate();
+        if (m_deviceRecoveryPending) {
+          T8_LOG_INFO("[Framework][DeviceLoss] WebGPU recovery completed after a successful frame");
+          m_deviceRecoveryPending = false;
+          m_deviceRecoveryAttempts = 0;
+        }
+      } catch (const std::exception& error) {
+        if (!HandleGraphicsFailure(error)) throw;
+      }
     }
     ReleaseMouseMode();
+  }
+
+  bool Win32Framework::HandleGraphicsFailure(const std::exception& error) {
+    std::string deviceFailure;
+    if (!pVideoDriver || pVideoDriver->m_currentAPI != GraphicsApi::WEBGPU ||
+        !pVideoDriver->GetDeviceFailure(deviceFailure)) return false;
+    if (RuntimeTelemetry::IsFrameActive()) RuntimeTelemetry::EndFrame();
+    if (g_profiler) g_profiler->EndFrame();
+    T8_LOG_ERROR("[Framework][DeviceLoss] Frame failed: %s; device=%s",
+                 error.what(), deviceFailure.c_str());
+    if (m_deviceRecoveryAttempts >= static_cast<unsigned>(g_config.webgpuDeviceRecoveryAttempts)) {
+      T8_TELEMETRY_ADD("device.recovery.exhausted", 1.0);
+      T8_LOG_ERROR("[Framework][DeviceLoss] Recovery exhausted; shutting down cleanly");
+      m_alive = false;
+      return true;
+    }
+    ++m_deviceRecoveryAttempts;
+    T8_TELEMETRY_ADD("device.recovery.attempts", 1.0);
+    m_deviceRecoveryPending = true;
+    try {
+      ChangeAPI(GraphicsApi::WEBGPU);
+      T8_LOG_INFO("[Framework][DeviceLoss] Recreated WebGPU renderer and scene; validating next frame");
+    } catch (const std::exception& recoveryError) {
+      T8_LOG_ERROR("[Framework][DeviceLoss] Recovery failed: %s", recoveryError.what());
+      m_alive = false;
+    }
+    return true;
   }
   void Win32Framework::ProcessInput() {
     pBaseApp->IManager.scrollDelta = 0.0f;
@@ -670,12 +722,22 @@ namespace t850 {
                 t850::config::ApiTag(api));
     if (m_inited) {
       ReleaseMouseMode();
-      pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
+      std::string deviceFailure;
+      const bool deviceLost = pVideoDriver && pVideoDriver->GetDeviceFailure(deviceFailure);
+      try { pVideoDriver->FlushGPUResources(); }
+      catch (const std::exception& error) {
+        if (!deviceLost) throw;
+        T8_LOG_ERROR("[Framework][DeviceLoss] Flush before recreation: %s", error.what());
+      }
       pBaseApp->DestroyAssets();
       MeshAssetCache::Get().Clear();
       MaterialAssetCache::Get().Clear();
       pBaseApp->resourceManager.Release();
-      pVideoDriver->DestroyDriver();
+      try { pVideoDriver->DestroyDriver(); }
+      catch (const std::exception& error) {
+        if (!deviceLost) throw;
+        T8_LOG_ERROR("[Framework][DeviceLoss] Driver teardown before recreation: %s", error.what());
+      }
       delete pVideoDriver;
       pVideoDriver = nullptr;
       g_pBaseDriver = nullptr;
@@ -700,6 +762,8 @@ namespace t850 {
       title += "   D3D12";
     else if (api == GraphicsApi::VULKAN)
       title += "   Vulkan";
+    else if (api == GraphicsApi::WEBGPU)
+      title += "   WebGPU (Dawn/D3D12)";
     else
       title += "   D3D11";
 
@@ -713,8 +777,11 @@ namespace t850 {
 #if defined(USING_OPENGL)
       SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "0");
       flags |= SDL_WINDOW_OPENGL;
+      SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+      SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+      SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
       SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-      T8_LOG_INFO("SDL_WINDOW_OPENGL flag set, depth=24 (WGL forced)");
+      T8_LOG_INFO("SDL_WINDOW_OPENGL flag set, desktop GL 4.3 compatibility requested, depth=24");
 #else
       T8_LOG_ERROR("USING_OPENGL not defined — GL context will NOT be created");
 #endif
@@ -775,28 +842,25 @@ namespace t850 {
 #if defined(USING_OPENGL)
       m_glContext = SDL_GL_CreateContext(m_pWindow);
       if (!m_glContext) {
-        T8_LOG_ERROR("GL context creation failed: %s", SDL_GetError());
+        const std::string computeContextError = SDL_GetError();
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+        m_glContext = SDL_GL_CreateContext(m_pWindow);
+        if (!m_glContext) {
+          throw std::runtime_error(
+            "OpenGL 4.3 compute and 3.3 graphics context creation failed: " +
+            computeContextError + "; " + SDL_GetError());
+        }
+        T8_LOG_INFO("OpenGL 4.3 context unavailable; using desktop GL 3.3 raster-only fallback");
       } else {
-        T8_LOG_INFO("SDL GL context created OK");
+        T8_LOG_INFO("SDL GL 4.3 compatibility context created OK");
       }
 #else
       T8_LOG_ERROR("USING_OPENGL not defined — skipping SDL_GL_CreateContext");
 #endif
-      pVideoDriver = new GLDriver;
-      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
     }
-    else if (api == GraphicsApi::D3D12) {
-      pVideoDriver = new D3D12Driver;
-      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
-    }
-    else if (api == GraphicsApi::VULKAN) {
-      pVideoDriver = new VulkanDriver;
-      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
-    }
-    else {
-      pVideoDriver = new D3DXDriver;
-      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
-    }
+    pVideoDriver = CreateWindowsGraphicsDriver(api, g_config.webgpuShaderFlow);
+    pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
 
     g_pBaseDriver = pVideoDriver;
     t850::Log::SetSessionTag(t850::config::ApiTag(pVideoDriver->m_currentAPI));

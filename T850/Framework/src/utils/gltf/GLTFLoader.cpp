@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
  * glTF 2.0 — top-level loader.
  *
@@ -180,6 +181,8 @@ bool RebaseGlbBufferViews(Document& doc,
 } // namespace
 
 bool LoadGLTF(const std::string& path, Document& out) {
+  T8_TELEMETRY_SCOPE("asset.gltf.parse");
+  T8_UPLOAD_SOURCE(RuntimeTelemetry::UploadSource::AssetLoad);
   LoadingProgress::SetCurrent("Loading model", path, "Reading glTF/GLB file");
   std::vector<unsigned char> raw;
   if (!ReadFileBytes(path, raw)) {

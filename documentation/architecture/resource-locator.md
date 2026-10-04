@@ -177,6 +177,11 @@ Use `ReadBinary` or `ReadText` when the data may live in an Android APK asset. U
 
 Use `ResolveCachePath` for generated data because packaged assets are read-only on Android and may be read-only in installed desktop builds.
 
+The compute registry is a packaged read-only resource at
+`Shaders/compute_kernels.json`. Load it with `ReadText`; do not resolve it as a
+writable cache file. Web/Wasm self-tests embed it explicitly, and Android asset
+sync includes it through the `Shaders/**` asset rule.
+
 ## Scene and mesh fallback behavior
 
 `.t8scene` files are loaded through `LoadEditorSceneFile()` using `ResourceLocator::ReadText()`.

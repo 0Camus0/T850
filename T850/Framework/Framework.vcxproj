@@ -48,6 +48,7 @@
     <ClInclude Include="include\game\GameValidation.h" />
     <ClInclude Include="include\game\InputFrame.h" />
     <ClInclude Include="include\game\MovementComponent.h" />
+    <ClInclude Include="include\game\RegeneratingHealthState.h" />
     <ClInclude Include="include\game\StateMachine.h" />
     <ClInclude Include="include\game\examples\HealthComponent.h" />
     <ClInclude Include="include\game\examples\GroupManager.h" />
@@ -79,7 +80,9 @@
     <ClInclude Include="include\scene\IBLResources.h" />
     <ClInclude Include="include\debug\FrameDumper.h" />
     <ClInclude Include="include\debug\CrashDiagnostics.h" />
+    <ClInclude Include="include\debug\ComputeSelfTest.h" />
     <ClInclude Include="include\debug\LoadingProgress.h" />
+    <ClInclude Include="include\debug\GpuTimestampProfiler.h" />
     <ClInclude Include="include\debug\Profiler.h" />
     <ClInclude Include="include\debug\RuntimeTelemetry.h" />
     <ClInclude Include="include\scene\EditorSceneFile.h" />
@@ -135,16 +138,30 @@
     <ClInclude Include="include\utils\xMaths.h" />
     <ClInclude Include="include\utils\ConfigRuntime.h" />
     <ClInclude Include="include\utils\RuntimeProfile.h" />
+    <ClInclude Include="include\utils\ComputeKernelRegistry.h" />
     <ClInclude Include="include\utils\ShaderPermutationDump.h" />
+    <ClInclude Include="include\utils\ShaderPrecompiler.h" />
+    <ClInclude Include="include\core\WebFramework.h" />
+    <ClInclude Include="include\core\ShaderTools.h" />
     <ClInclude Include="include\utils\SPIRVReflection.h" />
     <ClInclude Include="include\utils\ShaderDiskCache.h" />
+    <ClInclude Include="include\utils\ShaderPreprocessor.h" />
+    <ClInclude Include="include\utils\TextureMipmaps.h" />
+    <ClInclude Include="include\video\webgpu\WebGPUShaderCompiler.h" />
+    <ClInclude Include="include\video\webgpu\WebGPUContext.h" />
+    <ClInclude Include="include\video\webgpu\WebGPUDriver.h" />
+    <ClInclude Include="include\video\WindowsDriverFactory.h" />
+    <ClInclude Include="include\debug\GraphicsFixture.h" />
     <ClInclude Include="include\utils\gltf\GLTFTypes.h" />
     <ClInclude Include="include\utils\gltf\GLTFLoader.h" />
     <ClInclude Include="include\utils\gltf\GLTFAccessor.h" />
     <ClInclude Include="include\utils\gltf\GLTFImage.h" />
     <ClInclude Include="include\utils\gltf\GLTFMaterial.h" />
     <ClInclude Include="include\video\BaseDriver.h" />
+    <ClInclude Include="include\video\MutableGraphicsStateCache.h" />
+    <ClInclude Include="include\video\ShaderProgramCache.h" />
     <ClInclude Include="include\video\WindowHandle.h" />
+    <ClInclude Include="include\video\gl\GLCompute.h" />
     <ClInclude Include="include\video\gl\GLDriver.h" />
     <ClInclude Include="include\video\gl\GLDeviceContext.h" />
     <ClInclude Include="include\video\gl\GLDevice.h" />
@@ -162,6 +179,7 @@
     <ClInclude Include="include\video\d3d11\D3D11IndexBuffer.h" />
     <ClInclude Include="include\video\d3d11\D3D11ConstantBuffer.h" />
     <ClInclude Include="include\video\d3d11\D3D11Driver.h" />
+    <ClInclude Include="include\video\d3d11\D3D11Compute.h" />
     <ClInclude Include="include\video\d3d11\D3D11RT.h" />
     <ClInclude Include="include\video\d3d11\D3D11Shader.h" />
     <ClInclude Include="include\video\d3d11\D3D11Texture.h" />
@@ -172,11 +190,16 @@
     <ClInclude Include="include\video\d3d12\D3D12ConstantBuffer.h" />
     <ClInclude Include="include\video\d3d12\D3D12DeviceContext.h" />
     <ClInclude Include="include\video\d3d12\D3D12Device.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Pipeline.h" />
+    <ClInclude Include="include\video\d3d12\D3D12PipelineLibrary.h" />
     <ClInclude Include="include\video\d3d12\D3D12PipelineKey.h" />
+    <ClInclude Include="include\video\d3d12\D3D12ShaderCacheSession.h" />
     <ClInclude Include="include\video\d3d12\D3D12Shader.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Compute.h" />
     <ClInclude Include="include\video\d3d12\D3D12RT.h" />
     <ClInclude Include="include\video\d3d12\D3D12Texture.h" />
     <ClInclude Include="include\video\vulkan\VulkanDriver.h" />
+    <ClInclude Include="include\video\vulkan\VulkanCompute.h" />
     <ClInclude Include="include\video\vulkan\VulkanVertexBuffer.h" />
     <ClInclude Include="include\video\vulkan\VulkanIndexBuffer.h" />
     <ClInclude Include="include\video\vulkan\VulkanConstantBuffer.h" />
@@ -259,12 +282,16 @@
     <ClCompile Include="src\scene\IBLResources.cpp" />
     <ClCompile Include="src\debug\FrameDumper.cpp" />
     <ClCompile Include="src\debug\CrashDiagnostics.cpp" />
+    <ClCompile Include="src\debug\ComputeSelfTest.cpp" />
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />
+    <ClCompile Include="src\debug\GpuTimestampProfiler.cpp" />
     <ClCompile Include="src\debug\Profiler.cpp" />
     <ClCompile Include="src\debug\ProfilerGpuBackend.cpp" />
     <ClCompile Include="src\debug\RuntimeTelemetry.cpp" />
     <ClCompile Include="src\debug\RenderTrace.cpp" />
-    <ClCompile Include="src\scene\EditorSceneFile.cpp" />
+    <ClCompile Include="src\scene\EditorSceneFile.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
     <ClCompile Include="src\scene\SceneConversions.cpp" />
     <ClCompile Include="src\scene\SceneRegions.cpp" />
     <ClCompile Include="src\scene\MeshDatabaseBuilder.cpp" />
@@ -306,10 +333,40 @@
     <ClCompile Include="src\utils\XMaths.cpp" />
     <ClCompile Include="src\utils\ConfigRuntime.cpp" />
     <ClCompile Include="src\utils\RuntimeProfile.cpp" />
+    <ClCompile Include="src\utils\ComputeKernelRegistry.cpp" />
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp" />
+    <ClCompile Include="src\utils\ShaderPrecompiler.cpp" />
+    <ClCompile Include="src\core\WebFramework.cpp" />
+    <ClCompile Include="src\video\webgpu\WebGPUShaderPackage.cpp" />
+    <ClCompile Include="src\core\ShaderTools.cpp" />
     <ClCompile Include="src\utils\SPIRVReflection.cpp" />
+    <ClCompile Include="src\utils\ComputeReflection.cpp" />
+    <ClCompile Include="..\Librerias\spirv-reflect\spirv_reflect.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\utils\ShaderDiskCache.cpp" />
+    <ClCompile Include="src\utils\ShaderPreprocessor.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\Librerias\simplecpp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="..\Librerias\simplecpp\simplecpp.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <DisableSpecificWarnings>4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="src\video\webgpu\WebGPUShaderCompiler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\video\webgpu\WebGPUContext.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\video\webgpu\WebGPUDriver.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\video\WindowsDriverFactory.cpp" />
+    <ClCompile Include="src\debug\GraphicsFixture.cpp" />
     <ClCompile Include="src\video\BaseDriver.cpp" />
+    <ClCompile Include="src\video\ShaderProgramCache.cpp" />
+    <ClCompile Include="src\video\gl\GLCompute.cpp" />
     <ClCompile Include="src\video\gl\GLDriver.cpp" />
     <ClCompile Include="src\video\gl\GLDeviceContext.cpp" />
     <ClCompile Include="src\video\gl\GLDevice.cpp" />
@@ -326,6 +383,7 @@
     <ClCompile Include="src\video\d3d11\D3D11IndexBuffer.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11ConstantBuffer.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11Driver.cpp" />
+    <ClCompile Include="src\video\d3d11\D3D11Compute.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11RT.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11Shader.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11Texture.cpp" />
@@ -336,10 +394,15 @@
     <ClCompile Include="src\video\d3d12\D3D12ConstantBuffer.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12DeviceContext.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Device.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Pipeline.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12PipelineLibrary.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12ShaderCacheSession.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Shader.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Compute.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12RT.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Texture.cpp" />
     <ClCompile Include="src\video\vulkan\VulkanDriver.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanCompute.cpp" />
     <ClCompile Include="src\video\vulkan\VulkanVertexBuffer.cpp" />
     <ClCompile Include="src\video\vulkan\VulkanIndexBuffer.cpp" />
     <ClCompile Include="src\video\vulkan\VulkanConstantBuffer.cpp" />
@@ -809,6 +872,7 @@
       <AdditionalLibraryDirectories>$(T8VcpkgStatic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Lib>
   </ItemDefinitionGroup>
+  <Import Project="..\cmake\DawnPackage.targets" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

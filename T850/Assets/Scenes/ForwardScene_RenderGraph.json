@@ -1,0 +1,23 @@
+{
+  "render_targets": [
+    { "name": "ForwardColor", "color_count": 1, "color_format": "RGBA8", "depth_format": "F32", "size": [0, 0], "linear_filter": true }
+  ],
+  "passes": [
+    {
+      "name": "Forward Opaque",
+      "target": "ForwardColor",
+      "clear": true,
+      "clear_color": [0.025, 0.04, 0.06, 1.0],
+      "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "READ_WRITE", "cull_face": "FRONT_FACES" },
+      "camera": "main",
+      "bind_environment_map": true,
+      "draws": [{ "type": "mesh", "mesh_indices": [], "signature": "DEFAULT_PASS" }]
+    },
+    {
+      "name": "BackBuffer",
+      "state": { "depth_stencil": "NONE", "blend": "BLEND_OPAQUE" },
+      "inputs": [{ "source": "ForwardColor:COLOR0", "slot": 0 }],
+      "draws": [{ "type": "final_quad", "signature": "FSQUAD_1_TEX" }]
+    }
+  ]
+}

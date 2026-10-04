@@ -77,6 +77,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/core/Config.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/Core.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/EngineContext.cpp
+  ${T850_SOURCE_DIR}/Framework/src/core/WebFramework.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/android/AndroidFramework.cpp
   ${T850_SOURCE_DIR}/Framework/src/game/ComponentFactory.cpp
   ${T850_SOURCE_DIR}/Framework/src/game/Controller.cpp
@@ -118,9 +119,17 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/Technique.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ConfigRuntime.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/RuntimeProfile.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ComputeKernelRegistry.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderDiskCache.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPreprocessor.cpp
+  ${T850_SOURCE_DIR}/Librerias/simplecpp/simplecpp.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPermutationDump.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPrecompiler.cpp
+  ${T850_SOURCE_DIR}/Framework/src/video/webgpu/WebGPUShaderPackage.cpp
+  ${T850_SOURCE_DIR}/Framework/src/core/ShaderTools.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/SPIRVReflection.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ComputeReflection.cpp
+  ${T850_SOURCE_DIR}/Librerias/spirv-reflect/spirv_reflect.c
   ${T850_SOURCE_DIR}/Framework/src/utils/ThreadPool.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Spline.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Picking.cpp
@@ -134,7 +143,9 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/gltf/GLTFMesh.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/gltf/GLTFAnimation.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/BaseDriver.cpp
+  ${T850_SOURCE_DIR}/Framework/src/video/ShaderProgramCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanDriver.cpp
+  ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanCompute.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanVertexBuffer.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanIndexBuffer.cpp
   ${T850_SOURCE_DIR}/Framework/src/video/vulkan/VulkanConstantBuffer.cpp
@@ -190,6 +201,8 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelNavigation.cpp
   ${T850_SOURCE_DIR}/Framework/src/terrain/VoxelCollision.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/CrashDiagnostics.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/ComputeSelfTest.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/GpuTimestampProfiler.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/Profiler.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/ProfilerGpuBackend.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/RuntimeTelemetry.cpp
@@ -201,6 +214,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiD3D12Backend.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiOpenGLBackend.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiVulkanBackend.cpp
+  ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiWebGPUBackend.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/DevGuiContext.cpp
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/tinyxml2.cpp
   ${T850_SOURCE_DIR}/Librerias/mikktspace/src/mikktspace.c)
@@ -238,6 +252,9 @@ if(T850_VULKAN_VALIDATION)
 endif()
 target_compile_options(T850Android PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 target_precompile_headers(T850Android PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${T850_SOURCE_DIR}/Framework/pch.h>)
+set_source_files_properties(${T850_SOURCE_DIR}/Framework/src/utils/ShaderPreprocessor.cpp
+  ${T850_SOURCE_DIR}/Librerias/simplecpp/simplecpp.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+target_include_directories(T850Android PRIVATE ${T850_SOURCE_DIR}/Librerias/simplecpp)
 target_include_directories(T850Android PRIVATE
   ${T850_SOURCE_DIR}/DayScene
   ${T850_SOURCE_DIR}/FrameworkImGui/include

@@ -1,0 +1,7 @@
+diff --git a/src/draco/io/ply_reader.cc b/src/draco/io/ply_reader.cc
+--- a/src/draco/io/ply_reader.cc
++++ b/src/draco/io/ply_reader.cc
+@@ -17,2 +17,3 @@
++#include <algorithm>
+ #include <array>
+ #include <regex>

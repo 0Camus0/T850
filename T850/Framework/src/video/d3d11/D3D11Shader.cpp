@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 #include <video/d3d11/D3D11Shader.h>
 #include <utils/Log.h>
 #include <utils/ShaderDiskCache.h>
@@ -71,11 +72,13 @@ namespace t850 {
       VS_blob = nullptr;
       std::vector<uint8_t> cachedVS;
       if (ShaderDiskCache::LoadArtifact(cacheKey, "vs.dxbc", cachedVS) && CreateBlobFromBytes(cachedVS, VS_blob)) {
+        T8_TELEMETRY_ADD("shader.cache.hits", 1);
         T8_LOG_DEBUG("[ShaderCache][D3D11] VS hit %s", cacheKey.sha1.c_str());
       }
       else {
         ComPtr<ID3DBlob> errorBlob = nullptr;
-        hr = D3DCompile(src_vs.c_str(), src_vs.size(), vs_name.empty() ? nullptr : vs_name.c_str(), 0, 0, "VS", "vs_5_0", 0, 0, &VS_blob, &errorBlob);
+        T8_TELEMETRY_ADD("shader.cache.misses", 1);
+        hr = T8_TELEMETRY_CALL("shader.compile", D3DCompile(src_vs.c_str(), src_vs.size(), vs_name.empty() ? nullptr : vs_name.c_str(), 0, 0, "VS", "vs_5_0", 0, 0, &VS_blob, &errorBlob));
         if (hr != S_OK) {
 
           if (errorBlob) {
@@ -91,7 +94,7 @@ namespace t850 {
         ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
       }
 
-      hr = device->CreateVertexShader(VS_blob->GetBufferPointer(), VS_blob->GetBufferSize(), 0, &pVS);
+      hr = T8_TELEMETRY_CALL("shader.module.create", device->CreateVertexShader(VS_blob->GetBufferPointer(), VS_blob->GetBufferSize(), 0, &pVS));
       if (hr != S_OK) {
         T8_LOG_ERROR("CreateVertexShader failed (hr=0x%08X)", (unsigned)hr);
         exit(666);
@@ -102,11 +105,13 @@ namespace t850 {
       FS_blob = nullptr;
       std::vector<uint8_t> cachedFS;
       if (ShaderDiskCache::LoadArtifact(cacheKey, "fs.dxbc", cachedFS) && CreateBlobFromBytes(cachedFS, FS_blob)) {
+        T8_TELEMETRY_ADD("shader.cache.hits", 1);
         T8_LOG_DEBUG("[ShaderCache][D3D11] FS hit %s", cacheKey.sha1.c_str());
       }
       else {
         ComPtr<ID3DBlob> errorBlob = nullptr;
-        hr = D3DCompile(src_fs.c_str(), src_fs.size(), fs_name.empty() ? nullptr : fs_name.c_str(), 0, 0, "FS", "ps_5_0", 0, 0, &FS_blob, &errorBlob);
+        T8_TELEMETRY_ADD("shader.cache.misses", 1);
+        hr = T8_TELEMETRY_CALL("shader.compile", D3DCompile(src_fs.c_str(), src_fs.size(), fs_name.empty() ? nullptr : fs_name.c_str(), 0, 0, "FS", "ps_5_0", 0, 0, &FS_blob, &errorBlob));
         if (hr != S_OK) {
           if (errorBlob) {
             T8_LOG_ERROR("PS compile error: %s", (char*)errorBlob->GetBufferPointer());
@@ -121,29 +126,38 @@ namespace t850 {
         ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
       }
 
-      hr = device->CreatePixelShader(FS_blob->GetBufferPointer(), FS_blob->GetBufferSize(), 0, &pFS);
+      hr = T8_TELEMETRY_CALL("shader.module.create", device->CreatePixelShader(FS_blob->GetBufferPointer(), FS_blob->GetBufferSize(), 0, &pFS));
       if (hr != S_OK) {
         T8_LOG_ERROR("CreatePixelShader failed (hr=0x%08X)", (unsigned)hr);
         return false;
       }
     }
-    auto collectCBVSlots = [&](ID3DBlob* blob) {
+    auto collectCBVSlots = [&](ID3DBlob* blob, const std::string& name, const char* stage) {
       ID3D11ShaderReflection* resourceReflect = nullptr;
       if (D3DReflect(blob->GetBufferPointer(), blob->GetBufferSize(), IID_ID3D11ShaderReflection, (void**)&resourceReflect) != S_OK || !resourceReflect)
-        return;
+        return false;
       D3D11_SHADER_DESC shaderDesc = {};
       resourceReflect->GetDesc(&shaderDesc);
       for (UINT i = 0; i < shaderDesc.BoundResources; i++) {
         D3D11_SHADER_INPUT_BIND_DESC bindDesc = {};
         resourceReflect->GetResourceBindingDesc(i, &bindDesc);
+        std::string diagnostic;
+        if (!g_pBaseDriver->ValidateShaderComparisonSamplers(
+              bindDesc.Type == D3D_SIT_SAMPLER && (bindDesc.uFlags & D3D_SIF_COMPARISON_SAMPLER),
+              name.empty() ? "inline" : name, stage, key.bits, diagnostic)) {
+          T8_LOG_ERROR("%s", diagnostic.c_str());
+          resourceReflect->Release();
+          return false;
+        }
         if (bindDesc.Type == D3D_SIT_CBUFFER) {
           cbvSlots.insert((int)bindDesc.BindPoint);
         }
       }
       resourceReflect->Release();
+      return true;
     };
-    collectCBVSlots(VS_blob.Get());
-    collectCBVSlots(FS_blob.Get());
+    if (!collectCBVSlots(VS_blob.Get(), vs_name, "vertex") ||
+        !collectCBVSlots(FS_blob.Get(), fs_name, "fragment")) return false;
 
     ID3D11ShaderReflection* reflect;
 

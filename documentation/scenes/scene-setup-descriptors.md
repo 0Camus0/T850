@@ -1,3 +1,16 @@
+# Authored Runtime Setup
+
+`SceneSetup::Load` accepts either a descriptor path or a `SceneDescriptor` value.
+`.t8scene` files may embed that value as `runtime_setup`; VoxelScene uses this
+path. Legacy descriptor `runtime_scene` names the authored document, retained as
+`SceneSetup::runtimeScene`. The optional document `mouse_capture` controls
+`SceneProps::MouseCaptureAllowed`, with true as the compatibility default.
+`ApplyInputSettings` accepts an explicit scene override that takes precedence
+over the descriptor-associated document. Quality/profile changes do not reset it.
+
+See [ownership audit](../architecture/webgpu-branch-ownership-audit.md) for the
+current migration boundary and remaining specialized scene code.
+
 # SceneSetup and Runtime Control Descriptors
 
 Status: verified against source on 2026-08-19.
@@ -81,7 +94,7 @@ flowchart TD
 7. Builds owned splines and spline agents.
 8. Logs object counts.
 
-`LoadSceneDescriptor()` uses `ResourceLocator::ReadText()` and Glaze with `error_on_unknown_keys = false`. Unknown JSON keys are ignored.
+`LoadSceneDescriptor()` uses `ResourceLocator::ReadText()` and strict Glaze parsing with `error_on_unknown_keys = true`. Unknown JSON keys fail the load with a source-position diagnostic.
 
 ## Built object mapping
 
@@ -406,7 +419,7 @@ When adding a new UI control:
 
 ## Known limitations and gotchas
 
-- Unknown descriptor JSON keys are ignored by Glaze, so typos can be silent.
+- Unknown descriptor JSON keys are rejected by Glaze, so typos fail during load.
 - `CameraDesc::eye` is saved but currently ignored on load; `position` drives runtime `Camera::Eye`.
 - UI metadata is not self-binding. Each scene must map control names manually.
 - Descriptor profiles and `.t8scene` profiles overlap conceptually but are applied by scene-specific code.

@@ -1,0 +1,46 @@
+{
+  "version": 2,
+  "mouse_capture": true,
+  "render_graph": "Scenes/SceneTemplate_RenderGraph.json",
+  "disabled_render_passes": ["Light Add"],
+  "streamed_voxels": {
+    "chunk_dimensions": {"x": 16, "y": 16, "z": 16},
+    "streaming": {"horizontalRadius": 2, "verticalRadius": 0, "maxInFlight": 4, "maxLaunchesPerUpdate": 4, "maxCommitsPerUpdate": 4, "maxUnloadsPerUpdate": 4},
+    "terrain": {"base_height": 3, "height_mask": 3, "x_coefficient": 13, "z_coefficient": 7, "surface_depth": 2},
+    "palette": [
+      {"name": "stone", "color": [0.38, 0.43, 0.48, 1], "atlas_rect": [0, 0, 0.33333334, 1]},
+      {"name": "dirt", "color": [0.40, 0.25, 0.12, 1], "atlas_rect": [0.33333334, 0, 0.6666667, 1], "roughness": 1},
+      {"name": "grass", "color": [0.16, 0.55, 0.20, 1], "atlas_rect": [0.6666667, 0, 1, 1]}
+    ],
+    "deep_block": "stone", "fill_block": "dirt", "surface_block": "grass",
+    "edits_path": "VoxelWorlds/default/edits.t8vox",
+    "camera_profile": 3, "interaction_reach": 8,
+    "atlas_width": 6, "atlas_height": 2,
+    "atlas_rgba": [
+      132,142,154,255,132,142,154,255,116,76,42,255,116,76,42,255,66,158,72,255,66,158,72,255,
+      132,142,154,255,132,142,154,255,116,76,42,255,116,76,42,255,66,158,72,255,66,158,72,255
+    ]
+  },
+  "runtime_setup": {
+    "name": "VoxelScene",
+    "cameras": [{"position": [16, 10, -6], "pitch": -0.15, "fov": 1.134464, "aspect": 1.7777778, "near_plane": 0.05, "far_plane": 1000, "speed": 5000}],
+    "light_cameras": [{"position": [16, 40, -10], "pitch": 0.8, "fov": 0.9599311, "aspect": 1, "near_plane": 0.1, "far_plane": 200, "speed": 5000}],
+    "lights": [{"type": "directional", "direction": [-0.35, -1, 0.2], "color": [1, 0.96, 0.86], "intensity": 3}],
+    "gauss_filters": [
+      {"kernel_size": 4, "radius": 1, "sigma": 1},
+      {"kernel_size": 11, "radius": 2.5, "sigma": 4.5},
+      {"kernel_size": 23, "radius": 3, "sigma": 6}
+    ],
+    "quality": {
+      "shadow_map_resolution": 1024, "pcf_scale": 1.7, "pcf_samples": 1,
+      "parallax_low_samples": 0, "parallax_high_samples": 0, "parallax_height": 0,
+      "light_volume_steps": 0, "ssao_kernel_size": 10, "ssao_radius": 1,
+      "dof_near_samples": 0, "dof_far_samples": 0
+    },
+    "settings": {
+      "ambient_color": [0.18, 0.22, 0.28], "active_lights": 1,
+      "dof_enabled": false, "parallax_enabled": false, "ibl_factor": 0,
+      "aperture": 0, "focal_length": 0, "max_coc": 0, "auto_focus": false
+    }
+  }
+}

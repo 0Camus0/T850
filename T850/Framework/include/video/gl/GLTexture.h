@@ -34,6 +34,7 @@ namespace t850 {
     void  UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) override;
 
     unsigned int glTarget;
+    unsigned int glInternalFormat = 0;
   private:
     int APITextureLoc;
   };

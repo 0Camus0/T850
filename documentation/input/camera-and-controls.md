@@ -10,6 +10,16 @@ checks automatic runtime loading, idle-camera stability, and forwarded movement.
 
 This document explains T850's input state, platform input translation, gamepad and handheld paths, runtime camera profiles, editor camera routing, hosted window input behavior, and Android virtual controls.
 
+2026-09-17 FPS grounding correction: the compute merge's jump fix skipped the
+post-movement ground probe whenever collision-resolved vertical velocity was
+positive. Collision overclip can produce a small positive velocity even at rest,
+causing repeated loss of ground contact and camera-height jitter. `UpdateFps`
+now distinguishes pre-collision ascent from that correction and clears vertical
+velocity after confirming ground contact. Genuine upward jumps remain airborne.
+`T-CTRL-JUMP-01` covers idle stability at 30/60/144 Hz as well as jumping/landing.
+The browser harness's `--camera-stability` checks idle height over 600 frames;
+Chrome Compute and Firefox Raster measured zero height drift after the fix.
+
 Related documents:
 
 - [Main architecture](../architecture/main-architecture.md)
@@ -134,6 +144,7 @@ Important Windows behavior:
 - `RefreshGamepadState()` normalizes axes with deadzones, triggers with trigger deadzones, and updates held/pressed flags.
 - Pressing gamepad View/Back requests app close in the framework.
 - Window focus/resize events reset mouse deltas and button state to avoid stale drags.
+- `UpdateMouseMode()` releases relative mode and cursor confinement when the app's `AllowsMouseCapture()` policy is false, including while a modal UI is active. Modal keyboard handling is unchanged.
 - `UpdateMouseMode()` enables SDL relative mouse mode and hides the cursor when `AppBase::WantsRelativeMouseMode()` is true.
 - In relative mode, `xDelta`/`yDelta` come from `SDL_GetRelativeMouseState()`.
 - Outside relative mode, deltas are computed from absolute cursor movement.
@@ -178,7 +189,8 @@ Generic Android touch fallback:
 
 Desktop runtime behavior:
 
-- `WantsRelativeMouseMode()` returns true when ImGui is ready, the runtime GUI is hidden, and no modal text/keyboard input is active.
+- `App::AllowsMouseCapture()` follows the active scene's policy. `SceneBase` allows capture by default; DayScene and Sandbox override it to false, keeping the cursor visible and free to leave the window. Other scenes, including Quake and Minecraft, retain their existing capture policy.
+- `WantsRelativeMouseMode()` returns true only when the scene allows capture, regression fixed-step mode is disabled, ImGui is ready, the runtime GUI is hidden, and no modal text/keyboard input is active.
 - Runtime GUI calls `SubmitRuntimeGamepadGuiInput()` before drawing panels.
 - When GUI is visible, `DrawHandheldGuiFooter()` draws controller hints.
 - `DrawHandheldControllerHelpOverlay()` draws the hold-R3 mapping overlay whenever a gamepad is connected and enabled.
@@ -222,6 +234,11 @@ Scenes and editor free-fly mode convert `InputManager` into `CameraInputState`.
 - B/east sets `crouch`;
 - left stick click sets `sprint`;
 - right stick becomes look deltas when look is allowed.
+
+The grounded FPS controller only acquires ground support while vertical velocity is
+non-positive. A downward ground probe must not reclassify an ascending jump as grounded;
+otherwise scene-level ground stabilization can snap the character back to the floor during
+the first jump frame. `T-CTRL-JUMP-01` covers jump launch, held-key ascent, and landing.
 
 The right-stick look mapping is expressed as mouse-like deltas scaled by frame time, so existing mouse look paths are reused.
 

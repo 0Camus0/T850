@@ -1,4 +1,6 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
+#include <unordered_set>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -37,6 +39,102 @@
 #endif
 
 namespace t850 {
+  namespace {
+    uint64_t HashShaderStage(const std::string& source, const std::string& name) {
+      constexpr uint64_t offsetBasis = 14695981039346656037ull;
+      constexpr uint64_t prime = 1099511628211ull;
+      uint64_t hash = offsetBasis;
+      const auto append = [&](const std::string& value) {
+        for (const unsigned char byte : value) {
+          hash ^= byte;
+          hash *= prime;
+        }
+        hash ^= 0xff;
+        hash *= prime;
+      };
+      append(name);
+      append(source);
+      return hash;
+    }
+
+  }
+
+  ShaderFamilyId BaseDriver::IdentifyShaderFamily(const std::string& vertexSource,
+                                                   const std::string& fragmentSource,
+                                                   const std::string& vertexName,
+                                                   const std::string& fragmentName) {
+    return {HashShaderStage(vertexSource, vertexName),
+            HashShaderStage(fragmentSource, fragmentName)};
+  }
+
+  bool ComputePipeline::SetValidatedLayout(const ComputePipelineDesc& desc,
+      const std::vector<ComputeBindingLayoutDesc>& reflected, bool portableIndices) {
+    if (desc.bindings.size() != reflected.size()) return false;
+    std::unordered_set<uint32_t> indices;
+    std::unordered_set<uint64_t> registers;
+    auto validated = desc.bindings;
+    for (auto& declared : validated) {
+      const uint32_t nameSpace = declared.type == ComputeBindingType::Constants32 ? 0 :
+        declared.type == ComputeBindingType::Sampler ? 1 :
+        (declared.type == ComputeBindingType::ReadOnlyBuffer || declared.type == ComputeBindingType::ReadOnlyTexture) ? 2 : 3;
+      if (!indices.insert(declared.bindingIndex).second ||
+          !registers.insert((uint64_t(nameSpace) << 32) | declared.shaderRegister).second) return false;
+      const ComputeBindingLayoutDesc* match = nullptr;
+      for (const auto& resource : reflected) {
+        if (resource.type == declared.type && (portableIndices ? resource.bindingIndex == declared.bindingIndex :
+            resource.shaderRegister == declared.shaderRegister)) {
+          if (match) return false;
+          match = &resource;
+        }
+      }
+      if (!match || match->constantCount != declared.constantCount) return false;
+      if (match->storageFormat != ComputeStorageFormat::Unspecified) {
+        if (declared.storageFormat != ComputeStorageFormat::Unspecified && declared.storageFormat != match->storageFormat)
+          return false;
+        declared.storageFormat = match->storageFormat;
+      }
+      if (declared.type == ComputeBindingType::ReadWriteTexture &&
+          declared.storageFormat == ComputeStorageFormat::Unspecified) return false;
+    }
+    bindingLayout = std::move(validated);
+    return true;
+  }
+
+  bool ComputePipeline::ValidateBindings(const std::vector<ComputeBindingDesc>& bindings) const {
+    if (bindings.size() != bindingLayout.size()) return false;
+    std::unordered_set<const ComputeBindingLayoutDesc*> consumed;
+    std::unordered_set<const void*> reads, writes;
+    for (const auto& binding : bindings) {
+      const ComputeBindingLayoutDesc* layout = nullptr;
+      for (const auto& candidate : bindingLayout)
+        if (candidate.type == binding.type && candidate.shaderRegister == binding.shaderRegister) layout = &candidate;
+      if (!layout || !consumed.insert(layout).second) return false;
+      if (binding.type == ComputeBindingType::Constants32) {
+        if (!binding.constants || !binding.constantCount || binding.constantCount != layout->constantCount) return false;
+      } else if (binding.type == ComputeBindingType::ReadOnlyBuffer || binding.type == ComputeBindingType::ReadWriteBuffer) {
+        if (!binding.buffer || (binding.type == ComputeBindingType::ReadWriteBuffer &&
+            binding.buffer->descriptor.access != ComputeBufferAccess::ReadWrite)) return false;
+        if (binding.type == ComputeBindingType::ReadWriteBuffer) {
+          if (!writes.insert(binding.buffer).second) return false;
+        } else reads.insert(binding.buffer);
+      } else {
+        if (!binding.texture) return false;
+        if (binding.type == ComputeBindingType::ReadWriteTexture) {
+          if (!writes.insert(binding.texture).second) return false;
+        } else if (binding.type == ComputeBindingType::ReadOnlyTexture) reads.insert(binding.texture);
+        else {
+          bool paired = false;
+          for (const auto& sampled : bindings)
+            if (sampled.type == ComputeBindingType::ReadOnlyTexture && sampled.shaderRegister == binding.shaderRegister &&
+                sampled.texture == binding.texture) paired = true;
+          if (!paired) return false;
+        }
+      }
+    }
+    for (const void* resource : writes) if (reads.count(resource)) return false;
+    return true;
+  }
+
   BaseDriver*	g_pBaseDriver = 0;
   Device*           T8Device;	// Device for create resources
   DeviceContext*    T8DeviceContext; // Context to set and manipulate the resources
@@ -317,8 +415,13 @@ namespace t850 {
   #endif
 
     if (cil_props & CIL_COMPRESSED) {
+      T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+      T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture, size, 0);
       LoadAPITextureCompressed(buffer);
     } else {
+      T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+      T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture,
+        size ? size : static_cast<uint64_t>(this->x) * this->y * m_channels, 0);
       LoadAPITexture(T8DeviceContext, buffer);
     }
     if (found) {
@@ -330,6 +433,9 @@ namespace t850 {
 
   bool Texture::LoadFromMemory(const unsigned char * buff, int w, int h, int channels, const char* debugName)
   {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture,
+      buff && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * channels : 0, 0);
     m_channels = channels;
     cil_props = 0;
 
@@ -367,6 +473,9 @@ namespace t850 {
 
   bool Texture::CreateCubeMap(const unsigned char * buff, int w, int h)
   {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::CurrentUploadSource() == RuntimeTelemetry::UploadSource::Streaming ? RuntimeTelemetry::UploadSource::Streaming : RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Texture,
+      buff && w > 0 && h > 0 ? static_cast<uint64_t>(w) * h * 24 : 0, 0);
     m_channels = 4;
     cil_props = CIL_CUBE_MAP;
     bounded = 1;
@@ -390,12 +499,87 @@ namespace t850 {
     return true;
   }
 
+  uint64_t Texture::UploadByteSize() const {
+    if (cil_props & CIL_COMPRESSED) return size;
+    const unsigned bytesPerPixel = cil_props & CIL_HALF_FLOAT ? 8u : (std::max)(1u, m_channels);
+    return RuntimeTelemetry::TextureUploadBytes(x, y, mipmaps, cil_props & CIL_CUBE_MAP ? 6u : 1u, bytesPerPixel);
+  }
+
   void Texture::release() {
     DestroyAPITexture();
     delete this;
   }
 
+  bool BaseRT::IsColorFormat(int format) {
+    return format == RGB8 || format == RGBA8 || format == RGBA16F ||
+           format == RGBA32F || format == R8 || format == F16 || format == F32;
+  }
+
+  bool BaseRT::IsDepthFormat(int format) {
+    return format == NOTHING || format == FD16 || format == F32 || format == CUBE_F32;
+  }
+
+  bool BaseRT::ValidateDescriptor(int count, int color, int depth, int width, int height,
+                                 const std::vector<int>& formats, std::string& diagnostic) {
+    diagnostic.clear();
+    const auto invalid = [&](const std::string& feature) {
+      diagnostic = "[InvalidRenderTarget] " + feature;
+      return false;
+    };
+    if (count < 0 || count > 8) return invalid("color_count=" + std::to_string(count));
+    if (!IsColorFormat(color) && color != NOTHING) return invalid("color_format=" + std::to_string(color));
+    if (!IsDepthFormat(depth)) return invalid("depth_format=" + std::to_string(depth));
+    if (width <= 0 || height <= 0) return invalid("extent must be positive");
+    if (!formats.empty() && formats.size() != static_cast<size_t>(count))
+      return invalid("color_formats count does not match color_count");
+    for (const int format : formats) {
+      if (!IsColorFormat(format)) return invalid("color_format=" + std::to_string(format));
+    }
+    if (count > 0 && formats.empty() && color == NOTHING) return invalid("color attachment has no format");
+    if (count == 0 && depth == NOTHING) return invalid("no color or depth attachments");
+    if (depth == CUBE_F32 && width != height) return invalid("cube extent must be square");
+    return true;
+  }
+
+  bool BaseDriver::ValidateRenderTarget(int count, int color, int depth, int targetWidth, int targetHeight,
+                                       bool generateMips, const std::vector<int>& formats,
+                                       std::string& diagnostic) const {
+    if (!BaseRT::ValidateDescriptor(count, color, depth, targetWidth, targetHeight, formats, diagnostic)) return false;
+    const auto unsupported = [&](const std::string& feature) {
+      diagnostic = "[UnsupportedRenderTarget] backend=" + std::string(ApiTag()) + " feature=" + feature;
+      return false;
+    };
+    if (static_cast<unsigned>(count) > MaxRenderTargetColorAttachments()) return unsupported("color_count");
+    if (depth == BaseRT::CUBE_F32 && !SupportsCubeRenderTargets()) return unsupported("cube render targets");
+    if (!SupportsRenderTargetDepthFormat(depth)) return unsupported("depth_format=" + std::to_string(depth));
+    if (formats.empty()) {
+      if (count > 0 && !SupportsRenderTargetColorFormat(color)) return unsupported("color_format=" + std::to_string(color));
+    } else {
+      for (const int format : formats) {
+        if (!SupportsRenderTargetColorFormat(format)) return unsupported("color_format=" + std::to_string(format));
+      }
+    }
+    if (generateMips && !SupportsRenderTargetMipGeneration()) return unsupported("generate_mips");
+    return true;
+  }
+
+  bool BaseDriver::ValidateShaderComparisonSamplers(bool required, const std::string& shader,
+                                                   const char* stage, uint64_t keyBits,
+                                                   std::string& diagnostic) const {
+    diagnostic.clear();
+    if (!required || SupportsComparisonSamplers()) return true;
+    diagnostic = "[UnsupportedShaderFeature] backend=" + std::string(ApiTag()) +
+      " shader=" + shader + " stage=" + stage + " key=" + std::to_string(keyBits) +
+      " feature=comparison_sampler";
+    return false;
+  }
+
   bool BaseRT::LoadRT(int nrt, int cf, int df, int w, int h, bool GenMips) {
+    std::string diagnostic;
+    if (!ValidateDescriptor(nrt, cf, df, w, h, {}, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
     this->number_RT = nrt;
     this->color_format = cf;
     this->depth_format = df;
@@ -407,6 +591,11 @@ namespace t850 {
   }
 
   bool BaseRT::LoadRT(int nrt, const std::vector<int>& perCF, int df, int w, int h, bool GenMips) {
+    std::string diagnostic;
+    if (!ValidateDescriptor(nrt, perCF.empty() ? RGBA8 : perCF[0], df, w, h, perCF, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
     this->number_RT = nrt;
     this->color_format = perCF.empty() ? RGBA8 : perCF[0]; // fallback
     this->depth_format = df;
@@ -482,6 +671,7 @@ namespace t850 {
       // Special modes
       if (key.has(ShaderKey::NO_LIGHT))       Defines += "#define NO_LIGHT\n\n";
       if (key.has(ShaderKey::OMNI_SHADOWS))   Defines += "#define OMNIDIRECTIONAL_SH\n\n";
+      if (key.has(ShaderKey::NO_ENVIRONMENT)) Defines += "#define NO_ENVIRONMENT\n\n";
 
       // Effect toggles
       if (key.has(ShaderKey::PARALLAX))       Defines += "#define ENABLE_PARALLAX\n\n";
@@ -492,7 +682,7 @@ namespace t850 {
 
       // Pass type
       switch (key.getPass()) {
-      case PassType::FORWARD:            break; // default forward path, no define needed
+      case PassType::FORWARD:            Defines += "#define FORWARD_PASS\n\n"; break;
       case PassType::GBUFFER:            Defines += "#define G_BUFFER_PASS\n\n"; break;
       case PassType::SHADOW_MAP:         Defines += "#define SHADOW_MAP_PASS\n\n"; break;
       case PassType::FSQUAD_1_TEX:       Defines += "#define FSQUAD_1_TEX\n\n"; break;
@@ -530,6 +720,7 @@ namespace t850 {
       src_vs = Defines + src_vs;
       src_fs = Defines + src_fs;
     }
+    m_sourceDefines = Defines;
     this->key = key;
     if (!CreateShaderAPI(src_vs, src_fs, vs_name, fs_name)) {
       T8_LOG_ERROR("Shader defines for failed key 0x%016llX [VS='%s' FS='%s']:\n%s", static_cast<unsigned long long>(key.bits), vs_name.c_str(), fs_name.c_str(), Defines.c_str());
@@ -555,13 +746,27 @@ namespace t850 {
       return RTs[id]->vColorTextures[index];
     }
   }
-  ShaderBase * BaseDriver::GetShader(ShaderKey key)
+  ShaderBase* BaseDriver::GetShader(ShaderKey key, ShaderFamilyId family)
   {
-    auto it = m_shaderCache.find(key.bits);
-    if (it != m_shaderCache.end())
-      return it->second;
-    fprintf(stderr, "[ShaderKey] GetShader miss: key 0x%016llX (pass=%d)\n", static_cast<unsigned long long>(key.bits), key.getPass());
-    T8_LOG_ERROR("GetShader miss: key 0x%016llX (pass=%d)", static_cast<unsigned long long>(key.bits), key.getPass());
+    const ShaderProgramKey programKey{family, key.bits, GetShaderProgramFlow()};
+    return GetShader(programKey);
+  }
+  ShaderBase* BaseDriver::GetShader(const ShaderProgramKey& programKey)
+  {
+    if (ShaderBase* shader = m_shaderPrograms.Find(programKey))
+      return shader;
+    fprintf(stderr, "[ShaderProgramKey] GetShader miss: family 0x%016llX:0x%016llX key 0x%016llX (pass=%d) flow=%llu\n",
+            static_cast<unsigned long long>(programKey.family.vertex),
+            static_cast<unsigned long long>(programKey.family.fragment),
+            static_cast<unsigned long long>(programKey.permutation),
+            ShaderKey(programKey.permutation).getPass(),
+            static_cast<unsigned long long>(programKey.flow));
+    T8_LOG_ERROR("GetShader miss: family 0x%016llX:0x%016llX key 0x%016llX (pass=%d) flow=%llu",
+                 static_cast<unsigned long long>(programKey.family.vertex),
+                 static_cast<unsigned long long>(programKey.family.fragment),
+                 static_cast<unsigned long long>(programKey.permutation),
+                 ShaderKey(programKey.permutation).getPass(),
+                 static_cast<unsigned long long>(programKey.flow));
     return nullptr;
   }
   ShaderBase * BaseDriver::GetShaderIdx(int id)
@@ -585,11 +790,14 @@ namespace t850 {
   void BaseDriver::DestroyShaders()
   {
     for (unsigned int i = 0; i < m_shaders.size(); i++) {
+      if (!m_shaders[i])
+        continue;
+      OnShaderDestroying(*m_shaders[i]);
       m_shaders[i]->release();
       m_shaders[i] = nullptr;
     }
     m_shaders.clear();
-    m_shaderCache.clear();
+    m_shaderPrograms.Clear();
   }
   void BaseDriver::DestroyRTs()
   {
@@ -714,8 +922,10 @@ namespace t850 {
   {
     if (id >= 0 && id < (int)m_shaders.size()) {
       if (m_shaders[id] != nullptr) {
-        if (m_shaders[id]->key.isValid())
-          m_shaderCache.erase(m_shaders[id]->key.bits);
+        if (m_shaders[id]->key.isValid()) {
+          m_shaderPrograms.Erase(m_shaders[id]->programKey);
+        }
+        OnShaderDestroying(*m_shaders[id]);
         m_shaders[id]->release();
         m_shaders[id] = nullptr;
       }
@@ -821,12 +1031,13 @@ namespace t850 {
   }
   int BaseDriver::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name)
   {
+    const ShaderProgramKey programKey{
+      IdentifyShaderFamily(src_vs, src_fs, vs_name, fs_name), key.bits, GetShaderProgramFlow()};
     if (key.isValid()) {
-      auto it = m_shaderCache.find(key.bits);
-      if (it != m_shaderCache.end()) {
+      if (ShaderBase* cached = m_shaderPrograms.Find(programKey)) {
         // Already compiled — find its index
         for (int i = 0; i < (int)m_shaders.size(); i++) {
-          if (m_shaders[i] == it->second)
+          if (m_shaders[i] == cached)
             return i;
         }
       }
@@ -839,10 +1050,11 @@ namespace t850 {
     LoadingProgress::ScopedStep loadingStep("Compiling shader", shaderName, 0.45f, false);
     ShaderBase* shader = T8Device->CreateShader(src_vs, src_fs, key, vs_name, fs_name);
     if (shader != nullptr) {
+      shader->programKey = programKey;
       m_shaders.push_back(shader);
       int idx = static_cast<int>(m_shaders.size() - 1);
       if (key.isValid()) {
-        m_shaderCache[key.bits] = shader;
+        m_shaderPrograms.Insert(programKey, shader);
         T8_LOG_DEBUG("Shader compiled: key=0x%016llX pass=%d -> idx %d", static_cast<unsigned long long>(key.bits), key.getPass(), idx);
       }
       T8_TRACE_REGISTER_SHADER(shader, key.bits, vs_name, fs_name);
@@ -851,19 +1063,25 @@ namespace t850 {
     T8_LOG_ERROR("Shader compilation FAILED: key=0x%016llX pass=%d", static_cast<unsigned long long>(key.bits), key.getPass());
     return -1;
   }
-  int BaseDriver::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
+  int BaseDriver::CreateRT(int nrt, int cf, int df, int w, int h,
+                           bool genMips, bool allowStorage)
   {
     if (w == 0)
       w = width;
     if (h == 0)
       h = height;
+    std::string diagnostic;
+    if (!ValidateRenderTarget(nrt, cf, df, w, h, genMips, {}, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return -1;
+    }
     LoadingProgress::ScopedStep loadingStep(
       "Creating render target",
       std::to_string(w) + "x" + std::to_string(h) + " (" + std::to_string(nrt) + " color)",
       0.3f);
-    BaseRT	*pRT = T8Device->CreateRT(nrt,cf,df,w,h,genMips);
-    pRT->number_RT = nrt;
+    BaseRT	*pRT = T8Device->CreateRT(nrt,cf,df,w,h,genMips,allowStorage);
     if (pRT!= nullptr) {
+      pRT->number_RT = nrt;
       for (std::size_t i = 0; i < RTs.size(); ++i) {
         if (!RTs[i]) {
           RTs[i] = pRT;
@@ -879,20 +1097,29 @@ namespace t850 {
     }
     return -1;
   }
-  int BaseDriver::CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool genMips)
+  int BaseDriver::CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h,
+                           bool genMips, bool allowStorage)
   {
     if (w == 0) w = width;
     if (h == 0) h = height;
+    const int cf = perColorFormats.empty() ? BaseRT::RGBA8 : perColorFormats[0];
+    std::string diagnostic;
+    if (!ValidateRenderTarget(nrt, cf, df, w, h, genMips, perColorFormats, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return -1;
+    }
     LoadingProgress::ScopedStep loadingStep(
       "Creating render target",
       std::to_string(w) + "x" + std::to_string(h) + " (" + std::to_string(nrt) + " color)",
       0.3f);
-    int cf = perColorFormats.empty() ? BaseRT::RGBA8 : perColorFormats[0];
-    BaseRT* pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips);
+    BaseRT* pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips, allowStorage);
     if (pRT) {
       // Reload with per-attachment formats
       pRT->DestroyAPIRT();
-      pRT->LoadRT(nrt, perColorFormats, df, w, h, genMips);
+      if (!pRT->LoadRT(nrt, perColorFormats, df, w, h, genMips)) {
+        pRT->release();
+        return -1;
+      }
       for (std::size_t i = 0; i < RTs.size(); ++i) {
         if (!RTs[i]) {
           RTs[i] = pRT;
@@ -910,14 +1137,43 @@ namespace t850 {
   }
   void BaseDriver::ModifyRT(int RTID, int nrt, int cf, int df, int w, int h, bool genMips)
   {
-    DestroyRT(RTID);
     if (w == 0)
       w = width;
     if (h == 0)
       h = height;
+    std::string diagnostic;
+    if (RTID < 0 || RTID >= static_cast<int>(RTs.size()) ||
+        !ValidateRenderTarget(nrt, cf, df, w, h, genMips, {}, diagnostic)) {
+      T8_LOG_ERROR("[ModifyRT] invalid target=%d %s", RTID, diagnostic.c_str());
+      return;
+    }
     BaseRT	*pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips);
+    if (!pRT) return;
     pRT->number_RT = nrt;
+    DestroyRT(RTID);
     RTs[RTID] = pRT;
+  }
+
+  RenderTargetLayout BaseDriver::GetRenderTargetLayout() const {
+    RenderTargetLayout layout;
+    if (CurrentRT < 0) {
+      layout.surface = true;
+      layout.colorCount = 1;
+      layout.colorFormats[0] = SurfaceColorFormat();
+      layout.depthFormat = BaseRT::F32;
+      return layout;
+    }
+    if (CurrentRT >= static_cast<int>(RTs.size()) || !RTs[CurrentRT]) return layout;
+    const auto& target = *RTs[CurrentRT];
+    if (target.number_RT < 0 || target.number_RT > static_cast<int>(layout.colorFormats.size())) return layout;
+    layout.colorCount = static_cast<unsigned>(target.number_RT);
+    for (unsigned attachment = 0; attachment < layout.colorCount; ++attachment) {
+      const int format = target.perColorFormats.empty() ? target.color_format : target.perColorFormats[attachment];
+      layout.colorFormats[attachment] = format == BaseRT::RGB8 ? BaseRT::RGBA8 : format;
+    }
+    if (target.pDepthTexture)
+      layout.depthFormat = target.depth_format == BaseRT::FD16 ? BaseRT::FD16 : BaseRT::F32;
+    return layout;
   }
 
   bool BaseDriver::IsOffscreenEnabled() const {

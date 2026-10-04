@@ -13,10 +13,25 @@ namespace t850 {
     uint64_t shaderKeyBits = 0;
     std::string vsName;
     std::string fsName;
+    std::string stage;
+    std::string entryPoint;
+    std::string sourceName;
+    std::string computeName;
+    std::string profile;
+    bool compute = false;
   };
 
   namespace ShaderDiskCache {
     constexpr int kCacheFormatVersion = 1;
+
+    std::string ContentHash(const std::string& content);
+    ShaderDiskCacheKey MakeStageKey(const std::string& api,
+                    const std::string& compilerSignature,
+                    uint64_t shaderKeyBits,
+                    const std::string& stage,
+                    const std::string& entryPoint,
+                    const std::string& sourceName,
+                    const std::string& source);
 
     ShaderDiskCacheKey MakeKey(const std::string& api,
                                const std::string& driverSignature,
@@ -25,6 +40,13 @@ namespace t850 {
                                const std::string& fsName,
                                const std::string& vsSource,
                                const std::string& fsSource);
+
+        ShaderDiskCacheKey MakeComputeKey(const std::string& api,
+                          const std::string& driverSignature,
+                          const std::string& computeName,
+                          const std::string& entryPoint,
+                          const std::string& profile,
+                          const std::string& source);
 
     bool LoadArtifact(const ShaderDiskCacheKey& key, const std::string& artifactName,
                       std::vector<uint8_t>& outBytes);

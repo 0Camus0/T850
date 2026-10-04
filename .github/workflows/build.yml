@@ -2,10 +2,10 @@ name: Build
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, microsoft_webgpu_branch ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, microsoft_webgpu_branch ]
 
 jobs:
   validate-build-registration:
@@ -21,6 +21,11 @@ jobs:
         run: |
           & T850/scripts/ValidateBuildRegistration.ps1
 
+      - name: Validate WebGPU launcher routing and WPF state
+        shell: powershell
+        run: |
+          & T850/scripts/TestLauncherWebGPU.ps1 -Ui
+
       - name: Validate Minecraft terrain atlas mappings
         shell: pwsh
         run: |
@@ -28,12 +33,22 @@ jobs:
 
   build:
     needs: validate-build-registration
-    runs-on: windows-2022
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         platform: [Win32, x64, ARM64]
         configuration: [Debug, Release]
+        include:
+          - platform: Win32
+            runner: windows-2022
+            msbuild_architecture: x64
+          - platform: x64
+            runner: windows-2022
+            msbuild_architecture: x64
+          - platform: ARM64
+            runner: windows-11-arm
+            msbuild_architecture: arm64
 
     steps:
       - name: Checkout
@@ -42,31 +57,106 @@ jobs:
           lfs: false
 
       - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: ${{ matrix.msbuild_architecture }}
 
-      - name: Pin vcpkg compiler to Visual Studio 2022
+      - name: Pin vcpkg compiler to v143
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs2022 = & $vswhere -latest -products * -version "[17.0,18.0)" `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-            -property installationPath
-          if ([string]::IsNullOrWhiteSpace($vs2022)) {
-            throw 'Visual Studio 2022 C++ tools were not found.'
+          $component = if ('${{ matrix.platform }}' -eq 'ARM64') {
+            'Microsoft.VisualStudio.Component.VC.Tools.ARM64'
+          } else {
+            'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
           }
-          "VCPKG_VISUAL_STUDIO_PATH=$vs2022" >> $env:GITHUB_ENV
-          Write-Host "vcpkg compiler: $vs2022"
+          $versionRange = if ('${{ matrix.platform }}' -eq 'ARM64') { '[17.0,19.0)' } else { '[17.0,18.0)' }
+          $visualStudioInstance = @(& $vswhere -latest -products * -version $versionRange `
+            -requires $component `
+            -format json | ConvertFrom-Json) | Select-Object -First 1
+          if (-not $visualStudioInstance) {
+            throw 'A Visual Studio host with the required C++ tools was not found.'
+          }
+          $visualStudio = $visualStudioInstance.installationPath
+          $visualStudioMajor = ([version]$visualStudioInstance.installationVersion).Major
+          if ('${{ matrix.platform }}' -eq 'ARM64') {
+            $v143Compiler = Get-ChildItem (Join-Path $visualStudio 'VC\Tools\MSVC') -Directory -ErrorAction SilentlyContinue |
+              Where-Object {
+                $version = [version]$_.Name
+                $version -ge [version]'14.30' -and $version -lt [version]'14.50' -and
+                  (Test-Path (Join-Path $_.FullName 'bin\Hostarm64\arm64\cl.exe'))
+              } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+            if (-not $v143Compiler) {
+              throw "The selected Visual Studio host does not include the v143 ARM64 compiler: $visualStudio"
+            }
+            "VCPKG_OVERLAY_TRIPLETS=$PWD\T850\cmake\vcpkg-triplets" >> $env:GITHUB_ENV
+            Write-Host "v143 ARM64 compiler: $($v143Compiler.FullName)"
+          }
+          "VCPKG_VISUAL_STUDIO_PATH=$visualStudio" >> $env:GITHUB_ENV
+          "VisualStudioVersion=$visualStudioMajor.0" >> $env:GITHUB_ENV
+          Write-Host "vcpkg Visual Studio host: $visualStudio"
+          Write-Host "Visual Studio host version: $visualStudioMajor"
+
+      - name: Ensure v143 ATL
+        if: matrix.platform == 'x64' || matrix.platform == 'ARM64'
+        shell: pwsh
+        run: |
+          $isArm64 = '${{ matrix.platform }}' -eq 'ARM64'
+          $compilerPath = if ($isArm64) { 'bin\Hostarm64\arm64\cl.exe' } else { 'bin\Hostx64\x64\cl.exe' }
+          $v143Toolset = Get-ChildItem (Join-Path $env:VCPKG_VISUAL_STUDIO_PATH 'VC\Tools\MSVC') -Directory |
+            Where-Object {
+              $version = [version]$_.Name
+              $version -ge [version]'14.30' -and $version -lt [version]'14.50' -and
+                (Test-Path (Join-Path $_.FullName $compilerPath))
+            } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $v143Toolset) { throw "The selected Visual Studio host has no v143 ${{ matrix.platform }} toolset." }
+
+          $atlHeader = Join-Path $v143Toolset.FullName 'atlmfc\include\atlbase.h'
+          if (-not (Test-Path $atlHeader)) {
+            $toolsetVersion = [version]$v143Toolset.Name
+            $visualStudio2022Minor = $toolsetVersion.Minor - 30
+            $atlArchitecture = if ($isArm64) { '.ARM64' } else { '' }
+            $atlComponent = "Microsoft.VisualStudio.Component.VC.14.$($toolsetVersion.Minor).17.$visualStudio2022Minor.ATL$atlArchitecture"
+            $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+            if (-not (Test-Path $installer)) { throw "Visual Studio Installer not found: $installer" }
+
+            Write-Host "Installing $atlComponent for v143 ${{ matrix.platform }} cold-cache builds."
+            $arguments = @(
+              'modify',
+              '--installPath', "`"$env:VCPKG_VISUAL_STUDIO_PATH`"",
+              '--add', $atlComponent,
+              '--quiet', '--norestart', '--nocache'
+            )
+            $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
+            try {
+              if ($process.ExitCode -notin @(0, 3010)) { throw "Visual Studio Installer failed with exit code $($process.ExitCode)." }
+            } finally {
+              $process.Dispose()
+            }
+          }
+
+          if (-not (Test-Path $atlHeader)) { throw "v143 ${{ matrix.platform }} ATL header not found after setup: $atlHeader" }
+          Write-Host "v143 ${{ matrix.platform }} ATL header: $atlHeader"
 
       - name: Clone vcpkg
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+          if ('${{ matrix.platform }}' -in @('x64', 'ARM64')) {
+            & T850/scripts/SetupDawn.ps1 -Mode Bootstrap -Architecture '${{ matrix.platform }}'
+          } else {
+            git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+            if ($LASTEXITCODE -ne 0) { throw 'vcpkg clone failed.' }
+            $revision = git rev-parse HEAD:T850/Librerias/vcpkg
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot read the recorded vcpkg revision.' }
+            git -C T850/Librerias/vcpkg checkout --detach $revision
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot check out the recorded vcpkg revision.' }
+          }
 
       - name: Cache vcpkg packages
         uses: actions/cache@v4
         with:
           path: T850/Librerias/vcpkg/installed
-          key: vcpkg-${{ matrix.platform }}-${{ hashFiles('.github/workflows/build.yml') }}
+          key: vcpkg-${{ matrix.platform }}-${{ hashFiles('.github/workflows/build.yml', 'T850/cmake/vcpkg-overlays/**', 'T850/scripts/SetupDawn.ps1') }}
           restore-keys: |
             vcpkg-${{ matrix.platform }}-
 
@@ -75,6 +165,7 @@ jobs:
         run: |
           cd T850/Librerias/vcpkg
           ./bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed.' }
 
       - name: Install vcpkg packages (Win32)
         if: matrix.platform == 'Win32'
@@ -82,25 +173,41 @@ jobs:
         run: |
           cd T850/Librerias/vcpkg
           ./vcpkg.exe install --recurse glew:x86-windows-static angle:x86-windows draco:x86-windows draco:x86-windows-static vulkan-headers:x86-windows-static vulkan-loader:x86-windows-static vulkan-memory-allocator:x86-windows-static glslang:x86-windows-static joltphysics:x86-windows-static recastnavigation:x86-windows-static "imgui[docking-experimental,dx11-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x86-windows-static" imguizmo:x86-windows-static
+          if ($LASTEXITCODE -ne 0) { throw 'Win32 dependency installation failed.' }
 
       - name: Install vcpkg packages (x64)
         if: matrix.platform == 'x64'
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install --recurse glew:x64-windows-static angle:x64-windows draco:x64-windows draco:x64-windows-static vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static joltphysics:x64-windows-static recastnavigation:x64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" imguizmo:x64-windows-static
+          ./vcpkg.exe install --recurse glew:x64-windows-static angle:x64-windows draco:x64-windows draco:x64-windows-static vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static joltphysics:x64-windows-static recastnavigation:x64-windows-static
+          if ($LASTEXITCODE -ne 0) { throw 'Base dependency installation failed.' }
+          & ../../scripts/SetupDawn.ps1
 
       - name: Install vcpkg packages (ARM64)
         if: matrix.platform == 'ARM64'
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install --recurse glew:arm64-windows-static angle:arm64-windows draco:arm64-windows draco:arm64-windows-static vulkan-headers:arm64-windows-static vulkan-loader:arm64-windows-static vulkan-memory-allocator:arm64-windows-static glslang:arm64-windows-static joltphysics:arm64-windows-static recastnavigation:arm64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:arm64-windows-static" imguizmo:arm64-windows-static
+          ./vcpkg.exe install --recurse glew:arm64-windows-static angle:arm64-windows draco:arm64-windows draco:arm64-windows-static vulkan-headers:arm64-windows-static vulkan-loader:arm64-windows-static vulkan-memory-allocator:arm64-windows-static glslang:arm64-windows-static joltphysics:arm64-windows-static recastnavigation:arm64-windows-static
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 dependency installation failed.' }
+          & ../../scripts/SetupDawn.ps1 -Architecture ARM64
+
+      - name: Build Dawn package probe (hardware run is local)
+        if: matrix.platform == 'x64' || matrix.platform == 'ARM64'
+        shell: pwsh
+        run: |
+          $suffix = if ('${{ matrix.platform }}' -eq 'ARM64') { '-arm64' } else { '' }
+          $buildRoot = "T850/build/dawn-package$suffix"
+          cmake --build $buildRoot --config ${{ matrix.configuration }} --target DawnPackageProbe DawnMSBuildProbe DawnShaderProbe ShaderPreprocessorProbe DawnSurfaceProbe --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Dawn package probe build failed.' }
+          ctest --test-dir $buildRoot -C ${{ matrix.configuration }} --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'In-process shader translation/cache tests failed.' }
 
       - name: Build
         shell: pwsh
         env:
-          PreferredToolArchitecture: x64
+          PreferredToolArchitecture: ${{ matrix.msbuild_architecture }}
         run: |
           & T850/scripts/build.ps1 `
             -Config ${{ matrix.configuration }} `
@@ -124,17 +231,54 @@ jobs:
           $editor = "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/T8ditor.exe"
           if (-not (Test-Path $editor)) { throw "Editor output not found: $editor" }
           Write-Host "Editor built: $editor"
+          foreach ($runtimeFile in @('vulkan-1.dll', 'licenses/vulkan-loader.txt')) {
+            $path = Join-Path (Split-Path $exe) $runtimeFile
+            if (-not (Test-Path $path)) { throw "Required Vulkan runtime file not staged: $path" }
+          }
 
-      # Gameplay/terrain self-tests cannot run on GitHub-hosted runners (no
-      # display/GPU and no interactive session). They are exercised locally via
-      # T850/scripts/RunWindowsBuildMatrix.ps1, which runs the same six-cell
-      # matrix plus the Win32/x64 self-tests. Keep this step disabled in CI.
       - name: Run gameplay and terrain self-tests
-        if: false
         shell: pwsh
         run: |
-          & "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe" --game-selftest
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = (Resolve-Path "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe").Path
+          $stdout = Join-Path $env:RUNNER_TEMP 'game-selftest-stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'game-selftest-stderr.log'
+          $process = Start-Process -FilePath $exe -ArgumentList '--game-selftest' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            Get-Content $stdout
+            Get-Content $stderr
+            $exitCode = $process.ExitCode
+            Write-Host ('Self-test exit code: {0} (0x{0:X8})' -f $exitCode)
+            if ($exitCode -ne 0) { throw "Gameplay/terrain self-tests failed with exit code $exitCode." }
+            if (-not (Select-String -Path $stdout -Pattern '^PASS ' -Quiet)) { throw 'Self-tests exited without reporting any passing checks.' }
+          } finally {
+            $process.Dispose()
+          }
+
+      - name: Cache Emscripten SDK
+        if: matrix.platform == 'x64' && matrix.configuration == 'Release'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\emsdk
+          key: emsdk-${{ runner.os }}-6.0.9-${{ hashFiles('T850/scripts/BuildWeb.ps1') }}
+          restore-keys: |
+            emsdk-${{ runner.os }}-6.0.9-
+
+      - name: Build architecture-neutral WebAssembly bundle
+        if: matrix.platform == 'x64' && matrix.configuration == 'Release'
+        shell: pwsh
+        run: |
+          & T850/scripts/BuildWeb.ps1 -EmSdkRoot (Join-Path $env:RUNNER_TEMP 'emsdk') -Configuration Release -AssetMode Cloud -Clean
+
+      - name: Upload WebAssembly bundle
+        if: matrix.platform == 'x64' && matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: T850-Web-Release
+          path: |
+            T850/build/web/site
+            T850/build/web/WebShaders
+            T850/build/web/CloudAssets
+          if-no-files-found: error
 
       - name: Upload build artifacts
         if: matrix.configuration == 'Release'
@@ -145,6 +289,139 @@ jobs:
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/T8ditor.exe
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/*.dll
+            T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/licenses/*.txt
+
+  browser-webgpu:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            runner: windows-2022
+            edge_machine: '0x8664'
+          - architecture: ARM64
+            runner: windows-11-arm
+            edge_machine: '0xAA64'
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: T850/web/package-lock.json
+
+      - name: Install browser test dependencies
+        shell: pwsh
+        run: npm ci --prefix T850/web
+
+      - name: Download architecture-neutral WebAssembly bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: T850-Web-Release
+          path: T850/build/web
+
+      - name: Verify WebAssembly bundle layout
+        shell: pwsh
+        run: |
+          foreach ($path in @(
+            'T850/build/web/site/DayScene.html',
+            'T850/build/web/site/DayScene.js',
+            'T850/build/web/site/DayScene.wasm',
+            'T850/build/web/site/scenes.json',
+            'T850/build/web/CloudAssets/routes.json'
+          )) {
+            if (-not (Test-Path -LiteralPath $path)) { throw "Downloaded browser artifact is missing: $path" }
+          }
+          if (-not (Get-ChildItem 'T850/build/web/WebShaders' -File -Filter '*.json' | Select-Object -First 1)) {
+            throw 'Downloaded browser artifact contains no prepared shader packages.'
+          }
+          $payloads = @(Get-ChildItem 'T850/build/web/site', 'T850/build/web/WebShaders', 'T850/build/web/CloudAssets' -Recurse -File |
+            Where-Object Extension -In @('.glb', '.gltf', '.bin', '.dds', '.png', '.jpg', '.jpeg', '.t8ibl', '.zip'))
+          if ($payloads.Count) {
+            throw "Cloud browser artifact unexpectedly contains asset payloads: $($payloads.FullName -join ', ')"
+          }
+
+      - name: Verify native Edge architecture
+        shell: pwsh
+        run: |
+          $candidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
+            (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')
+          ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+          $edge = $null
+          foreach ($candidate in $candidates) {
+            $stream = [IO.File]::OpenRead($candidate)
+            $reader = [IO.BinaryReader]::new($stream)
+            try {
+              $stream.Position = 0x3c
+              $stream.Position = $reader.ReadInt32() + 4
+              $machine = ('0x{0:X4}' -f $reader.ReadUInt16())
+            } finally {
+              $reader.Dispose()
+              $stream.Dispose()
+            }
+            Write-Host "Edge candidate: $candidate ($machine)"
+            if ($machine -eq '${{ matrix.edge_machine }}') {
+              $edge = $candidate
+              break
+            }
+          }
+          if (-not $edge) {
+            throw 'No native ${{ matrix.architecture }} Edge executable was found.'
+          }
+          "T850_EDGE_PATH=$edge" >> $env:GITHUB_ENV
+          Write-Host "Native ${{ matrix.architecture }} Edge: $edge (${{ matrix.edge_machine }})"
+
+      - name: Run WebGPU compute and recovery self-tests in native Edge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stdout = Join-Path $env:RUNNER_TEMP 't850-web-server.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 't850-web-server-error.log'
+          $server = Start-Process node -ArgumentList 'T850/web/server.mjs', '--port', '8765' -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $null = $server.Handle
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 30; ++$attempt) {
+              if ($server.HasExited) {
+                throw "Browser bundle server exited with code $($server.ExitCode)."
+              }
+              try {
+                $response = Invoke-RestMethod 'http://127.0.0.1:8765/__t850' -TimeoutSec 2
+                if ($response.identity) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+            if (-not $ready) { throw 'Browser bundle server did not become ready.' }
+            & node T850/web/test-firefox.mjs --browser edge --binary "$env:T850_EDGE_PATH" --headless --software-webgpu --compute-selftest --no-interactions --url 'http://127.0.0.1:8765/?scene=6&width=960&height=540' --output "T850/build/web/ci-${{ matrix.architecture }}-edge"
+            if ($LASTEXITCODE -ne 0) { throw "Edge WebGPU test failed with exit code $LASTEXITCODE." }
+            & node T850/web/test-firefox.mjs --browser edge --binary "$env:T850_EDGE_PATH" --headless --software-webgpu --device-loss-recovery --no-interactions --url 'http://127.0.0.1:8765/?scene=4&width=640&height=360' --output "T850/build/web/ci-${{ matrix.architecture }}-edge-recovery"
+            if ($LASTEXITCODE -ne 0) { throw "Edge WebGPU recovery test failed with exit code $LASTEXITCODE." }
+          } finally {
+            if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
+            $server.Dispose()
+            Get-Content $stdout -ErrorAction SilentlyContinue
+            Get-Content $stderr -ErrorAction SilentlyContinue
+          }
+
+      - name: Upload browser WebGPU report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: T850-Web-${{ matrix.architecture }}-Edge-Report
+          path: T850/build/web/ci-${{ matrix.architecture }}-edge*
+          if-no-files-found: warn
 
   android:
     needs: validate-build-registration
@@ -176,6 +453,11 @@ jobs:
         shell: pwsh
         run: |
           git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg clone failed.' }
+          $revision = git rev-parse HEAD:T850/Librerias/vcpkg
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read the recorded vcpkg revision.' }
+          git -C T850/Librerias/vcpkg checkout --detach $revision
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot check out the recorded vcpkg revision.' }
 
       - name: Cache Android vcpkg packages
         uses: actions/cache@v4
@@ -310,6 +592,8 @@ jobs:
       - name: Clone vcpkg
         run: |
           git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+          revision=$(git rev-parse HEAD:T850/Librerias/vcpkg)
+          git -C T850/Librerias/vcpkg checkout --detach "$revision"
 
       - name: Cache Steam Deck vcpkg packages
         uses: actions/cache@v4
@@ -355,7 +639,7 @@ jobs:
           path: artifacts/steamdeck/T850-SteamDeck-Release.tar.gz
 
   release:
-    needs: [build, android, steamdeck]
+    needs: [build, browser-webgpu, android, steamdeck]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     permissions:
@@ -386,7 +670,7 @@ jobs:
           $releaseDir = "release-assets"
           New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
           $assets = "T850/Assets"
-          foreach ($dir in Get-ChildItem -Path artifacts -Directory | Where-Object { $_.Name -notlike "T850-Android-*" -and $_.Name -ne "T850-SteamDeck-Release" }) {
+          foreach ($dir in Get-ChildItem -Path artifacts -Directory | Where-Object { $_.Name -notlike "T850-Android-*" -and $_.Name -notlike "T850-Web-*-Edge-Report" -and $_.Name -notin @("T850-Web-Release", "T850-SteamDeck-Release") }) {
             $name = $dir.Name
             $staging = "staging/$name"
             New-Item -ItemType Directory -Path $staging -Force | Out-Null
@@ -429,6 +713,10 @@ jobs:
           foreach ($steamDeckPackage in Get-ChildItem -Path artifacts -Recurse -Filter "T850-SteamDeck-*.tar.gz") {
             Copy-Item $steamDeckPackage.FullName -Destination (Join-Path $releaseDir $steamDeckPackage.Name) -Force
           }
+
+      - name: Validate assembled release packages
+        shell: pwsh
+        run: T850/scripts/ValidateReleasePackages.ps1 -ReleaseDirectory release-assets -RequireSignedAndroid
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

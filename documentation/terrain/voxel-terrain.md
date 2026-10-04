@@ -1,6 +1,39 @@
+# Authored Reference Scene
+
+VoxelScene loads `Assets/Scenes/VoxelScene.t8scene`. Its `runtime_setup` uses the
+shared SceneSetup descriptor schema; `streamed_voxels` authors the palette,
+RGBA atlas, chunk dimensions, budgets, terrain parameters and interaction data.
+Framework `BuildStreamedVoxelPalette` validates these before replacing registry
+state, and `GenerateLayeredVoxelChunk` owns cancellable terrain generation.
+`VoxelStreamingManager::Reset(dimensions)` waits for prior jobs before changing
+dimensions. VoxelScene delegates sweeps to Framework `SweepVoxelBox`.
+
+Palette order still determines saved block IDs. Do not reorder an existing
+world's palette without a migration. Regression runs do not load user edits.
+The [ownership audit](../architecture/webgpu-branch-ownership-audit.md) records
+the remaining reference-app integration and current validation.
+
 # Mutable Voxel Terrain and Streaming
 
 Status: implemented and verified against source, 43 self-tests, and four-backend captures on 2026-08-31.
+
+## Streaming profiling
+
+CPU telemetry records `terrain.voxel.stream_update`, worker
+`terrain.voxel.mesh_build` and the Minecraft streaming/upload phase. Mutable mesh
+replacement tags its vertex/index uploads with source `Streaming`. The shared
+resource/source matrix exposes logical bytes, observed staging bytes, calls,
+CPU time, known allocations and the largest upload. Existing voxel counters
+remain available through fixed-ID accumulation.
+
+Use telemetry frequency zero for upload spikes; sampled-out frames have no
+budget alert. `--telemetryUploadBudgetMB` controls the captured-frame warning
+threshold. High bytes plus GPU wait suggests backpressure; high CPU encode with
+flat wait suggests packing/format work. These are hypotheses requiring a focused
+capture, not diagnoses from upload bytes alone. See
+[CPU profiling](../debug/diagnostics.md#cpu-profiling-workstream) for report
+semantics and the finite comparison harness. The short implementation smoke
+verified streaming attribution, not a sub-percent performance target.
 
 This subsystem provides backend-neutral mutable geometry, voxel chunks, atlas-aware greedy meshing, bounded asynchronous streaming, voxel selection/player collision, per-chunk Jolt collision, and sparse persistent edits. `VoxelScene` is the executable reference integration.
 
@@ -106,6 +139,23 @@ It reuses existing mesh shader permutations for:
 The primitive performs AABB frustum culling and honors material alpha/double-sided state. Base-color textures use the established `DiffuseTex` binding. The generic VoxelScene creates a small generated atlas for its reference blocks. Minecraft loads `terrain.png` through the Framework `TextureAtlas`, receives a managed texture ID, validates every authored face tile, and acquires immutable material variants for atlas-bound mob/weapon materials.
 
 Minecraft authors `atlas_tile_px: 16` and `atlas_pixelation_factor: 2`. Its water block maps all faces to the first blue water frame at grid tile `(13,12)`. The PNG tile itself is fully opaque; the block is authored as non-opaque for voxel face-neighbor behavior. This is a static visual tile; animated water frames, translucent water rendering, and fluid simulation are separate future features.
+
+Minecraft authors ordered voxel regions and fractional box arrays under
+`voxel_world.structures`. These are applied inside deterministic chunk generation so the
+beach house survives streaming and recentering. Full plank voxels provide its floor, walls,
+openings, and 5x4 roof center; 22 atlas-textured half slabs form the 7x6 outer roof perimeter.
+
+Minecraft also authors three non-colliding torch bases under `voxel_world.torch.positions`:
+two stand on supported terrain outside the doorway and one stands inside facing the window.
+Their top-center positions emit deterministic red, orange, and yellow fire particles into one
+storage texture. D3D11, D3D12, Vulkan, WebGPU, and desktop OpenGL 4.3+ execute the shared
+three-emitter rise, spread, lifetime, depth-occlusion, and fade calculation; older desktop GL
+and OpenGL ES keep the transparent fallback target.
+
+Herobrine retains the authored skin and adds a separate white emissive eye subset. Player
+contact damage is edge-triggered, five-heart health regenerates one heart per minute, and
+respawn resets the controller and health at the authored player spawn without regenerating
+the voxel world.
 
 The canonical `terrain.png` mapping uses face order `+X, -X, +Y, -Y, +Z, -Z`:
 

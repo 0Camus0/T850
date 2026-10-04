@@ -355,6 +355,9 @@ tasks.register('compileT850AndroidShaders') {
             def json = new groovy.json.JsonSlurper().parse(shaderPermutationFile)
             def permutations = json.permutations ?: [:]
             permutations.each { key, permutation ->
+                if (!key.toString().matches('(?i)^0x[0-9a-f]{16}$')) {
+                    throw new GradleException("Graphics shader permutation uses non-ShaderKey identity '${key}'")
+                }
                 def normalizedKey = key.toString().replaceFirst('^0[xX]', '').toUpperCase()
                 def defines = (permutation.defines ?: []).collect { it.toString() }
                 [permutation.vertexShader, permutation.fragmentShader].findAll { it }.each { shaderName ->
@@ -382,6 +385,10 @@ tasks.register('compileT850AndroidShaders') {
                         args: args.collect { it.toString() }
                     ]
                 }
+            }
+            def computePermutations = json.compute_permutations ?: [:]
+            if (!computePermutations.isEmpty()) {
+                logger.lifecycle("[T850] Skipping ${computePermutations.size()} compute permutation(s); Android Vulkan compute precompilation is not implemented yet.")
             }
         } else {
             logger.lifecycle('[T850] No shader_permutations.json found; Android APK will include base SPIR-V only.')

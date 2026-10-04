@@ -105,6 +105,7 @@ classDiagram
   }
   class RenderSkinnedMesh {
     +m_animController
+    +UpdateAnimationPose()
     +UploadBoneTexture()
   }
   class MeshAssetCache {

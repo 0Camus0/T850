@@ -1,0 +1,19 @@
+{
+  "projectName": "your-minecraft-demo",
+  "accountId": "REPLACE_WITH_YOUR_32_CHARACTER_ACCOUNT_ID",
+  "apiToken": "",
+  "branch": "main",
+  "minecraftOnly": true,
+  "r2Buckets": [
+    {
+      "binding": "MODELS",
+      "bucketName": "your-models-bucket",
+      "manifestUrl": "https://models.example.com/manifest.json"
+    },
+    {
+      "binding": "TEXTURES",
+      "bucketName": "your-textures-bucket",
+      "manifestUrl": "https://textures.example.com/manifest.json"
+    }
+  ]
+}

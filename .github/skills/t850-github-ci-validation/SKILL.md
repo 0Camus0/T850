@@ -117,7 +117,13 @@ steamdeck
 
 The `release` job is expected to be skipped for ordinary pull requests because it runs only for `v*` tags. A skipped release job is not a PR failure.
 
-Gameplay self-tests are intentionally disabled on GitHub-hosted Windows runners and must be supplied by the local validation workflow.
+For a tagged release, require `Validate assembled release packages` before the
+GitHub Release step. It validates Windows ZIP, Android APK and Steam tarball
+contents, rejects unsigned APK names and emits `SHA256SUMS.txt`.
+
+Gameplay self-tests run in every Windows matrix cell. Win32/x64 use
+`windows-2022`; ARM64 uses the native `windows-11-arm` runner. Require nonzero
+PASS output and exit code 0 for each cell.
 
 ## 6. Monitor to a Final Result
 

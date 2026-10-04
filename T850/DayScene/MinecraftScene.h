@@ -13,6 +13,7 @@
 #include <scene/TextRenderer.h>
 #include <physics/PhysicsTypes.h>
 #include <physics/CharacterController.h>
+#include <game/RegeneratingHealthState.h>
 #include <navigation/NavigationSystem.h>
 #include <navigation/NavigationDebugRenderer.h>
 #include <debug/FrameDumper.h>
@@ -58,7 +59,8 @@ constexpr int kMaxRenderDistance = 32;
 constexpr int kMaxChunkCount = kMaxRenderDistance * 2 + 1;
 constexpr int kMaxChunks = kMaxChunkCount * kMaxChunkCount;
 constexpr int kMaxMinecraftEnemies = 8;
-constexpr int kMaxRenderMeshCount = kMaxChunks + kMaxMinecraftEnemies + 1;
+constexpr int kMaxMinecraftTorchEmitters = 3;
+constexpr int kMaxRenderMeshCount = kMaxChunks + kMaxMinecraftEnemies + 3;
 
 struct MinecraftMob {
   XVECTOR3 position = XVECTOR3(24.5f, 40.0f, 24.5f, 1.0f);
@@ -93,6 +95,9 @@ public:
   void SaveSceneSettings();
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override;
+  bool AllowsMouseCapture() const override {
+    return !m_playerHealth.IsDead() && SceneProp.MouseCaptureAllowed;
+  }
 
     // Benchmark final-frame capture: dumps the backbuffer once the benchmark
     // duration elapses, then exits. (DayScene has its own capture path; other
@@ -165,6 +170,12 @@ public:
   float m_cascadeDebugOpacity = 0.12f;
   std::array<XVECTOR3, 6> m_cascadeDebugColors;
   int   m_cameraMode = 0;             // 0=player, 1=free spectator, 2=light
+  bool m_invertY = false;
+  void SetCameraMode(int mode);
+#ifdef __EMSCRIPTEN__
+  unsigned m_cameraDiagnosticFrames = 0;
+  unsigned m_gameplayDiagnosticFrames = 0;
+#endif
   int   m_debugCascadeIndex = 0;
   bool  m_debugCameraOrtho = false;
   bool  m_lightCameraEditMode = false;
@@ -196,6 +207,8 @@ public:
   int m_maxChunks = 0;
   int m_mobMeshStartIndex = 0;
   int m_weaponMeshIndex = 0;
+  int m_torchMeshIndex = 0;
+  int m_structureMeshIndex = 0;
   int m_renderMeshCount = 0;
   int m_centerChunkX = 0;
   int m_centerChunkZ = 0;
@@ -264,12 +277,28 @@ public:
   bool m_weaponSwinging = false;
   float m_weaponBob = 0.0f;     // walk bob phase
 
+  // Static torch bases and compute-particle emitter anchors.
+  std::array<XVECTOR3, kMaxMinecraftTorchEmitters> m_torchBasePositions;
+  int m_torchEmitterCount = 0;
+  XVECTOR3 m_torchFlamePosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  float m_torchParticleTime = 0.0f;
+
   // Player
   t850::KinematicCharacterController m_player;
   t850::KinematicCharacterSettings m_playerSettings;
   t850::KinematicCharacterSettings m_mobSettings;
   t850::terrain::VoxelNavigationSettings m_voxelNavigationSettings;
   t850::KinematicCharacterInput m_playerInput;
+  t850::game::RegeneratingHealthState m_playerHealth;
+  float m_damageFlashRemaining = 0.0f;
+  float m_attackCooldown = 0.0f;
+  bool m_waitForActionRelease = false;
+  unsigned m_attackCount = 0;
+  unsigned m_respawnCount = 0;
+  std::array<bool, kMaxMinecraftEnemies> m_playerMobContacts = {};
+  XVECTOR3 m_playerSpawnEye = XVECTOR3(0.0f, 40.0f, 0.0f, 1.0f);
+  float m_playerSpawnYaw = 0.0f;
+  float m_playerSpawnPitch = 0.0f;
   XVECTOR3 m_playerEye = XVECTOR3(0.0f, 40.0f, 0.0f, 1.0f);
   float m_playerYaw = 0.0f;
   float m_playerPitch = 0.0f;
@@ -304,19 +333,29 @@ public:
   void ProcessNavigationMeshBuild();
   void UpdateMobs(float dt);
   void UpdateMob(MinecraftMob& mob, int mobIndex, float dt);
+  void UpdatePlayerHealth(float dt);
+  bool PlayerTouchesMob(const MinecraftMob& mob, bool retainContact) const;
+  void RespawnPlayer();
+  bool TryAttackMob();
   void CreateMobMesh(int mobIndex);
   void UpdateMobInstance(int mobIndex);
   void ResetMob(int mobIndex);
   void SetMobCount(int count);
   void SetMobSpeed(float speed);
+  bool BuildMobSkin();
   void CreateWeaponMesh();
   void UpdateWeapon(float dt);
+  void CreateStructureDecorationMesh();
+  void CreateTorchBaseMesh();
+  void ApplyTorchParticleSettings();
   void UpdateDayNight(float dt);
   void SyncLightCameraFromSun();
   void SyncSunFromLightCamera();
   void SetLightCameraEditMode(bool enabled);
   void GenerateChunk(int cx, int cz, bool markState = true);
   void GenerateChunkData(int cx, int cz, std::vector<uint8_t>& blocks) const;
+  void ApplyAuthoredStructuresToChunk(int cx, int cz, std::vector<uint8_t>& blocks) const;
+  bool IsAuthoredStructureVoxel(int wx, int wy, int wz) const;
   void GenerateChunkTrees(int cx, int cz, bool markState = true);
   void BuildChunkMesh(int cx, int cz);
   void RebuildDirtyChunks();
@@ -366,12 +405,15 @@ public:
   void UpdatePlayer(float dt);
   void HandleBlockInteraction(InputManager* IManager);
   void ApplyPendingCubemap();
-  void RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, float maxDist,
+  bool RaycastBlocks(const XVECTOR3& origin, const XVECTOR3& dir, float maxDist,
                      int& outX, int& outY, int& outZ, int& outPrevX, int& outPrevY, int& outPrevZ) const;
 
   t850::Texture* m_atlasTexture = nullptr;
   t850::TextureAtlas m_textureAtlas;
   int m_atlasTexIndex = -1;
+  t850::Texture* m_mobSkinTexture = nullptr;
+  t850::TextureAtlas m_mobSkinAtlas;
+  int m_mobSkinTexIndex = -1;
   // Skybox selection (ImGui)
   std::string m_currentCubemapPath;
   std::string m_pendingCubemap;

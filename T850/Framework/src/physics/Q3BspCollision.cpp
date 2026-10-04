@@ -545,8 +545,8 @@ bool Q3BspCollisionWorld::SweepCapsule(const CharacterCollisionSweep& sweep, Cha
 }
 
 bool Q3BspCollisionWorld::SweepBox(const CharacterBoxSweep& sweep, CharacterCollisionHit& outHit) const {
-  T8_TELEMETRY_SCOPE("character.q3_sweep_box");
-  RuntimeTelemetry::AddCounter("character.q3SweepBox.count", 1.0);
+  T8_TELEMETRY_ADD("character.q3_sweep_box.calls", 1);
+  T8_TELEMETRY_ADD("character.q3SweepBox.count", 1.0);
   outHit = CharacterCollisionHit{};
   if (m_brushes.empty() || LengthSq3(sweep.displacement) <= 0.00000001f) {
     return false;
@@ -592,8 +592,8 @@ bool Q3BspCollisionWorld::SweepBox(const CharacterBoxSweep& sweep, CharacterColl
         hitFraction,
         hitNormal);
   }
-  RuntimeTelemetry::AddCounter("character.q3SweepBox.brushCandidates", static_cast<double>(brushCandidates));
-  RuntimeTelemetry::AddCounter("character.q3SweepBox.patchCandidates", static_cast<double>(patchCandidates));
+  T8_TELEMETRY_ADD("character.q3SweepBox.brushCandidates", static_cast<double>(brushCandidates));
+  T8_TELEMETRY_ADD("character.q3SweepBox.patchCandidates", static_cast<double>(patchCandidates));
 
   if (hitFraction >= 1.0f && !allSolid) {
     return false;

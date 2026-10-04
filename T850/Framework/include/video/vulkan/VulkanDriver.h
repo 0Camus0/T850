@@ -34,6 +34,7 @@
 #else
 #include <vk_mem_alloc.h>
 #endif
+#include <video/vulkan/VulkanCompute.h>
 
 #include <unordered_map>
 #include <string>
@@ -53,6 +54,13 @@ namespace t850 {
 
     VulkanDriver() { m_currentAPI = GraphicsApi::VULKAN; }
     const char* ApiTag() const override { return "vulkan"; }
+    bool SupportsComputeShaders() const override { return m_supportsComputeShaders; }
+    bool SupportsComputeTextures() const override { return m_supportsComputeTextures; }
+    int SurfaceColorFormat() const override {
+      if (m_swapChainFormat == VK_FORMAT_R8G8B8A8_UNORM) return BaseRT::RGBA8;
+      if (m_swapChainFormat == VK_FORMAT_B8G8R8A8_UNORM) return BaseRT::BGRA8;
+      return BaseRT::NOTHING;
+    }
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;
@@ -84,6 +92,7 @@ namespace t850 {
     void EndFrame() override;
     void WaitForGPU() override;
     void FlushGPUResources() override;
+    void RetireComputeResource(std::function<void()> release);
     void BeginResourceUploadBatch() override;
     void EndResourceUploadBatch() override;
     bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
@@ -91,6 +100,12 @@ namespace t850 {
     void BuildPipelineObjects() override;
     void SetViewport(float x, float y, float w, float h) override;
     void SetScissorRect(int x, int y, int w, int h) override;
+    std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
+    std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                              const void* initialData = nullptr) override;
+    bool DispatchCompute(ComputePipeline& pipeline, const std::vector<ComputeBindingDesc>& bindings,
+               uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
+    bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
 
     // ── Accessors ──
     VkCommandBuffer    GetCmdBuffer() const { return m_commandBuffers[m_currentFrame]; }
@@ -102,6 +117,7 @@ namespace t850 {
     uint32_t           GetGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
     VkRenderPass       GetBackbufferRenderPass() const { return m_backbufferRenderPass; }
     VkCommandPool      GetTransientCommandPool() const { return m_transientCommandPool; }
+    uint64_t GetCompletedGpuSubmissionSerial() const { return m_gpuCompletedSubmissionSerial; }
 
     // Transient command buffer helpers for one-shot GPU operations
     VkCommandBuffer GetTransientCommandBuffer();
@@ -207,6 +223,8 @@ namespace t850 {
     VBRingAlloc AllocateVBRing(const void* data, uint32_t size);
 
   private:
+    void OnShaderDestroying(ShaderBase& shader) override;
+    void ClearPipelineCache();
     friend class VulkanShader;
     friend class VulkanDeviceContext;
 
@@ -239,6 +257,8 @@ namespace t850 {
     VkQueue             m_presentQueue = VK_NULL_HANDLE;
     uint32_t            m_graphicsQueueFamily = 0;
     uint32_t            m_presentQueueFamily = 0;
+    bool                m_supportsComputeShaders = false;
+    bool                m_supportsComputeTextures = false;
 
     // Surface & swap chain
     VkSurfaceKHR        m_surface = VK_NULL_HANDLE;
@@ -273,6 +293,9 @@ namespace t850 {
     std::vector<VkSemaphore> m_imageRenderFinishedSemaphores;
     VkFence         m_inFlightFences[kBackBufferCount] = {};
     uint32_t        m_currentFrame = 0;
+    uint64_t        m_gpuSubmissionSerial = 0;
+    uint64_t        m_gpuCompletedSubmissionSerial = 0;
+    uint64_t        m_frameGpuSubmissionSerial[kBackBufferCount] = {};
     bool            m_renderPassActive = false;
 
     // Descriptors — one pool per frame in flight to avoid resetting in-use pools
@@ -306,6 +329,7 @@ namespace t850 {
       uint32_t framesRemaining = kBackBufferCount;
     };
     std::vector<RetiredEngineBuffer> m_retiredBuffers;
+    std::vector<std::function<void()>> m_retiredCompute[kBackBufferCount];
 
     int m_uploadBatchDepth = 0;
     VkCommandBuffer m_uploadBatchCmd = VK_NULL_HANDLE;
@@ -348,6 +372,9 @@ namespace t850 {
 
     // Pipeline cache: lazy-created per (shader × blend × depth × cull × attachment config)
     std::unordered_map<VulkanPipelineKey, VkPipeline, VulkanPipelineKeyHash> m_pipelineCache;
+    uint64_t m_pipelineCacheHits = 0;
+    uint64_t m_pipelineCacheMisses = 0;
+    uint64_t m_pipelineCacheEvictions = 0;
     VkPipelineCache m_vkPipelineCache = VK_NULL_HANDLE;  // Vulkan driver-level cache
     std::function<void()> m_prePresentOverlayCallback;
 

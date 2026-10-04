@@ -18,6 +18,7 @@
 
 #include <physics/JoltPhysicsSystem.h>
 #include <scene/PrimitiveManager.h>
+#include <core/Config.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/SceneProp.h>
 #include <scene/TextRenderer.h>
@@ -27,6 +28,7 @@
 #include <utils/Timer.h>
 
 #include <string>
+#include <chrono>
 #include <memory>
 #include <unordered_set>
 #include <vector>
@@ -51,6 +53,9 @@ public:
   void DrawRuntimeGui();
   bool RunOffscreenBenchmarkFastPath(float initialDtSecs);
   bool HandleRuntimeGuiToggle(const char* phase);
+#if T850_ENABLE_GPU_PROFILING
+  void EnsureGpuTimestampProfiler(uint64_t workloadFrame);
+#endif
 #ifndef OS_ANDROID
   void SubmitRuntimeGamepadGuiInput();
   void HandleRuntimeGuiPanelFocusSwitch();
@@ -67,6 +72,7 @@ public:
 
   // Modal UI state queried by the framework to block Esc-to-quit.
   bool IsModalActive() const override;
+  bool AllowsMouseCapture() const override;
   bool WantsRelativeMouseMode() const override;
 
 
@@ -112,6 +118,12 @@ public:
   SceneProps		SceneProp;
   Camera			Cam;
 
+  bool m_creatingAssets = true;
+  uint64_t m_runtimeFrameIndex = 0;
+  bool m_benchmarkHoldLogged = false;
+  bool m_offlineBenchmarkTiming = false;
+  bool m_offlineBenchmarkComplete = false;
+  std::chrono::steady_clock::time_point m_offlineBenchmarkStart;
   bool fading;
   bool fadeOut;
   float totalFadeTime;
@@ -125,7 +137,8 @@ public:
     _fadeTime = time;
     while (totalFadeTime <= _fadeTime) {
       FadeTimer.Update();
-      float fadeSecsElapsed = FadeTimer.GetDTSecs();
+        float fadeSecsElapsed = t850::g_config.regressionFixedDt > 0.0f
+          ? t850::g_config.regressionFixedDt : FadeTimer.GetDTSecs();
       totalFadeTime += fadeSecsElapsed;
       OnUpdate();
     }

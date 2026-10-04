@@ -13,9 +13,16 @@
 
 #include <utils/Timer.h>
 #include <stdio.h>
+#ifdef OS_WEB
+#include <emscripten.h>
+#endif
 
 void Timer::Init() {
-#ifdef OS_WINDOWS
+#ifdef OS_WEB
+	StartTime = emscripten_get_now();
+	Frequency = 1000.0;
+	Dt = DtSecs = 0.0;
+#elif defined(OS_WINDOWS)
 	LARGE_INTEGER y;
 	QueryPerformanceFrequency(&y);
 	Frequency = double(y.QuadPart) / 1000000.0;
@@ -31,7 +38,12 @@ void Timer::Init() {
 }
 
 void Timer::Update() {
-#ifdef OS_WINDOWS
+#ifdef OS_WEB
+	const double now = emscripten_get_now();
+	DtSecs = (now - StartTime) / 1000.0;
+	Dt = DtSecs * 1000000.0;
+	StartTime = now;
+#elif defined(OS_WINDOWS)
 	LARGE_INTEGER end;
 	QueryPerformanceCounter(&end);
 	Dt = double(end.QuadPart - StartTime.QuadPart) / Frequency;

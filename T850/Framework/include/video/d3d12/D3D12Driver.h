@@ -35,7 +35,11 @@ using Microsoft::WRL::ComPtr;
 #include <video/d3d12/D3D12DeviceContext.h>
 #include <video/d3d12/D3D12Device.h>
 #include <video/d3d12/D3D12PipelineKey.h>
+#include <video/d3d12/D3D12Pipeline.h>
+#include <video/d3d12/D3D12PipelineLibrary.h>
+#include <video/d3d12/D3D12ShaderCacheSession.h>
 #include <video/d3d12/D3D12Shader.h>
+#include <video/d3d12/D3D12Compute.h>
 #include <video/d3d12/D3D12Texture.h>
 #include <video/d3d12/D3D12RT.h>
 
@@ -50,6 +54,10 @@ namespace t850 {
 
     D3D12Driver() { m_currentAPI = GraphicsApi::D3D12; }
     const char* ApiTag() const override { return "d3d12"; }
+    bool SupportsComputeShaders() const override { return true; }
+    bool SupportsComputeTextures() const override { return true; }
+    bool SupportsCubeRenderTargets() const override { return true; }
+    uint64_t ProfilingAdapterId() const override;
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;
@@ -81,6 +89,7 @@ namespace t850 {
     void BeginFrame(FrameTargetMode target = FrameTargetMode::Swapchain) override;
     void EndFrame() override;
     void WaitForGPU() override;
+    void FlushGPUResources() override;
     void BeginResourceUploadBatch() override;
     void EndResourceUploadBatch() override;
     bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
@@ -88,11 +97,21 @@ namespace t850 {
     void BuildPipelineObjects() override;
     void SetViewport(float x, float y, float w, float h) override;
     void SetScissorRect(int x, int y, int w, int h) override;
+    std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
+    std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                              const void* initialData = nullptr) override;
+    bool DispatchCompute(ComputePipeline& pipeline,
+               const std::vector<ComputeBindingDesc>& bindings,
+               uint32_t groupCountX,
+               uint32_t groupCountY,
+               uint32_t groupCountZ) override;
+    bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
 
     // ── Helpers for resource creation ──
     D3D12Heap& GetHeap(D3D12Heap::Type type) { return m_heaps[type]; }
     ID3D12GraphicsCommandList* GetCmdList() const { return m_commandLists[m_currentBackBuffer].Get(); }
     ID3D12CommandQueue*        GetCmdQueue() const { return m_commandQueue.Get(); }
+    uint64_t GetCompletedFenceValue() const { return m_fence ? m_fence->GetCompletedValue() : 0; }
 
     // Upload helper: copies data to GPU using a temp command list
     void UploadBufferData(ID3D12Resource* dest, const void* data, size_t dataSize,
@@ -127,6 +146,8 @@ namespace t850 {
     D3D12_GPU_DESCRIPTOR_HANDLE AllocateDynamicCBV(const void* data, UINT dataSize);
 
   private:
+    void OnShaderDestroying(ShaderBase& shader) override;
+    ShaderProgramFlow GetShaderProgramFlow() const override;
     friend class D3D12Shader;
     void CreateDevice();
     void CreateCommandInfrastructure();
@@ -134,6 +155,7 @@ namespace t850 {
     void CreateBackBufferViews();
     void CreateDepthBuffer();
     void CreateHeaps();
+    void TransitionBackBuffer(D3D12_RESOURCE_STATES nextState);
     void CreateDefaultSampler();
     void WaitForFence();
     ID3D12GraphicsCommandList* GetResourceUploadCommandList();
@@ -174,6 +196,7 @@ namespace t850 {
 
     // Back buffers
     ComPtr<ID3D12Resource> m_backBuffers[kBackBufferCount];
+    D3D12_RESOURCE_STATES  m_backBufferStates[kBackBufferCount] = {};
     ComPtr<ID3D12Resource> m_depthBuffer;
     UINT m_currentBackBuffer = 0;
 
@@ -231,9 +254,15 @@ namespace t850 {
       UINT framesRemaining = kBackBufferCount;
     };
     std::vector<RetiredBuffer> m_retiredBuffers;
+    std::unordered_map<IUnknown*, ComPtr<IUnknown>> m_computeKeepAlive[kBackBufferCount];
 
     // PSO cache: lazy-created per (shader × blend × depth × cull × RT config)
-    std::unordered_map<D3D12PipelineKey, ComPtr<ID3D12PipelineState>, D3D12PipelineKeyHash> m_psoCache;
+    std::unordered_map<D3D12PipelineKey, std::unique_ptr<D3D12Pipeline>, D3D12PipelineKeyHash> m_psoCache;
+    D3D12ShaderCacheSession m_shaderCacheSession;
+    D3D12PipelineLibrary m_pipelineLibrary;
+    uint64_t m_psoCacheHits = 0;
+    uint64_t m_psoCacheMisses = 0;
+    uint64_t m_psoCacheEvictions = 0;
 
     // ── Debug layer InfoQueue polling thread ──
     void StartDebugMessageThread();

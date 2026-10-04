@@ -16,13 +16,14 @@
 #include <video/gl/GLDriver.h>
 #include <utils/Utils.h>
 #include <debug/RenderTrace.h>
+#include <utils/Log.h>
 
 #if defined(OS_LINUX)
 #include <sys/time.h>
 #endif
 namespace t850 {
   namespace {
-    void ResolveGLRTColorFormat(int format, GLint& internalFormat, GLint& dataFormat, GLint& dataType) {
+    bool ResolveGLRTColorFormat(int format, GLint& internalFormat, GLint& dataFormat, GLint& dataType) {
       switch (format) {
       case BaseRT::R8:
         internalFormat = GL_R8;
@@ -59,17 +60,26 @@ namespace t850 {
         break;
       case BaseRT::RGB8:
       case BaseRT::RGBA8:
-      case BaseRT::NOTHING:
-      default:
+      #if (GL_DRIVER_SELECTED == OGLES20)
         internalFormat = GL_RGBA;
+      #else
+        internalFormat = GL_RGBA8;
+      #endif
         dataFormat = GL_RGBA;
         dataType = GL_UNSIGNED_BYTE;
         break;
+      default: return false;
       }
+      return true;
     }
   }
 
   bool GLRT::LoadAPIRT() {
+    std::string diagnostic;
+    if (!g_pBaseDriver->ValidateRenderTarget(number_RT, color_format, depth_format, w, h, GenMips, perColorFormats, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
     GLint cfmt, dfmt, cinternal;
     GLint bysize = 0;
 
@@ -97,7 +107,11 @@ namespace t850 {
       break;
     case RGB8:
     case RGBA8: {
+    #if (GL_DRIVER_SELECTED == OGLES20)
       cfmt = GL_RGBA;
+    #else
+      cfmt = GL_RGBA8;
+    #endif
       cinternal = GL_RGBA;
       bysize = GL_UNSIGNED_BYTE;
     }break;
@@ -120,12 +134,7 @@ namespace t850 {
       cinternal = GL_RGBA;
       bysize = GL_FLOAT;
     }break;
-    case BGR8: {
-    }break;
-    case BGRA8: {
-    }break;
-    case BGRA32: {
-    }break;
+    default: return false;
     }
 
     dfmt = GL_DEPTH_COMPONENT;
@@ -177,7 +186,7 @@ namespace t850 {
         GLint attachmentDataFormat = cinternal;
         GLint attachmentType = cbysize;
         if (!perColorFormats.empty() && i < (int)perColorFormats.size())
-          ResolveGLRTColorFormat(perColorFormats[i], attachmentFormat, attachmentDataFormat, attachmentType);
+          if (!ResolveGLRTColorFormat(perColorFormats[i], attachmentFormat, attachmentDataFormat, attachmentType)) return false;
 
         glGenTextures(1, &ctex);
         glBindTexture(GL_TEXTURE_2D, ctex);
@@ -213,6 +222,7 @@ namespace t850 {
         pTextureColor->x = w;
         pTextureColor->y = h;
         pTextureColor->id = ctex;
+        pTextureColor->glInternalFormat = attachmentFormat;
         vColorTextures.push_back(pTextureColor);
         vFrameBuffers.push_back(fbo);
         vGLColorTex.push_back(ctex);

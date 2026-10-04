@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <functional>
 #include <mutex>
@@ -172,12 +171,15 @@ public:
       const auto now = std::chrono::steady_clock::now();
       if (!force && now - s_lastFrame < std::chrono::milliseconds(33)) return;
       s_lastFrame = now;
+      if (s_pumping) return;
+      s_pumping = true;
     }
 
-    bool expected = false;
-    if (!s_pumping.compare_exchange_strong(expected, true)) return;
     callback();
-    s_pumping.store(false);
+    {
+      std::lock_guard<std::mutex> lock(s_mutex);
+      s_pumping = false;
+    }
   }
 
 private:
@@ -195,7 +197,7 @@ private:
 
   inline static std::mutex s_mutex;
   inline static FrameCallback s_frameCallback;
-  inline static std::atomic_bool s_pumping{false};
+  inline static bool s_pumping = false;
   inline static bool s_active = false;
   inline static float s_completed = 0.0f;
   inline static float s_total = 1.0f;

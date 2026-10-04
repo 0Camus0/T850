@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -39,6 +40,7 @@ namespace t850 {
   }
   void D3DXVertexBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, initialData ? desc.byteWidth : 0, 0);
     descriptor = desc;
     D3D11_USAGE usage;
     switch (desc.usage)
@@ -80,9 +82,11 @@ namespace t850 {
       g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "vb", "");
     }
 #endif
+    if (initialData) RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Vertex, 0, 1);
   }
   void D3DXVertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, sysMemCpy.size(), 0);
     ID3D11DeviceContext* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
     if (descriptor.usage == BufferUsage::DINAMIC) {
       D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -103,6 +107,7 @@ namespace t850 {
   }
   void D3DXVertexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void * buffer)
   {
+    T8_UPLOAD_SCOPE(RuntimeTelemetry::UploadResource::Vertex, descriptor.byteWidth, 0);
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     ID3D11DeviceContext* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());

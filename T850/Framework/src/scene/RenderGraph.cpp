@@ -1,15 +1,19 @@
 #include <pch.h>
 #include <scene/RenderGraph.h>
+#include <debug/GpuTimestampProfiler.h>
 #include <scene/RenderGraphDescriptor.h>
 #include <scene/SceneProp.h>
 #include <scene/ShadowSystem.h>
 #include <scene/PrimitiveInstance.h>
+#include <scene/RenderSkinnedMesh.h>
 #include <scene/RenderQueue.h>     // MeshDrawStateTracker
 #include <utils/Camera.h>
 #include <video/BaseDriver.h>
 #include <Descriptors.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
+#include <utils/ComputeKernelRegistry.h>
+#include <core/Config.h>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -28,10 +32,17 @@
 #include <sstream>
 #include <cstdio>
 #include <unordered_map>
+#include <unordered_set>
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <set>
 
 namespace t850 {
+
+RenderGraph::~RenderGraph() = default;
+RenderGraph::RenderGraph(RenderGraph&&) noexcept = default;
+RenderGraph& RenderGraph::operator=(RenderGraph&&) noexcept = default;
 
 // ---- JSON loading via glaze ----
 
@@ -43,7 +54,7 @@ bool LoadRenderGraphDescriptor(const std::string& path, RenderGraphDesc& desc) {
     return false;
   }
 
-  auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, json);
+  auto ec = glz::read<glz::opts{.error_on_unknown_keys = true}>(desc, json);
   if (ec) {
     std::string err = glz::format_error(ec, json);
     T8_LOG_ERROR("[RenderGraph] Parse error '%s': %s", path.c_str(), err.c_str());
@@ -69,6 +80,38 @@ static const std::unordered_map<std::string, int> s_attachmentMap = {
   {"COLOR7", BaseDriver::COLOR7_ATTACHMENT},
 };
 
+namespace {
+
+std::optional<ComputeBindingType> ResolveComputeAccess(std::string_view access) {
+  if (access == "constants") return ComputeBindingType::Constants32;
+  if (access == "sampled") return ComputeBindingType::ReadOnlyTexture;
+  if (access == "storage_write") return ComputeBindingType::ReadWriteTexture;
+  if (access == "sampler") return ComputeBindingType::Sampler;
+  return std::nullopt;
+}
+
+bool ParseRenderTargetReference(std::string_view reference,
+                                std::string& renderTarget,
+                                int& attachment) {
+  if (reference.empty() || reference.front() == '@')
+    return false;
+  const size_t separator = reference.find(':');
+  renderTarget = std::string(reference.substr(0, separator));
+  const std::string attachmentName = separator == std::string_view::npos
+    ? "COLOR0" : std::string(reference.substr(separator + 1));
+  const auto found = s_attachmentMap.find(attachmentName);
+  if (renderTarget.empty() || found == s_attachmentMap.end())
+    return false;
+  attachment = found->second;
+  return true;
+}
+
+std::string ResourceIdentity(const std::string& renderTarget, int attachment) {
+  return renderTarget + ":" + std::to_string(attachment);
+}
+
+} // namespace
+
 static const std::unordered_map<std::string, int> s_colorFormatMap = {
   {"NONE",    BaseRT::NOTHING},
   {"RGBA8",   BaseRT::RGBA8},
@@ -76,17 +119,20 @@ static const std::unordered_map<std::string, int> s_colorFormatMap = {
   {"RGBA32F", BaseRT::RGBA32F},
   {"R8",      BaseRT::R8},
   {"F16",     BaseRT::F16},
+  {"F32",     BaseRT::F32},
   {"RGB8",    BaseRT::RGB8},
 };
 
 static const std::unordered_map<std::string, int> s_depthFormatMap = {
   {"NONE",    BaseRT::NOTHING},
+  {"FD16",    BaseRT::FD16},
   {"F32",     BaseRT::F32},
   {"CUBE_F32", BaseRT::CUBE_F32},
 };
 
 // Pass name -> PassType::E
 static const std::unordered_map<std::string, uint8_t> s_passMap = {
+  {"DEFAULT_PASS",          PassType::NONE},
   {"FORWARD_PASS",          PassType::FORWARD},
   {"GBUFF_PASS",            PassType::GBUFFER},
   {"SHADOW_MAP_PASS",       PassType::SHADOW_MAP},
@@ -150,12 +196,12 @@ int RenderGraph::ResolveAttachment(const std::string& name) {
 
 int RenderGraph::ResolveColorFormat(const std::string& name) {
   auto it = s_colorFormatMap.find(name);
-  return (it != s_colorFormatMap.end()) ? it->second : BaseRT::RGBA8;
+  return (it != s_colorFormatMap.end()) ? it->second : -1;
 }
 
 int RenderGraph::ResolveDepthFormat(const std::string& name) {
   auto it = s_depthFormatMap.find(name);
-  return (it != s_depthFormatMap.end()) ? it->second : BaseRT::NOTHING;
+  return (it != s_depthFormatMap.end()) ? it->second : -1;
 }
 
 ShaderKey RenderGraph::ResolveSignature(const std::string& name) {
@@ -244,10 +290,218 @@ bool RenderGraph::Load(const std::string& path) {
   m_nodes.clear();
   m_edges.clear();
   m_rtHandles.clear();
+  m_initializedTargetsPending = true;
 
   if (!LoadRenderGraphDescriptor(path, m_sourceDesc))
     return false;
+
+  std::unordered_map<std::string, const RTDesc*> renderTargets;
+  for (const RTDesc& renderTarget : m_sourceDesc.render_targets) {
+    if (renderTarget.name.empty() ||
+        !renderTargets.emplace(renderTarget.name, &renderTarget).second) {
+      T8_LOG_ERROR("[RenderGraph] Render target names must be nonempty and unique: '%s'",
+                   renderTarget.name.c_str());
+      return false;
+    }
+    const auto invalid = [&](const std::string& feature) {
+      T8_LOG_ERROR("[RenderGraph][InvalidRenderTarget] target='%s' feature='%s'",
+                   renderTarget.name.c_str(), feature.c_str());
+      return false;
+    };
+    if (ResolveColorFormat(renderTarget.color_format) < 0)
+      return invalid("color_format=" + renderTarget.color_format);
+    if (ResolveDepthFormat(renderTarget.depth_format) < 0)
+      return invalid("depth_format=" + renderTarget.depth_format);
+    if (renderTarget.color_count < 0 || renderTarget.color_count > 8)
+      return invalid("color_count=" + std::to_string(renderTarget.color_count));
+    if (!renderTarget.color_formats.empty() &&
+        renderTarget.color_formats.size() != static_cast<size_t>(renderTarget.color_count))
+      return invalid("color_formats count does not match color_count");
+    for (const auto& format : renderTarget.color_formats) {
+      if (ResolveColorFormat(format) < 0 || format == "NONE")
+        return invalid("color_formats=" + format);
+    }
+    if (renderTarget.color_count > 0 && renderTarget.color_formats.empty() &&
+        renderTarget.color_format == "NONE")
+      return invalid("color attachments require a color format");
+    if (renderTarget.color_count == 0 && renderTarget.depth_format == "NONE")
+      return invalid("no color or depth attachments");
+    if (renderTarget.size[0] < 0 || renderTarget.size[1] < 0)
+      return invalid("negative extent");
+  }
+
   for (const auto& pass : m_sourceDesc.passes) {
+    if (pass.cube_faces != 0 && (pass.cube_faces != 6 || !renderTargets.contains(pass.target) ||
+        renderTargets.at(pass.target)->depth_format != "CUBE_F32")) {
+      T8_LOG_ERROR("[RenderGraph][InvalidRenderTarget] pass='%s' target='%s' feature=cube_faces requires six faces and CUBE_F32",
+                   pass.name.c_str(), pass.target.c_str());
+      return false;
+    }
+    if (pass.execution != "graphics" && pass.execution != "compute_if_supported") {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has unknown execution mode '%s'",
+                   pass.name.c_str(), pass.execution.c_str());
+      return false;
+    }
+    if (pass.execution == "graphics" &&
+        (!pass.compute_shader.empty() || !pass.compute_extent_from.empty() ||
+         !pass.compute_resources.empty())) {
+      T8_LOG_ERROR("[RenderGraph] Graphics pass '%s' contains compute-only fields",
+                   pass.name.c_str());
+      return false;
+    }
+    if (pass.execution == "compute_if_supported") {
+      if (pass.compute_shader.empty() || pass.compute_entry.empty() ||
+          pass.compute_extent_from.empty() || pass.compute_resources.empty()) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has an incomplete compute declaration",
+                     pass.name.c_str());
+        return false;
+      }
+      if (pass.compute_depth <= 0) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute depth %d",
+                     pass.name.c_str(), pass.compute_depth);
+        return false;
+      }
+      const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
+      if (!kernel || pass.compute_entry != kernel->entryPoint) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has unknown compute kernel '%s:%s'",
+                     pass.name.c_str(), pass.compute_shader.c_str(),
+                     pass.compute_entry.c_str());
+        return false;
+      }
+      if (!SupportsComputePermutation(*kernel, pass.compute_permutation)) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' has unsupported permutation '%s'",
+                     pass.name.c_str(), pass.compute_permutation.c_str());
+        return false;
+      }
+
+      std::set<std::pair<ComputeBindingType, uint32_t>> expectedBindings;
+      for (size_t index = 0; index < kernel->bindings.size(); ++index) {
+        expectedBindings.emplace(kernel->bindings[index].type,
+                                 kernel->bindings[index].shaderRegister);
+      }
+      std::set<std::pair<ComputeBindingType, uint32_t>> declaredBindings;
+      std::unordered_set<std::string> sampledResources;
+      std::unordered_set<std::string> writtenResources;
+        std::unordered_map<int, std::string> sampledRegisters, samplerRegisters;
+        std::string extentName;
+        int extentIndex = 0;
+        if (!ParseRenderTargetReference(pass.compute_extent_from, extentName, extentIndex) ||
+          !renderTargets.count(extentName)) return false;
+        const RTDesc& extent = *renderTargets.at(extentName);
+      for (const ComputeResourceDesc& resource : pass.compute_resources) {
+        const std::optional<ComputeBindingType> type = ResolveComputeAccess(resource.access);
+        if (!type || resource.shader_register < 0) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute access '%s' or register %d",
+                       pass.name.c_str(), resource.access.c_str(), resource.shader_register);
+          return false;
+        }
+        const auto bindingKey = std::make_pair(
+          *type, static_cast<uint32_t>(resource.shader_register));
+        if (!expectedBindings.count(bindingKey) ||
+            !declaredBindings.insert(bindingKey).second) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' has unexpected or duplicate compute binding '%s' register %d",
+                       pass.name.c_str(), resource.access.c_str(), resource.shader_register);
+          return false;
+        }
+        if (*type == ComputeBindingType::Constants32) {
+          if (resource.resource != "@kernel_constants") {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' constants must use @kernel_constants",
+                         pass.name.c_str());
+            return false;
+          }
+          continue;
+        }
+
+        std::string renderTargetName;
+        int attachment = BaseDriver::COLOR0_ATTACHMENT;
+        if (!ParseRenderTargetReference(resource.resource, renderTargetName, attachment)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute resource '%s'",
+                       pass.name.c_str(), resource.resource.c_str());
+          return false;
+        }
+        const auto renderTargetIt = renderTargets.find(renderTargetName);
+        if (renderTargetIt == renderTargets.end()) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' references unknown compute target '%s'",
+                       pass.name.c_str(), renderTargetName.c_str());
+          return false;
+        }
+        const RTDesc& renderTarget = *renderTargetIt->second;
+        if ((attachment == BaseDriver::DEPTH_ATTACHMENT && renderTarget.depth_format == "NONE") ||
+            (attachment != BaseDriver::DEPTH_ATTACHMENT &&
+             (attachment < 0 || attachment >= renderTarget.color_count))) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' references unavailable attachment '%s'",
+                       pass.name.c_str(), resource.resource.c_str());
+          return false;
+        }
+        const std::string identity = ResourceIdentity(renderTargetName, attachment);
+        const ComputeBindingLayoutDesc* layout = nullptr;
+        for (size_t index = 0; index < kernel->bindings.size(); ++index)
+          if (kernel->bindings[index].type == *type && kernel->bindings[index].shaderRegister == resource.shader_register)
+            layout = &kernel->bindings[index];
+        if (!layout) return false;
+        if (attachment == BaseDriver::DEPTH_ATTACHMENT && renderTarget.depth_format == "CUBE_F32") return false;
+        if ((layout->matchOutputExtent || *type == ComputeBindingType::ReadWriteTexture) &&
+            (renderTarget.size != extent.size || renderTarget.size_ref != extent.size_ref)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' resource '%s' must match its dispatch extent", pass.name.c_str(), resource.resource.c_str());
+          return false;
+        }
+        if (*type == ComputeBindingType::ReadOnlyTexture) {
+          sampledResources.insert(identity);
+          sampledRegisters.emplace(resource.shader_register, identity);
+        } else if (*type == ComputeBindingType::Sampler) {
+          samplerRegisters.emplace(resource.shader_register, identity);
+        } else if (*type == ComputeBindingType::ReadWriteTexture) {
+          if (attachment == BaseDriver::DEPTH_ATTACHMENT || !renderTarget.storage) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' storage output '%s' is not a storage-enabled color target",
+                         pass.name.c_str(), resource.resource.c_str());
+            return false;
+          }
+          if (!renderTarget.color_formats.empty() && attachment >= static_cast<int>(renderTarget.color_formats.size())) return false;
+          const std::string& format = renderTarget.color_formats.empty()
+            ? renderTarget.color_format : renderTarget.color_formats[attachment];
+          const char* required = layout->storageFormat == ComputeStorageFormat::Rgba16Float ? "RGBA16F" : "RGBA8";
+          if (layout->storageFormat == ComputeStorageFormat::Unspecified || format != required) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' storage format '%s' does not match kernel '%s'",
+              pass.name.c_str(), format.c_str(), required);
+            return false;
+          }
+          if (!writtenResources.insert(identity).second) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' writes '%s' more than once",
+                         pass.name.c_str(), resource.resource.c_str());
+            return false;
+          }
+        }
+      }
+      if (declaredBindings != expectedBindings) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' does not declare the kernel's complete binding layout",
+                     pass.name.c_str());
+        return false;
+      }
+      for (const auto& [shaderRegister, sampler] : samplerRegisters) {
+        if (!sampledRegisters.count(shaderRegister) || sampledRegisters.at(shaderRegister) != sampler) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' sampler '%s' has no matching sampled resource",
+                       pass.name.c_str(), sampler.c_str());
+          return false;
+        }
+      }
+      for (const std::string& written : writtenResources) {
+        if (sampledResources.count(written)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' reads and writes '%s' in one dispatch",
+                       pass.name.c_str(), written.c_str());
+          return false;
+        }
+      }
+      std::string extentTarget;
+      int extentAttachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (!ParseRenderTargetReference(pass.compute_extent_from,
+                                      extentTarget, extentAttachment) ||
+          !writtenResources.count(ResourceIdentity(extentTarget, extentAttachment))) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' compute_extent_from must name a storage output",
+                     pass.name.c_str());
+        return false;
+      }
+    }
+
     for (const auto& draw : pass.draws) {
       if (draw.signature != "LIGHT_ADD") continue;
       bool hasSlot0 = false;
@@ -264,6 +518,8 @@ bool RenderGraph::Load(const std::string& path) {
       }
     }
   }
+  if (!ValidateResourceLifetimes(m_sourceDesc))
+    return false;
   m_effectiveDesc = m_sourceDesc;
 
   // Graph is built after CreateRenderTargets (needs RT handle map)
@@ -439,12 +695,30 @@ bool RenderGraph::Configure(
   return true;
 }
 
-void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props) {
-  CreateRenderTargets(driver, props, 0, 0);
+bool RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props) {
+  return CreateRenderTargets(driver, props, 0, 0);
 }
 
-void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride) {
-  m_rtHandles.clear();
+bool RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride) {
+  DestroyRenderTargets(driver);
+  if (!driver) return false;
+  struct TargetAllocation {
+    const RTDesc* descriptor;
+    int width;
+    int height;
+    int color;
+    int depth;
+    bool mips;
+    bool storage;
+    std::vector<int> formats;
+  };
+  std::vector<TargetAllocation> allocations;
+  const auto targetPass = [&](const std::string& target) {
+    for (const auto& pass : m_effectiveDesc.passes) {
+      if (pass.target == target) return pass.name;
+    }
+    return std::string("<unreferenced>");
+  };
 
 #if defined(OS_ANDROID)
   constexpr float kAndroidScreenRenderScale = 0.5f;
@@ -494,16 +768,42 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
     // CreateRT's final argument controls mip generation, not linear filtering.
     // Keep it opt-in per target so bloom/intermediate passes never sample
     // implicit mips unexpectedly.
-    const bool generateMips = rt.generate_mips;
-    int handle;
-    if (!rt.color_formats.empty()) {
-      // Per-attachment formats specified in JSON
-      std::vector<int> perCF;
-      for (const auto& fmt : rt.color_formats)
-        perCF.push_back(ResolveColorFormat(fmt));
-      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, generateMips);
-    } else {
-      handle = driver->CreateRT(rt.color_count, cf, df, w, h, generateMips);
+    const bool generateMips = rt.generate_mips && driver->SupportsRenderTargetMipGeneration();
+    if (rt.generate_mips && !generateMips) {
+      T8_LOG_INFO("[RenderGraph][CapabilityFallback] pass='%s' target='%s' backend=%s feature=generate_mips fallback=single_level",
+                  targetPass(rt.name).c_str(), rt.name.c_str(), driver->ApiTag());
+    }
+    const bool allowStorage = rt.storage && driver->SupportsComputeTextures();
+    if (rt.storage && !allowStorage) {
+      T8_LOG_INFO("[RenderGraph] Creating RT '%s' without storage usage on API=%s",
+                  rt.name.c_str(), driver->ApiTag());
+    }
+    std::vector<int> perCF;
+    for (const auto& fmt : rt.color_formats) perCF.push_back(ResolveColorFormat(fmt));
+    if (w == 0) w = driver->width;
+    if (h == 0) h = driver->height;
+    std::string diagnostic;
+    if (!driver->ValidateRenderTarget(rt.color_count, cf, df, w, h, generateMips, perCF, diagnostic)) {
+      T8_LOG_ERROR("[RenderGraph] pass='%s' target='%s' backend=%s %s",
+                   targetPass(rt.name).c_str(), rt.name.c_str(), driver->ApiTag(), diagnostic.c_str());
+      return false;
+    }
+    allocations.push_back({&rt, w, h, cf, df, generateMips, allowStorage, std::move(perCF)});
+  }
+
+  for (const auto& allocation : allocations) {
+    const auto& rt = *allocation.descriptor;
+    const int w = allocation.width;
+    const int h = allocation.height;
+    const bool generateMips = allocation.mips;
+    const int handle = allocation.formats.empty()
+      ? driver->CreateRT(rt.color_count, allocation.color, allocation.depth, w, h, generateMips, allocation.storage)
+      : driver->CreateRT(rt.color_count, allocation.formats, allocation.depth, w, h, generateMips, allocation.storage);
+    if (handle < 0) {
+      T8_LOG_ERROR("[RenderGraph][AllocationFailed] pass='%s' target='%s' backend=%s",
+                   targetPass(rt.name).c_str(), rt.name.c_str(), driver->ApiTag());
+      DestroyRenderTargets(driver);
+      return false;
     }
     auto applyFilter = [&](Texture* tex) {
       if (!tex) return;
@@ -532,10 +832,18 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
   }
 
   // Now that RT handles are resolved, build the DAG
+  m_initializedTargetsPending = true;
   BuildGraph();
+  CreateComputePipelines(driver);
+  return true;
 }
 
 void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
+  m_initializedTargetsPending = true;
+  const bool hasResources = !m_rtHandles.empty() || !m_computePipelines.empty();
+  m_computePipelines.clear();
+  if (driver && hasResources) driver->FlushGPUResources();
+  m_loggedComputeDispatches.clear();
   if (!driver) {
     m_rtHandles.clear();
     m_nodes.clear();
@@ -559,18 +867,156 @@ void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
   m_edges.clear();
 }
 
+void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
+  m_computePipelines.clear();
+  m_loggedComputeDispatches.clear();
+  if (!driver)
+    return;
+
+  for (const GraphNode& node : m_nodes) {
+    const RenderPassDesc& pass = *node.desc;
+    if (pass.execution == "graphics")
+      continue;
+    const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
+    if (!kernel)
+      continue;
+    if (g_config.postProcessMode != Config::PostProcessMode::Compute) {
+      T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics implementation by post-process mode on API=%s",
+                  pass.name.c_str(), driver->ApiTag());
+      continue;
+    }
+    if (!driver->SupportsComputeTextures()) {
+      T8_LOG_INFO("[RenderGraph] Pass '%s' using raster fallback on API=%s",
+                  pass.name.c_str(), driver->ApiTag());
+      continue;
+    }
+    std::string source;
+    if (!ResourceLocator::Instance().ReadText(pass.compute_shader, source)) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot load compute shader '%s'",
+                   pass.name.c_str(), pass.compute_shader.c_str());
+      continue;
+    }
+
+    ComputePipelineDesc pipelineDesc;
+    pipelineDesc.source = std::move(source);
+    pipelineDesc.entryPoint = pass.compute_entry;
+    pipelineDesc.debugName = pass.compute_shader;
+    pipelineDesc.permutationName = pass.compute_permutation;
+    ConfigureComputePipelineDesc(*kernel, pipelineDesc);
+    std::unique_ptr<ComputePipeline> pipeline = driver->CreateComputePipeline(pipelineDesc);
+    if (!pipeline) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' failed to create compute pipeline", pass.name.c_str());
+      continue;
+    }
+    if (!pipeline->threadGroupSize[0] || !pipeline->threadGroupSize[1] ||
+        !pipeline->threadGroupSize[2]) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' created a pipeline without reflected workgroup dimensions",
+                   pass.name.c_str());
+      continue;
+    }
+    m_computePipelines[node.index] = std::move(pipeline);
+    T8_LOG_INFO("[RenderGraph] Pass '%s' enabled compute kernel '%s' on API=%s",
+                pass.name.c_str(), pass.compute_shader.c_str(), driver->ApiTag());
+  }
+}
+
+bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props) {
+  const auto pipelineIt = m_computePipelines.find(node.index);
+  if (!driver || pipelineIt == m_computePipelines.end() || !pipelineIt->second)
+    return false;
+
+  const RenderPassDesc& pass = *node.desc;
+  const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
+  if (!kernel) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has no registered compute executor", pass.name.c_str());
+    return false;
+  }
+
+  const ResolvedTexture extentResource = ResolveTextureInput(pass.compute_extent_from);
+  if (extentResource.is_builtin || extentResource.rt_handle < 0 ||
+      extentResource.rt_handle >= static_cast<int>(driver->RTs.size()) ||
+      !driver->RTs[extentResource.rt_handle]) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute extent resource",
+                 pass.name.c_str());
+    return false;
+  }
+  BaseRT* outputRT = driver->RTs[extentResource.rt_handle];
+  if (outputRT->w <= 0 || outputRT->h <= 0) {
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute output dimensions %dx%d",
+                 pass.name.c_str(), outputRT->w, outputRT->h);
+    return false;
+  }
+
+  std::vector<ComputeBindingDesc> bindings;
+  bindings.reserve(pass.compute_resources.size());
+  std::vector<uint32_t> constantWords;
+  for (const ComputeResourceDesc& resource : pass.compute_resources) {
+    const std::optional<ComputeBindingType> type = ResolveComputeAccess(resource.access);
+    if (!type)
+      return false;
+    ComputeBindingDesc binding;
+    binding.type = *type;
+    binding.shaderRegister = static_cast<uint32_t>(resource.shader_register);
+    if (*type == ComputeBindingType::Constants32) {
+      ComputeKernelConstantsContext constantsContext;
+      constantsContext.sceneProps = &props;
+      constantsContext.outputWidth = static_cast<uint32_t>(outputRT->w);
+      constantsContext.outputHeight = static_cast<uint32_t>(outputRT->h);
+      constantsContext.permutation = pass.compute_permutation;
+      std::string error;
+      if (!BuildComputeConstants(*kernel, constantsContext, constantWords, error)) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot build constants: %s",
+                     pass.name.c_str(), error.c_str());
+        return false;
+      }
+      binding.constants = constantWords.data();
+      binding.constantCount = static_cast<uint32_t>(constantWords.size());
+    } else {
+      const ResolvedTexture resolved = ResolveTextureInput(resource.resource);
+      if (resolved.is_builtin || resolved.rt_handle < 0 ||
+          resolved.rt_handle >= static_cast<int>(driver->RTs.size())) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot resolve compute resource '%s'",
+                     pass.name.c_str(), resource.resource.c_str());
+        return false;
+      }
+      binding.texture = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
+      if (!binding.texture)
+        return false;
+      for (size_t index = 0; index < kernel->bindings.size(); ++index) {
+        const auto& layout = kernel->bindings[index];
+        if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
+            (layout.matchOutputExtent || layout.type == ComputeBindingType::ReadWriteTexture)) {
+          const auto* target = driver->RTs[resolved.rt_handle];
+          if (!target || target->w != outputRT->w || target->h != outputRT->h) return false;
+        }
+      }
+    }
+    bindings.push_back(binding);
+  }
+
+  const std::array<uint32_t, 3>& threads = pipelineIt->second->threadGroupSize;
+  const uint32_t groupsX = (static_cast<uint32_t>(outputRT->w) + threads[0] - 1u) / threads[0];
+  const uint32_t groupsY = (static_cast<uint32_t>(outputRT->h) + threads[1] - 1u) / threads[1];
+  const uint32_t groupsZ = (static_cast<uint32_t>(pass.compute_depth) + threads[2] - 1u) / threads[2];
+  const bool dispatched = driver->DispatchCompute(
+    *pipelineIt->second, bindings, groupsX, groupsY, groupsZ);
+  if (dispatched && m_loggedComputeDispatches.insert(node.index).second) {
+    T8_LOG_INFO("[RenderGraph] Pass '%s' dispatched compute %u x %u x %u for %dx%dx%d output",
+          pass.name.c_str(), groupsX, groupsY, groupsZ,
+          outputRT->w, outputRT->h, pass.compute_depth);
+  }
+  return dispatched;
+}
+
 void RenderGraph::BuildGraph() {
   m_nodes.clear();
   m_edges.clear();
 
-  // Map pass names to indices for dependency tracking
-  std::unordered_map<std::string, int> passIndex;
-  for (int i = 0; i < static_cast<int>(m_effectiveDesc.passes.size()); i++) {
-    passIndex[m_effectiveDesc.passes[i].name] = i;
-  }
+  std::unordered_map<std::string, const RTDesc*> renderTargets;
+  for (const RTDesc& target : m_effectiveDesc.render_targets)
+    renderTargets.emplace(target.name, &target);
 
-  // Build a map: RT name -> index of the last pass that wrote to it
-  // (updated as we scan passes in order)
+  // Build a map: RT attachment identity -> index of its last writer.
   std::unordered_map<std::string, int> lastWriter;
 
   m_nodes.resize(m_effectiveDesc.passes.size());
@@ -580,6 +1026,10 @@ void RenderGraph::BuildGraph() {
     auto& node = m_nodes[i];
     node.index = i;
     node.desc = &m_effectiveDesc.passes[i];
+    node.profileScope = Profiler::RegisterScope(passDesc.name.c_str());
+    node.telemetryScope = RuntimeTelemetry::RegisterScope("render.pass." + passDesc.name);
+    node.drawCounter = RuntimeTelemetry::RegisterCounter("render.pass." + passDesc.name + ".draws");
+    node.indexCounter = RuntimeTelemetry::RegisterCounter("render.pass." + passDesc.name + ".indices");
 
     // Resolve RT handle for this pass's target
     if (!passDesc.target.empty()) {
@@ -589,45 +1039,129 @@ void RenderGraph::BuildGraph() {
       node.rt_handle = -1;
     }
 
-    // Scan inputs to build edges
-    for (const auto& input : passDesc.inputs) {
-      if (input.source.empty() || input.source[0] == '@')
-        continue;  // built-in, no graph edge
+    std::unordered_set<std::string> recordedReads;
+    auto recordRead = [&](const std::string& source, int slot) {
+      if (source.empty() || source[0] == '@')
+        return;
 
-      // Extract RT name from "RTName:ATTACHMENT"
-      std::string rtName = input.source;
-      auto colon = rtName.find(':');
-      if (colon != std::string::npos)
-        rtName = rtName.substr(0, colon);
+      std::string rtName;
+      int attachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (!ParseRenderTargetReference(source, rtName, attachment))
+        return;
+      const std::string readIdentity = ResourceIdentity(rtName, attachment);
+      if (!recordedReads.insert(readIdentity).second)
+        return;
 
-      auto writerIt = lastWriter.find(rtName);
-      if (writerIt != lastWriter.end()) {
-        int fromPass = writerIt->second;
+      auto writerIt = lastWriter.find(readIdentity);
+      if (writerIt == lastWriter.end())
+        return;
+      const int fromPass = writerIt->second;
+      GraphEdge edge;
+      edge.from_pass = fromPass;
+      edge.to_pass = i;
+      edge.rt = rtName;
+      edge.attachment = attachment;
+      edge.slot = slot;
+      m_edges.push_back(edge);
+      if (std::find(node.inputs_from.begin(), node.inputs_from.end(), fromPass) == node.inputs_from.end())
+        node.inputs_from.push_back(fromPass);
+      if (std::find(m_nodes[fromPass].outputs_to.begin(), m_nodes[fromPass].outputs_to.end(), i) == m_nodes[fromPass].outputs_to.end())
+        m_nodes[fromPass].outputs_to.push_back(i);
+    };
 
-        GraphEdge edge;
-        edge.from_pass = fromPass;
-        edge.to_pass = i;
-        edge.rt = rtName;
-        edge.attachment = ResolveAttachment(
-          (colon != std::string::npos) ? input.source.substr(colon + 1) : "COLOR0");
-        edge.slot = input.slot;
-        m_edges.push_back(edge);
-
-        // Record adjacency
-        if (std::find(node.inputs_from.begin(), node.inputs_from.end(), fromPass) == node.inputs_from.end())
-          node.inputs_from.push_back(fromPass);
-        if (std::find(m_nodes[fromPass].outputs_to.begin(), m_nodes[fromPass].outputs_to.end(), i) == m_nodes[fromPass].outputs_to.end())
-          m_nodes[fromPass].outputs_to.push_back(i);
-      }
+    for (const auto& input : passDesc.inputs)
+      recordRead(input.source, input.slot);
+    for (const ComputeResourceDesc& resource : passDesc.compute_resources) {
+      if (resource.access == "sampled")
+        recordRead(resource.resource, resource.shader_register);
     }
 
-    // This pass writes to its target RT
-    if (!passDesc.target.empty()) {
-      lastWriter[passDesc.target] = i;
+    if (passDesc.execution == "graphics" && !passDesc.target.empty()) {
+      const auto target = renderTargets.find(passDesc.target);
+      if (target != renderTargets.end()) {
+        for (int attachment = 0; attachment < target->second->color_count; ++attachment)
+          lastWriter[ResourceIdentity(passDesc.target, attachment)] = i;
+        if (target->second->depth_format != "NONE")
+          lastWriter[ResourceIdentity(passDesc.target, BaseDriver::DEPTH_ATTACHMENT)] = i;
+      }
+    }
+    for (const ComputeResourceDesc& resource : passDesc.compute_resources) {
+      if (resource.access != "storage_write")
+        continue;  // built-in, no graph edge
+      std::string rtName;
+      int attachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (ParseRenderTargetReference(resource.resource, rtName, attachment))
+        lastWriter[ResourceIdentity(rtName, attachment)] = i;
     }
   }
 
   T8_LOG_INFO("[RenderGraph] Built graph: %zu nodes, %zu edges", m_nodes.size(), m_edges.size());
+}
+
+bool RenderGraph::ValidateResourceLifetimes(const RenderGraphDesc& desc) const {
+  std::unordered_map<std::string, const RTDesc*> renderTargets;
+  std::unordered_set<std::string> available;
+  for (const RTDesc& target : desc.render_targets) {
+    renderTargets.emplace(target.name, &target);
+    if (!target.initialized) continue;
+    for (int attachment = 0; attachment < target.color_count; ++attachment)
+      available.insert(ResourceIdentity(target.name, attachment));
+    if (target.depth_format != "NONE")
+      available.insert(ResourceIdentity(target.name, BaseDriver::DEPTH_ATTACHMENT));
+  }
+
+  std::unordered_set<std::string> passNames;
+  for (const RenderPassDesc& pass : desc.passes) {
+    if (pass.name.empty() || !passNames.insert(pass.name).second) {
+      T8_LOG_ERROR("[RenderGraph] Pass names must be nonempty and unique: '%s'", pass.name.c_str());
+      return false;
+    }
+    if (!pass.target.empty() && !renderTargets.contains(pass.target)) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' targets unknown render target '%s'",
+                   pass.name.c_str(), pass.target.c_str());
+      return false;
+    }
+
+    auto validateRead = [&](const std::string& source) {
+      if (source.empty() || source.front() == '@') return true;
+      std::string targetName;
+      int attachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (!ParseRenderTargetReference(source, targetName, attachment) ||
+          !renderTargets.contains(targetName)) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' reads unknown resource '%s'",
+                     pass.name.c_str(), source.c_str());
+        return false;
+      }
+      const std::string identity = ResourceIdentity(targetName, attachment);
+      if (!available.contains(identity)) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' reads '%s' before it is initialized or written",
+                     pass.name.c_str(), source.c_str());
+        return false;
+      }
+      return true;
+    };
+
+    for (const TextureInput& input : pass.inputs)
+      if (!validateRead(input.source)) return false;
+    for (const ComputeResourceDesc& resource : pass.compute_resources)
+      if (resource.access == "sampled" && !validateRead(resource.resource)) return false;
+
+    if (pass.execution == "graphics" && !pass.target.empty()) {
+      const RTDesc& target = *renderTargets.at(pass.target);
+      for (int attachment = 0; attachment < target.color_count; ++attachment)
+        available.insert(ResourceIdentity(pass.target, attachment));
+      if (target.depth_format != "NONE")
+        available.insert(ResourceIdentity(pass.target, BaseDriver::DEPTH_ATTACHMENT));
+    }
+    for (const ComputeResourceDesc& resource : pass.compute_resources) {
+      if (resource.access != "storage_write") continue;
+      std::string targetName;
+      int attachment = BaseDriver::COLOR0_ATTACHMENT;
+      if (ParseRenderTargetReference(resource.resource, targetName, attachment))
+        available.insert(ResourceIdentity(targetName, attachment));
+    }
+  }
+  return true;
 }
 
 int RenderGraph::GetRTHandle(const std::string& name) const {
@@ -684,6 +1218,24 @@ void RenderGraph::Execute(
   int finalOutputRT,
   CustomDrawCallback customDraw)
 {
+  if (m_initializedTargetsPending) {
+    for (const RTDesc& target : m_effectiveDesc.render_targets) {
+      if (!target.initialized) continue;
+      const auto handle = m_rtHandles.find(target.name);
+      if (handle == m_rtHandles.end() || handle->second < 0) continue;
+      driver->PushRT(handle->second);
+      driver->ClearWithColor(0.0f, 0.0f, 0.0f, 0.0f);
+      driver->PopRT();
+    }
+    m_initializedTargetsPending = false;
+  }
+
+  for (int meshIndex = 0; meshes && meshIndex < meshCount; ++meshIndex) {
+    if (!meshes[meshIndex].Visible) continue;
+    RenderSkinnedMesh* skinned = meshes[meshIndex].GetSkinnedMesh();
+    if (skinned && skinned->HasSkinData()) skinned->UploadBoneTexture();
+  }
+
   const bool shadowsEnabled = props.ToogleShadow != 0;
   const bool ssaoEnabled = props.ToogleSSAO != 0;
   props.DeferredLightVolumesEnabled = false;
@@ -707,8 +1259,11 @@ void RenderGraph::Execute(
          node.desc->name == "Shadow Blur H")) {
       continue;
     }
+  #if T850_ENABLE_GPU_PROFILING
+    GpuTimestampRegionGuard gpuPass(g_gpuTimestampProfiler, node.desc->name);
+  #endif
     ExecutePass(node, driver, props, meshes, meshCount, quads,
-                mainCam, lightCam, omniCams, envMaps, finalOutputRT, customDraw);
+          mainCam, lightCam, omniCams, envMaps, finalOutputRT, customDraw);
   }
   if (mainCam && !props.pCameras.empty()) {
     props.SetPrimaryCamera(mainCam);
@@ -729,12 +1284,23 @@ void RenderGraph::ExecutePass(
   const CustomDrawCallback& customDraw)
 {
   const auto& pass = *node.desc;
+  T8_LOG_TRACE("[RenderGraph] Begin pass='%s' target=%d finalOutput=%d push=%d pop=%d execution=%s currentRT=%d",
+               pass.name.c_str(), node.rt_handle, finalOutputRT, pass.push ? 1 : 0,
+               pass.pop ? 1 : 0, pass.execution.c_str(), driver ? driver->CurrentRT : -1);
   ScopedPrimaryCameraOverride cameraScope(props);
-  T8_PROFILE_SCOPE(t850::g_profiler, pass.name.c_str());
-  RuntimeTelemetry::ScopedTimer telemetryPass("render.pass." + pass.name);
-  RuntimeTelemetry::AddCounter("render.pass.count", 1.0);
+#if T850_ENABLE_PROFILING
+  ProfileScopeGuard profilePass(t850::g_profiler, node.profileScope);
+  RuntimeTelemetry::ScopedTimer telemetryPass(node.telemetryScope);
+  RuntimeTelemetry::DrawCounterScope passWork(node.drawCounter, node.indexCounter);
+#endif
+  T8_TELEMETRY_ADD("render.pass.count", 1.0);
   const bool shadowsEnabled = props.ToogleShadow != 0;
   const bool ssaoEnabled = props.ToogleSSAO != 0;
+
+  const auto mayDrawMesh = [&](int meshIndex, ShaderKey signature) {
+    return meshes && meshIndex >= 0 && meshIndex < meshCount && meshes[meshIndex].Visible &&
+      meshes[meshIndex].pBase && meshes[meshIndex].pBase->MayDrawInPass(signature.getPass());
+  };
 
   auto shouldSkipTextureInput = [&](const TextureInput& input) -> bool {
     if (!shadowsEnabled && input.source == "DepthPass:DEPTH") {
@@ -768,6 +1334,20 @@ void RenderGraph::ExecutePass(
   int bs = ResolveBlendState(pass.state.blend);
   if (bs >= 0) driver->SetBlendState(static_cast<BaseDriver::BlendStates>(bs));
 
+  const auto applyPostState = [&]() {
+    int postDs = ResolveDepthStencilState(pass.post_state.depth_stencil);
+    if (postDs >= 0)
+      driver->SetDepthStencilState(static_cast<BaseDriver::DepthStencilStates>(postDs));
+
+    int postCf = ResolveCullFace(pass.post_state.cull_face);
+    if (postCf >= 0)
+      driver->SetCullFace(static_cast<BaseDriver::FaceCulling>(postCf));
+
+    int postBs = ResolveBlendState(pass.post_state.blend);
+    if (postBs >= 0)
+      driver->SetBlendState(static_cast<BaseDriver::BlendStates>(postBs));
+  };
+
   // Camera selection: generated shadow passes use their dedicated cascade camera.
   if (ResolvePassKind(pass.kind) == RenderPassKind::ShadowDepth &&
       pass.shadow_projection_index >= 0 &&
@@ -791,6 +1371,16 @@ void RenderGraph::ExecutePass(
   // Gauss kernel selection
   if (pass.gauss_kernel >= 0) {
     props.ActiveGaussKernel = pass.gauss_kernel;
+  }
+
+  if (pass.execution == "compute_if_supported" &&
+      m_computePipelines.find(node.index) != m_computePipelines.end()) {
+    if (ExecuteComputePass(node, driver, props)) {
+      applyPostState();
+      return;
+    }
+    T8_LOG_ERROR("[RenderGraph] Pass '%s' compute dispatch failed; using graphics fallback",
+                 pass.name.c_str());
   }
 
   // Cubemap loop pass
@@ -877,6 +1467,37 @@ void RenderGraph::ExecutePass(
       const int th = driver->RTs[finalOutputRT]->h;
       driver->SetViewport(0.0f, 0.0f, (float)tw, (float)th);
       driver->SetScissorRect(0, 0, tw, th);
+    } else if (node.rt_handle < 0) {
+      // Default-output passes must not inherit a viewport from the previous RT.
+      driver->SetViewport(0.0f, 0.0f, (float)driver->width, (float)driver->height);
+      driver->SetScissorRect(0, 0, driver->width, driver->height);
+    }
+
+    const auto finishGraphicsPass = [&]() {
+      const bool didPush = ((node.rt_handle >= 0 || finalOutputPass) && pass.push);
+      const bool inheritedRT = (!pass.push && node.rt_handle >= 0);
+      if (pass.pop && (didPush || inheritedRT)) driver->PopRT();
+    };
+    bool hasDrawWork = false;
+    for (const auto& draw : pass.draws) {
+      if (draw.type != "mesh") { hasDrawWork = true; break; }
+      ShaderKey signature = ResolveSignature(draw.signature);
+      for (const auto& extra : draw.extra_signatures) signature.bits |= ResolveSignature(extra).bits;
+      if (draw.mesh_indices.empty()) {
+        for (int meshIndex = 0; meshIndex < meshCount && !hasDrawWork; ++meshIndex)
+          hasDrawWork = mayDrawMesh(meshIndex, signature);
+      } else {
+        for (const int meshIndex : draw.mesh_indices) {
+          if (mayDrawMesh(meshIndex, signature)) { hasDrawWork = true; break; }
+        }
+      }
+      if (hasDrawWork) break;
+    }
+    if (!hasDrawWork) {
+      T8_TELEMETRY_ADD("render.pass.empty_mesh_work", 1);
+      finishGraphicsPass();
+      applyPostState();
+      return;
     }
 
     for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
@@ -884,10 +1505,16 @@ void RenderGraph::ExecutePass(
     }
     quads[0].SetEnvironmentMap(nullptr);
 
+    std::array<Texture*, MaxPrimitiveTextures> meshInputTextures{};
+    std::array<bool, MaxPrimitiveTextures> meshInputSlots{};
     // Bind input textures
     for (const auto& input : pass.inputs) {
       if (shouldSkipTextureInput(input)) {
         clearTextureSlot(quads[0], input.slot);
+        if (input.slot >= 0 && input.slot < MaxPrimitiveTextures) {
+          meshInputSlots[input.slot] = true;
+          meshInputTextures[input.slot] = nullptr;
+        }
         continue;
       }
 
@@ -901,6 +1528,10 @@ void RenderGraph::ExecutePass(
       } else if (resolved.rt_handle >= 0) {
         Texture* tex = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
         quads[0].SetTexture(tex, input.slot);
+        if (input.slot >= 0 && input.slot < MaxPrimitiveTextures) {
+          meshInputSlots[input.slot] = true;
+          meshInputTextures[input.slot] = tex;
+        }
       }
     }
 
@@ -908,22 +1539,25 @@ void RenderGraph::ExecutePass(
       return textureIndex >= 0 ? driver->GetTexture(textureIndex) : nullptr;
     };
 
+    std::array<Texture*, 7> environmentTextures{};
+    const auto refreshEnvironmentTextures = [&]() {
+      if (!pass.bind_environment_map) return;
+      const int charlieIndex = envMaps.CharlieIBL >= 0 ? envMaps.CharlieIBL : (envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
+      environmentTextures = {textureOrNull(envMaps.Sky),
+        textureOrNull(envMaps.DiffuseIBL >= 0 ? envMaps.DiffuseIBL : envMaps.Sky),
+        textureOrNull(envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky),
+        textureOrNull(envMaps.BrdfLUT), textureOrNull(charlieIndex),
+        textureOrNull(envMaps.CharlieLUT), textureOrNull(envMaps.SheenELUT)};
+    };
+    refreshEnvironmentTextures();
     auto bindEnvironmentResources = [&](PrimitiveInst& primitive) {
-      Texture* sky = textureOrNull(envMaps.Sky);
-      Texture* diffuse = textureOrNull(envMaps.DiffuseIBL >= 0 ? envMaps.DiffuseIBL : envMaps.Sky);
-      Texture* specular = textureOrNull(envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
-      Texture* brdfLut = textureOrNull(envMaps.BrdfLUT);
-      int charlieIndex = envMaps.CharlieIBL >= 0 ? envMaps.CharlieIBL : (envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
-      Texture* charlie = textureOrNull(charlieIndex);
-      Texture* charlieLut = textureOrNull(envMaps.CharlieLUT);
-      Texture* sheenELut = textureOrNull(envMaps.SheenELUT);
-      primitive.SetEnvironmentMap(sky);
-      primitive.SetTexture(diffuse, EnvironmentTextureSlot::DiffuseIBL);
-      primitive.SetTexture(specular, EnvironmentTextureSlot::SpecularIBL);
-      primitive.SetTexture(brdfLut, EnvironmentTextureSlot::BrdfLUT);
-      primitive.SetTexture(charlie, EnvironmentTextureSlot::CharlieIBL);
-      primitive.SetTexture(charlieLut, EnvironmentTextureSlot::CharlieLUT);
-      primitive.SetTexture(sheenELut, EnvironmentTextureSlot::SheenELUT);
+      primitive.SetEnvironmentMap(environmentTextures[0]);
+      primitive.SetTexture(environmentTextures[1], EnvironmentTextureSlot::DiffuseIBL);
+      primitive.SetTexture(environmentTextures[2], EnvironmentTextureSlot::SpecularIBL);
+      primitive.SetTexture(environmentTextures[3], EnvironmentTextureSlot::BrdfLUT);
+      primitive.SetTexture(environmentTextures[4], EnvironmentTextureSlot::CharlieIBL);
+      primitive.SetTexture(environmentTextures[5], EnvironmentTextureSlot::CharlieLUT);
+      primitive.SetTexture(environmentTextures[6], EnvironmentTextureSlot::SheenELUT);
     };
 
     auto clearEnvironmentResources = [](PrimitiveInst& primitive) {
@@ -942,23 +1576,34 @@ void RenderGraph::ExecutePass(
       clearEnvironmentResources(quads[0]);
     }
 
+    bool meshResourcesDirty = false;
     auto bindMeshPassResources = [&](PrimitiveInst& mesh) {
+      if (meshResourcesDirty) {
+        meshInputSlots.fill(false);
+        for (const auto& input : pass.inputs) {
+          if (input.slot < 0 || input.slot >= MaxPrimitiveTextures) continue;
+          if (shouldSkipTextureInput(input)) {
+            meshInputSlots[input.slot] = true;
+            meshInputTextures[input.slot] = nullptr;
+          } else {
+            const auto resolved = ResolveTextureInput(input.source);
+            if (!resolved.is_builtin && resolved.rt_handle >= 0) {
+              meshInputSlots[input.slot] = true;
+              meshInputTextures[input.slot] = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
+            }
+          }
+        }
+        refreshEnvironmentTextures();
+        meshResourcesDirty = false;
+      }
       // Material maps are persistent instance state (slots 0-6 and 8).
       // Only clear the transient mesh-pass inputs before rebinding them.
       clearTextureSlot(mesh, 7);  // scene depth
       clearTextureSlot(mesh, 9);  // scene color
       mesh.SetEnvironmentMap(nullptr);
 
-      for (const auto& input : pass.inputs) {
-        if (shouldSkipTextureInput(input)) {
-          clearTextureSlot(mesh, input.slot);
-          continue;
-        }
-
-        auto resolved = ResolveTextureInput(input.source);
-        if (!resolved.is_builtin && resolved.rt_handle >= 0 && input.slot >= 0 && input.slot < MaxPrimitiveTextures) {
-          mesh.SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
-        }
+      for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
+        if (meshInputSlots[slot]) mesh.SetTexture(meshInputTextures[slot], slot);
       }
       if (pass.bind_environment_map) {
         bindEnvironmentResources(mesh);
@@ -982,6 +1627,7 @@ void RenderGraph::ExecutePass(
         if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
         if (customDraw && !draw.callback.empty())
           customDraw(draw.callback);
+        meshResourcesDirty = true;
         continue;
       }
 
@@ -996,6 +1642,7 @@ void RenderGraph::ExecutePass(
         if (draw.mesh_indices.empty()) {
           // Empty array = draw ALL meshes
           for (int mi = 0; mi < meshCount; ++mi) {
+            if (!mayDrawMesh(mi, sig)) continue;
             bindMeshPassResources(meshes[mi]);
             meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
@@ -1004,7 +1651,7 @@ void RenderGraph::ExecutePass(
           }
         } else {
           for (int mi : draw.mesh_indices) {
-            if (mi >= 0 && mi < meshCount) {
+            if (mayDrawMesh(mi, sig)) {
               bindMeshPassResources(meshes[mi]);
               meshes[mi].SetGlobalKey(sig);
               meshes[mi].Draw();
@@ -1044,22 +1691,11 @@ void RenderGraph::ExecutePass(
     if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
 
     // Pop RT
-    bool didPush = ((node.rt_handle >= 0 || finalOutputPass) && pass.push);
-    bool inheritedRT = (!pass.push && node.rt_handle >= 0);
-    if (pass.pop && (didPush || inheritedRT)) {
-      driver->PopRT();
-    }
+    finishGraphicsPass();
   }
 
   // Post-pass state restoration
-  int postDs = ResolveDepthStencilState(pass.post_state.depth_stencil);
-  if (postDs >= 0) driver->SetDepthStencilState(static_cast<BaseDriver::DepthStencilStates>(postDs));
-
-  int postCf = ResolveCullFace(pass.post_state.cull_face);
-  if (postCf >= 0) driver->SetCullFace(static_cast<BaseDriver::FaceCulling>(postCf));
-
-  int postBs = ResolveBlendState(pass.post_state.blend);
-  if (postBs >= 0) driver->SetBlendState(static_cast<BaseDriver::BlendStates>(postBs));
+  applyPostState();
 }
 
 } // namespace t850

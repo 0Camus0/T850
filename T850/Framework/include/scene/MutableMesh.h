@@ -29,6 +29,7 @@ public:
   void Create() override;
   void Transform(float* transform) override;
   void Draw(float* transform, float* viewProjection) override;
+  bool MayDrawInPass(uint8_t pass) const override;
   void Destroy() override;
 
 private:
@@ -53,6 +54,7 @@ private:
   std::string m_fragmentShaderSource;
   std::string m_vertexShaderName;
   std::string m_fragmentShaderName;
+  ShaderFamilyId m_shaderFamily;
   bool m_created = false;
   bool m_shadersCompiled = false;
 };

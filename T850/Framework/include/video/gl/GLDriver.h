@@ -15,6 +15,7 @@
 
 #include <Config.h>
 #include <video/BaseDriver.h>
+#include <video/MutableGraphicsStateCache.h>
 #ifdef T850_HEADLESS
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -80,9 +81,13 @@ namespace t850 {
   public:
     GLDriver() { m_currentAPI = GraphicsApi::OPENGL; }
     const char* ApiTag() const override { return "gl"; }
+        bool SupportsComputeShaders() const override { return m_computeShadersSupported; }
+        bool SupportsComputeTextures() const override { return m_computeTexturesSupported; }
         bool UsesGLSL() const override { return true; }
         bool NeedsVFlip() const override { return true; }
         bool SupportsRenderTargetMipGeneration() const override { return true; }
+        bool SupportsCubeRenderTargets() const override { return true; }
+        bool SupportsComparisonSamplers() const override { return true; }
         bool SupportsDeferredRendering() const override { return false; }
     void	InitDriver();
     void	CreateSurfaces();
@@ -100,6 +105,15 @@ namespace t850 {
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
     bool ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) override;
+#if defined(USING_OPENGL)
+    std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
+    std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                                                       const void* initialData = nullptr) override;
+    bool DispatchCompute(ComputePipeline& pipeline,
+                         const std::vector<ComputeBindingDesc>& bindings,
+                         uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
+    bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
+#endif
 	void SetCullFace(FaceCulling state) override;
 #ifdef T850_RENDER_TRACE
     void RefreshTracePendingRenderState() override;
@@ -130,13 +144,15 @@ namespace t850 {
     std::string					Extensions;
 
     private:
+    MutableGraphicsStateCache m_stateCache;
 #if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
         void FenceOffscreenTarget(int rt);
         void WaitForOffscreenTargetFence(int rt);
         void DestroyOffscreenFences();
         std::unordered_map<int, GLsync> m_offscreenFences;
 #endif
-
+        bool m_computeShadersSupported = false;
+        bool m_computeTexturesSupported = false;
   };
 }
 #endif

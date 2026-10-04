@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>T850</title>
+  <style>
+    :root { color-scheme: dark; font-family: Consolas, monospace; background: #141617; color: #e5e8e6; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100dvh; display: grid; grid-template-rows: 36px minmax(0, 1fr) var(--touch-footer, 0px); }
+    header { display: flex; align-items: center; gap: 16px; padding: 0 12px; border-bottom: 1px solid #404642; background: #252a27; }
+    strong { font-size: 14px; color: #b8ddb1; }
+    header a { color: inherit; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    select { min-width: 120px; max-width: 45vw; background: #252a27; color: inherit; border: 0; font: inherit; }
+    #status { margin-left: auto; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #touch-toggle, #touch-ontop-toggle { flex-shrink: 0; font-size: 12px; white-space: nowrap; }
+    #camera-controls { display: flex; gap: 6px; flex-shrink: 0; }
+    #camera-controls[hidden] { display: none; }
+    .camera-command { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 28px; border: 1px solid #8a9c91; border-radius: 4px; background: #19231e; color: #e5e8e6; font: 12px Consolas, monospace; cursor: pointer; }
+    .camera-command img { width: 16px; height: 16px; filter: invert(1); pointer-events: none; }
+    .camera-command[aria-pressed="true"], #touch-controls [aria-pressed="true"] { background: #446631ed; border-color: #f3ca64; }
+    .camera-command:focus-visible { outline: 2px solid #f3ca64; outline-offset: 2px; }
+    #touch-controls { position: fixed; z-index: 4; inset: 36px 0 0; pointer-events: none; user-select: none; -webkit-user-select: none; }
+    #touch-controls[hidden], #touch-toggle[hidden], #touch-ontop-toggle[hidden] { display: none; }
+    #touch-controls button { pointer-events: auto; touch-action: none; color: #fff; background: #14251dcc; border: 2px solid #d1e2d1cc; box-shadow: 0 2px 4px #0007; }
+    #touch-controls button:focus-visible { outline: 3px solid #f3ca64; outline-offset: 3px; }
+    #touch-controls .held { background: #446631ed; border-color: #f3ca64; }
+    .touch-stick { position: absolute; width: 120px; height: 120px; border-radius: 50%; padding: 0; bottom: max(24px, env(safe-area-inset-bottom)); }
+    #touch-move { left: max(20px, env(safe-area-inset-left)); }
+    #touch-look { right: max(20px, env(safe-area-inset-right)); }
+    .touch-stick::after { content: ''; position: absolute; width: 46px; height: 46px; left: calc(50% - 23px); top: calc(50% - 23px); border-radius: 50%; background: #e3edd6aa; transform: translate(var(--stick-x, 0px), var(--stick-y, 0px)); pointer-events: none; }
+    .touch-stick img { width: 36px; height: 36px; opacity: .9; }
+    .touch-actions { position: absolute; bottom: max(28px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+    .touch-actions button { width: 48px; height: 48px; border-radius: 6px; display: grid; place-items: center; padding: 9px; }
+    .touch-actions img { width: 24px; height: 24px; filter: invert(1); pointer-events: none; }
+    .touch-stick img { filter: invert(1); pointer-events: none; }
+    .touch-options { position: absolute; bottom: max(88px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+    .touch-options .camera-command { width: 64px; height: 44px; flex-direction: column; gap: 2px; font-size: 10px; padding: 2px; }
+    @media (max-width: 740px) { .touch-actions { bottom: 164px; gap: 6px; } .touch-actions button { width: 44px; height: 44px; } }
+    @media (max-width: 740px) and (min-height: 481px) { .touch-options { flex-direction: column; gap: 6px; bottom: max(24px, env(safe-area-inset-bottom)); } }
+    @media (max-height: 480px) { .touch-stick { width: 100px; height: 100px; bottom: 12px; } .touch-actions { bottom: 18px; } .touch-actions button { width: 40px; height: 40px; padding: 6px; } }
+    #runtime-error { position: fixed; z-index: 10; top: 48px; left: 12px; right: 12px; max-height: calc(100dvh - 64px); overflow: auto; padding: 12px; border: 1px solid #de8172; border-radius: 4px; background: #241d1c; color: #ffe0d9; }
+    #runtime-error summary { cursor: pointer; font-weight: bold; }
+    #runtime-error pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 Consolas, monospace; }
+    #runtime-console { position: fixed; z-index: 11; left: 0; right: 0; bottom: 0; border-top: 1px solid #8a9c91; background: #171c19; color: #e5e8e6; padding-bottom: env(safe-area-inset-bottom); }
+    #runtime-console[hidden] { display: none; }
+    #runtime-console summary { height: 36px; padding: 9px 12px; cursor: pointer; font-size: 13px; }
+    .console-toolbar { display: flex; align-items: center; gap: 8px; height: 44px; padding: 4px 12px; border-top: 1px solid #404642; }
+    .console-toolbar label { display: flex; align-items: center; gap: 6px; margin-right: auto; font-size: 12px; }
+    .console-toolbar button { display: grid; place-items: center; width: 36px; height: 36px; padding: 8px; border: 1px solid #8a9c91; border-radius: 4px; background: #252a27; cursor: pointer; }
+    .console-toolbar img { width: 18px; height: 18px; filter: invert(1); pointer-events: none; }
+    #runtime-console :focus-visible { outline: 2px solid #f3ca64; outline-offset: -2px; }
+    #console-output { height: min(32dvh, 280px); margin: 0; padding: 8px 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 Consolas, monospace; user-select: text; -webkit-user-select: text; overscroll-behavior: contain; }
+    .console-footer { display: flex; justify-content: space-between; gap: 8px; min-height: 24px; padding: 4px 12px; font-size: 11px; color: #b8c6be; }
+    #console-feedback { overflow-wrap: anywhere; text-align: right; }
+    #runtime-console { max-height: calc(100dvh - 36px); overflow: auto; }
+    #console-previous-error { border-top: 1px solid #404642; }
+    #console-previous-error pre { max-height: 120px; overflow: auto; margin: 0; padding: 8px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 Consolas, monospace; }
+    body.console-visible:has(#runtime-console[open]) #runtime-error { max-height: max(32px, calc(68dvh - 168px - env(safe-area-inset-bottom))); }
+    #canvas { display: block; width: 100%; height: 100%; min-height: 0; outline: none; }
+    .wssi-demo #canvas { place-self: center; width: min(100%, var(--demo-long-side), calc((100dvh - 36px - var(--touch-footer, 0px)) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; }
+    @media (max-width: 700px) and (orientation: portrait) {
+      body.touch-mode { --touch-footer: calc(216px + env(safe-area-inset-bottom)); }
+      .wssi-demo #canvas { width: min(100%, calc(var(--demo-long-side) * 9 / 16), calc((100dvh - 36px - var(--touch-footer, 0px)) * 9 / 16)); aspect-ratio: 9 / 16; }
+    }
+    body.touch-ontop { --touch-footer: 0px; }
+    body.touch-ontop #canvas { width: 100%; height: 100%; max-width: none !important; max-height: none !important; aspect-ratio: auto; }
+    .touch-ontop .touch-stick { bottom: max(76px, calc(56px + env(safe-area-inset-bottom))); }
+    .touch-ontop .touch-actions { bottom: max(80px, calc(56px + env(safe-area-inset-bottom))); }
+    .touch-ontop .touch-options { bottom: max(140px, calc(116px + env(safe-area-inset-bottom))); }
+    @media (max-width: 740px) and (min-height: 481px) {
+      .touch-ontop .touch-actions { bottom: max(216px, calc(196px + env(safe-area-inset-bottom))); }
+      .touch-ontop .touch-options { bottom: max(112px, calc(88px + env(safe-area-inset-bottom))); }
+    }
+    @media (max-height: 480px) {
+      .touch-ontop .touch-stick { bottom: max(60px, calc(56px + env(safe-area-inset-bottom))); }
+      .touch-ontop .touch-actions { bottom: max(100px, calc(80px + env(safe-area-inset-bottom))); }
+      .touch-ontop .touch-options { bottom: max(152px, calc(132px + env(safe-area-inset-bottom))); }
+    }
+    @media (max-width: 700px) {
+      header { gap: 8px; padding: 0 8px; }
+      #status { min-width: 0; }
+    }
+    @media (max-width: 360px) { .touch-stick { width: 100px; height: 100px; } #touch-move { left: 12px; } #touch-look { right: 12px; } }
+  </style>
+</head>
+<body>
+  <header><a href="./" aria-label="Back to scenes"><strong>T850</strong></a><select id="scene" aria-label="Scene"></select><label id="touch-toggle" hidden><input id="touch-enabled" type="checkbox">Touch</label><label id="touch-ontop-toggle" hidden><input id="touch-ontop" type="checkbox">OnTop</label><div id="camera-controls" hidden><button class="camera-command" id="web-view" data-command="1" aria-label="Free spectator" aria-pressed="false" title="Switch to free spectator" disabled><img src="icons/camera.svg" alt="">View</button><button class="camera-command" id="web-invert-y" data-command="2" aria-label="InvertY" aria-pressed="false" title="Invert vertical look" disabled><img src="icons/flip-vertical-2.svg" alt="">InvertY</button></div><span id="status" role="status">Loading</span></header>
+  <canvas id="canvas" width="1280" height="720" tabindex="0" aria-label="Scene viewport"></canvas>
+  <div id="touch-controls" hidden aria-label="Touch gamepad">
+    <button class="touch-stick" id="touch-move" data-axis="0" aria-label="Move" title="Move"><img src="icons/move.svg" alt=""></button>
+    <button class="touch-stick" id="touch-look" data-axis="2" aria-label="Look" title="Look"><img src="icons/crosshair.svg" alt=""></button>
+    <div class="touch-options">
+      <button class="camera-command" id="touch-view" data-command="1" aria-label="Free spectator" aria-pressed="false" title="Switch to free spectator" disabled><img src="icons/camera.svg" alt="">View</button>
+      <button class="camera-command" id="touch-invert-y" data-command="2" aria-label="InvertY" aria-pressed="false" title="Invert vertical look" disabled><img src="icons/flip-vertical-2.svg" alt="">InvertY</button>
+    </div>
+    <div class="touch-actions">
+      <button data-button="16" aria-label="Previous block" title="Previous block"><img src="icons/chevron-left.svg" alt=""></button>
+      <button data-button="4" aria-label="Break block" title="Break block"><img src="icons/pickaxe.svg" alt=""></button>
+      <button data-button="1" aria-label="Jump" title="Jump"><img src="icons/arrow-up.svg" alt=""></button>
+      <button data-button="2" aria-label="Sprint" title="Sprint"><img src="icons/zap.svg" alt=""></button>
+      <button data-button="8" aria-label="Place block" title="Place block"><img src="icons/plus.svg" alt=""></button>
+      <button data-button="32" aria-label="Next block" title="Next block"><img src="icons/chevron-right.svg" alt=""></button>
+    </div>
+  </div>
+  <details id="runtime-error" hidden open>
+    <summary id="runtime-error-title">Runtime error</summary>
+    <pre id="runtime-error-text" role="alert"></pre>
+  </details>
+  <details id="runtime-console" hidden open>
+    <summary>Engine console</summary>
+    <div class="console-toolbar">
+      <label><input id="console-follow" type="checkbox" checked>Follow</label>
+      <button id="console-copy" type="button" aria-label="Copy logs" title="Copy logs"><img src="icons/copy.svg" alt=""></button>
+      <button id="console-download" type="button" aria-label="Download logs" title="Download logs"><img src="icons/download.svg" alt=""></button>
+      <button id="console-clear" type="button" aria-label="Clear logs" title="Clear logs"><img src="icons/trash-2.svg" alt=""></button>
+    </div>
+    <pre id="console-output" tabindex="0" aria-label="Engine log output" aria-live="off"></pre>
+    <details id="console-previous-error" hidden>
+      <summary>Previous run diagnostics</summary>
+      <pre id="console-previous-error-text"></pre>
+    </details>
+    <div class="console-footer"><span id="console-count">0 messages</span><span id="console-feedback" role="status" aria-live="polite"></span></div>
+  </details>
+  <script>
+    const diagnostics = window.t850 = { state: 'loading', logs: [], errors: [] };
+    const statusElement = document.getElementById('status');
+    const canvas = document.getElementById('canvas');
+    const argumentsList = [];
+    const errorStorageKey = 't850:last-runtime-error:v1';
+    const checkpointStorageKey = 't850:last-session:v1';
+    const previousSessionStorageKey = 't850:previous-session:v1';
+    let wasmInitialized = false;
+    const consolePanel = document.getElementById('runtime-console');
+    const consoleEnabled = Boolean(consolePanel && typeof location !== 'undefined' && new URLSearchParams(location.search).get('logLevel') === 'trace');
+    let consoleTimer;
+    function renderConsole() {
+      consoleTimer = undefined;
+      const output = document.getElementById('console-output');
+      const scrollTop = output.scrollTop;
+      output.textContent = diagnostics.logs.join('\n');
+      output.scrollTop = document.getElementById('console-follow').checked ? output.scrollHeight : scrollTop;
+      document.getElementById('console-count').textContent = `${diagnostics.logs.length} / 4000 messages`;
+    }
+    function updateConsole(immediate = false) {
+      if (!consoleEnabled) return;
+      if (immediate) {
+        if (consoleTimer !== undefined) clearTimeout(consoleTimer);
+        renderConsole();
+      } else if (consoleTimer === undefined) {
+        consoleTimer = setTimeout(renderConsole, 250);
+      }
+    }
+    function consoleText() {
+      return ['T850 engine console', new Date().toISOString(), `Scene: ${diagnostics.scene ?? 'starting'}`,
+        `State: ${diagnostics.state}`, `Browser: ${navigator.userAgent}`,
+        `Render size: ${diagnostics.renderSize?.join(' x ') ?? 'not initialized'}`,
+        `Wasm memory bytes: ${diagnostics.memoryBytes ?? 'not reported'}`,
+        ...(diagnostics.previousSession ? ['Previous session checkpoint (reload cause unknown):', JSON.stringify(diagnostics.previousSession, null, 2), ''] : []),
+        ...(diagnostics.previousError ? ['Saved report from previous run:', JSON.stringify(diagnostics.previousError, null, 2), ''] : []),
+        `Recent messages: ${diagnostics.logs.length} / 4000`, '', ...diagnostics.logs].join('\n');
+    }
+    if (consoleEnabled) {
+      consolePanel.hidden = false;
+      document.body.classList.add('console-visible');
+      const feedback = document.getElementById('console-feedback');
+      document.getElementById('console-follow').addEventListener('change', () => updateConsole(true));
+      consolePanel.addEventListener('toggle', () => updateConsole(true));
+      document.getElementById('console-clear').addEventListener('click', () => {
+        diagnostics.logs.length = 0;
+        feedback.textContent = '';
+        updateConsole(true);
+      });
+      document.getElementById('console-copy').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(consoleText());
+          feedback.textContent = 'Copied';
+        } catch {
+          feedback.textContent = 'Clipboard unavailable';
+        }
+      });
+      document.getElementById('console-download').addEventListener('click', () => {
+        try {
+          const url = URL.createObjectURL(new Blob([consoleText()], { type: 'text/plain;charset=utf-8' }));
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = 't850-engine-logs.txt';
+          document.body.append(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          feedback.textContent = 'Download requested';
+        } catch {
+          feedback.textContent = 'Download unavailable';
+        }
+      });
+      for (const event of ['keydown', 'keyup', 'pointerdown', 'pointerup'])
+        consolePanel.addEventListener(event, event => event.stopPropagation());
+    }
+    function showError(report) {
+      document.getElementById('runtime-error-title').textContent = 'Runtime error';
+      document.getElementById('runtime-error-text').textContent = JSON.stringify(report, null, 2);
+      const panel = document.getElementById('runtime-error');
+      panel.hidden = false;
+      panel.open = true;
+    }
+    try {
+      const stored = sessionStorage.getItem(errorStorageKey);
+      if (stored && stored.length < 40000) {
+        const previous = JSON.parse(stored);
+        if (previous && typeof previous.message === 'string') {
+          diagnostics.previousError = previous;
+        }
+      }
+    } catch {}
+    for (const key of [previousSessionStorageKey, checkpointStorageKey]) {
+      try {
+        const stored = sessionStorage.getItem(key);
+        if (stored && stored.length < 16000) {
+          const previous = JSON.parse(stored);
+          if (previous?.version === 1 && typeof previous.capturedAt === 'string') {
+            const meaningful = previous.frames > 0 || previous.state === 'failed';
+            if (!diagnostics.previousSession || meaningful) diagnostics.previousSession = previous;
+            if (key === checkpointStorageKey && meaningful) sessionStorage.setItem(previousSessionStorageKey, stored);
+          }
+        }
+      } catch {}
+    }
+    if (consoleEnabled && (diagnostics.previousError || diagnostics.previousSession)) {
+      document.getElementById('console-previous-error').hidden = false;
+      document.getElementById('console-previous-error-text').textContent = JSON.stringify({
+        error: diagnostics.previousError, checkpoint: diagnostics.previousSession,
+      }, null, 2);
+    }
+    function saveSessionCheckpoint(lifecycle = 'active') {
+      const checkpoint = {
+        version: 1,
+        capturedAt: new Date().toISOString(),
+        lifecycle,
+        state: diagnostics.state,
+        stage: String(statusElement.textContent ?? 'Loading').slice(0, 160),
+        scene: diagnostics.scene,
+        frames: diagnostics.frames,
+        wasmMemoryBytes: diagnostics.memoryBytes,
+        renderSize: diagnostics.renderSize?.slice(),
+        visibility: document.visibilityState,
+        consoleEnabled,
+        browser: typeof navigator !== 'undefined' ? String(navigator.userAgent ?? '').slice(0, 512) : undefined,
+        recentLogs: diagnostics.logs.slice(-8).map(line => line.slice(0, 512)),
+      };
+      try { sessionStorage.setItem(checkpointStorageKey, JSON.stringify(checkpoint)); } catch {}
+    }
+    let checkpointTimer;
+    function startSessionCheckpoints() {
+      if (checkpointTimer !== undefined || typeof window.setInterval !== 'function') return;
+      saveSessionCheckpoint();
+      checkpointTimer = window.setInterval(saveSessionCheckpoint, 2000);
+    }
+    window.addEventListener('pagehide', () => {
+      saveSessionCheckpoint('pagehide');
+      if (checkpointTimer !== undefined) window.clearInterval(checkpointTimer);
+      checkpointTimer = undefined;
+    });
+    window.addEventListener('pageshow', startSessionCheckpoints);
+    startSessionCheckpoints();
+    function retainFirstError(message) {
+      if (diagnostics.lastError) return;
+      const report = diagnostics.lastError = {
+        capturedAt: new Date().toISOString(),
+        message: message.slice(0, 8000),
+        scene: diagnostics.scene,
+        frames: diagnostics.frames,
+        draws: diagnostics.draws,
+        renderSize: diagnostics.renderSize?.slice(),
+        memoryBytes: diagnostics.memoryBytes,
+        workerTiming: diagnostics.workerTiming ? { ...diagnostics.workerTiming } : undefined,
+        input: diagnostics.input ? { ...diagnostics.input } : undefined,
+        recentLogs: diagnostics.logs.slice(-12).map(line => line.slice(0, 1000)),
+      };
+      showError(report);
+      try { sessionStorage.setItem(errorStorageKey, JSON.stringify(report)); } catch {}
+      saveSessionCheckpoint('error');
+    }
+    function markReady() {
+      if (diagnostics.state === 'failed') return;
+      wasmInitialized = true;
+      diagnostics.state = 'running';
+      statusElement.textContent = 'Running';
+      saveSessionCheckpoint();
+    }
+    window.addEventListener('t850-runtime-ready', markReady);
+    function record(text, error = false) {
+      text = String(text).replace(/\x1b\[[0-9;]*m/g, '');
+      diagnostics.logs.push(text);
+      if (diagnostics.logs.length > 4000) diagnostics.logs.shift();
+      const isError = error || text.includes('[ERROR]') || text.includes('[ERROR ');
+      if (isError) {
+        diagnostics.errors.push(text);
+        if (diagnostics.errors.length > 64) diagnostics.errors.shift();
+        diagnostics.state = 'failed';
+        statusElement.textContent = 'Error';
+        retainFirstError(text);
+        statusElement.title = diagnostics.lastError.message;
+      } else if (text.includes('[WebFramework] Runtime ready')) {
+        markReady();
+      }
+      console.log(text);
+      updateConsole(isError);
+    }
+    window.addEventListener('error', event => {
+      const source = event.filename ? `\n${event.filename}:${event.lineno ?? 0}:${event.colno ?? 0}` : '';
+      record(event.error?.stack ?? `${event.message ?? 'Unknown browser error'}${source}`, true);
+    });
+    window.addEventListener('unhandledrejection', event => record(event.reason?.stack ?? String(event.reason), true));
+    if (typeof canvas.requestPointerLock === 'function') {
+      const requestPointerLock = canvas.requestPointerLock.bind(canvas);
+      const denied = error => {
+        if (!['WrongDocumentError', 'NotAllowedError', 'SecurityError', 'NotSupportedError', 'InvalidStateError', 'AbortError'].includes(error?.name)) throw error;
+        diagnostics.pointerLock = { state: 'denied', reason: error.name, message: error.message };
+        record(`[PointerLock] Mouse capture unavailable: ${error.name}. Rendering continues.`);
+      };
+      canvas.requestPointerLock = (...options) => {
+        try {
+          const request = requestPointerLock(...options);
+          if (request && typeof request.catch === 'function') return request.catch(denied);
+          return request;
+        } catch (error) { return denied(error); }
+      };
+      document.addEventListener('pointerlockchange', () => {
+        diagnostics.pointerLock = { state: document.pointerLockElement === canvas ? 'locked' : 'unlocked' };
+      });
+    }
+    var Module = {
+      canvas,
+      arguments: argumentsList,
+      print: (...text) => record(text.join(' ')),
+      printErr: (...text) => {
+        const message = text.join(' ');
+        const streamingFallback = !wasmInitialized && diagnostics.state === 'loading' &&
+          (message.startsWith('wasm streaming compile failed: ') || message === 'falling back to ArrayBuffer instantiation');
+        if (streamingFallback) diagnostics.wasmStreamingFallback = true;
+        record(message, !streamingFallback);
+      },
+      onRuntimeInitialized: () => { wasmInitialized = true; },
+      onAbort: reason => record(reason, true),
+      preRun: [function () {
+        Module.addRunDependency('web-launch');
+        Promise.resolve().then(async () => {
+          if (!navigator.gpu) throw new Error('WebGPU is unavailable in this browser');
+          if (!crossOriginIsolated) throw new Error('Cross-origin isolation is required');
+          const response = await fetch('scenes.json');
+          if (!response.ok) throw new Error('Cannot load scene catalog');
+          const catalog = await response.json();
+          const parameters = new URLSearchParams(location.search);
+          const minecraftDemo = parameters.get('demo') === 'wssi';
+          let enemyCount;
+          if (parameters.has('minecraftEnemyCount')) {
+            const rawCount = parameters.get('minecraftEnemyCount');
+            enemyCount = Number(rawCount);
+            if (!/^\d+$/.test(rawCount) || !Number.isInteger(enemyCount) || enemyCount < 0 || enemyCount > 8)
+              throw new Error('Enemy count must be an integer from 0 to 8');
+          }
+          for (const dimension of ['width', 'height']) {
+            if (!parameters.has(dimension)) continue;
+            const size = Number(parameters.get(dimension));
+            if (!Number.isInteger(size) || size < 64 || size > 8192) throw new Error('Invalid canvas ' + dimension);
+            if (!minecraftDemo) {
+              canvas.style[dimension === 'width' ? 'maxWidth' : 'maxHeight'] = size + 'px';
+              canvas.style.placeSelf = 'center';
+            }
+          }
+          if (minecraftDemo) {
+            document.body.classList.add('wssi-demo');
+            canvas.style.setProperty('--demo-long-side', Math.max(Number(parameters.get('width') ?? 1280), Number(parameters.get('height') ?? 720)) + 'px');
+          }
+          const requested = minecraftDemo ? 6 : Number(parameters.get('scene') ?? catalog.defaultScene);
+          const selected = catalog.scenes.find(scene => scene.id === requested);
+          if (!selected) throw new Error('Unknown scene');
+          if (catalog.assetBundle) {
+            statusElement.textContent = 'Loading bundled scene assets';
+            const { loadAssetBundle } = await import('./asset-bundle.mjs');
+            diagnostics.assetBundle = await loadAssetBundle(Module.FS, catalog.assetBundle);
+          }
+          const selector = document.getElementById('scene');
+          selector.hidden = minecraftDemo;
+          const home = document.querySelector('header a');
+          if (minecraftDemo) {
+            home.href = 'minecraft-wssi.html?' + new URLSearchParams({
+              minecraftEnemyCount: String(enemyCount ?? 1),
+              resolution: `${parameters.get('width') ?? 1280}x${parameters.get('height') ?? 720}`,
+              logLevel: parameters.get('logLevel') ?? 'error',
+            });
+            home.setAttribute('aria-label', 'Back to WSSI welcome');
+            home.querySelector('strong').textContent = 'WSSI / Minecraft';
+          } else if (parameters.get('entry') === 'launcher') {
+            home.href = 'launcher.html';
+          }
+          for (const scene of catalog.scenes) selector.add(new Option(scene.name, scene.id, false, scene.id === selected.id));
+          selector.addEventListener('change', () => {
+            const url = new URL(location.href);
+            url.searchParams.set('scene', selector.value);
+            url.searchParams.delete('model');
+            url.searchParams.delete('sceneFile');
+            location.assign(url);
+          });
+          diagnostics.scene = selected.name;
+          document.title = minecraftDemo ? 'Hackathon 2026: WSSI Web GPU Minecraft Demo' : selected.name + ' | T850';
+          argumentsList.push('--api', 'webgpu', '--scene', String(selected.id),
+            '--width', minecraftDemo ? String(canvas.clientWidth) : parameters.get('width') ?? String(canvas.clientWidth),
+            '--height', minecraftDemo ? String(canvas.clientHeight) : parameters.get('height') ?? String(canvas.clientHeight),
+            '--webAssetBaseUrl', catalog.assetBundle ? 'embedded' : new URL('assets', location.href).href);
+          argumentsList.push(...catalog.arguments);
+          argumentsList.push(...(selected.arguments ?? []));
+          if (selected.id === 6 && (minecraftDemo || enemyCount !== undefined))
+            argumentsList.push('--minecraftEnemyCount', String(enemyCount ?? 1));
+          const sceneFile = minecraftDemo ? undefined : parameters.get('sceneFile') ?? selected.sceneFile;
+          if (sceneFile) argumentsList.push('--sceneFile', sceneFile);
+          for (const option of ['model', 'culling', 'logLevel']) {
+            if (minecraftDemo && option === 'model') continue;
+            if (parameters.has(option)) argumentsList.push('--' + option, parameters.get(option));
+          }
+          const requestedPostProcessMode = parameters.get('postProcessMode') ?? (minecraftDemo ? 'compute' : null);
+          if (requestedPostProcessMode !== null) {
+            const mode = requestedPostProcessMode;
+            if (!['raster', 'compute'].includes(mode)) throw new Error('Invalid post-process mode');
+            argumentsList.push('--postProcessMode', mode);
+          }
+          if (parameters.has('shaderFlow')) {
+            const flow = parameters.get('shaderFlow');
+            if (!['auto', 'wgsl', 'spirv'].includes(flow)) throw new Error('Invalid shader flow');
+            argumentsList.push('--shaderFlow', flow);
+          }
+          if (parameters.has('computeSelfTest')) argumentsList.push('--compute-selftest', '--logLevel', 'info');
+          if (parameters.has('deviceLossRecovery')) argumentsList.push('--webgpu-recovery-selftest', '--logLevel', 'info');
+          if (parameters.has('gui')) argumentsList.push('--gui');
+          if (parameters.has('profile')) {
+            const frames = Number(parameters.get('profileFrames') ?? 1000);
+            if (!Number.isInteger(frames) || frames < 60 || frames > 100000) throw new Error('Invalid profile frame count');
+            argumentsList.push('--profileCpuOnly', '--profileFrames', String(frames), '--telemetry',
+              '--telemetryFrequencyFrames', '1', '--telemetryOutput', '/persistent/web-profile.json');
+            if (parameters.has('benchmark')) {
+              if (selected.id !== 1) throw new Error('Deterministic profiling benchmark requires DayScene');
+              argumentsList.push('--benchmark', '--benchmarkFrames', String(frames + 1), '--benchmarkFixedDt', '0.0166666667');
+            }
+            if (parameters.has('fixedDt')) {
+              const fixedDt = Number(parameters.get('fixedDt'));
+              if (!Number.isFinite(fixedDt) || fixedDt <= 0 || fixedDt > 1) throw new Error('Invalid profiling fixed timestep');
+              argumentsList.push('--regressionFixedDt', String(fixedDt));
+            }
+          }
+          if (parameters.has('benchmarkNoPresent') && !parameters.has('profileGpu')) {
+            if (selected.id !== 1) throw new Error('No-present benchmark requires DayScene');
+            const frames = Number(parameters.get('benchmarkFrames') ?? 600);
+            const holdFrame = Number(parameters.get('benchmarkHoldFrame') ?? 3000);
+            if (!Number.isInteger(frames) || frames < 30 || frames > 10000)
+              throw new Error('Invalid no-present benchmark frame count');
+            if (!Number.isInteger(holdFrame) || holdFrame < 1 || holdFrame > 20000)
+              throw new Error('Invalid no-present benchmark hold frame');
+            argumentsList.push('--benchmarkNoPresent', '--benchmarkHoldFrame', String(holdFrame),
+              '--benchmarkFrames', String(frames), '--benchmarkFixedDt', '0.0166666667');
+          }
+          if (parameters.has('profileGpu')) {
+            if (selected.id !== 1) throw new Error('GPU timestamp profiling requires DayScene');
+            if (typeof GPUCommandEncoder === 'undefined' ||
+                typeof GPUCommandEncoder.prototype.writeTimestamp !== 'function')
+              throw new Error('Browser WebGPU GPU timestamps are unavailable: GPUCommandEncoder.writeTimestamp is not implemented');
+            const frames = Number(parameters.get('profileGpuFrames') ?? 600);
+            const holdFrame = Number(parameters.get('benchmarkHoldFrame') ?? 3000);
+            const granularity = parameters.get('profileGpuPasses') ?? 'render-graph';
+            if (!Number.isInteger(frames) || frames < 1 || frames > 100000)
+              throw new Error('Invalid GPU profile frame count');
+            if (!Number.isInteger(holdFrame) || holdFrame < 1 || holdFrame > 20000)
+              throw new Error('Invalid GPU profile hold frame');
+            if (!['whole-frame', 'render-graph'].includes(granularity))
+              throw new Error('Invalid GPU profile granularity');
+            argumentsList.push('--profileGpu', '--profileGpuFrames', String(frames),
+              '--profileGpuOutput', '/persistent/gpu-profile.json',
+              '--profileGpuPasses', granularity,
+              '--benchmarkNoPresent', '--benchmarkHoldFrame', String(holdFrame),
+              '--benchmarkFrames', String(frames + 60),
+              '--benchmarkFixedDt', '0.0166666667');
+          }
+          Module.FS.mkdirTree('/persistent');
+          Module.FS.mount(Module.IDBFS, { autoPersist: true }, '/persistent');
+          await new Promise((resolve, reject) => Module.FS.syncfs(true, error => error ? reject(error) : resolve()));
+          statusElement.textContent = 'Starting ' + selected.name;
+        }).catch(error => record(error.message, true)).finally(() => Module.removeRunDependency('web-launch'));
+      }]
+    };
+    canvas.addEventListener('contextmenu', event => event.preventDefault());
+  </script>
+  <script src="touch-controls.js"></script>
+  {{{ SCRIPT }}}
+</body>
+</html>

@@ -31,7 +31,7 @@ It is responsible for:
 ```mermaid
 flowchart LR
   Asset["texture path / memory buffer / generated floats"] --> TextureBase["Texture base helpers"]
-  TextureBase --> API["D3D11 / D3D12 / GL / Vulkan Texture"]
+  TextureBase --> API["D3D11 / D3D12 / GL / Vulkan / WebGPU Texture"]
   API --> Driver["BaseDriver::Textures slots"]
   Driver --> Atlas["TextureAtlas immutable grid metadata"]
   Driver --> Material["RenderMesh material slots"]
@@ -51,6 +51,7 @@ flowchart LR
 | `Framework/src/video/d3d12/D3D12Texture.cpp` / `Framework/src/video/d3d12/D3D12Device.cpp` | D3D12 texture upload resources, SRV/sampler descriptors, compressed support, generated mip upload, float textures/cubemaps, update path. |
 | `Framework/src/video/gl/GLTexture.cpp` / `Framework/src/video/gl/GLDevice.cpp` | OpenGL texture upload, compressed support, GL sampler parameters, float texture/cubemap creation, shader uniform binding. |
 | `Framework/src/video/vulkan/VulkanTexture.cpp` / `Framework/src/video/vulkan/VulkanDevice.cpp` | Vulkan image/upload/sampler/image-view handling, BC decompression path, descriptor pending texture state, float textures/cubemaps. |
+| `Framework/src/video/webgpu/WebGPUDriver.cpp` / `Framework/src/video/webgpu/WebGPUContext.cpp` | Dawn texture creation/upload, feature-aware BC/float fallbacks, bind-group resources, completion retirement and browser/native surface ownership. |
 | `Framework/include/scene/IBLResources.h` / `Framework/src/scene/IBLResources.cpp` | Environment IBL resource paths, generated IBL filters/LUTs, cache load/save, IBL texture creation, `SceneProps` IBL settings. |
 | `Framework/include/scene/RenderGraph.h` / `Framework/src/scene/RenderGraph.cpp` | Environment texture slots, material extension slots, pass input binding, environment binding to mesh/quad primitives. |
 | `Framework/include/scene/MaterialAsset.h` | Material texture slot enum and cached material texture ID/pointer records. |
@@ -96,6 +97,16 @@ Common metadata:
 
 `BaseDriver::CreateTexture()` reuses an existing non-null texture slot when `Textures[i]->filepath == "Textures/" + path`. `CreateTextureFromMemory(key, ...)` applies the same ownership model to generated/decoded pixels and deduplicates by the caller-supplied stable key. Destroyed slots are reused for future textures. A scene holding a managed texture pointer does not release it directly.
 
+For WebGPU devices without BC compression, BC cubemaps select an existing mip
+at or below 512x512 (or the smallest available mip of an incomplete chain) before
+RGBA8 decoding. `DecompressDXTToRGBA(..., firstMip)` validates the entire input
+and skips discarded compressed levels independently for each face. Output stays
+face-major/mip-major with identical retained pixel orientation, and the GPU
+texture's dimensions/mip count reflect the selected base level. Its default
+`firstMip=0` leaves other callers unchanged. The original compressed resource,
+BC-capable WebGPU path, 2D textures and non-BC HDR skies are not modified. See
+[browser memory validation](../platform/browser.md#published-wssi-demo).
+
 ## File and memory creation APIs
 
 Texture creation entry points:
@@ -113,6 +124,51 @@ Texture creation entry points:
 | `BaseDriver::CreateFloatCubeMap(size, mipCount, data)` | Face-major RGBA float cubemap with explicit mips for generated IBL. |
 
 Managed memory textures and file textures both live in `BaseDriver::Textures`. Direct `Device::CreateTextureFromMemory()` remains a low-level backend allocation API; Framework assets should prefer the managed driver entry point.
+
+## Render-target format contract
+
+R2 adds shared descriptor validation before GPU allocation. Invalid numeric
+formats and malformed attachment/extent declarations fail with
+`[InvalidRenderTarget]`; valid formats lacking an implementation on the active
+backend fail with `[UnsupportedRenderTarget]`. `BaseDriver::CreateRT` returns
+`-1`, and failed replacement requests preserve the old target. Backend format
+switches no longer silently substitute RGBA8 for unknown values. RGB8 is an
+explicit supported RGB-in-RGBA8 representation, not an unknown-format fallback.
+
+Implemented support, verified from the current allocation paths:
+
+| Feature | D3D11 | D3D12 | Vulkan | Desktop GL | WebGPU |
+|---|---|---|---|---|---|
+| RGBA8/RGBA16F/RGBA32F, R8/F16/F32 color | Yes | Yes | Yes | Yes | Yes |
+| F32 depth / NONE depth request | Yes | Yes | Yes | Yes | Yes |
+| FD16 depth | Yes | No | No | No | No |
+| CUBE_F32 depth target | Yes | Yes | No | Yes | No |
+| Render-target mip generation | Yes | No | No | Yes | No |
+| Engine comparison-sampler path | No | No | No | Depth-only GL path | No |
+
+These are engine-path capabilities, not promises about every adapter's format
+features or API-level functionality. Ordinary cube texture loading is distinct
+from cube render targets. D3D12/Vulkan/GL previously promoted FD16 requests to
+D32; such requests now receive a capability rejection. D3D11 retains D16 with
+an R16_UNORM sampled view. Vulkan RGBA32F is now explicitly mapped to
+`VK_FORMAT_R32G32B32A32_SFLOAT`, and RGB8 is explicitly mapped to RGBA8; neither
+falls through to an arbitrary default. The graph's optional mip request has a
+named single-level fallback; direct creation does not silently downgrade it.
+
+D3D11/12 sampler setup currently uses ordinary filtering, and Vulkan sets
+`compareEnable = false`; API support alone is not engine support. D3D resource
+reflection and Vulkan depth-comparison instruction reflection reject unsupported
+comparison-sampler use during shader load. WebGPU checks the corresponding
+Tint metadata before binding-layout creation. Diagnostics include shader name,
+stage and key. Reflection represents depth textures distinctly so they cannot
+be mistaken for ordinary sampled textures; existing shader-package fields and
+ordinary resource-kind values are unchanged.
+
+Shared tests cover malformed descriptors, supported/unsupported capabilities,
+graph preflight, mip fallback and allocation rollback. The real-driver fixture
+checks D3D12/WebGPU rejection without exceptions in strict WGSL and SPIR-V flows.
+R2's all-scene validation status is tracked in the
+[remediation plan](webgpu-compute-remediation-plan.md#r2-reconcile-strict-versus-lenient-backend-behavior).
 
 ## TextureAtlas
 
@@ -261,15 +317,15 @@ Float resources:
 
 Sampler state is rebuilt from `Texture::params` by each backend.
 
-| `Texture::params` | D3D11/D3D12 | GL | Vulkan |
-|---|---|---|---|
-| default | anisotropic, max 16 for regular 2D textures | linear mipmap linear, clamp, anisotropy for non-cubemaps | linear + linear mipmap, anisotropy when supported and not cube/special filter |
-| cubemap default | linear mipmap, anisotropy disabled | linear mipmap, clamp | linear mipmap, anisotropy disabled |
-| `NEAREST_FILTER` | point filter, `MaxLOD = 0` | nearest min/mag | nearest, nearest mip, `maxLod = 0` |
-| `LINEAR_FILTER` | linear min/mag with mip point, `MaxLOD = 0` | linear without mip chain when no mips | linear, nearest mip, `maxLod = 0` |
-| `TILED` | wrap | repeat | repeat |
-| `CLAMP_TO_EDGE` | clamp | clamp to edge | clamp to edge |
-| `CLAMP_TO_BORDER` | border, opaque white, linear mip | clamp to border, white border | clamp to border, opaque white |
+| `Texture::params` | D3D11/D3D12 | GL | Vulkan | WebGPU |
+|---|---|---|---|---|
+| default | anisotropic, max 16 for regular 2D textures | linear mipmap linear, clamp, anisotropy for non-cubemaps | linear + linear mipmap, anisotropy when supported and not cube/special filter | linear + linear mipmap, anisotropy 16 for regular 2D textures |
+| cubemap default | linear mipmap, anisotropy disabled | linear mipmap, clamp | linear mipmap, anisotropy disabled | linear mipmap, anisotropy disabled |
+| `NEAREST_FILTER` | point filter, `MaxLOD = 0` | nearest min/mag | nearest, nearest mip, `maxLod = 0` | nearest min/mag/mip, `lodMaxClamp = 0` |
+| `LINEAR_FILTER` | linear min/mag with mip point, `MaxLOD = 0` | linear without mip chain when no mips | linear, nearest mip, `maxLod = 0` | linear min/mag, nearest mip, `lodMaxClamp = 0` |
+| `TILED` | wrap | repeat | repeat | repeat |
+| `CLAMP_TO_EDGE` | clamp | clamp to edge | clamp to edge | clamp to edge |
+| `CLAMP_TO_BORDER` | border, opaque white, linear mip | clamp to border, white border | clamp to border, opaque white | clamp-to-edge approximation; true border color is unavailable |
 
 `RenderMesh::LoadTex()` sets `MIPMAPS` plus either `TILED` or `CLAMP_TO_EDGE`, then calls `SetTextureParams()` after the texture is loaded.
 
@@ -459,7 +515,7 @@ Useful logs and diagnostics:
 
 - `Texture creation failed: '<path>'` from `BaseDriver::CreateTexture()`.
 - `Texture '<path>' not found, loading checker` from `Texture::LoadTexture()`.
-- backend-specific upload/SRV/sampler errors from D3D11/D3D12/GL/Vulkan texture files;
+- backend-specific upload/SRV/sampler errors from D3D11/D3D12/GL/Vulkan/WebGPU texture paths;
 - `[IBL] Loaded cached...`, `[IBL] Generated...`, or stale/truncated cache logs;
 - `T850_DUMP_TEXTURE_UPLOADS`, which writes uploaded textures as DDS plus metadata;
 - `RenderTrace`, which records texture/sampler binds and logical sampler signatures across APIs.

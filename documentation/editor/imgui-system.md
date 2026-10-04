@@ -2,6 +2,14 @@
 
 Status: verified against source and four-backend runtime tests on 2026-08-30.
 
+2026-09-14: Windows x64 also has `ImGuiWebGPUBackend`, using the pinned upstream
+`imgui_impl_wgpu` renderer and SDL3 platform backend. It supports the main runtime
+window's loading frames, fonts and controls through `WebGPUDriver`'s active render
+pass. Platform viewports are disabled because the upstream backend does not
+support them. Cube/depth and full opaque-preview handling, T8ditor and multiple
+hosted surfaces remain outside this integration. See
+[normal WebGPU scene validation](../development/windows-build-and-run.md#first-normal-webgpu-scene).
+
 This document explains the reusable FrameworkImGui layer used by runtime scenes and wrapped by T8ditor: platform/backend initialization, frame lifecycle, docking and platform windows, Android native-window rebinding, loading-screen rendering, `DevGuiContext`, and hosted viewport integration.
 
 Related documents:
@@ -22,7 +30,7 @@ It is responsible for:
 
 1. Creating and destroying the Dear ImGui context.
 2. Initializing the correct platform backend: SDL3 on desktop/Linux, Android backend on Android.
-3. Initializing the correct renderer backend: D3D11, D3D12, OpenGL, or Vulkan.
+3. Initializing the correct renderer backend: D3D11, D3D12, OpenGL, Vulkan, or WebGPU for supported runtime hosts.
 4. Driving `NewFrame()`, draw-data build, draw-data render, and optional platform windows.
 5. Routing manual gamepad navigation into ImGui.
 6. Rendering loading-progress frames while long asset loads run.
@@ -33,7 +41,7 @@ flowchart LR
   App["DayScene App / T8ditor wrapper"] --> ImGuiSystem["ImGuiSystem"]
   ImGuiSystem --> Factory["CreateImGuiRendererBackend"]
   Factory --> Renderer["ImGuiRendererBackend"]
-  Renderer --> APIs["D3D11 / D3D12 / OpenGL / Vulkan"]
+  Renderer --> APIs["D3D11 / D3D12 / OpenGL / Vulkan / WebGPU"]
   ImGuiSystem --> DevGui["DevGuiContext"]
   DevGui --> SceneGui["SceneBase::DrawDevGui"]
   ImGuiSystem --> Loading["LoadingProgress frame callback"]
@@ -48,7 +56,7 @@ flowchart LR
 | `FrameworkImGui/include/imgui/ImGuiSystem.h` | Public UI-system wrapper: init/shutdown, frame lifecycle, draw data, loading frame renderer, capture queries, wheel/gamepad input, Android event/native-window APIs. |
 | `FrameworkImGui/include/imgui/ImGuiRendererBackend.h` | Polymorphic backend contract for initialization, frame hooks, draw submission, texture IDs, descriptor cleanup, platform windows, and native input/window integration. |
 | `FrameworkImGui/src/ImGuiRendererBackend.cpp` | The single graphics-API factory boundary. |
-| `FrameworkImGui/src/ImGuiD3D11Backend.cpp`, `ImGuiD3D12Backend.cpp`, `ImGuiOpenGLBackend.cpp`, `ImGuiVulkanBackend.cpp` | Per-API ImGui platform/renderer integration and API-specific preview texture ownership. |
+| `FrameworkImGui/src/ImGuiD3D11Backend.cpp`, `ImGuiD3D12Backend.cpp`, `ImGuiOpenGLBackend.cpp`, `ImGuiVulkanBackend.cpp`, `ImGuiWebGPUBackend.cpp` | Per-API ImGui platform/renderer integration and API-specific preview texture ownership. |
 | `FrameworkImGui/src/ImGuiSystem.cpp` | API-neutral context coordinator, dockspace/platform windows, SDL event watcher, loading screen, and gamepad navigation. |
 | `FrameworkImGui/include/imgui/DevGuiContext.h` | Shared scene/dev GUI facade around ImGui panels, sections, descriptor widgets, hosted viewport docking IDs, embedded panels, and navigation focus. |
 | `FrameworkImGui/src/DevGuiContext.cpp` | `DevGuiContext` implementation: scoped labels, panel begin/end, slider/checkbox/combo/button helpers, frame stats overlay, navigation focus. |
@@ -140,10 +148,36 @@ Renderer behavior:
 | D3D12 | Enabled only when `imgui_impl_dx12.h` is available. Uses `D3D12Driver`, native device, command queue, backbuffer count, RTV/DSV formats, and the driver's visible CBV/SRV/UAV heap. |
 | OpenGL | Desktop only. Calls `ImGui_ImplOpenGL3_Init("#version 300 es")`. |
 | Vulkan | Uses `VulkanDriver` instance/device/queue family/queue, descriptor pool size 64, backbuffer count, and the backbuffer render pass. |
+| WebGPU | Uses upstream `imgui_impl_wgpu` with the driver's device, surface color format and `Depth32Float`. Platform viewports remain disabled. |
 
 D3D12 uses custom descriptor allocation callbacks from `D3D12Heap::CBV_SRV_UAV_VISIBLE`. It also owns opaque preview descriptors for depth/single-channel render targets.
 
 Vulkan rendering calls `VulkanDriver::EnsureBackbufferRenderPass()` before rendering draw data, uses the current command buffer, and owns descriptor sets created by `ImGui_ImplVulkan_AddTexture()`.
+
+### Offscreen overlay compatibility
+
+The shared offscreen ring uses `RGBA8` color and `F32` depth, while a desktop
+surface can use BGRA. An ImGui pipeline built for that surface cannot be bound
+unchanged to the offscreen render pass. At `NewFrame`, the Vulkan adapter checks
+whether the current target is one of the shared offscreen targets and recreates
+its main pipeline against the current render pass on a mode transition. It uses
+the backbuffer render pass when returning to the surface. Equivalent offscreen
+ring entries do not trigger pipeline recreation.
+
+The WebGPU adapter similarly selects the shared offscreen `RGBA8Unorm` format
+or the actual surface format. The pinned upstream WebGPU backend does not expose
+pipeline-format replacement, so a format transition recreates only its renderer
+backend before starting the ImGui frame, preserving the ImGui context and SDL
+platform backend. Font textures are recreated through upstream texture handling.
+Engine texture IDs remain native texture views. Both adapters wait for prior
+submitted work before replacing renderer resources; they do not wait or rebuild
+for every draw or every offscreen ring rotation.
+
+This is main-window/shared-offscreen support, not general editor multi-viewport
+parity. The bound target must remain compatible between `NewFrame` and
+`RenderDrawData`. The normal runtime and loading-frame paths satisfy that
+contract. See [offscreen overlay checks](../testing/verification.md#offscreen-overlays)
+for the bounded regression and post-overlay capture procedure.
 
 ## NewFrame and rendering lifecycle
 
@@ -180,12 +214,13 @@ OpenGL preserves/restores the current SDL GL window/context around platform-wind
 - D3D12 -> binds the D3D12 SRV heap and calls `ImGui_ImplDX12_RenderDrawData` with the current command list.
 - OpenGL -> `ImGui_ImplOpenGL3_RenderDrawData`.
 - Vulkan -> clears pending texture slots, ensures the backbuffer render pass, gets the current command buffer, then calls `ImGui_ImplVulkan_RenderDrawData`.
+- WebGPU -> uses `ImGui_ImplWGPU_RenderDrawData` inside the active runtime render pass; platform viewports remain disabled.
 
 On Android, runtime code normally calls `BuildDrawData()` in `DrawRuntimeGui()`, then installs a `BaseDriver::SetPrePresentOverlayCallback()` callback that calls `RenderDrawData()` at the correct point. Vulkan implements that virtual hook; shared UI code does not downcast the driver.
 
 ## Preview texture IDs
 
-`ImGuiSystem::GetTextureID(texture, mode)` delegates texture interoperability to the selected backend. D3D11 returns its SRV, OpenGL returns the texture object ID, D3D12 returns a native SRV or creates an opaque preview descriptor, and Vulkan creates/caches a combined-image descriptor set. `PruneTextureIDs()` and `ReleaseTextureIDs()` keep descriptor lifetime inside the backend. Runtime and T8ditor no longer switch on `GraphicsApi` or cast texture subclasses.
+`ImGuiSystem::GetTextureID(texture, mode)` delegates texture interoperability to the selected backend. D3D11 returns its SRV, OpenGL returns the texture object ID, D3D12 returns a native SRV or creates an opaque preview descriptor, Vulkan creates/caches a combined-image descriptor set, and WebGPU returns backend-owned texture-view/bind-group state. `PruneTextureIDs()` and `ReleaseTextureIDs()` keep descriptor lifetime inside the backend. Runtime and T8ditor no longer switch on `GraphicsApi` or cast texture subclasses.
 
 ## Capture queries and wheel input
 

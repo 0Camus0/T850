@@ -465,6 +465,7 @@ namespace t850 {
     void Create();
     void Transform(float *t);
     void Draw(float *t, float *vp);
+    bool MayDrawInPass(uint8_t pass) const override;
     void Destroy();
     void DrawWireframe();
     bool EnsureCullingMetadata();
@@ -510,6 +511,7 @@ namespace t850 {
     mutable double m_cullingCpuMs = 0.0;
 
     Texture*	d3dxEnvMap;
+    ShaderFamilyId m_shaderFamily;
 
     XMATRIX44	transform;
     XDataBase*	xFile;

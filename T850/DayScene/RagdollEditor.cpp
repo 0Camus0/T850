@@ -2375,14 +2375,20 @@ int RagdollEditor::RenderViewportWidth() const {
   if (m_renderWidth > 0) {
     return m_renderWidth;
   }
-  return (std::max)(1, g_pBaseDriver ? g_pBaseDriver->width : 1);
+  if (g_pBaseDriver && g_pBaseDriver->width > 1 && g_pBaseDriver->height > 1) {
+    return g_pBaseDriver->width;
+  }
+  return (std::max)(1, g_config.width);
 }
 
 int RagdollEditor::RenderViewportHeight() const {
   if (m_renderHeight > 0) {
     return m_renderHeight;
   }
-  return (std::max)(1, g_pBaseDriver ? g_pBaseDriver->height : 1);
+  if (g_pBaseDriver && g_pBaseDriver->width > 1 && g_pBaseDriver->height > 1) {
+    return g_pBaseDriver->height;
+  }
+  return (std::max)(1, g_config.height);
 }
 
 float RagdollEditor::RenderViewportOriginX() const {
@@ -2401,9 +2407,14 @@ void RagdollEditor::UpdateCameraProjectionForRenderViewport() {
   }
 
   const float aspect = static_cast<float>(width) / static_cast<float>(height);
+  const float orthoHeight = Cam.Width > 0.0f ? Cam.Width / aspect : static_cast<float>(height);
+  if (std::fabs(Cam.AspectRatio - aspect) <= 0.0001f &&
+      (!Cam.Ortho || std::fabs(Cam.Height - orthoHeight) <= 0.0001f)) {
+    return;
+  }
   Cam.AspectRatio = aspect;
   if (Cam.Ortho) {
-    Cam.Height = Cam.Width > 0.0f ? Cam.Width / aspect : static_cast<float>(height);
+    Cam.Height = orthoHeight;
   }
   Cam.CreatePojection();
   Cam.Update(0.0f);
@@ -3650,6 +3661,7 @@ void RagdollEditor::CreateAssets() {
   if (m_controlSetup.descriptor.name.empty()) {
     m_controlSetup.Load("Scenes/RagdollEditor.json");
   }
+  m_controlSetup.ApplyInputSettings(SceneProp);
 
   const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
   const bool embeddedSceneProfile = false;
@@ -3663,6 +3675,7 @@ void RagdollEditor::CreateAssets() {
     t850::scene::EditorSceneFile startupScene;
     std::string startupSceneError;
     if (t850::scene::LoadEditorSceneFile(g_config.sceneFilePath, startupScene, &startupSceneError)) {
+      m_controlSetup.ApplyInputSettings(SceneProp, startupScene.mouse_capture);
       startupSceneProfiles = startupScene.profiles;
       startupProfiles = &startupSceneProfiles;
     } else {
@@ -4096,6 +4109,7 @@ void RagdollEditor::OnUpdate(float _DtSecs) {
 
   if (!m_dumper.SkipCameraUpdates()) {
     T8_TELEMETRY_SCOPE("sandbox.update.camera_and_lights");
+    UpdateCameraProjectionForRenderViewport();
     if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
       T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_orbit_profile");
       SyncOrbitProfileFromSandbox();

@@ -1,6 +1,6 @@
 ---
 name: t850-api-frame-comparison
-description: "Use when T850 must dump the same frame on D3D11, D3D12, Vulkan, and OpenGL; compare render targets across APIs; diagnose a white overlay, black frame, lighting mismatch, shadow mismatch, or first divergent pass; or prove cross-backend visual parity."
+description: "Use when T850 must dump the same frame on D3D11, D3D12, Vulkan, OpenGL, and WebGPU; compare render targets across APIs; diagnose a white overlay, black frame, lighting mismatch, shadow mismatch, or first divergent pass; or prove cross-backend visual parity."
 argument-hint: "State scene/index, configuration, frame or fixed time, APIs, resolution, and reference API."
 ---
 
@@ -69,7 +69,7 @@ Use the same scene file, camera, profile, resolution, frame, and asset set for e
 
 Snapshot replay restores captured camera/light/render state, not a complete gameplay save state.
 
-## 4. Capture All Four APIs Sequentially
+## 4. Capture APIs Sequentially
 
 Run from the executable output directory so assets and DLLs resolve:
 
@@ -77,7 +77,7 @@ Run from the executable output directory so assets and DLLs resolve:
 Set-Location $Output
 $Before = @(Get-ChildItem -Directory -Filter 'dumps_*' | Select-Object -ExpandProperty FullName)
 
-$Results = foreach ($Api in @('d3d11','d3d12','vulkan','gl')) {
+$Results = foreach ($Api in @('d3d11','d3d12','vulkan','gl','webgpu')) {
   & $Exe --api $Api @CommonArgs
   [pscustomobject]@{ Api = $Api; ExitCode = $LASTEXITCODE }
 }
@@ -131,7 +131,7 @@ python .\scripts\compare_dumps.py REF_DIR CAND_DIR `
   --tolerance 2 --report REPORT_DIR
 ```
 
-Repeat D3D12 against D3D11, Vulkan, and GL. Cross-API images are not expected to be byte-identical because rasterization, filtering, and precision differ. Evaluate:
+Repeat D3D12 against D3D11, Vulkan, GL, and WebGPU. For WebGPU, record `--shaderFlow auto|wgsl|spirv` and do not combine flows in one comparison cell. Cross-API images are not expected to be byte-identical because rasterization, filtering, and precision differ. Evaluate:
 
 - average channel delta;
 - maximum delta;

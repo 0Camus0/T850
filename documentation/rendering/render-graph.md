@@ -1,6 +1,6 @@
 # Render Graph
 
-Status: verified against source on 2026-08-19.
+Status: capability-validation behavior verified against source and focused tests on 2026-09-18.
 
 This document explains T850's data-driven render graph: JSON descriptors, render target creation, pass execution, input/output edges, render-target push/pop behavior, state overrides, mesh and fullscreen-quad draws, post-processing, and final output routing.
 
@@ -27,7 +27,7 @@ flowchart LR
   Execute --> Mesh["mesh draw commands"]
   Execute --> Quad["fullscreen/final quad commands"]
   Execute --> Driver["BaseDriver PushRT/PopRT/SetState"]
-  Driver --> API["D3D11/D3D12/GL/Vulkan backends"]
+  Driver --> API["D3D11/D3D12/GL/Vulkan/WebGPU backends"]
 ```
 
 ## Key files and classes
@@ -92,7 +92,7 @@ Typical lifetime:
 
 1. Scene/editor calls `m_renderGraph.Load("Scenes/..._RenderGraph.json")`.
 2. Scene/editor calls `CreateRenderTargets()` after the driver and `SceneProps` are initialized.
-3. `CreateRenderTargets()` allocates every `RTDesc` through `BaseDriver::CreateRT()` and then calls `BuildGraph()`.
+3. `CreateRenderTargets()` preflights every resolved `RTDesc` against the driver before allocating through `BaseDriver::CreateRT()`, then calls `BuildGraph()` on success. It returns `false` on validation or allocation failure.
 4. Each frame calls `Execute()`.
 5. Resize or graph reload calls `DestroyRenderTargets()` and `CreateRenderTargets()` again.
 6. Scene shutdown calls `DestroyRenderTargets()`.
@@ -101,7 +101,71 @@ Typical lifetime:
 
 ## Descriptor JSON schema
 
-The graph is loaded with glaze from JSON into `RenderGraphDesc`. Unknown keys are ignored, which lets JSON files carry future/editor-only fields without breaking current runtime parsing.
+### Mesh Preparation Optimization
+
+Optimization published in web v0.1.10 on 2026-09-18: standard graphics passes use the conservative
+`PrimitiveBase::MayDrawInPass` query before preparing mesh bindings. Unknown
+primitives return true. Static/skinned meshes reuse their existing material
+classification, including shared material overrides and transmission; mutable
+meshes use their existing section alpha-mode rules and readiness check. The
+query does not replace frustum culling or cache eligibility across frames.
+
+When no mesh can participate, the pass skips its resource-binding and draw
+preparation. It still performs target binding, clears, viewport/scissor setup,
+target pop, camera restoration and post-state changes. Compute passes run before
+this check, callbacks and quad draws conservatively keep work enabled, and the
+cube-face path is unchanged. Thus a zero draw count is not treated as proof that
+a whole graph node has no side effects. Minecraft's transparent pass remains in
+the descriptor and automatically renders when eligible materials are present.
+
+Input textures and environment textures are resolved once per standard pass
+execution, then applied to eligible meshes from a fixed-size snapshot. The
+snapshot is discarded at the end of the pass, so resize, graph rebuild and
+environment changes cannot leave cross-frame pointers behind. A callback marks
+the snapshot dirty before subsequent mesh commands. Material texture bindings
+retain their original behavior. This deliberately avoids a persistent raw-pointer
+cache and removes string splitting/map lookup from the per-mesh loop.
+
+`MeshDrawStateTracker` also reuses extracted frustum planes within its pass scope
+when the view-projection matrix is byte-identical. Begin/End/Reset invalidate
+the snapshot, changed matrices recompute it, and calls outside a pass recompute
+unconditionally. Static and mutable mesh culling use this path. Cascade split
+distances, light camera construction, shadow-map resolution, cascade count and
+GPU shadow rendering are unchanged. Hardware CPU-cache misses were not measured;
+this optimization removes repeated calculations and lookups, not a proven
+hardware-cache pathology.
+
+Validation: `T-GRAPH-MESH-PREPARATION-01` covers empty-pass clear/pop/post-state
+semantics, mesh eligibility changes, hidden meshes, input/environment replacement,
+target reconstruction, callback mutation, shared materials, masking and transmission.
+`T-PASS-FRUSTUM-REUSE-01` compares all six planes exactly across repeated matrices,
+matrix changes and pass boundaries. Wasm shared tests and Windows x64/ARM64
+Debug/Release Framework/DayScene builds passed; x64 console self-tests passed.
+Headless Chrome passed Minecraft compute/raster, GUI/resize, mobile optional-feature
+fallbacks, touch/camera controls and Day Scene spectator transitions. Headless
+Firefox was environment-blocked because it exposed no WebGPU adapter.
+
+Matched 1,200-frame fixed-step Minecraft captures with zero and eight enemies
+retained identical per-frame draw/index/pass-counter hashes. In the zero-enemy
+comparison, 787,200 scene pixels outside the changing HUD were byte-identical.
+Empty transparent-pass CPU time in the eight-enemy instrumented comparison fell
+from 1.516 ms to 0.046 ms. Three alternating profiling-disabled runs measured
+baseline CPU work of 6.41/5.21/8.61 ms versus 3.55/3.12/4.81 ms locally; host-load
+variation is substantial, so these are not guaranteed FPS gains. No cascade
+quality reduction was performed. The tested build was subsequently published
+as web v0.1.10; deployment details are in the browser platform guide.
+
+Evidence: `%LOCALAPPDATA%/T850Profiles/render-graph-optimization-20260918`.
+
+The authored [ForwardScene graph](../../T850/Assets/Scenes/ForwardScene_RenderGraph.json)
+is a single-target example shared by native D3D12 and the first WebGPU scene.
+`DEFAULT_PASS` names `PassType::NONE` (the existing default mesh shading path),
+which draws opaque subsets as well. `FORWARD_PASS` retains its existing
+transparent/transmission-subset filter. SceneTemplate no longer assumes the
+first target is a multi-attachment GBuffer when initializing its fullscreen quad;
+pass inputs in the graph supply those bindings.
+
+The graph is loaded with glaze from JSON into `RenderGraphDesc`. Unknown keys are errors. This is required because a misspelled execution, access, or extent field must not silently turn a compute pass into graphics work.
 
 Top-level shape:
 
@@ -126,6 +190,8 @@ Top-level shape:
 | `size` | `[int,int]` | Explicit dimensions; `[0,0]` means screen/override size. |
 | `linear_filter` | bool | Sets RT texture filtering to linear or nearest. |
 | `generate_mips` | bool | Requests mip generation where supported. |
+| `storage` | bool | Requests storage/UAV creation usage on D3D11, D3D12, Vulkan, WebGPU, and desktop OpenGL 4.3+. |
+| `initialized` | bool | Requests a deterministic one-time zero clear before the first graph execution after allocation/recreation; defaults to false. |
 | `size_ref` | string | Named dynamic size such as `$shadow_resolution` or `$god_rays_resolution`. |
 
 Supported color format strings:
@@ -136,13 +202,52 @@ Supported color format strings:
 - `RGBA32F`
 - `R8`
 - `F16`
+- `F32` (single-channel floating-point color)
 - `RGB8`
 
 Supported depth format strings:
 
 - `NONE`
+- `FD16` (requires backend support; currently D3D11)
 - `F32`
 - `CUBE_F32`
+
+### Validation and capabilities
+
+Unknown color/depth names, invalid attachment counts, mismatched per-attachment
+format counts, negative extents and targets with no attachments fail structural
+graph loading with `[InvalidRenderTarget]` and the target name. Format lookups
+never substitute RGBA8 or NONE for an unknown name. `cube_faces` must be zero,
+or six with a declared `CUBE_F32` target.
+
+Creation resolves screen/override/shadow extents and asks the shared
+`BaseDriver::ValidateRenderTarget` policy before allocating any graph target.
+The driver supplies `SupportsCubeRenderTargets`,
+`SupportsRenderTargetDepthFormat`, `SupportsRenderTargetColorFormat`,
+`SupportsRenderTargetMipGeneration` and `MaxRenderTargetColorAttachments`.
+A valid unsupported request produces `[UnsupportedRenderTarget]`, naming the
+backend and feature; the graph adds the pass and target. Cube targets must be
+square. A failed preflight leaves no executable nodes. An allocation failure
+releases already-created graph targets and returns `false`.
+
+Mips have one explicit graph fallback: `generate_mips: true` becomes a single
+level on a backend without render-target mip generation, with a
+`[CapabilityFallback]` diagnostic naming the pass, target, backend and feature.
+Capable D3D11/GL backends retain the request. Depth/color formats and cube targets
+are not silently substituted. Direct `BaseDriver::CreateRT` requests have no
+implicit fallback: unsupported requests return `-1`. `RenderContainer`
+initialization and resize propagate the graph result; other callers must check
+the boolean and stop using the failed graph.
+
+Shader-derived requirements are checked at shader load rather than inferred
+from graph JSON. `SupportsComparisonSamplers` describes the implemented engine
+sampler path. Unsupported reflected comparison sampling fails with
+`[UnsupportedShaderFeature]` containing backend, shader name, stage and key.
+See [format and sampler support](textures-and-ibl.md#render-target-format-contract).
+
+If the selected driver cannot support compute textures, an authored storage target is
+allocated without storage/UAV usage so graphics initialization and raster fallback remain
+available. Compute pipelines are not created for that driver.
 
 `size_ref` is resolved from `SceneProps`:
 
@@ -159,6 +264,13 @@ On Android, screen-sized render targets can be scaled by the hard-coded Android 
 |---|---|---|
 | `name` | string | Human-readable pass name and graph node id. Some runtime skips are name-based. |
 | `target` | string | Render target name to bind. Empty string means draw to backbuffer/offscreen/final output. |
+| `execution` | string | `graphics` by default, or `compute_if_supported` to use a compute kernel with the authored draws as fallback. |
+| `compute_shader` | string | Resource-relative HLSL path for a compute pass. |
+| `compute_entry` | string | Compute entry point; defaults to `CS`. |
+| `compute_permutation` | string | Stable compute permutation name; defaults to `base`. |
+| `compute_extent_from` | string | Storage output whose dimensions determine dispatch counts. |
+| `compute_depth` | integer | Logical Z extent; defaults to 1 and must be positive. |
+| `compute_resources` | array | Complete typed binding list for constants, sampled textures, samplers, and storage outputs. |
 | `clear` | bool | Whether to clear after target binding. |
 | `clear_color` | `[float,float,float,float]` | Clear color used when `clear` is true. |
 | `clear_depth` | float | Descriptor field exists, but current clear path uses driver clear defaults rather than this value directly. |
@@ -193,6 +305,27 @@ Source format:
 Currently implemented built-in input:
 
 - `@ssao_noise` -> `SceneProps::SSAOKernel.NoiseTex`
+
+### Typed compute resources
+
+Every `compute_if_supported` pass declares the complete shader binding ABI in
+`compute_resources`. Each item contains `resource`, `access`, and
+`shader_register`.
+
+| Access | Resource | Binding |
+|---|---|---|
+| `constants` | `@kernel_constants` | Registry-packed constant words at `bN` |
+| `sampled` | `RT:COLORn` or `RT:DEPTH` | Read-only texture at `tN` |
+| `sampler` | Same texture as a sampled resource | Sampler at `sN` |
+| `storage_write` | Storage-enabled color target | Write-only texture at `uN` |
+
+Graph loading rejects unknown accesses, duplicate or incomplete bindings, invalid
+permutations, missing attachments, writes to non-storage targets, sampler entries
+without a matching sampled texture, and read/write feedback on the same subresource.
+`compute_extent_from` must name one declared storage output. Workgroup dimensions
+are reflected from the compiled pipeline on every backend; they are not authored in
+JSON. Dispatch uses ceiling division against the selected output width/height and
+the authored `compute_depth`, producing X, Y and Z group counts.
 
 `RenderGraphDescriptor.h` mentions `@environment_map`, but the current execution path binds environment maps through `bind_environment_map`, not through this input string.
 
@@ -257,11 +390,11 @@ other backends appear to work through undefined or stale bindings.
 
 ## Graph construction
 
-`BuildGraph()` creates one `GraphNode` per pass and one `GraphEdge` per RT input dependency.
+`BuildGraph()` creates one `GraphNode` per pass and one `GraphEdge` per render-target attachment dependency.
 
 ```mermaid
 flowchart TD
-  Passes["Pass array in JSON order"] --> LastWriter["Track last writer per RT name"]
+  Passes["Pass array in JSON order"] --> LastWriter["Track last writer per RT attachment"]
   LastWriter --> Inputs["For each input RTName:ATTACHMENT"]
   Inputs --> Edge["Create GraphEdge from last writer to consumer"]
   Edge --> NodeAdj["Fill inputs_from / outputs_to"]
@@ -272,7 +405,9 @@ Important behavior:
 
 - The graph stores dependency edges for inspection/debugging.
 - Execution still happens in JSON pass order; there is no topological sort.
-- Dependencies are resolved against the last writer seen so far, so pass ordering in JSON is meaningful.
+- Dependencies are resolved against the last writer of the exact color/depth attachment, so pass ordering in JSON is meaningful.
+- Reads before a writer are rejected unless the render-target declaration sets `initialized: true`; those targets receive a one-time zero clear before graph passes and previous-frame history targets use this explicit contract.
+- Pass names must be nonempty and unique, and every nonempty pass target must name a declared render target.
 - Built-in inputs beginning with `@` do not create graph edges.
 
 ## Execution flow
@@ -372,6 +507,37 @@ flowchart TD
 
 DayScene adds more post-processing, such as god rays and depth-of-field/CoC passes. T8ditor and SceneTemplate use smaller graph variants oriented around editor/runtime viewport needs.
 
+The DayScene `God Rays` calculation pass reads `GBuffer:DEPTH` and `DepthPass:DEPTH`, writes storage-enabled `GodRaysCalc:COLOR0`, and dispatches `ceil(width/8) x ceil(height/8) x 1`. Its existing `LIGHT_RAY_MARCHING` fullscreen draw remains the explicit raster mode and the fallback for desktop GL below 4.3 or OpenGL ES. DayScene also declares optional compute implementations for the God Rays horizontal/vertical blur, Bright, and HDR Composition passes; their existing fullscreen pixel-shader draws remain in the same descriptors. Shadow blur and 512x512 bloom blur remain raster after matched tests exposed unacceptable R8 quantization and cross-frame parity differences respectively. `LIGHT_ADD`, luminance adaptation, CoC, DoF, deferred lighting, copies, and final presentation remain graphics passes.
+
+Every maintained scene graph now exposes the shared Bright and HDR Composition compute alternatives: DayScene, MinecraftScene, Quake3Mock, RagdollEditor, SandboxScene, SceneTemplate, and T8ditor. Graphs that previously wrote Bright directly into `BloomAccum` now use a separate storage-enabled `BrightPass`, preserving the existing raster bloom H/V ping-pong before composition. God Rays compute remains DayScene-specific because the other graphs do not author that effect.
+
+Minecraft additionally writes `TorchParticles` with `CS_TorchParticles`. The compute kernel
+needs only the main camera, authored emitter state, and frame time, and writes every output
+pixel so no clear or atomic blend is required on compute-capable backends. `Light Add` samples
+that texture together with `Deferred`, placing the fire before luminance adaptation and bloom.
+The fallback pass clears `TorchParticles` to transparent, preserving base-only rendering on
+desktop GL below 4.3 and OpenGL ES.
+
+The particle workload is logically independent of shadow-map, GBuffer, and deferred-lighting
+generation, so a future dedicated compute queue could dispatch it early and overlap those
+graphics passes. The current D3D12 and Vulkan implementations record compute and graphics on
+one graphics command list/queue, while D3D11 uses one immediate context; JSON passes also
+execute serially. Therefore moving the pass earlier changes order but does not create GPU
+parallelism. A real overlap implementation requires a compute queue, queue-owned descriptors
+and command buffers, and a fence/semaphore before `Light Add` samples the storage result.
+That synchronization can cost more than this small effect, so the current implementation
+uses the existing same-queue UAV/write-to-sampled-read barrier.
+
+`--postProcessMode compute` selects every declared compute alternative for A/B testing, while `raster` selects all authored graphics or clear fallbacks. Selection is per render-graph pass rather than a Cartesian shader-key permutation. Desktop GL 4.3+ participates through its own compute implementation; older desktop GL and OpenGL ES follow the authored fallback. `auto` is rejected.
+
+A successful dispatch writes the pass target without executing its draw list and still applies
+the authored `post_state`. If pipeline creation is unavailable or a dispatch fails, execution
+falls through to the same pass's graphics draw. Compute-only passes can author an empty draw
+list plus a clear color as their unsupported-backend behavior; Minecraft uses this to produce
+a transparent torch-particle target on OpenGL.
+
+Use the unified `--postProcessMode compute|raster` selector for God Rays and other post-processing alternatives. Older desktop GL and OpenGL ES select the raster fallback when compute is requested.
+
 ## Fullscreen and final quads
 
 `RenderQuad::Create()` creates the fullscreen quad primitive and precompiles many `FS_Quad` pass variants:
@@ -440,11 +606,47 @@ To add a new render graph feature:
 5. Update graph JSON files in `Assets/Scenes`.
 6. Verify D3D12/Vulkan PSO behavior if the change alters RT formats, topology, input layout, or resource binding.
 
+## Legacy and Cascaded Shadow Sampling
+
+Legacy graphs such as DayScene do not declare `shadow_projections`. Their depth
+pass still uses the selected light camera, while the shared shadow-composition
+shader consumes the fixed-size shadow-sampling payload introduced for cascades.
+[RenderQuad::UploadShadowSamplingCB](../../T850/Framework/src/scene/RenderQuad.cpp)
+must bridge those contracts: one view using the existing light VP matrix, a
+whole-texture atlas transform, the legacy shadow-map resolution, and the current
+shadow bias/minimum light. Upload this payload on HLSL backends and copy it into
+the loose-uniform payload on OpenGL. An empty projection list must not skip the
+upload or reuse previous cascade values.
+
+Fixed on 2026-09-14: the cascade integration returned early for empty projection
+lists, leaving legacy shadow composition without initialized shadow matrices and
+parameters. Explicit cascade projections retain their existing path. The shared
+[self-test suite](../../T850/Framework/src/game/GameSelfTest.cpp) now includes
+`T-SHADOW-LEGACY-01`, covering legacy data, an explicit two-cascade payload, and
+returning from cascades to legacy rendering without stale matrices or splits.
+
+Verification used the working `Q3.8_v2` checkout with matched DayScene snapshot
+replays at 1280x720. D3D11/D3D12/Vulkan courtyard shadow depth and accumulation
+matched exactly; 17 of 18 dumped targets matched within two 8-bit levels. The
+final backbuffer retained small differences, so this is not exact final-frame
+parity. OpenGL has a pre-existing full-kernel blur correction relative to the
+reference: a temporary old-kernel probe made shadow accumulation, deferred
+lighting and god rays exact matches. The corrected blur was restored, and its
+shadow/deferred targets repeated exactly; final-frame variation remained.
+
+x64 Debug/Release builds and all 54 self-tests passed. ARM64 Debug/Release
+compile/link passed, without ARM64 execution. Minecraft D3D12/Vulkan smoke captures
+with four cascades, draw distance four and one enemy completed without errors;
+all four atlas tiles contained rendered depth. These are focused shadow gates,
+not a full scene/editor/platform visual matrix. Raw snapshots, images and reports
+from this run are local ignored outputs under `bin/x64/Release` and
+`VisualBaselines/day-shadow-regression`.
+
 ## Known limitations and gotchas
 
 - Execution is JSON order, not topologically sorted graph order.
-- Dependency edges only reflect RT inputs from the most recent prior writer.
-- Unknown JSON keys are ignored; typos in unused fields may not fail parsing.
+- Dependency edges reflect declared sampled RT attachments from their most recent prior writer; execution remains authored JSON order.
+- Unknown render-graph JSON keys are rejected during strict parsing.
 - Unknown signatures log an error but resolve to an empty valid `ShaderKey`, which may cause a later shader miss rather than a parse failure.
 - `clear_depth` exists in the descriptor but is not directly used by the current clear call.
 - State restoration is explicit. If a pass sets blend/depth/cull without `post_state`, later passes inherit that state.

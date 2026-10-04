@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <debug/RuntimeTelemetry.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -42,6 +43,8 @@ namespace t850 {
   }
 
   int	 PrimitiveManager::CreateMesh(const char *fname) {
+    T8_UPLOAD_SOURCE(RuntimeTelemetry::UploadSource::AssetLoad);
+    T8_CPU_WORK("gpu.upload_batch");
     // Probe: load to check if the model has skin/animation data
     RenderMesh* probe = new RenderMesh();
     probe->SetEngineContext(m_engineContext);

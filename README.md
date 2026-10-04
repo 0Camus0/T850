@@ -1,13 +1,17 @@
 # T850
 
+Current engine/documentation audit: 2026-09-26. Dated evidence sections retain
+their original benchmark or release revision and are not silently rebased onto
+the current implementation.
+
 <div align="center">
 
 [![Build](https://github.com/0Camus0/T850/actions/workflows/build.yml/badge.svg)](https://github.com/0Camus0/T850/actions/workflows/build.yml)
 &nbsp;&nbsp;![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Android%20%7C%20Steam%20Deck-blue)
-&nbsp;&nbsp;![APIs](https://img.shields.io/badge/APIs-D3D11%20%7C%20D3D12%20%7C%20Vulkan%20%7C%20OpenGL-green)
+&nbsp;&nbsp;![APIs](https://img.shields.io/badge/APIs-D3D11%20%7C%20D3D12%20%7C%20Vulkan%20%7C%20OpenGL%20%7C%20WebGPU-green)
 &nbsp;&nbsp;![License](https://img.shields.io/badge/license-MIT-yellow)
 
-**A C++23 rendering/game engine with four graphics backends, JSON render graphs, glTF/PBR, animation, Jolt physics, Recast/Detour navigation, gameplay simulation, and a built-in scene editor.**
+**A C++23 rendering/game engine with five Windows runtime graphics backends, JSON render graphs, glTF/PBR, animation, Jolt physics, Recast/Detour navigation, gameplay simulation, and a built-in scene editor.**
 
 <img src="T850/Resources/Screens/Sponza1.png" alt="T850 Sponza deferred renderer" width="100%">
 
@@ -17,11 +21,11 @@
 
 ### Rendering
 
-- D3D11, D3D12, OpenGL, and Vulkan peer backends on Windows.
+- D3D11, D3D12, OpenGL, Vulkan, and native Dawn/WebGPU peer DayScene backends on supported Windows targets; T8ditor intentionally remains on the first four.
 - Vulkan runtime on Android and Steam Deck/Linux.
 - JSON-driven render graph with deferred shading and post processing.
 - PBR metallic/roughness materials, IBL, shadows, SSAO, HDR/tone mapping, bloom, depth of field, God Rays, parallax/self-shadowing, lens flare, and vignette.
-- Shader permutations, disk caches, reflection, and D3D12/Vulkan PSO caches.
+- Shader permutations, strict manifest-backed compute kernels, disk caches, reflection, backend pipeline caches, D3D12 ShaderCacheSession/PipelineLibrary persistence, and native Dawn BlobCache persistence.
 - Deterministic render-target/frame dumps and same-API visual regression comparison.
 
 ### Assets and Animation
@@ -37,7 +41,7 @@
 - Jolt static/dynamic/kinematic bodies, triangle mesh cooking/cache, gameplay collision layers, filtered casts/overlap, characters, and ragdolls.
 - Recast NavMesh build/cache/bake, Detour path queries, volumes, area costs, and authored/generated traversal links.
 - Scene-owned fixed-tick gameplay system with stable IDs, components, controllers, movement intents, queued events, state machines, physics/navigation facades, path following, groups/formations/flocking, and RTS/FPS examples.
-- 39 CLI self-tests for schema, validation, lifecycle, events, tick semantics, state machines, physics, mutable meshes, voxel terrain, and navigation fallback.
+- 78 CLI self-tests for schema, validation, lifecycle, events, tick semantics, state machines, physics, render-graph lifetimes, mutable meshes, voxel terrain, navigation cancellation, and fallback behavior.
 
 ### T8ditor
 
@@ -105,7 +109,7 @@ is required. Replaceable Play sessions and full-world transactions remain follow
 
 ## Runtime Hosts
 
-`DayScene.exe` contains six selectable hosts:
+`DayScene.exe` contains seven selectable hosts:
 
 | Index | Host | Typical use |
 |---:|---|---|
@@ -115,6 +119,7 @@ is required. Replaceable Play sessions and full-world transactions remain follow
 | 3 | RagdollEditor | animated model and runtime ragdoll work |
 | 4 | SceneTemplate | authored `.t8scene`, gameplay, physics, navigation |
 | 5 | VoxelScene | generated mutable chunks, grounded FPS, streaming and block edits |
+| 6 | MinecraftScene | authored atlas-backed block world, enemies, voxel navigation/collision and browser demo |
 
 Use `DayScene.exe --help` for the current CLI. See [Runtime hosts](documentation/runtime/runtime-hosts.md) and [Runtime configuration](documentation/development/runtime-configuration.md).
 
@@ -155,7 +160,7 @@ Set-Location T850
 & .\bin\x64\Release\DayScene.exe --game-selftest
 ```
 
-Expected: 39 `PASS` lines and exit code 0.
+Expected: 78 `PASS` lines and exit code 0.
 
 Full deterministic candidate capture and comparison:
 
@@ -227,7 +232,10 @@ Downloads validate size/SHA-256 when present and atomically replace missing/inva
 - Android arm64-v8a and x86_64 Release APKs;
 - Steam Deck SteamRT Release and tarball package.
 
-A `v*` tag creates a GitHub Release containing Windows ZIPs, Android APKs, the Steam Deck tarball, and the compiled launcher.
+A `v*` tag creates a GitHub Release containing Windows ZIPs, Android APKs, the
+Steam Deck tarball, the compiled launcher, and `SHA256SUMS.txt`. Before
+publication, `ValidateReleasePackages.ps1` opens every archive, verifies required
+executables/native libraries/assets, and rejects unsigned tagged APKs.
 
 ## Repository Layout
 

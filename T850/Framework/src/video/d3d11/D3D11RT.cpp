@@ -13,6 +13,7 @@
 
 #include <video/d3d11/D3D11RT.h>
 #include <debug/RenderTrace.h>
+#include <utils/Log.h>
 #include <iostream>
 
 namespace t850 {
@@ -20,6 +21,11 @@ namespace t850 {
   extern DeviceContext*     T8DeviceContext;
 
   bool D3DXRT::LoadAPIRT() {
+    std::string diagnostic;
+    if (!g_pBaseDriver->ValidateRenderTarget(number_RT, color_format, depth_format, w, h, GenMips, perColorFormats, diagnostic)) {
+      T8_LOG_ERROR("%s", diagnostic.c_str());
+      return false;
+    }
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     DXGI_FORMAT cfmt;
@@ -49,6 +55,7 @@ namespace t850 {
     case BaseRT::RGBA32F: {
       cfmt = DXGI_FORMAT_R32G32B32A32_FLOAT;
     }break;
+    default: return false;
     }
 
     switch (this->depth_format) {
@@ -60,7 +67,7 @@ namespace t850 {
     case BaseRT::FD16: {
       depthFormat = DXGI_FORMAT_R16_TYPELESS;
       depthShaderViewFormat = DXGI_FORMAT_D16_UNORM;
-      depthResourceViewFormat = DXGI_FORMAT_R16_FLOAT;
+      depthResourceViewFormat = DXGI_FORMAT_R16_UNORM;
     }break;
     case BaseRT::F32: {
       depthFormat = DXGI_FORMAT_R32_TYPELESS;
@@ -73,6 +80,7 @@ namespace t850 {
       depthResourceViewFormat = DXGI_FORMAT_R32_FLOAT;
       isCubeDepth = true;
     }break;
+    default: return false;
     }
 
 
@@ -93,12 +101,14 @@ namespace t850 {
           case BaseRT::RGBA8:   thisFmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
           case BaseRT::RGBA16F: thisFmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
           case BaseRT::RGBA32F: thisFmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
-          default: break;
+          default: return false;
         }
       }
       desc.Format = thisFmt;
       desc.SampleDesc.Count = 1;
       desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+      if (AllowUnorderedAccess)
+        desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
       desc.Usage = D3D11_USAGE_DEFAULT;
       desc.MipLevels = GenMips ? 0 : 1;
       desc.MiscFlags = GenMips ? D3D11_RESOURCE_MISC_GENERATE_MIPS : 0;
@@ -135,6 +145,17 @@ namespace t850 {
         delete pTextureColor;
         std::cout << "Error creating Shader Resource View index " << i << std::endl;
         exit(444);
+      }
+      if (AllowUnorderedAccess) {
+        D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+        uavDesc.Format = thisFmt;
+        uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+        hr = device->CreateUnorderedAccessView(Tex.Get(), &uavDesc, &pTextureColor->pUAVTex);
+        if (FAILED(hr)) {
+          delete pTextureColor;
+          T8_LOG_ERROR("[D3D11] Failed to create storage UAV for RT color %d hr=0x%08X", i, hr);
+          return false;
+        }
       }
       pTextureColor->x = w;
       pTextureColor->y = h;

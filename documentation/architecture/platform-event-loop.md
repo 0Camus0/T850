@@ -43,7 +43,7 @@ flowchart TD
 
 ## Windows lifecycle
 
-`Win32Framework` is the most flexible platform implementation. It supports D3D11, D3D12, OpenGL, and Vulkan.
+`Win32Framework` is the most flexible platform implementation. DayScene supports D3D11, D3D12, OpenGL, Vulkan, and native Dawn/WebGPU. T8ditor intentionally excludes WebGPU.
 
 ### Creation flow
 
@@ -63,7 +63,7 @@ sequenceDiagram
   FW->>FW: InitializeGamepads()
   FW->>FW: ChangeAPI(desc.api)
   FW->>SDL: SDL_CreateWindow(...)
-  FW->>Driver: new D3D11/D3D12/GL/Vulkan driver
+  FW->>Driver: new D3D11/D3D12/GL/Vulkan/WebGPU driver
   FW->>Driver: InitDriver()
   FW->>FW: RefreshEngineContextFromGlobals()
   FW->>App: CreateAssets()
@@ -131,9 +131,26 @@ flowchart LR
   D3D12 --> ChangeAPI
   GL --> ChangeAPI
   Vulkan --> ChangeAPI
+  WebGPU --> ChangeAPI
   ChangeAPI --> DestroyOld["Destroy old API resources"]
   DestroyOld --> CreateNew["Create new window + driver"]
   CreateNew --> RecreateAssets["AppBase::CreateAssets"]
+```
+
+Confirmed WebGPU device loss follows the same composition boundary. Windows and
+browser hosts end active telemetry/profiler frames, recreate the driver and app
+assets, and validate the next frame. `webgpuDeviceRecoveryAttempts` defaults to
+three consecutive attempts (valid range 1-10); one successful frame resets the
+count and exhaustion shuts down cleanly.
+
+```mermaid
+flowchart LR
+  Failure["Confirmed WebGPU device failure"] --> Budget{"Recovery budget left?"}
+  Budget -->|yes| ChangeAPI["Recreate driver + app assets"]
+  ChangeAPI --> NextFrame["Validate next frame"]
+  NextFrame -->|success| Reset["Reset consecutive count"]
+  NextFrame -->|failure| Budget
+  Budget -->|no| Stop["Clean shutdown + exhausted telemetry"]
 ```
 
 ## Linux / Steam Deck lifecycle
@@ -272,6 +289,28 @@ flowchart TD
 
 Every frame that records scene or ImGui commands must call `CompleteFrame()`. The runtime no longer leaves the first rendered frame open across the next logical update; this keeps command-buffer/fence and ImGui frame-resource rotation aligned on explicit APIs.
 
+#### Scene reload lifetime
+
+`App::LoadScene()` fades out by running updates and submitting frames, then calls
+`FlushGPUResources()` before `OnDestoryScene()`. The flush must follow the fade:
+the last fade frame still references the old scene's buffers and render targets.
+The default flush waits for the GPU; Vulkan also resets command buffers and
+descriptor pools to release their references. Only then may the scene destroy
+its assets, load the replacement, and fade back in.
+
+Without this ordering, DayScene's automatic tour restart released a quad vertex
+buffer while it was still in flight. D3D12 validation reported error 921,
+`OBJECT_DELETED_WHILE_STILL_IN_USE`, and exception `0x87d`; Vulkan reported
+`VK_ERROR_DEVICE_LOST` on subsequent submissions. Transition begin, GPU-drained,
+and completion logs now identify these boundaries.
+
+Validation on Windows x64: Debug and Release D3D12 with `--d3d12debug` each
+completed two automatic tour restarts and clean shutdown with zero validation
+errors. Vulkan Debug confirmed validation layers enabled and passed the same
+two-restart check. D3D11, D3D12, Vulkan, and GL finite startup captures each
+produced 18 render targets and exited successfully without engine errors.
+D3D12 still reports the separate initial-buffer-state warning 1328.
+
 ### Editor application
 
 `EditorApp::OnUpdate()` owns editor timing, input, scene loading, and drawing.
@@ -309,7 +348,7 @@ The editor also has its own `CheckResize()` and hosted viewport/render-target ma
 
 | Platform | API behavior |
 |---|---|
-| Windows | Can select D3D11, D3D12, OpenGL, Vulkan. Runtime scenes also expose API switching hotkeys in some scenes. |
+| Windows | DayScene can select D3D11, D3D12, OpenGL, Vulkan, or WebGPU. T8ditor selects D3D11/D3D12/OpenGL/Vulkan. Runtime scenes also expose API switching hotkeys in some scenes. |
 | Linux/Steam Deck | Vulkan-only. Non-Vulkan requests are forced to Vulkan. |
 | Android | Vulkan-only. Native window controls surface creation/suspend/resume. |
 

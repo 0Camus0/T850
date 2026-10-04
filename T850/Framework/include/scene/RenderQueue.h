@@ -58,9 +58,8 @@ namespace t850 {
     uint64_t        sortKey       = 0;
 
     // ── Shader / PSO ─────────────────────────────────────────────
-    // Final pass-merged ShaderKey. The executor calls
-    // BaseDriver::GetShader(finalKey) once per change. Cached
-    // dense psoId for sort packing arrives in step 3.
+    // Final pass-merged permutation. Program resolution also requires
+    // the renderer's shader family and active flow identity.
     ShaderKey       finalKey;
 
     // ── Geometry (Tier 1 pool refs) ──────────────────────────────
@@ -163,6 +162,7 @@ namespace t850 {
     void Begin();
     void End();
     bool InScope() const { return m_passActive; }
+    void GetFrustumPlanes(const XMATRIX44& viewProjection, XVECTOR3 (&planes)[6]);
 
     // Reset all tracked binds. Called by Begin() and by RenderMesh's
     // private OpenScope() when no pass scope is active.
@@ -204,6 +204,9 @@ namespace t850 {
 
   private:
     bool                 m_passActive   = false;
+    bool                 m_frustumValid = false;
+    XMATRIX44            m_frustumViewProjection;
+    XVECTOR3             m_frustumPlanes[6];
     ShaderBase*          m_lastShader   = nullptr;
     Texture*             m_lastTex[kMaxTrackedSlots] = { nullptr };
     Texture*             m_lastEnv      = nullptr;

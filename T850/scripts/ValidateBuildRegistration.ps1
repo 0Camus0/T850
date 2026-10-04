@@ -132,6 +132,22 @@ foreach ($source in Get-ChildItem $editorRoot -Filter "*.cpp") {
 Require-Entry $editorSources 'include\t8ditor\EditorHost.h' "EditorSources.props"
 Require-Entry $editorFilters 'include\t8ditor\EditorHost.h' "T8ditorCore.vcxproj.filters"
 
+$workflowPath = Join-Path (Split-Path -Parent $SourceRoot) '.github\workflows\build.yml'
+$workflow = Get-Content $workflowPath -Raw
+foreach ($entry in @(
+    'T850/scripts/PackageWebRelease.ps1',
+    'T850/scripts/ValidateWebReleasePackage.ps1',
+    'T850-Web-Package',
+    'T850-Web-Release.zip'
+)) {
+    Require-Entry $workflow $entry '.github/workflows/build.yml'
+}
+foreach ($script in @('PackageWebRelease.ps1', 'ValidateWebReleasePackage.ps1')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot "scripts\$script") -PathType Leaf)) {
+        $errors.Add("scripts/$script is missing")
+    }
+}
+
 if ($errors.Count -gt 0) {
     $errors | ForEach-Object { Write-Error $_ }
     exit 1
@@ -143,3 +159,4 @@ Write-Host "  Framework headers: $($frameworkHeaders.Count)" -ForegroundColor Gr
 Write-Host "  DayScene: VoxelScene.cpp/.h, MinecraftScene.cpp/.h" -ForegroundColor Green
 Write-Host "  FrameworkImGui: RagdollEditorGui.cpp" -ForegroundColor Green
 Write-Host "  T8ditor shared scenes: RagdollEditor, Quake3Mock, SceneTemplate" -ForegroundColor Green
+Write-Host "  Browser release: cloud-backed Emscripten package registered" -ForegroundColor Green

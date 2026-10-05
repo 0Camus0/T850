@@ -113,6 +113,11 @@ if (-not (Test-Path (Join-Path $buildRoot 'WebShaders\*.json'))) {
 Assert-CommandSucceeded 'Browser configure'
 & $CMake --build $buildRoot --target DayScene T850WebSelfTests --parallel 4
 Assert-CommandSucceeded 'Browser build'
+$siteRoot = Join-Path $buildRoot 'site'
+foreach ($name in @('launcher.html', 'launcher.mjs')) {
+    Copy-Item (Join-Path $sourceRoot "web\$name") -Destination $siteRoot -Force
+}
+Copy-Item (Join-Path $sourceRoot 'web\previews') -Destination (Join-Path $siteRoot 'previews') -Recurse -Force
 $cmakePath = (Get-Command $CMake).Source
 $ctest = Join-Path (Split-Path -Parent $cmakePath) 'ctest.exe'
 & $ctest --test-dir $buildRoot -R '^T850WebSelfTests$' --output-on-failure

@@ -18,6 +18,7 @@ const { values } = parseArgs({ options: {
   shaders: { type: 'string', default: join(bundleRoot, 'WebShaders') },
   'cloud-routes': { type: 'string', default: existsSync(join(bundleRoot, 'CloudAssets/routes.json')) ? join(bundleRoot, 'CloudAssets/routes.json') : '' },
   open: { type: 'boolean', default: false },
+  launcher: { type: 'boolean', default: false },
   browser: { type: 'string' },
   query: { type: 'string', default: '' },
 } });
@@ -47,7 +48,8 @@ function openBrowser(url) {
   });
 }
 function launchUrl() {
-  const url = new URL(`http://127.0.0.1:${port}/`);
+  const entry = values.launcher ? 'launcher.html' : '';
+  const url = new URL(`http://127.0.0.1:${port}/${entry}`);
   url.search = new URLSearchParams(values.query).toString();
   return url.href;
 }
@@ -71,7 +73,7 @@ const assetIndex = JSON.stringify([...new Set([...assets.keys(), ...cloudAssets.
 const cloudIdentity = JSON.stringify([...cloudAssets]);
 const identity = createHash('sha256').update(JSON.stringify([values.site, values.assets, values.shaders, values['cloud-routes']].map(path => path ? resolve(path) : '')) + assetIndex + cloudIdentity + servedRuntime).digest('hex');
 const mime = new Map([
-  ['.html', 'text/html; charset=utf-8'], ['.js', 'text/javascript'],
+  ['.html', 'text/html; charset=utf-8'], ['.js', 'text/javascript'], ['.mjs', 'text/javascript'],
   ['.wasm', 'application/wasm'], ['.json', 'application/json'],
   ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.css', 'text/css'],
   ['.svg', 'image/svg+xml'],

@@ -685,6 +685,11 @@ jobs:
           $releaseDir = "release-assets"
           New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
           $assets = "T850/Assets"
+          $webPackages = @(Get-ChildItem -Path artifacts -Recurse -Filter "T850-Web-Release.zip")
+          if ($webPackages.Count -ne 1) { throw "Expected exactly one WebAssembly release package, found $($webPackages.Count)." }
+          $webStaging = "staging/T850-Web-Release"
+          Expand-Archive -LiteralPath $webPackages[0].FullName -DestinationPath $webStaging -Force
+          if (-not (Test-Path "$webStaging/web/server.mjs")) { throw 'WebAssembly release package has no portable server.' }
           foreach ($dir in Get-ChildItem -Path artifacts -Directory | Where-Object { $_.Name -match '^T850-(Win32|x64|ARM64)-Release$' }) {
             $name = $dir.Name
             $staging = "staging/$name"
@@ -695,6 +700,10 @@ jobs:
 
             # Copy launcher
             Copy-Item "T850/T850Launcher.exe" -Destination $staging
+
+            # Include the architecture-neutral browser package so the release
+            # launcher can open Browser WebGPU without combining archives.
+            Copy-Item "$webStaging/web" -Destination "$staging/web" -Recurse
 
             # Copy lightweight tracked assets. Heavy model/texture payloads are
             # downloaded by the launcher from the cloud manifests.
@@ -729,8 +738,6 @@ jobs:
             Copy-Item $steamDeckPackage.FullName -Destination (Join-Path $releaseDir $steamDeckPackage.Name) -Force
           }
 
-          $webPackages = @(Get-ChildItem -Path artifacts -Recurse -Filter "T850-Web-Release.zip")
-          if ($webPackages.Count -ne 1) { throw "Expected exactly one WebAssembly release package, found $($webPackages.Count)." }
           Copy-Item $webPackages[0].FullName -Destination (Join-Path $releaseDir $webPackages[0].Name) -Force
 
       - name: Validate assembled release packages

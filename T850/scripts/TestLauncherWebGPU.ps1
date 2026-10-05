@@ -104,8 +104,11 @@ function Test-Launcher([string]$Name) {
         }
         $cmbApi.SelectedItem.Tag = 'webgpu-browser'
         Assert-Rejected { Get-LaunchCommand } 'Missing browser build accepted'
-        foreach ($directory in @('web', 'build/web/site', 'build/web/WebShaders', 'Assets')) { [void][IO.Directory]::CreateDirectory((Join-Path $rootDir $directory)) }
-        foreach ($file in @('web/server.mjs', 'build/web/site/DayScene.html', 'build/web/site/DayScene.js', 'build/web/site/DayScene.wasm', 'build/web/site/scenes.json')) { [IO.File]::WriteAllText((Join-Path $rootDir $file), '') }
+        foreach ($directory in @('web', 'build/web/site', 'build/web/WebShaders', 'build/web/CloudAssets', 'Assets')) { [void][IO.Directory]::CreateDirectory((Join-Path $rootDir $directory)) }
+        foreach ($file in @('web/server.mjs', 'web/cloud-assets.mjs', 'web/cloudflare-config.mjs',
+            'build/web/site/DayScene.html', 'build/web/site/DayScene.js', 'build/web/site/DayScene.wasm',
+            'build/web/site/launcher.html', 'build/web/site/launcher.mjs', 'build/web/site/scenes.json',
+            'build/web/CloudAssets/routes.json')) { [IO.File]::WriteAllText((Join-Path $rootDir $file), '') }
         $browserCommand = Get-LaunchCommand
         Assert-True ($browserCommand.ExePath -match 'node(\.exe)?$' -and $browserCommand.Args -contains '--open') 'Browser mode did not launch the HTTP server with Node'
         Assert-True ($browserCommand.Display -match 'scene=4' -and $browserCommand.Display -match 'sceneFile=Scenes%2FTest.t8scene') 'Browser mode lost the selected scene/document'
@@ -494,8 +497,11 @@ function Test-LauncherUi([string]$Name) {
         Set-Api 'webgpu-browser'
         Update-Preview
         Assert-True (-not $btnRun.IsEnabled -and $txtStatus.Text -match 'Browser (build|bundle) missing') 'Missing browser runtime did not disable RUN'
-        foreach ($directory in @('web', 'web/site', 'web/WebShaders', 'web/assets', 'build/web/site', 'build/web/WebShaders', 'Assets')) { [void][IO.Directory]::CreateDirectory((Join-Path $rootDir $directory)) }
-        foreach ($file in @('web/server.mjs', 'web/site/DayScene.html', 'web/site/DayScene.js', 'web/site/DayScene.wasm', 'web/site/scenes.json', 'build/web/site/DayScene.html', 'build/web/site/DayScene.js', 'build/web/site/DayScene.wasm', 'build/web/site/scenes.json')) { [IO.File]::WriteAllText((Join-Path $rootDir $file), '') }
+        foreach ($directory in @('web', 'web/site', 'web/WebShaders', 'web/CloudAssets', 'web/assets', 'build/web/site', 'build/web/WebShaders', 'Assets')) { [void][IO.Directory]::CreateDirectory((Join-Path $rootDir $directory)) }
+        foreach ($file in @('web/server.mjs', 'web/cloud-assets.mjs', 'web/cloudflare-config.mjs',
+            'web/site/DayScene.html', 'web/site/DayScene.js', 'web/site/DayScene.wasm',
+            'web/site/launcher.html', 'web/site/launcher.mjs', 'web/site/scenes.json', 'web/CloudAssets/routes.json',
+            'build/web/site/DayScene.html', 'build/web/site/DayScene.js', 'build/web/site/DayScene.wasm', 'build/web/site/scenes.json')) { [IO.File]::WriteAllText((Join-Path $rootDir $file), '') }
         Update-Preview
         Assert-True ($btnRun.IsEnabled -and $btnRun.Content -eq 'OPEN BROWSER') 'Browser RUN is unavailable with a prepared build'
         Assert-True ($pnlBrowser.Visibility -eq 'Visible' -and $cmbBrowser.IsEnabled) 'Browser selector is unavailable in Emscripten mode'
@@ -509,6 +515,11 @@ function Test-LauncherUi([string]$Name) {
         Assert-True ($pnlShaderFlow.Visibility -eq 'Collapsed' -and -not $cmbShaderFlow.IsEnabled) 'Native shader flow is exposed for the browser'
         foreach ($controlName in @('chkDump', 'chkTelemetry', 'chkReplaySnapshot', 'chkFullscreen', 'chkBenchmark')) { Assert-True (-not $window.FindName($controlName).IsEnabled) "Browser mode left $controlName enabled" }
         Assert-True ($txtCmdPreview.Text -match '--open' -and $txtCmdPreview.Text -notmatch 'DayScene.exe|--telemetry|--profile') 'Browser command invoked the native runtime or profiling'
+        if ($Name -eq 'Launcher_Release.ps1') {
+            Assert-True ($txtCmdPreview.Text -match '--launcher') 'Release launcher did not open the lightweight browser scene launcher'
+        } else {
+            Assert-True ($txtCmdPreview.Text -notmatch '--launcher') 'Development launcher unexpectedly bypassed its selected scene'
+        }
         Save-Config
         Assert-True ((Get-Content $configPath -Raw | ConvertFrom-Json).webBrowser -eq (Join-Path $temporary 'Chrome & Test.exe')) 'Selected browser was not persisted'
         $cmbBrowser.SelectedIndex = 0

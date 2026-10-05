@@ -53,7 +53,14 @@ foreach ($package in $windowsPackages) {
         '(^|/)T8ditor\.exe$',
         '(^|/)T850Launcher\.exe$',
         '(^|/)Shaders/.+',
-        '(^|/)Scenes/.+'
+        '(^|/)Scenes/.+',
+        '(^|/)web/server\.mjs$',
+        '(^|/)web/cloud-assets\.mjs$',
+        '(^|/)web/site/DayScene\.wasm$',
+        '(^|/)web/site/launcher\.html$',
+        '(^|/)web/WebShaders/.+\.json$',
+        '(^|/)web/CloudAssets/routes\.json$',
+        '(^|/)web/assets/Scenes/.+'
     )
 }
 

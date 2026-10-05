@@ -349,6 +349,8 @@ jobs:
             'T850/build/web/site/DayScene.html',
             'T850/build/web/site/DayScene.js',
             'T850/build/web/site/DayScene.wasm',
+            'T850/build/web/site/launcher.html',
+            'T850/build/web/site/launcher.mjs',
             'T850/build/web/site/scenes.json',
             'T850/build/web/CloudAssets/routes.json'
           )) {
@@ -358,7 +360,8 @@ jobs:
             throw 'Downloaded browser artifact contains no prepared shader packages.'
           }
           $payloads = @(Get-ChildItem 'T850/build/web/site', 'T850/build/web/WebShaders', 'T850/build/web/CloudAssets' -Recurse -File |
-            Where-Object Extension -In @('.glb', '.gltf', '.bin', '.dds', '.png', '.jpg', '.jpeg', '.t8ibl', '.zip'))
+            Where-Object Extension -In @('.glb', '.gltf', '.bin', '.dds', '.png', '.jpg', '.jpeg', '.t8ibl', '.zip') |
+            Where-Object FullName -NotLike '*\site\previews\*.png')
           if ($payloads.Count) {
             throw "Cloud browser artifact unexpectedly contains asset payloads: $($payloads.FullName -join ', ')"
           }

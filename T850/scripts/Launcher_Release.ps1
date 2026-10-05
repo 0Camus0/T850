@@ -1223,8 +1223,11 @@ function Get-BrowserLaunchCommand {
     $server = Join-Path $browserRoot 'web\server.mjs'
     $bundle = if (Test-Path (Join-Path $browserRoot 'web\site\DayScene.html')) { 'web' } else { 'build\web' }
     $assets = if (Test-Path (Join-Path $browserRoot 'web\assets')) { 'web\assets' } else { 'Assets' }
-    foreach ($file in @('web\server.mjs', "$bundle\site\DayScene.html", "$bundle\site\DayScene.js", "$bundle\site\DayScene.wasm", "$bundle\site\scenes.json", "$bundle\WebShaders", $assets)) {
-        if (-not (Test-Path (Join-Path $browserRoot $file))) { throw "Browser bundle missing. Install web\server.mjs, web\site, web\WebShaders and web\assets beside the launcher." }
+    foreach ($file in @('web\server.mjs', 'web\cloud-assets.mjs', 'web\cloudflare-config.mjs',
+        "$bundle\site\DayScene.html", "$bundle\site\DayScene.js", "$bundle\site\DayScene.wasm",
+        "$bundle\site\launcher.html", "$bundle\site\launcher.mjs", "$bundle\site\scenes.json",
+        "$bundle\WebShaders", "$bundle\CloudAssets\routes.json", $assets)) {
+        if (-not (Test-Path (Join-Path $browserRoot $file))) { throw "Browser bundle missing. Install the complete cloud-backed web package beside the launcher." }
     }
     $node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $node) { throw "Browser launch requires Node.js on PATH." }
@@ -1238,7 +1241,7 @@ function Get-BrowserLaunchCommand {
         $parameters.model = $cmbModel.SelectedItem.Tag.ToString()
     }
     $query = ($parameters.GetEnumerator() | ForEach-Object { [uri]::EscapeDataString($_.Key) + '=' + [uri]::EscapeDataString([string]$_.Value) }) -join '&'
-    $arguments = @(('"{0}"' -f $server), '--open', '--query', ('"{0}"' -f $query))
+    $arguments = @(('"{0}"' -f $server), '--open', '--launcher', '--query', ('"{0}"' -f $query))
     $browserPath = [string]$cmbBrowser.SelectedItem.Tag
     if ($browserPath) {
         if (-not (Test-Path -LiteralPath $browserPath -PathType Leaf)) { throw "Selected browser is no longer installed: $browserPath" }

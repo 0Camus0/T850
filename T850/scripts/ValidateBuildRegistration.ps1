@@ -142,6 +142,11 @@ foreach ($entry in @(
 )) {
     Require-Entry $workflow $entry '.github/workflows/build.yml'
 }
+Require-Entry $workflow 'Copy-Item "$webStaging/web" -Destination "$staging/web" -Recurse' '.github/workflows/build.yml'
+$releaseLauncher = Get-Content (Join-Path $SourceRoot 'scripts\Launcher_Release.ps1') -Raw
+foreach ($entry in @("'--launcher'", 'CloudAssets\routes.json', 'site\launcher.html')) {
+    Require-Entry $releaseLauncher $entry 'scripts/Launcher_Release.ps1'
+}
 foreach ($script in @('PackageWebRelease.ps1', 'ValidateWebReleasePackage.ps1')) {
     if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot "scripts\$script") -PathType Leaf)) {
         $errors.Add("scripts/$script is missing")
@@ -160,3 +165,4 @@ Write-Host "  DayScene: VoxelScene.cpp/.h, MinecraftScene.cpp/.h" -ForegroundCol
 Write-Host "  FrameworkImGui: RagdollEditorGui.cpp" -ForegroundColor Green
 Write-Host "  T8ditor shared scenes: RagdollEditor, Quake3Mock, SceneTemplate" -ForegroundColor Green
 Write-Host "  Browser release: cloud-backed Emscripten package registered" -ForegroundColor Green
+Write-Host "  Release launcher: embedded web package and lightweight launcher registered" -ForegroundColor Green

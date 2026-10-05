@@ -70,6 +70,13 @@ ready and launch a scene while heavy resources are served through `/assets/*`.
 The aggregate tagged-release gate revalidates this ZIP before generating
 `SHA256SUMS.txt` and publishing any release assets.
 
+The same gate requires every Windows release ZIP to contain the validated
+`web/` runtime. Exercise `Launcher_Release.ps1` through
+`TestLauncherWebGPU.ps1 -Ui` and require Browser WebGPU to produce a Node command
+containing `--launcher`. For an assembled-package smoke test, extract a Windows
+ZIP, run `node web/server.mjs --launcher`, and require `/launcher.html`, its ES
+module, COOP/COEP headers and `/assets/index.json` to load successfully.
+
 ## Gameplay Self-Tests
 
 Build x64, then run the matching executable:

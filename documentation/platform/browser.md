@@ -118,6 +118,15 @@ runtime, launcher, prepared shaders, cloud catalog, URL safety, metadata budget
 and absence of heavyweight payload formats. Pull-request CI runs both scripts;
 tagged releases publish the already-validated ZIP without rebuilding it.
 
+Tagged releases also expand that validated package into every Win32, x64 and
+ARM64 Windows ZIP. Consequently, the included `T850Launcher.exe` can select
+**WebGPU + Browser (Emscripten)** and open the lightweight scene launcher without
+manually combining the Windows and web downloads. The release launcher requires
+the server, cloud parser/config module, launcher page/module, prepared shaders,
+cloud route catalog and tracked metadata before enabling **OPEN BROWSER**. It
+starts `web/server.mjs --open --launcher`, while the standalone web ZIP retains
+its `Start-T850-Web` scripts for users who do not need native Windows binaries.
+
 ### Stale Browser Builds
 
 OPEN BROWSER launches the last completed Emscripten build; building native

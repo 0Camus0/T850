@@ -269,6 +269,13 @@ jobs:
         run: |
           & T850/scripts/BuildWeb.ps1 -EmSdkRoot (Join-Path $env:RUNNER_TEMP 'emsdk') -Configuration Release -AssetMode Cloud -Clean
 
+      - name: Package cloud-backed WebAssembly release
+        if: matrix.platform == 'x64' && matrix.configuration == 'Release'
+        shell: pwsh
+        run: |
+          & T850/scripts/PackageWebRelease.ps1 -OutputPath T850/artifacts/web/T850-Web-Release.zip
+          & T850/scripts/ValidateWebReleasePackage.ps1 -Archive T850/artifacts/web/T850-Web-Release.zip
+
       - name: Upload WebAssembly bundle
         if: matrix.platform == 'x64' && matrix.configuration == 'Release'
         uses: actions/upload-artifact@v4
@@ -278,6 +285,14 @@ jobs:
             T850/build/web/site
             T850/build/web/WebShaders
             T850/build/web/CloudAssets
+          if-no-files-found: error
+
+      - name: Upload WebAssembly release package
+        if: matrix.platform == 'x64' && matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: T850-Web-Package
+          path: T850/artifacts/web/T850-Web-Release.zip
           if-no-files-found: error
 
       - name: Upload build artifacts
@@ -334,6 +349,8 @@ jobs:
             'T850/build/web/site/DayScene.html',
             'T850/build/web/site/DayScene.js',
             'T850/build/web/site/DayScene.wasm',
+            'T850/build/web/site/launcher.html',
+            'T850/build/web/site/launcher.mjs',
             'T850/build/web/site/scenes.json',
             'T850/build/web/CloudAssets/routes.json'
           )) {
@@ -343,7 +360,8 @@ jobs:
             throw 'Downloaded browser artifact contains no prepared shader packages.'
           }
           $payloads = @(Get-ChildItem 'T850/build/web/site', 'T850/build/web/WebShaders', 'T850/build/web/CloudAssets' -Recurse -File |
-            Where-Object Extension -In @('.glb', '.gltf', '.bin', '.dds', '.png', '.jpg', '.jpeg', '.t8ibl', '.zip'))
+            Where-Object Extension -In @('.glb', '.gltf', '.bin', '.dds', '.png', '.jpg', '.jpeg', '.t8ibl', '.zip') |
+            Where-Object FullName -NotLike '*\site\previews\*.png')
           if ($payloads.Count) {
             throw "Cloud browser artifact unexpectedly contains asset payloads: $($payloads.FullName -join ', ')"
           }
@@ -670,7 +688,12 @@ jobs:
           $releaseDir = "release-assets"
           New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
           $assets = "T850/Assets"
-          foreach ($dir in Get-ChildItem -Path artifacts -Directory | Where-Object { $_.Name -notlike "T850-Android-*" -and $_.Name -notlike "T850-Web-*-Edge-Report" -and $_.Name -notin @("T850-Web-Release", "T850-SteamDeck-Release") }) {
+          $webPackages = @(Get-ChildItem -Path artifacts -Recurse -Filter "T850-Web-Release.zip")
+          if ($webPackages.Count -ne 1) { throw "Expected exactly one WebAssembly release package, found $($webPackages.Count)." }
+          $webStaging = "staging/T850-Web-Release"
+          Expand-Archive -LiteralPath $webPackages[0].FullName -DestinationPath $webStaging -Force
+          if (-not (Test-Path "$webStaging/web/server.mjs")) { throw 'WebAssembly release package has no portable server.' }
+          foreach ($dir in Get-ChildItem -Path artifacts -Directory | Where-Object { $_.Name -match '^T850-(Win32|x64|ARM64)-Release$' }) {
             $name = $dir.Name
             $staging = "staging/$name"
             New-Item -ItemType Directory -Path $staging -Force | Out-Null
@@ -680,6 +703,10 @@ jobs:
 
             # Copy launcher
             Copy-Item "T850/T850Launcher.exe" -Destination $staging
+
+            # Include the architecture-neutral browser package so the release
+            # launcher can open Browser WebGPU without combining archives.
+            Copy-Item "$webStaging/web" -Destination "$staging/web" -Recurse
 
             # Copy lightweight tracked assets. Heavy model/texture payloads are
             # downloaded by the launcher from the cloud manifests.
@@ -713,6 +740,8 @@ jobs:
           foreach ($steamDeckPackage in Get-ChildItem -Path artifacts -Recurse -Filter "T850-SteamDeck-*.tar.gz") {
             Copy-Item $steamDeckPackage.FullName -Destination (Join-Path $releaseDir $steamDeckPackage.Name) -Force
           }
+
+          Copy-Item $webPackages[0].FullName -Destination (Join-Path $releaseDir $webPackages[0].Name) -Force
 
       - name: Validate assembled release packages
         shell: pwsh

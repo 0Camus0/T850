@@ -35,10 +35,15 @@ function Test-ZipEntries {
     }
 }
 
-$windowsPackages = @(Get-ChildItem -LiteralPath $releaseRoot -File -Filter '*.zip')
+$allZipPackages = @(Get-ChildItem -LiteralPath $releaseRoot -File -Filter '*.zip')
+$windowsPackages = @($allZipPackages | Where-Object Name -Match '^T850-(Win32|x64|ARM64)-Release\.zip$')
+$webPackages = @($allZipPackages | Where-Object Name -EQ 'T850-Web-Release.zip')
+$unknownZipPackages = @($allZipPackages | Where-Object { $_ -notin $windowsPackages -and $_ -notin $webPackages })
 $androidPackages = @(Get-ChildItem -LiteralPath $releaseRoot -File -Filter '*.apk')
 $steamPackages = @(Get-ChildItem -LiteralPath $releaseRoot -File -Filter 'T850-SteamDeck-*.tar.gz')
 if (-not $windowsPackages.Count) { throw 'No Windows release ZIPs were found.' }
+if ($webPackages.Count -ne 1) { throw "Expected one WebAssembly release ZIP, found $($webPackages.Count)." }
+if ($unknownZipPackages.Count) { throw "Unknown release ZIPs were found: $($unknownZipPackages.Name -join ', ')" }
 if (-not $androidPackages.Count) { throw 'No Android release APKs were found.' }
 if (-not $steamPackages.Count) { throw 'No Steam Deck release tarball was found.' }
 
@@ -48,9 +53,18 @@ foreach ($package in $windowsPackages) {
         '(^|/)T8ditor\.exe$',
         '(^|/)T850Launcher\.exe$',
         '(^|/)Shaders/.+',
-        '(^|/)Scenes/.+'
+        '(^|/)Scenes/.+',
+        '(^|/)web/server\.mjs$',
+        '(^|/)web/cloud-assets\.mjs$',
+        '(^|/)web/site/DayScene\.wasm$',
+        '(^|/)web/site/launcher\.html$',
+        '(^|/)web/WebShaders/.+\.json$',
+        '(^|/)web/CloudAssets/routes\.json$',
+        '(^|/)web/assets/Scenes/.+'
     )
 }
+
+& (Join-Path $PSScriptRoot 'ValidateWebReleasePackage.ps1') -Archive $webPackages[0].FullName
 
 foreach ($package in $androidPackages) {
     if ($RequireSignedAndroid -and $package.Name -match '-unsigned\.apk$') {
@@ -95,4 +109,4 @@ $checksums = foreach ($package in Get-ChildItem -LiteralPath $releaseRoot -File 
 }
 [IO.File]::WriteAllLines((Join-Path $releaseRoot 'SHA256SUMS.txt'), $checksums)
 
-Write-Host "Release package validation PASS: $($windowsPackages.Count) Windows, $($androidPackages.Count) Android, $($steamPackages.Count) Steam Deck"
+Write-Host "Release package validation PASS: $($windowsPackages.Count) Windows, $($webPackages.Count) WebAssembly, $($androidPackages.Count) Android, $($steamPackages.Count) Steam Deck"

@@ -13,7 +13,7 @@ test('browser launch isolates ports, reuses matching servers and preserves URL d
   const blocker = createServer((request, response) => response.end('{}'));
   try {
     for (const directory of ['site', 'assets', 'shaders']) await mkdir(join(root, directory));
-    for (const file of ['DayScene.html', 'DayScene.js', 'DayScene.wasm', 'scenes.json']) await writeFile(join(root, 'site', file), 'test');
+    for (const file of ['DayScene.html', 'DayScene.js', 'DayScene.wasm', 'launcher.html', 'launcher.mjs', 'scenes.json']) await writeFile(join(root, 'site', file), 'test');
     await writeFile(join(root, 'site', 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
     await writeFile(join(root, 'assets', 'model with spaces.glb'), 'asset');
     await writeFile(join(root, 'shaders', 'test.json'), '{"version":1}');
@@ -27,8 +27,8 @@ test('browser launch isolates ports, reuses matching servers and preserves URL d
     const query = new URLSearchParams({ scene: '4', sceneFile: 'Scenes/Test & map.t8scene' }).toString();
     const args = ['--site', join(root, 'site'), '--assets', join(root, 'assets'), '--shaders', join(root, 'shaders'),
       '--cloud-routes', cloudRoutes, '--port', String(port), '--open', '--query', query];
-    const launch = browser => {
-      const launchArgs = browser ? [...args, '--browser', browser] : args;
+    const launch = (browser, launcher = false) => {
+      const launchArgs = [...args, ...(launcher ? ['--launcher'] : []), ...(browser ? ['--browser', browser] : [])];
       const wrapper = `import childProcess from 'node:child_process';
       import { syncBuiltinESMExports } from 'node:module';
       childProcess.execFile = (file, args, done) => { console.log('OPEN ' + JSON.stringify({ file, args })); done(null); };
@@ -71,6 +71,11 @@ test('browser launch isolates ports, reuses matching servers and preserves URL d
     assert.match(reused.output, /Reusing T850/);
     assert.equal(reused.command.file, process.execPath);
     assert.deepEqual(reused.command.args, [reused.url.href]);
+    const launcher = await launch(process.execPath, true);
+    assert.equal(launcher.url.port, first.url.port);
+    assert.equal(launcher.url.pathname, '/launcher.html');
+    assert.equal(await fetch(launcher.url).then(result => result.text()), 'test');
+    assert.equal((await fetch(new URL('launcher.mjs', launcher.url))).headers.get('content-type'), 'text/javascript');
     await writeFile(join(root, 'assets', 'model with spaces.glb'), 'fresh');
     await writeFile(join(root, 'shaders', 'test.json'), '{"version":2}');
     const updated = await launch(process.execPath);

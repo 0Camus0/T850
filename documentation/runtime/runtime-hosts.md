@@ -50,8 +50,8 @@ From `bin/x64/Release`:
 # Day demo
 .\DayScene.exe --api d3d12 --scene 1
 
-# Quake3Mock
-.\DayScene.exe --api gl --scene 2 --model Models/DamagedHelmet.glb
+# Quake3Mock authored q3dm6 scene
+.\DayScene.exe --api gl --scene 2 --sceneFile Scenes/Q3/q3dm6_mod_3.t8scene
 
 # Ragdoll runtime
 .\DayScene.exe --api d3d11 --scene 3 --model Models/Tyrant.glb
@@ -121,7 +121,7 @@ player. This avoids forcing an overview/RTS camera through FPS gravity.
 |---|---|
 | `sandbox` | Sandbox + DamageHelmet + fixed orbit yaw |
 | `day` | DayScene |
-| `quake3` | Quake3Mock + DamageHelmet |
+| `quake3` | Quake3Mock + authored q3dm6 scene |
 | `ragdoll-editor` | RagdollEditor + Tyrant |
 | `scene-template-q3-jolt` | SceneTemplate + Q3 Jolt scene |
 | `scene-template-q3` | SceneTemplate + Q3 non-Jolt scene |

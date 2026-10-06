@@ -3,6 +3,11 @@
 Status: engine wrap-up update on 2026-09-26. Historical evidence sections retain
 their original dates and validate only the revisions named in those sections.
 
+Release follow-up on 2026-10-06 adds a validated cloud-backed Emscripten/WebGPU
+ZIP with the seven-scene launcher, prepared shaders and lightweight tracked
+metadata. Tagged releases publish it standalone and embed the same `web/` tree
+in each Windows ZIP so `T850Launcher.exe` can open Browser WebGPU directly.
+
 This is the single source of truth for implementation maturity, verified gates, known limits, and remaining engineering work. Subsystem documents own behavior and commands; Git history preserves completed plans and superseded reviews.
 
 ## Engine Status
@@ -13,9 +18,11 @@ deterministic initialization for declared history targets, graph-owned pre-pass
 bone uploads, configurable bounded WebGPU recovery, a strict manifest-backed
 compute registry, authored three-dimensional dispatch depth, render-thread
 cache assertions and assembled release-package validation. The x64 Release
-suite passes 78/78 checks; Win32/x64/ARM64 Release, Web/Wasm and Android arm64
-Release builds pass. D3D11, D3D12, Vulkan, OpenGL and WebGPU compute self-tests
-pass. Physical Android and Steam Deck runtime execution remains a hardware gate.
+suite passes 78/78 checks; Win32/x64/ARM64 Release, Web/Wasm, Android arm64/x86_64
+Release and SteamRT runtime/editor builds pass. D3D11, D3D12, Vulkan, OpenGL and
+WebGPU compute self-tests pass. A physical Steam Deck completed the official
+SteamRT Release build and 78/78 wrapper self-tests on 2026-09-28. Physical Android
+install/graphics execution and equipped-device performance remain hardware gates.
 
 Historical editor-build slice (2026-09-09): [T8ditorCore/static extensions](editor/editor-sdk.md)
 now supports an external host, panels/commands, component inspectors/validators,
@@ -179,8 +186,8 @@ The generic `VoxelScene` remains a generated finite streamed terrain reference. 
 
 - Windows primary toolchain: Visual Studio 2022/MSBuild/v143.
 - Android and Steam Deck: CMake through platform wrappers.
-- GitHub Actions: registration gate; Windows Win32/x64/ARM64 Debug+Release; Android arm64-v8a/x86_64; SteamRT; tagged-release packaging.
-- `v*` tags package Windows ZIPs, Android APKs, Steam Deck tarball, and launcher into a GitHub Release.
+- GitHub Actions: registration gate; Windows Win32/x64/ARM64 Debug+Release; Android arm64-v8a/x86_64; SteamRT; cloud-backed Emscripten/WebGPU; native x64/ARM64 Edge tests; tagged-release packaging.
+- `v*` tags package Windows ZIPs, signed Android APKs, Steam Deck tarball, standalone browser ZIP, launcher and checksums into a GitHub Release. Windows ZIPs embed the validated browser runtime.
 
 Use:
 

@@ -135,7 +135,7 @@ At default five seconds, the timed dump occurs at deterministic frame 300. This 
 |---|---|---|
 | `sandbox` | Sandbox + `DamagedHelmet.glb` + fixed orbit yaw | four APIs |
 | `day` | DayScene | four APIs |
-| `quake3` | Quake3Mock + static DamageHelmet | four APIs |
+| `quake3` | Quake3Mock + authored q3dm6 scene | four APIs |
 | `ragdoll-editor` | RagdollEditor + Tyrant | four APIs |
 | `scene-template-q3-jolt` | SceneTemplate + Q3 Jolt `.t8scene` | Vulkan requires >=4 GiB VRAM |
 | `scene-template-q3` | SceneTemplate + non-Jolt Q3 `.t8scene` | Vulkan requires >=4 GiB VRAM |

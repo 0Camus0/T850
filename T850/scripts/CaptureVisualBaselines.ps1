@@ -84,9 +84,9 @@ $caseDefinitions = @(
     [pscustomobject]@{
         Id = "quake3"
         Scene = 2
-        ExtraArgs = @("--model", $modelDamagedHelmet)
-        RequiredAssets = @($modelDamagedHelmet)
-        Note = "Quake3Mock with the static DamagedHelmet; animated coverage is provided by RagdollEditor."
+        ExtraArgs = @("--sceneFile", "Scenes/Q3/q3dm6_mod_3.t8scene")
+        RequiredAssets = @("Scenes/Q3/q3dm6_mod_3.t8scene", "Models/Q3/q3dm6.glb", $modelDoomSlayer)
+        Note = "Quake3Mock with the authored q3dm6 scene."
     },
     [pscustomobject]@{
         Id = "ragdoll-editor"

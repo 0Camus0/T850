@@ -142,7 +142,7 @@ Deterministic D3D12 captures from the seven current runtime hosts at 1280x720:
   </tr>
   <tr>
     <td width="50%"><img src="T850/Resources/Screens/Scenes/Quake3Mock.png" alt="Quake3Mock authored q3dm6 scene"><br><b>2 · Quake3Mock</b> — authored q3dm6 scene with Q3 runtime behavior.</td>
-    <td width="50%"><img src="T850/Resources/Screens/Scenes/RagdollEditor.png" alt="RagdollEditor animated Tyrant"><br><b>3 · RagdollEditor</b> — skinned animation and runtime ragdoll tooling.</td>
+    <td width="50%"><img src="T850/Resources/Screens/Scenes/RagdollEditor.png" alt="RagdollEditor animated Doom Slayer"><br><b>3 · RagdollEditor</b> — skinned animation and runtime ragdoll tooling.</td>
   </tr>
   <tr>
     <td width="50%"><img src="T850/Resources/Screens/Scenes/SceneTemplate.png" alt="SceneTemplate authored Q3 Jolt scene"><br><b>4 · SceneTemplate</b> — authored scene runtime, Jolt, navigation and gameplay.</td>

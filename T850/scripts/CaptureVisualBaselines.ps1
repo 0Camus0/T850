@@ -63,7 +63,6 @@ if ($PermutationOutput) {
 }
 
 $modelDamagedHelmet = "Models/DamagedHelmet.glb"
-$modelAnimated = "Models/Tyrant.glb"
 $modelDoomSlayer = "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb"
 
 $caseDefinitions = @(
@@ -79,6 +78,7 @@ $caseDefinitions = @(
         Scene = 1
         ExtraArgs = @()
         RequiredAssets = @("Models/SponzaEsc.glb", "Models/SkyBox.glb")
+        DumpSeconds = 15.0
         Note = "DayScene runtime demo."
     },
     [pscustomobject]@{
@@ -91,9 +91,9 @@ $caseDefinitions = @(
     [pscustomobject]@{
         Id = "ragdoll-editor"
         Scene = 3
-        ExtraArgs = @("--model", $modelAnimated)
-        RequiredAssets = @($modelAnimated)
-        Note = "RagdollEditor with the animated Tyrant model."
+        ExtraArgs = @("--model", $modelDoomSlayer)
+        RequiredAssets = @($modelDoomSlayer)
+        Note = "RagdollEditor with the launcher-selected Doom Slayer model."
     },
     [pscustomobject]@{
         Id = "scene-template-q3-jolt"
@@ -300,6 +300,7 @@ foreach ($case in $caseDefinitions) {
         $before = @(Get-ChildItem -LiteralPath $exeDir -Directory -Filter "dumps_${api}_*" -ErrorAction SilentlyContinue |
             ForEach-Object FullName)
 
+        $caseDumpSeconds = if ($case.PSObject.Properties['DumpSeconds']) { [double]$case.DumpSeconds } else { $DumpSeconds }
         $arguments = @(
             "--api", $api,
             "--scene", [string]$case.Scene,
@@ -326,10 +327,10 @@ foreach ($case in $caseDefinitions) {
             $captureMode = "snapshot_replay"
         }
         else {
-            $arguments += @("--dumpSnapshot-seconds", $DumpSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))
+            $arguments += @("--dumpSnapshot-seconds", $caseDumpSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))
         }
 
-        Write-Host "[baseline] $RunSet $($case.Id)/$api (${Width}x${Height}, ${DumpSeconds}s)"
+        Write-Host "[baseline] $RunSet $($case.Id)/$api (${Width}x${Height}, ${caseDumpSeconds}s)"
         $started = Get-Date
         $process = Start-Process -FilePath $ExePath -ArgumentList $arguments -WorkingDirectory $exeDir `
             -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
@@ -396,7 +397,7 @@ foreach ($case in $caseDefinitions) {
             ExtraArgs = $case.ExtraArgs
             Width = $dimensions.Width
             Height = $dimensions.Height
-            DumpSeconds = $DumpSeconds
+            DumpSeconds = $caseDumpSeconds
             FixedDeltaSeconds = $FixedDeltaSeconds
             CaptureMode = $captureMode
             ShaderFlow = if ($api -eq "webgpu") { $ShaderFlow } else { $null }

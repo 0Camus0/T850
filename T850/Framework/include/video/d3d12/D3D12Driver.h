@@ -56,6 +56,7 @@ namespace t850 {
     const char* ApiTag() const override { return "d3d12"; }
     bool SupportsComputeShaders() const override { return true; }
     bool SupportsComputeTextures() const override { return true; }
+    bool SupportsComputeTextures3D() const override { return true; }
     bool SupportsCubeRenderTargets() const override { return true; }
     uint64_t ProfilingAdapterId() const override;
 
@@ -99,6 +100,8 @@ namespace t850 {
     void SetScissorRect(int x, int y, int w, int h) override;
     std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
     std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                              const void* initialData = nullptr) override;
+    std::unique_ptr<ComputeTexture3D> CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
                               const void* initialData = nullptr) override;
     bool DispatchCompute(ComputePipeline& pipeline,
                const std::vector<ComputeBindingDesc>& bindings,

@@ -82,6 +82,22 @@ namespace t850 {
       commandList->ResourceBarrier(1, &barrier);
       texture.SetTrackedState(nextState);
     }
+
+    void TransitionVolume(ID3D12GraphicsCommandList* commandList,
+                          D3D12ComputeTexture3D& volume,
+                          D3D12_RESOURCE_STATES nextState) {
+      if (!volume.GetResource() || volume.GetState() == nextState)
+        return;
+
+      D3D12_RESOURCE_BARRIER barrier = {};
+      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      barrier.Transition.pResource = volume.GetResource();
+      barrier.Transition.StateBefore = volume.GetState();
+      barrier.Transition.StateAfter = nextState;
+      barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      commandList->ResourceBarrier(1, &barrier);
+      volume.SetState(nextState);
+    }
   }
 
   int D3D12ComputePipeline::GetConstantRootIndex(uint32_t shaderRegister) const {
@@ -309,8 +325,13 @@ namespace t850 {
         case D3D_SIT_SAMPLER: resource.type = ComputeBindingType::Sampler; break;
         default: return false;
       }
-      if ((resource.type == ComputeBindingType::ReadOnlyTexture || resource.type == ComputeBindingType::ReadWriteTexture) &&
-          binding.Dimension != D3D_SRV_DIMENSION_TEXTURE2D) return false;
+      if ((resource.type == ComputeBindingType::ReadOnlyTexture || resource.type == ComputeBindingType::ReadWriteTexture)) {
+        if (binding.Dimension == D3D_SRV_DIMENSION_TEXTURE3D) {
+          resource.dimension = ComputeTextureDimension::Tex3D;
+        } else if (binding.Dimension != D3D_SRV_DIMENSION_TEXTURE2D) {
+          return false;
+        }
+      }
       reflected.push_back(resource);
     }
     if (!SetValidatedLayout(desc, reflected, false)) return false;
@@ -482,6 +503,90 @@ namespace t850 {
     return pipeline;
   }
 
+  bool D3D12ComputeTexture3D::Create(ID3D12Device* device,
+                                     D3D12Driver* driver,
+                                     const ComputeTexture3DDesc& desc,
+                                     const void* initialData) {
+    if (!device || !driver || desc.width == 0 || desc.height == 0 || desc.depth == 0) {
+      T8_LOG_ERROR("[D3D12][Compute] Invalid volume descriptor for '%s'", desc.debugName.c_str());
+      return false;
+    }
+    if (desc.format == ComputeStorageFormat::Unspecified || initialData) {
+      T8_LOG_ERROR("[D3D12][Compute] Volume '%s' requires a storage format and GPU-side seeding",
+                   desc.debugName.c_str());
+      return false;
+    }
+
+    descriptor = desc;
+    const DXGI_FORMAT format = desc.format == ComputeStorageFormat::Rgba16Float
+      ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+
+    D3D12_RESOURCE_DESC resourceDesc = {};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
+    resourceDesc.Width = desc.width;
+    resourceDesc.Height = desc.height;
+    resourceDesc.DepthOrArraySize = static_cast<UINT16>(desc.depth);
+    resourceDesc.MipLevels = 1;
+    resourceDesc.Format = format;
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    resourceDesc.Flags = desc.access == ComputeBufferAccess::ReadWrite
+      ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
+      : D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12_HEAP_PROPERTIES heap = {};
+    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    const D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;
+    const HRESULT createHr = device->CreateCommittedResource(
+      &heap, D3D12_HEAP_FLAG_NONE, &resourceDesc, initialState, nullptr, IID_PPV_ARGS(&m_resource));
+    if (FAILED(createHr)) {
+      T8_LOG_ERROR("[D3D12][Compute] Volume '%s' creation failed (hr=0x%08X)",
+                   desc.debugName.c_str(), static_cast<unsigned>(createHr));
+      return false;
+    }
+    if (!desc.debugName.empty()) {
+      const std::wstring debugName(desc.debugName.begin(), desc.debugName.end());
+      m_resource->SetName(debugName.c_str());
+    }
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture3D.MipLevels = 1;
+    srvDesc.Texture3D.MostDetailedMip = 0;
+    m_srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
+    m_srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
+    device->CreateShaderResourceView(m_resource.Get(), &srvDesc, m_srvCPU);
+
+    if (desc.access == ComputeBufferAccess::ReadWrite) {
+      D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+      uavDesc.Format = format;
+      uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
+      uavDesc.Texture3D.MipSlice = 0;
+      uavDesc.Texture3D.FirstWSlice = 0;
+      uavDesc.Texture3D.WSize = desc.depth;
+      m_uavCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
+      m_uavGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
+      device->CreateUnorderedAccessView(m_resource.Get(), nullptr, &uavDesc, m_uavCPU);
+    }
+
+    m_state = initialState;
+    T8_LOG_INFO("[D3D12][Compute] Volume '%s' created (%ux%ux%u, access=%s)",
+                desc.debugName.c_str(), desc.width, desc.height, desc.depth,
+                desc.access == ComputeBufferAccess::ReadWrite ? "read-write" : "read-only");
+    return true;
+  }
+
+  std::unique_ptr<ComputeTexture3D> D3D12Driver::CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
+                                                                        const void* initialData) {
+    auto volume = std::make_unique<D3D12ComputeTexture3D>();
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    if (!volume->Create(device, this, desc, initialData))
+      return {};
+    return volume;
+  }
+
   std::unique_ptr<ComputeBuffer> D3D12Driver::CreateComputeBuffer(const ComputeBufferDesc& desc,
                                                                   const void* initialData) {
     auto buffer = std::make_unique<D3D12ComputeBuffer>();
@@ -518,6 +623,7 @@ namespace t850 {
       const ComputeBindingDesc* binding = nullptr;
       D3D12ComputeBuffer* buffer = nullptr;
       D3D12Texture* texture = nullptr;
+      D3D12ComputeTexture3D* texture3D = nullptr;
       int rootIndex = -1;
     };
     std::vector<ResolvedBinding> resolved;
@@ -530,17 +636,28 @@ namespace t850 {
     std::unordered_set<uint32_t> boundSamplers;
 
     for (const ComputeBindingDesc& binding : bindings) {
+      const ComputeBindingLayoutDesc* layout = nullptr;
+      for (const auto& candidate : pipeline->bindingLayout)
+        if (candidate.type == binding.type && candidate.shaderRegister == binding.shaderRegister) layout = &candidate;
+      const bool volume = layout && layout->dimension == ComputeTextureDimension::Tex3D;
       if (binding.type == ComputeBindingType::ReadWriteTexture || binding.type == ComputeBindingType::ReadOnlyTexture) {
-        const auto* texture = dynamic_cast<D3D12Texture*>(binding.texture);
-        if (!texture || !texture->pTexResource) return false;
-        const auto view = texture->pTexResource->GetDesc();
-        if (view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 1 || view.SampleDesc.Count != 1)
-          return false;
-        if (binding.type == ComputeBindingType::ReadWriteTexture)
-          for (const auto& layout : pipeline->bindingLayout)
-            if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
-                view.Format != (layout.storageFormat == ComputeStorageFormat::Rgba16Float
-                  ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
+        if (volume) {
+          const auto* texture3D = dynamic_cast<D3D12ComputeTexture3D*>(binding.texture3D);
+          if (!texture3D || !texture3D->GetResource())
+            return false;
+          if (binding.type == ComputeBindingType::ReadWriteTexture &&
+              (texture3D->descriptor.access != ComputeBufferAccess::ReadWrite || !texture3D->UavGPU().ptr))
+            return false;
+        } else {
+          const auto* texture = dynamic_cast<D3D12Texture*>(binding.texture);
+          if (!texture || !texture->pTexResource) return false;
+          const auto view = texture->pTexResource->GetDesc();
+          if (view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 1 || view.SampleDesc.Count != 1)
+            return false;
+          if (binding.type == ComputeBindingType::ReadWriteTexture)
+            if (view.Format != (layout->storageFormat == ComputeStorageFormat::Rgba16Float
+              ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
+        }
       }
       ResolvedBinding item;
       item.binding = &binding;
@@ -584,10 +701,18 @@ namespace t850 {
           break;
         case ComputeBindingType::ReadOnlyTexture:
           item.rootIndex = pipeline->GetTextureSrvRootIndex(binding.shaderRegister);
-          item.texture = dynamic_cast<D3D12Texture*>(binding.texture);
-          if (!item.texture || !item.texture->pTexResource || !item.texture->srvGPU.ptr) {
-            T8_LOG_ERROR("[D3D12][Compute] Invalid sampled texture t%u", binding.shaderRegister);
-            return false;
+          if (volume) {
+            item.texture3D = dynamic_cast<D3D12ComputeTexture3D*>(binding.texture3D);
+            if (!item.texture3D || !item.texture3D->GetResource() || !item.texture3D->SrvGPU().ptr) {
+              T8_LOG_ERROR("[D3D12][Compute] Invalid sampled volume t%u", binding.shaderRegister);
+              return false;
+            }
+          } else {
+            item.texture = dynamic_cast<D3D12Texture*>(binding.texture);
+            if (!item.texture || !item.texture->pTexResource || !item.texture->srvGPU.ptr) {
+              T8_LOG_ERROR("[D3D12][Compute] Invalid sampled texture t%u", binding.shaderRegister);
+              return false;
+            }
           }
           if (!boundTextureSrvs.insert(binding.shaderRegister).second) {
             T8_LOG_ERROR("[D3D12][Compute] Duplicate sampled texture t%u", binding.shaderRegister);
@@ -596,10 +721,18 @@ namespace t850 {
           break;
         case ComputeBindingType::ReadWriteTexture:
           item.rootIndex = pipeline->GetTextureUavRootIndex(binding.shaderRegister);
-          item.texture = dynamic_cast<D3D12Texture*>(binding.texture);
-          if (!item.texture || !item.texture->pTexResource || !item.texture->uavGPU.ptr) {
-            T8_LOG_ERROR("[D3D12][Compute] Invalid storage texture u%u", binding.shaderRegister);
-            return false;
+          if (volume) {
+            item.texture3D = dynamic_cast<D3D12ComputeTexture3D*>(binding.texture3D);
+            if (!item.texture3D || !item.texture3D->GetResource() || !item.texture3D->UavGPU().ptr) {
+              T8_LOG_ERROR("[D3D12][Compute] Invalid storage volume u%u", binding.shaderRegister);
+              return false;
+            }
+          } else {
+            item.texture = dynamic_cast<D3D12Texture*>(binding.texture);
+            if (!item.texture || !item.texture->pTexResource || !item.texture->uavGPU.ptr) {
+              T8_LOG_ERROR("[D3D12][Compute] Invalid storage texture u%u", binding.shaderRegister);
+              return false;
+            }
           }
           if (!boundTextureUavs.insert(binding.shaderRegister).second) {
             T8_LOG_ERROR("[D3D12][Compute] Duplicate storage texture u%u", binding.shaderRegister);
@@ -660,6 +793,7 @@ namespace t850 {
     for (const ResolvedBinding& item : resolved) {
       if (item.buffer) keepAlive.try_emplace(item.buffer->GetResource(), item.buffer->GetResource());
       if (item.texture) keepAlive.try_emplace(item.texture->pTexResource.Get(), item.texture->pTexResource.Get());
+      if (item.texture3D) keepAlive.try_emplace(item.texture3D->GetResource(), item.texture3D->GetResource());
       const ComputeBindingDesc& binding = *item.binding;
       switch (binding.type) {
         case ComputeBindingType::Constants32:
@@ -683,15 +817,28 @@ namespace t850 {
           writtenResources.insert(item.buffer->GetResource());
           break;
         case ComputeBindingType::ReadOnlyTexture:
-          TransitionTexture(commandList, *item.texture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-          commandList->SetComputeRootDescriptorTable(
-            static_cast<UINT>(item.rootIndex), item.texture->srvGPU);
+          if (item.texture3D) {
+            TransitionVolume(commandList, *item.texture3D, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            commandList->SetComputeRootDescriptorTable(
+              static_cast<UINT>(item.rootIndex), item.texture3D->SrvGPU());
+          } else {
+            TransitionTexture(commandList, *item.texture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            commandList->SetComputeRootDescriptorTable(
+              static_cast<UINT>(item.rootIndex), item.texture->srvGPU);
+          }
           break;
         case ComputeBindingType::ReadWriteTexture:
-          TransitionTexture(commandList, *item.texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-          commandList->SetComputeRootDescriptorTable(
-            static_cast<UINT>(item.rootIndex), item.texture->uavGPU);
-          writtenResources.insert(item.texture->pTexResource.Get());
+          if (item.texture3D) {
+            TransitionVolume(commandList, *item.texture3D, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->SetComputeRootDescriptorTable(
+              static_cast<UINT>(item.rootIndex), item.texture3D->UavGPU());
+            writtenResources.insert(item.texture3D->GetResource());
+          } else {
+            TransitionTexture(commandList, *item.texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->SetComputeRootDescriptorTable(
+              static_cast<UINT>(item.rootIndex), item.texture->uavGPU);
+            writtenResources.insert(item.texture->pTexResource.Get());
+          }
           break;
         case ComputeBindingType::Sampler:
           commandList->SetComputeRootDescriptorTable(
@@ -710,6 +857,8 @@ namespace t850 {
     for (const ResolvedBinding& item : resolved) {
       if (item.texture && item.binding->type != ComputeBindingType::Sampler)
         TransitionTexture(commandList, *item.texture, item.texture->GetGraphicsReadState());
+      if (item.texture3D && item.binding->type != ComputeBindingType::Sampler)
+        TransitionVolume(commandList, *item.texture3D, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
 
     // Graphics state must be rebound after a compute pipeline/root signature.

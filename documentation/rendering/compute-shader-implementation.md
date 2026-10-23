@@ -47,6 +47,33 @@ flowchart LR
 The base implementations fail explicitly. This keeps unsupported backends safe and makes
 capability selection a render-graph concern instead of a scene-side API switch.
 
+### Volumetric storage textures
+
+3D compute workloads (fluid volumes) use `ComputeTexture3D`, created through
+`CreateComputeTexture3D(ComputeTexture3DDesc)` and reported by
+`SupportsComputeTextures3D()`. A binding declares
+`ComputeBindingLayoutDesc::dimension = ComputeTextureDimension::Tex3D`; dispatch then
+requires `ComputeBindingDesc::texture3D` instead of `texture`.
+
+Reflection rejects a declared 2D/3D mismatch, so a kernel declaring `Texture3D` cannot be
+fed a 2D texture and vice versa. Volumes accept RGBA16F or RGBA8 UNORM storage, are
+created empty, and are seeded by a dispatch; CPU initial data is rejected. Dispatch depth
+is the third workgroup dimension and is still limited to 65535 groups.
+
+Current implementation status:
+
+| Backend | 3D compute storage |
+|---|---|
+| D3D11 | supported (CS 5.0, `TEXTURE3D` SRV/UAV) |
+| D3D12 | supported (`TEXTURE3D` resource plus SRV/UAV descriptors) |
+| Vulkan | not yet; capability false, callers fall back |
+| WebGPU/Dawn | not yet; capability false, callers fall back |
+| OpenGL | not yet; capability false, callers fall back |
+
+`--compute-selftest` runs deterministic 1x1x1, 9x5x3 and 33x17x7 volume write/readback
+cases whenever the backend reports the capability, and skips them otherwise.
+
+
 ### Portable guarantees
 
 - Buffer creation access is a maximum capability. ReadWrite allocations can bind

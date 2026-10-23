@@ -53,12 +53,15 @@ namespace t850 {
 
   enum class ComputeStorageFormat { Unspecified, Rgba8Unorm, Rgba16Float };
 
+  enum class ComputeTextureDimension { Tex2D, Tex3D };
+
   struct ComputeBindingLayoutDesc {
     ComputeBindingType type = ComputeBindingType::Constants32;
     uint32_t shaderRegister = 0;
     uint32_t bindingIndex = 0;
     uint32_t constantCount = 0;
     ComputeStorageFormat storageFormat = ComputeStorageFormat::Unspecified;
+    ComputeTextureDimension dimension = ComputeTextureDimension::Tex2D;
     bool matchOutputExtent = false;
   };
 
@@ -79,6 +82,23 @@ namespace t850 {
   };
 
   struct ComputeBindingDesc;
+
+  // Volumetric storage texture used by 3D compute workloads (fluid volumes).
+  // Backends that cannot expose a 3D UAV report no capability and return null.
+  struct ComputeTexture3DDesc {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t depth = 0;
+    ComputeStorageFormat format = ComputeStorageFormat::Rgba16Float;
+    ComputeBufferAccess access = ComputeBufferAccess::ReadWrite;
+    std::string debugName;
+  };
+
+  class ComputeTexture3D {
+  public:
+    virtual ~ComputeTexture3D() = default;
+    ComputeTexture3DDesc descriptor;
+  };
 
   class ComputePipeline {
   public:
@@ -103,6 +123,7 @@ namespace t850 {
     const uint32_t* constants = nullptr;
     uint32_t constantCount = 0;
     Texture* texture = nullptr;
+    ComputeTexture3D* texture3D = nullptr;
   };
 
   class DeviceContext {
@@ -393,6 +414,7 @@ namespace t850 {
     virtual bool SupportsDeferredRendering() const { return true; }
     virtual bool SupportsComputeShaders() const { return false; }
     virtual bool SupportsComputeTextures() const { return false; }
+    virtual bool SupportsComputeTextures3D() const { return false; }
     virtual const char* ApiTag() const { return "unknown"; }
     virtual const char* ProviderTag() const { return "native"; }
     virtual const char* UnderlyingBackendTag() const { return ApiTag(); }
@@ -466,6 +488,10 @@ namespace t850 {
     }
     virtual std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
                                                                 const void* initialData = nullptr) {
+      (void)desc; (void)initialData; return {};
+    }
+    virtual std::unique_ptr<ComputeTexture3D> CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
+                                                                     const void* initialData = nullptr) {
       (void)desc; (void)initialData; return {};
     }
     virtual bool DispatchCompute(ComputePipeline& pipeline,

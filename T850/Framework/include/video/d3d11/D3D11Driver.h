@@ -45,6 +45,7 @@ namespace t850 {
     }
     bool SupportsComputeShaders() const override { return m_featureLevel >= D3D_FEATURE_LEVEL_11_0; }
     bool SupportsComputeTextures() const override { return m_supportsComputeTextures; }
+    bool SupportsComputeTextures3D() const override { return m_supportsComputeTextures; }
     void	InitDriver();
     void	CreateSurfaces();
     void	DestroySurfaces();
@@ -77,6 +78,8 @@ namespace t850 {
     void  CompleteFrame(FrameCompletionMode mode = FrameCompletionMode::Present) override;
     std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
     std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                              const void* initialData = nullptr) override;
+    std::unique_ptr<ComputeTexture3D> CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
                               const void* initialData = nullptr) override;
     bool DispatchCompute(ComputePipeline& pipeline,
                const std::vector<ComputeBindingDesc>& bindings,

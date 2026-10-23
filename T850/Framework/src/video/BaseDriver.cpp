@@ -88,6 +88,7 @@ namespace t850 {
         }
       }
       if (!match || match->constantCount != declared.constantCount) return false;
+      if (match->dimension != declared.dimension) return false;
       if (match->storageFormat != ComputeStorageFormat::Unspecified) {
         if (declared.storageFormat != ComputeStorageFormat::Unspecified && declared.storageFormat != match->storageFormat)
           return false;
@@ -118,15 +119,19 @@ namespace t850 {
           if (!writes.insert(binding.buffer).second) return false;
         } else reads.insert(binding.buffer);
       } else {
-        if (!binding.texture) return false;
+        const bool volume = layout->dimension == ComputeTextureDimension::Tex3D;
+        const void* resource = volume
+          ? static_cast<const void*>(binding.texture3D)
+          : static_cast<const void*>(binding.texture);
+        if (!resource) return false;
         if (binding.type == ComputeBindingType::ReadWriteTexture) {
-          if (!writes.insert(binding.texture).second) return false;
-        } else if (binding.type == ComputeBindingType::ReadOnlyTexture) reads.insert(binding.texture);
+          if (!writes.insert(resource).second) return false;
+        } else if (binding.type == ComputeBindingType::ReadOnlyTexture) reads.insert(resource);
         else {
           bool paired = false;
           for (const auto& sampled : bindings)
             if (sampled.type == ComputeBindingType::ReadOnlyTexture && sampled.shaderRegister == binding.shaderRegister &&
-                sampled.texture == binding.texture) paired = true;
+                (volume ? sampled.texture3D == binding.texture3D : sampled.texture == binding.texture)) paired = true;
           if (!paired) return false;
         }
       }

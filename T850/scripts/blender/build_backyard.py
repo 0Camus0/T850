@@ -311,7 +311,25 @@ def build_ground():
     gravel = material("Ground_Gravel", (0.52, 0.48, 0.42), roughness=0.95)
     concrete = material("Ground_Patio", (0.68, 0.66, 0.62), roughness=0.8)
 
-    parts = [plane("Ground_Gravel", (GROUND["size"], GROUND["size"]), (GROUND["center"][0], GROUND["center"][1], 0.0), gravel)]
+    half = GROUND["size"] * 0.5
+    cx, cy = GROUND["center"]
+    min_x = cx - half
+    max_x = cx + half
+    min_y = cy - half
+    max_y = cy + half
+
+    parts = []
+    # The gravel is split into four strips so the pool opening stays hollow;
+    # a single plane would hide the basin.
+    strips = (
+        ("Ground_Gravel_Front", (max_x - min_x, POOL_MIN_Y - min_y), (cx, (min_y + POOL_MIN_Y) * 0.5)),
+        ("Ground_Gravel_Back", (max_x - min_x, max_y - POOL_MAX_Y), (cx, (POOL_MAX_Y + max_y) * 0.5)),
+        ("Ground_Gravel_Left", (POOL_MIN_X - min_x, POOL_MAX_Y - POOL_MIN_Y), ((min_x + POOL_MIN_X) * 0.5, (POOL_MIN_Y + POOL_MAX_Y) * 0.5)),
+        ("Ground_Gravel_Right", (max_x - POOL_MAX_X, POOL_MAX_Y - POOL_MIN_Y), ((POOL_MAX_X + max_x) * 0.5, (POOL_MIN_Y + POOL_MAX_Y) * 0.5)),
+    )
+    for name, size, location in strips:
+        parts.append(plane(name, size, (location[0], location[1], 0.0), gravel))
+
     parts.append(
         box(
             "Ground_Patio",

@@ -360,6 +360,7 @@ namespace {
 #include <RagdollEditor.h>
 #include <VoxelScene.h>
 #include <MinecraftScene.h>
+#include <BackyardScene.h>
 
 #ifdef OS_ANDROID
 namespace {
@@ -387,6 +388,7 @@ void App::InitVars() {
   m_scenes.emplace_back(std::make_unique<SceneTemplate>());
   m_scenes.emplace_back(std::make_unique<VoxelScene>());
   m_scenes.emplace_back(std::make_unique<MinecraftScene>());
+  m_scenes.emplace_back(std::make_unique<BackyardScene>());
   t850::EngineContext& engineContext = t850::GetEngineContext();
   engineContext.physics = &m_physics;
   if (!m_physics.Initialize() && m_physics.IsAvailable()) {

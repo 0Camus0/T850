@@ -237,6 +237,7 @@ add_library(T850Android SHARED
   ${T850_SOURCE_DIR}/DayScene/SandboxScene.cpp
   ${T850_SOURCE_DIR}/DayScene/VoxelScene.cpp
   ${T850_SOURCE_DIR}/DayScene/MinecraftScene.cpp
+  ${T850_SOURCE_DIR}/DayScene/BackyardScene.cpp
   ${T850_ANDROID_FRAMEWORK_SOURCES})
 
 target_compile_definitions(T850Android PRIVATE

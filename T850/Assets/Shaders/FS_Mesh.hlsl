@@ -258,6 +258,84 @@ float LoadForwardSceneDepth(VS_OUTPUT input)
     return SceneDepthTex.Load(int3(pixel, 0)).r;
 }
 
+#ifdef FLUID_SURFACE
+// Water plane height and the depth of the basin floor below it, both authored
+// in the pool geometry (water line -0.04 m, floor -1.60 m).
+static const float kWaterLineY = -0.04f;
+static const float kWaterToFloor = 1.56f;
+
+// One directional sine octave. Kept as a separate function and called six times
+// explicitly: dynamic indexing into a local const array is not reliably unrolled
+// and silently collapses every octave onto element 0, which is why the ripples
+// looked like a single soft blotch.
+float2 WaterRippleOctave(float2 p, float timeSeconds, float2 dir, float waveLength,
+                         float amplitude, float speed, float fadeDistance, float viewDistance)
+{
+    float k = 6.28318530718f / waveLength;
+    float phase = dot(dir, p) * k + timeSeconds * speed * k;
+    float octaveFade = saturate(1.0f - viewDistance / fadeDistance);
+    return dir * (amplitude * k * cos(phase)) * octaveFade;
+}
+
+float WaterRippleHeightOctave(float2 p, float timeSeconds, float2 dir, float waveLength,
+                              float amplitude, float speed, float fadeDistance, float viewDistance)
+{
+    float k = 6.28318530718f / waveLength;
+    float phase = dot(dir, p) * k + timeSeconds * speed * k;
+    float octaveFade = saturate(1.0f - viewDistance / fadeDistance);
+    return amplitude * sin(phase) * octaveFade;
+}
+
+// Horizontal gradient of the six-octave directional ripple field, in m/m.
+#define T8_RIPPLE_OCTAVES(FN, ACCUM, P, T, D)                    \
+    ACCUM = FN(P, T, float2( 0.86f,  0.51f), 0.62f, 0.0160f, 0.55f, 60.0f, D); \
+    ACCUM += FN(P, T, float2(-0.60f,  0.80f), 0.41f, 0.0090f, 0.75f, 48.0f, D); \
+    ACCUM += FN(P, T, float2( 0.31f, -0.95f), 0.27f, 0.0060f, 1.05f, 36.0f, D); \
+    ACCUM += FN(P, T, float2( 0.98f, -0.20f), 0.19f, 0.0036f, 1.35f, 27.0f, D); \
+    ACCUM += FN(P, T, float2(-0.87f, -0.49f), 0.14f, 0.0022f, 1.70f, 20.0f, D); \
+    ACCUM += FN(P, T, float2( 0.42f,  0.91f), 0.11f, 0.0014f, 2.10f, 15.0f, D);
+
+float2 WaterRippleGradient(float2 p, float timeSeconds, float viewDistance)
+{
+    float2 gradient = float2(0.0f, 0.0f);
+    T8_RIPPLE_OCTAVES(WaterRippleOctave, gradient, p, timeSeconds, viewDistance)
+    return gradient;
+}
+
+// The same field's height, in metres. Used to synthesise caustics on the basin
+// floor: light focuses where the surface is flat and spreads where it curves.
+float WaterRippleHeight(float2 p, float timeSeconds, float viewDistance)
+{
+    float height = 0.0f;
+    T8_RIPPLE_OCTAVES(WaterRippleHeightOctave, height, p, timeSeconds, viewDistance)
+    return height;
+}
+
+// Slope magnitude of just the three longest-wavelength octaves. Caustic webs are
+// cell-sized features, so building them from the finest octaves only produces a
+// uniform crinkle instead of readable caustic cells.
+float WaterRippleSlopeLow(float2 p, float timeSeconds, float viewDistance)
+{
+    float2 slope = WaterRippleOctave(p, timeSeconds, float2( 0.86f,  0.51f), 0.62f, 0.0160f, 0.55f, 60.0f, viewDistance);
+    slope += WaterRippleOctave(p, timeSeconds, float2(-0.60f,  0.80f), 0.41f, 0.0090f, 0.75f, 48.0f, viewDistance);
+    slope += WaterRippleOctave(p, timeSeconds, float2( 0.31f, -0.95f), 0.27f, 0.0060f, 1.05f, 36.0f, viewDistance);
+    slope += WaterRippleOctave(p, timeSeconds, float2( 0.98f, -0.20f), 0.19f, 0.0036f, 1.35f, 27.0f, viewDistance);
+    return length(slope);
+}
+
+// Procedural breakup so foam reads as froth rather than a smooth gradient.
+// The finer octaves fade out with distance, otherwise the compressed grazing
+// view turns them into a moire hatch.
+float WaterFoamNoise(float2 p, float timeSeconds, float viewDistance)
+{
+    float fade = saturate(1.0f - viewDistance / 22.0f);
+    float n = sin(p.x * 8.0f + timeSeconds * 2.6f) * sin(p.y * 9.5f - timeSeconds * 2.1f);
+    n += 0.55f * sin(p.x * 21.0f - timeSeconds * 3.4f) * sin(p.y * 19.0f + timeSeconds * 3.0f) * fade;
+    n += 0.30f * sin(p.x * 47.0f + timeSeconds * 4.1f) * sin(p.y * 43.0f - timeSeconds * 3.7f) * fade * fade;
+    return saturate(0.5f + 0.42f * n);
+}
+#endif
+
 float2 SignNotZero(float2 value)
 {
     return float2(value.x >= 0.0f ? 1.0f : -1.0f,
@@ -856,16 +934,27 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float lightmap = SampleLightmap(input);
 
 #ifdef FLUID_SURFACE
-    // Tilt the surface normal from the solver's slope channels and brighten
-    // crests with foam. Sampled with Load() so no sampler slot is needed.
+    // Solver surface: height (m), foam, slopeX, slopeZ. The slopes are height
+    // differences in metres across one 0.09 m texel step, so dividing by the
+    // spacing recovers a dimensionless gradient and the old magic 18.0 becomes
+    // the unit conversion it always was.
+    bool fluidOpaque = false;
+    float4 fluidSurface = float4(0.0f, 0.0f, 0.0f, 0.0f);
     {
         uint fluidWidth = 1, fluidHeight = 1;
         FluidSurfaceTexture.GetDimensions(fluidWidth, fluidHeight);
         int2 texel = clamp(int2(saturate(uv) * float2(fluidWidth, fluidHeight)),
                            int2(0, 0), int2(fluidWidth - 1, fluidHeight - 1));
-        float4 fluidSurface = FluidSurfaceTexture.Load(int3(texel, 0));
-        normal = normalize(normal + float3(-fluidSurface.z, 0.0f, -fluidSurface.w) * 18.0f);
-        color.rgb = lerp(color.rgb, float3(1.0f, 1.0f, 1.0f), saturate(fluidSurface.y) * 0.55f);
+        fluidSurface = FluidSurfaceTexture.Load(int3(texel, 0));
+    }
+    {
+        float fluidViewDistance = length(CameraPosition.xyz - input.WorldPos.xyz);
+        // Solver gradient (large-scale shape) plus the analytic ripple gradient
+        // (high-frequency sparkle). Height-field normal is (-dh/dx, 1, -dh/dz).
+        float2 heightGradient = fluidSurface.zw / 0.09f
+                              + WaterRippleGradient(input.WorldPos.xz,
+                                                    MaterialParams3.w, fluidViewDistance);
+        normal = normalize(float3(-heightGradient.x, 1.0f, -heightGradient.y));
     }
 #endif
 
@@ -1000,6 +1089,91 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         finalColor = lerp(finalColor, sceneColor, transmission);
     }
 #endif
+#ifdef FLUID_SURFACE
+    // Crysis-style forward water: a dielectric sheet over a shallow body.
+    // Refraction, Beer-Lambert absorption, sky reflection and a sun glint are
+    // composited by hand, so the result is written fully opaque.
+    {
+        // Fresnel comes from the macro normal, not the rippled one: a rough
+        // surface's Fresnel is an average over its microfacets. Using the
+        // perturbed normal sends grazing facets to near-total reflection and
+        // the reflection vector into the dark half of the cubemap.
+        float fluidFresnel = saturate((0.02f + 0.98f * pow(1.0f - saturate(eyeDir.y), 5.0f)) * 2.2f + 0.06f);
+
+        // Optical path length from the water surface down to the basin floor
+        // along the view ray. Both surfaces are flat and the floor depth is
+        // known from the authored geometry, so this is exact and does not need
+        // the GBuffer depth (whose encoding does not linearise usefully here).
+        float fluidViewDistance = length(CameraPosition.xyz - input.WorldPos.xyz);
+        float fluidCameraHeight = max(CameraPosition.y - kWaterLineY, 0.1f);
+        float thickness = clamp(kWaterToFloor * fluidViewDistance / fluidCameraHeight, 0.0f, 8.0f);
+
+        // Refraction, faded out towards the basin border so the deck and coping
+        // never smear into the water.
+        float fluidTime = MaterialParams3.w;
+        float2 borderDistance = min(uv, 1.0f - uv);
+        float borderFade = saturate(min(borderDistance.x, borderDistance.y) * 30.0f);
+        float2 screenUV = GetForwardScreenUV(input);
+        float2 refractOffset = float2(normal.x, -normal.z) * 0.025f * borderFade *
+                               (0.6f + 0.4f * saturate(thickness / 3.0f));
+        float3 floorColor = SceneColorTex.SampleLevel(SceneColorSS, saturate(screenUV + refractOffset), 0.0f).rgb;
+
+        // Caustics. A flat patch of surface focuses sunlight onto a small spot,
+        // a curved patch spreads it out, so the ripple field's slope magnitude
+        // traces the bright filaments that make shallow water read as water.
+        float rippleSlope = WaterRippleSlopeLow(input.WorldPos.xz, fluidTime, fluidViewDistance);
+        float causticWeb = pow(saturate(1.0f - rippleSlope * 2.0f), 2.0f);
+        float3 floorLit = floorColor * (0.45f + 1.00f * causticWeb);
+
+        // Beer-Lambert absorption: red dies first and blue survives, which is
+        // what turns deep water cyan. The scattered body term fills in the loss.
+        float3 transmittance = exp(-float3(0.38f, 0.17f, 0.10f) * thickness);
+        float3 shallowBody = float3(0.09f, 0.34f, 0.33f);
+        float3 deepBody    = float3(0.012f, 0.10f, 0.17f);
+        float3 bodyColor   = lerp(shallowBody, deepBody, saturate(thickness / 5.0f));
+        float3 waterColor  = floorLit * transmittance + bodyColor * (1.0f - transmittance);
+
+        // Sky reflection from the prefiltered environment, plus the tight sun
+        // glint that actually sells the sense of motion.
+        // Volumetric scattering: the sun's light that entered the water and
+        // left it again towards the eye. Without it, dusk water looks like flat
+        // tinted glass no matter how good the ripples are.
+        float3 fluidSunDir = normalize(Light0Direction.xyz);
+        float sunWrap = saturate(dot(eyeDir, -fluidSunDir) * 0.5f + 0.5f);
+        float3 sunTint = LightColors[0].xyz * LightColors[0].w;
+        float3 scatterVolume = sunTint * (0.05f * sunWrap +
+                                         0.03f * pow(saturate(dot(normal, -fluidSunDir)), 2.0f));
+        waterColor += scatterVolume * (1.0f - exp(-thickness * 0.45f));
+
+        float3 reflected = reflect(-eyeDir, normal);
+        reflected.y = max(reflected.y, 0.02f);
+        reflected.x = -reflected.x;
+        reflected.z = -reflected.z;
+        float roughMip = clamp(0.04f * iblMaxMip, 0.0f, iblMaxMip);
+        // Sharp reflection: the point of the ripple normals is to break the sky
+        // reflection into facets. Sampling a prefiltered mip turns that into a
+        // flat grey wash, which is exactly what made the water look milky.
+        float3 reflection = texIBLSpecular.SampleLevel(IBLSpecularSS, reflected, 0.0f).xyz * iblFactor;
+        reflection += directLight * 1.6f;
+        if (numLights > 0 && LightPositions[0].w < 0.5f) {
+            float3 sunDir = normalize(-LightPositions[0].xyz);
+            float3 halfVec = normalize(eyeDir + sunDir);
+            float sunGlint = pow(saturate(dot(normal, halfVec)), 400.0f) * LightColors[0].w;
+            reflection += LightColors[0].xyz * sunGlint * 5.0f;
+        }
+
+        finalColor = lerp(waterColor, reflection, fluidFresnel);
+
+        // Foam only where the water meets the basin walls and steps. Gating it by
+        // the border distance rather than by the depth keeps it off the open
+        // surface, where the old version smeared a cloud across the whole pool.
+        float shoreFoam = saturate(1.0f - borderFade * 2.0f);
+        float foam = saturate((saturate(fluidSurface.y) * 0.6f + shoreFoam) *
+                              WaterFoamNoise(input.WorldPos.xz, fluidTime, fluidViewDistance) * 1.1f);
+        finalColor = lerp(finalColor, float3(0.74f, 0.82f, 0.84f), foam * 0.7f);
+        fluidOpaque = true;
+    }
+#endif
     finalColor += emissive;
 
     float alpha = color.a;
@@ -1007,6 +1181,11 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         alpha = saturate(1.0f - transmission);
     if (AlphaParams.x < 1.5f && transmission <= 0.0f)
         alpha = 1.0f;
+#ifdef FLUID_SURFACE
+    // The water composite already contains the background, so it must replace
+    // rather than blend.
+    if (fluidOpaque) alpha = 1.0f;
+#endif
     return float4(finalColor, alpha);
 }
 #endif

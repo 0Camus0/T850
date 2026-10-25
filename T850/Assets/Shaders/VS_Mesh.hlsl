@@ -27,6 +27,7 @@ cbuffer MeshInstanceCB : register(b1) {
     float4x4 WVP;
 	float4x4 World;
 	float4x4 WorldView;
+	float4   TimeParams;
 }
 #endif
 
@@ -230,6 +231,18 @@ VS_OUTPUT VS( VS_INPUT input ){
 		                   int2(0, 0), int2(fluidWidth - 1, fluidHeight - 1));
 		float4 fluidSurface = FluidSurfaceTexture.Load(int3(texel, 0));
 		input.position.y += fluidSurface.x;
+
+		// Add the three longest ripple octaves geometrically. A shading-only
+		// normal leaves the silhouette flat, which is the giveaway at grazing
+		// angles. The finer octaves stay shading-only because 0.094 m mesh quads
+		// cannot represent a 0.11 m wavelength without aliasing.
+		float2 ripplePos = input.position.xz;
+		float rippleTime = TimeParams.x;
+		float rippleHeight =
+			0.0160f * sin(dot(ripplePos, float2( 0.86f, 0.51f)) * 10.134f + rippleTime * 5.573f) +
+			0.0090f * sin(dot(ripplePos, float2(-0.60f, 0.80f)) * 15.322f + rippleTime * 11.492f) +
+			0.0060f * sin(dot(ripplePos, float2( 0.31f, -0.95f)) * 23.271f + rippleTime * 24.434f);
+		input.position.y += rippleHeight;
 	}
 #endif
     OUT.hposition = mul( WVP , input.position );

@@ -44,6 +44,10 @@ namespace t850 {
 
     bool IsReady() const { return m_ready; }
     const FluidSettings& Settings() const { return m_settings; }
+    // Solver clock in seconds, advanced by exactly deltaTime per Step. Driving
+    // time-dependent shading from it keeps renders frame-deterministic instead
+    // of depending on wall-clock frame pacing.
+    float SimulationTime() const { return m_time; }
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.

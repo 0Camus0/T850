@@ -187,6 +187,9 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	XVECTOR3 ParticleEmitterPosition1 = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
 	XVECTOR3 ParticleEmitterPosition2 = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
 	float ParticleTimeSeconds = 0.0f;
+	// Scene clock in seconds, advanced by the owning scene each frame. Feeds
+	// time-dependent shading (e.g. the pool water's ripple detail).
+	float TimeSeconds = 0.0f;
 	int ParticleCount = 0;
 	float ParticleLifetime = 0.0f;
 	float ParticleRiseHeight = 0.0f;

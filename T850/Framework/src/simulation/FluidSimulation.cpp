@@ -7,6 +7,10 @@
 #include <utils/ResourceLocator.h>
 
 #include <cstring>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
 
 namespace t850 {
 namespace {
@@ -30,6 +34,10 @@ namespace {
     float padding0;
   };
   static_assert(sizeof(FluidConstants) == 64);
+
+  // Voxels this far inside the wall are treated as the "deep interior" for
+  // divergence measurement; projection cannot fix the boundary band.
+  constexpr uint32_t kInteriorMargin = 4;
 
   const ComputeKernelDefinition* FindKernel(const char* source) {
     return FindComputeKernel(source);
@@ -85,8 +93,9 @@ std::vector<uint32_t> FluidSimulation::BuildConstants() const {
   constants.damping = m_settings.damping;
   constants.surfaceLevel = m_settings.surfaceLevel;
   constants.timeValue = m_time;
-  // The discrete Poisson equation needs divergence scaled by cell area so the
-  // pressure gradient has the same units as velocity.
+  // Consistent discrete projection: Lap(p) = div, then u -= grad(p).
+  // (Equivalently Lap(p') = div/dt with u -= dt*grad(p').) Mixing the two
+  // conventions over-corrects by 1/dt and makes divergence grow with iterations.
   constants.pressureScale = m_settings.cellSize * m_settings.cellSize;
   constants.padding0 = 0.0f;
   std::vector<uint32_t> words(sizeof(constants) / sizeof(uint32_t));
@@ -143,9 +152,11 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_surfacePipeline = CreatePipeline(driver, "CS_FluidSurface3D.hlsl");
   m_seedPipeline = CreatePipeline(driver, "CS_FluidSeed3D.hlsl");
   m_diagnosticsPipeline = CreatePipeline(driver, "CS_FluidDiagnostics3D.hlsl");
+  m_copyPipeline = CreatePipeline(driver, "CS_FluidCopy3D.hlsl");
 
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
-                  m_gradientPipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline;
+                  m_gradientPipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
+                  m_copyPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
   complete = complete && m_divergence;
@@ -175,7 +186,9 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_gradientPipeline.reset();
   m_surfacePipeline.reset();
   m_seedPipeline.reset();
+  m_seedDivergentPipeline.reset();
   m_diagnosticsPipeline.reset();
+  m_copyPipeline.reset();
   for (auto& volume : m_velocity) volume.reset();
   for (auto& volume : m_pressure) volume.reset();
   m_divergence.reset();
@@ -277,7 +290,7 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   return true;
 }
 
-bool FluidSimulation::Seed(BaseDriver* driver) {
+bool FluidSimulation::Seed(BaseDriver* driver, bool divergent) {
   if (!m_ready || !driver) return false;
   const std::vector<uint32_t> constants = BuildConstants();
   const std::vector<ComputeBindingDesc> bindings = {
@@ -287,7 +300,29 @@ bool FluidSimulation::Seed(BaseDriver* driver) {
   const uint32_t groupsX = (m_settings.width + m_seedPipeline->threadGroupSize[0] - 1) / m_seedPipeline->threadGroupSize[0];
   const uint32_t groupsY = (m_settings.height + m_seedPipeline->threadGroupSize[1] - 1) / m_seedPipeline->threadGroupSize[1];
   const uint32_t groupsZ = (m_settings.depth + m_seedPipeline->threadGroupSize[2] - 1) / m_seedPipeline->threadGroupSize[2];
-  return driver->DispatchCompute(*m_seedPipeline, bindings, groupsX, groupsY, groupsZ);
+
+  if (!divergent) return driver->DispatchCompute(*m_seedPipeline, bindings, groupsX, groupsY, groupsZ);
+
+  // The base pipeline was compiled without SEED_DIVERGENT; build the
+  // permutation lazily and cache it.
+  if (!m_seedDivergentPipeline) {
+    const ComputeKernelDefinition* kernel = FindKernel("CS_FluidSeed3D.hlsl");
+    if (!kernel) return false;
+    ComputePipelineDesc desc;
+    desc.debugName = kernel->sourceName + std::string("#divergent");
+    desc.entryPoint = kernel->entryPoint;
+    desc.permutationName = "divergent";
+    desc.defines = {"SEED_DIVERGENT"};
+    desc.bindings = kernel->bindings;
+    const std::string sourcePath = "Shaders/" + kernel->sourceName;
+    if (!ResourceLocator::Instance().ReadText(sourcePath, desc.source)) return false;
+    m_seedDivergentPipeline = driver->CreateComputePipeline(desc);
+    if (!m_seedDivergentPipeline) {
+      T8_LOG_ERROR("[Fluid] Cannot build the divergent seed permutation");
+      return false;
+    }
+  }
+  return driver->DispatchCompute(*m_seedDivergentPipeline, bindings, groupsX, groupsY, groupsZ);
 }
 
 bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
@@ -341,6 +376,187 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
   }
   T8_LOG_ERROR("[Fluid] Unknown stage '%s'", stage);
   return false;
+}
+
+bool FluidSimulation::DumpVolume(BaseDriver* driver, const std::string& directory, VolumeDump& summary) {
+  return AnalyzeVolume(driver, &directory, summary);
+}
+
+bool FluidSimulation::MeasureVolume(BaseDriver* driver, VolumeDump& summary) {
+  return AnalyzeVolume(driver, nullptr, summary);
+}
+
+bool FluidSimulation::AnalyzeVolume(BaseDriver* driver, const std::string* directory, VolumeDump& summary) {
+  summary = VolumeDump{};
+  if (!m_ready || !driver || !m_copyPipeline) return false;
+  const uint32_t width = m_settings.width;
+  const uint32_t height = m_settings.height;
+  const uint32_t depth = m_settings.depth;
+  const uint32_t voxelCount = width * height * depth;
+
+  ComputeBufferDesc bufferDesc;
+  bufferDesc.byteWidth = voxelCount * 4 * sizeof(uint32_t);
+  bufferDesc.structureStride = 4 * sizeof(uint32_t);
+  bufferDesc.access = ComputeBufferAccess::ReadWrite;
+  bufferDesc.debugName = "Fluid Volume Copy";
+  std::vector<uint32_t> zeroSeed(static_cast<size_t>(voxelCount) * 4, 0u);
+  std::unique_ptr<ComputeBuffer> buffer = driver->CreateComputeBuffer(bufferDesc, zeroSeed.data());
+  if (!buffer) {
+    T8_LOG_ERROR("[Fluid] Cannot allocate %u-voxel copy buffer", voxelCount);
+    return false;
+  }
+
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
+    {ComputeBindingType::ReadWriteBuffer, 0, buffer.get(), nullptr, 0}
+  };
+  const uint32_t groupsX = (width + m_copyPipeline->threadGroupSize[0] - 1) / m_copyPipeline->threadGroupSize[0];
+  const uint32_t groupsY = (height + m_copyPipeline->threadGroupSize[1] - 1) / m_copyPipeline->threadGroupSize[1];
+  const uint32_t groupsZ = (depth + m_copyPipeline->threadGroupSize[2] - 1) / m_copyPipeline->threadGroupSize[2];
+  if (!driver->DispatchCompute(*m_copyPipeline, bindings, groupsX, groupsY, groupsZ)) {
+    T8_LOG_ERROR("[Fluid] Volume copy dispatch failed");
+    return false;
+  }
+
+  std::vector<uint32_t> raw(static_cast<size_t>(voxelCount) * 4, 0u);
+  if (!driver->ReadComputeBuffer(*buffer, raw.data(), raw.size() * sizeof(uint32_t))) {
+    T8_LOG_ERROR("[Fluid] Volume readback failed (%zu bytes)", raw.size() * sizeof(uint32_t));
+    return false;
+  }
+  driver->FlushGPUResources();
+
+  std::vector<float> vx(voxelCount), vy(voxelCount), vz(voxelCount);
+  double sumSpeed = 0.0, sumVertical = 0.0;
+  float maxSpeed = 0.0f, maxDivergence = 0.0f;
+  double sumDivergence = 0.0;
+  uint32_t divergenceSamples = 0;
+  float interiorMaxDivergence = 0.0f;
+  double interiorSumDivergence = 0.0;
+  uint32_t interiorSamples = 0;
+  for (uint32_t z = 0; z < depth; ++z) {
+    for (uint32_t y = 0; y < height; ++y) {
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint32_t index = (z * height + y) * width + x;
+        float fx, fy, fz;
+        std::memcpy(&fx, &raw[index * 4 + 0], sizeof(float));
+        std::memcpy(&fy, &raw[index * 4 + 1], sizeof(float));
+        std::memcpy(&fz, &raw[index * 4 + 2], sizeof(float));
+        vx[index] = fx; vy[index] = fy; vz[index] = fz;
+        const float speed = std::sqrt(fx * fx + fy * fy + fz * fz);
+        sumSpeed += speed;
+        sumVertical += fy;
+        maxSpeed = (std::max)(maxSpeed, speed);
+
+        // Interior cells only: walls are zeroed and would bias the residual.
+        if (x > 0 && y > 0 && z > 0 && x + 1 < width && y + 1 < height && z + 1 < depth) {
+          const float scale = 0.5f / m_settings.cellSize;
+          const float divergence =
+            (vx[(z * height + y) * width + (x + 1)] - vx[(z * height + y) * width + (x - 1)]) * scale +
+            (vy[(z * height + (y + 1)) * width + x] - vy[(z * height + (y - 1)) * width + x]) * scale +
+            (vz[((z + 1) * height + y) * width + x] - vz[((z - 1) * height + y) * width + x]) * scale;
+          maxDivergence = (std::max)(maxDivergence, std::abs(divergence));
+          sumDivergence += std::abs(divergence);
+          ++divergenceSamples;
+        }
+        // Deep interior: skip the boundary band, where the wall stencil and the
+        // Neumann pressure clamp leave a residual that projection cannot remove.
+        if (x >= kInteriorMargin && y >= kInteriorMargin && z >= kInteriorMargin &&
+            x + kInteriorMargin < width && y + kInteriorMargin < height && z + kInteriorMargin < depth) {
+          const float scale = 0.5f / m_settings.cellSize;
+          const float divergence =
+            (vx[(z * height + y) * width + (x + 1)] - vx[(z * height + y) * width + (x - 1)]) * scale +
+            (vy[(z * height + (y + 1)) * width + x] - vy[(z * height + (y - 1)) * width + x]) * scale +
+            (vz[((z + 1) * height + y) * width + x] - vz[((z - 1) * height + y) * width + x]) * scale;
+          interiorMaxDivergence = (std::max)(interiorMaxDivergence, std::abs(divergence));
+          interiorSumDivergence += std::abs(divergence);
+          ++interiorSamples;
+        }
+      }
+    }
+  }
+
+  summary.width = width;
+  summary.height = height;
+  summary.depth = depth;
+  summary.maxSpeed = maxSpeed;
+  summary.maxDivergence = maxDivergence;
+  summary.meanDivergence = divergenceSamples
+    ? static_cast<float>(sumDivergence / divergenceSamples) : 0.0f;
+  summary.interiorMaxDivergence = interiorMaxDivergence;
+  summary.interiorMeanDivergence = interiorSamples
+    ? static_cast<float>(interiorSumDivergence / interiorSamples) : 0.0f;
+  summary.meanVertical = voxelCount ? static_cast<float>(sumVertical / voxelCount) : 0.0f;
+
+  if (!directory) return true;
+
+  std::error_code ec;
+  std::filesystem::create_directories(*directory, ec);
+  if (ec) {
+    T8_LOG_ERROR("[Fluid] Cannot create dump directory '%s': %s", directory->c_str(), ec.message().c_str());
+    return false;
+  }
+
+  float dumpMaxSpeed = maxSpeed > 1e-6f ? maxSpeed : 1.0f;
+  for (uint32_t z = 0; z < depth; ++z) {
+    std::vector<uint8_t> magnitude(static_cast<size_t>(width) * height * 3, 0);
+    std::vector<uint8_t> vertical(static_cast<size_t>(width) * height * 3, 0);
+    for (uint32_t y = 0; y < height; ++y) {
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint32_t index = (z * height + y) * width + x;
+        const uint32_t pixel = (y * width + x) * 3;
+        const float speed = std::sqrt(vx[index] * vx[index] + vy[index] * vy[index] + vz[index] * vz[index]);
+        const uint8_t speedByte = static_cast<uint8_t>((std::min)(255.0f, speed / dumpMaxSpeed * 255.0f));
+        magnitude[pixel + 0] = speedByte;
+        magnitude[pixel + 1] = speedByte;
+        magnitude[pixel + 2] = speedByte;
+        // Vertical component: red = up, blue = down, mid-grey = still.
+        const float normalised = (std::max)(-1.0f, (std::min)(1.0f, vy[index] / dumpMaxSpeed));
+        const uint8_t up = static_cast<uint8_t>((std::max)(0.0f, normalised) * 255.0f);
+        const uint8_t down = static_cast<uint8_t>((std::max)(0.0f, -normalised) * 255.0f);
+        vertical[pixel + 0] = up;
+        vertical[pixel + 1] = static_cast<uint8_t>(64);
+        vertical[pixel + 2] = down;
+      }
+    }
+    const auto writePpm = [&](const char* prefix, const std::vector<uint8_t>& pixels) {
+      char name[64];
+      std::snprintf(name, sizeof(name), "/%s_z%02u.ppm", prefix, z);
+      const std::string path = *directory + name;
+      std::ofstream out(path, std::ios::binary);
+      if (!out) return;
+      out << "P6\n" << width << ' ' << height << "\n255\n";
+      out.write(reinterpret_cast<const char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
+    };
+    writePpm("fluid_speed", magnitude);
+    writePpm("fluid_vertical", vertical);
+    ++summary.slices;
+  }
+
+  std::ofstream json(*directory + "/fluid_volume.json");
+  if (json) {
+    json << "{\n"
+         << "  \"width\": " << width << ",\n"
+         << "  \"height\": " << height << ",\n"
+         << "  \"depth\": " << depth << ",\n"
+         << "  \"cellSize\": " << m_settings.cellSize << ",\n"
+         << "  \"sliceCount\": " << summary.slices << ",\n"
+         << "  \"maxSpeed\": " << summary.maxSpeed << ",\n"
+         << "  \"meanSpeed\": " << (voxelCount ? sumSpeed / voxelCount : 0.0) << ",\n"
+         << "  \"meanVertical\": " << summary.meanVertical << ",\n"
+         << "  \"maxDivergence\": " << summary.maxDivergence << ",\n"
+         << "  \"meanDivergence\": " << summary.meanDivergence << ",\n"
+         << "  \"interiorMaxDivergence\": " << summary.interiorMaxDivergence << ",\n"
+         << "  \"interiorMeanDivergence\": " << summary.interiorMeanDivergence << "\n"
+         << "}\n";
+  }
+
+  T8_LOG_INFO("[Fluid] Volume dumped to '%s': %ux%ux%u slices=%u maxSpeed=%.4f meanSpeed=%.4f wallDiv=%.4f interiorMaxDiv=%.4f interiorMeanDiv=%.4f",
+              directory->c_str(), width, height, depth, summary.slices, summary.maxSpeed,
+              voxelCount ? static_cast<float>(sumSpeed / voxelCount) : 0.0f,
+              summary.maxDivergence, summary.interiorMaxDivergence, summary.interiorMeanDivergence);
+  return true;
 }
 
 bool FluidSimulation::ReadDiagnostics(BaseDriver* driver, Diagnostics& out) {

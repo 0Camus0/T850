@@ -104,6 +104,8 @@ int main(int arg,char ** args) try {
   bool computeSelfTest = false;
   bool fluidSelfTest = false;
   int fluidSelfTestFrames = 24;
+  std::string fluidDumpDirectory;
+  int fluidIterations = 8;
   bool webgpuRecoverySelfTest = false;
   bool computeSelfTestApiExplicit = false;
   int computeSelfTestWaitSeconds = 0;
@@ -130,6 +132,14 @@ int main(int arg,char ** args) try {
     if (std::string_view(args[i]) == "--fluid-selftest-frames" && i + 1 < arg) {
       fluidSelfTest = true;
       fluidSelfTestFrames = (std::max)(1, (std::min)(2000, std::stoi(args[++i])));
+    }
+    if (std::string_view(args[i]) == "--fluid-dump-volume" && i + 1 < arg) {
+      fluidSelfTest = true;
+      fluidDumpDirectory = args[++i];
+    }
+    if (std::string_view(args[i]) == "--fluid-iterations" && i + 1 < arg) {
+      fluidSelfTest = true;
+      fluidIterations = (std::max)(1, (std::min)(400, std::stoi(args[++i])));
     }
     if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
       webgpuRecoverySelfTest = true;
@@ -333,7 +343,7 @@ int main(int arg,char ** args) try {
     settings.width = 32;
     settings.height = 16;
     settings.depth = 16;
-    settings.pressureIterations = 8;
+    settings.pressureIterations = static_cast<uint32_t>(fluidIterations);
     settings.deltaTime = 1.0f / 60.0f;
     settings.cellSize = 0.09f;
     if (!fluid.TryInitialize(driver, settings)) {
@@ -376,21 +386,62 @@ int main(int arg,char ** args) try {
         }
       }
 
-      // Stages 1..6 run once each so the first divergence is attributable.
-      struct StageCase { const char* stage;};
-      const StageCase stages[] = {{"advect"}, {"forces"}, {"divergence"},
-                                  {"pressure"}, {"gradient"}, {"surface"}};
-      for (const StageCase& stage : stages) {
-        if (!fluid.StepStage(driver, stage.stage)) {
-          T8_LOG_ERROR("[FluidSelfTest] stage '%s' dispatch failed", stage.stage);
-          ++failures;
-          break;
+      // Stage 1: a field with known non-zero divergence must be projected, and
+      // more Jacobi iterations must monotonically reduce the residual. Plain
+      // Jacobi needs O(grid^2) iterations to converge, so the gate is the trend
+      // plus "never grows", not an absolute ratio at one iteration count.
+      if (failures == 0) {
+        const int iterationSweep[] = {1, 8, 50};
+        float ratios[3] = {0.0f, 0.0f, 0.0f};
+        for (int sweep = 0; sweep < 3 && failures == 0; ++sweep) {
+          const int iterations = iterationSweep[sweep];
+          if (!fluid.Seed(driver, true)) {
+            T8_LOG_ERROR("[FluidSelfTest] divergent seed failed");
+            ++failures;
+            break;
+          }
+          t850::FluidSimulation::VolumeDump before;
+          const std::string base = fluidDumpDirectory.empty() ? "." : fluidDumpDirectory;
+          const std::string tag = "/iter" + std::to_string(iterations);
+          if (!fluid.MeasureVolume(driver, before)) { ++failures; break; }
+          if (!fluid.StepStage(driver, "divergence")) { ++failures; break; }
+          for (int iteration = 0; iteration < iterations; ++iteration) {
+            if (!fluid.StepStage(driver, "pressure")) {
+              T8_LOG_ERROR("[FluidSelfTest] pressure iteration %d failed", iteration);
+              ++failures;
+            }
+          }
+          t850::FluidSimulation::VolumeDump after;
+          if (failures != 0) break;
+          if (!fluid.StepStage(driver, "gradient")) { ++failures; break; }
+          if (!fluid.MeasureVolume(driver, after)) { ++failures; break; }
+          if (!fluidDumpDirectory.empty())
+            fluid.DumpVolume(driver, base + tag + "/after", after);
+          ratios[sweep] = before.interiorMeanDivergence > 1e-6f
+            ? after.interiorMeanDivergence / before.interiorMeanDivergence : 0.0f;
+          T8_LOG_INFO("[FluidSelfTest] projection iterations=%3d pre=%.4f post=%.4f ratio=%.3f",
+                      iterations, before.interiorMeanDivergence, after.interiorMeanDivergence, ratios[sweep]);
         }
-        const std::string_view name(stage.stage);
-        if (name != "divergence" && name != "pressure" && name != "surface") {
-          if (!report(stage.stage, nullptr)) break;
+        if (failures == 0) {
+          if (!(ratios[0] >= ratios[1] && ratios[1] >= ratios[2])) {
+            T8_LOG_ERROR("[FluidSelfTest] divergence residual is not monotonically decreasing (%.3f, %.3f, %.3f)",
+                         ratios[0], ratios[1], ratios[2]);
+            ++failures;
+          }
+          if (ratios[0] > 1.05f) {
+            T8_LOG_ERROR("[FluidSelfTest] projection increased divergence (ratio=%.3f)", ratios[0]);
+            ++failures;
+          }
+          if (ratios[2] > 0.85f) {
+            T8_LOG_ERROR("[FluidSelfTest] 50 Jacobi iterations removed almost nothing (ratio=%.3f)", ratios[2]);
+            ++failures;
+          }
         }
       }
+
+      // A uniform field is divergence-free, so the previous pre/post check
+      // measured only wall stencil noise. The divergent seed above is the real
+      // projection test.
 
       // Full solver: the field must still be finite and moving.
       for (int frame = 0; failures == 0 && frame < fluidSelfTestFrames; ++frame) {
@@ -403,6 +454,13 @@ int main(int arg,char ** args) try {
       if (failures == 0 && report("full", &diagnostics)) {
         if (diagnostics.meanSpeed <= 0.0005f) {
           T8_LOG_ERROR("[FluidSelfTest] solver field is static (meanSpeed=%.6f)", diagnostics.meanSpeed);
+          ++failures;
+        }
+      }
+      if (!fluidDumpDirectory.empty()) {
+        t850::FluidSimulation::VolumeDump dump;
+        if (!fluid.DumpVolume(driver, fluidDumpDirectory + "/final", dump)) {
+          T8_LOG_ERROR("[FluidSelfTest] final volume dump failed");
           ++failures;
         }
       }

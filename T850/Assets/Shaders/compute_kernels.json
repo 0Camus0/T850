@@ -104,6 +104,96 @@
         {"type": "storage_texture", "shader_register": 0, "binding_index": 1, "storage_format": "rgba16float"},
         {"type": "sampled_texture", "shader_register": 0, "binding_index": 2, "match_output_extent": true}
       ]
+    },
+    {
+      "id": "fluid_advect",
+      "source": "CS_FluidAdvect3D.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d"},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 2, "dimension": "3d", "storage_format": "rgba16float"}
+      ]
+    },
+    {
+      "id": "fluid_forces",
+      "source": "CS_FluidForces3D.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d"},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 2, "dimension": "3d", "storage_format": "rgba16float"}
+      ]
+    },
+    {
+      "id": "fluid_divergence",
+      "source": "CS_FluidDivergence3D.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d"},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 2, "dimension": "3d", "storage_format": "rgba16float"}
+      ]
+    },
+    {
+      "id": "fluid_pressure",
+      "source": "CS_FluidPressure3D.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d"},
+        {"type": "sampled_texture", "shader_register": 1, "binding_index": 2, "dimension": "3d"},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 3, "dimension": "3d", "storage_format": "rgba16float"}
+      ]
+    },
+    {
+      "id": "fluid_gradient",
+      "source": "CS_FluidGradient3D.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d"},
+        {"type": "sampled_texture", "shader_register": 1, "binding_index": 2, "dimension": "3d"},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 3, "dimension": "3d", "storage_format": "rgba16float"}
+      ]
+    },
+    {
+      "id": "fluid_surface",
+      "source": "CS_FluidSurface3D.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d"},
+        {"type": "sampled_texture", "shader_register": 1, "binding_index": 2},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 3, "storage_format": "rgba16float"}
+      ]
+    },
+    {
+      "id": "fluid_diagnostics",
+      "source": "CS_FluidDiagnostics3D.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d"},
+        {"type": "read_write_buffer", "shader_register": 0, "binding_index": 2}
+      ]
+    },
+    {
+      "id": "fluid_seed",
+      "source": "CS_FluidSeed3D.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d", "storage_format": "rgba16float"}
+      ]
     }
   ]
 }

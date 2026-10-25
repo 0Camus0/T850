@@ -633,7 +633,8 @@ namespace {
       bufferDesc.structureStride = 2 * sizeof(uint32_t);
       bufferDesc.access = ComputeBufferAccess::ReadWrite;
       bufferDesc.debugName = "T850 Volume Compute Result";
-      std::unique_ptr<ComputeBuffer> result = driver->CreateComputeBuffer(bufferDesc);
+      const std::array<uint32_t, 2> zeroSeed = {0u, 0u};
+      std::unique_ptr<ComputeBuffer> result = driver->CreateComputeBuffer(bufferDesc, zeroSeed.data());
       if (!result) {
         T8_LOG_ERROR("[ComputeVolume] %ux%ux%u result buffer creation failed", width, height, depth);
         return 1;

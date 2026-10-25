@@ -1,0 +1,105 @@
+#pragma once
+
+#include <video/BaseDriver.h>
+
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace t850 {
+
+  struct FluidSettings {
+    uint32_t width = 96;
+    uint32_t height = 32;
+    uint32_t depth = 48;
+    uint32_t pressureIterations = 8;
+    float cellSize = 0.09f;
+    float deltaTime = 1.0f / 30.0f;
+    float viscosity = 0.02f;
+    float gravity = 9.81f;
+    float windX = 0.6f;
+    float windY = 0.0f;
+    float windZ = -0.35f;
+    float damping = 0.6f;
+    float surfaceLevel = 0.92f;
+    float pressureScale = 1.0f;
+  };
+
+  // GPU volumetric Navier-Stokes solver for a bounded pool volume.
+  // Requires SupportsComputeTextures3D(); callers must fall back to analytic
+  // waves when TryInitialize returns false.
+  class FluidSimulation {
+  public:
+    FluidSimulation() = default;
+    ~FluidSimulation();
+
+    bool TryInitialize(BaseDriver* driver, const FluidSettings& settings);
+    void Shutdown(BaseDriver* driver);
+
+    // Advances the solver one frame and refreshes the 2D surface target.
+    bool Step(BaseDriver* driver);
+    bool Reset(BaseDriver* driver);
+
+    bool IsReady() const { return m_ready; }
+    const FluidSettings& Settings() const { return m_settings; }
+
+    // Sampled 2D surface (height, foam, slopeX, slopeZ) produced by Step().
+    Texture* SurfaceTexture() const { return m_surfaceTexture[m_surfaceCurrent]; }
+    int SurfaceRenderTarget() const { return m_surfaceRT[m_surfaceCurrent]; }
+
+    struct Diagnostics {
+      uint32_t samples = 0;
+      float maxSpeed = 0.0f;
+      float meanSpeed = 0.0f;
+      uint32_t nonFinite = 0;
+      float meanX = 0.0f;
+    };
+    bool ReadDiagnostics(BaseDriver* driver, Diagnostics& out);
+
+    // Writes a known 1.0 m/s +X field so later stages have defined input.
+    bool Seed(BaseDriver* driver);
+
+    // Runs a single named stage and leaves the result in the current volume.
+    // Stage names match the debug log; used by the staged self-test.
+    bool StepStage(BaseDriver* driver, const char* stage);
+
+  private:
+    std::unique_ptr<ComputeTexture3D> CreateVolume(BaseDriver* driver, const char* debugName);
+    std::unique_ptr<ComputePipeline> CreatePipeline(BaseDriver* driver, const char* source);
+    std::vector<uint32_t> BuildConstants() const;
+    bool EnsureSurfaceTarget(BaseDriver* driver);
+    bool DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
+                        ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
+                        ComputeTexture3D* target);
+
+    static constexpr size_t kVelocityCount = 2;
+    static constexpr size_t kPressureCount = 2;
+
+    BaseDriver* m_driver = nullptr;
+    FluidSettings m_settings;
+    bool m_ready = false;
+
+    std::unique_ptr<ComputeTexture3D> m_velocity[kVelocityCount];
+    std::unique_ptr<ComputeTexture3D> m_divergence;
+    std::unique_ptr<ComputeTexture3D> m_pressure[kPressureCount];
+
+    std::unique_ptr<ComputePipeline> m_advect;
+    std::unique_ptr<ComputePipeline> m_forces;
+    std::unique_ptr<ComputePipeline> m_divergencePipeline;
+    std::unique_ptr<ComputePipeline> m_pressurePipeline;
+    std::unique_ptr<ComputePipeline> m_gradientPipeline;
+    std::unique_ptr<ComputePipeline> m_surfacePipeline;
+    std::unique_ptr<ComputePipeline> m_seedPipeline;
+    std::unique_ptr<ComputePipeline> m_diagnosticsPipeline;
+
+    int m_surfaceRT[2] = {-1, -1};
+    Texture* m_surfaceTexture[2] = {nullptr, nullptr};
+    uint32_t m_surfaceCurrent = 0;
+    uint32_t m_current = 0;
+    uint32_t m_pressureCurrent = 0;
+    float m_time = 0.0f;
+  };
+
+} // namespace t850

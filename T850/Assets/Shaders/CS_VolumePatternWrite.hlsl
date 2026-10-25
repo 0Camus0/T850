@@ -22,6 +22,10 @@ cbuffer VolumeConstantsBuffer : register(b0)
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(1, 0)]]
 #endif
+#ifdef T850_SPIRV
+[[spv::nonreadable]]
+[[spv::format_rgba16f]]
+#endif
 RWTexture3D<float4> Output : register(u0);
 
 [numthreads(8, 8, 1)]

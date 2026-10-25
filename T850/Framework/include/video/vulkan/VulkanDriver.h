@@ -56,6 +56,7 @@ namespace t850 {
     const char* ApiTag() const override { return "vulkan"; }
     bool SupportsComputeShaders() const override { return m_supportsComputeShaders; }
     bool SupportsComputeTextures() const override { return m_supportsComputeTextures; }
+    bool SupportsComputeTextures3D() const override { return m_supportsComputeTextures; }
     int SurfaceColorFormat() const override {
       if (m_swapChainFormat == VK_FORMAT_R8G8B8A8_UNORM) return BaseRT::RGBA8;
       if (m_swapChainFormat == VK_FORMAT_B8G8R8A8_UNORM) return BaseRT::BGRA8;
@@ -102,6 +103,8 @@ namespace t850 {
     void SetScissorRect(int x, int y, int w, int h) override;
     std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
     std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
+                              const void* initialData = nullptr) override;
+    std::unique_ptr<ComputeTexture3D> CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
                               const void* initialData = nullptr) override;
     bool DispatchCompute(ComputePipeline& pipeline, const std::vector<ComputeBindingDesc>& bindings,
                uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;

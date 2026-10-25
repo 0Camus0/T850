@@ -275,6 +275,9 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     if (!m_fluid.Step(pFramework->pVideoDriver)) {
       T8_LOG_ERROR("[Backyard] Fluid step failed; disabling the solver for this scene");
       m_fluidReady = false;
+    } else {
+      // Shading time follows the solver clock so ripples are frame-deterministic.
+      SceneProp.TimeSeconds = m_fluid.SimulationTime();
     }
   }
   m_dumper.UpdateReplayState();

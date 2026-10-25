@@ -129,6 +129,9 @@ namespace t850 {
       XMATRIX44 WVP;
       XMATRIX44 World;
       XMATRIX44 WorldView;
+      // Scene clock, so vertex-side animation (water ripples) matches the
+      // fragment-side detail waves instead of drifting out of phase.
+      XVECTOR3  TimeParams;
     };
 
     struct MeshFrameCBuffer {

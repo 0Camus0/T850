@@ -189,10 +189,21 @@
       "id": "fluid_seed",
       "source": "CS_FluidSeed3D.hlsl",
       "entry": "CS",
-      "permutations": ["base"],
+      "permutations": ["base", "divergent"],
       "bindings": [
         {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
         {"type": "storage_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d", "storage_format": "rgba16float"}
+      ]
+    },
+    {
+      "id": "fluid_copy",
+      "source": "CS_FluidCopy3D.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "constants", "shader_register": 0, "binding_index": 0, "constant_count": 16},
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d"},
+        {"type": "read_write_buffer", "shader_register": 0, "binding_index": 2}
       ]
     }
   ]

@@ -58,8 +58,29 @@ namespace t850 {
     };
     bool ReadDiagnostics(BaseDriver* driver, Diagnostics& out);
 
+    // Copies the whole velocity volume to the CPU and writes per-slice PPM
+    // images plus a JSON summary (divergence residual, per-slice statistics).
+    // Returns false if the readback fails.
+    struct VolumeDump {
+      uint32_t width = 0;
+      uint32_t height = 0;
+      uint32_t depth = 0;
+      float maxDivergence = 0.0f;
+      float meanDivergence = 0.0f;
+      float interiorMeanDivergence = 0.0f;
+      float interiorMaxDivergence = 0.0f;
+      float maxSpeed = 0.0f;
+      float meanVertical = 0.0f;
+      uint32_t slices = 0;
+    };
+    bool DumpVolume(BaseDriver* driver, const std::string& directory, VolumeDump& summary);
+    // Same statistics without writing images (cheap: one buffer copy).
+    bool MeasureVolume(BaseDriver* driver, VolumeDump& summary);
+
     // Writes a known 1.0 m/s +X field so later stages have defined input.
-    bool Seed(BaseDriver* driver);
+    // With divergent=true it writes a field with a known constant divergence,
+    // which is what proves the pressure solve actually projects.
+    bool Seed(BaseDriver* driver, bool divergent = false);
 
     // Runs a single named stage and leaves the result in the current volume.
     // Stage names match the debug log; used by the staged self-test.
@@ -70,6 +91,7 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> CreatePipeline(BaseDriver* driver, const char* source);
     std::vector<uint32_t> BuildConstants() const;
     bool EnsureSurfaceTarget(BaseDriver* driver);
+    bool AnalyzeVolume(BaseDriver* driver, const std::string* directory, VolumeDump& summary);
     bool DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                         ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
                         ComputeTexture3D* target);
@@ -92,7 +114,9 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_gradientPipeline;
     std::unique_ptr<ComputePipeline> m_surfacePipeline;
     std::unique_ptr<ComputePipeline> m_seedPipeline;
+    std::unique_ptr<ComputePipeline> m_seedDivergentPipeline;
     std::unique_ptr<ComputePipeline> m_diagnosticsPipeline;
+    std::unique_ptr<ComputePipeline> m_copyPipeline;
 
     int m_surfaceRT[2] = {-1, -1};
     Texture* m_surfaceTexture[2] = {nullptr, nullptr};

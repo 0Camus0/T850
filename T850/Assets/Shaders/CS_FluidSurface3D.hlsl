@@ -57,9 +57,13 @@ void CS(uint3 id : SV_DispatchThreadID)
         return;
 
     const int surfaceY = clamp(int(SurfaceLevel * float(Height)), 1, int(Height) - 2);
-    const float3 surfaceVelocity = VelocityIn.Load(int4(int3(id.x, surfaceY, id.z), 0)).xyz;
+    // Average two rows around the surface: the top row is a solid-boundary cell
+    // whose velocity is clamped to zero, so sampling only there reads nothing.
+    const float3 surfaceVelocity =
+      (VelocityIn.Load(int4(int3(id.x, surfaceY, id.z), 0)).xyz +
+       VelocityIn.Load(int4(int3(id.x, surfaceY - 1, id.z), 0)).xyz) * 0.5f;
     const float vertical = surfaceVelocity.y;
-    const float below = VelocityIn.Load(int4(int3(id.x, surfaceY - 1, id.z), 0)).y;
+    const float below = VelocityIn.Load(int4(int3(id.x, max(surfaceY - 2, 0), id.z), 0)).y;
 
     // Wave equation driven by the 3D vertical velocity, damped and coupled to
     // the neighbouring columns so disturbances spread across the pool.
@@ -69,17 +73,22 @@ void CS(uint3 id : SV_DispatchThreadID)
         SurfaceHeight(int(id.x), int(id.z) + 1) + SurfaceHeight(int(id.x), int(id.z) - 1) -
         4.0f * center;
 
-    // Travelling wind waves whose amplitude scales with the local flow energy,
-    // so the surface only ripples where the solver has actually moved water.
-    const float energy = saturate(length(surfaceVelocity) * 3.0f);
+    // Travelling wind waves at a fixed base amplitude, modulated by the local
+    // flow energy. A purely energy-scaled amplitude stays at exactly zero while
+    // the field is calm, so the surface never starts to move.
+    const float energy = saturate(length(surfaceVelocity) * 4.0f);
+    const float baseAmplitude = 0.07f;
     const float wave =
-        sin(float(id.x) * 0.42f + TimeValue * 1.7f) *
-        cos(float(id.z) * 0.33f + TimeValue * 1.2f);
-    const float wave2 = sin(float(id.x) * 0.17f + float(id.z) * 0.23f + TimeValue * 0.9f);
+        sin(float(id.x) * 0.60f + TimeValue * 2.2f) *
+        cos(float(id.z) * 0.85f + TimeValue * 1.6f);
+    const float wave2 = sin(float(id.x) * 0.16f + float(id.z) * 0.22f + TimeValue * 0.9f);
+    const float target = (wave + wave2 * 0.9f) * baseAmplitude * (0.35f + energy);
 
-    float height = center + (vertical + below * 0.5f) * DeltaTime + laplacian * 0.18f +
-                   (wave + wave2 * 0.5f) * energy * DeltaTime * 6.0f;
-    height *= saturate(1.0f - 1.1f * DeltaTime);
+    // Relax toward the target instead of integrating an increment, so the wave
+    // cannot drift away from the pool's water level.
+    float height = lerp(center, target, saturate(DeltaTime * 6.0f)) +
+                   (vertical + below * 0.5f) * DeltaTime * 0.35f + laplacian * 0.12f;
+    height *= saturate(1.0f - 0.6f * DeltaTime);
     height = clamp(height, -0.45f, 0.45f);
 
     const float slopeX = (SurfaceHeight(int(id.x) + 1, int(id.z)) - SurfaceHeight(int(id.x) - 1, int(id.z))) * 0.5f;

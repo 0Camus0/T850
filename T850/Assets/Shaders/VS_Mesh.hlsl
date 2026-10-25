@@ -32,12 +32,14 @@ cbuffer MeshInstanceCB : register(b1) {
 
 #ifdef USE_SKINNING_TEXTURE
 Texture2D<float4> BoneTexture : register(t24);
+#endif
 
 #ifdef FLUID_SURFACE
 // Sampled with Load() so no sampler binding is required.
 Texture2D<float4> FluidSurfaceTexture : register(t23);
 #endif
 
+#ifdef USE_SKINNING_TEXTURE
 float4x4 getBoneMatrix(int index) {
 	uint texW, texH;
 	BoneTexture.GetDimensions(texW, texH);

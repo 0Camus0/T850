@@ -864,8 +864,8 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         int2 texel = clamp(int2(saturate(uv) * float2(fluidWidth, fluidHeight)),
                            int2(0, 0), int2(fluidWidth - 1, fluidHeight - 1));
         float4 fluidSurface = FluidSurfaceTexture.Load(int3(texel, 0));
-        normal = normalize(normal + float3(-fluidSurface.z, 0.0f, -fluidSurface.w) * 8.0f);
-        color = lerp(color, float3(1.0f, 1.0f, 1.0f), saturate(fluidSurface.y) * 0.55f);
+        normal = normalize(normal + float3(-fluidSurface.z, 0.0f, -fluidSurface.w) * 18.0f);
+        color.rgb = lerp(color.rgb, float3(1.0f, 1.0f, 1.0f), saturate(fluidSurface.y) * 0.55f);
     }
 #endif
 

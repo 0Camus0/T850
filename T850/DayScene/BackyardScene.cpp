@@ -144,10 +144,10 @@ void BackyardScene::CreateAssets() {
     t850::PrimitiveInst instance;
     instance.CreateInstance(PrimitiveMgr.GetPrimitive(primitive), &identity);
     if (std::string(asset.label) == "water") {
-      // Slot 23 receives the solver's surface texture once the fluid is
-      // initialized. The FLUID_SURFACE permutation is not yet registered in
-      // the shader export pipeline, so the plane currently renders with the
-      // standard mesh permutation (displacement dormant).
+      // The solver's surface texture is bound at slot 23; this persistent flag
+      // survives the render graph's per-pass SetGlobalKey and selects the
+      // displacement/foam shader permutation.
+      instance.PersistentFeatureBits = t850::ShaderKey::FLUID_SURFACE;
     }
     instance.Update();
     const t850::RenderInstanceHandle handle = m_renderContainer.AddMeshInstance(instance);
@@ -170,29 +170,37 @@ void BackyardScene::CreateAssets() {
     T8_LOG_INFO("[Backyard] Ready: %zu mesh instances", m_instances.size());
   }
 
-  // Start the volumetric solver and point it at the graph's surface target.
+  // Grid matches the pool basin: 9.0 m (X) x 1.6 m (Y) x 4.5 m (Z) at a
+  // 9 cm cell. The surface UV space therefore maps 1:1 onto the pool mesh.
   t850::FluidSettings fluidSettings;
-  fluidSettings.width = 64;
-  fluidSettings.height = 32;
-  fluidSettings.depth = 24;
+  fluidSettings.width = 100;
+  fluidSettings.height = 18;
+  fluidSettings.depth = 50;
   fluidSettings.pressureIterations = fluidIterations;
   fluidSettings.deltaTime = 1.0f / 60.0f;
   fluidSettings.cellSize = 0.09f;
+  fluidSettings.surfaceLevel = 0.96f;
   if (m_fluid.TryInitialize(driver, fluidSettings)) {
     m_fluidReady = true;
     if (!m_fluid.Seed(driver, true)) {
       T8_LOG_ERROR("[Backyard] Fluid seed dispatch failed");
     }
-    // Bind the solver's stable surface texture straight onto the water
-    // instance at slot 23 (t23). No render-graph RT involved: a graph target
-    // written by an out-of-graph dispatch did not survive readback.
-    t850::Texture* surface = m_fluid.SurfaceTexture();
+    // Bind a stable surface target onto the water instance at slot 23 (t23).
+    // No render-graph RT involved: a graph target written by an out-of-graph
+    // dispatch did not survive readback, so the RT is owned by the driver here.
+    m_waterSurfaceRT = driver->CreateRT(1, t850::BaseRT::RGBA16F, t850::BaseRT::NOTHING,
+                                       static_cast<int>(fluidSettings.width),
+                                       static_cast<int>(fluidSettings.depth), false, true);
+    t850::Texture* surface = m_waterSurfaceRT >= 0
+      ? driver->GetRTTexture(m_waterSurfaceRT, t850::BaseDriver::COLOR0_ATTACHMENT) : nullptr;
     if (surface && m_waterHandle.IsValid()) {
+      m_fluid.SetSurfaceOutput(surface);
       if (t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle)) {
         water->SetTexture(surface, 23);
         water->Update();
         T8_LOG_INFO("[Backyard] Water surface bound to solver texture (%dx%d)", surface->x, surface->y);
       }
+      EnsureWaterShaderPermutations(driver);
     } else {
       T8_LOG_ERROR("[Backyard] Cannot bind the water surface texture");
     }
@@ -207,6 +215,9 @@ void BackyardScene::DestroyAssets() {
     m_fluid.Shutdown(pFramework->pVideoDriver);
   }
   m_fluidReady = false;
+  if (m_waterSurfaceRT >= 0 && pFramework && pFramework->pVideoDriver)
+    pFramework->pVideoDriver->DestroyRT(m_waterSurfaceRT);
+  m_waterSurfaceRT = -1;
   m_instances.clear();
   m_primitiveIndices.clear();
   PrimitiveMgr.DestroyPrimitives();
@@ -216,6 +227,33 @@ void BackyardScene::DestroyAssets() {
   }
   SceneProp.SSAOKernel.Destroy();
   m_assetsCreated = false;
+}
+
+void BackyardScene::EnsureWaterShaderPermutations(t850::BaseDriver* driver) {
+  if (!driver) return;
+  // RenderMesh only pre-compiles permutations derived from the material key, so
+  // a draw-time instance flag (FLUID_SURFACE) has no compiled program and the
+  // draw is skipped. Create the exact keys the water mesh needs here.
+  std::string vertexSource, fragmentSource;
+  if (!t850::ResourceLocator::Instance().ReadText("Shaders/VS_Mesh.hlsl", vertexSource) ||
+      !t850::ResourceLocator::Instance().ReadText("Shaders/FS_Mesh.hlsl", fragmentSource)) {
+    T8_LOG_ERROR("[Backyard] Cannot read mesh shader sources for the water permutation");
+    return;
+  }
+  // Water material: normals, tangents, binormals, uv0 + glTF tangent space.
+  const uint64_t baseBits =
+    t850::ShaderKey::HAS_NORMALS | t850::ShaderKey::HAS_TANGENTS |
+    t850::ShaderKey::HAS_BINORMALS | t850::ShaderKey::HAS_TEXCOORD0 |
+    t850::ShaderKey::GLTF_TANGENT_SPACE;
+  for (uint8_t pass : {t850::PassType::FORWARD, t850::PassType::GBUFFER,
+                       t850::PassType::SHADOW_MAP, t850::PassType::RADIAL_DEPTH}) {
+    t850::ShaderKey key(baseBits | t850::ShaderKey::FLUID_SURFACE);
+    key.setPass(pass);
+    T8_LOG_INFO("[Backyard] Precompiling water permutation pass=%u", static_cast<unsigned>(pass));
+    // Names must match RenderMesh exactly: the shader family hash includes the
+    // source text and these basenames, not the resource path.
+    driver->CreateShader(vertexSource, fragmentSource, key, "VS_Mesh.hlsl", "FS_Mesh.hlsl");
+  }
 }
 
 void BackyardScene::OnLoadScene() {
@@ -269,13 +307,6 @@ void BackyardScene::OnDraw() {
   if (m_fluidReady) {
     static int probeFrame = 0;
     if (++probeFrame == 120) {
-      t850::Texture* surface = m_fluid.SurfaceTexture();
-      float rgba[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-      const int rt = m_fluid.SurfaceRenderTarget();
-      const bool ok = surface && rt >= 0 && pFramework->pVideoDriver->ReadRTColorFloat(
-        rt, t850::BaseDriver::COLOR0_ATTACHMENT, rgba);
-      T8_LOG_INFO("[Backyard][surface] ok=%d height=%.4f foam=%.4f slopeX=%.4f slopeZ=%.4f",
-                  ok ? 1 : 0, rgba[0], rgba[1], rgba[2], rgba[3]);
       t850::FluidSimulation::Diagnostics diagnostics;
       if (m_fluid.ReadDiagnostics(pFramework->pVideoDriver, diagnostics))
         T8_LOG_INFO("[Backyard][fluid] samples=%u meanSpeed=%.4f maxSpeed=%.4f nonFinite=%u",

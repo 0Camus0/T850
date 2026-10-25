@@ -324,10 +324,17 @@ def build_water_surface():
     line up with the simulation grid and UVs must be exact (no smart-project).
     """
     water = material("Water_Surface", (0.10, 0.34, 0.42), roughness=0.03)
+    # Transparent so the renderer draws the surface in the forward pass, where
+    # refraction is available and the displacement permutation resolves.
+    water.blend_method = "BLEND"
+    bsdf = water.node_tree.nodes.get("Principled BSDF")
+    if bsdf is not None:
+        if "Alpha" in bsdf.inputs:
+            bsdf.inputs["Alpha"].default_value = 0.72
     width = POOL["width"]
     length = POOL["length"]
-    nx = 32
-    nz = 16
+    nx = 96
+    nz = 48
     z_level = WATER_LINE - 0.04
 
     verts = []

@@ -35,6 +35,8 @@ private:
 
   static constexpr int kSceneIndex = 7;
 
+  void EnsureWaterShaderPermutations(t850::BaseDriver* driver);
+
   t850::RenderContainer m_renderContainer;
   t850::PrimitiveManager PrimitiveMgr;
   t850::SceneSetup m_sceneSetup;
@@ -49,6 +51,10 @@ private:
   t850::RenderInstanceHandle m_waterHandle;
   t850::FluidSimulation m_fluid;
   bool m_fluidReady = false;
+  // Stable 2D target the solver copies its surface into every Step, so the
+  // water mesh binds one texture for the whole frame instead of chasing the
+  // solver's ping-pong pair.
+  int m_waterSurfaceRT = -1;
   uint32_t fluidIterations = 30;
   t850::EnvironmentMapSet m_envMaps;
   int m_envMapTexture = -1;

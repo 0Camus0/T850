@@ -2484,6 +2484,11 @@ namespace t850 {
           Texture* t = matTex(MatTexSlot::Lightmap); if (!t) t = sub_info->LightmapTex;
           bindTextureOnce(t, MaterialTextureSlot::Lightmap, "LightmapTex", LightmapSamplerSlot);
         }
+        if (s->key.has(ShaderKey::FLUID_SURFACE)) {
+          // Solver surface texture. Read with Load(), so the sampler slot is
+          // only there to keep the state tracker's bookkeeping uniform.
+          bindTextureOnce(Textures[23], 23, "FluidSurfaceTexture", 0);
+        }
 
         // Phase A.5 step 2: when using shared pools the index/vertex
         // offsets steer the draw to this submesh's allocation. Falls

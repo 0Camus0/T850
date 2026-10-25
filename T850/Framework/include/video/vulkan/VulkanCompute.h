@@ -37,6 +37,21 @@ namespace t850 {
     VkBuffer buffer = VK_NULL_HANDLE;
     VmaAllocation allocation = VK_NULL_HANDLE;
   };
+
+  class VulkanComputeTexture3D final : public ComputeTexture3D {
+  public:
+    ~VulkanComputeTexture3D() override;
+    bool Create(VulkanDriver* driver, const ComputeTexture3DDesc& desc, const void* initialData);
+
+    VulkanDriver* owner = nullptr;
+    VkImage image = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkImageLayout GetLayout() const { return layout; }
+    void SetLayout(VkImageLayout next) { layout = next; }
+  };
 }
 #endif
 #endif

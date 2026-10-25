@@ -1,0 +1,97 @@
+// T850 pool fluid: applies wind, buoyancy and viscous diffusion to the
+// velocity volume, with solid walls on the volume boundary.
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(0, 0)]]
+#endif
+cbuffer FluidConstants : register(b0)
+{
+    uint Width;
+    uint Height;
+    uint Depth;
+    uint Iteration;
+    float DeltaTime;
+    float CellSize;
+    float Viscosity;
+    float Gravity;
+    float WindX;
+    float WindY;
+    float WindZ;
+    float Damping;
+    float SurfaceLevel;
+    float TimeValue;
+    float PressureScale;
+    float Padding0;
+};
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(1, 0)]]
+#endif
+Texture3D<float4> VelocityIn : register(t0);
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(2, 0)]]
+#endif
+#ifdef T850_SPIRV
+[[spv::nonreadable]]
+[[spv::format_rgba16f]]
+#endif
+RWTexture3D<float4> VelocityOut : register(u0);
+
+bool IsSolid(int3 cell)
+{
+    return cell.x <= 0 || cell.y <= 0 || cell.z <= 0 ||
+           cell.x >= int(Width) - 1 || cell.y >= int(Height) - 1 || cell.z >= int(Depth) - 1;
+}
+
+float4 Fetch(int3 cell)
+{
+    if (IsSolid(cell))
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    return VelocityIn.Load(int4(cell, 0));
+}
+
+[numthreads(4, 4, 4)]
+void CS(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= Width || id.y >= Height || id.z >= Depth)
+        return;
+    int3 cell = int3(id);
+    if (IsSolid(cell))
+    {
+        VelocityOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return;
+    }
+
+    float4 center = VelocityIn.Load(int4(cell, 0));
+    float3 velocity = center.xyz;
+
+    // Viscous diffusion from the six neighbours.
+    float4 laplacian = Fetch(cell + int3(1, 0, 0)) + Fetch(cell - int3(1, 0, 0)) +
+                       Fetch(cell + int3(0, 1, 0)) + Fetch(cell - int3(0, 1, 0)) +
+                       Fetch(cell + int3(0, 0, 1)) + Fetch(cell - int3(0, 0, 1)) -
+                       6.0f * center;
+    velocity += laplacian.xyz * Viscosity;
+
+    // Wind drives the surface layer only.
+    const float surfaceY = SurfaceLevel * float(Height);
+    if (float(id.y) > surfaceY - 2.0f)
+    {
+        // A spatially varying stir survives the pressure projection; a uniform
+        // wind would be removed as a null-space gradient.
+        const float stirX = sin(TimeValue * 0.9f + float(id.x) * 0.31f + float(id.z) * 0.17f);
+        const float stirZ = cos(TimeValue * 0.7f + float(id.z) * 0.29f + float(id.x) * 0.13f);
+        velocity.x += (WindX + stirX * 0.45f) * DeltaTime;
+        velocity.z += (WindZ + stirZ * 0.45f) * DeltaTime;
+        velocity.y += (WindY + stirX * stirZ * 0.25f) * DeltaTime;
+    }
+
+    // Gravity keeps the volume settled; buoyancy lifts lighter surface cells.
+    velocity.y -= Gravity * DeltaTime;
+    if (float(id.y) > surfaceY - 1.0f)
+        velocity.y += Gravity * 0.85f * DeltaTime;
+
+    velocity *= saturate(1.0f - Damping * DeltaTime);
+    velocity = clamp(velocity, -12.0f, 12.0f);
+    VelocityOut[id] = float4(velocity, center.w);
+}

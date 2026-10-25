@@ -45,6 +45,7 @@
 #include <utils/gltf/GLTFAccessor.h>
 #include <game/GameSelfTest.h>
 #include <debug/ComputeSelfTest.h>
+#include <simulation/FluidSimulation.h>
 #include <debug/CrashDiagnostics.h>
 #include <debug/GraphicsFixture.h>
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
@@ -101,6 +102,8 @@ int main(int arg,char ** args) try {
     }
 
   bool computeSelfTest = false;
+  bool fluidSelfTest = false;
+  int fluidSelfTestFrames = 24;
   bool webgpuRecoverySelfTest = false;
   bool computeSelfTestApiExplicit = false;
   int computeSelfTestWaitSeconds = 0;
@@ -120,6 +123,13 @@ int main(int arg,char ** args) try {
     }
     if (std::string_view(args[i]) == "--compute-selftest") {
       computeSelfTest = true;
+    }
+    if (std::string_view(args[i]) == "--fluid-selftest") {
+      fluidSelfTest = true;
+    }
+    if (std::string_view(args[i]) == "--fluid-selftest-frames" && i + 1 < arg) {
+      fluidSelfTest = true;
+      fluidSelfTestFrames = (std::max)(1, (std::min)(2000, std::stoi(args[++i])));
     }
     if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
       webgpuRecoverySelfTest = true;
@@ -305,8 +315,7 @@ int main(int arg,char ** args) try {
   pFrameWork->OnCreateApplication(desc);
   if (computeSelfTest) {
     T8_LOG_INFO("[ComputeSelfTest] Starting standalone arithmetic validation on API=%s",
-          pFrameWork->pVideoDriver->ApiTag());
-    if (computeSelfTestWaitSeconds > 0) {
+          pFrameWork->pVideoDriver->ApiTag());    if (computeSelfTestWaitSeconds > 0) {
       T8_LOG_INFO("[ComputeSelfTest] Waiting %d seconds before dispatch for capture tools",
                   computeSelfTestWaitSeconds);
       std::this_thread::sleep_for(std::chrono::seconds(computeSelfTestWaitSeconds));
@@ -316,6 +325,97 @@ int main(int arg,char ** args) try {
       T8_LOG_INFO("[ComputeSelfTest] Waiting %d seconds after dispatch for capture tools",
                   computeSelfTestWaitSeconds);
       std::this_thread::sleep_for(std::chrono::seconds(computeSelfTestWaitSeconds));
+    }
+  } else if (fluidSelfTest) {
+    t850::BaseDriver* driver = pFrameWork->pVideoDriver;
+    t850::FluidSimulation fluid;
+    t850::FluidSettings settings;
+    settings.width = 32;
+    settings.height = 16;
+    settings.depth = 16;
+    settings.pressureIterations = 8;
+    settings.deltaTime = 1.0f / 60.0f;
+    settings.cellSize = 0.09f;
+    if (!fluid.TryInitialize(driver, settings)) {
+      T8_LOG_INFO("[FluidSelfTest] SKIP: API=%s has no volumetric compute storage", driver->ApiTag());
+      result = 0;
+    } else {
+      int failures = 0;
+      const uint32_t expectedSamples = settings.width * settings.height * settings.depth;
+      const auto report = [&](const char* label, t850::FluidSimulation::Diagnostics* result) -> bool {
+        t850::FluidSimulation::Diagnostics diagnostics;
+        if (!fluid.ReadDiagnostics(driver, diagnostics)) {
+          T8_LOG_ERROR("[FluidSelfTest] %-12s readback failed", label);
+          ++failures;
+          return false;
+        }
+        T8_LOG_INFO("[FluidSelfTest] %-12s samples=%u/%u meanX=%+.4f meanSpeed=%.4f maxSpeed=%.4f nonFinite=%u",
+                    label, diagnostics.samples, expectedSamples, diagnostics.meanX,
+                    diagnostics.meanSpeed, diagnostics.maxSpeed, diagnostics.nonFinite);
+        if (result) *result = diagnostics;
+        if (diagnostics.samples != expectedSamples || diagnostics.nonFinite != 0) {
+          T8_LOG_ERROR("[FluidSelfTest] %-12s invalid: samples=%u expected=%u nonFinite=%u",
+                       label, diagnostics.samples, expectedSamples, diagnostics.nonFinite);
+          ++failures;
+          return false;
+        }
+        return true;
+      };
+
+      // Stage 0: a seeded volume must read back as exactly 1.0 m/s on +X.
+      float seededMeanX = 0.0f;
+      if (!fluid.Seed(driver)) {
+        T8_LOG_ERROR("[FluidSelfTest] Seed dispatch failed on API=%s", driver->ApiTag());
+        ++failures;
+      } else {
+        t850::FluidSimulation::Diagnostics diagnostics;
+        if (report("seed", &diagnostics)) seededMeanX = diagnostics.meanX;
+        if (std::abs(seededMeanX - 1.0f) > 0.05f) {
+          T8_LOG_ERROR("[FluidSelfTest] seed expected meanX=1.0, got %+.4f", seededMeanX);
+          ++failures;
+        }
+      }
+
+      // Stages 1..6 run once each so the first divergence is attributable.
+      struct StageCase { const char* stage;};
+      const StageCase stages[] = {{"advect"}, {"forces"}, {"divergence"},
+                                  {"pressure"}, {"gradient"}, {"surface"}};
+      for (const StageCase& stage : stages) {
+        if (!fluid.StepStage(driver, stage.stage)) {
+          T8_LOG_ERROR("[FluidSelfTest] stage '%s' dispatch failed", stage.stage);
+          ++failures;
+          break;
+        }
+        const std::string_view name(stage.stage);
+        if (name != "divergence" && name != "pressure" && name != "surface") {
+          if (!report(stage.stage, nullptr)) break;
+        }
+      }
+
+      // Full solver: the field must still be finite and moving.
+      for (int frame = 0; failures == 0 && frame < fluidSelfTestFrames; ++frame) {
+        if (!fluid.Step(driver)) {
+          T8_LOG_ERROR("[FluidSelfTest] Step %d failed on API=%s", frame, driver->ApiTag());
+          ++failures;
+        }
+      }
+      t850::FluidSimulation::Diagnostics diagnostics;
+      if (failures == 0 && report("full", &diagnostics)) {
+        if (diagnostics.meanSpeed <= 0.0005f) {
+          T8_LOG_ERROR("[FluidSelfTest] solver field is static (meanSpeed=%.6f)", diagnostics.meanSpeed);
+          ++failures;
+        }
+      }
+
+      if (failures == 0) {
+        T8_LOG_INFO("[FluidSelfTest] PASS: API=%s grid=%ux%ux%u frames=%d meanSpeed=%.4f",
+                    driver->ApiTag(), settings.width, settings.height, settings.depth,
+                    fluidSelfTestFrames, diagnostics.meanSpeed);
+      } else {
+        T8_LOG_ERROR("[FluidSelfTest] FAIL: API=%s failures=%d", driver->ApiTag(), failures);
+      }
+      fluid.Shutdown(driver);
+      result = failures == 0 ? 0 : 1;
     }
   } else if (!t850::g_config.flags.dumpShaderPermutations) {
 	  pFrameWork->UpdateApplication();

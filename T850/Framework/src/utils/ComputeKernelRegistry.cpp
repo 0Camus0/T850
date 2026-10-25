@@ -28,6 +28,7 @@ struct ComputeBindingManifest {
   int binding_index = 0;
   int constant_count = 0;
   std::string storage_format = "unspecified";
+  std::string dimension = "2d";
   bool match_output_extent = false;
 };
 
@@ -319,6 +320,12 @@ const std::vector<ComputeKernelDefinition>& Kernels() {
             !ResolveBindingType(binding.type, layout.type) ||
             !ResolveStorageFormat(binding.storage_format, layout.storageFormat)) {
           T8_LOG_ERROR("[ComputeKernelRegistry] Kernel '%s' has an invalid binding", entry.source.c_str());
+          return std::vector<ComputeKernelDefinition>{};
+        }
+        if (binding.dimension == "3d") layout.dimension = ComputeTextureDimension::Tex3D;
+        else if (binding.dimension != "2d") {
+          T8_LOG_ERROR("[ComputeKernelRegistry] Kernel '%s' has an invalid binding dimension",
+                       entry.source.c_str());
           return std::vector<ComputeKernelDefinition>{};
         }
         layout.shaderRegister = static_cast<uint32_t>(binding.shader_register);

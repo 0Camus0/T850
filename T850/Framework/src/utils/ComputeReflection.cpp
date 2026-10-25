@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <utils/SPIRVReflection.h>
+#include <utils/Log.h>
 #include <video/BaseDriver.h>
 #include "../../../Librerias/spirv-reflect/spirv_reflect.h"
 
@@ -24,7 +25,11 @@ bool ReflectComputeBindings(const std::vector<uint32_t>& spirv, const ComputePip
   if (spvReflectEnumerateDescriptorBindings(&module, &count, resources.data()) != SPV_REFLECT_RESULT_SUCCESS) return false;
   bindings.clear();
   for (const auto* resource : resources) {
-    if (resource->set != 0 || resource->count != 1 || resource->array.dims_count) return false;
+    if (resource->set != 0 || resource->count != 1 || resource->array.dims_count) {
+      T8_LOG_ERROR("[ComputeReflection] Binding %u rejected: set=%u count=%u array=%u",
+                   resource->binding, resource->set, resource->count, resource->array.dims_count);
+      return false;
+    }
     ComputeBindingLayoutDesc binding;
     binding.bindingIndex = resource->binding;
     switch (resource->descriptor_type) {
@@ -46,15 +51,33 @@ bool ReflectComputeBindings(const std::vector<uint32_t>& spirv, const ComputePip
         break;
       case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE:
         binding.type = ComputeBindingType::ReadWriteTexture;
-        if (!(resource->decoration_flags & SPV_REFLECT_DECORATION_NON_READABLE)) return false;
+        if (!(resource->decoration_flags & SPV_REFLECT_DECORATION_NON_READABLE)) {
+          T8_LOG_ERROR("[ComputeReflection] Storage image %u is write-only", resource->binding);
+          return false;
+        }
         if (resource->image.image_format == SpvImageFormatRgba8) binding.storageFormat = ComputeStorageFormat::Rgba8Unorm;
         else if (resource->image.image_format == SpvImageFormatRgba16f) binding.storageFormat = ComputeStorageFormat::Rgba16Float;
-        else return false;
+        else {
+          T8_LOG_ERROR("[ComputeReflection] Storage image %u has unsupported format %d",
+                       resource->binding, static_cast<int>(resource->image.image_format));
+          return false;
+        }
         break;
       default: return false;
     }
-    if ((binding.type == ComputeBindingType::ReadOnlyTexture || binding.type == ComputeBindingType::ReadWriteTexture) &&
-        (resource->image.dim != SpvDim2D || resource->image.arrayed || resource->image.ms)) return false;
+    if (binding.type == ComputeBindingType::ReadOnlyTexture || binding.type == ComputeBindingType::ReadWriteTexture) {
+      if (resource->image.arrayed || resource->image.ms) {
+        T8_LOG_ERROR("[ComputeReflection] Image %u rejected: arrayed=%u ms=%u",
+                     resource->binding, resource->image.arrayed, resource->image.ms);
+        return false;
+      }
+      if (resource->image.dim == SpvDim3D) binding.dimension = ComputeTextureDimension::Tex3D;
+      else if (resource->image.dim != SpvDim2D) {
+        T8_LOG_ERROR("[ComputeReflection] Image %u rejected: dim=%d", resource->binding,
+                     static_cast<int>(resource->image.dim));
+        return false;
+      }
+    }
     bindings.push_back(binding);
     if (combinedSamplers && resource->descriptor_type == SPV_REFLECT_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
       for (const auto& texture : desc.bindings) {

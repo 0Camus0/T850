@@ -206,6 +206,54 @@ bool VulkanComputeBuffer::Create(VulkanDriver* driver, const ComputeBufferDesc& 
   return true;
 }
 
+VulkanComputeTexture3D::~VulkanComputeTexture3D() {
+  if (owner && owner->GetDevice()) {
+    owner->RetireComputeResource([device = owner->GetDevice(), nativeView = view,
+        nativeImage = image, allocator = owner->GetAllocator(), nativeAllocation = allocation] {
+      if (nativeView) vkDestroyImageView(device, nativeView, nullptr);
+      if (nativeImage) vmaDestroyImage(allocator, nativeImage, nativeAllocation);
+    });
+  }
+}
+
+bool VulkanComputeTexture3D::Create(VulkanDriver* driver, const ComputeTexture3DDesc& desc, const void* initialData) {
+  if (!driver || !driver->GetDevice() || !desc.width || !desc.height || !desc.depth ||
+      desc.format == ComputeStorageFormat::Unspecified || initialData) return false;
+  owner = driver;
+  descriptor = desc;
+  const VkFormat format = desc.format == ComputeStorageFormat::Rgba16Float
+    ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+
+  VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  imageInfo.imageType = VK_IMAGE_TYPE_3D;
+  imageInfo.format = format;
+  imageInfo.extent = {desc.width, desc.height, desc.depth};
+  imageInfo.mipLevels = 1;
+  imageInfo.arrayLayers = 1;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+    (desc.access == ComputeBufferAccess::ReadWrite ? 0 : VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  VmaAllocationCreateInfo allocationInfo{};
+  allocationInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+  if (vmaCreateImage(driver->GetAllocator(), &imageInfo, &allocationInfo, &image, &allocation, nullptr) != VK_SUCCESS)
+    return false;
+
+  VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  viewInfo.image = image;
+  viewInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
+  viewInfo.format = format;
+  viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  if (vkCreateImageView(driver->GetDevice(), &viewInfo, nullptr, &view) != VK_SUCCESS) return false;
+
+  layout = VK_IMAGE_LAYOUT_UNDEFINED;
+  T8_LOG_INFO("[Vulkan][Compute] Volume created (%ux%ux%u, %s)", desc.width, desc.height, desc.depth,
+              desc.access == ComputeBufferAccess::ReadWrite ? "read-write" : "read-only");
+  return true;
+}
+
 std::unique_ptr<ComputePipeline> VulkanDriver::CreateComputePipeline(const ComputePipelineDesc& desc) {
   auto pipeline = std::make_unique<VulkanComputePipeline>();
   return pipeline->Create(this, desc) ? std::move(pipeline) : nullptr;
@@ -214,6 +262,12 @@ std::unique_ptr<ComputePipeline> VulkanDriver::CreateComputePipeline(const Compu
 std::unique_ptr<ComputeBuffer> VulkanDriver::CreateComputeBuffer(const ComputeBufferDesc& desc, const void* initialData) {
   auto buffer = std::make_unique<VulkanComputeBuffer>();
   return buffer->Create(this, desc, initialData) ? std::move(buffer) : nullptr;
+}
+
+std::unique_ptr<ComputeTexture3D> VulkanDriver::CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
+                                                                       const void* initialData) {
+  auto volume = std::make_unique<VulkanComputeTexture3D>();
+  return volume->Create(this, desc, initialData) ? std::move(volume) : nullptr;
 }
 
 bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vector<ComputeBindingDesc>& bindings,
@@ -241,6 +295,18 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
         }
       }
     }
+    if (binding.texture3D) {
+      const auto* volume = dynamic_cast<VulkanComputeTexture3D*>(binding.texture3D);
+      if (!volume || volume->owner != this || !volume->image || !volume->view) {
+        T8_LOG_ERROR("[Vulkan][Compute] Invalid volume binding u%u", binding.shaderRegister);
+        return false;
+      }
+      if (binding.type == ComputeBindingType::ReadWriteTexture &&
+          volume->descriptor.access != ComputeBufferAccess::ReadWrite) {
+        T8_LOG_ERROR("[Vulkan][Compute] Volume u%u is not writable", binding.shaderRegister);
+        return false;
+      }
+    }
   }
   BeginFrame(FrameTargetMode::Offscreen);
   VkCommandBuffer cmd = GetCmdBuffer();
@@ -251,6 +317,7 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
   std::vector<VkDescriptorImageInfo> imageInfos;
   std::vector<VkWriteDescriptorSet> writes;
   std::vector<VulkanTexture*> writtenTextures;
+  std::vector<VulkanComputeTexture3D*> writtenVolumes;
   std::unordered_set<const ComputeBindingLayoutDesc*> boundLayouts;
   infos.reserve(bindings.size()); imageInfos.reserve(bindings.size()); writes.reserve(bindings.size());
   for (const auto& binding : bindings) {
@@ -273,6 +340,38 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
       VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
       write.dstSet = set; write.dstBinding = layout->bindingIndex; write.descriptorCount = 1;
       write.descriptorType = DescriptorType(binding.type); write.pBufferInfo = &infos.back();
+      writes.push_back(write);
+      continue;
+    }
+
+    if (layout->dimension == ComputeTextureDimension::Tex3D) {
+      auto* volume = dynamic_cast<VulkanComputeTexture3D*>(binding.texture3D);
+      if (!volume || !volume->image || !volume->view) return false;
+      VkDescriptorImageInfo imageInfo{};
+      if (binding.type == ComputeBindingType::ReadOnlyTexture) {
+        if (volume->GetLayout() != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+          TransitionImageLayout(cmd, volume->image, volume->GetLayout(),
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+          volume->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        imageInfo.imageView = volume->view;
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      } else if (binding.type == ComputeBindingType::ReadWriteTexture) {
+        if (volume->GetLayout() != VK_IMAGE_LAYOUT_GENERAL) {
+          TransitionImageLayout(cmd, volume->image, volume->GetLayout(),
+                                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_ASPECT_COLOR_BIT);
+          volume->SetLayout(VK_IMAGE_LAYOUT_GENERAL);
+        }
+        imageInfo.imageView = volume->view;
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        writtenVolumes.push_back(volume);
+      } else {
+        return false;
+      }
+      imageInfos.push_back(imageInfo);
+      VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+      write.dstSet = set; write.dstBinding = layout->bindingIndex; write.descriptorCount = 1;
+      write.descriptorType = DescriptorType(binding.type); write.pImageInfo = &imageInfos.back();
       writes.push_back(write);
       continue;
     }
@@ -310,7 +409,12 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     writes.push_back(write);
   }
   if (writes.size() != pipeline->bindings.size() ||
-      boundLayouts.size() != pipeline->bindings.size()) return false;
+      boundLayouts.size() != pipeline->bindings.size()) {
+    T8_LOG_ERROR("[Vulkan][Compute] Incomplete descriptor writes for '%s' (writes=%zu bound=%zu expected=%zu)",
+                 pipeline->bindings.size() ? "compute" : "compute",
+                 writes.size(), boundLayouts.size(), pipeline->bindings.size());
+    return false;
+  }
   vkUpdateDescriptorSets(GetDevice(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->pipelineLayout, 0, 1, &set, 0, nullptr);
@@ -325,6 +429,11 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     TransitionImageLayout(cmd, texture->m_image, texture->GetLayout(),
                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, TextureAspect(*texture));
     texture->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  }
+  for (VulkanComputeTexture3D* volume : writtenVolumes) {
+    TransitionImageLayout(cmd, volume->image, volume->GetLayout(),
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+    volume->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   }
   m_lastPipeline = VK_NULL_HANDLE;
   m_lastPipelineLayout = VK_NULL_HANDLE;

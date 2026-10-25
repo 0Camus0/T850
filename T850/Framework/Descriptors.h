@@ -112,6 +112,8 @@ struct ShaderKey {
   static constexpr uint64_t HAS_TEXCOORD3 = 1ull << 40;
   static constexpr uint64_t LIGHTMAP_MAP = 1ull << 41;
   static constexpr uint64_t NO_ENVIRONMENT = 1ull << 42;
+  // Pool water surface driven by the GPU fluid solver's height/foam texture.
+  static constexpr uint64_t FLUID_SURFACE = 1ull << 43;
 
   // Mask of every bit that affects vertex layout / IA reflection.
   // Used by passes that re-derive a key from a base subset key (e.g.

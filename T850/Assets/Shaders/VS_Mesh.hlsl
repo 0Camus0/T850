@@ -33,6 +33,11 @@ cbuffer MeshInstanceCB : register(b1) {
 #ifdef USE_SKINNING_TEXTURE
 Texture2D<float4> BoneTexture : register(t24);
 
+#ifdef FLUID_SURFACE
+// Sampled with Load() so no sampler binding is required.
+Texture2D<float4> FluidSurfaceTexture : register(t23);
+#endif
+
 float4x4 getBoneMatrix(int index) {
 	uint texW, texH;
 	BoneTexture.GetDimensions(texW, texH);
@@ -213,6 +218,18 @@ VS_OUTPUT VS( VS_INPUT input ){
 	OUT.hposition = mul( WVP , input.position );
 	OUT.Pos		  = OUT.hposition;
 #else	
+#ifdef FLUID_SURFACE
+	// Displace the water surface by the solver's height field (metres).
+	{
+		uint fluidWidth = 1, fluidHeight = 1;
+		FluidSurfaceTexture.GetDimensions(fluidWidth, fluidHeight);
+		float2 fluidUV = saturate(input.texture0.xy);
+		int2 texel = clamp(int2(fluidUV * float2(fluidWidth, fluidHeight)),
+		                   int2(0, 0), int2(fluidWidth - 1, fluidHeight - 1));
+		float4 fluidSurface = FluidSurfaceTexture.Load(int3(texel, 0));
+		input.position.y += fluidSurface.x;
+	}
+#endif
     OUT.hposition = mul( WVP , input.position );
 	
 	float3x3 RotWorld = (float3x3)World;

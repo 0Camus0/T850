@@ -153,10 +153,11 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_seedPipeline = CreatePipeline(driver, "CS_FluidSeed3D.hlsl");
   m_diagnosticsPipeline = CreatePipeline(driver, "CS_FluidDiagnostics3D.hlsl");
   m_copyPipeline = CreatePipeline(driver, "CS_FluidCopy3D.hlsl");
+  m_surfaceCopyPipeline = CreatePipeline(driver, "CS_FluidSurfaceCopy.hlsl");
 
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
-                  m_copyPipeline;
+                  m_copyPipeline && m_surfaceCopyPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
   complete = complete && m_divergence;
@@ -189,6 +190,8 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_seedDivergentPipeline.reset();
   m_diagnosticsPipeline.reset();
   m_copyPipeline.reset();
+  m_surfaceCopyPipeline.reset();
+  m_surfaceOutput = nullptr;
   for (auto& volume : m_velocity) volume.reset();
   for (auto& volume : m_pressure) volume.reset();
   m_divergence.reset();
@@ -234,6 +237,25 @@ bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeli
   return driver->DispatchCompute(pipeline, bindings, groupsX, groupsY, groupsZ);
 }
 
+bool FluidSimulation::PublishSurface(BaseDriver* driver) {
+  if (!m_surfaceOutput) return true;
+  if (m_surfaceOutput->x != static_cast<int>(m_settings.width) ||
+      m_surfaceOutput->y != static_cast<int>(m_settings.depth)) {
+    T8_LOG_ERROR("[Fluid] Surface output is %dx%d but the solver is %ux%u",
+                 m_surfaceOutput->x, m_surfaceOutput->y, m_settings.width, m_settings.depth);
+    return false;
+  }
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[m_surfaceCurrent]},
+    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceOutput}
+  };
+  const uint32_t groupsX = (m_settings.width + m_surfaceCopyPipeline->threadGroupSize[0] - 1) /
+                           m_surfaceCopyPipeline->threadGroupSize[0];
+  const uint32_t groupsY = (m_settings.depth + m_surfaceCopyPipeline->threadGroupSize[1] - 1) /
+                           m_surfaceCopyPipeline->threadGroupSize[1];
+  return driver->DispatchCompute(*m_surfaceCopyPipeline, bindings, groupsX, groupsY, 1);
+}
+
 bool FluidSimulation::Step(BaseDriver* driver) {
   if (!m_ready || !driver) return false;
   m_time += m_settings.deltaTime;
@@ -273,7 +295,9 @@ bool FluidSimulation::Step(BaseDriver* driver) {
     return false;
   m_current = projected;
 
-  // 6. Derive the renderable 2D surface from the volume (ping-pong).
+  // Derive the renderable 2D surface from the volume. The surface pass samples
+  // the previous surface and writes a separate target (ping-pong): a resource
+  // cannot be both read and written in one dispatch.
   const uint32_t surfaceNext = (m_surfaceCurrent + 1) % 2;
   const std::vector<uint32_t> constants = BuildConstants();
   const std::vector<ComputeBindingDesc> surfaceBindings = {
@@ -287,6 +311,18 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   if (!driver->DispatchCompute(*m_surfacePipeline, surfaceBindings, groupsX, groupsY, 1))
     return false;
   m_surfaceCurrent = surfaceNext;
+
+  // Copy the freshly written surface into the fixed output texel set. Keeping
+  // the output stable lets a mesh bind one texture for the whole frame instead
+  // of chasing the ping-pong pair.
+  if (m_surfaceOutput) {
+    const std::vector<ComputeBindingDesc> copyBindings = {
+      {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[m_surfaceCurrent]},
+      {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceOutput}
+    };
+    if (!driver->DispatchCompute(*m_surfaceCopyPipeline, copyBindings, groupsX, groupsY, 1))
+      return false;
+  }
   return true;
 }
 
@@ -372,7 +408,7 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
     const uint32_t groupsY = (m_settings.depth + m_surfacePipeline->threadGroupSize[1] - 1) / m_surfacePipeline->threadGroupSize[1];
     if (!driver->DispatchCompute(*m_surfacePipeline, bindings, groupsX, groupsY, 1)) return false;
     m_surfaceCurrent = surfaceNext;
-    return true;
+    return PublishSurface(driver);
   }
   T8_LOG_ERROR("[Fluid] Unknown stage '%s'", stage);
   return false;

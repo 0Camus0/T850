@@ -214,7 +214,17 @@ def build_pool():
     parts.append(box("Pool_Coping_YMax", (w, cw, ch), (cx, POOL_MAX_Y + cw * 0.5, ch * 0.5), coping))
 
     band = 0.16
-    parts.append(box("Pool_TileBand", (w - 0.01, l - 0.01, band), (cx, cy, -band * 0.5 - 0.02), tiles))
+    band_inset = 0.01
+    # Four thin segments hugging the inner walls. A single full-footprint box
+    # would cap the pool at the water line and hide the water surface.
+    parts.append(box("Pool_TileBand_XMin", (band_inset, l - 0.02, band),
+                     (POOL_MIN_X + band_inset * 0.5, cy, -band * 0.5 - 0.02), tiles))
+    parts.append(box("Pool_TileBand_XMax", (band_inset, l - 0.02, band),
+                     (POOL_MAX_X - band_inset * 0.5, cy, -band * 0.5 - 0.02), tiles))
+    parts.append(box("Pool_TileBand_YMin", (w - 0.02, band_inset, band),
+                     (cx, POOL_MIN_Y + band_inset * 0.5, -band * 0.5 - 0.02), tiles))
+    parts.append(box("Pool_TileBand_YMax", (w - 0.02, band_inset, band),
+                     (cx, POOL_MAX_Y - band_inset * 0.5, -band * 0.5 - 0.02), tiles))
 
     for part in parts:
         uv_unwrap(part)
@@ -307,6 +317,51 @@ def build_house():
 # ---------------------------------------------------------------------------
 # Ground, patio, perimeter wall, props
 # ---------------------------------------------------------------------------
+def build_water_surface():
+    """Explicit grid at the water line with UV 0..1 across the pool footprint.
+
+    The runtime displaces it with the solver's height texture, so vertices must
+    line up with the simulation grid and UVs must be exact (no smart-project).
+    """
+    water = material("Water_Surface", (0.10, 0.34, 0.42), roughness=0.03)
+    width = POOL["width"]
+    length = POOL["length"]
+    nx = 32
+    nz = 16
+    z_level = WATER_LINE - 0.04
+
+    verts = []
+    for j in range(nz + 1):
+        for i in range(nx + 1):
+            verts.append((POOL_MIN_X + (i / nx) * width,
+                          POOL_MIN_Y + (j / nz) * length,
+                          z_level))
+    faces = []
+    for j in range(nz):
+        for i in range(nx):
+            a = j * (nx + 1) + i
+            b = a + 1
+            c = a + nx + 1
+            d = c + 1
+            faces.append((a, b, d, c))
+
+    mesh = bpy.data.meshes.new("Water_Surface")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for poly in mesh.polygons:
+        for loop_index in poly.loop_indices:
+            vertex = mesh.loops[loop_index].vertex_index
+            i = vertex % (nx + 1)
+            j = vertex // (nx + 1)
+            uv_layer.data[loop_index].uv = (i / nx, j / nz)
+
+    obj = bpy.data.objects.new("Water_Surface", mesh)
+    bpy.context.collection.objects.link(obj)
+    obj.data.materials.append(water)
+    return [obj]
+
+
 def build_ground():
     gravel = material("Ground_Gravel", (0.52, 0.48, 0.42), roughness=0.95)
     concrete = material("Ground_Patio", (0.68, 0.66, 0.62), roughness=0.8)
@@ -471,6 +526,9 @@ def main():
     prop_parts = build_props()
     prop_path = export_objects(prop_parts, "Backyard_Props")
 
+    water_parts = build_water_surface()
+    water_path = export_objects(water_parts, "Backyard_Water")
+
     write_layout(
         pool_path,
         {
@@ -479,6 +537,7 @@ def main():
             "ground": ground_path,
             "wall": wall_path,
             "props": prop_path,
+            "water": water_path,
         },
     )
     print("Backyard asset generation complete")

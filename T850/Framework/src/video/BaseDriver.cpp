@@ -677,6 +677,7 @@ namespace t850 {
       if (key.has(ShaderKey::NO_LIGHT))       Defines += "#define NO_LIGHT\n\n";
       if (key.has(ShaderKey::OMNI_SHADOWS))   Defines += "#define OMNIDIRECTIONAL_SH\n\n";
       if (key.has(ShaderKey::NO_ENVIRONMENT)) Defines += "#define NO_ENVIRONMENT\n\n";
+      if (key.has(ShaderKey::FLUID_SURFACE))  Defines += "#define FLUID_SURFACE\n\n";
 
       // Effect toggles
       if (key.has(ShaderKey::PARALLAX))       Defines += "#define ENABLE_PARALLAX\n\n";

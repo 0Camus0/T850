@@ -153,6 +153,10 @@ Texture2D EmissiveTex : register(t8);
 #endif
 
 Texture2D SceneColorTex : register(t9);
+#ifdef FLUID_SURFACE
+// Sampled with Load() so no sampler binding is required.
+Texture2D<float4> FluidSurfaceTexture : register(t23);
+#endif
 TextureCube texIBLDiffuse : register(t10);
 TextureCube texIBLSpecular : register(t11);
 Texture2D texIBLBRDF : register(t12);
@@ -850,6 +854,20 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     BuildSurface(input, isFrontFace, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     float3 emissive = SampleEmissive(input, uv);
     float lightmap = SampleLightmap(input);
+
+#ifdef FLUID_SURFACE
+    // Tilt the surface normal from the solver's slope channels and brighten
+    // crests with foam. Sampled with Load() so no sampler slot is needed.
+    {
+        uint fluidWidth = 1, fluidHeight = 1;
+        FluidSurfaceTexture.GetDimensions(fluidWidth, fluidHeight);
+        int2 texel = clamp(int2(saturate(uv) * float2(fluidWidth, fluidHeight)),
+                           int2(0, 0), int2(fluidWidth - 1, fluidHeight - 1));
+        float4 fluidSurface = FluidSurfaceTexture.Load(int3(texel, 0));
+        normal = normalize(normal + float3(-fluidSurface.z, 0.0f, -fluidSurface.w) * 8.0f);
+        color = lerp(color, float3(1.0f, 1.0f, 1.0f), saturate(fluidSurface.y) * 0.55f);
+    }
+#endif
 
 #ifdef FORWARD_PASS
     if (ForwardParams.z > 0.5f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {

@@ -2340,7 +2340,9 @@ namespace t850 {
         ShaderKey finalKey(sub_info->key.bits);
         finalKey.setPass(gKey.getPass());
         constexpr uint64_t featureMask = (1ull << ShaderKey::PASS_SHIFT) - 1ull;
-        finalKey.bits |= (gKey.bits & featureMask);
+        // FLUID_SURFACE lives above the low feature band but must still be
+        // propagated from the scene's instance key.
+        finalKey.bits |= (gKey.bits & (featureMask | ShaderKey::FLUID_SURFACE));
         if (finalKey.has(ShaderKey::HEIGHT_MAP) && m_fParallaxEnabled > 0.5f) {
           uint8_t pass = finalKey.getPass();
           if (pass == PassType::GBUFFER || pass == PassType::FORWARD) {

@@ -50,7 +50,13 @@ namespace t850 {
     void SetVisible(bool f) { Visible = f; }
 
     //
-    void SetGlobalKey(ShaderKey k) { gKey = k; }
+    // PersistentFeatureBits survive per-pass SetGlobalKey calls: the render
+    // graph overwrites gKey for every draw, so a scene-set flag would be lost.
+    uint64_t PersistentFeatureBits = 0;
+    void SetGlobalKey(ShaderKey k) {
+      gKey = k;
+      gKey.bits |= (PersistentFeatureBits & ShaderKey::FLUID_SURFACE);
+    }
     void SetTexture(Texture* tex, int index) {
       Textures[index] = tex;
     }

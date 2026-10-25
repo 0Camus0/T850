@@ -24,12 +24,13 @@ namespace {
 
   // Emitted by scripts/blender/build_backyard.py. Each glTF node already
   // carries its authored world transform, so instances stay at the origin.
-  constexpr std::array<BackyardAsset, 5> kBackyardAssets = {{
+  constexpr std::array<BackyardAsset, 6> kBackyardAssets = {{
     {"Models/Backyard/Backyard_Ground.glb", "ground"},
     {"Models/Backyard/Backyard_House.glb", "house"},
     {"Models/Backyard/Backyard_Pool.glb", "pool"},
     {"Models/Backyard/Backyard_Wall.glb", "wall"},
     {"Models/Backyard/Backyard_Props.glb", "props"},
+    {"Models/Backyard/Backyard_Water.glb", "water"},
   }};
 }
 
@@ -142,6 +143,12 @@ void BackyardScene::CreateAssets() {
     }
     t850::PrimitiveInst instance;
     instance.CreateInstance(PrimitiveMgr.GetPrimitive(primitive), &identity);
+    if (std::string(asset.label) == "water") {
+      // Slot 23 receives the solver's surface texture once the fluid is
+      // initialized. The FLUID_SURFACE permutation is not yet registered in
+      // the shader export pipeline, so the plane currently renders with the
+      // standard mesh permutation (displacement dormant).
+    }
     instance.Update();
     const t850::RenderInstanceHandle handle = m_renderContainer.AddMeshInstance(instance);
     if (!handle.IsValid()) {
@@ -150,6 +157,7 @@ void BackyardScene::CreateAssets() {
     }
     m_primitiveIndices.push_back(static_cast<unsigned int>(primitive));
     m_instances.push_back(handle);
+    if (std::string(asset.label) == "water") m_waterHandle = handle;
     T8_LOG_INFO("[Backyard] Loaded '%s' (%s) primitive=%d instance=%u",
                 asset.path, asset.label, primitive, handle.index);
   }
@@ -161,10 +169,44 @@ void BackyardScene::CreateAssets() {
   } else {
     T8_LOG_INFO("[Backyard] Ready: %zu mesh instances", m_instances.size());
   }
+
+  // Start the volumetric solver and point it at the graph's surface target.
+  t850::FluidSettings fluidSettings;
+  fluidSettings.width = 64;
+  fluidSettings.height = 32;
+  fluidSettings.depth = 24;
+  fluidSettings.pressureIterations = fluidIterations;
+  fluidSettings.deltaTime = 1.0f / 60.0f;
+  fluidSettings.cellSize = 0.09f;
+  if (m_fluid.TryInitialize(driver, fluidSettings)) {
+    m_fluidReady = true;
+    if (!m_fluid.Seed(driver, true)) {
+      T8_LOG_ERROR("[Backyard] Fluid seed dispatch failed");
+    }
+    // Bind the solver's stable surface texture straight onto the water
+    // instance at slot 23 (t23). No render-graph RT involved: a graph target
+    // written by an out-of-graph dispatch did not survive readback.
+    t850::Texture* surface = m_fluid.SurfaceTexture();
+    if (surface && m_waterHandle.IsValid()) {
+      if (t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle)) {
+        water->SetTexture(surface, 23);
+        water->Update();
+        T8_LOG_INFO("[Backyard] Water surface bound to solver texture (%dx%d)", surface->x, surface->y);
+      }
+    } else {
+      T8_LOG_ERROR("[Backyard] Cannot bind the water surface texture");
+    }
+  } else {
+    T8_LOG_INFO("[Backyard] Fluid solver unavailable; water renders without displacement");
+  }
 }
 
 void BackyardScene::DestroyAssets() {
   if (!m_assetsCreated && !pFramework) return;
+  if (m_fluidReady && pFramework && pFramework->pVideoDriver) {
+    m_fluid.Shutdown(pFramework->pVideoDriver);
+  }
+  m_fluidReady = false;
   m_instances.clear();
   m_primitiveIndices.clear();
   PrimitiveMgr.DestroyPrimitives();
@@ -191,6 +233,12 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_cameraController.Update(deltaSeconds, t850::CameraUpdateContext{});
   }
   m_lightCamera.Update(0.0f);
+  if (m_fluidReady && pFramework && pFramework->pVideoDriver) {
+    if (!m_fluid.Step(pFramework->pVideoDriver)) {
+      T8_LOG_ERROR("[Backyard] Fluid step failed; disabling the solver for this scene");
+      m_fluidReady = false;
+    }
+  }
   m_dumper.UpdateReplayState();
 }
 
@@ -217,6 +265,23 @@ void BackyardScene::OnInput(InputManager* input) {
 void BackyardScene::OnDraw() {
   if (!m_assetsCreated) return;
   m_renderContainer.Execute(pFramework->pVideoDriver, m_deltaSeconds);
+
+  if (m_fluidReady) {
+    static int probeFrame = 0;
+    if (++probeFrame == 120) {
+      t850::Texture* surface = m_fluid.SurfaceTexture();
+      float rgba[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+      const int rt = m_fluid.SurfaceRenderTarget();
+      const bool ok = surface && rt >= 0 && pFramework->pVideoDriver->ReadRTColorFloat(
+        rt, t850::BaseDriver::COLOR0_ATTACHMENT, rgba);
+      T8_LOG_INFO("[Backyard][surface] ok=%d height=%.4f foam=%.4f slopeX=%.4f slopeZ=%.4f",
+                  ok ? 1 : 0, rgba[0], rgba[1], rgba[2], rgba[3]);
+      t850::FluidSimulation::Diagnostics diagnostics;
+      if (m_fluid.ReadDiagnostics(pFramework->pVideoDriver, diagnostics))
+        T8_LOG_INFO("[Backyard][fluid] samples=%u meanSpeed=%.4f maxSpeed=%.4f nonFinite=%u",
+                    diagnostics.samples, diagnostics.meanSpeed, diagnostics.maxSpeed, diagnostics.nonFinite);
+    }
+  }
 
   if (m_dumper.ShouldDump(m_deltaSeconds)) {
     std::vector<t850::RTDumpEntry> targets = {

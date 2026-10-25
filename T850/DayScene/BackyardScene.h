@@ -4,6 +4,7 @@
 #include <debug/FrameDumper.h>
 #include <scene/RenderContainer.h>
 #include <scene/SceneSetup.h>
+#include <simulation/FluidSimulation.h>
 #include <utils/CameraProfiles.h>
 
 #include <vector>
@@ -45,6 +46,10 @@ private:
 
   std::vector<unsigned int> m_primitiveIndices;
   std::vector<t850::RenderInstanceHandle> m_instances;
+  t850::RenderInstanceHandle m_waterHandle;
+  t850::FluidSimulation m_fluid;
+  bool m_fluidReady = false;
+  uint32_t fluidIterations = 30;
   t850::EnvironmentMapSet m_envMaps;
   int m_envMapTexture = -1;
   int m_diffuseIBLTexture = -1;

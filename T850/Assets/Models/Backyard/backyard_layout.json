@@ -65,6 +65,7 @@
     "house": "Backyard_House.glb",
     "ground": "Backyard_Ground.glb",
     "wall": "Backyard_Wall.glb",
-    "props": "Backyard_Props.glb"
+    "props": "Backyard_Props.glb",
+    "water": "Backyard_Water.glb"
   }
 }

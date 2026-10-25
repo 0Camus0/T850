@@ -57,7 +57,8 @@ void CS(uint3 id : SV_DispatchThreadID)
         return;
 
     const int surfaceY = clamp(int(SurfaceLevel * float(Height)), 1, int(Height) - 2);
-    const float vertical = VelocityIn.Load(int4(int3(id.x, surfaceY, id.z), 0)).y;
+    const float3 surfaceVelocity = VelocityIn.Load(int4(int3(id.x, surfaceY, id.z), 0)).xyz;
+    const float vertical = surfaceVelocity.y;
     const float below = VelocityIn.Load(int4(int3(id.x, surfaceY - 1, id.z), 0)).y;
 
     // Wave equation driven by the 3D vertical velocity, damped and coupled to
@@ -68,12 +69,21 @@ void CS(uint3 id : SV_DispatchThreadID)
         SurfaceHeight(int(id.x), int(id.z) + 1) + SurfaceHeight(int(id.x), int(id.z) - 1) -
         4.0f * center;
 
-    float height = center + (vertical + below * 0.5f) * DeltaTime + laplacian * 0.18f;
-    height *= saturate(1.0f - 1.6f * DeltaTime);
-    height = clamp(height, -0.35f, 0.35f);
+    // Travelling wind waves whose amplitude scales with the local flow energy,
+    // so the surface only ripples where the solver has actually moved water.
+    const float energy = saturate(length(surfaceVelocity) * 3.0f);
+    const float wave =
+        sin(float(id.x) * 0.42f + TimeValue * 1.7f) *
+        cos(float(id.z) * 0.33f + TimeValue * 1.2f);
+    const float wave2 = sin(float(id.x) * 0.17f + float(id.z) * 0.23f + TimeValue * 0.9f);
+
+    float height = center + (vertical + below * 0.5f) * DeltaTime + laplacian * 0.18f +
+                   (wave + wave2 * 0.5f) * energy * DeltaTime * 6.0f;
+    height *= saturate(1.0f - 1.1f * DeltaTime);
+    height = clamp(height, -0.45f, 0.45f);
 
     const float slopeX = (SurfaceHeight(int(id.x) + 1, int(id.z)) - SurfaceHeight(int(id.x) - 1, int(id.z))) * 0.5f;
     const float slopeZ = (SurfaceHeight(int(id.x), int(id.z) + 1) - SurfaceHeight(int(id.x), int(id.z) - 1)) * 0.5f;
-    const float foam = saturate(abs(vertical) * 1.5f + abs(height) * 4.0f);
+    const float foam = saturate(abs(vertical) * 2.0f + length(surfaceVelocity) * 1.5f + abs(height) * 3.0f);
     SurfaceOut[id.xy] = float4(height, foam, slopeX, slopeZ);
 }

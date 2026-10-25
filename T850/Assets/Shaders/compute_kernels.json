@@ -205,6 +205,16 @@
         {"type": "sampled_texture", "shader_register": 0, "binding_index": 1, "dimension": "3d"},
         {"type": "read_write_buffer", "shader_register": 0, "binding_index": 2}
       ]
+    },
+    {
+      "id": "fluid_surface_copy",
+      "source": "CS_FluidSurfaceCopy.hlsl",
+      "entry": "CS",
+      "permutations": ["base"],
+      "bindings": [
+        {"type": "sampled_texture", "shader_register": 0, "binding_index": 0},
+        {"type": "storage_texture", "shader_register": 0, "binding_index": 1, "storage_format": "rgba16float"}
+      ]
     }
   ]
 }

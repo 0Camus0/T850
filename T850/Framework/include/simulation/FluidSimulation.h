@@ -45,6 +45,10 @@ namespace t850 {
     bool IsReady() const { return m_ready; }
     const FluidSettings& Settings() const { return m_settings; }
 
+    // Render-graph target the solver copies its current surface into each Step.
+    // Must match the simulation width/depth or the copy is skipped.
+    void SetSurfaceOutput(Texture* texture) { m_surfaceOutput = texture; }
+
     // Sampled 2D surface (height, foam, slopeX, slopeZ) produced by Step().
     Texture* SurfaceTexture() const { return m_surfaceTexture[m_surfaceCurrent]; }
     int SurfaceRenderTarget() const { return m_surfaceRT[m_surfaceCurrent]; }
@@ -92,6 +96,7 @@ namespace t850 {
     std::vector<uint32_t> BuildConstants() const;
     bool EnsureSurfaceTarget(BaseDriver* driver);
     bool AnalyzeVolume(BaseDriver* driver, const std::string* directory, VolumeDump& summary);
+    bool PublishSurface(BaseDriver* driver);
     bool DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                         ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
                         ComputeTexture3D* target);
@@ -117,6 +122,8 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_seedDivergentPipeline;
     std::unique_ptr<ComputePipeline> m_diagnosticsPipeline;
     std::unique_ptr<ComputePipeline> m_copyPipeline;
+    std::unique_ptr<ComputePipeline> m_surfaceCopyPipeline;
+    Texture* m_surfaceOutput = nullptr;
 
     int m_surfaceRT[2] = {-1, -1};
     Texture* m_surfaceTexture[2] = {nullptr, nullptr};

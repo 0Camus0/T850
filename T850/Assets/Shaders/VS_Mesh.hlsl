@@ -238,11 +238,12 @@ VS_OUTPUT VS( VS_INPUT input ){
 		// cannot represent a 0.11 m wavelength without aliasing.
 		float2 ripplePos = input.position.xz;
 		float rippleTime = TimeParams.x;
+		float rippleScale = TimeParams.y;
 		float rippleHeight =
 			0.0160f * sin(dot(ripplePos, float2( 0.86f, 0.51f)) * 10.134f + rippleTime * 5.573f) +
 			0.0090f * sin(dot(ripplePos, float2(-0.60f, 0.80f)) * 15.322f + rippleTime * 11.492f) +
 			0.0060f * sin(dot(ripplePos, float2( 0.31f, -0.95f)) * 23.271f + rippleTime * 24.434f);
-		input.position.y += rippleHeight;
+		input.position.y += rippleHeight * rippleScale;
 	}
 #endif
     OUT.hposition = mul( WVP , input.position );

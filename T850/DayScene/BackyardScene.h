@@ -24,6 +24,9 @@ public:
   void OnUpdate(float deltaSeconds) override;
   void OnDraw() override;
   void OnInput(InputManager* input) override;
+  void DrawDevGui(t850::DevGuiContext& gui) override;
+  // The GUI can change the solver grid, which means new 3D textures.
+  bool RebuildFluid();
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override { m_cameraController.ClearInput(); }
 
@@ -36,6 +39,7 @@ private:
   static constexpr int kSceneIndex = 7;
 
   void EnsureWaterShaderPermutations(t850::BaseDriver* driver);
+  t850::FluidSettings MakeFluidSettings() const;
 
   t850::RenderContainer m_renderContainer;
   t850::PrimitiveManager PrimitiveMgr;
@@ -55,7 +59,10 @@ private:
   // water mesh binds one texture for the whole frame instead of chasing the
   // solver's ping-pong pair.
   int m_waterSurfaceRT = -1;
-  uint32_t fluidIterations = 30;
+  // Grid the solver is actually running, so the GUI can detect a change.
+  int m_appliedGridWidth = 0;
+  int m_appliedGridHeight = 0;
+  int m_appliedGridDepth = 0;
   t850::EnvironmentMapSet m_envMaps;
   int m_envMapTexture = -1;
   int m_diffuseIBLTexture = -1;

@@ -48,6 +48,9 @@ namespace t850 {
     // time-dependent shading from it keeps renders frame-deterministic instead
     // of depending on wall-clock frame pacing.
     float SimulationTime() const { return m_time; }
+    // Live-tunable iteration count; changing the grid needs a full rebuild.
+    void SetPressureIterations(uint32_t iterations) { m_settings.pressureIterations = iterations; }
+    void SetSurfaceLevel(float level) { m_settings.surfaceLevel = level; }
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.

@@ -311,10 +311,11 @@ void BackyardScene::OnInput(InputManager* input) {
   state.crouch = input->PressedKey(T800K_LCTRL);
   state.sprint = input->PressedKey(T800K_LSHIFT);
   // Look only while a mouse button is held. Stray window-focus deltas would
-  // otherwise rotate the camera without user intent.
+  // otherwise rotate the camera without user intent. Both axes are inverted so
+  // dragging moves the view opposite to the pointer.
   state.mouseLook = input->PressedMouseButton(0) || input->PressedMouseButton(2);
-  state.mouseDeltaX = (std::clamp)(static_cast<float>(input->xDelta), -200.0f, 200.0f);
-  state.mouseDeltaY = (std::clamp)(static_cast<float>(-input->yDelta), -200.0f, 200.0f);
+  state.mouseDeltaX = (std::clamp)(-static_cast<float>(input->xDelta), -200.0f, 200.0f);
+  state.mouseDeltaY = (std::clamp)(static_cast<float>(input->yDelta), -200.0f, 200.0f);
   state.scrollDelta = input->scrollDelta;
   t850::ApplyGamepadToCameraInput(state, *input, m_deltaSeconds, true);
   m_cameraController.HandleInput(state);

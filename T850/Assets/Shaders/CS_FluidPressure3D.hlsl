@@ -1,6 +1,7 @@
-// T850 pool fluid: one Jacobi pressure iteration.
+// T850 pool fluid: one red-black Gauss-Seidel pressure pass with SOR.
 // Reads the previous pressure and the divergence volume, writes the next
-// pressure approximation.
+// pressure approximation. Only cells matching the current parity are relaxed;
+// the rest are copied through so the ping-pong target stays a complete field.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -10,6 +11,7 @@ cbuffer FluidConstants : register(b0)
     uint Width;
     uint Height;
     uint Depth;
+    // Packed as sweep * 2 + parity (nothing else reads this field).
     uint Iteration;
     float DeltaTime;
     float CellSize;
@@ -22,6 +24,7 @@ cbuffer FluidConstants : register(b0)
     float SurfaceLevel;
     float TimeValue;
     float PressureScale;
+    // Successive over-relaxation factor for this pass.
     float Padding0;
 };
 
@@ -64,11 +67,26 @@ void CS(uint3 id : SV_DispatchThreadID)
         return;
     int3 cell = int3(id);
     const float center = PressureIn.Load(int4(cell, 0)).x;
+
+    // Red-black ordering. Cells of the other colour are copied through; the next
+    // pass relaxes them against these freshly updated neighbours, which is what
+    // makes this Gauss-Seidel rather than Jacobi.
+    const uint parity = Iteration & 1u;
+    if (((cell.x + cell.y + cell.z) & 1) != int(parity)) {
+        PressureOut[id] = float4(center, 0.0f, 0.0f, 0.0f);
+        return;
+    }
+
     const float neighbours =
         PressureAt(cell + int3(1, 0, 0), center) + PressureAt(cell - int3(1, 0, 0), center) +
         PressureAt(cell + int3(0, 1, 0), center) + PressureAt(cell - int3(0, 1, 0), center) +
         PressureAt(cell + int3(0, 0, 1), center) + PressureAt(cell - int3(0, 0, 1), center);
     const float divergence = DivergenceIn.Load(int4(cell, 0)).x;
-    const float pressure = (neighbours - divergence * PressureScale) / 6.0f;
+    const float gaussSeidelTarget = (neighbours - divergence * PressureScale) / 6.0f;
+    // SOR: omega > 1 overshoots toward the target and converges markedly faster
+    // than plain Gauss-Seidel for a 7-point Laplacian. 1.0 degenerates to plain
+    // Gauss-Seidel, so the slider is usable as a comparison.
+    const float omega = clamp(Padding0, 0.05f, 1.99f);
+    const float pressure = lerp(center, gaussSeidelTarget, omega);
     PressureOut[id] = float4(pressure, 0.0f, 0.0f, 0.0f);
 }

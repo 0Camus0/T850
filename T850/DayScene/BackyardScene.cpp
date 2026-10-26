@@ -262,6 +262,7 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   settings.windZ = w.windZ;
   settings.damping = w.damping;
   settings.surfaceLevel = (std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f);
+  settings.sorOmega = (std::min)((std::max)(w.sorOmega, 1.0f), 1.99f);
   return settings;
 }
 
@@ -337,6 +338,7 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
   if (m_fluidReady && pFramework && pFramework->pVideoDriver) {
     m_fluid.SetPressureIterations(static_cast<uint32_t>((std::max)(w.pressureIterations, 0)));
     m_fluid.SetSurfaceLevel((std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f));
+    m_fluid.SetSOROmega((std::min)((std::max)(w.sorOmega, 1.0f), 1.99f));
     if (!m_fluid.Step(pFramework->pVideoDriver)) {
       T8_LOG_ERROR("[Backyard] Fluid step failed; disabling the solver for this scene");
       m_fluidReady = false;
@@ -433,6 +435,7 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     sliderInt("water_grid_h", "grid height", w.gridHeight, 4.0f, 64.0f, 1.0f);
     sliderInt("water_grid_d", "grid depth", w.gridDepth, 16.0f, 192.0f, 1.0f);
     sliderInt("water_iterations", "pressure iterations", w.pressureIterations, 1.0f, 200.0f, 1.0f);
+    slider("water_sor_omega", "SOR omega (1 = Gauss-Seidel)", w.sorOmega, 1.0f, 1.99f, 0.001f);
     slider("water_cell", "cell size (m)", w.cellSize, 0.01f, 0.30f, 0.001f);
     slider("water_dt", "delta time (s)", w.deltaTime, 1.0f / 240.0f, 1.0f / 15.0f, 0.0001f);
     slider("water_viscosity", "viscosity", w.viscosity, 0.0f, 0.5f, 0.001f);

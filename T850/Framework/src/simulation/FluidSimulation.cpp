@@ -77,12 +77,12 @@ std::unique_ptr<ComputePipeline> FluidSimulation::CreatePipeline(BaseDriver* dri
   return driver->CreateComputePipeline(desc);
 }
 
-std::vector<uint32_t> FluidSimulation::BuildConstants() const {
+std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked) const {
   FluidConstants constants{};
   constants.width = m_settings.width;
   constants.height = m_settings.height;
   constants.depth = m_settings.depth;
-  constants.iteration = 0;
+  constants.iteration = iterationPacked;
   constants.deltaTime = m_settings.deltaTime;
   constants.cellSize = m_settings.cellSize;
   constants.viscosity = m_settings.viscosity;
@@ -97,7 +97,8 @@ std::vector<uint32_t> FluidSimulation::BuildConstants() const {
   // (Equivalently Lap(p') = div/dt with u -= dt*grad(p').) Mixing the two
   // conventions over-corrects by 1/dt and makes divergence grow with iterations.
   constants.pressureScale = m_settings.cellSize * m_settings.cellSize;
-  constants.padding0 = 0.0f;
+  // padding0 carries the SOR factor to the pressure kernel.
+  constants.padding0 = m_settings.sorOmega;
   std::vector<uint32_t> words(sizeof(constants) / sizeof(uint32_t));
   std::memcpy(words.data(), &constants, sizeof(constants));
   return words;
@@ -221,8 +222,8 @@ bool FluidSimulation::Reset(BaseDriver* driver) {
 
 bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                                      ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
-                                     ComputeTexture3D* target) {
-  const std::vector<uint32_t> constants = BuildConstants();
+                                     ComputeTexture3D* target, uint32_t iterationPacked) {
+  const std::vector<uint32_t> constants = BuildConstants(iterationPacked);
   std::vector<ComputeBindingDesc> bindings;
   bindings.push_back({ComputeBindingType::Constants32, 0, nullptr, constants.data(),
                       static_cast<uint32_t>(constants.size())});
@@ -276,17 +277,22 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   if (!DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr, m_divergence.get()))
     return false;
 
-  // 4. Jacobi pressure solve.
-  const uint32_t pressureNext = (m_pressureCurrent + 1) % kPressureCount;
+  // 4. Red-black Gauss-Seidel pressure sweeps with over-relaxation. Each sweep
+  // is two dispatches: one relaxes the even cells, the next relaxes the odd
+  // cells against those freshly updated neighbours. Storage textures are
+  // write-only here, so an in-place Gauss-Seidel is impossible and the ping-pong
+  // pair carries the intermediate field; cells of the other colour are copied
+  // through unchanged.
   for (uint32_t iteration = 0; iteration < m_settings.pressureIterations; ++iteration) {
-    const uint32_t source = m_pressureCurrent;
-    const uint32_t target = (source + 1) % kPressureCount;
-    if (!DispatchVolume(driver, *m_pressurePipeline, m_pressure[source].get(), m_divergence.get(),
-                        m_pressure[target].get()))
-      return false;
-    m_pressureCurrent = target;
+    for (uint32_t parity = 0; parity < 2; ++parity) {
+      const uint32_t source = m_pressureCurrent;
+      const uint32_t target = (source + 1) % kPressureCount;
+      if (!DispatchVolume(driver, *m_pressurePipeline, m_pressure[source].get(), m_divergence.get(),
+                          m_pressure[target].get(), parity))
+        return false;
+      m_pressureCurrent = target;
+    }
   }
-  (void)pressureNext;
 
   // 5. Project velocity.
   const uint32_t projected = (m_current + 1) % kVelocityCount;
@@ -380,12 +386,16 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
   if (name == "divergence")
     return DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr, m_divergence.get());
   if (name == "pressure") {
-    const uint32_t source = m_pressureCurrent;
-    const uint32_t target = (source + 1) % kPressureCount;
-    if (!DispatchVolume(driver, *m_pressurePipeline, m_pressure[source].get(), m_divergence.get(),
-                        m_pressure[target].get()))
-      return false;
-    m_pressureCurrent = target;
+    // One full red-black sweep: relax the even cells, then the odd cells against
+    // the freshly updated even ones.
+    for (uint32_t parity = 0; parity < 2; ++parity) {
+      const uint32_t source = m_pressureCurrent;
+      const uint32_t target = (source + 1) % kPressureCount;
+      if (!DispatchVolume(driver, *m_pressurePipeline, m_pressure[source].get(), m_divergence.get(),
+                          m_pressure[target].get(), parity))
+        return false;
+      m_pressureCurrent = target;
+    }
     return true;
   }
   if (name == "gradient") {

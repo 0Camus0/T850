@@ -14,7 +14,7 @@ namespace t850 {
     int   gridWidth = 100;
     int   gridHeight = 18;
     int   gridDepth = 50;
-    int   pressureIterations = 30;
+    int   pressureIterations = 15;
     float cellSize = 0.09f;
     float deltaTime = 1.0f / 60.0f;
     float viscosity = 0.02f;
@@ -24,6 +24,8 @@ namespace t850 {
     float windZ = -0.35f;
     float damping = 0.6f;
     float surfaceLevel = 0.96f;
+    // SOR factor for the red-black Gauss-Seidel pressure sweep.
+    float sorOmega = 1.8f;
 
     // ── Optics ──
     float absorbR = 0.38f;

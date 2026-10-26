@@ -134,6 +134,14 @@ cbuffer MeshMaterialCB : register(b2) {
     float4   WaterReflect2;
     float4   WaterFoam0;
     float4   WaterFoam1;
+    float4   WaterFoam2;
+    float4   WaterFoam3;
+    float4   WaterRipple0;
+    float4   WaterRipple1;
+    float4   WaterRipple2;
+    float4   WaterRipple3;
+    float4   WaterRipple4;
+    float4   WaterRipple5;
     float4   WaterMisc0;
 }
 #endif
@@ -300,13 +308,13 @@ float WaterRippleHeightOctave(float2 p, float timeSeconds, float2 dir, float wav
 }
 
 // Horizontal gradient of the six-octave directional ripple field, in m/m.
-#define T8_RIPPLE_OCTAVES(FN, ACCUM, P, T, D)                    \
-    ACCUM = FN(P, T, float2( 0.86f,  0.51f), 0.62f, 0.0160f, 0.55f, 60.0f, D); \
-    ACCUM += FN(P, T, float2(-0.60f,  0.80f), 0.41f, 0.0090f, 0.75f, 48.0f, D); \
-    ACCUM += FN(P, T, float2( 0.31f, -0.95f), 0.27f, 0.0060f, 1.05f, 36.0f, D); \
-    ACCUM += FN(P, T, float2( 0.98f, -0.20f), 0.19f, 0.0036f, 1.35f, 27.0f, D); \
-    ACCUM += FN(P, T, float2(-0.87f, -0.49f), 0.14f, 0.0022f, 1.70f, 20.0f, D); \
-    ACCUM += FN(P, T, float2( 0.42f,  0.91f), 0.11f, 0.0014f, 2.10f, 15.0f, D);
+#define T8_RIPPLE_OCTAVES(FN, ACCUM, P, T, D)                                                             \
+    ACCUM = FN(P, T, float2( 0.86f,  0.51f), WaterRipple0.y, WaterRipple0.x, WaterRipple0.z, WaterRipple0.w, D); \
+    ACCUM += FN(P, T, float2(-0.60f,  0.80f), WaterRipple1.y, WaterRipple1.x, WaterRipple1.z, WaterRipple1.w, D); \
+    ACCUM += FN(P, T, float2( 0.31f, -0.95f), WaterRipple2.y, WaterRipple2.x, WaterRipple2.z, WaterRipple2.w, D); \
+    ACCUM += FN(P, T, float2( 0.98f, -0.20f), WaterRipple3.y, WaterRipple3.x, WaterRipple3.z, WaterRipple3.w, D); \
+    ACCUM += FN(P, T, float2(-0.87f, -0.49f), WaterRipple4.y, WaterRipple4.x, WaterRipple4.z, WaterRipple4.w, D); \
+    ACCUM += FN(P, T, float2( 0.42f,  0.91f), WaterRipple5.y, WaterRipple5.x, WaterRipple5.z, WaterRipple5.w, D);
 
 float2 WaterRippleGradient(float2 p, float timeSeconds, float viewDistance)
 {
@@ -324,15 +332,15 @@ float WaterRippleHeight(float2 p, float timeSeconds, float viewDistance)
     return height;
 }
 
-// Slope magnitude of just the three longest-wavelength octaves. Caustic webs are
+// Slope magnitude of the four longest-wavelength octaves. Caustic webs are
 // cell-sized features, so building them from the finest octaves only produces a
 // uniform crinkle instead of readable caustic cells.
 float WaterRippleSlopeLow(float2 p, float timeSeconds, float viewDistance)
 {
-    float2 slope = WaterRippleOctave(p, timeSeconds, float2( 0.86f,  0.51f), 0.62f, 0.0160f, 0.55f, 60.0f, viewDistance);
-    slope += WaterRippleOctave(p, timeSeconds, float2(-0.60f,  0.80f), 0.41f, 0.0090f, 0.75f, 48.0f, viewDistance);
-    slope += WaterRippleOctave(p, timeSeconds, float2( 0.31f, -0.95f), 0.27f, 0.0060f, 1.05f, 36.0f, viewDistance);
-    slope += WaterRippleOctave(p, timeSeconds, float2( 0.98f, -0.20f), 0.19f, 0.0036f, 1.35f, 27.0f, viewDistance);
+    float2 slope = WaterRippleOctave(p, timeSeconds, float2( 0.86f,  0.51f), WaterRipple0.y, WaterRipple0.x, WaterRipple0.z, WaterRipple0.w, viewDistance);
+    slope += WaterRippleOctave(p, timeSeconds, float2(-0.60f,  0.80f), WaterRipple1.y, WaterRipple1.x, WaterRipple1.z, WaterRipple1.w, viewDistance);
+    slope += WaterRippleOctave(p, timeSeconds, float2( 0.31f, -0.95f), WaterRipple2.y, WaterRipple2.x, WaterRipple2.z, WaterRipple2.w, viewDistance);
+    slope += WaterRippleOctave(p, timeSeconds, float2( 0.98f, -0.20f), WaterRipple3.y, WaterRipple3.x, WaterRipple3.z, WaterRipple3.w, viewDistance);
     return length(slope);
 }
 
@@ -341,9 +349,9 @@ float WaterRippleSlopeLow(float2 p, float timeSeconds, float viewDistance)
 // analytic octaves here as well would double-count that detail.
 float2 WaterRippleGradientCoarse(float2 p, float timeSeconds, float viewDistance)
 {
-    float2 gradient = WaterRippleOctave(p, timeSeconds, float2( 0.86f,  0.51f), 0.62f, 0.0160f, 0.55f, 60.0f, viewDistance);
-    gradient += WaterRippleOctave(p, timeSeconds, float2(-0.60f,  0.80f), 0.41f, 0.0090f, 0.75f, 48.0f, viewDistance);
-    gradient += WaterRippleOctave(p, timeSeconds, float2( 0.31f, -0.95f), 0.27f, 0.0060f, 1.05f, 36.0f, viewDistance);
+    float2 gradient = WaterRippleOctave(p, timeSeconds, float2( 0.86f,  0.51f), WaterRipple0.y, WaterRipple0.x, WaterRipple0.z, WaterRipple0.w, viewDistance);
+    gradient += WaterRippleOctave(p, timeSeconds, float2(-0.60f,  0.80f), WaterRipple1.y, WaterRipple1.x, WaterRipple1.z, WaterRipple1.w, viewDistance);
+    gradient += WaterRippleOctave(p, timeSeconds, float2( 0.31f, -0.95f), WaterRipple2.y, WaterRipple2.x, WaterRipple2.z, WaterRipple2.w, viewDistance);
     return gradient;
 }
 
@@ -352,10 +360,10 @@ float2 WaterRippleGradientCoarse(float2 p, float timeSeconds, float viewDistance
 // view turns them into a moire hatch.
 float WaterFoamNoise(float2 p, float timeSeconds, float viewDistance)
 {
-    float fade = saturate(1.0f - viewDistance / 22.0f);
-    float n = sin(p.x * 8.0f + timeSeconds * 2.6f) * sin(p.y * 9.5f - timeSeconds * 2.1f);
-    n += 0.55f * sin(p.x * 21.0f - timeSeconds * 3.4f) * sin(p.y * 19.0f + timeSeconds * 3.0f) * fade;
-    n += 0.30f * sin(p.x * 47.0f + timeSeconds * 4.1f) * sin(p.y * 43.0f - timeSeconds * 3.7f) * fade * fade;
+    float fade = saturate(1.0f - viewDistance / max(WaterFoam3.z, 0.001f));
+    float n = sin(p.x * WaterFoam2.x + timeSeconds * 2.6f) * sin(p.y * WaterFoam2.y - timeSeconds * 2.1f);
+    n += 0.55f * sin(p.x * WaterFoam2.z - timeSeconds * 3.4f) * sin(p.y * WaterFoam2.w + timeSeconds * 3.0f) * fade;
+    n += 0.30f * sin(p.x * WaterFoam3.x + timeSeconds * 4.1f) * sin(p.y * WaterFoam3.y - timeSeconds * 3.7f) * fade * fade;
     return saturate(0.5f + 0.42f * n);
 }
 
@@ -364,7 +372,7 @@ float WaterFoamNoise(float2 p, float timeSeconds, float viewDistance)
 // drift rates so the pattern never visibly repeats, and SampleGrad lets hardware
 // mip selection handle minification. That is what the analytic ripples could not
 // do, which is why they needed distance fades.
-static const bool kNormalMapEnabled = true;
+// Feature toggles, driven by the WaterMisc0 constant group.
 Texture2D<float4> FluidNormalTex : register(t22);
 SamplerState FluidNormalSS : register(s0);
 
@@ -390,9 +398,6 @@ float2 WaterNormalMapGradient(float2 uv, float timeSeconds)
 // compares NDC depths directly: both sides are NDC, so no linearisation is
 // needed (the engine's GBuffer depth does not linearise usefully at these
 // distances). Returns rgb and a confidence in .a.
-static const bool kSsrEnabled = true;
-static const bool kSsrProbe = false;
-
 float4 WaterTraceScreenSpace(float3 origin, float3 dir, float3 fallback, float2 distortion,
                              float ndcYSign, float depthSign)
 {
@@ -471,8 +476,6 @@ float4 WaterTraceScreenSpace(float3 origin, float3 dir, float3 fallback, float2 
             // physically weaker far from the surface. Blend back to sky.
             float distanceConfidence = saturate(1.0f - travelled / max(WaterReflect2.x, 0.001f));
             float confidence = stepConfidence * edgeConfidence * distanceConfidence;
-            if (kSsrProbe)
-                return float4(hitUV.x, hitUV.y, saturate(travelled / max(WaterReflect2.x, 0.001f)), 1.0f);
             float2 sampleUV = saturate(hitUV + distortion);
             // Five-tap blur, widening with distance. Water is not a mirror, and a
             // single-tap fetch of a high-frequency reflection scintillates as the
@@ -1117,7 +1120,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         // The fabricated normal map carries the fine capillary detail, and does
         // it with hardware mip filtering, so it replaces the fine analytic
         // octaves that needed distance fades.
-        if (kNormalMapEnabled)
+        if (WaterMisc0.y > 0.5f)
             heightGradient += WaterNormalMapGradient(uv, MaterialParams3.w);
         normal = normalize(float3(-heightGradient.x, 1.0f, -heightGradient.y));
     }
@@ -1278,7 +1281,8 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         // never smear into the water.
         float fluidTime = MaterialParams3.w;
         float2 borderDistance = min(uv, 1.0f - uv);
-        float borderFade = saturate(min(borderDistance.x, borderDistance.y) * WaterOptics2.w);
+        float borderFade = saturate(min(borderDistance.x, borderDistance.y) /
+                                    max(WaterOptics2.w, 0.0001f));
         float2 screenUV = GetForwardScreenUV(input);
         float2 refractOffset = float2(normal.x, -normal.z) * WaterOptics1.w * borderFade *
                                (0.6f + 0.4f * saturate(thickness / 3.0f));
@@ -1325,7 +1329,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         // Screen-space reflections pick up what a cubemap cannot: the pool deck,
         // the house, and anything else within the reflected ray's reach. Where
         // the trace fails (off-screen, behind the camera) the IBL sky stands in.
-        if (kSsrEnabled) {
+        if (WaterMisc0.z > 0.5f) {
             // Distort the reflected sample by the ripples so the reflected image
             // breaks up the way a real one does, instead of staying razor sharp.
             float2 distortion = float2(normal.x, -normal.z) * WaterReflect1.y;

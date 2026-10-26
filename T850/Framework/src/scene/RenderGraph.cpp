@@ -1412,7 +1412,7 @@ void RenderGraph::ExecutePass(
         }
 
         for (int mi : draw.mesh_indices) {
-          if (mi < meshCount) {
+          if (mi < meshCount && meshes[mi].AllowsPass(sig.getPass())) {
             meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
             ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);

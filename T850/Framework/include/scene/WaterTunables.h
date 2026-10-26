@@ -37,7 +37,8 @@ namespace t850 {
     float deepG = 0.10f;
     float deepB = 0.17f;
     float refractionStrength = 0.025f;
-    float refractionBorderFade = 30.0f;
+    // Width of the border fade zone in UV units (fraction of the pool span).
+    float refractionBorderFade = 1.0f / 30.0f;
     float causticGain = 1.0f;
     float causticPower = 2.0f;
     float causticSlopeScale = 2.0f;
@@ -87,6 +88,25 @@ namespace t850 {
     float foamR = 0.74f;
     float foamG = 0.82f;
     float foamB = 0.84f;
+
+    // ── Ripple octaves (amplitude m, wavelength m, speed, distance fade m) ──
+    float rippleAmp[6] = { 0.0160f, 0.0090f, 0.0060f, 0.0036f, 0.0022f, 0.0014f };
+    float rippleLen[6] = { 0.62f, 0.41f, 0.27f, 0.19f, 0.14f, 0.11f };
+    float rippleSpeed[6] = { 0.55f, 0.75f, 1.05f, 1.35f, 1.70f, 2.10f };
+    float rippleFade[6] = { 60.0f, 48.0f, 36.0f, 27.0f, 20.0f, 15.0f };
+
+    // ── Foam noise frequencies (rad/m) and its distance fade ──
+    float foamFreq0X = 8.0f;
+    float foamFreq0Y = 9.5f;
+    float foamFreq1X = 21.0f;
+    float foamFreq1Y = 19.0f;
+    float foamFreq2X = 47.0f;
+    float foamFreq2Y = 43.0f;
+    float foamFade = 22.0f;
+
+    // ── Feature toggles ──
+    bool normalMapEnabled = true;
+    bool ssrEnabled = true;
   };
 
   // Mirrors the tail of MeshMaterialCBuffer and the HLSL MeshMaterialCB exactly.
@@ -107,6 +127,14 @@ namespace t850 {
     XVECTOR3 WaterReflect2;
     XVECTOR3 WaterFoam0;
     XVECTOR3 WaterFoam1;
+    XVECTOR3 WaterFoam2;
+    XVECTOR3 WaterFoam3;
+    XVECTOR3 WaterRipple0;
+    XVECTOR3 WaterRipple1;
+    XVECTOR3 WaterRipple2;
+    XVECTOR3 WaterRipple3;
+    XVECTOR3 WaterRipple4;
+    XVECTOR3 WaterRipple5;
     XVECTOR3 WaterMisc0;
   };
 
@@ -126,7 +154,17 @@ namespace t850 {
     g.WaterReflect2 = XVECTOR3(w.ssrMaxDistance, w.ssrStepStart, w.ssrStepGrowth, w.ssrStepMax);
     g.WaterFoam0 = XVECTOR3(w.foamCrest, w.foamBorder, w.foamNoise, w.foamStrength);
     g.WaterFoam1 = XVECTOR3(w.foamR, w.foamG, w.foamB, 0.0f);
-    g.WaterMisc0 = XVECTOR3(static_cast<float>(w.ssrSteps), 0.0f, 0.0f, 0.0f);
+    g.WaterFoam2 = XVECTOR3(w.foamFreq0X, w.foamFreq0Y, w.foamFreq1X, w.foamFreq1Y);
+    g.WaterFoam3 = XVECTOR3(w.foamFreq2X, w.foamFreq2Y, w.foamFade, 0.0f);
+    g.WaterRipple0 = XVECTOR3(w.rippleAmp[0], w.rippleLen[0], w.rippleSpeed[0], w.rippleFade[0]);
+    g.WaterRipple1 = XVECTOR3(w.rippleAmp[1], w.rippleLen[1], w.rippleSpeed[1], w.rippleFade[1]);
+    g.WaterRipple2 = XVECTOR3(w.rippleAmp[2], w.rippleLen[2], w.rippleSpeed[2], w.rippleFade[2]);
+    g.WaterRipple3 = XVECTOR3(w.rippleAmp[3], w.rippleLen[3], w.rippleSpeed[3], w.rippleFade[3]);
+    g.WaterRipple4 = XVECTOR3(w.rippleAmp[4], w.rippleLen[4], w.rippleSpeed[4], w.rippleFade[4]);
+    g.WaterRipple5 = XVECTOR3(w.rippleAmp[5], w.rippleLen[5], w.rippleSpeed[5], w.rippleFade[5]);
+    g.WaterMisc0 = XVECTOR3(static_cast<float>(w.ssrSteps),
+                            w.normalMapEnabled ? 1.0f : 0.0f,
+                            w.ssrEnabled ? 1.0f : 0.0f, 0.0f);
     return g;
   }
 

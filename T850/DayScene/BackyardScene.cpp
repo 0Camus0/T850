@@ -461,7 +461,7 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     slider("water_deep_g", "deep G", w.deepG, 0.0f, 1.0f, 0.001f);
     slider("water_deep_b", "deep B", w.deepB, 0.0f, 1.0f, 0.001f);
     slider("water_refract", "refraction strength", w.refractionStrength, 0.0f, 0.15f, 0.0005f);
-    slider("water_border_fade", "refraction border fade", w.refractionBorderFade, 1.0f, 80.0f, 0.1f);
+    slider("water_border_fade", "border fade width (uv)", w.refractionBorderFade, 0.005f, 0.5f, 0.001f);
     slider("water_caustic_gain", "caustic gain", w.causticGain, 0.0f, 4.0f, 0.01f);
     slider("water_caustic_power", "caustic power", w.causticPower, 0.5f, 12.0f, 0.01f);
     slider("water_caustic_slope", "caustic slope scale", w.causticSlopeScale, 0.1f, 10.0f, 0.01f);
@@ -506,6 +506,27 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     sliderInt("water_ssr_steps", "SSR steps", w.ssrSteps, 1.0f, 256.0f, 1.0f);
   }
 
+  if (gui.BeginSection("Ripple octaves")) {
+    static const char* const kOctaveNames[6] = { "octave 1 (coarse)", "octave 2", "octave 3",
+                                                 "octave 4", "octave 5", "octave 6 (fine)" };
+    static const char* const kAmpIds[6] = { "water_ripple_amp0", "water_ripple_amp1", "water_ripple_amp2",
+                                            "water_ripple_amp3", "water_ripple_amp4", "water_ripple_amp5" };
+    static const char* const kLenIds[6] = { "water_ripple_len0", "water_ripple_len1", "water_ripple_len2",
+                                            "water_ripple_len3", "water_ripple_len4", "water_ripple_len5" };
+    static const char* const kSpeedIds[6] = { "water_ripple_speed0", "water_ripple_speed1", "water_ripple_speed2",
+                                              "water_ripple_speed3", "water_ripple_speed4", "water_ripple_speed5" };
+    static const char* const kFadeIds[6] = { "water_ripple_fade0", "water_ripple_fade1", "water_ripple_fade2",
+                                             "water_ripple_fade3", "water_ripple_fade4", "water_ripple_fade5" };
+    for (int i = 0; i < 6; ++i) {
+      if (gui.BeginSection(kOctaveNames[i], i < 3)) {
+        slider(kAmpIds[i], "amplitude (m)", w.rippleAmp[i], 0.0f, 0.05f, 0.0001f);
+        slider(kLenIds[i], "wavelength (m)", w.rippleLen[i], 0.02f, 4.0f, 0.001f);
+        slider(kSpeedIds[i], "speed", w.rippleSpeed[i], 0.0f, 8.0f, 0.01f);
+        slider(kFadeIds[i], "distance fade (m)", w.rippleFade[i], 1.0f, 200.0f, 0.5f);
+      }
+    }
+  }
+
   if (gui.BeginSection("Foam")) {
     slider("water_foam_crest", "crest foam", w.foamCrest, 0.0f, 2.0f, 0.01f);
     slider("water_foam_border", "border foam", w.foamBorder, 0.0f, 4.0f, 0.01f);
@@ -514,6 +535,20 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     slider("water_foam_r", "foam R", w.foamR, 0.0f, 1.0f, 0.001f);
     slider("water_foam_g", "foam G", w.foamG, 0.0f, 1.0f, 0.001f);
     slider("water_foam_b", "foam B", w.foamB, 0.0f, 1.0f, 0.001f);
+    slider("water_foam_f0x", "noise freq 0 X", w.foamFreq0X, 0.5f, 80.0f, 0.1f);
+    slider("water_foam_f0y", "noise freq 0 Y", w.foamFreq0Y, 0.5f, 80.0f, 0.1f);
+    slider("water_foam_f1x", "noise freq 1 X", w.foamFreq1X, 0.5f, 120.0f, 0.1f);
+    slider("water_foam_f1y", "noise freq 1 Y", w.foamFreq1Y, 0.5f, 120.0f, 0.1f);
+    slider("water_foam_f2x", "noise freq 2 X", w.foamFreq2X, 0.5f, 200.0f, 0.1f);
+    slider("water_foam_f2y", "noise freq 2 Y", w.foamFreq2Y, 0.5f, 200.0f, 0.1f);
+    slider("water_foam_fade", "noise distance fade", w.foamFade, 1.0f, 120.0f, 0.5f);
+  }
+
+  if (gui.BeginSection("Toggles")) {
+    gui.Checkbox(t850::CheckboxDesc{ "water_normal_map_on", "normal map", true, true },
+                 w.normalMapEnabled);
+    gui.Checkbox(t850::CheckboxDesc{ "water_ssr_on", "screen-space reflections", true, true },
+                 w.ssrEnabled);
   }
 
   gui.Separator();

@@ -53,6 +53,13 @@ namespace t850 {
     // PersistentFeatureBits survive per-pass SetGlobalKey calls: the render
     // graph overwrites gKey for every draw, so a scene-set flag would be lost.
     uint64_t PersistentFeatureBits = 0;
+    // Passes this instance may be drawn in. Clear a bit to keep a transparent
+    // mesh out of a depth-writing pass (the water must not write GBuffer depth,
+    // or screen-space reflections have nothing behind them to trace against).
+    uint64_t DrawPassMask = ~0ull;
+    bool AllowsPass(uint8_t pass) const {
+      return pass < 64 && ((DrawPassMask >> pass) & 1ull) != 0ull;
+    }
     void SetGlobalKey(ShaderKey k) {
       gKey = k;
       gKey.bits |= (PersistentFeatureBits & ShaderKey::FLUID_SURFACE);

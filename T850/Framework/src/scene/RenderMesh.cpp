@@ -2165,6 +2165,7 @@ namespace t850 {
       T8_TELEMETRY_ADD("render.mesh.packedLights", static_cast<double>(packedLights));
       infoCam.w = static_cast<float>(packedLights);
       frameCB.CameraInfo = infoCam;
+      frameCB.CameraVP = pRenderCamera->VP;
       frameCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
       frameCB.ParallaxSettings.w = m_fParallaxEnabled;
       frameCB.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
@@ -2417,7 +2418,7 @@ namespace t850 {
         }
 
         if (s->key.has(ShaderKey::NORMAL_MAP)) {
-          Texture* t = matTex(MatTexSlot::Normal); if (!t) t = sub_info->NormalTex;
+          Texture* t = matTex(MatTexSlot::Normal); if (!t) t = Textures[3]; if (!t) t = sub_info->NormalTex;
           bindTextureOnce(t, 3, "NormalTex", 3);
         }
         if (EnvMap) {
@@ -2487,9 +2488,11 @@ namespace t850 {
           bindTextureOnce(t, MaterialTextureSlot::Lightmap, "LightmapTex", LightmapSamplerSlot);
         }
         if (s->key.has(ShaderKey::FLUID_SURFACE)) {
-          // Solver surface texture. Read with Load(), so the sampler slot is
-          // only there to keep the state tracker's bookkeeping uniform.
+          // Solver surface plus the fabricated tiling ripple normal map. Both
+          // are read with Load()/SampleGrad() straight from the instance's own
+          // slots, so no material plumbing is involved.
           bindTextureOnce(Textures[23], 23, "FluidSurfaceTexture", 0);
+          bindTextureOnce(Textures[22], 22, "FluidNormalTex", 0);
         }
 
         // Phase A.5 step 2: when using shared pools the index/vertex

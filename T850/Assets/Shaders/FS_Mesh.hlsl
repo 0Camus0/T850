@@ -70,6 +70,7 @@ cbuffer MeshFrameCB : register(b0) {
     float4   LightPositions[128];
     float4   LightColors[128];
     float4   LightRadius[32];
+    float4x4 CameraVP;
 }
 
 cbuffer MeshMaterialCB : register(b2) {
@@ -323,6 +324,17 @@ float WaterRippleSlopeLow(float2 p, float timeSeconds, float viewDistance)
     return length(slope);
 }
 
+// Gradient of only the three longest octaves. The fabricated normal map supplies
+// the fine capillary detail with proper mip filtering, so keeping the finest
+// analytic octaves here as well would double-count that detail.
+float2 WaterRippleGradientCoarse(float2 p, float timeSeconds, float viewDistance)
+{
+    float2 gradient = WaterRippleOctave(p, timeSeconds, float2( 0.86f,  0.51f), 0.62f, 0.0160f, 0.55f, 60.0f, viewDistance);
+    gradient += WaterRippleOctave(p, timeSeconds, float2(-0.60f,  0.80f), 0.41f, 0.0090f, 0.75f, 48.0f, viewDistance);
+    gradient += WaterRippleOctave(p, timeSeconds, float2( 0.31f, -0.95f), 0.27f, 0.0060f, 1.05f, 36.0f, viewDistance);
+    return gradient;
+}
+
 // Procedural breakup so foam reads as froth rather than a smooth gradient.
 // The finer octaves fade out with distance, otherwise the compressed grazing
 // view turns them into a moire hatch.
@@ -333,6 +345,123 @@ float WaterFoamNoise(float2 p, float timeSeconds, float viewDistance)
     n += 0.55f * sin(p.x * 21.0f - timeSeconds * 3.4f) * sin(p.y * 19.0f + timeSeconds * 3.0f) * fade;
     n += 0.30f * sin(p.x * 47.0f + timeSeconds * 4.1f) * sin(p.y * 43.0f - timeSeconds * 3.7f) * fade * fade;
     return saturate(0.5f + 0.42f * n);
+}
+
+// Slope of the fabricated tiling normal map, in m/m, bound at slot 22 alongside
+// the solver surface at 23. Two layers are sampled at different tile scales and
+// drift rates so the pattern never visibly repeats, and SampleGrad lets hardware
+// mip selection handle minification. That is what the analytic ripples could not
+// do, which is why they needed distance fades.
+static const bool kNormalMapEnabled = true;
+Texture2D<float4> FluidNormalTex : register(t22);
+SamplerState FluidNormalSS : register(s0);
+
+float2 WaterNormalMapGradient(float2 uv, float timeSeconds)
+{
+    float2 uvA = uv * float2(18.0f, 9.0f) + float2(0.021f, 0.013f) * timeSeconds;
+    float2 uvB = uv * float2(24.0f, 12.0f) + float2(-0.017f, 0.029f) * timeSeconds;
+    float3 a = FluidNormalTex.SampleGrad(FluidNormalSS, uvA, ddx(uvA), ddy(uvA)).xyz;
+    float3 b = FluidNormalTex.SampleGrad(FluidNormalSS, uvB, ddx(uvB), ddy(uvB)).xyz;
+    // Guard against a missing texture: an unbound SRV reads as all zeros, which
+    // would decode to a -1 normal and produce a wild slope instead of none.
+    a = (dot(a, a) < 0.01f) ? float3(0.0f, 0.0f, 1.0f) : a * 2.0f - 1.0f;
+    b = (dot(b, b) < 0.01f) ? float3(0.0f, 0.0f, 1.0f) : b * 2.0f - 1.0f;
+    // Match the green flip the engine applies to glTF normal maps.
+    a.y = -a.y;
+    b.y = -b.y;
+    float2 slopeA = a.xy / max(a.z, 0.2f);
+    float2 slopeB = b.xy / max(b.z, 0.2f);
+    return (slopeA + slopeB) * 0.5f;
+}
+
+// Screen-space reflection trace. Marches the reflected ray in world space and
+// compares NDC depths directly: both sides are NDC, so no linearisation is
+// needed (the engine's GBuffer depth does not linearise usefully at these
+// distances). Returns rgb and a confidence in .a.
+static const bool kSsrEnabled = true;
+static const bool kSsrProbe = false;
+
+float4 WaterTraceScreenSpace(float3 origin, float3 dir, float3 fallback, float2 distortion,
+                             float ndcYSign)
+{
+    float travelled = 0.0f;
+    float stepLen = 0.05f;
+    float3 prevPos = origin;
+    float2 prevUV = float2(0.0f, 0.0f);
+    float prevDiff = 0.0f;
+    bool havePrev = false;
+
+    [loop] for (int i = 0; i < 48; ++i) {
+        travelled += stepLen;
+        stepLen = min(stepLen * 1.30f, 1.0f);
+        float3 pos = origin + dir * travelled;
+        float4 clip = mul(CameraVP, float4(pos, 1.0f));
+        if (clip.w <= 0.001f)
+            return float4(fallback, 0.0f);
+        float2 uv = (clip.xy / clip.w) * float2(0.5f, ndcYSign * 0.5f) + 0.5f;
+        if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f)
+            return float4(fallback, 0.0f);
+        int2 px = clamp(int2(uv * ForwardParams.xy), int2(0, 0),
+                        int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1));
+        float sceneZ = SceneDepthTex.Load(int3(px, 0)).r;
+        float rayZ = clip.z / clip.w;
+        if (sceneZ <= 0.0001f) {  // nothing recorded here
+            prevPos = pos;
+            prevUV = uv;
+            havePrev = false;
+            continue;
+        }
+        // Sign-agnostic crossing test: a hit is where the ray's depth relative to
+        // the scene flips sign. Backends differ in whether a larger stored depth
+        // means closer, and this removes the need to know which.
+        float diff = rayZ - sceneZ;
+        // Ignore the first few steps: the ray starts on the water surface, whose
+        // own depth sits in SceneDepthTex, so an early sign flip is the ray
+        // crossing its own surface, not a real reflection.
+        if (i >= 3 && havePrev && (prevDiff > 0.0f) != (diff > 0.0f)) {
+            // Bisect between prevPos and pos for the crossing point.
+            float3 lo = prevPos;
+            float3 hi = pos;
+            float2 hitUV = uv;
+            float loDiff = prevDiff;
+            [unroll] for (int k = 0; k < 5; ++k) {
+                float3 mid = (lo + hi) * 0.5f;
+                float4 c2 = mul(CameraVP, float4(mid, 1.0f));
+                float2 muv = (c2.xy / c2.w) * float2(0.5f, ndcYSign * 0.5f) + 0.5f;
+                int2 mpx = clamp(int2(muv * ForwardParams.xy), int2(0, 0),
+                                 int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1));
+                float mScene = SceneDepthTex.Load(int3(mpx, 0)).r;
+                hitUV = muv;
+                float mDiff = c2.z / c2.w - mScene;
+                if ((mDiff > 0.0f) == (loDiff > 0.0f))
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            // Fade confidence across the last step: the crossing point is only
+            // accurate to the step length, so thin features would otherwise show
+            // hard edges.
+            float2 travel = abs(hitUV - prevUV);
+            // Confidence by depth agreement at the crossing, not by UV travel:
+            // UV travel is one whole step long even for a perfect hit, which
+            // capped every confidence well below 1 and made the reflection fade.
+            float3 hitPos = (prevPos + pos) * 0.5f;
+            float4 hitClip = mul(CameraVP, float4(hitPos, 1.0f));
+            int2 hpx = clamp(int2(hitUV * ForwardParams.xy), int2(0, 0),
+                             int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1));
+            float hitSceneZ = SceneDepthTex.Load(int3(hpx, 0)).r;
+            float depthError = abs(hitClip.z / hitClip.w - hitSceneZ);
+            float confidence = saturate(1.0f - depthError * 60.0f) *
+                               saturate(1.0f - max(travel.x, travel.y) * 24.0f);
+            float2 sampleUV = saturate(hitUV + distortion);
+            return float4(SceneColorTex.SampleLevel(SceneColorSS, sampleUV, 0.0f).rgb, confidence);
+        }
+        prevPos = pos;
+        prevUV = uv;
+        prevDiff = diff;
+        havePrev = true;
+    }
+    return float4(fallback, 0.0f);
 }
 #endif
 
@@ -952,8 +1081,13 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         // Solver gradient (large-scale shape) plus the analytic ripple gradient
         // (high-frequency sparkle). Height-field normal is (-dh/dx, 1, -dh/dz).
         float2 heightGradient = fluidSurface.zw / 0.09f
-                              + WaterRippleGradient(input.WorldPos.xz,
-                                                    MaterialParams3.w, fluidViewDistance);
+                              + WaterRippleGradientCoarse(input.WorldPos.xz,
+                                                          MaterialParams3.w, fluidViewDistance);
+        // The fabricated normal map carries the fine capillary detail, and does
+        // it with hardware mip filtering, so it replaces the fine analytic
+        // octaves that needed distance fades.
+        if (kNormalMapEnabled)
+            heightGradient += WaterNormalMapGradient(uv, MaterialParams3.w) * 0.65f;
         normal = normalize(float3(-heightGradient.x, 1.0f, -heightGradient.y));
     }
 #endif
@@ -1146,7 +1280,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         waterColor += scatterVolume * (1.0f - exp(-thickness * 0.45f));
 
         float3 reflected = reflect(-eyeDir, normal);
-        reflected.y = max(reflected.y, 0.02f);
+        float3 reflectRay = normalize(float3(reflected.x, max(reflected.y, 0.01f), reflected.z));
         reflected.x = -reflected.x;
         reflected.z = -reflected.z;
         float roughMip = clamp(0.04f * iblMaxMip, 0.0f, iblMaxMip);
@@ -1155,6 +1289,36 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         // flat grey wash, which is exactly what made the water look milky.
         float3 reflection = texIBLSpecular.SampleLevel(IBLSpecularSS, reflected, 0.0f).xyz * iblFactor;
         reflection += directLight * 1.6f;
+        // Screen-space reflections pick up what a cubemap cannot: the pool deck,
+        // the house, and anything else within the reflected ray's reach. Where
+        // the trace fails (off-screen, behind the camera) the IBL sky stands in.
+        if (kSsrEnabled) {
+            // Distort the reflected sample by the ripples so the reflected image
+            // breaks up the way a real one does, instead of staying razor sharp.
+            float2 distortion = float2(normal.x, -normal.z) * 0.006f;
+            // Clip-space Y handedness differs between the backends. A wrong sign
+            // sends every trace step to the mirrored half of the screen, where
+            // the depth test never crosses. Detect it by projecting a point 1 m
+            // straight up from the fragment: if NDC y grows with world up then
+            // NDC y points up and the UV conversion must negate it.
+            float4 clipSelf = mul(CameraVP, float4(input.WorldPos.xyz, 1.0f));
+            float4 clipUp = mul(CameraVP, float4(input.WorldPos.xyz + float3(0.0f, 1.0f, 0.0f), 1.0f));
+            float ndcYSign = (clipUp.y / clipUp.w > clipSelf.y / clipSelf.w) ? -1.0f : 1.0f;
+            float4 ssr = WaterTraceScreenSpace(input.WorldPos.xyz + normal * 0.002f, reflectRay,
+                                               reflection, distortion, ndcYSign);
+            reflection = lerp(reflection, ssr.rgb, ssr.a * 0.72f);
+            if (kSsrProbe) {
+                // Temporary probe: raw depth at this pixel (R), at the vertically
+                // mirrored pixel (G), and this fragment's own NDC depth (B).
+                int2 px = clamp(int2(input.hposition.xy), int2(0, 0),
+                                int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1));
+                float z0 = SceneDepthTex.Load(int3(px, 0)).r;
+                float z1 = SceneDepthTex.Load(int3(px.x, (int)ForwardParams.y - 1 - px.y, 0)).r;
+                float4 cs = mul(CameraVP, float4(input.WorldPos.xyz, 1.0f));
+                return float4(saturate(z0 * 100.0f), saturate(z1 * 100.0f),
+                              saturate(cs.z / cs.w * 100.0f), 1.0f);
+            }
+        }
         if (numLights > 0 && LightPositions[0].w < 0.5f) {
             float3 sunDir = normalize(-LightPositions[0].xyz);
             float3 halfVec = normalize(eyeDir + sunDir);

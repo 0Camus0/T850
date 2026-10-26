@@ -1644,6 +1644,7 @@ void RenderGraph::ExecutePass(
           for (int mi = 0; mi < meshCount; ++mi) {
             if (!mayDrawMesh(mi, sig)) continue;
             bindMeshPassResources(meshes[mi]);
+            if (!meshes[mi].AllowsPass(sig.getPass())) continue;
             meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
             ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
@@ -1651,13 +1652,13 @@ void RenderGraph::ExecutePass(
           }
         } else {
           for (int mi : draw.mesh_indices) {
-            if (mayDrawMesh(mi, sig)) {
-              bindMeshPassResources(meshes[mi]);
-              meshes[mi].SetGlobalKey(sig);
-              meshes[mi].Draw();
-              ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
-              meshes[mi].SetGlobalKey(fwd);
-            }
+            if (!mayDrawMesh(mi, sig)) continue;
+            bindMeshPassResources(meshes[mi]);
+            if (!meshes[mi].AllowsPass(sig.getPass())) continue;
+            meshes[mi].SetGlobalKey(sig);
+            meshes[mi].Draw();
+            ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
+            meshes[mi].SetGlobalKey(fwd);
           }
         }
       }

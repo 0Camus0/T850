@@ -4,7 +4,9 @@
 
 #include <core/Config.h>
 #include <core/EngineContext.h>
+#include <imgui/DevGuiContext.h>
 #include <scene/IBLResources.h>
+#include <scene/SceneDescriptor.h>
 #include <scene/PrimitiveManager.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
@@ -177,53 +179,90 @@ void BackyardScene::CreateAssets() {
 
   // Grid matches the pool basin: 9.0 m (X) x 1.6 m (Y) x 4.5 m (Z) at a
   // 9 cm cell. The surface UV space therefore maps 1:1 onto the pool mesh.
-  t850::FluidSettings fluidSettings;
-  fluidSettings.width = 100;
-  fluidSettings.height = 18;
-  fluidSettings.depth = 50;
-  fluidSettings.pressureIterations = fluidIterations;
-  fluidSettings.deltaTime = 1.0f / 60.0f;
-  fluidSettings.cellSize = 0.09f;
-  fluidSettings.surfaceLevel = 0.96f;
-  if (m_fluid.TryInitialize(driver, fluidSettings)) {
-    m_fluidReady = true;
-    if (!m_fluid.Seed(driver, true)) {
-      T8_LOG_ERROR("[Backyard] Fluid seed dispatch failed");
-    }
-    // Bind a stable surface target onto the water instance at slot 23 (t23).
-    // No render-graph RT involved: a graph target written by an out-of-graph
-    // dispatch did not survive readback, so the RT is owned by the driver here.
-    m_waterSurfaceRT = driver->CreateRT(1, t850::BaseRT::RGBA16F, t850::BaseRT::NOTHING,
-                                       static_cast<int>(fluidSettings.width),
-                                       static_cast<int>(fluidSettings.depth), false, true);
-    t850::Texture* surface = m_waterSurfaceRT >= 0
-      ? driver->GetRTTexture(m_waterSurfaceRT, t850::BaseDriver::COLOR0_ATTACHMENT) : nullptr;
-    if (surface && m_waterHandle.IsValid()) {
-      m_fluid.SetSurfaceOutput(surface);
-      if (t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle)) {
-        water->SetTexture(surface, 23);
-        // Fabricated tiling ripple normal map (scripts/textures/build_water_normal.py).
-        // Bound at slot 22 rather than the material normal-map slot 3, which
-        // crashes the D3D12 path when the material itself has no normal map.
-        const int normalTextureIndex = driver->CreateTexture("Backyard/WaterNormal.png");
-        t850::Texture* normalTexture = normalTextureIndex >= 0
-          ? driver->GetTexture(normalTextureIndex) : nullptr;
-        if (normalTexture) {
-          water->SetTexture(normalTexture, 22);
-          T8_LOG_INFO("[Backyard] Water normal map bound (%dx%d)", normalTexture->x, normalTexture->y);
-        } else {
-          T8_LOG_ERROR("[Backyard] Cannot load Textures/Backyard/WaterNormal.png");
-        }
-        water->Update();
-        T8_LOG_INFO("[Backyard] Water surface bound to solver texture (%dx%d)", surface->x, surface->y);
-      }
-      EnsureWaterShaderPermutations(driver);
-    } else {
-      T8_LOG_ERROR("[Backyard] Cannot bind the water surface texture");
-    }
-  } else {
-    T8_LOG_INFO("[Backyard] Fluid solver unavailable; water renders without displacement");
+  RebuildFluid();
+}
+
+bool BackyardScene::RebuildFluid() {
+  if (!pFramework || !pFramework->pVideoDriver) return false;
+  t850::BaseDriver* driver = pFramework->pVideoDriver;
+
+  // Tear the solver down while the driver is idle. A texture still referenced by
+  // an in-flight command list must never be destroyed.
+  driver->FlushGPUResources();
+  m_fluid.Shutdown(driver);
+  m_fluidReady = false;
+  if (m_waterSurfaceRT >= 0) {
+    driver->DestroyRT(m_waterSurfaceRT);
+    m_waterSurfaceRT = -1;
   }
+
+  const t850::FluidSettings fluidSettings = MakeFluidSettings();
+  m_appliedGridWidth = static_cast<int>(fluidSettings.width);
+  m_appliedGridHeight = static_cast<int>(fluidSettings.height);
+  m_appliedGridDepth = static_cast<int>(fluidSettings.depth);
+
+  if (!m_fluid.TryInitialize(driver, fluidSettings)) {
+    T8_LOG_INFO("[Backyard] Fluid solver unavailable; water renders without displacement");
+    return false;
+  }
+  m_fluidReady = true;
+  if (!m_fluid.Seed(driver, true))
+    T8_LOG_ERROR("[Backyard] Fluid seed dispatch failed");
+
+  // Bind a stable surface target onto the water instance at slot 23 (t23).
+  // No render-graph RT involved: a graph target written by an out-of-graph
+  // dispatch did not survive readback, so the RT is owned by the driver here.
+  m_waterSurfaceRT = driver->CreateRT(1, t850::BaseRT::RGBA16F, t850::BaseRT::NOTHING,
+                                     m_appliedGridWidth, m_appliedGridDepth, false, true);
+  t850::Texture* surface = m_waterSurfaceRT >= 0
+    ? driver->GetRTTexture(m_waterSurfaceRT, t850::BaseDriver::COLOR0_ATTACHMENT) : nullptr;
+  if (!surface || !m_waterHandle.IsValid()) {
+    T8_LOG_ERROR("[Backyard] Cannot bind the water surface texture");
+    return false;
+  }
+
+  m_fluid.SetSurfaceOutput(surface);
+  if (t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle)) {
+    water->SetTexture(surface, 23);
+    // Fabricated tiling ripple normal map (scripts/textures/build_water_normal.py).
+    // Bound at slot 22 rather than the material normal-map slot 3, which crashes
+    // the D3D12 path when the material itself has no normal map.
+    const int normalTextureIndex = driver->CreateTexture("Backyard/WaterNormal.png");
+    t850::Texture* normalTexture = normalTextureIndex >= 0
+      ? driver->GetTexture(normalTextureIndex) : nullptr;
+    if (normalTexture) {
+      water->SetTexture(normalTexture, 22);
+      T8_LOG_INFO("[Backyard] Water normal map bound (%dx%d)", normalTexture->x, normalTexture->y);
+    } else {
+      T8_LOG_ERROR("[Backyard] Cannot load Textures/Backyard/WaterNormal.png");
+    }
+    water->Update();
+    T8_LOG_INFO("[Backyard] Water surface bound to solver texture (%dx%d)", surface->x, surface->y);
+  }
+  EnsureWaterShaderPermutations(driver);
+  T8_LOG_INFO("[Backyard] Fluid solver running on %dx%dx%d, %d pressure iterations",
+              m_appliedGridWidth, m_appliedGridHeight, m_appliedGridDepth,
+              static_cast<int>(SceneProp.Water.pressureIterations));
+  return true;
+}
+
+t850::FluidSettings BackyardScene::MakeFluidSettings() const {
+  const t850::WaterTunables& w = SceneProp.Water;
+  t850::FluidSettings settings;
+  settings.width = static_cast<uint32_t>((std::max)(w.gridWidth, 8));
+  settings.height = static_cast<uint32_t>((std::max)(w.gridHeight, 4));
+  settings.depth = static_cast<uint32_t>((std::max)(w.gridDepth, 8));
+  settings.pressureIterations = static_cast<uint32_t>((std::max)(w.pressureIterations, 0));
+  settings.cellSize = (std::max)(w.cellSize, 0.001f);
+  settings.deltaTime = (std::max)(w.deltaTime, 1.0f / 1000.0f);
+  settings.viscosity = w.viscosity;
+  settings.gravity = w.gravity;
+  settings.windX = w.windX;
+  settings.windY = w.windY;
+  settings.windZ = w.windZ;
+  settings.damping = w.damping;
+  settings.surfaceLevel = (std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f);
+  return settings;
 }
 
 void BackyardScene::DestroyAssets() {
@@ -288,7 +327,16 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_cameraController.Update(deltaSeconds, t850::CameraUpdateContext{});
   }
   m_lightCamera.Update(0.0f);
+  // A grid change needs new 3D textures; everything else can be retuned in place.
+  const t850::WaterTunables& w = SceneProp.Water;
+  if (m_fluidReady &&
+      (w.gridWidth != m_appliedGridWidth || w.gridHeight != m_appliedGridHeight ||
+       w.gridDepth != m_appliedGridDepth)) {
+    RebuildFluid();
+  }
   if (m_fluidReady && pFramework && pFramework->pVideoDriver) {
+    m_fluid.SetPressureIterations(static_cast<uint32_t>((std::max)(w.pressureIterations, 0)));
+    m_fluid.SetSurfaceLevel((std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f));
     if (!m_fluid.Step(pFramework->pVideoDriver)) {
       T8_LOG_ERROR("[Backyard] Fluid step failed; disabling the solver for this scene");
       m_fluidReady = false;
@@ -311,10 +359,10 @@ void BackyardScene::OnInput(InputManager* input) {
   state.crouch = input->PressedKey(T800K_LCTRL);
   state.sprint = input->PressedKey(T800K_LSHIFT);
   // Look only while a mouse button is held. Stray window-focus deltas would
-  // otherwise rotate the camera without user intent. Both axes are inverted so
-  // dragging moves the view opposite to the pointer.
+  // otherwise rotate the camera without user intent. Only the vertical axis is
+  // inverted.
   state.mouseLook = input->PressedMouseButton(0) || input->PressedMouseButton(2);
-  state.mouseDeltaX = (std::clamp)(-static_cast<float>(input->xDelta), -200.0f, 200.0f);
+  state.mouseDeltaX = (std::clamp)(static_cast<float>(input->xDelta), -200.0f, 200.0f);
   state.mouseDeltaY = (std::clamp)(static_cast<float>(input->yDelta), -200.0f, 200.0f);
   state.scrollDelta = input->scrollDelta;
   t850::ApplyGamepadToCameraInput(state, *input, m_deltaSeconds, true);
@@ -345,4 +393,135 @@ void BackyardScene::OnDraw() {
         pFramework->pVideoDriver, m_camera, m_lightCamera, SceneProp, targets, m_deltaSeconds);
     if (m_dumper.ShouldExit()) std::exit(0);
   }
+}
+
+void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
+  if (!gui.BeginPanel("Backyard Water")) {
+    return;
+  }
+
+  t850::WaterTunables& w = SceneProp.Water;
+
+  // One line per knob: build a SliderDesc inline and hand the value by reference,
+  // so an edit lands in SceneProps immediately and rides to the shader on the
+  // next draw (or to the solver on the next dispatch).
+  auto slider = [&gui](const char* name, const char* label, float& value,
+                       float minValue, float maxValue, float step) {
+    t850::SliderDesc desc;
+    desc.name = name;
+    desc.label = label;
+    desc.min_val = minValue;
+    desc.max_val = maxValue;
+    desc.step = step;
+    desc.default_val = value;
+    return gui.Slider(desc, value);
+  };
+  auto sliderInt = [&gui](const char* name, const char* label, int& value,
+                          float minValue, float maxValue, float step) {
+    t850::SliderDesc desc;
+    desc.name = name;
+    desc.label = label;
+    desc.min_val = minValue;
+    desc.max_val = maxValue;
+    desc.step = step;
+    desc.default_val = static_cast<float>(value);
+    return gui.SliderInt(desc, value);
+  };
+
+  if (gui.BeginSection("Solver")) {
+    sliderInt("water_grid_w", "grid width", w.gridWidth, 16.0f, 192.0f, 1.0f);
+    sliderInt("water_grid_h", "grid height", w.gridHeight, 4.0f, 64.0f, 1.0f);
+    sliderInt("water_grid_d", "grid depth", w.gridDepth, 16.0f, 192.0f, 1.0f);
+    sliderInt("water_iterations", "pressure iterations", w.pressureIterations, 1.0f, 200.0f, 1.0f);
+    slider("water_cell", "cell size (m)", w.cellSize, 0.01f, 0.30f, 0.001f);
+    slider("water_dt", "delta time (s)", w.deltaTime, 1.0f / 240.0f, 1.0f / 15.0f, 0.0001f);
+    slider("water_viscosity", "viscosity", w.viscosity, 0.0f, 0.5f, 0.001f);
+    slider("water_gravity", "gravity", w.gravity, 0.0f, 30.0f, 0.01f);
+    slider("water_wind_x", "wind X", w.windX, -5.0f, 5.0f, 0.01f);
+    slider("water_wind_y", "wind Y", w.windY, -5.0f, 5.0f, 0.01f);
+    slider("water_wind_z", "wind Z", w.windZ, -5.0f, 5.0f, 0.01f);
+    slider("water_damping", "damping", w.damping, 0.0f, 4.0f, 0.01f);
+    slider("water_surface_level", "surface level", w.surfaceLevel, 0.05f, 0.99f, 0.001f);
+    gui.Separator();
+    if (gui.Button("Reseed solver") && m_fluidReady && pFramework && pFramework->pVideoDriver)
+      m_fluid.Seed(pFramework->pVideoDriver, true);
+    if (gui.Button("Rebuild grid"))
+      RebuildFluid();
+  }
+
+  if (gui.BeginSection("Optics")) {
+    slider("water_absorb_r", "absorption R", w.absorbR, 0.0f, 2.0f, 0.001f);
+    slider("water_absorb_g", "absorption G", w.absorbG, 0.0f, 2.0f, 0.001f);
+    slider("water_absorb_b", "absorption B", w.absorbB, 0.0f, 2.0f, 0.001f);
+    slider("water_thickness_scale", "body depth scale", w.thicknessScale, 0.5f, 20.0f, 0.01f);
+    slider("water_shallow_r", "shallow R", w.shallowR, 0.0f, 1.0f, 0.001f);
+    slider("water_shallow_g", "shallow G", w.shallowG, 0.0f, 1.0f, 0.001f);
+    slider("water_shallow_b", "shallow B", w.shallowB, 0.0f, 1.0f, 0.001f);
+    slider("water_deep_r", "deep R", w.deepR, 0.0f, 1.0f, 0.001f);
+    slider("water_deep_g", "deep G", w.deepG, 0.0f, 1.0f, 0.001f);
+    slider("water_deep_b", "deep B", w.deepB, 0.0f, 1.0f, 0.001f);
+    slider("water_refract", "refraction strength", w.refractionStrength, 0.0f, 0.15f, 0.0005f);
+    slider("water_border_fade", "refraction border fade", w.refractionBorderFade, 1.0f, 80.0f, 0.1f);
+    slider("water_caustic_gain", "caustic gain", w.causticGain, 0.0f, 4.0f, 0.01f);
+    slider("water_caustic_power", "caustic power", w.causticPower, 0.5f, 12.0f, 0.01f);
+    slider("water_caustic_slope", "caustic slope scale", w.causticSlopeScale, 0.1f, 10.0f, 0.01f);
+    slider("water_caustic_base", "floor base light", w.causticFloorBase, 0.0f, 2.0f, 0.01f);
+    slider("water_fresnel_boost", "fresnel boost", w.fresnelBoost, 0.0f, 6.0f, 0.01f);
+    slider("water_fresnel_bias", "fresnel bias", w.fresnelBias, 0.0f, 1.0f, 0.001f);
+    slider("water_scatter_wrap", "scatter wrap", w.scatterWrap, 0.0f, 0.5f, 0.001f);
+    slider("water_scatter_normal", "scatter normal", w.scatterNormal, 0.0f, 0.5f, 0.001f);
+    slider("water_scatter_depth", "scatter depth", w.scatterDepth, 0.0f, 3.0f, 0.01f);
+    slider("water_line_y", "water line Y (m)", w.waterLineY, -1.0f, 0.5f, 0.001f);
+    slider("water_to_floor", "water to floor (m)", w.waterToFloor, 0.1f, 4.0f, 0.01f);
+  }
+
+  if (gui.BeginSection("Surface detail")) {
+    slider("water_wave_scale", "analytic wave scale", w.analyticWaveScale, 0.0f, 4.0f, 0.01f);
+    slider("water_wave_speed", "analytic wave speed", w.analyticWaveSpeed, 0.0f, 4.0f, 0.01f);
+    slider("water_vertex_wave", "vertex wave scale", w.vertexWaveScale, 0.0f, 4.0f, 0.01f);
+    slider("water_normal_gain", "normal map gain", w.normalMapGain, 0.0f, 3.0f, 0.01f);
+    slider("water_normal_tile_x", "normal tile X", w.normalTileX, 1.0f, 60.0f, 0.05f);
+    slider("water_normal_tile_z", "normal tile Z", w.normalTileZ, 1.0f, 60.0f, 0.05f);
+    slider("water_normal_drift_x", "normal drift X", w.normalDriftX, -0.2f, 0.2f, 0.0005f);
+    slider("water_normal_drift_z", "normal drift Z", w.normalDriftZ, -0.2f, 0.2f, 0.0005f);
+    slider("water_normal_tile2_x", "normal tile2 X", w.normalTile2X, 1.0f, 60.0f, 0.05f);
+    slider("water_normal_tile2_z", "normal tile2 Z", w.normalTile2Z, 1.0f, 60.0f, 0.05f);
+    slider("water_normal_drift2_x", "normal drift2 X", w.normalDrift2X, -0.2f, 0.2f, 0.0005f);
+    slider("water_normal_drift2_z", "normal drift2 Z", w.normalDrift2Z, -0.2f, 0.2f, 0.0005f);
+  }
+
+  if (gui.BeginSection("Reflection")) {
+    slider("water_ibl_scale", "IBL reflection scale", w.iblReflectionScale, 0.0f, 4.0f, 0.01f);
+    slider("water_direct_scale", "direct light scale", w.directLightScale, 0.0f, 8.0f, 0.01f);
+    slider("water_glint_power", "sun glint power", w.sunGlintPower, 1.0f, 4000.0f, 1.0f);
+    slider("water_glint_scale", "sun glint scale", w.sunGlintScale, 0.0f, 40.0f, 0.1f);
+    slider("water_ssr_weight", "SSR weight", w.ssrWeight, 0.0f, 1.0f, 0.01f);
+    slider("water_ssr_distortion", "SSR distortion", w.ssrDistortion, 0.0f, 0.05f, 0.0001f);
+    slider("water_ssr_blur_base", "SSR blur base (px)", w.ssrBlurBase, 0.0f, 12.0f, 0.1f);
+    slider("water_ssr_blur_range", "SSR blur range (px)", w.ssrBlurRange, 0.0f, 40.0f, 0.1f);
+    slider("water_ssr_max_dist", "SSR max distance", w.ssrMaxDistance, 1.0f, 120.0f, 0.5f);
+    slider("water_ssr_step_start", "SSR step start (m)", w.ssrStepStart, 0.005f, 0.5f, 0.001f);
+    slider("water_ssr_step_growth", "SSR step growth", w.ssrStepGrowth, 1.0f, 2.0f, 0.01f);
+    slider("water_ssr_step_max", "SSR step max (m)", w.ssrStepMax, 0.05f, 5.0f, 0.01f);
+    sliderInt("water_ssr_steps", "SSR steps", w.ssrSteps, 1.0f, 256.0f, 1.0f);
+  }
+
+  if (gui.BeginSection("Foam")) {
+    slider("water_foam_crest", "crest foam", w.foamCrest, 0.0f, 2.0f, 0.01f);
+    slider("water_foam_border", "border foam", w.foamBorder, 0.0f, 4.0f, 0.01f);
+    slider("water_foam_noise", "foam noise", w.foamNoise, 0.0f, 4.0f, 0.01f);
+    slider("water_foam_strength", "foam strength", w.foamStrength, 0.0f, 1.0f, 0.01f);
+    slider("water_foam_r", "foam R", w.foamR, 0.0f, 1.0f, 0.001f);
+    slider("water_foam_g", "foam G", w.foamG, 0.0f, 1.0f, 0.001f);
+    slider("water_foam_b", "foam B", w.foamB, 0.0f, 1.0f, 0.001f);
+  }
+
+  gui.Separator();
+  gui.Text("Values apply live. Grid size changes rebuild the solver.");
+  if (gui.Button("Reset water settings")) {
+    w = t850::WaterTunables{};
+    RebuildFluid();
+  }
+
+  gui.EndPanel();
 }

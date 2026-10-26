@@ -48,6 +48,7 @@
 #include <scene/MeshAsset.h>
 #include <scene/MeshAssetCache.h>
 #include <scene/MaterialAsset.h>
+#include <scene/WaterTunables.h>
 #include <scene/LineRenderer.h>
 #include <scene/WireframeGeometry.h>
 
@@ -195,6 +196,10 @@ namespace t850 {
       XVECTOR3  TransmissionUVTransform1;
       XVECTOR3  LightmapUVTransform0;
       XVECTOR3  LightmapUVTransform1;
+      // Live water parameters from SceneProps::Water. Appended so every existing
+      // field keeps its offset; the HLSL MeshMaterialCB declares the identical
+      // sequence at its tail.
+      t850::WaterGpuParams WaterParams;
     };
 
     struct AABB {

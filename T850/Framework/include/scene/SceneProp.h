@@ -18,6 +18,7 @@
 #include <utils/xMaths.h>
 #include <utils/Camera.h>
 #include <scene/ShadowSystem.h>
+#include <scene/WaterTunables.h>
 #include <vector>
 
 enum LightType {
@@ -190,6 +191,8 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	// Scene clock in seconds, advanced by the owning scene each frame. Feeds
 	// time-dependent shading (e.g. the pool water's ripple detail).
 	float TimeSeconds = 0.0f;
+	// Live-editable water parameters, driven by the dev GUI panel.
+	t850::WaterTunables Water;
 	int ParticleCount = 0;
 	float ParticleLifetime = 0.0f;
 	float ParticleRiseHeight = 0.0f;

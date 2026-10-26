@@ -2107,7 +2107,9 @@ namespace t850 {
       instanceCB.WVP = WVP;
       instanceCB.World = transform;
       instanceCB.WorldView = WorldView;
-      instanceCB.TimeParams = XVECTOR3(pScProp ? pScProp->TimeSeconds : 0.0f, 0.0f, 0.0f, 0.0f);
+      instanceCB.TimeParams = XVECTOR3(pScProp ? pScProp->TimeSeconds : 0.0f,
+                                       pScProp ? pScProp->Water.vertexWaveScale : 1.0f,
+                                       0.0f, 0.0f);
 
       RenderMesh::MeshFrameCBuffer& frameCB = it_MeshInfo->FrameCB;
       frameCB.Light0Pos = pScProp->Lights[0].Position;
@@ -2311,6 +2313,7 @@ namespace t850 {
         materialCB.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
         materialCB.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel,
                                               pScProp ? pScProp->TimeSeconds : 0.0f);
+        materialCB.WaterParams = t850::BuildWaterGpu(pScProp ? pScProp->Water : t850::WaterTunables{});
         ApplyMeshMaterialCB(it_MeshInfo->CnstBuffer, materialCB);
 
         // Phase A.5 step 2: bind shared IB pool if available, otherwise

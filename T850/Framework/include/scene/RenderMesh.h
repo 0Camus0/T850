@@ -145,6 +145,9 @@ namespace t850 {
       XVECTOR3  LightPositions[128];
       XVECTOR3  LightColors[128];
       XVECTOR3  LightRadius[32];
+      // Camera view-projection, so screen-space effects (water reflections) can
+      // project world points without a second constant buffer.
+      XMATRIX44 CameraVP;
     };
 
     struct MeshMaterialCBuffer {

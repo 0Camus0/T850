@@ -148,6 +148,11 @@ void BackyardScene::CreateAssets() {
       // survives the render graph's per-pass SetGlobalKey and selects the
       // displacement/foam shader permutation.
       instance.PersistentFeatureBits = t850::ShaderKey::FLUID_SURFACE;
+      // Keep the transparent water out of the depth-writing GBuffer and shadow
+      // passes. If it wrote GBuffer depth, SceneDepthTex would hold the water
+      // itself and screen-space reflections would have nothing behind it.
+      instance.DrawPassMask = ~((1ull << t850::PassType::GBUFFER) |
+                                (1ull << t850::PassType::SHADOW_MAP));
     }
     instance.Update();
     const t850::RenderInstanceHandle handle = m_renderContainer.AddMeshInstance(instance);
@@ -197,6 +202,18 @@ void BackyardScene::CreateAssets() {
       m_fluid.SetSurfaceOutput(surface);
       if (t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle)) {
         water->SetTexture(surface, 23);
+        // Fabricated tiling ripple normal map (scripts/textures/build_water_normal.py).
+        // Bound at slot 22 rather than the material normal-map slot 3, which
+        // crashes the D3D12 path when the material itself has no normal map.
+        const int normalTextureIndex = driver->CreateTexture("Backyard/WaterNormal.png");
+        t850::Texture* normalTexture = normalTextureIndex >= 0
+          ? driver->GetTexture(normalTextureIndex) : nullptr;
+        if (normalTexture) {
+          water->SetTexture(normalTexture, 22);
+          T8_LOG_INFO("[Backyard] Water normal map bound (%dx%d)", normalTexture->x, normalTexture->y);
+        } else {
+          T8_LOG_ERROR("[Backyard] Cannot load Textures/Backyard/WaterNormal.png");
+        }
         water->Update();
         T8_LOG_INFO("[Backyard] Water surface bound to solver texture (%dx%d)", surface->x, surface->y);
       }

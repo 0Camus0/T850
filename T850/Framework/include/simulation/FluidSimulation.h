@@ -25,6 +25,10 @@ namespace t850 {
     float damping = 0.6f;
     float surfaceLevel = 0.92f;
     float pressureScale = 1.0f;
+    // Successive over-relaxation factor for the red-black Gauss-Seidel pressure
+    // sweep. 1.0 is plain Gauss-Seidel; ~1.8 is near optimal for a 7-point
+    // Laplacian on a long thin domain.
+    float sorOmega = 1.8f;
   };
 
   // GPU volumetric Navier-Stokes solver for a bounded pool volume.
@@ -51,6 +55,7 @@ namespace t850 {
     // Live-tunable iteration count; changing the grid needs a full rebuild.
     void SetPressureIterations(uint32_t iterations) { m_settings.pressureIterations = iterations; }
     void SetSurfaceLevel(float level) { m_settings.surfaceLevel = level; }
+    void SetSOROmega(float omega) { m_settings.sorOmega = omega; }
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.
@@ -100,13 +105,13 @@ namespace t850 {
   private:
     std::unique_ptr<ComputeTexture3D> CreateVolume(BaseDriver* driver, const char* debugName);
     std::unique_ptr<ComputePipeline> CreatePipeline(BaseDriver* driver, const char* source);
-    std::vector<uint32_t> BuildConstants() const;
+    std::vector<uint32_t> BuildConstants(uint32_t iterationPacked = 0) const;
     bool EnsureSurfaceTarget(BaseDriver* driver);
     bool AnalyzeVolume(BaseDriver* driver, const std::string* directory, VolumeDump& summary);
     bool PublishSurface(BaseDriver* driver);
     bool DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                         ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
-                        ComputeTexture3D* target);
+                        ComputeTexture3D* target, uint32_t iterationPacked = 0);
 
     static constexpr size_t kVelocityCount = 2;
     static constexpr size_t kPressureCount = 2;

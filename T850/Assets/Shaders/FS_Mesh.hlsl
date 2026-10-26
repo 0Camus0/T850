@@ -382,7 +382,7 @@ static const bool kSsrEnabled = true;
 static const bool kSsrProbe = false;
 
 float4 WaterTraceScreenSpace(float3 origin, float3 dir, float3 fallback, float2 distortion,
-                             float ndcYSign)
+                             float ndcYSign, float depthSign)
 {
     float travelled = 0.0f;
     float stepLen = 0.05f;
@@ -411,14 +411,14 @@ float4 WaterTraceScreenSpace(float3 origin, float3 dir, float3 fallback, float2 
             havePrev = false;
             continue;
         }
-        // Sign-agnostic crossing test: a hit is where the ray's depth relative to
-        // the scene flips sign. Backends differ in whether a larger stored depth
-        // means closer, and this removes the need to know which.
-        float diff = rayZ - sceneZ;
-        // Ignore the first few steps: the ray starts on the water surface, whose
-        // own depth sits in SceneDepthTex, so an early sign flip is the ray
-        // crossing its own surface, not a real reflection.
-        if (i >= 3 && havePrev && (prevDiff > 0.0f) != (diff > 0.0f)) {
+        // depthSign makes this explicit rather than relying on a sign flip to
+        // happen to land the right way: positive means a larger stored depth is
+        // nearer, which is what the caller measures from the water's own depth
+        // against the opaque surface behind it.
+        float diff = (rayZ - sceneZ) * depthSign;
+        // The ray starts just above the water surface, which is nearer than the
+        // basin floor, so diff begins positive and falls as the ray recedes.
+        if (havePrev && prevDiff > 0.0f && diff <= 0.0f) {
             // Bisect between prevPos and pos for the crossing point.
             float3 lo = prevPos;
             float3 hi = pos;
@@ -432,8 +432,8 @@ float4 WaterTraceScreenSpace(float3 origin, float3 dir, float3 fallback, float2 
                                  int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1));
                 float mScene = SceneDepthTex.Load(int3(mpx, 0)).r;
                 hitUV = muv;
-                float mDiff = c2.z / c2.w - mScene;
-                if ((mDiff > 0.0f) == (loDiff > 0.0f))
+                float mDiff = (c2.z / c2.w - mScene) * depthSign;
+                if (mDiff > 0.0f)
                     lo = mid;
                 else
                     hi = mid;
@@ -442,19 +442,37 @@ float4 WaterTraceScreenSpace(float3 origin, float3 dir, float3 fallback, float2 
             // accurate to the step length, so thin features would otherwise show
             // hard edges.
             float2 travel = abs(hitUV - prevUV);
-            // Confidence by depth agreement at the crossing, not by UV travel:
-            // UV travel is one whole step long even for a perfect hit, which
-            // capped every confidence well below 1 and made the reflection fade.
-            float3 hitPos = (prevPos + pos) * 0.5f;
-            float4 hitClip = mul(CameraVP, float4(hitPos, 1.0f));
-            int2 hpx = clamp(int2(hitUV * ForwardParams.xy), int2(0, 0),
-                             int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1));
-            float hitSceneZ = SceneDepthTex.Load(int3(hpx, 0)).r;
-            float depthError = abs(hitClip.z / hitClip.w - hitSceneZ);
-            float confidence = saturate(1.0f - depthError * 60.0f) *
-                               saturate(1.0f - max(travel.x, travel.y) * 24.0f);
+            // The crossing test itself is geometric and both backends agree on the
+            // hit position to within a thousandth of the screen, so confidence is
+            // built from factors that are stable across backends. A depth-residual
+            // weight is deliberately not used: it is a difference of nearly equal
+            // numbers, so a tiny projection difference dominates it and the two
+            // APIs end up with visibly different reflection strength.
+            float stepGap = max(travel.x, travel.y);
+            float stepConfidence = saturate(1.0f - stepGap * 8.0f);
+            // Edge fade: samples near the screen border are one texel away from
+            // leaving the screen entirely, so their colour is unreliable.
+            float2 edge = min(hitUV, 1.0f - hitUV);
+            float edgeConfidence = saturate(min(edge.x, edge.y) * 24.0f);
+            // Distant hits are less trustworthy; the reflected image is also
+            // physically weaker far from the surface. Blend back to sky.
+            float distanceConfidence = saturate(1.0f - travelled / 26.0f);
+            float confidence = stepConfidence * edgeConfidence * distanceConfidence;
+            if (kSsrProbe)
+                return float4(hitUV.x, hitUV.y, saturate(travelled / 26.0f), 1.0f);
             float2 sampleUV = saturate(hitUV + distortion);
-            return float4(SceneColorTex.SampleLevel(SceneColorSS, sampleUV, 0.0f).rgb, confidence);
+            // Five-tap blur, widening with distance. Water is not a mirror, and a
+            // single-tap fetch of a high-frequency reflection scintillates as the
+            // ripples move - which is also what made the two backends look
+            // different, because thin bright glints land on different pixels.
+            float2 texelStep = 1.0f / max(ForwardParams.xy, float2(1.0f, 1.0f));
+            float blurRadius = 1.5f + 10.0f * (1.0f - distanceConfidence);
+            float3 reflectedColor = SceneColorTex.SampleLevel(SceneColorSS, sampleUV, 0.0f).rgb * 0.36f;
+            reflectedColor += SceneColorTex.SampleLevel(SceneColorSS, saturate(sampleUV + float2(texelStep.x, 0.0f) * blurRadius), 0.0f).rgb * 0.16f;
+            reflectedColor += SceneColorTex.SampleLevel(SceneColorSS, saturate(sampleUV - float2(texelStep.x, 0.0f) * blurRadius), 0.0f).rgb * 0.16f;
+            reflectedColor += SceneColorTex.SampleLevel(SceneColorSS, saturate(sampleUV + float2(0.0f, texelStep.y) * blurRadius), 0.0f).rgb * 0.16f;
+            reflectedColor += SceneColorTex.SampleLevel(SceneColorSS, saturate(sampleUV - float2(0.0f, texelStep.y) * blurRadius), 0.0f).rgb * 0.16f;
+            return float4(reflectedColor, confidence);
         }
         prevPos = pos;
         prevUV = uv;
@@ -1302,22 +1320,26 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
             // straight up from the fragment: if NDC y grows with world up then
             // NDC y points up and the UV conversion must negate it.
             float4 clipSelf = mul(CameraVP, float4(input.WorldPos.xyz, 1.0f));
-            float4 clipUp = mul(CameraVP, float4(input.WorldPos.xyz + float3(0.0f, 1.0f, 0.0f), 1.0f));
-            float ndcYSign = (clipUp.y / clipUp.w > clipSelf.y / clipSelf.w) ? -1.0f : 1.0f;
-            float4 ssr = WaterTraceScreenSpace(input.WorldPos.xyz + normal * 0.002f, reflectRay,
-                                               reflection, distortion, ndcYSign);
-            reflection = lerp(reflection, ssr.rgb, ssr.a * 0.72f);
-            if (kSsrProbe) {
-                // Temporary probe: raw depth at this pixel (R), at the vertically
-                // mirrored pixel (G), and this fragment's own NDC depth (B).
-                int2 px = clamp(int2(input.hposition.xy), int2(0, 0),
+            float2 clipNdc = clipSelf.xy / clipSelf.w;
+            float2 screenUVOwn = GetForwardScreenUV(input);
+            // Deriving the clip-space Y handedness from a world-space probe is
+            // fragile; instead take both candidate conversions of THIS fragment's
+            // own clip position and keep whichever reproduces its actual screen
+            // position. That is exact and backend-independent.
+            float2 uvMinus = clipNdc * float2(0.5f, -0.5f) + 0.5f;
+            float2 uvPlus = clipNdc * float2(0.5f, 0.5f) + 0.5f;
+            float ndcYSign = (length(uvMinus - screenUVOwn) <= length(uvPlus - screenUVOwn))
+                             ? -1.0f : 1.0f;
+            // The water is known to sit in front of the basin floor, so comparing
+            // the two depths here determines whether a larger stored depth means
+            // nearer, without assuming a reverse-Z convention per backend.
+            int2 selfPx = clamp(int2(input.hposition.xy), int2(0, 0),
                                 int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1));
-                float z0 = SceneDepthTex.Load(int3(px, 0)).r;
-                float z1 = SceneDepthTex.Load(int3(px.x, (int)ForwardParams.y - 1 - px.y, 0)).r;
-                float4 cs = mul(CameraVP, float4(input.WorldPos.xyz, 1.0f));
-                return float4(saturate(z0 * 100.0f), saturate(z1 * 100.0f),
-                              saturate(cs.z / cs.w * 100.0f), 1.0f);
-            }
+            float selfSceneZ = SceneDepthTex.Load(int3(selfPx, 0)).r;
+            float depthSign = (clipSelf.z / clipSelf.w > selfSceneZ) ? 1.0f : -1.0f;
+            float4 ssr = WaterTraceScreenSpace(input.WorldPos.xyz + normal * 0.002f, reflectRay,
+                                               reflection, distortion, ndcYSign, depthSign);
+            reflection = lerp(reflection, ssr.rgb, ssr.a * 0.85f);
         }
         if (numLights > 0 && LightPositions[0].w < 0.5f) {
             float3 sunDir = normalize(-LightPositions[0].xyz);

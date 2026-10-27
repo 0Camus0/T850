@@ -16,7 +16,19 @@ namespace t850 {
     int   gridDepth = 50;
     int   pressureIterations = 15;
     float cellSize = 0.09f;
+    // Fixed step used only when fixedTimeStep is on. When it is off (the
+    // default) the solver advances by the real frame delta so the water runs in
+    // real time instead of at (frame rate / 60) times real speed.
     float deltaTime = 1.0f / 60.0f;
+    // Longest real delta the solver will accept. Clamps pathological frames
+    // (window drag, breakpoint) so an explicit viscous step cannot blow up:
+    // the von Neumann bound here is h^2 / (6 nu) = 0.0675 s, so 1/30 sits at
+    // half of it.
+    float maxDeltaTime = 1.0f / 30.0f;
+    // Multiplies elapsed time. 1.0 is real time; smaller makes the water lazy.
+    float timeScale = 1.0f;
+    // Deterministic fixed-step mode (for reproducible frame dumps and tests).
+    bool fixedTimeStep = false;
     float viscosity = 0.02f;
     float gravity = 9.81f;
     float windX = 0.6f;

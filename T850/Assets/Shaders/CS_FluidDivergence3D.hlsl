@@ -37,14 +37,33 @@ Texture3D<float4> VelocityIn : register(t0);
 #endif
 RWTexture3D<float4> DivergenceOut : register(u0);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(3, 0)]]
+#endif
+StructuredBuffer<uint> WallMask : register(t8);
+
+uint CellIndex(int3 cell)
+{
+    return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
+}
+
+bool IsSolid(int3 cell)
+{
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return true;
+    return WallMask[CellIndex(cell)] != 0u;
+}
+
 bool Outside(int3 cell)
 {
-    return cell.x <= 0 || cell.y <= 0 || cell.z <= 0 ||
-           cell.x >= int(Width) - 1 || cell.y >= int(Height) - 1 || cell.z >= int(Depth) - 1;
+    return IsSolid(cell);
 }
 
 float Component(int3 cell, int axis)
 {
+    // A solid neighbour contributes zero flux, which is the no-penetration wall
+    // condition expressed through the mask instead of a box-shaped guess.
     if (Outside(cell))
         return 0.0f;
     float4 value = VelocityIn.Load(int4(cell, 0));
@@ -57,6 +76,10 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
     int3 cell = int3(id);
+    if (IsSolid(cell)) {
+        DivergenceOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return;
+    }
     const float scale = 0.5f / CellSize;
     const float divergence =
         (Component(cell + int3(1, 0, 0), 0) - Component(cell - int3(1, 0, 0), 0)) * scale +

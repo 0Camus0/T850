@@ -29,6 +29,24 @@ namespace t850 {
     // sweep. 1.0 is plain Gauss-Seidel; ~1.8 is near optimal for a 7-point
     // Laplacian on a long thin domain.
     float sorOmega = 1.8f;
+
+    // Basin bounds in engine space. The solver domain is exactly this box, so a
+    // voxel is outside the fluid only where the pool geometry intrudes (the
+    // steps) or on the outer shell. Cells outside are solid.
+    float basinMinX = -4.5f;
+    float basinMinY = -1.6f;
+    float basinMinZ = -9.0f;
+    float basinMaxX = 4.5f;
+    float basinMaxY = 0.02f;
+    float basinMaxZ = -4.5f;
+  };
+
+  // One solid intrusion into the basin, in engine space. Derived from the pool
+  // geometry's named nodes (emitted by scripts/blender/build_backyard.py into
+  // backyard_layout.json), never hard-coded here.
+  struct FluidSolidBox {
+    float minX = 0.0f, minY = 0.0f, minZ = 0.0f;
+    float maxX = 0.0f, maxY = 0.0f, maxZ = 0.0f;
   };
 
   // GPU volumetric Navier-Stokes solver for a bounded pool volume.
@@ -41,6 +59,16 @@ namespace t850 {
 
     bool TryInitialize(BaseDriver* driver, const FluidSettings& settings);
     void Shutdown(BaseDriver* driver);
+
+    // Loads the basin bounds and solid intrusions (pool steps) from the
+    // Blender-emitted layout, so wall conditions come from the real geometry.
+    // Returns false if the layout is missing; the solver then falls back to the
+    // closed-box shell only.
+    bool LoadPoolLayout(const char* layoutPath = "Models/Backyard/backyard_layout.json");
+
+    // Number of voxels the mask marks solid (outside the fluid domain).
+    uint32_t SolidVoxelCount() const { return m_solidVoxelCount; }
+    uint32_t FluidVoxelCount() const { return m_settings.width * m_settings.height * m_settings.depth - m_solidVoxelCount; }
 
     // Advances the solver one frame and refreshes the 2D surface target.
     bool Step(BaseDriver* driver);
@@ -89,6 +117,13 @@ namespace t850 {
       float maxSpeed = 0.0f;
       float meanVertical = 0.0f;
       uint32_t slices = 0;
+      // Summed |velocity| over every voxel the wall mask marks solid. Non-zero
+      // means water leaked into the pool geometry.
+      float solidSpeedSum = 0.0f;
+      uint32_t solidSamples = 0;
+      // Largest normal velocity component pointing into a solid face, over fluid
+      // voxels adjacent to a wall.
+      float maxWallPenetration = 0.0f;
     };
     bool DumpVolume(BaseDriver* driver, const std::string& directory, VolumeDump& summary);
     // Same statistics without writing images (cheap: one buffer copy).
@@ -107,8 +142,17 @@ namespace t850 {
     std::unique_ptr<ComputeTexture3D> CreateVolume(BaseDriver* driver, const char* debugName);
     std::unique_ptr<ComputePipeline> CreatePipeline(BaseDriver* driver, const char* source);
     std::vector<uint32_t> BuildConstants(uint32_t iterationPacked = 0) const;
+    bool BuildWallMask(BaseDriver* driver);
     bool EnsureSurfaceTarget(BaseDriver* driver);
     bool AnalyzeVolume(BaseDriver* driver, const std::string* directory, VolumeDump& summary);
+  // Reads the mask buffer once so the CPU-side acceptance probe can classify voxels.
+  bool RefreshMaskSnapshot(BaseDriver* driver);
+  bool IsMaskSolid(uint32_t x, uint32_t y, uint32_t z) const {
+    if (x >= m_settings.width || y >= m_settings.height || z >= m_settings.depth) return true;
+    return m_maskSnapshot[static_cast<size_t>(x) + m_settings.width *
+                           (static_cast<size_t>(y) + m_settings.height * z)] != 0u;
+  }
+  std::vector<uint32_t> m_maskSnapshot;
     bool PublishSurface(BaseDriver* driver);
     bool DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                         ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
@@ -136,6 +180,12 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_diagnosticsPipeline;
     std::unique_ptr<ComputePipeline> m_copyPipeline;
     std::unique_ptr<ComputePipeline> m_surfaceCopyPipeline;
+    // Structured buffer of one uint per voxel: 1 = solid, 0 = fluid. Built from
+    // the pool layout and bound read-only to every kernel that needs to know
+    // where the walls are.
+    std::unique_ptr<ComputeBuffer> m_wallMask;
+    std::vector<FluidSolidBox> m_solidBoxes;
+    uint32_t m_solidVoxelCount = 0;
     Texture* m_surfaceOutput = nullptr;
 
     int m_surfaceRT[2] = {-1, -1};

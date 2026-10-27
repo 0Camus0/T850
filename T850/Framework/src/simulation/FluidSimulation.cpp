@@ -6,6 +6,8 @@
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 
+#include <glaze/glaze.hpp>
+
 #include <cstring>
 #include <cmath>
 #include <filesystem>
@@ -13,6 +15,25 @@
 #include <system_error>
 
 namespace t850 {
+
+  // Minimal mirror of the pool section of backyard_layout.json. Only the fields
+  // the solver needs; unknown keys are tolerated so the layout can grow.
+  // Declared outside the anonymous namespace so glz::meta can specialise on them.
+  struct LayoutStepJson {
+    std::string name;
+    double minX = 0.0, minY = 0.0, minZ = 0.0;
+    double maxX = 0.0, maxY = 0.0, maxZ = 0.0;
+  };
+  struct LayoutPoolJson {
+    double minX = 0.0, minY = 0.0, maxX = 0.0, maxY = 0.0;
+    double depth = 0.0;
+    std::vector<LayoutStepJson> steps;
+  };
+  struct LayoutJson {
+    double waterLine = 0.0;
+    LayoutPoolJson pool;
+  };
+
 namespace {
 
   struct FluidConstants {
@@ -44,6 +65,33 @@ namespace {
   }
 
 } // namespace
+
+} // namespace t850
+
+template <>
+struct glz::meta<t850::LayoutStepJson> {
+  using T = t850::LayoutStepJson;
+  static constexpr auto value = glz::object(
+      "name", &T::name, "minX", &T::minX, "minY", &T::minY, "minZ", &T::minZ,
+      "maxX", &T::maxX, "maxY", &T::maxY, "maxZ", &T::maxZ);
+};
+
+template <>
+struct glz::meta<t850::LayoutPoolJson> {
+  using T = t850::LayoutPoolJson;
+  static constexpr auto value = glz::object(
+      "minX", &T::minX, "minY", &T::minY, "maxX", &T::maxX, "maxY", &T::maxY,
+      "depth", &T::depth, "steps", &T::steps);
+};
+
+template <>
+struct glz::meta<t850::LayoutJson> {
+  using T = t850::LayoutJson;
+  static constexpr auto value = glz::object(
+      "waterLine", &T::waterLine, "pool", &T::pool);
+};
+
+namespace t850 {
 
 FluidSimulation::~FluidSimulation() = default;
 
@@ -104,6 +152,121 @@ std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked) 
   return words;
 }
 
+bool FluidSimulation::LoadPoolLayout(const char* layoutPath) {
+  m_solidBoxes.clear();
+  if (!layoutPath) return false;
+  std::string json;
+  if (!ResourceLocator::Instance().ReadText(layoutPath, json)) {
+    T8_LOG_INFO("[Fluid] No pool layout at '%s'; walls fall back to the closed box", layoutPath);
+    return false;
+  }
+  LayoutJson layout;
+  auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(layout, json);
+  if (ec) {
+    T8_LOG_ERROR("[Fluid] Cannot parse pool layout '%s'", layoutPath);
+    return false;
+  }
+
+  // The solver domain is the inner basin: X and Z from the pool footprint, Y
+  // from the floor up to just above the water line.
+  const double floorY = -std::abs(layout.pool.depth);
+  m_settings.basinMinX = static_cast<float>(layout.pool.minX);
+  m_settings.basinMaxX = static_cast<float>(layout.pool.maxX);
+  m_settings.basinMinZ = static_cast<float>(layout.pool.minY);
+  m_settings.basinMaxZ = static_cast<float>(layout.pool.maxY);
+  m_settings.basinMinY = static_cast<float>(floorY);
+  // One extra cell of headroom above the water line, so the top row is not
+  // clamped by the ceiling and the surface stays inside the domain.
+  m_settings.basinMaxY = static_cast<float>(layout.waterLine + m_settings.cellSize);
+
+  for (const LayoutStepJson& step : layout.pool.steps) {
+    FluidSolidBox box;
+    box.minX = static_cast<float>(step.minX);
+    box.minY = static_cast<float>(step.minY);
+    box.minZ = static_cast<float>(step.minZ);
+    box.maxX = static_cast<float>(step.maxX);
+    box.maxY = static_cast<float>(step.maxY);
+    box.maxZ = static_cast<float>(step.maxZ);
+    m_solidBoxes.push_back(box);
+  }
+
+  T8_LOG_INFO("[Fluid] Pool layout '%s': basin %.2f x %.2f x %.2f m at (%.2f, %.2f, %.2f), %zu solid intrusion(s)",
+              layoutPath,
+              m_settings.basinMaxX - m_settings.basinMinX,
+              m_settings.basinMaxY - m_settings.basinMinY,
+              m_settings.basinMaxZ - m_settings.basinMinZ,
+              m_settings.basinMinX, m_settings.basinMinY, m_settings.basinMinZ,
+              m_solidBoxes.size());
+  return true;
+}
+
+bool FluidSimulation::BuildWallMask(BaseDriver* driver) {
+  if (!driver) return false;
+  const uint32_t width = m_settings.width;
+  const uint32_t height = m_settings.height;
+  const uint32_t depth = m_settings.depth;
+  if (width == 0 || height == 0 || depth == 0) return false;
+
+  const float cell = m_settings.cellSize;
+  const float sizeX = m_settings.basinMaxX - m_settings.basinMinX;
+  const float sizeY = m_settings.basinMaxY - m_settings.basinMinY;
+  const float sizeZ = m_settings.basinMaxZ - m_settings.basinMinZ;
+
+  const uint32_t voxelCount = width * height * depth;
+  std::vector<uint32_t> mask(static_cast<size_t>(voxelCount), 0u);
+  m_solidVoxelCount = 0;
+
+  for (uint32_t k = 0; k < depth; ++k) {
+    const float pz = m_settings.basinMinZ + (k + 0.5f) * (sizeZ / static_cast<float>(depth));
+    for (uint32_t j = 0; j < height; ++j) {
+      const float py = m_settings.basinMinY + (j + 0.5f) * (sizeY / static_cast<float>(height));
+      for (uint32_t i = 0; i < width; ++i) {
+        const float px = m_settings.basinMinX + (i + 0.5f) * (sizeX / static_cast<float>(width));
+
+        // The outer shell is solid: water cannot leave the basin.
+        bool solid = i == 0 || i == width - 1 || j == 0 || j == height - 1 ||
+                     k == 0 || k == depth - 1;
+
+        // Then every authored intrusion (the pool steps). A voxel is solid when
+        // its centre lies inside the box, which is the same convention the
+        // kernels use for stencil neighbours.
+        if (!solid) {
+          for (const FluidSolidBox& box : m_solidBoxes) {
+            if (px >= box.minX && px <= box.maxX &&
+                py >= box.minY && py <= box.maxY &&
+                pz >= box.minZ && pz <= box.maxZ) {
+              solid = true;
+              break;
+            }
+          }
+        }
+
+        if (solid) {
+          mask[static_cast<size_t>(i + width * (j + height * k))] = 1u;
+          ++m_solidVoxelCount;
+        }
+      }
+    }
+  }
+
+  ComputeBufferDesc bufferDesc;
+  bufferDesc.byteWidth = voxelCount * sizeof(uint32_t);
+  bufferDesc.structureStride = sizeof(uint32_t);
+  bufferDesc.access = ComputeBufferAccess::ReadOnly;
+  bufferDesc.debugName = "Fluid Wall Mask";
+  m_wallMask = driver->CreateComputeBuffer(bufferDesc, mask.data());
+  if (!m_wallMask) {
+    T8_LOG_ERROR("[Fluid] Cannot allocate the %u-voxel wall mask", voxelCount);
+    return false;
+  }
+
+  T8_LOG_INFO("[Fluid] Wall mask %ux%ux%u: %u solid of %u voxels (%.1f%% fluid)",
+              width, height, depth, m_solidVoxelCount, voxelCount,
+              100.0 * static_cast<double>(voxelCount - m_solidVoxelCount) / static_cast<double>(voxelCount));
+  (void)cell;
+  return true;
+}
+
 bool FluidSimulation::EnsureSurfaceTarget(BaseDriver* driver) {
   const int width = static_cast<int>(m_settings.width);
   const int depth = static_cast<int>(m_settings.depth);
@@ -138,12 +301,19 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
 
   m_driver = driver;
   m_settings = settings;
+  // Load the pool layout into m_settings (basin bounds) before any volume or
+  // mask work, so the mask classifies cells against the real basin.
+  LoadPoolLayout();
 
   for (size_t i = 0; i < kVelocityCount; ++i)
     m_velocity[i] = CreateVolume(driver, i == 0 ? "Fluid Velocity A" : "Fluid Velocity B");
   m_divergence = CreateVolume(driver, "Fluid Divergence");
   for (size_t i = 0; i < kPressureCount; ++i)
     m_pressure[i] = CreateVolume(driver, i == 0 ? "Fluid Pressure A" : "Fluid Pressure B");
+
+  // Wall mask from the authored pool geometry. LoadPoolLayout() must run before
+  // this so the basin bounds match the cells being classified.
+  BuildWallMask(driver);
 
   m_advect = CreatePipeline(driver, "CS_FluidAdvect3D.hlsl");
   m_forces = CreatePipeline(driver, "CS_FluidForces3D.hlsl");
@@ -193,6 +363,9 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_copyPipeline.reset();
   m_surfaceCopyPipeline.reset();
   m_surfaceOutput = nullptr;
+  m_wallMask.reset();
+  m_solidBoxes.clear();
+  m_solidVoxelCount = 0;
   for (auto& volume : m_velocity) volume.reset();
   for (auto& volume : m_pressure) volume.reset();
   m_divergence.reset();
@@ -231,6 +404,8 @@ bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeli
   if (sampledB)
     bindings.push_back({ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr, sampledB});
   bindings.push_back({ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, target});
+  if (m_wallMask)
+    bindings.push_back({ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0});
 
   const uint32_t groupsX = (m_settings.width + pipeline.threadGroupSize[0] - 1) / pipeline.threadGroupSize[0];
   const uint32_t groupsY = (m_settings.height + pipeline.threadGroupSize[1] - 1) / pipeline.threadGroupSize[1];
@@ -432,9 +607,18 @@ bool FluidSimulation::MeasureVolume(BaseDriver* driver, VolumeDump& summary) {
   return AnalyzeVolume(driver, nullptr, summary);
 }
 
+bool FluidSimulation::RefreshMaskSnapshot(BaseDriver* driver) {
+  if (!m_wallMask) return false;
+  const size_t voxelCount = static_cast<size_t>(m_settings.width) * m_settings.height * m_settings.depth;
+  m_maskSnapshot.resize(voxelCount);
+  return driver && driver->ReadComputeBuffer(*m_wallMask, m_maskSnapshot.data(),
+                                             voxelCount * sizeof(uint32_t));
+}
+
 bool FluidSimulation::AnalyzeVolume(BaseDriver* driver, const std::string* directory, VolumeDump& summary) {
   summary = VolumeDump{};
   if (!m_ready || !driver || !m_copyPipeline) return false;
+  RefreshMaskSnapshot(driver);
   const uint32_t width = m_settings.width;
   const uint32_t height = m_settings.height;
   const uint32_t depth = m_settings.depth;
@@ -481,6 +665,9 @@ bool FluidSimulation::AnalyzeVolume(BaseDriver* driver, const std::string* direc
   float interiorMaxDivergence = 0.0f;
   double interiorSumDivergence = 0.0;
   uint32_t interiorSamples = 0;
+  double solidSpeedSum = 0.0;
+  uint32_t solidSamples = 0;
+  float maxWallPenetration = 0.0f;
   for (uint32_t z = 0; z < depth; ++z) {
     for (uint32_t y = 0; y < height; ++y) {
       for (uint32_t x = 0; x < width; ++x) {
@@ -494,6 +681,23 @@ bool FluidSimulation::AnalyzeVolume(BaseDriver* driver, const std::string* direc
         sumSpeed += speed;
         sumVertical += fy;
         maxSpeed = (std::max)(maxSpeed, speed);
+
+        // Wall-mask acceptance probe. A solid voxel carrying velocity means water
+        // leaked into the pool geometry; a fluid voxel pointing into a solid face
+        // means the no-penetration condition is not being enforced.
+        const bool voxelSolid = IsMaskSolid(x, y, z);
+        if (voxelSolid) {
+          solidSpeedSum += speed;
+          ++solidSamples;
+          continue;
+        }
+        const float ax = std::abs(fx), ay = std::abs(fy), az = std::abs(fz);
+        if (IsMaskSolid(x + 1, y, z) && fx > ax && fx > 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, fx);
+        if (IsMaskSolid(x - 1, y, z) && -fx > ax && fx < 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, -fx);
+        if (IsMaskSolid(x, y + 1, z) && fy > ay && fy > 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, fy);
+        if (IsMaskSolid(x, y - 1, z) && -fy > ay && fy < 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, -fy);
+        if (IsMaskSolid(x, y, z + 1) && fz > az && fz > 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, fz);
+        if (IsMaskSolid(x, y, z - 1) && -fz > az && fz < 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, -fz);
 
         // Interior cells only: walls are zeroed and would bias the residual.
         if (x > 0 && y > 0 && z > 0 && x + 1 < width && y + 1 < height && z + 1 < depth) {
@@ -534,6 +738,9 @@ bool FluidSimulation::AnalyzeVolume(BaseDriver* driver, const std::string* direc
   summary.interiorMeanDivergence = interiorSamples
     ? static_cast<float>(interiorSumDivergence / interiorSamples) : 0.0f;
   summary.meanVertical = voxelCount ? static_cast<float>(sumVertical / voxelCount) : 0.0f;
+  summary.solidSpeedSum = static_cast<float>(solidSpeedSum);
+  summary.solidSamples = solidSamples;
+  summary.maxWallPenetration = maxWallPenetration;
 
   if (!directory) return true;
 

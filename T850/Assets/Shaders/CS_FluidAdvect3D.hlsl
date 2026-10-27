@@ -39,9 +39,31 @@ Texture3D<float4> VelocityIn : register(t0);
 #endif
 RWTexture3D<float4> VelocityOut : register(u0);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(3, 0)]]
+#endif
+StructuredBuffer<uint> WallMask : register(t8);
+
+uint CellIndex(int3 cell)
+{
+    return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
+}
+
+bool IsSolidCell(int3 cell)
+{
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return true;
+    return WallMask[CellIndex(cell)] != 0u;
+}
+
 float4 SampleVelocity(int3 cell)
 {
     cell = clamp(cell, int3(0, 0, 0), int3(Width - 1, Height - 1, Depth - 1));
+    // A backtrace that lands inside a wall samples no velocity rather than the
+    // wall's stale contents, so advection cannot drag fluid out of the basin.
+    if (WallMask[CellIndex(cell)] != 0u)
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
     return VelocityIn.Load(int4(cell, 0));
 }
 
@@ -74,6 +96,11 @@ void CS(uint3 id : SV_DispatchThreadID)
         return;
     float3 cellPos = float3(id) + 0.5;
     float4 velocity = VelocityIn.Load(int4(id, 0));
+    // Solid cells stay exactly zero: the wall is not advected.
+    if (WallMask[CellIndex(int3(id))] != 0u) {
+        VelocityOut[id] = float4(0.0f, 0.0f, 0.0f, velocity.w);
+        return;
+    }
     float3 backPos = cellPos - velocity.xyz * (DeltaTime / CellSize);
     float4 advected = SampleVelocityTrilinear(backPos - 0.5);
     VelocityOut[id] = float4(advected.xyz, velocity.w);

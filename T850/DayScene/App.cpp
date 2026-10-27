@@ -421,6 +421,20 @@ int main(int arg,char ** args) try {
             ? after.interiorMeanDivergence / before.interiorMeanDivergence : 0.0f;
           T8_LOG_INFO("[FluidSelfTest] projection iterations=%3d pre=%.4f post=%.4f ratio=%.3f",
                       iterations, before.interiorMeanDivergence, after.interiorMeanDivergence, ratios[sweep]);
+          // Wall acceptance: no velocity may exist inside a solid voxel, and no
+          // fluid voxel may point into a wall face.
+          T8_LOG_INFO("[FluidSelfTest] walls iterations=%3d solidSpeedSum=%.6f solidSamples=%u maxWallPenetration=%.6f",
+                      iterations, after.solidSpeedSum, after.solidSamples, after.maxWallPenetration);
+          if (after.solidSpeedSum > 1e-4f) {
+            T8_LOG_ERROR("[FluidSelfTest] water leaked into %u solid voxels (sum |v| = %.6f)",
+                         after.solidSamples, after.solidSpeedSum);
+            ++failures;
+          }
+          if (after.maxWallPenetration > 1e-4f) {
+            T8_LOG_ERROR("[FluidSelfTest] velocity points into a wall face (max %.6f m/s)",
+                         after.maxWallPenetration);
+            ++failures;
+          }
         }
         if (failures == 0) {
           if (!(ratios[0] >= ratios[1] && ratios[1] >= ratios[2])) {

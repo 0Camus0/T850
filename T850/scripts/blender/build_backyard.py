@@ -231,6 +231,36 @@ def build_pool():
     return parts
 
 
+def build_step_bounds():
+    """Engine-space AABBs of the pool steps, in the same formulas build_pool uses.
+
+    Blender axes are (x, y_up, z_depth) with the pool spanning y. The engine maps
+    Blender (x, y, z) to engine (x, z, y), so an AABB emitted here is already in
+    engine space: engine X is Blender x, engine Y is Blender z, engine Z is
+    Blender y.
+    """
+    length = POOL["length"]
+    depth = POOL["depth"]
+    steps = []
+    for i in range(POOL["step_count"]):
+        top = WATER_LINE - POOL["step_rise"] * (i + 1)
+        height = max(depth + top, 0.02)
+        width = POOL["step_run"] * (POOL["step_count"] - i)
+        center_x = POOL_MAX_X - width * 0.5
+        center_y = POOL_MAX_Y - length * 0.275
+        center_z = top - height * 0.5
+        steps.append({
+            "name": "Pool_Step_%d" % (i + 1),
+            "minX": round(center_x - width * 0.5, 4),
+            "maxX": round(center_x + width * 0.5, 4),
+            "minY": round(center_z - height * 0.5, 4),
+            "maxY": round(center_z + height * 0.5, 4),
+            "minZ": round(center_y - length * 0.275, 4),
+            "maxZ": round(center_y + length * 0.275, 4),
+        })
+    return steps
+
+
 # ---------------------------------------------------------------------------
 # House: stucco walls, standing-seam metal roof, chimney, glazing, pergola
 # ---------------------------------------------------------------------------
@@ -473,6 +503,11 @@ def write_layout(pool_path, asset_paths):
             "stepRise": POOL["step_rise"],
             "stepRun": POOL["step_run"],
             "mesh": os.path.basename(pool_path),
+            # Exact engine-space bounds of every solid intrusion into the basin,
+            # emitted from the same formulas that build the meshes above. The
+            # fluid solver derives its wall mask from these, so a geometry change
+            # cannot silently desync from the simulation.
+            "steps": build_step_bounds(),
             "boundaryNodes": [
                 "Pool_Wall_XMin",
                 "Pool_Wall_XMax",

@@ -47,10 +47,22 @@ Texture3D<float4> DivergenceIn : register(t1);
 #endif
 RWTexture3D<float4> PressureOut : register(u0);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(4, 0)]]
+#endif
+StructuredBuffer<uint> WallMask : register(t8);
+
+uint CellIndex(int3 cell)
+{
+    return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
+}
+
 bool Outside(int3 cell)
 {
-    return cell.x <= 0 || cell.y <= 0 || cell.z <= 0 ||
-           cell.x >= int(Width) - 1 || cell.y >= int(Height) - 1 || cell.z >= int(Depth) - 1;
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return true;
+    return WallMask[CellIndex(cell)] != 0u;
 }
 
 float PressureAt(int3 cell, float fallback)
@@ -66,6 +78,11 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
     int3 cell = int3(id);
+    // Solid voxels hold no pressure and are never relaxed.
+    if (Outside(cell)) {
+        PressureOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return;
+    }
     const float center = PressureIn.Load(int4(cell, 0)).x;
 
     // Red-black ordering. Cells of the other colour are copied through; the next

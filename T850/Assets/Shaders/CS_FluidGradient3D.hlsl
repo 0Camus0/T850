@@ -43,10 +43,22 @@ Texture3D<float4> PressureIn : register(t1);
 #endif
 RWTexture3D<float4> VelocityOut : register(u0);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(4, 0)]]
+#endif
+StructuredBuffer<uint> WallMask : register(t8);
+
+uint CellIndex(int3 cell)
+{
+    return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
+}
+
 bool Outside(int3 cell)
 {
-    return cell.x <= 0 || cell.y <= 0 || cell.z <= 0 ||
-           cell.x >= int(Width) - 1 || cell.y >= int(Height) - 1 || cell.z >= int(Depth) - 1;
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return true;
+    return WallMask[CellIndex(cell)] != 0u;
 }
 
 float PressureAt(int3 cell, float fallback)
@@ -75,6 +87,15 @@ void CS(uint3 id : SV_DispatchThreadID)
         PressureAt(cell + int3(0, 1, 0), center) - PressureAt(cell - int3(0, 1, 0), center),
         PressureAt(cell + int3(0, 0, 1), center) - PressureAt(cell - int3(0, 0, 1), center)) * scale;
     velocity.xyz -= gradient;
+    // No-penetration at the wall face: a component pointing into a solid
+    // neighbour is forced to zero, so the boundary condition holds at the face
+    // rather than only inside the solid voxel.
+    if (Outside(cell + int3(1, 0, 0)) && velocity.x > 0.0f) velocity.x = 0.0f;
+    if (Outside(cell - int3(1, 0, 0)) && velocity.x < 0.0f) velocity.x = 0.0f;
+    if (Outside(cell + int3(0, 1, 0)) && velocity.y > 0.0f) velocity.y = 0.0f;
+    if (Outside(cell - int3(0, 1, 0)) && velocity.y < 0.0f) velocity.y = 0.0f;
+    if (Outside(cell + int3(0, 0, 1)) && velocity.z > 0.0f) velocity.z = 0.0f;
+    if (Outside(cell - int3(0, 0, 1)) && velocity.z < 0.0f) velocity.z = 0.0f;
     velocity.xyz = clamp(velocity.xyz, -12.0f, 12.0f);
     VelocityOut[id] = velocity;
 }

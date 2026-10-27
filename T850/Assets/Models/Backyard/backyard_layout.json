@@ -16,6 +16,35 @@
     "stepRise": 0.3,
     "stepRun": 0.35,
     "mesh": "Backyard_Pool.glb",
+    "steps": [
+      {
+        "name": "Pool_Step_1",
+        "minX": 3.45,
+        "maxX": 4.5,
+        "minY": -1.6,
+        "maxY": -0.3,
+        "minZ": -6.975,
+        "maxZ": -4.5
+      },
+      {
+        "name": "Pool_Step_2",
+        "minX": 3.8,
+        "maxX": 4.5,
+        "minY": -1.6,
+        "maxY": -0.6,
+        "minZ": -6.975,
+        "maxZ": -4.5
+      },
+      {
+        "name": "Pool_Step_3",
+        "minX": 4.15,
+        "maxX": 4.5,
+        "minY": -1.6,
+        "maxY": -0.9,
+        "minZ": -6.975,
+        "maxZ": -4.5
+      }
+    ],
     "boundaryNodes": [
       "Pool_Wall_XMin",
       "Pool_Wall_XMax",

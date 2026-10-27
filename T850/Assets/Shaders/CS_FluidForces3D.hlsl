@@ -38,10 +38,22 @@ Texture3D<float4> VelocityIn : register(t0);
 #endif
 RWTexture3D<float4> VelocityOut : register(u0);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(3, 0)]]
+#endif
+StructuredBuffer<uint> WallMask : register(t8);
+
+uint CellIndex(int3 cell)
+{
+    return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
+}
+
 bool IsSolid(int3 cell)
 {
-    return cell.x <= 0 || cell.y <= 0 || cell.z <= 0 ||
-           cell.x >= int(Width) - 1 || cell.y >= int(Height) - 1 || cell.z >= int(Depth) - 1;
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return true;
+    return WallMask[CellIndex(cell)] != 0u;
 }
 
 float4 Fetch(int3 cell)

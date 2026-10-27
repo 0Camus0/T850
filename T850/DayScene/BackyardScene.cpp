@@ -255,7 +255,6 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   settings.pressureIterations = static_cast<uint32_t>((std::max)(w.pressureIterations, 0));
   settings.cellSize = (std::max)(w.cellSize, 0.001f);
   settings.deltaTime = (std::max)(w.deltaTime, 1.0f / 1000.0f);
-  settings.viscosity = w.viscosity;
   settings.gravity = w.gravity;
   settings.windX = w.windX;
   settings.windY = w.windY;
@@ -339,12 +338,36 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_fluid.SetPressureIterations(static_cast<uint32_t>((std::max)(w.pressureIterations, 0)));
     m_fluid.SetSurfaceLevel((std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f));
     m_fluid.SetSOROmega((std::min)((std::max)(w.sorOmega, 1.0f), 1.99f));
+
+    // Advance by REAL elapsed time. Stepping a fixed 1/60 s once per rendered
+    // frame tied the water's speed to the frame rate: at 721 fps the simulation
+    // ran 12x faster than real time, which is why it looked like fast-forward.
+    // The delta is clamped because the viscous term is integrated explicitly and
+    // its von Neumann bound here is h^2/(6*nu) = 0.0675 s.
+    float fluidDelta = w.fixedTimeStep ? w.deltaTime : deltaSeconds * w.timeScale;
+    fluidDelta = (std::min)((std::max)(fluidDelta, 0.0f), (std::max)(w.maxDeltaTime, 1.0f / 1000.0f));
+    m_fluid.SetDeltaTime(fluidDelta);
     if (!m_fluid.Step(pFramework->pVideoDriver)) {
       T8_LOG_ERROR("[Backyard] Fluid step failed; disabling the solver for this scene");
       m_fluidReady = false;
     } else {
-      // Shading time follows the solver clock so ripples are frame-deterministic.
+      // Shading time follows the solver clock so the ripple and foam scroll match
+      // the simulated water speed instead of running at frame rate.
       SceneProp.TimeSeconds = m_fluid.SimulationTime();
+      // Report the ratio now and then: 1.00 means the water is running in real time.
+      static float reportedWall = 0.0f;
+      static float reportedSim = 0.0f;
+      static int reportFrames = 0;
+      reportedWall += deltaSeconds;
+      reportedSim += fluidDelta;
+      if (++reportFrames == 600) {
+        T8_LOG_INFO("[Backyard][timing] sim/wall ratio = %.2f (%d frames, sim %.2fs over wall %.2fs)",
+                    reportedWall > 0.0f ? reportedSim / reportedWall : 0.0f,
+                    reportFrames, reportedSim, reportedWall);
+        reportFrames = 0;
+        reportedWall = 0.0f;
+        reportedSim = 0.0f;
+      }
     }
   }
   m_dumper.UpdateReplayState();
@@ -437,7 +460,11 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     sliderInt("water_iterations", "pressure iterations", w.pressureIterations, 1.0f, 200.0f, 1.0f);
     slider("water_sor_omega", "SOR omega (1 = Gauss-Seidel)", w.sorOmega, 1.0f, 1.99f, 0.001f);
     slider("water_cell", "cell size (m)", w.cellSize, 0.01f, 0.30f, 0.001f);
-    slider("water_dt", "delta time (s)", w.deltaTime, 1.0f / 240.0f, 1.0f / 15.0f, 0.0001f);
+    slider("water_dt", "fixed step (s, only when fixed)", w.deltaTime, 1.0f / 240.0f, 1.0f / 15.0f, 0.0001f);
+    slider("water_max_dt", "max delta (s)", w.maxDeltaTime, 1.0f / 240.0f, 1.0f / 10.0f, 0.0001f);
+    slider("water_time_scale", "time scale (1 = real time)", w.timeScale, 0.05f, 3.0f, 0.01f);
+    gui.Checkbox(t850::CheckboxDesc{ "water_fixed_dt", "fixed time step", false, true },
+                 w.fixedTimeStep);
     slider("water_viscosity", "viscosity", w.viscosity, 0.0f, 0.5f, 0.001f);
     slider("water_gravity", "gravity", w.gravity, 0.0f, 30.0f, 0.01f);
     slider("water_wind_x", "wind X", w.windX, -5.0f, 5.0f, 0.01f);

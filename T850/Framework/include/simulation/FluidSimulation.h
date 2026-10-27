@@ -56,6 +56,7 @@ namespace t850 {
     void SetPressureIterations(uint32_t iterations) { m_settings.pressureIterations = iterations; }
     void SetSurfaceLevel(float level) { m_settings.surfaceLevel = level; }
     void SetSOROmega(float omega) { m_settings.sorOmega = omega; }
+    void SetDeltaTime(float seconds) { m_settings.deltaTime = seconds; }
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.

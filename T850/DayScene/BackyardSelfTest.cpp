@@ -489,6 +489,191 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
     }
   }
 
+  // ── Gate 4: moving boundary ────────────────────────────────────────────────
+  // Body faces must carry the body's velocity. The staggered layout makes this exact:
+  // texel (i,j,k).x is the +X face of cell (i,j,k), and the boundary kernel writes the
+  // body velocity onto every face of a body cell. Sampling deep-interior cells avoids
+  // the ambiguous half-cell membership at the surface.
+  if (failures == 0) {
+    if (!fluid.ResetToRest(driver)) { T8_LOG_ERROR("[BackyardSelfTest] boundary: reset failed"); ++failures; }
+    FluidSphere& ball = fluid.DroppedSphere();
+    ball.enabled = true;
+    ball.radius = 0.25f;
+    ball.x = 0.0f;
+    ball.z = fs.basinMinZ + 0.5f * (fs.basinMaxZ - fs.basinMinZ);
+    ball.y = fs.waterPlaneY - 0.60f;      // fully submerged
+    ball.vx = 1.0f;
+    ball.vy = 0.20f;
+    ball.vz = -0.30f;
+    ball.submerged = 1.0f;
+    if (!fluid.Step(driver)) { T8_LOG_ERROR("[BackyardSelfTest] boundary: step failed"); ++failures; }
+
+    const float bx = ball.vx, by = ball.vy, bz = ball.vz;
+    std::vector<float> velocity;
+    if (!fluid.ReadVelocity(driver, velocity)) {
+      T8_LOG_ERROR("[BackyardSelfTest] boundary: velocity readback failed");
+      ++failures;
+    } else {
+      const float h = fs.cellSize;
+      const float inner = ball.radius - 0.5f * h;   // interior only, half a cell of margin
+      int tested = 0;
+      float worst = 0.0f;
+      for (uint32_t k = 0; k < fs.depth; ++k)
+        for (uint32_t j = 0; j < fs.height; ++j)
+          for (uint32_t i = 0; i < fs.width; ++i) {
+            const float x = fs.basinMinX + (static_cast<float>(i) + 0.5f) * h;
+            const float y = fs.basinMinY + (static_cast<float>(j) + 0.5f) * h;
+            const float z = fs.basinMinZ + (static_cast<float>(k) + 0.5f) * h;
+            const float dx = x - ball.x, dy = y - ball.y, dz = z - ball.z;
+            if (dx * dx + dy * dy + dz * dz > inner * inner) continue;
+            const size_t index = static_cast<size_t>(i) + fs.width *
+                (static_cast<size_t>(j) + static_cast<size_t>(fs.height) * k);
+            const float u = velocity[index * 4 + 0];
+            const float v = velocity[index * 4 + 1];
+            const float w = velocity[index * 4 + 2];
+            worst = (std::max)(worst, (std::max)(std::fabs(u - bx),
+                        (std::max)(std::fabs(v - by), std::fabs(w - bz))));
+            ++tested;
+          }
+      T8_LOG_INFO("[BackyardSelfTest] boundary  body cells=%d worst face deviation=%.5f m/s (body %.2f %.2f %.2f)",
+                  tested, worst, bx, by, bz);
+      if (tested < 20) {
+        T8_LOG_ERROR("[BackyardSelfTest] boundary: only %d body cells sampled, the test is not measuring anything", tested);
+        ++failures;
+      } else if (worst > 0.01f) {
+        T8_LOG_ERROR("[BackyardSelfTest] boundary: a body face deviates %.5f m/s from the body velocity", worst);
+        ++failures;
+      }
+    }
+  }
+
+  // ── Gate 5: the surface texture is a real 2D field ──────────────────────────
+  // Reads the texture the vertex shader actually displaces with, not the volume. A gate
+  // on the volume cannot catch a surface-kernel indexing bug: CS_FluidSurface3D once read
+  // its grid row from id.z (always 0 in a (width, depth, 1) dispatch), so every output
+  // row was filled from grid column z = 0 - the texture varied along X and was exactly
+  // constant along Y while the volume was perfectly correct.
+  if (failures == 0) {
+    if (!fluid.ResetToRest(driver)) { T8_LOG_ERROR("[BackyardSelfTest] surface: reset failed"); ++failures; }
+    FluidSphere& ball = fluid.DroppedSphere();
+    ball.enabled = true;
+    ball.radius = 0.25f;
+    ball.densityRatio = 0.6f;
+    // Deliberately OFF-CENTRE in X. A centred drop cannot distinguish a correct mapping
+    // from a transposed one, because the disturbance sits at the centre of both axes
+    // either way; an X offset moves the peak along X for a correct kernel and along Z
+    // for a transposed one.
+    ball.x = 0.60f;
+    ball.z = fs.basinMinZ + 0.5f * (fs.basinMaxZ - fs.basinMinZ);
+    ball.y = fs.waterPlaneY + 1.0f;
+    ball.vx = ball.vy = ball.vz = 0.0f;
+    ball.submerged = 0.0f;
+
+    float impact = -1.0f;
+    const uint32_t limit = static_cast<uint32_t>(std::ceil(2.0f / options.fixedDt));
+    for (uint32_t frame = 0; frame < limit && impact < 0.0f && failures == 0; ++frame) {
+      if (!fluid.Step(driver)) { ++failures; break; }
+      if (ball.submerged > 0.0f) impact = fluid.SimulationTime();
+    }
+    // A little way past impact, so the cavity has formed and the rim has risen.
+    const uint32_t settle = static_cast<uint32_t>(std::ceil(0.15f / options.fixedDt));
+    for (uint32_t frame = 0; frame < settle && failures == 0; ++frame)
+      if (!fluid.Step(driver)) { ++failures; }
+
+    std::vector<float> surface;
+    if (failures == 0 && !fluid.ReadSurface(driver, surface)) {
+      T8_LOG_ERROR("[BackyardSelfTest] surface: texture readback failed");
+      ++failures;
+    } else if (failures == 0) {
+      const uint32_t w = fs.width, d = fs.depth;
+      // Per-axis variation, as the median range over the other axis. Under the id.z bug
+      // each row is an exact copy of row 0, so the column range collapses to zero while
+      // the row range stays large. Medians keep a few noisy rows from flaking the gate.
+      std::vector<float> rowRanges, colRanges;
+      rowRanges.reserve(d);
+      colRanges.reserve(w);
+      for (uint32_t y = 0; y < d; ++y) {
+        float lo = 1e9f, hi = -1e9f;
+        for (uint32_t x = 0; x < w; ++x) {
+          const float r = surface[(static_cast<size_t>(x) + static_cast<size_t>(w) * y) * 4];
+          lo = (std::min)(lo, r);
+          hi = (std::max)(hi, r);
+        }
+        rowRanges.push_back(hi - lo);
+      }
+      for (uint32_t x = 0; x < w; ++x) {
+        float lo = 1e9f, hi = -1e9f;
+        for (uint32_t y = 0; y < d; ++y) {
+          const float r = surface[(static_cast<size_t>(x) + static_cast<size_t>(w) * y) * 4];
+          lo = (std::min)(lo, r);
+          hi = (std::max)(hi, r);
+        }
+        colRanges.push_back(hi - lo);
+      }
+      auto median = [](std::vector<float> values) {
+        std::sort(values.begin(), values.end());
+        const size_t n = values.size();
+        return n % 2 ? values[n / 2] : 0.5f * (values[n / 2 - 1] + values[n / 2]);
+      };
+      const float rowMedian = median(rowRanges);
+      const float colMedian = median(colRanges);
+
+      // Extreme value and where it sits, as the directional probe.
+      int minX = 0, minY = 0;
+      float minValue = 1e9f;
+      for (uint32_t y = 0; y < d; ++y)
+        for (uint32_t x = 0; x < w; ++x) {
+          const float r = surface[(static_cast<size_t>(x) + static_cast<size_t>(w) * y) * 4];
+          if (r < minValue) { minValue = r; minX = static_cast<int>(x); minY = static_cast<int>(y); }
+        }
+      const int centreX = static_cast<int>(w / 2);
+      const int centreY = static_cast<int>(d / 2);
+
+      // Thresholds are calibrated against measurement, not assumption. GLM suggested
+      // 5 mm on both axes, which would FAIL today's correct kernel: the medians are
+      // 4.5 mm along X and 2.2 mm along Y, because a median over rows/columns is
+      // dominated by the far field where the disturbance has decayed. What matters is
+      // the discrimination: the id.z bug makes the across-Y median EXACTLY zero, while
+      // still-pool noise gives a range of about 0.4 mm over 50 samples. 1 mm sits
+      // comfortably above noise and below the correct signal.
+      constexpr float kAxisVariationMin = 0.001f;
+      T8_LOG_INFO("[BackyardSelfTest] surface texture  rowMedian=%.4f m colMedian=%.4f m  extreme=%.4f m at x=%d y=%d (centre %d,%d)",
+                  rowMedian, colMedian, minValue, minX, minY, centreX, centreY);
+      if (rowMedian < kAxisVariationMin || colMedian < kAxisVariationMin) {
+        T8_LOG_ERROR("[BackyardSelfTest] surface texture is not a 2D field (%.4f m along X, %.4f m along Y; need %.4f m in both)",
+                     rowMedian, colMedian, kAxisVariationMin);
+        ++failures;
+      }
+      if (minX - centreX < 3) {
+        T8_LOG_ERROR("[BackyardSelfTest] the disturbance does not sit at the ball's X position (%d vs centre %d)",
+                     minX, centreX);
+        ++failures;
+      }
+      if (std::abs(minY - centreY) > 3) {
+        T8_LOG_ERROR("[BackyardSelfTest] the disturbance is displaced in Z (%d vs centre %d) - mapping looks transposed",
+                     minY, centreY);
+        ++failures;
+      }
+    }
+
+    // Alpha must stay inside [0,1]. The transport is the only thing that can violate it,
+    // and Stage 5b replaces that transport, so the count belongs here as its gate.
+    std::vector<float> alpha;
+    if (failures == 0 && fluid.ReadVolumeFraction(driver, alpha)) {
+      int violations = 0;
+      float worstAlpha = 0.0f;
+      for (float a : alpha) {
+        const float excess = (std::max)(-a, a - 1.0f);
+        if (excess > 1e-3f) { ++violations; worstAlpha = (std::max)(worstAlpha, excess); }
+      }
+      T8_LOG_INFO("[BackyardSelfTest] boundedness  cells outside [0,1]=%d worst excess=%.5f", violations, worstAlpha);
+      if (violations != 0) {
+        T8_LOG_ERROR("[BackyardSelfTest] %d cells have alpha outside [0,1] (worst %.5f)", violations, worstAlpha);
+        ++failures;
+      }
+    }
+  }
+
   fluid.Shutdown(driver);
   if (failures == 0) {
     T8_LOG_INFO("[BackyardSelfTest] PASS: api=%s", api);

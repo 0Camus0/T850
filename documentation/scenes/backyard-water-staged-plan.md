@@ -36,6 +36,7 @@ grid.
 | 0. Baseline & guardrails | — | S | Without a recorded baseline no later claim is checkable |
 | 1a. Vulkan gate must be trustworthy | W-18 | S | **DONE** — Vulkan self-test now PASS |
 | 1b. Make failures provable | W-12 | M | **DONE** — gates 1, 2, 3, 6 pass on both APIs |
+| 1c. Readback gates | W-12 gates 4, 5 + boundedness | M | **DONE** — gate 5 proven to fail on the id.z bug |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | High visible payoff, low risk, no overlap with the solver |
 | 3. Rendering correctness | W-09, W-10 | M | Independent of the solver; improves what already works |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
@@ -243,32 +244,68 @@ new readback APIs.
 
 ---
 
-### Stage 1c — Remaining gates (W-12 gates 4 and 5)
+### Stage 1c — Remaining gates (W-12 gates 4 and 5) — **DONE**
 
-**Scope** — the two gates that need new readback APIs, deliberately split out of 1b:
+**Scope delivered**
 
-- **Gate 5 (surface-texture readback).** Read the actual surface texture at several positions
-  rather than texel (0,0). This is the gate that would catch the **`id.y`/`id.z` dispatch-axis bug**
-  class: gate 2 as implemented reads the alpha volume, so a surface kernel that copies the
-  near-wall row into every row passes it. Add a 2D texture→buffer copy kernel (the 2D analogue of
-  `CS_FluidCopy3D`) plus a `FluidSimulation::ReadSurface` accessor, then assert the surface texture
-  varies in **both** grid axes and matches the alpha-derived elevation within one cell.
-- **Gate 4 (velocity at a moving boundary).** Ball moving at constant velocity through still water:
-  liquid faces next to it carry its normal velocity, and no liquid face points into it relative to
-  its velocity. Needs `FluidSimulation::ReadVelocity`. The staggered layout makes this precise:
-  texel `(i,j,k).x` is the +X face of cell `(i,j,k)`.
-- **α boundedness violations** (count of cells outside [0,1]) — cheap, and the direct target of the
-  Stage 5b transport change. Add it here so 5b has its gate ready.
+- **Gate 5 — surface-texture readback.** New `CS_FluidSurfaceToBuffer.hlsl` (Texture2D →
+  `RWStructuredBuffer<float4>`) plus `FluidSimulation::ReadSurface`. Reads the texture the vertex
+  shader actually displaces with, not the volume fraction — the volume cannot reveal a bug in the
+  surface kernel itself.
+- **Gate 4 — moving boundary.** New `FluidSimulation::ReadVelocity`. Body faces must carry the
+  body's velocity; sampled deep-interior cells so the half-cell membership at the surface is not
+  ambiguous.
+- **α boundedness.** Count of cells outside [0,1], the direct target of the Stage 5b transport
+  change.
 
-**Files** — new `CS_FluidSurfaceToBuffer.hlsl`, `compute_kernels.json`, `FluidSimulation.{h,cpp}`,
-`DayScene/BackyardSelfTest.cpp`.
+**Measured (both APIs)**
 
-**Acceptance** — gates 4 and 5 pass on both APIs; the surface-texture gate **fails** when the
-`id.y` fix in `CS_FluidSurface3D` is temporarily reverted to `id.z`, then passes again when
-restored. That is the specific proof Stage 0 identified as missing.
+| Metric | D3D12 | Vulkan |
+|---|---|---|
+| Boundary: body cells sampled | 47 | 47 |
+| Boundary: worst face deviation | **0.00018 m/s** | 0.00018 m/s |
+| Surface: median range along X | 4.5 mm | 4.4 mm |
+| Surface: median range along Y | 2.2 mm | 2.2 mm |
+| Surface: extreme value and position | −0.5576 m at x=56 y=24 | identical |
+| Boundedness: cells outside [0,1] | **0** | **0** |
 
-**Exit** — all six gates in place, and at least one demonstrated to fail on the exact bug class
-that survived the previous "verified" pass.
+The directional probe is exact: ball dropped at x = +0.60 m (≈ column 56.7) puts the extreme at
+**x = 56**, y = 24 against a centre of 25. A transposed mapping would put that offset on the Z
+axis instead.
+
+**Mutation proof — the gate really fails on the bug it exists for**
+
+Reintroduced `id.z` in `CS_FluidSurface3D` (`if (id.x >= Width || id.z >= Depth)` and
+`const int cz = int(id.z)`), rebuilt, ran:
+
+```
+surface texture  rowMedian=0.0016 m colMedian=0.0000 m  extreme=-0.0059 m at x=3 y=0 (centre 50,25)
+ERROR surface texture is not a 2D field (0.0016 m along X, 0.0000 m along Y; need 0.0010 m in both)
+FAIL: api=d3d12 failures=3
+```
+
+The across-Y median is **exactly zero** because every output row is a copy of grid column z = 0, and
+the directional probe independently fails (extreme at x=3 instead of x=56). Restored the kernel,
+rebuilt, ran: `PASS`, `colMedian=0.0022`, extreme back at x=56. This is the demonstration Stage 0
+identified as missing from the original "verified" pass.
+
+**Threshold calibration — GLM's 5 mm would have been wrong**
+
+GLM proposed 5 mm on both axes. Measured medians are **4.5 mm along X and 2.2 mm along Y** on a
+*correct* kernel, because a median over rows/columns is dominated by the far field where the
+disturbance has decayed; a 5 mm threshold would fail a healthy solver. What matters is
+discrimination: the bug produces **exactly 0** while still-pool noise gives ≈0.4 mm range over 50
+samples, so 1 mm sits comfortably between them. This is the same class of mistake as the catalogue's
+"constant ~300 cells" deficit — a threshold guessed rather than measured.
+
+**Decision recorded** — Qwen argued against a CPU cross-check of the texture against a duplicated
+elevation rule ("the risk is false negatives due to divergence… generally, no"); GLM wanted one at
+a loose 5 mm tolerance. The directional probe covers the specific failure modes (wrong axis,
+transposition) without duplicating the kernel rule on the CPU, so no cross-check was added. If a
+wrong-integral bug appears later, it needs an analytic golden case rather than a duplicate rule.
+
+**Exit** — all six gates pass on both APIs, and gate 5 is proven to fail on the exact bug class that
+survived the earlier "verified" pass.
 
 ---
 
@@ -545,9 +582,13 @@ Key findings: the correction deficit is **not** constant (202 → 749 cells over
 body, repaying only ~174 per check) and the pool sinks 1.1 cm/s; X-vs-Z anisotropy of 10.3 mm is a
 property of the operator-split transport, not a bug. See the Stage 1b section in §3.
 
-### Stage 1c — gates 4 and 5
+### Stage 1c — gates 4, 5 and boundedness
 
-_Pending._
+**DONE.** Boundary face deviation 0.00018 m/s over 47 body cells; surface texture medians 4.5 mm
+(X) / 2.2 mm (Y) with the extreme at x=56 for a ball dropped at x=+0.60 m; alpha violations 0.
+Mutation test: reintroducing id.z made the across-Y median **exactly 0.0000 m** and the gate
+failed with 3 failures; restoring it returned PASS. Thresholds calibrated to 1 mm because GLM's
+suggested 5 mm would fail a correct kernel (measured medians are 4.5 and 2.2 mm).
 
 ### Stage 2 — W-01, W-08, W-13
 

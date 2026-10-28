@@ -1304,8 +1304,8 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         // R is the (scaled) elevation delta, so undo the presentation scale here to
         // recover the physical height.
         float fluidViewDistance = length(CameraPosition.xyz - input.WorldPos.xyz);
-        float rawHeight = fluidSurface.x / max(WaterMisc1.x, 0.001f);
-        float columnDepth = max(WaterOptics5.y - rawHeight, 0.02f);
+        float rawHeight = fluidSurface.x;
+        float columnDepth = max(WaterOptics5.y + rawHeight, 0.02f);
         // Path length along the view ray: depth / cos(theta), with theta measured
         // from vertical. eyeDir.y is that cosine.
         float cosTheta = max(abs(eyeDir.y), 0.25f);

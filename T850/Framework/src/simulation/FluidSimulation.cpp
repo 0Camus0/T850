@@ -152,7 +152,10 @@ std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked, 
   // Consistent discrete projection: Lap(p) = div, then u -= grad(p).
   // (Equivalently Lap(p') = div/dt with u -= dt*grad(p').) Mixing the two
   // conventions over-corrects by 1/dt and makes divergence grow with iterations.
-  constants.pressureScale = m_settings.cellSize * m_settings.cellSize;
+  // Lap(p) = div/dt and u -= dt*grad(p): pressure stays in physical units, so the
+  // previous substep's field remains a valid warm start when dt changes.
+  constants.pressureScale = m_settings.cellSize * m_settings.cellSize /
+                            (std::max)(m_settings.deltaTime, 1e-5f);
   // padding0 carries the SOR factor to the pressure kernel, or the compression
   // strength to the alpha advection kernel. The forces kernel reads the same
   // field as its sustained forcing gain.
@@ -202,12 +205,8 @@ namespace {
   struct CorrectionConstantsBlob {
     float interfaceHeadroom;
     float volumeDelta;
-    // A cbuffer is padded to a 16-byte boundary, so the reflected word count is
-    // 4 even though only two floats are used. The declared count in
-    // compute_kernels.json and this blob must both say 4 or the driver silently
-    // rejects the pipeline.
-    float padding0;
-    float padding1;
+    float interfaceAlpha;
+    float correctionPadding;
   };
 }
 
@@ -215,8 +214,8 @@ std::vector<uint32_t> FluidSimulation::BuildCorrectionConstants(float deficit) c
   CorrectionConstantsBlob blob{};
   blob.interfaceHeadroom = m_lastInterfaceHeadroom;
   blob.volumeDelta = deficit;
-  blob.padding0 = 0.0f;
-  blob.padding1 = 0.0f;
+  blob.interfaceAlpha = m_lastInterfaceAlpha;
+  blob.correctionPadding = 0.0f;
   std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
   std::memcpy(words.data(), &blob, sizeof(blob));
   return words;
@@ -369,17 +368,14 @@ bool FluidSimulation::BuildWallMask(BaseDriver* driver) {
       for (uint32_t i = 0; i < width; ++i) {
         const float px = m_settings.basinMinX + (i + 0.5f) * (sizeX / static_cast<float>(width));
 
-        // The outer shell is solid on the walls and the floor, but NOT the
-        // ceiling: a free surface needs air above the water, so the top row must
-        // stay open. If it were solid the water would have nowhere to rise into
-        // and alpha would saturate across every remaining row.
-        bool solid = i == 0 || i == width - 1 || j == 0 ||
-                     k == 0 || k == depth - 1;
+        // The domain is the inner basin and every kernel already treats out-of-range
+        // neighbours as solid, so only authored intrusions are marked here.
+        bool solid = false;
 
         // Then every authored intrusion (the pool steps). A voxel is solid when
         // its centre lies inside the box, which is the same convention the
         // kernels use for stencil neighbours.
-        if (!solid) {
+        {
           for (const FluidSolidBox& box : m_solidBoxes) {
             if (px >= box.minX && px <= box.maxX &&
                 py >= box.minY && py <= box.maxY &&
@@ -574,9 +570,10 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_spherePipeline = CreatePipeline(driver, "CS_FluidSphere3D.hlsl");
   m_objectVelocityPipeline = CreatePipeline(driver, "CS_FluidObstacleVelocity3D.hlsl");
   m_clearPipeline = CreatePipeline(driver, "CS_FluidClear3D.hlsl");
+  m_extrapolatePipeline = CreatePipeline(driver, "CS_FluidExtrapolate3D.hlsl");
 
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
-                  m_gradientPipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
+                  m_gradientPipeline && m_extrapolatePipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
                   m_alphaAdvectPipeline && m_volumeCorrectPipeline &&                   m_spherePipeline && m_objectVelocityPipeline && m_clearPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
@@ -616,6 +613,7 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_divergencePipeline.reset();
   m_pressurePipeline.reset();
   m_gradientPipeline.reset();
+  m_extrapolatePipeline.reset();
   m_surfacePipeline.reset();
   m_seedPipeline.reset();
   m_seedDivergentPipeline.reset();
@@ -715,11 +713,12 @@ bool FluidSimulation::CorrectVolumeFraction(BaseDriver* driver, float& appliedSc
   // water out of saturated cells.
   const float deficit = reference - total;
   if (std::abs(deficit) <= 0.5f) return true;             // within noise
-  if (interfaceSum <= 1.0f) return false;                 // no interface to scale
+  // Adding water needs interface headroom to land in; removing it needs interface
+  // water to take from. Without either there is nothing sane to correct.
+  if (deficit > 0.0f && m_lastInterfaceHeadroom <= 1.0f) return false;
+  if (deficit < 0.0f && m_lastInterfaceAlpha <= 1.0f) return false;
 
-  const float targetInterface = interfaceSum + deficit;
-  if (targetInterface <= 0.0f) return false;
-  appliedScale = targetInterface / interfaceSum;
+  appliedScale = 1.0f + deficit / (std::max)(total, 1.0f);
 
   // Additive, headroom-weighted distribution. A multiplicative rescale is eaten
   // by the clamp: interface cells sit just under 1, so alpha * 1.03 lands above
@@ -803,6 +802,7 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
   totalAlpha = 0.0f;
   interfaceSum = 0.0f;
   float interfaceHeadroom = 0.0f;
+  float interfaceAlpha = 0.0f;
   if (!driver || !m_copyPipeline || !m_alpha[0]) return false;
   const uint32_t width = m_settings.width;
   const uint32_t height = m_settings.height;
@@ -844,12 +844,15 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
     float value = 0.0f;
     std::memcpy(&value, &raw[index * 4 + 0], sizeof(float));
     totalAlpha += value;
-    if (value > 0.001f && value < 0.999f) {
+    // Same band the correction kernel touches: liquid cells with room, [airThreshold, 0.999).
+    if (value >= m_settings.airThreshold && value < 0.999f) {
       interfaceSum += value;
       interfaceHeadroom += 1.0f - value;
+      interfaceAlpha += value;
     }
   }
   m_lastInterfaceHeadroom = interfaceHeadroom;
+  m_lastInterfaceAlpha = interfaceAlpha;
   return true;
 }
 
@@ -860,48 +863,107 @@ void FluidSimulation::AdvanceSphere(float dt) {
   const float floorY = m_settings.basinMinY;
   const float radius = (std::max)(s.radius, 0.001f);
 
-  // Submerged FRACTION of the sphere by the water plane, in [0,1].
-  const float bottom = s.y - radius;
-  const float submergedDepth = m_settings.waterPlaneY - bottom;
-  s.submerged = (std::min)((std::max)(submergedDepth / (2.0f * radius), 0.0f), 1.0f);
+  // Spherical-cap volume fraction: f = h^2(3r-h)/(4r^3)
+  const float h = (std::min)((std::max)(m_settings.waterPlaneY - (s.y - radius), 0.0f), 2.0f * radius);
+  s.submerged = (h * h * (3.0f * radius - h)) / (4.0f * radius * radius * radius);
 
-  // Archimedes, net of gravity: a_net = g * (submerged / densityRatio - 1).
-  // Equilibrium is submerged == densityRatio, so density ALONE decides whether the
-  // body floats and how deep it sits; mass does not enter here, and should not.
   const float ratio = (std::max)(s.densityRatio, 0.02f);
-  const float accel = m_settings.gravity * (s.submerged / ratio - 1.0f);
+  const float addedMass = 0.5f;
+  const float effectiveMass = ratio + addedMass * s.submerged;
 
-  // Quadratic drag on a sphere, with added mass:
-  //   F_d      = 0.5 * rho_w * Cd * A * v^2          (A = pi r^2)
-  //   m_eff    = rho_w * V * (densityRatio + 1/3)    (V = 4/3 pi r^3, plus the
-  //                                                   half-volume of water the body
-  //                                                   drags along with it)
-  //   a_drag   = 9 * Cd * v^2 / (16 * r * (densityRatio + 1/3))
-  // Dividing by the EFFECTIVE inertia is what makes a heavy ball punch through the
-  // surface while a light one is stopped dead. The previous fixed damping
-  // coefficient was mass-independent and about 5x too strong at entry speed.
+  // Net vertical acceleration: a_y = g * (f - rho) / (rho + Ca*f)
+  const float accel = m_settings.gravity * (s.submerged - ratio) / effectiveMass;
+
+  // Quadratic drag: a_drag = 3*Cd*f*|v|^2 / (8*r*effectiveMass)
   const float speed = std::sqrt(s.vx * s.vx + s.vy * s.vy + s.vz * s.vz);
   float dragScale = 0.0f;
   if (s.submerged > 0.0f && speed > 1e-5f) {
-    const float dragAccel = s.submerged * (9.0f * s.dragCoefficient * speed * speed) /
-                            (16.0f * radius * (ratio + 1.0f / 3.0f));
+    const float dragAccel = (3.0f * s.dragCoefficient * s.submerged * speed * speed) /
+                            (8.0f * radius * effectiveMass);
     dragScale = dragAccel / speed;
   }
 
   s.vy += accel * dt;
-  // Explicit drag integrated per component; clamped so a fast entry cannot reverse
-  // the velocity in a single frame.
-  const float dragStep = (std::min)(dragScale * dt, 0.5f);
-  s.vx -= s.vx * dragStep;
-  s.vy -= s.vy * dragStep;
-  s.vz -= s.vz * dragStep;
+  // Wave-radiation damping of heave, as a damping ratio of the hydrostatic natural
+  // frequency; the solver applies no pressure force back on the body.
+  if (h > 0.0f && h < 2.0f * radius) {
+    const float stiffness = 3.0f * h * (2.0f * radius - h) / (4.0f * radius * radius * radius);
+    const float omega = std::sqrt(m_settings.gravity * stiffness / effectiveMass);
+    s.vy /= 1.0f + 2.0f * (std::max)(s.heaveDamping, 0.0f) * omega * dt;
+  }
+  // Implicit drag integration: v /= (1 + (a_drag/|v|) * dt)
+  const float dragFactor = 1.0f + dragScale * dt;
+  s.vx /= dragFactor;
+  s.vy /= dragFactor;
+  s.vz /= dragFactor;
 
   s.x += s.vx * dt;
   s.y += s.vy * dt;
   s.z += s.vz * dt;
 
-  // Keep the body inside the basin: resting on the floor, and against the walls.
   const float bounce = (std::min)((std::max)(s.restitution, 0.0f), 0.99f);
+
+  // Collision with authored pool intrusions
+  for (const FluidSolidBox& box : m_solidBoxes) {
+    float cx = (std::min)((std::max)(s.x, box.minX), box.maxX);
+    float cy = (std::min)((std::max)(s.y, box.minY), box.maxY);
+    float cz = (std::min)((std::max)(s.z, box.minZ), box.maxZ);
+
+    float dx = s.x - cx;
+    float dy = s.y - cy;
+    float dz = s.z - cz;
+    float distSq = dx * dx + dy * dy + dz * dz;
+
+    if (distSq < radius * radius) {
+      float dist = std::sqrt(distSq);
+      float nx, ny, nz;
+      if (dist > 1e-6f) {
+        nx = dx / dist;
+        ny = dy / dist;
+        nz = dz / dist;
+        float pen = radius - dist;
+        s.x += nx * pen;
+        s.y += ny * pen;
+        s.z += nz * pen;
+      } else {
+        // Centre inside box: push out along axis of least penetration
+        float px = (std::min)(s.x - box.minX, box.maxX - s.x);
+        float py = (std::min)(s.y - box.minY, box.maxY - s.y);
+        float pz = (std::min)(s.z - box.minZ, box.maxZ - s.z);
+        if (px < py && px < pz) {
+          nx = (s.x < (box.minX + box.maxX) * 0.5f) ? -1.0f : 1.0f;
+          ny = 0.0f;
+          nz = 0.0f;
+          s.x += nx * (px + radius);
+        } else if (py < pz) {
+          nx = 0.0f;
+          ny = (s.y < (box.minY + box.maxY) * 0.5f) ? -1.0f : 1.0f;
+          nz = 0.0f;
+          s.y += ny * (py + radius);
+        } else {
+          nx = 0.0f;
+          ny = 0.0f;
+          nz = (s.z < (box.minZ + box.maxZ) * 0.5f) ? -1.0f : 1.0f;
+          s.z += nz * (pz + radius);
+        }
+      }
+
+      // Reflect velocity if pointing into the box
+      float vDotN = s.vx * nx + s.vy * ny + s.vz * nz;
+      if (vDotN < 0.0f) {
+        s.vx -= (1.0f + bounce) * vDotN * nx;
+        s.vy -= (1.0f + bounce) * vDotN * ny;
+        s.vz -= (1.0f + bounce) * vDotN * nz;
+        // Multiply tangential components by restitution
+        float vn = s.vx * nx + s.vy * ny + s.vz * nz;
+        s.vx = vn * nx + (s.vx - vn * nx) * bounce;
+        s.vy = vn * ny + (s.vy - vn * ny) * bounce;
+        s.vz = vn * nz + (s.vz - vn * nz) * bounce;
+      }
+    }
+  }
+
+  // Keep the body inside the basin: resting on the floor, and against the walls.
   if (s.y - radius < floorY) {
     s.y = floorY + radius;
     if (s.vy < 0.0f) s.vy = -s.vy * bounce;
@@ -1001,17 +1063,14 @@ bool FluidSimulation::InjectSphere(BaseDriver* driver) {
 bool FluidSimulation::StepObjectVelocity(BaseDriver* driver) {
   if (!m_ready || !driver || !m_objectVelocityPipeline || !m_velocity[m_current]) return false;
 
-  // No-penetration at the moving body. Must run before divergence so the pressure
-  // solve sees the body's motion; there is nothing else in the solver that tells
-  // the fluid a solid object is sweeping through it.
+  // Solid-face boundary values (static walls 0, body faces = body velocity). On the
+  // staggered grid this is the whole moving-wall condition, so it runs every substep.
   const uint32_t target = (m_current + 1) % kVelocityCount;
   const std::vector<uint32_t> constants = BuildConstants();
   const std::vector<uint32_t> objectConstants = BuildObjectConstants();
   const std::vector<ComputeBindingDesc> bindings = {
     {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
     {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
-    {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr,
-     (m_alpha[m_alphaCurrent] ? m_alpha[m_alphaCurrent].get() : m_velocity[m_current].get())},
     {ComputeBindingType::Constants32, 1, nullptr, objectConstants.data(), static_cast<uint32_t>(objectConstants.size())},
     {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
     {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[target].get()}
@@ -1036,7 +1095,8 @@ bool FluidSimulation::Reset(BaseDriver* driver) {
 bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                                      ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
                                      ComputeTexture3D* target, uint32_t iterationPacked,
-                                     bool withAlpha, float paddingOverride) {
+                                     bool withAlpha, float paddingOverride,
+                                     const std::vector<uint32_t>* objectConstants) {
   const std::vector<uint32_t> constants = BuildConstants(iterationPacked, paddingOverride);
   std::vector<ComputeBindingDesc> bindings;
   bindings.push_back({ComputeBindingType::Constants32, 0, nullptr, constants.data(),
@@ -1052,6 +1112,10 @@ bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeli
   if (withAlpha && m_alpha[m_alphaCurrent])
     bindings.push_back({ComputeBindingType::ReadOnlyTexture, 2, nullptr, nullptr, 0, nullptr,
                         m_alpha[m_alphaCurrent].get()});
+  // Only kernels that declare b1 (divergence, gradient) receive the body constants.
+  if (objectConstants)
+    bindings.push_back({ComputeBindingType::Constants32, 1, nullptr, objectConstants->data(),
+                        static_cast<uint32_t>(objectConstants->size())});
 
   const uint32_t groupsX = (m_settings.width + pipeline.threadGroupSize[0] - 1) / pipeline.threadGroupSize[0];
   const uint32_t groupsY = (m_settings.height + pipeline.threadGroupSize[1] - 1) / pipeline.threadGroupSize[1];
@@ -1102,7 +1166,7 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   // failure. Keeping its displacement under half a cell per substep means every
   // stage - stamp, coupling, divergence, pressure, advection - sees a consistent
   // configuration and a consistent dt.
-  uint32_t substeps = 1;
+  uint32_t bodySubsteps = 1;
   float bodySpeed = 0.0f;
   if (m_sphere.enabled) {
     bodySpeed = std::sqrt(m_sphere.vx * m_sphere.vx +
@@ -1110,11 +1174,21 @@ bool FluidSimulation::Step(BaseDriver* driver) {
                           m_sphere.vz * m_sphere.vz);
     const float travel = bodySpeed * frameDt;
     if (travel > 0.5f * cell)
-      substeps = static_cast<uint32_t>(std::ceil(travel / (0.5f * cell)));
-    substeps = (std::min)((std::max)(substeps, 1u), 12u);
+      bodySubsteps = static_cast<uint32_t>(std::ceil(travel / (0.5f * cell)));
+    bodySubsteps = (std::min)((std::max)(bodySubsteps, 1u), 12u);
   }
-  T8_LOG_DEBUG("[Fluid] substeps=%u bodySpeed=%.2f m/s travel=%.3f m cell=%.3f m",
-               substeps, bodySpeed, bodySpeed * frameDt, cell);
+
+  // CFL limit for the unsplit upwind alpha transport: (|u|+|v|+|w|)*dt/h <= 1.
+  // Real frame deltas reach maxDeltaTime = 1/30 s, far above what one step allows.
+  uint32_t substeps = bodySubsteps;
+  if (m_settings.maxSubstepDt > 0.0f) {
+    const uint32_t cflSubsteps =
+      static_cast<uint32_t>(std::ceil(frameDt / m_settings.maxSubstepDt));
+    substeps = (std::max)(substeps, cflSubsteps);
+  }
+  substeps = (std::min)((std::max)(substeps, 1u), 12u);
+  T8_LOG_DEBUG("[Fluid] substeps=%u bodySubsteps=%u bodySpeed=%.2f m/s travel=%.3f m cell=%.3f m",
+               substeps, bodySubsteps, bodySpeed, bodySpeed * frameDt, cell);
 
   const float subDt = frameDt / static_cast<float>(substeps);
   m_settings.deltaTime = subDt;
@@ -1123,6 +1197,17 @@ bool FluidSimulation::Step(BaseDriver* driver) {
     ok = StepInternal(driver);
   // Restore the frame delta so the caller and the GUI keep seeing the real value.
   m_settings.deltaTime = frameDt;
+
+  // Volume correction reads the field back to the CPU, which is a hard sync.
+  // Doing that every substep would stall the pipeline and churn Vulkan
+  // descriptors, and mass drifts slowly, so it runs periodically per frame.
+  if (m_alphaAdvectPipeline && m_alpha[0] && m_alpha[1]) {
+    if (++m_framesSinceVolumeCheck >= m_volumeCheckInterval) {
+      m_framesSinceVolumeCheck = 0;
+      float appliedScale = 1.0f;
+      CorrectVolumeFraction(driver, appliedScale);
+    }
+  }
   return ok;
 }
 
@@ -1153,15 +1238,13 @@ bool FluidSimulation::StepInternal(BaseDriver* driver) {
     return false;
   m_current = forced;
 
-  // 2.5 Obstacle velocity coupling. The body imposes its normal velocity on the
-  // fluid (no-penetration at a moving solid boundary), which is what puts the
-  // impact into the momentum equation. It has to happen BEFORE divergence: the
-  // pressure solve needs to see the divergence the body creates, otherwise there
-  // is nothing to react to and no wave can radiate outwards.
-  if (m_sphere.enabled && m_objectVelocityPipeline)
-    StepObjectVelocity(driver);
+  // 2.5 Solid boundaries, including the moving body. Must precede divergence so
+  // the pressure solve sees the body's motion.
+  if (!StepObjectVelocity(driver))
+    return false;
 
   // 3. Divergence, restricted to wet cells.
+  const std::vector<uint32_t> objectConstants = BuildObjectConstants();
   if (!DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr,
                       m_divergence.get(), 0, true))
     return false;
@@ -1186,9 +1269,19 @@ bool FluidSimulation::StepInternal(BaseDriver* driver) {
   // 5. Project velocity, then transport the free surface by conservative flux.
   const uint32_t projected = (m_current + 1) % kVelocityCount;
   if (!DispatchVolume(driver, *m_gradientPipeline, m_velocity[m_current].get(),
-                      m_pressure[m_pressureCurrent].get(), m_velocity[projected].get(), 0, true))
+                      m_pressure[m_pressureCurrent].get(), m_velocity[projected].get(), 0, true,
+                      -1.0f, &objectConstants))
     return false;
   m_current = projected;
+
+  // Air is never projected, so overwrite it with the neighbouring liquid velocity.
+  if (m_extrapolatePipeline) {
+    const uint32_t extrapolated = (m_current + 1) % kVelocityCount;
+    if (!DispatchVolume(driver, *m_extrapolatePipeline, m_velocity[m_current].get(),
+                        m_alpha[m_alphaCurrent].get(), m_velocity[extrapolated].get(), 0, false))
+      return false;
+    m_current = extrapolated;
+  }
 
   // Transport alpha AFTER projection so the flux field is the one the fluid
   // actually moves with. Flux-form advection conserves volume by construction.
@@ -1223,17 +1316,6 @@ bool FluidSimulation::StepInternal(BaseDriver* driver) {
   // cells solid, the advection writes them dry, and the volume correction restores
   // exactly the amount the body's submerged volume displaced.
 
-  if (m_alphaAdvectPipeline && m_alpha[0] && m_alpha[1]) {
-    // Volume correction reads the field back to the CPU, which is a hard sync.
-    // Doing that every frame would stall the pipeline and churn Vulkan
-    // descriptors, and mass drifts slowly, so it runs periodically instead.
-    if (++m_framesSinceVolumeCheck >= m_volumeCheckInterval) {
-      m_framesSinceVolumeCheck = 0;
-      float appliedScale = 1.0f;
-      CorrectVolumeFraction(driver, appliedScale);
-    }
-  }
-
   // Derive the renderable 2D surface from the volume. The surface pass samples
   // the previous surface and writes a separate target (ping-pong): a resource
   // cannot be both read and written in one dispatch.
@@ -1251,7 +1333,8 @@ bool FluidSimulation::StepInternal(BaseDriver* driver) {
     // Basin floor and authored water plane, from the pool layout JSON. These used
     // to be literals in the kernel.
     {ComputeBindingType::Constants32, 1, nullptr, geometryConstants.data(), static_cast<uint32_t>(geometryConstants.size())},
-    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]}
+    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]},
+    {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0}
   };
   const uint32_t groupsX = (m_settings.width + m_surfacePipeline->threadGroupSize[0] - 1) / m_surfacePipeline->threadGroupSize[0];
   const uint32_t groupsY = (m_settings.depth + m_surfacePipeline->threadGroupSize[1] - 1) / m_surfacePipeline->threadGroupSize[1];
@@ -1324,9 +1407,12 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
     m_current = next;
     return true;
   }
-  if (name == "divergence")
+  if (name == "divergence") {
+    if (!StepObjectVelocity(driver))
+      return false;
     return DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr,
                           m_divergence.get(), 0, true);
+  }
   if (name == "pressure") {
     // One full red-black sweep: relax the even cells, then the odd cells against
     // the freshly updated even ones.
@@ -1341,8 +1427,10 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
     return true;
   }
   if (name == "gradient") {
+    const std::vector<uint32_t> objectConstants = BuildObjectConstants();
     if (!DispatchVolume(driver, *m_gradientPipeline, m_velocity[m_current].get(),
-                        m_pressure[m_pressureCurrent].get(), m_velocity[next].get(), 0, true))
+                        m_pressure[m_pressureCurrent].get(), m_velocity[next].get(), 0, true,
+                        -1.0f, &objectConstants))
       return false;
     m_current = next;
     return true;
@@ -1357,7 +1445,8 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
       {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr,
        (m_alpha[m_alphaCurrent] ? m_alpha[m_alphaCurrent].get() : m_velocity[m_current].get())},
       {ComputeBindingType::Constants32, 1, nullptr, geometryConstants.data(), static_cast<uint32_t>(geometryConstants.size())},
-      {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]}
+      {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]},
+      {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0}
     };
     const uint32_t groupsX = (m_settings.width + m_surfacePipeline->threadGroupSize[0] - 1) / m_surfacePipeline->threadGroupSize[0];
     const uint32_t groupsY = (m_settings.depth + m_surfacePipeline->threadGroupSize[1] - 1) / m_surfacePipeline->threadGroupSize[1];
@@ -1451,44 +1540,42 @@ bool FluidSimulation::AnalyzeVolume(BaseDriver* driver, const std::string* direc
         sumSpeed += speed;
         sumVertical += fy;
         maxSpeed = (std::max)(maxSpeed, speed);
-
-        // Wall-mask acceptance probe. A solid voxel carrying velocity means water
-        // leaked into the pool geometry; a fluid voxel pointing into a solid face
-        // means the no-penetration condition is not being enforced.
-        const bool voxelSolid = IsMaskSolid(x, y, z);
-        if (voxelSolid) {
-          solidSpeedSum += speed;
+      }
+    }
+  }
+  // Staggered grid: texel (x,y,z) holds the +X/+Y/+Z faces of that cell; index -1 is a wall.
+  const auto faceU = [&](int x, int y, int z) { return x < 0 ? 0.0f : vx[(z * height + y) * width + x]; };
+  const auto faceV = [&](int x, int y, int z) { return y < 0 ? 0.0f : vy[(z * height + y) * width + x]; };
+  const auto faceW = [&](int x, int y, int z) { return z < 0 ? 0.0f : vz[(z * height + y) * width + x]; };
+  for (uint32_t z = 0; z < depth; ++z) {
+    for (uint32_t y = 0; y < height; ++y) {
+      for (uint32_t x = 0; x < width; ++x) {
+        const int ix = static_cast<int>(x), iy = static_cast<int>(y), iz = static_cast<int>(z);
+        // Wall-mask acceptance probe: every face touching a solid voxel must carry
+        // zero velocity (no body is present in the self-test).
+        if (IsMaskSolid(x, y, z)) {
+          const uint32_t index = (z * height + y) * width + x;
+          solidSpeedSum += std::abs(vx[index]) + std::abs(vy[index]) + std::abs(vz[index]);
           ++solidSamples;
           continue;
         }
-        const float ax = std::abs(fx), ay = std::abs(fy), az = std::abs(fz);
-        if (IsMaskSolid(x + 1, y, z) && fx > ax && fx > 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, fx);
-        if (IsMaskSolid(x - 1, y, z) && -fx > ax && fx < 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, -fx);
-        if (IsMaskSolid(x, y + 1, z) && fy > ay && fy > 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, fy);
-        if (IsMaskSolid(x, y - 1, z) && -fy > ay && fy < 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, -fy);
-        if (IsMaskSolid(x, y, z + 1) && fz > az && fz > 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, fz);
-        if (IsMaskSolid(x, y, z - 1) && -fz > az && fz < 0.0f) maxWallPenetration = (std::max)(maxWallPenetration, -fz);
+        if (IsMaskSolid(x + 1, y, z)) maxWallPenetration = (std::max)(maxWallPenetration, std::abs(faceU(ix, iy, iz)));
+        if (IsMaskSolid(x - 1, y, z)) maxWallPenetration = (std::max)(maxWallPenetration, std::abs(faceU(ix - 1, iy, iz)));
+        if (IsMaskSolid(x, y + 1, z)) maxWallPenetration = (std::max)(maxWallPenetration, std::abs(faceV(ix, iy, iz)));
+        if (IsMaskSolid(x, y - 1, z)) maxWallPenetration = (std::max)(maxWallPenetration, std::abs(faceV(ix, iy - 1, iz)));
+        if (IsMaskSolid(x, y, z + 1)) maxWallPenetration = (std::max)(maxWallPenetration, std::abs(faceW(ix, iy, iz)));
+        if (IsMaskSolid(x, y, z - 1)) maxWallPenetration = (std::max)(maxWallPenetration, std::abs(faceW(ix, iy, iz - 1)));
 
-        // Interior cells only: walls are zeroed and would bias the residual.
-        if (x > 0 && y > 0 && z > 0 && x + 1 < width && y + 1 < height && z + 1 < depth) {
-          const float scale = 0.5f / m_settings.cellSize;
-          const float divergence =
-            (vx[(z * height + y) * width + (x + 1)] - vx[(z * height + y) * width + (x - 1)]) * scale +
-            (vy[(z * height + (y + 1)) * width + x] - vy[(z * height + (y - 1)) * width + x]) * scale +
-            (vz[((z + 1) * height + y) * width + x] - vz[((z - 1) * height + y) * width + x]) * scale;
-          maxDivergence = (std::max)(maxDivergence, std::abs(divergence));
-          sumDivergence += std::abs(divergence);
-          ++divergenceSamples;
-        }
-        // Deep interior: skip the boundary band, where the wall stencil and the
-        // Neumann pressure clamp leave a residual that projection cannot remove.
+        const float divergence =
+          ((faceU(ix, iy, iz) - faceU(ix - 1, iy, iz)) +
+           (faceV(ix, iy, iz) - faceV(ix, iy - 1, iz)) +
+           (faceW(ix, iy, iz) - faceW(ix, iy, iz - 1))) / m_settings.cellSize;
+        maxDivergence = (std::max)(maxDivergence, std::abs(divergence));
+        sumDivergence += std::abs(divergence);
+        ++divergenceSamples;
+        // Deep interior, away from the free surface and walls.
         if (x >= kInteriorMargin && y >= kInteriorMargin && z >= kInteriorMargin &&
             x + kInteriorMargin < width && y + kInteriorMargin < height && z + kInteriorMargin < depth) {
-          const float scale = 0.5f / m_settings.cellSize;
-          const float divergence =
-            (vx[(z * height + y) * width + (x + 1)] - vx[(z * height + y) * width + (x - 1)]) * scale +
-            (vy[(z * height + (y + 1)) * width + x] - vy[(z * height + (y - 1)) * width + x]) * scale +
-            (vz[((z + 1) * height + y) * width + x] - vz[((z - 1) * height + y) * width + x]) * scale;
           interiorMaxDivergence = (std::max)(interiorMaxDivergence, std::abs(divergence));
           interiorSumDivergence += std::abs(divergence);
           ++interiorSamples;

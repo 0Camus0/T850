@@ -68,6 +68,19 @@ cbuffer GeometryConstants : register(b1)
     float WorldOriginZ;
 };
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(5, 0)]]
+#endif
+StructuredBuffer<uint> WallMask : register(t8);
+
+bool IsSolid(int3 cell)
+{
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return true;
+    return WallMask[uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z))] != 0u;
+}
+
 // Column integral of alpha, expressed as a world-space elevation.
 // Integrating rather than taking the topmost alpha > 0.5 cell handles a
 // partially filled interface cell continuously, avoiding the one-cell
@@ -81,9 +94,23 @@ float ColumnElevation(int x, int z)
 {
     if (x < 0 || z < 0 || x >= int(Width) || z >= int(Depth))
         return WaterPlaneY;
+    // Solid cells (floor, steps, a submerged body) count as full only when wet
+    // water sits above them; otherwise the surface over a step sinks by its height.
     float water = 0.0f;
-    for (uint j = 0; j < Height; ++j)
-        water += saturate(AlphaIn.Load(int4(int3(x, int(j), z), 0)).x);
+    float pendingSolid = 0.0f;
+    for (uint j = 0; j < Height; ++j) {
+        const int3 c = int3(x, int(j), z);
+        if (IsSolid(c)) {
+            pendingSolid += 1.0f;
+            continue;
+        }
+        const float a = saturate(AlphaIn.Load(int4(c, 0)).x);
+        water += a;
+        if (a >= 0.5f) {
+            water += pendingSolid;
+            pendingSolid = 0.0f;
+        }
+    }
     if (water <= 0.001f)
         return WaterPlaneY;
     return BasinMinY + water * CellSize;
@@ -95,16 +122,19 @@ float ColumnElevation(int x, int z)
 float SurfaceFoam(int x, int z, int surfaceRow)
 {
     float divergence = 0.0f;
-    const float scale = 0.5f / CellSize;
+    const int3 hi = int3(int(Width) - 1, int(Height) - 1, int(Depth) - 1);
+    x = clamp(x, 0, hi.x);
+    z = clamp(z, 0, hi.z);
     for (int row = surfaceRow - 2; row <= surfaceRow; ++row) {
-        const int3 c = int3(x, clamp(row, 0, int(Height) - 1), z);
-        const float3 vxp = VelocityIn.Load(int4(c + int3(1, 0, 0), 0)).xyz;
-        const float3 vxm = VelocityIn.Load(int4(c - int3(1, 0, 0), 0)).xyz;
-        const float3 vyp = VelocityIn.Load(int4(c + int3(0, 1, 0), 0)).xyz;
-        const float3 vym = VelocityIn.Load(int4(c - int3(0, 1, 0), 0)).xyz;
-        const float3 vzp = VelocityIn.Load(int4(c + int3(0, 0, 1), 0)).xyz;
-        const float3 vzm = VelocityIn.Load(int4(c - int3(0, 0, 1), 0)).xyz;
-        divergence += ((vxp.x - vxm.x) + (vyp.y - vym.y) + (vzp.z - vzm.z)) * scale;
+        const int3 c = int3(x, clamp(row, 0, hi.y), z);
+        // Staggered grid: texel c holds the cell's +X/+Y/+Z faces; the -face is
+        // the previous texel, or a wall (0) at index -1.
+        const float3 plus = VelocityIn.Load(int4(c, 0)).xyz;
+        float uMinus = 0.0f, vMinus = 0.0f, wMinus = 0.0f;
+        if (c.x > 0) uMinus = VelocityIn.Load(int4(c - int3(1, 0, 0), 0)).x;
+        if (c.y > 0) vMinus = VelocityIn.Load(int4(c - int3(0, 1, 0), 0)).y;
+        if (c.z > 0) wMinus = VelocityIn.Load(int4(c - int3(0, 0, 1), 0)).z;
+        divergence += ((plus.x - uMinus) + (plus.y - vMinus) + (plus.z - wMinus)) / CellSize;
     }
     return saturate(divergence * 0.35f);
 }
@@ -112,11 +142,12 @@ float SurfaceFoam(int x, int z, int surfaceRow)
 [numthreads(8, 8, 1)]
 void CS(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x >= Width || id.z >= Depth)
+    // Dispatched as (width, depth, 1): the grid row lives in id.y.
+    if (id.x >= Width || id.y >= Depth)
         return;
 
     const int cx = int(id.x);
-    const int cz = int(id.z);
+    const int cz = int(id.y);
 
     // Raw column elevations around this texel. These 9 sums replace 9 separate
     // ColumnElevation calls below, so the smoothing costs one pass of loads.

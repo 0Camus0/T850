@@ -1,5 +1,7 @@
-// T850 pool fluid: applies wind, buoyancy and viscous diffusion to the
-// velocity volume, with solid walls on the volume boundary.
+// T850 pool fluid: viscosity, gravity and optional surface forcing on a
+// staggered MAC velocity volume. Each component diffuses against its own
+// same-component neighbours; solid faces are zeroed and left to the boundary
+// kernel.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -42,9 +44,6 @@ RWTexture3D<float4> VelocityOut : register(u0);
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(3, 0)]]
 #endif
-#if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(3, 0)]]
-#endif
 StructuredBuffer<uint> WallMask : register(t8);
 
 uint CellIndex(int3 cell)
@@ -52,7 +51,7 @@ uint CellIndex(int3 cell)
     return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
 }
 
-bool IsSolid(int3 cell)
+bool IsSolidCell(int3 cell)
 {
     if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
         cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
@@ -60,11 +59,54 @@ bool IsSolid(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
-float4 Fetch(int3 cell)
+bool IsSolidFace(int3 a, int axis)
 {
-    if (IsSolid(cell))
-        return float4(0.0f, 0.0f, 0.0f, 0.0f);
-    return VelocityIn.Load(int4(cell, 0));
+    if (IsSolidCell(a))
+        return true;
+    int3 b = a;
+    if (axis == 0) b.x += 1;
+    else if (axis == 1) b.y += 1;
+    else b.z += 1;
+    return IsSolidCell(b);
+}
+
+// Same-component neighbour value; out-of-range texel contributes the centre value.
+float NeighbourComponent(int3 n, int c, float centre)
+{
+    int3 dim = int3(Width, Height, Depth);
+    if (c == 0)
+    {
+        if (n.x < 0 || n.x > dim.x - 1)
+            return centre;
+        n.y = clamp(n.y, 0, dim.y - 1);
+        n.z = clamp(n.z, 0, dim.z - 1);
+        return VelocityIn.Load(int4(n, 0)).x;
+    }
+    if (c == 1)
+    {
+        if (n.y < 0 || n.y > dim.y - 1)
+            return centre;
+        n.x = clamp(n.x, 0, dim.x - 1);
+        n.z = clamp(n.z, 0, dim.z - 1);
+        return VelocityIn.Load(int4(n, 0)).y;
+    }
+    if (n.z < 0 || n.z > dim.z - 1)
+        return centre;
+    n.x = clamp(n.x, 0, dim.x - 1);
+    n.y = clamp(n.y, 0, dim.y - 1);
+    return VelocityIn.Load(int4(n, 0)).z;
+}
+
+float LaplacianComponent(int3 cell, int c, float centre)
+{
+    float sum = 0.0f;
+    sum += NeighbourComponent(cell + int3(1, 0, 0), c, centre);
+    sum += NeighbourComponent(cell - int3(1, 0, 0), c, centre);
+    sum += NeighbourComponent(cell + int3(0, 1, 0), c, centre);
+    sum += NeighbourComponent(cell - int3(0, 1, 0), c, centre);
+    sum += NeighbourComponent(cell + int3(0, 0, 1), c, centre);
+    sum += NeighbourComponent(cell - int3(0, 0, 1), c, centre);
+    return sum - 6.0f * centre;
 }
 
 [numthreads(4, 4, 4)]
@@ -73,45 +115,54 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
     int3 cell = int3(id);
-    if (IsSolid(cell))
+
+    float4 centre = VelocityIn.Load(int4(cell, 0));
+    float u = 0.0f;
+    float v = 0.0f;
+    float w = 0.0f;
+
+    // Explicit diffusion: nu*dt/h^2, capped at the 3D stability limit of 1/6.
+    const float diffusion = min(Viscosity * DeltaTime / (CellSize * CellSize), 1.0f / 6.0f);
+
+    if (!IsSolidFace(cell, 0))
     {
-        VelocityOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
-        return;
+        u = centre.x + LaplacianComponent(cell, 0, centre.x) * diffusion;
+    }
+    if (!IsSolidFace(cell, 1))
+    {
+        v = centre.y + LaplacianComponent(cell, 1, centre.y) * diffusion;
+    }
+    if (!IsSolidFace(cell, 2))
+    {
+        w = centre.z + LaplacianComponent(cell, 2, centre.z) * diffusion;
     }
 
-    float4 center = VelocityIn.Load(int4(cell, 0));
-    float3 velocity = center.xyz;
+    // Gravity acts on the vertical face velocity.
+    if (!IsSolidFace(cell, 1))
+        v -= Gravity * DeltaTime;
 
-    // Viscous diffusion from the six neighbours.
-    float4 laplacian = Fetch(cell + int3(1, 0, 0)) + Fetch(cell - int3(1, 0, 0)) +
-                       Fetch(cell + int3(0, 1, 0)) + Fetch(cell - int3(0, 1, 0)) +
-                       Fetch(cell + int3(0, 0, 1)) + Fetch(cell - int3(0, 0, 1)) -
-                       6.0f * center;
-    velocity += laplacian.xyz * Viscosity;
-
-    // Wind drives the surface layer. The layer is defined by the surface level;
-    // the volume fraction is not visible to this kernel, so alpha-weighted
-    // viscosity and gravity live in the alpha-aware kernels instead.
+    // Wind drives the surface layer; amplitude comes from JSON via FluidSettings.
     const float surfaceY = SurfaceLevel * float(Height);
     if (float(id.y) > surfaceY - 2.0f)
     {
-        // Amplitude comes from JSON via FluidSettings; 1.0 is the tuned default.
-        // Without this the pool decays to perfectly flat within seconds because
-        // the seed is a one-shot impulse with no sustained energy input.
         const float gain = max(ForcingAmplitude, 0.0f) * DeltaTime;
         const float stirX = sin(TimeValue * 0.9f + float(id.x) * 0.31f + float(id.z) * 0.17f);
         const float stirZ = cos(TimeValue * 0.7f + float(id.z) * 0.29f + float(id.x) * 0.13f);
-        velocity.x += (WindX + stirX * 0.45f) * gain;
-        velocity.z += (WindZ + stirZ * 0.45f) * gain;
-        velocity.y += (WindY + stirX * stirZ * 0.25f) * gain;
+        if (!IsSolidFace(cell, 0))
+            u += (WindX + stirX * 0.45f) * gain;
+        if (!IsSolidFace(cell, 2))
+            w += (WindZ + stirZ * 0.45f) * gain;
+        if (!IsSolidFace(cell, 1))
+            v += (WindY + stirX * stirZ * 0.25f) * gain;
     }
 
-    // Gravity acts on the water; the hydrostatic balance is the pressure solve's
-    // job now that the free surface gives it a Dirichlet reference, so the old
-    // hand-tuned counter-lift is gone.
-    velocity.y -= Gravity * DeltaTime;
+    const float damp = saturate(1.0f - Damping * DeltaTime);
+    u *= damp;
+    v *= damp;
+    w *= damp;
+    u = clamp(u, -12.0f, 12.0f);
+    v = clamp(v, -12.0f, 12.0f);
+    w = clamp(w, -12.0f, 12.0f);
 
-    velocity *= saturate(1.0f - Damping * DeltaTime);
-    velocity = clamp(velocity, -12.0f, 12.0f);
-    VelocityOut[id] = float4(velocity, center.w);
+    VelocityOut[id] = float4(u, v, w, 0.0f);
 }

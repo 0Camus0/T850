@@ -21,7 +21,7 @@
     "steps": [
       {
         "name": "Pool_Step_1",
-        "minX": 3.45,
+        "minX": 4.15,
         "maxX": 4.5,
         "minY": -1.6,
         "maxY": -0.3,
@@ -39,7 +39,7 @@
       },
       {
         "name": "Pool_Step_3",
-        "minX": 4.15,
+        "minX": 3.45,
         "maxX": 4.5,
         "minY": -1.6,
         "maxY": -0.9,

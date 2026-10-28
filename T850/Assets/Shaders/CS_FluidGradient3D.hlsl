@@ -1,5 +1,11 @@
-// T850 pool fluid: subtracts the pressure gradient so the velocity field
-// becomes divergence free.
+// T850 pool fluid: subtracts the pressure gradient on the MAC grid.
+//
+// Per texel and component c, the face between A (this texel's cell) and
+// B = A + e_c is classified. SOLID faces take their boundary value (body
+// velocity component if the solid cell is a BODY cell, else 0). AIR faces copy
+// the input. LIQUID faces subtract (pB - pA)/CellSize, where an AIR cell uses the
+// ghost value p_ghost = p_L * (1 - 1/theta). Each component is clamped to
+// [-12, 12].
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -48,12 +54,40 @@ RWTexture3D<float4> VelocityOut : register(u0);
 #endif
 StructuredBuffer<uint> WallMask : register(t8);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(5, 0)]]
+#endif
+Texture3D<float4> AlphaIn : register(t2);
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(6, 0)]]
+#endif
+cbuffer ObjectConstants : register(b1)
+{
+    float ObjectCentreX;
+    float ObjectCentreY;
+    float ObjectCentreZ;
+    float ObjectRadius;
+
+    float ObjectVelX;
+    float ObjectVelY;
+    float ObjectVelZ;
+    float ObjectEnabled;
+
+    float WorldOriginX;
+    float WorldOriginZ;
+    float BasinMinY;
+    float ObjectPadding0;
+};
+
+#define T8_LIQUID_THRESHOLD 0.5f
+
 uint CellIndex(int3 cell)
 {
     return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
 }
 
-bool Outside(int3 cell)
+bool IsSolid(int3 cell)
 {
     if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
         cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
@@ -61,28 +95,82 @@ bool Outside(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
-#if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(5, 0)]]
-#endif
-Texture3D<float4> AlphaIn : register(t2);
-
-#define T8_AIR_THRESHOLD 0.05f
-
-bool IsAir(int3 cell)
+bool IsLiquid(int3 cell)
 {
-    if (Outside(cell))
+    if (IsSolid(cell))
         return false;
-    return AlphaIn.Load(int4(cell, 0)).x < T8_AIR_THRESHOLD;
+    return saturate(AlphaIn.Load(int4(cell, 0)).x) >= T8_LIQUID_THRESHOLD;
 }
 
-float PressureAt(int3 cell, float fallback)
+bool IsBodyCell(int3 cell)
 {
-    if (Outside(cell))
-        return fallback;
-    // Dirichlet p = 0 at the free surface.
-    if (IsAir(cell))
-        return 0.0f;
-    return PressureIn.Load(int4(cell, 0)).x;
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return false;
+    if (ObjectEnabled < 0.5f || ObjectRadius <= 0.0f)
+        return false;
+    const float3 centre = float3(WorldOriginX + float(cell.x) * CellSize,
+                                 BasinMinY + (float(cell.y) + 0.5f) * CellSize,
+                                 WorldOriginZ + float(cell.z) * CellSize);
+    const float3 d = centre - float3(ObjectCentreX, ObjectCentreY, ObjectCentreZ);
+    return dot(d, d) <= ObjectRadius * ObjectRadius;
+}
+
+float AlphaAt(int3 cell)
+{
+    return saturate(AlphaIn.Load(int4(cell, 0)).x);
+}
+
+float Theta(float aL, float aAir)
+{
+    return clamp((aL - 0.5f) / max(aL - aAir, 1e-4f), 0.1f, 1.0f);
+}
+
+// Pressure at a cell, using the ghost value for AIR cells. `liquidCell` is the
+// LIQUID cell of the face; `otherCell` is the cell being queried.
+float PressureForFace(int3 liquidCell, int3 otherCell)
+{
+    if (IsLiquid(otherCell))
+        return PressureIn.Load(int4(otherCell, 0)).x;
+    // AIR: ghost value p_L * (1 - 1/theta).
+    const float pL = PressureIn.Load(int4(liquidCell, 0)).x;
+    const float theta = Theta(AlphaAt(liquidCell), AlphaAt(otherCell));
+    return pL * (1.0f - 1.0f / theta);
+}
+
+float SolidBoundaryValue(int3 solidCell, int axis)
+{
+    if (IsBodyCell(solidCell))
+        return axis == 0 ? ObjectVelX : (axis == 1 ? ObjectVelY : ObjectVelZ);
+    return 0.0f;
+}
+
+// Gradient-corrected value for component `axis` on the face between A and B.
+float FaceValue(int3 a, int3 b, int axis, float inputValue)
+{
+    if (IsSolid(a))
+        return SolidBoundaryValue(a, axis);
+    if (IsSolid(b))
+        return SolidBoundaryValue(b, axis);
+
+    const bool aLiquid = IsLiquid(a);
+    const bool bLiquid = IsLiquid(b);
+    if (!aLiquid && !bLiquid)
+        return inputValue; // AIR face: copy input
+
+    // LIQUID face: at least one side is liquid.
+    float pA;
+    float pB;
+    if (aLiquid)
+        pA = PressureIn.Load(int4(a, 0)).x;
+    else
+        pA = PressureForFace(b, a);
+    if (bLiquid)
+        pB = PressureIn.Load(int4(b, 0)).x;
+    else
+        pB = PressureForFace(a, b);
+
+    return inputValue - DeltaTime * (pB - pA) / CellSize;
 }
 
 [numthreads(4, 4, 4)]
@@ -90,34 +178,17 @@ void CS(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
+
     int3 cell = int3(id);
-    float4 velocity = VelocityIn.Load(int4(id, 0));
-    // Only solid carries no flow. Air must NOT be zeroed: doing so makes the free
-    // surface behave like a solid lid, so water pushed down has nowhere to rise
-    // into and alpha clamping destroys mass (measured -27.7% in 600 frames).
-    // Air keeps the transported velocity and is simply skipped by the pressure
-    // solve, which is the Dirichlet p = 0 boundary condition.
-    if (Outside(cell))
-    {
-        VelocityOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
-        return;
-    }
-    const float center = PressureIn.Load(int4(cell, 0)).x;
-    const float scale = 0.5f / CellSize;
-    const float3 gradient = float3(
-        PressureAt(cell + int3(1, 0, 0), center) - PressureAt(cell - int3(1, 0, 0), center),
-        PressureAt(cell + int3(0, 1, 0), center) - PressureAt(cell - int3(0, 1, 0), center),
-        PressureAt(cell + int3(0, 0, 1), center) - PressureAt(cell - int3(0, 0, 1), center)) * scale;
-    velocity.xyz -= gradient;
-    // No-penetration at the wall face: a component pointing into a solid
-    // neighbour is forced to zero, so the boundary condition holds at the face
-    // rather than only inside the solid voxel.
-    if (Outside(cell + int3(1, 0, 0)) && velocity.x > 0.0f) velocity.x = 0.0f;
-    if (Outside(cell - int3(1, 0, 0)) && velocity.x < 0.0f) velocity.x = 0.0f;
-    if (Outside(cell + int3(0, 1, 0)) && velocity.y > 0.0f) velocity.y = 0.0f;
-    if (Outside(cell - int3(0, 1, 0)) && velocity.y < 0.0f) velocity.y = 0.0f;
-    if (Outside(cell + int3(0, 0, 1)) && velocity.z > 0.0f) velocity.z = 0.0f;
-    if (Outside(cell - int3(0, 0, 1)) && velocity.z < 0.0f) velocity.z = 0.0f;
-    velocity.xyz = clamp(velocity.xyz, -12.0f, 12.0f);
-    VelocityOut[id] = velocity;
+    float4 velocity = VelocityIn.Load(int4(cell, 0));
+
+    float u = FaceValue(cell, cell + int3(1, 0, 0), 0, velocity.x);
+    float v = FaceValue(cell, cell + int3(0, 1, 0), 1, velocity.y);
+    float w = FaceValue(cell, cell + int3(0, 0, 1), 2, velocity.z);
+
+    u = clamp(u, -12.0f, 12.0f);
+    v = clamp(v, -12.0f, 12.0f);
+    w = clamp(w, -12.0f, 12.0f);
+
+    VelocityOut[id] = float4(u, v, w, 0.0f);
 }

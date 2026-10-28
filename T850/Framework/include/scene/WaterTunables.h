@@ -2,6 +2,9 @@
 
 #include <utils/xMaths.h>
 
+#include <algorithm>
+#include <cmath>
+
 namespace t850 {
 
   // Every water constant that used to be a literal in the shader or in
@@ -9,8 +12,7 @@ namespace t850 {
   //
   // Two groups: solver values that the host feeds to FluidSimulation, and look
   // values that ride to the fragment shader in the material constant buffer.
-  struct WaterTunables {
-    // ── Solver (host-side compute dispatches) ──
+  struct WaterTunables {    // ── Solver (host-side compute dispatches) ──
     int   gridWidth = 100;
     int   gridHeight = 18;
     int   gridDepth = 50;
@@ -164,7 +166,18 @@ namespace t850 {
     bool  sphereEnabled = true;
     float sphereRadius = 0.25f;
     // Density of the dropped body relative to water. Below 1 floats, above 1 sinks.
+    // This, not mass, decides the floating depth: equilibrium submerged fraction
+    // equals this value.
     float sphereDensityRatio = 0.6f;
+    // Drag coefficient of a smooth sphere, and the bounce at the floor and walls.
+    float sphereDragCoefficient = 0.47f;
+    float sphereRestitution = 0.30f;
+    // Water density used to turn density ratio into a mass in kg. Mass is DERIVED
+    // from radius and density; editing the mass slider back-solves the density so
+    // the two can never disagree.
+    float sphereWaterDensity = 1000.0f;
+    // When on, the mass slider is shown and drives density instead of the other way.
+    bool  sphereMassOverride = false;
     float sphereDropHeight = 1.0f;
     float sphereDropX = 0.0f;
     float sphereDropZ = -6.75f;
@@ -173,6 +186,21 @@ namespace t850 {
     float sphereInitialVZ = 0.0f;
     // Seconds after scene start before the sphere is released.
     float sphereReleaseDelay = 0.0f;
+
+    // Mass in kg, derived from radius and density: a body's mass is a property of
+    // its size and material, so radius + density is the consistent parameterisation
+    // and mass is what falls out of it.
+    float SphereMassKg() const {
+      const float r = (std::max)(sphereRadius, 0.001f);
+      return sphereDensityRatio * sphereWaterDensity * (4.0f / 3.0f) * 3.14159265358979f * r * r * r;
+    }
+    // Inverse of SphereMassKg, used when the mass slider is edited.
+    float SphereDensityFromMass(float massKg) const {
+      const float r = (std::max)(sphereRadius, 0.001f);
+      const float volume = (4.0f / 3.0f) * 3.14159265358979f * r * r * r;
+      const float density = massKg / (sphereWaterDensity * (std::max)(volume, 1e-6f));
+      return (std::min)((std::max)(density, 0.02f), 20.0f);
+    }
   };
 
   // Mirrors the tail of MeshMaterialCBuffer and the HLSL MeshMaterialCB exactly.

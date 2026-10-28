@@ -548,11 +548,12 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_volumeCorrectPipeline = CreatePipeline(driver, "CS_FluidVolumeCorrect3D.hlsl");
   m_spherePipeline = CreatePipeline(driver, "CS_FluidSphere3D.hlsl");
   m_objectVelocityPipeline = CreatePipeline(driver, "CS_FluidObstacleVelocity3D.hlsl");
+  m_clearPipeline = CreatePipeline(driver, "CS_FluidClear3D.hlsl");
 
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
-                  m_alphaAdvectPipeline && m_volumeCorrectPipeline &&                   m_spherePipeline && m_objectVelocityPipeline;
+                  m_alphaAdvectPipeline && m_volumeCorrectPipeline &&                   m_spherePipeline && m_objectVelocityPipeline && m_clearPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
   complete = complete && m_divergence;
@@ -605,6 +606,7 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_volumeCorrectPipeline.reset();
   m_spherePipeline.reset();
   m_objectVelocityPipeline.reset();
+  m_clearPipeline.reset();
   m_removedBuffer.reset();
   m_removedColumns = 0;
   m_referenceVolumeFraction = 0.0f;
@@ -833,50 +835,96 @@ void FluidSimulation::AdvanceSphere(float dt) {
   const float floorY = m_settings.basinMinY;
   const float radius = (std::max)(s.radius, 0.001f);
 
-  // Submerged FRACTION of the sphere by the water plane, in [0,1]. This is what
-  // makes the entry decelerate and the ball settle instead of accelerating
-  // straight to the floor: before this the body was ballistic all the way down.
+  // Submerged FRACTION of the sphere by the water plane, in [0,1].
   const float bottom = s.y - radius;
   const float submergedDepth = m_settings.waterPlaneY - bottom;
   s.submerged = (std::min)((std::max)(submergedDepth / (2.0f * radius), 0.0f), 1.0f);
 
-  // Archimedes: the upthrust is rho_water / rho_body times gravity, scaled by how
-  // much of the body is under the surface. densityRatio is relative to water, so
-  // a value below 1 floats and above 1 sinks.
+  // Archimedes, net of gravity: a_net = g * (submerged / densityRatio - 1).
+  // Equilibrium is submerged == densityRatio, so density ALONE decides whether the
+  // body floats and how deep it sits; mass does not enter here, and should not.
   const float ratio = (std::max)(s.densityRatio, 0.02f);
-  const float buoyancy = s.submerged * (1.0f / ratio) * m_settings.gravity;
-  s.vy += (-m_settings.gravity + buoyancy) * dt;
+  const float accel = m_settings.gravity * (s.submerged / ratio - 1.0f);
 
-  // Quadratic drag, only while wet. Water is ~800x denser than air, so this is
-  // the term that actually stops the ball; without it the pool looks like it has
-  // no viscosity at all.
+  // Quadratic drag on a sphere, with added mass:
+  //   F_d      = 0.5 * rho_w * Cd * A * v^2          (A = pi r^2)
+  //   m_eff    = rho_w * V * (densityRatio + 1/3)    (V = 4/3 pi r^3, plus the
+  //                                                   half-volume of water the body
+  //                                                   drags along with it)
+  //   a_drag   = 9 * Cd * v^2 / (16 * r * (densityRatio + 1/3))
+  // Dividing by the EFFECTIVE inertia is what makes a heavy ball punch through the
+  // surface while a light one is stopped dead. The previous fixed damping
+  // coefficient was mass-independent and about 5x too strong at entry speed.
   const float speed = std::sqrt(s.vx * s.vx + s.vy * s.vy + s.vz * s.vz);
+  float dragScale = 0.0f;
   if (s.submerged > 0.0f && speed > 1e-5f) {
-    const float damp = 1.0f / (1.0f + 6.0f * s.submerged * speed * dt);
-    s.vx *= damp;
-    s.vy *= damp;
-    s.vz *= damp;
+    const float dragAccel = s.submerged * (9.0f * s.dragCoefficient * speed * speed) /
+                            (16.0f * radius * (ratio + 1.0f / 3.0f));
+    dragScale = dragAccel / speed;
   }
+
+  s.vy += accel * dt;
+  // Explicit drag integrated per component; clamped so a fast entry cannot reverse
+  // the velocity in a single frame.
+  const float dragStep = (std::min)(dragScale * dt, 0.5f);
+  s.vx -= s.vx * dragStep;
+  s.vy -= s.vy * dragStep;
+  s.vz -= s.vz * dragStep;
 
   s.x += s.vx * dt;
   s.y += s.vy * dt;
   s.z += s.vz * dt;
 
   // Keep the body inside the basin: resting on the floor, and against the walls.
+  const float bounce = (std::min)((std::max)(s.restitution, 0.0f), 0.99f);
   if (s.y - radius < floorY) {
     s.y = floorY + radius;
-    if (s.vy < 0.0f) s.vy = 0.0f;
-    s.vx *= 0.6f;
-    s.vz *= 0.6f;
+    if (s.vy < 0.0f) s.vy = -s.vy * bounce;
+    s.vx *= bounce;
+    s.vz *= bounce;
   }
   const float minX = m_settings.basinMinX + radius;
   const float maxX = m_settings.basinMaxX - radius;
   const float minZ = m_settings.basinMinZ + radius;
   const float maxZ = m_settings.basinMaxZ - radius;
-  if (s.x < minX) { s.x = minX; s.vx = std::abs(s.vx) * 0.4f; }
-  if (s.x > maxX) { s.x = maxX; s.vx = -std::abs(s.vx) * 0.4f; }
-  if (s.z < minZ) { s.z = minZ; s.vz = std::abs(s.vz) * 0.4f; }
-  if (s.z > maxZ) { s.z = maxZ; s.vz = -std::abs(s.vz) * 0.4f; }
+  if (s.x < minX) { s.x = minX; s.vx = std::abs(s.vx) * bounce; }
+  if (s.x > maxX) { s.x = maxX; s.vx = -std::abs(s.vx) * bounce; }
+  if (s.z < minZ) { s.z = minZ; s.vz = std::abs(s.vz) * bounce; }
+  if (s.z > maxZ) { s.z = maxZ; s.vz = -std::abs(s.vz) * bounce; }
+}
+
+bool FluidSimulation::ResetToRest(BaseDriver* driver) {
+  if (!m_ready || !driver || !m_clearPipeline) return false;
+
+  const std::vector<uint32_t> constants = BuildConstants();
+  const uint32_t px = (m_settings.width + m_clearPipeline->threadGroupSize[0] - 1) / m_clearPipeline->threadGroupSize[0];
+  const uint32_t py = (m_settings.height + m_clearPipeline->threadGroupSize[1] - 1) / m_clearPipeline->threadGroupSize[1];
+  const uint32_t pz = (m_settings.depth + m_clearPipeline->threadGroupSize[2] - 1) / m_clearPipeline->threadGroupSize[2];
+
+  auto clear = [&](ComputeTexture3D* volume) {
+    if (!volume) return true;
+    const std::vector<ComputeBindingDesc> bindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+      {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, volume}
+    };
+    return driver->DispatchCompute(*m_clearPipeline, bindings, px, py, pz);
+  };
+
+  // Clearing momentum is the point of a reset: without it the next drop lands in
+  // water the previous one set moving, and two runs at different heights are not
+  // comparable.
+  if (!clear(m_velocity[0].get()) || !clear(m_velocity[1].get())) return false;
+  if (!clear(m_pressure[0].get()) || !clear(m_pressure[1].get())) return false;
+  if (!clear(m_divergence.get())) return false;
+  if (!clear(m_alpha[0].get()) || !clear(m_alpha[1].get())) return false;
+
+  m_current = 0;
+  m_pressureCurrent = 0;
+  m_time = 0.0f;
+  m_framesSinceVolumeCheck = 0;
+
+  // Re-seed the volume fraction and lock the reference mass to the resting pool.
+  return SeedVolumeFraction(driver);
 }
 
 bool FluidSimulation::InjectSphere(BaseDriver* driver) {

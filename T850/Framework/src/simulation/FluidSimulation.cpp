@@ -28,10 +28,17 @@ namespace t850 {
   struct LayoutPoolJson {
     double minX = 0.0, minY = 0.0, maxX = 0.0, maxY = 0.0;
     double depth = 0.0;
+    // Metres of air the solver domain keeps above the still-water plane so a
+    // splash has room to rise into. With no freeboard the top row of the volume
+    // is already full and the free surface behaves like a solid lid.
+    double freeboard = 0.35;
     std::vector<LayoutStepJson> steps;
   };
   struct LayoutJson {
     double waterLine = 0.0;
+    // Absolute world Y of the still-water surface, i.e. the plane the water mesh
+    // is authored at. Authoritative: the solver derives its fill level from it.
+    double waterPlaneY = 0.0;
     LayoutPoolJson pool;
   };
 
@@ -82,14 +89,14 @@ struct glz::meta<t850::LayoutPoolJson> {
   using T = t850::LayoutPoolJson;
   static constexpr auto value = glz::object(
       "minX", &T::minX, "minY", &T::minY, "maxX", &T::maxX, "maxY", &T::maxY,
-      "depth", &T::depth, "steps", &T::steps);
+      "depth", &T::depth, "freeboard", &T::freeboard, "steps", &T::steps);
 };
 
 template <>
 struct glz::meta<t850::LayoutJson> {
   using T = t850::LayoutJson;
   static constexpr auto value = glz::object(
-      "waterLine", &T::waterLine, "pool", &T::pool);
+      "waterLine", &T::waterLine, "waterPlaneY", &T::waterPlaneY, "pool", &T::pool);
 };
 
 namespace t850 {
@@ -156,6 +163,104 @@ std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked, 
   return words;
 }
 
+// Mirrors `cbuffer ObjectConstants : register(b1)` in CS_FluidSphere3D.hlsl.
+// The word count must match the reflected layout exactly or the dispatch is
+// rejected by base binding validation.
+namespace {
+  struct ObjectConstantsBlob {
+    float centreX, centreY, centreZ, radius;
+    float velX, velY, velZ, enabled;
+    float worldOriginX, worldOriginZ, basinMinY, padding0;
+  };
+}
+
+std::vector<uint32_t> FluidSimulation::BuildObjectConstants() const {
+  ObjectConstantsBlob blob{};
+  blob.centreX = m_sphere.x;
+  blob.centreY = m_sphere.y;
+  blob.centreZ = m_sphere.z;
+  blob.radius = m_sphere.radius;
+  blob.velX = m_sphere.vx;
+  blob.velY = m_sphere.vy;
+  blob.velZ = m_sphere.vz;
+  blob.enabled = m_sphere.enabled ? 1.0f : 0.0f;
+  // Centre of grid cell (0, *, 0) in world space, and the world Y of the bottom
+  // face of row 0. Derived from the basin bounds, which come from the pool
+  // layout JSON, so nothing about the pool placement is baked into the kernel.
+  blob.worldOriginX = m_settings.basinMinX + 0.5f * m_settings.cellSize;
+  blob.worldOriginZ = m_settings.basinMinZ + 0.5f * m_settings.cellSize;
+  blob.basinMinY = m_settings.basinMinY;
+  blob.padding0 = 0.0f;
+  std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
+  std::memcpy(words.data(), &blob, sizeof(blob));
+  return words;
+}
+
+// Mirrors `cbuffer CorrectionConstants : register(b1)` in
+// CS_FluidVolumeCorrect3D.hlsl.
+namespace {
+  struct CorrectionConstantsBlob {
+    float interfaceHeadroom;
+    float volumeDelta;
+    // A cbuffer is padded to a 16-byte boundary, so the reflected word count is
+    // 4 even though only two floats are used. The declared count in
+    // compute_kernels.json and this blob must both say 4 or the driver silently
+    // rejects the pipeline.
+    float padding0;
+    float padding1;
+  };
+}
+
+std::vector<uint32_t> FluidSimulation::BuildCorrectionConstants(float deficit) const {
+  CorrectionConstantsBlob blob{};
+  blob.interfaceHeadroom = m_lastInterfaceHeadroom;
+  blob.volumeDelta = deficit;
+  blob.padding0 = 0.0f;
+  blob.padding1 = 0.0f;
+  std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
+  std::memcpy(words.data(), &blob, sizeof(blob));
+  return words;
+}
+
+// Mirrors `cbuffer SpreadConstants : register(b1)` in CS_FluidSphereSpread3D.hlsl.
+namespace {
+  struct SpreadConstantsBlob {
+    float displacedTotal;
+    float totalFreeCapacity;
+    float padding0;
+    float padding1;
+  };
+}
+
+std::vector<uint32_t> FluidSimulation::BuildSpreadConstants(float displaced, float totalFree) const {
+  SpreadConstantsBlob blob{};
+  blob.displacedTotal = displaced;
+  blob.totalFreeCapacity = totalFree;
+  std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
+  std::memcpy(words.data(), &blob, sizeof(blob));
+  return words;
+}
+
+namespace {
+  struct GeometryConstantsBlob {
+    float basinMinY;
+    float waterPlaneY;
+    float worldOriginX;
+    float worldOriginZ;
+  };
+}
+
+std::vector<uint32_t> FluidSimulation::BuildGeometryConstants() const {
+  GeometryConstantsBlob blob{};
+  blob.basinMinY = m_settings.basinMinY;
+  blob.waterPlaneY = m_settings.waterPlaneY;
+  blob.worldOriginX = m_settings.basinMinX + 0.5f * m_settings.cellSize;
+  blob.worldOriginZ = m_settings.basinMinZ + 0.5f * m_settings.cellSize;
+  std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
+  std::memcpy(words.data(), &blob, sizeof(blob));
+  return words;
+}
+
 bool FluidSimulation::LoadPoolLayout(const char* layoutPath) {
   m_solidBoxes.clear();
   if (!layoutPath) return false;
@@ -179,11 +284,46 @@ bool FluidSimulation::LoadPoolLayout(const char* layoutPath) {
   m_settings.basinMinZ = static_cast<float>(layout.pool.minY);
   m_settings.basinMaxZ = static_cast<float>(layout.pool.maxY);
   m_settings.basinMinY = static_cast<float>(floorY);
-  // Domain height is exactly Height * cellSize so the column integral in the
-  // surface kernel (alpha sum * CellSize) converts to metres without a scale
-  // error. A domain that is not an exact multiple of the cell size would make
-  // the waterline sit centimetres off the authored plane.
-  m_settings.basinMaxY = m_settings.basinMinY + static_cast<float>(m_settings.height) * m_settings.cellSize;
+
+  // Domain height. Two rules, both data-driven:
+  //  - the top of the volume is the still-water plane plus the freeboard the
+  //    pool JSON asks for, so the volume really contains air above the water.
+  //    With no air above it the top row is already full and the free surface acts
+  //    as a solid lid, which caps any splash at exactly zero height.
+  //  - rows are derived from that height and the cell size, so the grid scales
+  //    with the pool instead of being a literal.
+  const float cellSize = (std::max)(m_settings.cellSize, 0.001f);
+  m_settings.waterPlaneY = static_cast<float>(layout.waterPlaneY);
+  m_settings.freeboard = static_cast<float>((std::max)(layout.pool.freeboard, 0.0));
+
+  if (m_settings.deriveGridFromLayout) {
+    // Domain height. The top of the volume is the still-water plane plus the
+    // freeboard the pool JSON asks for, so the volume really contains air above
+    // the water. With no air above it the top row is already full and the free
+    // surface acts as a solid lid, which caps any splash at zero height. Rows are
+    // derived from that height and the cell size, so the grid scales with the pool
+    // instead of being a literal.
+    const double domainTop = (std::max)(layout.waterPlaneY + (std::max)(layout.pool.freeboard, 0.0),
+                                        floorY + static_cast<double>(cellSize) * 4.0);
+    const auto rows = static_cast<uint32_t>(std::lround((domainTop - floorY) / static_cast<double>(cellSize)));
+    m_settings.height = (std::min)((std::max)(rows, 4u), 64u);
+    // Exact multiple of the cell size, so the column integral in the surface
+    // kernel converts to metres without a scale error.
+    m_settings.basinMaxY = m_settings.basinMinY + static_cast<float>(m_settings.height) * cellSize;
+    // Fill level that places the still-water surface exactly on the authored plane.
+    m_settings.surfaceLevel = (std::min)(
+        (std::max)(static_cast<float>((layout.waterPlaneY - floorY) /
+                                      (static_cast<double>(m_settings.height) * cellSize)),
+                   0.02f),
+        0.99f);
+    T8_LOG_INFO("[Fluid] Domain %.2f..%.2f m (%u rows @ %.3f m), water plane %.3f m, fill %.3f",
+                m_settings.basinMinY, m_settings.basinMaxY, m_settings.height, cellSize,
+                static_cast<float>(layout.waterPlaneY), m_settings.surfaceLevel);
+  } else {
+    // Caller's grid wins. Keep the domain exactly Height * cellSize so the column
+    // integral converts to metres without a scale error.
+    m_settings.basinMaxY = m_settings.basinMinY + static_cast<float>(m_settings.height) * cellSize;
+  }
 
   for (const LayoutStepJson& step : layout.pool.steps) {
     FluidSolidBox box;
@@ -339,11 +479,15 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_seedAlphaPipeline = CreatePipeline(driver, "CS_FluidSeedAlpha3D.hlsl");
   m_alphaAdvectPipeline = CreatePipeline(driver, "CS_FluidAlphaAdvect3D.hlsl");
   m_volumeCorrectPipeline = CreatePipeline(driver, "CS_FluidVolumeCorrect3D.hlsl");
+  m_spherePipeline = CreatePipeline(driver, "CS_FluidSphere3D.hlsl");
+  m_sphereSpreadPipeline = CreatePipeline(driver, "CS_FluidSphereSpread3D.hlsl");
+  m_sphereSumPipeline = CreatePipeline(driver, "CS_FluidSphereSum3D.hlsl");
 
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
-                  m_alphaAdvectPipeline && m_volumeCorrectPipeline;
+                  m_alphaAdvectPipeline && m_volumeCorrectPipeline && m_spherePipeline &&
+                  m_sphereSpreadPipeline && m_sphereSumPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
   complete = complete && m_divergence;
@@ -394,6 +538,12 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_seedAlphaPipeline.reset();
   m_alphaAdvectPipeline.reset();
   m_volumeCorrectPipeline.reset();
+  m_spherePipeline.reset();
+  m_sphereSpreadPipeline.reset();
+  m_sphereSumPipeline.reset();
+  m_sphereTotals.reset();
+  m_removedBuffer.reset();
+  m_removedColumns = 0;
   m_referenceVolumeFraction = 0.0f;
   m_interfaceAlphaSum = 0.0f;
   m_framesSinceVolumeCheck = 0;
@@ -465,11 +615,16 @@ bool FluidSimulation::CorrectVolumeFraction(BaseDriver* driver, float& appliedSc
   if (targetInterface <= 0.0f) return false;
   appliedScale = targetInterface / interfaceSum;
 
+  // Additive, headroom-weighted distribution. A multiplicative rescale is eaten
+  // by the clamp: interface cells sit just under 1, so alpha * 1.03 lands above
+  // 1 and saturate() discards the whole gain.
   const uint32_t alphaNext = (m_alphaCurrent + 1) % 2;
-  const std::vector<uint32_t> constants = BuildConstants(0, appliedScale);
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<uint32_t> correctionConstants = BuildCorrectionConstants(deficit);
   const std::vector<ComputeBindingDesc> bindings = {
     {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
     {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
+    {ComputeBindingType::Constants32, 1, nullptr, correctionConstants.data(), static_cast<uint32_t>(correctionConstants.size())},
     {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[alphaNext].get()}
   };
   const uint32_t gx = (m_settings.width + m_volumeCorrectPipeline->threadGroupSize[0] - 1) / m_volumeCorrectPipeline->threadGroupSize[0];
@@ -478,6 +633,16 @@ bool FluidSimulation::CorrectVolumeFraction(BaseDriver* driver, float& appliedSc
   if (!driver->DispatchCompute(*m_volumeCorrectPipeline, bindings, gx, gy, gz))
     return false;
   m_alphaCurrent = alphaNext;
+
+  // Verify the correction actually landed. A correction that is computed but
+  // then clamped back on the GPU is the difference between "mass is conserved"
+  // and "mass is conserved on paper", so measure the result instead of assuming.
+  float totalAfter = 0.0f;
+  float interfaceAfter = 0.0f;
+  if (MeasureVolumeFraction(driver, totalAfter, interfaceAfter)) {
+    T8_LOG_DEBUG("[Fluid] VolumeCorrection t=%.2fs was=%.0f deficit=%.1f headroom=%.0f -> now=%.0f (%+.1f)",
+                 m_time, total, deficit, m_lastInterfaceHeadroom, totalAfter, totalAfter - total);
+  }
   return true;
 }
 
@@ -491,6 +656,7 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
                                             float& interfaceSum) {
   totalAlpha = 0.0f;
   interfaceSum = 0.0f;
+  float interfaceHeadroom = 0.0f;
   if (!driver || !m_copyPipeline || !m_alpha[0]) return false;
   const uint32_t width = m_settings.width;
   const uint32_t height = m_settings.height;
@@ -532,8 +698,138 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
     float value = 0.0f;
     std::memcpy(&value, &raw[index * 4 + 0], sizeof(float));
     totalAlpha += value;
-    if (value > 0.001f && value < 0.999f) interfaceSum += value;
+    if (value > 0.001f && value < 0.999f) {
+      interfaceSum += value;
+      interfaceHeadroom += 1.0f - value;
+    }
   }
+  m_lastInterfaceHeadroom = interfaceHeadroom;
+  return true;
+}
+
+void FluidSimulation::AdvanceSphere(float dt) {
+  FluidSphere& s = m_sphere;
+  if (!s.enabled || dt <= 0.0f) return;
+
+  const float floorY = m_settings.basinMinY;
+  const float radius = (std::max)(s.radius, 0.001f);
+
+  // Submerged FRACTION of the sphere by the water plane, in [0,1]. This is what
+  // makes the entry decelerate and the ball settle instead of accelerating
+  // straight to the floor: before this the body was ballistic all the way down.
+  const float bottom = s.y - radius;
+  const float submergedDepth = m_settings.waterPlaneY - bottom;
+  s.submerged = (std::min)((std::max)(submergedDepth / (2.0f * radius), 0.0f), 1.0f);
+
+  // Archimedes: the upthrust is rho_water / rho_body times gravity, scaled by how
+  // much of the body is under the surface. densityRatio is relative to water, so
+  // a value below 1 floats and above 1 sinks.
+  const float ratio = (std::max)(s.densityRatio, 0.02f);
+  const float buoyancy = s.submerged * (1.0f / ratio) * m_settings.gravity;
+  s.vy += (-m_settings.gravity + buoyancy) * dt;
+
+  // Quadratic drag, only while wet. Water is ~800x denser than air, so this is
+  // the term that actually stops the ball; without it the pool looks like it has
+  // no viscosity at all.
+  const float speed = std::sqrt(s.vx * s.vx + s.vy * s.vy + s.vz * s.vz);
+  if (s.submerged > 0.0f && speed > 1e-5f) {
+    const float damp = 1.0f / (1.0f + 6.0f * s.submerged * speed * dt);
+    s.vx *= damp;
+    s.vy *= damp;
+    s.vz *= damp;
+  }
+
+  s.x += s.vx * dt;
+  s.y += s.vy * dt;
+  s.z += s.vz * dt;
+
+  // Keep the body inside the basin: resting on the floor, and against the walls.
+  if (s.y - radius < floorY) {
+    s.y = floorY + radius;
+    if (s.vy < 0.0f) s.vy = 0.0f;
+    s.vx *= 0.6f;
+    s.vz *= 0.6f;
+  }
+  const float minX = m_settings.basinMinX + radius;
+  const float maxX = m_settings.basinMaxX - radius;
+  const float minZ = m_settings.basinMinZ + radius;
+  const float maxZ = m_settings.basinMaxZ - radius;
+  if (s.x < minX) { s.x = minX; s.vx = std::abs(s.vx) * 0.4f; }
+  if (s.x > maxX) { s.x = maxX; s.vx = -std::abs(s.vx) * 0.4f; }
+  if (s.z < minZ) { s.z = minZ; s.vz = std::abs(s.vz) * 0.4f; }
+  if (s.z > maxZ) { s.z = maxZ; s.vz = -std::abs(s.vz) * 0.4f; }
+}
+
+bool FluidSimulation::InjectSphere(BaseDriver* driver) {
+  if (!m_ready || !driver || !m_spherePipeline || !m_sphereSpreadPipeline || !m_alpha[m_alphaCurrent])
+    return false;
+
+  const uint32_t columns = m_settings.width * m_settings.depth;
+  if (!m_removedBuffer || m_removedColumns != columns) {
+    ComputeBufferDesc desc;
+    desc.byteWidth = columns * 2 * sizeof(float);
+    desc.structureStride = 2 * sizeof(float);
+    desc.access = ComputeBufferAccess::ReadWrite;
+    desc.debugName = "Fluid Sphere Removed";
+    const std::vector<uint32_t> seed(columns * 2, 0u);
+    m_removedBuffer = driver->CreateComputeBuffer(desc, seed.data());
+    if (!m_removedBuffer) return false;
+    m_removedColumns = columns;
+  }
+
+  const uint32_t alphaMid = (m_alphaCurrent + 1) % 2;
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<uint32_t> objectConstants = BuildObjectConstants();
+  // The obstacle parameters go in as CONSTANTS, not as a structured buffer.
+  // ComputeBuffer has no update path in this engine, so a buffer created once
+  // would be read stale forever and the obstacle would never move.
+  const std::vector<ComputeBindingDesc> openBindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
+    {ComputeBindingType::Constants32, 1, nullptr, objectConstants.data(), static_cast<uint32_t>(objectConstants.size())},
+    {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
+    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[alphaMid].get()},
+    {ComputeBindingType::ReadWriteBuffer, 1, m_removedBuffer.get(), nullptr, 0}
+  };
+  const uint32_t gx = (m_settings.width + m_spherePipeline->threadGroupSize[0] - 1) / m_spherePipeline->threadGroupSize[0];
+  const uint32_t gy = (m_settings.depth + m_spherePipeline->threadGroupSize[1] - 1) / m_spherePipeline->threadGroupSize[1];
+  if (!driver->DispatchCompute(*m_spherePipeline, openBindings, gx, gy, 1))
+    return false;
+  m_alphaCurrent = alphaMid;
+
+  // Reduce the per-column bookkeeping to two totals ON THE GPU. Reading the buffer
+  // back to the CPU was a hard pipeline stall every frame, and the readback
+  // returned zeroed data, which made the whole displacement a silent no-op.
+  const uint32_t columnsCount = m_settings.width * m_settings.depth;
+  if (!m_sphereTotals || m_removedColumns != columnsCount) {
+    ComputeBufferDesc totalsDesc;
+    totalsDesc.byteWidth = 2 * sizeof(float);
+    totalsDesc.structureStride = 2 * sizeof(float);
+    totalsDesc.access = ComputeBufferAccess::ReadWrite;
+    totalsDesc.debugName = "Fluid Sphere Totals";
+    const std::vector<uint32_t> seed(2, 0u);
+    m_sphereTotals = driver->CreateComputeBuffer(totalsDesc, seed.data());
+    if (!m_sphereTotals) return false;
+  }
+  const std::vector<ComputeBindingDesc> sumBindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyBuffer, 0, m_removedBuffer.get(), nullptr, 0},
+    {ComputeBindingType::ReadWriteBuffer, 0, m_sphereTotals.get(), nullptr, 0}
+  };
+  if (!driver->DispatchCompute(*m_sphereSumPipeline, sumBindings, 1, 1, 1))
+    return false;
+
+  const uint32_t alphaNext = (m_alphaCurrent + 1) % 2;
+  const std::vector<ComputeBindingDesc> spreadBindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
+    {ComputeBindingType::ReadOnlyBuffer, 9, m_sphereTotals.get(), nullptr, 0},
+    {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
+    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[alphaNext].get()}
+  };
+  if (!driver->DispatchCompute(*m_sphereSpreadPipeline, spreadBindings, gx, gy, 1))
+    return false;
+  m_alphaCurrent = alphaNext;
   return true;
 }
 
@@ -649,6 +945,14 @@ bool FluidSimulation::Step(BaseDriver* driver) {
 
   // Transport alpha AFTER projection so the flux field is the one the fluid
   // actually moves with. Flux-form advection conserves volume by construction.
+  AdvanceSphere(m_settings.deltaTime);
+  if (m_sphere.enabled && m_spherePipeline && m_sphere.y - m_sphere.radius <
+      m_settings.basinMinY + static_cast<float>(m_settings.height) * m_settings.cellSize) {
+    // The sphere is at or below the water plane, so it is displacing water. Do this
+    // before advection so the cavity it opens is transported by the same velocity
+    // field and the pressure solve sees it this frame.
+    InjectSphere(driver);
+  }
   if (m_alphaAdvectPipeline && m_alpha[0] && m_alpha[1]) {
     const uint32_t alphaNext = (m_alphaCurrent + 1) % 2;
     const std::vector<uint32_t> alphaConstants = BuildConstants(0, m_settings.alphaCompression);
@@ -681,6 +985,7 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   // cannot be both read and written in one dispatch.
   const uint32_t surfaceNext = (m_surfaceCurrent + 1) % 2;
   const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<uint32_t> geometryConstants = BuildGeometryConstants();
   const std::vector<ComputeBindingDesc> surfaceBindings = {
     {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
     {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
@@ -689,6 +994,9 @@ bool FluidSimulation::Step(BaseDriver* driver) {
     // surface texture here, which kept the visible water independent of alpha.
     {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr,
      (m_alpha[m_alphaCurrent] ? m_alpha[m_alphaCurrent].get() : m_velocity[m_current].get())},
+    // Basin floor and authored water plane, from the pool layout JSON. These used
+    // to be literals in the kernel.
+    {ComputeBindingType::Constants32, 1, nullptr, geometryConstants.data(), static_cast<uint32_t>(geometryConstants.size())},
     {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]}
   };
   const uint32_t groupsX = (m_settings.width + m_surfacePipeline->threadGroupSize[0] - 1) / m_surfacePipeline->threadGroupSize[0];
@@ -788,11 +1096,13 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
   if (name == "surface") {
     const uint32_t surfaceNext = (m_surfaceCurrent + 1) % 2;
     const std::vector<uint32_t> constants = BuildConstants();
+    const std::vector<uint32_t> geometryConstants = BuildGeometryConstants();
     const std::vector<ComputeBindingDesc> bindings = {
       {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
       {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
       {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr,
        (m_alpha[m_alphaCurrent] ? m_alpha[m_alphaCurrent].get() : m_velocity[m_current].get())},
+      {ComputeBindingType::Constants32, 1, nullptr, geometryConstants.data(), static_cast<uint32_t>(geometryConstants.size())},
       {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]}
     };
     const uint32_t groupsX = (m_settings.width + m_surfacePipeline->threadGroupSize[0] - 1) / m_surfacePipeline->threadGroupSize[0];

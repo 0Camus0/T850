@@ -1,6 +1,7 @@
 {
   "units": "meters",
   "waterLine": 0.0,
+  "waterPlaneY": -0.04,
   "pool": {
     "minX": -4.5,
     "minY": -9.0,
@@ -9,6 +10,7 @@
     "width": 9.0,
     "length": 4.5,
     "depth": 1.6,
+    "freeboard": 0.42,
     "wallThickness": 0.25,
     "copingWidth": 0.4,
     "copingHeight": 0.08,
@@ -96,17 +98,5 @@
     "wall": "Backyard_Wall.glb",
     "props": "Backyard_Props.glb",
     "water": "Backyard_Water.glb"
-  },
-  "waterDetail": {
-    "normalMap": "Backyard/WaterNormal.png",
-    "windSpeed": 6.5,
-    "minCycles": 2,
-    "maxCycles": 128,
-    "spread": 0.35,
-    "targetP99Slope": 0.42,
-    "tileSizeMetres": 0.4,
-    "peakWavelengthMetres": 0.12,
-    "bandWidth": 1.1,
-    "directionality": 0.55
   }
 }

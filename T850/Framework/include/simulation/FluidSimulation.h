@@ -44,6 +44,17 @@ namespace t850 {
     float basinMaxY = 0.02f;
     float basinMaxZ = -4.5f;
 
+    // Absolute world Y of the still-water surface (the plane the water mesh is
+    // authored at). Overridden from the pool layout JSON by LoadPoolLayout().
+    float waterPlaneY = -0.04f;
+    // Metres of air kept above the water plane so a free surface can rise.
+    float freeboard = 0.35f;
+    // When true, LoadPoolLayout() derives the row count from the water plane plus
+    // the freeboard, and derives the fill level so the still surface lands exactly
+    // on the authored plane. Off by default so synthetic tests keep the grid they
+    // asked for.
+    bool deriveGridFromLayout = false;
+
     // Fraction of the basin height that starts filled with water. Cells below
     // this are alpha = 1, cells above are air (alpha = 0), and the single row
     // straddling the initial waterline holds the fractional value.
@@ -63,6 +74,21 @@ namespace t850 {
   struct FluidSolidBox {
     float minX = 0.0f, minY = 0.0f, minZ = 0.0f;
     float maxX = 0.0f, maxY = 0.0f, maxZ = 0.0f;
+  };
+
+  // A sphere dropped into the water. Simulated as a ballistic body until it enters
+  // the pool, then integrated through the fluid as a displaced-volume obstacle.
+  // All values come from the scene JSON, never from literals here.
+  struct FluidSphere {
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    float vx = 0.0f, vy = 0.0f, vz = 0.0f;
+    float radius = 0.1f;
+    // Density relative to water. Below 1 floats, above 1 sinks.
+    float densityRatio = 0.6f;
+    bool enabled = false;
+    // Submerged depth below the water plane, used to damp the fall and to decide
+    // when it has settled on the floor.
+    float submerged = 0.0f;
   };
 
   // GPU volumetric Navier-Stokes solver for a bounded pool volume.
@@ -113,6 +139,12 @@ namespace t850 {
     void SetSOROmega(float omega) { m_settings.sorOmega = omega; }
     void SetDeltaTime(float seconds) { m_settings.deltaTime = seconds; }
     void SetForcingAmplitude(float amplitude) { m_settings.forcingAmplitude = amplitude; }
+
+    // Sphere dropping into the pool. Advance() integrates it and pushes the result
+    // into the solver each frame, so the water responds to a real event.
+    FluidSphere& DroppedSphere() { return m_sphere; }
+    void AdvanceSphere(float dt);
+    bool InjectSphere(BaseDriver* driver);
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.
@@ -171,6 +203,18 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> CreatePipeline(BaseDriver* driver, const char* source);
     std::vector<uint32_t> BuildConstants(uint32_t iterationPacked = 0,
                                          float paddingOverride = -1.0f) const;
+    // Obstacle parameters for CS_FluidSphere3D, packed as live constants because
+    // ComputeBuffer has no update path: a buffer seeded once would be read stale
+    // forever and the obstacle would never move.
+    std::vector<uint32_t> BuildObjectConstants() const;
+    // Basin floor, authored water plane and grid origin. Also live constants, for
+    // the same reason: the surface kernel must not carry the pool placement as a
+    // literal.
+    std::vector<uint32_t> BuildGeometryConstants() const;
+    // Headroom-weighted volume delta for CS_FluidVolumeCorrect3D.
+    std::vector<uint32_t> BuildCorrectionConstants(float deficit) const;
+    // (displaced volume, total surface free capacity) for CS_FluidSphereSpread3D.
+    std::vector<uint32_t> BuildSpreadConstants(float displaced, float totalFree) const;
     bool BuildWallMask(BaseDriver* driver);
     bool MeasureVolumeFraction(BaseDriver* driver, float& totalAlpha, float& interfaceSum);
     bool EnsureSurfaceTarget(BaseDriver* driver);
@@ -217,6 +261,17 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_seedAlphaPipeline;
     std::unique_ptr<ComputePipeline> m_alphaAdvectPipeline;
     std::unique_ptr<ComputePipeline> m_volumeCorrectPipeline;
+    std::unique_ptr<ComputePipeline> m_spherePipeline;
+    // Pass 2 of the obstacle injection: spreads the displaced volume over the free
+    // surface so the body is actually visible instead of cancelling itself out.
+    std::unique_ptr<ComputePipeline> m_sphereSpreadPipeline;
+    // GPU reduction of the per-column bookkeeping into (displaced, freeCapacity).
+    std::unique_ptr<ComputePipeline> m_sphereSumPipeline;
+    std::unique_ptr<ComputeBuffer> m_sphereTotals;
+    // Per-column (removed, free capacity), written by pass 1 and summed on the CPU.
+    std::unique_ptr<ComputeBuffer> m_removedBuffer;
+    uint32_t m_removedColumns = 0;
+    FluidSphere m_sphere;
     // Total alpha at seed time, the reference the volume correction restores to.
     float m_referenceVolumeFraction = 0.0f;
     // Interface-cell alpha sum, needed to compute the correction scale.
@@ -225,7 +280,10 @@ namespace t850 {
     // hard sync, and mass drifts slowly enough that per-frame correction is not
     // needed.
     uint32_t m_framesSinceVolumeCheck = 0;
-    uint32_t m_volumeCheckInterval = 1;
+    uint32_t m_volumeCheckInterval = 15;
+    // Free capacity of the interface cells from the most recent measurement,
+    // used to bound the additive volume correction.
+    float m_lastInterfaceHeadroom = 0.0f;
     std::unique_ptr<ComputeBuffer> m_volumeReadbackBuffer;
     uint32_t m_volumeReadbackVoxels = 0;
     // Structured buffer of one uint per voxel: 1 = solid, 0 = fluid. Built from

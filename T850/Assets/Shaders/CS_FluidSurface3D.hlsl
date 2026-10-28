@@ -44,7 +44,7 @@ Texture3D<float4> VelocityIn : register(t0);
 Texture3D<float4> AlphaIn : register(t1);
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(3, 0)]]
+[[vk::binding(4, 0)]]
 #endif
 #ifdef T850_SPIRV
 [[spv::nonreadable]]
@@ -52,13 +52,21 @@ Texture3D<float4> AlphaIn : register(t1);
 #endif
 RWTexture2D<float4> SurfaceOut : register(u0);
 
-// Absolute world Y of the bottom of the solver domain. Must be the real basin
-// floor, not the authored water plane, or every height is offset by the depth.
-#define T8_BASIN_MIN_Y (-1.60f)
-// Authored water plane. R is written as a DELTA from this plane because the water
-// mesh already sits at it and the vertex shader adds R to its Y. Writing an
-// absolute elevation here would drop the surface by the full depth.
-#define T8_WATER_PLANE_Y (-0.04f)
+// Absolute world Y of the bottom of the solver domain, and the authored water
+// plane. Both arrive as constants from the pool layout so nothing about the pool
+// placement is baked into this kernel. R is written as a DELTA from the water
+// plane because the water mesh already sits at it and the vertex shader adds R to
+// its Y; writing an absolute elevation here would drop the surface by the depth.
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(3, 0)]]
+#endif
+cbuffer GeometryConstants : register(b1)
+{
+    float BasinMinY;
+    float WaterPlaneY;
+    float WorldOriginX;
+    float WorldOriginZ;
+};
 
 // Column integral of alpha, expressed as a world-space elevation.
 // Integrating rather than taking the topmost alpha > 0.5 cell handles a
@@ -72,13 +80,13 @@ RWTexture2D<float4> SurfaceOut : register(u0);
 float ColumnElevation(int x, int z)
 {
     if (x < 0 || z < 0 || x >= int(Width) || z >= int(Depth))
-        return T8_WATER_PLANE_Y;
+        return WaterPlaneY;
     float water = 0.0f;
     for (uint j = 0; j < Height; ++j)
         water += saturate(AlphaIn.Load(int4(int3(x, int(j), z), 0)).x);
     if (water <= 0.001f)
-        return T8_WATER_PLANE_Y;
-    return T8_BASIN_MIN_Y + water * CellSize;
+        return WaterPlaneY;
+    return BasinMinY + water * CellSize;
 }
 
 // Foam from velocity divergence in the surface band. Divergence is the cheap,
@@ -107,23 +115,46 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= Width || id.z >= Depth)
         return;
 
-    const float elevation = ColumnElevation(int(id.x), int(id.z));
+    const int cx = int(id.x);
+    const int cz = int(id.z);
+
+    // Raw column elevations around this texel. These 9 sums replace 9 separate
+    // ColumnElevation calls below, so the smoothing costs one pass of loads.
+    float e[3][3];
+    for (int dz = -1; dz <= 1; ++dz) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            e[dz + 1][dx + 1] = ColumnElevation(cx + dx, cz + dz);
+        }
+    }
+
+    // A column sum changes in whole-cell steps as the interface cell fills, so the
+    // raw elevation is staircase-quantised on 0.09 m cells and reads as blocks at
+    // the water edge. A separable 3x3 tent (weights 1,2,1 / 16) turns that into a
+    // smooth ramp. It is applied here rather than on the texture because storage
+    // textures are not filterable: there is no hardware bilinear to lean on, so the
+    // values themselves have to be smooth.
+    const float elevation = (1.0f / 16.0f) *
+        (e[0][0] + 2.0f * e[0][1] + e[0][2] +
+         2.0f * e[1][0] + 4.0f * e[1][1] + 2.0f * e[1][2] +
+         e[2][0] + 2.0f * e[2][1] + e[2][2]);
+
     // R is a delta from the authored water plane, matching the shader contract:
     // the mesh already sits at that plane and adds R to its Y.
-    const float height = elevation - T8_WATER_PLANE_Y;
+    const float height = elevation - WaterPlaneY;
 
     // Slopes are per-texel height DIFFERENCES over the 0.09 m cell step, matching
     // the shader's slope convention (central difference, no divide by spacing).
-    // Dividing here would make the fragment shader's slope scale wrong.
-    const float slopeX = (ColumnElevation(int(id.x) + 1, int(id.z)) -
-                          ColumnElevation(int(id.x) - 1, int(id.z))) * 0.5f;
-    const float slopeZ = (ColumnElevation(int(id.x), int(id.z) + 1) -
-                          ColumnElevation(int(id.x), int(id.z) - 1)) * 0.5f;
+    // Dividing here would make the fragment shader's slope scale wrong. They come
+    // from the SAME tent weights, so the normal cannot disagree with the surface.
+    const float slopeX = (1.0f / 8.0f) * 0.5f *
+        ((e[0][2] + 2.0f * e[1][2] + e[2][2]) - (e[0][0] + 2.0f * e[1][0] + e[2][0]));
+    const float slopeZ = (1.0f / 8.0f) * 0.5f *
+        ((e[2][0] + 2.0f * e[2][1] + e[2][2]) - (e[0][0] + 2.0f * e[0][1] + e[0][2]));
 
     // Row holding the waterline, so foam samples the interface band.
-    const int surfaceRow = clamp(int((elevation - T8_BASIN_MIN_Y) / CellSize),
+    const int surfaceRow = clamp(int((elevation - BasinMinY) / CellSize),
                                  1, int(Height) - 1);
-    const float foam = SurfaceFoam(int(id.x), int(id.z), surfaceRow);
+    const float foam = SurfaceFoam(cx, cz, surfaceRow);
 
     SurfaceOut[id.xy] = float4(height, foam, slopeX, slopeZ);
 }

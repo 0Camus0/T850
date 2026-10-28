@@ -227,13 +227,22 @@ VS_OUTPUT VS( VS_INPUT input ){
 		uint fluidWidth = 1, fluidHeight = 1;
 		FluidSurfaceTexture.GetDimensions(fluidWidth, fluidHeight);
 		float2 fluidUV = saturate(input.texture0.xy);
-		int2 texel = clamp(int2(fluidUV * float2(fluidWidth, fluidHeight)),
-		                   int2(0, 0), int2(fluidWidth - 1, fluidHeight - 1));
-		float4 fluidSurface = FluidSurfaceTexture.Load(int3(texel, 0));
-		// A calm pool's real surface variation is a few millimetres, under one
-		// pixel at typical viewing distance, so the solved height is scaled for
-		// presentation. TimeParams.z is the JSON-driven displacement scale.
-		input.position.y += fluidSurface.x * TimeParams.z;
+		// Bilinear reconstruction. The solver writes to a STORAGE texture, which
+		// cannot be sampled with hardware filtering, so a plain Load() snaps every
+		// vertex onto a texel and the water edge renders as 0.09 m blocks. Blending
+		// the four surrounding texels here is what makes the mesh look continuous,
+		// and it needs the mesh to be denser than the grid (288 x 144 vertices over
+		// a 100 x 50 grid) so the interpolation is actually sampled.
+		float2 gridPos = fluidUV * float2(fluidWidth, fluidHeight) - 0.5f;
+		int2 base = clamp(int2(floor(gridPos)), int2(0, 0),
+		                  int2(max(int(fluidWidth) - 2, 0), max(int(fluidHeight) - 2, 0)));
+		float2 frac = saturate(gridPos - float2(base));
+		float h00 = FluidSurfaceTexture.Load(int3(base + int2(0, 0), 0)).x;
+		float h10 = FluidSurfaceTexture.Load(int3(base + int2(1, 0), 0)).x;
+		float h01 = FluidSurfaceTexture.Load(int3(base + int2(0, 1), 0)).x;
+		float h11 = FluidSurfaceTexture.Load(int3(base + int2(1, 1), 0)).x;
+		float fluidHeightValue = lerp(lerp(h00, h10, frac.x), lerp(h01, h11, frac.x), frac.y);
+		input.position.y += fluidHeightValue * TimeParams.z;
 
 		// Optional geometric ripple octaves. A shading-only normal leaves the
 		// silhouette flat, which is the giveaway at grazing angles. The finer

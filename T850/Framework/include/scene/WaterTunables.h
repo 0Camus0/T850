@@ -14,8 +14,14 @@ namespace t850 {
     int   gridWidth = 100;
     int   gridHeight = 18;
     int   gridDepth = 50;
-    int   pressureIterations = 15;
+    int   pressureIterations = 60;
     float cellSize = 0.09f;
+    // Absolute world Y of the still-water surface (the plane the water mesh is
+    // authored at), and the metres of air the solver keeps above it so a free
+    // surface has room to rise. Both are overridden from the pool layout JSON,
+    // which is the authority; these are only the fallback.
+    float waterPlaneY = -0.04f;
+    float freeboard = 0.42f;
     // Fixed step used only when fixedTimeStep is on. When it is off (the
     // default) the solver advances by the real frame delta so the water runs in
     // real time instead of at (frame rate / 60) times real speed.
@@ -127,7 +133,12 @@ namespace t850 {
     // at 6-13 m is under one pixel (one pixel is about 1.3 mm there). The solver
     // stays physical; this scales the presentation so what it computed is legible.
     // Set to 1.0 for a physically exact surface.
-    float displacementScale = 12.0f;
+    // Metres of vertex displacement per metre of simulated surface elevation.
+    // 1.0 is physically exact: R is the true delta from the authored water plane,
+    // so a 0.25 m cavity depresses the mesh by 0.25 m. It used to be 12 to make a
+    // sub-millimetre analytic ripple visible; once the surface came from the real
+    // solver that amplification turned every feature into a crater.
+    float displacementScale = 1.0f;
     // Artistic gain on the shading normal. The geometric slope conversion is
     // handled in the shader from cellSize; this only exaggerates the tilt.
     float normalStrength = 1.0f;
@@ -138,6 +149,22 @@ namespace t850 {
     // A one-shot seed decays within seconds; without continuous forcing the
     // solver correctly produces a motionless pool.
     float forcingAmplitude = 1.0f;
+
+    // ── Dropped sphere ──
+    // A ballistic body released above the surface, so the water reacts to a real
+    // event instead of only ever showing its own equilibrium.
+    bool  sphereEnabled = true;
+    float sphereRadius = 0.25f;
+    // Density of the dropped body relative to water. Below 1 floats, above 1 sinks.
+    float sphereDensityRatio = 0.6f;
+    float sphereDropHeight = 1.0f;
+    float sphereDropX = 0.0f;
+    float sphereDropZ = -6.75f;
+    float sphereInitialVY = 0.0f;
+    float sphereInitialVX = 0.0f;
+    float sphereInitialVZ = 0.0f;
+    // Seconds after scene start before the sphere is released.
+    float sphereReleaseDelay = 0.0f;
   };
 
   // Mirrors the tail of MeshMaterialCBuffer and the HLSL MeshMaterialCB exactly.

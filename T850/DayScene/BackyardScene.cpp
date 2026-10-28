@@ -26,13 +26,17 @@ namespace {
 
   // Emitted by scripts/blender/build_backyard.py. Each glTF node already
   // carries its authored world transform, so instances stay at the origin.
-  constexpr std::array<BackyardAsset, 6> kBackyardAssets = {{
+  constexpr std::array<BackyardAsset, 7> kBackyardAssets = {{
     {"Models/Backyard/Backyard_Ground.glb", "ground"},
     {"Models/Backyard/Backyard_House.glb", "house"},
     {"Models/Backyard/Backyard_Pool.glb", "pool"},
     {"Models/Backyard/Backyard_Wall.glb", "wall"},
     {"Models/Backyard/Backyard_Props.glb", "props"},
     {"Models/Backyard/Backyard_Water.glb", "water"},
+    // Unit-radius sphere at the origin, emitted by scripts/models/build_ball.py.
+    // The scene positions and scales it every frame from the simulated body, so
+    // the asset carries no placement of its own.
+    {"Models/Backyard/Backyard_Ball.glb", "ball"},
   }};
 }
 
@@ -165,6 +169,7 @@ void BackyardScene::CreateAssets() {
     m_primitiveIndices.push_back(static_cast<unsigned int>(primitive));
     m_instances.push_back(handle);
     if (std::string(asset.label) == "water") m_waterHandle = handle;
+    if (std::string(asset.label) == "ball") m_ballHandle = handle;
     T8_LOG_INFO("[Backyard] Loaded '%s' (%s) primitive=%d instance=%u",
                 asset.path, asset.label, primitive, handle.index);
   }
@@ -197,13 +202,26 @@ bool BackyardScene::RebuildFluid() {
   }
 
   const t850::FluidSettings fluidSettings = MakeFluidSettings();
-  m_appliedGridWidth = static_cast<int>(fluidSettings.width);
-  m_appliedGridHeight = static_cast<int>(fluidSettings.height);
-  m_appliedGridDepth = static_cast<int>(fluidSettings.depth);
 
   if (!m_fluid.TryInitialize(driver, fluidSettings)) {
     T8_LOG_INFO("[Backyard] Fluid solver unavailable; water renders without displacement");
     return false;
+  }
+  // The solver derives its grid height and fill level from the pool layout JSON,
+  // so read the applied values back rather than trusting the request.
+  {
+    const t850::FluidSettings& applied = m_fluid.Settings();
+    m_appliedGridWidth = static_cast<int>(applied.width);
+    m_appliedGridHeight = static_cast<int>(applied.height);
+    m_appliedGridDepth = static_cast<int>(applied.depth);
+    // Write the derived dims back into the tunables. OnUpdate() rebuilds the
+    // solver whenever the requested grid differs from the applied one, so leaving
+    // the tunable at its literal default made that fire EVERY frame and silently
+    // re-seed the simulation before it could ever accumulate. This was why the
+    // water never appeared to move.
+    SceneProp.Water.gridWidth = m_appliedGridWidth;
+    SceneProp.Water.gridHeight = m_appliedGridHeight;
+    SceneProp.Water.gridDepth = m_appliedGridDepth;
   }
   m_fluidReady = true;
   if (!m_fluid.Seed(driver, true))
@@ -212,6 +230,22 @@ bool BackyardScene::RebuildFluid() {
   // one fractional row at the line.
   if (!m_fluid.SeedVolumeFraction(driver))
     T8_LOG_ERROR("[Backyard] Volume fraction seed failed");
+
+  // Initialise the dropped sphere from JSON-driven values: released after a delay
+  // from a configured height above the water plane.
+  {
+    t850::FluidSphere& sphere = m_fluid.DroppedSphere();
+    sphere.radius = SceneProp.Water.sphereRadius;
+    sphere.densityRatio = SceneProp.Water.sphereDensityRatio;
+    sphere.x = SceneProp.Water.sphereDropX;
+    sphere.z = SceneProp.Water.sphereDropZ;
+    sphere.y = SceneProp.Water.sphereDropHeight;
+    sphere.vx = SceneProp.Water.sphereInitialVX;
+    sphere.vy = SceneProp.Water.sphereInitialVY;
+    sphere.vz = SceneProp.Water.sphereInitialVZ;
+    sphere.enabled = false;  // released after the delay
+    m_sphereReleaseDelay = SceneProp.Water.sphereReleaseDelay;
+  }
 
   // Bind a stable surface target onto the water instance at slot 23 (t23).
   // No render-graph RT involved: a graph target written by an out-of-graph
@@ -267,6 +301,12 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   settings.surfaceLevel = (std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f);
   settings.sorOmega = (std::min)((std::max)(w.sorOmega, 1.0f), 1.99f);
   settings.forcingAmplitude = (std::max)(w.forcingAmplitude, 0.0f);
+  // Let the solver derive its row count and fill level from the pool layout JSON,
+  // so the basin gets real freeboard above the waterline and nothing about the
+  // pool placement is a literal.
+  settings.deriveGridFromLayout = true;
+  settings.waterPlaneY = w.waterPlaneY;
+  settings.freeboard = w.freeboard;
   return settings;
 }
 
@@ -344,6 +384,31 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_fluid.SetSurfaceLevel((std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f));
     m_fluid.SetSOROmega((std::min)((std::max)(w.sorOmega, 1.0f), 1.99f));
     m_fluid.SetForcingAmplitude((std::max)(w.forcingAmplitude, 0.0f));
+
+    // Release the sphere once the configured delay has elapsed.
+    m_elapsedSeconds += deltaSeconds;
+    {
+      t850::FluidSphere& sphere = m_fluid.DroppedSphere();
+      if (!sphere.enabled && w.sphereEnabled && m_elapsedSeconds >= m_sphereReleaseDelay) {
+        sphere.enabled = true;
+        T8_LOG_INFO("[Backyard] Sphere released at y=%.2f radius=%.2f (impact speed %.2f m/s)",
+                    sphere.y, sphere.radius, std::sqrt(2.0f * 9.81f * std::max(0.0f, sphere.y)));
+      }
+      // Keep the visible ball welded to the simulated body. Without this the
+      // physics responds but there is nothing on screen to see doing it.
+      if (m_ballHandle.IsValid()) {
+        if (t850::PrimitiveInst* ball = m_renderContainer.GetMesh(m_ballHandle)) {
+          if (w.sphereEnabled) {
+            ball->SetVisible(true);
+            ball->TranslateAbsolute(sphere.x, sphere.y, sphere.z);
+            ball->ScaleAbsolute(sphere.radius, sphere.radius, sphere.radius);
+            ball->Update();
+          } else {
+            ball->SetVisible(false);
+          }
+        }
+      }
+    }
 
     // Advance by REAL elapsed time. Stepping a fixed 1/60 s once per rendered
     // frame tied the water's speed to the frame rate: at 721 fps the simulation
@@ -450,6 +515,9 @@ void BackyardScene::OnDraw() {
         T8_LOG_INFO("[Backyard][surface] texel0 height=%.4f | grid min=%.4f max=%.4f mean=%.4f maxSlope=%.4f maxFoam=%.4f samples=%d",
                     [&] { float r[4] = {0,0,0,0}; pFramework->pVideoDriver->ReadRTColorFloat(rt, t850::BaseDriver::COLOR0_ATTACHMENT, r); return r[0]; }(),
                     minH, maxH, samples > 0 ? sumH / samples : 0.0f, maxSlope, maxFoam, samples);
+        const t850::FluidSphere& s = m_fluid.DroppedSphere();
+        T8_LOG_INFO("[Backyard][sphere] y=%.3f vy=%.3f submerged=%.2f enabled=%d t=%.2f",
+                    s.y, s.vy, s.submerged, s.enabled ? 1 : 0, m_fluid.SimulationTime());
       }
     }
   }
@@ -618,6 +686,30 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     slider("water_foam_f2x", "noise freq 2 X", w.foamFreq2X, 0.5f, 200.0f, 0.1f);
     slider("water_foam_f2y", "noise freq 2 Y", w.foamFreq2Y, 0.5f, 200.0f, 0.1f);
     slider("water_foam_fade", "noise distance fade", w.foamFade, 1.0f, 120.0f, 0.5f);
+  }
+
+  if (gui.BeginSection("Dropped sphere")) {
+    gui.Checkbox(t850::CheckboxDesc{ "water_sphere_on", "enabled", true, true },
+                 w.sphereEnabled);
+    slider("water_sphere_radius", "radius (m)", w.sphereRadius, 0.02f, 0.40f, 0.005f);
+    slider("water_sphere_height", "drop height (m)", w.sphereDropHeight, 0.05f, 3.0f, 0.01f);
+    slider("water_sphere_x", "drop X", w.sphereDropX, -4.0f, 4.0f, 0.05f);
+    slider("water_sphere_z", "drop Z", w.sphereDropZ, -8.5f, -5.0f, 0.05f);
+    slider("water_sphere_vy", "initial VY", w.sphereInitialVY, -5.0f, 5.0f, 0.05f);
+    slider("water_sphere_vx", "initial VX", w.sphereInitialVX, -5.0f, 5.0f, 0.05f);
+    slider("water_sphere_vz", "initial VZ", w.sphereInitialVZ, -5.0f, 5.0f, 0.05f);
+    slider("water_sphere_delay", "release delay (s)", w.sphereReleaseDelay, 0.0f, 20.0f, 0.1f);
+    if (gui.Button("Drop now")) {
+      t850::FluidSphere& sphere = m_fluid.DroppedSphere();
+      sphere.radius = w.sphereRadius;
+      sphere.x = w.sphereDropX;
+      sphere.z = w.sphereDropZ;
+      sphere.y = w.sphereDropHeight;
+      sphere.vx = w.sphereInitialVX;
+      sphere.vy = w.sphereInitialVY;
+      sphere.vz = w.sphereInitialVZ;
+      sphere.enabled = true;
+    }
   }
 
   if (gui.BeginSection("Presentation")) {

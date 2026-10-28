@@ -112,6 +112,10 @@ namespace t850 {
     // Summed alpha over the fluid domain, read back to the CPU. Used to prove
     // mass conservation.
     bool MeasureVolumeFraction(BaseDriver* driver, float& totalAlpha);
+    // Raw alpha of every voxel, for diagnostics that need the actual surface shape
+    // rather than a rendered frame (a still image cannot tell a dimple that tracks
+    // the body apart from waves that actually propagate).
+    bool ReadVolumeFraction(BaseDriver* driver, std::vector<float>& out);
 
     // Loads the basin bounds and solid intrusions (pool steps) from the
     // Blender-emitted layout, so wall conditions come from the real geometry.
@@ -145,6 +149,12 @@ namespace t850 {
     FluidSphere& DroppedSphere() { return m_sphere; }
     void AdvanceSphere(float dt);
     bool InjectSphere(BaseDriver* driver);
+    // Imposes no-penetration between the fluid and the moving body. Must be called
+    // before the divergence/pressure step.
+    bool StepObjectVelocity(BaseDriver* driver);
+    // Stamps the moving body into the wall mask so it becomes a solid boundary for
+    // every kernel (divergence, pressure, gradient, alpha advection).
+    bool UpdateWallMaskForBody(BaseDriver* driver);
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.
@@ -262,15 +272,16 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_alphaAdvectPipeline;
     std::unique_ptr<ComputePipeline> m_volumeCorrectPipeline;
     std::unique_ptr<ComputePipeline> m_spherePipeline;
-    // Pass 2 of the obstacle injection: spreads the displaced volume over the free
-    // surface so the body is actually visible instead of cancelling itself out.
-    std::unique_ptr<ComputePipeline> m_sphereSpreadPipeline;
-    // GPU reduction of the per-column bookkeeping into (displaced, freeCapacity).
-    std::unique_ptr<ComputePipeline> m_sphereSumPipeline;
-    std::unique_ptr<ComputeBuffer> m_sphereTotals;
-    // Per-column (removed, free capacity), written by pass 1 and summed on the CPU.
+    // Couples the moving body to the velocity field (no-penetration at a moving
+    // solid boundary). Without this there is no divergence from the impact, so the
+    // pressure solve has nothing to react to and no wave can radiate.
+    std::unique_ptr<ComputePipeline> m_objectVelocityPipeline;
+    // Per-column (removed, free capacity), written by the obstacle pass.
     std::unique_ptr<ComputeBuffer> m_removedBuffer;
     uint32_t m_removedColumns = 0;
+    // Authored wall mask on the CPU, used to re-stamp the moving body each frame.
+    std::vector<uint32_t> m_baseMask;
+    uint32_t m_maskBodyCellCount = 0;
     FluidSphere m_sphere;
     // Total alpha at seed time, the reference the volume correction restores to.
     float m_referenceVolumeFraction = 0.0f;

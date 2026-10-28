@@ -482,7 +482,7 @@ void BackyardScene::OnDraw() {
 
   if (m_fluidReady) {
     static int probeFrame = 0;
-    if (++probeFrame == 120) {
+    if (++probeFrame % 60 == 0) {
       t850::FluidSimulation::Diagnostics diagnostics;
       if (m_fluid.ReadDiagnostics(pFramework->pVideoDriver, diagnostics))
         T8_LOG_INFO("[Backyard][fluid] samples=%u meanSpeed=%.4f maxSpeed=%.4f nonFinite=%u",
@@ -518,6 +518,27 @@ void BackyardScene::OnDraw() {
         const t850::FluidSphere& s = m_fluid.DroppedSphere();
         T8_LOG_INFO("[Backyard][sphere] y=%.3f vy=%.3f submerged=%.2f enabled=%d t=%.2f",
                     s.y, s.vy, s.submerged, s.enabled ? 1 : 0, m_fluid.SimulationTime());
+        // Alpha column profile along X through the ball's Z row. This is the only
+        // way to tell "a dimple that tracks the body" apart from "waves that
+        // propagate": a rendered frame cannot show the difference.
+        {
+          std::vector<float> alpha;
+          if (m_fluid.ReadVolumeFraction(pFramework->pVideoDriver, alpha)) {
+            const t850::FluidSettings& fs = m_fluid.Settings();
+            const uint32_t w = fs.width, hgt = fs.height, dep = fs.depth;
+            char line[512];
+            std::string profile;
+            const uint32_t row = dep / 2;
+            for (uint32_t x = 0; x < w; x += 4) {
+              float column = 0.0f;
+              for (uint32_t y = 0; y < hgt; ++y)
+                column += alpha[x + w * (y + hgt * row)];
+              std::snprintf(line, sizeof(line), " %.2f", column * fs.cellSize);
+              profile += line;
+            }
+            T8_LOG_INFO("[Backyard][columns] elevation (m) along X, z=%u:%s", row, profile.c_str());
+          }
+        }
       }
     }
   }

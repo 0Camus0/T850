@@ -1,0 +1,589 @@
+# Backyard Water — Remaining Work and Implementation Directions
+
+This document lists every known open issue in the backyard pool water (scene 7) after commit
+`e90752b4` ("Fix backyard water rendering and rebuild the solver on a staggered grid"), with the
+root cause, the fix to implement, the files involved and how to prove the fix works.
+
+It is written so that any implementer (GLM, DeepSeek or a human) can pick **one task**, follow it
+in isolation, and hand back a change that can be reviewed against the acceptance criteria. Tasks
+are ordered by priority. Each task states which other tasks it depends on.
+
+The original implementation record is
+[backyard-water-simulation.md](backyard-water-simulation.md). Its sections on the solver
+(6–8, 14–16) describe the **old collocated solver** and are superseded by section 2 below until
+task W-16 updates them.
+
+---
+
+## 1. How to use this document
+
+1. Pick one task. Do not combine tasks unless the task says so.
+2. Read section 2 (current architecture) and section 3 (rules) first. Most failures in previous
+   rounds came from breaking a rule in section 3, not from the physics.
+3. Implement only what the task asks. No drive-by refactors, no reformatting.
+4. Run every command in the task's **Acceptance** list and report the measured numbers, not just
+   "pass".
+5. Hand back: the diff (or complete files), the measured numbers, and anything that did not work.
+
+### Suggested model per task
+
+The "Suggested" field is a recommendation, not a rule. Observed behaviour so far:
+
+| Model | Strengths | Watch for |
+|---|---|---|
+| DeepSeek (DS4) | Fast (≈70 s for four complete kernels), follows output formats exactly, good at self-contained HLSL | Subtle index bugs: wrote `cell - offset` where `offset` was already negative; produced a `CellIndex` with a term multiplied by `0u`; used an `[unroll]` loop over a local array (rule R5) |
+| GLM | Large context (500k), careful with multi-file C++ | Very slow with reasoning on (stalled > 20 min twice); run with reasoning disabled (`chat_template_kwargs: {enable_thinking: false}`) |
+
+Every delivered kernel was correct in structure and wrong in one detail at least once. **Review
+every line of index arithmetic.**
+
+Helper used for previous rounds (outside the repo): `D:\Code\QwenFlashT850\backyard-diag\llm.py`
+(OpenAI-compatible client, optional `nothink` argument) and `extract.py` (pulls
+`=== FILE: name ===` blocks out of a response and diffs them against the sources).
+
+---
+
+## 2. Current architecture (as of e90752b4)
+
+### 2.1 Per-substep pipeline
+
+`FluidSimulation::Step` splits the frame into substeps (`maxSubstepDt` = 1/120 s, and enough to
+keep the ball under half a cell per substep; capped at 12). Each substep (`StepInternal`):
+
+| # | Kernel | Purpose |
+|---|---|---|
+| 0 | CPU `AdvanceSphere`, `UpdateWallMaskForBody` | Integrate the ball; stamp its cells into the wall mask (CPU, re-uploads the mask) |
+| 1 | `CS_FluidAdvect3D` | Semi-Lagrangian advection of the staggered velocity |
+| 2 | `CS_FluidForces3D` | Viscosity (`ν·dt/h²`, capped at 1/6), gravity on V faces, optional wind, damping |
+| 3 | `CS_FluidObstacleVelocity3D` | **Boundary kernel**: every solid face gets its boundary value (0, or the ball's velocity) |
+| 4 | `CS_FluidDivergence3D` | Divergence of liquid cells |
+| 5 | `CS_FluidPressure3D` × 2·N | Red-black SOR, ghost-fluid free surface |
+| 6 | `CS_FluidGradient3D` | `u -= dt·∇p` on liquid faces; solid faces get boundary values |
+| 7 | `CS_FluidExtrapolate3D` | One layer of velocity extrapolation into air faces |
+| 8 | `CS_FluidAlphaAdvect3D` | Flux-form upwind volume fraction + bounded interface sharpening |
+| 9 | `CS_FluidSurface3D` + `CS_FluidSurfaceCopy` | 2D surface texture for the water mesh |
+
+Once per frame (every 15 frames) `CorrectVolumeFraction` reads the whole volume back to the CPU
+and adds the missing water to liquid cells that still have room.
+
+### 2.2 Grid conventions (MAC)
+
+* Cells `(i,j,k)`, `0 ≤ i < W`, `0 ≤ j < H`, `0 ≤ k < D`, size `CellSize` (0.09 m). +Y is up.
+* Velocity texture texel `(i,j,k)` stores the faces on the **positive** side of cell `(i,j,k)`:
+  `.x` = u at `(i+1, j+½, k+½)`, `.y` = v at `(i+½, j+1, k+½)`, `.z` = w at `(i+½, j+½, k+1)`,
+  `.w` = 0. The −X face of cell `A` is texel `A−e_x`; at index −1 it is the domain wall (0).
+* Out-of-range cells are **solid** in every kernel.
+* Cell classes: SOLID (mask ≠ 0 or out of range), LIQUID (α ≥ 0.5), AIR (α < 0.5).
+  `T8_LIQUID_THRESHOLD` (HLSL) and `FluidSettings::airThreshold` (C++) must both be 0.5.
+* Face classes: SOLID (either side solid), LIQUID (not solid, either side liquid), AIR.
+* Pressure: `∇²p = ∇·u / dt` (`PressureScale = h²/dt`), then `u -= dt·∇p`. Pressure is stored in
+  physical units so the previous substep's field stays a valid warm start when dt changes.
+* Ghost fluid: across a liquid→air face, `θ = clamp((αL−0.5)/(αL−αA), 0.1, 1)`,
+  `p_ghost = p_L·(1−1/θ)`.
+* Body cell test (kernels with `ObjectConstants`): centre
+  `(WorldOriginX + i·h, BasinMinY + (j+½)·h, WorldOriginZ + k·h)` inside the sphere.
+  `WorldOriginX/Z` already include the half-cell offset.
+
+### 2.3 Surface texture contract (`CS_FluidSurface3D`, slot t23)
+
+R = elevation delta from the authored water plane (m); G = foam; B/A = tent-filtered height
+differences per texel (the fragment shader multiplies by `2/cellSize`). Column height counts
+solid cells that lie below wet water. Dispatched as `(width, depth, 1)`: the grid row is `id.y`.
+
+### 2.4 Baseline measurements to keep or beat
+
+D3D12, x64 Release, RTX 4080 Laptop, scene 7, default tunables (ball r 0.25 m, density 0.6,
+dropped from 1.0 m). Measured from the `[Backyard]` log lines (see 4.3).
+
+| Metric | Value at e90752b4 |
+|---|---|
+| Still pool surface rms (before impact) | 0.1–0.3 mm |
+| Mean speed before impact | ≈ 0.006 m/s |
+| Mean speed at t ≈ 10.7 s | 0.0035 m/s (decaying) |
+| Surface rms at t ≈ 11 s | ≈ 2.2 cm (dominated by the −35 cm hollow under the floating ball) |
+| Water over the steps | ≤ +5 cm |
+| Ball at rest | submerged fraction 0.60 (= density ratio) |
+| Volume correction deficit | ≈ 300 cells (0.36 %) every 15 frames, constant from t = 0 |
+| Alpha volume drift (with correction) | −0.03 % |
+| Fluid self-test | PASS D3D12 and Vulkan; projection ratio 0.448 at 50 Gauss–Seidel sweeps (0.078 with SOR) |
+| Other APIs | D3D11 full solver, 0 errors; OpenGL/WebGPU: see W-01 |
+
+---
+
+## 3. Rules every change must follow
+
+These are not style preferences. Each one has caused a silent failure, a GPU hang or a wrong
+result in this code base.
+
+* **R1 — HLSL 2018 does not short-circuit `||`, `&&` or `?:`.** The engine's DXC flow compiles
+  HLSL 2018. `InRange(c) && WallMask[Index(c)]` reads the buffer even when `c` is out of range.
+  On D3D12 the structured buffer is a root SRV with no bounds checking and the read faulted the
+  GPU (`DXGI_ERROR_DEVICE_HUNG`); Vulkan happened to survive. Always guard with an early `return`.
+* **R2 — Registry and shader must agree exactly.** Every kernel is declared in
+  [compute_kernels.json](../../T850/Assets/Shaders/compute_kernels.json). `binding_index` must equal
+  the `[[vk::binding(N, 0)]]` value; `constant_count` must equal the reflected DWORD count (a
+  cbuffer is padded to 4 DWORDs). A mismatch makes the driver reject the pipeline **with no
+  error**. Every declared resource must be used, or the compiler strips it and the layout no
+  longer matches.
+* **R3 — Storage textures are write-only.** Keep `[[spv::nonreadable]]` and the
+  `[[spv::format_…]]` attribute under `#ifdef T850_SPIRV`. All fields are ping-ponged.
+* **R4 — Only RGBA8 and RGBA16F storage formats exist** today (see W-02).
+* **R5 — No loops over local arrays.** An `[unroll]` loop over a local `const` array collapsed
+  onto element 0 on this engine. Write six neighbour calls out explicitly.
+* **R6 — Staged self-test path.** `FluidSimulation::StepStage` re-implements single stages for
+  the self-test. Any binding change to divergence, pressure, gradient, surface or the boundary
+  kernel must be mirrored there.
+* **R7 — Binding order on the host.** `DispatchVolume` appends bindings in a fixed order
+  (b0, t0, t1, u0, t8, t2, b1). Kernels that do not declare a resource must not receive it.
+* **R8 — Comments.** One short line, only where the code cannot speak for itself.
+* **R9 — Do not commit `T850/config.json`** (rewritten by the app at runtime) or generated
+  `.glb` files (git-ignored; regenerate with the Blender script).
+
+---
+
+## 4. Build and verification
+
+### 4.1 Build (x64 Release)
+
+```powershell
+& 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe' `
+  D:\Code\QwenFlashT850\T850-backyard\T850\T850.sln '/t:Framework;DayScene' `
+  /p:Configuration=Release /p:Platform=x64 /m:2 /nologo /v:m
+```
+
+If the build fails with `C2011 'std::align_val_t'` or `__builtin_assume_aligned` redefinitions,
+delete the stale precompiled header
+`T850\Lib\VStuff\Framework\Release\x64\Framework.pch` and rebuild. Use `/m:2`; higher parallelism
+has crashed the compiler on DayScene.
+
+Shader-only changes do not need a rebuild: kernels are compiled at startup from
+`T850\Assets\Shaders`.
+
+### 4.2 Fluid self-test (must pass on D3D12 and Vulkan)
+
+```powershell
+cd D:\Code\QwenFlashT850\T850-backyard\T850\bin\x64\Release
+.\DayScene.exe --api d3d12  --fluid-selftest --logLevel info --logFile selftest_d3d12.log
+.\DayScene.exe --api vulkan --fluid-selftest --logLevel info --logFile selftest_vk.log
+```
+
+Look for `[FluidSelfTest] PASS`. Report the `projection` and `massConservation` lines.
+
+### 4.3 Scene run with measurements
+
+```powershell
+.\DayScene.exe --api d3d12 --scene 7 --width 1280 --height 720 --dump-frame 3000 `
+  --logLevel info --logFile scene.log
+```
+
+The run exits at frame 3000 (≈ 11 s of simulation at ~270 fps). Every 60 frames it logs:
+
+* `[Backyard][fluid] … meanSpeed maxSpeed nonFinite`
+* `[Backyard][sphere] y vy submerged t`
+* `[Backyard][surface] delta vs water plane (m): min max mean rms` — computed from the alpha
+  readback with the same rule as the surface kernel
+* `[Backyard][columns] surface delta (cm) along X` — through the ball's row
+* `[Backyard][timing] … alpha volume`
+
+With `--logLevel debug` the log also contains `[Fluid] VolumeCorrection … deficit=` and the
+per-frame `substeps=` lines. Zero `[ERROR]` lines are required.
+
+### 4.4 Visual check
+
+`--dumpSnapshot-seconds 0.9` (and `2.0`) writes `dumps_d3d12_f*/RT_Dump_BackBuffer.ppm`. After an
+impact, rings must spread in **all** directions from the ball and reflect from the walls.
+
+---
+
+## 5. Tasks
+
+Priority: **P1** visible defect or correctness bug, **P2** quality/robustness, **P3** cleanup.
+Size: S (< 100 lines), M (100–400 lines), L (> 400 lines or several subsystems).
+
+### W-01 — Water is invisible on OpenGL and WebGPU (P1, S, suggested: either)
+
+**Problem.** On `--api gl` and `--api webgpu` the solver is unavailable
+(`SupportsComputeTextures3D()` is false), the scene logs "water renders without displacement",
+and then logs `GetShader miss … key 0x000008000810000F (pass=1)` **every frame** (400 errors in a
+400-frame run). The water mesh is never drawn.
+
+**Root cause.** [BackyardScene.cpp](../../T850/DayScene/BackyardScene.cpp) sets
+`instance.PersistentFeatureBits = ShaderKey::FLUID_SURFACE` unconditionally when the water mesh is
+loaded. That permutation is only compiled by `EnsureWaterShaderPermutations`, which runs after the
+solver initialised successfully, and the GLSL/WGSL mesh shaders (`VS_Mesh.glsl/.wgsl`,
+`FS_Mesh.glsl/.wgsl`) do not implement `FLUID_SURFACE` at all.
+
+**Fix.** Set `FLUID_SURFACE` on the water instance only after `TryInitialize` succeeds (in
+`RebuildFluid`, next to `water->SetTexture(surface, 23)`), and clear it whenever the solver is torn
+down or unavailable. Without the bit the water renders with its glTF material as a static plane.
+Keep `DrawPassMask` as is.
+
+**Acceptance.** `--api gl` and `--api webgpu` scene 7 runs: 0 `[ERROR]` lines, water plane visible
+in the back-buffer dump. D3D12/Vulkan/D3D11 unchanged (rings still render).
+
+---
+
+### W-02 — 32-bit storage for volume fraction and pressure (P1, M, suggested: GLM)
+
+**Problem.** Every field is RGBA16F. Near α = 1 a half float has a step of 2⁻¹¹ ≈ 0.00049, so a
+per-substep flux smaller than ~0.00024 is rounded away. This is a likely contributor to the
+constant ≈ 300-cell loss per 15 frames (see W-03). Pressure (≈ 15 m²/s² at the floor) carries
+only ~3 significant digits, which limits how far the projection can converge.
+
+**Fix.** Add a 32-bit single-channel storage format to the compute layer and move α, pressure
+and divergence to it.
+
+1. `ComputeStorageFormat` in [BaseDriver.h](../../T850/Framework/include/video/BaseDriver.h):
+   add `R32Float`.
+2. Registry parser [ComputeKernelRegistry.cpp](../../T850/Framework/src/utils/ComputeKernelRegistry.cpp)
+   (`"rgba16float"` branch): accept `"r32float"`.
+3. Reflection [ComputeReflection.cpp](../../T850/Framework/src/utils/ComputeReflection.cpp): map
+   `SpvImageFormatR32f`.
+4. Backends: every place that maps the enum to a native format and validates views —
+   `D3D11Compute.cpp`, `D3D12Compute.cpp` (volume creation and the binding validation),
+   `VulkanCompute.cpp` (creation and layout check), `GLCompute.cpp`, `WebGPUDriver.cpp`,
+   `RenderGraph.cpp` (message only). D3D: `DXGI_FORMAT_R32_FLOAT`. Vulkan:
+   `VK_FORMAT_R32_SFLOAT`. GL: `GL_R32F`.
+5. `FluidSimulation::CreateVolume` gets a format parameter; α, pressure and divergence volumes
+   use `R32Float`; velocity stays RGBA16F.
+6. Kernels that write those volumes: `RWTexture3D<float>` with `[[spv::format_r32f]]`; readers
+   use `Texture3D<float>`. Update `storage_format` in the registry for every kernel that writes
+   them (alpha advect, seed alpha, volume correct, pressure, divergence, clear — the clear kernel
+   is used for all volumes, so it needs an R32F permutation or a second kernel).
+7. `CS_FluidCopy3D` (volume readback) must handle the R32F source.
+8. Extend `ComputeSelfTest` with an R32F volume round-trip on every backend that supports 3D
+   compute.
+
+**Pitfalls.** R2 (registry), R3 (format attribute), R6 (staged path). The surface kernel reads α
+as `.x`; switching to `Texture3D<float>` changes the load syntax.
+
+**Acceptance.** Compute self-test passes on D3D11/D3D12/Vulkan. Fluid self-test passes. Scene run:
+report the `VolumeCorrection` deficit before/after (debug log); report surface rms at t ≈ 11 s.
+
+---
+
+### W-03 — Mass is lost every substep and re-added by a global correction (P1, L, suggested: DeepSeek for the kernel, GLM for the host)
+
+**Problem.** Even with the pool at rest, `CorrectVolumeFraction` adds ≈ 300 cells (0.36 % of the
+water) every 15 frames. The correction is a stop-gap: it does a full-volume GPU→CPU readback (a
+hard stall, see W-04), and it puts water back where there is room, not where it was lost.
+
+**Root cause.** `CS_FluidAlphaAdvect3D` is first-order upwind with `saturate()` at the end. Any
+cell whose update would exceed 1 or drop below 0 is clipped, and the clipped amount is destroyed.
+Upwind also smears air entrained by the splash through the pool (now limited by the sharpening
+term). Half-float storage (W-02) adds rounding loss.
+
+**Fix (recommended).** Replace the transport with the conservative, bounded, operator-split VOF
+scheme of Weymouth & Yue (2010, *J. Comput. Phys.* 229, "Conservative Volume-of-Fluid method for
+free-surface simulations on Cartesian-grids"):
+
+* Advect one axis per pass (X, Y, Z; alternate the order every substep), each pass a separate
+  dispatch with ping-pong.
+* Each pass uses face fluxes from a simple geometric interface reconstruction (or, as a first
+  step, the existing upwind/sharpened flux) **plus** the dilation term `dt · c · ∂u/∂x`, where
+  `c = 1` if the cell's α at the start of the step is ≥ 0.5, else 0. This term makes each 1D pass
+  exactly conservative and keeps α in [0,1] under the 1D CFL condition, so no clipping is needed.
+* Keep the correction as a safety net but log its deficit; it should become ~0.
+
+**Alternative (smaller).** Keep the unsplit scheme but replace `saturate` clipping with flux
+limiting: compute each face flux, then scale outgoing fluxes of a cell so it cannot go below 0 and
+incoming fluxes so it cannot exceed 1 (Zalesak-style limiter). Fluxes stay antisymmetric, so the
+domain sum is exact.
+
+**Pitfalls.** The dilation term must use the **stored** face velocities (MAC), same as the flux.
+Solid faces carry zero flux. Mind R5 (no local arrays).
+
+**Acceptance.** Debug log: `VolumeCorrection deficit` < 20 cells per 15 frames over 3000 frames
+(at rest **and** after the impact). Fluid self-test mass drift line within ±0.05 %. Surface rms at
+t ≈ 11 s not worse than 2.5 cm. Rings still render.
+
+---
+
+### W-04 — GPU→CPU readbacks stall the frame (P2, M, suggested: GLM)
+
+**Problem.** `CorrectVolumeFraction` calls `MeasureVolumeFraction` twice (before and after), and
+each copies the entire volume (110 000 × 16 bytes) to a buffer and reads it back synchronously.
+`BackyardScene::OnDraw` additionally calls `ReadDiagnostics` (allocates a new buffer every call)
+and `ReadVolumeFraction` every 60 frames. Each readback is a full CPU/GPU synchronisation, so the
+frame time spikes every 15 frames and the real-time step (`deltaSeconds`) becomes uneven.
+
+**Fix.**
+1. New kernel `CS_FluidReduce3D`: one pass that sums α, liquid-band headroom (α ∈ [0.5, 0.999)),
+   and liquid-band α into a small RW buffer using `InterlockedAdd` on fixed-point values (the
+   pattern `CS_FluidDiagnostics3D` already uses). Read back 16 bytes instead of 1.76 MB.
+2. Drop the "after" measurement in `CorrectVolumeFraction` unless `--logLevel debug`.
+3. Persist the diagnostics buffer instead of creating it per call.
+4. Gate the scene's per-60-frame probes (`[Backyard][surface]`, `[columns]`, `[fluid]`) behind a
+   dev-GUI checkbox or `--logLevel debug`; keep them available because the acceptance runs in this
+   document rely on them.
+5. Optional (larger): an asynchronous readback (fence-tracked ring of readback buffers, result
+   consumed 2–3 frames later). This needs a new `BaseDriver` API; if attempted, implement for
+   D3D11/D3D12/Vulkan and keep the synchronous path as a fallback.
+
+**Acceptance.** Same deficit/rms numbers as before (the correction must behave identically).
+Report frame-time max and p99 over a 3000-frame run before and after, using `--profile
+--profileFrames 3000` or the PresentMon workflow in
+[gpu-performance-profiling-workflow.md](../rendering/gpu-performance-profiling-workflow.md).
+
+---
+
+### W-05 — Moving the ball re-uploads the wall mask synchronously (P2, M, suggested: DeepSeek)
+
+**Problem.** `UpdateWallMaskForBody` stamps the ball into a CPU copy of the mask and calls
+`CreateComputeBuffer` with initial data whenever the ball's cell footprint changes — up to 12
+times per frame while it moves. On D3D12 each call creates a committed resource, an upload
+buffer, a command list, and waits for the GPU (`WaitForQueuedUploadWork`).
+
+**Fix.** Make the body analytic everywhere instead of stamping it:
+
+* `IsSolid(cell)` in every fluid kernel becomes "static mask **or** `IsBodyCell(cell)`". This
+  requires the `ObjectConstants` cbuffer (b1, 12 floats) in: advect, forces, divergence,
+  pressure, extrapolate, alpha advect, surface. Register b1 for each in the registry (R2) and pass
+  it from `DispatchVolume` (R7) and `StepStage` (R6).
+* `UpdateWallMaskForBody` then only uploads the static mask once (keep `m_baseMask` for the CPU
+  diagnostics).
+* The surface kernel must **not** count body cells as "solid under water" (that would raise the
+  surface over the submerged ball); use the static mask only there.
+
+**Pitfalls.** The surface kernel already uses b1 for `GeometryConstants`; the body constants need
+a different register there (b2) or the geometry values must move into the object block. R1 when
+combining the two tests.
+
+**Acceptance.** Debug log shows no "Fluid Wall Mask created" lines after startup. Scene metrics
+unchanged within noise (cavity depth at impact ≥ 0.4 m, ball at rest submerged 0.60). Self-test
+passes.
+
+---
+
+### W-06 — The ball does not feel the simulated water (P2, M, suggested: GLM)
+
+**Problem.** `AdvanceSphere` computes buoyancy from the **authored** water plane, not the
+simulated surface, and receives no force from the fluid. The ball cannot ride waves, and the
+energy it should lose by radiating waves is replaced by an artificial heave damping ratio
+(`sphereHeaveDamping`, default 0.15).
+
+**Fix.**
+1. Each substep (or each frame), compute the local water level under the ball on the GPU: average
+   the surface elevation over the columns within the ball's radius, using a small reduction
+   kernel. Read it back asynchronously (W-04 step 5) or once per frame with a 1-frame delay.
+2. Use that level instead of `waterPlaneY` for the cap volume in `AdvanceSphere`.
+3. Optional: horizontal drift. Average the liquid face velocities in a shell around the ball and
+   apply drag relative to that velocity instead of to zero.
+4. Re-tune `heaveDamping` downwards once the ball reacts to the real surface; document the new
+   default.
+
+**Acceptance.** Ball at rest: submerged 0.60 ± 0.02. Drop a second time with "Drop now" while
+waves are still running: the ball's `y` in the log must correlate with the local surface (show
+both series). No new stalls (W-04 metric).
+
+---
+
+### W-07 — Water under the ball is deleted, not displaced (P2, M, suggested: DeepSeek)
+
+**Problem.** When the ball's footprint moves, newly covered cells become solid and the alpha
+kernel writes them to 0. That water disappears and is only restored, spread over the whole pool,
+by the next volume correction. The rim around the entry point is therefore lower than it should
+be.
+
+**Fix.** Before stamping a new footprint (or, with W-05, before advecting α each substep), run a
+displacement kernel: for each liquid cell that is a body cell in the new configuration but was
+not in the previous one, push its α into the nearest non-body neighbours, preferring the
+direction of the body's velocity and then upwards. The kernel needs the previous and current body
+constants. Conserve the moved amount exactly (scatter with integer atomics into a buffer, or
+gather from the receiving side).
+
+**Acceptance.** Debug log: the correction deficit during the 0.3 s after impact drops by at least
+half compared with the baseline. Impact rim height (max of `[columns]` in the first 0.3 s after
+impact) increases.
+
+---
+
+### W-08 — The domain ceiling is a lid (P2, S, suggested: DeepSeek)
+
+**Problem.** The domain ends 0.42 m above the water plane and every kernel treats out-of-range
+cells as solid, including above the top row. A strong splash (try density 3.0, drop height 2.5 m)
+hits a solid lid instead of open air.
+
+**Fix.** Treat `j ≥ Height` as AIR, not SOLID, in the pressure (ghost value 0 → Dirichlet),
+gradient and extrapolation kernels, and treat the top faces of the last row as AIR faces.
+Keep zero α flux through the top so water cannot leave the domain (it falls back). Alternatively
+raise `freeboard` in `build_backyard.py` and the layout JSON; report the memory and time cost.
+
+**Acceptance.** Heavy-drop run (density 3.0, height 2.5 m): no α accumulation in the top row
+(probe the top row of the ball column), self-test passes.
+
+---
+
+### W-09 — Water optics use constant depth and unguarded refraction (P2, M, suggested: GLM)
+
+**Problems** in the `FLUID_SURFACE` block of [FS_Mesh.hlsl](../../T850/Assets/Shaders/FS_Mesh.hlsl):
+
+1. **Depth for absorption.** `columnDepth = waterToFloor + R`, with `waterToFloor` a constant
+   1.56 m. Over the steps the real depth is 0.26–0.86 m, so the steps are tinted like deep water.
+   Fix: compute a static per-column floor height once (CPU, from the static mask) into a small
+   R16F/R32F 2D texture bound at a free slot, and use `surface − floor` as the depth.
+2. **Refraction picks up foreground objects.** The refracted lookup into `SceneColorTex` has no
+   depth test, so the ball above the water and the coping bleed into the water. Fix: sample
+   `SceneDepthTex` at the refracted UV; if that depth is nearer than the water fragment, fall back
+   to the unrefracted UV.
+3. **Fresnel ignores the waves.** It uses `eyeDir.y` (flat normal). Use the solver normal blended
+   towards the flat normal (e.g. 50 %) so crests change reflectivity without the dark patches the
+   original author reported.
+4. `RenderMesh::Draw` binds textures through per-slot branches: a new slot needs a new branch
+   (see the implementation record, bug 18).
+
+**Acceptance.** Back-buffer dumps before/after from the same snapshot (`--replaySnapshot`) at
+t = 2.0 s: steps visibly lighter than the deep end; no ball colour around the ball in the water.
+Zero errors on D3D12/Vulkan/D3D11.
+
+---
+
+### W-10 — The water is invisible to depth-based post effects (P3, M, suggested: GLM)
+
+**Problem.** The water is excluded from the GBuffer pass (`DrawPassMask`) so that SSR can see the
+pool floor. As a result DOF, SSAO, fog and god rays treat the pool as empty: objects under water
+get ambient occlusion and focus as if they were in air.
+
+**Fix.** After the forward water pass, write the water's depth into a separate depth target (a
+depth-only draw of the displaced mesh) and let the post passes that need scene depth use the
+nearer of the two. Measure the cost of the extra draw.
+
+**Acceptance.** Depth target dump shows the water surface; frame time cost reported.
+
+---
+
+### W-11 — Tunables are not data-driven; grid size can disagree with cell size (P2, M, suggested: GLM)
+
+**Problems.**
+1. About 90 water tunables live as C++ defaults in
+   [WaterTunables.h](../../T850/Framework/include/scene/WaterTunables.h); nothing loads them from
+   the scene JSON (the implementation record already flags this as the largest gap).
+2. `alphaCompression` (0.5), `maxSubstepDt` (1/120) and the volume-check interval (15) are not
+   tunables and not in the GUI.
+3. `gridWidth` (100) and `gridDepth` (50) are literals. The wall mask places cells using
+   `basin size / width`, while the kernels use `cellSize`. Changing `cellSize` in the GUI without
+   changing the grid makes the two disagree silently. The cell-size slider also has no effect
+   until "Rebuild grid" is pressed.
+4. `WaterGpuParams` comment says "Fifteen float4 groups"; there are 24.
+
+**Fix.** Derive width and depth from the layout like the height already is
+(`deriveGridFromLayout`), so only `cellSize` is a free parameter; rebuild automatically when it
+changes. Add the three solver values to `WaterTunables` and the GUI. Load `WaterTunables` from a
+`"water"` object in `BackyardScene.json` with glaze (`error_on_unknown_keys = true`, matching the
+engine's strict JSON policy), falling back to the C++ defaults.
+
+**Acceptance.** Editing a value in the JSON changes the run (show one example). Setting
+`cellSize` to 0.06 rebuilds a 150×33×75 grid automatically and the pool still sits at the authored
+plane (surface rms at rest < 3 mm).
+
+---
+
+### W-12 — Self-test gaps (P1, M, suggested: either)
+
+The self-test missed every bug fixed in e90752b4. Add these gates (a new `--backyard-selftest`
+running the real scene headless, or extend `--fluid-selftest`):
+
+1. **Still pool.** Ball disabled, 2 s of simulation: mean speed < 0.01 m/s, surface rms < 3 mm,
+   mean surface delta within ±5 mm of the authored plane, step columns within ±1 cm.
+   (Would have caught the 9 cm offset, the step hole, the start-up test seed and the free-falling
+   air.)
+2. **Isotropy.** Ball dropped in the middle of the pool: compare the surface delta at equal
+   distances along ±X and ±Z at t = 0.3 s; difference < 20 %. (Would have caught the `id.z` bug
+   that made waves travel along X only.)
+3. **Mass.** Ball enabled, 10 s: correction deficit per check < 0.1 % of the water (tightened
+   after W-03).
+4. **Moving boundary.** A ball moving at constant velocity through still water: liquid faces next
+   to it carry its normal velocity; no liquid face points into it relative to its velocity.
+5. **Readback.** Read texels from the surface texture at several positions (the old probe read
+   only texel (0,0)), e.g. via `CS_FluidCopy3D`-style copy to a buffer.
+
+A CLI switch to disable the ball (`--backyardNoBall`) is needed for gate 1.
+
+**Acceptance.** All gates pass at e90752b4 (gate 3 with the current 0.5 % threshold). Each gate
+must **fail** when the corresponding bug is reintroduced: demonstrate by temporarily reverting the
+`id.y` fix and the wall-mask shell fix, then restore them.
+
+---
+
+### W-13 — Dead code (P3, S, suggested: DeepSeek)
+
+* `CS_FluidSphere3D.hlsl`, `FluidSimulation::InjectSphere`, `m_removedBuffer`,
+  `m_removedColumns`, `BuildSpreadConstants` (refers to a non-existent `CS_FluidSphereSpread3D`)
+  and the `fluid_sphere` registry entry are unused. `CS_FluidSphere3D` also has the `id.z` row bug
+  the surface kernel had.
+* `FluidSettings::pressureScale`, `initialFill` and `wetThreshold` are unused.
+* `FluidSimulation::Reset` only resets two indices and is unused.
+
+Remove them (and the `fluid_sphere` pipeline creation in `TryInitialize`). Keep the divergent
+`Seed` permutation: the self-test uses it.
+
+**Acceptance.** Build, self-test and scene run unchanged.
+
+---
+
+### W-14 — Duplicated constants across kernels (P3, S–M, suggested: either)
+
+The `FluidConstants` cbuffer is copied into 16 kernels, `ObjectConstants` into 3, and
+`T8_LIQUID_THRESHOLD` into 5 kernels plus `FluidSettings::airThreshold` in C++. A change to one
+copy silently diverges from the others.
+
+**Fix.** First check whether the compute compile path resolves `#include` (pipelines are created
+from source text read by `ResourceLocator`; DXC and glslang need an include handler). If it does,
+move the shared declarations into `Shaders/FluidCommon.hlsli`. If not, pass the threshold through
+the constants (`Padding0` is already per-kernel, so add it to `ObjectConstants` or a new field) and
+add a test that compares the cbuffer text of all fluid kernels.
+
+**Acceptance.** Self-test and scene run unchanged; one place to change the threshold.
+
+---
+
+### W-15 — Solver cost is not measured (P2, M, suggested: GLM)
+
+At 60 fps the solver runs 2 substeps × (≈ 130 dispatches, 120 of them pressure sweeps). Nobody
+has measured the GPU time.
+
+**Fix.** Wrap `Step` in the engine's GPU profiling scopes (see
+[gpu-performance-profiling-workflow.md](../rendering/gpu-performance-profiling-workflow.md)) and
+report GPU ms per frame for the solver at 1280×720 and 1920×1080. Then evaluate, in this order:
+(1) fewer pressure iterations once the warm start has converged (log a residual every N frames),
+(2) a single dispatch per red-black sweep using groupshared tiles, (3) multigrid-preconditioned
+CG. Change only (1) in this task; report the others with numbers.
+
+**Acceptance.** Table of solver GPU ms before/after; scene metrics (2.4) unchanged.
+
+---
+
+### W-16 — The implementation record is out of date (P2, S, suggested: either)
+
+[backyard-water-simulation.md](backyard-water-simulation.md) still describes the collocated
+solver (sections 6–8), the old surface contract details, the old bug list (14) and measurements
+(16). Rewrite those sections from section 2 of this document and the e90752b4 commit message, and
+add the bugs fixed in that commit to the root-cause log. Keep the historical bugs; mark the ones
+whose fix was replaced.
+
+**Acceptance.** No statement in the record contradicts the code (spot-check: storage layout,
+pressure convention, surface dispatch, ball model, volume correction band).
+
+---
+
+### W-17 — Untested platforms (P3, M, suggested: either)
+
+* Android (Vulkan) and Linux/Steam Deck: the solver uses 3D storage images and compute on every
+  substep; neither platform has run scene 7.
+* ARM64 Windows: builds only Framework + DayScene; not run.
+* The fallback path on GL/WebGPU depends on W-01.
+
+**Fix/acceptance.** Run scene 7 and the fluid self-test on each available platform, record
+results in the implementation record, and file a task for each failure.
+
+---
+
+## 6. Hand-back checklist
+
+* [ ] Only the files the task names were changed (plus registry entries the task requires).
+* [ ] R1–R9 checked; every new buffer/texture read is guarded (R1).
+* [ ] x64 Release builds with no new warnings.
+* [ ] Fluid self-test PASS on D3D12 and Vulkan.
+* [ ] Scene 7 run: 0 `[ERROR]` lines; the section 2.4 metrics reported before and after.
+* [ ] Visual check (4.4) still shows circular rings.
+* [ ] `T850/config.json` and generated assets not committed.

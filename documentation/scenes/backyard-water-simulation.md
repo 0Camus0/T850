@@ -1,5 +1,10 @@
 # Backyard Scene & GPU Pool Water — Implementation Record
 
+> **Status (2026-10-28):** commit `e90752b4` rebuilt the solver on a staggered (MAC) grid with a
+> ghost-fluid free surface and fixed several rendering defects. Sections 6–8 and 14–16 below
+> describe the earlier collocated solver. The current architecture, open issues and how to fix
+> them are in [backyard-water-remaining-work.md](backyard-water-remaining-work.md).
+
 This document is the complete engineering record of the `backyard_scene` work on the T850
 engine: a new runtime scene with a parametric backyard, a real 3D Navier–Stokes free-surface
 fluid solver running on compute shaders, a dropped rigid body coupled to that solver, and a

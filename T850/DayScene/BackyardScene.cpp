@@ -222,6 +222,11 @@ bool BackyardScene::RebuildFluid() {
     SceneProp.Water.gridWidth = m_appliedGridWidth;
     SceneProp.Water.gridHeight = m_appliedGridHeight;
     SceneProp.Water.gridDepth = m_appliedGridDepth;
+    // Same for the fill level. LoadPoolLayout() derives it so the still surface
+    // lands exactly on the authored water plane; leaving the tunable at its literal
+    // default meant OnUpdate() re-imposed the wrong value, and a reset would re-seed
+    // the pool at 96% instead of the derived 78.8%.
+    SceneProp.Water.surfaceLevel = applied.surfaceLevel;
   }
   m_fluidReady = true;
   if (!m_fluid.Seed(driver, true))
@@ -237,6 +242,8 @@ bool BackyardScene::RebuildFluid() {
     t850::FluidSphere& sphere = m_fluid.DroppedSphere();
     sphere.radius = SceneProp.Water.sphereRadius;
     sphere.densityRatio = SceneProp.Water.sphereDensityRatio;
+    sphere.dragCoefficient = SceneProp.Water.sphereDragCoefficient;
+    sphere.restitution = SceneProp.Water.sphereRestitution;
     sphere.x = SceneProp.Water.sphereDropX;
     sphere.z = SceneProp.Water.sphereDropZ;
     sphere.y = SceneProp.Water.sphereDropHeight;
@@ -366,6 +373,39 @@ void BackyardScene::OnDestoryScene() {
   DestroyAssets();
 }
 
+void BackyardScene::ResetSimulation() {
+  if (!m_fluidReady || !pFramework || !pFramework->pVideoDriver) return;
+  t850::BaseDriver* driver = pFramework->pVideoDriver;
+  const t850::WaterTunables& w = SceneProp.Water;
+
+  if (!m_fluid.ResetToRest(driver)) {
+    T8_LOG_ERROR("[Backyard] Reset failed: the solver could not be cleared");
+    return;
+  }
+
+  // Re-arm the body at the configured height. Parameters are NOT reset: the whole
+  // point is to retest a changed drop height from an identical initial condition.
+  t850::FluidSphere& sphere = m_fluid.DroppedSphere();
+  sphere.radius = w.sphereRadius;
+  sphere.densityRatio = w.sphereDensityRatio;
+  sphere.dragCoefficient = w.sphereDragCoefficient;
+  sphere.restitution = w.sphereRestitution;
+  sphere.x = w.sphereDropX;
+  sphere.z = w.sphereDropZ;
+  sphere.y = w.sphereDropHeight;
+  sphere.vx = w.sphereInitialVX;
+  sphere.vy = w.sphereInitialVY;
+  sphere.vz = w.sphereInitialVZ;
+  sphere.submerged = 0.0f;
+  sphere.enabled = false;   // re-armed: the release delay applies again
+
+  m_elapsedSeconds = 0.0f;
+  m_sphereReleaseDelay = w.sphereReleaseDelay;
+
+  T8_LOG_INFO("[Backyard] Simulation reset: pool at rest, ball armed at y=%.2f r=%.2f density=%.2f (mass %.2f kg)",
+              sphere.y, sphere.radius, sphere.densityRatio, w.SphereMassKg());
+}
+
 void BackyardScene::OnUpdate(float deltaSeconds) {
   m_deltaSeconds = deltaSeconds;
   if (!m_dumper.SkipCameraUpdates()) {
@@ -391,8 +431,9 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
       t850::FluidSphere& sphere = m_fluid.DroppedSphere();
       if (!sphere.enabled && w.sphereEnabled && m_elapsedSeconds >= m_sphereReleaseDelay) {
         sphere.enabled = true;
-        T8_LOG_INFO("[Backyard] Sphere released at y=%.2f radius=%.2f (impact speed %.2f m/s)",
-                    sphere.y, sphere.radius, std::sqrt(2.0f * 9.81f * std::max(0.0f, sphere.y)));
+        T8_LOG_INFO("[Backyard] Sphere released at y=%.2f radius=%.2f density=%.2f mass=%.2f kg (impact speed %.2f m/s)",
+                    sphere.y, sphere.radius, sphere.densityRatio, w.SphereMassKg(),
+                    std::sqrt(2.0f * 9.81f * std::max(0.0f, sphere.y)));
       }
       // Keep the visible ball welded to the simulated body. Without this the
       // physics responds but there is nothing on screen to see doing it.
@@ -712,7 +753,28 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
   if (gui.BeginSection("Dropped sphere")) {
     gui.Checkbox(t850::CheckboxDesc{ "water_sphere_on", "enabled", true, true },
                  w.sphereEnabled);
-    slider("water_sphere_radius", "radius (m)", w.sphereRadius, 0.02f, 0.40f, 0.005f);
+    slider("water_sphere_radius", "radius (m)", w.sphereRadius, 0.02f, 0.60f, 0.005f);
+    // Density is the physical parameter: equilibrium submerged fraction equals it,
+    // so it alone decides whether the body floats and how deep it sits.
+    slider("water_sphere_density", "density (x water)", w.sphereDensityRatio, 0.05f, 3.0f, 0.01f);
+
+    // Mass is DERIVED from radius and density, and shown always. If the override is
+    // enabled the mass slider drives the density instead, so editing either one
+    // updates the other instead of the two fighting each frame.
+    char massText[128];
+    std::snprintf(massText, sizeof(massText), "mass %.2f kg  (density %.0f kg/m3)",
+                  w.SphereMassKg(), w.sphereDensityRatio * w.sphereWaterDensity);
+    gui.Text(massText);
+    gui.Checkbox(t850::CheckboxDesc{ "water_sphere_mass_override", "edit by mass", false, true },
+                 w.sphereMassOverride);
+    if (w.sphereMassOverride) {
+      float massEdit = w.SphereMassKg();
+      if (slider("water_sphere_mass", "mass (kg)", massEdit, 0.01f, 500.0f, 0.01f))
+        w.sphereDensityRatio = w.SphereDensityFromMass(massEdit);
+    }
+    slider("water_sphere_cd", "drag coefficient", w.sphereDragCoefficient, 0.05f, 1.5f, 0.01f);
+    slider("water_sphere_restitution", "bounce (0 = dead stop)", w.sphereRestitution, 0.0f, 0.9f, 0.01f);
+
     slider("water_sphere_height", "drop height (m)", w.sphereDropHeight, 0.05f, 3.0f, 0.01f);
     slider("water_sphere_x", "drop X", w.sphereDropX, -4.0f, 4.0f, 0.05f);
     slider("water_sphere_z", "drop Z", w.sphereDropZ, -8.5f, -5.0f, 0.05f);
@@ -723,13 +785,23 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     if (gui.Button("Drop now")) {
       t850::FluidSphere& sphere = m_fluid.DroppedSphere();
       sphere.radius = w.sphereRadius;
+      sphere.densityRatio = w.sphereDensityRatio;
+      sphere.dragCoefficient = w.sphereDragCoefficient;
+      sphere.restitution = w.sphereRestitution;
       sphere.x = w.sphereDropX;
       sphere.z = w.sphereDropZ;
       sphere.y = w.sphereDropHeight;
       sphere.vx = w.sphereInitialVX;
       sphere.vy = w.sphereInitialVY;
       sphere.vz = w.sphereInitialVZ;
+      sphere.submerged = 0.0f;
       sphere.enabled = true;
+    }
+    // Reset the pool AND re-arm the body, so a new drop height can be tested from a
+    // comparable initial state. Clearing the solver's momentum is the part that
+    // matters: without it the next drop lands in water the previous one set moving.
+    if (gui.Button("Reset simulation")) {
+      ResetSimulation();
     }
   }
 

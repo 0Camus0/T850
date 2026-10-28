@@ -27,6 +27,10 @@ public:
   void DrawDevGui(t850::DevGuiContext& gui) override;
   // The GUI can change the solver grid, which means new 3D textures.
   bool RebuildFluid();
+  // Clears the solver to a flat, motionless pool and re-arms the dropped body at the
+  // configured height, so a changed drop parameter can be retested from a comparable
+  // initial state.
+  void ResetSimulation();
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override { m_cameraController.ClearInput(); }
 
@@ -53,8 +57,7 @@ private:
   std::vector<unsigned int> m_primitiveIndices;
   std::vector<t850::RenderInstanceHandle> m_instances;
   t850::RenderInstanceHandle m_waterHandle;
-  t850::RenderInstanceHandle m_ballHandle;
-  t850::FluidSimulation m_fluid;
+  t850::RenderInstanceHandle m_ballHandle;  t850::FluidSimulation m_fluid;
   bool m_fluidReady = false;
   // Stable 2D target the solver copies its surface into every Step, so the
   // water mesh binds one texture for the whole frame instead of chasing the

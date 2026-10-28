@@ -83,8 +83,13 @@ namespace t850 {
     float x = 0.0f, y = 0.0f, z = 0.0f;
     float vx = 0.0f, vy = 0.0f, vz = 0.0f;
     float radius = 0.1f;
-    // Density relative to water. Below 1 floats, above 1 sinks.
+    // Density relative to water. Below 1 floats, above 1 sinks. This is the only
+    // term that decides the floating depth (equilibrium submerged fraction equals
+    // this value), which is why it is the primary control rather than mass.
     float densityRatio = 0.6f;
+    // Drag coefficient of a smooth sphere, and the bounce at the floor and walls.
+    float dragCoefficient = 0.47f;
+    float restitution = 0.30f;
     bool enabled = false;
     // Submerged depth below the water plane, used to damp the fall and to decide
     // when it has settled on the floor.
@@ -155,6 +160,10 @@ namespace t850 {
     // Stamps the moving body into the wall mask so it becomes a solid boundary for
     // every kernel (divergence, pressure, gradient, alpha advection).
     bool UpdateWallMaskForBody(BaseDriver* driver);
+    // Returns the solver to a flat, motionless pool and re-locks the reference mass.
+    // Used by the scene's reset button so a new drop height can be tested from a
+    // comparable initial state.
+    bool ResetToRest(BaseDriver* driver);
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.
@@ -276,6 +285,8 @@ namespace t850 {
     // solid boundary). Without this there is no divergence from the impact, so the
     // pressure solve has nothing to react to and no wave can radiate.
     std::unique_ptr<ComputePipeline> m_objectVelocityPipeline;
+    // Zeroing kernel used by the reset path.
+    std::unique_ptr<ComputePipeline> m_clearPipeline;
     // Per-column (removed, free capacity), written by the obstacle pass.
     std::unique_ptr<ComputeBuffer> m_removedBuffer;
     uint32_t m_removedColumns = 0;

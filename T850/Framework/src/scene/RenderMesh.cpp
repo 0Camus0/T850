@@ -2109,7 +2109,8 @@ namespace t850 {
       instanceCB.WorldView = WorldView;
       instanceCB.TimeParams = XVECTOR3(pScProp ? pScProp->TimeSeconds : 0.0f,
                                        pScProp ? pScProp->Water.vertexWaveScale : 1.0f,
-                                       0.0f, 0.0f);
+                                       pScProp ? pScProp->Water.displacementScale : 1.0f,
+                                       (pScProp && pScProp->Water.fakeRipplesEnabled) ? 1.0f : 0.0f);
 
       RenderMesh::MeshFrameCBuffer& frameCB = it_MeshInfo->FrameCB;
       frameCB.Light0Pos = pScProp->Lights[0].Position;

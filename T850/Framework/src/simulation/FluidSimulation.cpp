@@ -147,8 +147,10 @@ std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked, 
   // conventions over-corrects by 1/dt and makes divergence grow with iterations.
   constants.pressureScale = m_settings.cellSize * m_settings.cellSize;
   // padding0 carries the SOR factor to the pressure kernel, or the compression
-  // strength to the alpha advection kernel.
+  // strength to the alpha advection kernel. The forces kernel reads the same
+  // field as its sustained forcing gain.
   constants.padding0 = paddingOverride >= 0.0f ? paddingOverride : m_settings.sorOmega;
+  (void)constants.padding0;
   std::vector<uint32_t> words(sizeof(constants) / sizeof(uint32_t));
   std::memcpy(words.data(), &constants, sizeof(constants));
   return words;
@@ -546,8 +548,8 @@ bool FluidSimulation::Reset(BaseDriver* driver) {
 bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                                      ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
                                      ComputeTexture3D* target, uint32_t iterationPacked,
-                                     bool withAlpha) {
-  const std::vector<uint32_t> constants = BuildConstants(iterationPacked);
+                                     bool withAlpha, float paddingOverride) {
+  const std::vector<uint32_t> constants = BuildConstants(iterationPacked, paddingOverride);
   std::vector<ComputeBindingDesc> bindings;
   bindings.push_back({ComputeBindingType::Constants32, 0, nullptr, constants.data(),
                       static_cast<uint32_t>(constants.size())});
@@ -608,10 +610,11 @@ bool FluidSimulation::Step(BaseDriver* driver) {
     return false;
   m_current = next;
 
-  // 2. External forces and viscosity.
+  // 2. External forces and viscosity. padding0 is read here as the sustained
+  // forcing gain, so it is overridden rather than defaulting to the SOR factor.
   const uint32_t forced = (m_current + 1) % kVelocityCount;
   if (!DispatchVolume(driver, *m_forces, m_velocity[m_current].get(), nullptr,
-                      m_velocity[forced].get()))
+                      m_velocity[forced].get(), 0, false, m_settings.forcingAmplitude))
     return false;
   m_current = forced;
 

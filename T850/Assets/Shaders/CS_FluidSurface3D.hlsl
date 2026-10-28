@@ -1,5 +1,14 @@
-// T850 pool fluid: derives a renderable 2D surface from the 3D velocity
-// volume. One output texel per water column: height, foam, slope X/Z.
+// T850 pool fluid: derives the renderable 2D water surface from the simulated
+// volume fraction. One output texel per water column:
+//   R = surface elevation in metres (world Y)
+//   G = foam
+//   B = slope dH/dx (dimensionless gradient)
+//   A = slope dH/dz
+//
+// This replaces the old heuristic that relaxed a height toward a procedural sine
+// target from surface-layer velocity. The height is now the column integral of
+// alpha, so the visible waterline is exactly consistent with the conserved mass:
+// whatever the solver conserves, the surface shows.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -32,7 +41,7 @@ Texture3D<float4> VelocityIn : register(t0);
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(2, 0)]]
 #endif
-Texture2D<float4> SurfaceIn : register(t1);
+Texture3D<float4> AlphaIn : register(t1);
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(3, 0)]]
@@ -43,11 +52,53 @@ Texture2D<float4> SurfaceIn : register(t1);
 #endif
 RWTexture2D<float4> SurfaceOut : register(u0);
 
-float SurfaceHeight(int x, int z)
+// Absolute world Y of the bottom of the solver domain. Must be the real basin
+// floor, not the authored water plane, or every height is offset by the depth.
+#define T8_BASIN_MIN_Y (-1.60f)
+// Authored water plane. R is written as a DELTA from this plane because the water
+// mesh already sits at it and the vertex shader adds R to its Y. Writing an
+// absolute elevation here would drop the surface by the full depth.
+#define T8_WATER_PLANE_Y (-0.04f)
+
+// Column integral of alpha, expressed as a world-space elevation.
+// Integrating rather than taking the topmost alpha > 0.5 cell handles a
+// partially filled interface cell continuously, avoiding the one-cell
+// quantisation jitter that thresholding produces as the surface moves.
+//
+// A column with no water at all is a wall column (the domain shell is solid, so
+// alpha there is exactly 0). Reporting the basin floor for those would drag the
+// water mesh's edge vertices down the full depth, so they report the water plane
+// instead and contribute a zero delta.
+float ColumnElevation(int x, int z)
 {
     if (x < 0 || z < 0 || x >= int(Width) || z >= int(Depth))
-        return 0.0f;
-    return SurfaceIn.Load(int3(x, z, 0)).x;
+        return T8_WATER_PLANE_Y;
+    float water = 0.0f;
+    for (uint j = 0; j < Height; ++j)
+        water += saturate(AlphaIn.Load(int4(int3(x, int(j), z), 0)).x);
+    if (water <= 0.001f)
+        return T8_WATER_PLANE_Y;
+    return T8_BASIN_MIN_Y + water * CellSize;
+}
+
+// Foam from velocity divergence in the surface band. Divergence is the cheap,
+// physically meaningful whitecap signal: stretching surface flow has positive
+// divergence, slack water has none. An alpha threshold would give a binary mask.
+float SurfaceFoam(int x, int z, int surfaceRow)
+{
+    float divergence = 0.0f;
+    const float scale = 0.5f / CellSize;
+    for (int row = surfaceRow - 2; row <= surfaceRow; ++row) {
+        const int3 c = int3(x, clamp(row, 0, int(Height) - 1), z);
+        const float3 vxp = VelocityIn.Load(int4(c + int3(1, 0, 0), 0)).xyz;
+        const float3 vxm = VelocityIn.Load(int4(c - int3(1, 0, 0), 0)).xyz;
+        const float3 vyp = VelocityIn.Load(int4(c + int3(0, 1, 0), 0)).xyz;
+        const float3 vym = VelocityIn.Load(int4(c - int3(0, 1, 0), 0)).xyz;
+        const float3 vzp = VelocityIn.Load(int4(c + int3(0, 0, 1), 0)).xyz;
+        const float3 vzm = VelocityIn.Load(int4(c - int3(0, 0, 1), 0)).xyz;
+        divergence += ((vxp.x - vxm.x) + (vyp.y - vym.y) + (vzp.z - vzm.z)) * scale;
+    }
+    return saturate(divergence * 0.35f);
 }
 
 [numthreads(8, 8, 1)]
@@ -56,43 +107,23 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= Width || id.z >= Depth)
         return;
 
-    const int surfaceY = clamp(int(SurfaceLevel * float(Height)), 1, int(Height) - 2);
-    // Average two rows around the surface: the top row is a solid-boundary cell
-    // whose velocity is clamped to zero, so sampling only there reads nothing.
-    const float3 surfaceVelocity =
-      (VelocityIn.Load(int4(int3(id.x, surfaceY, id.z), 0)).xyz +
-       VelocityIn.Load(int4(int3(id.x, surfaceY - 1, id.z), 0)).xyz) * 0.5f;
-    const float vertical = surfaceVelocity.y;
-    const float below = VelocityIn.Load(int4(int3(id.x, max(surfaceY - 2, 0), id.z), 0)).y;
+    const float elevation = ColumnElevation(int(id.x), int(id.z));
+    // R is a delta from the authored water plane, matching the shader contract:
+    // the mesh already sits at that plane and adds R to its Y.
+    const float height = elevation - T8_WATER_PLANE_Y;
 
-    // Wave equation driven by the 3D vertical velocity, damped and coupled to
-    // the neighbouring columns so disturbances spread across the pool.
-    const float center = SurfaceIn.Load(int3(id.x, id.z, 0)).x;
-    const float laplacian =
-        SurfaceHeight(int(id.x) + 1, int(id.z)) + SurfaceHeight(int(id.x) - 1, int(id.z)) +
-        SurfaceHeight(int(id.x), int(id.z) + 1) + SurfaceHeight(int(id.x), int(id.z) - 1) -
-        4.0f * center;
+    // Slopes are per-texel height DIFFERENCES over the 0.09 m cell step, matching
+    // the shader's slope convention (central difference, no divide by spacing).
+    // Dividing here would make the fragment shader's slope scale wrong.
+    const float slopeX = (ColumnElevation(int(id.x) + 1, int(id.z)) -
+                          ColumnElevation(int(id.x) - 1, int(id.z))) * 0.5f;
+    const float slopeZ = (ColumnElevation(int(id.x), int(id.z) + 1) -
+                          ColumnElevation(int(id.x), int(id.z) - 1)) * 0.5f;
 
-    // Travelling wind waves at a fixed base amplitude, modulated by the local
-    // flow energy. A purely energy-scaled amplitude stays at exactly zero while
-    // the field is calm, so the surface never starts to move.
-    const float energy = saturate(length(surfaceVelocity) * 4.0f);
-    const float baseAmplitude = 0.07f;
-    const float wave =
-        sin(float(id.x) * 0.60f + TimeValue * 2.2f) *
-        cos(float(id.z) * 0.85f + TimeValue * 1.6f);
-    const float wave2 = sin(float(id.x) * 0.16f + float(id.z) * 0.22f + TimeValue * 0.9f);
-    const float target = (wave + wave2 * 0.9f) * baseAmplitude * (0.35f + energy);
+    // Row holding the waterline, so foam samples the interface band.
+    const int surfaceRow = clamp(int((elevation - T8_BASIN_MIN_Y) / CellSize),
+                                 1, int(Height) - 1);
+    const float foam = SurfaceFoam(int(id.x), int(id.z), surfaceRow);
 
-    // Relax toward the target instead of integrating an increment, so the wave
-    // cannot drift away from the pool's water level.
-    float height = lerp(center, target, saturate(DeltaTime * 6.0f)) +
-                   (vertical + below * 0.5f) * DeltaTime * 0.35f + laplacian * 0.12f;
-    height *= saturate(1.0f - 0.6f * DeltaTime);
-    height = clamp(height, -0.45f, 0.45f);
-
-    const float slopeX = (SurfaceHeight(int(id.x) + 1, int(id.z)) - SurfaceHeight(int(id.x) - 1, int(id.z))) * 0.5f;
-    const float slopeZ = (SurfaceHeight(int(id.x), int(id.z) + 1) - SurfaceHeight(int(id.x), int(id.z) - 1)) * 0.5f;
-    const float foam = saturate(abs(vertical) * 2.0f + length(surfaceVelocity) * 1.5f + abs(height) * 3.0f);
     SurfaceOut[id.xy] = float4(height, foam, slopeX, slopeZ);
 }

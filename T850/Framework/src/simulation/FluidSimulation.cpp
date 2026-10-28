@@ -177,9 +177,11 @@ bool FluidSimulation::LoadPoolLayout(const char* layoutPath) {
   m_settings.basinMinZ = static_cast<float>(layout.pool.minY);
   m_settings.basinMaxZ = static_cast<float>(layout.pool.maxY);
   m_settings.basinMinY = static_cast<float>(floorY);
-  // One extra cell of headroom above the water line, so the top row is not
-  // clamped by the ceiling and the surface stays inside the domain.
-  m_settings.basinMaxY = static_cast<float>(layout.waterLine + m_settings.cellSize);
+  // Domain height is exactly Height * cellSize so the column integral in the
+  // surface kernel (alpha sum * CellSize) converts to metres without a scale
+  // error. A domain that is not an exact multiple of the cell size would make
+  // the waterline sit centimetres off the authored plane.
+  m_settings.basinMaxY = m_settings.basinMinY + static_cast<float>(m_settings.height) * m_settings.cellSize;
 
   for (const LayoutStepJson& step : layout.pool.steps) {
     FluidSolidBox box;
@@ -679,7 +681,11 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   const std::vector<ComputeBindingDesc> surfaceBindings = {
     {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
     {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
-    {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, m_surfaceTexture[m_surfaceCurrent]},
+    // The surface is now an integral of the simulated volume fraction, so alpha is
+    // the input that defines the waterline. The old code sampled the previous 2D
+    // surface texture here, which kept the visible water independent of alpha.
+    {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr,
+     (m_alpha[m_alphaCurrent] ? m_alpha[m_alphaCurrent].get() : m_velocity[m_current].get())},
     {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]}
   };
   const uint32_t groupsX = (m_settings.width + m_surfacePipeline->threadGroupSize[0] - 1) / m_surfacePipeline->threadGroupSize[0];
@@ -782,7 +788,8 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
     const std::vector<ComputeBindingDesc> bindings = {
       {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
       {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
-      {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, m_surfaceTexture[m_surfaceCurrent]},
+      {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr,
+       (m_alpha[m_alphaCurrent] ? m_alpha[m_alphaCurrent].get() : m_velocity[m_current].get())},
       {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]}
     };
     const uint32_t groupsX = (m_settings.width + m_surfacePipeline->threadGroupSize[0] - 1) / m_surfacePipeline->threadGroupSize[0];

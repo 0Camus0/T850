@@ -408,10 +408,77 @@ bool FluidSimulation::BuildWallMask(BaseDriver* driver) {
     T8_LOG_ERROR("[Fluid] Cannot allocate the %u-voxel wall mask", voxelCount);
     return false;
   }
+  // Keep the authored mask on the CPU. The moving body is stamped into a copy of
+  // it each frame, which is what makes the body a solid boundary for EVERY kernel
+  // (divergence, pressure, gradient and the alpha advection) without teaching all
+  // four about a sphere.
+  m_baseMask = std::move(mask);
+  m_maskBodyCellCount = 0;
 
   T8_LOG_INFO("[Fluid] Wall mask %ux%ux%u: %u solid of %u voxels (%.1f%% fluid)",
               width, height, depth, m_solidVoxelCount, voxelCount,
               100.0 * static_cast<double>(voxelCount - m_solidVoxelCount) / static_cast<double>(voxelCount));
+  (void)cell;
+  return true;
+}
+
+bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
+  if (!driver || m_baseMask.empty()) return false;
+
+  const uint32_t width = m_settings.width;
+  const uint32_t height = m_settings.height;
+  const uint32_t depth = m_settings.depth;
+  const float cell = (std::max)(m_settings.cellSize, 1e-4f);
+
+  // Nothing stamped last frame and nothing to stamp now: the authored mask still
+  // stands, so skip the re-upload entirely.
+  const bool wantBody = m_sphere.enabled && m_sphere.radius > 0.0f;
+  if (!wantBody && m_maskBodyCellCount == 0) return true;
+
+  std::vector<uint32_t> mask = m_baseMask;
+  uint32_t stamped = 0;
+
+  if (wantBody) {
+    // Cell centres, matching the convention BuildWallMask() uses for the authored
+    // intrusions and the kernels use for their stencil neighbours.
+    const float sizeX = m_settings.basinMaxX - m_settings.basinMinX;
+    const float sizeY = m_settings.basinMaxY - m_settings.basinMinY;
+    const float sizeZ = m_settings.basinMaxZ - m_settings.basinMinZ;
+    const float radius2 = m_sphere.radius * m_sphere.radius;
+
+    for (uint32_t k = 0; k < depth; ++k) {
+      const float pz = m_settings.basinMinZ + (k + 0.5f) * (sizeZ / static_cast<float>(depth));
+      const float dz = pz - m_sphere.z;
+      for (uint32_t j = 0; j < height; ++j) {
+        const float py = m_settings.basinMinY + (j + 0.5f) * (sizeY / static_cast<float>(height));
+        const float dy = py - m_sphere.y;
+        for (uint32_t i = 0; i < width; ++i) {
+          const float px = m_settings.basinMinX + (i + 0.5f) * (sizeX / static_cast<float>(width));
+          const float dx = px - m_sphere.x;
+          if (dx * dx + dy * dy + dz * dz > radius2) continue;
+          const size_t index = static_cast<size_t>(i + width * (j + height * k));
+          if (mask[index] == 0u) { mask[index] = 1u; ++stamped; }
+        }
+      }
+    }
+  }
+
+  // One-frame lag is not acceptable during a plunge: rebuild whenever the body's
+  // cell footprint changes. Re-uploading the mask is ~440 kB, which is cheap next
+  // to the cost of the body punching through the water without any reaction.
+  if (stamped == 0 && m_maskBodyCellCount == 0) return true;
+
+  ComputeBufferDesc bufferDesc;
+  bufferDesc.byteWidth = static_cast<uint32_t>(mask.size() * sizeof(uint32_t));
+  bufferDesc.structureStride = sizeof(uint32_t);
+  bufferDesc.access = ComputeBufferAccess::ReadOnly;
+  bufferDesc.debugName = "Fluid Wall Mask";
+  m_wallMask = driver->CreateComputeBuffer(bufferDesc, mask.data());
+  if (!m_wallMask) {
+    T8_LOG_ERROR("[Fluid] Cannot reallocate the wall mask for the moving body");
+    return false;
+  }
+  m_maskBodyCellCount = stamped;
   (void)cell;
   return true;
 }
@@ -480,14 +547,12 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_alphaAdvectPipeline = CreatePipeline(driver, "CS_FluidAlphaAdvect3D.hlsl");
   m_volumeCorrectPipeline = CreatePipeline(driver, "CS_FluidVolumeCorrect3D.hlsl");
   m_spherePipeline = CreatePipeline(driver, "CS_FluidSphere3D.hlsl");
-  m_sphereSpreadPipeline = CreatePipeline(driver, "CS_FluidSphereSpread3D.hlsl");
-  m_sphereSumPipeline = CreatePipeline(driver, "CS_FluidSphereSum3D.hlsl");
+  m_objectVelocityPipeline = CreatePipeline(driver, "CS_FluidObstacleVelocity3D.hlsl");
 
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
-                  m_alphaAdvectPipeline && m_volumeCorrectPipeline && m_spherePipeline &&
-                  m_sphereSpreadPipeline && m_sphereSumPipeline;
+                  m_alphaAdvectPipeline && m_volumeCorrectPipeline &&                   m_spherePipeline && m_objectVelocityPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
   complete = complete && m_divergence;
@@ -539,9 +604,7 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_alphaAdvectPipeline.reset();
   m_volumeCorrectPipeline.reset();
   m_spherePipeline.reset();
-  m_sphereSpreadPipeline.reset();
-  m_sphereSumPipeline.reset();
-  m_sphereTotals.reset();
+  m_objectVelocityPipeline.reset();
   m_removedBuffer.reset();
   m_removedColumns = 0;
   m_referenceVolumeFraction = 0.0f;
@@ -603,11 +666,27 @@ bool FluidSimulation::CorrectVolumeFraction(BaseDriver* driver, float& appliedSc
   float interfaceSum = 0.0f;
   if (!MeasureVolumeFraction(driver, total, interfaceSum)) return false;
 
+  // The reference must account for the space the body occupies. Chasing the
+  // seed-time total while a ball sits in the water makes the correction pump water
+  // straight back into the cavity the body opened: measured column elevations
+  // formed an 18 cm dome centred on the ball, and the cavity never survived long
+  // enough to launch a wave. The physically correct target is
+  // (seed water) - (volume the submerged part of the body displaces).
+  float reference = m_referenceVolumeFraction;
+  if (m_sphere.enabled && m_sphere.radius > 0.0f && m_sphere.submerged > 0.0f) {
+    const double radius = static_cast<double>(m_sphere.radius);
+    const double cell = static_cast<double>((std::max)(m_settings.cellSize, 1e-4f));
+    const double ballCells = (4.0 / 3.0) * 3.14159265358979 * radius * radius * radius /
+                             (cell * cell * cell);
+    reference -= static_cast<float>(ballCells * m_sphere.submerged);
+  }
+  if (reference <= 1.0f) reference = m_referenceVolumeFraction;
+
   // The correction only touches partially filled cells, so the achievable delta
   // is bounded by their total. If the loss exceeds that there is nothing sane to
   // rescale and the honest answer is to leave the field alone than to fabricate
   // water out of saturated cells.
-  const float deficit = m_referenceVolumeFraction - total;
+  const float deficit = reference - total;
   if (std::abs(deficit) <= 0.5f) return true;             // within noise
   if (interfaceSum <= 1.0f) return false;                 // no interface to scale
 
@@ -650,6 +729,46 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
   totalAlpha = 0.0f;
   float unused = 0.0f;
   return MeasureVolumeFraction(driver, totalAlpha, unused);
+}
+
+bool FluidSimulation::ReadVolumeFraction(BaseDriver* driver, std::vector<float>& out) {
+  out.clear();
+  if (!m_ready || !driver || !m_alpha[m_alphaCurrent]) return false;
+  const uint32_t width = m_settings.width;
+  const uint32_t height = m_settings.height;
+  const uint32_t depth = m_settings.depth;
+  const uint32_t voxelCount = width * height * depth;
+
+  ComputeBufferDesc bufferDesc;
+  bufferDesc.byteWidth = voxelCount * 4 * sizeof(uint32_t);
+  bufferDesc.structureStride = 4 * sizeof(uint32_t);
+  bufferDesc.access = ComputeBufferAccess::ReadWrite;
+  bufferDesc.debugName = "Fluid Alpha Readback";
+  if (!m_volumeReadbackBuffer || m_volumeReadbackVoxels != voxelCount) {
+    std::vector<uint32_t> zeroSeed(static_cast<size_t>(voxelCount) * 4, 0u);
+    m_volumeReadbackBuffer = driver->CreateComputeBuffer(bufferDesc, zeroSeed.data());
+    if (!m_volumeReadbackBuffer) return false;
+    m_volumeReadbackVoxels = voxelCount;
+  }
+
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
+    {ComputeBindingType::ReadWriteBuffer, 0, m_volumeReadbackBuffer.get(), nullptr, 0}
+  };
+  const uint32_t gx = (width + m_copyPipeline->threadGroupSize[0] - 1) / m_copyPipeline->threadGroupSize[0];
+  const uint32_t gy = (height + m_copyPipeline->threadGroupSize[1] - 1) / m_copyPipeline->threadGroupSize[1];
+  const uint32_t gz = (depth + m_copyPipeline->threadGroupSize[2] - 1) / m_copyPipeline->threadGroupSize[2];
+  if (!driver->DispatchCompute(*m_copyPipeline, bindings, gx, gy, gz)) return false;
+
+  std::vector<uint32_t> raw(static_cast<size_t>(voxelCount) * 4, 0u);
+  if (!driver->ReadComputeBuffer(*m_volumeReadbackBuffer, raw.data(), raw.size() * sizeof(uint32_t)))
+    return false;
+  out.resize(voxelCount);
+  for (uint32_t index = 0; index < voxelCount; ++index)
+    std::memcpy(&out[index], &raw[index * 4 + 0], sizeof(float));
+  return true;
 }
 
 bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlpha,
@@ -761,8 +880,7 @@ void FluidSimulation::AdvanceSphere(float dt) {
 }
 
 bool FluidSimulation::InjectSphere(BaseDriver* driver) {
-  if (!m_ready || !driver || !m_spherePipeline || !m_sphereSpreadPipeline || !m_alpha[m_alphaCurrent])
-    return false;
+  if (!m_ready || !driver || !m_spherePipeline || !m_alpha[m_alphaCurrent]) return false;
 
   const uint32_t columns = m_settings.width * m_settings.depth;
   if (!m_removedBuffer || m_removedColumns != columns) {
@@ -796,40 +914,39 @@ bool FluidSimulation::InjectSphere(BaseDriver* driver) {
   if (!driver->DispatchCompute(*m_spherePipeline, openBindings, gx, gy, 1))
     return false;
   m_alphaCurrent = alphaMid;
+  // NOTE: there is deliberately no redistribution pass here. Returning the removed
+  // volume as a UNIFORM elevation rise over every column low-pass-filtered the
+  // surface: it replaced any local crest or trough with a flat DC offset, which is
+  // exactly what removed the waves. Displacement now enters through the momentum
+  // equation instead (CS_FluidObstacleVelocity3D, see StepObjectVelocity), and the
+  // conservative alpha advection carries the surface shape from there.
+  return true;
+}
 
-  // Reduce the per-column bookkeeping to two totals ON THE GPU. Reading the buffer
-  // back to the CPU was a hard pipeline stall every frame, and the readback
-  // returned zeroed data, which made the whole displacement a silent no-op.
-  const uint32_t columnsCount = m_settings.width * m_settings.depth;
-  if (!m_sphereTotals || m_removedColumns != columnsCount) {
-    ComputeBufferDesc totalsDesc;
-    totalsDesc.byteWidth = 2 * sizeof(float);
-    totalsDesc.structureStride = 2 * sizeof(float);
-    totalsDesc.access = ComputeBufferAccess::ReadWrite;
-    totalsDesc.debugName = "Fluid Sphere Totals";
-    const std::vector<uint32_t> seed(2, 0u);
-    m_sphereTotals = driver->CreateComputeBuffer(totalsDesc, seed.data());
-    if (!m_sphereTotals) return false;
-  }
-  const std::vector<ComputeBindingDesc> sumBindings = {
-    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
-    {ComputeBindingType::ReadOnlyBuffer, 0, m_removedBuffer.get(), nullptr, 0},
-    {ComputeBindingType::ReadWriteBuffer, 0, m_sphereTotals.get(), nullptr, 0}
-  };
-  if (!driver->DispatchCompute(*m_sphereSumPipeline, sumBindings, 1, 1, 1))
-    return false;
+bool FluidSimulation::StepObjectVelocity(BaseDriver* driver) {
+  if (!m_ready || !driver || !m_objectVelocityPipeline || !m_velocity[m_current]) return false;
 
-  const uint32_t alphaNext = (m_alphaCurrent + 1) % 2;
-  const std::vector<ComputeBindingDesc> spreadBindings = {
+  // No-penetration at the moving body. Must run before divergence so the pressure
+  // solve sees the body's motion; there is nothing else in the solver that tells
+  // the fluid a solid object is sweeping through it.
+  const uint32_t target = (m_current + 1) % kVelocityCount;
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<uint32_t> objectConstants = BuildObjectConstants();
+  const std::vector<ComputeBindingDesc> bindings = {
     {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
-    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
-    {ComputeBindingType::ReadOnlyBuffer, 9, m_sphereTotals.get(), nullptr, 0},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
+    {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr,
+     (m_alpha[m_alphaCurrent] ? m_alpha[m_alphaCurrent].get() : m_velocity[m_current].get())},
+    {ComputeBindingType::Constants32, 1, nullptr, objectConstants.data(), static_cast<uint32_t>(objectConstants.size())},
     {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
-    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[alphaNext].get()}
+    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[target].get()}
   };
-  if (!driver->DispatchCompute(*m_sphereSpreadPipeline, spreadBindings, gx, gy, 1))
+  const uint32_t gx = (m_settings.width + m_objectVelocityPipeline->threadGroupSize[0] - 1) / m_objectVelocityPipeline->threadGroupSize[0];
+  const uint32_t gy = (m_settings.height + m_objectVelocityPipeline->threadGroupSize[1] - 1) / m_objectVelocityPipeline->threadGroupSize[1];
+  const uint32_t gz = (m_settings.depth + m_objectVelocityPipeline->threadGroupSize[2] - 1) / m_objectVelocityPipeline->threadGroupSize[2];
+  if (!driver->DispatchCompute(*m_objectVelocityPipeline, bindings, gx, gy, gz))
     return false;
-  m_alphaCurrent = alphaNext;
+  m_current = target;
   return true;
 }
 
@@ -901,6 +1018,15 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   m_time += m_settings.deltaTime;
   const uint32_t next = (m_current + 1) % kVelocityCount;
 
+  // The body moves and becomes part of the solid boundary BEFORE anything else in
+  // the frame, so divergence, the pressure solve, the gradient and the alpha
+  // advection all see it as a wall. Without that the pressure projection simply
+  // undid the no-penetration velocity the body imposed, and the impact produced no
+  // divergence for the solver to react to. Measured column elevations stayed
+  // within 1 cm of the seed profile across the whole plunge: no wave, ever.
+  AdvanceSphere(m_settings.deltaTime);
+  UpdateWallMaskForBody(driver);
+
   // 1. Advect velocity through itself.
   if (!DispatchVolume(driver, *m_advect, m_velocity[m_current].get(), nullptr, m_velocity[next].get()))
     return false;
@@ -913,6 +1039,14 @@ bool FluidSimulation::Step(BaseDriver* driver) {
                       m_velocity[forced].get(), 0, false, m_settings.forcingAmplitude))
     return false;
   m_current = forced;
+
+  // 2.5 Obstacle velocity coupling. The body imposes its normal velocity on the
+  // fluid (no-penetration at a moving solid boundary), which is what puts the
+  // impact into the momentum equation. It has to happen BEFORE divergence: the
+  // pressure solve needs to see the divergence the body creates, otherwise there
+  // is nothing to react to and no wave can radiate outwards.
+  if (m_sphere.enabled && m_objectVelocityPipeline)
+    StepObjectVelocity(driver);
 
   // 3. Divergence, restricted to wet cells.
   if (!DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr,
@@ -945,14 +1079,13 @@ bool FluidSimulation::Step(BaseDriver* driver) {
 
   // Transport alpha AFTER projection so the flux field is the one the fluid
   // actually moves with. Flux-form advection conserves volume by construction.
-  AdvanceSphere(m_settings.deltaTime);
-  if (m_sphere.enabled && m_spherePipeline && m_sphere.y - m_sphere.radius <
-      m_settings.basinMinY + static_cast<float>(m_settings.height) * m_settings.cellSize) {
-    // The sphere is at or below the water plane, so it is displacing water. Do this
-    // before advection so the cavity it opens is transported by the same velocity
-    // field and the pressure solve sees it this frame.
-    InjectSphere(driver);
-  }
+  //
+  // This is what carries the wave now. The body's momentum went into the velocity
+  // field before divergence, the pressure solve turned that into motion, and this
+  // advection transports the free surface with it, which is exactly how a real
+  // impact builds a rim and radiates gravity waves. Cells the body occupies are
+  // already solid in the mask, so the advection clears its footprint by itself and
+  // no separate removal pass is needed.
   if (m_alphaAdvectPipeline && m_alpha[0] && m_alpha[1]) {
     const uint32_t alphaNext = (m_alphaCurrent + 1) % 2;
     const std::vector<uint32_t> alphaConstants = BuildConstants(0, m_settings.alphaCompression);
@@ -970,6 +1103,14 @@ bool FluidSimulation::Step(BaseDriver* driver) {
     if (!driver->DispatchCompute(*m_alphaAdvectPipeline, alphaBindings, ax, ay, az))
       return false;
     m_alphaCurrent = alphaNext;
+  }
+
+  // The body's own footprint is handled by the wall mask (see UpdateWallMaskForBody
+  // at the top of the frame), so there is no alpha surgery here: the mask makes its
+  // cells solid, the advection writes them dry, and the volume correction restores
+  // exactly the amount the body's submerged volume displaced.
+
+  if (m_alphaAdvectPipeline && m_alpha[0] && m_alpha[1]) {
     // Volume correction reads the field back to the CPU, which is a hard sync.
     // Doing that every frame would stall the pipeline and churn Vulkan
     // descriptors, and mass drifts slowly, so it runs periodically instead.

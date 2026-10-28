@@ -40,7 +40,10 @@ namespace t850 {
     float windX = 0.6f;
     float windY = 0.0f;
     float windZ = -0.35f;
-    float damping = 0.6f;
+    // Velocity decay per second. 0.6 removed almost all of a wave's energy within
+    // a second or two, so nothing could propagate far. Real water is lightly
+    // damped; viscosity is what actually dissipates a pool's waves.
+    float damping = 0.05f;
     float surfaceLevel = 0.96f;
     // SOR factor for the red-black Gauss-Seidel pressure sweep.
     float sorOmega = 1.8f;
@@ -148,7 +151,12 @@ namespace t850 {
     // Sustained forcing amplitude so the pool is not perfectly flat at rest.
     // A one-shot seed decays within seconds; without continuous forcing the
     // solver correctly produces a motionless pool.
-    float forcingAmplitude = 1.0f;
+    // Sustained surface forcing gain. This drove a synthetic sin/cos stir on the
+    // surface layer so the pool would not decay to flat. Now that the solver has a
+    // real driving event (the dropped body) and real gravity waves, leaving it on
+    // drowns the physics in a synthetic pattern, which is exactly what made the
+    // water look like rolling sine waves. Off by default.
+    float forcingAmplitude = 0.0f;
 
     // ── Dropped sphere ──
     // A ballistic body released above the surface, so the water reacts to a real

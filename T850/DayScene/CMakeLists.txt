@@ -10,7 +10,8 @@ add_executable(DayScene
 	SandboxScene.cpp
 	VoxelScene.cpp
 	MinecraftScene.cpp
-	BackyardScene.cpp)
+	BackyardScene.cpp
+	BackyardSelfTest.cpp)
 
 t850_apply_app(DayScene)
 t850_apply_profiler_defines(DayScene)

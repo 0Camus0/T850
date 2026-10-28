@@ -46,6 +46,7 @@
 #include <game/GameSelfTest.h>
 #include <debug/ComputeSelfTest.h>
 #include <simulation/FluidSimulation.h>
+#include <BackyardSelfTest.h>
 #include <debug/CrashDiagnostics.h>
 #include <debug/GraphicsFixture.h>
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
@@ -103,6 +104,10 @@ int main(int arg,char ** args) try {
 
   bool computeSelfTest = false;
   bool fluidSelfTest = false;
+  bool backyardSelfTest = false;
+  bool backyardNoBall = false;
+  int backyardSelfTestFrames = 900;
+  float fluidFixedDt = 1.0f / 300.0f;
   int fluidSelfTestFrames = 24;
   std::string fluidDumpDirectory;
   int fluidIterations = 8;
@@ -140,6 +145,23 @@ int main(int arg,char ** args) try {
     if (std::string_view(args[i]) == "--fluid-iterations" && i + 1 < arg) {
       fluidSelfTest = true;
       fluidIterations = (std::max)(1, (std::min)(400, std::stoi(args[++i])));
+    }
+    if (std::string_view(args[i]) == "--backyard-selftest") {
+      backyardSelfTest = true;
+    }
+    if (std::string_view(args[i]) == "--backyard-selftest-frames" && i + 1 < arg) {
+      backyardSelfTest = true;
+      backyardSelfTestFrames = (std::max)(1, (std::min)(20000, std::stoi(args[++i])));
+    }
+    // Deterministic step for the water: without it two runs land on different
+    // physical states and cannot be compared.
+    if (std::string_view(args[i]) == "--fluid-fixed-dt" && i + 1 < arg) {
+      const float value = std::stof(args[++i]);
+      if (value > 0.0f && value <= 0.1f) fluidFixedDt = value;
+      else T8_LOG_ERROR("[App] --fluid-fixed-dt %g is outside 0 < dt <= 0.1", value);
+    }
+    if (std::string_view(args[i]) == "--backyard-no-ball") {
+      backyardNoBall = true;
     }
     if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
       webgpuRecoverySelfTest = true;
@@ -336,6 +358,12 @@ int main(int arg,char ** args) try {
                   computeSelfTestWaitSeconds);
       std::this_thread::sleep_for(std::chrono::seconds(computeSelfTestWaitSeconds));
     }
+  } else if (backyardSelfTest) {
+    t850::BackyardSelfTestOptions options;
+    options.frames = static_cast<uint32_t>(backyardSelfTestFrames);
+    options.fixedDt = fluidFixedDt;
+    options.skipBall = backyardNoBall;
+    result = t850::RunBackyardSelfTest(pFrameWork->pVideoDriver, options);
   } else if (fluidSelfTest) {
     t850::BaseDriver* driver = pFrameWork->pVideoDriver;
     t850::FluidSimulation fluid;

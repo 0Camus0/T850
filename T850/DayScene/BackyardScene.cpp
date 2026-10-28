@@ -208,6 +208,10 @@ bool BackyardScene::RebuildFluid() {
   m_fluidReady = true;
   if (!m_fluid.Seed(driver, true))
     T8_LOG_ERROR("[Backyard] Fluid seed dispatch failed");
+  // Free-surface initialisation: alpha = 1 below the waterline, 0 above it, with
+  // one fractional row at the line.
+  if (!m_fluid.SeedVolumeFraction(driver))
+    T8_LOG_ERROR("[Backyard] Volume fraction seed failed");
 
   // Bind a stable surface target onto the water instance at slot 23 (t23).
   // No render-graph RT involved: a graph target written by an out-of-graph
@@ -354,16 +358,27 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
       // Shading time follows the solver clock so the ripple and foam scroll match
       // the simulated water speed instead of running at frame rate.
       SceneProp.TimeSeconds = m_fluid.SimulationTime();
-      // Report the ratio now and then: 1.00 means the water is running in real time.
+      // Report the ratio now and then: 1.00 means the water is running in real
+      // time. Also tracks total alpha so mass conservation is measurable in the
+      // live scene, not just in the test harness.
       static float reportedWall = 0.0f;
       static float reportedSim = 0.0f;
       static int reportFrames = 0;
+      static float initialVolume = -1.0f;
       reportedWall += deltaSeconds;
       reportedSim += fluidDelta;
       if (++reportFrames == 600) {
-        T8_LOG_INFO("[Backyard][timing] sim/wall ratio = %.2f (%d frames, sim %.2fs over wall %.2fs)",
-                    reportedWall > 0.0f ? reportedSim / reportedWall : 0.0f,
-                    reportFrames, reportedSim, reportedWall);
+        float volume = 0.0f;
+        if (m_fluid.MeasureVolumeFraction(pFramework->pVideoDriver, volume)) {
+          if (initialVolume < 0.0f) initialVolume = volume;
+          T8_LOG_INFO("[Backyard][timing] sim/wall ratio = %.2f (%d frames); alpha volume = %.0f cells (%+.3f%% vs start)",
+                      reportedWall > 0.0f ? reportedSim / reportedWall : 0.0f,
+                      reportFrames, volume,
+                      initialVolume > 0.0f ? 100.0f * (volume - initialVolume) / initialVolume : 0.0f);
+        } else {
+          T8_LOG_INFO("[Backyard][timing] sim/wall ratio = %.2f (%d frames)",
+                      reportedWall > 0.0f ? reportedSim / reportedWall : 0.0f, reportFrames);
+        }
         reportFrames = 0;
         reportedWall = 0.0f;
         reportedSim = 0.0f;

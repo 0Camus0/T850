@@ -47,12 +47,28 @@ uint CellIndex(int3 cell)
     return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
 }
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(4, 0)]]
+#endif
+Texture3D<float4> AlphaIn : register(t2);
+
 bool IsSolid(int3 cell)
 {
     if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
         cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
         return true;
     return WallMask[CellIndex(cell)] != 0u;
+}
+
+// Volume fraction below which a voxel counts as air. Kept in sync with
+// FluidSettings::airThreshold.
+#define T8_AIR_THRESHOLD 0.05f
+
+bool IsAir(int3 cell)
+{
+    if (IsSolid(cell))
+        return false;
+    return AlphaIn.Load(int4(cell, 0)).x < T8_AIR_THRESHOLD;
 }
 
 bool Outside(int3 cell)
@@ -76,7 +92,8 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
     int3 cell = int3(id);
-    if (IsSolid(cell)) {
+    // Solid carries no divergence; air is not subject to incompressibility.
+    if (IsSolid(cell) || IsAir(cell)) {
         DivergenceOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }

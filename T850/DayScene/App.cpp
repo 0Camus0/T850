@@ -351,7 +351,19 @@ int main(int arg,char ** args) try {
       result = 0;
     } else {
       int failures = 0;
+      fluid.SeedVolumeFraction(driver);
       const uint32_t expectedSamples = settings.width * settings.height * settings.depth;
+      {
+        float volume = 0.0f;
+        if (fluid.MeasureVolumeFraction(driver, volume)) {
+          T8_LOG_INFO("[FluidSelfTest] freeSurface totalAlpha=%.0f cells of %u fluid voxels",
+                      volume, fluid.FluidVoxelCount());
+          if (volume <= 0.0f) {
+            T8_LOG_ERROR("[FluidSelfTest] volume fraction seeded empty");
+            ++failures;
+          }
+        }
+      }
       const auto report = [&](const char* label, t850::FluidSimulation::Diagnostics* result) -> bool {
         t850::FluidSimulation::Diagnostics diagnostics;
         if (!fluid.ReadDiagnostics(driver, diagnostics)) {
@@ -419,6 +431,23 @@ int main(int arg,char ** args) try {
             fluid.DumpVolume(driver, base + tag + "/after", after);
           ratios[sweep] = before.interiorMeanDivergence > 1e-6f
             ? after.interiorMeanDivergence / before.interiorMeanDivergence : 0.0f;
+          // Free-surface transport must conserve volume. This runs the real Step
+          // pipeline (which includes flux-form advection and the global
+          // correction) rather than the staged pressure-only path. The correction
+          // runs once per frame against the locked reference, so a little drift
+          // between frames is expected and only the trend matters.
+          float volumeBefore = 0.0f, volumeAfter = 0.0f;
+          fluid.MeasureVolumeFraction(driver, volumeBefore);
+          for (int frame = 0; frame < 60; ++frame) fluid.Step(driver);
+          fluid.MeasureVolumeFraction(driver, volumeAfter);
+          const float volumeDrift = volumeBefore > 0.0f
+            ? 100.0f * (volumeAfter - volumeBefore) / volumeBefore : 0.0f;
+          T8_LOG_INFO("[FluidSelfTest] massConservation frames=60 before=%.0f after=%.0f drift=%+.2f%%",
+                      volumeBefore, volumeAfter, volumeDrift);
+          if (std::abs(volumeDrift) > 2.0f) {
+            T8_LOG_ERROR("[FluidSelfTest] volume drift %.2f%% exceeds 2%%", volumeDrift);
+            ++failures;
+          }
           T8_LOG_INFO("[FluidSelfTest] projection iterations=%3d pre=%.4f post=%.4f ratio=%.3f",
                       iterations, before.interiorMeanDivergence, after.interiorMeanDivergence, ratios[sweep]);
           // Wall acceptance: no velocity may exist inside a solid voxel, and no

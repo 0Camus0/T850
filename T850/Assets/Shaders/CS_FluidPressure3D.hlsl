@@ -65,10 +65,32 @@ bool Outside(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
-float PressureAt(int3 cell, float fallback)
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(5, 0)]]
+#endif
+Texture3D<float4> AlphaIn : register(t2);
+
+// Volume fraction below which a voxel counts as air. Kept in sync with
+// FluidSettings::airThreshold.
+#define T8_AIR_THRESHOLD 0.05f
+
+bool IsAir(int3 cell)
 {
     if (Outside(cell))
+        return false;
+    return AlphaIn.Load(int4(cell, 0)).x < T8_AIR_THRESHOLD;
+}
+
+float PressureAt(int3 cell, float fallback)
+{
+    // Solid neighbour: Neumann, the wall reflects the pressure back.
+    if (Outside(cell))
         return fallback;
+    // Air neighbour: Dirichlet p = 0. This is what gives the free surface a
+    // pressure reference and makes the matrix non-singular, so no mean removal
+    // is needed.
+    if (IsAir(cell))
+        return 0.0f;
     return PressureIn.Load(int4(cell, 0)).x;
 }
 
@@ -78,8 +100,9 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
     int3 cell = int3(id);
-    // Solid voxels hold no pressure and are never relaxed.
-    if (Outside(cell)) {
+    // Solid holds no pressure. Air is the Dirichlet reference: p = 0 fixed, so it
+    // is copied through rather than relaxed.
+    if (Outside(cell) || IsAir(cell)) {
         PressureOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }

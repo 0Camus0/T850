@@ -61,10 +61,27 @@ bool Outside(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(5, 0)]]
+#endif
+Texture3D<float4> AlphaIn : register(t2);
+
+#define T8_AIR_THRESHOLD 0.05f
+
+bool IsAir(int3 cell)
+{
+    if (Outside(cell))
+        return false;
+    return AlphaIn.Load(int4(cell, 0)).x < T8_AIR_THRESHOLD;
+}
+
 float PressureAt(int3 cell, float fallback)
 {
     if (Outside(cell))
         return fallback;
+    // Dirichlet p = 0 at the free surface.
+    if (IsAir(cell))
+        return 0.0f;
     return PressureIn.Load(int4(cell, 0)).x;
 }
 
@@ -75,6 +92,11 @@ void CS(uint3 id : SV_DispatchThreadID)
         return;
     int3 cell = int3(id);
     float4 velocity = VelocityIn.Load(int4(id, 0));
+    // Only solid carries no flow. Air must NOT be zeroed: doing so makes the free
+    // surface behave like a solid lid, so water pushed down has nowhere to rise
+    // into and alpha clamping destroys mass (measured -27.7% in 600 frames).
+    // Air keeps the transported velocity and is simply skipped by the pressure
+    // solve, which is the Dirichlet p = 0 boundary condition.
     if (Outside(cell))
     {
         VelocityOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);

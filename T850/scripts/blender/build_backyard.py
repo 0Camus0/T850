@@ -32,12 +32,17 @@ POOL = {
     "step_count": 3,
     "step_rise": 0.30,
     "step_run": 0.35,
+    # Freeboard: metres of air the fluid solver keeps above the water plane so a
+    # free surface has room to rise.
+    "freeboard": 0.42,
 }
 POOL_MIN_X = -4.5
 POOL_MIN_Y = -9.0
 POOL_MAX_X = POOL_MIN_X + POOL["width"]
 POOL_MAX_Y = POOL_MIN_Y + POOL["length"]
 WATER_LINE = 0.0
+# Engine-space Y of the still-water surface: 4 cm below the pool rim.
+WATER_PLANE_Y = -0.04
 
 HOUSE = {
     "width": 18.0,
@@ -363,8 +368,13 @@ def build_water_surface():
             bsdf.inputs["Alpha"].default_value = 0.72
     width = POOL["width"]
     length = POOL["length"]
-    nx = 96
-    nz = 48
+    # Vertex density, deliberately well above the solver grid (100 x 50). The
+    # surface texture is a storage texture and cannot be sampled with hardware
+    # bilinear filtering, so every displaced vertex lands exactly on a texel and
+    # the water edge reads as 0.09 m blocks. Extra vertices cost nothing at runtime
+    # and turn those blocks into a smooth ramp.
+    nx = 288
+    nz = 144
     z_level = WATER_LINE - 0.04
 
     verts = []
@@ -488,6 +498,10 @@ def write_layout(pool_path, asset_paths):
     layout = {
         "units": "meters",
         "waterLine": WATER_LINE,
+        # Absolute world Y of the still-water surface: the plane the water mesh is
+        # authored at. The fluid solver derives its fill level from this, rather
+        # than from a literal, so moving the pool in Blender moves the simulation.
+        "waterPlaneY": WATER_PLANE_Y,
         "pool": {
             "minX": POOL_MIN_X,
             "minY": POOL_MIN_Y,
@@ -496,6 +510,9 @@ def write_layout(pool_path, asset_paths):
             "width": POOL["width"],
             "length": POOL["length"],
             "depth": POOL["depth"],
+            # Metres of air the solver volume keeps above the water plane. A free
+            # surface cannot rise if the top of the domain is already full.
+            "freeboard": POOL["freeboard"],
             "wallThickness": POOL["wall_thickness"],
             "copingWidth": POOL["coping_width"],
             "copingHeight": POOL["coping_height"],

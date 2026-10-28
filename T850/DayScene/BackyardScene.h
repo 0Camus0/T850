@@ -53,6 +53,7 @@ private:
   std::vector<unsigned int> m_primitiveIndices;
   std::vector<t850::RenderInstanceHandle> m_instances;
   t850::RenderInstanceHandle m_waterHandle;
+  t850::RenderInstanceHandle m_ballHandle;
   t850::FluidSimulation m_fluid;
   bool m_fluidReady = false;
   // Stable 2D target the solver copies its surface into every Step, so the
@@ -63,6 +64,9 @@ private:
   int m_appliedGridWidth = 0;
   int m_appliedGridHeight = 0;
   int m_appliedGridDepth = 0;
+  // Seconds to wait before releasing the dropped sphere.
+  float m_sphereReleaseDelay = 1.0f;
+  float m_elapsedSeconds = 0.0f;
   t850::EnvironmentMapSet m_envMaps;
   int m_envMapTexture = -1;
   int m_diffuseIBLTexture = -1;

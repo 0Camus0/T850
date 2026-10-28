@@ -502,9 +502,15 @@
           "dimension": "3d"
         },
         {
+          "type": "constants",
+          "shader_register": 1,
+          "binding_index": 3,
+          "constant_count": 4
+        },
+        {
           "type": "storage_texture",
           "shader_register": 0,
-          "binding_index": 3,
+          "binding_index": 4,
           "storage_format": "rgba16float"
         }
       ]
@@ -697,11 +703,127 @@
           "dimension": "3d"
         },
         {
+          "type": "constants",
+          "shader_register": 1,
+          "binding_index": 2,
+          "constant_count": 4
+        },
+        {
           "type": "storage_texture",
           "shader_register": 0,
-          "binding_index": 2,
+          "binding_index": 3,
           "dimension": "3d",
           "storage_format": "rgba16float"
+        }
+      ]
+    },
+    {
+      "id": "fluid_sphere",
+      "source": "CS_FluidSphere3D.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 16
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 0,
+          "binding_index": 1,
+          "dimension": "3d"
+        },
+        {
+          "type": "constants",
+          "shader_register": 1,
+          "binding_index": 2,
+          "constant_count": 12
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 8,
+          "binding_index": 3
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 0,
+          "binding_index": 4,
+          "dimension": "3d",
+          "storage_format": "rgba16float"
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 5
+        }
+      ]
+    },
+    {
+      "id": "fluid_sphere_spread",
+      "source": "CS_FluidSphereSpread3D.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 16
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 0,
+          "binding_index": 1,
+          "dimension": "3d"
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 9,
+          "binding_index": 2
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 8,
+          "binding_index": 3
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 0,
+          "binding_index": 4,
+          "dimension": "3d",
+          "storage_format": "rgba16float"
+        }
+      ]
+    },
+    {
+      "id": "fluid_sphere_sum",
+      "source": "CS_FluidSphereSum3D.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 16
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 2
         }
       ]
     }

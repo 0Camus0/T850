@@ -1277,13 +1277,19 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         float fluidFresnel = saturate((0.02f + 0.98f * pow(1.0f - saturate(eyeDir.y), 5.0f)) *
                                       WaterOptics4.x + WaterOptics4.y);
 
-        // Optical path length from the water surface down to the basin floor
-        // along the view ray. Both surfaces are flat and the floor depth is
-        // known from the authored geometry, so this is exact and does not need
-        // the GBuffer depth (whose encoding does not linearise usefully here).
+        // Optical path length. The vertical water depth comes from the SIMULATED
+        // column, not from the camera height: an analytic formula that divided by
+        // the camera's height above the water made absorption camera-dependent,
+        // which produced dark patches that slid across the pool as the view moved.
+        // R is the (scaled) elevation delta, so undo the presentation scale here to
+        // recover the physical height.
         float fluidViewDistance = length(CameraPosition.xyz - input.WorldPos.xyz);
-        float fluidCameraHeight = max(CameraPosition.y - WaterOptics5.z, 0.1f);
-        float thickness = clamp(WaterOptics5.y * fluidViewDistance / fluidCameraHeight, 0.0f, 8.0f);
+        float rawHeight = fluidSurface.x / max(WaterMisc1.x, 0.001f);
+        float columnDepth = max(WaterOptics5.y - rawHeight, 0.02f);
+        // Path length along the view ray: depth / cos(theta), with theta measured
+        // from vertical. eyeDir.y is that cosine.
+        float cosTheta = max(abs(eyeDir.y), 0.25f);
+        float thickness = clamp(columnDepth / cosTheta, 0.0f, 8.0f);
 
         // Refraction, faded out towards the basin border so the deck and coping
         // never smear into the water.
@@ -1299,7 +1305,11 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         // Caustics. A flat patch of surface focuses sunlight onto a small spot,
         // a curved patch spreads it out, so the ripple field's slope magnitude
         // traces the bright filaments that make shallow water read as water.
-        float rippleSlope = WaterRippleSlopeLow(input.WorldPos.xz, fluidTime, fluidViewDistance);
+        // Caustics from the SIMULATED surface slope. The previous version derived
+        // them from procedural sine octaves, which kept a camera-independent but
+        // entirely fake pattern on the floor even when the simulation was calm.
+        float2 fluidSlope = fluidSurface.zw * (2.0f / max(WaterMisc1.z, 0.001f));
+        float rippleSlope = length(fluidSlope);
         float causticWeb = pow(saturate(1.0f - rippleSlope * WaterOptics3.z), WaterOptics3.y);
         float3 floorLit = floorColor * (WaterOptics3.w + WaterOptics3.x * causticWeb);
 

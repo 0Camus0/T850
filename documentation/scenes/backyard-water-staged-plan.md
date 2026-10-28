@@ -45,6 +45,15 @@ grid.
 | 7. Solver cost | W-15 | M | Measure before optimising |
 | 8. Cleanup, docs, platforms | W-14, W-16, W-17 | S–M | Only once the code is stable |
 
+### Additions found during Stage 0
+
+- **W-18 — Vulkan fluid self-test exhausts the descriptor pool** (P1, S). Fails at step 109 of a
+  400-frame run with `VK_ERROR_OUT_OF_POOL_MEMORY`; every physics gate passes identically on
+  Vulkan first. The scene itself is clean on Vulkan, so this is harness plumbing, not the solver.
+  Until it is fixed the Vulkan gate is untrustworthy, which undermines every stage that relies on
+  "self-test PASS on D3D12 and Vulkan". **Must land in Stage 1** alongside W-12, before any
+  solver change, or we will not be able to tell a real Vulkan regression from this defect.
+
 ### Dependency graph
 
 ```
@@ -72,6 +81,31 @@ Hard edges:
 Each stage lists: scope, files likely touched, acceptance, and exit criteria. Task text lives in
 the catalogue; it is not repeated here.
 
+### Measurement protocol (from Stage 0)
+
+Two modes, because the two families of metric need different things:
+
+- **Mode A — deterministic fixed step** (`fixedTimeStep = true`, `dt = 1/120 s`): all physics A/B
+  numbers. Without it two runs land on different physical states at the same wall-clock time and
+  cross-stage comparison is meaningless. D3D12 vs Vulkan at rest already differ under real dt
+  (rms 0.0205 vs 0.0279), which proves the point.
+- **Mode B — real dt** (clamped, CFL substeps): integration sanity, substep/CFL distribution and
+  performance. This is the mode that exercises the clamp logic, so it must not be replaced by
+  Mode A — it exercises something A cannot.
+
+Both modes are needed; neither is a substitute for the other. `fixedTimeStep` exists as a tunable
+but is not CLI-exposed, which is part of Stage 1.
+
+Sampling rules:
+- anchor metrics to **sim time**, not frame index or wall clock (`[sphere] t=…` is sim time);
+- prefer anchoring to **physical events** over fixed times where possible ("ball velocity < 0.01
+  for 10 consecutive frames" rather than "t = 10.7 s");
+- run 3 repeats and record the **median** for real-dt metrics; one repeat suffices in fixed-step
+  if two runs agree;
+- report **p50 and p99**, not just means, for anything that can spike;
+- exclude the ball region (1.5 cells around the body surface) from surface-rms so the −35 cm
+  hollow cannot mask solver flatness regressions.
+
 ### Stage 0 — Baseline & guardrails
 
 **Do**
@@ -88,18 +122,27 @@ the catalogue; it is not repeated here.
 
 ### Stage 1 — Make failures provable (W-12)
 
-**Scope** — the five gates plus the `--backyardNoBall` switch. Gate 1 (still pool) and gate 2
-(isotropy) are the two that would have caught the bugs fixed in `e90752b4`; gate 3 is tightened
-in Stage 5b.
+**Scope** — the five gates plus the `--backyardNoBall` and deterministic fixed-step switches,
+**and W-18** (Vulkan descriptor pool). Gate 1 (still pool) and gate 2 (isotropy) are the two that
+would have caught the bugs fixed in `e90752b4`; gate 3 is tightened in Stage 5b.
+
+Stage 0 showed the gate set is currently incomplete in a specific way: the metrics that later
+stages need (wave front speed and amplitude decay, α boundedness violations, ball-region-excluded
+surface rms, ball trajectory, substep/CFL distribution) do not exist. Gates 1–5 cover the
+still pool and isotropy; **add a sixth gate for wave propagation** (GLM's suggestion: wavefront
+arrival time at r = 0.5 m and the amplitude ratio A(0.5 m)/A(0.1 m)), because that is the single
+most sensitive indicator of the transport change in Stage 5b.
 
 **Files** — `DayScene/App.cpp`, `DayScene/BackyardScene.cpp`, `Framework/src/simulation/…`
-(staged reads), possibly `Framework/src/debug/`.
+(staged reads), possibly `Framework/src/debug/`, `Framework/src/video/vulkan/VulkanDriver.cpp`
+(W-18).
 
-**Acceptance** — all five gates pass at HEAD. Then demonstrate **two** gates actually fail when
-their bug is reintroduced (catalogue requires the `id.y` revert and the wall-shell revert), and
-restore.
+**Acceptance** — all six gates pass at HEAD **on both APIs, including Vulkan** (which requires
+W-18 first). Then demonstrate **two** gates actually fail when their bug is reintroduced
+(catalogue requires the `id.y` revert and the wall-shell revert), and restore.
 
-**Exit** — gates in place and proven to be capable of failing. Every later stage cites them.
+**Exit** — gates in place, proven capable of failing, and Vulkan trustworthy. Every later stage
+cites them.
 
 ---
 
@@ -289,7 +332,64 @@ Append measured results here per stage, so a cold session starts informed.
 
 ### Stage 0 — baseline (@ `01ccbd82`)
 
-_Pending._
+Built and measured 2026-10-28, D3D12 and Vulkan, x64 Release, 1280×720, scene 7,
+`--logLevel debug`, `--dumpSnapshot-seconds 20`. **0 `[ERROR]` lines in both scene runs.**
+
+#### Confirmed baseline (D3D12), matching the catalogue
+
+| Metric | Catalogue | Measured |
+|---|---|---|
+| Still pool surface rms (pre-impact, t=0.32 s) | 0.1–0.3 mm | **0.1 mm** (`min=-0.0023 max=-0.0015 mean=-0.0018 rms=0.0001`) |
+| Mean speed pre-impact | ≈ 0.006 m/s | **0.0028 m/s** |
+| Impact frame (t=0.57 s) | — | `min=-0.5702 max=+0.0756 rms=0.0377` |
+| Surface rms at t≈11 s | ≈ 2.2 cm | **2.19 cm** (sample 51) |
+| Hollow under the floating ball | ≈ −35 cm | **−0.341 m** at rest |
+| Water over the steps at rest | ≤ +5 cm | **+4.1 cm** |
+| Ball at rest | submerged 0.60 | **0.60** (`y=-0.074 vy=0.000 t=19.8`) |
+| Mean speed at rest (t≈19.5 s) | 0.0035 m/s | **0.0026–0.0032 m/s** |
+| Volume correction deficit | ≈ 300 cells every 15 frames | **215–355 cells, last 274, constant from t=0** |
+| Alpha volume drift | −0.03 % | **+0.011 %** (see finding 3) |
+| Fluid self-test D3D12 | PASS | **PASS** (`projection ratio 0.388` at 50 sweeps, `massConservation drift -0.00%`, `walls solidSpeedSum=0 maxWallPenetration=0`) |
+| `sim/wall ratio` | 1.00 | **0.99–1.00** |
+
+#### Findings that contradict the catalogue
+
+1. **Vulkan fluid self-test FAILS.** `[FluidSelfTest] Step 109 failed on API=vulkan`,
+   `FAIL: failures=1`. Root cause logged immediately before: `[Vulkan] AllocateDescriptorSets
+   failed res=-1000069000 frame=1 cachedSets=0` — that HRESULT is `VK_ERROR_OUT_OF_POOL_MEMORY`.
+   The 400-frame selftest exhausts the descriptor pool; every earlier gate
+   (massConservation, projection, walls) passes identically on Vulkan. The catalogue's
+   "PASS D3D12 and Vulkan" is wrong. Filed as **W-18**.
+2. **The Vulkan *scene* is healthy.** Scene 7 ran 20 s with **0 `[ERROR]` lines**, ball at rest
+   submerged 0.60, surface rms 2.79 cm. So this is a harness/pool-sizing defect, not a solver
+   defect — but it means the Vulkan gate is currently untrustworthy.
+3. **Alpha-volume drift is +0.011 %, not −0.03 %.** The catalogue figure is stale. Drift is
+   measured over 600-frame windows (`sim/wall ratio = 1.00 (600 frames)`), which at this frame
+   rate is ≈ 2 s, not ≈ 20 s — so it is sampled far more often than assumed.
+4. **Correction headroom is 0 for the first corrections** (`t=0.12 s headroom=0`) while the
+   deficit is already 355 cells, and headroom only rises to ≈ 3400 at t≈19.8 s. The correction
+   cannot be putting water where it was lost; this corroborates W-03.
+5. **D3D12 and Vulkan are not comparable at rest** (rms 0.0205 vs 0.0279). With real-time dt the
+   two runs accumulate different sim time per substep. Cross-backend comparison needs fixed-step
+   mode, which is only a tunable today, not CLI-exposed.
+
+#### Baseline gaps (feed directly into Stage 1 / W-12)
+
+These metrics are **not instrumentable today**, so no later stage can be checked on them:
+
+| Missing metric | Why it matters | Stage that needs it |
+|---|---|---|
+| Wave propagation (front speed, amplitude vs radius) | The transport and storage stages change dispersion/dissipation; nothing measures it | 5a, 5b |
+| Boundedness violations (α outside [0,1]) | The whole point of the conservative scheme | 5b |
+| Surface rms **excluding the ball region** | Current rms is dominated by the −35 cm hollow, so it cannot detect solver flatness regressions | 2, 5b, 6b |
+| Ball trajectory (impact time, rebound peak, settle time) | Body-coupling stages can converge to 0.60 while changing dynamics | 6a, 6b |
+| Substep/CFL distribution (p50/p99, % at cap) | A perf regression can hide as fewer substeps and read as "faster" | 7 |
+| Frame/GPU ms | Performance has no baseline | 7 |
+| Per-column floor depth | Optics depth is a constant today | 3 |
+| Deterministic fixed-step CLI switch | Needed for any repeatable A/B | 1 |
+
+`--backyardNoBall` (needed for the still-pool gate) does not exist yet either; the pre-impact
+sample works around it for now because the ball takes ≈ 0.45 s to reach the water.
 
 ### Stage 1 — W-12 gates
 

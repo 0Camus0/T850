@@ -498,7 +498,8 @@
         {
           "type": "sampled_texture",
           "shader_register": 1,
-          "binding_index": 2
+          "binding_index": 2,
+          "dimension": "3d"
         },
         {
           "type": "storage_texture",

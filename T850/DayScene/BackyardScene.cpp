@@ -420,6 +420,35 @@ void BackyardScene::OnDraw() {
       if (m_fluid.ReadDiagnostics(pFramework->pVideoDriver, diagnostics))
         T8_LOG_INFO("[Backyard][fluid] samples=%u meanSpeed=%.4f maxSpeed=%.4f nonFinite=%u",
                     diagnostics.samples, diagnostics.meanSpeed, diagnostics.maxSpeed, diagnostics.nonFinite);
+      // Surface contract probe: R must be a small delta around the water plane,
+      // and B/A must be small per-texel height differences. A large |R| or a
+      // missing texture shows up here immediately.
+      t850::Texture* surface = m_fluid.SurfaceTexture();
+      const int rt = m_fluid.SurfaceRenderTarget();
+      if (surface && rt >= 0) {
+        float minH = 1e9f, maxH = -1e9f, sumH = 0.0f, maxSlope = 0.0f, maxFoam = 0.0f;
+        int samples = 0, misses = 0;
+        for (int gy = 0; gy < 5; ++gy) {
+          for (int gx = 0; gx < 5; ++gx) {
+            const int tx = (surface->x * (2 * gx + 1)) / 10;
+            const int ty = (surface->y * (2 * gy + 1)) / 10;
+            float rgba[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            if (!pFramework->pVideoDriver->ReadRTColorFloat(rt, t850::BaseDriver::COLOR0_ATTACHMENT, rgba)) {
+              ++misses;
+              continue;
+            }
+            minH = (std::min)(minH, rgba[0]);
+            maxH = (std::max)(maxH, rgba[0]);
+            maxSlope = (std::max)(maxSlope, (std::max)(std::fabs(rgba[2]), std::fabs(rgba[3])));
+            maxFoam = (std::max)(maxFoam, rgba[1]);
+            sumH += rgba[0];
+            ++samples;
+          }
+        }
+        T8_LOG_INFO("[Backyard][surface] texel0 height=%.4f | grid min=%.4f max=%.4f mean=%.4f maxSlope=%.4f maxFoam=%.4f samples=%d",
+                    [&] { float r[4] = {0,0,0,0}; pFramework->pVideoDriver->ReadRTColorFloat(rt, t850::BaseDriver::COLOR0_ATTACHMENT, r); return r[0]; }(),
+                    minH, maxH, samples > 0 ? sumH / samples : 0.0f, maxSlope, maxFoam, samples);
+      }
     }
   }
 

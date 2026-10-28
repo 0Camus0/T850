@@ -308,7 +308,14 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
       }
     }
   }
+  // A headless dispatch loop never reaches CompleteFrame, so BeginFrame() early-outs
+  // after the first dispatch and the descriptor pool is reset only once: enough
+  // dispatches then exhaust it with VK_ERROR_OUT_OF_POOL_MEMORY. Recycle the frame
+  // first when the budget is nearly spent; this is a no-op for renderer-owned frames.
+  RecycleOverflowingComputeFrame();
+  const bool openedFrame = !m_frameStarted;
   BeginFrame(FrameTargetMode::Offscreen);
+  if (openedFrame) m_frameOpenedByCompute = true;
   VkCommandBuffer cmd = GetCmdBuffer();
   EndRenderPassIfActive(cmd);
   VkDescriptorSet set = AllocateDescriptorSet(pipeline->descriptorSetLayout);

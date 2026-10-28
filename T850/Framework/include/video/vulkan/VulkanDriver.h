@@ -110,6 +110,14 @@ namespace t850 {
                uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
     bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
 
+    // Closes a compute-owned offscreen frame when its descriptor pool is nearly
+    // exhausted, waits for the GPU, and lets the next BeginFrame() start a clean
+    // pool generation. A headless dispatch loop never reaches CompleteFrame, so
+    // BeginFrame() early-outs after the first dispatch and the pool is reset exactly
+    // once - which exhausted it at step 109 of the 400-frame fluid self-test with
+    // VK_ERROR_OUT_OF_POOL_MEMORY. Returns true when a recycle happened.
+    bool RecycleOverflowingComputeFrame();
+
     // ── Accessors ──
     VkCommandBuffer    GetCmdBuffer() const { return m_commandBuffers[m_currentFrame]; }
     VkDevice           GetDevice() const { return m_device; }
@@ -351,6 +359,15 @@ namespace t850 {
     FaceCulling           m_currentCull  = FRONT_FACES;
     bool                   m_frameStarted = false;
     bool                   m_frameUsesSwapchain = true;
+    // Set when the frame currently open was opened by DispatchCompute rather than by
+    // the renderer. Only such a frame may be recycled from the compute path (see
+    // RecycleOffscreenComputeFrame); recycling a renderer-owned frame would
+    // invalidate descriptor sets already recorded for its draws.
+    bool                   m_frameOpenedByCompute = false;
+    // Descriptor sets allocated from m_descriptorPools[m_currentFrame] since the last
+    // ResetDescriptorPool. Used to detect a headless dispatch loop that never reaches
+    // CompleteFrame.
+    uint32_t               m_descriptorSetsThisGeneration = 0;
     bool                   m_screenshotConsumedSemaphore = false;
     bool                   m_swapchainNeedsRecreate = false;
 

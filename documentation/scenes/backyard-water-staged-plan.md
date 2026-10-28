@@ -34,7 +34,8 @@ grid.
 | Stage | Tasks | Size | Why here |
 |---|---|---|---|
 | 0. Baseline & guardrails | — | S | Without a recorded baseline no later claim is checkable |
-| 1. Make failures provable | W-12 | M | Turns every later fix into a gate instead of an opinion |
+| 1a. Vulkan gate must be trustworthy | W-18 | S | A gate we cannot trust invalidates every later stage |
+| 1b. Make failures provable | W-12 | M | Turns every later fix into a gate instead of an opinion |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | High visible payoff, low risk, no overlap with the solver |
 | 3. Rendering correctness | W-09, W-10 | M | Independent of the solver; improves what already works |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
@@ -120,11 +121,62 @@ Sampling rules:
 
 ---
 
-### Stage 1 — Make failures provable (W-12)
+### Stage 1a — Vulkan gate must be trustworthy (W-18) — **DONE**
 
-**Scope** — the five gates plus the `--backyardNoBall` and deterministic fixed-step switches,
-**and W-18** (Vulkan descriptor pool). Gate 1 (still pool) and gate 2 (isotropy) are the two that
-would have caught the bugs fixed in `e90752b4`; gate 3 is tightened in Stage 5b.
+**Problem** — the 400-frame fluid self-test failed at step 109 on Vulkan with
+`VK_ERROR_OUT_OF_POOL_MEMORY`. Every physics gate passed identically first, and the Vulkan
+*scene* was clean, so it was pool plumbing rather than the solver — but it made the Vulkan gate
+unusable.
+
+**Root cause** — `VulkanDriver::BeginFrame` early-returns when `m_frameStarted` is already true
+(`if (m_frameStarted) return;`). A headless dispatch loop never reaches `CompleteFrame`, so the
+frame stays open after the first dispatch and the descriptor pool is reset **exactly once**.
+Every later dispatch then accumulates into that one pool until it is exhausted. The interactive
+scene never sees this because it resets the pool at every render frame.
+
+**Fix** — `VulkanDriver::RecycleOverflowingComputeFrame()`, called from the compute dispatch path
+before `BeginFrame`. It only acts on a frame the *compute path itself* opened
+(`m_frameOpenedByCompute`), so a renderer-owned frame can never be recycled under its draws. When
+the set count for the current pool generation reaches **6144 (75% of `maxSets` 8192)** it
+completes the frame (`SubmitNoPresent`), calls `WaitForGPU()` — required, because resetting a pool
+invalidates every set allocated from it and none may still be in flight — and lets the next
+`BeginFrame` start a clean generation.
+
+The budget is deliberately a fraction of `maxSets` rather than a small batch size: one
+interactive frame uses a few hundred sets and can never reach 6144, so the renderer path is
+untouched and no per-frame submit is introduced. A headless loop keeps allocating until it does
+reach it, which is exactly the case that used to run the pool dry.
+
+**Files** — `Framework/include/video/vulkan/VulkanDriver.h`,
+`Framework/src/video/vulkan/VulkanDriver.cpp`, `Framework/src/video/vulkan/VulkanCompute.cpp`.
+
+**Measured**
+
+| | Before | After |
+|---|---|---|
+| Vulkan fluid self-test, 400 frames | `Step 109 failed`, `FAIL: failures=1` | **`PASS`**, `meanSpeed=0.1341` |
+| Recycles needed | — | 3 (at 6144 sets each) |
+| Vulkan scene 7, 12 s | 0 errors | **0 errors**, ball at rest `submerged=0.60`, rms 3.24 cm |
+| D3D12 scene 7, 12 s | rms 2.19 cm | **rms 2.19 cm** — unchanged |
+| D3D12 self-test | PASS | **PASS** |
+
+Cross-backend agreement after the fix: D3D12 `meanSpeed=0.1340`, Vulkan `0.1341`.
+
+**Environment note** — after editing `VulkanDriver.h` an incremental link produced the
+`_EXCEPTION_DISPOSITION` / `std::align_val_t` `C2011` redefinition pair from stale CRT
+precompiled state; no `.pch` existed to delete. `MSBuild /t:Rebuild /m:1` clears it. Expect this
+after header edits in this project; go straight to a rebuild rather than debugging the headers.
+
+**Exit** — Vulkan gate trustworthy. Every later stage can now rely on "self-test PASS on D3D12
+and Vulkan".
+
+---
+
+### Stage 1b — Make failures provable (W-12)
+
+**Scope** — the five gates plus the `--backyardNoBall` and deterministic fixed-step switches.
+Gate 1 (still pool) and gate 2 (isotropy) are the two that would have caught the bugs fixed in
+`e90752b4`; gate 3 is tightened in Stage 5b.
 
 Stage 0 showed the gate set is currently incomplete in a specific way: the metrics that later
 stages need (wave front speed and amplitude decay, α boundedness violations, ball-region-excluded
@@ -134,15 +186,13 @@ arrival time at r = 0.5 m and the amplitude ratio A(0.5 m)/A(0.1 m)), because th
 most sensitive indicator of the transport change in Stage 5b.
 
 **Files** — `DayScene/App.cpp`, `DayScene/BackyardScene.cpp`, `Framework/src/simulation/…`
-(staged reads), possibly `Framework/src/debug/`, `Framework/src/video/vulkan/VulkanDriver.cpp`
-(W-18).
+(staged reads), possibly `Framework/src/debug/`.
 
-**Acceptance** — all six gates pass at HEAD **on both APIs, including Vulkan** (which requires
-W-18 first). Then demonstrate **two** gates actually fail when their bug is reintroduced
-(catalogue requires the `id.y` revert and the wall-shell revert), and restore.
+**Acceptance** — all six gates pass at HEAD **on both APIs**. Then demonstrate **two** gates
+actually fail when their bug is reintroduced (catalogue requires the `id.y` revert and the
+wall-shell revert), and restore.
 
-**Exit** — gates in place, proven capable of failing, and Vulkan trustworthy. Every later stage
-cites them.
+**Exit** — gates in place, proven capable of failing. Every later stage cites them.
 
 ---
 
@@ -391,7 +441,15 @@ These metrics are **not instrumentable today**, so no later stage can be checked
 `--backyardNoBall` (needed for the still-pool gate) does not exist yet either; the pre-impact
 sample works around it for now because the ball takes ≈ 0.45 s to reach the water.
 
-### Stage 1 — W-12 gates
+### Stage 1a — W-18 Vulkan descriptor pool
+
+**DONE.** Root cause: `BeginFrame` early-returns while a frame is open, and a headless loop never
+closes it, so the pool was reset once and then accumulated. Fix recycles a *compute-owned* frame
+at 6144 sets (75% of maxSets) with a `WaitForGPU()` guard. Vulkan self-test now `PASS`
+(`meanSpeed=0.1341`, 3 recycles); Vulkan and D3D12 scenes unchanged, 0 errors.
+See the Stage 1a section in §3 for the full measurement table.
+
+### Stage 1b — W-12 gates
 
 _Pending._
 

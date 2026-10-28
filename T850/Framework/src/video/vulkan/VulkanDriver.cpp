@@ -1479,6 +1479,10 @@ namespace t850 {
     // Reset per-frame descriptor pool and pending state
     vkResetDescriptorPool(m_device, m_descriptorPools[m_currentFrame], 0);
     m_descriptorSetCache.clear();
+    // A fresh pool generation: restart the budget accounting, and note that this
+    // frame belongs to whoever called BeginFrame (the renderer, if it got here first).
+    m_descriptorSetsThisGeneration = 0;
+    m_frameOpenedByCompute = false;
     m_cbRingOffset = 0;
     m_cbDirty = false;
     memset(m_pendingTextures, 0, sizeof(m_pendingTextures));
@@ -2803,13 +2807,42 @@ reopen:
     VkDescriptorSet ds = VK_NULL_HANDLE;
     VkResult res = vkAllocateDescriptorSets(m_device, &allocInfo, &ds);
     if (res != VK_SUCCESS) {
-      T8_LOG_ERROR("[Vulkan] AllocateDescriptorSets failed res=%d frame=%u cachedSets=%zu",
+      T8_LOG_ERROR("[Vulkan] AllocateDescriptorSets failed res=%d frame=%u cachedSets=%zu setsThisGeneration=%u",
                    res,
                    m_currentFrame,
-                   m_descriptorSetCache.size());
+                   m_descriptorSetCache.size(),
+                   m_descriptorSetsThisGeneration);
       return VK_NULL_HANDLE;
     }
+    ++m_descriptorSetsThisGeneration;
     return ds;
+  }
+
+  bool VulkanDriver::RecycleOverflowingComputeFrame() {
+    // Only frames opened by the compute path may be recycled. A renderer-owned frame
+    // already has descriptor sets recorded for its draws; resetting the pool under it
+    // would leave those bindings dangling.
+    if (!m_frameStarted || !m_frameOpenedByCompute)
+      return false;
+
+    // The budget is a fraction of maxSets rather than a small batch size on purpose:
+    // one interactive frame uses only a few hundred sets, so it can never reach this
+    // and the renderer path is untouched. A headless loop keeps allocating until it
+    // does reach it, which is exactly the case that used to run the pool dry.
+    constexpr uint32_t kDescriptorSetBudget = 6144;   // 75% of the 8192 maxSets
+    if (m_descriptorSetsThisGeneration < kDescriptorSetBudget)
+      return false;
+
+    T8_LOG_DEBUG("[Vulkan][Compute] Recycling the compute-owned frame at %u descriptor sets",
+                 m_descriptorSetsThisGeneration);
+
+    // Finish the command buffer and wait: resetting a pool invalidates every set
+    // allocated from it, so none may still be referenced by in-flight work.
+    CompleteFrame(FrameCompletionMode::SubmitNoPresent);
+    WaitForGPU();
+    // CompleteFrame cleared m_frameStarted, so the next BeginFrame() opens a fresh
+    // frame and resets the pool for this slot.
+    return true;
   }
 
   void VulkanDriver::BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader) {

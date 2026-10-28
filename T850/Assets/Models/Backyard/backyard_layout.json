@@ -96,5 +96,17 @@
     "wall": "Backyard_Wall.glb",
     "props": "Backyard_Props.glb",
     "water": "Backyard_Water.glb"
+  },
+  "waterDetail": {
+    "normalMap": "Backyard/WaterNormal.png",
+    "windSpeed": 6.5,
+    "minCycles": 2,
+    "maxCycles": 128,
+    "spread": 0.35,
+    "targetP99Slope": 0.42,
+    "tileSizeMetres": 0.4,
+    "peakWavelengthMetres": 0.12,
+    "bandWidth": 1.1,
+    "directionality": 0.55
   }
 }

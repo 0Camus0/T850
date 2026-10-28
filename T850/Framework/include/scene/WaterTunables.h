@@ -133,7 +133,7 @@ namespace t850 {
     float normalStrength = 1.0f;
     // Draw the procedural ripple octaves and the tiling normal map on top of the
     // simulated surface. Off means the water is driven purely by the solver.
-    bool fakeRipplesEnabled = true;
+    bool fakeRipplesEnabled = false;
     // Sustained forcing amplitude so the pool is not perfectly flat at rest.
     // A one-shot seed decays within seconds; without continuous forcing the
     // solver correctly produces a motionless pool.

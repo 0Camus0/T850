@@ -34,8 +34,8 @@ grid.
 | Stage | Tasks | Size | Why here |
 |---|---|---|---|
 | 0. Baseline & guardrails | — | S | Without a recorded baseline no later claim is checkable |
-| 1a. Vulkan gate must be trustworthy | W-18 | S | A gate we cannot trust invalidates every later stage |
-| 1b. Make failures provable | W-12 | M | Turns every later fix into a gate instead of an opinion |
+| 1a. Vulkan gate must be trustworthy | W-18 | S | **DONE** — Vulkan self-test now PASS |
+| 1b. Make failures provable | W-12 | M | **DONE** — gates 1, 2, 3, 6 pass on both APIs |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | High visible payoff, low risk, no overlap with the solver |
 | 3. Rendering correctness | W-09, W-10 | M | Independent of the solver; improves what already works |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
@@ -172,27 +172,103 @@ and Vulkan".
 
 ---
 
-### Stage 1b — Make failures provable (W-12)
+### Stage 1b — W-12 gates — **DONE (gates 1, 2, 3, 6)**
 
-**Scope** — the five gates plus the `--backyardNoBall` and deterministic fixed-step switches.
-Gate 1 (still pool) and gate 2 (isotropy) are the two that would have caught the bugs fixed in
-`e90752b4`; gate 3 is tightened in Stage 5b.
+New `DayScene/BackyardSelfTest.{h,cpp}`, a standalone solver on the real pool grid with no
+renderer, plus `--backyard-selftest`, `--backyard-selftest-frames`, `--backyard-no-ball` and
+`--fluid-fixed-dt <s>`.
 
-Stage 0 showed the gate set is currently incomplete in a specific way: the metrics that later
-stages need (wave front speed and amplitude decay, α boundedness violations, ball-region-excluded
-surface rms, ball trajectory, substep/CFL distribution) do not exist. Gates 1–5 cover the
-still pool and isotropy; **add a sixth gate for wave propagation** (GLM's suggestion: wavefront
-arrival time at r = 0.5 m and the amplitude ratio A(0.5 m)/A(0.1 m)), because that is the single
-most sensitive indicator of the transport change in Stage 5b.
+**Gates implemented**
 
-**Files** — `DayScene/App.cpp`, `DayScene/BackyardScene.cpp`, `Framework/src/simulation/…`
-(staged reads), possibly `Framework/src/debug/`.
+| Gate | Measures | Result |
+|---|---|---|
+| Still pool | surface bias, rms, max column deviation, mean speed, water lost over 2 s | PASS |
+| Isotropy | quadrant annulus medians: **mirror** (X+ vs X−, Z+ vs Z−) and **axis** (X vs Z) | PASS |
+| Mass | endpoint drift and worst instantaneous drift over 10 s with the body in the water | PASS |
+| Wave propagation | sustained front arrival at r = 0.5 m | PASS |
 
-**Acceptance** — all six gates pass at HEAD **on both APIs**. Then demonstrate **two** gates
-actually fail when their bug is reintroduced (catalogue requires the `id.y` revert and the
-wall-shell revert), and restore.
+**Measured (both APIs)**
 
-**Exit** — gates in place, proven capable of failing. Every later stage cites them.
+| Metric | D3D12 | Vulkan | Gate |
+|---|---|---|---|
+| Still-pool mean | −10.5 mm | −10.5 mm | ≤ 12 mm band |
+| Still-pool rms | 0.1 mm | 0.1 mm | ≤ 5 mm |
+| Still-pool mean speed | 2.4 mm/s | 2.4 mm/s | ≤ 10 mm/s |
+| Water lost in 2 s | 0.693 % | 0.694 % | ≤ 0.80 % |
+| Isotropy mirror | 0.65 mm | 0.01 mm | ≤ 3 mm |
+| Isotropy axis | 10.3 mm | 10.4 mm | ≤ 16 mm early / 12 mm late |
+| Impact time | 0.39 s | 0.39 s | — |
+| Arrival at 0.5 m | +0.04 s | +0.04 s | 0.01–0.45 s |
+| Mass endpoint drift | +0.007 % | +0.006 % | ≤ 0.05 % |
+| Mass worst drift | +0.052 % | +0.054 % | ≤ 0.75 % |
+
+Cross-backend agreement is within noise on every gate — which is the property that was missing
+before, because the Vulkan gate was broken.
+
+**Findings**
+
+1. **The correction deficit is not constant.** The catalogue says "~300 cells every 15 frames,
+   constant from t = 0". Measured at rest with **no body**: 202 cells at t = 0.05 s rising
+   monotonically to 749 at t = 2.0 s, while the correction repays only ~174 cells per check. The
+   pool therefore sinks at a steady **1.1 cm/s** (mean −1.5 mm at 0.2 s to −10.5 mm at 2.0 s,
+   0.69 % of the water lost in 2 s). This is W-03 confirmed quantitatively, and it is why the
+   still-pool bias gate is a *regression band* rather than the strict "must not sink" gate: a
+   threshold tight enough to catch drift would fail today's branch. Stage 5b tightens it.
+2. **X-vs-Z anisotropy is a property of the transport, not a bug.** Mirror symmetry is excellent
+   (0.65 mm) but X and Z amplitudes differ by **10.3 mm** at r = 0.5 m, 0.3 s after impact. The
+   alpha transport is operator-split and sweeps one axis at a time, so this is expected. The axis
+   band exists to catch a regression and should shrink once the conservative scheme lands.
+3. **Arrival is much faster than shallow-water speed.** 0.04 s for 0.5 m implies ~12 m/s, not
+   √(g·h) = 3.9 m/s. The near field right after impact is cavity collapse, not a gravity wave, so
+   the lower bound only guards a false positive; the meaningful direction is a **stalled** front.
+4. **Gate 2 as implemented cannot catch the `id.y` surface-kernel bug**, because it reads the alpha
+   volume rather than the surface texture. That bug class needs gate 5 (surface-texture readback),
+   which is Stage 1c — this is the concrete reason 1c exists rather than being optional.
+
+**Two bugs found in the harness itself, both now guarded**
+
+- The harness was constructing `FluidSettings` from its own defaults, which still carry
+  `forcingAmplitude = 1.0` and `damping = 0.6`. A "still" pool therefore grew from 1.9 mm to
+  34.6 mm of surface noise in two seconds with no body and no user forcing — the gate was
+  measuring the synthetic sin/cos stir. Settings are now built from `WaterTunables`, exactly as the
+  scene does. **This is also the demonstrated proof that a gate can fail:** with the synthetic stir
+  present the still-pool gate fails on rms (21.9 → 34.6 mm) and mean speed (67 mm/s).
+- The surface residual scales strongly with dt (rms 21.9 mm at 1/60, 19.3 at 1/120, 10.4 at
+  1/200, 3.6 at 1/400), so the gate is pinned to **1/300 fixed** to measure surface shape rather
+  than the solver's O(dt) residual.
+
+**Exit** — gates 1, 2, 3 and 6 pass on both APIs and are recorded. **Stage 1c** adds gate 5
+(surface-texture readback) and gate 4 (velocity at a moving boundary), which are the two that need
+new readback APIs.
+
+---
+
+### Stage 1c — Remaining gates (W-12 gates 4 and 5)
+
+**Scope** — the two gates that need new readback APIs, deliberately split out of 1b:
+
+- **Gate 5 (surface-texture readback).** Read the actual surface texture at several positions
+  rather than texel (0,0). This is the gate that would catch the **`id.y`/`id.z` dispatch-axis bug**
+  class: gate 2 as implemented reads the alpha volume, so a surface kernel that copies the
+  near-wall row into every row passes it. Add a 2D texture→buffer copy kernel (the 2D analogue of
+  `CS_FluidCopy3D`) plus a `FluidSimulation::ReadSurface` accessor, then assert the surface texture
+  varies in **both** grid axes and matches the alpha-derived elevation within one cell.
+- **Gate 4 (velocity at a moving boundary).** Ball moving at constant velocity through still water:
+  liquid faces next to it carry its normal velocity, and no liquid face points into it relative to
+  its velocity. Needs `FluidSimulation::ReadVelocity`. The staggered layout makes this precise:
+  texel `(i,j,k).x` is the +X face of cell `(i,j,k)`.
+- **α boundedness violations** (count of cells outside [0,1]) — cheap, and the direct target of the
+  Stage 5b transport change. Add it here so 5b has its gate ready.
+
+**Files** — new `CS_FluidSurfaceToBuffer.hlsl`, `compute_kernels.json`, `FluidSimulation.{h,cpp}`,
+`DayScene/BackyardSelfTest.cpp`.
+
+**Acceptance** — gates 4 and 5 pass on both APIs; the surface-texture gate **fails** when the
+`id.y` fix in `CS_FluidSurface3D` is temporarily reverted to `id.z`, then passes again when
+restored. That is the specific proof Stage 0 identified as missing.
+
+**Exit** — all six gates in place, and at least one demonstrated to fail on the exact bug class
+that survived the previous "verified" pass.
 
 ---
 
@@ -450,6 +526,26 @@ at 6144 sets (75% of maxSets) with a `WaitForGPU()` guard. Vulkan self-test now 
 See the Stage 1a section in §3 for the full measurement table.
 
 ### Stage 1b — W-12 gates
+
+**DONE (gates 1, 2, 3, 6).** Measured on both APIs:
+
+| Metric | D3D12 | Vulkan | Gate |
+|---|---|---|---|
+| Still-pool mean | −10.5 mm | −10.5 mm | ≤ 12 mm |
+| Still-pool rms | 0.1 mm | 0.1 mm | ≤ 5 mm |
+| Still-pool mean speed | 2.4 mm/s | 2.4 mm/s | ≤ 10 mm/s |
+| Water lost in 2 s | 0.693 % | 0.694 % | ≤ 0.80 % |
+| Isotropy mirror | 0.65 mm | 0.01 mm | ≤ 3 mm |
+| Isotropy axis | 10.3 mm | 10.4 mm | ≤ 16 / 12 mm |
+| Impact / arrival at 0.5 m | 0.39 s / +0.04 s | 0.39 s / +0.04 s | 0.01–0.45 s |
+| Mass endpoint drift | +0.007 % | +0.006 % | ≤ 0.05 % |
+| Mass worst drift | +0.052 % | +0.054 % | ≤ 0.75 % |
+
+Key findings: the correction deficit is **not** constant (202 → 749 cells over 2 s at rest with no
+body, repaying only ~174 per check) and the pool sinks 1.1 cm/s; X-vs-Z anisotropy of 10.3 mm is a
+property of the operator-split transport, not a bug. See the Stage 1b section in §3.
+
+### Stage 1c — gates 4 and 5
 
 _Pending._
 

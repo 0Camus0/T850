@@ -12,6 +12,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <system_error>
 
 namespace t850 {
@@ -125,7 +126,7 @@ std::unique_ptr<ComputePipeline> FluidSimulation::CreatePipeline(BaseDriver* dri
   return driver->CreateComputePipeline(desc);
 }
 
-std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked) const {
+std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked, float paddingOverride) const {
   FluidConstants constants{};
   constants.width = m_settings.width;
   constants.height = m_settings.height;
@@ -145,8 +146,9 @@ std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked) 
   // (Equivalently Lap(p') = div/dt with u -= dt*grad(p').) Mixing the two
   // conventions over-corrects by 1/dt and makes divergence grow with iterations.
   constants.pressureScale = m_settings.cellSize * m_settings.cellSize;
-  // padding0 carries the SOR factor to the pressure kernel.
-  constants.padding0 = m_settings.sorOmega;
+  // padding0 carries the SOR factor to the pressure kernel, or the compression
+  // strength to the alpha advection kernel.
+  constants.padding0 = paddingOverride >= 0.0f ? paddingOverride : m_settings.sorOmega;
   std::vector<uint32_t> words(sizeof(constants) / sizeof(uint32_t));
   std::memcpy(words.data(), &constants, sizeof(constants));
   return words;
@@ -223,8 +225,11 @@ bool FluidSimulation::BuildWallMask(BaseDriver* driver) {
       for (uint32_t i = 0; i < width; ++i) {
         const float px = m_settings.basinMinX + (i + 0.5f) * (sizeX / static_cast<float>(width));
 
-        // The outer shell is solid: water cannot leave the basin.
-        bool solid = i == 0 || i == width - 1 || j == 0 || j == height - 1 ||
+        // The outer shell is solid on the walls and the floor, but NOT the
+        // ceiling: a free surface needs air above the water, so the top row must
+        // stay open. If it were solid the water would have nowhere to rise into
+        // and alpha would saturate across every remaining row.
+        bool solid = i == 0 || i == width - 1 || j == 0 ||
                      k == 0 || k == depth - 1;
 
         // Then every authored intrusion (the pool steps). A voxel is solid when
@@ -310,6 +315,8 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_divergence = CreateVolume(driver, "Fluid Divergence");
   for (size_t i = 0; i < kPressureCount; ++i)
     m_pressure[i] = CreateVolume(driver, i == 0 ? "Fluid Pressure A" : "Fluid Pressure B");
+  for (int i = 0; i < 2; ++i)
+    m_alpha[i] = CreateVolume(driver, i == 0 ? "Fluid Alpha A" : "Fluid Alpha B");
 
   // Wall mask from the authored pool geometry. LoadPoolLayout() must run before
   // this so the basin bounds match the cells being classified.
@@ -325,15 +332,29 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_diagnosticsPipeline = CreatePipeline(driver, "CS_FluidDiagnostics3D.hlsl");
   m_copyPipeline = CreatePipeline(driver, "CS_FluidCopy3D.hlsl");
   m_surfaceCopyPipeline = CreatePipeline(driver, "CS_FluidSurfaceCopy.hlsl");
+  m_seedAlphaPipeline = CreatePipeline(driver, "CS_FluidSeedAlpha3D.hlsl");
+  m_alphaAdvectPipeline = CreatePipeline(driver, "CS_FluidAlphaAdvect3D.hlsl");
+  m_volumeCorrectPipeline = CreatePipeline(driver, "CS_FluidVolumeCorrect3D.hlsl");
 
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
-                  m_copyPipeline && m_surfaceCopyPipeline;
+                  m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
+                  m_alphaAdvectPipeline && m_volumeCorrectPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
   complete = complete && m_divergence;
+  complete = complete && m_alpha[0] && m_alpha[1];
   if (!complete) {
-    T8_LOG_ERROR("[Fluid] Solver resources are incomplete on %s", driver->ApiTag());
+    T8_LOG_ERROR("[Fluid] Solver resources are incomplete on %s: adv=%d for=%d div=%d pre=%d grad=%d surf=%d seed=%d diag=%d copy=%d surfCopy=%d seedAlpha=%d advAlpha=%d volCorrect=%d velA=%d velB=%d preA=%d preB=%d divVol=%d alphaA=%d alphaB=%d",
+                driver->ApiTag(),
+                m_advect ? 1 : 0, m_forces ? 1 : 0, m_divergencePipeline ? 1 : 0,
+                m_pressurePipeline ? 1 : 0, m_gradientPipeline ? 1 : 0, m_surfacePipeline ? 1 : 0,
+                m_seedPipeline ? 1 : 0, m_diagnosticsPipeline ? 1 : 0, m_copyPipeline ? 1 : 0,
+                m_surfaceCopyPipeline ? 1 : 0, m_seedAlphaPipeline ? 1 : 0,
+                m_alphaAdvectPipeline ? 1 : 0, m_volumeCorrectPipeline ? 1 : 0,
+                m_velocity[0] ? 1 : 0, m_velocity[1] ? 1 : 0,
+                m_pressure[0] ? 1 : 0, m_pressure[1] ? 1 : 0,
+                m_divergence ? 1 : 0, m_alpha[0] ? 1 : 0, m_alpha[1] ? 1 : 0);
     Shutdown(driver);
     return false;
   }
@@ -364,6 +385,16 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_surfaceCopyPipeline.reset();
   m_surfaceOutput = nullptr;
   m_wallMask.reset();
+  m_alpha[0].reset();
+  m_alpha[1].reset();
+  m_seedAlphaPipeline.reset();
+  m_alphaAdvectPipeline.reset();
+  m_volumeCorrectPipeline.reset();
+  m_referenceVolumeFraction = 0.0f;
+  m_interfaceAlphaSum = 0.0f;
+  m_framesSinceVolumeCheck = 0;
+  m_volumeReadbackBuffer.reset();
+  m_volumeReadbackVoxels = 0;
   m_solidBoxes.clear();
   m_solidVoxelCount = 0;
   for (auto& volume : m_velocity) volume.reset();
@@ -385,6 +416,123 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_time = 0.0f;
 }
 
+bool FluidSimulation::SeedVolumeFraction(BaseDriver* driver) {
+  if (!m_ready || !driver || !m_seedAlphaPipeline) return false;
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
+    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()}
+  };
+  const uint32_t groupsX = (m_settings.width + m_seedAlphaPipeline->threadGroupSize[0] - 1) / m_seedAlphaPipeline->threadGroupSize[0];
+  const uint32_t groupsY = (m_settings.height + m_seedAlphaPipeline->threadGroupSize[1] - 1) / m_seedAlphaPipeline->threadGroupSize[1];
+  const uint32_t groupsZ = (m_settings.depth + m_seedAlphaPipeline->threadGroupSize[2] - 1) / m_seedAlphaPipeline->threadGroupSize[2];
+  if (!driver->DispatchCompute(*m_seedAlphaPipeline, bindings, groupsX, groupsY, groupsZ))
+    return false;
+  float total = 0.0f;
+  float interfaceSum = 0.0f;
+  MeasureVolumeFraction(driver, total, interfaceSum);
+  m_referenceVolumeFraction = total;
+  T8_LOG_INFO("[Fluid] Volume fraction seeded at %.1f%% fill: total alpha = %.0f cells (%.1f%% of the %u fluid voxels), reference locked",
+              m_settings.surfaceLevel * 100.0f, total,
+              100.0 * static_cast<double>(total) / static_cast<double>((std::max)(1u, FluidVoxelCount())),
+              FluidVoxelCount());
+  return true;
+}
+
+bool FluidSimulation::CorrectVolumeFraction(BaseDriver* driver, float& appliedScale) {
+  appliedScale = 1.0f;
+  if (!m_ready || !driver || !m_volumeCorrectPipeline) return false;
+  if (m_referenceVolumeFraction <= 0.0f) return false;
+
+  float total = 0.0f;
+  float interfaceSum = 0.0f;
+  if (!MeasureVolumeFraction(driver, total, interfaceSum)) return false;
+
+  // The correction only touches partially filled cells, so the achievable delta
+  // is bounded by their total. If the loss exceeds that there is nothing sane to
+  // rescale and the honest answer is to leave the field alone than to fabricate
+  // water out of saturated cells.
+  const float deficit = m_referenceVolumeFraction - total;
+  if (std::abs(deficit) <= 0.5f) return true;             // within noise
+  if (interfaceSum <= 1.0f) return false;                 // no interface to scale
+
+  const float targetInterface = interfaceSum + deficit;
+  if (targetInterface <= 0.0f) return false;
+  appliedScale = targetInterface / interfaceSum;
+
+  const uint32_t alphaNext = (m_alphaCurrent + 1) % 2;
+  const std::vector<uint32_t> constants = BuildConstants(0, appliedScale);
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
+    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[alphaNext].get()}
+  };
+  const uint32_t gx = (m_settings.width + m_volumeCorrectPipeline->threadGroupSize[0] - 1) / m_volumeCorrectPipeline->threadGroupSize[0];
+  const uint32_t gy = (m_settings.height + m_volumeCorrectPipeline->threadGroupSize[1] - 1) / m_volumeCorrectPipeline->threadGroupSize[1];
+  const uint32_t gz = (m_settings.depth + m_volumeCorrectPipeline->threadGroupSize[2] - 1) / m_volumeCorrectPipeline->threadGroupSize[2];
+  if (!driver->DispatchCompute(*m_volumeCorrectPipeline, bindings, gx, gy, gz))
+    return false;
+  m_alphaCurrent = alphaNext;
+  return true;
+}
+
+bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlpha) {
+  totalAlpha = 0.0f;
+  float unused = 0.0f;
+  return MeasureVolumeFraction(driver, totalAlpha, unused);
+}
+
+bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlpha,
+                                            float& interfaceSum) {
+  totalAlpha = 0.0f;
+  interfaceSum = 0.0f;
+  if (!driver || !m_copyPipeline || !m_alpha[0]) return false;
+  const uint32_t width = m_settings.width;
+  const uint32_t height = m_settings.height;
+  const uint32_t depth = m_settings.depth;
+  const uint32_t voxelCount = width * height * depth;
+
+  ComputeBufferDesc bufferDesc;
+  bufferDesc.byteWidth = voxelCount * 4 * sizeof(uint32_t);
+  bufferDesc.structureStride = 4 * sizeof(uint32_t);
+  bufferDesc.access = ComputeBufferAccess::ReadWrite;
+  bufferDesc.debugName = "Fluid Alpha Volume Readback";
+  // Persist the readback buffer instead of allocating one per call: a fresh
+  // buffer every frame churns Vulkan descriptor sets and eventually exhausts the
+  // pool, which showed up as a late Step failure in the selftest.
+  if (!m_volumeReadbackBuffer || m_volumeReadbackVoxels != voxelCount) {
+    std::vector<uint32_t> zeroSeed(static_cast<size_t>(voxelCount) * 4, 0u);
+    m_volumeReadbackBuffer = driver->CreateComputeBuffer(bufferDesc, zeroSeed.data());
+    if (!m_volumeReadbackBuffer) return false;
+    m_volumeReadbackVoxels = voxelCount;
+  }
+  ComputeBuffer* buffer = m_volumeReadbackBuffer.get();
+
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
+    {ComputeBindingType::ReadWriteBuffer, 0, buffer, nullptr, 0}
+  };
+  const uint32_t groupsX = (width + m_copyPipeline->threadGroupSize[0] - 1) / m_copyPipeline->threadGroupSize[0];
+  const uint32_t groupsY = (height + m_copyPipeline->threadGroupSize[1] - 1) / m_copyPipeline->threadGroupSize[1];
+  const uint32_t groupsZ = (depth + m_copyPipeline->threadGroupSize[2] - 1) / m_copyPipeline->threadGroupSize[2];
+  if (!driver->DispatchCompute(*m_copyPipeline, bindings, groupsX, groupsY, groupsZ))
+    return false;
+
+  std::vector<uint32_t> raw(static_cast<size_t>(voxelCount) * 4, 0u);
+  if (!driver->ReadComputeBuffer(*buffer, raw.data(), raw.size() * sizeof(uint32_t)))
+    return false;
+  for (uint32_t index = 0; index < voxelCount; ++index) {
+    float value = 0.0f;
+    std::memcpy(&value, &raw[index * 4 + 0], sizeof(float));
+    totalAlpha += value;
+    if (value > 0.001f && value < 0.999f) interfaceSum += value;
+  }
+  return true;
+}
+
 bool FluidSimulation::Reset(BaseDriver* driver) {
   if (!m_ready || !driver) return false;
   (void)driver;
@@ -395,7 +543,8 @@ bool FluidSimulation::Reset(BaseDriver* driver) {
 
 bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                                      ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
-                                     ComputeTexture3D* target, uint32_t iterationPacked) {
+                                     ComputeTexture3D* target, uint32_t iterationPacked,
+                                     bool withAlpha) {
   const std::vector<uint32_t> constants = BuildConstants(iterationPacked);
   std::vector<ComputeBindingDesc> bindings;
   bindings.push_back({ComputeBindingType::Constants32, 0, nullptr, constants.data(),
@@ -406,11 +555,26 @@ bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeli
   bindings.push_back({ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, target});
   if (m_wallMask)
     bindings.push_back({ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0});
+  // Free-surface-aware kernels also read the volume fraction at t2. Appended last
+  // so the binding indices of every existing kernel are unchanged.
+  if (withAlpha && m_alpha[m_alphaCurrent])
+    bindings.push_back({ComputeBindingType::ReadOnlyTexture, 2, nullptr, nullptr, 0, nullptr,
+                        m_alpha[m_alphaCurrent].get()});
 
   const uint32_t groupsX = (m_settings.width + pipeline.threadGroupSize[0] - 1) / pipeline.threadGroupSize[0];
   const uint32_t groupsY = (m_settings.height + pipeline.threadGroupSize[1] - 1) / pipeline.threadGroupSize[1];
   const uint32_t groupsZ = (m_settings.depth + pipeline.threadGroupSize[2] - 1) / pipeline.threadGroupSize[2];
-  return driver->DispatchCompute(pipeline, bindings, groupsX, groupsY, groupsZ);
+  const bool dispatched = driver->DispatchCompute(pipeline, bindings, groupsX, groupsY, groupsZ);
+  if (!dispatched) {
+    std::string layout;
+    for (const ComputeBindingLayoutDesc& desc : pipeline.bindingLayout) {
+      layout += " [" + std::to_string(static_cast<int>(desc.type)) + ":" +
+                std::to_string(desc.shaderRegister) + "]";
+    }
+    T8_LOG_ERROR("[Fluid] Dispatch failed: passed %zu bindings, pipeline expects %zu; layout:%s",
+                 bindings.size(), pipeline.bindingLayout.size(), layout.c_str());
+  }
+  return dispatched;
 }
 
 bool FluidSimulation::PublishSurface(BaseDriver* driver) {
@@ -444,12 +608,14 @@ bool FluidSimulation::Step(BaseDriver* driver) {
 
   // 2. External forces and viscosity.
   const uint32_t forced = (m_current + 1) % kVelocityCount;
-  if (!DispatchVolume(driver, *m_forces, m_velocity[m_current].get(), nullptr, m_velocity[forced].get()))
+  if (!DispatchVolume(driver, *m_forces, m_velocity[m_current].get(), nullptr,
+                      m_velocity[forced].get()))
     return false;
   m_current = forced;
 
-  // 3. Divergence.
-  if (!DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr, m_divergence.get()))
+  // 3. Divergence, restricted to wet cells.
+  if (!DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr,
+                      m_divergence.get(), 0, true))
     return false;
 
   // 4. Red-black Gauss-Seidel pressure sweeps with over-relaxation. Each sweep
@@ -463,18 +629,47 @@ bool FluidSimulation::Step(BaseDriver* driver) {
       const uint32_t source = m_pressureCurrent;
       const uint32_t target = (source + 1) % kPressureCount;
       if (!DispatchVolume(driver, *m_pressurePipeline, m_pressure[source].get(), m_divergence.get(),
-                          m_pressure[target].get(), parity))
+                          m_pressure[target].get(), parity, true))
         return false;
       m_pressureCurrent = target;
     }
   }
 
-  // 5. Project velocity.
+  // 5. Project velocity, then transport the free surface by conservative flux.
   const uint32_t projected = (m_current + 1) % kVelocityCount;
-  if (!DispatchVolume(driver, *m_gradientPipeline, m_velocity[m_current].get(), m_pressure[m_pressureCurrent].get(),
-                      m_velocity[projected].get()))
+  if (!DispatchVolume(driver, *m_gradientPipeline, m_velocity[m_current].get(),
+                      m_pressure[m_pressureCurrent].get(), m_velocity[projected].get(), 0, true))
     return false;
   m_current = projected;
+
+  // Transport alpha AFTER projection so the flux field is the one the fluid
+  // actually moves with. Flux-form advection conserves volume by construction.
+  if (m_alphaAdvectPipeline && m_alpha[0] && m_alpha[1]) {
+    const uint32_t alphaNext = (m_alphaCurrent + 1) % 2;
+    const std::vector<uint32_t> alphaConstants = BuildConstants(0, m_settings.alphaCompression);
+    const std::vector<ComputeBindingDesc> alphaBindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, alphaConstants.data(),
+       static_cast<uint32_t>(alphaConstants.size())},
+      {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
+      {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
+      {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[alphaNext].get()},
+      {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0}
+    };
+    const uint32_t ax = (m_settings.width + m_alphaAdvectPipeline->threadGroupSize[0] - 1) / m_alphaAdvectPipeline->threadGroupSize[0];
+    const uint32_t ay = (m_settings.height + m_alphaAdvectPipeline->threadGroupSize[1] - 1) / m_alphaAdvectPipeline->threadGroupSize[1];
+    const uint32_t az = (m_settings.depth + m_alphaAdvectPipeline->threadGroupSize[2] - 1) / m_alphaAdvectPipeline->threadGroupSize[2];
+    if (!driver->DispatchCompute(*m_alphaAdvectPipeline, alphaBindings, ax, ay, az))
+      return false;
+    m_alphaCurrent = alphaNext;
+    // Volume correction reads the field back to the CPU, which is a hard sync.
+    // Doing that every frame would stall the pipeline and churn Vulkan
+    // descriptors, and mass drifts slowly, so it runs periodically instead.
+    if (++m_framesSinceVolumeCheck >= m_volumeCheckInterval) {
+      m_framesSinceVolumeCheck = 0;
+      float appliedScale = 1.0f;
+      CorrectVolumeFraction(driver, appliedScale);
+    }
+  }
 
   // Derive the renderable 2D surface from the volume. The surface pass samples
   // the previous surface and writes a separate target (ping-pong): a resource
@@ -559,7 +754,8 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
     return true;
   }
   if (name == "divergence")
-    return DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr, m_divergence.get());
+    return DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr,
+                          m_divergence.get(), 0, true);
   if (name == "pressure") {
     // One full red-black sweep: relax the even cells, then the odd cells against
     // the freshly updated even ones.
@@ -567,7 +763,7 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
       const uint32_t source = m_pressureCurrent;
       const uint32_t target = (source + 1) % kPressureCount;
       if (!DispatchVolume(driver, *m_pressurePipeline, m_pressure[source].get(), m_divergence.get(),
-                          m_pressure[target].get(), parity))
+                          m_pressure[target].get(), parity, true))
         return false;
       m_pressureCurrent = target;
     }
@@ -575,7 +771,7 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
   }
   if (name == "gradient") {
     if (!DispatchVolume(driver, *m_gradientPipeline, m_velocity[m_current].get(),
-                        m_pressure[m_pressureCurrent].get(), m_velocity[next].get()))
+                        m_pressure[m_pressureCurrent].get(), m_velocity[next].get(), 0, true))
       return false;
     m_current = next;
     return true;

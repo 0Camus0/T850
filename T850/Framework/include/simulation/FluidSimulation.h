@@ -39,6 +39,18 @@ namespace t850 {
     float basinMaxX = 4.5f;
     float basinMaxY = 0.02f;
     float basinMaxZ = -4.5f;
+
+    // Fraction of the basin height that starts filled with water. Cells below
+    // this are alpha = 1, cells above are air (alpha = 0), and the single row
+    // straddling the initial waterline holds the fractional value.
+    float initialFill = 0.94f;
+    // Alpha below this counts as air: no pressure solve, no projection.
+    float airThreshold = 0.05f;
+    // Alpha above this counts as fully wet.
+    float wetThreshold = 0.95f;
+    // Russo-Smereka compression strength for the flux-form alpha advection.
+    // Higher keeps the interface sharper at the cost of some surface noise.
+    float alphaCompression = 0.0f;
   };
 
   // One solid intrusion into the basin, in engine space. Derived from the pool
@@ -59,6 +71,17 @@ namespace t850 {
 
     bool TryInitialize(BaseDriver* driver, const FluidSettings& settings);
     void Shutdown(BaseDriver* driver);
+
+    // Volume fraction in [0,1] per voxel: 1 = water, 0 = air. This is the real
+    // free-surface field; the 2D surface texture the shader consumes is derived
+    // from it.
+    bool SeedVolumeFraction(BaseDriver* driver);
+    // Restores total alpha to the value captured at seed time by rescaling the
+    // interface cells. Returns how much it had to correct, as a fraction.
+    bool CorrectVolumeFraction(BaseDriver* driver, float& appliedScale);
+    // Summed alpha over the fluid domain, read back to the CPU. Used to prove
+    // mass conservation.
+    bool MeasureVolumeFraction(BaseDriver* driver, float& totalAlpha);
 
     // Loads the basin bounds and solid intrusions (pool steps) from the
     // Blender-emitted layout, so wall conditions come from the real geometry.
@@ -141,8 +164,10 @@ namespace t850 {
   private:
     std::unique_ptr<ComputeTexture3D> CreateVolume(BaseDriver* driver, const char* debugName);
     std::unique_ptr<ComputePipeline> CreatePipeline(BaseDriver* driver, const char* source);
-    std::vector<uint32_t> BuildConstants(uint32_t iterationPacked = 0) const;
+    std::vector<uint32_t> BuildConstants(uint32_t iterationPacked = 0,
+                                         float paddingOverride = -1.0f) const;
     bool BuildWallMask(BaseDriver* driver);
+    bool MeasureVolumeFraction(BaseDriver* driver, float& totalAlpha, float& interfaceSum);
     bool EnsureSurfaceTarget(BaseDriver* driver);
     bool AnalyzeVolume(BaseDriver* driver, const std::string* directory, VolumeDump& summary);
   // Reads the mask buffer once so the CPU-side acceptance probe can classify voxels.
@@ -156,7 +181,8 @@ namespace t850 {
     bool PublishSurface(BaseDriver* driver);
     bool DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                         ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
-                        ComputeTexture3D* target, uint32_t iterationPacked = 0);
+                        ComputeTexture3D* target, uint32_t iterationPacked = 0,
+                        bool withAlpha = false);
 
     static constexpr size_t kVelocityCount = 2;
     static constexpr size_t kPressureCount = 2;
@@ -168,6 +194,9 @@ namespace t850 {
     std::unique_ptr<ComputeTexture3D> m_velocity[kVelocityCount];
     std::unique_ptr<ComputeTexture3D> m_divergence;
     std::unique_ptr<ComputeTexture3D> m_pressure[kPressureCount];
+    // Free-surface volume fraction, ping-ponged. RGBA16F holds alpha in .x.
+    std::unique_ptr<ComputeTexture3D> m_alpha[2];
+    uint32_t m_alphaCurrent = 0;
 
     std::unique_ptr<ComputePipeline> m_advect;
     std::unique_ptr<ComputePipeline> m_forces;
@@ -180,6 +209,20 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_diagnosticsPipeline;
     std::unique_ptr<ComputePipeline> m_copyPipeline;
     std::unique_ptr<ComputePipeline> m_surfaceCopyPipeline;
+    std::unique_ptr<ComputePipeline> m_seedAlphaPipeline;
+    std::unique_ptr<ComputePipeline> m_alphaAdvectPipeline;
+    std::unique_ptr<ComputePipeline> m_volumeCorrectPipeline;
+    // Total alpha at seed time, the reference the volume correction restores to.
+    float m_referenceVolumeFraction = 0.0f;
+    // Interface-cell alpha sum, needed to compute the correction scale.
+    float m_interfaceAlphaSum = 0.0f;
+    // Volume correction runs periodically: it needs a GPU readback, which is a
+    // hard sync, and mass drifts slowly enough that per-frame correction is not
+    // needed.
+    uint32_t m_framesSinceVolumeCheck = 0;
+    uint32_t m_volumeCheckInterval = 1;
+    std::unique_ptr<ComputeBuffer> m_volumeReadbackBuffer;
+    uint32_t m_volumeReadbackVoxels = 0;
     // Structured buffer of one uint per voxel: 1 = solid, 0 = fluid. Built from
     // the pool layout and bound read-only to every kernel that needs to know
     // where the walls are.

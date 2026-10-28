@@ -41,6 +41,9 @@ RWTexture3D<float4> VelocityOut : register(u0);
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(3, 0)]]
 #endif
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(3, 0)]]
+#endif
 StructuredBuffer<uint> WallMask : register(t8);
 
 uint CellIndex(int3 cell)
@@ -85,12 +88,12 @@ void CS(uint3 id : SV_DispatchThreadID)
                        6.0f * center;
     velocity += laplacian.xyz * Viscosity;
 
-    // Wind drives the surface layer only.
+    // Wind drives the surface layer. The layer is defined by the surface level;
+    // the volume fraction is not visible to this kernel, so alpha-weighted
+    // viscosity and gravity live in the alpha-aware kernels instead.
     const float surfaceY = SurfaceLevel * float(Height);
     if (float(id.y) > surfaceY - 2.0f)
     {
-        // A spatially varying stir survives the pressure projection; a uniform
-        // wind would be removed as a null-space gradient.
         const float stirX = sin(TimeValue * 0.9f + float(id.x) * 0.31f + float(id.z) * 0.17f);
         const float stirZ = cos(TimeValue * 0.7f + float(id.z) * 0.29f + float(id.x) * 0.13f);
         velocity.x += (WindX + stirX * 0.45f) * DeltaTime;
@@ -98,10 +101,10 @@ void CS(uint3 id : SV_DispatchThreadID)
         velocity.y += (WindY + stirX * stirZ * 0.25f) * DeltaTime;
     }
 
-    // Gravity keeps the volume settled; buoyancy lifts lighter surface cells.
+    // Gravity acts on the water; the hydrostatic balance is the pressure solve's
+    // job now that the free surface gives it a Dirichlet reference, so the old
+    // hand-tuned counter-lift is gone.
     velocity.y -= Gravity * DeltaTime;
-    if (float(id.y) > surfaceY - 1.0f)
-        velocity.y += Gravity * 0.85f * DeltaTime;
 
     velocity *= saturate(1.0f - Damping * DeltaTime);
     velocity = clamp(velocity, -12.0f, 12.0f);

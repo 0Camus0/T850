@@ -126,6 +126,13 @@ namespace t850 {
     // rather than a rendered frame (a still image cannot tell a dimple that tracks
     // the body apart from waves that actually propagate).
     bool ReadVolumeFraction(BaseDriver* driver, std::vector<float>& out);
+    // Raw velocity of every voxel, 4 floats each. Staggered layout: texel (i,j,k).x is
+    // the +X face of cell (i,j,k), .y the +Y face, .z the +Z face.
+    bool ReadVelocity(BaseDriver* driver, std::vector<float>& out);
+    // The 2D surface texture the vertex shader displaces the water mesh with, 4 floats
+    // per texel (R elevation delta, G foam, B/A slopes). Reading the volume fraction
+    // cannot detect a bug in the surface kernel itself, which is why this exists.
+    bool ReadSurface(BaseDriver* driver, std::vector<float>& out);
 
     // Loads the basin bounds and solid intrusions (pool steps) from the
     // Blender-emitted layout, so wall conditions come from the real geometry.
@@ -304,6 +311,10 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_objectVelocityPipeline;
     // Zeroing kernel used by the reset path.
     std::unique_ptr<ComputePipeline> m_clearPipeline;
+    // Surface texture -> buffer, for the readback gate.
+    std::unique_ptr<ComputePipeline> m_surfaceToBufferPipeline;
+    std::unique_ptr<ComputeBuffer> m_surfaceReadbackBuffer;
+    uint32_t m_surfaceReadbackTexels = 0;
     // Per-column (removed, free capacity), written by the obstacle pass.
     std::unique_ptr<ComputeBuffer> m_removedBuffer;
     uint32_t m_removedColumns = 0;

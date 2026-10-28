@@ -570,12 +570,14 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_spherePipeline = CreatePipeline(driver, "CS_FluidSphere3D.hlsl");
   m_objectVelocityPipeline = CreatePipeline(driver, "CS_FluidObstacleVelocity3D.hlsl");
   m_clearPipeline = CreatePipeline(driver, "CS_FluidClear3D.hlsl");
+  m_surfaceToBufferPipeline = CreatePipeline(driver, "CS_FluidSurfaceToBuffer.hlsl");
   m_extrapolatePipeline = CreatePipeline(driver, "CS_FluidExtrapolate3D.hlsl");
 
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_extrapolatePipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
-                  m_alphaAdvectPipeline && m_volumeCorrectPipeline &&                   m_spherePipeline && m_objectVelocityPipeline && m_clearPipeline;
+                  m_alphaAdvectPipeline && m_volumeCorrectPipeline &&                   m_spherePipeline && m_objectVelocityPipeline && m_clearPipeline &&
+                  m_surfaceToBufferPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
   complete = complete && m_divergence;
@@ -630,6 +632,9 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_spherePipeline.reset();
   m_objectVelocityPipeline.reset();
   m_clearPipeline.reset();
+  m_surfaceToBufferPipeline.reset();
+  m_surfaceReadbackBuffer.reset();
+  m_surfaceReadbackTexels = 0;
   m_removedBuffer.reset();
   m_removedColumns = 0;
   m_referenceVolumeFraction = 0.0f;
@@ -794,6 +799,82 @@ bool FluidSimulation::ReadVolumeFraction(BaseDriver* driver, std::vector<float>&
   out.resize(voxelCount);
   for (uint32_t index = 0; index < voxelCount; ++index)
     std::memcpy(&out[index], &raw[index * 4 + 0], sizeof(float));
+  return true;
+}
+
+bool FluidSimulation::ReadVelocity(BaseDriver* driver, std::vector<float>& out) {
+  out.clear();
+  if (!m_ready || !driver || !m_velocity[m_current]) return false;
+  const uint32_t width = m_settings.width;
+  const uint32_t height = m_settings.height;
+  const uint32_t depth = m_settings.depth;
+  const uint32_t voxelCount = width * height * depth;
+
+  ComputeBufferDesc bufferDesc;
+  bufferDesc.byteWidth = voxelCount * 4 * sizeof(uint32_t);
+  bufferDesc.structureStride = 4 * sizeof(uint32_t);
+  bufferDesc.access = ComputeBufferAccess::ReadWrite;
+  bufferDesc.debugName = "Fluid Velocity Readback";
+  if (!m_volumeReadbackBuffer || m_volumeReadbackVoxels != voxelCount) {
+    std::vector<uint32_t> zeroSeed(static_cast<size_t>(voxelCount) * 4, 0u);
+    m_volumeReadbackBuffer = driver->CreateComputeBuffer(bufferDesc, zeroSeed.data());
+    if (!m_volumeReadbackBuffer) return false;
+    m_volumeReadbackVoxels = voxelCount;
+  }
+
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
+    {ComputeBindingType::ReadWriteBuffer, 0, m_volumeReadbackBuffer.get(), nullptr, 0}
+  };
+  const uint32_t gx = (width + m_copyPipeline->threadGroupSize[0] - 1) / m_copyPipeline->threadGroupSize[0];
+  const uint32_t gy = (height + m_copyPipeline->threadGroupSize[1] - 1) / m_copyPipeline->threadGroupSize[1];
+  const uint32_t gz = (depth + m_copyPipeline->threadGroupSize[2] - 1) / m_copyPipeline->threadGroupSize[2];
+  if (!driver->DispatchCompute(*m_copyPipeline, bindings, gx, gy, gz)) return false;
+
+  std::vector<uint32_t> raw(static_cast<size_t>(voxelCount) * 4, 0u);
+  if (!driver->ReadComputeBuffer(*m_volumeReadbackBuffer, raw.data(), raw.size() * sizeof(uint32_t)))
+    return false;
+  out.resize(static_cast<size_t>(voxelCount) * 4);
+  std::memcpy(out.data(), raw.data(), static_cast<size_t>(voxelCount) * 4 * sizeof(float));
+  return true;
+}
+
+bool FluidSimulation::ReadSurface(BaseDriver* driver, std::vector<float>& out) {
+  out.clear();
+  if (!m_ready || !driver || !m_surfaceToBufferPipeline) return false;
+  Texture* surface = m_surfaceTexture[m_surfaceCurrent];
+  if (!surface) return false;
+
+  const uint32_t texels = m_settings.width * m_settings.depth;
+  ComputeBufferDesc bufferDesc;
+  bufferDesc.byteWidth = texels * 4 * sizeof(uint32_t);
+  bufferDesc.structureStride = 4 * sizeof(uint32_t);
+  bufferDesc.access = ComputeBufferAccess::ReadWrite;
+  bufferDesc.debugName = "Fluid Surface Readback";
+  if (!m_surfaceReadbackBuffer || m_surfaceReadbackTexels != texels) {
+    std::vector<uint32_t> zeroSeed(static_cast<size_t>(texels) * 4, 0u);
+    m_surfaceReadbackBuffer = driver->CreateComputeBuffer(bufferDesc, zeroSeed.data());
+    if (!m_surfaceReadbackBuffer) return false;
+    m_surfaceReadbackTexels = texels;
+  }
+
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, surface},
+    {ComputeBindingType::ReadWriteBuffer, 0, m_surfaceReadbackBuffer.get(), nullptr, 0}
+  };
+  const uint32_t gx = (m_settings.width + m_surfaceToBufferPipeline->threadGroupSize[0] - 1) / m_surfaceToBufferPipeline->threadGroupSize[0];
+  const uint32_t gy = (m_settings.depth + m_surfaceToBufferPipeline->threadGroupSize[1] - 1) / m_surfaceToBufferPipeline->threadGroupSize[1];
+  if (!driver->DispatchCompute(*m_surfaceToBufferPipeline, bindings, gx, gy, 1)) return false;
+
+  std::vector<uint32_t> raw(static_cast<size_t>(texels) * 4, 0u);
+  if (!driver->ReadComputeBuffer(*m_surfaceReadbackBuffer, raw.data(), raw.size() * sizeof(uint32_t)))
+    return false;
+  out.resize(static_cast<size_t>(texels) * 4);
+  std::memcpy(out.data(), raw.data(), static_cast<size_t>(texels) * 4 * sizeof(float));
   return true;
 }
 

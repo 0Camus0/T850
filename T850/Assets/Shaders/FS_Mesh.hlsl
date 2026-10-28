@@ -143,6 +143,7 @@ cbuffer MeshMaterialCB : register(b2) {
     float4   WaterRipple4;
     float4   WaterRipple5;
     float4   WaterMisc0;
+    float4   WaterMisc1;
 }
 #endif
 
@@ -1114,14 +1115,21 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         float fluidViewDistance = length(CameraPosition.xyz - input.WorldPos.xyz);
         // Solver gradient (large-scale shape) plus the analytic ripple gradient
         // (high-frequency sparkle). Height-field normal is (-dh/dx, 1, -dh/dz).
-        float2 heightGradient = fluidSurface.zw / 0.09f
-                              + WaterRippleGradientCoarse(input.WorldPos.xz,
-                                                          MaterialParams3.w, fluidViewDistance);
-        // The fabricated normal map carries the fine capillary detail, and does
-        // it with hardware mip filtering, so it replaces the fine analytic
-        // octaves that needed distance fades.
-        if (WaterMisc0.y > 0.5f)
-            heightGradient += WaterNormalMapGradient(uv, MaterialParams3.w);
+        // Solver gradient. B/A are central differences of the elevation in metres
+        // spanning a 0.18 m stencil (one cell either side), so the true gradient is
+        // slope / (2 * cellSize). cellSize comes from JSON, not a literal.
+        float fluidCellSize = max(WaterMisc1.z, 0.001f);
+        float2 heightGradient = fluidSurface.zw * (2.0f / fluidCellSize);
+        // The procedural ripple octaves and the tiling normal map are presentation
+        // only. Gating them lets the water be driven purely by the simulation when
+        // the fake layer would otherwise drown it out.
+        if (WaterMisc0.w > 0.5f) {
+            heightGradient += WaterRippleGradientCoarse(input.WorldPos.xz,
+                                                        MaterialParams3.w, fluidViewDistance);
+            if (WaterMisc0.y > 0.5f)
+                heightGradient += WaterNormalMapGradient(uv, MaterialParams3.w);
+        }
+        heightGradient *= max(WaterMisc1.y, 0.0f);
         normal = normalize(float3(-heightGradient.x, 1.0f, -heightGradient.y));
     }
 #endif

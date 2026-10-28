@@ -30,6 +30,10 @@ namespace t850 {
     // Laplacian on a long thin domain.
     float sorOmega = 1.8f;
 
+    // Sustained surface forcing gain. Without it the one-shot seed decays and the
+    // pool becomes perfectly flat, so the simulation has nothing to show.
+    float forcingAmplitude = 1.0f;
+
     // Basin bounds in engine space. The solver domain is exactly this box, so a
     // voxel is outside the fluid only where the pool geometry intrudes (the
     // steps) or on the outer shell. Cells outside are solid.
@@ -108,6 +112,7 @@ namespace t850 {
     void SetSurfaceLevel(float level) { m_settings.surfaceLevel = level; }
     void SetSOROmega(float omega) { m_settings.sorOmega = omega; }
     void SetDeltaTime(float seconds) { m_settings.deltaTime = seconds; }
+    void SetForcingAmplitude(float amplitude) { m_settings.forcingAmplitude = amplitude; }
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.
@@ -182,7 +187,7 @@ namespace t850 {
     bool DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                         ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
                         ComputeTexture3D* target, uint32_t iterationPacked = 0,
-                        bool withAlpha = false);
+                        bool withAlpha = false, float paddingOverride = -1.0f);
 
     static constexpr size_t kVelocityCount = 2;
     static constexpr size_t kPressureCount = 2;

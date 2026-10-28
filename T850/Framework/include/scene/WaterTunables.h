@@ -121,6 +121,23 @@ namespace t850 {
     // ── Feature toggles ──
     bool normalMapEnabled = true;
     bool ssrEnabled = true;
+
+    // ── Presentation gains ──
+    // A calm 1.6 m pool yields only a few millimetres of surface variation, which
+    // at 6-13 m is under one pixel (one pixel is about 1.3 mm there). The solver
+    // stays physical; this scales the presentation so what it computed is legible.
+    // Set to 1.0 for a physically exact surface.
+    float displacementScale = 12.0f;
+    // Artistic gain on the shading normal. The geometric slope conversion is
+    // handled in the shader from cellSize; this only exaggerates the tilt.
+    float normalStrength = 1.0f;
+    // Draw the procedural ripple octaves and the tiling normal map on top of the
+    // simulated surface. Off means the water is driven purely by the solver.
+    bool fakeRipplesEnabled = true;
+    // Sustained forcing amplitude so the pool is not perfectly flat at rest.
+    // A one-shot seed decays within seconds; without continuous forcing the
+    // solver correctly produces a motionless pool.
+    float forcingAmplitude = 1.0f;
   };
 
   // Mirrors the tail of MeshMaterialCBuffer and the HLSL MeshMaterialCB exactly.
@@ -150,6 +167,7 @@ namespace t850 {
     XVECTOR3 WaterRipple4;
     XVECTOR3 WaterRipple5;
     XVECTOR3 WaterMisc0;
+    XVECTOR3 WaterMisc1;
   };
 
   inline WaterGpuParams BuildWaterGpu(const WaterTunables& w) {
@@ -178,7 +196,9 @@ namespace t850 {
     g.WaterRipple5 = XVECTOR3(w.rippleAmp[5], w.rippleLen[5], w.rippleSpeed[5], w.rippleFade[5]);
     g.WaterMisc0 = XVECTOR3(static_cast<float>(w.ssrSteps),
                             w.normalMapEnabled ? 1.0f : 0.0f,
-                            w.ssrEnabled ? 1.0f : 0.0f, 0.0f);
+                            w.ssrEnabled ? 1.0f : 0.0f,
+                            w.fakeRipplesEnabled ? 1.0f : 0.0f);
+    g.WaterMisc1 = XVECTOR3(w.displacementScale, w.normalStrength, w.cellSize, w.forcingAmplitude);
     return g;
   }
 

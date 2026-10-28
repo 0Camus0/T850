@@ -266,6 +266,7 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   settings.damping = w.damping;
   settings.surfaceLevel = (std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f);
   settings.sorOmega = (std::min)((std::max)(w.sorOmega, 1.0f), 1.99f);
+  settings.forcingAmplitude = (std::max)(w.forcingAmplitude, 0.0f);
   return settings;
 }
 
@@ -342,6 +343,7 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_fluid.SetPressureIterations(static_cast<uint32_t>((std::max)(w.pressureIterations, 0)));
     m_fluid.SetSurfaceLevel((std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f));
     m_fluid.SetSOROmega((std::min)((std::max)(w.sorOmega, 1.0f), 1.99f));
+    m_fluid.SetForcingAmplitude((std::max)(w.forcingAmplitude, 0.0f));
 
     // Advance by REAL elapsed time. Stepping a fixed 1/60 s once per rendered
     // frame tied the water's speed to the frame rate: at 721 fps the simulation
@@ -618,7 +620,12 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     slider("water_foam_fade", "noise distance fade", w.foamFade, 1.0f, 120.0f, 0.5f);
   }
 
-  if (gui.BeginSection("Toggles")) {
+  if (gui.BeginSection("Presentation")) {
+    slider("water_disp_scale", "displacement scale", w.displacementScale, 1.0f, 60.0f, 0.1f);
+    slider("water_normal_strength", "normal strength", w.normalStrength, 0.0f, 4.0f, 0.01f);
+    slider("water_forcing", "forcing amplitude", w.forcingAmplitude, 0.0f, 20.0f, 0.1f);
+    gui.Checkbox(t850::CheckboxDesc{ "water_fake_ripples", "procedural ripples", true, true },
+                 w.fakeRipplesEnabled);
     gui.Checkbox(t850::CheckboxDesc{ "water_normal_map_on", "normal map", true, true },
                  w.normalMapEnabled);
     gui.Checkbox(t850::CheckboxDesc{ "water_ssr_on", "screen-space reflections", true, true },

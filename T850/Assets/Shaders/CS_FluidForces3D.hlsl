@@ -21,7 +21,8 @@ cbuffer FluidConstants : register(b0)
     float SurfaceLevel;
     float TimeValue;
     float PressureScale;
-    float Padding0;
+    // Sustained surface forcing gain, from JSON.
+    float ForcingAmplitude;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -94,11 +95,15 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float surfaceY = SurfaceLevel * float(Height);
     if (float(id.y) > surfaceY - 2.0f)
     {
+        // Amplitude comes from JSON via FluidSettings; 1.0 is the tuned default.
+        // Without this the pool decays to perfectly flat within seconds because
+        // the seed is a one-shot impulse with no sustained energy input.
+        const float gain = max(ForcingAmplitude, 0.0f) * DeltaTime;
         const float stirX = sin(TimeValue * 0.9f + float(id.x) * 0.31f + float(id.z) * 0.17f);
         const float stirZ = cos(TimeValue * 0.7f + float(id.z) * 0.29f + float(id.x) * 0.13f);
-        velocity.x += (WindX + stirX * 0.45f) * DeltaTime;
-        velocity.z += (WindZ + stirZ * 0.45f) * DeltaTime;
-        velocity.y += (WindY + stirX * stirZ * 0.25f) * DeltaTime;
+        velocity.x += (WindX + stirX * 0.45f) * gain;
+        velocity.z += (WindZ + stirZ * 0.45f) * gain;
+        velocity.y += (WindY + stirX * stirZ * 0.25f) * gain;
     }
 
     // Gravity acts on the water; the hydrostatic balance is the pressure solve's

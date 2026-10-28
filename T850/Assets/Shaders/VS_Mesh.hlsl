@@ -230,20 +230,26 @@ VS_OUTPUT VS( VS_INPUT input ){
 		int2 texel = clamp(int2(fluidUV * float2(fluidWidth, fluidHeight)),
 		                   int2(0, 0), int2(fluidWidth - 1, fluidHeight - 1));
 		float4 fluidSurface = FluidSurfaceTexture.Load(int3(texel, 0));
-		input.position.y += fluidSurface.x;
+		// A calm pool's real surface variation is a few millimetres, under one
+		// pixel at typical viewing distance, so the solved height is scaled for
+		// presentation. TimeParams.z is the JSON-driven displacement scale.
+		input.position.y += fluidSurface.x * TimeParams.z;
 
-		// Add the three longest ripple octaves geometrically. A shading-only
-		// normal leaves the silhouette flat, which is the giveaway at grazing
-		// angles. The finer octaves stay shading-only because 0.094 m mesh quads
-		// cannot represent a 0.11 m wavelength without aliasing.
-		float2 ripplePos = input.position.xz;
-		float rippleTime = TimeParams.x;
-		float rippleScale = TimeParams.y;
-		float rippleHeight =
-			0.0160f * sin(dot(ripplePos, float2( 0.86f, 0.51f)) * 10.134f + rippleTime * 5.573f) +
-			0.0090f * sin(dot(ripplePos, float2(-0.60f, 0.80f)) * 15.322f + rippleTime * 11.492f) +
-			0.0060f * sin(dot(ripplePos, float2( 0.31f, -0.95f)) * 23.271f + rippleTime * 24.434f);
-		input.position.y += rippleHeight * rippleScale;
+		// Optional geometric ripple octaves. A shading-only normal leaves the
+		// silhouette flat, which is the giveaway at grazing angles. The finer
+		// octaves stay shading-only because 0.094 m mesh quads cannot represent
+		// a 0.11 m wavelength without aliasing. TimeParams.w gates them so the
+		// water can be driven purely by the solver.
+		if (TimeParams.w > 0.5f) {
+			float2 ripplePos = input.position.xz;
+			float rippleTime = TimeParams.x;
+			float rippleScale = TimeParams.y;
+			float rippleHeight =
+				0.0160f * sin(dot(ripplePos, float2( 0.86f, 0.51f)) * 10.134f + rippleTime * 5.573f) +
+				0.0090f * sin(dot(ripplePos, float2(-0.60f, 0.80f)) * 15.322f + rippleTime * 11.492f) +
+				0.0060f * sin(dot(ripplePos, float2( 0.31f, -0.95f)) * 23.271f + rippleTime * 24.434f);
+			input.position.y += rippleHeight * rippleScale;
+		}
 	}
 #endif
     OUT.hposition = mul( WVP , input.position );

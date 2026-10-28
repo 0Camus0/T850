@@ -164,6 +164,9 @@ namespace t850 {
     // Used by the scene's reset button so a new drop height can be tested from a
     // comparable initial state.
     bool ResetToRest(BaseDriver* driver);
+    // One solver advance at the current m_settings.deltaTime. Step() drives this,
+    // possibly several times per frame.
+    bool StepInternal(BaseDriver* driver);
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.
@@ -293,6 +296,11 @@ namespace t850 {
     // Authored wall mask on the CPU, used to re-stamp the moving body each frame.
     std::vector<uint32_t> m_baseMask;
     uint32_t m_maskBodyCellCount = 0;
+    // Cell footprint of the body from the previous substep, so an unchanged
+    // footprint skips the re-upload entirely.
+    int m_maskBodyMin[3] = {-1, -1, -1};
+    int m_maskBodyMax[3] = {-1, -1, -1};
+    bool m_maskBodyValid = false;
     FluidSphere m_sphere;
     // Total alpha at seed time, the reference the volume correction restores to.
     float m_referenceVolumeFraction = 0.0f;

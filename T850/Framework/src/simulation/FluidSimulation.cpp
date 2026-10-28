@@ -414,6 +414,9 @@ bool FluidSimulation::BuildWallMask(BaseDriver* driver) {
   // four about a sphere.
   m_baseMask = std::move(mask);
   m_maskBodyCellCount = 0;
+  m_maskBodyValid = false;
+  m_maskBodyMin[0] = m_maskBodyMin[1] = m_maskBodyMin[2] = -1;
+  m_maskBodyMax[0] = m_maskBodyMax[1] = m_maskBodyMax[2] = -1;
 
   T8_LOG_INFO("[Fluid] Wall mask %ux%ux%u: %u solid of %u voxels (%.1f%% fluid)",
               width, height, depth, m_solidVoxelCount, voxelCount,
@@ -430,30 +433,54 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
   const uint32_t depth = m_settings.depth;
   const float cell = (std::max)(m_settings.cellSize, 1e-4f);
 
-  // Nothing stamped last frame and nothing to stamp now: the authored mask still
-  // stands, so skip the re-upload entirely.
+  const float sizeX = m_settings.basinMaxX - m_settings.basinMinX;
+  const float sizeY = m_settings.basinMaxY - m_settings.basinMinY;
+  const float sizeZ = m_settings.basinMaxZ - m_settings.basinMinZ;
+  const float stepX = sizeX / static_cast<float>(width);
+  const float stepY = sizeY / static_cast<float>(height);
+  const float stepZ = sizeZ / static_cast<float>(depth);
+
   const bool wantBody = m_sphere.enabled && m_sphere.radius > 0.0f;
-  if (!wantBody && m_maskBodyCellCount == 0) return true;
+
+  // Only the cells the body can reach are re-stamped: the authored mask is untouched
+  // everywhere else. This matters now that the solver substeps up to a dozen times
+  // per frame, so re-scanning the whole volume would cost 12x what it used to.
+  int minI = -1, minJ = -1, minK = -1, maxI = -1, maxJ = -1, maxK = -1;
+  if (wantBody) {
+    auto indexOf = [](float value, float origin, float step, uint32_t count) {
+      const int index = static_cast<int>(std::floor((value - origin) / step));
+      return (std::min)((std::max)(index, 0), static_cast<int>(count) - 1);
+    };
+    const float reach = m_sphere.radius + cell;   // one cell of margin
+    minI = indexOf(m_sphere.x - reach, m_settings.basinMinX, stepX, width);
+    maxI = indexOf(m_sphere.x + reach, m_settings.basinMinX, stepX, width);
+    minJ = indexOf(m_sphere.y - reach, m_settings.basinMinY, stepY, height);
+    maxJ = indexOf(m_sphere.y + reach, m_settings.basinMinY, stepY, height);
+    minK = indexOf(m_sphere.z - reach, m_settings.basinMinZ, stepZ, depth);
+    maxK = indexOf(m_sphere.z + reach, m_settings.basinMinZ, stepZ, depth);
+  }
+
+  // Identical cell footprint to the previous substep: the buffer already matches.
+  if (m_maskBodyValid &&
+      minI == m_maskBodyMin[0] && maxI == m_maskBodyMax[0] &&
+      minJ == m_maskBodyMin[1] && maxJ == m_maskBodyMax[1] &&
+      minK == m_maskBodyMin[2] && maxK == m_maskBodyMax[2])
+    return true;
 
   std::vector<uint32_t> mask = m_baseMask;
   uint32_t stamped = 0;
-
   if (wantBody) {
     // Cell centres, matching the convention BuildWallMask() uses for the authored
     // intrusions and the kernels use for their stencil neighbours.
-    const float sizeX = m_settings.basinMaxX - m_settings.basinMinX;
-    const float sizeY = m_settings.basinMaxY - m_settings.basinMinY;
-    const float sizeZ = m_settings.basinMaxZ - m_settings.basinMinZ;
     const float radius2 = m_sphere.radius * m_sphere.radius;
-
-    for (uint32_t k = 0; k < depth; ++k) {
-      const float pz = m_settings.basinMinZ + (k + 0.5f) * (sizeZ / static_cast<float>(depth));
+    for (int k = minK; k <= maxK; ++k) {
+      const float pz = m_settings.basinMinZ + (k + 0.5f) * stepZ;
       const float dz = pz - m_sphere.z;
-      for (uint32_t j = 0; j < height; ++j) {
-        const float py = m_settings.basinMinY + (j + 0.5f) * (sizeY / static_cast<float>(height));
+      for (int j = minJ; j <= maxJ; ++j) {
+        const float py = m_settings.basinMinY + (j + 0.5f) * stepY;
         const float dy = py - m_sphere.y;
-        for (uint32_t i = 0; i < width; ++i) {
-          const float px = m_settings.basinMinX + (i + 0.5f) * (sizeX / static_cast<float>(width));
+        for (int i = minI; i <= maxI; ++i) {
+          const float px = m_settings.basinMinX + (i + 0.5f) * stepX;
           const float dx = px - m_sphere.x;
           if (dx * dx + dy * dy + dz * dz > radius2) continue;
           const size_t index = static_cast<size_t>(i + width * (j + height * k));
@@ -462,11 +489,6 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
       }
     }
   }
-
-  // One-frame lag is not acceptable during a plunge: rebuild whenever the body's
-  // cell footprint changes. Re-uploading the mask is ~440 kB, which is cheap next
-  // to the cost of the body punching through the water without any reaction.
-  if (stamped == 0 && m_maskBodyCellCount == 0) return true;
 
   ComputeBufferDesc bufferDesc;
   bufferDesc.byteWidth = static_cast<uint32_t>(mask.size() * sizeof(uint32_t));
@@ -478,6 +500,9 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
     T8_LOG_ERROR("[Fluid] Cannot reallocate the wall mask for the moving body");
     return false;
   }
+  m_maskBodyMin[0] = minI; m_maskBodyMin[1] = minJ; m_maskBodyMin[2] = minK;
+  m_maskBodyMax[0] = maxI; m_maskBodyMax[1] = maxJ; m_maskBodyMax[2] = maxK;
+  m_maskBodyValid = true;
   m_maskBodyCellCount = stamped;
   (void)cell;
   return true;
@@ -922,6 +947,8 @@ bool FluidSimulation::ResetToRest(BaseDriver* driver) {
   m_pressureCurrent = 0;
   m_time = 0.0f;
   m_framesSinceVolumeCheck = 0;
+  // Force the next frame to re-stamp (or clear) the body footprint.
+  m_maskBodyValid = false;
 
   // Re-seed the volume fraction and lock the reference mass to the resting pool.
   return SeedVolumeFraction(driver);
@@ -1062,6 +1089,44 @@ bool FluidSimulation::PublishSurface(BaseDriver* driver) {
 }
 
 bool FluidSimulation::Step(BaseDriver* driver) {
+  if (!m_ready || !driver) return false;
+
+  const float frameDt = m_settings.deltaTime;
+  const float cell = (std::max)(m_settings.cellSize, 1e-4f);
+
+  // Substep count from the body's own speed. The solid stamp and the velocity
+  // coupling only sample the body at discrete instants, so a fast body jumps over
+  // water it never actually touches: at entry speed above cellSize/dt (5.4 m/s here
+  // at 60 fps and 0.09 m cells) it can cross more than a cell per frame and pass
+  // clean through the surface, which is exactly the "went through like nothing"
+  // failure. Keeping its displacement under half a cell per substep means every
+  // stage - stamp, coupling, divergence, pressure, advection - sees a consistent
+  // configuration and a consistent dt.
+  uint32_t substeps = 1;
+  float bodySpeed = 0.0f;
+  if (m_sphere.enabled) {
+    bodySpeed = std::sqrt(m_sphere.vx * m_sphere.vx +
+                          m_sphere.vy * m_sphere.vy +
+                          m_sphere.vz * m_sphere.vz);
+    const float travel = bodySpeed * frameDt;
+    if (travel > 0.5f * cell)
+      substeps = static_cast<uint32_t>(std::ceil(travel / (0.5f * cell)));
+    substeps = (std::min)((std::max)(substeps, 1u), 12u);
+  }
+  T8_LOG_DEBUG("[Fluid] substeps=%u bodySpeed=%.2f m/s travel=%.3f m cell=%.3f m",
+               substeps, bodySpeed, bodySpeed * frameDt, cell);
+
+  const float subDt = frameDt / static_cast<float>(substeps);
+  m_settings.deltaTime = subDt;
+  bool ok = true;
+  for (uint32_t substep = 0; substep < substeps && ok; ++substep)
+    ok = StepInternal(driver);
+  // Restore the frame delta so the caller and the GUI keep seeing the real value.
+  m_settings.deltaTime = frameDt;
+  return ok;
+}
+
+bool FluidSimulation::StepInternal(BaseDriver* driver) {
   if (!m_ready || !driver) return false;
   m_time += m_settings.deltaTime;
   const uint32_t next = (m_current + 1) % kVelocityCount;

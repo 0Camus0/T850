@@ -90,6 +90,7 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Editor/runtime architecture assessment | [editor/architecture-review.md](editor/architecture-review.md) | Review and first extraction, 2026-09-07 |
 | `.t8scene` and runtime loading | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Strict owned-schema behavior verified 2026-09-26 |
 | SceneDescriptor/SceneSetup | [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md) | Strict descriptor behavior verified 2026-09-26 |
+| Backyard scene and GPU pool water simulation | [scenes/backyard-water-simulation.md](scenes/backyard-water-simulation.md) | Implemented; D3D12 + Vulkan verified 2026-10-28 |
 
 ## Governance
 

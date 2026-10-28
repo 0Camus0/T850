@@ -154,7 +154,13 @@ void CS(uint3 id : SV_DispatchThreadID)
     // Row holding the waterline, so foam samples the interface band.
     const int surfaceRow = clamp(int((elevation - BasinMinY) / CellSize),
                                  1, int(Height) - 1);
-    const float foam = SurfaceFoam(cx, cz, surfaceRow);
+    // Foam comes from velocity divergence, which is a second derivative and is
+    // therefore very spiky at single cells. Averaging three columns (sharing the
+    // same surface row, so no extra row fetches) removes the single-cell pops that
+    // read as flashing whitecaps without washing the foam shape out.
+    const float foam = (SurfaceFoam(cx - 1, cz, surfaceRow) +
+                        SurfaceFoam(cx, cz, surfaceRow) +
+                        SurfaceFoam(cx + 1, cz, surfaceRow)) * (1.0f / 3.0f);
 
     SurfaceOut[id.xy] = float4(height, foam, slopeX, slopeZ);
 }

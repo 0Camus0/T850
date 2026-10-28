@@ -1107,9 +1107,24 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     {
         uint fluidWidth = 1, fluidHeight = 1;
         FluidSurfaceTexture.GetDimensions(fluidWidth, fluidHeight);
-        int2 texel = clamp(int2(saturate(uv) * float2(fluidWidth, fluidHeight)),
-                           int2(0, 0), int2(fluidWidth - 1, fluidHeight - 1));
-        fluidSurface = FluidSurfaceTexture.Load(int3(texel, 0));
+        // Bilinear reconstruction, using the SAME texel-centre convention as the
+        // vertex shader. A plain nearest Load() here was the cause of the surface
+        // "flashing": the geometry is displaced with a bilinearly blended height, so
+        // it is smooth, while the shading normal jumped between whole texels. One
+        // texel covers several screen pixels, so those jumps swept across the screen
+        // as the waves moved and read as flickering blocks. A storage texture cannot
+        // be sampled with hardware filtering, so the blend has to be done by hand -
+        // and it has to be done identically in both stages or they disagree about
+        // where the surface is.
+        float2 gridPos = saturate(uv) * float2(fluidWidth, fluidHeight) - 0.5f;
+        int2 base = clamp(int2(floor(gridPos)), int2(0, 0),
+                          int2(max(int(fluidWidth) - 2, 0), max(int(fluidHeight) - 2, 0)));
+        float2 frac = saturate(gridPos - float2(base));
+        float4 c00 = FluidSurfaceTexture.Load(int3(base + int2(0, 0), 0));
+        float4 c10 = FluidSurfaceTexture.Load(int3(base + int2(1, 0), 0));
+        float4 c01 = FluidSurfaceTexture.Load(int3(base + int2(0, 1), 0));
+        float4 c11 = FluidSurfaceTexture.Load(int3(base + int2(1, 1), 0));
+        fluidSurface = lerp(lerp(c00, c10, frac.x), lerp(c01, c11, frac.x), frac.y);
     }
     {
         float fluidViewDistance = length(CameraPosition.xyz - input.WorldPos.xyz);
@@ -1130,6 +1145,11 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
                 heightGradient += WaterNormalMapGradient(uv, MaterialParams3.w);
         }
         heightGradient *= max(WaterMisc1.y, 0.0f);
+        // Clamp the slope. A pool wave is never steeper than a few degrees, so
+        // anything beyond this is numerical noise, and an unbounded gradient fed a
+        // wildly wrong normal into the specular and reflection terms, which showed
+        // up as bright flashes exactly where the solver's interface was noisiest.
+        heightGradient = clamp(heightGradient, -4.0f, 4.0f);
         normal = normalize(float3(-heightGradient.x, 1.0f, -heightGradient.y));
     }
 #endif

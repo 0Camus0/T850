@@ -201,7 +201,8 @@ def build_pool():
     for i in range(POOL["step_count"]):
         top = WATER_LINE - step_rise * (i + 1)
         height = max(d + top, 0.02)
-        width = step_run * (POOL["step_count"] - i)
+        # Deeper steps reach further into the pool, otherwise they nest inside step 1.
+        width = step_run * (i + 1)
         parts.append(
             box(
                 "Pool_Step_%d" % (i + 1),
@@ -250,7 +251,7 @@ def build_step_bounds():
     for i in range(POOL["step_count"]):
         top = WATER_LINE - POOL["step_rise"] * (i + 1)
         height = max(depth + top, 0.02)
-        width = POOL["step_run"] * (POOL["step_count"] - i)
+        width = POOL["step_run"] * (i + 1)
         center_x = POOL_MAX_X - width * 0.5
         center_y = POOL_MAX_Y - length * 0.275
         center_z = top - height * 0.5

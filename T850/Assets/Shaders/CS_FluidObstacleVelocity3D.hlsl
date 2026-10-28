@@ -1,22 +1,11 @@
-// T850 pool fluid: couple a moving body to the velocity field.
+// T850 pool fluid: MAC-grid boundary kernel.
 //
-// This is the physically essential half of obstacle interaction, and it was
-// missing. The volume-fraction pass carved a hole where the body was but never
-// touched velocity, so the solver had no divergence to react to: the pressure
-// solve had nothing to push against, the surface just showed a static dimple that
-// tracked the ball, and no wave ever radiated. Displacement has to enter the
-// momentum equation as a VELOCITY SOURCE, not as a height-field patch.
-//
-// The constraint imposed is the no-penetration condition at a moving solid
-// boundary:
-//     u . n = u_body . n        on the body surface
-// Only the normal component is touched; the tangential component is left alone,
-// which is the free-slip convention the rest of the solver already uses at the
-// pool walls.
-//
-// Runs AFTER forces/viscosity and BEFORE divergence, so the divergence the
-// pressure solve sees includes the body's motion. Applying it after projection
-// would simply be undone by the gradient subtraction.
+// Runs every substep after forces and before divergence. For each texel and each
+// component c it inspects the face between cell A (this texel) and B = A + e_c.
+// A SOLID face is overwritten with its boundary value: the body's velocity
+// component if the solid cell of the face is a BODY cell, otherwise 0. Every
+// other face is copied through unchanged. On a staggered grid the solid faces
+// carry the body velocity exactly, so no smoothing band is needed.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -49,11 +38,6 @@ Texture3D<float4> VelocityIn : register(t0);
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(2, 0)]]
 #endif
-Texture3D<float4> AlphaIn : register(t1);
-
-#if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(3, 0)]]
-#endif
 cbuffer ObjectConstants : register(b1)
 {
     float ObjectCentreX;
@@ -73,12 +57,12 @@ cbuffer ObjectConstants : register(b1)
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(4, 0)]]
+[[vk::binding(3, 0)]]
 #endif
 StructuredBuffer<uint> WallMask : register(t8);
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(5, 0)]]
+[[vk::binding(4, 0)]]
 #endif
 #ifdef T850_SPIRV
 [[spv::nonreadable]]
@@ -99,6 +83,38 @@ bool IsSolid(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
+bool IsBodyCell(int3 cell)
+{
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return false;
+    if (ObjectEnabled < 0.5f || ObjectRadius <= 0.0f)
+        return false;
+    const float3 centre = float3(WorldOriginX + float(cell.x) * CellSize,
+                                 BasinMinY + (float(cell.y) + 0.5f) * CellSize,
+                                 WorldOriginZ + float(cell.z) * CellSize);
+    const float3 d = centre - float3(ObjectCentreX, ObjectCentreY, ObjectCentreZ);
+    return dot(d, d) <= ObjectRadius * ObjectRadius;
+}
+
+// Boundary value for a solid face whose solid cell is `solidCell`.
+float SolidBoundaryValue(int3 solidCell, int axis)
+{
+    if (IsBodyCell(solidCell))
+        return axis == 0 ? ObjectVelX : (axis == 1 ? ObjectVelY : ObjectVelZ);
+    return 0.0f;
+}
+
+// Face value for component `axis` between A and B = A + e_axis.
+float FaceValue(int3 a, int3 b, int axis, float inputValue)
+{
+    if (IsSolid(a))
+        return SolidBoundaryValue(a, axis);
+    if (IsSolid(b))
+        return SolidBoundaryValue(b, axis);
+    return inputValue;
+}
+
 [numthreads(4, 4, 4)]
 void CS(uint3 id : SV_DispatchThreadID)
 {
@@ -108,42 +124,9 @@ void CS(uint3 id : SV_DispatchThreadID)
     int3 cell = int3(id);
     float4 velocity = VelocityIn.Load(int4(cell, 0));
 
-    // Dry cells carry no momentum: imposing a boundary condition on air would
-    // manufacture velocity out of nothing, and the gradient kernel deliberately
-    // keeps air velocity untouched so the free surface is not a solid lid.
-    const float alpha = saturate(AlphaIn.Load(int4(cell, 0)).x);
-    if (IsSolid(cell) || alpha <= 0.05f || ObjectEnabled < 0.5f || ObjectRadius <= 0.0f) {
-        VelocityOut[id] = velocity;
-        return;
-    }
+    const float u = FaceValue(cell, cell + int3(1, 0, 0), 0, velocity.x);
+    const float v = FaceValue(cell, cell + int3(0, 1, 0), 1, velocity.y);
+    const float w = FaceValue(cell, cell + int3(0, 0, 1), 2, velocity.z);
 
-    // World position of this cell's CENTRE.
-    const float3 centre = float3(WorldOriginX + (float(cell.x) + 0.5f) * CellSize,
-                                 BasinMinY + (float(cell.y) + 0.5f) * CellSize,
-                                 WorldOriginZ + (float(cell.z) + 0.5f) * CellSize);
-    const float3 offset = centre - float3(ObjectCentreX, ObjectCentreY, ObjectCentreZ);
-    const float distance = length(offset);
-
-    // Band one and a half cells wide: enough to catch every cell the body
-    // actually sweeps through without dragging the whole pool along with it.
-    const float band = 1.5f * CellSize;
-    if (distance > ObjectRadius + band)
-    {
-        VelocityOut[id] = velocity;
-        return;
-    }
-
-    const float3 normal = distance > 1e-5f ? offset / distance : float3(0.0f, 1.0f, 0.0f);
-    const float3 bodyVelocity = float3(ObjectVelX, ObjectVelY, ObjectVelZ);
-
-    // No-penetration: the fluid's normal velocity must match the body's.
-    const float fluidNormal = dot(velocity.xyz, normal);
-    const float bodyNormal = dot(bodyVelocity, normal);
-    // Fully inside the body, fully enforced; ramping to zero across the band.
-    const float weight = distance <= ObjectRadius
-        ? 1.0f
-        : saturate(1.0f - (distance - ObjectRadius) / band);
-
-    velocity.xyz += (bodyNormal - fluidNormal) * weight * normal;
-    VelocityOut[id] = velocity;
+    VelocityOut[id] = float4(u, v, w, 0.0f);
 }

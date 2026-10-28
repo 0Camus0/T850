@@ -59,13 +59,16 @@ namespace t850 {
     // this are alpha = 1, cells above are air (alpha = 0), and the single row
     // straddling the initial waterline holds the fractional value.
     float initialFill = 0.94f;
-    // Alpha below this counts as air: no pressure solve, no projection.
-    float airThreshold = 0.05f;
+    // Alpha below this counts as air for the pressure solve; must equal
+    // T8_LIQUID_THRESHOLD in the kernels.
+    float airThreshold = 0.5f;
     // Alpha above this counts as fully wet.
     float wetThreshold = 0.95f;
-    // Russo-Smereka compression strength for the flux-form alpha advection.
-    // Higher keeps the interface sharper at the cost of some surface noise.
-    float alphaCompression = 0.0f;
+    // Interface sharpening strength for the flux-form alpha advection (0 = pure
+    // upwind, which smears entrained air through the whole pool).
+    float alphaCompression = 0.5f;
+    // CFL cap on the unsplit upwind alpha transport: (|u|+|v|+|w|)*dt/h <= 1.
+    float maxSubstepDt = 1.0f / 120.0f;
   };
 
   // One solid intrusion into the basin, in engine space. Derived from the pool
@@ -90,6 +93,8 @@ namespace t850 {
     // Drag coefficient of a smooth sphere, and the bounce at the floor and walls.
     float dragCoefficient = 0.47f;
     float restitution = 0.30f;
+    // Heave damping ratio standing in for the energy a bobbing body radiates as waves.
+    float heaveDamping = 0.15f;
     bool enabled = false;
     // Submerged depth below the water plane, used to damp the fall and to decide
     // when it has settled on the floor.
@@ -130,6 +135,8 @@ namespace t850 {
 
     // Number of voxels the mask marks solid (outside the fluid domain).
     uint32_t SolidVoxelCount() const { return m_solidVoxelCount; }
+    // Authored solids only (the moving body is not stamped into this copy).
+    const std::vector<uint32_t>& BaseMask() const { return m_baseMask; }
     uint32_t FluidVoxelCount() const { return m_settings.width * m_settings.height * m_settings.depth - m_solidVoxelCount; }
 
     // Advances the solver one frame and refreshes the 2D surface target.
@@ -147,15 +154,20 @@ namespace t850 {
     void SetSurfaceLevel(float level) { m_settings.surfaceLevel = level; }
     void SetSOROmega(float omega) { m_settings.sorOmega = omega; }
     void SetDeltaTime(float seconds) { m_settings.deltaTime = seconds; }
+    void SetMaxSubstepDt(float seconds) { m_settings.maxSubstepDt = seconds; }
     void SetForcingAmplitude(float amplitude) { m_settings.forcingAmplitude = amplitude; }
+    void SetViscosity(float viscosity) { m_settings.viscosity = viscosity; }
+    void SetGravity(float gravity) { m_settings.gravity = gravity; }
+    void SetDamping(float damping) { m_settings.damping = damping; }
+    void SetWind(float x, float y, float z) { m_settings.windX = x; m_settings.windY = y; m_settings.windZ = z; }
 
     // Sphere dropping into the pool. Advance() integrates it and pushes the result
     // into the solver each frame, so the water responds to a real event.
     FluidSphere& DroppedSphere() { return m_sphere; }
     void AdvanceSphere(float dt);
     bool InjectSphere(BaseDriver* driver);
-    // Imposes no-penetration between the fluid and the moving body. Must be called
-    // before the divergence/pressure step.
+    // Writes solid-face boundary velocities (walls 0, body faces = body velocity).
+    // Must be called before the divergence/pressure step.
     bool StepObjectVelocity(BaseDriver* driver);
     // Stamps the moving body into the wall mask so it becomes a solid boundary for
     // every kernel (divergence, pressure, gradient, alpha advection).
@@ -253,7 +265,8 @@ namespace t850 {
     bool DispatchVolume(BaseDriver* driver, ComputePipeline& pipeline,
                         ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
                         ComputeTexture3D* target, uint32_t iterationPacked = 0,
-                        bool withAlpha = false, float paddingOverride = -1.0f);
+                        bool withAlpha = false, float paddingOverride = -1.0f,
+                        const std::vector<uint32_t>* objectConstants = nullptr);
 
     static constexpr size_t kVelocityCount = 2;
     static constexpr size_t kPressureCount = 2;
@@ -274,6 +287,7 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_divergencePipeline;
     std::unique_ptr<ComputePipeline> m_pressurePipeline;
     std::unique_ptr<ComputePipeline> m_gradientPipeline;
+    std::unique_ptr<ComputePipeline> m_extrapolatePipeline;
     std::unique_ptr<ComputePipeline> m_surfacePipeline;
     std::unique_ptr<ComputePipeline> m_seedPipeline;
     std::unique_ptr<ComputePipeline> m_seedDivergentPipeline;
@@ -314,6 +328,8 @@ namespace t850 {
     // Free capacity of the interface cells from the most recent measurement,
     // used to bound the additive volume correction.
     float m_lastInterfaceHeadroom = 0.0f;
+    // Interface alpha sum from the last measurement; bounds the removal side of the correction.
+    float m_lastInterfaceAlpha = 0.0f;
     std::unique_ptr<ComputeBuffer> m_volumeReadbackBuffer;
     uint32_t m_volumeReadbackVoxels = 0;
     // Structured buffer of one uint per voxel: 1 = solid, 0 = fluid. Built from

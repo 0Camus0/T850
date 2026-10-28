@@ -37,7 +37,9 @@ namespace t850 {
     float timeScale = 1.0f;
     // Deterministic fixed-step mode (for reproducible frame dumps and tests).
     bool fixedTimeStep = false;
-    float viscosity = 0.02f;
+    // Kinematic viscosity in m^2/s (water is 1e-6). Advection already adds far more
+    // numerical diffusion at 9 cm cells, so this only matters when raised.
+    float viscosity = 1.0e-6f;
     float gravity = 9.81f;
     float windX = 0.6f;
     float windY = 0.0f;
@@ -172,6 +174,8 @@ namespace t850 {
     // Drag coefficient of a smooth sphere, and the bounce at the floor and walls.
     float sphereDragCoefficient = 0.47f;
     float sphereRestitution = 0.30f;
+    // Heave damping ratio standing in for wave radiation (the solver is one-way coupled).
+    float sphereHeaveDamping = 0.15f;
     // Water density used to turn density ratio into a mass in kg. Mass is DERIVED
     // from radius and density; editing the mass slider back-solves the density so
     // the two can never disagree.

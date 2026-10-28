@@ -229,12 +229,9 @@ bool BackyardScene::RebuildFluid() {
     SceneProp.Water.surfaceLevel = applied.surfaceLevel;
   }
   m_fluidReady = true;
-  if (!m_fluid.Seed(driver, true))
-    T8_LOG_ERROR("[Backyard] Fluid seed dispatch failed");
-  // Free-surface initialisation: alpha = 1 below the waterline, 0 above it, with
-  // one fractional row at the line.
-  if (!m_fluid.SeedVolumeFraction(driver))
-    T8_LOG_ERROR("[Backyard] Volume fraction seed failed");
+  // Start from a motionless pool; Seed() writes a self-test velocity pattern.
+  if (!m_fluid.ResetToRest(driver))
+    T8_LOG_ERROR("[Backyard] Fluid reset to rest failed");
 
   // Initialise the dropped sphere from JSON-driven values: released after a delay
   // from a configured height above the water plane.
@@ -244,6 +241,7 @@ bool BackyardScene::RebuildFluid() {
     sphere.densityRatio = SceneProp.Water.sphereDensityRatio;
     sphere.dragCoefficient = SceneProp.Water.sphereDragCoefficient;
     sphere.restitution = SceneProp.Water.sphereRestitution;
+    sphere.heaveDamping = SceneProp.Water.sphereHeaveDamping;
     sphere.x = SceneProp.Water.sphereDropX;
     sphere.z = SceneProp.Water.sphereDropZ;
     sphere.y = SceneProp.Water.sphereDropHeight;
@@ -301,6 +299,7 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   settings.cellSize = (std::max)(w.cellSize, 0.001f);
   settings.deltaTime = (std::max)(w.deltaTime, 1.0f / 1000.0f);
   settings.gravity = w.gravity;
+  settings.viscosity = (std::max)(w.viscosity, 0.0f);
   settings.windX = w.windX;
   settings.windY = w.windY;
   settings.windZ = w.windZ;
@@ -390,6 +389,7 @@ void BackyardScene::ResetSimulation() {
   sphere.densityRatio = w.sphereDensityRatio;
   sphere.dragCoefficient = w.sphereDragCoefficient;
   sphere.restitution = w.sphereRestitution;
+  sphere.heaveDamping = w.sphereHeaveDamping;
   sphere.x = w.sphereDropX;
   sphere.z = w.sphereDropZ;
   sphere.y = w.sphereDropHeight;
@@ -424,6 +424,10 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_fluid.SetSurfaceLevel((std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f));
     m_fluid.SetSOROmega((std::min)((std::max)(w.sorOmega, 1.0f), 1.99f));
     m_fluid.SetForcingAmplitude((std::max)(w.forcingAmplitude, 0.0f));
+    m_fluid.SetViscosity((std::max)(w.viscosity, 0.0f));
+    m_fluid.SetGravity(w.gravity);
+    m_fluid.SetDamping((std::max)(w.damping, 0.0f));
+    m_fluid.SetWind(w.windX, w.windY, w.windZ);
 
     // Release the sphere once the configured delay has elapsed.
     m_elapsedSeconds += deltaSeconds;
@@ -528,58 +532,52 @@ void BackyardScene::OnDraw() {
       if (m_fluid.ReadDiagnostics(pFramework->pVideoDriver, diagnostics))
         T8_LOG_INFO("[Backyard][fluid] samples=%u meanSpeed=%.4f maxSpeed=%.4f nonFinite=%u",
                     diagnostics.samples, diagnostics.meanSpeed, diagnostics.maxSpeed, diagnostics.nonFinite);
-      // Surface contract probe: R must be a small delta around the water plane,
-      // and B/A must be small per-texel height differences. A large |R| or a
-      // missing texture shows up here immediately.
-      t850::Texture* surface = m_fluid.SurfaceTexture();
-      const int rt = m_fluid.SurfaceRenderTarget();
-      if (surface && rt >= 0) {
-        float minH = 1e9f, maxH = -1e9f, sumH = 0.0f, maxSlope = 0.0f, maxFoam = 0.0f;
-        int samples = 0, misses = 0;
-        for (int gy = 0; gy < 5; ++gy) {
-          for (int gx = 0; gx < 5; ++gx) {
-            const int tx = (surface->x * (2 * gx + 1)) / 10;
-            const int ty = (surface->y * (2 * gy + 1)) / 10;
-            float rgba[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            if (!pFramework->pVideoDriver->ReadRTColorFloat(rt, t850::BaseDriver::COLOR0_ATTACHMENT, rgba)) {
-              ++misses;
-              continue;
-            }
-            minH = (std::min)(minH, rgba[0]);
-            maxH = (std::max)(maxH, rgba[0]);
-            maxSlope = (std::max)(maxSlope, (std::max)(std::fabs(rgba[2]), std::fabs(rgba[3])));
-            maxFoam = (std::max)(maxFoam, rgba[1]);
-            sumH += rgba[0];
-            ++samples;
+      const t850::FluidSphere& s = m_fluid.DroppedSphere();
+      T8_LOG_INFO("[Backyard][sphere] y=%.3f vy=%.3f submerged=%.2f enabled=%d t=%.2f",
+                  s.y, s.vy, s.submerged, s.enabled ? 1 : 0, m_fluid.SimulationTime());
+      // Surface elevation relative to the authored water plane, computed exactly as
+      // CS_FluidSurface3D does (solid cells under wet water count as full). The
+      // profile is the only way to tell a dimple that tracks the body apart from
+      // waves that propagate: a rendered frame cannot show the difference.
+      std::vector<float> alpha;
+      const std::vector<uint32_t>& mask = m_fluid.BaseMask();
+      if (m_fluid.ReadVolumeFraction(pFramework->pVideoDriver, alpha) && mask.size() == alpha.size()) {
+        const t850::FluidSettings& fs = m_fluid.Settings();
+        const uint32_t w = fs.width, hgt = fs.height, dep = fs.depth;
+        auto delta = [&](uint32_t x, uint32_t z) {
+          float water = 0.0f, pending = 0.0f;
+          for (uint32_t y = 0; y < hgt; ++y) {
+            const size_t index = x + w * (y + static_cast<size_t>(hgt) * z);
+            if (mask[index] != 0u) { pending += 1.0f; continue; }
+            const float a = (std::min)((std::max)(alpha[index], 0.0f), 1.0f);
+            water += a;
+            if (a >= 0.5f) { water += pending; pending = 0.0f; }
+          }
+          return water <= 0.001f ? 0.0f : fs.basinMinY + water * fs.cellSize - fs.waterPlaneY;
+        };
+        float minH = 1e9f, maxH = -1e9f, sum = 0.0f, sumSq = 0.0f;
+        for (uint32_t z = 0; z < dep; ++z) {
+          for (uint32_t x = 0; x < w; ++x) {
+            const float d = delta(x, z);
+            minH = (std::min)(minH, d);
+            maxH = (std::max)(maxH, d);
+            sum += d;
+            sumSq += d * d;
           }
         }
-        T8_LOG_INFO("[Backyard][surface] texel0 height=%.4f | grid min=%.4f max=%.4f mean=%.4f maxSlope=%.4f maxFoam=%.4f samples=%d",
-                    [&] { float r[4] = {0,0,0,0}; pFramework->pVideoDriver->ReadRTColorFloat(rt, t850::BaseDriver::COLOR0_ATTACHMENT, r); return r[0]; }(),
-                    minH, maxH, samples > 0 ? sumH / samples : 0.0f, maxSlope, maxFoam, samples);
-        const t850::FluidSphere& s = m_fluid.DroppedSphere();
-        T8_LOG_INFO("[Backyard][sphere] y=%.3f vy=%.3f submerged=%.2f enabled=%d t=%.2f",
-                    s.y, s.vy, s.submerged, s.enabled ? 1 : 0, m_fluid.SimulationTime());
-        // Alpha column profile along X through the ball's Z row. This is the only
-        // way to tell "a dimple that tracks the body" apart from "waves that
-        // propagate": a rendered frame cannot show the difference.
-        {
-          std::vector<float> alpha;
-          if (m_fluid.ReadVolumeFraction(pFramework->pVideoDriver, alpha)) {
-            const t850::FluidSettings& fs = m_fluid.Settings();
-            const uint32_t w = fs.width, hgt = fs.height, dep = fs.depth;
-            char line[512];
-            std::string profile;
-            const uint32_t row = dep / 2;
-            for (uint32_t x = 0; x < w; x += 4) {
-              float column = 0.0f;
-              for (uint32_t y = 0; y < hgt; ++y)
-                column += alpha[x + w * (y + hgt * row)];
-              std::snprintf(line, sizeof(line), " %.2f", column * fs.cellSize);
-              profile += line;
-            }
-            T8_LOG_INFO("[Backyard][columns] elevation (m) along X, z=%u:%s", row, profile.c_str());
-          }
+        const float count = static_cast<float>(w * dep);
+        const float mean = sum / count;
+        T8_LOG_INFO("[Backyard][surface] delta vs water plane (m): min=%.4f max=%.4f mean=%.4f rms=%.4f",
+                    minH, maxH, mean, std::sqrt((std::max)(sumSq / count - mean * mean, 0.0f)));
+        const float rowF = (s.z - fs.basinMinZ) / fs.cellSize;
+        const uint32_t row = static_cast<uint32_t>((std::min)((std::max)(rowF, 0.0f), static_cast<float>(dep - 1)));
+        char line[32];
+        std::string profile;
+        for (uint32_t x = 0; x < w; x += 4) {
+          std::snprintf(line, sizeof(line), " %+.0f", delta(x, row) * 100.0f);
+          profile += line;
         }
+        T8_LOG_INFO("[Backyard][columns] surface delta (cm) along X, z=%u:%s", row, profile.c_str());
       }
     }
   }
@@ -641,7 +639,7 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     slider("water_time_scale", "time scale (1 = real time)", w.timeScale, 0.05f, 3.0f, 0.01f);
     gui.Checkbox(t850::CheckboxDesc{ "water_fixed_dt", "fixed time step", false, true },
                  w.fixedTimeStep);
-    slider("water_viscosity", "viscosity", w.viscosity, 0.0f, 0.5f, 0.001f);
+    slider("water_viscosity", "viscosity (m^2/s)", w.viscosity, 0.0f, 0.01f, 0.000001f);
     slider("water_gravity", "gravity", w.gravity, 0.0f, 30.0f, 0.01f);
     slider("water_wind_x", "wind X", w.windX, -5.0f, 5.0f, 0.01f);
     slider("water_wind_y", "wind Y", w.windY, -5.0f, 5.0f, 0.01f);
@@ -649,8 +647,8 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     slider("water_damping", "damping", w.damping, 0.0f, 4.0f, 0.01f);
     slider("water_surface_level", "surface level", w.surfaceLevel, 0.05f, 0.99f, 0.001f);
     gui.Separator();
-    if (gui.Button("Reseed solver") && m_fluidReady && pFramework && pFramework->pVideoDriver)
-      m_fluid.Seed(pFramework->pVideoDriver, true);
+    if (gui.Button("Reseed solver"))
+      ResetSimulation();
     if (gui.Button("Rebuild grid"))
       RebuildFluid();
   }
@@ -774,6 +772,7 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     }
     slider("water_sphere_cd", "drag coefficient", w.sphereDragCoefficient, 0.05f, 1.5f, 0.01f);
     slider("water_sphere_restitution", "bounce (0 = dead stop)", w.sphereRestitution, 0.0f, 0.9f, 0.01f);
+    slider("water_sphere_heave_damping", "heave damping ratio", w.sphereHeaveDamping, 0.0f, 1.0f, 0.01f);
 
     slider("water_sphere_height", "drop height (m)", w.sphereDropHeight, 0.05f, 3.0f, 0.01f);
     slider("water_sphere_x", "drop X", w.sphereDropX, -4.0f, 4.0f, 0.05f);
@@ -788,6 +787,7 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
       sphere.densityRatio = w.sphereDensityRatio;
       sphere.dragCoefficient = w.sphereDragCoefficient;
       sphere.restitution = w.sphereRestitution;
+      sphere.heaveDamping = w.sphereHeaveDamping;
       sphere.x = w.sphereDropX;
       sphere.z = w.sphereDropZ;
       sphere.y = w.sphereDropHeight;

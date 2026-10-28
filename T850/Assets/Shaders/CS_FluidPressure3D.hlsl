@@ -1,7 +1,12 @@
-// T850 pool fluid: one red-black Gauss-Seidel pressure pass with SOR.
-// Reads the previous pressure and the divergence volume, writes the next
-// pressure approximation. Only cells matching the current parity are relaxed;
-// the rest are copied through so the ping-pong target stays a complete field.
+// T850 pool fluid: one red-black Gauss-Seidel pressure pass with SOR and a
+// ghost-fluid free surface.
+//
+// Non-LIQUID cells write 0. LIQUID cells of the inactive colour copy their
+// PressureIn value. LIQUID cells of the active colour accumulate the six
+// neighbours: LIQUID contributes p_N and 1 to the diagonal, AIR contributes
+// 1/theta to the diagonal only (the ghost value is folded in), SOLID contributes
+// nothing (Neumann). The target is (sum - div*PressureScale)/diag, relaxed by
+// SOR omega = Padding0.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -52,12 +57,19 @@ RWTexture3D<float4> PressureOut : register(u0);
 #endif
 StructuredBuffer<uint> WallMask : register(t8);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(5, 0)]]
+#endif
+Texture3D<float4> AlphaIn : register(t2);
+
+#define T8_LIQUID_THRESHOLD 0.5f
+
 uint CellIndex(int3 cell)
 {
     return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
 }
 
-bool Outside(int3 cell)
+bool IsSolid(int3 cell)
 {
     if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
         cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
@@ -65,33 +77,38 @@ bool Outside(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
-#if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(5, 0)]]
-#endif
-Texture3D<float4> AlphaIn : register(t2);
-
-// Volume fraction below which a voxel counts as air. Kept in sync with
-// FluidSettings::airThreshold.
-#define T8_AIR_THRESHOLD 0.05f
-
-bool IsAir(int3 cell)
+bool IsLiquid(int3 cell)
 {
-    if (Outside(cell))
+    if (IsSolid(cell))
         return false;
-    return AlphaIn.Load(int4(cell, 0)).x < T8_AIR_THRESHOLD;
+    return saturate(AlphaIn.Load(int4(cell, 0)).x) >= T8_LIQUID_THRESHOLD;
 }
 
-float PressureAt(int3 cell, float fallback)
+float AlphaAt(int3 cell)
 {
-    // Solid neighbour: Neumann, the wall reflects the pressure back.
-    if (Outside(cell))
-        return fallback;
-    // Air neighbour: Dirichlet p = 0. This is what gives the free surface a
-    // pressure reference and makes the matrix non-singular, so no mean removal
-    // is needed.
-    if (IsAir(cell))
-        return 0.0f;
-    return PressureIn.Load(int4(cell, 0)).x;
+    return saturate(AlphaIn.Load(int4(cell, 0)).x);
+}
+
+// theta for the interface between liquid cell L and air cell N.
+float Theta(float aL, float aN)
+{
+    return clamp((aL - 0.5f) / max(aL - aN, 1e-4f), 0.1f, 1.0f);
+}
+
+// Accumulate one neighbour into sum/diag. Returns nothing; mutates by reference.
+void AccumulateNeighbour(int3 n, float aC, inout float sum, inout float diag)
+{
+    if (IsSolid(n))
+        return; // Neumann: face not part of the stencil
+    if (IsLiquid(n))
+    {
+        sum += PressureIn.Load(int4(n, 0)).x;
+        diag += 1.0f;
+        return;
+    }
+    // AIR neighbour: ghost value folded into the diagonal.
+    const float theta = Theta(aC, AlphaAt(n));
+    diag += 1.0f / theta;
 }
 
 [numthreads(4, 4, 4)]
@@ -99,34 +116,37 @@ void CS(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
+
     int3 cell = int3(id);
-    // Solid holds no pressure. Air is the Dirichlet reference: p = 0 fixed, so it
-    // is copied through rather than relaxed.
-    if (Outside(cell) || IsAir(cell)) {
+    if (!IsLiquid(cell))
+    {
         PressureOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
+
     const float center = PressureIn.Load(int4(cell, 0)).x;
 
-    // Red-black ordering. Cells of the other colour are copied through; the next
-    // pass relaxes them against these freshly updated neighbours, which is what
-    // makes this Gauss-Seidel rather than Jacobi.
     const uint parity = Iteration & 1u;
-    if (((cell.x + cell.y + cell.z) & 1) != int(parity)) {
+    if (((cell.x + cell.y + cell.z) & 1) != int(parity))
+    {
         PressureOut[id] = float4(center, 0.0f, 0.0f, 0.0f);
         return;
     }
 
-    const float neighbours =
-        PressureAt(cell + int3(1, 0, 0), center) + PressureAt(cell - int3(1, 0, 0), center) +
-        PressureAt(cell + int3(0, 1, 0), center) + PressureAt(cell - int3(0, 1, 0), center) +
-        PressureAt(cell + int3(0, 0, 1), center) + PressureAt(cell - int3(0, 0, 1), center);
+    const float aC = AlphaAt(cell);
+    float sum = 0.0f;
+    float diag = 0.0f;
+
+    AccumulateNeighbour(cell + int3(1, 0, 0), aC, sum, diag);
+    AccumulateNeighbour(cell + int3(-1, 0, 0), aC, sum, diag);
+    AccumulateNeighbour(cell + int3(0, 1, 0), aC, sum, diag);
+    AccumulateNeighbour(cell + int3(0, -1, 0), aC, sum, diag);
+    AccumulateNeighbour(cell + int3(0, 0, 1), aC, sum, diag);
+    AccumulateNeighbour(cell + int3(0, 0, -1), aC, sum, diag);
+
     const float divergence = DivergenceIn.Load(int4(cell, 0)).x;
-    const float gaussSeidelTarget = (neighbours - divergence * PressureScale) / 6.0f;
-    // SOR: omega > 1 overshoots toward the target and converges markedly faster
-    // than plain Gauss-Seidel for a 7-point Laplacian. 1.0 degenerates to plain
-    // Gauss-Seidel, so the slider is usable as a comparison.
+    const float target = diag > 0.0f ? (sum - divergence * PressureScale) / diag : 0.0f;
     const float omega = clamp(Padding0, 0.05f, 1.99f);
-    const float pressure = lerp(center, gaussSeidelTarget, omega);
+    const float pressure = lerp(center, target, omega);
     PressureOut[id] = float4(pressure, 0.0f, 0.0f, 0.0f);
 }

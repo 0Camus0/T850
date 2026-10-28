@@ -1,4 +1,10 @@
-// T850 pool fluid: divergence of the velocity volume with solid-wall clamping.
+// T850 pool fluid: divergence of the MAC velocity field.
+//
+// Non-LIQUID cells write 0. A LIQUID cell sums the six face fluxes that bound it:
+// the +X face is texel (i,j,k).x, the -X face is texel (i-1,j,k).x, and likewise
+// for Y and Z. A texel index of -1 on the face's own axis is the domain wall and
+// reads 0. Solid faces already hold their boundary values from the boundary
+// kernel, so they are used as stored.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -42,15 +48,17 @@ RWTexture3D<float4> DivergenceOut : register(u0);
 #endif
 StructuredBuffer<uint> WallMask : register(t8);
 
-uint CellIndex(int3 cell)
-{
-    return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
-}
-
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(4, 0)]]
 #endif
 Texture3D<float4> AlphaIn : register(t2);
+
+#define T8_LIQUID_THRESHOLD 0.5f
+
+uint CellIndex(int3 cell)
+{
+    return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
+}
 
 bool IsSolid(int3 cell)
 {
@@ -60,30 +68,32 @@ bool IsSolid(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
-// Volume fraction below which a voxel counts as air. Kept in sync with
-// FluidSettings::airThreshold.
-#define T8_AIR_THRESHOLD 0.05f
-
-bool IsAir(int3 cell)
+bool IsLiquid(int3 cell)
 {
     if (IsSolid(cell))
         return false;
-    return AlphaIn.Load(int4(cell, 0)).x < T8_AIR_THRESHOLD;
+    return saturate(AlphaIn.Load(int4(cell, 0)).x) >= T8_LIQUID_THRESHOLD;
 }
 
-bool Outside(int3 cell)
+// Component `axis` of the face stored in texel `cell`. A texel index of -1 on
+// the face's own axis is the domain wall and reads 0.
+float FaceComponent(int3 cell, int axis)
 {
-    return IsSolid(cell);
-}
-
-float Component(int3 cell, int axis)
-{
-    // A solid neighbour contributes zero flux, which is the no-penetration wall
-    // condition expressed through the mask instead of a box-shaped guess.
-    if (Outside(cell))
+    if (axis == 0)
+    {
+        if (cell.x < 0)
+            return 0.0f;
+        return VelocityIn.Load(int4(cell, 0)).x;
+    }
+    if (axis == 1)
+    {
+        if (cell.y < 0)
+            return 0.0f;
+        return VelocityIn.Load(int4(cell, 0)).y;
+    }
+    if (cell.z < 0)
         return 0.0f;
-    float4 value = VelocityIn.Load(int4(cell, 0));
-    return axis == 0 ? value.x : (axis == 1 ? value.y : value.z);
+    return VelocityIn.Load(int4(cell, 0)).z;
 }
 
 [numthreads(4, 4, 4)]
@@ -91,16 +101,21 @@ void CS(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
+
     int3 cell = int3(id);
-    // Solid carries no divergence; air is not subject to incompressibility.
-    if (IsSolid(cell) || IsAir(cell)) {
+    if (!IsLiquid(cell))
+    {
         DivergenceOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
-    const float scale = 0.5f / CellSize;
-    const float divergence =
-        (Component(cell + int3(1, 0, 0), 0) - Component(cell - int3(1, 0, 0), 0)) * scale +
-        (Component(cell + int3(0, 1, 0), 1) - Component(cell - int3(0, 1, 0), 1)) * scale +
-        (Component(cell + int3(0, 0, 1), 2) - Component(cell - int3(0, 0, 1), 2)) * scale;
+
+    const float uPlus  = FaceComponent(cell, 0);
+    const float uMinus = FaceComponent(cell + int3(-1, 0, 0), 0);
+    const float vPlus  = FaceComponent(cell, 1);
+    const float vMinus = FaceComponent(cell + int3(0, -1, 0), 1);
+    const float wPlus  = FaceComponent(cell, 2);
+    const float wMinus = FaceComponent(cell + int3(0, 0, -1), 2);
+
+    const float divergence = (uPlus - uMinus + vPlus - vMinus + wPlus - wMinus) / CellSize;
     DivergenceOut[id] = float4(divergence, 0.0f, 0.0f, 0.0f);
 }

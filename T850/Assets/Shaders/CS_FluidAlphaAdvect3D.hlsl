@@ -1,15 +1,9 @@
-// T850 pool fluid: flux-form volume-fraction advection.
+// T850 pool fluid: flux-form volume-fraction advection on a staggered MAC grid.
 //
-// This is the real free-surface transport step. Unlike semi-Lagrangian
-// advection, it is written in conservative flux form: every face flux that
-// leaves one cell enters its neighbour, so summing alpha over the domain
-// telescopes to boundary fluxes only and total volume is conserved to rounding.
-//
-// One kernel, no intermediate flux texture: each cell reads its six neighbours
-// and the six collocated face velocities, then integrates the net flux inline.
-// A compression term (Russo & Smereka) pushes alpha towards 0 or 1 where the
-// interface is, which counteracts the numerical diffusion of first-order upwind
-// and keeps the front sharp without a full PLIC reconstruction.
+// Conservative flux form: every face flux leaving one cell enters its neighbour,
+// so summing alpha over the domain telescopes to boundary fluxes only. Face
+// velocities are the single stored MAC values, shared by both cells, keeping the
+// scheme antisymmetric. A compression term (Russo & Smereka) sharpens the front.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -31,8 +25,7 @@ cbuffer FluidConstants : register(b0)
     float SurfaceLevel;
     float TimeValue;
     float PressureScale;
-    // Reused as the compression strength for this kernel; the pressure kernel
-    // reads the same field as its SOR factor.
+    // Reused as the compression strength for this kernel.
     float Padding0;
 };
 
@@ -65,7 +58,7 @@ uint CellIndex(int3 cell)
     return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
 }
 
-bool IsSolid(int3 cell)
+bool IsSolidCell(int3 cell)
 {
     if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
         cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
@@ -75,53 +68,65 @@ bool IsSolid(int3 cell)
 
 float AlphaAt(int3 cell)
 {
-    // Solid and out-of-domain neighbours carry no water, which is itself a
-    // no-flux condition: nothing can be advected out through a wall.
-    if (IsSolid(cell))
+    if (IsSolidCell(cell))
         return 0.0f;
     return saturate(AlphaIn.Load(int4(cell, 0)).x);
 }
 
-float ComponentAt(int3 cell, int axis)
+// Stored MAC face velocity for component c at texel n; out-of-range along c is 0.
+float FaceVelocity(int3 n, int c)
 {
-    if (IsSolid(cell))
+    int3 dim = int3(Width, Height, Depth);
+    if (c == 0)
+    {
+        if (n.x < 0 || n.x > dim.x - 1)
+            return 0.0f;
+        n.y = clamp(n.y, 0, dim.y - 1);
+        n.z = clamp(n.z, 0, dim.z - 1);
+        return VelocityIn.Load(int4(n, 0)).x;
+    }
+    if (c == 1)
+    {
+        if (n.y < 0 || n.y > dim.y - 1)
+            return 0.0f;
+        n.x = clamp(n.x, 0, dim.x - 1);
+        n.z = clamp(n.z, 0, dim.z - 1);
+        return VelocityIn.Load(int4(n, 0)).y;
+    }
+    if (n.z < 0 || n.z > dim.z - 1)
         return 0.0f;
-    float4 v = VelocityIn.Load(int4(cell, 0));
-    return axis == 0 ? v.x : (axis == 1 ? v.y : v.z);
-}
-
-// Collocated face velocity: the mean of the two cells sharing the face.
-float FaceVelocity(int3 cell, int3 offset, int axis)
-{
-    return 0.5f * (ComponentAt(cell, axis) + ComponentAt(cell + offset, axis));
+    n.x = clamp(n.x, 0, dim.x - 1);
+    n.y = clamp(n.y, 0, dim.y - 1);
+    return VelocityIn.Load(int4(n, 0)).z;
 }
 
 // Signed volume flux LEAVING `cell` across one face, in alpha-cells per second.
-// Positive means water leaves the cell. Antisymmetry is the whole point: the
-// neighbour computes exactly the negative of this for the shared face, so
-// summing over the domain telescopes and total volume is conserved. An earlier
-// per-cell formulation picked the compression sign independently on each side,
-// which broke that symmetry and created about 4.5% mass in the first 600 frames.
+// Both cells sharing the face read the same stored U, so the mirror flux is its
+// exact negation and the domain sum telescopes.
 float FaceFluxOut(int3 cell, int3 offset, int axis, float outwardSign)
 {
     const int3 neighbour = cell + offset;
     const float alphaCell = AlphaAt(cell);
     const float alphaNeighbour = AlphaAt(neighbour);
 
-    // Velocity components projected onto the outward face normal, for both cells.
-    const float outwardCell = outwardSign * ComponentAt(cell, axis);
-    const float outwardNeighbour = outwardSign * ComponentAt(neighbour, axis);
-    const float faceVelocity = 0.5f * (outwardCell + outwardNeighbour);
+    // Stored MAC face velocity: + face uses texel(cell), - face uses texel(cell - e_c).
+    float u;
+    if (outwardSign > 0.0f)
+        u = FaceVelocity(cell, axis);
+    else
+        u = FaceVelocity(cell + offset, axis);
 
-    // Upwind transport: the donor's alpha crosses the face.
-    float flux = faceVelocity > 0.0f ? faceVelocity * alphaCell
-                                     : faceVelocity * alphaNeighbour;
+    const float s = outwardSign * u;
 
-    // Compression (Russo & Smereka): an extra outward flux proportional to how
-    // much fuller this cell is than its neighbour, which pushes the interface
-    // towards a step profile and cancels upwind smearing. Being proportional to
-    // (alphaCell - alphaNeighbour) it flips sign for the neighbour automatically.
-    flux += Padding0 * abs(faceVelocity) * (alphaCell - alphaNeighbour);
+    if (IsSolidCell(neighbour))
+        return 0.0f;
+
+    float flux = s > 0.0f ? s * alphaCell : s * alphaNeighbour;
+    // Interface sharpening (OpenFOAM-style): moves water toward the fuller side,
+    // scaled by a(1-a); the ramp keeps near-equal bulk cells from being amplified.
+    const float faceAlpha = 0.5f * (alphaCell + alphaNeighbour);
+    const float direction = clamp((alphaNeighbour - alphaCell) * 4.0f, -1.0f, 1.0f);
+    flux += Padding0 * abs(s) * faceAlpha * (1.0f - faceAlpha) * direction;
     return flux;
 }
 
@@ -132,7 +137,8 @@ void CS(uint3 id : SV_DispatchThreadID)
         return;
     int3 cell = int3(id);
 
-    if (IsSolid(cell)) {
+    if (IsSolidCell(cell))
+    {
         AlphaOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
@@ -140,8 +146,6 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float center = AlphaAt(cell);
     const float dtOverH = DeltaTime / CellSize;
 
-    // Net outward flux over the six faces. Every face contributes exactly once
-    // and its mirror contributes the negation, so no water is invented.
     const float fluxOut =
         FaceFluxOut(cell, int3( 1, 0, 0), 0,  1.0f) +
         FaceFluxOut(cell, int3(-1, 0, 0), 0, -1.0f) +
@@ -150,8 +154,6 @@ void CS(uint3 id : SV_DispatchThreadID)
         FaceFluxOut(cell, int3( 0, 0, 1), 2,  1.0f) +
         FaceFluxOut(cell, int3( 0, 0,-1), 2, -1.0f);
 
-    // Clamping is the only place this scheme is not exactly conservative; a
-    // global volume correction pass absorbs that residual.
     float alpha = saturate(center - dtOverH * fluxOut);
     AlphaOut[id] = float4(alpha, 0.0f, 0.0f, 0.0f);
 }

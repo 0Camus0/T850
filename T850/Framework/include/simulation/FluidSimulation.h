@@ -203,8 +203,8 @@ namespace t850 {
     // comparable initial state.
     bool ResetToRest(BaseDriver* driver);
     // One solver advance at the current m_settings.deltaTime. Step() drives this,
-    // possibly several times per frame.
-    bool StepInternal(BaseDriver* driver);
+    // possibly several times per frame; only the frame's last substep needs the surface.
+    bool StepInternal(BaseDriver* driver, bool writeSurface = true);
 
     // Render-graph target the solver copies its current surface into each Step.
     // Must match the simulation width/depth or the copy is skipped.

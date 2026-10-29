@@ -3,7 +3,7 @@
 This document lists every known open issue in the backyard pool water (scene 7) after commit
 `e90752b4` ("Fix backyard water rendering and rebuild the solver on a staggered grid"), with the
 root cause, the fix to implement, the files involved and how to prove the fix works. Section 0 has
-the current status (as of code commit `4d21e836`).
+the current status (as of code commit `5d640c2e`).
 
 It is written so that any implementer (GLM, DeepSeek or a human) can pick **one task**, follow it
 in isolation, and hand back a change that can be reviewed against the acceptance criteria. Tasks
@@ -28,7 +28,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-13 Dead code | Done | `ea80665b` | Accepted |
 | W-19 Ball sits in a funnel | Done (review) | `fa5422ff`, `33baad50` | Surface under/around the floating ball flat and stable; gates 7 and 8 |
 | W-20 Scene index ignored with `--api` | Resolved: by design, documented | — | `config.json` is only read with `--config`; always pass `--scene 7` |
-| Tooling: fluid debug view | Done (review) | `4d21e836` | Wireframe and voxel overlays in the ImGui panel; see 4.5 |
+| Tooling: fluid debug view | Done (review) | `4d21e836`, `93dff3d9`, `5d640c2e` | Wireframe, voxel and whole-volume velocity overlays in the ImGui panel; D3D12 upload-ring crash fixed (per-layer caps); bulk-water α statistic; see 4.5 |
 | W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked; rest of W-11 open |
 | W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p; P1–P9 open |
 | All others | Open | — | — |
@@ -44,8 +44,10 @@ compile `App.cpp`. Minor nits left for the next stage that touches those files: 
 
 Review follow-up changes (by the reviewer, not the stage implementer), all on `backyard_scene`:
 `d2291f1a` (open-ceiling ghost pressure in the gradient kernel, see W-08), `fa5422ff` and
-`33baad50` (W-19 ball funnel and its flicker follow-up), `4d21e836` (fluid debug view, see 4.5).
-Pull them before starting Stage 3.
+`33baad50` (W-19 ball funnel and its flicker follow-up), `4d21e836`, `93dff3d9` and `5d640c2e`
+(fluid debug view, its D3D12 crash fix and the whole-volume velocity layer, see 4.5), `d6b65147`
+(grid follows the cell size, W-11 item 3) and `3a371903` (W-15 fixes). Pull them before starting
+Stage 3. **Next stage: 3 (W-09, W-10).**
 
 ---
 

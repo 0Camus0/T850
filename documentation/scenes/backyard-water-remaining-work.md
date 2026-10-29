@@ -2,7 +2,8 @@
 
 This document lists every known open issue in the backyard pool water (scene 7) after commit
 `e90752b4` ("Fix backyard water rendering and rebuild the solver on a staggered grid"), with the
-root cause, the fix to implement, the files involved and how to prove the fix works.
+root cause, the fix to implement, the files involved and how to prove the fix works. Section 0 has
+the current status (as of code commit `4d21e836`).
 
 It is written so that any implementer (GLM, DeepSeek or a human) can pick **one task**, follow it
 in isolation, and hand back a change that can be reviewed against the acceptance criteria. Tasks
@@ -25,8 +26,9 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-01 Water invisible on GL/WebGPU | Done | `ea80665b` | Accepted. GL and WebGPU scene 7: 0 errors |
 | W-08 Domain ceiling is a lid | Done, **corrected in review** | `ea80665b` + review commit | Gradient/pressure ghost-pressure mismatch at the ceiling fixed; see W-08 |
 | W-13 Dead code | Done | `ea80665b` | Accepted |
-| W-19 Ball sits in a funnel | Done (review) | `fa5422ff` + flicker follow-up | Surface under/around the floating ball flat and stable; gates 7 and 8 |
+| W-19 Ball sits in a funnel | Done (review) | `fa5422ff`, `33baad50` | Surface under/around the floating ball flat and stable; gates 7 and 8 |
 | W-20 Scene index ignored with `--api` | Resolved: by design, documented | — | `config.json` is only read with `--config`; always pass `--scene 7` |
+| Tooling: fluid debug view | Done (review) | `4d21e836` | Wireframe and voxel overlays in the ImGui panel; see 4.5 |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -38,9 +40,10 @@ compile `App.cpp`. Minor nits left for the next stage that touches those files: 
 `RecycleOverflowingComputeFrame`); the still-pool gate comment says "1 mm" while the code checks
 5 mm.
 
-Review follow-up fixes (by the reviewer, not the stage implementer): `d2291f1a` (open-ceiling
-ghost pressure in the gradient kernel, see W-08) and `fa5422ff` (W-19 ball funnel). Both are on
-`backyard_scene`; pull them before starting Stage 3.
+Review follow-up changes (by the reviewer, not the stage implementer), all on `backyard_scene`:
+`d2291f1a` (open-ceiling ghost pressure in the gradient kernel, see W-08), `fa5422ff` and
+`33baad50` (W-19 ball funnel and its flicker follow-up), `4d21e836` (fluid debug view, see 4.5).
+Pull them before starting Stage 3.
 
 ---
 
@@ -245,24 +248,30 @@ impact, rings must spread in **all** directions from the ball and reflect from t
 ### 4.5 Debug view (ImGui "Backyard Water" → "Debug view")
 
 `FluidDebugRenderer` (`Framework/src/simulation/FluidDebugRenderer.cpp`) draws line overlays read
-back from the solver every frame a layer is on (a GPU stall; expect ~70–100 fps instead of ~280):
+back from the solver every frame a layer is on (a GPU stall; expect ~70–100 fps instead of ~280).
+Nothing is created or read back while every option is off.
 
-| Layer | Shows | Colour |
+| Option (as labelled in the panel) | What you see | Colour |
 |---|---|---|
-| water mesh wireframe | the 288×144 render mesh, displaced on the CPU exactly as `VS_Mesh` does | white, translucent |
-| solver surface | one vertex per surface texel: the resolution the solver actually has | yellow |
-| liquid voxels | cells with α ≥ 0.5 and air above: the voxel free surface the pressure solve sees | blue |
-| partially filled cells | interface cells, box height = α·h | teal |
-| solid voxels | wall-mask shell touching fluid; steps grey, the stamped body orange | grey / orange |
-| velocity slice | cell-centred velocity on one XY slice (follows the ball by default) | magenta |
-| grid bounds | solver domain box | green |
+| water mesh wireframe | The actual render mesh (288×144 vertices), displaced on the CPU exactly as `VS_Mesh` does | white, translucent |
+| solver surface, 1 vertex per column | One vertex per surface texel (100×50): the resolution the simulation really has | yellow |
+| liquid voxels at the surface, alpha >= 0.5 | Cells at least half full with air above: the blocky surface the pressure solve sees | blue |
+| partially filled cells, height = alpha | The interface cells, each box filled to its water fraction | teal |
+| solid voxels: steps grey, body orange | The wall-mask shell touching fluid: steps, and the ball as the solver voxelises it | grey / orange |
+| velocity on a vertical slice | Cell-centred flow arrows on one XY slice; follows the ball by default. Sliders: line length (m per m/s) and slice Z row | magenta |
+| solver grid bounds | The simulation box | green |
+| x-ray (ignore scene depth) | Draws every layer through walls and the ball | — |
+| hide shaded water | Hides the rendered water so only the overlays remain | — |
 
-"x-ray" ignores scene depth; "hide shaded water" hides the water mesh. Depth testing uses GBuffer
-depth, which excludes the water, so voxels under the surface stay visible. Use this when changing
-grid size or cell size: it shows how coarse the solver is compared with the render mesh, and how the
-ball is voxelised. Verified on D3D12, Vulkan and D3D11 with 0 errors; GL/WebGPU run no solver, so
-nothing is drawn there. When any layer changes how the solver data is laid out (W-02 storage, W-03
-transport), update the readback interpretation in the debug renderer in the same change.
+Below the options the panel shows the grid size, cell size and per-layer counts (mesh lines,
+liquid, partial, solid and body voxels, velocity lines and the slice row).
+
+Depth testing uses GBuffer depth, which excludes the water, so voxels under the surface stay
+visible. Use this when changing grid size or cell size: it shows how coarse the solver is compared
+with the render mesh, and how the ball is voxelised. Verified on D3D12, Vulkan and D3D11 with 0
+errors; GL/WebGPU run no solver, so nothing is drawn there. The renderer consumes
+`ReadSurface`, `ReadVolumeFraction`, `ReadVelocity` and `ReadWallMask`; a task that changes their
+output layout (W-02 storage, W-03 transport) must update the renderer in the same change.
 
 ---
 
@@ -630,7 +639,7 @@ running the real scene headless, or extend `--fluid-selftest`):
 5. **Readback.** Read texels from the surface texture at several positions (the old probe read
    only texel (0,0)), e.g. via `CS_FluidCopy3D`-style copy to a buffer.
 
-A CLI switch to disable the ball (`--backyardNoBall`) is needed for gate 1.
+A CLI switch to disable the ball is needed for gate 1 (implemented as `--backyard-no-ball`).
 
 **Acceptance.** All gates pass at e90752b4 (gate 3 with the current 0.5 % threshold). Each gate
 must **fail** when the corresponding bug is reintroduced: demonstrate by temporarily reverting the

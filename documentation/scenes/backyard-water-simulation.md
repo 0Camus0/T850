@@ -796,6 +796,9 @@ back-solves density, so editing either updates the other without them fighting e
 - `T8_LOG_DEBUG("[Fluid] VolumeCorrection … was= deficit= headroom= -> now=`)` on each correction.
 - Scene probe at every 60th frame: solver diagnostics, surface contract probe, sphere state,
   column profile.
+- Later additions (details in [backyard-water-remaining-work.md](backyard-water-remaining-work.md)
+  section 4): `ReadSurface`/`ReadWallMask` readbacks, the 8-gate `--backyard-selftest`, and the
+  ImGui "Debug view" (`FluidDebugRenderer`: displaced mesh wireframe, voxels, velocity slice).
 
 ---
 

@@ -1,15 +1,15 @@
 # Backyard Water — Staged Plan
 
 Companion to [backyard-water-remaining-work.md](backyard-water-remaining-work.md) (the task
-catalogue W-01…W-17) and [backyard-water-simulation.md](backyard-water-simulation.md) (the
-implementation record).
+catalogue W-01…W-20, with current status in its section 0) and
+[backyard-water-simulation.md](backyard-water-simulation.md) (the implementation record).
 
 The task catalogue is the source of truth for **what** each task is and how to prove it. This
 document is only about **order and session boundaries**, so each stage can be executed cold, in
 one context, without carrying the whole backlog.
 
-Baseline for all work: `01ccbd82` (HEAD), after `e90752b4` rebuilt the solver on a staggered
-grid.
+Stage 0 baseline: `01ccbd82`. Last code change: `4d21e836` (stages 0–2 done, plus the review
+fixes and the debug view logged in section 4). Start Stage 3 from the tip of `backyard_scene`.
 
 ---
 
@@ -26,6 +26,11 @@ grid.
 5. **Never combine.** No drive-by refactors, no reformatting, no extra kernels.
 6. **Append results** to section 4 of this document under the stage heading before closing the
    session — that is how the next session starts informed.
+7. **Always pass `--scene 7`.** `config.json` is only read with `--config`; a run without
+   `--scene 7` tests SandboxScene. Check the log contains `[Backyard]` lines before trusting it.
+8. **Look at the solver, not just the shaded result.** The ImGui "Debug view" (remaining-work
+   section 4.5) shows the displaced mesh, the voxels and a velocity slice. Use it before and after
+   any solver or surface change.
 
 ---
 
@@ -404,7 +409,9 @@ branch, bug 18 in the record), `BackyardScene.cpp`, render graph JSON if a new t
 
 **Acceptance** — A/B back-buffer dumps from one snapshot at t = 2.0 s: steps visibly lighter than
 the deep end; no ball colour in the water; depth target contains the water surface. 0 errors on
-D3D12/Vulkan/D3D11. Frame-time cost of the extra draw reported.
+D3D12/Vulkan/D3D11. Frame-time cost of the extra draw reported. For W-10, the "water mesh
+wireframe" overlay must sit on the depth-only surface (same displacement), and gates 7 and 8 stay
+green.
 
 **Exit** — water optics match the geometry; no new passes disabled.
 
@@ -443,7 +450,9 @@ trip.
 
 **Files** — `BaseDriver.h`, `ComputeKernelRegistry.cpp`, `ComputeReflection.cpp`,
 `D3D11/D3D12/Vulkan/GLCompute.cpp`, `WebGPUDriver.cpp`, `RenderGraph.cpp`, `FluidSimulation.cpp`,
-`compute_kernels.json`, all α/pressure/divergence kernels, `ComputeSelfTest.cpp`.
+`compute_kernels.json`, all α/pressure/divergence kernels, `ComputeSelfTest.cpp`. Keep the CPU
+output of `ReadVolumeFraction` (one float per voxel) unchanged: the self-test and
+`FluidDebugRenderer` consume it.
 
 **Acceptance** — compute self-test passes on D3D11/D3D12/Vulkan; fluid self-test passes. Report
 the `VolumeCorrection` deficit before/after and surface rms at t ≈ 11 s.
@@ -673,8 +682,8 @@ PASS on both APIs with Stage 1c numbers unchanged; `--fluid-selftest` PASS on bo
 
 ### Review of stages 0–2 (2026-10-28) — fixes applied by the reviewer
 
-Re-run independently: all gates PASS on D3D12 and Vulkan, GL/WebGPU 0 errors. Two defects were
-fixed directly, so **pull `backyard_scene` before Stage 3**:
+Re-run independently: all gates PASS on D3D12 and Vulkan, GL/WebGPU 0 errors. The reviewer
+committed the changes below directly, so **pull `backyard_scene` (at or after `4d21e836`) before Stage 3**:
 
 1. `d2291f1a` — the gradient kernel used an α-derived θ (≈ 0.5) for the open-ceiling face while
    the pressure kernel solves it with θ = 1, doubling the pressure step there. Gradient now uses
@@ -688,10 +697,13 @@ fixed directly, so **pull `backyard_scene` before Stage 3**:
    under the floating ball ≈ −35 cm" row in the Stage 0 table no longer applies and the "surface rms
    excluding the ball region" gap is closed by gate 7.
 
-3. Flicker follow-up to W-19 (same branch, after `05745df7`): the first W-19 kernel used an α ≥ 0.5
+3. `33baad50` — flicker follow-up to W-19: the first W-19 kernel used an α ≥ 0.5
    test to decide "body here", which flipped while the ball bobbed — 0.44 m frame-to-frame jumps next
    to the ball. Body detection is now mask-only with a continuous blend; new gate 8 (frame-to-frame
    jerk near the settling ball, limit 1 cm) measures 0.0066 m and fails on the old kernel.
+4. `4d21e836` — fluid debug view (tooling, no solver change): ImGui "Debug view" overlays for the
+   displaced mesh wireframe, solver surface grid, liquid/partial/solid voxels, a velocity slice and
+   the grid bounds. Option table in remaining-work section 4.5. Costs nothing while off.
 
 The backyard self-test now has **8 gates**; the no-ball flag is `--backyard-no-ball`. W-20 is not a
 bug: `config.json` is read only with `--config`, so **always pass `--scene 7`** and check the log

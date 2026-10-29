@@ -162,6 +162,19 @@ namespace {
     return true;
   }
 
+  float Median(std::vector<float> values) {
+    if (values.empty()) return 0.0f;
+    std::sort(values.begin(), values.end());
+    const size_t n = values.size();
+    return n % 2 ? values[n / 2] : 0.5f * (values[n / 2 - 1] + values[n / 2]);
+  }
+
+  // Gate 7: around a floating body at rest the rendered surface must sit at the
+  // far-field level. Before the fix: ring -2.3 cm, covered texels -34 cm (the "funnel");
+  // after: ring -0.6..-0.8 cm, covered within 0.4 cm of the ring.
+  constexpr float kFloatRingMax = 0.015f;
+  constexpr float kFloatCoveredMax = 0.02f;
+
   // Gate 6: a WET top row must have a non-zero +Y face velocity. A lid zeroes it exactly
   // (the gradient kernel overwrites the face with SolidBoundaryValue()), so the threshold
   // only has to separate "exactly zero" from "a real vent flow". Measured open-ceiling
@@ -704,9 +717,10 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
   //           p_ghost = p_L*(1 - 1/theta) drives it. Measured: tens of cm/s.
   //
   // A heavy drop is used because the ordinary drop never wets the top row at all, so an
-  // unwet ceiling cannot be probed. Note the 3x-density 2.5 m drop legitimately overflows
-  // this shallow (1.56 m) pool - the top row does fill - so the top row's water content is
-  // reported but NOT asserted: filling it is correct, pinning against it is not.
+  // unwet ceiling cannot be probed. The 3x-density 2.5 m drop throws a local splash crown
+  // up to the top row (the ball's 0.065 m3 raises the mean level only ~1.6 mm), so the top
+  // row's water content is reported but NOT asserted: filling it is correct, pinning
+  // against it is not.
   if (failures == 0 && !options.skipBall) {
     if (!fluid.ResetToRest(driver)) { T8_LOG_ERROR("[BackyardSelfTest] ceiling: reset failed"); ++failures; }
     FluidSphere& ball = fluid.DroppedSphere();
@@ -782,6 +796,79 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
       T8_LOG_ERROR("[BackyardSelfTest] ceiling: the heavy drop raised the surface only %.3f m (need %.3f)",
                    peakRise, kCeilingRiseMin);
       ++failures;
+    }
+  }
+
+  // ── Gate 7: a floating body leaves the surface flat ──────────────────────────
+  // Reads the rendered surface texture, so it covers the surface kernel's handling of
+  // columns that pass through the body, not just the volume.
+  if (failures == 0 && !options.skipBall) {
+    if (!fluid.ResetToRest(driver)) { T8_LOG_ERROR("[BackyardSelfTest] float: reset failed"); ++failures; }
+    FluidSphere& ball = fluid.DroppedSphere();
+    ball.enabled = true;
+    ball.radius = 0.25f;
+    ball.densityRatio = 0.6f;
+    ball.dragCoefficient = 0.47f;
+    ball.restitution = 0.30f;
+    ball.x = 0.0f;
+    ball.z = fs.basinMinZ + 0.5f * (fs.basinMaxZ - fs.basinMinZ);
+    ball.y = fs.waterPlaneY + 1.0f;                 // the scene's default drop
+    ball.vx = ball.vy = ball.vz = 0.0f;
+    ball.submerged = 0.0f;
+    if (failures == 0 && !StepFor(fluid, driver, static_cast<uint32_t>(std::ceil(8.0f / options.fixedDt)))) {
+      T8_LOG_ERROR("[BackyardSelfTest] float: step failed");
+      ++failures;
+    }
+    std::vector<float> surface;
+    if (failures == 0 && !fluid.ReadSurface(driver, surface)) {
+      T8_LOG_ERROR("[BackyardSelfTest] float: surface readback failed");
+      ++failures;
+    } else if (failures == 0) {
+      const float h = fs.cellSize;
+      const float r = ball.radius;
+      constexpr int kBands = 8;                     // 10 cm radial bands, for the log
+      std::vector<float> farField, ring, covered, bands[kBands];
+      for (uint32_t z = 0; z < fs.depth; ++z)
+        for (uint32_t x = 0; x < fs.width; ++x) {
+          const float dx = fs.basinMinX + (static_cast<float>(x) + 0.5f) * h - ball.x;
+          const float dz = fs.basinMinZ + (static_cast<float>(z) + 0.5f) * h - ball.z;
+          const float dist = std::sqrt(dx * dx + dz * dz);
+          const float value = surface[(static_cast<size_t>(x) + static_cast<size_t>(fs.width) * z) * 4];
+          if (dist >= 1.0f && dist <= 1.5f) farField.push_back(value);
+          if (dist >= r + 0.5f * h && dist <= r + 1.5f * h) ring.push_back(value);
+          if (dist <= r - 0.5f * h) covered.push_back(value);
+          const int band = static_cast<int>(dist / 0.1f);
+          if (band < kBands) bands[band].push_back(value);
+        }
+      if (farField.empty() || ring.empty() || covered.empty()) {
+        T8_LOG_ERROR("[BackyardSelfTest] float: empty sample set (far %zu ring %zu covered %zu)",
+                     farField.size(), ring.size(), covered.size());
+        ++failures;
+      } else {
+        const float farLevel = Median(farField);
+        const float ringLevel = Median(ring);
+        const float coveredMin = *std::min_element(covered.begin(), covered.end());
+        std::string profile;
+        char cell[24];
+        for (int b = 0; b < kBands; ++b) {
+          std::snprintf(cell, sizeof(cell), " %+.1f", bands[b].empty() ? 0.0f : 100.0f * (Median(bands[b]) - farLevel));
+          profile += cell;
+        }
+        T8_LOG_INFO("[BackyardSelfTest] float  ball y=%.3f submerged=%.2f  far=%+.4f m  ring-far=%+.4f m  "
+                    "covered min-ring=%+.4f m  profile vs far (cm, 10 cm bands):%s",
+                    ball.y, ball.submerged, farLevel, ringLevel - farLevel, coveredMin - ringLevel,
+                    profile.c_str());
+        if (std::fabs(ringLevel - farLevel) > kFloatRingMax) {
+          T8_LOG_ERROR("[BackyardSelfTest] float: the surface just outside the body is %+.4f m from the far field (limit %.3f)",
+                       ringLevel - farLevel, kFloatRingMax);
+          ++failures;
+        }
+        if (ringLevel - coveredMin > kFloatCoveredMax) {
+          T8_LOG_ERROR("[BackyardSelfTest] float: the surface under the body dips %.4f m below its surroundings (limit %.3f)",
+                       ringLevel - coveredMin, kFloatCoveredMax);
+          ++failures;
+        }
+      }
     }
   }
 

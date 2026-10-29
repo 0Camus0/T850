@@ -561,25 +561,16 @@ void BackyardScene::OnDraw() {
       const t850::FluidSphere& s = m_fluid.DroppedSphere();
       T8_LOG_INFO("[Backyard][sphere] y=%.3f vy=%.3f submerged=%.2f enabled=%d t=%.2f",
                   s.y, s.vy, s.submerged, s.enabled ? 1 : 0, m_fluid.SimulationTime());
-      // Surface elevation relative to the authored water plane, computed exactly as
-      // CS_FluidSurface3D does (solid cells under wet water count as full). The
-      // profile is the only way to tell a dimple that tracks the body apart from
-      // waves that propagate: a rendered frame cannot show the difference.
-      std::vector<float> alpha;
-      const std::vector<uint32_t>& mask = m_fluid.BaseMask();
-      if (m_fluid.ReadVolumeFraction(pFramework->pVideoDriver, alpha) && mask.size() == alpha.size()) {
+      // Rendered surface elevation relative to the authored water plane, read from the
+      // texture the vertex shader displaces with. The profile is the only way to tell a
+      // dimple that tracks the body apart from waves that propagate: a rendered frame
+      // cannot show the difference.
+      std::vector<float> surface;
+      if (m_fluid.ReadSurface(pFramework->pVideoDriver, surface)) {
         const t850::FluidSettings& fs = m_fluid.Settings();
-        const uint32_t w = fs.width, hgt = fs.height, dep = fs.depth;
+        const uint32_t w = fs.width, dep = fs.depth;
         auto delta = [&](uint32_t x, uint32_t z) {
-          float water = 0.0f, pending = 0.0f;
-          for (uint32_t y = 0; y < hgt; ++y) {
-            const size_t index = x + w * (y + static_cast<size_t>(hgt) * z);
-            if (mask[index] != 0u) { pending += 1.0f; continue; }
-            const float a = (std::min)((std::max)(alpha[index], 0.0f), 1.0f);
-            water += a;
-            if (a >= 0.5f) { water += pending; pending = 0.0f; }
-          }
-          return water <= 0.001f ? 0.0f : fs.basinMinY + water * fs.cellSize - fs.waterPlaneY;
+          return surface[(x + static_cast<size_t>(w) * z) * 4];
         };
         float minH = 1e9f, maxH = -1e9f, sum = 0.0f, sumSq = 0.0f;
         for (uint32_t z = 0; z < dep; ++z) {

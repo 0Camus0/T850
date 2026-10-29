@@ -95,30 +95,83 @@ bool IsSolid(int3 cell)
 // alpha there is exactly 0). Reporting the basin floor for those would drag the
 // water mesh's edge vertices down the full depth, so they report the water plane
 // instead and contribute a zero delta.
-float ColumnElevation(int x, int z)
+static const uint COLUMN_DRY = 0u;
+static const uint COLUMN_FREE = 1u;
+// A floating body rests on this column: the integral stops at the body's underside,
+// not at the free surface around it.
+static const uint COLUMN_COVERED = 2u;
+
+float RawColumnElevation(int x, int z, out uint state)
 {
+    state = COLUMN_DRY;
     if (x < 0 || z < 0 || x >= int(Width) || z >= int(Depth))
         return WaterPlaneY;
     // Solid cells (floor, steps, a submerged body) count as full only when wet
     // water sits above them; otherwise the surface over a step sinks by its height.
     float water = 0.0f;
     float pendingSolid = 0.0f;
+    bool onWater = false;
+    bool covered = false;
     for (uint j = 0; j < Height; ++j) {
         const int3 c = int3(x, int(j), z);
         if (IsSolid(c)) {
             pendingSolid += 1.0f;
+            // A solid run that starts on wet water is a body floating on it; a run
+            // that starts on air (a falling body) leaves the surface below intact.
+            covered = covered || onWater;
             continue;
         }
         const float a = saturate(AlphaIn.Load(int4(c, 0)).x);
         water += a;
-        if (a >= 0.5f) {
+        onWater = a >= 0.5f;
+        if (onWater) {
             water += pendingSolid;
             pendingSolid = 0.0f;
+            covered = false;
         }
     }
     if (water <= 0.001f)
         return WaterPlaneY;
+    state = covered ? COLUMN_COVERED : COLUMN_FREE;
     return BasinMinY + water * CellSize;
+}
+
+// Longest walk from a covered column to open water. A 0.25 m ball spans ~3 cells of
+// radius; 8 cells also covers a ball twice that size.
+static const int INPAINT_REACH = 8;
+
+// Covered columns take the mean free-surface level found by walking outward in 8
+// directions. Without this the mesh dives to the body's underside, and the 3x3 tent
+// spreads that into a visible funnel around a floating ball.
+float ColumnElevation(int x, int z)
+{
+    uint state;
+    const float own = RawColumnElevation(x, z, state);
+    if (state != COLUMN_COVERED)
+        return own;
+
+    const int2 directions[8] = {
+        int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1),
+        int2(1, 1), int2(-1, 1), int2(1, -1), int2(-1, -1)
+    };
+    float sum = 0.0f;
+    float count = 0.0f;
+    [loop]
+    for (int d = 0; d < 8; ++d) {
+        [loop]
+        for (int s = 1; s <= INPAINT_REACH; ++s) {
+            uint neighbourState;
+            const float e = RawColumnElevation(x + directions[d].x * s, z + directions[d].y * s, neighbourState);
+            if (neighbourState == COLUMN_COVERED)
+                continue;
+            if (neighbourState == COLUMN_FREE) {
+                sum += e;
+                count += 1.0f;
+            }
+            break;
+        }
+    }
+    return count > 0.0f ? sum / count : own;
 }
 
 // Foam from velocity divergence in the surface band. Divergence is the cheap,

@@ -27,6 +27,11 @@ cbuffer FluidConstants : register(b0)
     float PressureScale;
     // Reused as the compression strength for this kernel.
     float Padding0;
+    // 1 when the rows above the domain are open air, 0 for a closed ceiling.
+    float OpenCeiling;
+    float OpenCeilingPad0;
+    float OpenCeilingPad1;
+    float OpenCeilingPad2;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)

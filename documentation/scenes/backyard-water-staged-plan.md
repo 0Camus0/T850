@@ -37,7 +37,7 @@ grid.
 | 1a. Vulkan gate must be trustworthy | W-18 | S | **DONE** — Vulkan self-test now PASS |
 | 1b. Make failures provable | W-12 | M | **DONE** — gates 1, 2, 3, 6 pass on both APIs |
 | 1c. Readback gates | W-12 gates 4, 5 + boundedness | M | **DONE** — gate 5 proven to fail on the id.z bug |
-| 2. Cheap visible defects | W-01, W-08, W-13 | S–M | High visible payoff, low risk, no overlap with the solver |
+| 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
 | 3. Rendering correctness | W-09, W-10 | M | Independent of the solver; improves what already works |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
@@ -311,7 +311,7 @@ survived the earlier "verified" pass.
 
 ### Stage 2 — Cheap visible defects (W-01, W-08, W-13)
 
-**Scope**
+**Scope** (as planned)
 - **W-01** — only set `FLUID_SURFACE` on the water instance once `TryInitialize` succeeded, and
   clear it on teardown. Removes the per-frame `GetShader miss` flood on GL/WebGPU.
 - **W-08** — treat `j ≥ Height` as AIR in pressure/gradient/extrapolate instead of SOLID.
@@ -320,14 +320,69 @@ survived the earlier "verified" pass.
   unused `FluidSettings` fields. **Note:** that kernel carries the same `id.z` row bug the surface
   kernel had; deleting removes a latent trap.
 
-**Files** — `BackyardScene.cpp`, `CS_FluidPressure3D.hlsl`, `CS_FluidGradient3D.hlsl`,
-`CS_FluidExtrapolate3D.hlsl`, `FluidSimulation.{h,cpp}`, `compute_kernels.json`.
+**What actually had to change, and two deviations from the catalogue**
 
-**Acceptance** — `--api gl` and `--api webgpu` scene 7: 0 `[ERROR]` lines, water plane visible in
-the dump. Heavy drop (density 3.0, height 2.5 m): no α accumulation in the top row. Build,
-self-test and D3D12/Vulkan scene unchanged (Stage 0 numbers).
+1. **The ceiling had to become a SETTING, not a global change.** Both agents predicted the risk:
+   an unconditionally open top makes the +Y face of the top row a vent, so water can leave the
+   domain and any test that assumes a closed box breaks. It did — the engine's synthetic
+   `--fluid-selftest` (a 32×16×16 closed box, unrelated to the pool) failed with
+   `velocity points into a wall face (max 0.630859 m/s)` at 8 pressure iterations. So the fix is
+   `FluidSettings::openCeiling` (**default false**), opt-in per scene from
+   `WaterTunables::openCeiling` (true for the Backyard pool), and both the pressure and gradient
+   kernels branch on it via a new cbuffer field.
+2. **Divergence needed no change.** The catalogue lists it, but on this staggered layout the +Y
+   face of cell `(i,j,k)` *is* texel `(i,j,k).y`, already in range — there is no `j+1` texel to
+   read. The lid came entirely from the gradient kernel's `IsSolid(b)` branch overwriting the face
+   velocity with `SolidBoundaryValue() = 0`.
+3. **Extrapolation needed no change.** It runs after the gradient and classifies the top face as
+   solid, which means "do not extrapolate" — so it preserves the value the gradient just wrote.
+   Treating it as an AIR face would have overwritten it with a neighbour average.
+4. **A new cbuffer field is an R2 trap.** `FluidConstants` grew 64 → 80 bytes (`openCeiling` +
+   3 pads, `static_assert` updated). Every one of the 17 fluid kernels declares the same five
+   fields in the same order, and **the registry's per-binding `constant_count` had to go 16 → 20
+   in all 16 entries at once.** With the struct grown but the registry left at 16, every single
+   compute pipeline silently failed to create and the solver reported "resources are incomplete"
+   with no underlying error — exactly the failure mode R2 warns about.
 
-**Exit** — three independent small wins, none touching the numerical scheme.
+**Files** — `BackyardScene.{h,cpp}`, `BackyardSelfTest.{h,cpp}`, `WaterTunables.h`,
+`FluidSimulation.{h,cpp}`, all 17 `CS_Fluid*.hlsl`, `compute_kernels.json`.
+
+**Acceptance, as measured**
+
+- **W-01**: `--api gl --scene 7` and `--api webgpu --scene 7` → **0 `[ERROR]` lines** (previously
+  ~400 `GetShader miss` per 400 frames). Both log
+  `[Backyard] Fluid solver unavailable; water renders as a flat plane with the ordinary material
+  permutation (no FLUID_SURFACE)`. D3D12/Vulkan/D3D11 log
+  `Water surface bound to solver texture (100x50), FLUID_SURFACE enabled` — so the bit is set
+  exactly when the solver is up. All five backends: 0 errors.
+- **W-08**: new **gate 6** in `BackyardSelfTest.cpp`. Heavy drop (density 3.0, 2.5 m) on the real
+  pool grid; it probes the **+Y face velocity of a wet top-row cell**, which is the exact quantity
+  the lid zeroed.
+  - Open ceiling: `wet-top samples=15/60, top-face |v| max=0.7939 m/s` → PASS.
+  - Ceiling closed (setting flipped to false, same binary path): `top-face |v| max=0.0000 m/s`
+    **exactly** → `FAIL: the ceiling is a no-flux lid`. Mutation-proof through the whole chain
+    tunable → settings → cbuffer → shader.
+- **W-13**: build, `--fluid-selftest` (both APIs: PASS, wall penetration 0.000000 at 1, 8 and 50
+  iterations), `--backyard-selftest` (both APIs PASS) and the scene unchanged. 26 → 25 kernels.
+
+**Deviation — the catalogue's W-08 acceptance is not achievable as written.** It asks for "no α
+accumulation in the top row". Measured: the top row reaches `alpha=1.000` and the peak column rise
+is `+0.419 m` — the full 0.42 m of freeboard — *with the lid and without it, identically*. A
+3x-density 0.25 m ball dropped 2.5 m into a 1.56 m deep pool genuinely overflows it, and the closed
+domain has nowhere for the water to go. Filling the top row is therefore correct and cannot be the
+failure signal; pinning against it is what is wrong. Gate 6 asserts the venting velocity instead,
+and the top-row alpha is logged but not asserted. If the pool must not overflow, the fix is more
+freeboard (Stage 4 / W-11 territory), not a solver change.
+
+**Stage 2 numbers (unchanged from Stage 1c, so no regression):** still-pool rms 0.1 mm / meanSpeed
+0.0024 m/s / volumeLoss 0.693%; isotropy mirror 0.00065 m axis 0.0103 m (D3D12) and mirror
+0.00001 m axis 0.0104 m (Vulkan); mass endpoint drift +0.007% / worst +0.052%; boundary deviation
+0.00018 m/s over 47 body cells; surface medians 4.5 mm (X) / 2.2 mm (Y), extreme −0.5576 m at x=56;
+α violations 0.
+
+**Exit** — three independent small wins plus one new gate; no change to the numerical scheme's
+interior operator.
+
 
 ---
 
@@ -592,7 +647,27 @@ suggested 5 mm would fail a correct kernel (measured medians are 4.5 and 2.2 mm)
 
 ### Stage 2 — W-01, W-08, W-13
 
-_Pending._
+Done. W-01: FLUID_SURFACE is now set only after `TryInitialize` succeeds (`SetWaterFluidFeature()`
+in `RebuildFluid`), and cleared on teardown or when the solver is unavailable — GL and WebGPU go
+from ~400 `GetShader miss` errors per 400 frames to **0**, and the water draws with the ordinary
+material permutation. W-08: the open ceiling is a **setting** (`FluidSettings::openCeiling`,
+default false, enabled from `WaterTunables` for the pool) because making it global broke the
+engine's synthetic closed-box test (`velocity points into a wall face, 0.630859 m/s`). Only
+pressure (Dirichlet `diag += 1`, not a theta-derived ghost when the row above has no alpha) and
+gradient (the `IsSolid(b)` branch that zeroed the top face) needed changing — divergence never
+read out of range here, and extrapolate's "solid" classification is what preserves the gradient's
+value. New cbuffer field cost: struct 64 → 80 bytes and **every registry `constant_count` 16 → 20
+at once**; without that all 16 compute pipelines fail silently. Gate 6 (heavy 3.0-density 2.5 m
+drop, wet-top-row +Y face velocity): open `0.7939 m/s` → PASS, closed `0.0000 m/s` exactly → FAIL,
+so the whole tunable → settings → cbuffer → shader path is mutation-proven. Catalogue acceptance
+deviation: the top row legitimately fills to `alpha=1.000` and rise `+0.419 m` in *both*
+configurations — a 3x-density ball into a 1.56 m pool overflows it — so the gate asserts venting
+velocity, not top-row water content. W-13: `CS_FluidSphere3D.hlsl`, `InjectSphere`,
+`m_removedBuffer`, `m_removedColumns`, `BuildSpreadConstants`, the `fluid_sphere` registry entry,
+its pipeline, and the dead `FluidSettings` fields (`pressureScale`, `initialFill`,
+`wetThreshold`) and `FluidSimulation::Reset` are gone; 26 → 25 kernels. All six gates plus gate 6
+PASS on both APIs with Stage 1c numbers unchanged; `--fluid-selftest` PASS on both; five backends
+0 errors on scene 7.
 
 ### Stage 3 — W-09, W-10
 

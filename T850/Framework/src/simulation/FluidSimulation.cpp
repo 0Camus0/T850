@@ -61,8 +61,15 @@ namespace {
     float timeValue;
     float pressureScale;
     float padding0;
+    // 1 when the rows above the domain are air rather than a solid ceiling. Padded
+    // to 4 DWORDs so the cbuffer stays 16-byte aligned; the whole blob is 80 bytes
+    // and every kernel declares the same five fields in the same order.
+    float openCeiling;
+    float openCeilingPad0;
+    float openCeilingPad1;
+    float openCeilingPad2;
   };
-  static_assert(sizeof(FluidConstants) == 64);
+  static_assert(sizeof(FluidConstants) == 80);
 
   // Voxels this far inside the wall are treated as the "deep interior" for
   // divergence measurement; projection cannot fix the boundary band.
@@ -161,6 +168,8 @@ std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked, 
   // field as its sustained forcing gain.
   constants.padding0 = paddingOverride >= 0.0f ? paddingOverride : m_settings.sorOmega;
   (void)constants.padding0;
+  constants.openCeiling = m_settings.openCeiling ? 1.0f : 0.0f;
+  (void)constants.openCeiling;
   std::vector<uint32_t> words(sizeof(constants) / sizeof(uint32_t));
   std::memcpy(words.data(), &constants, sizeof(constants));
   return words;
@@ -216,25 +225,6 @@ std::vector<uint32_t> FluidSimulation::BuildCorrectionConstants(float deficit) c
   blob.volumeDelta = deficit;
   blob.interfaceAlpha = m_lastInterfaceAlpha;
   blob.correctionPadding = 0.0f;
-  std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
-  std::memcpy(words.data(), &blob, sizeof(blob));
-  return words;
-}
-
-// Mirrors `cbuffer SpreadConstants : register(b1)` in CS_FluidSphereSpread3D.hlsl.
-namespace {
-  struct SpreadConstantsBlob {
-    float displacedTotal;
-    float totalFreeCapacity;
-    float padding0;
-    float padding1;
-  };
-}
-
-std::vector<uint32_t> FluidSimulation::BuildSpreadConstants(float displaced, float totalFree) const {
-  SpreadConstantsBlob blob{};
-  blob.displacedTotal = displaced;
-  blob.totalFreeCapacity = totalFree;
   std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
   std::memcpy(words.data(), &blob, sizeof(blob));
   return words;
@@ -567,7 +557,6 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_seedAlphaPipeline = CreatePipeline(driver, "CS_FluidSeedAlpha3D.hlsl");
   m_alphaAdvectPipeline = CreatePipeline(driver, "CS_FluidAlphaAdvect3D.hlsl");
   m_volumeCorrectPipeline = CreatePipeline(driver, "CS_FluidVolumeCorrect3D.hlsl");
-  m_spherePipeline = CreatePipeline(driver, "CS_FluidSphere3D.hlsl");
   m_objectVelocityPipeline = CreatePipeline(driver, "CS_FluidObstacleVelocity3D.hlsl");
   m_clearPipeline = CreatePipeline(driver, "CS_FluidClear3D.hlsl");
   m_surfaceToBufferPipeline = CreatePipeline(driver, "CS_FluidSurfaceToBuffer.hlsl");
@@ -576,7 +565,7 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_extrapolatePipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
-                  m_alphaAdvectPipeline && m_volumeCorrectPipeline &&                   m_spherePipeline && m_objectVelocityPipeline && m_clearPipeline &&
+                  m_alphaAdvectPipeline && m_volumeCorrectPipeline && m_objectVelocityPipeline && m_clearPipeline &&
                   m_surfaceToBufferPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
@@ -629,14 +618,11 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_seedAlphaPipeline.reset();
   m_alphaAdvectPipeline.reset();
   m_volumeCorrectPipeline.reset();
-  m_spherePipeline.reset();
   m_objectVelocityPipeline.reset();
   m_clearPipeline.reset();
   m_surfaceToBufferPipeline.reset();
   m_surfaceReadbackBuffer.reset();
   m_surfaceReadbackTexels = 0;
-  m_removedBuffer.reset();
-  m_removedColumns = 0;
   m_referenceVolumeFraction = 0.0f;
   m_interfaceAlphaSum = 0.0f;
   m_framesSinceVolumeCheck = 0;
@@ -1097,50 +1083,6 @@ bool FluidSimulation::ResetToRest(BaseDriver* driver) {
   return SeedVolumeFraction(driver);
 }
 
-bool FluidSimulation::InjectSphere(BaseDriver* driver) {
-  if (!m_ready || !driver || !m_spherePipeline || !m_alpha[m_alphaCurrent]) return false;
-
-  const uint32_t columns = m_settings.width * m_settings.depth;
-  if (!m_removedBuffer || m_removedColumns != columns) {
-    ComputeBufferDesc desc;
-    desc.byteWidth = columns * 2 * sizeof(float);
-    desc.structureStride = 2 * sizeof(float);
-    desc.access = ComputeBufferAccess::ReadWrite;
-    desc.debugName = "Fluid Sphere Removed";
-    const std::vector<uint32_t> seed(columns * 2, 0u);
-    m_removedBuffer = driver->CreateComputeBuffer(desc, seed.data());
-    if (!m_removedBuffer) return false;
-    m_removedColumns = columns;
-  }
-
-  const uint32_t alphaMid = (m_alphaCurrent + 1) % 2;
-  const std::vector<uint32_t> constants = BuildConstants();
-  const std::vector<uint32_t> objectConstants = BuildObjectConstants();
-  // The obstacle parameters go in as CONSTANTS, not as a structured buffer.
-  // ComputeBuffer has no update path in this engine, so a buffer created once
-  // would be read stale forever and the obstacle would never move.
-  const std::vector<ComputeBindingDesc> openBindings = {
-    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
-    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
-    {ComputeBindingType::Constants32, 1, nullptr, objectConstants.data(), static_cast<uint32_t>(objectConstants.size())},
-    {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
-    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[alphaMid].get()},
-    {ComputeBindingType::ReadWriteBuffer, 1, m_removedBuffer.get(), nullptr, 0}
-  };
-  const uint32_t gx = (m_settings.width + m_spherePipeline->threadGroupSize[0] - 1) / m_spherePipeline->threadGroupSize[0];
-  const uint32_t gy = (m_settings.depth + m_spherePipeline->threadGroupSize[1] - 1) / m_spherePipeline->threadGroupSize[1];
-  if (!driver->DispatchCompute(*m_spherePipeline, openBindings, gx, gy, 1))
-    return false;
-  m_alphaCurrent = alphaMid;
-  // NOTE: there is deliberately no redistribution pass here. Returning the removed
-  // volume as a UNIFORM elevation rise over every column low-pass-filtered the
-  // surface: it replaced any local crest or trough with a flat DC offset, which is
-  // exactly what removed the waves. Displacement now enters through the momentum
-  // equation instead (CS_FluidObstacleVelocity3D, see StepObjectVelocity), and the
-  // conservative alpha advection carries the surface shape from there.
-  return true;
-}
-
 bool FluidSimulation::StepObjectVelocity(BaseDriver* driver) {
   if (!m_ready || !driver || !m_objectVelocityPipeline || !m_velocity[m_current]) return false;
 
@@ -1162,14 +1104,6 @@ bool FluidSimulation::StepObjectVelocity(BaseDriver* driver) {
   if (!driver->DispatchCompute(*m_objectVelocityPipeline, bindings, gx, gy, gz))
     return false;
   m_current = target;
-  return true;
-}
-
-bool FluidSimulation::Reset(BaseDriver* driver) {
-  if (!m_ready || !driver) return false;
-  (void)driver;
-  m_current = 0;
-  m_pressureCurrent = 0;
   return true;
 }
 

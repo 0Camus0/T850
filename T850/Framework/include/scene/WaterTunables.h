@@ -24,6 +24,10 @@ namespace t850 {
     // which is the authority; these are only the fallback.
     float waterPlaneY = -0.04f;
     float freeboard = 0.42f;
+    // The rows above the pool are air, not a lid. The solver's pressure solve then
+    // vents at the ceiling instead of reflecting off it. Set false to close the box,
+    // which is what the synthetic solver tests require.
+    bool openCeiling = true;
     // Fixed step used only when fixedTimeStep is on. When it is off (the
     // default) the solver advances by the real frame delta so the water runs in
     // real time instead of at (frame rate / 60) times real speed.

@@ -25,7 +25,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-01 Water invisible on GL/WebGPU | Done | `ea80665b` | Accepted. GL and WebGPU scene 7: 0 errors |
 | W-08 Domain ceiling is a lid | Done, **corrected in review** | `ea80665b` + review commit | Gradient/pressure ghost-pressure mismatch at the ceiling fixed; see W-08 |
 | W-13 Dead code | Done | `ea80665b` | Accepted |
-| W-19 Ball sits in a funnel | **New, open** | — | Found in review; see W-19 |
+| W-19 Ball sits in a funnel | Done (review) | `fa5422ff` | Surface under/around the floating ball now flat; gate 7 added |
 | W-20 Scene index ignored with `--api` | **New, open** (unverified report) | — | Reported by the Stage 2 implementer |
 | All others | Open | — | — |
 
@@ -37,6 +37,10 @@ compile `App.cpp`. Minor nits left for the next stage that touches those files: 
 `VulkanDriver.h` refers to `RecycleOffscreenComputeFrame` (the function is
 `RecycleOverflowingComputeFrame`); the still-pool gate comment says "1 mm" while the code checks
 5 mm.
+
+Review follow-up fixes (by the reviewer, not the stage implementer): `d2291f1a` (open-ceiling
+ghost pressure in the gradient kernel, see W-08) and `fa5422ff` (W-19 ball funnel). Both are on
+`backyard_scene`; pull them before starting Stage 3.
 
 ---
 
@@ -126,7 +130,7 @@ dropped from 1.0 m). Measured from the `[Backyard]` log lines (see 4.3).
 | Still pool mean level (no ball, 2 s) | **sinks ≈ 1.1 cm/s** (−1.5 mm at 0.2 s, −10.5 mm at 2 s); found in Stage 0, missed by the original rms-only baseline |
 | Mean speed before impact | ≈ 0.006 m/s |
 | Mean speed at t ≈ 10.7 s | 0.0035 m/s (decaying) |
-| Surface rms at t ≈ 11 s | ≈ 2.2 cm (dominated by the −35 cm hollow under the floating ball) |
+| Surface rms at t ≈ 11 s | ≈ 2.2 cm at e90752b4, dominated by the −35 cm hollow under the floating ball. **After W-19: rendered surface min −2.1 cm, rms 1.1 cm at t = 10.7 s** |
 | Water over the steps | ≤ +5 cm |
 | Ball at rest | submerged fraction 0.60 (= density ratio) |
 | Volume correction deficit | ≈ 300 cells (0.36 %) every 15 frames with the ball; **not constant** at rest without the ball (202 → 749 cells over 2 s, Stage 0) |
@@ -196,7 +200,7 @@ cd D:\Code\QwenFlashT850\T850-backyard\T850\bin\x64\Release
 Look for `[FluidSelfTest] PASS`. Report the `projection` and `massConservation` lines.
 
 The pool-level gates (still pool, isotropy, mass, moving boundary, surface texture readback, open
-ceiling) run the real Backyard solver headless:
+ceiling, floating body) run the real Backyard solver headless:
 
 ```powershell
 .\DayScene.exe --api d3d12  --backyard-selftest --logLevel info --logFile backyard_d3d12.log
@@ -224,9 +228,10 @@ The run exits at frame 3000 (≈ 11 s of simulation at ~270 fps). Every 60 frame
 
 * `[Backyard][fluid] … meanSpeed maxSpeed nonFinite`
 * `[Backyard][sphere] y vy submerged t`
-* `[Backyard][surface] delta vs water plane (m): min max mean rms` — computed from the alpha
-  readback with the same rule as the surface kernel
-* `[Backyard][columns] surface delta (cm) along X` — through the ball's row
+* `[Backyard][surface] delta vs water plane (m): min max mean rms` — read from the rendered
+  surface texture (`FluidSimulation::ReadSurface`) since W-19; before that it was re-derived from
+  alpha with the static mask and could not see the ball
+* `[Backyard][columns] surface delta (cm) along X` — through the ball's row, same texture
 * `[Backyard][timing] … alpha volume`
 
 With `--logLevel debug` the log also contains `[Fluid] VolumeCorrection … deficit=` and the
@@ -416,10 +421,11 @@ energy it should lose by radiating waves is replaced by an artificial heave damp
 
 **Fix.**
 1. Each substep (or each frame), compute the local water level under the ball on the GPU: average
-   the surface elevation over a **ring of columns just outside the ball's footprint** (radius
-   r + 1.5·h), using a small reduction kernel. Do not average the columns inside the footprint:
-   they report the water under the ball (see W-19). Read it back asynchronously (W-04 step 5) or
-   once per frame with a 1-frame delay.
+   the **surface texture** over a ring just outside the ball's footprint (radius r + 1.5·h), using
+   a small reduction kernel. Since W-19 the texture's covered texels already hold the inpainted
+   free-surface level, so the footprint gives the same answer; do not re-derive the level from
+   alpha columns, which still stop at the body's underside. Read it back asynchronously (W-04
+   step 5) or once per frame with a 1-frame delay.
 2. Use that level instead of `waterPlaneY` for the cap volume in `AdvanceSphere`.
 3. Optional: horizontal drift. Average the liquid face velocities in a shell around the ball and
    apply drag relative to that velocity instead of to zero.
@@ -672,7 +678,9 @@ add the bugs fixed in that commit to the root-cause log. Keep the historical bug
 whose fix was replaced.
 
 **Acceptance.** No statement in the record contradicts the code (spot-check: storage layout,
-pressure convention, surface dispatch, ball model, volume correction band).
+pressure convention, surface dispatch, ball model, volume correction band). Also record the
+open-ceiling setting (W-08) and the covered-column inpainting in the surface kernel (W-19) in
+section 7 of the record.
 
 ---
 
@@ -698,60 +706,65 @@ frames use a few hundred sets and never reach the threshold. Reviewed and accept
 
 ---
 
-### W-19 — The floating ball sits in a funnel of water (P1, M, suggested: DeepSeek for the kernel)
+### W-19 — The floating ball sits in a funnel of water (P1, M) — DONE in `fa5422ff`
 
-**Symptom.** At rest the ball looks like a weight on a stretched fabric: the water surface bends
-down into a dark collar around it, and reflections and refraction warp towards it.
+**Symptom.** At rest the ball looked like a weight on a stretched fabric: the water surface bent
+down into a dark collar around it, and reflections and refraction warped towards it.
 
-**Evidence.** With the ball at rest (submerged 0.60), the `[Backyard][columns]` profile through the
-ball reads **−35 cm** at the ball's column and still **−13 to −14 cm** in the sampled column 0.36 m
-away, while the ball's waterline radius is only ≈ 0.25 m. The back-buffer at t = 9 s shows a dark
-sloped ring around the ball. A real floating sphere leaves the surface flat up to the contact line
-(the meniscus is millimetres at this scale).
-
-**Root cause.** The water simulation is right; the rendered surface is reconstructed wrongly around
-the ball.
+**Root cause.** The water simulation was right; the rendered surface was reconstructed wrongly
+around the ball.
 
 1. `ColumnElevation` in [CS_FluidSurface3D.hlsl](../../T850/Assets/Shaders/CS_FluidSurface3D.hlsl)
-   counts solid cells only when wet water lies above them. In a column that passes through a
-   floating ball nothing wet lies above the ball, so the column reports the water level **under**
-   the ball (≈ ball bottom, −0.28 to −0.35 m below the plane). The mesh vertices inside the
-   footprint dive to the ball's underside.
+   counts solid cells only when wet water lies above them. In a column through a floating ball
+   nothing wet lies above the ball, so the column reported the water level **under** the ball
+   (≈ −34 cm). The mesh vertices inside the footprint dove to the ball's underside.
 2. The 3×3 tent filter in the same kernel and the bilinear reconstruction in `VS_Mesh` spread that
-   dip one to two cells (9–18 cm) beyond the ball's waterline, where the mesh is visible: a funnel.
-3. The funnel walls are steep (the shader clamps slopes at ±4, ≈ 76°), so refraction offsets,
-   sun glint and reflections bend strongly there. That is the "lensing" look and the dark collar.
+   dip 1–2 cells beyond the waterline, where the mesh is visible: a funnel.
+3. The funnel walls were steep (slopes clamp at ±4), so refraction, glint and reflections bent
+   strongly there: the "lensing" look and the dark collar.
 
-**Fix.** Treat columns covered by the body as unknown and inpaint them from the free surface around
-it, inside the surface kernel so heights and slopes stay consistent:
+The scene's `[columns]` log hid part of this: it re-derived the surface from alpha with the
+**static** mask (no ball), so its numbers did not match what was drawn.
 
-* Bind `ObjectConstants` (12 floats) to the surface kernel at **b2** (b1 is already
-  `GeometryConstants`), registry binding index 6; add it to both surface dispatches
-  (`StepInternal` and `StepStage`, rule R6).
-* In `ColumnElevation`, a column is **covered** when its centre lies within `ObjectRadius + 0.5·h`
-  of the ball centre horizontally **and** the ball pierces the surface (ball top above the ring
-  level computed below). For a covered column return the average of `ColumnElevation` sampled at
-  8 points on a ring of radius `ObjectRadius + 1.5·h` around the ball (rounded to cells, skipping
-  out-of-range and solid columns; the ring columns are never covered, so there is no recursion).
-* A fully submerged (sinking) ball must keep today's behaviour: wet water above the body already
-  counts the body cells as water and the surface over it is correct.
-* Because the tent filter calls `ColumnElevation` for its 3×3 neighbours, the inpainted value flows
-  into the slopes automatically; no change is needed in `VS_Mesh`/`FS_Mesh`.
+**What was implemented** (differs from the plan proposed in review, for the reasons given):
 
-**Pitfalls.** R1 when sampling ring columns near walls; the extra loads (8 ring columns × 22 rows
-for the few covered texels) are cheap but must be skipped entirely when `ObjectEnabled < 0.5`.
-W-05 will add the same constants elsewhere; reuse the same declaration.
+* `RawColumnElevation(x, z, out state)` classifies each column as `COLUMN_DRY` (no water / out of
+  range), `COLUMN_FREE`, or `COLUMN_COVERED`. A column is covered when a solid run starts directly
+  on a wet cell (α ≥ 0.5) and no wet cell follows above it. This is read from the wall mask the
+  kernel already binds, so **no `ObjectConstants`, registry or C++ binding change was needed**, and
+  it works for any body stamped into the mask, not just the sphere.
+* A falling body (air below it) and a submerged body (wet water above it) are **not** covered, so
+  both keep the previous behaviour.
+* `ColumnElevation` returns the raw value for free columns; for covered ones it walks outward in 8
+  directions (up to `INPAINT_REACH = 8` cells) to the first non-covered column and averages the
+  free ones found. The tent filter calls `ColumnElevation`, so heights and slopes stay consistent.
+* `BackyardScene`'s `[surface]`/`[columns]` log now reads the real texture via `ReadSurface`.
+* New self-test **gate 7** (`BackyardSelfTest.cpp`): drop the default ball from 1 m, settle 8 s,
+  read the surface texture, compare the ring `[r + 0.5h, r + 1.5h]` and the covered texels
+  (`dist ≤ r − 0.5h`) with the far-field median (1.0–1.5 m). Limits: ring within 1.5 cm of far
+  field, covered texels at most 2 cm below the ring. Logs a 10 cm-band radial profile.
 
-**Acceptance.**
+**Measured** (gate 7, profile in cm vs far field for bands 0–0.1, 0.1–0.2, … m):
 
-* Scene run, ball at rest (t ≥ 8 s): in `[Backyard][columns]` no sampled column outside the ball's
-  waterline radius is more than 2 cm below the far-field mean (today: −13 to −14 cm). The
-  diagnostic must compute the same inpainting, or the gate must read the surface texture.
-* New `--backyard-selftest` gate: after the ball settles, the surface texture at radius r + 1.5·h
-  around the ball is within ±1 cm of the far-field mean, and covered texels are within ±2 cm of the
-  ring mean. Demonstrate that the gate fails with the inpainting disabled.
-* Visual check (4.4) at t = 9 s: no dark collar; rings after the impact unchanged.
-* Fluid and backyard self-tests pass on D3D12 and Vulkan.
+| | ring − far | covered min − ring | profile | Gate |
+|---|---|---|---|---|
+| Before (D3D12) | −2.27 cm | −33.8 cm | −36.0 −29.1 −11.5 −1.7 −0.4 −0.3 | FAIL (2) |
+| After D3D12 | −0.61 cm | −0.34 cm | −0.8 −0.8 −0.8 −0.5 −0.4 −0.3 | PASS |
+| After Vulkan | −0.81 cm | −0.27 cm | −1.0 −1.0 −0.9 −0.7 −0.4 −0.3 | PASS |
+
+Scene 7 at t = 10.7 s: rendered surface min −2.1 cm (was −35 cm), `[columns]` flat within ±1 cm
+across the ball's row; back-buffer shows the ball on a flat surface with no collar. Fluid and
+backyard self-tests PASS on D3D12 and Vulkan; scene 7 on D3D11 runs with 0 errors.
+
+**Residual, not a defect yet.** The surface within ~0.3 m of the ball still sits 0.5–1 cm below
+the far field. Gate 5's off-centre drop still finds its extreme at x = 56 (unchanged). If W-07
+(displacement) changes this, recalibrate gate 7 from measurement and note it here.
+
+**Rules learned** (apply to any later surface-kernel change):
+
+* Diagnostics must read the texture the shader draws (`ReadSurface`), not a CPU re-derivation.
+* Gate 7 must keep failing with the inpainting disabled: to check, make `ColumnElevation` return
+  `own` unconditionally and run `--backyard-selftest`; expect the two `float:` errors above.
 
 ---
 

@@ -420,8 +420,8 @@ green.
 ### Stage 4 — Data-driven tunables (W-11)
 
 **Scope**
-- Derive `gridWidth`/`gridDepth` from the layout the way the height already is, so `cellSize` is
-  the only free grid parameter and a change rebuilds automatically.
+- ~~Derive `gridWidth`/`gridDepth` from the layout~~ — **done in review** (one cubic cell size
+  drives the grid; linked GUI sliders; `--backyard-cell-size`). See W-11 for the measurements.
 - Add `alphaCompression`, `maxSubstepDt` and the volume-check interval to `WaterTunables` + GUI.
 - Load `WaterTunables` from a `"water"` object in `BackyardScene.json` with glaze
   (`error_on_unknown_keys = true`), falling back to the C++ defaults.
@@ -704,6 +704,24 @@ committed the changes below directly, so **pull `backyard_scene` (at or after `4
 4. `4d21e836` — fluid debug view (tooling, no solver change): ImGui "Debug view" overlays for the
    displaced mesh wireframe, solver surface grid, liquid/partial/solid voxels, a velocity slice and
    the grid bounds. Option table in remaining-work section 4.5. Costs nothing while off.
+5. `d6b65147` — W-11 item 3: the grid follows one cubic cell size (`FluidSimulation::DeriveGrid`); width,
+   depth and cell-size sliders are linked and rebuild on release; `--backyard-cell-size <m>` runs
+   the self-test on another grid. Default grid unchanged (100×22×50, all gates PASS).
+
+**Lead for Stage 5b (W-03): the still-pool sink depends on where the waterline falls in a cell.**
+Running the still-pool gate at several cell sizes (2 s, D3D12):
+
+| Cell | Waterline cell fill = frac(1.56 m / h) | Mean at 2 s |
+|---|---|---|
+| 0.09 | 0.33 | −10.5 mm, still sinking |
+| 0.06 | 0.00 | −3.0 mm, steady from 0.2 s |
+| 0.075 | 0.80 | −0.4 mm, steady |
+| 0.1216 | 0.83 | −0.4 mm, steady |
+
+Only the grid whose still-water cell is **less than half full** sinks. A cell with α < 0.5 is AIR
+to the pressure solve, so its water has no pressure support. Hypothesis, not proven: confirm it
+first (e.g. move the authored water plane by a fraction of a cell at 0.09 m) before designing
+the W-03 fix around it. The default grid is not changed to hide it.
 
 The backyard self-test now has **8 gates**; the no-ball flag is `--backyard-no-ball`. W-20 is not a
 bug: `config.json` is read only with `--config`, so **always pass `--scene 7`** and check the log

@@ -8,9 +8,9 @@ The task catalogue is the source of truth for **what** each task is and how to p
 document is only about **order and session boundaries**, so each stage can be executed cold, in
 one context, without carrying the whole backlog.
 
-Stage 0 baseline: `01ccbd82`. Last code change: `5d640c2e` (stages 0–2 done, plus the review
-fixes, the debug view and the W-15 fixes logged in section 4). **Next: Stage 3 (W-09, W-10)**,
-starting from the tip of `backyard_scene`.
+Stage 0 baseline: `01ccbd82`. Last code change: `47500166` (stages 0–3 done and reviewed, plus the
+review fixes, the debug view and the W-15 fixes logged in section 4). **Next: Stage 3c (W-21), then
+Stage 4 (W-11)**, starting from the tip of `backyard_scene`.
 
 ---
 
@@ -44,7 +44,8 @@ starting from the tip of `backyard_scene`.
 | 1b. Make failures provable | W-12 | M | **DONE** — gates 1, 2, 3, 6 pass on both APIs |
 | 1c. Readback gates | W-12 gates 4, 5 + boundedness | M | **DONE** — gate 5 proven to fail on the id.z bug |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
-| 3. Rendering correctness | W-19, W-09, W-10 | M | **DONE** — W-19 (`fa5422ff`); W-09 and W-10 in 3a/3b (W-10's depth target is written, its consumer is still open) |
+| 3. Rendering correctness | W-19, W-09, W-10 | M | **DONE, reviewed** — W-19 (`fa5422ff`), W-09 (`517ae6bf`), W-10 (`96d84638`, redesigned in review `47500166`: CoC consumes the nearer depth, no extra pass) |
+| 3c. Two solvers on Vulkan | W-21 | S–M | Found in the Stage 3 review; the Vulkan fluid self-test fails under scene 7. Fix before tuning (Stage 4+) so the gate can be trusted |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
@@ -481,7 +482,16 @@ Vulkan with numbers unchanged from HEAD; scene 7 → 0 errors on D3D12, Vulkan, 
 
 ---
 
-#### Stage 3b — W-10 water depth for post effects (done, with one honest gap)
+#### Stage 3b — W-10 water depth for post effects (done, with one honest gap) — **superseded in review**
+
+> **Review correction (`47500166`).** The pass described below was removed. The forward pass
+> already writes the water into `Deferred:DEPTH` (`push: false`, `READ_WRITE`), identical pixel for
+> pixel to this `WaterDepth` target (110,770 / 110,770 overlapping pixels on D3D12), so the extra
+> pass only re-shaded the water (≈ 0.18 ms) and added water hidden behind opaque geometry. The
+> "honest gap" was real and correctly reported: CoC was empty because Backyard ships with
+> `dof_enabled: false` (and `aperture: 90` saturates CoC everywhere when it is on). CoC now samples
+> the nearer of `GBuffer:DEPTH` and `Deferred:DEPTH`; verified with DOF on and aperture 5. Full
+> numbers in remaining-work W-10. The two traps below are still true and worth knowing.
 
 **What shipped.** A new render target `WaterDepth` (`color_count: 0`, `depth_format: F32`, screen
 sized) and a new pass `Water Depth` right after `Forward Transparent`, which draws exactly one mesh
@@ -522,6 +532,21 @@ scene to be verifiable.
 
 **Verification.** `--backyard-selftest` PASS on D3D12 and Vulkan; scene 7 → 0 errors and the
 `WaterDepth` RT created on D3D12, Vulkan, D3D11, GL and WebGPU.
+
+---
+
+### Stage 3c — Two solvers on Vulkan (W-21)
+
+**Scope** — find why `--scene 7 --api vulkan --fluid-selftest` fails (the self-test's solver and the
+scene's solver step in the same frames) and fix the shared state. Measurements, hypothesis and
+acceptance are in remaining-work W-21. Start by listing every object a `FluidSimulation` instance
+gets from the driver per kernel (pipeline, descriptor set, constant/uniform buffer) and whether
+Vulkan allocates it per instance, per dispatch or once per kernel.
+
+**Files** — expected `VulkanCompute.cpp` / `VulkanDriver.cpp` or `FluidSimulation.cpp`; the harness
+(`App.cpp`) only if the investigation proves the sharing is harness-only.
+
+**Exit** — the Vulkan fluid self-test passes under scene 7 and scene 0 with identical numbers.
 
 ---
 
@@ -867,6 +892,32 @@ subset can never draw in RADIAL_DEPTH/GBUFFER/SHADOW_MAP). Measured: the depth d
 pixels confined to the pool; cost +0.179 ms/frame (~3.2%). Remaining: nothing consumes the depth
 yet — DOF is force-disabled in this scene and the CoC target dumps all-zero, so the consumer could
 not be verified and was deliberately not shipped.
+
+### Review of Stage 3 (2026-10-29) — by the reviewer
+
+Re-run independently at `96d84638`: `--backyard-selftest` PASS on D3D12 and Vulkan; scene 7 0 errors
+on all five APIs; floor texture logs depth 0.300…1.560 m.
+
+1. **W-09 accepted.** Checked: `MaxPrimitiveTextures` 24 → 28 does not disturb skinning (bones at
+   t24) or lightmaps (t25) — they bind outside the `Textures[]` array, and `RenderQuad` skips
+   unnamed slots; `SceneIsNearerAt` derives the depth direction, which is correct under the
+   engine's reverse-Z (depth clears to 0); the redeclared `fluidCellSize` is in its own scope.
+2. `47500166` — **W-10 redesigned.** The "Water Depth" pass duplicated `Deferred:DEPTH` (see the
+   correction under 3b). Pass, target and the `mesh_indices: [5]` check removed; CoC (HLSL, GLSL,
+   WGSL) now takes the nearer of slots 0 and 1. All three graphs that run CoC bind slot 1 — WebGPU
+   rejects a declared-but-unbound texture and Vulkan's dummy is white, so "leave it unbound" is not
+   an option. With DOF on: CoC-near changes in 30,870 texels exactly over the pool; DayScene and
+   Minecraft (DOF on by default) 0 errors on all five APIs.
+3. **W-21 found** (new task, Stage 3c): `--fluid-selftest` under `--scene 7` fails on Vulkan every
+   time (mass drift −18 % … −100 %); under scene 0 it passes. Reproduced with Stage 3 reverted,
+   so it predates this stage. Remaining-work 4.2 now runs the fluid self-test with `--scene 0`.
+
+**Lesson for every later stage:** before adding a render pass, dump what the existing targets
+already hold. A forward pass that writes depth into its own target is a free depth buffer.
+
+### Stage 3c — W-21
+
+_Pending._
 
 ### Stage 4 — W-11
 

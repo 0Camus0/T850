@@ -8,8 +8,9 @@ The task catalogue is the source of truth for **what** each task is and how to p
 document is only about **order and session boundaries**, so each stage can be executed cold, in
 one context, without carrying the whole backlog.
 
-Stage 0 baseline: `01ccbd82`. Last code change: `4d21e836` (stages 0–2 done, plus the review
-fixes and the debug view logged in section 4). Start Stage 3 from the tip of `backyard_scene`.
+Stage 0 baseline: `01ccbd82`. Last code change: `5d640c2e` (stages 0–2 done, plus the review
+fixes, the debug view and the W-15 fixes logged in section 4). **Next: Stage 3 (W-09, W-10)**,
+starting from the tip of `backyard_scene`.
 
 ---
 
@@ -473,7 +474,8 @@ the global correction as a safety net and log its deficit; it should approach ze
 
 **Acceptance** — deficit < 20 cells per 15 frames over 3000 frames, at rest **and** after impact.
 Self-test mass drift within ±0.05%. Surface rms at t ≈ 11 s ≤ 2.5 cm. Rings still render. Tighten
-gate 3 of W-12 to the new threshold.
+gate 3 of W-12 to the new threshold. Debug view "bulk water" mean α ≥ 0.999 with fewer than 1 % of
+bulk cells below 0.98, before and 10 s after the impact.
 
 **Exit** — mass loss is solved at the source, not patched by the correction.
 
@@ -685,7 +687,7 @@ PASS on both APIs with Stage 1c numbers unchanged; `--fluid-selftest` PASS on bo
 ### Review of stages 0–2 (2026-10-28) — fixes applied by the reviewer
 
 Re-run independently: all gates PASS on D3D12 and Vulkan, GL/WebGPU 0 errors. The reviewer
-committed the changes below directly, so **pull `backyard_scene` (at or after `4d21e836`) before Stage 3**:
+committed the changes below directly, so **pull `backyard_scene` (at or after `5d640c2e`) before Stage 3**:
 
 1. `d2291f1a` — the gradient kernel used an α-derived θ (≈ 0.5) for the open-ceiling face while
    the pressure kernel solves it with θ = 1, doubling the pressure step there. Gradient now uses
@@ -713,6 +715,16 @@ committed the changes below directly, so **pull `backyard_scene` (at or after `4
    GPU-bound in it, Vulkan CPU-bound. Fixed the per-substep surface work and two log-only GPU
    stalls: 720p D3D12 191 → 219 fps, Vulkan 298 → 313 fps, results unchanged. Findings P1–P9 with
    expected gains are in W-15; frame-rate A/B script `backyard-diag\perf.ps1`.
+7. `93dff3d9` — the debug view's voxel layers crashed D3D12: dynamic vertex buffers stream through
+   a 16 MB per-frame ring, and "partially filled cells" drew the whole diluted pool (≈ 81k boxes,
+   15.6 MB). Layers are now capped (8000 boxes, evenly strided), partial cells are interface-only,
+   and a new "bulk water" line reports the dilution (see the second lead below).
+8. `5d640c2e` — debug view: velocity arrows for the whole water volume (speed-coloured, minimum
+   speed filter, auto lattice step, 15 000-arrow cap). At rest ≈ 56k of 86k liquid cells still move
+   faster than 5 mm/s.
+
+Any change to the debug renderer must keep every dynamic upload bounded: test with all layers on
+at 1440p on D3D12 and confirm 0 `Ring buffer overflow` lines.
 
 **Lead for Stage 5b (W-03): the still-pool sink depends on where the waterline falls in a cell.**
 Running the still-pool gate at several cell sizes (2 s, D3D12):
@@ -728,6 +740,13 @@ Only the grid whose still-water cell is **less than half full** sinks. A cell wi
 to the pressure solve, so its water has no pressure support. Hypothesis, not proven: confirm it
 first (e.g. move the authored water plane by a fraction of a cell at 0.09 m) before designing
 the W-03 fix around it. The default grid is not changed to hide it.
+
+**Second lead for Stage 5b: the bulk water is diluted.** The debug view's "bulk water" line (liquid
+cells with no air neighbour, which should stay at α = 1) reads mean 0.995 before the impact and
+**0.96 mean / 0.89 min with ≈ 100 % of bulk cells below 0.98** afterwards, on both APIs, and does
+not recover. Consistent with the `saturate` clip turning residual divergence into one-way loss,
+which the volume correction then refills in the bulk instead of at the surface. Details and the
+new acceptance line are in W-03.
 
 The backyard self-test now has **8 gates**; the no-ball flag is `--backyard-no-ball`. W-20 is not a
 bug: `config.json` is read only with `--config`, so **always pass `--scene 7`** and check the log

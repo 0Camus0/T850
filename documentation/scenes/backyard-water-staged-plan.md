@@ -38,7 +38,7 @@ grid.
 | 1b. Make failures provable | W-12 | M | **DONE** — gates 1, 2, 3, 6 pass on both APIs |
 | 1c. Readback gates | W-12 gates 4, 5 + boundedness | M | **DONE** — gate 5 proven to fail on the id.z bug |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
-| 3. Rendering correctness | W-19, W-09, W-10 | M | Independent of the solver; W-19 (ball funnel) first, it is the most visible defect |
+| 3. Rendering correctness | W-19, W-09, W-10 | M | W-19 **DONE in review** (`fa5422ff`); W-09, W-10 remain |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
@@ -389,8 +389,8 @@ interior operator.
 ### Stage 3 — Rendering correctness (W-19, W-09, W-10)
 
 **Scope**
-- W-19 first: inpaint the surface columns covered by a floating ball in `CS_FluidSurface3D`, so the
-  ball no longer sits in a funnel (details and acceptance in the remaining-work document).
+- W-19 is **done** (`fa5422ff`): covered surface columns are inpainted in `CS_FluidSurface3D` and
+  gate 7 guards it. Do not undo it while touching the surface kernel; gate 7 must stay green.
 - Per-column static floor height texture (CPU-built from the static mask) so absorption uses the
   real depth over the steps instead of a constant 1.56 m.
 - Depth test the refracted `SceneColorTex` lookup against `SceneDepthTex` so the ball and coping
@@ -670,6 +670,25 @@ its pipeline, and the dead `FluidSettings` fields (`pressureScale`, `initialFill
 `wetThreshold`) and `FluidSimulation::Reset` are gone; 26 → 25 kernels. All six gates plus gate 6
 PASS on both APIs with Stage 1c numbers unchanged; `--fluid-selftest` PASS on both; five backends
 0 errors on scene 7.
+
+### Review of stages 0–2 (2026-10-28) — fixes applied by the reviewer
+
+Re-run independently: all gates PASS on D3D12 and Vulkan, GL/WebGPU 0 errors. Two defects were
+fixed directly, so **pull `backyard_scene` before Stage 3**:
+
+1. `d2291f1a` — the gradient kernel used an α-derived θ (≈ 0.5) for the open-ceiling face while
+   the pressure kernel solves it with θ = 1, doubling the pressure step there. Gradient now uses
+   ghost pressure 0. Gate 6 top-face |v| max **0.7939 → 0.1478 m/s** (still ≫ 0.01 threshold).
+   Correction to the Stage 2 note above: the ball does **not** overflow the pool (0.065 m³ over
+   40.5 m² = 1.6 mm); the +0.419 m is a local splash crown. Freeboard stays 0.42 m; expose it in W-11.
+2. `fa5422ff` — W-19, the funnel around the floating ball. Covered surface columns are inpainted
+   from the surrounding free surface; new gate 7. Before/after: covered texels −33.8 → −0.3 cm
+   relative to the ring, ring −2.27 → −0.61 cm (D3D12) / −0.81 cm (Vulkan) relative to the far
+   field. The scene's `[surface]`/`[columns]` lines now read the rendered texture, so the "Hollow
+   under the floating ball ≈ −35 cm" row in the Stage 0 table no longer applies and the "surface rms
+   excluding the ball region" gap is closed by gate 7.
+
+The backyard self-test now has **7 gates**; the no-ball flag is `--backyard-no-ball`.
 
 ### Stage 3 — W-09, W-10
 

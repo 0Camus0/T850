@@ -91,7 +91,7 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | `.t8scene` and runtime loading | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Strict owned-schema behavior verified 2026-09-26 |
 | SceneDescriptor/SceneSetup | [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md) | Strict descriptor behavior verified 2026-09-26 |
 | Backyard scene and GPU pool water simulation | [scenes/backyard-water-simulation.md](scenes/backyard-water-simulation.md) | Implemented; D3D12 + Vulkan verified 2026-10-28 |
-| Backyard water: remaining work and implementation directions | [scenes/backyard-water-remaining-work.md](scenes/backyard-water-remaining-work.md) | 20 tasks (W-01..W-20); 5 done and reviewed 2026-10-28 |
+| Backyard water: remaining work and implementation directions | [scenes/backyard-water-remaining-work.md](scenes/backyard-water-remaining-work.md) | 20 tasks (W-01..W-20); 6 done and reviewed 2026-10-28 |
 | Backyard water: staged execution plan | [scenes/backyard-water-staged-plan.md](scenes/backyard-water-staged-plan.md) | 10 stages, one session each, with dependency edges and exit criteria |
 
 ## Governance

@@ -23,6 +23,8 @@ namespace t850 {
     uint32_t pressureIterations = 60;
     // Skip the drop gates and run only the still-pool and mass gates.
     bool skipBall = false;
+    // Requested cell size in metres; 0 keeps the WaterTunables default. The grid follows.
+    float cellSize = 0.0f;
   };
 
   // Runs the backyard water gates against a standalone solver on the real pool grid,

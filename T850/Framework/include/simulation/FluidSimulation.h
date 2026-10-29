@@ -48,10 +48,9 @@ namespace t850 {
     float waterPlaneY = -0.04f;
     // Metres of air kept above the water plane so a free surface can rise.
     float freeboard = 0.35f;
-    // When true, LoadPoolLayout() derives the row count from the water plane plus
-    // the freeboard, and derives the fill level so the still surface lands exactly
-    // on the authored plane. Off by default so synthetic tests keep the grid they
-    // asked for.
+    // When true, LoadPoolLayout() derives width, depth and height from the pool layout
+    // and cellSize (cubic cells), and the fill level so the still surface lands exactly
+    // on the authored plane. Off by default so synthetic tests keep the grid they asked for.
     bool deriveGridFromLayout = false;
 
     // Alpha below this counts as air for the pressure solve; must equal
@@ -139,6 +138,27 @@ namespace t850 {
     // Returns false if the layout is missing; the solver then falls back to the
     // closed-box shell only.
     bool LoadPoolLayout(const char* layoutPath = "Models/Backyard/backyard_layout.json");
+
+    // Pool footprint and the height from the floor to the top of the air above the water,
+    // in metres, as read by LoadPoolLayout(). Zero when no layout was loaded.
+    struct LayoutExtent {
+      float sizeX = 0.0f;
+      float sizeZ = 0.0f;
+      float domainHeight = 0.0f;
+    };
+    const LayoutExtent& PoolExtent() const { return m_layoutExtent; }
+
+    // Grid a layout implies for a requested cell size. Cells are cubes, so one size fixes
+    // all three counts; the size is snapped so the pool length is a whole number of cells.
+    struct DerivedGrid {
+      uint32_t width = 0;
+      uint32_t height = 0;
+      uint32_t depth = 0;
+      float cellSize = 0.0f;
+    };
+    static constexpr uint32_t kMaxGridCells = 512;
+    static constexpr uint32_t kMaxGridRows = 128;
+    static DerivedGrid DeriveGrid(const LayoutExtent& extent, float requestedCellSize);
 
     // Number of voxels the mask marks solid (outside the fluid domain).
     uint32_t SolidVoxelCount() const { return m_solidVoxelCount; }
@@ -313,6 +333,7 @@ namespace t850 {
     uint32_t m_surfaceReadbackTexels = 0;
     // Authored wall mask on the CPU, used to re-stamp the moving body each frame.
     std::vector<uint32_t> m_baseMask;
+    LayoutExtent m_layoutExtent;
     uint32_t m_maskBodyCellCount = 0;
     // Cell footprint of the body from the previous substep, so an unchanged
     // footprint skips the re-upload entirely.

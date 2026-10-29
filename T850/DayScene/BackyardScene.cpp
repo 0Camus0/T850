@@ -230,6 +230,10 @@ bool BackyardScene::RebuildFluid() {
     SceneProp.Water.gridWidth = m_appliedGridWidth;
     SceneProp.Water.gridHeight = m_appliedGridHeight;
     SceneProp.Water.gridDepth = m_appliedGridDepth;
+    // The solver snaps the cell size so the pool length is a whole number of cells.
+    m_appliedCellSize = applied.cellSize;
+    SceneProp.Water.cellSize = applied.cellSize;
+    m_gridEditCell = applied.cellSize;
     // Same for the fill level. LoadPoolLayout() derives it so the still surface
     // lands exactly on the authored water plane; leaving the tunable at its literal
     // default meant OnUpdate() re-imposed the wrong value, and a reset would re-seed
@@ -444,7 +448,8 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
   // A grid change needs new 3D textures; everything else can be retuned in place.
   const t850::WaterTunables& w = SceneProp.Water;
   if (m_fluidReady &&
-      (w.gridWidth != m_appliedGridWidth || w.gridHeight != m_appliedGridHeight ||
+      (std::fabs(w.cellSize - m_appliedCellSize) > 1e-6f ||
+       w.gridWidth != m_appliedGridWidth || w.gridHeight != m_appliedGridHeight ||
        w.gridDepth != m_appliedGridDepth)) {
     RebuildFluid();
   }
@@ -683,12 +688,51 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
   };
 
   if (gui.BeginSection("Solver")) {
-    sliderInt("water_grid_w", "grid width", w.gridWidth, 16.0f, 192.0f, 1.0f);
-    sliderInt("water_grid_h", "grid height", w.gridHeight, 4.0f, 64.0f, 1.0f);
-    sliderInt("water_grid_d", "grid depth", w.gridDepth, 16.0f, 192.0f, 1.0f);
+    // Cells are cubes and the pool size is fixed, so one cell size decides width, depth and
+    // height together. The three controls are linked views of it; the grid rebuilds on release.
+    const t850::FluidSimulation::LayoutExtent& pool = m_fluid.PoolExtent();
+    if (m_fluidReady && pool.sizeX > 0.0f && pool.sizeZ > 0.0f) {
+      constexpr float kMinCell = 0.03f;
+      constexpr float kMaxCell = 0.30f;
+      if (m_gridEditCell <= 0.0f) m_gridEditCell = w.cellSize;
+      using Grid = t850::FluidSimulation::DerivedGrid;
+      Grid preview = t850::FluidSimulation::DeriveGrid(pool, m_gridEditCell);
+      int gridW = static_cast<int>(preview.width);
+      int gridD = static_cast<int>(preview.depth);
+      bool commit = false;
+      if (sliderInt("water_grid_w", "grid width (X cells)", gridW,
+                    std::ceil(pool.sizeX / kMaxCell), std::floor(pool.sizeX / kMinCell), 1.0f))
+        m_gridEditCell = pool.sizeX / static_cast<float>(gridW);
+      commit |= ImGui::IsItemDeactivatedAfterEdit();
+      if (sliderInt("water_grid_d", "grid depth (Z cells)", gridD,
+                    std::ceil(pool.sizeZ / kMaxCell), std::floor(pool.sizeZ / kMinCell), 1.0f))
+        m_gridEditCell = pool.sizeZ / static_cast<float>(gridD);
+      commit |= ImGui::IsItemDeactivatedAfterEdit();
+      slider("water_cell", "cell size (m)", m_gridEditCell, kMinCell, kMaxCell, 0.001f);
+      commit |= ImGui::IsItemDeactivatedAfterEdit();
+      m_gridEditCell = (std::min)((std::max)(m_gridEditCell, kMinCell), kMaxCell);
+      preview = t850::FluidSimulation::DeriveGrid(pool, m_gridEditCell);
+
+      char line[192];
+      const t850::FluidSettings& applied = m_fluid.Settings();
+      std::snprintf(line, sizeof(line), "grid height (Y cells) %u: pool floor to %.2f m above the water",
+                    preview.height, pool.domainHeight - (applied.waterPlaneY - applied.basinMinY));
+      gui.Text(line);
+      const double cells = static_cast<double>(preview.width) * preview.height * preview.depth;
+      const double running = static_cast<double>(m_appliedGridWidth) * m_appliedGridHeight * m_appliedGridDepth;
+      // Work per step scales with the cell count; the CFL limit adds substeps as cells shrink.
+      const double cost = running > 0.0 && preview.cellSize > 0.0f
+          ? cells / running * (m_appliedCellSize / preview.cellSize) : 1.0;
+      std::snprintf(line, sizeof(line), "%u x %u x %u = %.0f cells @ %.4f m  (~%.1fx solver cost)%s",
+                    preview.width, preview.height, preview.depth, cells, preview.cellSize, cost,
+                    std::fabs(preview.cellSize - m_appliedCellSize) > 1e-6f ? "  - release to rebuild" : "");
+      gui.Text(line);
+      if (commit) w.cellSize = preview.cellSize;
+    } else {
+      gui.Text("Grid controls need the running solver (D3D11, D3D12 or Vulkan).");
+    }
     sliderInt("water_iterations", "pressure iterations", w.pressureIterations, 1.0f, 200.0f, 1.0f);
     slider("water_sor_omega", "SOR omega (1 = Gauss-Seidel)", w.sorOmega, 1.0f, 1.99f, 0.001f);
-    slider("water_cell", "cell size (m)", w.cellSize, 0.01f, 0.30f, 0.001f);
     slider("water_dt", "fixed step (s, only when fixed)", w.deltaTime, 1.0f / 240.0f, 1.0f / 15.0f, 0.0001f);
     slider("water_max_dt", "max delta (s)", w.maxDeltaTime, 1.0f / 240.0f, 1.0f / 10.0f, 0.0001f);
     slider("water_time_scale", "time scale (1 = real time)", w.timeScale, 0.05f, 3.0f, 0.01f);

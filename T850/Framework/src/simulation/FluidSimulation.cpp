@@ -250,8 +250,38 @@ std::vector<uint32_t> FluidSimulation::BuildGeometryConstants() const {
   return words;
 }
 
+FluidSimulation::DerivedGrid FluidSimulation::DeriveGrid(const LayoutExtent& extent, float requestedCellSize) {
+  auto cells = [](double length, double cell, long minimum, long maximum) {
+    return static_cast<uint32_t>((std::min)((std::max)(std::lround(length / cell), minimum), maximum));
+  };
+  DerivedGrid grid;
+  const double requested = (std::max)(requestedCellSize, 0.001f);
+  const long nominal = static_cast<long>(cells(extent.sizeX, requested, 8, static_cast<long>(kMaxGridCells)));
+  // Prefer a nearby width that also makes Z a whole number of cells, so neither wall sits a
+  // fraction of a cell off (a 2:1 pool snaps to even widths).
+  long width = nominal;
+  double bestError = 1e30;
+  for (long candidate = nominal - 2; candidate <= nominal + 2; ++candidate) {
+    if (candidate < 8 || candidate > static_cast<long>(kMaxGridCells)) continue;
+    const double h = extent.sizeX / static_cast<double>(candidate);
+    const double rows = extent.sizeZ / h;
+    const double error = std::fabs(rows - std::round(rows)) * h + 1e-9 * std::labs(candidate - nominal);
+    if (error < bestError) {
+      bestError = error;
+      width = candidate;
+    }
+  }
+  grid.width = static_cast<uint32_t>(width);
+  // Snap so the pool length is a whole number of cubic cells.
+  grid.cellSize = static_cast<float>(extent.sizeX / static_cast<double>(grid.width));
+  grid.depth = cells(extent.sizeZ, grid.cellSize, 8, static_cast<long>(kMaxGridCells));
+  grid.height = cells(extent.domainHeight, grid.cellSize, 4, static_cast<long>(kMaxGridRows));
+  return grid;
+}
+
 bool FluidSimulation::LoadPoolLayout(const char* layoutPath) {
   m_solidBoxes.clear();
+  m_layoutExtent = LayoutExtent{};
   if (!layoutPath) return false;
   std::string json;
   if (!ResourceLocator::Instance().ReadText(layoutPath, json)) {
@@ -284,29 +314,34 @@ bool FluidSimulation::LoadPoolLayout(const char* layoutPath) {
   const float cellSize = (std::max)(m_settings.cellSize, 0.001f);
   m_settings.waterPlaneY = static_cast<float>(layout.waterPlaneY);
   m_settings.freeboard = static_cast<float>((std::max)(layout.pool.freeboard, 0.0));
+  m_layoutExtent.sizeX = static_cast<float>(layout.pool.maxX - layout.pool.minX);
+  m_layoutExtent.sizeZ = static_cast<float>(layout.pool.maxY - layout.pool.minY);
+  m_layoutExtent.domainHeight = static_cast<float>(
+      (std::max)(layout.waterPlaneY + (std::max)(layout.pool.freeboard, 0.0) - floorY, 0.0));
 
   if (m_settings.deriveGridFromLayout) {
-    // Domain height. The top of the volume is the still-water plane plus the
-    // freeboard the pool JSON asks for, so the volume really contains air above
-    // the water. With no air above it the top row is already full and the free
-    // surface acts as a solid lid, which caps any splash at zero height. Rows are
-    // derived from that height and the cell size, so the grid scales with the pool
-    // instead of being a literal.
-    const double domainTop = (std::max)(layout.waterPlaneY + (std::max)(layout.pool.freeboard, 0.0),
-                                        floorY + static_cast<double>(cellSize) * 4.0);
-    const auto rows = static_cast<uint32_t>(std::lround((domainTop - floorY) / static_cast<double>(cellSize)));
-    m_settings.height = (std::min)((std::max)(rows, 4u), 64u);
-    // Exact multiple of the cell size, so the column integral in the surface
-    // kernel converts to metres without a scale error.
-    m_settings.basinMaxY = m_settings.basinMinY + static_cast<float>(m_settings.height) * cellSize;
+    // The whole grid follows from one cubic cell size: X spans the pool exactly, Z and
+    // the air above the water to within half a cell. Width, depth and height are outputs.
+    const DerivedGrid grid = DeriveGrid(m_layoutExtent, m_settings.cellSize);
+    m_settings.width = grid.width;
+    m_settings.depth = grid.depth;
+    m_settings.height = grid.height;
+    m_settings.cellSize = grid.cellSize;
+    const float h = grid.cellSize;
+    // Exact multiples of the cell size, so the mask stamp (size / count) and the kernels
+    // (origin + i * cellSize) place every cell in the same spot.
+    m_settings.basinMaxX = m_settings.basinMinX + static_cast<float>(grid.width) * h;
+    m_settings.basinMaxZ = m_settings.basinMinZ + static_cast<float>(grid.depth) * h;
+    m_settings.basinMaxY = m_settings.basinMinY + static_cast<float>(grid.height) * h;
     // Fill level that places the still-water surface exactly on the authored plane.
     m_settings.surfaceLevel = (std::min)(
         (std::max)(static_cast<float>((layout.waterPlaneY - floorY) /
-                                      (static_cast<double>(m_settings.height) * cellSize)),
+                                      (static_cast<double>(m_settings.height) * h)),
                    0.02f),
         0.99f);
-    T8_LOG_INFO("[Fluid] Domain %.2f..%.2f m (%u rows @ %.3f m), water plane %.3f m, fill %.3f",
-                m_settings.basinMinY, m_settings.basinMaxY, m_settings.height, cellSize,
+    T8_LOG_INFO("[Fluid] Grid %ux%ux%u @ %.4f m (requested %.4f m), domain Y %.2f..%.2f m, water plane %.3f m, fill %.3f",
+                grid.width, grid.height, grid.depth, h, cellSize,
+                m_settings.basinMinY, m_settings.basinMaxY,
                 static_cast<float>(layout.waterPlaneY), m_settings.surfaceLevel);
   } else {
     // Caller's grid wins. Keep the domain exactly Height * cellSize so the column

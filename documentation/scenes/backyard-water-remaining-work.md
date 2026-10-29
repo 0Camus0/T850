@@ -33,7 +33,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p; P1–P9 open |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
 | W-10 Water invisible to depth post effects | Done, **redesigned in review** | `96d84638` + `47500166` | The extra pass duplicated `Deferred:DEPTH`; removed. CoC now uses the nearer depth; see W-10 |
-| W-21 Vulkan fluid self-test fails inside scene 7 | **Open** (found in review) | — | Pre-existing at `945b2f7c`; passes under scene 0 and on D3D12; see W-21 |
+| W-21 Vulkan fluid self-test fails inside scene 7 | **Open** (found in review) | — | Pre-existing at `945b2f7c`; passes under scenes 0, 1, 6 and on D3D12; see W-21 |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -57,7 +57,8 @@ target was correct but redundant — the forward pass already writes the water i
 identical pixel for pixel — and had no consumer. The reviewer removed the pass and made CoC consume
 the nearer depth (`47500166`, details in W-10). Re-run: `--backyard-selftest` PASS on D3D12 and
 Vulkan; scenes 7, 1 and 6 log 0 errors on D3D12, Vulkan, D3D11, GL and WebGPU. Found in passing:
-W-21. **Next: W-21 (Stage 3c, small), then Stage 4 (W-11).**
+W-21. **Next: W-21 (Stage 3c, small), then Stage 4 (W-11).** Step-by-step brief: section 0 of
+[backyard-water-staged-plan.md](backyard-water-staged-plan.md).
 
 ---
 
@@ -217,8 +218,8 @@ cd D:\Code\QwenFlashT850\T850-backyard\T850\bin\x64\Release
 Look for `[FluidSelfTest] PASS`. Report the `projection` and `massConservation` lines.
 
 `--fluid-selftest` checks the solver in isolation on its own 32×16×16 grid, so it runs under scene
-0 (this is the one exception to "always pass `--scene 7`"). Under scene 7 it fails on Vulkan,
-because the Backyard solver runs at the same time — that is W-21, not a regression of your change.
+0 (this is the one exception to "always pass `--scene 7`"). Under scene 7 it fails on Vulkan after
+the Backyard scene initialises — that is W-21, not a regression of your change.
 
 The pool-level gates (still pool, isotropy, mass, moving boundary, surface texture readback, open
 ceiling, floating body, floating-body flicker) run the real Backyard solver headless:
@@ -711,6 +712,11 @@ estimate are shown below them, and the grid rebuilds when the slider is released
 
 Items 1, 2 and 4 (JSON loading, the three solver tunables, the stale comment) remain open.
 
+**Traps (found in the Stage 3 review).** `WaterTunables::floorTextureBound` is runtime state that the
+scene sets when the floor texture binds; keep it out of the JSON metadata. `WaterTunables::freeboard`
+is overwritten by `pool.freeboard` from `Models/Backyard/backyard_layout.json`, so the tunable has no
+effect; keep the layout as the single source of truth.
+
 **Acceptance.** Editing a value in the JSON changes the run (show one example). Setting
 `cellSize` to 0.06 rebuilds a 150×33×75 grid automatically and the pool still sits at the authored
 plane (surface rms at rest < 3 mm).
@@ -980,11 +986,11 @@ trusting any result.
 
 ---
 
-### W-21 — Vulkan fluid self-test fails while the Backyard solver is running (P2, S–M, suggested: GLM)
+### W-21 — Vulkan fluid self-test fails after the Backyard scene initialises (P2, S–M, suggested: GLM)
 
-**Problem.** `--scene 7 --api vulkan --fluid-selftest` fails every time; with `--scene 0` it passes,
-and D3D12 passes either way. Found in the Stage 3 review; it is **not** caused by Stage 3 — the
-same failure reproduces with all Stage 3 files reverted to `945b2f7c`.
+**Problem.** `--scene 7 --api vulkan --fluid-selftest` fails every time; under every other scene
+tested it passes, and D3D12 passes either way. Found in the Stage 3 review; it is **not** caused by
+Stage 3 — the same failure reproduces with all Stage 3 files reverted to `945b2f7c`.
 
 | Configuration | Runs | Result |
 |---|---|---|
@@ -992,24 +998,30 @@ same failure reproduces with all Stage 3 files reverted to `945b2f7c`.
 | scene 7, Vulkan, HEAD, floor texture skipped | 5 | 5 FAIL: −0.03 % (projection ratio 1.056) or −27.28 % |
 | scene 7, Vulkan, Stage 3 reverted (`945b2f7c`) | 5 | 5 FAIL: −0.03 % or −27.28 % |
 | scene 0, Vulkan, HEAD | 5 | 5 PASS, −0.02 % |
+| scene 1 (DayScene), Vulkan, HEAD | 3 | 3 PASS, −0.02 % |
+| scene 6 (Minecraft), Vulkan, HEAD | 3 | 3 PASS, −0.03 % |
 | scene 7, D3D12, HEAD | 8 | 8 PASS, −0.02 % |
 
 The outcome jumps between a few discrete values, and in the worst runs the projection *increases*
-divergence (ratio 418, then mass 7168 → 6). That looks like shared state between the two
-`FluidSimulation` instances (the self-test's 32×16×16 grid and the scene's 100×22×50 grid stepping
-in the same frames), not like numerical noise. The log shows the scene's solver starting before
-the self-test's first line.
+divergence (ratio 418, then mass 7168 → 6) — corrupted state, not numerical noise. The self-test
+runs in `main()` right after `OnCreateApplication`, before the frame loop, so the Backyard solver
+has been **initialised (resources created, volume fraction seeded) but never stepped**. An earlier
+version of this entry blamed "two solvers stepping together"; that was wrong. `--backyard-selftest`
+(on the scene's own 100×22×50 grid) passes after the same initialisation; the fluid self-test's
+32×16×16 grid fails.
 
-**Fix.** First find what the two instances share on Vulkan: per-kernel pipeline objects, descriptor
-sets or constant/uniform buffers that are written for one dispatch and overwritten by the other
-before the GPU reads them. D3D12 passing suggests D3D12 versions or copies that state per dispatch
-and Vulkan does not. Fix the sharing; do **not** "fix" it by making the harness skip the scene.
-If it turns out to be genuinely harness-only (two solvers can never coexist in a shipped scene),
-document why and make the harness run the self-test before the scene initialises.
+**Fix.** Vulkan compute allocates descriptor sets and constant slices per dispatch, and each
+`FluidSimulation` owns its pipelines, so look at **per-frame** driver state that Backyard's
+initialisation leaves behind: an open frame and who opened it (`m_frameStarted`,
+`m_frameOpenedByCompute`), the descriptor pool and CB ring of that frame, and barriers or layout
+transitions for newly created 3D images. The three diagnostics to run first are in section 0, step
+1 of the staged plan. Fix the driver; do **not** "fix" it by making the harness skip the scene. If
+it turns out to be harness-only (no shipped path can create a solver and then dispatch outside a
+frame), document why and make the harness drain the scene's frame before the self-test.
 
 **Acceptance.** `--scene 7 --api vulkan --fluid-selftest` PASS 5/5 with mass drift within ±0.1 % and
-projection ratios matching the scene-0 run; scene-0 and D3D12 results unchanged; `--backyard-selftest`
-PASS on both APIs.
+projection ratios matching the scene-0 run; scenes 0, 1, 6 and D3D12 results unchanged;
+`--backyard-selftest` PASS on both APIs.
 
 ---
 

@@ -1,7 +1,7 @@
 # Backyard Water — Staged Plan
 
 Companion to [backyard-water-remaining-work.md](backyard-water-remaining-work.md) (the task
-catalogue W-01…W-20, with current status in its section 0) and
+catalogue W-01…W-21, with current status in its section 0) and
 [backyard-water-simulation.md](backyard-water-simulation.md) (the implementation record).
 
 The task catalogue is the source of truth for **what** each task is and how to prove it. This
@@ -10,7 +10,97 @@ one context, without carrying the whole backlog.
 
 Stage 0 baseline: `01ccbd82`. Last code change: `47500166` (stages 0–3 done and reviewed, plus the
 review fixes, the debug view and the W-15 fixes logged in section 4). **Next: Stage 3c (W-21), then
-Stage 4 (W-11)**, starting from the tip of `backyard_scene`.
+Stage 4 (W-11)**, starting from the tip of `backyard_scene`. Section 0 is the step-by-step brief.
+
+---
+
+## 0. Next steps for the local agents (as of `caaea83e`, 2026-10-29)
+
+Start every session from the tip of `backyard_scene` (at or after `caaea83e`) and build:
+
+```powershell
+cd D:\Code\QwenFlashT850\T850-backyard\T850
+& 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe' T850.sln '/t:Framework;DayScene' /p:Configuration=Release /p:Platform=x64 /m:2 /nologo /v:m
+```
+
+If the build fails with C2011 `align_val_t` after a project or header change, delete
+`Lib\VStuff\Framework\Release\x64\*.pch` and rebuild. Shader and JSON edits need no rebuild: assets
+load from the source tree. Scene ids: 0 Sandbox, 1 DayScene, 6 Minecraft, 7 Backyard.
+
+### Step 1 — Stage 3c, W-21 (next session)
+
+Facts already established — start from them, do not re-measure:
+
+- Fails **only on Vulkan and only under `--scene 7`**: 8/8 FAIL. Under DayScene (`--scene 1`) 3/3
+  PASS, Minecraft (`--scene 6`) 3/3 PASS, scene 0 5/5 PASS; D3D12 under scene 7 8/8 PASS. So it is
+  something Backyard's initialisation does, not "any scene".
+- The fluid self-test runs in `main()` straight after `OnCreateApplication`, before the frame
+  loop. The Backyard solver is therefore **initialised (resources created, volume fraction seeded)
+  but never stepped**. The first write-up's "two solvers stepping together" was wrong.
+- `--backyard-selftest` (100×22×50, the scene's grid) passes after the same initialisation;
+  `--fluid-selftest` (32×16×16) fails.
+- Per-dispatch state is not shared: `VulkanDriver::DispatchCompute` allocates a fresh descriptor
+  set and constant slice for every dispatch, and each `FluidSimulation` owns its pipelines.
+  Per-**frame** state is shared: the descriptor pool, the CB ring, `m_frameStarted` /
+  `m_frameOpenedByCompute`, and `RecycleOverflowingComputeFrame` only recycles frames that compute
+  opened.
+
+Three diagnostics, in order. Each is a temporary change, reverted before the real fix; record each
+result under "Stage 3c" in section 4 before writing the fix:
+
+1. Run `--scene 7 --api vulkan --fluid-selftest --logLevel debug` and look for
+   `[Vulkan][Compute] Recycling`, CB-ring and `AllocateDescriptorSets failed` lines, and whether a
+   frame is already open (and who opened it) when the self-test starts.
+2. In `App.cpp`, just before the fluid self-test, submit and drain whatever frame the scene left
+   open (`CompleteFrame(SubmitNoPresent)` + `WaitForGPU()`). If the failure disappears, the cause is
+   frame ownership, and the fix belongs in the Vulkan driver (compute must not depend on who opened
+   the frame), not in the harness.
+3. Temporarily give the self-test the scene's 100×22×50 grid. If it then passes, look for state
+   that depends on volume size or resource identity — e.g. barriers or image-layout transitions for
+   newly created 3D images.
+
+Acceptance and the full measurement table: remaining-work W-21. Likely files: `VulkanDriver.cpp`,
+`VulkanCompute.cpp`; `App.cpp` only if the harness is proven to be the only affected path.
+
+### Step 2 — Stage 4, W-11 (the session after 3c)
+
+Scope is in section 3. Traps found in the review:
+
+- **`WaterTunables::floorTextureBound` is runtime state, not a tunable.** Stage 3a added it; the scene
+  sets it when the floor texture binds. Keep it out of the glaze metadata (or move it out of
+  `WaterTunables`) so JSON can neither set it nor be rejected because of it.
+- **Freeboard has two sources and the tunable loses.** `WaterTunables::freeboard` is copied into
+  `FluidSettings`, then `FluidSimulation` overwrites it with `pool.freeboard` from
+  `Models/Backyard/backyard_layout.json`. Keep one source of truth (the layout) and make the GUI and
+  JSON edit that; do not add a third.
+- Load strictly: `glz::opts{.error_on_unknown_keys = true}` as in `SceneDescriptor.cpp`. A missing
+  `"water"` object falls back to the C++ defaults; an unknown key is an error that names the key.
+- Show the example the acceptance asks for: one JSON edit, the log line or metric that changed, no
+  rebuild.
+
+### After that
+
+Stage 5a (W-02, R32F storage), then 5b (W-03). Before designing 5b, read the two Stage 5b leads in
+section 4 (the still-pool sink depends on how full the waterline cell is; the bulk water is
+diluted after the impact) and confirm the first hypothesis before building on it.
+
+### Standing rules from the Stage 3 review
+
+- **Self-tests:** `--fluid-selftest` with `--scene 0` (until W-21 is fixed); `--backyard-selftest` and
+  every scene run with `--scene 7`.
+- **Before adding a render pass, dump what the existing targets already hold.** Stage 3b re-drew the
+  water into a new target that duplicated `Deferred:DEPTH`.
+- **A zero-difference A/B is not a result until the target is shown to be non-empty and not
+  saturated.** Stage 3b's CoC A/B measured an empty target (DOF off); with DOF on, `aperture: 90`
+  saturated it. Revert temporary edits (DOF, aperture, extra dumps) before committing.
+- **Every graph that runs `COC_PASS` binds slot 1** (the opaque depth again if it has no forward
+  depth). WebGPU rejects an unbound declared texture, and Vulkan's placeholder texture is white.
+- When a shared shader or graph changes, run `--scene 1` and `--scene 6` as well as `--scene 7`, on
+  all five APIs, and quote the error counts.
+- Commit locally on `backyard_scene`; never commit `T850/config.json`; never push.
+
+**Hand-back:** append to section 4 under the stage heading: commit ids, before/after numbers, every
+command run, and anything you could not verify.
 
 ---
 
@@ -45,7 +135,7 @@ Stage 4 (W-11)**, starting from the tip of `backyard_scene`.
 | 1c. Readback gates | W-12 gates 4, 5 + boundedness | M | **DONE** — gate 5 proven to fail on the id.z bug |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
 | 3. Rendering correctness | W-19, W-09, W-10 | M | **DONE, reviewed** — W-19 (`fa5422ff`), W-09 (`517ae6bf`), W-10 (`96d84638`, redesigned in review `47500166`: CoC consumes the nearer depth, no extra pass) |
-| 3c. Two solvers on Vulkan | W-21 | S–M | Found in the Stage 3 review; the Vulkan fluid self-test fails under scene 7. Fix before tuning (Stage 4+) so the gate can be trusted |
+| 3c. Vulkan fluid self-test after Backyard init | W-21 | S–M | Found in the Stage 3 review; the Vulkan fluid self-test fails under scene 7 only. Fix before tuning (Stage 4+) so the gate can be trusted |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
@@ -535,13 +625,13 @@ scene to be verifiable.
 
 ---
 
-### Stage 3c — Two solvers on Vulkan (W-21)
+### Stage 3c — Vulkan fluid self-test after Backyard initialisation (W-21)
 
-**Scope** — find why `--scene 7 --api vulkan --fluid-selftest` fails (the self-test's solver and the
-scene's solver step in the same frames) and fix the shared state. Measurements, hypothesis and
-acceptance are in remaining-work W-21. Start by listing every object a `FluidSimulation` instance
-gets from the driver per kernel (pipeline, descriptor set, constant/uniform buffer) and whether
-Vulkan allocates it per instance, per dispatch or once per kernel.
+**Scope** — find why `--scene 7 --api vulkan --fluid-selftest` fails when every other scene and
+D3D12 pass, and fix the cause. The Backyard solver is initialised but never stepped before the
+test, so look at what that initialisation leaves behind in the Vulkan driver's per-frame state.
+Facts and the three diagnostics are in section 0, step 1; measurements and acceptance in
+remaining-work W-21.
 
 **Files** — expected `VulkanCompute.cpp` / `VulkanDriver.cpp` or `FluidSimulation.cpp`; the harness
 (`App.cpp`) only if the investigation proves the sharing is harness-only.
@@ -909,8 +999,9 @@ on all five APIs; floor texture logs depth 0.300…1.560 m.
    an option. With DOF on: CoC-near changes in 30,870 texels exactly over the pool; DayScene and
    Minecraft (DOF on by default) 0 errors on all five APIs.
 3. **W-21 found** (new task, Stage 3c): `--fluid-selftest` under `--scene 7` fails on Vulkan every
-   time (mass drift −18 % … −100 %); under scene 0 it passes. Reproduced with Stage 3 reverted,
-   so it predates this stage. Remaining-work 4.2 now runs the fluid self-test with `--scene 0`.
+   time (mass drift −18 % … −100 %); under scenes 0, 1 and 6 it passes. Reproduced with Stage 3
+   reverted, so it predates this stage. Remaining-work 4.2 now runs the fluid self-test with
+   `--scene 0`.
 
 **Lesson for every later stage:** before adding a render pass, dump what the existing targets
 already hold. A forward pass that writes depth into its own target is a free depth buffer.

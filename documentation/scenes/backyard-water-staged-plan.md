@@ -8,9 +8,9 @@ The task catalogue is the source of truth for **what** each task is and how to p
 document is only about **order and session boundaries**, so each stage can be executed cold, in
 one context, without carrying the whole backlog.
 
-Stage 0 baseline: `01ccbd82`. Last code change: `47500166` (stages 0–3 done and reviewed, plus the
-review fixes, the debug view and the W-15 fixes logged in section 4). **Next: Stage 3c (W-21), then
-Stage 4 (W-11)**, starting from the tip of `backyard_scene`. Section 0 is the step-by-step brief.
+Stage 0 baseline: `01ccbd82`. Stages 0–3 and 3c are done and reviewed, plus the review fixes, the
+debug view and the W-15 fixes logged in section 4. **Next: Stage 4 (W-11)**, starting from the tip of
+`backyard_scene`. Section 0 is the step-by-step brief.
 
 ---
 
@@ -27,7 +27,11 @@ If the build fails with C2011 `align_val_t` after a project or header change, de
 `Lib\VStuff\Framework\Release\x64\*.pch` and rebuild. Shader and JSON edits need no rebuild: assets
 load from the source tree. Scene ids: 0 Sandbox, 1 DayScene, 6 Minecraft, 7 Backyard.
 
-### Step 1 — Stage 3c, W-21 (next session)
+### Step 1 — Stage 3c, W-21 — DONE (kept for reference)
+
+**Result: uninitialised volume memory, fixed in `FluidSimulation::TryInitialize`.** The three
+diagnostics below were run; none of the frame-ownership candidates held. See Stage 3c in section 4
+for the full measurement table.
 
 Facts already established — start from them, do not re-measure:
 
@@ -135,7 +139,7 @@ command run, and anything you could not verify.
 | 1c. Readback gates | W-12 gates 4, 5 + boundedness | M | **DONE** — gate 5 proven to fail on the id.z bug |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
 | 3. Rendering correctness | W-19, W-09, W-10 | M | **DONE, reviewed** — W-19 (`fa5422ff`), W-09 (`517ae6bf`), W-10 (`96d84638`, redesigned in review `47500166`: CoC consumes the nearer depth, no extra pass) |
-| 3c. Vulkan fluid self-test after Backyard init | W-21 | S–M | Found in the Stage 3 review; the Vulkan fluid self-test fails under scene 7 only. Fix before tuning (Stage 4+) so the gate can be trusted |
+| 3c. Vulkan fluid self-test after Backyard init | W-21 | S–M | **DONE** — root cause was NOT frame ownership: it was uninitialised GPU volume memory. Fixed in `TryInitialize` |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
@@ -1008,7 +1012,56 @@ already hold. A forward pass that writes depth into its own target is a free dep
 
 ### Stage 3c — W-21
 
-_Pending._
+Done. **Root cause: uninitialised GPU volume memory, not frame ownership.**
+
+The Stage 3 review's three diagnostics pointed at per-frame Vulkan state, and both consulting
+agents ranked "the scene left a frame open" first. Both were wrong, and the diagnostics are what
+showed it:
+
+1. **Debug log, scene 7, Vulkan (failing):** no `Recycling the compute-owned frame` line anywhere —
+   the descriptor-pool recycle never fires, so pool exhaustion is out. A temporary
+   `RecycleOverflowingComputeFrame` diagnostic that logs when a compute dispatch runs inside a
+   renderer-opened frame also **never fired**, so every dispatch was inside a compute-owned frame.
+   Frame ownership is therefore not the cause either.
+2. **Drain the scene's frame before the self-test** (`CompleteFrame(SubmitNoPresent)` +
+   `WaitForGPU()` in `App.cpp`): **3 FAIL / 2 PASS in 5 runs**. Inconclusive, and it exposed the
+   key fact the catalogue's table had hidden — **the failure is intermittent**, not 8/8. Two
+   discrete outcomes: PASS at −0.00 % drift, or total loss (`7168 → 6`, −99.92 %).
+3. **The decisive observation:** `seed` reads back perfectly (8192/8192 samples, `meanX=+1.0`) and
+   the *first* step batch then destroys the field, while `--backyard-selftest` (which calls
+   `ResetToRest()` before stepping) always passed — and the Backyard self-test's own comment
+   already documented the reason: *"Seeding alpha alone leaves freshly created storage textures
+   holding whatever was in GPU memory"*.
+
+**The fix.** `FluidSimulation::TryInitialize` now calls `ResetToRest(driver)` once the solver is
+ready, so every caller starts from a defined state: velocity, pressure, divergence and both alpha
+volumes cleared by `CS_FluidClear3D`. Under scene 0/1/6 the allocator happens to hand back zeroed
+memory so nothing showed; after the Backyard solver has created and seeded its own 100×22×50
+volumes, the allocator hands back *its* contents, and a caller that only seeds alpha steps from
+garbage momentum — hence divergence ×540 after one pressure iteration.
+
+Fixed in the solver, **not** in the harness: any caller that creates a solver and steps it must get
+a defined initial state. The temporary `App.cpp` drain and the driver diagnostic are reverted.
+
+**Measured.**
+
+| Configuration | Runs | Result |
+|---|---|---|
+| scene 7, Vulkan, before | 10 | 3 PASS / 7 FAIL; failures at −99.92 % or −18.21 % |
+| scene 7, Vulkan, after | 6 | **6 PASS**, drift −0.00 % |
+| scene 7, Vulkan, after, with the harness drain still in | 6 | 6 PASS (so the fix is not the drain) |
+| scene 7, Vulkan, after, drain reverted | 6 | 6 PASS |
+| scenes 0, 1, 6, 7 × Vulkan and D3D12, after | 8 | **8 PASS**, `meanSpeed=0.1086` (Vulkan) / `0.1083` (D3D12) |
+
+Also verified: `--backyard-selftest` PASS on D3D12 and Vulkan with numbers identical to the Stage 2
+baseline; scenes 0, 1, 6, 7 on D3D12, Vulkan, D3D11, GL and WebGPU → **0 errors in all 20
+combinations**. Build needed a PCH delete (`Lib\VStuff\Framework\Release\x64\Framework.pch`) after
+the headers changed — the documented C2011/C2375 trap, and this time it produced a *stale binary
+that silently kept the old behaviour*, so the fix looked 50/50 until the rebuild was clean.
+
+**Lesson for the catalogue.** An intermittent failure with two discrete outcomes is the signature of
+reading uninitialised memory, not of a deterministic state bug. The earlier table's "8/8 FAIL" was a
+sampling artefact.
 
 ### Stage 4 — W-11
 

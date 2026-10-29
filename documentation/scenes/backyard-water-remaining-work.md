@@ -30,6 +30,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-20 Scene index ignored with `--api` | Resolved: by design, documented | — | `config.json` is only read with `--config`; always pass `--scene 7` |
 | Tooling: fluid debug view | Done (review) | `4d21e836` | Wireframe and voxel overlays in the ImGui panel; see 4.5 |
 | W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked; rest of W-11 open |
+| W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p; P1–P9 open |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -704,19 +705,65 @@ add a test that compares the cbuffer text of all fluid kernels.
 
 ---
 
-### W-15 — Solver cost is not measured (P2, M, suggested: GLM)
+### W-15 — Solver and frame cost (P1, M–L) — measured in review; three fixes done, P1–P9 open
 
-At 60 fps the solver runs 2 substeps × (≈ 130 dispatches, 120 of them pressure sweeps). Nobody
-has measured the GPU time.
+**Measured** (review, 2026-10-28; RTX 4080 Laptop, x64 Release, scene 7, 1280×720,
+`--logLevel info`; median of four 600-frame windows after the drop, from the timestamps of the
+`[Backyard][timing]` lines; script `D:\Code\QwenFlashT850\backyard-diag\perf.ps1`):
 
-**Fix.** Wrap `Step` in the engine's GPU profiling scopes (see
-[gpu-performance-profiling-workflow.md](../rendering/gpu-performance-profiling-workflow.md)) and
-report GPU ms per frame for the solver at 1280×720 and 1920×1080. Then evaluate, in this order:
-(1) fewer pressure iterations once the warm start has converged (log a residual every N frames),
-(2) a single dispatch per red-black sweep using groupshared tiles, (3) multigrid-preconditioned
-CG. Change only (1) in this task; report the others with numbers.
+| Configuration | D3D12 | Vulkan |
+|---|---|---|
+| Baseline (`b9eabc40`) | 191 fps (5.24 ms) | 298 fps (3.36 ms) |
+| Solver not stepped (render only) | 457 fps (2.19 ms) | 798 fps (1.25 ms) |
+| → solver share of the frame | **3.05 ms (58 %)** | **2.10 ms (63 %)** |
+| Saved without the volume correction | 1.01 ms | 0.67 ms |
+| Saved with 20 instead of 60 pressure iterations | 1.21 ms | 0.89 ms |
+| Saved without the verification re-read | 0.45 ms | ≈ 0 |
+| Saved without the 60-frame scene probe | 0.43 ms | ≈ 0 |
+| CPU time inside `Step()` (stall sources off) | 0.37 ms | 1.3 ms |
+| Render graph, all passes (profiler GPU time) | ≈ 1.0 ms | — |
+| **After `3a371903`** | **219 fps (+15 %)** | **313 fps (+5 %)** |
 
-**Acceptance.** Table of solver GPU ms before/after; scene metrics (2.4) unchanged.
+Reading: D3D12 is **GPU-bound** in the solver (0.37 ms of CPU but 1.9 ms of extra frame time);
+Vulkan is **CPU-bound** (≈ 10 µs to record each of ≈ 130 dispatches). Each correction or probe
+readback is a full GPU stall (≈ 15 ms and ≈ 26 ms on D3D12) amortised over 15 or 60 frames. The
+render graph is cheap at 720p: shadow depth 0.29 ms, shadow accumulation 0.21 ms, water 0.17 ms,
+GBuffer 0.15 ms, everything else ≤ 0.04 ms.
+
+**Done in review (`3a371903`, results unchanged, all gates PASS):**
+1. The surface kernel and its copy run only on the frame's last substep (they ran every substep).
+2. The re-read that verified each volume correction (a second full readback and stall) runs only
+   at `--logLevel debug`; it only fed a debug line.
+3. The scene's 60-frame probe (diagnostics and surface readbacks) runs only when info logging is
+   on; the user's `config.json` uses `error`.
+
+**Open, in priority order:**
+
+| # | Finding | Where | Fix | Expected |
+|---|---|---|---|---|
+| P1 | Volume correction is a synchronous readback of the whole α volume as RGBA (16 B/voxel, 4× what is needed) plus a CPU sum, every 15 frames. D3D12 `ReadComputeBuffer` also creates a new committed readback resource per call and calls `WaitForGPU` | `MeasureVolumeFraction`, `D3D12Driver::ReadComputeBuffer` | GPU reduction (α total, interface α, headroom) into a 3-float buffer; read the previous frame's result through a persistent readback buffer and a fence (W-04 step 5) | ≈ 1.0 ms D3D12, 0.7 ms Vulkan |
+| P2 | Pressure: 60 red-black iterations = 120 full-grid dispatches per substep. Half the threads only copy the other colour through (write-only storage + ping-pong), and the scalar lives in RGBA16F | `CS_FluidPressure3D`, `StepInternal` | After W-02 (R32F): in-place red-black on `RWTexture3D<float>` (typed UAV loads of R32F are universal), dispatching only the active colour. Then fewer iterations with a logged residual, several sweeps per dispatch in groupshared tiles, or MGPCG | up to ≈ 1.2–1.8 ms D3D12 |
+| P3 | D3D12 barriers: every dispatch issues a transition SRV→UAV, a UAV barrier, then a transition UAV→SRV, each in its own `ResourceBarrier` call. The transition back is unnecessary for compute-only 3D volumes, and the UAV barrier is redundant when a transition follows | `D3D12Driver::DispatchCompute` | Leave volumes in their tracked state; batch pending transitions into one call at the next dispatch; UAV barriers only for UAV→UAV reuse | GPU idle between the ≈ 130 dispatches; engine-wide, test every compute user |
+| P4 | Vulkan records ≈ 10 µs per dispatch (1.3 ms per frame) | Vulkan compute dispatch (descriptor set allocation and update per dispatch) | Cache descriptor sets per pipeline + binding set; the solver alternates between two ping-pong states, so a small cache almost always hits | ≈ 1 ms CPU on Vulkan |
+| P5 | D3D12 CPU per dispatch: six `unordered_set`s and a vector allocated, `dynamic_cast` per binding, keep-alive map insert per resource, `SetDescriptorHeaps`/root signature/PSO rebound even when unchanged (the pressure PSO 120× in a row) | `D3D12Driver::DispatchCompute` | Validate once per pipeline and layout, small fixed arrays, skip redundant state | 0.37 ms today; matters once the GPU side is fixed |
+| P6 | The moving body re-creates the whole wall-mask buffer (copy of 110k words, new GPU buffer, upload) whenever its cell footprint changes: every substep while it falls or bobs | `UpdateWallMaskForBody` | W-05 (analytic body in the kernels) removes it; interim: one persistent buffer updated in place | allocation churn and spikes during the drop |
+| P7 | The surface kernel no longer reads its previous output, so the surface ping-pong pair and the copy dispatch are unnecessary | `StepInternal`, `PublishSurface` | Write straight into the output texture (it already has the storage flag) | one dispatch and barrier per frame |
+| P8 | The render graph carries template passes the backyard never uses: Torch Particles (a full-resolution RGBA16F target cleared and filled by compute every frame), Light Add (adds that empty target) and Debug Cascade Regions (a debug fullscreen pass drawn every frame) | `BackyardScene_RenderGraph.json` | Remove Torch; make Light Add a plain copy or rewire the HDR chain; enable the debug pass only when toggled | ≈ 0.03 ms at 720p, ×4 at 1440p; 7–29 MB |
+| P9 | Readbacks go texture → compute copy → structured buffer → copy → readback heap | `ReadVolumeFraction`, `ReadVelocity`, `ReadSurface` | A driver call that copies a texture region straight to a readback buffer | debug paths; low |
+
+Checked and fine: the whole solver runs in compute shaders (no pixel-shader simulation); the
+post-processing passes that have compute versions already use them; the 3D volumes need both UAV
+and SRV access, which is what they have; GBuffer, shadows and the water draw are cheap at 720p.
+
+**Profiling pitfalls.** The engine profiler records scopes only while its frame is open, and
+`FluidSimulation::Step` runs in `OnUpdate` before that, so GPU scopes placed inside the solver are
+silently dropped. Use frame-rate A/B with `perf.ps1`, or move the profiler's frame start before
+`OnUpdate`. In review the Vulkan `--profile --profileFrames 1200` run never exited (killed at
+300 s); D3D12 exits normally.
+
+**Acceptance (per item).** Before/after table from `perf.ps1` (median of the four windows) on
+D3D12 and Vulkan; `--backyard-selftest` and `--fluid-selftest` PASS on both; the scene metrics in
+2.4 unchanged.
 
 ---
 

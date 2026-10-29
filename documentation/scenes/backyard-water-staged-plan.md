@@ -49,7 +49,7 @@ fixes and the debug view logged in section 4). Start Stage 3 from the tip of `ba
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
 | 6b. Displacement + ball feels water | W-07, W-06 | M | Needs 6a's previous/current body state and async readback |
-| 7. Solver cost | W-15 | M | Measure before optimising |
+| 7. Solver cost | W-15 | M | Measured in review (`3a371903`); P3, P4, P5, P7, P8 here. P1 lands with W-04 (6a), P2 after W-02 (5a), P6 with W-05 (6a) |
 | 8. Cleanup, docs, platforms | W-14, W-16, W-17 | S–M | Only once the code is stable |
 
 ### Additions found during Stage 0
@@ -523,15 +523,17 @@ height increases; ball at rest submerged 0.60 ± 0.02; dropping again over runni
 
 ### Stage 7 — Solver cost (W-15)
 
-**Scope** — wrap `Step` in GPU profiling scopes; report solver GPU ms/frame at 1280×720 and
-1920×1080. Only change item (1): fewer pressure iterations once the warm start has converged, with
-a logged residual. Report single-dispatch red-black and multigrid-PCG with numbers, not
-implementations.
+**Scope** — measurement is done (W-15 table; the solver is 58–63 % of the frame). Implement the
+engine-side findings P3 (D3D12 barrier batching), P4 (Vulkan descriptor-set cache), P5 (D3D12
+per-dispatch CPU work), P7 (surface written in place) and P8 (unused template passes), one
+commit each. P1, P2 and P6 belong to stages 6a, 5a and 6a; if those are done, re-measure them here.
 
-**Files** — `FluidSimulation.cpp`, profiling scopes per
-[gpu-performance-profiling-workflow.md](../rendering/gpu-performance-profiling-workflow.md).
+**Files** — `D3D12Compute.cpp`, the Vulkan compute dispatch, `FluidSimulation.cpp`,
+`BackyardScene_RenderGraph.json`. P3–P5 are engine-wide: also run `--compute-selftest` on all
+APIs and a DayScene scene that uses compute post-processing.
 
-**Acceptance** — before/after ms table; Stage 0 scene metrics unchanged.
+**Acceptance** — `perf.ps1` before/after per item on D3D12 and Vulkan; all self-tests PASS; Stage 0
+scene metrics unchanged. Note the profiler pitfall in W-15: solver GPU scopes are dropped.
 
 **Exit** — the solver's cost is a known number, not an assumption.
 
@@ -707,6 +709,10 @@ committed the changes below directly, so **pull `backyard_scene` (at or after `4
 5. `d6b65147` — W-11 item 3: the grid follows one cubic cell size (`FluidSimulation::DeriveGrid`); width,
    depth and cell-size sliders are linked and rebuild on release; `--backyard-cell-size <m>` runs
    the self-test on another grid. Default grid unchanged (100×22×50, all gates PASS).
+6. `3a371903` — W-15 measured: the solver is 58 % (D3D12) / 63 % (Vulkan) of the frame; D3D12 is
+   GPU-bound in it, Vulkan CPU-bound. Fixed the per-substep surface work and two log-only GPU
+   stalls: 720p D3D12 191 → 219 fps, Vulkan 298 → 313 fps, results unchanged. Findings P1–P9 with
+   expected gains are in W-15; frame-rate A/B script `backyard-diag\perf.ps1`.
 
 **Lead for Stage 5b (W-03): the still-pool sink depends on where the waterline falls in a cell.**
 Running the still-pool gate at several cell sizes (2 s, D3D12):

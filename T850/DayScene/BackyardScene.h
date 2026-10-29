@@ -76,6 +76,9 @@ private:
   int m_appliedGridWidth = 0;
   int m_appliedGridHeight = 0;
   int m_appliedGridDepth = 0;
+  float m_appliedCellSize = 0.0f;
+  // Cell size being dragged in the GUI; committed (and the grid rebuilt) on release.
+  float m_gridEditCell = -1.0f;
   // Seconds to wait before releasing the dropped sphere.
   float m_sphereReleaseDelay = 1.0f;
   float m_elapsedSeconds = 0.0f;

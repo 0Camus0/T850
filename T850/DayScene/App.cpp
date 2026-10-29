@@ -106,6 +106,7 @@ int main(int arg,char ** args) try {
   bool fluidSelfTest = false;
   bool backyardSelfTest = false;
   bool backyardNoBall = false;
+  float backyardCellSize = 0.0f;
   int backyardSelfTestFrames = 900;
   float fluidFixedDt = 1.0f / 300.0f;
   int fluidSelfTestFrames = 24;
@@ -162,6 +163,12 @@ int main(int arg,char ** args) try {
     }
     if (std::string_view(args[i]) == "--backyard-no-ball") {
       backyardNoBall = true;
+    }
+    if (std::string_view(args[i]) == "--backyard-cell-size" && i + 1 < arg) {
+      backyardSelfTest = true;
+      const float value = std::stof(args[++i]);
+      if (value >= 0.02f && value <= 0.5f) backyardCellSize = value;
+      else T8_LOG_ERROR("[App] --backyard-cell-size %g is outside 0.02..0.5 m", value);
     }
     if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
       webgpuRecoverySelfTest = true;
@@ -363,6 +370,7 @@ int main(int arg,char ** args) try {
     options.frames = static_cast<uint32_t>(backyardSelfTestFrames);
     options.fixedDt = fluidFixedDt;
     options.skipBall = backyardNoBall;
+    options.cellSize = backyardCellSize;
     result = t850::RunBackyardSelfTest(pFrameWork->pVideoDriver, options);
   } else if (fluidSelfTest) {
     t850::BaseDriver* driver = pFrameWork->pVideoDriver;

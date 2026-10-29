@@ -205,7 +205,7 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
   FluidSettings settings;
   settings.width = static_cast<uint32_t>((std::max)(w.gridWidth, 8));
   settings.depth = static_cast<uint32_t>((std::max)(w.gridDepth, 8));
-  settings.cellSize = (std::max)(w.cellSize, 0.001f);
+  settings.cellSize = options.cellSize > 0.0f ? options.cellSize : (std::max)(w.cellSize, 0.001f);
   settings.pressureIterations = options.pressureIterations;
   settings.deltaTime = options.fixedDt;
   settings.maxSubstepDt = options.fixedDt;

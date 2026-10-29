@@ -780,9 +780,16 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
                     fs.width, fs.height, fs.depth, fs.width * fs.height * fs.depth, fs.cellSize);
       gui.Text(line);
       if (v.Any()) {
-        std::snprintf(line, sizeof(line), "mesh lines %u | liquid %u | partial %u | solid %u | body %u",
-                      st.meshLines, st.liquidVoxels, st.partialCells, st.solidVoxels, st.bodyVoxels);
+        std::snprintf(line, sizeof(line), "mesh lines %u | liquid %u/%u | partial %u/%u | solid %u/%u | body %u/%u (drawn/total)",
+                      st.meshLines, st.liquidDrawn, st.liquidVoxels, st.partialDrawn, st.partialCells,
+                      st.solidDrawn, st.solidVoxels, st.bodyDrawn, st.bodyVoxels);
         gui.Text(line);
+        if (st.bulkCells > 0) {
+          // Water away from the surface should stay at alpha 1; lower means it is being diluted.
+          std::snprintf(line, sizeof(line), "bulk water alpha: mean %.3f, min %.3f, %u of %u cells below 0.98",
+                        st.bulkMeanAlpha, st.bulkMinAlpha, st.bulkBelow98, st.bulkCells);
+          gui.Text(line);
+        }
         if (v.velocitySlice) {
           std::snprintf(line, sizeof(line), "velocity lines %u on slice z=%d", st.velocityLines, st.velocitySliceZ);
           gui.Text(line);

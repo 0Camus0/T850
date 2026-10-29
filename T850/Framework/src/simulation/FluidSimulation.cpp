@@ -626,6 +626,18 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   }
 
   m_ready = true;
+  // A fresh solver must start from a DEFINED state. New storage volumes hold whatever
+  // was in GPU memory: under a scene that has already run its own solver, the allocator
+  // hands back its old volume contents, so a caller that only seeds alpha and steps
+  // starts from garbage momentum. That is why --fluid-selftest failed only under
+  // --scene 7 on Vulkan (divergence ×540, mass -18%), and passed under scenes 0/1/6
+  // where the memory happened to be zero. --backyard-selftest had already worked around
+  // it by calling ResetToRest(); this fixes it for every caller instead.
+  if (!ResetToRest(driver)) {
+    T8_LOG_ERROR("[Fluid] Could not clear the initial volume state on %s", driver->ApiTag());
+    Shutdown(driver);
+    return false;
+  }
   T8_LOG_INFO("[Fluid] Solver ready on %s: grid=%ux%ux%u iterations=%u",
               driver->ApiTag(), m_settings.width, m_settings.height, m_settings.depth,
               m_settings.pressureIterations);

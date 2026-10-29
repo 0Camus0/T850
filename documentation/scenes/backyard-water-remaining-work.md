@@ -33,7 +33,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p; P1–P9 open |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
 | W-10 Water invisible to depth post effects | Done, **redesigned in review** | `96d84638` + `47500166` | The extra pass duplicated `Deferred:DEPTH`; removed. CoC now uses the nearer depth; see W-10 |
-| W-21 Vulkan fluid self-test fails inside scene 7 | **Open** (found in review) | — | Pre-existing at `945b2f7c`; passes under scenes 0, 1, 6 and on D3D12; see W-21 |
+| W-21 Vulkan fluid self-test fails inside scene 7 | **Done** (Stage 3c) | — | Root cause was uninitialised volume memory, not Vulkan frame state; `TryInitialize` now clears; 6/6 PASS scene 7 Vulkan |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -1022,6 +1022,35 @@ frame), document why and make the harness drain the scene's frame before the sel
 **Acceptance.** `--scene 7 --api vulkan --fluid-selftest` PASS 5/5 with mass drift within ±0.1 % and
 projection ratios matching the scene-0 run; scenes 0, 1, 6 and D3D12 results unchanged;
 `--backyard-selftest` PASS on both APIs.
+
+**Outcome (Stage 3c) — RESOLVED, and the diagnosis above was wrong about the cause.** It is not
+per-frame Vulkan state at all: it is **uninitialised GPU volume memory**.
+
+Diagnostics run (as section 0 ordered): the debug log shows **no** `Recycling the compute-owned
+frame` line (so the descriptor pool never runs dry) and a temporary driver diagnostic proved **no**
+compute dispatch ever ran inside a renderer-opened frame (so frame ownership is not the cause). The
+`App.cpp` drain of the scene's frame gave **3 FAIL / 2 PASS in 5 runs** — inconclusive, and it
+exposed that the failure is **intermittent**, not 8/8: the outcome is either PASS at −0.00 % or a
+total loss (`7168 → 6 cells`, −99.92 %).
+
+Root cause: the self-test seeds alpha and then steps, but `FluidSimulation::TryInitialize` left the
+velocity, pressure and divergence volumes holding whatever was in GPU memory. Under scenes 0/1/6
+that memory happens to be zero, so nothing showed. After the Backyard solver has created and seeded
+its own 100×22×50 volumes, the allocator hands back *those* contents, and the first step begins from
+garbage momentum — divergence grows ×540 in one pressure iteration. `--backyard-selftest` always
+passed because it calls `ResetToRest()` first, and its own source comment had already documented
+this exact hazard.
+
+Fix: `TryInitialize` now calls `ResetToRest()` once the solver is ready, so **every** caller starts
+from a defined state. In the solver, not the harness — any caller that creates and steps a solver
+must get defined initial state. The temporary harness drain and driver diagnostic are reverted.
+
+Measured after the fix: scene 7 Vulkan **6/6 PASS** (drift −0.00 %), and 6/6 again with the drain
+removed, so the fix is the clear and not the drain; scenes 0, 1, 6, 7 × Vulkan and D3D12 **8/8 PASS**
+(`meanSpeed` 0.1086 / 0.1083); `--backyard-selftest` PASS both APIs with Stage 2 numbers unchanged;
+scenes 0, 1, 6, 7 on five APIs → **0 errors in all 20 combinations**.
+
+Section 4.2 no longer needs `--scene 0` for the fluid self-test: it now passes under any scene.
 
 ---
 

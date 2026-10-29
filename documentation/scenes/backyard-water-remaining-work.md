@@ -263,16 +263,26 @@ Nothing is created or read back while every option is off.
 | partially filled cells, height = alpha | Interface cells only (0.02 < α < 0.98 with an air neighbour), each box filled to its water fraction | teal |
 | solid voxels: steps grey, body orange | The wall-mask shell touching fluid: steps, and the ball as the solver voxelises it | grey / orange |
 | velocity on a vertical slice | Cell-centred flow arrows on one XY slice; follows the ball by default. Sliders: line length (m per m/s) and slice Z row | magenta |
+| velocity in the whole water volume | An arrow (shaft and head) per liquid cell over the full 3D grid, coloured by speed. Sliders: one arrow every N cells (0 = auto, sized to the 15 000-arrow cap; N = 2 at the default grid), hide cells slower than (m/s, default 0.005, above the still-pool noise), and the shared line length | cyan < 5 cm/s, yellow < 25 cm/s, red faster |
 | solver grid bounds | The simulation box | green |
 | x-ray (ignore scene depth) | Draws every layer through walls and the ball | — |
 | hide shaded water | Hides the rendered water so only the overlays remain | — |
 
 Below the options the panel shows the grid size, cell size, per-layer counts as drawn/total, and a
 **bulk water** line: mean and minimum α of liquid cells with no air neighbour, and how many are
-below 0.98 (they should all be 1; see W-03).
+below 0.98 (they should all be 1; see W-03). With the volume field on it also shows how many liquid
+cells move faster than the threshold and the fastest liquid cell (speed, cell index, α).
 
-Each voxel layer draws at most 8000 boxes (`kMaxBoxesPerLayer`); above that it draws every Nth
-candidate, so the coverage stays spread over the pool. The cap exists because D3D12 streams
+The box layers are deliberately surface-only: liquid voxels are the top water cell of each
+column, partially filled cells the water/air interface. Drawing every one of the ≈ 86k water cells
+as a box would be an opaque mass of lines and would exceed the D3D12 upload ring below. Use the
+whole-volume velocity field (with "hide shaded water" and "x-ray") to look inside the pool.
+Measured at rest (t ≈ 25 s, default grid): ≈ 56k of 86k liquid cells still move faster than
+5 mm/s, the fastest ≈ 0.018 m/s next to a wall; right after the impact the fastest is ≈ 0.8 m/s.
+
+Each voxel layer draws at most 8000 boxes (`kMaxBoxesPerLayer`) and the volume field at most
+15 000 arrows (`kMaxVolumeArrows`); above that they draw every Nth candidate, so the coverage stays
+spread over the pool. The caps exist because D3D12 streams
 dynamic vertex buffers through a 16 MB per-frame ring shared with the constant buffers: the first
 version drew one box per diluted water cell (≈ 81k boxes, 15.6 MB) and overflowed it on every
 frame (`Ring buffer overflow`, then a crash). Vulkan has no such ring, which is why it only

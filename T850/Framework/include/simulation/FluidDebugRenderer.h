@@ -21,10 +21,13 @@ namespace t850 {
     bool partialCells = false;    // interface cells, box height = alpha * cell
     bool solidVoxels = false;     // wall-mask cells touching fluid; the moving body separately
     bool velocitySlice = false;   // cell-centred velocity on one vertical XY slice
+    bool velocityVolume = false;  // velocity arrows for every liquid cell in the 3D volume
     bool domainBounds = false;
     bool xray = false;            // ignore scene depth
     float velocityScale = 0.25f;  // metres of line per m/s
     int velocitySliceZ = -1;      // grid row; -1 follows the dropped body
+    int volumeSampling = 0;       // one arrow every N cells per axis; 0 picks N to fit the cap
+    float minSpeed = 0.005f;      // m/s; slower cells get no arrow (still-pool noise is ~2 mm/s)
     // Presentation values the vertex shader applies, so the wireframe matches the mesh.
     float displacementScale = 1.0f;
     bool rippleOctaves = false;
@@ -33,7 +36,7 @@ namespace t850 {
 
     bool Any() const {
       return meshWireframe || surfaceGrid || liquidVoxels || partialCells ||
-             solidVoxels || velocitySlice || domainBounds;
+             solidVoxels || velocitySlice || velocityVolume || domainBounds;
     }
   };
 
@@ -46,6 +49,14 @@ namespace t850 {
     uint32_t bodyVoxels = 0, bodyDrawn = 0;
     uint32_t velocityLines = 0;
     int velocitySliceZ = -1;
+    // Whole-volume velocity: liquid cells, those at or above minSpeed, arrows drawn, sampling step.
+    uint32_t volumeLiquidCells = 0;
+    uint32_t volumeMoving = 0;
+    uint32_t volumeArrows = 0;
+    uint32_t volumeStep = 0;
+    float volumeMaxSpeed = 0.0f;
+    int volumeMaxCell[3] = {-1, -1, -1};
+    float volumeMaxAlpha = 0.0f;
     // Liquid cells with no air neighbour; their alpha should stay 1.
     uint32_t bulkCells = 0;
     uint32_t bulkBelow98 = 0;
@@ -83,14 +94,18 @@ namespace t850 {
       bool Upload();
     };
 
-    enum Layer { kMesh, kGrid, kLiquid, kPartial, kSolid, kBody, kVelocity, kBounds, kLayerCount };
+    enum Layer { kMesh, kGrid, kLiquid, kPartial, kSolid, kBody, kVelocity,
+                 kVolumeSlow, kVolumeMedium, kVolumeFast, kBounds, kLayerCount };
 
     // D3D12 streams dynamic vertex buffers through a 16 MB per-frame ring shared with the
     // constant buffers; uncapped voxel layers (one box per water cell) overflowed it.
     static constexpr size_t kMaxBoxesPerLayer = 8000;
+    static constexpr size_t kMaxVolumeArrows = 15000;
     struct Box { float x0, y0, z0, x1, y1, z1; };
+    struct Arrow { uint16_t i, j, k; float u, v, w; };
     static uint32_t EmitBoxes(LineBatch& batch, const std::vector<Box>& boxes);
     std::vector<Box> m_boxScratch[4];
+    std::vector<Arrow> m_arrowScratch;
 
     LineRenderer m_lineRenderer;
     LineBatch m_batches[kLayerCount];

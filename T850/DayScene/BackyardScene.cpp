@@ -764,10 +764,17 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     check("water_dbg_partial", "partially filled cells, height = alpha (teal)", v.partialCells);
     check("water_dbg_solid", "solid voxels: steps grey, body orange", v.solidVoxels);
     check("water_dbg_velocity", "velocity on a vertical slice (magenta)", v.velocitySlice);
-    if (v.velocitySlice) {
+    check("water_dbg_velocity_volume",
+          "velocity in the whole water volume (cyan < 5 cm/s, yellow < 25 cm/s, red faster)", v.velocityVolume);
+    if (v.velocitySlice || v.velocityVolume)
       slider("water_dbg_velocity_scale", "velocity line length (m per m/s)", v.velocityScale, 0.01f, 2.0f, 0.01f);
+    if (v.velocitySlice) {
       const float maxRow = m_fluidReady ? static_cast<float>(m_fluid.Settings().depth) - 1.0f : 191.0f;
       sliderInt("water_dbg_slice", "slice Z row (-1 follows the ball)", v.velocitySliceZ, -1.0f, maxRow, 1.0f);
+    }
+    if (v.velocityVolume) {
+      sliderInt("water_dbg_volume_step", "one arrow every N cells (0 = auto)", v.volumeSampling, 0.0f, 8.0f, 1.0f);
+      slider("water_dbg_min_speed", "hide cells slower than (m/s)", v.minSpeed, 0.0f, 0.2f, 0.001f);
     }
     check("water_dbg_bounds", "solver grid bounds (green)", v.domainBounds);
     check("water_dbg_xray", "x-ray (ignore scene depth)", v.xray);
@@ -792,6 +799,15 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
         }
         if (v.velocitySlice) {
           std::snprintf(line, sizeof(line), "velocity lines %u on slice z=%d", st.velocityLines, st.velocitySliceZ);
+          gui.Text(line);
+        }
+        if (v.velocityVolume) {
+          std::snprintf(line, sizeof(line), "volume: %u arrows (every %u cells) of %u moving / %u liquid cells",
+                        st.volumeArrows, st.volumeStep, st.volumeMoving, st.volumeLiquidCells);
+          gui.Text(line);
+          std::snprintf(line, sizeof(line), "fastest liquid cell %.3f m/s at (%d, %d, %d), alpha %.2f",
+                        st.volumeMaxSpeed, st.volumeMaxCell[0], st.volumeMaxCell[1], st.volumeMaxCell[2],
+                        st.volumeMaxAlpha);
           gui.Text(line);
         }
         gui.Text("Layers are read back from the GPU every frame; expect a lower frame rate.");

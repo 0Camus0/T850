@@ -70,6 +70,29 @@ namespace {
 
   float Saturate(float v) { return (std::min)((std::max)(v, 0.0f), 1.0f); }
 
+  // Speed bands for the whole-volume field, in m/s.
+  constexpr float kSlowSpeed = 0.05f;
+  constexpr float kFastSpeed = 0.25f;
+
+  // Shaft plus a two-line head; the head makes the direction readable where shafts overlap.
+  void AppendArrow(std::vector<float>& vertices, std::vector<unsigned int>& indices,
+                   float cx, float cy, float cz, float dx, float dy, float dz) {
+    const float length = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (length < 1e-6f) return;
+    const float tx = cx + dx, ty = cy + dy, tz = cz + dz;
+    const float ux = dx / length, uy = dy / length, uz = dz / length;
+    // Head wings lie in the plane of the shaft and a horizontal axis (X when the shaft is vertical).
+    const bool vertical = std::fabs(uy) > 0.9f;
+    float px = vertical ? 0.0f : -uz, py = vertical ? -uz : 0.0f, pz = vertical ? uy : ux;
+    const float pl = (std::max)(std::sqrt(px * px + py * py + pz * pz), 1e-6f);
+    px /= pl; py /= pl; pz /= pl;
+    const float back = 0.3f * length, wing = 0.15f * length;
+    const float bx = tx - ux * back, by = ty - uy * back, bz = tz - uz * back;
+    AppendLine(vertices, indices, cx, cy, cz, tx, ty, tz);
+    AppendLine(vertices, indices, tx, ty, tz, bx + px * wing, by + py * wing, bz + pz * wing);
+    AppendLine(vertices, indices, tx, ty, tz, bx - px * wing, by - py * wing, bz - pz * wing);
+  }
+
 } // namespace
 
 uint32_t FluidDebugRenderer::EmitBoxes(LineBatch& batch, const std::vector<Box>& boxes) {
@@ -200,13 +223,14 @@ void FluidDebugRenderer::Draw(BaseDriver* driver, FluidSimulation& fluid, const 
   const size_t voxels = static_cast<size_t>(g.w) * g.h * g.d;
 
   const bool wantSurface = view.meshWireframe || view.surfaceGrid;
-  const bool wantMask = view.liquidVoxels || view.partialCells || view.solidVoxels || view.velocitySlice;
-  const bool wantAlpha = view.liquidVoxels || view.partialCells || view.velocitySlice;
+  const bool wantVelocity = view.velocitySlice || view.velocityVolume;
+  const bool wantMask = view.liquidVoxels || view.partialCells || view.solidVoxels || wantVelocity;
+  const bool wantAlpha = view.liquidVoxels || view.partialCells || wantVelocity;
   const bool haveSurface = wantSurface && fluid.ReadSurface(driver, m_surface) &&
                            m_surface.size() == static_cast<size_t>(g.w) * g.d * 4;
   const bool haveMask = wantMask && fluid.ReadWallMask(driver, m_mask) && m_mask.size() == voxels;
   const bool haveAlpha = wantAlpha && fluid.ReadVolumeFraction(driver, m_alpha) && m_alpha.size() == voxels;
-  const bool haveVelocity = view.velocitySlice && fluid.ReadVelocity(driver, m_velocity) &&
+  const bool haveVelocity = wantVelocity && fluid.ReadVelocity(driver, m_velocity) &&
                             m_velocity.size() == voxels * 4;
 
   auto surfaceAt = [&](int x, int z) {
@@ -332,6 +356,16 @@ void FluidDebugRenderer::Draw(BaseDriver* driver, FluidSimulation& fluid, const 
     m_stats.bodyDrawn = EmitBoxes(m_batches[kBody], bodies);
   }
 
+  const size_t strideY = g.w;
+  const size_t strideZ = static_cast<size_t>(g.w) * g.h;
+  // Staggered storage: texel (i,j,k) holds the +faces; the -face is the previous texel.
+  auto cellVelocity = [&](uint32_t i, uint32_t j, uint32_t k, float& u, float& v, float& w) {
+    const size_t idx = g.Index(i, j, k);
+    u = 0.5f * (m_velocity[idx * 4 + 0] + (i > 0 ? m_velocity[(idx - 1) * 4 + 0] : 0.0f));
+    v = 0.5f * (m_velocity[idx * 4 + 1] + (j > 0 ? m_velocity[(idx - strideY) * 4 + 1] : 0.0f));
+    w = 0.5f * (m_velocity[idx * 4 + 2] + (k > 0 ? m_velocity[(idx - strideZ) * 4 + 2] : 0.0f));
+  };
+
   if (view.velocitySlice && haveMask && haveAlpha && haveVelocity) {
     uint32_t k = g.d / 2;
     if (view.velocitySliceZ >= 0) {
@@ -342,16 +376,12 @@ void FluidDebugRenderer::Draw(BaseDriver* driver, FluidSimulation& fluid, const 
     }
     m_stats.velocitySliceZ = static_cast<int>(k);
     LineBatch& batch = m_batches[kVelocity];
-    const size_t strideY = g.w;
-    const size_t strideZ = static_cast<size_t>(g.w) * g.h;
     for (uint32_t j = 0; j < g.h; ++j)
       for (uint32_t i = 0; i < g.w; ++i) {
         const size_t idx = g.Index(i, j, k);
         if (m_mask[idx] != 0u || m_alpha[idx] < 0.1f) continue;
-        // Staggered storage: texel (i,j,k) holds the +faces; the -face is the previous texel.
-        const float u = 0.5f * (m_velocity[idx * 4 + 0] + (i > 0 ? m_velocity[(idx - 1) * 4 + 0] : 0.0f));
-        const float v = 0.5f * (m_velocity[idx * 4 + 1] + (j > 0 ? m_velocity[(idx - strideY) * 4 + 1] : 0.0f));
-        const float w = 0.5f * (m_velocity[idx * 4 + 2] + (k > 0 ? m_velocity[(idx - strideZ) * 4 + 2] : 0.0f));
+        float u, v, w;
+        cellVelocity(i, j, k, u, v, w);
         if (u * u + v * v + w * w < 1e-6f) continue;
         const float cx = g.minX + (i + 0.5f) * g.stepX;
         const float cy = g.minY + (j + 0.5f) * g.stepY;
@@ -360,6 +390,55 @@ void FluidDebugRenderer::Draw(BaseDriver* driver, FluidSimulation& fluid, const 
                    cx + u * view.velocityScale, cy + v * view.velocityScale, cz + w * view.velocityScale);
         ++m_stats.velocityLines;
       }
+  }
+
+  if (view.velocityVolume && haveMask && haveAlpha && haveVelocity) {
+    std::vector<Arrow>& arrows = m_arrowScratch;
+    arrows.clear();
+    const float minSpeed2 = view.minSpeed * view.minSpeed;
+    float maxSpeed2 = 0.0f;
+    for (uint32_t k = 0; k < g.d; ++k)
+      for (uint32_t j = 0; j < g.h; ++j)
+        for (uint32_t i = 0; i < g.w; ++i) {
+          const size_t idx = g.Index(i, j, k);
+          if (m_mask[idx] != 0u || m_alpha[idx] < s.airThreshold) continue;
+          ++m_stats.volumeLiquidCells;
+          float u, v, w;
+          cellVelocity(i, j, k, u, v, w);
+          const float speed2 = u * u + v * v + w * w;
+          if (speed2 > maxSpeed2) {
+            maxSpeed2 = speed2;
+            m_stats.volumeMaxCell[0] = static_cast<int>(i);
+            m_stats.volumeMaxCell[1] = static_cast<int>(j);
+            m_stats.volumeMaxCell[2] = static_cast<int>(k);
+            m_stats.volumeMaxAlpha = m_alpha[idx];
+          }
+          if (speed2 < minSpeed2) continue;
+          arrows.push_back({static_cast<uint16_t>(i), static_cast<uint16_t>(j), static_cast<uint16_t>(k), u, v, w});
+        }
+    m_stats.volumeMoving = static_cast<uint32_t>(arrows.size());
+    m_stats.volumeMaxSpeed = std::sqrt(maxSpeed2);
+
+    // A regular lattice keeps the field readable; a linear stride on top only guarantees the cap.
+    uint32_t step = view.volumeSampling > 0 ? static_cast<uint32_t>(view.volumeSampling)
+        : (std::max)(1u, static_cast<uint32_t>(std::ceil(std::cbrt(
+              static_cast<double>(arrows.size()) / static_cast<double>(kMaxVolumeArrows)))));
+    m_stats.volumeStep = step;
+    size_t onLattice = 0;
+    for (const Arrow& a : arrows)
+      if (a.i % step == 0 && a.j % step == 0 && a.k % step == 0) ++onLattice;
+    const size_t thin = onLattice > kMaxVolumeArrows ? (onLattice + kMaxVolumeArrows - 1) / kMaxVolumeArrows : 1;
+    size_t latticeIndex = 0;
+    for (const Arrow& a : arrows) {
+      if (a.i % step != 0 || a.j % step != 0 || a.k % step != 0) continue;
+      if (latticeIndex++ % thin != 0) continue;
+      const float speed = std::sqrt(a.u * a.u + a.v * a.v + a.w * a.w);
+      LineBatch& batch = m_batches[speed < kSlowSpeed ? kVolumeSlow : speed < kFastSpeed ? kVolumeMedium : kVolumeFast];
+      AppendArrow(batch.vertices, batch.indices,
+                  g.minX + (a.i + 0.5f) * g.stepX, g.minY + (a.j + 0.5f) * g.stepY, g.minZ + (a.k + 0.5f) * g.stepZ,
+                  a.u * view.velocityScale, a.v * view.velocityScale, a.w * view.velocityScale);
+      ++m_stats.volumeArrows;
+    }
   }
 
   if (view.domainBounds) {
@@ -376,7 +455,10 @@ void FluidDebugRenderer::Draw(BaseDriver* driver, FluidSimulation& fluid, const 
     XVECTOR3(0.20f, 1.00f, 0.80f, 0.60f),  // partial cells
     XVECTOR3(0.65f, 0.65f, 0.65f, 0.70f),  // static solids
     XVECTOR3(1.00f, 0.50f, 0.10f, 1.00f),  // body
-    XVECTOR3(1.00f, 0.20f, 0.85f, 1.00f),  // velocity
+    XVECTOR3(1.00f, 0.20f, 0.85f, 1.00f),  // velocity slice
+    XVECTOR3(0.30f, 0.80f, 1.00f, 0.70f),  // volume, slow
+    XVECTOR3(1.00f, 0.90f, 0.20f, 0.90f),  // volume, medium
+    XVECTOR3(1.00f, 0.25f, 0.20f, 1.00f),  // volume, fast
     XVECTOR3(0.30f, 1.00f, 0.30f, 1.00f),  // bounds
   };
 

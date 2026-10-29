@@ -1304,20 +1304,27 @@ void main(){
 ///////////
 #elif defined(COC_PASS)
 uniform highp sampler2D tex0;
+// Depth the forward pass drew into (transparent surfaces such as the pool water are
+// kept out of the GBuffer). Graphs without forward depth bind the opaque depth again.
+uniform highp sampler2D tex1;
 #ifdef ES_30
 	//layout(location = 0) out highp vec4 colorOut;
 	layout(location = 1) out highp vec4 colorOut_1;
 #endif
+// Nearest surface the camera sees. Reverse-Z, so the nearer depth is the larger.
+highp float SampleCoCDepth(highp vec2 uv) {
+#ifdef ES_30
+	return max(textureLod(tex0, uv, 0.0).r, textureLod(tex1, uv, 0.0).r);
+#else
+	return max(texture2D(tex0, uv).r, texture2D(tex1, uv).r);
+#endif
+}
 void main() {
     lowp vec2 coords = vecUVCoords;
 	coords.y = 1.0 - coords.y;
 	highp float aperture = LightPositions[0].x;
 	highp float focalLength = LightPositions[0].y;
-	#ifdef ES_30
-	highp float z = texture( tex0, coords ).r;
-	#else
-	highp float z = texture2D( tex0, coords ).r;
-	#endif
+	highp float z = SampleCoCDepth(coords);
 	if (!IsSceneDepthValid(z)) {
 	#ifdef ES_30
 		colorOut = vec4(0.0);
@@ -1330,22 +1337,14 @@ void main() {
 	}
 	highp float depthFocus;
   #ifdef AUTO_FOCUS
-  	#ifdef ES_30
-    depthFocus = texture(tex0, vec2(0.5, 0.5)).r;// Auto Focus center
-	#else
-	depthFocus = texture2D(tex0, vec2(0.5, 0.5)).r;// Auto Focus center
-	#endif
+	depthFocus = SampleCoCDepth(vec2(0.5, 0.5));// Auto Focus center
 	if (LightPositions[1].z > 0.5 && !IsSceneDepthValid(depthFocus) && LightPositions[1].w > 0.0) {
 		highp float bestDepth = 0.0;
 		for (int focusY = -2; focusY <= 2; ++focusY) {
 			for (int focusX = -2; focusX <= 2; ++focusX) {
 				highp vec2 focusUV = clamp(vec2(0.5) +
 					vec2(float(focusX), float(focusY)) * (LightPositions[1].w * 0.5), 0.0, 1.0);
-				#ifdef ES_30
-					highp float candidate = textureLod(tex0, focusUV, 0.0).r;
-				#else
-					highp float candidate = texture2D(tex0, focusUV).r;
-				#endif
+				highp float candidate = SampleCoCDepth(focusUV);
 				if (IsSceneDepthValid(candidate))
 					bestDepth = max(bestDepth, candidate);
 			}

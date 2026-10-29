@@ -183,6 +183,10 @@ Texture2D SceneColorTex : register(t9);
 #ifdef FLUID_SURFACE
 // Sampled with Load() so no sampler binding is required.
 Texture2D<float4> FluidSurfaceTexture : register(t23);
+// Static per-column pool floor height (world Y) in .x, width x depth texels, one
+// per solver column. Built on the CPU from the authored wall mask, so absorption
+// uses the real depth over the submerged steps instead of one constant.
+Texture2D<float4> FluidFloorTexture : register(t24);
 #endif
 TextureCube texIBLDiffuse : register(t10);
 TextureCube texIBLSpecular : register(t11);
@@ -283,6 +287,37 @@ float LoadForwardSceneDepth(VS_OUTPUT input)
     int2 maxPixel = int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1);
     pixel = min(max(pixel, int2(0, 0)), maxPixel);
     return SceneDepthTex.Load(int3(pixel, 0)).r;
+}
+
+// True when opaque geometry at `sampleUV` sits NEARER to the camera than this water
+// fragment. The water is transparent and does not write depth, so SceneDepthTex holds
+// only opaque geometry: anything nearer than the water here is a real object in front
+// of it (the ball above the surface, the coping, a step seen through a crest), and a
+// refracted lookup at that point would pull its colour into the water.
+//
+// Two things this must get right:
+//  * The depth must be `hposition.z`, which in a pixel shader is the rasterised depth
+//    in [0,1] - the same units SceneDepthTex stores. `Pos.z / Pos.w` is clip-space NDC
+//    z in [-1,1] and comparing it to a [0,1] depth is off by a factor of two and an
+//    offset, which silently makes every comparison fail. (The older depth tests in
+//    this shader use NDC z too; they only need a tolerance, so they survive.)
+//  * The convention (larger means nearer or farther) differs per backend, so it is
+//    derived: this water fragment is known to sit in front of the opaque basin floor
+//    already stored at its own pixel.
+bool SceneIsNearerAt(VS_OUTPUT input, float2 sampleUV)
+{
+    const float epsilon = 1e-4f;   // in [0,1] depth
+    int2 maxPixel = int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1);
+    int2 px = clamp(int2(sampleUV * ForwardParams.xy), int2(0, 0), maxPixel);
+    int2 selfPx = clamp(int2(input.hposition.xy), int2(0, 0), maxPixel);
+    const float sampled = SceneDepthTex.Load(int3(px, 0)).r;
+    const float opaqueHere = SceneDepthTex.Load(int3(selfPx, 0)).r;
+    if (sampled <= 0.0f || opaqueHere <= 0.0f)
+        return false;   // nothing opaque to compare against
+    const float selfZ = input.hposition.z;
+    // Water in front of the floor means smaller depth is nearer (the usual convention).
+    const float depthSign = (selfZ < opaqueHere) ? -1.0f : 1.0f;
+    return (sampled - selfZ) * depthSign > epsilon;
 }
 
 #ifdef FLUID_SURFACE
@@ -1294,7 +1329,18 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         // surface's Fresnel is an average over its microfacets. Using the
         // perturbed normal sends grazing facets to near-total reflection and
         // the reflection vector into the dark half of the cubemap.
-        float fluidFresnel = saturate((0.02f + 0.98f * pow(1.0f - saturate(eyeDir.y), 5.0f)) *
+        //
+        // But a purely flat normal meant the crests never changed reflectivity at
+        // all. Half-way: the SOLVER's height-field normal (the simulation, not the
+        // presentation ripple layer) blended 50 % toward flat, so a crest tilts the
+        // Fresnel without a grazing facet being able to spike it.
+        float fluidCellSize = max(WaterMisc1.z, 0.001f);
+        float2 solverGradient = fluidSurface.zw * (2.0f / fluidCellSize) * max(WaterMisc1.y, 0.0f);
+        solverGradient = clamp(solverGradient, -4.0f, 4.0f);
+        float3 fresnelNormalSolver = normalize(float3(-solverGradient.x, 1.0f, -solverGradient.y));
+        float3 fresnelNormal = normalize(lerp(float3(0.0f, 1.0f, 0.0f), fresnelNormalSolver, 0.5f));
+        float nDotEye = saturate(dot(fresnelNormal, eyeDir));
+        float fluidFresnel = saturate((0.02f + 0.98f * pow(1.0f - nDotEye, 5.0f)) *
                                       WaterOptics4.x + WaterOptics4.y);
 
         // Optical path length. The vertical water depth comes from the SIMULATED
@@ -1305,7 +1351,27 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         // recover the physical height.
         float fluidViewDistance = length(CameraPosition.xyz - input.WorldPos.xyz);
         float rawHeight = fluidSurface.x;
-        float columnDepth = max(WaterOptics5.y + rawHeight, 0.02f);
+        // Real per-column water depth. waterToFloor is one constant 1.56 m, so the
+        // submerged steps (tops at -0.34 and -0.60 m, real depth 0.26-0.86 m) were
+        // tinted like the deep end. When the scene binds the static floor-height
+        // texture, take the depth from it: surface - floor, both in world Y.
+        // WaterOptics5.z is the authored water plane; .y stays as the fallback for a
+        // scene that has no floor texture.
+        float columnDepth;
+        if (WaterOptics5.w > 0.5f) {
+            uint floorWidth = 1, floorHeight = 1;
+            FluidFloorTexture.GetDimensions(floorWidth, floorHeight);
+            // Nearest texel on purpose: the floor is DISCONTINUOUS at every step
+            // edge, so filtering a height field across it invents a ramp that never
+            // existed and would tint the step face as if it were deep water.
+            float2 floorGrid = saturate(uv) * float2(floorWidth, floorHeight);
+            int2 floorCell = clamp(int2(floorGrid), int2(0, 0),
+                                   int2(max(int(floorWidth) - 1, 0), max(int(floorHeight) - 1, 0)));
+            float floorY = FluidFloorTexture.Load(int3(floorCell, 0)).x;
+            columnDepth = max(WaterOptics5.z + rawHeight - floorY, 0.02f);
+        } else {
+            columnDepth = max(WaterOptics5.y + rawHeight, 0.02f);
+        }
         // Path length along the view ray: depth / cos(theta), with theta measured
         // from vertical. eyeDir.y is that cosine.
         float cosTheta = max(abs(eyeDir.y), 0.25f);
@@ -1320,7 +1386,15 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         float2 screenUV = GetForwardScreenUV(input);
         float2 refractOffset = float2(normal.x, -normal.z) * WaterOptics1.w * borderFade *
                                (0.6f + 0.4f * saturate(thickness / 3.0f));
-        float3 floorColor = SceneColorTex.SampleLevel(SceneColorSS, saturate(screenUV + refractOffset), 0.0f).rgb;
+        float2 refractUV = saturate(screenUV + refractOffset);
+        // Depth-test the refracted lookup. Without it the ball above the water and the
+        // pool coping smeared their colour into the surface - the refraction has no
+        // idea what it is sampling. A hard switch rather than a blend: the occlusion
+        // boundary is a hard geometric edge, and cross-fading two UV lookups is what
+        // smears the coping.
+        if (SceneIsNearerAt(input, refractUV))
+            refractUV = screenUV;
+        float3 floorColor = SceneColorTex.SampleLevel(SceneColorSS, refractUV, 0.0f).rgb;
 
         // Caustics. A flat patch of surface focuses sunlight onto a small spot,
         // a curved patch spreads it out, so the ripple field's slope magnitude

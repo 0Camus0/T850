@@ -2497,6 +2497,10 @@ namespace t850 {
           // slots, so no material plumbing is involved.
           bindTextureOnce(Textures[23], 23, "FluidSurfaceTexture", 0);
           bindTextureOnce(Textures[22], 22, "FluidNormalTex", 0);
+          // Per-column pool floor height, so absorption uses the real depth over the steps.
+          // Each extra slot needs its own branch here: a texture bound on the instance is
+          // invisible to the shader until this list names it (implementation record bug 18).
+          bindTextureOnce(Textures[24], 24, "FluidFloorTexture", 0);
         }
 
         // Phase A.5 step 2: when using shared pools the index/vertex

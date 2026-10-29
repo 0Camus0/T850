@@ -27,7 +27,11 @@ namespace t850 {
 #define BUFFER_OFFSET(i) ((char *)NULL + (i))
 #endif
 
-  constexpr int MaxPrimitiveTextures = 24;
+  // Slots 22 (fluid normal map) and 23 (solver surface) are used by the Backyard
+  // water, and 24 (static per-column floor height) is one past the old limit of 24:
+  // SetTexture() indexes this array directly, so 24 was an out-of-bounds write and
+  // the shader silently read 0. Keep real headroom above the highest used slot.
+  constexpr int MaxPrimitiveTextures = 28;
 
   class PrimitiveBase {
   public:

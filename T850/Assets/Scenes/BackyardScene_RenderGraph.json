@@ -20,6 +20,13 @@
     { "name": "Deferred",          "color_count": 1, "color_format": "RGBA16F", "depth_format": "F32",  "size": [0,0], "linear_filter": true },
     { "name": "Extra16F",          "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "DepthPass",         "color_count": 0, "color_format": "NONE",    "depth_format": "F32",  "size": [0,0], "linear_filter": false, "size_ref": "$shadow_resolution", "shadow_projection": "sun-shadow" },
+  {
+   "name": "WaterDepth",
+   "color_count": 0,
+   "depth_format": "F32",
+   "size": [0, 0],
+   "linear_filter": false
+  },
     { "name": "ShadowAccum",       "color_count": 1, "color_format": "R8",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "ExtraHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "storage": true },
     { "name": "BloomAccum",        "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
@@ -157,6 +164,25 @@
       ],
       "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
     },
+  {
+   "name": "Water Depth",
+   "target": "WaterDepth",
+   "state": {
+    "depth_stencil": "READ_WRITE",
+    "cull_face": "FRONT_FACES"
+   },
+   "camera": "main",
+   "draws": [
+    {
+     "type": "mesh",
+     "mesh_indices": [5],
+     "signature": "FORWARD_PASS"
+    }
+   ],
+   "post_state": {
+    "depth_stencil": "READ"
+   }
+  },
     {
       "name": "Debug Cascade Regions",
       "target": "Deferred",

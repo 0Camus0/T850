@@ -44,7 +44,7 @@ starting from the tip of `backyard_scene`.
 | 1b. Make failures provable | W-12 | M | **DONE** — gates 1, 2, 3, 6 pass on both APIs |
 | 1c. Readback gates | W-12 gates 4, 5 + boundedness | M | **DONE** — gate 5 proven to fail on the id.z bug |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
-| 3. Rendering correctness | W-19, W-09, W-10 | M | W-19 **DONE in review** (`fa5422ff`); W-09 **DONE** (see Stage 3); W-10 remains |
+| 3. Rendering correctness | W-19, W-09, W-10 | M | **DONE** — W-19 (`fa5422ff`); W-09 and W-10 in 3a/3b (W-10's depth target is written, its consumer is still open) |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
@@ -403,7 +403,8 @@ interior operator.
   stop bleeding into the water. **DONE.**
 - Blend the Fresnel normal toward the flat normal so crests change reflectivity without dark
   patches. **DONE.**
-- W-10: a depth-only draw of the displaced water gives post effects a surface to see. **REMAINS.**
+- W-10: a depth-only draw of the displaced water gives post effects a surface to see. **DONE**
+  (details in 3b below).
 
 **Files** — `FS_Mesh.hlsl`, `RenderMesh.cpp` (new texture slot — remember the per-slot `if`
 branch, bug 18 in the record), `BackyardScene.cpp`, render graph JSON if a new target is needed.
@@ -477,6 +478,50 @@ Vulkan with numbers unchanged from HEAD; scene 7 → 0 errors on D3D12, Vulkan, 
 (floor texture bound exactly when the solver is up).
 
 **Exit** — W-09 done; W-10 (depth-only water for post effects) still open.
+
+---
+
+#### Stage 3b — W-10 water depth for post effects (done, with one honest gap)
+
+**What shipped.** A new render target `WaterDepth` (`color_count: 0`, `depth_format: F32`, screen
+sized) and a new pass `Water Depth` right after `Forward Transparent`, which draws exactly one mesh
+into it with `FORWARD_PASS`. `BackyardScene` dumps it as `RT_Dump_WaterDepth.ppm` for inspection.
+
+**Two traps found while wiring it**
+
+* **A forward-only subset can never draw in `RADIAL_DEPTH`, `GBUFFER` or `SHADOW_MAP`.**
+  `ShouldDrawSubsetInPass` returns `!forwardOnly` for those three passes and `forwardOnly` for
+  `FORWARD`, so the water is only ever drawn in the forward pass. The first attempt used
+  `RADIAL_DEPTH_PASS` and produced a **completely empty** depth target; the signature has to be
+  `FORWARD_PASS`.
+* **`mesh_indices` must name the water, and a reordered asset list would silently break it.**
+  `Backyard_Water` is the sixth asset (`mesh_indices: [5]`). `RebuildFluid` now logs an error if the
+  water instance index is not 5, so a reorder fails loudly instead of drawing the ball into the
+  depth map.
+
+**Measured.** The depth target dump contains the water surface: **121,350 non-background pixels
+confined to x 14…958, y 476…652** — the pool region, and nothing else. Cost of the extra pass,
+median of 3 timed runs of 1200 frames at 1280×720 on D3D12: **6.884 s with it vs 6.669 s without =
++0.179 ms per frame (~3.2 % of a 5.6 ms frame)**. That is expensive for one mesh because the pass
+runs the full `FS_Mesh` water shading and discards the colour; a depth-only fragment variant would
+remove most of it (recorded as a follow-up).
+
+**The honest gap — nothing consumes it yet.** The catalogue's fix also says "let the post passes
+that need scene depth use the nearer of the two", and I could not verify that in this scene:
+
+* `BackyardScene` **force-disables the DOF passes** (`SetPassEnabled("DOF", false)`, same for
+  "DOF 2"), so depth-of-field cannot show the change;
+* the `CoC` target, the natural intermediate, **dumps as all-zero** in this configuration — it is
+  never written or is recycled before the dump, so an A/B on it proves nothing (I measured 0
+  differing pixels with the water depth wired in, and 0 with it wired out: the test was measuring
+  an empty target).
+
+I therefore reverted the `FS_Quad` CoC change rather than ship shader arithmetic I could not
+demonstrate working. Wiring a depth consumer is the remaining step, and it needs a DOF-enabled
+scene to be verifiable.
+
+**Verification.** `--backyard-selftest` PASS on D3D12 and Vulkan; scene 7 → 0 errors and the
+`WaterDepth` RT created on D3D12, Vulkan, D3D11, GL and WebGPU.
 
 ---
 
@@ -816,18 +861,12 @@ contains `[Backyard]` lines.
 
 ### Stage 3 — W-09, W-10
 
-W-09 done (details in 3a above). Three fixes: per-column floor depth texture at t24 (nearest
-texel, RGBA32F, built from the authored mask), a refraction depth test against `SceneDepthTex`, and
-a Fresnel normal blended 50 % from the solver height field toward flat. Deterministic A/B at frame
-600: steps +2.68 brightness levels while the deep end is unchanged (+0.18), large diffs confined to
-the step side of the pool, 464k/921k pixels bit-identical. Two real bugs found on the way:
-`MaxPrimitiveTextures` was 24, so the new slot 24 was an out-of-bounds write that made the shader
-read floorY = 0 and brighten the whole pool uniformly until fixed; and `Pos.z/Pos.w` is NDC z in
-[−1,1], not the [0,1] depth `SceneDepthTex` holds, which made the refraction test never fire.
-Refraction is measured-inert at the default 0.025–0.03 strength (occlusion only fires where the
-surface is flat, so the displacement is ~0 there); kept because it is correct and becomes active at
-stronger refraction or a displaced crest. All gates PASS on both APIs with HEAD's numbers; scene 7
-→ 0 errors on five backends. W-10 remains.
+W-09 done (3a): per-column floor depth, guarded refraction, blended Fresnel. W-10 done (3b): a
+`WaterDepth` target and a "Water Depth" pass drawing the water with `FORWARD_PASS` (a forward-only
+subset can never draw in RADIAL_DEPTH/GBUFFER/SHADOW_MAP). Measured: the depth dump holds 121,350
+pixels confined to the pool; cost +0.179 ms/frame (~3.2%). Remaining: nothing consumes the depth
+yet — DOF is force-disabled in this scene and the CoC target dumps all-zero, so the consumer could
+not be verified and was deliberately not shipped.
 
 ### Stage 4 — W-11
 

@@ -6,6 +6,7 @@
 #include <core/EngineContext.h>
 #include <imgui/DevGuiContext.h>
 #include <scene/IBLResources.h>
+#include <scene/RenderMesh.h>
 #include <scene/SceneDescriptor.h>
 #include <scene/PrimitiveManager.h>
 #include <utils/Log.h>
@@ -338,6 +339,8 @@ void BackyardScene::DestroyAssets() {
     m_fluid.Shutdown(pFramework->pVideoDriver);
   }
   m_fluidReady = false;
+  m_fluidDebug.Destroy();
+  m_fluidDebugMeshBound = false;
   if (m_waterSurfaceRT >= 0 && pFramework && pFramework->pVideoDriver)
     pFramework->pVideoDriver->DestroyRT(m_waterSurfaceRT);
   m_waterSurfaceRT = -1;
@@ -547,9 +550,44 @@ void BackyardScene::OnInput(InputManager* input) {
   m_cameraController.HandleInput(state);
 }
 
+void BackyardScene::DrawFluidDebug() {
+  if (!m_fluidReady || !m_fluidDebugView.Any()) return;
+  t850::BaseDriver* driver = pFramework->pVideoDriver;
+  if (!m_fluidDebug.IsReady() && !m_fluidDebug.Create()) return;
+  t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle);
+  if (m_fluidDebugView.meshWireframe && !m_fluidDebugMeshBound && water) {
+    if (auto* mesh = dynamic_cast<t850::RenderMesh*>(water->pBase))
+      m_fluidDebugMeshBound = m_fluidDebug.SetWaterMesh(*mesh);
+  }
+  const t850::WaterTunables& w = SceneProp.Water;
+  m_fluidDebugView.displacementScale = w.displacementScale;
+  m_fluidDebugView.rippleOctaves = w.fakeRipplesEnabled;
+  m_fluidDebugView.rippleScale = w.vertexWaveScale;
+  m_fluidDebugView.rippleTime = SceneProp.TimeSeconds;
+  // GBuffer depth holds the opaque scene only (the water is kept out of it), so voxels
+  // under the surface stay visible while the house, coping and ball still occlude.
+  t850::Texture* depth = nullptr;
+  const int gbuffer = m_renderContainer.Graph().GetRTHandle("GBuffer");
+  if (gbuffer >= 0 && gbuffer < static_cast<int>(driver->RTs.size()) && driver->RTs[gbuffer])
+    depth = driver->RTs[gbuffer]->pDepthTexture;
+  XMATRIX44 meshWorld;
+  meshWorld.Identity();
+  if (water) meshWorld = water->Final;
+  m_fluidDebug.Draw(driver, m_fluid, m_fluidDebugView, meshWorld, m_camera.VP, m_camera.FPlane,
+                    depth, driver->width, driver->height);
+}
+
 void BackyardScene::OnDraw() {
   if (!m_assetsCreated) return;
+  if (t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle))
+    water->SetVisible(!m_hideWater);
   m_renderContainer.Execute(pFramework->pVideoDriver, m_deltaSeconds);
+#ifdef OS_ANDROID
+  if (m_fluidDebugView.Any())
+    pFramework->pVideoDriver->SetPrePresentOverlayCallback([this]() { DrawFluidDebug(); });
+#else
+  DrawFluidDebug();
+#endif
 
   if (m_fluidReady) {
     static int probeFrame = 0;
@@ -668,6 +706,45 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
       ResetSimulation();
     if (gui.Button("Rebuild grid"))
       RebuildFluid();
+  }
+
+  if (gui.BeginSection("Debug view")) {
+    t850::FluidDebugView& v = m_fluidDebugView;
+    auto check = [&gui](const char* name, const char* label, bool& value) {
+      return gui.Checkbox(t850::CheckboxDesc{ name, label, false, true }, value);
+    };
+    check("water_dbg_mesh", "water mesh wireframe (white)", v.meshWireframe);
+    check("water_dbg_grid", "solver surface, 1 vertex per column (yellow)", v.surfaceGrid);
+    check("water_dbg_liquid", "liquid voxels at the surface, alpha >= 0.5 (blue)", v.liquidVoxels);
+    check("water_dbg_partial", "partially filled cells, height = alpha (teal)", v.partialCells);
+    check("water_dbg_solid", "solid voxels: steps grey, body orange", v.solidVoxels);
+    check("water_dbg_velocity", "velocity on a vertical slice (magenta)", v.velocitySlice);
+    if (v.velocitySlice) {
+      slider("water_dbg_velocity_scale", "velocity line length (m per m/s)", v.velocityScale, 0.01f, 2.0f, 0.01f);
+      const float maxRow = m_fluidReady ? static_cast<float>(m_fluid.Settings().depth) - 1.0f : 191.0f;
+      sliderInt("water_dbg_slice", "slice Z row (-1 follows the ball)", v.velocitySliceZ, -1.0f, maxRow, 1.0f);
+    }
+    check("water_dbg_bounds", "solver grid bounds (green)", v.domainBounds);
+    check("water_dbg_xray", "x-ray (ignore scene depth)", v.xray);
+    check("water_dbg_hide", "hide shaded water", m_hideWater);
+    if (m_fluidReady) {
+      const t850::FluidSettings& fs = m_fluid.Settings();
+      const t850::FluidDebugStats& st = m_fluidDebug.Stats();
+      char line[192];
+      std::snprintf(line, sizeof(line), "grid %u x %u x %u = %u voxels, cell %.3f m",
+                    fs.width, fs.height, fs.depth, fs.width * fs.height * fs.depth, fs.cellSize);
+      gui.Text(line);
+      if (v.Any()) {
+        std::snprintf(line, sizeof(line), "mesh lines %u | liquid %u | partial %u | solid %u | body %u",
+                      st.meshLines, st.liquidVoxels, st.partialCells, st.solidVoxels, st.bodyVoxels);
+        gui.Text(line);
+        if (v.velocitySlice) {
+          std::snprintf(line, sizeof(line), "velocity lines %u on slice z=%d", st.velocityLines, st.velocitySliceZ);
+          gui.Text(line);
+        }
+        gui.Text("Layers are read back from the GPU every frame; expect a lower frame rate.");
+      }
+    }
   }
 
   if (gui.BeginSection("Optics")) {

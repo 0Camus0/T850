@@ -1042,6 +1042,9 @@
     <ClCompile Include="src\simulation\FluidSimulation.cpp">
       <Filter>Source Files\simulation</Filter>
     </ClCompile>
+    <ClCompile Include="src\simulation\FluidDebugRenderer.cpp">
+      <Filter>Source Files\simulation</Filter>
+    </ClCompile>
     <ClCompile Include="src\scene\ShadowSystem.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>

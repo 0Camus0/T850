@@ -185,6 +185,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/EditorSceneFile.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderGraph.cpp
 ${T850_SOURCE_DIR}/Framework/src/simulation/FluidSimulation.cpp
+${T850_SOURCE_DIR}/Framework/src/simulation/FluidDebugRenderer.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/ShadowSystem.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneDescriptor.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneSetup.cpp

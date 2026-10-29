@@ -4,6 +4,7 @@
 #include <debug/FrameDumper.h>
 #include <scene/RenderContainer.h>
 #include <scene/SceneSetup.h>
+#include <simulation/FluidDebugRenderer.h>
 #include <simulation/FluidSimulation.h>
 #include <utils/CameraProfiles.h>
 
@@ -47,6 +48,7 @@ private:
   // from RebuildFluid so the flag always matches solver availability.
   void SetWaterFluidFeature(bool enabled);
   t850::FluidSettings MakeFluidSettings() const;
+  void DrawFluidDebug();
 
   t850::RenderContainer m_renderContainer;
   t850::PrimitiveManager PrimitiveMgr;
@@ -62,6 +64,10 @@ private:
   t850::RenderInstanceHandle m_waterHandle;
   t850::RenderInstanceHandle m_ballHandle;  t850::FluidSimulation m_fluid;
   bool m_fluidReady = false;
+  t850::FluidDebugRenderer m_fluidDebug;
+  t850::FluidDebugView m_fluidDebugView;
+  bool m_fluidDebugMeshBound = false;
+  bool m_hideWater = false;
   // Stable 2D target the solver copies its surface into every Step, so the
   // water mesh binds one texture for the whole frame instead of chasing the
   // solver's ping-pong pair.

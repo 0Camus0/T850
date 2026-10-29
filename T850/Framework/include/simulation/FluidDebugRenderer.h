@@ -1,0 +1,96 @@
+#pragma once
+
+#include <scene/LineRenderer.h>
+#include <utils/xMaths.h>
+
+#include <cstdint>
+#include <vector>
+
+namespace t850 {
+
+  class FluidSimulation;
+  class RenderMesh;
+  class BaseDriver;
+
+  // What the fluid debug overlay draws. Every layer is read back from the solver each
+  // frame it is enabled, so it shows the simulation itself, not the shaded result.
+  struct FluidDebugView {
+    bool meshWireframe = false;   // water render mesh, displaced exactly as VS_Mesh does
+    bool surfaceGrid = false;     // one vertex per surface texel: what the solver resolves
+    bool liquidVoxels = false;    // liquid cells (alpha >= 0.5) with air above: the voxel surface
+    bool partialCells = false;    // interface cells, box height = alpha * cell
+    bool solidVoxels = false;     // wall-mask cells touching fluid; the moving body separately
+    bool velocitySlice = false;   // cell-centred velocity on one vertical XY slice
+    bool domainBounds = false;
+    bool xray = false;            // ignore scene depth
+    float velocityScale = 0.25f;  // metres of line per m/s
+    int velocitySliceZ = -1;      // grid row; -1 follows the dropped body
+    // Presentation values the vertex shader applies, so the wireframe matches the mesh.
+    float displacementScale = 1.0f;
+    bool rippleOctaves = false;
+    float rippleScale = 1.0f;
+    float rippleTime = 0.0f;
+
+    bool Any() const {
+      return meshWireframe || surfaceGrid || liquidVoxels || partialCells ||
+             solidVoxels || velocitySlice || domainBounds;
+    }
+  };
+
+  struct FluidDebugStats {
+    uint32_t meshLines = 0;
+    uint32_t liquidVoxels = 0;
+    uint32_t partialCells = 0;
+    uint32_t solidVoxels = 0;
+    uint32_t bodyVoxels = 0;
+    uint32_t velocityLines = 0;
+    int velocitySliceZ = -1;
+  };
+
+  class FluidDebugRenderer {
+  public:
+    bool Create();
+    void Destroy();
+    bool IsReady() const { return m_lineRenderer.IsReady(); }
+
+    // Captures the water mesh's CPU positions, UV0 and unique edges once.
+    bool SetWaterMesh(const RenderMesh& mesh);
+
+    void Draw(BaseDriver* driver, FluidSimulation& fluid, const FluidDebugView& view,
+              const XMATRIX44& meshWorld, const XMATRIX44& viewProjection, float farPlane,
+              Texture* sceneDepth, int viewWidth, int viewHeight);
+
+    const FluidDebugStats& Stats() const { return m_stats; }
+
+  private:
+    struct LineBatch {
+      VertexBuffer* vb = nullptr;
+      IndexBuffer* ib = nullptr;
+      unsigned vertexCapacity = 0;
+      unsigned indexCapacity = 0;
+      unsigned indexCount = 0;
+      std::vector<float> vertices;        // xyzw
+      std::vector<unsigned int> indices;  // line list
+
+      void Clear() { vertices.clear(); indices.clear(); }
+      void Release();
+      bool Upload();
+    };
+
+    enum Layer { kMesh, kGrid, kLiquid, kPartial, kSolid, kBody, kVelocity, kBounds, kLayerCount };
+
+    LineRenderer m_lineRenderer;
+    LineBatch m_batches[kLayerCount];
+    FluidDebugStats m_stats;
+
+    std::vector<float> m_meshPositions;  // xyz per vertex, object space
+    std::vector<float> m_meshUV;         // uv0 per vertex
+    std::vector<unsigned int> m_meshEdges;
+
+    std::vector<float> m_surface;
+    std::vector<float> m_alpha;
+    std::vector<float> m_velocity;
+    std::vector<uint32_t> m_mask;
+  };
+
+} // namespace t850

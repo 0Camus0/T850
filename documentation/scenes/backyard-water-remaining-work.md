@@ -11,7 +11,32 @@ are ordered by priority. Each task states which other tasks it depends on.
 The original implementation record is
 [backyard-water-simulation.md](backyard-water-simulation.md). Its sections on the solver
 (6–8, 14–16) describe the **old collocated solver** and are superseded by section 2 below until
-task W-16 updates them.
+task W-16 updates them. The order in which the tasks are executed is in
+[backyard-water-staged-plan.md](backyard-water-staged-plan.md).
+
+---
+
+## 0. Progress and review status
+
+| Task | Status | Commit | Review (independent re-run) |
+|---|---|---|---|
+| W-18 Vulkan descriptor-pool exhaustion | Done | `a18d34e5` | Accepted. Recycles only compute-opened frames past 75 % of the pool |
+| W-12 Self-test gaps | Done | `853fff34`, `08d441fa` | Accepted. `--backyard-selftest` PASS on D3D12 and Vulkan; gates are calibrated against measurements |
+| W-01 Water invisible on GL/WebGPU | Done | `ea80665b` | Accepted. GL and WebGPU scene 7: 0 errors |
+| W-08 Domain ceiling is a lid | Done, **corrected in review** | `ea80665b` + review commit | Gradient/pressure ghost-pressure mismatch at the ceiling fixed; see W-08 |
+| W-13 Dead code | Done | `ea80665b` | Accepted |
+| W-19 Ball sits in a funnel | **New, open** | — | Found in review; see W-19 |
+| W-20 Scene index ignored with `--api` | **New, open** (unverified report) | — | Reported by the Stage 2 implementer |
+| All others | Open | — | — |
+
+Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
+`--backyard-selftest` PASS on D3D12 and Vulkan; scene 7 on OpenGL and WebGPU logs 0 errors. Registry
+and shader `FluidConstants` sizes agree in all 16 kernels (20 DWORDs). Build registration validator
+PASS; `BackyardSelfTest.cpp` is correctly absent from `AndroidBuild.cmake` because Android does not
+compile `App.cpp`. Minor nits left for the next stage that touches those files: the comment in
+`VulkanDriver.h` refers to `RecycleOffscreenComputeFrame` (the function is
+`RecycleOverflowingComputeFrame`); the still-pool gate comment says "1 mm" while the code checks
+5 mm.
 
 ---
 
@@ -98,12 +123,13 @@ dropped from 1.0 m). Measured from the `[Backyard]` log lines (see 4.3).
 | Metric | Value at e90752b4 |
 |---|---|
 | Still pool surface rms (before impact) | 0.1–0.3 mm |
+| Still pool mean level (no ball, 2 s) | **sinks ≈ 1.1 cm/s** (−1.5 mm at 0.2 s, −10.5 mm at 2 s); found in Stage 0, missed by the original rms-only baseline |
 | Mean speed before impact | ≈ 0.006 m/s |
 | Mean speed at t ≈ 10.7 s | 0.0035 m/s (decaying) |
 | Surface rms at t ≈ 11 s | ≈ 2.2 cm (dominated by the −35 cm hollow under the floating ball) |
 | Water over the steps | ≤ +5 cm |
 | Ball at rest | submerged fraction 0.60 (= density ratio) |
-| Volume correction deficit | ≈ 300 cells (0.36 %) every 15 frames, constant from t = 0 |
+| Volume correction deficit | ≈ 300 cells (0.36 %) every 15 frames with the ball; **not constant** at rest without the ball (202 → 749 cells over 2 s, Stage 0) |
 | Alpha volume drift (with correction) | −0.03 % |
 | Fluid self-test | PASS D3D12 and Vulkan; projection ratio 0.448 at 50 Gauss–Seidel sweeps (0.078 with SOR) |
 | Other APIs | D3D11 full solver, 0 errors; OpenGL/WebGPU: see W-01 |
@@ -168,6 +194,24 @@ cd D:\Code\QwenFlashT850\T850-backyard\T850\bin\x64\Release
 ```
 
 Look for `[FluidSelfTest] PASS`. Report the `projection` and `massConservation` lines.
+
+The pool-level gates (still pool, isotropy, mass, moving boundary, surface texture readback, open
+ceiling) run the real Backyard solver headless:
+
+```powershell
+.\DayScene.exe --api d3d12  --backyard-selftest --logLevel info --logFile backyard_d3d12.log
+.\DayScene.exe --api vulkan --backyard-selftest --logLevel info --logFile backyard_vk.log
+```
+
+Look for `[BackyardSelfTest] PASS`. `--backyard-no-ball` skips the ball-dependent gates;
+`--backyard-selftest-frames N` changes the run length.
+
+### 4.2.1 Images
+
+Frame dumps are PPM. Convert crops with a validating converter (each PNG row needs its leading
+filter byte; a PNG without it is rejected by image viewers and by the chat tooling). The one used for
+reviews is `D:\Code\QwenFlashT850\backyard-diag\ppm2png.py <in.ppm> <out.png> [x0 y0 x1 y1] [scale]`;
+it refuses to write a malformed or oversized file.
 
 ### 4.3 Scene run with measurements
 
@@ -372,8 +416,10 @@ energy it should lose by radiating waves is replaced by an artificial heave damp
 
 **Fix.**
 1. Each substep (or each frame), compute the local water level under the ball on the GPU: average
-   the surface elevation over the columns within the ball's radius, using a small reduction
-   kernel. Read it back asynchronously (W-04 step 5) or once per frame with a 1-frame delay.
+   the surface elevation over a **ring of columns just outside the ball's footprint** (radius
+   r + 1.5·h), using a small reduction kernel. Do not average the columns inside the footprint:
+   they report the water under the ball (see W-19). Read it back asynchronously (W-04 step 5) or
+   once per frame with a 1-frame delay.
 2. Use that level instead of `waterPlaneY` for the cap volume in `AdvanceSphere`.
 3. Optional: horizontal drift. Average the liquid face velocities in a shell around the ball and
    apply drag relative to that velocity instead of to zero.
@@ -453,6 +499,23 @@ venting is not permitted is the actual defect. The gate therefore probes the **+
 wet top-row cell**: open ceiling gives `0.7939 m/s` (PASS), a closed ceiling gives `0.0000 m/s`
 exactly (FAIL). If the pool must not overflow, raise `freeboard` — that is a layout/`W-11` change,
 not a solver change.
+
+**Review correction (2026-10-28).**
+
+* **Ghost-pressure mismatch, fixed.** The pressure kernel solves the open-ceiling face with
+  θ = 1 (ghost pressure 0), but the gradient kernel fell through to `PressureForFace`, which derives
+  θ from α. For a full top row that gives θ = 0.5 and a ghost pressure of −p, so the gradient
+  applied twice the pressure step the solve assumed. The gradient now uses 0 for that face, matching
+  the pressure kernel. Measured top-face |v| max: **0.7939 → 0.1478 m/s**; gate 6 still passes
+  (threshold 0.01 m/s) on D3D12 and Vulkan. Most of the "venting velocity" above was the mismatch.
+* **"The pool genuinely overflows" is wrong.** The ball displaces about 90 cells = 0.065 m³; spread
+  over the 40.5 m² pool that raises the level by **1.6 mm**. The +0.419 m is the local splash crown
+  at the impact rim, which reaches the top of the domain because α still cannot leave through the
+  top face. That needs an extreme drop (3× density from 2.5 m); the default drop does not reach the
+  top row.
+* **Freeboard decision.** Keep 0.42 m. Raising it to ≈ 1 m takes the grid from 22 to about 29 Y
+  rows, roughly 30 % more cells on every substep, to serve a stress test. Expose `freeboard` as a
+  data-driven value in W-11 instead, so a scene that wants big splashes can opt in.
 
 ---
 
@@ -622,6 +685,85 @@ pressure convention, surface dispatch, ball model, volume correction band).
 
 **Fix/acceptance.** Run scene 7 and the fluid self-test on each available platform, record
 results in the implementation record, and file a task for each failure.
+
+---
+
+### W-18 — Vulkan descriptor pool exhausted in headless compute loops (P1, S) — DONE
+
+Added during Stage 0 by the implementer: a headless dispatch loop never reaches `CompleteFrame`, so
+the per-frame descriptor pool was reset once and ran dry (`VK_ERROR_OUT_OF_POOL_MEMORY`) at step 109
+of a 400-frame self-test. Fixed in `a18d34e5` with `RecycleOverflowingComputeFrame`, which submits,
+waits and recycles only frames opened by the compute path once 75 % of the pool is used. Interactive
+frames use a few hundred sets and never reach the threshold. Reviewed and accepted.
+
+---
+
+### W-19 — The floating ball sits in a funnel of water (P1, M, suggested: DeepSeek for the kernel)
+
+**Symptom.** At rest the ball looks like a weight on a stretched fabric: the water surface bends
+down into a dark collar around it, and reflections and refraction warp towards it.
+
+**Evidence.** With the ball at rest (submerged 0.60), the `[Backyard][columns]` profile through the
+ball reads **−35 cm** at the ball's column and still **−13 to −14 cm** in the sampled column 0.36 m
+away, while the ball's waterline radius is only ≈ 0.25 m. The back-buffer at t = 9 s shows a dark
+sloped ring around the ball. A real floating sphere leaves the surface flat up to the contact line
+(the meniscus is millimetres at this scale).
+
+**Root cause.** The water simulation is right; the rendered surface is reconstructed wrongly around
+the ball.
+
+1. `ColumnElevation` in [CS_FluidSurface3D.hlsl](../../T850/Assets/Shaders/CS_FluidSurface3D.hlsl)
+   counts solid cells only when wet water lies above them. In a column that passes through a
+   floating ball nothing wet lies above the ball, so the column reports the water level **under**
+   the ball (≈ ball bottom, −0.28 to −0.35 m below the plane). The mesh vertices inside the
+   footprint dive to the ball's underside.
+2. The 3×3 tent filter in the same kernel and the bilinear reconstruction in `VS_Mesh` spread that
+   dip one to two cells (9–18 cm) beyond the ball's waterline, where the mesh is visible: a funnel.
+3. The funnel walls are steep (the shader clamps slopes at ±4, ≈ 76°), so refraction offsets,
+   sun glint and reflections bend strongly there. That is the "lensing" look and the dark collar.
+
+**Fix.** Treat columns covered by the body as unknown and inpaint them from the free surface around
+it, inside the surface kernel so heights and slopes stay consistent:
+
+* Bind `ObjectConstants` (12 floats) to the surface kernel at **b2** (b1 is already
+  `GeometryConstants`), registry binding index 6; add it to both surface dispatches
+  (`StepInternal` and `StepStage`, rule R6).
+* In `ColumnElevation`, a column is **covered** when its centre lies within `ObjectRadius + 0.5·h`
+  of the ball centre horizontally **and** the ball pierces the surface (ball top above the ring
+  level computed below). For a covered column return the average of `ColumnElevation` sampled at
+  8 points on a ring of radius `ObjectRadius + 1.5·h` around the ball (rounded to cells, skipping
+  out-of-range and solid columns; the ring columns are never covered, so there is no recursion).
+* A fully submerged (sinking) ball must keep today's behaviour: wet water above the body already
+  counts the body cells as water and the surface over it is correct.
+* Because the tent filter calls `ColumnElevation` for its 3×3 neighbours, the inpainted value flows
+  into the slopes automatically; no change is needed in `VS_Mesh`/`FS_Mesh`.
+
+**Pitfalls.** R1 when sampling ring columns near walls; the extra loads (8 ring columns × 22 rows
+for the few covered texels) are cheap but must be skipped entirely when `ObjectEnabled < 0.5`.
+W-05 will add the same constants elsewhere; reuse the same declaration.
+
+**Acceptance.**
+
+* Scene run, ball at rest (t ≥ 8 s): in `[Backyard][columns]` no sampled column outside the ball's
+  waterline radius is more than 2 cm below the far-field mean (today: −13 to −14 cm). The
+  diagnostic must compute the same inpainting, or the gate must read the surface texture.
+* New `--backyard-selftest` gate: after the ball settles, the surface texture at radius r + 1.5·h
+  around the ball is within ±1 cm of the far-field mean, and covered texels are within ±2 cm of the
+  ring mean. Demonstrate that the gate fails with the inpainting disabled.
+* Visual check (4.4) at t = 9 s: no dark collar; rings after the impact unchanged.
+* Fluid and backyard self-tests pass on D3D12 and Vulkan.
+
+---
+
+### W-20 — `config.json` scene index ignored when `--api` is passed (P3, S, suggested: either)
+
+Reported by the Stage 2 implementer, not yet verified in review: a bare `--api gl` run loads
+SandboxScene even though `config.json` has `"scene": 7`, so tests that rely on the config scene
+silently test the wrong scene. Reproduce first. If confirmed, make the configured scene apply unless
+`--scene` is passed, and add `--scene 7` to every command in this document regardless (they already
+have it).
+
+**Acceptance.** `DayScene.exe --api gl` with `"scene": 7` in `config.json` logs the Backyard scene.
 
 ---
 

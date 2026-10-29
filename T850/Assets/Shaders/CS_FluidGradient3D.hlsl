@@ -195,6 +195,8 @@ float FaceValue(int3 a, int3 b, int axis, float inputValue)
         pA = PressureForFace(b, a);
     if (bLiquid)
         pB = PressureIn.Load(int4(b, 0)).x;
+    else if (OpenCeiling > 0.5f && IsAboveTop(b))
+        pB = 0.0f; // Must match the pressure kernel, which solves this face with theta = 1.
     else
         pB = PressureForFace(a, b);
 

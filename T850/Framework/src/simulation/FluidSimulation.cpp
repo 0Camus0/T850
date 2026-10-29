@@ -827,6 +827,13 @@ bool FluidSimulation::ReadVelocity(BaseDriver* driver, std::vector<float>& out) 
   return true;
 }
 
+bool FluidSimulation::ReadWallMask(BaseDriver* driver, std::vector<uint32_t>& out) {
+  out.clear();
+  if (!m_ready || !RefreshMaskSnapshot(driver)) return false;
+  out = m_maskSnapshot;
+  return true;
+}
+
 bool FluidSimulation::ReadSurface(BaseDriver* driver, std::vector<float>& out) {
   out.clear();
   if (!m_ready || !driver || !m_surfaceToBufferPipeline) return false;

@@ -242,6 +242,28 @@ per-frame `substeps=` lines. Zero `[ERROR]` lines are required.
 `--dumpSnapshot-seconds 0.9` (and `2.0`) writes `dumps_d3d12_f*/RT_Dump_BackBuffer.ppm`. After an
 impact, rings must spread in **all** directions from the ball and reflect from the walls.
 
+### 4.5 Debug view (ImGui "Backyard Water" → "Debug view")
+
+`FluidDebugRenderer` (`Framework/src/simulation/FluidDebugRenderer.cpp`) draws line overlays read
+back from the solver every frame a layer is on (a GPU stall; expect ~70–100 fps instead of ~280):
+
+| Layer | Shows | Colour |
+|---|---|---|
+| water mesh wireframe | the 288×144 render mesh, displaced on the CPU exactly as `VS_Mesh` does | white, translucent |
+| solver surface | one vertex per surface texel: the resolution the solver actually has | yellow |
+| liquid voxels | cells with α ≥ 0.5 and air above: the voxel free surface the pressure solve sees | blue |
+| partially filled cells | interface cells, box height = α·h | teal |
+| solid voxels | wall-mask shell touching fluid; steps grey, the stamped body orange | grey / orange |
+| velocity slice | cell-centred velocity on one XY slice (follows the ball by default) | magenta |
+| grid bounds | solver domain box | green |
+
+"x-ray" ignores scene depth; "hide shaded water" hides the water mesh. Depth testing uses GBuffer
+depth, which excludes the water, so voxels under the surface stay visible. Use this when changing
+grid size or cell size: it shows how coarse the solver is compared with the render mesh, and how the
+ball is voxelised. Verified on D3D12, Vulkan and D3D11 with 0 errors; GL/WebGPU run no solver, so
+nothing is drawn there. When any layer changes how the solver data is laid out (W-02 storage, W-03
+transport), update the readback interpretation in the debug renderer in the same change.
+
 ---
 
 ## 5. Tasks

@@ -131,6 +131,8 @@ namespace t850 {
     // per texel (R elevation delta, G foam, B/A slopes). Reading the volume fraction
     // cannot detect a bug in the surface kernel itself, which is why this exists.
     bool ReadSurface(BaseDriver* driver, std::vector<float>& out);
+    // The wall mask the kernels bind right now: authored solids plus the moving body.
+    bool ReadWallMask(BaseDriver* driver, std::vector<uint32_t>& out);
 
     // Loads the basin bounds and solid intrusions (pool steps) from the
     // Blender-emitted layout, so wall conditions come from the real geometry.

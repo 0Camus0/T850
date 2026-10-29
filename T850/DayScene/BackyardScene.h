@@ -47,6 +47,12 @@ private:
   // Enables/clears the FLUID_SURFACE permutation on the water mesh. Called only
   // from RebuildFluid so the flag always matches solver availability.
   void SetWaterFluidFeature(bool enabled);
+  // Builds and binds the static per-column floor height texture at t24, so the
+  // water shader can use the real depth over the submerged steps.
+  bool BindFloorHeightTexture(t850::BaseDriver* driver, t850::PrimitiveInst* water);
+  int m_waterFloorTexture = -1;
+  uint32_t m_waterFloorWidth = 0;
+  uint32_t m_waterFloorDepth = 0;
   t850::FluidSettings MakeFluidSettings() const;
   void DrawFluidDebug();
 

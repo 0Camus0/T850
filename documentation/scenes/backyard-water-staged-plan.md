@@ -44,7 +44,7 @@ starting from the tip of `backyard_scene`.
 | 1b. Make failures provable | W-12 | M | **DONE** — gates 1, 2, 3, 6 pass on both APIs |
 | 1c. Readback gates | W-12 gates 4, 5 + boundedness | M | **DONE** — gate 5 proven to fail on the id.z bug |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
-| 3. Rendering correctness | W-19, W-09, W-10 | M | W-19 **DONE in review** (`fa5422ff`); W-09, W-10 remain |
+| 3. Rendering correctness | W-19, W-09, W-10 | M | W-19 **DONE in review** (`fa5422ff`); W-09 **DONE** (see Stage 3); W-10 remains |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
@@ -398,12 +398,12 @@ interior operator.
 - W-19 is **done** (`fa5422ff`): covered surface columns are inpainted in `CS_FluidSurface3D` and
   gate 7 guards it. Do not undo it while touching the surface kernel; gate 7 must stay green.
 - Per-column static floor height texture (CPU-built from the static mask) so absorption uses the
-  real depth over the steps instead of a constant 1.56 m.
+  real depth over the steps instead of a constant 1.56 m. **DONE.**
 - Depth test the refracted `SceneColorTex` lookup against `SceneDepthTex` so the ball and coping
-  stop bleeding into the water.
+  stop bleeding into the water. **DONE.**
 - Blend the Fresnel normal toward the flat normal so crests change reflectivity without dark
-  patches.
-- W-10: a depth-only draw of the displaced water gives post effects a surface to see.
+  patches. **DONE.**
+- W-10: a depth-only draw of the displaced water gives post effects a surface to see. **REMAINS.**
 
 **Files** — `FS_Mesh.hlsl`, `RenderMesh.cpp` (new texture slot — remember the per-slot `if`
 branch, bug 18 in the record), `BackyardScene.cpp`, render graph JSON if a new target is needed.
@@ -415,6 +415,68 @@ wireframe" overlay must sit on the depth-only surface (same displacement), and g
 green.
 
 **Exit** — water optics match the geometry; no new passes disabled.
+
+---
+
+#### Stage 3a — W-09 water optics (done)
+
+**What changed**
+
+1. **Per-column floor depth.** `BackyardScene::BindFloorHeightTexture` builds a `width x depth`
+   RGBA32F texture from the *authored* wall mask — floor Y = `basinMinY + solidRunFromBasinFloor *
+   cellSize` — and binds it at **t24** (`FluidFloorTexture`), with `RenderMesh::Draw` naming the slot
+   (bug 18). `FS_Mesh` then computes `columnDepth = waterPlaneY + elevation - floorY`, nearest-texel
+   `Load` on purpose (bilinear across a step edge invents a ramp that never existed). The old
+   `WaterOptics5.y` constant survives as the fallback when no texture is bound, gated by a new
+   `WaterOptics5.w` flag (`WaterTunables::floorTextureBound`). Logged range: floor Y −1.600…−0.340,
+   so depth **0.300…1.560 m**.
+2. **Refraction depth test.** `SceneIsNearerAt()` compares the depth at the refracted UV with this
+   fragment's own depth and falls back to the unrefracted UV. Hard switch, not a blend (GLM): the
+   occlusion boundary is a geometric edge and cross-fading two lookups is what smears the coping.
+3. **Fresnel normal.** `dot(blendedNormal, eyeDir)` replaces `eyeDir.y`, where the blended normal is
+   the **solver** height-field normal (not the presentation ripple layer) lerped 50 % toward flat.
+
+**Two bugs found while verifying — both real, both mine**
+
+* **`MaxPrimitiveTextures` was 24, and slot 24 is one past the end.** `SetTexture(tex, 24)` wrote out
+  of bounds and `RenderMesh` read out of bounds; the shader got floorY = 0 for every column, so
+  `columnDepth` collapsed to the 0.02 m clamp and the **whole pool** brightened uniformly (+8.1
+  levels). Fixed by raising the limit to 28 with headroom. Without the A/B this would have shipped
+  as "looks brighter, must be working".
+* **`Pos.z / Pos.w` is NDC z in [−1,1], not the [0,1] depth `SceneDepthTex` stores.** Comparing the
+  two silently made every occlusion test fail (the refraction fix measured *exactly* 0 changed
+  pixels before this). `hposition.z` is the rasterised depth in [0,1] and is the correct value.
+
+**Measured** (deterministic A/B: `--regressionFixedDt 0.0033 --dump-frame 600`, same sim state, so
+the only difference is the shader):
+
+| Region | before | after | delta |
+|---|---|---|---|
+| deep end (left) | 126.71 | 126.89 | **+0.18** (unchanged, 1.56 m either way) |
+| steps (right) | 122.52 | 125.20 | **+2.68** (now tinted as shallow) |
+| pool mid | 125.58 | 125.48 | −0.10 |
+| dry deck / sky / house | — | — | ≤ 0.04 |
+
+9,055 pixels differ >12, and the large diffs sit in x 490…932, y 483…625 — the step side of the
+pool. 464k of 921k pixels are bit-identical, which is the determinism proof.
+
+**Honest note on the refraction fix.** Isolating it (`v2-refract` vs baseline at frame 200) changed
+**zero** pixels, and instrumentation showed why: occlusion *does* fire, but only where the
+displacement is tiny. Near the ball the surface is flat (W-19 already inpainted it), so
+`refractOffset ≈ 0` there; where the ripples are strong there is nothing in front to occlude. With
+`refractionStrength` at its default 0.025–0.03 the artefact is therefore latent, not visible. The
+fix is kept because it is correct and cheap and becomes active as soon as a crest displaces the
+lookup onto the ball or coping — and because without it those pixels sample whatever happens to be
+in front.
+
+**Fresnel:** measurable but small on calm water (0.844 in the ball region, 0.378 across the pool at
+frame 600; 1.507/0.159 at frame 200). It is the mechanism that lets crests change reflectivity.
+
+**Verification.** Release x64 builds; `--backyard-selftest` and `--fluid-selftest` PASS on D3D12 and
+Vulkan with numbers unchanged from HEAD; scene 7 → 0 errors on D3D12, Vulkan, D3D11, GL, WebGPU
+(floor texture bound exactly when the solver is up).
+
+**Exit** — W-09 done; W-10 (depth-only water for post effects) still open.
 
 ---
 
@@ -754,7 +816,18 @@ contains `[Backyard]` lines.
 
 ### Stage 3 — W-09, W-10
 
-_Pending._
+W-09 done (details in 3a above). Three fixes: per-column floor depth texture at t24 (nearest
+texel, RGBA32F, built from the authored mask), a refraction depth test against `SceneDepthTex`, and
+a Fresnel normal blended 50 % from the solver height field toward flat. Deterministic A/B at frame
+600: steps +2.68 brightness levels while the deep end is unchanged (+0.18), large diffs confined to
+the step side of the pool, 464k/921k pixels bit-identical. Two real bugs found on the way:
+`MaxPrimitiveTextures` was 24, so the new slot 24 was an out-of-bounds write that made the shader
+read floorY = 0 and brighten the whole pool uniformly until fixed; and `Pos.z/Pos.w` is NDC z in
+[−1,1], not the [0,1] depth `SceneDepthTex` holds, which made the refraction test never fire.
+Refraction is measured-inert at the default 0.025–0.03 strength (occlusion only fires where the
+surface is flat, so the displacement is ~0 there); kept because it is correct and becomes active at
+stronger refraction or a displaced crest. All gates PASS on both APIs with HEAD's numbers; scene 7
+→ 0 errors on five backends. W-10 remains.
 
 ### Stage 4 — W-11
 

@@ -292,6 +292,12 @@ bool BackyardScene::RebuildFluid() {
     } else {
       T8_LOG_ERROR("[Backyard] Cannot load Textures/Backyard/WaterNormal.png");
     }
+    // Per-column static floor height, so absorption uses the real depth over the
+    // steps (0.26-0.86 m) instead of one constant 1.56 m.
+    if (BindFloorHeightTexture(driver, water))
+      SceneProp.Water.floorTextureBound = true;
+    else
+      SceneProp.Water.floorTextureBound = false;
     // Only now — with a live solver and a bound surface texture — may the
     // displacement permutation be selected.
     water->PersistentFeatureBits |= t850::ShaderKey::FLUID_SURFACE;
@@ -348,6 +354,12 @@ void BackyardScene::DestroyAssets() {
   if (m_waterSurfaceRT >= 0 && pFramework && pFramework->pVideoDriver)
     pFramework->pVideoDriver->DestroyRT(m_waterSurfaceRT);
   m_waterSurfaceRT = -1;
+  if (m_waterFloorTexture >= 0 && pFramework && pFramework->pVideoDriver)
+    pFramework->pVideoDriver->DestroyTexture(m_waterFloorTexture);
+  m_waterFloorTexture = -1;
+  m_waterFloorWidth = 0;
+  m_waterFloorDepth = 0;
+  SceneProp.Water.floorTextureBound = false;
   m_instances.clear();
   m_primitiveIndices.clear();
   PrimitiveMgr.DestroyPrimitives();
@@ -359,8 +371,74 @@ void BackyardScene::DestroyAssets() {
   m_assetsCreated = false;
 }
 
-void BackyardScene::SetWaterFluidFeature(bool enabled) {
-  if (!m_waterHandle.IsValid()) return;
+bool BackyardScene::BindFloorHeightTexture(t850::BaseDriver* driver, t850::PrimitiveInst* water) {
+  if (!driver || !water) return false;
+  const t850::FluidSettings& fs = m_fluid.Settings();
+  const uint32_t width = fs.width;
+  const uint32_t depth = fs.depth;
+  const uint32_t rows = fs.height;
+  // The authored mask is static, so an existing texture with the same dimensions is
+  // still correct: rebind it rather than churning a new one on every slider release.
+  if (m_waterFloorTexture >= 0 && m_waterFloorWidth == width && m_waterFloorDepth == depth) {
+    if (t850::Texture* existing = driver->GetTexture(m_waterFloorTexture)) {
+      water->SetTexture(existing, 24);
+      water->Update();
+      return true;
+    }
+    m_waterFloorTexture = -1;
+  }
+  const std::vector<uint32_t>& mask = m_fluid.BaseMask();
+  if (mask.size() != static_cast<size_t>(width) * rows * depth) {
+    T8_LOG_ERROR("[Backyard] Floor height texture: mask holds %zu cells, expected %ux%ux%u",
+                 mask.size(), width, rows, depth);
+    return false;
+  }
+  // One texel per solver column, holding the world Y of the floor. The floor is the
+  // top of the solid run that starts at the basin bottom: the submerged steps are
+  // solid from the floor up, and an open water column has no solid there at all.
+  // Built from the AUTHORED mask, so the floating body (which is stamped into a
+  // separate working mask) can never move the floor.
+  std::vector<float> texels(static_cast<size_t>(width) * depth * 4, 0.0f);
+  float lowest = 0.0f;
+  float highest = 0.0f;
+  bool first = true;
+  for (uint32_t z = 0; z < depth; ++z) {
+    for (uint32_t x = 0; x < width; ++x) {
+      uint32_t solidRun = 0;
+      for (uint32_t y = 0; y < rows; ++y) {
+        const size_t index = x + static_cast<size_t>(width) * (y + static_cast<size_t>(rows) * z);
+        if (mask[index] == 0u) break;
+        ++solidRun;
+      }
+      const float floorY = fs.basinMinY + static_cast<float>(solidRun) * fs.cellSize;
+      const size_t out = (static_cast<size_t>(x) + static_cast<size_t>(width) * z) * 4;
+      texels[out] = floorY;
+      if (first) { lowest = highest = floorY; first = false; }
+      else { lowest = (std::min)(lowest, floorY); highest = (std::max)(highest, floorY); }
+    }
+  }
+  const int textureIndex = driver->CreateFloatTexture(static_cast<int>(width),
+                                                      static_cast<int>(depth), texels.data());
+  t850::Texture* texture = textureIndex >= 0 ? driver->GetTexture(textureIndex) : nullptr;
+  if (!texture) {
+    T8_LOG_ERROR("[Backyard] Cannot create the floor height texture (%ux%u)", width, depth);
+    return false;
+  }
+  water->SetTexture(texture, 24);
+  water->Update();
+  if (m_waterFloorTexture >= 0 && m_waterFloorTexture != textureIndex)
+    driver->DestroyTexture(m_waterFloorTexture);
+  m_waterFloorTexture = textureIndex;
+  m_waterFloorWidth = width;
+  m_waterFloorDepth = depth;
+  T8_LOG_INFO("[Backyard] Floor height texture bound (%ux%u), floor Y %.3f .. %.3f "
+              "(water plane %.3f, so depth %.3f .. %.3f m)",
+              width, depth, lowest, highest, fs.waterPlaneY,
+              fs.waterPlaneY - highest, fs.waterPlaneY - lowest);
+  return true;
+}
+
+void BackyardScene::SetWaterFluidFeature(bool enabled) {  if (!m_waterHandle.IsValid()) return;
   t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle);
   if (!water) return;
   const uint64_t bit = t850::ShaderKey::FLUID_SURFACE;

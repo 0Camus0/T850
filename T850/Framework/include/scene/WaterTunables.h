@@ -80,7 +80,12 @@ namespace t850 {
     float scatterNormal = 0.03f;
     float scatterDepth = 0.45f;
     float waterLineY = -0.04f;
+    // Fallback depth when no floor-height texture is bound. It is one constant, so
+    // it is only correct at the deep end (1.56 m); the scene binds a per-column
+    // floor texture and the shader prefers it. Kept so a scene can opt out.
     float waterToFloor = 1.56f;
+    // Set by BackyardScene once the per-column floor texture is bound at t24.
+    bool floorTextureBound = false;
 
     // ── Surface detail ──
     float analyticWaveScale = 1.0f;
@@ -248,7 +253,8 @@ namespace t850 {
     g.WaterOptics2 = XVECTOR3(w.deepR, w.deepG, w.deepB, w.refractionBorderFade);
     g.WaterOptics3 = XVECTOR3(w.causticGain, w.causticPower, w.causticSlopeScale, w.causticFloorBase);
     g.WaterOptics4 = XVECTOR3(w.fresnelBoost, w.fresnelBias, w.scatterWrap, w.scatterNormal);
-    g.WaterOptics5 = XVECTOR3(w.scatterDepth, w.waterToFloor, w.waterLineY, 0.0f);
+    g.WaterOptics5 = XVECTOR3(w.scatterDepth, w.waterToFloor, w.waterLineY,
+                              w.floorTextureBound ? 1.0f : 0.0f);
     g.WaterWaves0 = XVECTOR3(w.analyticWaveScale, w.analyticWaveSpeed, w.normalMapGain, w.vertexWaveScale);
     g.WaterWaves1 = XVECTOR3(w.normalTileX, w.normalTileZ, w.normalDriftX, w.normalDriftZ);
     g.WaterWaves2 = XVECTOR3(w.normalTile2X, w.normalTile2Z, w.normalDrift2X, w.normalDrift2Z);

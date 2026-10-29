@@ -586,18 +586,24 @@ struct CoCOutput {
     @location(0) color0: f32,
     @location(1) color1: f32,
 }
+// Nearest of the opaque depth (tex0) and the depth the forward pass drew into (tex1),
+// which holds transparent surfaces such as the pool water. Reverse-Z: larger is nearer.
+// Graphs without forward depth bind the opaque depth to both.
+fn SampleCoCDepth(uv: vec2<f32>) -> f32 {
+    return max(textureSampleLevel(tex0, SS, uv, 0.0).r, textureSampleLevel(tex1, SS, uv, 0.0).r);
+}
 @fragment fn FS(input: FragmentInput) -> CoCOutput {
     var result: CoCOutput;
-    let depth = textureSampleLevel(tex0, SS, input.texture0, 0.0).r;
+    let depth = SampleCoCDepth(input.texture0);
     if (!IsSceneDepthValid(depth)) { return result; }
 #ifdef AUTO_FOCUS
-    var focus = textureSampleLevel(tex0, SS, vec2<f32>(0.5), 0.0).r;
+    var focus = SampleCoCDepth(vec2<f32>(0.5));
     if (quadPass.LightPositions[1].z > 0.5 && !IsSceneDepthValid(focus) && quadPass.LightPositions[1].w > 0.0) {
         var best = 0.0;
         for (var row = -2; row <= 2; row++) {
             for (var column = -2; column <= 2; column++) {
                 let coords = clamp(vec2<f32>(0.5) + vec2<f32>(f32(column), f32(row)) * (quadPass.LightPositions[1].w * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
-                let candidate = textureSampleLevel(tex0, SS, coords, 0.0).r;
+                let candidate = SampleCoCDepth(coords);
                 if (IsSceneDepthValid(candidate)) { best = max(best, candidate); }
             }
         }

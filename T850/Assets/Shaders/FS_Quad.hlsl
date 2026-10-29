@@ -1168,6 +1168,14 @@ struct FS_OUT{
 	float color1 : SV_TARGET1;
 };
 Texture2D tex0 : register(t0);
+// Depth the forward pass drew into. Transparent surfaces such as the pool water are
+// kept out of the GBuffer (SSR must see the floor), so tex0 alone treats them as
+// empty. Graphs without forward depth bind the opaque depth here as well.
+Texture2D tex1 : register(t1);
+// Nearest surface the camera sees. Reverse-Z, so the nearer depth is the larger.
+float SampleCoCDepth(float2 uv) {
+	return max(tex0.SampleLevel(SS, uv, 0.0f).r, tex1.SampleLevel(SS, uv, 0.0f).r);
+}
 FS_OUT FS( VS_OUTPUT input ) : SV_TARGET {	
 	float aperture = LightPositions[0].x;
 	float focalLength = LightPositions[0].y;
@@ -1175,20 +1183,20 @@ FS_OUT FS( VS_OUTPUT input ) : SV_TARGET {
 	OUT.color0 = 0.0;
 	OUT.color1 = 0.0;
 
-	float z = tex0.SampleLevel(SS, input.texture0.xy, 0.0f).r;
+	float z = SampleCoCDepth(input.texture0.xy);
 	if (!IsSceneDepthValid(z))
 		return OUT;
 
 	float depthFocus;
   #ifdef AUTO_FOCUS
-	depthFocus = tex0.SampleLevel(SS, float2(0.5, 0.5), 0.0f).r;// Auto Focus center
+	depthFocus = SampleCoCDepth(float2(0.5, 0.5));// Auto Focus center
 		if (LightPositions[1].z > 0.5f && !IsSceneDepthValid(depthFocus) && LightPositions[1].w > 0.0f) {
 			float bestDepth = 0.0f;
 			[unroll] for (int focusY = -2; focusY <= 2; ++focusY) {
 				[unroll] for (int focusX = -2; focusX <= 2; ++focusX) {
 					float2 focusUV = saturate(float2(0.5, 0.5) +
 						float2((float)focusX, (float)focusY) * (LightPositions[1].w * 0.5f));
-					float candidate = tex0.SampleLevel(SS, focusUV, 0.0f).r;
+					float candidate = SampleCoCDepth(focusUV);
 					if (IsSceneDepthValid(candidate))
 						bestDepth = max(bestDepth, candidate);
 				}

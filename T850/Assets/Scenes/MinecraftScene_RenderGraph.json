@@ -281,7 +281,8 @@
       "name": "CoC",
       "target": "CoC",
       "inputs": [
-        { "source": "GBuffer:DEPTH", "slot": 0 }
+        { "source": "GBuffer:DEPTH", "slot": 0 },
+        { "source": "GBuffer:DEPTH", "slot": 1 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "COC_PASS" }

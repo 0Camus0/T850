@@ -298,16 +298,6 @@ bool BackyardScene::RebuildFluid() {
       SceneProp.Water.floorTextureBound = true;
     else
       SceneProp.Water.floorTextureBound = false;
-    // The render graph's "Water Depth" pass draws exactly one mesh index into the
-    // WaterDepth target. Verify that index is still the water: if the asset list is
-    // reordered, the pass would silently draw the wrong mesh (or nothing) and the
-    // depth target would look plausible while being wrong.
-    constexpr int kWaterMeshIndex = 5;   // Backyard_Water is the 6th asset
-    if (m_waterHandle.index != static_cast<uint32_t>(kWaterMeshIndex)) {
-      T8_LOG_ERROR("[Backyard] Water instance is %u but the 'Water Depth' render-graph pass "
-                   "draws mesh index %d; update BackyardScene_RenderGraph.json",
-                   m_waterHandle.index, kWaterMeshIndex);
-    }
     // Only now — with a live solver and a bound surface texture — may the
     // displacement permutation be selected.
     water->PersistentFeatureBits |= t850::ShaderKey::FLUID_SURFACE;
@@ -737,9 +727,11 @@ void BackyardScene::OnDraw() {
         {m_renderContainer.Graph().GetRTHandle("GBuffer"), t850::BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
         {m_renderContainer.Graph().GetRTHandle("Deferred"), t850::BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
         {m_renderContainer.Graph().GetRTHandle("ExtraHelper"), t850::BaseDriver::COLOR0_ATTACHMENT, "HDR_Final"},
-        // Depth-only target written by the "Water Depth" pass (W-10): the opaque depth
-        // lives in GBuffer:DEPTH, so this is where the displaced water surface shows up.
-        {m_renderContainer.Graph().GetRTHandle("WaterDepth"), t850::BaseDriver::DEPTH_ATTACHMENT, "WaterDepth"}};
+        // W-10: the forward pass draws the water into Deferred's own depth buffer, so
+        // this holds exactly the visible water surface (opaque depth is GBuffer:DEPTH).
+        // CoC takes the nearer of the two. With DOF on, the DOF pass re-pushes Deferred
+        // and clears it before this end-of-frame dump, so dump it with DOF off.
+        {m_renderContainer.Graph().GetRTHandle("Deferred"), t850::BaseDriver::DEPTH_ATTACHMENT, "WaterDepth"}};
     m_dumper.DumpFrame(
         pFramework->pVideoDriver, m_camera, m_lightCamera, SceneProp, targets, m_deltaSeconds);
     if (m_dumper.ShouldExit()) std::exit(0);

@@ -594,7 +594,8 @@ void BackyardScene::OnDraw() {
   DrawFluidDebug();
 #endif
 
-  if (m_fluidReady) {
+  // The probe's readbacks stall the GPU, so skip them when nothing would be logged.
+  if (m_fluidReady && t850::Log::GetMaxLevel() >= t850::Log::LVL_INFO) {
     static int probeFrame = 0;
     if (++probeFrame % 60 == 0) {
       t850::FluidSimulation::Diagnostics diagnostics;

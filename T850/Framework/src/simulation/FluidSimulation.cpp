@@ -768,6 +768,8 @@ bool FluidSimulation::CorrectVolumeFraction(BaseDriver* driver, float& appliedSc
   // Verify the correction actually landed. A correction that is computed but
   // then clamped back on the GPU is the difference between "mass is conserved"
   // and "mass is conserved on paper", so measure the result instead of assuming.
+  // The second readback is a full GPU stall and only feeds a debug line.
+  if (Log::GetMaxLevel() < Log::LVL_DEBUG) return true;
   float totalAfter = 0.0f;
   float interfaceAfter = 0.0f;
   if (MeasureVolumeFraction(driver, totalAfter, interfaceAfter)) {
@@ -1251,7 +1253,7 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   m_settings.deltaTime = subDt;
   bool ok = true;
   for (uint32_t substep = 0; substep < substeps && ok; ++substep)
-    ok = StepInternal(driver);
+    ok = StepInternal(driver, substep + 1 == substeps);
   // Restore the frame delta so the caller and the GUI keep seeing the real value.
   m_settings.deltaTime = frameDt;
 
@@ -1268,7 +1270,7 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   return ok;
 }
 
-bool FluidSimulation::StepInternal(BaseDriver* driver) {
+bool FluidSimulation::StepInternal(BaseDriver* driver, bool writeSurface) {
   if (!m_ready || !driver) return false;
   m_time += m_settings.deltaTime;
   const uint32_t next = (m_current + 1) % kVelocityCount;
@@ -1373,6 +1375,7 @@ bool FluidSimulation::StepInternal(BaseDriver* driver) {
   // cells solid, the advection writes them dry, and the volume correction restores
   // exactly the amount the body's submerged volume displaced.
 
+  if (!writeSurface) return true;
   // Derive the renderable 2D surface from the volume. The surface pass samples
   // the previous surface and writes a separate target (ping-pong): a resource
   // cannot be both read and written in one dispatch.

@@ -140,7 +140,7 @@ command run, and anything you could not verify.
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
 | 3. Rendering correctness | W-19, W-09, W-10 | M | **DONE, reviewed** — W-19 (`fa5422ff`), W-09 (`517ae6bf`), W-10 (`96d84638`, redesigned in review `47500166`: CoC consumes the nearer depth, no extra pass) |
 | 3c. Vulkan fluid self-test after Backyard init | W-21 | S–M | **DONE** — root cause was NOT frame ownership: it was uninitialised GPU volume memory. Fixed in `TryInitialize` |
-| 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
+| 4. Data-driven tunables | W-11 | M | **BLOCKED** — a 107-field `WaterTunables` breaks `DayScene.cpp`'s glaze instantiation; needs a struct split first (Stage 4a). See the Stage 4 attempt note |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
@@ -663,6 +663,51 @@ plane.
 
 **Exit** — the "nothing hardcoded" requirement is measurably satisfied for the water; every later
 stage can tune without a rebuild.
+
+#### Stage 4 attempt (2026-10-29) — BLOCKED on a glaze/MSVC limit, nothing committed
+
+Attempted items 1, 2 and 3. **Items 1, 2 are ready; item 3 (the JSON load) cannot compile as
+designed**, and the cause is worth recording before the next attempt.
+
+**Measured facts**
+
+- `WaterTunables` has **104** fields at `5798477c`. Adding the three promoted solver values
+  (`maxSubstepDt`, `alphaCompression`, `volumeCheckInterval`) takes it to **107**.
+- With 107 fields the build fails in a **legacy translation unit**, `DayScene.cpp`, with
+  `glaze/util/parse.hpp(1394)` `C3878: syntax error: unexpected token ')'`. `DayScene.cpp` contains
+  no direct glaze call; it instantiates glaze transitively through a header that serializes
+  `SceneProps`, which contains `WaterTunables`. 104 members compile, 107 do not.
+- Giving `WaterTunables` an explicit `glz::meta` (101 keys, the six excluded members documented)
+  **does not fix it**. Two further experiments also failed: the meta in `WaterTunables.h` (so every
+  TU sees it), and moving the meta plus the loader into a dedicated TU.
+- An explicit meta of **101 keys cannot be read with `error_on_unknown_keys = true`** in this glaze
+  version: `json/read.hpp(1892)` `static_assert(bool(hash_info<T>.type))` fails, i.e. the
+  compile-time perfect hash cannot be built at that key count. GLM confirms there is no knob; the
+  seed search simply fails.
+- `glz::raw_json` is available (`glaze/core/common.hpp`), so capturing the `"water"` object as raw
+  text and parsing it separately is viable *in principle*.
+
+**Two viable routes, both costed**
+
+1. **Split `WaterTunables` into sub-structs** (`Solver`, `Optics`, `Surface`, `Reflection`, `Foam`,
+   `Body`), each with its own meta and ≤ ~40 keys. This fixes both the reflection explosion and the
+   perfect-hash limit, and Qwen's review argues it is the durable answer. Cost: ~100 call sites
+   (`w.absorbR` → `w.optics.absorbR`), plus `BuildWaterGpu` and every GUI slider. That is a
+   refactor, and rule 5 forbids drive-by refactors inside a stage — so it should be its own stage.
+2. **Keep one struct, hand-roll the JSON surface**: a `std::map<std::string, float>`-style applier
+   written by hand (no glaze reflection of `WaterTunables`), plus a meta on whatever *does* get
+   serialized so the 107-field struct is never auto-reflected. Cheaper today, but it bypasses glaze
+   and needs its own type dispatch and tests.
+
+**Recommendation** — do route 1 as a dedicated stage (call it **Stage 4a, "split the water
+tunables"**), then Stage 4 proper becomes trivial: six small metas, each with `error_on_unknown_keys
+= true` working normally, and one JSON object per group. Route 2 is a fallback if the split proves
+too invasive.
+
+**What is already proven and can be reused** (reverted, not committed, because it does not build):
+the three `WaterTunables` fields, the two `FluidSimulation` setters, the `MakeFluidSettings`
+wiring, the `OnUpdate` push and the four GUI sliders were all written and are correct — they only
+need the struct split to land first.
 
 ---
 

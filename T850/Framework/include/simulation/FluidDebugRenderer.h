@@ -39,12 +39,18 @@ namespace t850 {
 
   struct FluidDebugStats {
     uint32_t meshLines = 0;
-    uint32_t liquidVoxels = 0;
-    uint32_t partialCells = 0;
-    uint32_t solidVoxels = 0;
-    uint32_t bodyVoxels = 0;
+    // Candidates per layer, and how many were drawn (layers are capped, see kMaxBoxesPerLayer).
+    uint32_t liquidVoxels = 0, liquidDrawn = 0;
+    uint32_t partialCells = 0, partialDrawn = 0;
+    uint32_t solidVoxels = 0, solidDrawn = 0;
+    uint32_t bodyVoxels = 0, bodyDrawn = 0;
     uint32_t velocityLines = 0;
     int velocitySliceZ = -1;
+    // Liquid cells with no air neighbour; their alpha should stay 1.
+    uint32_t bulkCells = 0;
+    uint32_t bulkBelow98 = 0;
+    float bulkMeanAlpha = 0.0f;
+    float bulkMinAlpha = 0.0f;
   };
 
   class FluidDebugRenderer {
@@ -78,6 +84,13 @@ namespace t850 {
     };
 
     enum Layer { kMesh, kGrid, kLiquid, kPartial, kSolid, kBody, kVelocity, kBounds, kLayerCount };
+
+    // D3D12 streams dynamic vertex buffers through a 16 MB per-frame ring shared with the
+    // constant buffers; uncapped voxel layers (one box per water cell) overflowed it.
+    static constexpr size_t kMaxBoxesPerLayer = 8000;
+    struct Box { float x0, y0, z0, x1, y1, z1; };
+    static uint32_t EmitBoxes(LineBatch& batch, const std::vector<Box>& boxes);
+    std::vector<Box> m_boxScratch[4];
 
     LineRenderer m_lineRenderer;
     LineBatch m_batches[kLayerCount];

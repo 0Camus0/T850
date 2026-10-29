@@ -260,15 +260,23 @@ Nothing is created or read back while every option is off.
 | water mesh wireframe | The actual render mesh (288×144 vertices), displaced on the CPU exactly as `VS_Mesh` does | white, translucent |
 | solver surface, 1 vertex per column | One vertex per surface texel (100×50): the resolution the simulation really has | yellow |
 | liquid voxels at the surface, alpha >= 0.5 | Cells at least half full with air above: the blocky surface the pressure solve sees | blue |
-| partially filled cells, height = alpha | The interface cells, each box filled to its water fraction | teal |
+| partially filled cells, height = alpha | Interface cells only (0.02 < α < 0.98 with an air neighbour), each box filled to its water fraction | teal |
 | solid voxels: steps grey, body orange | The wall-mask shell touching fluid: steps, and the ball as the solver voxelises it | grey / orange |
 | velocity on a vertical slice | Cell-centred flow arrows on one XY slice; follows the ball by default. Sliders: line length (m per m/s) and slice Z row | magenta |
 | solver grid bounds | The simulation box | green |
 | x-ray (ignore scene depth) | Draws every layer through walls and the ball | — |
 | hide shaded water | Hides the rendered water so only the overlays remain | — |
 
-Below the options the panel shows the grid size, cell size and per-layer counts (mesh lines,
-liquid, partial, solid and body voxels, velocity lines and the slice row).
+Below the options the panel shows the grid size, cell size, per-layer counts as drawn/total, and a
+**bulk water** line: mean and minimum α of liquid cells with no air neighbour, and how many are
+below 0.98 (they should all be 1; see W-03).
+
+Each voxel layer draws at most 8000 boxes (`kMaxBoxesPerLayer`); above that it draws every Nth
+candidate, so the coverage stays spread over the pool. The cap exists because D3D12 streams
+dynamic vertex buffers through a 16 MB per-frame ring shared with the constant buffers: the first
+version drew one box per diluted water cell (≈ 81k boxes, 15.6 MB) and overflowed it on every
+frame (`Ring buffer overflow`, then a crash). Vulkan has no such ring, which is why it only
+failed on D3D12.
 
 Depth testing uses GBuffer depth, which excludes the water, so voxels under the surface stay
 visible. Use this when changing grid size or cell size: it shows how coarse the solver is compared
@@ -365,6 +373,21 @@ cell whose update would exceed 1 or drop below 0 is clipped, and the clipped amo
 Upwind also smears air entrained by the splash through the pool (now limited by the sharpening
 term). Half-float storage (W-02) adds rounding loss.
 
+**Evidence from the debug view (review).** The "bulk water" statistic (liquid cells with no air
+neighbour, which should all be α = 1) on D3D12 and Vulkan at 1280×720:
+
+| Time | Bulk mean α | Bulk min α | Bulk cells below 0.98 |
+|---|---|---|---|
+| Before the impact | 0.995 | 0.55 | 204–1765 of ≈ 77k |
+| After the impact, steady | **0.96** | **0.89** | **≈ 81 250 of 81 252** |
+
+The whole pool is diluted by about 4 % and never recovers. This is consistent with the clip: the
+projection leaves residual divergence, cells with outflow lose α, cells with inflow are capped at
+1, so the net is a one-way loss spread through the bulk. The volume correction then adds water
+only in the [0.5, 0.999) band, which is now almost every cell, so it refills the bulk instead of
+the surface. A correct fix makes the bulk line read ≈ 1.000 and keeps it there after the impact;
+add that to the acceptance below.
+
 **Fix (recommended).** Replace the transport with the conservative, bounded, operator-split VOF
 scheme of Weymouth & Yue (2010, *J. Comput. Phys.* 229, "Conservative Volume-of-Fluid method for
 free-surface simulations on Cartesian-grids"):
@@ -387,7 +410,8 @@ Solid faces carry zero flux. Mind R5 (no local arrays).
 
 **Acceptance.** Debug log: `VolumeCorrection deficit` < 20 cells per 15 frames over 3000 frames
 (at rest **and** after the impact). Fluid self-test mass drift line within ±0.05 %. Surface rms at
-t ≈ 11 s not worse than 2.5 cm. Rings still render.
+t ≈ 11 s not worse than 2.5 cm. Rings still render. Debug view "bulk water" mean α ≥ 0.999 and
+fewer than 1 % of bulk cells below 0.98, before and 10 s after the impact.
 
 ---
 

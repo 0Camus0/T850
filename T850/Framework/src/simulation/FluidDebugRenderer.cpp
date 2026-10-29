@@ -72,6 +72,18 @@ namespace {
 
 } // namespace
 
+uint32_t FluidDebugRenderer::EmitBoxes(LineBatch& batch, const std::vector<Box>& boxes) {
+  const size_t stride = boxes.size() > kMaxBoxesPerLayer
+      ? (boxes.size() + kMaxBoxesPerLayer - 1) / kMaxBoxesPerLayer : 1;
+  uint32_t drawn = 0;
+  for (size_t b = 0; b < boxes.size(); b += stride) {
+    const Box& box = boxes[b];
+    AppendBox(batch.vertices, batch.indices, box.x0, box.y0, box.z0, box.x1, box.y1, box.z1);
+    ++drawn;
+  }
+  return drawn;
+}
+
 void FluidDebugRenderer::LineBatch::Release() {
   if (vb) { vb->release(); vb = nullptr; }
   if (ib) { ib->release(); ib = nullptr; }
@@ -254,32 +266,53 @@ void FluidDebugRenderer::Draw(BaseDriver* driver, FluidSimulation& fluid, const 
   auto solid = [&](uint32_t i, uint32_t j, uint32_t k) { return m_mask[g.Index(i, j, k)] != 0u; };
 
   if ((view.liquidVoxels || view.partialCells) && haveMask && haveAlpha) {
+    std::vector<Box>& liquid = m_boxScratch[0];
+    std::vector<Box>& partial = m_boxScratch[1];
+    liquid.clear();
+    partial.clear();
+    double bulkSum = 0.0;
+    float bulkMin = 1.0f;
     for (uint32_t k = 0; k < g.d; ++k)
       for (uint32_t j = 0; j < g.h; ++j)
         for (uint32_t i = 0; i < g.w; ++i) {
           if (solid(i, j, k)) continue;
           const float a = m_alpha[g.Index(i, j, k)];
+          auto airAt = [&](int x, int y, int z) {
+            if (x < 0 || y < 0 || z < 0 || x >= static_cast<int>(g.w) || z >= static_cast<int>(g.d)) return false;
+            if (y >= static_cast<int>(g.h)) return true;   // open air above the domain
+            return !solid(x, y, z) && m_alpha[g.Index(x, y, z)] < s.airThreshold;
+          };
+          const int x = static_cast<int>(i), y = static_cast<int>(j), z = static_cast<int>(k);
+          const bool touchesAir = airAt(x - 1, y, z) || airAt(x + 1, y, z) || airAt(x, y - 1, z) ||
+                                  airAt(x, y + 1, z) || airAt(x, y, z - 1) || airAt(x, y, z + 1);
           const float x0 = g.minX + i * g.stepX, y0 = g.minY + j * g.stepY, z0 = g.minZ + k * g.stepZ;
-          if (view.liquidVoxels && a >= s.airThreshold) {
-            const bool airAbove = j + 1 == g.h ||
-                (!solid(i, j + 1, k) && m_alpha[g.Index(i, j + 1, k)] < s.airThreshold);
-            if (airAbove) {
-              AppendBox(m_batches[kLiquid].vertices, m_batches[kLiquid].indices,
-                        x0, y0, z0, x0 + g.stepX, y0 + g.stepY, z0 + g.stepZ);
-              ++m_stats.liquidVoxels;
-            }
+          if (a >= s.airThreshold && !touchesAir) {
+            bulkSum += a;
+            bulkMin = (std::min)(bulkMin, a);
+            ++m_stats.bulkCells;
+            if (a < 0.98f) ++m_stats.bulkBelow98;
           }
-          if (view.partialCells && a > 0.02f && a < 0.98f) {
-            AppendBox(m_batches[kPartial].vertices, m_batches[kPartial].indices,
-                      x0, y0, z0, x0 + g.stepX, y0 + a * g.stepY, z0 + g.stepZ);
-            ++m_stats.partialCells;
-          }
+          if (view.liquidVoxels && a >= s.airThreshold && airAt(x, y + 1, z))
+            liquid.push_back({x0, y0, z0, x0 + g.stepX, y0 + g.stepY, z0 + g.stepZ});
+          // Interface band only: away from air a partial value is dilution, reported below.
+          if (view.partialCells && a > 0.02f && a < 0.98f && touchesAir)
+            partial.push_back({x0, y0, z0, x0 + g.stepX, y0 + a * g.stepY, z0 + g.stepZ});
         }
+    m_stats.bulkMeanAlpha = m_stats.bulkCells ? static_cast<float>(bulkSum / m_stats.bulkCells) : 0.0f;
+    m_stats.bulkMinAlpha = m_stats.bulkCells ? bulkMin : 0.0f;
+    m_stats.liquidVoxels = static_cast<uint32_t>(liquid.size());
+    m_stats.partialCells = static_cast<uint32_t>(partial.size());
+    m_stats.liquidDrawn = EmitBoxes(m_batches[kLiquid], liquid);
+    m_stats.partialDrawn = EmitBoxes(m_batches[kPartial], partial);
   }
 
   if (view.solidVoxels && haveMask) {
     const std::vector<uint32_t>& base = fluid.BaseMask();
     const bool haveBase = base.size() == voxels;
+    std::vector<Box>& statics = m_boxScratch[2];
+    std::vector<Box>& bodies = m_boxScratch[3];
+    statics.clear();
+    bodies.clear();
     for (uint32_t k = 0; k < g.d; ++k)
       for (uint32_t j = 0; j < g.h; ++j)
         for (uint32_t i = 0; i < g.w; ++i) {
@@ -290,11 +323,13 @@ void FluidDebugRenderer::Draw(BaseDriver* driver, FluidSimulation& fluid, const 
                                (k > 0 && !solid(i, j, k - 1)) || (k + 1 < g.d && !solid(i, j, k + 1));
           if (!exposed) continue;
           const bool body = haveBase && base[g.Index(i, j, k)] == 0u;
-          LineBatch& batch = m_batches[body ? kBody : kSolid];
           const float x0 = g.minX + i * g.stepX, y0 = g.minY + j * g.stepY, z0 = g.minZ + k * g.stepZ;
-          AppendBox(batch.vertices, batch.indices, x0, y0, z0, x0 + g.stepX, y0 + g.stepY, z0 + g.stepZ);
-          ++(body ? m_stats.bodyVoxels : m_stats.solidVoxels);
+          (body ? bodies : statics).push_back({x0, y0, z0, x0 + g.stepX, y0 + g.stepY, z0 + g.stepZ});
         }
+    m_stats.solidVoxels = static_cast<uint32_t>(statics.size());
+    m_stats.bodyVoxels = static_cast<uint32_t>(bodies.size());
+    m_stats.solidDrawn = EmitBoxes(m_batches[kSolid], statics);
+    m_stats.bodyDrawn = EmitBoxes(m_batches[kBody], bodies);
   }
 
   if (view.velocitySlice && haveMask && haveAlpha && haveVelocity) {

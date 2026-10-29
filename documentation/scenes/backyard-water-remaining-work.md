@@ -221,6 +221,14 @@ Keep `DrawPassMask` as is.
 **Acceptance.** `--api gl` and `--api webgpu` scene 7 runs: 0 `[ERROR]` lines, water plane visible
 in the back-buffer dump. D3D12/Vulkan/D3D11 unchanged (rings still render).
 
+**Outcome (Stage 2).** Fixed exactly as above via `BackyardScene::SetWaterFluidFeature(bool)`, called
+from `RebuildFluid` (true after `SetTexture(surface, 23)`, false on teardown, on `TryInitialize`
+failure and on surface-bind failure). Measured: GL and WebGPU scene 7 → **0 `[ERROR]` lines**, both
+logging the ordinary-material fallback; D3D12/Vulkan/D3D11 log `FLUID_SURFACE enabled` and 0 errors.
+Note the earlier "400 errors in a 400-frame run" was reproduced only after passing `--scene 7`
+explicitly — `config.json`'s `"scene": 7` is not honoured on the `--api`-only path, so a bare
+`--api gl` run silently tests SandboxScene instead of the Backyard.
+
 ---
 
 ### W-02 — 32-bit storage for volume fraction and pressure (P1, M, suggested: GLM)
@@ -412,6 +420,40 @@ raise `freeboard` in `build_backyard.py` and the layout JSON; report the memory 
 **Acceptance.** Heavy-drop run (density 3.0, height 2.5 m): no α accumulation in the top row
 (probe the top row of the ball column), self-test passes.
 
+**Outcome (Stage 2) — implemented, and this acceptance criterion is wrong.** The fix that shipped is
+a **setting**, not a global change: `FluidSettings::openCeiling` (default `false`), opt-in from
+`WaterTunables::openCeiling` (true for the pool), branching on a new `OpenCeiling` cbuffer field in
+`CS_FluidPressure3D` and `CS_FluidGradient3D`. Making it global is not safe — see below.
+
+* **Only two kernels needed changing.** Divergence does **not** read out of range: on this staggered
+  layout the +Y face of cell `(i,j,k)` is texel `(i,j,k).y`, already in range, so there is no `j+1`
+  texel. The lid came entirely from the gradient kernel's `IsSolid(b)` branch overwriting the face
+  velocity with `SolidBoundaryValue() = 0`. Extrapolate must **not** be changed either: it runs after
+  the gradient and classifies the top face as solid, which means "do not extrapolate", so it preserves
+  the value the gradient just wrote. Treating it as an AIR face would overwrite it with a neighbour
+  average.
+* **Pressure uses `diag += 1` (theta forced to 1), not a theta-derived ghost.** The row above the
+  domain has no stored alpha; when the top row is fully wet there is no air cell to compute theta
+  against, and the 0.1 clamp would over-soften the diagonal and checkerboard at the lid. `diag += 1`
+  is a plain Dirichlet p = 0 and also keeps the matrix non-singular.
+* **Why it cannot be global.** The engine's synthetic `--fluid-selftest` (a 32×16×16 closed box,
+  unrelated to the pool) failed with `velocity points into a wall face (max 0.630859 m/s)`. An open
+  top is a vent, so a closed-box test must keep it closed.
+* **R2 cost.** `FluidConstants` grew 64 → 80 bytes and the registry's per-binding `constant_count`
+  had to go 16 → 20 in all 16 fluid entries **at once**. With the struct grown and the registry left
+  at 16 every compute pipeline failed to create, silently, and the solver reported only "resources are
+  incomplete".
+
+**Why the acceptance criterion cannot be met as written.** Measured on the real pool grid, a
+3x-density 0.25 m ball dropped 2.5 m reaches `top-row alpha = 1.000` and a peak column rise of
+`+0.419 m` — the full 0.42 m of freeboard — **identically with the lid and without it**. That ball
+displaces ~90 cells into a 1.56 m deep pool, so it genuinely overflows it, and the closed domain has
+nowhere for the water to go. Filling the top row is therefore *correct*; pinning against it while
+venting is not permitted is the actual defect. The gate therefore probes the **+Y face velocity of a
+wet top-row cell**: open ceiling gives `0.7939 m/s` (PASS), a closed ceiling gives `0.0000 m/s`
+exactly (FAIL). If the pool must not overflow, raise `freeboard` — that is a layout/`W-11` change,
+not a solver change.
+
 ---
 
 ### W-09 — Water optics use constant depth and unguarded refraction (P2, M, suggested: GLM)
@@ -518,6 +560,11 @@ Remove them (and the `fluid_sphere` pipeline creation in `TryInitialize`). Keep 
 `Seed` permutation: the self-test uses it.
 
 **Acceptance.** Build, self-test and scene run unchanged.
+
+**Outcome (Stage 2).** All of the above removed, plus the `fluid_sphere` pipeline creation and its
+`complete` check. `CS_FluidSphereSpread3D.hlsl` (referenced by the `SpreadConstantsBlob` comment) no
+longer exists, so that struct went too. Registry 26 → 25 kernels. Build, `--fluid-selftest` (both
+APIs), `--backyard-selftest` (both APIs) and the scene are unchanged.
 
 ---
 

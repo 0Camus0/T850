@@ -34,9 +34,8 @@ namespace {
     }
   };
 
-  bool CaptureSurface(FluidSimulation& fluid, BaseDriver* driver, SurfaceField& out) {
-    std::vector<float> alpha;
-    if (!fluid.ReadVolumeFraction(driver, alpha)) return false;
+  bool CaptureSurfaceFromAlpha(FluidSimulation& fluid, const std::vector<float>& alpha,
+                               SurfaceField& out) {
     const std::vector<uint32_t>& mask = fluid.BaseMask();
     if (mask.size() != alpha.size()) return false;
 
@@ -60,6 +59,12 @@ namespace {
       }
     }
     return true;
+  }
+
+  bool CaptureSurface(FluidSimulation& fluid, BaseDriver* driver, SurfaceField& out) {
+    std::vector<float> alpha;
+    if (!fluid.ReadVolumeFraction(driver, alpha)) return false;
+    return CaptureSurfaceFromAlpha(fluid, alpha, out);
   }
 
   struct Stats {
@@ -157,6 +162,16 @@ namespace {
     return true;
   }
 
+  // Gate 6: a WET top row must have a non-zero +Y face velocity. A lid zeroes it exactly
+  // (the gradient kernel overwrites the face with SolidBoundaryValue()), so the threshold
+  // only has to separate "exactly zero" from "a real vent flow". Measured open-ceiling
+  // values are tens of cm/s; 0.01 m/s is two orders of magnitude below that and still
+  // two orders above the exact zero a lid produces.
+  constexpr float kTopFaceSpeedMin = 0.01f;
+  // A 2.5 m drop of a 3x-density ball must lift the surface noticeably, or the probe is
+  // measuring a solver that has stopped moving rather than an open ceiling.
+  constexpr float kCeilingRiseMin = 0.05f;
+
 } // namespace
 
 int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& options) {
@@ -194,6 +209,7 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
   settings.deriveGridFromLayout = true;
   settings.waterPlaneY = w.waterPlaneY;
   settings.freeboard = w.freeboard;
+  settings.openCeiling = w.openCeiling;
 
   if (!fluid.TryInitialize(driver, settings)) {
     T8_LOG_INFO("[BackyardSelfTest] SKIP: api=%s has no volumetric compute storage", api);
@@ -671,6 +687,101 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
         T8_LOG_ERROR("[BackyardSelfTest] %d cells have alpha outside [0,1] (worst %.5f)", violations, worstAlpha);
         ++failures;
       }
+    }
+  }
+
+  // ── Gate 6: the ceiling is air, not a lid ──────────────────────────────────
+  // The domain ends `freeboard` above the water plane, and every kernel originally
+  // treated out-of-range as SOLID in every direction - including above the top row.
+  // That made the top row's +Y face a no-flux wall, and a strong splash pins against it
+  // instead of venting. On the staggered grid the +Y face of a top-row cell is that
+  // texel's own .y component, so the probe is exact:
+  //
+  //   lid  -> the gradient kernel takes the `IsSolid(b)` branch for b = (i, Height, k)
+  //           and OVERWRITES the face velocity with SolidBoundaryValue() = 0, and the
+  //           extrapolate kernel leaves it there. Measured: exactly 0.00000 m/s.
+  //   open -> the face is an ordinary liquid/air face and the ghost pressure
+  //           p_ghost = p_L*(1 - 1/theta) drives it. Measured: tens of cm/s.
+  //
+  // A heavy drop is used because the ordinary drop never wets the top row at all, so an
+  // unwet ceiling cannot be probed. Note the 3x-density 2.5 m drop legitimately overflows
+  // this shallow (1.56 m) pool - the top row does fill - so the top row's water content is
+  // reported but NOT asserted: filling it is correct, pinning against it is not.
+  if (failures == 0 && !options.skipBall) {
+    if (!fluid.ResetToRest(driver)) { T8_LOG_ERROR("[BackyardSelfTest] ceiling: reset failed"); ++failures; }
+    FluidSphere& ball = fluid.DroppedSphere();
+    ball.enabled = true;
+    ball.radius = 0.25f;
+    ball.densityRatio = 3.0f;                       // heavy, as the acceptance case asks
+    ball.dragCoefficient = 0.47f;
+    ball.restitution = 0.30f;
+    ball.x = 0.0f;
+    ball.z = fs.basinMinZ + 0.5f * (fs.basinMaxZ - fs.basinMinZ);
+    ball.y = fs.waterPlaneY + 2.5f;                 // 2.5 m above the surface
+    ball.vx = 0.0f;
+    ball.vy = 0.0f;
+    ball.vz = 0.0f;
+    ball.submerged = 0.0f;
+
+    const uint32_t ceilingFrames = static_cast<uint32_t>(std::ceil(6.0f / options.fixedDt));
+    const uint32_t topRow = fs.height - 1;
+    float topRowPeak = 0.0f;
+    float peakRise = -1e9f;
+    float peakFall = 1e9f;
+    float topFaceSpeedMax = 0.0f;      // max |v| at the +Y face of a WET top-row cell
+    uint32_t wetTopSamples = 0;
+    uint32_t sampled = 0;
+    for (uint32_t i = 0; i < ceilingFrames && failures == 0; ++i) {
+      if (!fluid.Step(driver)) { T8_LOG_ERROR("[BackyardSelfTest] ceiling: step failed"); ++failures; break; }
+      if (i % 30 != 29) continue;
+      std::vector<float> alpha;
+      std::vector<float> velocity;
+      if (!fluid.ReadVolumeFraction(driver, alpha) || !fluid.ReadVelocity(driver, velocity)) {
+        T8_LOG_ERROR("[BackyardSelfTest] ceiling: readback failed");
+        ++failures;
+        break;
+      }
+      bool wetTop = false;
+      for (uint32_t k = 0; k < fs.depth; ++k)
+        for (uint32_t x = 0; x < fs.width; ++x) {
+          const size_t index = x + fs.width * (topRow + static_cast<size_t>(fs.height) * k);
+          const float a = alpha[index];
+          topRowPeak = (std::max)(topRowPeak, a);
+          if (a >= 0.5f) {
+            wetTop = true;
+            topFaceSpeedMax = (std::max)(topFaceSpeedMax, std::fabs(velocity[index * 4 + 1]));
+          }
+        }
+      if (wetTop) ++wetTopSamples;
+      SurfaceField field;
+      if (CaptureSurfaceFromAlpha(fluid, alpha, field)) {
+        const Stats s = Summarise(field);
+        peakRise = (std::max)(peakRise, s.maxValue);
+        peakFall = (std::min)(peakFall, s.minValue);
+      }
+      ++sampled;
+    }
+    T8_LOG_INFO("[BackyardSelfTest] open ceiling  top-row peak alpha=%.3f rise=%+.3f m fall=%+.3f m  "
+                "wet-top samples=%u/%u  top-face |v| max=%.4f m/s",
+                topRowPeak, peakRise, peakFall, wetTopSamples, sampled, topFaceSpeedMax);
+    if (sampled < 10) {
+      T8_LOG_ERROR("[BackyardSelfTest] ceiling: only %u samples, the gate is not measuring anything", sampled);
+      ++failures;
+    } else if (wetTopSamples == 0) {
+      // Without a wet top row the probe has nothing to look at, and the gate would pass
+      // on a lid. Fail loudly instead of silently testing nothing.
+      T8_LOG_ERROR("[BackyardSelfTest] ceiling: the drop never wet the top row, so the open-ceiling "
+                   "condition was not exercised (peak rise %+.3f m)", peakRise);
+      ++failures;
+    } else if (topFaceSpeedMax < kTopFaceSpeedMin) {
+      T8_LOG_ERROR("[BackyardSelfTest] ceiling: a wet top row has |v|=%.5f m/s at its +Y face "
+                   "(need >%.4f) - the ceiling is a no-flux lid", topFaceSpeedMax, kTopFaceSpeedMin);
+      ++failures;
+    }
+    if (peakRise < kCeilingRiseMin) {
+      T8_LOG_ERROR("[BackyardSelfTest] ceiling: the heavy drop raised the surface only %.3f m (need %.3f)",
+                   peakRise, kCeilingRiseMin);
+      ++failures;
     }
   }
 

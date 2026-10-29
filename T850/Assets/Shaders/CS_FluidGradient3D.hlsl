@@ -28,6 +28,11 @@ cbuffer FluidConstants : register(b0)
     float TimeValue;
     float PressureScale;
     float Padding0;
+    // 1 when the rows above the domain are open air, 0 for a closed ceiling.
+    float OpenCeiling;
+    float OpenCeilingPad0;
+    float OpenCeilingPad1;
+    float OpenCeilingPad2;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -95,6 +100,19 @@ bool IsSolid(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
+// The ceiling is the only open boundary. Every other out-of-range direction is a
+// genuine pool wall, but the rows ABOVE the domain are air, not a lid. Treating
+// them as solid made the top row's +Y face a no-flux wall, so the pressure solve
+// resisted any rise and a strong splash piled up against the ceiling instead of
+// leaving the surface free. Only x/z-valid cells directly above the top row are
+// open; the corner cells beyond that stay solid.
+bool IsAboveTop(int3 cell)
+{
+    return cell.y >= int(Height) &&
+           cell.x >= 0 && cell.x < int(Width) &&
+           cell.z >= 0 && cell.z < int(Depth);
+}
+
 bool IsLiquid(int3 cell)
 {
     if (IsSolid(cell))
@@ -118,6 +136,12 @@ bool IsBodyCell(int3 cell)
 
 float AlphaAt(int3 cell)
 {
+    // Guarded: cells above the ceiling are air by definition. HLSL Load() beyond
+    // the texture returns 0 on D3D12 but is undefined on Vulkan, so never rely on
+    // it -- R1 applies here as much as to the wall-mask buffer.
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return 0.0f;
     return saturate(AlphaIn.Load(int4(cell, 0)).x);
 }
 
@@ -150,7 +174,11 @@ float FaceValue(int3 a, int3 b, int axis, float inputValue)
 {
     if (IsSolid(a))
         return SolidBoundaryValue(a, axis);
-    if (IsSolid(b))
+    // An AIR neighbour above the ceiling must NOT take the solid branch: that
+    // branch zeroes the face velocity, which is exactly the lid this change
+    // removes. Falling through turns it into an ordinary liquid/air face, whose
+    // ghost pressure drives the free surface upward.
+    if (IsSolid(b) && !(OpenCeiling > 0.5f && IsAboveTop(b)))
         return SolidBoundaryValue(b, axis);
 
     const bool aLiquid = IsLiquid(a);

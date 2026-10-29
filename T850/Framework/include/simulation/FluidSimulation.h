@@ -24,7 +24,6 @@ namespace t850 {
     float windZ = -0.35f;
     float damping = 0.6f;
     float surfaceLevel = 0.92f;
-    float pressureScale = 1.0f;
     // Successive over-relaxation factor for the red-black Gauss-Seidel pressure
     // sweep. 1.0 is plain Gauss-Seidel; ~1.8 is near optimal for a 7-point
     // Laplacian on a long thin domain.
@@ -55,20 +54,19 @@ namespace t850 {
     // asked for.
     bool deriveGridFromLayout = false;
 
-    // Fraction of the basin height that starts filled with water. Cells below
-    // this are alpha = 1, cells above are air (alpha = 0), and the single row
-    // straddling the initial waterline holds the fractional value.
-    float initialFill = 0.94f;
     // Alpha below this counts as air for the pressure solve; must equal
     // T8_LIQUID_THRESHOLD in the kernels.
     float airThreshold = 0.5f;
-    // Alpha above this counts as fully wet.
-    float wetThreshold = 0.95f;
     // Interface sharpening strength for the flux-form alpha advection (0 = pure
     // upwind, which smears entrained air through the whole pool).
     float alphaCompression = 0.5f;
     // CFL cap on the unsplit upwind alpha transport: (|u|+|v|+|w|)*dt/h <= 1.
     float maxSubstepDt = 1.0f / 120.0f;
+    // Treat the rows directly above the domain as AIR instead of a solid ceiling.
+    // Off by default: a closed box is what the synthetic solver tests assume, and an
+    // open top changes the velocity field at the top face (water can vent). The
+    // Backyard pool enables it, because its ceiling is 0.42 m of real air.
+    bool openCeiling = false;
   };
 
   // One solid intrusion into the basin, in engine space. Derived from the pool
@@ -172,7 +170,6 @@ namespace t850 {
     // into the solver each frame, so the water responds to a real event.
     FluidSphere& DroppedSphere() { return m_sphere; }
     void AdvanceSphere(float dt);
-    bool InjectSphere(BaseDriver* driver);
     // Writes solid-face boundary velocities (walls 0, body faces = body velocity).
     // Must be called before the divergence/pressure step.
     bool StepObjectVelocity(BaseDriver* driver);
@@ -254,8 +251,6 @@ namespace t850 {
     std::vector<uint32_t> BuildGeometryConstants() const;
     // Headroom-weighted volume delta for CS_FluidVolumeCorrect3D.
     std::vector<uint32_t> BuildCorrectionConstants(float deficit) const;
-    // (displaced volume, total surface free capacity) for CS_FluidSphereSpread3D.
-    std::vector<uint32_t> BuildSpreadConstants(float displaced, float totalFree) const;
     bool BuildWallMask(BaseDriver* driver);
     bool MeasureVolumeFraction(BaseDriver* driver, float& totalAlpha, float& interfaceSum);
     bool EnsureSurfaceTarget(BaseDriver* driver);
@@ -304,7 +299,6 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_seedAlphaPipeline;
     std::unique_ptr<ComputePipeline> m_alphaAdvectPipeline;
     std::unique_ptr<ComputePipeline> m_volumeCorrectPipeline;
-    std::unique_ptr<ComputePipeline> m_spherePipeline;
     // Couples the moving body to the velocity field (no-penetration at a moving
     // solid boundary). Without this there is no divergence from the impact, so the
     // pressure solve has nothing to react to and no wave can radiate.
@@ -315,9 +309,6 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_surfaceToBufferPipeline;
     std::unique_ptr<ComputeBuffer> m_surfaceReadbackBuffer;
     uint32_t m_surfaceReadbackTexels = 0;
-    // Per-column (removed, free capacity), written by the obstacle pass.
-    std::unique_ptr<ComputeBuffer> m_removedBuffer;
-    uint32_t m_removedColumns = 0;
     // Authored wall mask on the CPU, used to re-stamp the moving body each frame.
     std::vector<uint32_t> m_baseMask;
     uint32_t m_maskBodyCellCount = 0;

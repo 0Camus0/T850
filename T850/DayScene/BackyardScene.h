@@ -43,6 +43,9 @@ private:
   static constexpr int kSceneIndex = 7;
 
   void EnsureWaterShaderPermutations(t850::BaseDriver* driver);
+  // Enables/clears the FLUID_SURFACE permutation on the water mesh. Called only
+  // from RebuildFluid so the flag always matches solver availability.
+  void SetWaterFluidFeature(bool enabled);
   t850::FluidSettings MakeFluidSettings() const;
 
   t850::RenderContainer m_renderContainer;

@@ -150,10 +150,14 @@ void BackyardScene::CreateAssets() {
     t850::PrimitiveInst instance;
     instance.CreateInstance(PrimitiveMgr.GetPrimitive(primitive), &identity);
     if (std::string(asset.label) == "water") {
-      // The solver's surface texture is bound at slot 23; this persistent flag
-      // survives the render graph's per-pass SetGlobalKey and selects the
-      // displacement/foam shader permutation.
-      instance.PersistentFeatureBits = t850::ShaderKey::FLUID_SURFACE;
+      // FLUID_SURFACE is NOT set here. It selects the displacement/foam shader
+      // permutation, and that permutation is only compiled once the compute solver
+      // is up. Setting it at mesh-load time made every backend that has no working
+      // solver (GL, WebGPU) request a permutation that was never compiled, so the
+      // draw was skipped and the water plane rendered invisible. The bit is now
+      // applied in RebuildFluid() strictly after TryInitialize() succeeds, and
+      // cleared whenever the solver is torn down.
+      //
       // Keep the transparent water out of the depth-writing GBuffer and shadow
       // passes. If it wrote GBuffer depth, SceneDepthTex would hold the water
       // itself and screen-space reflections would have nothing behind it.
@@ -196,6 +200,7 @@ bool BackyardScene::RebuildFluid() {
   driver->FlushGPUResources();
   m_fluid.Shutdown(driver);
   m_fluidReady = false;
+  SetWaterFluidFeature(false);
   if (m_waterSurfaceRT >= 0) {
     driver->DestroyRT(m_waterSurfaceRT);
     m_waterSurfaceRT = -1;
@@ -204,7 +209,9 @@ bool BackyardScene::RebuildFluid() {
   const t850::FluidSettings fluidSettings = MakeFluidSettings();
 
   if (!m_fluid.TryInitialize(driver, fluidSettings)) {
-    T8_LOG_INFO("[Backyard] Fluid solver unavailable; water renders without displacement");
+    T8_LOG_INFO("[Backyard] Fluid solver unavailable; water renders as a flat plane "
+                "with the ordinary material permutation (no FLUID_SURFACE)");
+    SetWaterFluidFeature(false);
     return false;
   }
   // The solver derives its grid height and fill level from the pool layout JSON,
@@ -261,6 +268,7 @@ bool BackyardScene::RebuildFluid() {
     ? driver->GetRTTexture(m_waterSurfaceRT, t850::BaseDriver::COLOR0_ATTACHMENT) : nullptr;
   if (!surface || !m_waterHandle.IsValid()) {
     T8_LOG_ERROR("[Backyard] Cannot bind the water surface texture");
+    SetWaterFluidFeature(false);
     return false;
   }
 
@@ -279,8 +287,12 @@ bool BackyardScene::RebuildFluid() {
     } else {
       T8_LOG_ERROR("[Backyard] Cannot load Textures/Backyard/WaterNormal.png");
     }
+    // Only now — with a live solver and a bound surface texture — may the
+    // displacement permutation be selected.
+    water->PersistentFeatureBits |= t850::ShaderKey::FLUID_SURFACE;
     water->Update();
-    T8_LOG_INFO("[Backyard] Water surface bound to solver texture (%dx%d)", surface->x, surface->y);
+    T8_LOG_INFO("[Backyard] Water surface bound to solver texture (%dx%d), FLUID_SURFACE enabled",
+                surface->x, surface->y);
   }
   EnsureWaterShaderPermutations(driver);
   T8_LOG_INFO("[Backyard] Fluid solver running on %dx%dx%d, %d pressure iterations",
@@ -313,6 +325,10 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   settings.deriveGridFromLayout = true;
   settings.waterPlaneY = w.waterPlaneY;
   settings.freeboard = w.freeboard;
+  // The pool's ceiling is 0.42 m of real air, so the top of the domain must vent
+  // rather than act as a wall. The solver keeps this off by default so the
+  // synthetic closed-box tests stay closed.
+  settings.openCeiling = w.openCeiling;
   return settings;
 }
 
@@ -334,6 +350,16 @@ void BackyardScene::DestroyAssets() {
   }
   SceneProp.SSAOKernel.Destroy();
   m_assetsCreated = false;
+}
+
+void BackyardScene::SetWaterFluidFeature(bool enabled) {
+  if (!m_waterHandle.IsValid()) return;
+  t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle);
+  if (!water) return;
+  const uint64_t bit = t850::ShaderKey::FLUID_SURFACE;
+  const uint64_t before = water->PersistentFeatureBits;
+  water->PersistentFeatureBits = enabled ? (before | bit) : (before & ~bit);
+  if (water->PersistentFeatureBits != before) water->Update();
 }
 
 void BackyardScene::EnsureWaterShaderPermutations(t850::BaseDriver* driver) {

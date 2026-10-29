@@ -31,6 +31,11 @@ cbuffer FluidConstants : register(b0)
     float PressureScale;
     // Successive over-relaxation factor for this pass.
     float Padding0;
+    // 1 when the rows above the domain are open air, 0 for a closed ceiling.
+    float OpenCeiling;
+    float OpenCeilingPad0;
+    float OpenCeilingPad1;
+    float OpenCeilingPad2;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -77,6 +82,16 @@ bool IsSolid(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
+// The ceiling is the only open boundary, and only when the solver is told the rows
+// above the domain are air. Cells directly above the top row are then air, not a lid;
+// every other out-of-range direction is a genuine pool wall.
+bool IsAboveTop(int3 cell)
+{
+    return cell.y >= int(Height) &&
+           cell.x >= 0 && cell.x < int(Width) &&
+           cell.z >= 0 && cell.z < int(Depth);
+}
+
 bool IsLiquid(int3 cell)
 {
     if (IsSolid(cell))
@@ -86,6 +101,11 @@ bool IsLiquid(int3 cell)
 
 float AlphaAt(int3 cell)
 {
+    // Above the ceiling alpha is air by definition; HLSL Load() out of bounds is
+    // undefined on Vulkan, so return explicitly instead of relying on it.
+    if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+        cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
+        return 0.0f;
     return saturate(AlphaIn.Load(int4(cell, 0)).x);
 }
 
@@ -98,6 +118,17 @@ float Theta(float aL, float aN)
 // Accumulate one neighbour into sum/diag. Returns nothing; mutates by reference.
 void AccumulateNeighbour(int3 n, float aC, inout float sum, inout float diag)
 {
+    // Open ceiling: a Dirichlet p = 0 boundary. theta is forced to 1 rather than
+    // derived from the alpha gradient, because the cell above the domain has no
+    // stored alpha -- when the top row is fully wet (alpha = 1) there is no air
+    // cell to compute theta against, and the 0.1 clamp would over-soften the
+    // diagonal and produce a checkerboard at the lid. diag += 1 also anchors the
+    // matrix, so it stays non-singular even with an entirely wet top row.
+    if (OpenCeiling > 0.5f && IsAboveTop(n))
+    {
+        diag += 1.0f;
+        return;
+    }
     if (IsSolid(n))
         return; // Neumann: face not part of the stencil
     if (IsLiquid(n))

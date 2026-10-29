@@ -688,7 +688,14 @@ fixed directly, so **pull `backyard_scene` before Stage 3**:
    under the floating ball ≈ −35 cm" row in the Stage 0 table no longer applies and the "surface rms
    excluding the ball region" gap is closed by gate 7.
 
-The backyard self-test now has **7 gates**; the no-ball flag is `--backyard-no-ball`.
+3. Flicker follow-up to W-19 (same branch, after `05745df7`): the first W-19 kernel used an α ≥ 0.5
+   test to decide "body here", which flipped while the ball bobbed — 0.44 m frame-to-frame jumps next
+   to the ball. Body detection is now mask-only with a continuous blend; new gate 8 (frame-to-frame
+   jerk near the settling ball, limit 1 cm) measures 0.0066 m and fails on the old kernel.
+
+The backyard self-test now has **8 gates**; the no-ball flag is `--backyard-no-ball`. W-20 is not a
+bug: `config.json` is read only with `--config`, so **always pass `--scene 7`** and check the log
+contains `[Backyard]` lines.
 
 ### Stage 3 — W-09, W-10
 

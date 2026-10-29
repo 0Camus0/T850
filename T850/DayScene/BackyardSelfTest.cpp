@@ -156,12 +156,6 @@ namespace {
     return front;
   }
 
-  bool StepFor(FluidSimulation& fluid, BaseDriver* driver, uint32_t frames) {
-    for (uint32_t i = 0; i < frames; ++i)
-      if (!fluid.Step(driver)) return false;
-    return true;
-  }
-
   float Median(std::vector<float> values) {
     if (values.empty()) return 0.0f;
     std::sort(values.begin(), values.end());
@@ -171,9 +165,13 @@ namespace {
 
   // Gate 7: around a floating body at rest the rendered surface must sit at the
   // far-field level. Before the fix: ring -2.3 cm, covered texels -34 cm (the "funnel");
-  // after: ring -0.6..-0.8 cm, covered within 0.4 cm of the ring.
+  // after: ring -0.1..-0.2 cm, covered within 0.7 cm of the ring.
   constexpr float kFloatRingMax = 0.015f;
   constexpr float kFloatCoveredMax = 0.02f;
+  // Largest |h(t) - 2h(t-1) + h(t-2)| per texel near the settling ball, 3-4 s after the
+  // drop. The first W-19 kernel (alpha-thresholded body test) measured 0.44 m (visible
+  // flicker); the mask-only test measures 0.0066 m.
+  constexpr float kFloatFlickerMax = 0.01f;
 
   // Gate 6: a WET top row must have a non-zero +Y face velocity. A lid zeroes it exactly
   // (the gradient kernel overwrites the face with SolidBoundaryValue()), so the threshold
@@ -815,9 +813,39 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
     ball.y = fs.waterPlaneY + 1.0f;                 // the scene's default drop
     ball.vx = ball.vy = ball.vz = 0.0f;
     ball.submerged = 0.0f;
-    if (failures == 0 && !StepFor(fluid, driver, static_cast<uint32_t>(std::ceil(8.0f / options.fixedDt)))) {
-      T8_LOG_ERROR("[BackyardSelfTest] float: step failed");
-      ++failures;
+    const uint32_t settleFrames = static_cast<uint32_t>(std::ceil(8.0f / options.fixedDt));
+    const uint32_t flickerBegin = static_cast<uint32_t>(std::ceil(3.0f / options.fixedDt));
+    const uint32_t flickerEnd = static_cast<uint32_t>(std::ceil(4.0f / options.fixedDt));
+    std::vector<float> current, previous, previous2;
+    float worstJerk = 0.0f;
+    float worstJerkDistance = 0.0f;
+    for (uint32_t i = 0; i < settleFrames && failures == 0; ++i) {
+      if (!fluid.Step(driver)) { T8_LOG_ERROR("[BackyardSelfTest] float: step failed"); ++failures; break; }
+      if (i < flickerBegin || i >= flickerEnd) continue;
+      if (!fluid.ReadSurface(driver, current)) { T8_LOG_ERROR("[BackyardSelfTest] float: surface readback failed"); ++failures; break; }
+      if (!previous2.empty()) {
+        for (uint32_t z = 0; z < fs.depth; ++z)
+          for (uint32_t x = 0; x < fs.width; ++x) {
+            const float dx = fs.basinMinX + (static_cast<float>(x) + 0.5f) * fs.cellSize - ball.x;
+            const float dz = fs.basinMinZ + (static_cast<float>(z) + 0.5f) * fs.cellSize - ball.z;
+            const float dist = std::sqrt(dx * dx + dz * dz);
+            if (dist > ball.radius + 3.0f * fs.cellSize) continue;
+            const size_t t = (static_cast<size_t>(x) + static_cast<size_t>(fs.width) * z) * 4;
+            const float jerk = std::fabs(current[t] - 2.0f * previous[t] + previous2[t]);
+            if (jerk > worstJerk) { worstJerk = jerk; worstJerkDistance = dist; }
+          }
+      }
+      previous2.swap(previous);
+      previous.swap(current);
+    }
+    if (failures == 0) {
+      T8_LOG_INFO("[BackyardSelfTest] float flicker  worst frame-to-frame jerk 3-4 s=%.4f m at %.2f m from the ball",
+                  worstJerk, worstJerkDistance);
+      if (worstJerk > kFloatFlickerMax) {
+        T8_LOG_ERROR("[BackyardSelfTest] float: the surface near the body flickers by %.4f m between frames (limit %.3f)",
+                     worstJerk, kFloatFlickerMax);
+        ++failures;
+      }
     }
     std::vector<float> surface;
     if (failures == 0 && !fluid.ReadSurface(driver, surface)) {

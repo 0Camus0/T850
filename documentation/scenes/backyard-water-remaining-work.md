@@ -25,8 +25,8 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-01 Water invisible on GL/WebGPU | Done | `ea80665b` | Accepted. GL and WebGPU scene 7: 0 errors |
 | W-08 Domain ceiling is a lid | Done, **corrected in review** | `ea80665b` + review commit | Gradient/pressure ghost-pressure mismatch at the ceiling fixed; see W-08 |
 | W-13 Dead code | Done | `ea80665b` | Accepted |
-| W-19 Ball sits in a funnel | Done (review) | `fa5422ff` | Surface under/around the floating ball now flat; gate 7 added |
-| W-20 Scene index ignored with `--api` | **New, open** (unverified report) | — | Reported by the Stage 2 implementer |
+| W-19 Ball sits in a funnel | Done (review) | `fa5422ff` + flicker follow-up | Surface under/around the floating ball flat and stable; gates 7 and 8 |
+| W-20 Scene index ignored with `--api` | Resolved: by design, documented | — | `config.json` is only read with `--config`; always pass `--scene 7` |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -200,7 +200,7 @@ cd D:\Code\QwenFlashT850\T850-backyard\T850\bin\x64\Release
 Look for `[FluidSelfTest] PASS`. Report the `projection` and `massConservation` lines.
 
 The pool-level gates (still pool, isotropy, mass, moving boundary, surface texture readback, open
-ceiling, floating body) run the real Backyard solver headless:
+ceiling, floating body, floating-body flicker) run the real Backyard solver headless:
 
 ```powershell
 .\DayScene.exe --api d3d12  --backyard-selftest --logLevel info --logFile backyard_d3d12.log
@@ -726,7 +726,9 @@ around the ball.
 The scene's `[columns]` log hid part of this: it re-derived the surface from alpha with the
 **static** mask (no ball), so its numbers did not match what was drawn.
 
-**What was implemented** (differs from the plan proposed in review, for the reasons given):
+**What was implemented** (differs from the plan proposed in review, for the reasons given). The
+first two bullets describe `fa5422ff`; the body test was later replaced, see the flicker follow-up
+below for the current kernel:
 
 * `RawColumnElevation(x, z, out state)` classifies each column as `COLUMN_DRY` (no water / out of
   range), `COLUMN_FREE`, or `COLUMN_COVERED`. A column is covered when a solid run starts directly
@@ -756,27 +758,51 @@ Scene 7 at t = 10.7 s: rendered surface min −2.1 cm (was −35 cm), `[columns]
 across the ball's row; back-buffer shows the ball on a flat surface with no collar. Fluid and
 backyard self-tests PASS on D3D12 and Vulkan; scene 7 on D3D11 runs with 0 errors.
 
-**Residual, not a defect yet.** The surface within ~0.3 m of the ball still sits 0.5–1 cm below
-the far field. Gate 5's off-centre drop still finds its extreme at x = 56 (unchanged). If W-07
-(displacement) changes this, recalibrate gate 7 from measurement and note it here.
+**Residual, not a defect yet.** The surface within ~0.3 m of the ball sits within ±1 cm of the
+far field. Gate 5's off-centre drop still finds its extreme at x = 56 (unchanged). If W-07
+(displacement) changes this, recalibrate gates 7 and 8 from measurement and note it here.
+
+**Follow-up: flicker while the ball settles.** The `fa5422ff` kernel decided "covered" with an
+α ≥ 0.5 test on the cell under the body. While the ball bobbed, that cell's α crossed 0.5 every few
+frames, so columns flipped between the inpainted level and the body's underside: up to **0.44 m**
+frame-to-frame next to the ball, seen as flickering in the water (simulation, not reflection). The
+kernel now uses `ReadColumn()`, which detects a body from the **wall mask only** (a solid run
+resting on an open cell; steps stand on the floor and never match), and blends continuously from the
+ring level to the water lying on top of the body (`lerp(ring, bodyTop + waterAbove·h,
+saturate(waterAbove))`), so a submerging body has no switch either. New **gate 8** measures the
+largest per-texel second difference |h(t) − 2h(t−1) + h(t−2)| within r + 3h of the ball from 3–4 s
+after the drop (limit 1 cm):
+
+| | Gate 8 jerk | Gate 7 ring − far | covered min − ring |
+|---|---|---|---|
+| `fa5422ff` kernel (D3D12) | **0.4445 m** at 0.06 m from the ball — FAIL | — | — |
+| Mask-only kernel D3D12 | 0.0066 m — PASS | −0.12 cm | −0.63 cm |
+| Mask-only kernel Vulkan | 0.0067 m — PASS | −0.19 cm | −0.71 cm |
+
+Scene 7 on D3D12 and D3D11: 0 errors. Fluid self-test PASS on both APIs.
 
 **Rules learned** (apply to any later surface-kernel change):
 
 * Diagnostics must read the texture the shader draws (`ReadSurface`), not a CPU re-derivation.
-* Gate 7 must keep failing with the inpainting disabled: to check, make `ColumnElevation` return
-  `own` unconditionally and run `--backyard-selftest`; expect the two `float:` errors above.
+* Never switch a surface texel between two reconstructions on a thresholded, time-varying field
+  (α ≥ 0.5); classify from the mask and blend continuously. A single settled-frame gate cannot see
+  this — gate 8 samples consecutive frames.
+* Gates 7 and 8 must keep failing on a broken kernel: restore `fa5422ff`'s shader and expect gate 8
+  to fail; make `ColumnElevation` return `own.elevation` unconditionally and expect gate 7's two
+  `float:` errors.
 
 ---
 
-### W-20 — `config.json` scene index ignored when `--api` is passed (P3, S, suggested: either)
+### W-20 — `config.json` scene index ignored without `--config` (P3) — RESOLVED, by design
 
-Reported by the Stage 2 implementer, not yet verified in review: a bare `--api gl` run loads
-SandboxScene even though `config.json` has `"scene": 7`, so tests that rely on the config scene
-silently test the wrong scene. Reproduce first. If confirmed, make the configured scene apply unless
-`--scene` is passed, and add `--scene 7` to every command in this document regardless (they already
-have it).
+Confirmed in review: a bare `DayScene.exe` (with or without `--api`) starts SandboxScene with the
+helmet. `App.cpp` loads a config file **only** when `--config <path>` is passed
+(`FindConfigArgument` → `LoadRuntimeConfig`); otherwise the built-in defaults apply. The Launcher
+passes `--config`, so its runs honour `"scene": 7`. No code change.
 
-**Acceptance.** `DayScene.exe --api gl` with `"scene": 7` in `config.json` logs the Backyard scene.
+**Rule for every command in these documents:** always pass `--scene 7` explicitly. A run without it
+tests SandboxScene and logs no `[Backyard]` lines — check that the log contains `[Backyard]` before
+trusting any result.
 
 ---
 

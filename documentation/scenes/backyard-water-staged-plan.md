@@ -38,7 +38,7 @@ grid.
 | 1b. Make failures provable | W-12 | M | **DONE** — gates 1, 2, 3, 6 pass on both APIs |
 | 1c. Readback gates | W-12 gates 4, 5 + boundedness | M | **DONE** — gate 5 proven to fail on the id.z bug |
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
-| 3. Rendering correctness | W-09, W-10 | M | Independent of the solver; improves what already works |
+| 3. Rendering correctness | W-19, W-09, W-10 | M | Independent of the solver; W-19 (ball funnel) first, it is the most visible defect |
 | 4. Data-driven tunables | W-11 | M | Unlocks tuning without rebuilds; needed before solver tuning |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
@@ -386,9 +386,11 @@ interior operator.
 
 ---
 
-### Stage 3 — Rendering correctness (W-09, W-10)
+### Stage 3 — Rendering correctness (W-19, W-09, W-10)
 
 **Scope**
+- W-19 first: inpaint the surface columns covered by a floating ball in `CS_FluidSurface3D`, so the
+  ball no longer sits in a funnel (details and acceptance in the remaining-work document).
 - Per-column static floor height texture (CPU-built from the static mask) so absorption uses the
   real depth over the steps instead of a constant 1.56 m.
 - Depth test the refracted `SceneColorTex` lookup against `SceneDepthTex` so the ball and coping

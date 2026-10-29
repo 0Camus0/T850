@@ -3,7 +3,7 @@
 This document lists every known open issue in the backyard pool water (scene 7) after commit
 `e90752b4` ("Fix backyard water rendering and rebuild the solver on a staggered grid"), with the
 root cause, the fix to implement, the files involved and how to prove the fix works. Section 0 has
-the current status (as of code commit `5d640c2e`).
+the current status (as of code commit `47500166`).
 
 It is written so that any implementer (GLM, DeepSeek or a human) can pick **one task**, follow it
 in isolation, and hand back a change that can be reviewed against the acceptance criteria. Tasks
@@ -31,6 +31,9 @@ task W-16 updates them. The order in which the tasks are executed is in
 | Tooling: fluid debug view | Done (review) | `4d21e836`, `93dff3d9`, `5d640c2e` | Wireframe, voxel and whole-volume velocity overlays in the ImGui panel; D3D12 upload-ring crash fixed (per-layer caps); bulk-water α statistic; see 4.5 |
 | W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked; rest of W-11 open |
 | W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p; P1–P9 open |
+| W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
+| W-10 Water invisible to depth post effects | Done, **redesigned in review** | `96d84638` + `47500166` | The extra pass duplicated `Deferred:DEPTH`; removed. CoC now uses the nearer depth; see W-10 |
+| W-21 Vulkan fluid self-test fails inside scene 7 | **Open** (found in review) | — | Pre-existing at `945b2f7c`; passes under scene 0 and on D3D12; see W-21 |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -47,7 +50,14 @@ Review follow-up changes (by the reviewer, not the stage implementer), all on `b
 `33baad50` (W-19 ball funnel and its flicker follow-up), `4d21e836`, `93dff3d9` and `5d640c2e`
 (fluid debug view, its D3D12 crash fix and the whole-volume velocity layer, see 4.5), `d6b65147`
 (grid follows the cell size, W-11 item 3) and `3a371903` (W-15 fixes). Pull them before starting
-Stage 3. **Next stage: 3 (W-09, W-10).**
+Stage 3.
+
+Review of Stage 3 (`517ae6bf`, `96d84638`, 2026-10-29): W-09 accepted as delivered. W-10's depth
+target was correct but redundant — the forward pass already writes the water into `Deferred:DEPTH`,
+identical pixel for pixel — and had no consumer. The reviewer removed the pass and made CoC consume
+the nearer depth (`47500166`, details in W-10). Re-run: `--backyard-selftest` PASS on D3D12 and
+Vulkan; scenes 7, 1 and 6 log 0 errors on D3D12, Vulkan, D3D11, GL and WebGPU. Found in passing:
+W-21. **Next: W-21 (Stage 3c, small), then Stage 4 (W-11).**
 
 ---
 
@@ -200,11 +210,15 @@ Shader-only changes do not need a rebuild: kernels are compiled at startup from
 
 ```powershell
 cd D:\Code\QwenFlashT850\T850-backyard\T850\bin\x64\Release
-.\DayScene.exe --api d3d12  --fluid-selftest --logLevel info --logFile selftest_d3d12.log
-.\DayScene.exe --api vulkan --fluid-selftest --logLevel info --logFile selftest_vk.log
+.\DayScene.exe --scene 0 --api d3d12  --fluid-selftest --logLevel info --logFile selftest_d3d12.log
+.\DayScene.exe --scene 0 --api vulkan --fluid-selftest --logLevel info --logFile selftest_vk.log
 ```
 
 Look for `[FluidSelfTest] PASS`. Report the `projection` and `massConservation` lines.
+
+`--fluid-selftest` checks the solver in isolation on its own 32×16×16 grid, so it runs under scene
+0 (this is the one exception to "always pass `--scene 7`"). Under scene 7 it fails on Vulkan,
+because the Backyard solver runs at the same time — that is W-21, not a regression of your change.
 
 The pool-level gates (still pool, isotropy, mass, moving boundary, surface texture readback, open
 ceiling, floating body, floating-body flicker) run the real Backyard solver headless:
@@ -596,7 +610,7 @@ not a solver change.
 
 ---
 
-### W-09 — Water optics use constant depth and unguarded refraction (P2, M, suggested: GLM)
+### W-09 — Water optics use constant depth and unguarded refraction (P2, M, suggested: GLM) — DONE in `517ae6bf`
 
 **Problems** in the `FLUID_SURFACE` block of [FS_Mesh.hlsl](../../T850/Assets/Shaders/FS_Mesh.hlsl):
 
@@ -620,7 +634,7 @@ Zero errors on D3D12/Vulkan/D3D11.
 
 ---
 
-### W-10 — The water is invisible to depth-based post effects (P3, M, suggested: GLM)
+### W-10 — The water is invisible to depth-based post effects (P3, M, suggested: GLM) — DONE (redesigned in review, `47500166`)
 
 **Problem.** The water is excluded from the GBuffer pass (`DrawPassMask`) so that SSR can see the
 pool floor. As a result DOF, SSAO, fog and god rays treat the pool as empty: objects under water
@@ -631,6 +645,32 @@ depth-only draw of the displaced mesh) and let the post passes that need scene d
 nearer of the two. Measure the cost of the extra draw.
 
 **Acceptance.** Depth target dump shows the water surface; frame time cost reported.
+
+**What was done.** No extra draw was needed. "Forward Transparent" continues the `Deferred` target
+(`push: false`, contents loaded) with `depth_stencil: READ_WRITE`, and `Deferred`'s depth is cleared
+at the "Deferred" pass and never touched by opaque geometry (the lighting pass is a full-screen
+quad). So after the forward pass `Deferred:DEPTH` holds exactly the visible water — the shader's
+own `discard` against `GBuffer:DEPTH` already removes water behind the coping and ball. Measured
+against Stage 3b's separate `WaterDepth` pass: 110,770 / 110,770 overlapping pixels identical on
+D3D12 (109,904 on Vulkan); the separate pass only added 9–12k pixels of water *hidden* behind
+opaque geometry, cost ≈ 0.18 ms re-shading the water, and depended on `mesh_indices: [5]`.
+
+Consumer: the CoC pass (`FS_Quad` `COC_PASS`, HLSL, GLSL and WGSL) samples
+`max(slot 0, slot 1)` — reverse-Z, so the max is the nearer surface — for the pixel depth and for
+auto-focus. Backyard binds `GBuffer:DEPTH` at 0 and `Deferred:DEPTH` at 1. DayScene and Minecraft
+bind `GBuffer:DEPTH` at both (`max(z, z) = z`, unchanged). Every graph that runs CoC **must** bind
+slot 1: WebGPU rejects a declared-but-unbound texture ("Sampled texture missing"), and Vulkan's
+dummy texture is white (1.0 = nearest under reverse-Z), which would put every pixel in the near
+field. A/B with DOF on and aperture 5, deterministic frame 600 on D3D12: CoC-near changes in 30,870
+of 512×512 texels, exactly over the pool, mean +36 levels; CoC-far unchanged; back buffer changes
+in 44,740 pixels inside the pool, max 5 levels. Default config is unchanged (Backyard ships with
+`dof_enabled: false`, and its `aperture: 90` saturates CoC everywhere — tune both before turning
+DOF on). The `RT_Dump_WaterDepth.ppm` dump now reads `Deferred:DEPTH`; dump it with DOF off,
+because the DOF pass re-pushes `Deferred` and clears it before the end-of-frame dump.
+
+Not covered, by design: SSAO ("Shadow Accumulation") runs **before** the water is drawn, and the
+Backyard graph has no fog or god-ray pass that reads depth after it. A future post pass that needs
+the water should take the same two inputs.
 
 ---
 
@@ -940,12 +980,45 @@ trusting any result.
 
 ---
 
+### W-21 — Vulkan fluid self-test fails while the Backyard solver is running (P2, S–M, suggested: GLM)
+
+**Problem.** `--scene 7 --api vulkan --fluid-selftest` fails every time; with `--scene 0` it passes,
+and D3D12 passes either way. Found in the Stage 3 review; it is **not** caused by Stage 3 — the
+same failure reproduces with all Stage 3 files reverted to `945b2f7c`.
+
+| Configuration | Runs | Result |
+|---|---|---|
+| scene 7, Vulkan, HEAD | 8 | 8 FAIL: mass drift −99.92 % (×2) or −18.21 % (×6) |
+| scene 7, Vulkan, HEAD, floor texture skipped | 5 | 5 FAIL: −0.03 % (projection ratio 1.056) or −27.28 % |
+| scene 7, Vulkan, Stage 3 reverted (`945b2f7c`) | 5 | 5 FAIL: −0.03 % or −27.28 % |
+| scene 0, Vulkan, HEAD | 5 | 5 PASS, −0.02 % |
+| scene 7, D3D12, HEAD | 8 | 8 PASS, −0.02 % |
+
+The outcome jumps between a few discrete values, and in the worst runs the projection *increases*
+divergence (ratio 418, then mass 7168 → 6). That looks like shared state between the two
+`FluidSimulation` instances (the self-test's 32×16×16 grid and the scene's 100×22×50 grid stepping
+in the same frames), not like numerical noise. The log shows the scene's solver starting before
+the self-test's first line.
+
+**Fix.** First find what the two instances share on Vulkan: per-kernel pipeline objects, descriptor
+sets or constant/uniform buffers that are written for one dispatch and overwritten by the other
+before the GPU reads them. D3D12 passing suggests D3D12 versions or copies that state per dispatch
+and Vulkan does not. Fix the sharing; do **not** "fix" it by making the harness skip the scene.
+If it turns out to be genuinely harness-only (two solvers can never coexist in a shipped scene),
+document why and make the harness run the self-test before the scene initialises.
+
+**Acceptance.** `--scene 7 --api vulkan --fluid-selftest` PASS 5/5 with mass drift within ±0.1 % and
+projection ratios matching the scene-0 run; scene-0 and D3D12 results unchanged; `--backyard-selftest`
+PASS on both APIs.
+
+---
+
 ## 6. Hand-back checklist
 
 * [ ] Only the files the task names were changed (plus registry entries the task requires).
 * [ ] R1–R9 checked; every new buffer/texture read is guarded (R1).
 * [ ] x64 Release builds with no new warnings.
-* [ ] Fluid self-test PASS on D3D12 and Vulkan.
+* [ ] Fluid self-test (`--scene 0`, see 4.2) and `--backyard-selftest` (`--scene 7`) PASS on D3D12 and Vulkan.
 * [ ] Scene 7 run: 0 `[ERROR]` lines; the section 2.4 metrics reported before and after.
 * [ ] Visual check (4.4) still shows circular rings.
 * [ ] `T850/config.json` and generated assets not committed.

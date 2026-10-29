@@ -29,6 +29,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-19 Ball sits in a funnel | Done (review) | `fa5422ff`, `33baad50` | Surface under/around the floating ball flat and stable; gates 7 and 8 |
 | W-20 Scene index ignored with `--api` | Resolved: by design, documented | — | `config.json` is only read with `--config`; always pass `--scene 7` |
 | Tooling: fluid debug view | Done (review) | `4d21e836` | Wireframe and voxel overlays in the ImGui panel; see 4.5 |
+| W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked; rest of W-11 open |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -211,7 +212,9 @@ ceiling, floating body, floating-body flicker) run the real Backyard solver head
 ```
 
 Look for `[BackyardSelfTest] PASS`. `--backyard-no-ball` skips the ball-dependent gates;
-`--backyard-selftest-frames N` changes the run length.
+`--backyard-selftest-frames N` changes the run length; `--backyard-cell-size <m>` runs on the grid
+that cell size implies (the `[Fluid] Grid WxHxD @ h` line reports it). The gates are calibrated on
+the default 0.09 m grid: at other sizes the isotropy gate (fixed radius and time) is informational.
 
 ### 4.2.1 Images
 
@@ -613,6 +616,23 @@ nearer of the two. Measure the cost of the extra draw.
 changes. Add the three solver values to `WaterTunables` and the GUI. Load `WaterTunables` from a
 `"water"` object in `BackyardScene.json` with glaze (`error_on_unknown_keys = true`, matching the
 engine's strict JSON policy), falling back to the C++ defaults.
+
+**Done in review: item 3.** `FluidSimulation::DeriveGrid(PoolExtent(), cellSize)` derives all three
+counts from one cubic cell size. The size is snapped so X is a whole number of cells, preferring a
+width within ±2 that also makes Z whole (a 2:1 pool snaps to even widths), and the basin max
+X/Y/Z become exact multiples of the cell, so the mask stamp, the kernels and the debug renderer
+agree. In the GUI the "grid width (X cells)", "grid depth (Z cells)" and "cell size (m)" sliders
+are linked views of that one value (0.03–0.30 m). The derived height, cell count and a cost
+estimate are shown below them, and the grid rebuilds when the slider is released. Measured:
+
+| Requested cell | Grid | Still pool at 2 s (mean / rms) |
+|---|---|---|
+| 0.09 (default) | 100×22×50 @ 0.0900 | −10.5 mm / 0.1 mm (unchanged; all 8 gates PASS D3D12+Vulkan) |
+| 0.06 | 150×33×75 @ 0.0600 | −3.0 mm / 0.5 mm (W-11 acceptance met) |
+| 0.075 | 120×26×60 @ 0.0750 | −0.4 mm / 2.3 mm |
+| 0.12 | 74×16×37 @ 0.1216 | −0.4 mm / 3.2 mm |
+
+Items 1, 2 and 4 (JSON loading, the three solver tunables, the stale comment) remain open.
 
 **Acceptance.** Editing a value in the JSON changes the run (show one example). Setting
 `cellSize` to 0.06 rebuilds a 150×33×75 grid automatically and the pool still sits at the authored

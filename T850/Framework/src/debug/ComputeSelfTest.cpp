@@ -582,6 +582,91 @@ namespace {
   // Deterministic 3D storage-texture dispatch/readback. Skipped when the
   // backend has no 3D compute texture capability; a capable backend that
   // fails the workload fails the whole self-test.
+  //
+  // One workload, two storage formats: RGBA16F (velocity's format) and R32F (the fluid's
+  // alpha/pressure/divergence format, W-02). The R32F kernels write a value whose
+  // fractional part fp16 cannot hold, so a backend that silently stores 16-bit fails.
+  int RunVolumeFormatWorkload(BaseDriver* driver, ComputePipeline& writer, ComputePipeline& reader,
+                              ComputeStorageFormat format, const char* label,
+                              uint32_t* outMismatches) {
+    constexpr std::array<std::array<uint32_t, 3>, 3> extents = {{
+      {1, 1, 1}, {9, 5, 3}, {33, 17, 7}
+    }};
+    uint32_t totalMismatches = 0;
+    for (size_t index = 0; index < extents.size(); ++index) {
+      const uint32_t width = extents[index][0];
+      const uint32_t height = extents[index][1];
+      const uint32_t depth = extents[index][2];
+      const uint32_t seed = 37u + static_cast<uint32_t>(index);
+
+      ComputeTexture3DDesc volumeDesc;
+      volumeDesc.width = width;
+      volumeDesc.height = height;
+      volumeDesc.depth = depth;
+      volumeDesc.format = format;
+      volumeDesc.access = ComputeBufferAccess::ReadWrite;
+      volumeDesc.debugName = "T850 Volume Self Test Target";
+      std::unique_ptr<ComputeTexture3D> volume = driver->CreateComputeTexture3D(volumeDesc);
+      if (!volume) {
+        T8_LOG_ERROR("[ComputeVolume] %s %ux%ux%u volume creation failed", label, width, height, depth);
+        return 1;
+      }
+
+      ComputeBufferDesc bufferDesc;
+      bufferDesc.byteWidth = 2 * sizeof(uint32_t);
+      bufferDesc.structureStride = 2 * sizeof(uint32_t);
+      bufferDesc.access = ComputeBufferAccess::ReadWrite;
+      bufferDesc.debugName = "T850 Volume Compute Result";
+      const std::array<uint32_t, 2> zeroSeed = {0u, 0u};
+      std::unique_ptr<ComputeBuffer> result = driver->CreateComputeBuffer(bufferDesc, zeroSeed.data());
+      if (!result) {
+        T8_LOG_ERROR("[ComputeVolume] %s %ux%ux%u result buffer creation failed", label, width, height, depth);
+        return 1;
+      }
+
+      const std::array<uint32_t, 4> constants = {width, height, depth, seed};
+      const std::vector<ComputeBindingDesc> writeBindings = {
+        {ComputeBindingType::Constants32, 0, nullptr, constants.data(), 4},
+        {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, volume.get()}
+      };
+      const std::vector<ComputeBindingDesc> readBindings = {
+        {ComputeBindingType::Constants32, 0, nullptr, constants.data(), 4},
+        {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, volume.get()},
+        {ComputeBindingType::ReadWriteBuffer, 0, result.get(), nullptr, 0}
+      };
+      const uint32_t groupsX = (width + writer.threadGroupSize[0] - 1u) / writer.threadGroupSize[0];
+      const uint32_t groupsY = (height + writer.threadGroupSize[1] - 1u) / writer.threadGroupSize[1];
+      const uint32_t groupsZ = (depth + writer.threadGroupSize[2] - 1u) / writer.threadGroupSize[2];
+      const uint32_t readGroupsX = (width + reader.threadGroupSize[0] - 1u) / reader.threadGroupSize[0];
+      const uint32_t readGroupsY = (height + reader.threadGroupSize[1] - 1u) / reader.threadGroupSize[1];
+      const uint32_t readGroupsZ = (depth + reader.threadGroupSize[2] - 1u) / reader.threadGroupSize[2];
+
+      std::array<uint32_t, 2> actual = {0xDEADBEEFu, 0xDEADBEEFu};
+      const bool dispatched =
+        driver->DispatchCompute(writer, writeBindings, groupsX, groupsY, groupsZ) &&
+        driver->DispatchCompute(reader, readBindings, readGroupsX, readGroupsY, readGroupsZ);
+      const bool readback = dispatched &&
+        driver->ReadComputeBuffer(*result, actual.data(), sizeof(actual));
+      driver->FlushGPUResources();
+
+      if (!readback) {
+        T8_LOG_ERROR("[ComputeVolume] %s %ux%ux%u dispatch or readback failed", label, width, height, depth);
+        return 1;
+      }
+      const uint32_t expectedVisited = width * height * depth;
+      if (actual[0] != 0u || actual[1] != expectedVisited) {
+        T8_LOG_ERROR("[ComputeVolume] %s %ux%ux%u mismatches=%u visited=%u expectedVisited=%u",
+                     label, width, height, depth, actual[0], actual[1], expectedVisited);
+        return 1;
+      }
+      totalMismatches += actual[0];
+      T8_LOG_INFO("[ComputeVolume] %s %ux%ux%u PASS (mismatches=0 visited=%u)",
+                  label, width, height, depth, actual[1]);
+    }
+    if (outMismatches) *outMismatches = totalMismatches;
+    return 0;
+  }
+
   int RunComputeVolumeSelfTest(BaseDriver* driver) {
     if (!driver || !driver->SupportsComputeTextures3D()) return 0;
     if (!driver->SupportsComputeTextures()) return 1;
@@ -606,85 +691,40 @@ namespace {
       return 1;
     }
 
-    constexpr std::array<std::array<uint32_t, 3>, 3> extents = {{
-      {1, 1, 1}, {9, 5, 3}, {33, 17, 7}
-    }};
-    for (size_t index = 0; index < extents.size(); ++index) {
-      const uint32_t width = extents[index][0];
-      const uint32_t height = extents[index][1];
-      const uint32_t depth = extents[index][2];
-      const uint32_t seed = 37u + static_cast<uint32_t>(index);
+    if (RunVolumeFormatWorkload(driver, *writer, *reader, ComputeStorageFormat::Rgba16Float,
+                                "rgba16float", nullptr) != 0)
+      return 1;
 
-      ComputeTexture3DDesc volumeDesc;
-      volumeDesc.width = width;
-      volumeDesc.height = height;
-      volumeDesc.depth = depth;
-      volumeDesc.format = ComputeStorageFormat::Rgba16Float;
-      volumeDesc.access = ComputeBufferAccess::ReadWrite;
-      volumeDesc.debugName = "T850 Volume Self Test Target";
-      std::unique_ptr<ComputeTexture3D> volume = driver->CreateComputeTexture3D(volumeDesc);
-      if (!volume) {
-        T8_LOG_ERROR("[ComputeVolume] %ux%ux%u volume creation failed", width, height, depth);
-        return 1;
-      }
-
-      ComputeBufferDesc bufferDesc;
-      bufferDesc.byteWidth = 2 * sizeof(uint32_t);
-      bufferDesc.structureStride = 2 * sizeof(uint32_t);
-      bufferDesc.access = ComputeBufferAccess::ReadWrite;
-      bufferDesc.debugName = "T850 Volume Compute Result";
-      const std::array<uint32_t, 2> zeroSeed = {0u, 0u};
-      std::unique_ptr<ComputeBuffer> result = driver->CreateComputeBuffer(bufferDesc, zeroSeed.data());
-      if (!result) {
-        T8_LOG_ERROR("[ComputeVolume] %ux%ux%u result buffer creation failed", width, height, depth);
-        return 1;
-      }
-
-      const std::array<uint32_t, 4> constants = {width, height, depth, seed};
-      const std::vector<ComputeBindingDesc> writeBindings = {
-        {ComputeBindingType::Constants32, 0, nullptr, constants.data(), 4},
-        {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, volume.get()}
-      };
-      const std::vector<ComputeBindingDesc> readBindings = {
-        {ComputeBindingType::Constants32, 0, nullptr, constants.data(), 4},
-        {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, volume.get()},
-        {ComputeBindingType::ReadWriteBuffer, 0, result.get(), nullptr, 0}
-      };
-      const uint32_t groupsX = (width + writer->threadGroupSize[0] - 1u) / writer->threadGroupSize[0];
-      const uint32_t groupsY = (height + writer->threadGroupSize[1] - 1u) / writer->threadGroupSize[1];
-      const uint32_t groupsZ = (depth + writer->threadGroupSize[2] - 1u) / writer->threadGroupSize[2];
-      const uint32_t readGroupsX = (width + reader->threadGroupSize[0] - 1u) / reader->threadGroupSize[0];
-      const uint32_t readGroupsY = (height + reader->threadGroupSize[1] - 1u) / reader->threadGroupSize[1];
-      const uint32_t readGroupsZ = (depth + reader->threadGroupSize[2] - 1u) / reader->threadGroupSize[2];
-
-      std::array<uint32_t, 2> actual = {0xDEADBEEFu, 0xDEADBEEFu};
-      const bool dispatched =
-        driver->DispatchCompute(*writer, writeBindings, groupsX, groupsY, groupsZ) &&
-        driver->DispatchCompute(*reader, readBindings, readGroupsX, readGroupsY, readGroupsZ);
-      const bool readback = dispatched &&
-        driver->ReadComputeBuffer(*result, actual.data(), sizeof(actual));
-      driver->FlushGPUResources();
-
-      uint64_t expectedSum = 0;
-      for (uint32_t z = 0; z < depth; ++z)
-        for (uint32_t y = 0; y < height; ++y)
-          for (uint32_t x = 0; x < width; ++x)
-            expectedSum += (x * 3u + y * 11u + z * 131u + seed) % 64u;
-
-      if (!readback) {
-        T8_LOG_ERROR("[ComputeVolume] %ux%ux%u dispatch or readback failed", width, height, depth);
-        return 1;
-      }
-      const uint32_t expectedVisited = width * height * depth;
-      if (actual[0] != 0u || actual[1] != expectedVisited || expectedSum == 0u) {
-        T8_LOG_ERROR("[ComputeVolume] %ux%ux%u mismatches=%u visited=%u expectedVisited=%u",
-                     width, height, depth, actual[0], actual[1], expectedVisited);
-        return 1;
-      }
-      T8_LOG_INFO("[ComputeVolume] %ux%ux%u PASS (mismatches=0 visited=%u)",
-                  width, height, depth, actual[1]);
+    std::unique_ptr<ComputePipeline> floatWriter = CreateTestPipeline(
+      driver, "Shaders/CS_VolumeFloatPatternWrite.hlsl",
+      {
+        {ComputeBindingType::Constants32, 0, 0, 4},
+        {ComputeBindingType::ReadWriteTexture, 0, 1, 0, ComputeStorageFormat::R32Float,
+         ComputeTextureDimension::Tex3D}
+      });
+    std::unique_ptr<ComputePipeline> floatReader = CreateTestPipeline(
+      driver, "Shaders/CS_VolumeFloatPatternRead.hlsl",
+      {
+        {ComputeBindingType::Constants32, 0, 0, 4},
+        {ComputeBindingType::ReadOnlyTexture, 0, 1, 0, ComputeStorageFormat::Unspecified,
+         ComputeTextureDimension::Tex3D},
+        {ComputeBindingType::ReadWriteBuffer, 0, 2, 0}
+      });
+    if (!floatWriter || !floatReader) {
+      T8_LOG_ERROR("[ComputeVolume] r32float pipeline creation failed on API=%s", driver->ApiTag());
+      return 1;
     }
-    T8_LOG_INFO("[ComputeVolume] PASS: API=%s odd-sized 3D storage textures", driver->ApiTag());
+    uint32_t floatMismatches = 0;
+    if (RunVolumeFormatWorkload(driver, *floatWriter, *floatReader, ComputeStorageFormat::R32Float,
+                                "r32float", &floatMismatches) != 0)
+      return 1;
+    if (floatMismatches != 0) {
+      T8_LOG_ERROR("[ComputeVolume] r32float lost precision: %u mismatching voxels", floatMismatches);
+      return 1;
+    }
+
+    T8_LOG_INFO("[ComputeVolume] PASS: API=%s odd-sized 3D storage textures, rgba16float and r32float",
+                driver->ApiTag());
     return 0;
   }
 

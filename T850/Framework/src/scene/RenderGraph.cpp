@@ -459,7 +459,8 @@ bool RenderGraph::Load(const std::string& path) {
           if (!renderTarget.color_formats.empty() && attachment >= static_cast<int>(renderTarget.color_formats.size())) return false;
           const std::string& format = renderTarget.color_formats.empty()
             ? renderTarget.color_format : renderTarget.color_formats[attachment];
-          const char* required = layout->storageFormat == ComputeStorageFormat::Rgba16Float ? "RGBA16F" : "RGBA8";
+          const char* required = layout->storageFormat == ComputeStorageFormat::Rgba16Float ? "RGBA16F"
+            : layout->storageFormat == ComputeStorageFormat::R32Float ? "R32F" : "RGBA8";
           if (layout->storageFormat == ComputeStorageFormat::Unspecified || format != required) {
             T8_LOG_ERROR("[RenderGraph] Pass '%s' storage format '%s' does not match kernel '%s'",
               pass.name.c_str(), format.c_str(), required);

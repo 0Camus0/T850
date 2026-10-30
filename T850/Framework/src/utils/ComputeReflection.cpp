@@ -57,6 +57,7 @@ bool ReflectComputeBindings(const std::vector<uint32_t>& spirv, const ComputePip
         }
         if (resource->image.image_format == SpvImageFormatRgba8) binding.storageFormat = ComputeStorageFormat::Rgba8Unorm;
         else if (resource->image.image_format == SpvImageFormatRgba16f) binding.storageFormat = ComputeStorageFormat::Rgba16Float;
+        else if (resource->image.image_format == SpvImageFormatR32f) binding.storageFormat = ComputeStorageFormat::R32Float;
         else {
           T8_LOG_ERROR("[ComputeReflection] Storage image %u has unsupported format %d",
                        resource->binding, static_cast<int>(resource->image.image_format));

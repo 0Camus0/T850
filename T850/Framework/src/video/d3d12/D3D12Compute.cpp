@@ -51,6 +51,17 @@ namespace t850 {
       return found == indices.end() ? -1 : found->second;
     }
 
+    // One place maps a compute storage format to a DXGI format, so the resource, the UAV
+    // and the binding check can never disagree (a mismatch here is silent garbage).
+    DXGI_FORMAT ToDxgiStorageFormat(ComputeStorageFormat format) {
+      switch (format) {
+        case ComputeStorageFormat::Rgba8Unorm:  return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case ComputeStorageFormat::Rgba16Float: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case ComputeStorageFormat::R32Float:    return DXGI_FORMAT_R32_FLOAT;
+        default:                                return DXGI_FORMAT_UNKNOWN;
+      }
+    }
+
     void TransitionBuffer(ID3D12GraphicsCommandList* commandList,
                           D3D12ComputeBuffer& buffer,
                           D3D12_RESOURCE_STATES nextState) {
@@ -518,8 +529,11 @@ namespace t850 {
     }
 
     descriptor = desc;
-    const DXGI_FORMAT format = desc.format == ComputeStorageFormat::Rgba16Float
-      ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    const DXGI_FORMAT format = ToDxgiStorageFormat(desc.format);
+    if (format == DXGI_FORMAT_UNKNOWN) {
+      T8_LOG_ERROR("[D3D12][Compute] Volume '%s' has an unsupported storage format", desc.debugName.c_str());
+      return false;
+    }
 
     D3D12_RESOURCE_DESC resourceDesc = {};
     resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
@@ -648,6 +662,11 @@ namespace t850 {
           if (binding.type == ComputeBindingType::ReadWriteTexture &&
               (texture3D->descriptor.access != ComputeBufferAccess::ReadWrite || !texture3D->UavGPU().ptr))
             return false;
+          // A storage volume's texel format must equal what the shader declared; writing
+          // float into an RGBA16F view (or reading R32F as RGBA16F) is silent garbage.
+          if (layout->storageFormat != ComputeStorageFormat::Unspecified &&
+              ToDxgiStorageFormat(texture3D->descriptor.format) != ToDxgiStorageFormat(layout->storageFormat))
+            return false;
         } else {
           const auto* texture = dynamic_cast<D3D12Texture*>(binding.texture);
           if (!texture || !texture->pTexResource) return false;
@@ -655,8 +674,7 @@ namespace t850 {
           if (view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 1 || view.SampleDesc.Count != 1)
             return false;
           if (binding.type == ComputeBindingType::ReadWriteTexture)
-            if (view.Format != (layout->storageFormat == ComputeStorageFormat::Rgba16Float
-              ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
+            if (view.Format != ToDxgiStorageFormat(layout->storageFormat)) return false;
         }
       }
       ResolvedBinding item;

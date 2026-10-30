@@ -256,6 +256,7 @@ bool ResolveStorageFormat(std::string_view value, ComputeStorageFormat& format) 
   if (value == "unspecified") format = ComputeStorageFormat::Unspecified;
   else if (value == "rgba8unorm") format = ComputeStorageFormat::Rgba8Unorm;
   else if (value == "rgba16float") format = ComputeStorageFormat::Rgba16Float;
+  else if (value == "r32float") format = ComputeStorageFormat::R32Float;
   else return false;
   return true;
 }

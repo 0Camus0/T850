@@ -31,6 +31,17 @@ namespace t850 {
       return reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     }
 
+    // One place maps a compute storage format to a DXGI format, so the texture and the
+    // UAV whose format the binding check compares can never disagree.
+    DXGI_FORMAT ToDxgiStorageFormat(ComputeStorageFormat format) {
+      switch (format) {
+        case ComputeStorageFormat::Rgba8Unorm:  return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case ComputeStorageFormat::Rgba16Float: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case ComputeStorageFormat::R32Float:    return DXGI_FORMAT_R32_FLOAT;
+        default:                                return DXGI_FORMAT_UNKNOWN;
+      }
+    }
+
     ID3D11DeviceContext* GetContext() {
       return reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     }
@@ -179,8 +190,11 @@ namespace t850 {
     if (initialData) return false;
     descriptor = desc;
 
-    const DXGI_FORMAT format = desc.format == ComputeStorageFormat::Rgba16Float
-      ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    const DXGI_FORMAT format = ToDxgiStorageFormat(desc.format);
+    if (format == DXGI_FORMAT_UNKNOWN) {
+      T8_LOG_ERROR("[D3D11][Compute] Volume '%s' has an unsupported storage format", desc.debugName.c_str());
+      return false;
+    }
     D3D11_TEXTURE3D_DESC textureDesc = {};
     textureDesc.Width = desc.width;
     textureDesc.Height = desc.height;
@@ -270,8 +284,7 @@ namespace t850 {
             texture->pUAVTex->GetDesc(&output);
             for (const auto& candidate : pipeline->bindingLayout)
               if (candidate.type == binding.type && candidate.shaderRegister == binding.shaderRegister &&
-                  output.Format != (candidate.storageFormat == ComputeStorageFormat::Rgba16Float
-                    ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
+                  output.Format != ToDxgiStorageFormat(candidate.storageFormat)) return false;
           }
         }
       }

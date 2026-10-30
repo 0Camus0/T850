@@ -1460,12 +1460,17 @@ because the loader is data-driven.
   `Color.jpg` (sRGB), `Normal.png` (OpenGL convention), `ORM.png` (linear: R = AO or 255, G =
   roughness, B = metalness × 255). Default 512² — 1 MB per map decoded, so the whole palette is
   ~96 MB of texture memory; `--resolution` allows 256/512/1024.
-- `Assets/Textures/Ball/` is **not committed** (`.gitignore` already drops
-  `Assets/Textures/**/*.png`; add the directory so the JPEGs stay out too). The Backyard scene
-  already requires a script run for its GLBs, so this does not change the build story.
-- `Assets/Scenes/BackyardBallMaterials.json` is committed: `{"version": 1, "materials":
-  [{"id": "Metal009", "label": "Brushed silver", "metal": 1.0}, …]}`, 32 entries. Unknown or
-  malformed ids are a hard error naming the file, the same discipline as `BackyardWater.json`.
+- **Delivery is the cloud texture manifest, not a per-machine ambientCG download.** Only the
+  authoring machine fetches from ambientCG; `scripts/PushCloudTextures.ps1` uploads the packed files
+  to the `t850-textures` R2 bucket and republishes the shared manifest, and every other machine gets
+  them from `scripts/DownloadTextures.ps1` like the sky cubemaps. See
+  `documentation/development/cloud-assets.md` ("Publishing Assets to R2").
+- `Assets/Textures/Ball/` is **not committed** (`.gitignore` drops the directory). The Backyard
+  scene already requires a script run for its GLBs, so this does not change the build story.
+- `Assets/Scenes/BackyardBallMaterials.json` is committed: `{"version": 1, "resolution": 512,
+  "materials": [{"id": "Metal009", "label": "Brushed silver", "metal": 1.0}, …]}`, 32 entries plus
+  19 spare ids. Unknown or malformed ids are a hard error naming the file, the same discipline as
+  `BackyardWater.json`.
 
 **Assignment.** Ball with body index *k* (1…N) takes `materials[(k - 1) % 32]`; body 0 (the scripted
 ball) takes `materials[0]`. Deterministic, independent of `spawnSeed`, and a permutation for the
@@ -1490,7 +1495,24 @@ for the process lifetime (resident count ≤ palette size, independent of the ba
 
 **Limitations to record.** No per-instance AO (subset-gated), no per-ball tint or roughness scale
 (the factors are shared; a texture-level variation would be needed), palette bounded at 32 resident
-sets, and texture files are not committed so a fresh clone must run the fetch script.
+sets, and texture files are not committed so a fresh clone must run `DownloadTextures.ps1`.
+
+**Outcome so far (2026-10-30) — the asset half is done, the engine half is not.**
+
+- `scripts/textures/fetch_ball_materials.py` packs all 32 sets at 512² (96 files, 16.78 MB) from the
+  pinned ambientCG archives; a corrupted archive aborts with a sha256 mismatch (negative-tested).
+- `scripts/PushCloudTextures.ps1` (new) uploaded the 96 objects to `t850-textures` under
+  `Textures/Ball/` and republished `manifest.json` to **both** buckets. The manifest went from 114
+  entries / 42 textures to **210 entries / 138 textures**, `manifestVersion` 1, 110,459 bytes; each
+  new entry carries a `sha256`.
+- Verified: every upload read back from the API matched the local file; both buckets still hold the
+  same manifest; the public `r2.dev` manifest and a sample of ball objects serve the new content;
+  a second run reports "the manifest is already current" and publishes nothing.
+- `DownloadTextures.ps1` reports 138/138 ready, and deleting `Ball/Marble016/ORM.png` made it
+  re-download the file and verify its sha256.
+- Not done (Stage 4d proper): the ball GLB has no UVs yet, the renderer has no
+  `INSTANCE_MATERIAL_MAPS` fallbacks, the scene does not assign materials, and gate 10 does not
+  exist.
 
 ---
 

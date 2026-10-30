@@ -113,8 +113,10 @@ those the owner added a fourth scene request — **a different PBR material on e
 below in three places: the override is a plain `PrimitiveInst::InstanceMaterialMaps` flag, not a
 `ShaderKey` bit (no new permutation to compile); the ball GLB declares the three maps itself as 1×1
 placeholders, so the textured permutation and the tangents come from the normal glTF path; and the
-owner asked for **random** materials, so a seeded shuffle bag replaces `(k - 1) % 32`. Gate 10 and
-the frame probe script were not written; the evidence is the spawn log and a frame dump.
+owner asked for **random** materials, so a seeded shuffle bag replaces `(k - 1) % 32`.
+**Gate 10 and the probe are now written** by the local agent (section 4, "Stage 4d, part 3"): the
+gate is headless and checks the palette, the disk and decode of all 32 sets and the real shuffle bag;
+the probe is a same-seed A/B against the placeholder look, so it proves the pixels, not the log.
 
 Every spawned ball shows its own PBR material, from a palette of **32 verified CC0 sets**. The
 palette table is in remaining-work W-25; the data lives in `Scenes/BackyardBallMaterials.json`.
@@ -1778,6 +1780,58 @@ p99 ≈ 4 ms, 0 spikes.
 
 **Rule.** A Framework change is not done until the engine document that describes it is updated in
 the same commit or the next one.
+
+### Stage 4d, part 3 — gate 10 and the frame probe (2026-10-30, local agent)
+
+Stage 4d shipped without its proof. Both halves are now in, and both were negative-tested.
+
+**Gate 10** (`BackyardSelfTest.cpp`, headless, runs with every `--backyard-selftest`). Three facts,
+each one a separate failure message:
+
+1. the palette lists at least 32 materials;
+2. every set resolves on disk through `ResourceLocator` — the check names the first missing set and
+   points at `scripts/DownloadTextures.ps1`;
+3. every set **decodes on the running API** — one set at a time, created and destroyed, so the gate
+   never holds 96 textures.
+
+It then draws one full cycle from the **real** shuffle bag and asserts it is a permutation. The bag
+moved out of `BackyardScene` into `BackyardWaterJson.{h,cpp}` as `BackyardBallMaterialBag` so the
+scene and the gate run the same code instead of a copy; the LCG and its seeding are unchanged, so
+material sequences are identical to before.
+
+Measured: D3D12 and Vulkan `ball materials palette=32 onDisk=32 decoded=32 bagPermutation=ok`, both
+self-tests still PASS with every other gate unchanged. Negative test: moving
+`Assets/Textures/Ball/Cork001` aside gives exit 1 and `31 of 32 sets are on disk (first missing: set
+32); run scripts/DownloadTextures.ps1`.
+
+**The probe** (`scripts/validation/probe_ball_materials.py`) had to be redesigned once. The first
+version projected each spawned ball into a frame dump and sampled its colour; that produced false
+failures because two balls can overlap in screen space and two metals can legitimately look alike at
+a handful of pixels. Comparing colours *between balls* was the wrong test.
+
+The working test is an **A/B of the same frame**: one run with the palette, one with
+`Scenes/BackyardBallMaterials.json` moved aside (the balls fall back to the GLB's red placeholder),
+same `--backyard-spawn-seed`, same frame. Each ball's spawn position is projected with the engine's
+own `camVP` from `snapshot.json`, and its patch must differ between the two dumps. A log line can
+lie; a pixel that changes only because the palette exists cannot.
+
+- Projection convention, measured rather than assumed: `snapshot.json`'s `camVP` is row-major and
+  the engine uses row vectors, so `clip_j = Σ v_i · M[i][j]`. (The column-major reading put every
+  ball in the sky.)
+- The dump is frame 3: the balls have fallen 0.007 s, so they are still on their logged spawn
+  positions.
+- Measured: D3D12 and Vulkan both PASS with 33 bodies, 32 distinct materials, one expected repeat,
+  and a **mean per-ball palette-vs-placeholder difference of 76.6 / 76.7** out of 255.
+
+**New CLI hook.** `--backyard-spawn-seed <n>` overrides `spawnSeed` for a run, so a test can
+reproduce a spawn layout without editing `Scenes/BackyardWater.json`.
+
+**Rules learned here.**
+
+- **Prove the rule and prove the pixels separately.** "32 distinct strings in a log" is not evidence
+  that the renderer used them, and a colour comparison between balls is not evidence of a rule.
+- **An A/B against a documented fallback is a cheap, honest probe.** Hide the input, re-run the same
+  seed, and require the output to change where it should.
 
 ### Stage 5a — W-02
 

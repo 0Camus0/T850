@@ -177,6 +177,9 @@ int main(int arg,char ** args) try {
       backyardSpawnOnStart = (std::max)(std::stoi(args[++i]), 0);
       BackyardScene::SetSpawnOnStart(backyardSpawnOnStart);
     }
+    if (std::string_view(args[i]) == "--backyard-spawn-seed" && i + 1 < arg) {
+      BackyardScene::SetSpawnSeed(static_cast<uint32_t>((std::max)(std::stoul(args[++i]), 0ul)));
+    }
     if (std::string_view(args[i]) == "--backyard-pick-test") {
       BackyardScene::SetPickTest(true);
     }

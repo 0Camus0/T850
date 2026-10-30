@@ -5,6 +5,8 @@
 #include <simulation/FluidSimulation.h>
 #include <scene/WaterTunables.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
+#include <BackyardWaterJson.h>
 
 #include <algorithm>
 #include <cmath>
@@ -1005,6 +1007,78 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
       }
     }
     fluid.RemoveBodiesFrom(1);
+  }
+
+  // ── Gate 10: the per-ball material palette (W-25) ────────────────────────────
+  // Three independent facts, all headless: the palette lists at least 32 materials,
+  // every one of them resolves on disk and decodes on this API, and the real shuffle
+  // bag hands out a permutation for one full cycle. The pixel proof that the textures
+  // reach the shader is scripts\validation\probe_ball_materials.py, which needs a frame.
+  {
+    t850::BackyardBallPalette palette;
+    if (!t850::LoadBackyardBallPalette("Scenes/BackyardBallMaterials.json", palette)) {
+      T8_LOG_ERROR("[BackyardSelfTest] ball materials: the palette file is invalid");
+      ++failures;
+    } else {
+      const uint32_t count = static_cast<uint32_t>(palette.materials.size());
+      const auto& locator = t850::ResourceLocator::Instance();
+      uint32_t onDisk = 0;
+      uint32_t decoded = 0;
+      uint32_t firstFailure = 0;
+      for (uint32_t i = 0; i < count; ++i) {
+        const std::string folder = "Textures/Ball/" + palette.materials[i].id + "/";
+        const std::string names[3] = {palette.maps.color, palette.maps.normal, palette.maps.orm};
+        bool present = true;
+        for (const std::string& name : names) {
+          if (!locator.Exists(folder + name)) { present = false; break; }
+        }
+        if (!present) {
+          if (firstFailure == 0) firstFailure = i + 1;
+          continue;
+        }
+        ++onDisk;
+        // Create and destroy one set at a time so the gate never holds 96 textures.
+        bool ok = true;
+        for (const std::string& name : names) {
+          const int index = driver->CreateTexture("Ball/" + palette.materials[i].id + "/" + name);
+          if (index < 0) ok = false;
+          else driver->DestroyTexture(index);
+        }
+        if (ok) ++decoded;
+        else if (firstFailure == 0) firstFailure = i + 1;
+      }
+
+      t850::BackyardBallMaterialBag bag;
+      bag.Reset(12345u);
+      std::vector<uint32_t> seen(count, 0);
+      uint32_t drawn = 0;
+      bool permutation = count > 0;
+      for (uint32_t i = 0; i < count; ++i) {
+        uint32_t index = 0;
+        if (!bag.Next(count, index) || index >= count || seen[index] != 0) { permutation = false; break; }
+        seen[index] = 1;
+        ++drawn;
+      }
+
+      T8_LOG_INFO("[BackyardSelfTest] ball materials  palette=%u onDisk=%u decoded=%u bagPermutation=%s",
+                  count, onDisk, decoded, permutation ? "ok" : "FAILED");
+      if (count < 32) {
+        T8_LOG_ERROR("[BackyardSelfTest] ball materials: the palette lists %u materials, expected >= 32", count);
+        ++failures;
+      } else if (onDisk != count) {
+        T8_LOG_ERROR("[BackyardSelfTest] ball materials: %u of %u sets are on disk (first missing: set %u); "
+                     "run scripts/DownloadTextures.ps1", onDisk, count, firstFailure);
+        ++failures;
+      } else if (decoded != count) {
+        T8_LOG_ERROR("[BackyardSelfTest] ball materials: %u of %u sets failed to decode on %s (first: set %u)",
+                     decoded, count, api, firstFailure);
+        ++failures;
+      } else if (!permutation) {
+        T8_LOG_ERROR("[BackyardSelfTest] ball materials: the shuffle bag repeated a material after %u draws",
+                     drawn);
+        ++failures;
+      }
+    }
   }
 
   fluid.Shutdown(driver);

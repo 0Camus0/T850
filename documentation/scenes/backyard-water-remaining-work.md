@@ -1281,6 +1281,11 @@ gables closed. `git diff backyard_layout.json` is empty (house extents unchanged
 self-tests unchanged (the house is not part of the solver). Regenerate only through the script —
 no hand edits to the GLB.
 
+**Outcome (Stage 4a) — DONE.** `rot=(-sign*angle, 0, 0)` on the slabs and the seams; two
+`from_pydata` gable prisms at `min_x`/`max_x`, flush with the wall face. Generator prints
+`world Z 3.152 .. 5.148 m` for both slabs (mid-plane 3.20…5.10); house GLB 78 → 80 meshes;
+layout JSON diff empty; frame-300 dump pitched; 0 errors on five APIs; self-tests PASS.
+
 ---
 
 ## 6. Hand-back checklist

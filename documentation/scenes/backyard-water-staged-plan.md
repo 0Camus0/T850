@@ -42,11 +42,14 @@ stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` 
 - **Stages 4a–4c (W-24 roof, W-23 textures, W-22 more balls)** — `2114fa0e`, `507ef1a4`, `0a981b8b`.
   Reviewer follow-ups: `9f6e7a2f` fixed the water drawn mirrored in Z (regenerate the GLBs, see
   above), and `97009aef` removed the ball cap — any number of balls, a new inline-buffer compute
-  binding, and a **Spawn 10 balls** button (section 4, "No ball cap"). **Next is Step 4 (Stage 5a).**
-  Steps 1–3 below are kept for reference.
+  binding, and a **Spawn 10 balls** button (section 4, "No ball cap"). Both fixes were verified
+  independently by the local agent (section 4, "Independent verification after the two review
+  fixes"). **Next is Step 4 (Stage 4d).** Steps 1–3 below are kept for reference.
 
 The owner then asked for three things before the solver work resumes, in this order (one stage per
-session, smallest first). Full specifications are in remaining-work W-24, W-23 and W-22.
+session, smallest first). Full specifications are in remaining-work W-24, W-23 and W-22. After
+those the owner added a fourth scene request — **a different PBR material on every spawned ball**
+(Step 4, remaining-work W-25). The solver work (Stage 5a, W-02) follows as Step 5.
 
 ### Step 1 — Stage 4a, W-24: the house roof is upside down (small)
 
@@ -88,7 +91,44 @@ session, smallest first). Full specifications are in remaining-work W-24, W-23 a
 - Measure fps with 0, 1 and 7 extra balls in one session: every footprint change re-uploads the mask
   (W-05), so the cost grows with the ball count.
 
-### Step 4 — Stage 5a, W-02 (after 4a–4c)
+### Step 4 — Stage 4d, W-25: a different PBR material on every ball (owner request)
+
+Every spawned ball shows its own PBR material, from a palette of **32 verified CC0 sets**. The
+palette table is in remaining-work W-25; the data lives in `Scenes/BackyardBallMaterials.json`.
+
+- **Read the shader before designing around it.** `METALLIC_MAP` samples a *metallic-roughness*
+  texture: `metallic = PBRParams.x * sample.b`, `roughness = PBRParams.y * sample.g`. So a palette
+  entry is a packed ORM map (`R` = AO, `G` = roughness, `B` = metalness) which also carries the
+  roughness — one per-instance texture drives both. `GLOSS_MAP` is the wrong path here (it reads
+  `.r` and ignores the factor), and the per-subset factor cannot differ per ball, so the ball
+  material's `metallicFactor` and `roughnessFactor` both become **1.0**.
+- **AO is not available per instance.** `OCCLUSION_MAP` is gated on `MaterialParams7.x`, which the
+  renderer fills from the *subset's* material, so an instance AO map does nothing. Skip AO for balls
+  (a convex sphere needs none) and record the limitation.
+- **The ball GLB has no UVs.** `Backyard_Ball.glb` carries `POSITION` and `NORMAL` only, so no
+  texture can land on it. Add spherical `TEXCOORD_0` and `TANGENT`, white `baseColorFactor`,
+  `metallicFactor`/`roughnessFactor` = 1.0, and regenerate with
+  `python scripts\models\build_ball.py` — it writes glTF directly, no Blender needed.
+- **Renderer.** `PrimitiveInst` already owns per-instance `Textures[28]`, and `PrimitiveInst::Draw`
+  pushes them into the shared primitive then restores them — that is the established override
+  mechanism. Only slot 3 (normal) is read from the instance today; add the base-colour (0) and
+  metallic-roughness (6) fallbacks **behind a new `ShaderKey::INSTANCE_MATERIAL_MAPS` bit**, so the
+  other scenes that put an atlas in instance slot 0 (Minecraft, Voxel) keep their current
+  behaviour. Propagate the bit through `finalKey` the way `FLUID_SURFACE` is propagated.
+- **Textures are fetched, not committed.** `.gitignore` already ignores `Assets/Textures/**/*.png`
+  and the Backyard scene already needs a script run for its GLBs. Add
+  `scripts/textures/fetch_ball_materials.py` (the same pinned-sha256 + User-Agent pattern as the
+  house script) that downloads the 1K archives into `build/texture-cache` and packs 512² runtime
+  files into `Assets/Textures/Ball/<ID>/{Color.jpg, Normal.png, ORM.png}` with Pillow (installed:
+  10.1.0). 512² RGBA8 is 1 MB per map decoded, so the whole 32-set palette is ~96 MB of texture
+  memory; textures upload lazily per material, so the resident count is bounded by the palette, not
+  by the ball count.
+- **Proof.** Gate 10 (headless: palette ≥ 32, every entry resolves and loads on the running API, the
+  assignment is a permutation for the first 32 balls) plus a frame-dump probe script that projects
+  each ball's centre from `snapshot.json`'s `camVP` into the dumped back buffer (`RT_Dump_*.ppm`)
+  and asserts the sampled colours are pairwise distinct.
+
+### Step 5 — Stage 5a, W-02 (after 4a–4d)
 
 Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Before starting:
 
@@ -184,6 +224,7 @@ command run, and anything you could not verify.
 | 4a. House roof | W-24 | S | **DONE** — sign flipped, gables closed, 78 → 80 meshes, layout JSON unchanged |
 | 4b. Textured materials | W-23 | M | **DONE** — CC0 ambientCG textures with NormalGL, metric world-box UVs, JPEGs embedded; −5.5 % fps; layout unchanged |
 | 4c. Spawn more balls | W-22 | M–L | **DONE** — mask-encoded body index, gate 9 multi-body PASS, GUI spawn/clear. Review: Z-mirror fixed (`9f6e7a2f`), **cap removed** (`97009aef`, 100 balls tested) |
+| 4d. Per-ball PBR materials | W-25 | M | **Owner request** — 32 verified CC0 sets, per-instance base-colour/normal/ORM maps behind a new key bit, 512² fetched textures, gate 10 + frame probe |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
@@ -830,6 +871,35 @@ self-test number exactly.
 
 ---
 
+### Stage 4d — Per-ball PBR materials (W-25)
+
+**Scope** — a data-driven palette of 32 CC0 PBR sets; each spawned ball (and the scripted ball)
+takes a different one. Per-instance base colour, normal and packed metallic-roughness maps; ball
+GLB gains UVs and tangents; a fetch/pack script produces 512² runtime textures; gate 10 proves the
+palette and the assignment; a frame-dump probe proves the materials differ on screen.
+
+**Files** — `Framework/Descriptors.h` (new `ShaderKey::INSTANCE_MATERIAL_MAPS` bit),
+`Framework/src/scene/PrimitiveInstance.cpp` (`SetGlobalKey` merge), `Framework/src/scene/RenderMesh.cpp`
+(instance-slot fallbacks for slots 0 and 6, normal slot 3 preferred when the bit is set, `finalKey`
+propagation), `scripts/models/build_ball.py` (UVs, tangents, factors 1.0),
+`scripts/textures/fetch_ball_materials.py` (new), `Scenes/BackyardBallMaterials.json` (new),
+`DayScene/BackyardScene.h/.cpp` (palette load, lazy texture creation, per-ball assignment),
+`DayScene/BackyardSelfTest.cpp` (gate 10), `scripts/validation/probe_ball_materials.py` (new),
+`.gitignore` (`Assets/Textures/Ball/`), docs.
+
+**Acceptance** — see remaining-work W-25. Additionally: gates 1–9 unchanged, self-tests PASS on
+D3D12 and Vulkan, scene 7 (and scenes 0/1/6) 0 `[ERROR]` lines on all five APIs, and the same-session
+fps delta reported for 0 / 7 / 32 balls.
+
+**Risks** — the material factors are shared per subset, so every ball must be map-driven (any ball
+without a map falls back to a flat matte-metal look, which is why the fetch step is mandatory).
+Shader-permutation count grows by the ball variants only.
+
+**Exit** — 32 balls spawn with 32 visibly different materials; `BackyardBallMaterials.json` lists
+them; a missing texture file logs one warning naming the fetch script and does not abort the scene.
+
+---
+
 ### Stage 5a — 32-bit storage for α, pressure, divergence (W-02)
 
 **Scope** — add `R32Float` to `ComputeStorageFormat`, the registry parser, the reflection map,
@@ -1464,6 +1534,32 @@ on five APIs. fps at 720p, same session: D3D12 220 / 199 / 141 and Vulkan 315 / 
 **Rule for later stages.** For small per-dispatch arrays (body lists, per-object parameters) use
 the inline `ReadOnlyBuffer` binding, not a bigger root-constant block: D3D12 shares 64 DWORDs across
 the whole root signature. Test spawn changes with `--backyard-spawn 100` as well as a few balls.
+
+### Independent verification after the two review fixes (2026-10-30, local agent)
+
+Re-checked both commits from the tip (`37682bb6`) rather than trusting the write-ups above.
+
+- **Build.** Green after deleting `Lib\VStuff\Framework\Release\x64\*.pch` (the inline-binding change
+  touched `BaseDriver.h`). One transient `D8040` compiler crash on the retry; the second retry was
+  green.
+- **`9f6e7a2f` (water mirrored in Z).** Read the regenerated `Backyard_Water.glb` directly: `v = 0`
+  at engine z = −9.0 and `v = 1` at z = −4.5, which is the solver's row order. No
+  "Water mesh UV is mirrored in Z" line at startup. The earlier measurement had already shown the
+  *balls* were in the right place, so only the water could have been wrong.
+- **`97009aef` (no ball cap).** `--backyard-spawn 100` on D3D12, Vulkan and D3D11: 100
+  `[Backyard] Spawned ball …` lines, 101 bodies, every ball inside the basin, 0 `[ERROR]` lines.
+- **Gates.** `--fluid-selftest` and `--backyard-selftest` PASS on D3D12 and Vulkan with unchanged
+  numbers, gate 9 included. Scenes 0/1/6 × five APIs and scene 7 × five APIs: 0 `[ERROR]` lines.
+
+**New rules learned here.**
+
+- **Check the shader before designing a texture path.** `METALLIC_MAP` samples a metallic-roughness
+  texture (`metallic = PBRParams.x * .b`, `roughness = PBRParams.y * .g`), `GLOSS_MAP` reads `.r` and
+  ignores the factor, and `OCCLUSION_MAP` is gated on a per-subset material flag — three facts that
+  decide how Stage 4d has to be built.
+- **A GLB written by hand may carry no UVs at all.** `Backyard_Ball.glb` has only `POSITION` and
+  `NORMAL`, so a texture silently cannot bind; check `attributes` before assuming a mesh is
+  texturable.
 
 ### Stage 5a — W-02
 

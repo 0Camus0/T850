@@ -939,7 +939,47 @@ See section 4, "Stage 4d, part 2".
 
 ### Stage 5a — 32-bit storage for α, pressure, divergence (W-02)
 
-**Scope** — add `R32Float` to `ComputeStorageFormat`, the registry parser, the reflection map,
+**Part 1 is done (`14c705f4`).** `ComputeStorageFormat::R32Float` exists; the registry parses
+`r32float`, the SPIR-V reflection maps `SpvImageFormatR32f`, and each of the five backends resolves
+a storage format in **one helper** instead of a per-site ternary. The binding checks now also compare
+a 3D volume's texel format with the shader's declared storage format on D3D12 and Vulkan; that
+mismatch was silent garbage before (undefined behaviour on Vulkan with no validation layers). The
+compute self-test runs the same 3D workload as RGBA16F **and** R32F, and the R32F kernels write
+`value + 1/3` with a `1e-4` tolerance, which fp16 cannot hold, so a backend that quietly stores 16-bit
+fails: PASS on D3D12, Vulkan and D3D11 with `mismatches=0, visited=3927` on the 33×17×7 case.
+
+**Part 2 (switching the volumes) is BLOCKED on a measured behaviour shift, not on a format bug.**
+Switching α, pressure and divergence to R32F compiles, decodes and runs on all three solver APIs,
+and it is *more* accurate by every global measure, but three calibrated gates move:
+
+| Gate | RGBA16F (today) | R32F (measured) |
+|---|---|---|
+| still-pool volume loss over 2 s | 0.693 % | **0.001 %** |
+| fluid self-test projection (meanX after 24 frames) | +0.0201 | **+0.0066** |
+| early isotropy (X vs Z, +0.30 s) | 10.7 mm, all quadrants rise | 29.2 mm, X pair up / Z pair down |
+| late isotropy (+1.00 s) | 7.9 mm | 3.0 mm, all quadrants rise |
+| gate 7 funnel (`ring-far`) | −1.2 mm | −17.1 mm (limit 15 mm) |
+| surface-texture Y median | 2.4 mm | 0.8 mm |
+
+The early-isotropy quadrupole is mirror-symmetric (0.9 mm) and comes from **α**: with pressure and
+divergence in R32F but α back in RGBA16F, all four quadrants rise again (+3.8/+3.8/+2.5/+2.5 cm,
+axis 13 mm) — but that run then fails gate 7 differently (`ring-far` +43 mm, pool level −41 mm). The
+fp16 α rounding that the 0.69 % loss came from is also what the volume correction and the waterline
+treatment (W-19) were calibrated against: the correction injects α every 15 frames, a uniform rise
+that dominated the early-isotropy measurement. With exact α the correction has nothing to do, and the
+scheme's own split-sweep anisotropy and the real meniscus around the ball become visible.
+
+**What the next session must do before switching α** (do not relax a gate to make it pass):
+
+1. Decide whether the −17 mm ring around a floating ball is the real meniscus or a kernel artefact:
+   dump the surface field around the ball at rest on both formats, and read W-19's seeding of the
+   waterline cells (it may rely on fp16 quantisation making partly-filled cells round to 1).
+2. Re-derive gate 7 and the early isotropy band from that measurement, with the numbers and the
+   reason recorded next to the constant, the way the gate comments already do.
+3. Then switch pressure and divergence first (they are the perf-relevant fields: 60 dispatches per
+   substep) and α second, each with its own self-test run on D3D12 and Vulkan.
+
+**Original scope** — add `R32Float` to `ComputeStorageFormat`, the registry parser, the reflection map,
 and every backend that maps or validates formats. `CreateVolume` takes a format; α, pressure and
 divergence become R32F; velocity stays RGBA16F. Kernels that write them switch to
 `RWTexture3D<float>` with `[[spv::format_r32f]]`; readers to `Texture3D<float>`. The clear kernel
@@ -1835,7 +1875,8 @@ reproduce a spawn layout without editing `Scenes/BackyardWater.json`.
 
 ### Stage 5a — W-02
 
-_Pending._
+Part 1 done (`14c705f4`); part 2 blocked on a measured gate shift. Details, numbers and the required
+next steps are in section 3, "Stage 5a".
 
 ### Stage 5b — W-03
 

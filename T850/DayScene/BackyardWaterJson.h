@@ -37,6 +37,17 @@ namespace t850 {
     std::vector<BackyardBallMaterial> materials;
   };
 
+  // W-25: the material pick is a shuffle bag — every material once before a repeat —
+  // driven by its own LCG, so the seeded spawn sequence is untouched. The scene and the
+  // self-test gate share this exact code, so the gate proves the real selection rule.
+  struct BackyardBallMaterialBag {
+    uint32_t rng = 1u;
+    std::vector<uint32_t> remaining;
+    void Reset(uint32_t seed);
+    // Refills and reshuffles when empty. Returns false only for an empty palette.
+    bool Next(uint32_t count, uint32_t& index);
+  };
+
   // A missing file yields an empty palette (the balls keep the GLB's own look). Returns
   // false for a malformed file or an id/file name that is not a plain name.
   bool LoadBackyardBallPalette(const char* path, BackyardBallPalette& out);

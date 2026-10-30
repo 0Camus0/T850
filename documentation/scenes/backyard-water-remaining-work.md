@@ -1570,8 +1570,15 @@ sets, and texture files are not committed so a fresh clone must run `DownloadTex
 
   Verified: 32 distinct materials across 32 bodies, all 32 used by 100 balls on D3D12, Vulkan and
   D3D11 with 0 errors, gate 9 unchanged, scenes 7/1/6 on five APIs 0 errors, and 100-ball fps within
-  noise of the placeholder look. Gate 10 and the frame probe script were not written. Details are in
-  the staged plan, section 4, "Stage 4d, part 2".
+  noise of the placeholder look. Details are in the staged plan, section 4, "Stage 4d, part 2".
+- **Proof closed in this session (gate 10 + probe).** Gate 10 runs headless with every
+  `--backyard-selftest`: palette >= 32, every set on disk, every set decodes on the running API, and
+  the real shuffle bag is a permutation (`palette=32 onDisk=32 decoded=32 bagPermutation=ok` on
+  D3D12 and Vulkan; a missing set fails with exit 1 and names it).
+  `scripts/validation/probe_ball_materials.py` is the pixel half: same seed, one run with the palette
+  and one with the palette file moved aside, each ball projected with the engine's `camVP` and its
+  patch required to change (mean difference 76.6 / 76.7 on D3D12 / Vulkan). `--backyard-spawn-seed`
+  was added so the layout is reproducible. Details in the staged plan, "Stage 4d, part 3".
 
 ---
 

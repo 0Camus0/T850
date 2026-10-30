@@ -46,6 +46,8 @@ public:
   // Test hook: spawn this many balls as soon as the solver is ready. Used by
   // --backyard-spawn so the multi-body path can be exercised without the GUI.
   static void SetSpawnOnStart(int count) { s_spawnOnStart = count; }
+  // Test hook (--backyard-spawn-seed): fixes the spawn RNG so a run is reproducible.
+  static void SetSpawnSeed(uint32_t seed) { s_spawnSeed = seed; }
   // Test hook (--backyard-pick-test): drives the real pick/drag input path with a
   // synthetic InputManager, so no OS mouse or keyboard input is ever generated.
   static void SetPickTest(bool enabled) { s_pickTest = enabled; }
@@ -114,10 +116,9 @@ private:
   };
   t850::BackyardBallPalette m_ballPalette;
   std::vector<BallMaterialMaps> m_ballMaterialMaps;   // parallel to m_ballPalette.materials
-  // Shuffle bag: every material is used once before any repeats.
-  std::vector<uint32_t> m_ballMaterialBag;
-  // Separate from m_spawnRng so material picks never shift the seeded spawn positions.
-  uint32_t m_materialRng = 1u;
+  // Shuffle bag: every material is used once before any repeats. Seeded from the spawn
+  // seed through a separate LCG, so material picks never shift the spawn positions.
+  t850::BackyardBallMaterialBag m_ballMaterialBag;
   void LoadBallPalette();
   void DestroyBallMaterials();
   // Gives the instance a random palette material; returns its label, or nullptr when
@@ -181,4 +182,5 @@ private:
   float m_deltaSeconds = 0.0f;
   bool m_assetsCreated = false;
   static int s_spawnOnStart;
+  static uint32_t s_spawnSeed;
 };

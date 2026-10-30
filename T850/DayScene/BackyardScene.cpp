@@ -55,6 +55,7 @@ namespace {
 }
 
 int BackyardScene::s_spawnOnStart = 0;
+uint32_t BackyardScene::s_spawnSeed = 0;
 bool BackyardScene::s_pickTest = false;
 
 BackyardScene::BackyardScene() = default;
@@ -85,11 +86,12 @@ void BackyardScene::InitVars() {
                              kWaterTunablesPath);
   }
   // W-22: a non-zero spawnSeed reproduces a spawn sequence; 0 draws a fresh seed so
-  // each run differs.
+  // each run differs. --backyard-spawn-seed overrides the JSON value for tests.
+  if (s_spawnSeed != 0) SceneProp.Water.spawnSeed = static_cast<int32_t>(s_spawnSeed);
   m_spawnRng = SceneProp.Water.spawnSeed != 0
       ? static_cast<uint32_t>(SceneProp.Water.spawnSeed)
       : static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count());
-  m_materialRng = m_spawnRng ^ 0x9E3779B9u;
+  m_ballMaterialBag.Reset(m_spawnRng ^ 0x9E3779B9u);
   m_extraBallHandles.clear();
   m_dragBody = -1;
   m_cursorFreed = false;
@@ -538,7 +540,7 @@ void BackyardScene::DestroyBallMaterials() {
     }
   }
   m_ballMaterialMaps.clear();
-  m_ballMaterialBag.clear();
+  m_ballMaterialBag.Reset(m_spawnRng ^ 0x9E3779B9u);
 }
 
 const char* BackyardScene::AssignBallMaterial(t850::PrimitiveInst& inst) {
@@ -547,16 +549,8 @@ const char* BackyardScene::AssignBallMaterial(t850::PrimitiveInst& inst) {
   if (!driver || count == 0) return nullptr;
   // A set that fails to load is skipped; at most one full pass over the palette.
   for (uint32_t attempt = 0; attempt < count; ++attempt) {
-    if (m_ballMaterialBag.empty()) {
-      m_ballMaterialBag.resize(count);
-      for (uint32_t i = 0; i < count; ++i) m_ballMaterialBag[i] = i;
-      for (uint32_t i = count - 1; i > 0; --i) {
-        m_materialRng = m_materialRng * 1664525u + 1013904223u;
-        std::swap(m_ballMaterialBag[i], m_ballMaterialBag[(m_materialRng >> 8) % (i + 1)]);
-      }
-    }
-    const uint32_t index = m_ballMaterialBag.back();
-    m_ballMaterialBag.pop_back();
+    uint32_t index = 0;
+    if (!m_ballMaterialBag.Next(count, index)) return nullptr;
 
     BallMaterialMaps& maps = m_ballMaterialMaps[index];
     if (!maps.attempted) {

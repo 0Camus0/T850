@@ -218,4 +218,26 @@ namespace t850 {
     return true;
   }
 
+  void BackyardBallMaterialBag::Reset(uint32_t seed) {
+    rng = seed ? seed : 1u;
+    remaining.clear();
+  }
+
+  bool BackyardBallMaterialBag::Next(uint32_t count, uint32_t& index) {
+    if (count == 0) return false;
+    if (remaining.empty()) {
+      remaining.resize(count);
+      for (uint32_t i = 0; i < count; ++i) remaining[i] = i;
+      // Fisher-Yates on a separate LCG, so a cosmetic pick never shifts the seeded
+      // spawn sequence (W-25).
+      for (uint32_t i = count - 1; i > 0; --i) {
+        rng = rng * 1664525u + 1013904223u;
+        std::swap(remaining[i], remaining[(rng >> 8) % (i + 1)]);
+      }
+    }
+    index = remaining.back();
+    remaining.pop_back();
+    return true;
+  }
+
 } // namespace t850

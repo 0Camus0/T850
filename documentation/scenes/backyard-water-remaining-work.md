@@ -35,6 +35,9 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
 | W-10 Water invisible to depth post effects | Done, **redesigned in review** | `96d84638` + `47500166` | The extra pass duplicated `Deferred:DEPTH`; removed. CoC now uses the nearer depth; see W-10 |
 | W-21 Vulkan fluid self-test fails inside scene 7 | **Done** (Stage 3c) | `5798477c` | Accepted. Root cause was uninitialised volume memory, not Vulkan frame state; `TryInitialize` now clears; 6/6 PASS scene 7 Vulkan |
+| W-22 Spawn more balls (random place, size, weight) | **Open** (requested 2026-10-29) | — | Stage 4c; one body today, the solver needs a body list |
+| W-23 Textured materials with normal maps | **Open** (requested 2026-10-29) | — | Stage 4b; every mesh is a flat colour |
+| W-24 House roof is upside down | **Open** (found 2026-10-29) | — | Stage 4a; sign error in `build_backyard.py` |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -67,7 +70,7 @@ defect fixed by the reviewer (`e974f4e5`): `BackyardWaterJson.cpp` was not in
 `cmake/AndroidBuild.cmake`, so the Android link would fail; `ValidateBuildRegistration.ps1` does not
 check Backyard files, which is why it still said PASS. A reported Vulkan slowdown is **not** from
 these stages: the same 172–177 fps reproduces at `7bd0afe9`, `945b2f7c` and `3a371903` (W-15).
-**Next: Stage 5a (W-02).**
+**Next: Stage 4a (W-24 roof), 4b (W-23 textures), 4c (W-22 more balls), then Stage 5a (W-02).**
 
 ---
 
@@ -1081,6 +1084,202 @@ removed, so the fix is the clear and not the drain; scenes 0, 1, 6, 7 × Vulkan 
 scenes 0, 1, 6, 7 on five APIs → **0 errors in all 20 combinations**.
 
 Section 4.2 no longer needs `--scene 0` for the fluid self-test: it now passes under any scene.
+
+---
+
+### W-22 — Spawn more balls at random places, sizes and weights (P2, M–L, suggested: GLM for the host, DeepSeek for the kernels)
+
+**Request.** A GUI button that drops another ball at a random position that always lands in the
+pool, with a random radius and a random weight. The scripted ball and its drop stay as they are.
+
+**Why this is not just a GUI change.** The solver knows exactly one body: `FluidSimulation` holds a
+single `FluidSphere m_sphere` (`DroppedSphere()`), `UpdateWallMaskForBody` stamps that one sphere,
+`AdvanceSphere` integrates it, the volume correction subtracts its submerged volume, and the
+gradient and obstacle-velocity kernels read its centre, radius and velocity from the 12-DWORD
+`ObjectConstants` block (b1). Every one of those must become a list.
+
+**Constraint that decides the design (measured).** D3D12 binds compute constants as root constants,
+and a root signature holds 64 DWORDs in total. `CS_FluidGradient3D` already uses 38: b0 20 + b1 12 +
+four descriptor tables + one root SRV (see the `[D3D12][Compute] Root parameter` lines at info
+level). Storing centre, radius and velocity per body (8 DWORDs) therefore caps the list at 4 bodies,
+and there is no API to update a compute buffer every substep (only `CreateComputeBuffer` with
+initial data, which is the synchronous upload W-05 complains about).
+
+**Design — put the body index in the wall mask.** The mask is one `uint` per cell and every kernel
+and CPU reader only tests `!= 0u` / `== 0u` (checked: all 10 fluid kernels, `FluidDebugRenderer`,
+`BackyardSelfTest`, `BackyardScene`). Keep static solids at `1u` and stamp body *k* as `2u + k`.
+Then:
+
+* `IsSolid` is unchanged everywhere.
+* `IsBodyCell(cell)` in the two kernels becomes `WallMask[idx] >= 2u`, and the body's velocity is
+  `BodyVelocity[WallMask[idx] - 2u].xyz`. Centre and radius are no longer needed on the GPU, because
+  the stamp already encodes the footprint. `ObjectConstants` becomes `uint BodyCount; uint3 pad;
+  float4 BodyVelocity[kMaxBodies];` = 4 + 4·N DWORDs. With **kMaxBodies = 8** the gradient root
+  signature is 20 + 36 + 6 = 62 DWORDs — under the limit. Confirm with the log line, and if a kernel
+  gains a binding later, the cap must shrink with it.
+* R1 (no short-circuit in HLSL 2018): guard the index before using it —
+  `uint k = (m >= 2u) ? min(m - 2u, kMaxBodies - 1u) : 0u;` then branch on `m >= 2u`.
+* The surface kernel's covered-column detection (W-19, gates 7 and 8) is mask-only and keeps working
+  for any number of bodies.
+
+**Host changes.**
+1. `FluidSimulation`: replace `m_sphere` with `std::vector<FluidSphere> m_bodies` (capacity
+   kMaxBodies). Keep `DroppedSphere()` returning `m_bodies[0]` so the scene, `BackyardSelfTest` and
+   gates 7/8 stay as they are. Add `AddBody(const FluidSphere&)` (returns the index or -1 at the
+   cap), `RemoveBodiesFrom(size_t first)` and `BodyCount()`.
+2. `AdvanceSphere` → loop over bodies. Add sphere–sphere contact (push the pair apart along the
+   centre line by the overlap, then exchange the normal velocity with `restitution`); without it two
+   balls stamp the same cells and the later one wins. Floor and wall collision already exist per
+   body.
+3. `UpdateWallMaskForBody`: stamp every enabled body with `2u + k`, in index order. The dirty check
+   must compare all bodies' cell AABBs, not one. Each change still re-uploads the whole mask (W-05):
+   measure the cost with 1 and with 8 moving balls and report it — that measurement is W-05's
+   motivation.
+4. Substep count: use the fastest body (`bodySpeed` is currently from one sphere).
+5. Volume correction (`reference -= ballCells * submerged`, around line 740): sum over bodies.
+6. `BuildObjectConstants`: header + one velocity per body slot; registry entry sizes for both
+   kernels in `compute_kernels.json` must match the new cbuffer (R2).
+
+**Scene changes (`BackyardScene`).**
+1. Rendering: one `PrimitiveInst` per extra ball, sharing the ball primitive already loaded for
+   `Backyard_Ball.glb` (create with `CreateInstance(PrimitiveMgr.GetPrimitive(ballPrimitive), ...)`,
+   add with `m_renderContainer.AddMeshInstance`, remove with `RemoveMesh`). Keep the handles in a
+   vector parallel to the bodies; weld transform and scale to each body every frame, as is done for
+   `m_ballHandle`.
+2. Tunables in `WaterTunables` **and** the `glz::meta` in `BackyardWaterJson.cpp` (otherwise the
+   strict loader rejects the new JSON keys): `spawnMaxBalls` (≤ kMaxBodies − 1), `spawnRadiusMin` /
+   `spawnRadiusMax` (defaults 0.10 / 0.35 m; clamp the minimum to ≥ 1.2 × `cellSize`, a smaller ball
+   is not resolved by the grid), `spawnDensityMin` / `spawnDensityMax` (defaults 0.2 / 1.6 × water,
+   so some float and some sink), `spawnHeightMin` / `spawnHeightMax` above the water plane (0.5 /
+   2.0 m), `spawnSeed` (0 = random each run; non-zero = reproducible).
+3. Placement that always lands in the pool: take the basin from the solver settings, never from
+   literals (`basinMinX/MaxX/MinZ/MaxZ`). Draw `x ∈ [minX + r + h, maxX − r − h]`, `z` likewise
+   (h = one cell of margin), `y = waterPlaneY + r + U(heightMin, heightMax)`, horizontal velocity 0,
+   so it falls straight down inside the walls. Reject and redraw (up to 32 tries) if the new ball's
+   footprint overlaps an existing ball's (distance < r₁ + r₂ + h); give up with a log line rather
+   than spawning inside another ball. Landing on the steps counts as in the pool.
+4. Weight: radius and density ratio are drawn independently; mass is derived
+   (`density · 1000 · 4/3 π r³`). Log each spawn: index, position, radius, density, mass in kg.
+5. GUI, in "Dropped sphere": **Spawn ball** (disabled when the solver is not running — GL and
+   WebGPU — or at the cap, with the reason shown), **Clear spawned balls**, and a line
+   "balls: N / max". "Reset simulation" also clears spawned balls.
+6. Optional: a per-instance tint so balls are told apart; the ball primitive is one dark-red
+   material, so this needs a per-instance colour or brightness — check `PrimitiveInst` before adding
+   anything.
+
+**Acceptance.**
+* Default run unchanged: `--backyard-selftest` (all 8 gates) and `--fluid-selftest` PASS on D3D12
+  and Vulkan with the same numbers as before; scene 7 0 errors on five APIs.
+* With `spawnSeed` fixed, spawn 7 balls: every ball's final `x, z` lies inside the basin minus its
+  radius (log the final positions after 10 s); no ball overlaps another; balls with density < 1
+  float with submerged fraction ≈ their density (± 0.05), the rest rest on the floor or steps.
+* Mass: the correction deficit stays within the range of the single-ball run.
+* Performance: fps with 0, 1 and 7 extra balls, same session (`perf.ps1`), and the count of mask
+  re-uploads per second at info log level.
+* The debug view's "body voxels" count rises with each ball.
+
+**Pitfalls.** Changing `ObjectConstants` without updating the registry size breaks the dispatch on
+D3D12 ("passed N bindings, pipeline expects M") — R2. A stale PCH after editing
+`FluidSimulation.h` silently keeps the old struct (Stage 3c). Do not touch `CS_FluidSurface3D`: gates
+7 and 8 guard it.
+
+**Later (with W-05).** When the body becomes analytic instead of stamped, the list moves to a
+structured buffer updated through a new upload API, and the 8-body cap goes away.
+
+---
+
+### W-23 — Textured materials with normal maps (P2, M, suggested: GLM)
+
+**Problem.** Every Backyard mesh is a flat colour: `build_backyard.py`'s `material()` sets only
+Base Color, Metallic and Roughness factors. The engine already supports full glTF PBR textures —
+`GLTFMaterial.cpp` maps `baseColorTexture`, `metallicRoughnessTexture`, `normalTexture` (with
+`scale`), `occlusionTexture` and `emissiveTexture`, embedded (`bufferView`) or external images,
+plus `KHR_texture_transform`; tangents are generated with MikkTSpace when the file has none
+(`GLTFMesh.cpp`). So this is an asset task, not an engine task.
+
+**Source: ambientCG (CC0).** All assets are CC0 1.0 — free for any use including commercial, no
+credit required ([license](https://docs.ambientcg.com/license/)). Download pattern, confirmed
+through the public API: `https://ambientcg.com/get?file=<ID>_1K-JPG.zip`. Each zip holds
+`<ID>_1K-JPG_Color.jpg`, `_NormalGL.jpg`, `_NormalDX.jpg`, `_Roughness.jpg`, usually
+`_AmbientOcclusion.jpg` and `_Displacement.jpg`. **Use `NormalGL`** — glTF normal maps are OpenGL
+convention (+Y up); `NormalDX` makes every bump look inverted. Poly Haven (polyhaven.com, also CC0)
+is the alternative. Candidates that exist with a 1K-JPG download (API query, 2026-10-29) — pick by
+looking at the previews on `https://ambientcg.com/a/<ID>`:
+
+| Surface (material in `build_backyard.py`) | Candidates |
+|---|---|
+| House walls, chimney (`House_Stucco`) | Plaster001, Plaster002, PaintedPlaster017 |
+| Yard wall (`Wall_Adobe`) | Plaster007, Plaster003 |
+| Roof (`House_RoofMetal`) | CorrugatedSteel005, CorrugatedSteel009 |
+| Patio, house floor (`Ground_Patio`, `House_Concrete`) | Concrete034, Concrete047A, PavingStones138 |
+| Ground (`Ground_Gravel`) | Gravel043, Ground079S |
+| Pool coping (`Pool_Coping`) | PavingStones150, Concrete042A |
+| Pool shell and tile line (`Pool_Plaster`, `Pool_TileLine`) | Tiles141, Tiles139 (tile line); keep the plaster plain or use Plaster001 tinted |
+| Pergola (`House_Pergola`) | Planks037A, WoodFloor043 |
+
+**Fix.**
+1. New script `T850/scripts/textures/fetch_backyard_textures.py`: a pinned table
+   `{material name: (ambientCG id, "1K-JPG", sha256)}`. Downloads each zip once into a cache that is
+   not committed (`T850/build/texture-cache/`), verifies the sha256 (record it on the first download),
+   extracts Color, NormalGL, Roughness and AmbientOcclusion. Head comment: source, license (CC0) and
+   the IDs. No network access from the engine.
+2. `build_backyard.py`: give `material()` an optional `textures=` dict and `tile_m` (metres per
+   texture repeat). Build the node graph the glTF exporter understands: Image Texture (Color, sRGB) →
+   Base Color; Image Texture (Roughness, Non-Color) → Roughness; Image Texture (NormalGL, Non-Color)
+   → Normal Map node → Normal. Keep the existing colour as a tint only if the texture is too bright
+   or dark (multiply node) — otherwise drop it. AO is optional; the exporter needs the "glTF Material
+   Output" group for it, so do it last.
+3. **UVs in metres.** `uv_unwrap()` uses `smart_project`, whose scale is arbitrary per object, so a
+   tiling texture would come out a different size on every box. Add `uv_world_box(obj, tile_m)`: per
+   face, pick the dominant axis of the world normal and set `uv = (the other two world coordinates)
+   / tile_m`. Use it for all textured parts. **Never touch the water mesh's UVs** — they are the
+   solver mapping (implementation record 3.2) and the water gets no texture.
+4. Export with tangents (`export_tangents=True`) and JPEG images embedded in the `.glb`
+   (`export_image_format="JPEG"` or `"AUTO"`). The `.glb` files are generated and never committed,
+   so embedding is the simplest delivery. Expect the house GLB to grow from 0.12 MB to a few MB.
+5. Rerun the generator (Blender command in implementation record 3.1). The mesh cache under
+   `Models/Backyard/.t8cache` keys on file size and write time, so a new GLB invalidates it by itself.
+
+**Acceptance.**
+* `git diff T850/Assets/Models/Backyard/backyard_layout.json` is empty: textures must not move
+  geometry.
+* Log at info: the `[MeshInfo] KeyFlags` lines for the house, wall, ground and pool show
+  `baseColorMap=1 normalMap=1 tangents=1`.
+* Back-buffer dump at frame 300 before/after from the default camera: brick, plaster, corrugated
+  steel and paving visible at a believable scale (a 1 m feature looks 1 m). Check grazing angles on
+  the ground for shimmering; if it shimmers, mips are missing — report it, do not hide it with blur.
+* Scenes 7, 1 and 6 on all five APIs: 0 errors (GL and WebGPU decode the JPEGs to RGBA8).
+* Same-session fps before/after on D3D12 and Vulkan; a few percent is acceptable, report it.
+* Pool, water and solver untouched: `--backyard-selftest` PASS with identical numbers.
+
+---
+
+### W-24 — The house roof is upside down (P2, S, suggested: either)
+
+**Problem (seen in the frame-300 back-buffer dump).** The two roof slabs slope the wrong way: the
+outer edges sit high and the middle sags, so the roof is a V with the ridge cap floating above the
+valley. Cause, in `build_house()` in `T850/scripts/blender/build_backyard.py`: each slab is rotated
+about X by `sign * angle`. Rotating by +θ about X raises the slab's +Y end, so the slab on the +Y
+half (`sign = +1`, placed at `cy + run/2`) lifts its *outer* edge, and the −Y slab (`sign = −1`)
+lifts its outer edge too. Both must lift the edge that touches the ridge instead.
+
+**Fix.** Use `rot=(-sign * angle, 0.0, 0.0)` for `House_Roof_Front` / `House_Roof_Back` **and** for
+the standing seams (`House_Seam_Front_*` / `House_Seam_Back_*`), which share the same rotation.
+Then:
+* After the fix each slab's ridge-side edge is at `h + rise/2 + (slope_len/2)·sin(angle) = ridge` (5.1
+  m) and its eave edge at `h` (3.2 m) with a 0.5 m overhang; the ridge cap at `ridge` closes the top.
+  Print the min/max world Z of both slabs from the script to prove it.
+* The roof now leaves the two gable triangles open at `x = min_x` and `x = max_x` (the walls stop at
+  the eave height). Add two triangular gable walls in stucco (a prism from a bmesh with 3+3 verts,
+  or a box with its top two verts merged at the ridge) so the roof does not float.
+* The chimney passes through the roof on the +Y side; check it still pokes out (its top is at
+  ≈ 6.0 m, the roof surface there is ≈ 4.75 m).
+
+**Acceptance.** Back-buffer dump at frame 300 from the default camera shows a pitched roof with the
+ridge highest and the eaves resting on the walls; side view (move the camera in the GUI) shows the
+gables closed. `git diff backyard_layout.json` is empty (house extents unchanged). Scene 7 0 errors;
+self-tests unchanged (the house is not part of the solver). Regenerate only through the script —
+no hand edits to the GLB.
 
 ---
 

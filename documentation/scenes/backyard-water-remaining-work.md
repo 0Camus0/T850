@@ -1356,6 +1356,144 @@ layout JSON diff empty; frame-300 dump pitched; 0 errors on five APIs; self-test
 
 ---
 
+### W-25 — A different PBR material on every spawned ball (P2, M) — owner request
+
+**Goal.** Every ball that lands in the pool is visibly a different material, from a curated palette
+of **32 CC0 PBR sets** (the owner asked for at least 32). The scripted ball keeps slot 0 of the
+palette. Nothing about the solver changes.
+
+**Source and licence.** ambientCG, **CC0 1.0 Universal** (`https://docs.ambientcg.com/license/`):
+the raw files may be shipped inside a project and no credit is required. All 51 ids below were
+checked against the API (`https://ambientcg.com/api/v2/full_json?id=<ID>&include=displayData`) and
+every one of them has a downloadable 1K-JPG archive
+(`https://ambientcg.com/get?file=<ID>_1K-JPG.zip`). An archive holds `_Color`, `_NormalGL`,
+`_NormalDX`, `_Roughness`, `_Displacement` and often `_AmbientOcclusion`. **`NormalDX` must never be
+used** — it inverts every bump. ambientCG has no metallic map: metalness is a property of the asset
+family (`Metal*` = 1, marble/wood/stone = 0).
+
+**The 32-material palette.** "Metal" is the constant written into the ORM map's blue channel.
+
+| # | id | What it looks like | Metal |
+|---|---|---|---|
+| 1 | Metal009 | Brushed silver | 1 |
+| 2 | Metal049A | Smooth silver | 1 |
+| 3 | Metal048A | Clean gold | 1 |
+| 4 | Metal043A | Clean copper | 1 |
+| 5 | Metal043B | Dirty copper | 1 |
+| 6 | Metal032 | Plain grey metal | 1 |
+| 7 | Metal027 | Powder-coated black | 1 |
+| 8 | Metal038 | Scratched steel | 1 |
+| 9 | Metal046A | Clean dark metal | 1 |
+| 10 | Metal046B | Dirty dark metal | 1 |
+| 11 | MetalPlates006 | Riveted steel plates | 1 |
+| 12 | DiamondPlate001 | Diamond tread plate | 1 |
+| 13 | Chainmail001 | Chain mail | 1 |
+| 14 | CorrugatedSteel005 | Corrugated steel | 1 |
+| 15 | Marble001 | White marble | 0 |
+| 16 | Marble002 | Black marble | 0 |
+| 17 | Marble003 | Grey marble | 0 |
+| 18 | Marble012 | Veined white marble | 0 |
+| 19 | Marble016 | Black reflective marble | 0 |
+| 20 | Onyx001 | Onyx | 0 |
+| 21 | Travertine001 | Travertine | 0 |
+| 22 | Terrazzo001 | Terrazzo, fine | 0 |
+| 23 | Terrazzo005 | Terrazzo, coarse | 0 |
+| 24 | Tiles139 | Ceramic tiles | 0 |
+| 25 | Concrete047A | Polished concrete | 0 |
+| 26 | Wood001 | Oak planks | 0 |
+| 27 | Wood021 | Weathered wood | 0 |
+| 28 | Wood035 | Dark wood | 0 |
+| 29 | WoodFloor043 | Floor planks | 0 |
+| 30 | Rock030 | Rough rock | 0 |
+| 31 | Leather008 | Leather | 0 |
+| 32 | Cork001 | Cork | 0 |
+
+**19 spare ids**, verified but not shipped in the palette, for when 32 is not enough:
+Metal030, MetalPlates007, CorrugatedSteel009, Marble008, Terrazzo003, Terrazzo007, Tiles141,
+Wood051, Wood062, Planks021, Concrete034, PavingStones150, Rock029, Bricks075A, Asphalt012,
+Fabric019, Rubber001, Plastic001, Porcelain001. Adding one is a line in the manifest plus a fetch,
+because the loader is data-driven.
+
+**How the engine actually reads material maps (checked in `Assets/Shaders/FS_Mesh.hlsl`).**
+
+- `METALLIC_MAP` samples a *metallic-roughness* texture: `metallic = PBRParams.x * sample.b` and
+  `roughness = PBRParams.y * sample.g`. This is the only path that gives independent roughness, so
+  a palette entry is one packed **ORM** map (`R` = AO, `G` = roughness, `B` = metalness) plus a
+  base-colour map and a `NormalGL` map.
+- `GLOSS_MAP` is `#elif`-ed after `METALLIC_MAP` and reads `.r` with **no** factor multiply — do not
+  use it for the palette.
+- `OCCLUSION_MAP` is gated on `MaterialParams7.x`, which the renderer fills from the *subset's*
+  material (`mat->textures[Occlusion] ? 1 : 0`), so a per-instance AO map is inert. **Balls therefore
+  skip AO**; the ORM map still carries AO in `R` (harmless, it is never sampled) so the same file can
+  be reused if AO is ever plumbed per instance.
+- Base colour is multiplied by `baseColorFactor` in glTF tangent space, so the ball material's factor
+  must be white. Because the material is shared by every ball, `metallicFactor` and `roughnessFactor`
+  must both be **1.0** — the maps then carry all the variation. A ball with no map falls back to a
+  matte-metal look, which is why the fetch step is mandatory.
+- Instance UV sets: `MapShareBaseSet(TexCoordSets.z) ? uv : …` makes the metallic map share UV0 when
+  the material's `metallicTexCoord` is 0, which is the default. No UV transform is applied.
+
+**Per-instance plumbing.**
+
+- `PrimitiveInst` already carries `Texture* Textures[MaxPrimitiveTextures]`, `ShaderKey gKey` and
+  `SetTexture(tex, slot)`; `PrimitiveInst::Draw()` pushes them into the shared `PrimitiveBase`, draws
+  and restores them. That is the mechanism — no GPU instancing buffer is involved.
+- `RenderMesh::Draw` currently reads the instance slot only for normals (`Textures[3]`). Add
+  base-colour (0) and metallic-roughness (6) fallbacks, but **behind a new
+  `ShaderKey::INSTANCE_MATERIAL_MAPS` bit** so the scenes that already put an atlas in instance slot 0
+  (Minecraft `Meshes[idx].SetTexture(m_atlasTexture, 0)`, VoxelScene) keep today's behaviour.
+  Propagate the bit in `finalKey` exactly as `FLUID_SURFACE` is propagated, and merge it in
+  `PrimitiveInst::SetGlobalKey` from `PersistentFeatureBits`.
+- Slot numbering: 0 base colour, 3 normal, 6 metallic-roughness; 22/23/24 stay the water's. Every
+  new instance slot needs a `bindTextureOnce` branch, and `MaxPrimitiveTextures` is already 28.
+
+**Assets.**
+
+- `Backyard_Ball.glb` carries **only `POSITION` and `NORMAL`** — no UVs, no tangents, so no texture
+  can bind. `scripts/models/build_ball.py` (pure Python, writes glTF directly) must emit spherical
+  `TEXCOORD_0` and `TANGENT`, and the material must become
+  `baseColorFactor = [1,1,1,1]`, `metallicFactor = 1.0`, `roughnessFactor = 1.0`.
+- `scripts/textures/fetch_ball_materials.py`: same pattern as
+  `fetch_backyard_textures.py` (pinned sha256 per archive, a User-Agent or ambientCG answers 403),
+  downloads into the uncommitted `build/texture-cache`, then packs runtime files with Pillow
+  (10.1.0 is installed) into `Assets/Textures/Ball/<ID>/`:
+  `Color.jpg` (sRGB), `Normal.png` (OpenGL convention), `ORM.png` (linear: R = AO or 255, G =
+  roughness, B = metalness × 255). Default 512² — 1 MB per map decoded, so the whole palette is
+  ~96 MB of texture memory; `--resolution` allows 256/512/1024.
+- `Assets/Textures/Ball/` is **not committed** (`.gitignore` already drops
+  `Assets/Textures/**/*.png`; add the directory so the JPEGs stay out too). The Backyard scene
+  already requires a script run for its GLBs, so this does not change the build story.
+- `Assets/Scenes/BackyardBallMaterials.json` is committed: `{"version": 1, "materials":
+  [{"id": "Metal009", "label": "Brushed silver", "metal": 1.0}, …]}`, 32 entries. Unknown or
+  malformed ids are a hard error naming the file, the same discipline as `BackyardWater.json`.
+
+**Assignment.** Ball with body index *k* (1…N) takes `materials[(k - 1) % 32]`; body 0 (the scripted
+ball) takes `materials[0]`. Deterministic, independent of `spawnSeed`, and a permutation for the
+first 32 spawns. The spawn log names the material. Textures are created lazily on first use and kept
+for the process lifetime (resident count ≤ palette size, independent of the ball count).
+
+**Acceptance.**
+
+1. `BackyardBallMaterials.json` lists ≥ 32 entries and every one resolves to three files that load
+   on the running API (gate 10).
+2. Gate 10 also asserts the assignment is a permutation for the first 32 bodies, and that each ball
+   instance's slots 0/3/6 are non-null, pairwise distinct between two balls, and that
+   `INSTANCE_MATERIAL_MAPS` | `DIFFUSE_MAP` | `NORMAL_MAP` | `METALLIC_MAP` are set in its key.
+3. Frame probe: `--backyard-spawn 32` with a fixed `spawnSeed`, one dump frame; project each body's
+   centre from `snapshot.json`'s `camVP` into the back buffer and assert the 32 sampled colours are
+   pairwise distinct (documented threshold) and that a metal ball and a marble ball differ in mean
+   lightness. Reported on D3D12 and Vulkan.
+4. Gates 1–9 unchanged; both self-tests PASS on D3D12 and Vulkan; scenes 0/1/6 and 7 on five APIs
+   with 0 `[ERROR]` lines; same-session fps for 0 / 7 / 32 balls.
+5. Regenerate only `Backyard_Ball.glb`; the other Backyard GLBs and `backyard_layout.json` must not
+   change.
+
+**Limitations to record.** No per-instance AO (subset-gated), no per-ball tint or roughness scale
+(the factors are shared; a texture-level variation would be needed), palette bounded at 32 resident
+sets, and texture files are not committed so a fresh clone must run the fetch script.
+
+---
+
 ## 6. Hand-back checklist
 
 * [ ] Only the files the task names were changed (plus registry entries the task requires).

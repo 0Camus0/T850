@@ -120,7 +120,8 @@ namespace t850 {
     // from it.
     bool SeedVolumeFraction(BaseDriver* driver);
     // Restores total alpha to the value captured at seed time by rescaling the
-    // interface cells. Returns how much it had to correct, as a fraction.
+    // interface cells. Measured and applied on the GPU (no readback); appliedScale is
+    // only known at debug log level.
     bool CorrectVolumeFraction(BaseDriver* driver, float& appliedScale);
     // Summed alpha over the fluid domain, read back to the CPU. Used to prove
     // mass conservation.
@@ -292,8 +293,8 @@ namespace t850 {
     // the same reason: the surface kernel must not carry the pool placement as a
     // literal.
     std::vector<uint32_t> BuildGeometryConstants() const;
-    // Headroom-weighted volume delta for CS_FluidVolumeCorrect3D.
-    std::vector<uint32_t> BuildCorrectionConstants(float deficit) const;
+    // Target volume and sum slot for CS_FluidVolumeCorrect3D.
+    std::vector<uint32_t> BuildCorrectionConstants(float reference, uint32_t sumSlot) const;
     bool BuildWallMask(BaseDriver* driver);
     bool MeasureVolumeFraction(BaseDriver* driver, float& totalAlpha, float& interfaceSum);
     bool EnsureSurfaceTarget(BaseDriver* driver);
@@ -342,6 +343,13 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_seedAlphaPipeline;
     std::unique_ptr<ComputePipeline> m_alphaAdvectPipeline;
     std::unique_ptr<ComputePipeline> m_volumeCorrectPipeline;
+    // GPU sums for the correction (two slots, 4 x uint4), so it needs no readback.
+    std::unique_ptr<ComputePipeline> m_volumeReducePipeline;
+    std::unique_ptr<ComputeBuffer> m_volumeSums;
+    uint32_t m_volumeSumSlot = 0;
+    // Static authored mask on the GPU; the live mask is restamped from it in place.
+    std::unique_ptr<ComputePipeline> m_stampBodiesPipeline;
+    std::unique_ptr<ComputeBuffer> m_baseMaskBuffer;
     // Couples the moving body to the velocity field (no-penetration at a moving
     // solid boundary). Without this there is no divergence from the impact, so the
     // pressure solve has nothing to react to and no wave can radiate.

@@ -231,19 +231,17 @@ void FluidSimulation::RemoveBodiesFrom(size_t first) {
 // CS_FluidVolumeCorrect3D.hlsl.
 namespace {
   struct CorrectionConstantsBlob {
-    float interfaceHeadroom;
-    float volumeDelta;
-    float interfaceAlpha;
-    float correctionPadding;
+    float referenceVolume;
+    uint32_t sumSlot;
+    float pad0;
+    float pad1;
   };
 }
 
-std::vector<uint32_t> FluidSimulation::BuildCorrectionConstants(float deficit) const {
+std::vector<uint32_t> FluidSimulation::BuildCorrectionConstants(float reference, uint32_t sumSlot) const {
   CorrectionConstantsBlob blob{};
-  blob.interfaceHeadroom = m_lastInterfaceHeadroom;
-  blob.volumeDelta = deficit;
-  blob.interfaceAlpha = m_lastInterfaceAlpha;
-  blob.correctionPadding = 0.0f;
+  blob.referenceVolume = reference;
+  blob.sumSlot = sumSlot;
   std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
   std::memcpy(words.data(), &blob, sizeof(blob));
   return words;
@@ -442,6 +440,10 @@ bool FluidSimulation::BuildWallMask(BaseDriver* driver) {
   bufferDesc.byteWidth = voxelCount * sizeof(uint32_t);
   bufferDesc.structureStride = sizeof(uint32_t);
   bufferDesc.access = ComputeBufferAccess::ReadOnly;
+  bufferDesc.debugName = "Fluid Base Mask";
+  m_baseMaskBuffer = driver->CreateComputeBuffer(bufferDesc, mask.data());
+  // Read-write so the bodies are restamped in place on the GPU (UpdateWallMaskForBody).
+  bufferDesc.access = ComputeBufferAccess::ReadWrite;
   bufferDesc.debugName = "Fluid Wall Mask";
   m_wallMask = driver->CreateComputeBuffer(bufferDesc, mask.data());
   if (!m_wallMask) {
@@ -522,6 +524,55 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
     }
   }
   if (sameFootprints) return true;
+
+  // GPU path: rewrite the persistent mask from the base mask in one dispatch. The CPU
+  // path below copies every voxel and re-creates the buffer through a blocking upload.
+  if (m_stampBodiesPipeline && m_baseMaskBuffer && m_wallMask &&
+      m_wallMask->descriptor.access == ComputeBufferAccess::ReadWrite) {
+    std::vector<float> spheres((std::max)(m_bodies.size(), size_t(1)) * 4u, 0.0f);
+    for (size_t b = 0; b < footprint.size(); ++b) {
+      if (!footprint[b].valid) continue;
+      spheres[b * 4u + 0u] = m_bodies[b].x;
+      spheres[b * 4u + 1u] = m_bodies[b].y;
+      spheres[b * 4u + 2u] = m_bodies[b].z;
+      spheres[b * 4u + 3u] = m_bodies[b].radius;
+    }
+    struct StampConstants {
+      float basinMinX, basinMinY, basinMinZ;
+      uint32_t bodyCount;
+      float stepX, stepY, stepZ, pad;
+    } stamp{m_settings.basinMinX, m_settings.basinMinY, m_settings.basinMinZ,
+            static_cast<uint32_t>(m_bodies.size()), stepX, stepY, stepZ, 0.0f};
+    static_assert(sizeof(StampConstants) == 8u * sizeof(uint32_t));
+    uint32_t stampWords[8];
+    std::memcpy(stampWords, &stamp, sizeof(stamp));
+    const std::vector<uint32_t> constants = BuildConstants();
+    ComputeBindingDesc bodies;
+    bodies.type = ComputeBindingType::ReadOnlyBuffer;
+    bodies.shaderRegister = 1;
+    bodies.inlineData = spheres.data();
+    bodies.inlineBytes = static_cast<uint32_t>(spheres.size() * sizeof(float));
+    bodies.inlineStride = 4u * sizeof(float);
+    const std::vector<ComputeBindingDesc> bindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+      {ComputeBindingType::Constants32, 1, nullptr, stampWords, 8u},
+      {ComputeBindingType::ReadOnlyBuffer, 0, m_baseMaskBuffer.get(), nullptr, 0},
+      bodies,
+      {ComputeBindingType::ReadWriteBuffer, 0, m_wallMask.get(), nullptr, 0}
+    };
+    const uint32_t* group = m_stampBodiesPipeline->threadGroupSize.data();
+    if (!driver->DispatchCompute(*m_stampBodiesPipeline, bindings,
+                                 (width + group[0] - 1) / group[0],
+                                 (height + group[1] - 1) / group[1],
+                                 (depth + group[2] - 1) / group[2])) {
+      T8_LOG_ERROR("[Fluid] Body stamp dispatch failed");
+      return false;
+    }
+    m_maskBodyFootprints = std::move(footprint);
+    m_maskBodyStampCount = activeBodies;
+    m_maskBodyValid = true;
+    return true;
+  }
 
   std::vector<uint32_t> mask = m_baseMask;
   uint32_t stamped = 0;
@@ -643,6 +694,8 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_seedAlphaPipeline = CreatePipeline(driver, "CS_FluidSeedAlpha3D.hlsl");
   m_alphaAdvectPipeline = CreatePipeline(driver, "CS_FluidAlphaAdvect3D.hlsl");
   m_volumeCorrectPipeline = CreatePipeline(driver, "CS_FluidVolumeCorrect3D.hlsl");
+  m_volumeReducePipeline = CreatePipeline(driver, "CS_FluidVolumeReduce3D.hlsl");
+  m_stampBodiesPipeline = CreatePipeline(driver, "CS_FluidStampBodies3D.hlsl");
   m_objectVelocityPipeline = CreatePipeline(driver, "CS_FluidObstacleVelocity3D.hlsl");
   m_clearPipeline = CreatePipeline(driver, "CS_FluidClear3D.hlsl");
   m_surfaceToBufferPipeline = CreatePipeline(driver, "CS_FluidSurfaceToBuffer.hlsl");
@@ -651,7 +704,9 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_extrapolatePipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
-                  m_alphaAdvectPipeline && m_volumeCorrectPipeline && m_objectVelocityPipeline && m_clearPipeline &&
+                  m_alphaAdvectPipeline && m_volumeCorrectPipeline && m_volumeReducePipeline &&
+                  m_stampBodiesPipeline && m_baseMaskBuffer &&
+                  m_objectVelocityPipeline && m_clearPipeline &&
                   m_surfaceToBufferPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
@@ -716,6 +771,11 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_seedAlphaPipeline.reset();
   m_alphaAdvectPipeline.reset();
   m_volumeCorrectPipeline.reset();
+  m_volumeReducePipeline.reset();
+  m_volumeSums.reset();
+  m_volumeSumSlot = 0;
+  m_stampBodiesPipeline.reset();
+  m_baseMaskBuffer.reset();
   m_objectVelocityPipeline.reset();
   m_clearPipeline.reset();
   m_surfaceToBufferPipeline.reset();
@@ -773,12 +833,8 @@ bool FluidSimulation::SeedVolumeFraction(BaseDriver* driver) {
 
 bool FluidSimulation::CorrectVolumeFraction(BaseDriver* driver, float& appliedScale) {
   appliedScale = 1.0f;
-  if (!m_ready || !driver || !m_volumeCorrectPipeline) return false;
+  if (!m_ready || !driver || !m_volumeCorrectPipeline || !m_volumeReducePipeline) return false;
   if (m_referenceVolumeFraction <= 0.0f) return false;
-
-  float total = 0.0f;
-  float interfaceSum = 0.0f;
-  if (!MeasureVolumeFraction(driver, total, interfaceSum)) return false;
 
   // The reference must account for the space the body occupies. Chasing the
   // seed-time total while a ball sits in the water makes the correction pump water
@@ -799,48 +855,67 @@ bool FluidSimulation::CorrectVolumeFraction(BaseDriver* driver, float& appliedSc
   }
   if (reference <= 1.0f) reference = m_referenceVolumeFraction;
 
-  // The correction only touches partially filled cells, so the achievable delta
-  // is bounded by their total. If the loss exceeds that there is nothing sane to
-  // rescale and the honest answer is to leave the field alone than to fabricate
-  // water out of saturated cells.
-  const float deficit = reference - total;
-  if (std::abs(deficit) <= 0.5f) return true;             // within noise
-  // Adding water needs interface headroom to land in; removing it needs interface
-  // water to take from. Without either there is nothing sane to correct.
-  if (deficit > 0.0f && m_lastInterfaceHeadroom <= 1.0f) return false;
-  if (deficit < 0.0f && m_lastInterfaceAlpha <= 1.0f) return false;
+  // Both slots start at zero; each correction clears the slot the next round uses.
+  if (!m_volumeSums) {
+    ComputeBufferDesc sumsDesc;
+    sumsDesc.byteWidth = 4 * 4 * sizeof(uint32_t);
+    sumsDesc.structureStride = 4 * sizeof(uint32_t);
+    sumsDesc.access = ComputeBufferAccess::ReadWrite;
+    sumsDesc.debugName = "Fluid Volume Sums";
+    const std::vector<uint32_t> zero(16, 0u);
+    m_volumeSums = driver->CreateComputeBuffer(sumsDesc, zero.data());
+    m_volumeSumSlot = 0;
+    if (!m_volumeSums) return false;
+  }
+  const uint32_t slot = m_volumeSumSlot;
 
-  appliedScale = 1.0f + deficit / (std::max)(total, 1.0f);
-
-  // Additive, headroom-weighted distribution. A multiplicative rescale is eaten
-  // by the clamp: interface cells sit just under 1, so alpha * 1.03 lands above
-  // 1 and saturate() discards the whole gain.
-  const uint32_t alphaNext = (m_alphaCurrent + 1) % 2;
-  const std::vector<uint32_t> constants = BuildConstants();
-  const std::vector<uint32_t> correctionConstants = BuildCorrectionConstants(deficit);
-  const std::vector<ComputeBindingDesc> bindings = {
-    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+  // 1. Total alpha, interface headroom and interface alpha, summed on the GPU. The
+  // correction kernel derives the deficit and the same guards from them, so nothing
+  // is read back: the old full-volume readback stalled a frame every interval.
+  const std::vector<uint32_t> reduceConstants = BuildConstants(slot);
+  const std::vector<ComputeBindingDesc> reduceBindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, reduceConstants.data(), static_cast<uint32_t>(reduceConstants.size())},
     {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
-    {ComputeBindingType::Constants32, 1, nullptr, correctionConstants.data(), static_cast<uint32_t>(correctionConstants.size())},
-    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[alphaNext].get()}
+    {ComputeBindingType::ReadWriteBuffer, 0, m_volumeSums.get(), nullptr, 0}
   };
   const uint32_t gx = (m_settings.width + m_volumeCorrectPipeline->threadGroupSize[0] - 1) / m_volumeCorrectPipeline->threadGroupSize[0];
   const uint32_t gy = (m_settings.height + m_volumeCorrectPipeline->threadGroupSize[1] - 1) / m_volumeCorrectPipeline->threadGroupSize[1];
   const uint32_t gz = (m_settings.depth + m_volumeCorrectPipeline->threadGroupSize[2] - 1) / m_volumeCorrectPipeline->threadGroupSize[2];
-  if (!driver->DispatchCompute(*m_volumeCorrectPipeline, bindings, gx, gy, gz))
+  if (!driver->DispatchCompute(*m_volumeReducePipeline, reduceBindings, gx, gy, gz)) {
+    m_volumeSums.reset();   // a half-written slot must not be reused
     return false;
-  m_alphaCurrent = alphaNext;
+  }
 
-  // Verify the correction actually landed. A correction that is computed but
-  // then clamped back on the GPU is the difference between "mass is conserved"
-  // and "mass is conserved on paper", so measure the result instead of assuming.
-  // The second readback is a full GPU stall and only feeds a debug line.
+  // 2. Additive, headroom-weighted distribution. A multiplicative rescale is eaten
+  // by the clamp: interface cells sit just under 1, so alpha * 1.03 lands above
+  // 1 and saturate() discards the whole gain.
+  const uint32_t alphaNext = (m_alphaCurrent + 1) % 2;
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<uint32_t> correctionConstants = BuildCorrectionConstants(reference, slot);
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
+    {ComputeBindingType::Constants32, 1, nullptr, correctionConstants.data(), static_cast<uint32_t>(correctionConstants.size())},
+    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[alphaNext].get()},
+    {ComputeBindingType::ReadWriteBuffer, 1, m_volumeSums.get(), nullptr, 0}
+  };
+  if (!driver->DispatchCompute(*m_volumeCorrectPipeline, bindings, gx, gy, gz)) {
+    m_volumeSums.reset();
+    return false;
+  }
+  m_alphaCurrent = alphaNext;
+  m_volumeSumSlot = slot ^ 1u;
+
+  // The readback is a full GPU stall, so the numbers are only fetched for a debug line.
   if (Log::GetMaxLevel() < Log::LVL_DEBUG) return true;
-  float totalAfter = 0.0f;
-  float interfaceAfter = 0.0f;
-  if (MeasureVolumeFraction(driver, totalAfter, interfaceAfter)) {
-    T8_LOG_DEBUG("[Fluid] VolumeCorrection t=%.2fs was=%.0f deficit=%.1f headroom=%.0f -> now=%.0f (%+.1f)",
-                 m_time, total, deficit, m_lastInterfaceHeadroom, totalAfter, totalAfter - total);
+  uint32_t sums[16] = {};
+  if (driver->ReadComputeBuffer(*m_volumeSums, sums, sizeof(sums))) {
+    const uint32_t* s = sums + slot * 8u;
+    const float total = static_cast<float>(s[0]) + static_cast<float>(s[1]) / 65536.0f;
+    const float headroom = static_cast<float>(s[2]) + static_cast<float>(s[3]) / 65536.0f;
+    appliedScale = 1.0f + (reference - total) / (std::max)(total, 1.0f);
+    T8_LOG_DEBUG("[Fluid] VolumeCorrection t=%.2fs was=%.0f deficit=%.1f headroom=%.0f",
+                 m_time, total, reference - total, headroom);
   }
   return true;
 }

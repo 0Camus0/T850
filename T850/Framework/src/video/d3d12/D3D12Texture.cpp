@@ -434,6 +434,48 @@ namespace t850 {
       return;
     }
     const UINT64 uploadSize = m_uploadBuffer->GetDesc().Width;
+    const D3D12_RESOURCE_STATES shaderReadState =
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
+    // Inside a frame, stage through the per-frame ring and record the copy in the frame's
+    // own command list. The old path below submitted a separate list and blocked on a
+    // fence, which serialised CPU and GPU on every call (per frame for tiled lights).
+    ID3D12Resource* ring = nullptr;
+    UINT64 ringOffset = 0;
+    void* ringMapped = nullptr;
+    const UINT64 footprintBytes = static_cast<UINT64>(layout.Footprint.RowPitch) * numRows;
+    ID3D12GraphicsCommandList* frameList = driver->GetCmdList();
+    if (frameList && driver->AllocateRingUpload(footprintBytes, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT,
+                                                ring, ringOffset, ringMapped)) {
+      for (UINT r = 0; r < numRows; r++) {
+        memcpy(static_cast<uint8_t*>(ringMapped) + static_cast<UINT64>(r) * layout.Footprint.RowPitch,
+               reinterpret_cast<const uint8_t*>(data) + static_cast<UINT64>(r) * rowBytes,
+               static_cast<size_t>(rowBytes));
+      }
+      RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, static_cast<uint64_t>(w) * h * 16);
+
+      D3D12_RESOURCE_BARRIER barrier = {};
+      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      barrier.Transition.pResource = pTexResource.Get();
+      barrier.Transition.StateBefore = shaderReadState;
+      barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+      barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      frameList->ResourceBarrier(1, &barrier);
+
+      D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
+      dst.pResource = pTexResource.Get();
+      dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      src.pResource = ring;
+      src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+      src.PlacedFootprint = layout;
+      src.PlacedFootprint.Offset = ringOffset;
+      frameList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+      barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+      barrier.Transition.StateAfter = shaderReadState;
+      frameList->ResourceBarrier(1, &barrier);
+      return;
+    }
 
     // Copy data to upload buffer (respecting row pitch alignment)
     void* mapped = nullptr;
@@ -466,9 +508,6 @@ namespace t850 {
     }
     m_uploadBuffer->Unmap(0, nullptr);
     RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Texture, static_cast<uint64_t>(w) * h * 16);
-
-    const D3D12_RESOURCE_STATES shaderReadState =
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 
     ComPtr<ID3D12CommandAllocator> allocator;
     HRESULT hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));

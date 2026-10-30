@@ -101,4 +101,6 @@ T850/Assets/Models/**/*.bin
 !/T850/Assets/Textures/herobrine_green.png
 /T850/Assets/Textures/**/*.t8ibl
 /T850/Assets/Textures/**/*.download
+# Backyard ball PBR palette: fetched from the cloud texture manifest, never committed
+/T850/Assets/Textures/Ball/
 /T850/imgui_layout.ini

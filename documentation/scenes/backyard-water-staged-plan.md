@@ -97,7 +97,9 @@ Every spawned ball shows its own PBR material, from a palette of **32 verified C
 palette table is in remaining-work W-25; the data lives in `Scenes/BackyardBallMaterials.json`.
 **Owner decisions (2026-10-30):** palette stays at 32, textures at 512², texture files are fetched by
 script and not committed, and the two local models are consulted at each step as usual. The owner
-has not started the stage yet — this brief is what the next session executes.
+pointed the delivery at the `t850-textures` R2 bucket and asked that the cloud manifest stay in sync
+with the local side, so the assets were published first (see section 4, "Stage 4d, part 1" — done);
+the engine work below is what the next session executes.
 
 - **Read the shader before designing around it.** `METALLIC_MAP` samples a *metallic-roughness*
   texture: `metallic = PBRParams.x * sample.b`, `roughness = PBRParams.y * sample.g`. So a palette
@@ -118,14 +120,16 @@ has not started the stage yet — this brief is what the next session executes.
   metallic-roughness (6) fallbacks **behind a new `ShaderKey::INSTANCE_MATERIAL_MAPS` bit**, so the
   other scenes that put an atlas in instance slot 0 (Minecraft, Voxel) keep their current
   behaviour. Propagate the bit through `finalKey` the way `FLUID_SURFACE` is propagated.
-- **Textures are fetched, not committed.** `.gitignore` already ignores `Assets/Textures/**/*.png`
-  and the Backyard scene already needs a script run for its GLBs. Add
-  `scripts/textures/fetch_ball_materials.py` (the same pinned-sha256 + User-Agent pattern as the
-  house script) that downloads the 1K archives into `build/texture-cache` and packs 512² runtime
-  files into `Assets/Textures/Ball/<ID>/{Color.jpg, Normal.png, ORM.png}` with Pillow (installed:
-  10.1.0). 512² RGBA8 is 1 MB per map decoded, so the whole 32-set palette is ~96 MB of texture
-  memory; textures upload lazily per material, so the resident count is bounded by the palette, not
-  by the ball count.
+- **Textures come from the cloud, not from ambientCG on every machine.** `.gitignore` ignores
+  `Assets/Textures/Ball/`; only the authoring machine runs
+  `scripts/textures/fetch_ball_materials.py` (1K archives → 512² `Color.jpg`, `Normal.png`,
+  `ORM.png` with Pillow), and `scripts/PushCloudTextures.ps1` (new) uploads them to the
+  `t850-textures` R2 bucket and republishes the shared manifest. Every other machine gets them from
+  `scripts/DownloadTextures.ps1` like the sky cubemaps — see `documentation/development/cloud-assets.md`.
+  **This half is already done** (see section 4, "Stage 4d, part 1"): 96 objects, 138 textures in the
+  manifest, verified end to end. 512² RGBA8 is 1 MB per map decoded, so the palette is ~96 MB of
+  texture memory; textures upload lazily per material at runtime, so the resident count is bounded
+  by the palette, not by the ball count.
 - **Proof.** Gate 10 (headless: palette ≥ 32, every entry resolves and loads on the running API, the
   assignment is a permutation for the first 32 balls) plus a frame-dump probe script that projects
   each ball's centre from `snapshot.json`'s `camVP` into the dumped back buffer (`RT_Dump_*.ppm`)
@@ -227,7 +231,7 @@ command run, and anything you could not verify.
 | 4a. House roof | W-24 | S | **DONE** — sign flipped, gables closed, 78 → 80 meshes, layout JSON unchanged |
 | 4b. Textured materials | W-23 | M | **DONE** — CC0 ambientCG textures with NormalGL, metric world-box UVs, JPEGs embedded; −5.5 % fps; layout unchanged |
 | 4c. Spawn more balls | W-22 | M–L | **DONE** — mask-encoded body index, gate 9 multi-body PASS, GUI spawn/clear. Review: Z-mirror fixed (`9f6e7a2f`), **cap removed** (`97009aef`, 100 balls tested) |
-| 4d. Per-ball PBR materials | W-25 | M | **Owner request** — 32 verified CC0 sets, per-instance base-colour/normal/ORM maps behind a new key bit, 512² fetched textures, gate 10 + frame probe |
+| 4d. Per-ball PBR materials | W-25 | M | **Owner request** — 32 verified CC0 sets published to R2 (part 1 **DONE**, section 4); per-instance base-colour/normal/ORM maps behind a new key bit, gate 10 + frame probe still to do |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
@@ -1563,6 +1567,56 @@ Re-checked both commits from the tip (`37682bb6`) rather than trusting the write
 - **A GLB written by hand may carry no UVs at all.** `Backyard_Ball.glb` has only `POSITION` and
   `NORMAL`, so a texture silently cannot bind; check `attributes` before assuming a mesh is
   texturable.
+
+### Stage 4d, part 1 — the ball palette is in the cloud (2026-10-30)
+
+The owner asked for the textures to live in Cloudflare R2 and for the cloud manifest to stay in
+sync with the local side. What the buckets hold, measured today:
+
+- `t850-textures`: 43 objects (root `manifest.json` + 42 textures, 481.7 MB).
+- `t850-models`: 74 objects (root `manifest.json`, `runtime_assets.json` + 72 models).
+- The **same** `manifest.json` bytes are uploaded to both buckets (one union manifest, 114 assets,
+  each entry naming its bucket). There is no committed local copy of it; the committed
+  `Assets/model-cloud-manifest.json` is the byte-identical twin of `runtime_assets.json`, which is
+  the models-only subset the launchers read.
+- The token in `C:\Users\camus\Documents\cloud.txt` is an account-scoped API token: bucket listing,
+  object read, `PUT` and `DELETE` on `/accounts/{id}/r2/buckets/{bucket}/objects/{key}` all work.
+  It is never copied into the repository. `web/cloudflare.local.json` stays absent, so the npm
+  tooling keeps using `CLOUDFLARE_API_TOKEN`.
+
+New tooling, both authoring-only:
+
+- `scripts/textures/fetch_ball_materials.py` packs the 32 CC0 sets at 512² into
+  `Assets/Textures/Ball/<id>/{Color.jpg, Normal.png, ORM.png}` (96 files, 16.78 MB) from pinned
+  ambientCG archives. A corrupted archive aborts with a sha256 mismatch (negative-tested by
+  flipping a byte in `Metal009_1K-JPG.zip`).
+- `scripts/PushCloudTextures.ps1` is the first publish tool in the repo: dry run by default,
+  `-Apply` to upload, `-Prune` opt-in. It treats the cloud manifest as the source of truth, aborts if
+  the two bucket copies have drifted, changes only the entries for the scanned prefix, uploads
+  objects before the manifest (and deletes before republishing the pruned manifest), verifies every
+  upload by reading it back and comparing SHA-256, publishes to both buckets and re-verifies both,
+  and adds `sha256` to **new** entries only (older entries stay size-only). A PowerShell JSON round
+  trip of the current manifest is byte-identical, so publishing does not churn untouched entries;
+  the only new top-level field is `manifestVersion`.
+
+Measured run: 96 objects uploaded (16.78 MB), manifest 114 → **210 entries, 42 → 138 textures**,
+`manifestVersion` 1, 110,459 bytes; both buckets verified identical; a re-run reports "already
+current" and publishes nothing. `DownloadTextures.ps1` reports 138/138 ready, and deleting
+`Ball/Marble016/ORM.png` made it re-download the file and verify the manifest's sha256.
+
+**Rules learned here.**
+
+- **Publish objects before the manifest, and verify the object rather than the status code.** The
+  `ETag` returned to `Invoke-WebRequest` on a `PUT` is not reliable; reading the object back through
+  the authenticated API and comparing SHA-256 is.
+- **`r2.dev` propagates, it does not race.** A freshly stored key can take a minute or two to appear
+  on the public hostname, so a per-object public `HEAD` immediately after upload is not a valid
+  failure signal; verify through the API, then sample the public hostname at the end.
+- **Never skip an upload on size alone.** New entries carry a `sha256`, so re-runs are genuinely
+  idempotent; entries without one are compared by size and can only be forced with `-Force`.
+
+**Still open (Stage 4d proper):** the ball GLB has no UVs, the renderer has no
+`INSTANCE_MATERIAL_MAPS` fallbacks, the scene does not assign materials, and gate 10 does not exist.
 
 ### Stage 5a — W-02
 

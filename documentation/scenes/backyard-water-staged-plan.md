@@ -140,7 +140,7 @@ command run, and anything you could not verify.
 | 2. Cheap visible defects | W-01, W-08, W-13 | S–M | **DONE** — GL/WebGPU 0 errors; lid proven open; dead sphere path deleted |
 | 3. Rendering correctness | W-19, W-09, W-10 | M | **DONE, reviewed** — W-19 (`fa5422ff`), W-09 (`517ae6bf`), W-10 (`96d84638`, redesigned in review `47500166`: CoC consumes the nearer depth, no extra pass) |
 | 3c. Vulkan fluid self-test after Backyard init | W-21 | S–M | **DONE** — root cause was NOT frame ownership: it was uninitialised GPU volume memory. Fixed in `TryInitialize` |
-| 4. Data-driven tunables | W-11 | M | **BLOCKED** — a 107-field `WaterTunables` breaks `DayScene.cpp`'s glaze instantiation; needs a struct split first (Stage 4a). See the Stage 4 attempt note |
+| 4. Data-driven tunables | W-11 | M | **DONE** — `Scenes/BackyardWater.json` drives all 101 settable fields; three solver literals promoted; strict key validation. See Stage 4 |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
@@ -664,40 +664,72 @@ plane.
 **Exit** — the "nothing hardcoded" requirement is measurably satisfied for the water; every later
 stage can tune without a rebuild.
 
-#### Stage 4 attempt (2026-10-29) — BLOCKED on a glaze/MSVC limit, nothing committed
+#### Stage 4 — W-11 (done)
 
-Attempted items 1, 2 and 3. **Items 1, 2 are ready; item 3 (the JSON load) cannot compile as
-designed**, and the cause is worth recording before the next attempt.
+**My earlier "BLOCKED" note in this section was wrong, and the correction matters.** I had concluded
+that a 107-field `WaterTunables` broke `DayScene.cpp`'s glaze instantiation and that the struct
+needed splitting. That was a bad diagnosis from a confounded experiment: the failing build had
+*several* changes applied at once, and the culprit was not the field count.
 
-**Measured facts**
+**What actually happened.** Field count was never the problem. Adding one probe field (105) built
+clean; adding all three real fields (107) built clean. The build only failed when **glaze reached
+`DayScene.cpp` through a header** — `WaterTunables.h` or `SceneDescriptor.h` — where MSVC dies in
+`glaze/util/parse.hpp` (`C3878`). Keeping glaze out of those headers fixes it, with no struct split
+needed. The lesson is the same one this project keeps re-learning: isolate one variable per
+experiment.
 
-- `WaterTunables` has **104** fields at `5798477c`. Adding the three promoted solver values
-  (`maxSubstepDt`, `alphaCompression`, `volumeCheckInterval`) takes it to **107**.
-- With 107 fields the build fails in a **legacy translation unit**, `DayScene.cpp`, with
-  `glaze/util/parse.hpp(1394)` `C3878: syntax error: unexpected token ')'`. `DayScene.cpp` contains
-  no direct glaze call; it instantiates glaze transitively through a header that serializes
-  `SceneProps`, which contains `WaterTunables`. 104 members compile, 107 do not.
-- Giving `WaterTunables` an explicit `glz::meta` (101 keys, the six excluded members documented)
-  **does not fix it**. Two further experiments also failed: the meta in `WaterTunables.h` (so every
-  TU sees it), and moving the meta plus the loader into a dedicated TU.
-- An explicit meta of **101 keys cannot be read with `error_on_unknown_keys = true`** in this glaze
-  version: `json/read.hpp(1892)` `static_assert(bool(hash_info<T>.type))` fails, i.e. the
-  compile-time perfect hash cannot be built at that key count. GLM confirms there is no knob; the
-  seed search simply fails.
-- `glz::raw_json` is available (`glaze/core/common.hpp`), so capturing the `"water"` object as raw
-  text and parsing it separately is viable *in principle*.
+**What shipped**
 
-**Two viable routes, both costed**
+1. **Three solver literals promoted to tunables.** `alphaCompression` (was a `FluidSettings` literal
+   0.5), `maxSubstepDt` (was 1/120) and `volumeCheckInterval` (was a hardcoded 15 inside
+   `FluidSimulation` with no setter at all) are now `WaterTunables` fields, wired into
+   `MakeFluidSettings` and pushed live every frame in `OnUpdate` via two new setters
+   (`SetAlphaCompression`, `SetVolumeCheckInterval`). Four GUI sliders added.
+2. **`Scenes/BackyardWater.json`** — the whole tunable surface (101 settable keys) authored in JSON.
+   Loaded by a **dedicated leaf translation unit**, [BackyardWaterJson.cpp](../../T850/DayScene/BackyardWaterJson.cpp),
+   which is the only place glaze meets `WaterTunables`. That file owns the explicit
+   `glz::meta<WaterTunables>`, so glaze never reaches `DayScene.cpp`.
+3. Stale "Fifteen float4 groups" comment corrected to 24.
 
-1. **Split `WaterTunables` into sub-structs** (`Solver`, `Optics`, `Surface`, `Reflection`, `Foam`,
-   `Body`), each with its own meta and ≤ ~40 keys. This fixes both the reflection explosion and the
-   perfect-hash limit, and Qwen's review argues it is the durable answer. Cost: ~100 call sites
-   (`w.absorbR` → `w.optics.absorbR`), plus `BuildWaterGpu` and every GUI slider. That is a
-   refactor, and rule 5 forbids drive-by refactors inside a stage — so it should be its own stage.
-2. **Keep one struct, hand-roll the JSON surface**: a `std::map<std::string, float>`-style applier
-   written by hand (no glaze reflection of `WaterTunables`), plus a meta on whatever *does* get
-   serialized so the 107-field struct is never auto-reflected. Cheaper today, but it bypasses glaze
-   and needs its own type dispatch and tests.
+**Six keys are deliberately not settable, each documented in the meta**
+
+| Key | Why |
+|---|---|
+| `gridWidth` / `gridHeight` / `gridDepth` | derived from `cellSize` + the pool layout; the scene writes them back |
+| `waterPlaneY` | owned by `backyard_layout.json` |
+| `freeboard` | owned by the same layout; `FluidSimulation` overwrites it, so a JSON value would silently do nothing |
+| `floorTextureBound` | runtime state the scene sets when the floor texture binds |
+
+**Deviation from the catalogue: the file is `Scenes/BackyardWater.json`, not a `"water"` object inside
+`BackyardScene.json`.** Reason: the scene descriptor's parse is strict and owns that file's top-level
+key set, so teaching it a `"water"` key means putting glaze (or a `glz::raw_json` member) in
+`SceneDescriptor.h` — which is exactly what breaks `DayScene.cpp`. A separate file keeps both
+properties. Editing it is one JSON edit, which is what the acceptance asks for.
+
+**Strictness: glaze's own unknown-key check cannot be used here.** `glz::opts{.error_on_unknown_keys
+= true}` needs a compile-time perfect hash, and this glaze version's seed search fails at 101 keys
+(`json/read.hpp(1892)`: `static_assert(bool(hash_info<T>.type))`). Confirmed by GLM: no knob exists.
+So the read is permissive and the keys are validated by hand against
+`glz::reflect<WaterTunables>::keys` — a typo is still a hard error that names the key, which is the
+property that matters (Qwen's objection to a permissive read was exactly this, and the manual check
+answers it).
+
+**Measured**
+
+| Check | Result |
+|---|---|
+| Shipped file loads | `19 of 101 keys set, the rest keep their C++ defaults`, 0 errors |
+| **One JSON edit changes the run** | `pressureIterations` 60 → 20: log reads `20 pressure iterations`, and the `[columns]` surface probe changes (`-3 -3 -2 …` → `-1 -0 +0 …`) |
+| **Unknown key is a hard error** | injected `sorOmegaTypo` → `Unknown water key 'sorOmegaTypo' … Known keys are listed in the glz::meta`, then `Startup/runtime failure: … invalid water tunables file`, process exit code **1** |
+| Missing file falls back | renamed away → `No water tunables file … using the C++ defaults`, 60 iterations, 0 errors |
+| **Full key round-trip** | generated a file with all **101** keys at their C++ defaults → `101 of 101 keys set`, 0 errors |
+| `--backyard-selftest` | PASS on D3D12 and Vulkan |
+| `--fluid-selftest` (scene 7) | PASS on D3D12 and Vulkan |
+| Scenes 0/1/6/7 × 5 APIs | **0 errors in all 20 combinations** |
+
+**Note for later stages:** `BackyardSelfTest` builds its settings from `WaterTunables{}` defaults, not
+from the scene's JSON. That is deliberate — the gates must not change when the scene file is tuned —
+but it means a JSON edit is not visible in the self-test numbers, only in a scene run.
 
 **Recommendation** — do route 1 as a dedicated stage (call it **Stage 4a, "split the water
 tunables"**), then Stage 4 proper becomes trivial: six small metas, each with `error_on_unknown_keys
@@ -1110,7 +1142,18 @@ sampling artefact.
 
 ### Stage 4 — W-11
 
-_Pending._
+Done. Three solver literals promoted (`alphaCompression` 0.5, `maxSubstepDt` 1/120, and the
+volume-check interval 15 which had no setter at all), wired through `MakeFluidSettings`, pushed live
+in `OnUpdate`, four GUI sliders. The tunable surface is authored in `Scenes/BackyardWater.json` and
+loaded by a dedicated leaf TU (`BackyardWaterJson.cpp`) that owns the `glz::meta<WaterTunables>` —
+glaze must not reach `DayScene.cpp` through a header, which is the actual MSVC limit. Six keys are
+deliberately not settable (grid dims, waterPlaneY, freeboard, floorTextureBound), each documented in
+the meta. Strictness is hand-validated against `glz::reflect::keys` because glaze's perfect hash
+fails at 101 keys. Measured: shipped file sets 19/101 keys; `pressureIterations` 60 → 20 changes the
+log line and the surface probe; an injected typo errors with the key name and exit code 1; the
+missing-file path falls back to defaults; all 101 keys round-trip (`101 of 101 keys set`). Gates PASS
+on both APIs and all 20 scene/API combinations log 0 errors. My earlier "blocked, field count"
+diagnosis in this document was wrong and is corrected in the section above.
 
 ### Stage 5a — W-02
 

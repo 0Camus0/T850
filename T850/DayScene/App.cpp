@@ -174,7 +174,7 @@ int main(int arg,char ** args) try {
       else T8_LOG_ERROR("[App] --backyard-cell-size %g is outside 0.02..0.5 m", value);
     }
     if (std::string_view(args[i]) == "--backyard-spawn" && i + 1 < arg) {
-      backyardSpawnOnStart = (std::min)((std::max)(std::stoi(args[++i]), 0), 7);
+      backyardSpawnOnStart = (std::max)(std::stoi(args[++i]), 0);
       BackyardScene::SetSpawnOnStart(backyardSpawnOnStart);
     }
     if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {

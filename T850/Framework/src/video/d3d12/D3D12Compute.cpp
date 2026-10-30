@@ -678,7 +678,7 @@ namespace t850 {
         case ComputeBindingType::ReadOnlyBuffer:
           item.rootIndex = pipeline->GetBufferSrvRootIndex(binding.shaderRegister);
           item.buffer = dynamic_cast<D3D12ComputeBuffer*>(binding.buffer);
-          if (!item.buffer) {
+          if (!item.buffer && !binding.inlineData) {
             T8_LOG_ERROR("[D3D12][Compute] Invalid read-only buffer t%u", binding.shaderRegister);
             return false;
           }
@@ -804,6 +804,13 @@ namespace t850 {
             0);
           break;
         case ComputeBindingType::ReadOnlyBuffer:
+          if (!item.buffer) {
+            // Upload-heap memory is in GENERIC_READ, which a root SRV may read directly.
+            commandList->SetComputeRootShaderResourceView(
+              static_cast<UINT>(item.rootIndex),
+              AllocateRingData(binding.inlineData, binding.inlineBytes));
+            break;
+          }
           TransitionBuffer(commandList, *item.buffer, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
           commandList->SetComputeRootShaderResourceView(
             static_cast<UINT>(item.rootIndex),

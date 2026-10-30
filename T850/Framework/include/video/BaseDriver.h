@@ -124,6 +124,11 @@ namespace t850 {
     uint32_t constantCount = 0;
     Texture* texture = nullptr;
     ComputeTexture3D* texture3D = nullptr;
+    // ReadOnlyBuffer with no `buffer`: the backend copies these bytes into per-frame
+    // transient memory and binds them as a structured buffer for this dispatch only.
+    const void* inlineData = nullptr;
+    uint32_t inlineBytes = 0;
+    uint32_t inlineStride = 0;
   };
 
   class DeviceContext {

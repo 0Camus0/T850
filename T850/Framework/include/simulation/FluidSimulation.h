@@ -103,14 +103,9 @@ namespace t850 {
   // waves when TryInitialize returns false.
   class FluidSimulation {
   public:
-    // W-22: hard cap on moving bodies. Set by the D3D12 64-DWORD root signature:
-    // ObjectConstants becomes 4 + 4*N DWORDs (header plus one velocity per body), and
-    // CS_FluidGradient3D already spends 20 on b0. 8 bodies -> 4 + 32 = 36, leaving the
-    // gradient's total at 62. If a kernel gains a binding, this cap must shrink with it.
-    static constexpr uint32_t kMaxBodies = 8;
-
     // One body always exists: body 0 is the scripted ball, and DroppedSphere() returns
-    // a reference into this vector.
+    // a reference into this vector. There is no upper limit on the body count: the
+    // per-body velocities reach the kernels as a per-dispatch structured buffer.
     FluidSimulation() : m_bodies(1) {}
     ~FluidSimulation();
 
@@ -205,7 +200,7 @@ namespace t850 {
     FluidSphere& DroppedSphere() { return m_bodies[0]; }
     uint32_t BodyCount() const { return static_cast<uint32_t>(m_bodies.size()); }
     const std::vector<FluidSphere>& Bodies() const { return m_bodies; }
-    // Appends a body. Returns its index, or -1 at the cap.
+    // Appends a body and returns its index.
     int AddBody(const FluidSphere& body);
     // Removes bodies [first, end). first is clamped so body 0 can never be removed.
     void RemoveBodiesFrom(size_t first);
@@ -285,10 +280,10 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> CreatePipeline(BaseDriver* driver, const char* source);
     std::vector<uint32_t> BuildConstants(uint32_t iterationPacked = 0,
                                          float paddingOverride = -1.0f) const;
-    // Obstacle parameters for CS_FluidSphere3D, packed as live constants because
-    // ComputeBuffer has no update path: a buffer seeded once would be read stale
-    // forever and the obstacle would never move.
+    // Header for the body kernels' ObjectConstants (b1): the body count.
     std::vector<uint32_t> BuildObjectConstants() const;
+    // One float4 velocity per body for the body kernels' BodyVelocity buffer (t9).
+    std::vector<float> BuildBodyVelocities() const;
     // Basin floor, authored water plane and grid origin. Also live constants, for
     // the same reason: the surface kernel must not carry the pool placement as a
     // literal.
@@ -312,7 +307,7 @@ namespace t850 {
                         ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
                         ComputeTexture3D* target, uint32_t iterationPacked = 0,
                         bool withAlpha = false, float paddingOverride = -1.0f,
-                        const std::vector<uint32_t>* objectConstants = nullptr);
+                        bool withBodies = false);
 
     static constexpr size_t kVelocityCount = 2;
     static constexpr size_t kPressureCount = 2;
@@ -359,11 +354,15 @@ namespace t850 {
     uint32_t m_maskBodyCellCount = 0;
     // Cell footprint of every body from the previous substep, so an unchanged set of
     // footprints skips the re-upload entirely. Index order matches m_bodies.
-    int m_maskBodyMin[kMaxBodies][3];
-    int m_maskBodyMax[kMaxBodies][3];
+    struct CellBox {
+      int lo[3] = {-1, -1, -1};
+      int hi[3] = {-1, -1, -1};
+      bool valid = false;
+    };
+    std::vector<CellBox> m_maskBodyFootprints;
     uint32_t m_maskBodyStampCount = 0;
     bool m_maskBodyValid = false;
-    // W-22: body 0 is the scripted ball; AddBody appends extras up to kMaxBodies.
+    // W-22: body 0 is the scripted ball; AddBody appends any number of extras.
     std::vector<FluidSphere> m_bodies;
     // Total alpha at seed time, the reference the volume correction restores to.
     float m_referenceVolumeFraction = 0.0f;

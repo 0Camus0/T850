@@ -334,6 +334,9 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     if (binding.type == ComputeBindingType::Constants32) {
       if (!binding.constants || binding.constantCount != layout->constantCount) return false;
       info = AllocateCBData(binding.constants, binding.constantCount * sizeof(uint32_t));
+    } else if (binding.type == ComputeBindingType::ReadOnlyBuffer && !binding.buffer) {
+      if (!binding.inlineData || !binding.inlineBytes) return false;
+      info = AllocateCBData(binding.inlineData, binding.inlineBytes);
     } else if (binding.type == ComputeBindingType::ReadOnlyBuffer || binding.type == ComputeBindingType::ReadWriteBuffer) {
       auto* buffer = dynamic_cast<VulkanComputeBuffer*>(binding.buffer);
         if (!buffer || (binding.type == ComputeBindingType::ReadWriteBuffer &&

@@ -20,7 +20,6 @@
     "volumeCheckInterval": 15,
     "refractionStrength": 0.025,
     "spawnSeed": 0,
-    "spawnMaxBalls": 7,
     "spawnRadiusMin": 0.1,
     "spawnRadiusMax": 0.35,
     "spawnDensityMin": 0.2,

@@ -214,8 +214,7 @@ namespace t850 {
     // ── Spawned balls (W-22) ──
     // A GUI button drops an extra ball at a random place that always lands in the pool.
     // The scripted ball above is body 0 and keeps its own parameters; these describe the
-    // extras only.
-    int   spawnMaxBalls = 7;                 // capped by FluidSimulation::kMaxBodies - 1
+    // extras only. There is no limit on how many can be spawned.
     float spawnRadiusMin = 0.10f;            // clamped up to 1.2 x cellSize by the scene
     float spawnRadiusMax = 0.35f;
     float spawnDensityMin = 0.2f;            // below 1 floats, above 1 sinks

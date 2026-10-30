@@ -112,6 +112,9 @@ namespace t850 {
       if (!layout || !consumed.insert(layout).second) return false;
       if (binding.type == ComputeBindingType::Constants32) {
         if (!binding.constants || !binding.constantCount || binding.constantCount != layout->constantCount) return false;
+      } else if (binding.type == ComputeBindingType::ReadOnlyBuffer && !binding.buffer) {
+        if (!binding.inlineData || !binding.inlineBytes || !binding.inlineStride ||
+            binding.inlineBytes % binding.inlineStride) return false;
       } else if (binding.type == ComputeBindingType::ReadOnlyBuffer || binding.type == ComputeBindingType::ReadWriteBuffer) {
         if (!binding.buffer || (binding.type == ComputeBindingType::ReadWriteBuffer &&
             binding.buffer->descriptor.access != ComputeBufferAccess::ReadWrite)) return false;

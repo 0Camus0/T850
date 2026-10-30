@@ -507,13 +507,6 @@ bool BackyardScene::SpawnBall() {
   }
   const t850::WaterTunables& w = SceneProp.Water;
   const t850::FluidSettings& fs = m_fluid.Settings();
-  const uint32_t cap = (std::min)(
-      static_cast<uint32_t>((std::max)(w.spawnMaxBalls, 0)),
-      t850::FluidSimulation::kMaxBodies - 1u);
-  if (m_fluid.BodyCount() - 1u >= cap) {
-    T8_LOG_INFO("[Backyard] Cannot spawn a ball: at the cap of %u spawned bodies", cap);
-    return false;
-  }
   if (m_ballPrimitive < 0) {
     T8_LOG_ERROR("[Backyard] Cannot spawn a ball: the ball primitive is unavailable");
     return false;
@@ -567,15 +560,22 @@ bool BackyardScene::SpawnBall() {
     }
   }
   if (!placed) {
-    T8_LOG_INFO("[Backyard] Cannot spawn a ball: no free spot in the basin after 32 tries");
-    return false;
+    // The air above the pool is crowded: keep the last drawn x, z and drop the ball from
+    // above every body it would touch, so a spawn never fails for lack of room.
+    float top = body.y;
+    for (const t850::FluidSphere& existing : m_fluid.Bodies()) {
+      if (!existing.enabled) continue;
+      const float dx = body.x - existing.x;
+      const float dz = body.z - existing.z;
+      const float reach = body.radius + existing.radius + margin;
+      if (dx * dx + dz * dz < reach * reach)
+        top = (std::max)(top, existing.y + existing.radius + body.radius + margin);
+    }
+    body.y = top;
+    placed = true;
   }
 
   const int index = m_fluid.AddBody(body);
-  if (index < 0) {
-    T8_LOG_INFO("[Backyard] Cannot spawn a ball: the solver body list is full");
-    return false;
-  }
 
   // One render instance per body, sharing the ball primitive.
   XMATRIX44 identity;
@@ -1250,24 +1250,23 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
       ResetSimulation();
     }
 
-    // W-22: spawn extra bodies. Disabled (with the reason shown) when the solver is not
-    // running - GL and WebGPU have no volumetric compute - or when the cap is reached.
+    // W-22: spawn extra bodies, any number. Disabled (with the reason shown) when the
+    // solver is not running - GL and WebGPU have no volumetric compute.
     gui.Text("spawned balls");
-    const int spawnCap = (std::min)((std::max)(w.spawnMaxBalls, 0),
-                                    static_cast<int>(t850::FluidSimulation::kMaxBodies) - 1);
     char spawnText[64];
-    std::snprintf(spawnText, sizeof(spawnText), "balls: %u / %d",
-                  m_fluid.BodyCount() - 1u, spawnCap);
+    std::snprintf(spawnText, sizeof(spawnText), "balls: %u", m_fluid.BodyCount() - 1u);
     gui.Text(spawnText);
     if (!m_fluidReady)
       gui.Text("spawning needs the fluid solver (unavailable on this API)");
     if (gui.Button("Spawn ball") && m_fluidReady) {
       SpawnBall();
     }
+    if (gui.Button("Spawn 10 balls") && m_fluidReady) {
+      for (int spawn = 0; spawn < 10; ++spawn) SpawnBall();
+    }
     if (gui.Button("Clear spawned balls")) {
       ClearSpawnedBalls();
     }
-    sliderInt("water_spawn_max", "max spawned balls", w.spawnMaxBalls, 0, 7, 1);
     slider("water_spawn_radius_min", "spawn radius min (m)", w.spawnRadiusMin, 0.05f, 0.6f, 0.005f);
     slider("water_spawn_radius_max", "spawn radius max (m)", w.spawnRadiusMax, 0.05f, 0.6f, 0.005f);
     slider("water_spawn_density_min", "spawn density min (x water)", w.spawnDensityMin, 0.05f, 3.0f, 0.01f);

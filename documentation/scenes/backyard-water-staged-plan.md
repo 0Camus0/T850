@@ -1323,7 +1323,32 @@ the warm tint restores most of the sand colour but not all of it. A warmer plast
 
 ### Stage 4c — W-22
 
-_Pending._
+_Pending. Design review done ahead of implementation — see the notes below._
+
+**Design notes from the GLM/Qwen consultation (2026-10-29), to apply when the stage runs:**
+
+* **The mask encoding is sound only if every reader is audited for equality, not truthiness.** Static
+  solids stay `1u`, body `k` becomes `2u + k`. Any kernel that compares `mask == 1u` breaks
+  (moving bodies would fail a "static wall" test); any kernel that *writes* the mask must preserve the
+  encoding or bodies silently turn into static walls. Guard the lookup with `mask >= 2u + N` for
+  stale masks after a body is removed — an out-of-bounds root-constant/SRV read is undefined on GPU.
+* **A face between two body cells is ambiguous** (which body's velocity?) and never occurred with one
+  body. It must be skipped as zero-flux: there is no fluid there.
+* **Adjacent bodies create a thin fluid gap** with extreme pressure gradients — a resolution limit,
+  not a logic bug. Spawn with a minimum gap of one cell rather than changing the solver.
+* **Sphere–sphere contact:** 28 pairs, fixed `i < j` order, inverse-mass-weighted positional
+  correction plus a normal impulse, 2–4 iterations for chains. Deterministic order and a PRNG seeded
+  from `spawnSeed` are what make it reproducible; keep contact resolution entirely on the CPU.
+* **Substeps:** max over bodies is correct, but the count jumps when a body enters or leaves. If that
+  stutters, clamp it.
+* **Per-substep order matters:** integrate bodies → resolve contacts → stamp the mask → upload →
+  measure/correct volume → solve. Stamping after the pressure solve uses stale geometry; measuring
+  before the stamp lags the correction by a substep.
+* **The acceptance test must be multi-body.** Gate 7/8 passing with one ball does not exercise this.
+  Spawn one nearly stationary and one fast ball: (1) the fast ball's footprint faces carry *its*
+  velocity (no slip-through), (2) the stationary ball behaves exactly like the pre-change single-body
+  path, (3) mask values around both read `2 + k`. Qwen adds: no sphere centre may violate the wall
+  by more than one voxel over a long run.
 
 ### Stage 5a — W-02
 

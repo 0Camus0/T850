@@ -27,6 +27,11 @@ If the build fails with C2011 `align_val_t` after a project or header change, de
 `Lib\VStuff\Framework\Release\x64\*.pch` and rebuild. Shader and JSON edits need no rebuild: assets
 load from the source tree. Scene ids: 0 Sandbox, 1 DayScene, 6 Minecraft, 7 Backyard.
 
+**Every automated run passes `--unattended`** (owner rule, 2026-10-30). The owner works on this
+machine while tests run: a test window must never capture the mouse or take focus, and no test may
+move the cursor or send keystrokes (`SetCursorPos`, `mouse_event`, `SendInput`, `keybd_event`,
+`SetForegroundWindow`). Test input features in-process instead, the way `--backyard-pick-test` does.
+
 **Regenerate the Backyard GLBs after pulling `9f6e7a2f`** (Blender command in the implementation
 record 3.1). That commit fixes the water mesh's UV, which ran opposite to world Z and drew every
 ripple and ball footprint mirrored across the pool (details in section 4, "Water mirrored in Z"). A
@@ -46,6 +51,9 @@ stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` 
   independently by the local agent (section 4, "Independent verification after the two review
   fixes"). **Stage 4d is done** (`e055efec`, section 4, "Stage 4d, part 2"): every ball gets a
   random palette material. **Next is Step 5 (Stage 5a).** Steps 1–4 below are kept for reference.
+- **Owner requests after 4d (reviewer, section 4, "Pick and drag, PBR fixes, unattended runs")** —
+  `c4c680dc` PBR lighting fixes in all three `FS_Quad` languages, `210cb571` `--unattended`, and
+  `c920c9a5` Ctrl + left-drag moves a ball.
 
 The owner then asked for three things before the solver work resumes, in this order (one stage per
 session, smallest first). Full specifications are in remaining-work W-24, W-23 and W-22. After
@@ -1680,6 +1688,48 @@ logs `Ball palette: only 0 of 32 materials are on disk`.
 - **Material textures beat instance textures in `RenderMesh::Draw`.** A per-instance override needs
   the explicit opt-in.
 - **A second RNG for cosmetic picks keeps seeded physics reproducible.**
+
+### Pick and drag, PBR fixes, unattended runs (2026-10-30, reviewer)
+
+**Wind** acts on the water only: `windX/Y/Z` feed the solver kernels' constants, the ball integrator
+has no wind term, and the water applies no force back on a ball. Wind cannot move the balls.
+
+**PBR fixes (`c4c680dc`, HLSL, GLSL and WGSL alike).**
+
+- The deferred passes multiplied the sun's shadow-map term into every light, so point lights went
+  dark inside the sun's shadow; it now gates directional light only.
+- SSAO was multiplied into direct light; it now scales indirect (IBL/ambient) light only.
+- `ShadowAccum` is `RGBA8` in every render graph: R = sun shadow, G = SSAO (it was their product
+  in one `R8` channel). Dumps on all five APIs show R with hard 0 minima and G with soft minima.
+- Generated tangents carry glTF handedness. glTF V runs down the image, so MikkTSpace fed raw
+  glTF UVs returned the opposite sign, and normal-map bumps were inverted on meshes without
+  `TANGENT` (the ball). The naive fallback got the same sign rule.
+
+**Pick and drag (`c920c9a5`).** Hold **Ctrl**: the scene stops capturing the mouse (its
+`AllowsMouseCapture` override), so the cursor is free even in the first-person camera. Ctrl + left
+click on a ball holds it under the cursor; the wheel moves it nearer or farther; releasing the
+button throws it with its last velocity. The cursor stays free while a ball is held. A click
+without Ctrl is still the camera's. A held body (`FluidSphere::held`) skips gravity, buoyancy and
+drag, and contacts treat it as infinitely heavy, so it shoves other balls.
+
+**`--backyard-pick-test`** feeds a synthetic `InputManager` to the scene's own input path, so no OS
+input is generated. Gates: a no-Ctrl click does not pick; Ctrl + click picks the ball under the
+cursor; capture is freed; the dragged ball follows the cursor ray (0.003 m off) and pushes another
+ball; release; re-grab; a final frame dump shows the ball held at a known pixel. Run it with
+`backyard-diag\pick_test.ps1` (`--unattended --regressionFixedDt 0.0033 --backyard-spawn 6
+--backyard-pick-test`). PASS on D3D12, Vulkan and D3D11; GL and WebGPU SKIP (no solver). The D3D12
+and Vulkan dumps show the held ball centred on the synthetic cursor.
+
+**`--unattended` (`210cb571`)** disables mouse capture and creates the window without activating
+it. That exposed a latent bug: the D3D11 and D3D12 drivers took `GetActiveWindow()` instead of the
+window they were given, which is null for a window that never got focus
+(`CreateSwapChain` failed with `DXGI_ERROR_INVALID_CALL`). Both now read the HWND from the SDL
+window. The 19-run matrix is 0 errors with the flag on every run.
+
+**Rules learned here.**
+
+- **Never drive the owner's real input from a test.** Use `--unattended` and in-process input.
+- **`GetActiveWindow()` is not "my window".** Take the handle from the window you created.
 
 ### Stage 5a — W-02
 

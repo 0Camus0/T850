@@ -594,7 +594,9 @@ def build_water_surface():
             vertex = mesh.loops[loop_index].vertex_index
             i = vertex % (nx + 1)
             j = vertex // (nx + 1)
-            uv_layer.data[loop_index].uv = (i / nx, j / nz)
+            # The glTF exporter writes V as 1 - v, and the solver's surface texture has
+            # row 0 at basinMinZ, so author 1 - j/nz to make the exported V grow with +Z.
+            uv_layer.data[loop_index].uv = (i / nx, 1.0 - j / nz)
 
     obj = bpy.data.objects.new("Water_Surface", mesh)
     bpy.context.collection.objects.link(obj)

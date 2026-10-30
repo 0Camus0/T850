@@ -8,6 +8,8 @@
 #include <simulation/FluidDebugRenderer.h>
 #include <simulation/FluidSimulation.h>
 #include <utils/CameraProfiles.h>
+#include <utils/InputManager.h>
+#include <utils/Picking.h>
 
 #include <vector>
 
@@ -35,9 +37,18 @@ public:
   void ResetSimulation();
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override { m_cameraController.ClearInput(); }
+  // The runtime GUI is the scene's control panel, so the camera and ball dragging stay
+  // usable while it is open; ImGui's own mouse capture is checked in OnInput.
+  bool AllowsInputWhenRuntimeGuiVisible() const override { return true; }
+  // Holding Ctrl, or dragging a ball, releases the camera's mouse capture so the cursor
+  // is free to pick balls; the capture returns when both end.
+  bool AllowsMouseCapture() const override { return SceneProp.MouseCaptureAllowed && !m_cursorFreed; }
   // Test hook: spawn this many balls as soon as the solver is ready. Used by
   // --backyard-spawn so the multi-body path can be exercised without the GUI.
   static void SetSpawnOnStart(int count) { s_spawnOnStart = count; }
+  // Test hook (--backyard-pick-test): drives the real pick/drag input path with a
+  // synthetic InputManager, so no OS mouse or keyboard input is ever generated.
+  static void SetPickTest(bool enabled) { s_pickTest = enabled; }
 
 private:
   struct AssetRequest {
@@ -112,6 +123,34 @@ private:
   // Gives the instance a random palette material; returns its label, or nullptr when
   // no material is available (the GLB's own placeholder look stays).
   const char* AssignBallMaterial(t850::PrimitiveInst& inst);
+  // ── Mouse drag: Ctrl + left button on a ball holds it under the cursor ──
+  int m_dragBody = -1;                // held body index, -1 when nothing is held
+  bool m_cursorFreed = false;         // Ctrl held or a ball held: no mouse capture
+  float m_dragDistance = 0.0f;        // along the cursor ray, eye to the ball centre
+  XVECTOR3 m_dragOffset;              // ball centre minus its projection on the ray
+  XVECTOR3 m_dragTarget;              // where the cursor wants the centre this frame
+  t850::Ray CursorRay(float mouseX, float mouseY) const;
+  bool ProjectToScreen(const XVECTOR3& world, float& x, float& y) const;
+  // Camera and ball input; OnInput feeds the real InputManager, the pick test a fake one.
+  void ProcessSceneInput(InputManager* input, bool imguiWantsMouse);
+  // Returns true while a ball is held, so the camera ignores that mouse gesture.
+  bool HandleBallDrag(InputManager* input, bool imguiWantsMouse, bool ctrlDown);
+  // Steers the held body toward the cursor target over the next solver step.
+  void ApplyBallDrag(float dt);
+  // Releases the held body; it keeps its last velocity, so a fast drag throws it.
+  void EndBallDrag();
+  // ── --backyard-pick-test state ──
+  static bool s_pickTest;
+  InputManager m_pickTestInput;
+  int m_pickTestFrame = 0;
+  int m_pickTestTarget = -1;
+  int m_pickTestVictim = -1;
+  int m_pickTestFailures = 0;
+  bool m_pickTestDone = false;
+  XVECTOR3 m_pickTestVictimStart;
+  float m_pickTestFrom[2] = {0.0f, 0.0f};
+  float m_pickTestTo[2] = {0.0f, 0.0f};
+  void RunPickTestStep();
   t850::FluidDebugRenderer m_fluidDebug;
   t850::FluidDebugView m_fluidDebugView;
   bool m_fluidDebugMeshBound = false;

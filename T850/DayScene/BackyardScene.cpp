@@ -28,6 +28,10 @@ namespace {
   // BackyardWaterJson.h).
   constexpr const char* kWaterTunablesPath = "Scenes/BackyardWater.json";
   constexpr const char* kBallPalettePath = "Scenes/BackyardBallMaterials.json";
+  // Mouse drag limits: the steering speed bounds the solver's boundary velocity and its
+  // substep count; the ceiling keeps a held ball within sight of the pool.
+  constexpr float kMaxDragSpeed = 6.0f;          // m/s
+  constexpr float kMaxDragHeightAboveWater = 2.5f; // m
 
   struct BackyardAsset {
     const char* path;
@@ -51,6 +55,7 @@ namespace {
 }
 
 int BackyardScene::s_spawnOnStart = 0;
+bool BackyardScene::s_pickTest = false;
 
 BackyardScene::BackyardScene() = default;
 
@@ -86,6 +91,14 @@ void BackyardScene::InitVars() {
       : static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count());
   m_materialRng = m_spawnRng ^ 0x9E3779B9u;
   m_extraBallHandles.clear();
+  m_dragBody = -1;
+  m_cursorFreed = false;
+  m_pickTestInput = InputManager{};
+  m_pickTestFrame = 0;
+  m_pickTestTarget = -1;
+  m_pickTestVictim = -1;
+  m_pickTestFailures = 0;
+  m_pickTestDone = false;
   if (m_sceneSetup.cameras.empty() || m_sceneSetup.lightCameras.empty()) {
     throw std::runtime_error("Backyard scene requires at least one camera and one light camera");
   }
@@ -234,6 +247,7 @@ void BackyardScene::CreateAssets() {
 bool BackyardScene::RebuildFluid() {
   if (!pFramework || !pFramework->pVideoDriver) return false;
   t850::BaseDriver* driver = pFramework->pVideoDriver;
+  EndBallDrag();
 
   // Tear the solver down while the driver is idle. A texture still referenced by
   // an in-flight command list must never be destroyed.
@@ -388,6 +402,7 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
 
 void BackyardScene::DestroyAssets() {
   if (!m_assetsCreated && !pFramework) return;
+  EndBallDrag();
   if (m_fluidReady && pFramework && pFramework->pVideoDriver) {
     m_fluid.Shutdown(pFramework->pVideoDriver);
   }
@@ -566,6 +581,133 @@ const char* BackyardScene::AssignBallMaterial(t850::PrimitiveInst& inst) {
   return nullptr;
 }
 
+t850::Ray BackyardScene::CursorRay(float mouseX, float mouseY) const {
+  const t850::BaseDriver* driver = pFramework ? pFramework->pVideoDriver : nullptr;
+  const float width = static_cast<float>((std::max)(driver ? driver->width : 1, 1));
+  const float height = static_cast<float>((std::max)(driver ? driver->height : 1, 1));
+  XMATRIX44 viewProjection = m_camera.VP;
+  XMATRIX44 inverseViewProjection;
+  viewProjection.Inverse(&inverseViewProjection);
+  // Unproject a mid-depth point and aim from the eye: correct for standard and reverse-Z
+  // depth alike, where ScreenPointToRay assumes NDC z = 0 is the near plane.
+  const float ndcX = 2.0f * ((mouseX + 0.5f) / width) - 1.0f;
+  const float ndcY = 1.0f - 2.0f * ((mouseY + 0.5f) / height);
+  const XVECTOR3 point = t850::TransformPoint(XVECTOR3(ndcX, ndcY, 0.5f), inverseViewProjection);
+  XVECTOR3 direction(point.x - m_camera.Eye.x, point.y - m_camera.Eye.y, point.z - m_camera.Eye.z);
+  direction.Normalize();
+  t850::Ray ray;
+  ray.origin = XVECTOR3(m_camera.Eye.x, m_camera.Eye.y, m_camera.Eye.z);
+  ray.direction = direction;
+  return ray;
+}
+
+bool BackyardScene::ProjectToScreen(const XVECTOR3& world, float& x, float& y) const {
+  const t850::BaseDriver* driver = pFramework ? pFramework->pVideoDriver : nullptr;
+  const float width = static_cast<float>((std::max)(driver ? driver->width : 1, 1));
+  const float height = static_cast<float>((std::max)(driver ? driver->height : 1, 1));
+  const XMATRIX44& vp = m_camera.VP;
+  const float w = world.x * vp.m[0][3] + world.y * vp.m[1][3] + world.z * vp.m[2][3] + vp.m[3][3];
+  if (w <= 1e-6f) return false;   // behind the eye
+  const XVECTOR3 ndc = t850::TransformPoint(world, vp);
+  // Exact inverse of the pixel-to-NDC mapping in CursorRay.
+  x = (ndc.x + 1.0f) * 0.5f * width - 0.5f;
+  y = (1.0f - ndc.y) * 0.5f * height - 0.5f;
+  return x >= 0.0f && y >= 0.0f && x < width && y < height;
+}
+
+bool BackyardScene::HandleBallDrag(InputManager* input, bool imguiWantsMouse, bool ctrlDown) {
+  const float mouseX = static_cast<float>(input->mouseX);
+  const float mouseY = static_cast<float>(input->mouseY);
+  if (m_dragBody >= 0) {
+    if (!input->PressedMouseButton(0) || !m_fluidReady ||
+        static_cast<uint32_t>(m_dragBody) >= m_fluid.BodyCount()) {
+      EndBallDrag();
+      return false;
+    }
+    if (input->scrollDelta != 0.0f)
+      m_dragDistance = (std::max)(m_dragDistance * (1.0f + 0.1f * input->scrollDelta), 0.5f);
+    const t850::Ray ray = CursorRay(mouseX, mouseY);
+    m_dragTarget = XVECTOR3(ray.origin.x + ray.direction.x * m_dragDistance + m_dragOffset.x,
+                            ray.origin.y + ray.direction.y * m_dragDistance + m_dragOffset.y,
+                            ray.origin.z + ray.direction.z * m_dragDistance + m_dragOffset.z);
+    return true;
+  }
+
+  // Consume the click even over the GUI, so a press that starts on a panel never turns
+  // into a grab when the cursor later crosses a ball. Without Ctrl the click is the
+  // camera's, never a pick.
+  const bool clicked = input->PressedOnceMouseButton(0);
+  if (!clicked || !ctrlDown || imguiWantsMouse || !m_fluidReady) return false;
+
+  const t850::Ray ray = CursorRay(mouseX, mouseY);
+  int best = -1;
+  float bestDistance = FLT_MAX;
+  for (uint32_t index = 0; index < m_fluid.BodyCount(); ++index) {
+    const t850::FluidSphere& body = m_fluid.Bodies()[index];
+    if (!body.enabled || (index == 0 && !SceneProp.Water.sphereEnabled)) continue;
+    t850::BoundingSphere sphere;
+    sphere.center = XVECTOR3(body.x, body.y, body.z);
+    sphere.radius = body.radius;
+    float distance = 0.0f;
+    if (t850::RayIntersectsSphere(ray, sphere, distance) && distance < bestDistance) {
+      bestDistance = distance;
+      best = static_cast<int>(index);
+    }
+  }
+  t850::FluidSphere* body = best >= 0 ? m_fluid.Body(static_cast<uint32_t>(best)) : nullptr;
+  if (!body) return false;
+
+  const float along = (body->x - ray.origin.x) * ray.direction.x +
+                      (body->y - ray.origin.y) * ray.direction.y +
+                      (body->z - ray.origin.z) * ray.direction.z;
+  m_dragDistance = (std::max)(along, 0.5f);
+  m_dragOffset = XVECTOR3(body->x - (ray.origin.x + ray.direction.x * along),
+                          body->y - (ray.origin.y + ray.direction.y * along),
+                          body->z - (ray.origin.z + ray.direction.z * along));
+  m_dragTarget = XVECTOR3(body->x, body->y, body->z);
+  body->held = true;
+  body->vx = body->vy = body->vz = 0.0f;
+  m_dragBody = best;
+  T8_LOG_INFO("[Backyard] Holding ball %d (radius %.2f m) at (%.2f, %.2f, %.2f)",
+              best, body->radius, body->x, body->y, body->z);
+  return true;
+}
+
+void BackyardScene::ApplyBallDrag(float dt) {
+  t850::FluidSphere* body = m_fluid.Body(static_cast<uint32_t>(m_dragBody));
+  if (!body || !body->held || dt <= 0.0f) return;
+  const t850::FluidSettings& fs = m_fluid.Settings();
+  const float radius = body->radius;
+  // The basin walls stop the ball anyway; clamping the target too keeps the steering
+  // velocity from pushing into a wall forever.
+  const float targetX = (std::clamp)(m_dragTarget.x, fs.basinMinX + radius, (std::max)(fs.basinMaxX - radius, fs.basinMinX + radius));
+  const float targetY = (std::clamp)(m_dragTarget.y, fs.basinMinY + radius, fs.waterPlaneY + kMaxDragHeightAboveWater);
+  const float targetZ = (std::clamp)(m_dragTarget.z, fs.basinMinZ + radius, (std::max)(fs.basinMaxZ - radius, fs.basinMinZ + radius));
+  float vx = (targetX - body->x) / dt;
+  float vy = (targetY - body->y) / dt;
+  float vz = (targetZ - body->z) / dt;
+  const float speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+  if (speed > kMaxDragSpeed) {
+    const float scale = kMaxDragSpeed / speed;
+    vx *= scale;
+    vy *= scale;
+    vz *= scale;
+  }
+  body->vx = vx;
+  body->vy = vy;
+  body->vz = vz;
+}
+
+void BackyardScene::EndBallDrag() {
+  if (m_dragBody < 0) return;
+  if (t850::FluidSphere* body = m_fluid.Body(static_cast<uint32_t>(m_dragBody))) {
+    body->held = false;
+    T8_LOG_INFO("[Backyard] Released ball %d at (%.2f, %.2f, %.2f), velocity (%.2f, %.2f, %.2f) m/s",
+                m_dragBody, body->x, body->y, body->z, body->vx, body->vy, body->vz);
+  }
+  m_dragBody = -1;
+}
+
 void BackyardScene::UpdateExtraBallTransforms() {
   for (size_t index = 0; index < m_extraBallHandles.size(); ++index) {
     const uint32_t bodyIndex = static_cast<uint32_t>(index + 1);   // body 0 is the scripted ball
@@ -581,6 +723,7 @@ void BackyardScene::UpdateExtraBallTransforms() {
 }
 
 void BackyardScene::ClearSpawnedBalls() {
+  EndBallDrag();
   for (t850::RenderInstanceHandle handle : m_extraBallHandles) {
     if (handle.IsValid()) m_renderContainer.RemoveMesh(handle);
   }
@@ -616,6 +759,7 @@ bool BackyardScene::SpawnBall() {
 
   t850::FluidSphere body = m_fluid.DroppedSphere();   // inherit drag, restitution, damping
   body.enabled = true;
+  body.held = false;
   body.vx = body.vy = body.vz = 0.0f;
   body.submerged = 0.0f;
 
@@ -807,6 +951,7 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_cameraController.Update(deltaSeconds, t850::CameraUpdateContext{});
   }
   m_lightCamera.Update(0.0f);
+  if (s_pickTest && !m_pickTestDone) RunPickTestStep();
   // A grid change needs new 3D textures; everything else can be retuned in place.
   const t850::WaterTunables& w = SceneProp.Water;
   if (m_fluidReady &&
@@ -864,6 +1009,7 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     // its von Neumann bound here is h^2/(6*nu) = 0.0675 s.
     float fluidDelta = w.fixedTimeStep ? w.deltaTime : deltaSeconds * w.timeScale;
     fluidDelta = (std::min)((std::max)(fluidDelta, 0.0f), (std::max)(w.maxDeltaTime, 1.0f / 1000.0f));
+    if (m_dragBody >= 0) ApplyBallDrag(fluidDelta);
     m_fluid.SetDeltaTime(fluidDelta);
     if (!m_fluid.Step(pFramework->pVideoDriver)) {
       T8_LOG_ERROR("[Backyard] Fluid step failed; disabling the solver for this scene");
@@ -904,23 +1050,219 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
 
 void BackyardScene::OnInput(InputManager* input) {
   if (!input) return;
+  bool imguiWantsMouse = false;
+#ifndef OS_ANDROID
+  imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+#endif
+  ProcessSceneInput(input, imguiWantsMouse);
+}
+
+void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse) {
+  // Ctrl frees the cursor (AllowsMouseCapture) and turns a left click into a pick.
+  const bool ctrlDown = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
+  const bool draggingBall = HandleBallDrag(input, imguiWantsMouse, ctrlDown);
+  m_cursorFreed = ctrlDown || draggingBall;
   t850::CameraInputState state;
   state.moveForward = input->PressedKey(T800K_w);
   state.moveBackward = input->PressedKey(T800K_s);
   state.moveLeft = input->PressedKey(T800K_a);
   state.moveRight = input->PressedKey(T800K_d);
   state.jump = input->PressedKey(T800K_SPACE);
-  state.crouch = input->PressedKey(T800K_LCTRL);
   state.sprint = input->PressedKey(T800K_LSHIFT);
   // Look only while a mouse button is held. Stray window-focus deltas would
   // otherwise rotate the camera without user intent. Only the vertical axis is
-  // inverted.
-  state.mouseLook = input->PressedMouseButton(0) || input->PressedMouseButton(2);
+  // inverted. Ctrl, a held ball and the GUI own the mouse, so none turns the camera.
+  state.mouseLook = !ctrlDown && !draggingBall && !imguiWantsMouse &&
+      (input->PressedMouseButton(0) || input->PressedMouseButton(2));
   state.mouseDeltaX = (std::clamp)(static_cast<float>(input->xDelta), -200.0f, 200.0f);
   state.mouseDeltaY = (std::clamp)(static_cast<float>(input->yDelta), -200.0f, 200.0f);
-  state.scrollDelta = input->scrollDelta;
+  state.scrollDelta = (draggingBall || imguiWantsMouse) ? 0.0f : input->scrollDelta;
   t850::ApplyGamepadToCameraInput(state, *input, m_deltaSeconds, true);
   m_cameraController.HandleInput(state);
+}
+
+void BackyardScene::RunPickTestStep() {
+  constexpr int kSettleFrames = 600;   // let the spawned balls land before picking
+  constexpr int kDragFrames = 300;
+  constexpr int kHoldFrames = 300;
+  constexpr int kRegrabFrames = 150;
+  constexpr int kGrab = kSettleFrames + 2;
+  constexpr int kDragStart = kGrab + 1;
+  constexpr int kHoldEnd = kDragStart + kDragFrames + kHoldFrames;
+  constexpr int kRegrab = kHoldEnd + 1;
+  constexpr int kEnd = kRegrab + 1 + kRegrabFrames;
+  const int frame = m_pickTestFrame++;
+  InputManager& in = m_pickTestInput;
+
+  auto check = [&](bool ok, const char* what) {
+    if (ok) {
+      T8_LOG_INFO("[BackyardPickTest] ok: %s", what);
+    } else {
+      ++m_pickTestFailures;
+      T8_LOG_ERROR("[BackyardPickTest] FAIL: %s", what);
+    }
+    return ok;
+  };
+  auto finish = [&]() {
+    m_pickTestDone = true;
+    T8_LOG_INFO("[BackyardPickTest] %s (%d failure(s))", m_pickTestFailures ? "FAIL" : "PASS",
+                m_pickTestFailures);
+    m_dumper.RequestDump();
+  };
+  auto setCursor = [&](float x, float y) {
+    in.mouseX = static_cast<int>(std::lround(x));
+    in.mouseY = static_cast<int>(std::lround(y));
+  };
+  auto setButton = [&](bool down) {
+    in.MouseButtonStates[0][0] = down;
+    if (!down) in.MouseButtonStates[1][0] = false;
+  };
+  auto position = [&](int index) {
+    const t850::FluidSphere& body = m_fluid.Bodies()[static_cast<uint32_t>(index)];
+    return XVECTOR3(body.x, body.y, body.z);
+  };
+  // Perpendicular distance from a body's centre to the ray under the synthetic cursor.
+  auto offRay = [&](int index) {
+    const t850::Ray ray = CursorRay(static_cast<float>(in.mouseX), static_cast<float>(in.mouseY));
+    const XVECTOR3 p = position(index);
+    const float dx = p.x - ray.origin.x, dy = p.y - ray.origin.y, dz = p.z - ray.origin.z;
+    const float along = dx * ray.direction.x + dy * ray.direction.y + dz * ray.direction.z;
+    const float px = dx - along * ray.direction.x, py = dy - along * ray.direction.y,
+                pz = dz - along * ray.direction.z;
+    return std::sqrt(px * px + py * py + pz * pz);
+  };
+
+  if (!m_fluidReady) {
+    T8_LOG_INFO("[BackyardPickTest] SKIP: no fluid solver (and so no balls) on this API");
+    m_pickTestDone = true;
+    m_dumper.RequestDump();
+    return;
+  }
+
+  if (frame == kSettleFrames) {
+    // Target: the enabled ball nearest the eye with its centre on screen, so no other
+    // ball can be in front of it. Victim: the ball nearest the target.
+    const XVECTOR3 eye(m_camera.Eye.x, m_camera.Eye.y, m_camera.Eye.z);
+    float best = FLT_MAX;
+    for (uint32_t index = 0; index < m_fluid.BodyCount(); ++index) {
+      const t850::FluidSphere& body = m_fluid.Bodies()[index];
+      float sx = 0.0f, sy = 0.0f;
+      if (!body.enabled || (index == 0 && !SceneProp.Water.sphereEnabled) ||
+          !ProjectToScreen(XVECTOR3(body.x, body.y, body.z), sx, sy)) continue;
+      const float d = (body.x - eye.x) * (body.x - eye.x) + (body.y - eye.y) * (body.y - eye.y) +
+                      (body.z - eye.z) * (body.z - eye.z);
+      if (d < best) { best = d; m_pickTestTarget = static_cast<int>(index); }
+    }
+    best = FLT_MAX;
+    for (uint32_t index = 0; m_pickTestTarget >= 0 && index < m_fluid.BodyCount(); ++index) {
+      const t850::FluidSphere& body = m_fluid.Bodies()[index];
+      if (static_cast<int>(index) == m_pickTestTarget || !body.enabled ||
+          (index == 0 && !SceneProp.Water.sphereEnabled)) continue;
+      const XVECTOR3 t = position(m_pickTestTarget);
+      const float d = (body.x - t.x) * (body.x - t.x) + (body.y - t.y) * (body.y - t.y) +
+                      (body.z - t.z) * (body.z - t.z);
+      if (d < best) { best = d; m_pickTestVictim = static_cast<int>(index); }
+    }
+    if (!check(m_pickTestTarget >= 0 && m_pickTestVictim >= 0,
+               "two balls are in view (run with --backyard-spawn 2 or more)")) {
+      finish();
+      return;
+    }
+    ProjectToScreen(position(m_pickTestTarget), m_pickTestFrom[0], m_pickTestFrom[1]);
+    T8_LOG_INFO("[BackyardPickTest] target ball %d at pixel (%.0f, %.0f), victim ball %d",
+                m_pickTestTarget, m_pickTestFrom[0], m_pickTestFrom[1], m_pickTestVictim);
+    setCursor(m_pickTestFrom[0], m_pickTestFrom[1]);
+    setButton(true);
+    ProcessSceneInput(&in, false);
+    check(m_dragBody < 0, "a left click without Ctrl does not pick a ball");
+    return;
+  }
+  if (frame == kSettleFrames + 1) {
+    setButton(false);
+    ProcessSceneInput(&in, false);
+    return;
+  }
+  if (frame == kGrab || frame == kRegrab) {
+    float x = 0.0f, y = 0.0f;
+    ProjectToScreen(position(m_pickTestTarget), x, y);
+    setCursor(x, y);
+    in.KeyStates[0][T800K_LCTRL] = true;
+    setButton(true);
+    ProcessSceneInput(&in, false);
+    if (!check(m_dragBody == m_pickTestTarget, "Ctrl + left click picks the ball under the cursor")) {
+      finish();
+      return;
+    }
+    check(!AllowsMouseCapture(), "the cursor is free (no mouse capture) while Ctrl is held");
+    m_pickTestFrom[0] = x;
+    m_pickTestFrom[1] = y;
+    if (frame == kGrab) {
+      m_pickTestVictimStart = position(m_pickTestVictim);
+      ProjectToScreen(m_pickTestVictimStart, m_pickTestTo[0], m_pickTestTo[1]);
+    } else {
+      m_pickTestTo[0] = x;
+      m_pickTestTo[1] = y - 80.0f;   // lift it in view for the frame dump
+    }
+    return;
+  }
+  if ((frame >= kDragStart && frame < kHoldEnd) || (frame > kRegrab && frame < kEnd)) {
+    const bool regrab = frame > kRegrab;
+    const int moveFrames = regrab ? kRegrabFrames : kDragFrames;
+    const float t = (std::min)(static_cast<float>(frame - (regrab ? kRegrab + 1 : kDragStart)) /
+                               static_cast<float>(moveFrames), 1.0f);
+    in.KeyStates[0][T800K_LCTRL] = false;
+    in.scrollDelta = 0.0f;
+    if (frame == kDragStart) {
+      // The real wheel path moves the ball to the victim's depth along the cursor ray.
+      const XVECTOR3 v = m_pickTestVictimStart;
+      const float eyeToVictim = std::sqrt((v.x - m_camera.Eye.x) * (v.x - m_camera.Eye.x) +
+                                          (v.y - m_camera.Eye.y) * (v.y - m_camera.Eye.y) +
+                                          (v.z - m_camera.Eye.z) * (v.z - m_camera.Eye.z));
+      in.scrollDelta = (eyeToVictim / (std::max)(m_dragDistance, 0.5f) - 1.0f) / 0.1f;
+    }
+    setCursor(m_pickTestFrom[0] + (m_pickTestTo[0] - m_pickTestFrom[0]) * t,
+              m_pickTestFrom[1] + (m_pickTestTo[1] - m_pickTestFrom[1]) * t);
+    ProcessSceneInput(&in, false);
+    if (frame == kDragStart)
+      check(!AllowsMouseCapture(), "the cursor stays free while a ball is held after Ctrl is released");
+    if (m_dragBody != m_pickTestTarget) {
+      check(false, "the ball stays held while the button is down");
+      finish();
+      return;
+    }
+    if (regrab && frame == kEnd - 1) {
+      const t850::FluidSphere& held = m_fluid.Bodies()[static_cast<uint32_t>(m_pickTestTarget)];
+      check(offRay(m_pickTestTarget) < held.radius, "the held ball sits under the cursor");
+      T8_LOG_INFO("[BackyardPickTest] dump frame shows ball %d held at pixel (%d, %d), radius %.2f m",
+                  m_pickTestTarget, in.mouseX, in.mouseY, held.radius);
+      finish();
+    }
+    return;
+  }
+  if (frame == kHoldEnd) {
+    const t850::FluidSphere& held = m_fluid.Bodies()[static_cast<uint32_t>(m_pickTestTarget)];
+    const XVECTOR3 heldPos = position(m_pickTestTarget);
+    const XVECTOR3 victimPos = position(m_pickTestVictim);
+    const float victimRadius = m_fluid.Bodies()[static_cast<uint32_t>(m_pickTestVictim)].radius;
+    const float pushed = std::sqrt((victimPos.x - m_pickTestVictimStart.x) * (victimPos.x - m_pickTestVictimStart.x) +
+                                   (victimPos.y - m_pickTestVictimStart.y) * (victimPos.y - m_pickTestVictimStart.y) +
+                                   (victimPos.z - m_pickTestVictimStart.z) * (victimPos.z - m_pickTestVictimStart.z));
+    const float separation = std::sqrt((victimPos.x - heldPos.x) * (victimPos.x - heldPos.x) +
+                                       (victimPos.y - heldPos.y) * (victimPos.y - heldPos.y) +
+                                       (victimPos.z - heldPos.z) * (victimPos.z - heldPos.z));
+    const float contact = held.radius + victimRadius;
+    T8_LOG_INFO("[BackyardPickTest] after the drag: held ball %.3f m off the cursor ray, victim pushed "
+                "%.3f m, separation %.3f m (contact %.3f m)",
+                offRay(m_pickTestTarget), pushed, separation, contact);
+    check(offRay(m_pickTestTarget) < held.radius, "the dragged ball follows the cursor");
+    check(pushed > 0.5f * contact, "the dragged ball pushes the ball it is moved into");
+    check(separation > 0.9f * contact, "the two balls do not interpenetrate");
+    setButton(false);
+    ProcessSceneInput(&in, false);
+    check(m_dragBody < 0 && !held.held, "releasing the button drops the ball");
+    check(AllowsMouseCapture() == SceneProp.MouseCaptureAllowed,
+          "the scene's mouse capture policy returns after the release");
+  }
 }
 
 void BackyardScene::DrawFluidDebug() {
@@ -1359,6 +1701,8 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     if (gui.Button("Clear spawned balls")) {
       ClearSpawnedBalls();
     }
+    gui.Text("Ctrl frees the mouse: Ctrl + left-drag a ball to move it; the wheel moves it");
+    gui.Text("nearer/farther; release the button to throw it");
     slider("water_spawn_radius_min", "spawn radius min (m)", w.spawnRadiusMin, 0.05f, 0.6f, 0.005f);
     slider("water_spawn_radius_max", "spawn radius max (m)", w.spawnRadiusMax, 0.05f, 0.6f, 0.005f);
     slider("water_spawn_density_min", "spawn density min (x water)", w.spawnDensityMin, 0.05f, 3.0f, 0.01f);

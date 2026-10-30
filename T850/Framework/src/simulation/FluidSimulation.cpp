@@ -1060,9 +1060,11 @@ void FluidSimulation::ResolveBodyContacts() {
       const float overlap = sum - dist;
       // Density ratio stands in for mass: both bodies are spheres of unit volume
       // factor, so a denser ball moves less. Clamped like the integrator's terms.
-      const float invA = 1.0f / (std::max)(a.densityRatio, 0.02f);
-      const float invB = 1.0f / (std::max)(b.densityRatio, 0.02f);
+      // A held body behaves as infinitely heavy.
+      const float invA = a.held ? 0.0f : 1.0f / (std::max)(a.densityRatio, 0.02f);
+      const float invB = b.held ? 0.0f : 1.0f / (std::max)(b.densityRatio, 0.02f);
       const float invSum = invA + invB;
+      if (invSum <= 0.0f) return;
 
       const float shareA = invA / invSum;
       const float shareB = invB / invSum;
@@ -1166,19 +1168,21 @@ void FluidSimulation::AdvanceOneSphere(FluidSphere& s, float dt) {
     dragScale = dragAccel / speed;
   }
 
-  s.vy += accel * dt;
-  // Wave-radiation damping of heave, as a damping ratio of the hydrostatic natural
-  // frequency; the solver applies no pressure force back on the body.
-  if (h > 0.0f && h < 2.0f * radius) {
-    const float stiffness = 3.0f * h * (2.0f * radius - h) / (4.0f * radius * radius * radius);
-    const float omega = std::sqrt(m_settings.gravity * stiffness / effectiveMass);
-    s.vy /= 1.0f + 2.0f * (std::max)(s.heaveDamping, 0.0f) * omega * dt;
+  if (!s.held) {
+    s.vy += accel * dt;
+    // Wave-radiation damping of heave, as a damping ratio of the hydrostatic natural
+    // frequency; the solver applies no pressure force back on the body.
+    if (h > 0.0f && h < 2.0f * radius) {
+      const float stiffness = 3.0f * h * (2.0f * radius - h) / (4.0f * radius * radius * radius);
+      const float omega = std::sqrt(m_settings.gravity * stiffness / effectiveMass);
+      s.vy /= 1.0f + 2.0f * (std::max)(s.heaveDamping, 0.0f) * omega * dt;
+    }
+    // Implicit drag integration: v /= (1 + (a_drag/|v|) * dt)
+    const float dragFactor = 1.0f + dragScale * dt;
+    s.vx /= dragFactor;
+    s.vy /= dragFactor;
+    s.vz /= dragFactor;
   }
-  // Implicit drag integration: v /= (1 + (a_drag/|v|) * dt)
-  const float dragFactor = 1.0f + dragScale * dt;
-  s.vx /= dragFactor;
-  s.vy /= dragFactor;
-  s.vz /= dragFactor;
 
   s.x += s.vx * dt;
   s.y += s.vy * dt;

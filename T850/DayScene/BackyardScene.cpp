@@ -14,6 +14,7 @@
 #include <utils/ResourceLocator.h>
 
 #include <array>
+#include <chrono>
 #include <stdexcept>
 #include <string>
 
@@ -46,6 +47,8 @@ namespace {
   }};
 }
 
+int BackyardScene::s_spawnOnStart = 0;
+
 BackyardScene::BackyardScene() = default;
 
 void BackyardScene::InitVars() {
@@ -73,6 +76,12 @@ void BackyardScene::InitVars() {
     throw std::runtime_error(std::string("Backyard scene has an invalid water tunables file: ") +
                              kWaterTunablesPath);
   }
+  // W-22: a non-zero spawnSeed reproduces a spawn sequence; 0 draws a fresh seed so
+  // each run differs.
+  m_spawnRng = SceneProp.Water.spawnSeed != 0
+      ? static_cast<uint32_t>(SceneProp.Water.spawnSeed)
+      : static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+  m_extraBallHandles.clear();
   if (m_sceneSetup.cameras.empty() || m_sceneSetup.lightCameras.empty()) {
     throw std::runtime_error("Backyard scene requires at least one camera and one light camera");
   }
@@ -186,7 +195,7 @@ void BackyardScene::CreateAssets() {
     m_primitiveIndices.push_back(static_cast<unsigned int>(primitive));
     m_instances.push_back(handle);
     if (std::string(asset.label) == "water") m_waterHandle = handle;
-    if (std::string(asset.label) == "ball") m_ballHandle = handle;
+    if (std::string(asset.label) == "ball") { m_ballHandle = handle; m_ballPrimitive = primitive; }
     T8_LOG_INFO("[Backyard] Loaded '%s' (%s) primitive=%d instance=%u",
                 asset.path, asset.label, primitive, handle.index);
   }
@@ -202,6 +211,12 @@ void BackyardScene::CreateAssets() {
   // Grid matches the pool basin: 9.0 m (X) x 1.6 m (Y) x 4.5 m (Z) at a
   // 9 cm cell. The surface UV space therefore maps 1:1 onto the pool mesh.
   RebuildFluid();
+
+  // Test hook (--backyard-spawn): drop N balls as soon as the solver exists, so the
+  // multi-body path can be exercised deterministically without the GUI.
+  for (int i = 0; i < s_spawnOnStart && m_fluidReady; ++i) {
+    if (!SpawnBall()) break;
+  }
 }
 
 bool BackyardScene::RebuildFluid() {
@@ -453,6 +468,139 @@ bool BackyardScene::BindFloorHeightTexture(t850::BaseDriver* driver, t850::Primi
   return true;
 }
 
+float BackyardScene::NextSpawnRandom() {
+  // Deterministic LCG (Numerical Recipes constants). spawnSeed != 0 makes a whole
+  // spawn sequence reproducible, which the acceptance test relies on.
+  m_spawnRng = m_spawnRng * 1664525u + 1013904223u;
+  return static_cast<float>((m_spawnRng >> 8) & 0x00FFFFFFu) / 16777216.0f;
+}
+
+void BackyardScene::UpdateExtraBallTransforms() {
+  for (size_t index = 0; index < m_extraBallHandles.size(); ++index) {
+    const uint32_t bodyIndex = static_cast<uint32_t>(index + 1);   // body 0 is the scripted ball
+    if (bodyIndex >= m_fluid.BodyCount()) break;
+    t850::PrimitiveInst* inst = m_renderContainer.GetMesh(m_extraBallHandles[index]);
+    if (!inst) continue;
+    const t850::FluidSphere& body = m_fluid.Bodies()[bodyIndex];
+    inst->SetVisible(body.enabled);
+    inst->TranslateAbsolute(body.x, body.y, body.z);
+    inst->ScaleAbsolute(body.radius, body.radius, body.radius);
+    inst->Update();
+  }
+}
+
+void BackyardScene::ClearSpawnedBalls() {
+  for (t850::RenderInstanceHandle handle : m_extraBallHandles) {
+    if (handle.IsValid()) m_renderContainer.RemoveMesh(handle);
+  }
+  m_extraBallHandles.clear();
+  // Body 0 is the scripted ball and must survive.
+  m_fluid.RemoveBodiesFrom(1);
+  T8_LOG_INFO("[Backyard] Spawned balls cleared; %u body remains", m_fluid.BodyCount());
+}
+
+bool BackyardScene::SpawnBall() {
+  if (!m_fluidReady) {
+    T8_LOG_ERROR("[Backyard] Cannot spawn a ball: the fluid solver is not running on this API");
+    return false;
+  }
+  const t850::WaterTunables& w = SceneProp.Water;
+  const t850::FluidSettings& fs = m_fluid.Settings();
+  const uint32_t cap = (std::min)(
+      static_cast<uint32_t>((std::max)(w.spawnMaxBalls, 0)),
+      t850::FluidSimulation::kMaxBodies - 1u);
+  if (m_fluid.BodyCount() - 1u >= cap) {
+    T8_LOG_INFO("[Backyard] Cannot spawn a ball: at the cap of %u spawned bodies", cap);
+    return false;
+  }
+  if (m_ballPrimitive < 0) {
+    T8_LOG_ERROR("[Backyard] Cannot spawn a ball: the ball primitive is unavailable");
+    return false;
+  }
+
+  // The basin comes from the solver settings, never from literals, so a pool layout
+  // change moves the spawn area with it.
+  const float cell = (std::max)(fs.cellSize, 0.001f);
+  const float margin = cell;
+  // Clamp the radius band so a ball is always resolved by the grid (>= 1.2 cells).
+  float radiusMin = (std::max)(w.spawnRadiusMin, 1.2f * cell);
+  float radiusMax = (std::max)(w.spawnRadiusMax, radiusMin);
+  const float densityMin = (std::max)(w.spawnDensityMin, 0.02f);
+  const float densityMax = (std::max)(w.spawnDensityMax, densityMin);
+  const float heightMin = (std::max)(w.spawnHeightMin, 0.05f);
+  const float heightMax = (std::max)(w.spawnHeightMax, heightMin);
+
+  t850::FluidSphere body = m_fluid.DroppedSphere();   // inherit drag, restitution, damping
+  body.enabled = true;
+  body.vx = body.vy = body.vz = 0.0f;
+  body.submerged = 0.0f;
+
+  bool placed = false;
+  for (int attempt = 0; attempt < 32 && !placed; ++attempt) {
+    const float t = NextSpawnRandom();
+    body.radius = radiusMin + (radiusMax - radiusMin) * t;
+    body.densityRatio = densityMin + (densityMax - densityMin) * NextSpawnRandom();
+
+    const float loX = fs.basinMinX + body.radius + margin;
+    const float hiX = fs.basinMaxX - body.radius - margin;
+    const float loZ = fs.basinMinZ + body.radius + margin;
+    const float hiZ = fs.basinMaxZ - body.radius - margin;
+    if (hiX <= loX || hiZ <= loZ) continue;   // basin too small for this radius
+    body.x = loX + (hiX - loX) * NextSpawnRandom();
+    body.z = loZ + (hiZ - loZ) * NextSpawnRandom();
+    // Straight drop from above the surface, so it always lands inside the walls.
+    body.y = fs.waterPlaneY + body.radius + heightMin +
+             (heightMax - heightMin) * NextSpawnRandom();
+
+    // Reject if it would start inside another body (the stamp would then overlap and
+    // the later index would silently win).
+    placed = true;
+    for (uint32_t other = 0; other < m_fluid.BodyCount() && placed; ++other) {
+      const t850::FluidSphere& existing = m_fluid.Bodies()[other];
+      if (!existing.enabled) continue;
+      const float dx = body.x - existing.x;
+      const float dy = body.y - existing.y;
+      const float dz = body.z - existing.z;
+      const float minGap = body.radius + existing.radius + margin;
+      if (dx * dx + dy * dy + dz * dz < minGap * minGap) placed = false;
+    }
+  }
+  if (!placed) {
+    T8_LOG_INFO("[Backyard] Cannot spawn a ball: no free spot in the basin after 32 tries");
+    return false;
+  }
+
+  const int index = m_fluid.AddBody(body);
+  if (index < 0) {
+    T8_LOG_INFO("[Backyard] Cannot spawn a ball: the solver body list is full");
+    return false;
+  }
+
+  // One render instance per body, sharing the ball primitive.
+  XMATRIX44 identity;
+  XMatIdentity(identity);
+  t850::PrimitiveInst instance;
+  instance.CreateInstance(PrimitiveMgr.GetPrimitive(static_cast<unsigned int>(m_ballPrimitive)), &identity);
+  instance.TranslateAbsolute(body.x, body.y, body.z);
+  instance.ScaleAbsolute(body.radius, body.radius, body.radius);
+  instance.Update();
+  const t850::RenderInstanceHandle handle = m_renderContainer.AddMeshInstance(instance);
+  if (!handle.IsValid()) {
+    T8_LOG_ERROR("[Backyard] Cannot add the render instance for a spawned ball");
+    m_fluid.RemoveBodiesFrom(m_fluid.BodyCount() - 1u);
+    return false;
+  }
+  m_extraBallHandles.push_back(handle);
+
+  T8_LOG_INFO("[Backyard] Spawned ball %d: position (%.2f, %.2f, %.2f) radius %.2f m, "
+              "density %.2f x water, mass %.2f kg; %u bodies",
+              index, body.x, body.y, body.z, body.radius, body.densityRatio,
+              body.densityRatio * w.sphereWaterDensity * (4.0f / 3.0f) * 3.14159265f *
+              body.radius * body.radius * body.radius,
+              m_fluid.BodyCount());
+  return true;
+}
+
 void BackyardScene::SetWaterFluidFeature(bool enabled) {  if (!m_waterHandle.IsValid()) return;
   t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle);
   if (!water) return;
@@ -502,6 +650,10 @@ void BackyardScene::ResetSimulation() {
   if (!m_fluidReady || !pFramework || !pFramework->pVideoDriver) return;
   t850::BaseDriver* driver = pFramework->pVideoDriver;
   const t850::WaterTunables& w = SceneProp.Water;
+
+  // W-22: a reset also clears the spawned balls, so a new drop height is retested from
+  // the same single-body state the gates assume.
+  ClearSpawnedBalls();
 
   if (!m_fluid.ResetToRest(driver)) {
     T8_LOG_ERROR("[Backyard] Reset failed: the solver could not be cleared");
@@ -584,6 +736,8 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
           }
         }
       }
+      // W-22: the spawned balls follow their own bodies the same way.
+      UpdateExtraBallTransforms();
     }
 
     // Advance by REAL elapsed time. Stepping a fixed 1/60 s once per rendered
@@ -1070,6 +1224,32 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     if (gui.Button("Reset simulation")) {
       ResetSimulation();
     }
+
+    // W-22: spawn extra bodies. Disabled (with the reason shown) when the solver is not
+    // running - GL and WebGPU have no volumetric compute - or when the cap is reached.
+    gui.Text("spawned balls");
+    const int spawnCap = (std::min)((std::max)(w.spawnMaxBalls, 0),
+                                    static_cast<int>(t850::FluidSimulation::kMaxBodies) - 1);
+    char spawnText[64];
+    std::snprintf(spawnText, sizeof(spawnText), "balls: %u / %d",
+                  m_fluid.BodyCount() - 1u, spawnCap);
+    gui.Text(spawnText);
+    if (!m_fluidReady)
+      gui.Text("spawning needs the fluid solver (unavailable on this API)");
+    if (gui.Button("Spawn ball") && m_fluidReady) {
+      SpawnBall();
+    }
+    if (gui.Button("Clear spawned balls")) {
+      ClearSpawnedBalls();
+    }
+    sliderInt("water_spawn_max", "max spawned balls", w.spawnMaxBalls, 0, 7, 1);
+    slider("water_spawn_radius_min", "spawn radius min (m)", w.spawnRadiusMin, 0.05f, 0.6f, 0.005f);
+    slider("water_spawn_radius_max", "spawn radius max (m)", w.spawnRadiusMax, 0.05f, 0.6f, 0.005f);
+    slider("water_spawn_density_min", "spawn density min (x water)", w.spawnDensityMin, 0.05f, 3.0f, 0.01f);
+    slider("water_spawn_density_max", "spawn density max (x water)", w.spawnDensityMax, 0.05f, 3.0f, 0.01f);
+    slider("water_spawn_height_min", "spawn height min (m)", w.spawnHeightMin, 0.1f, 3.0f, 0.01f);
+    slider("water_spawn_height_max", "spawn height max (m)", w.spawnHeightMax, 0.1f, 3.0f, 0.01f);
+    sliderInt("water_spawn_seed", "spawn seed (0 = random)", w.spawnSeed, 0, 100000, 1);
   }
 
   if (gui.BeginSection("Presentation")) {

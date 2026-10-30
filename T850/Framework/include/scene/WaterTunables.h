@@ -211,6 +211,20 @@ namespace t850 {
     // Seconds after scene start before the sphere is released.
     float sphereReleaseDelay = 0.0f;
 
+    // ── Spawned balls (W-22) ──
+    // A GUI button drops an extra ball at a random place that always lands in the pool.
+    // The scripted ball above is body 0 and keeps its own parameters; these describe the
+    // extras only.
+    int   spawnMaxBalls = 7;                 // capped by FluidSimulation::kMaxBodies - 1
+    float spawnRadiusMin = 0.10f;            // clamped up to 1.2 x cellSize by the scene
+    float spawnRadiusMax = 0.35f;
+    float spawnDensityMin = 0.2f;            // below 1 floats, above 1 sinks
+    float spawnDensityMax = 1.6f;
+    float spawnHeightMin = 0.5f;             // metres above the water plane
+    float spawnHeightMax = 2.0f;
+    // 0 = random each run; non-zero makes a spawn sequence reproducible.
+    int   spawnSeed = 0;
+
     // Mass in kg, derived from radius and density: a body's mass is a property of
     // its size and material, so radius + density is the consistent parameterisation
     // and mass is what falls out of it.

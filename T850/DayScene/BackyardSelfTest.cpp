@@ -900,6 +900,113 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
     }
   }
 
+  // ── Gate 9: multiple bodies keep their own identity ────────────────────────
+  // W-22 encodes the body index in the wall mask (2u + k) so the kernels can look up
+  // per-body velocity without a centre/radius list. Two failure modes are invisible to
+  // a single-ball run: a kernel that still compares the mask to exactly 1u (moving
+  // bodies then act as static walls) and an index that is off by one (a fast ball gets
+  // the other ball's velocity). This gate spawns two bodies with DIFFERENT velocities
+  // and checks both the mask values and the footprint velocities.
+  if (failures == 0 && !options.skipBall) {
+    if (!fluid.ResetToRest(driver)) { T8_LOG_ERROR("[BackyardSelfTest] multi-body: reset failed"); ++failures; }
+    FluidSphere& first = fluid.DroppedSphere();
+    first.enabled = true;
+    first.radius = 0.25f;
+    first.densityRatio = 0.6f;
+    first.dragCoefficient = 0.47f;
+    first.restitution = 0.30f;
+    first.x = 0.0f;
+    first.z = fs.basinMinZ + 0.5f * (fs.basinMaxZ - fs.basinMinZ);
+    first.y = fs.waterPlaneY - 0.60f;      // fully submerged
+    first.vx = 0.80f;
+    first.vy = 0.10f;
+    first.vz = -0.20f;
+    first.submerged = 1.0f;
+
+    FluidSphere second = first;
+    second.x = 1.60f;                     // well separated: no overlapping footprints
+    second.radius = 0.20f;
+    second.vx = -0.40f;
+    second.vy = 0.25f;
+    second.vz = 0.55f;
+    const int secondIndex = fluid.AddBody(second);
+    if (secondIndex < 0) {
+      T8_LOG_ERROR("[BackyardSelfTest] multi-body: AddBody refused a second body");
+      ++failures;
+    } else if (!fluid.Step(driver)) {
+      T8_LOG_ERROR("[BackyardSelfTest] multi-body: step failed");
+      ++failures;
+    } else {
+      const float h = fs.cellSize;
+      const FluidSphere& a = fluid.Bodies()[0];
+      const FluidSphere& b = fluid.Bodies()[1];
+      const float av[3] = {a.vx, a.vy, a.vz};
+      const float bv[3] = {b.vx, b.vy, b.vz};
+
+      std::vector<uint32_t> mask;
+      std::vector<float> velocity;
+      if (!fluid.ReadWallMask(driver, mask) || !fluid.ReadVelocity(driver, velocity)) {
+        T8_LOG_ERROR("[BackyardSelfTest] multi-body: readback failed");
+        ++failures;
+      } else {
+        int maskErrors = 0;
+        int cellsA = 0;
+        int cellsB = 0;
+        float worstA = 0.0f;
+        float worstB = 0.0f;
+        for (uint32_t k = 0; k < fs.depth; ++k)
+          for (uint32_t j = 0; j < fs.height; ++j)
+            for (uint32_t i = 0; i < fs.width; ++i) {
+              const size_t index = static_cast<size_t>(i) + fs.width *
+                  (static_cast<size_t>(j) + static_cast<size_t>(fs.height) * k);
+              const float x = fs.basinMinX + (static_cast<float>(i) + 0.5f) * h;
+              const float y = fs.basinMinY + (static_cast<float>(j) + 0.5f) * h;
+              const float z = fs.basinMinZ + (static_cast<float>(k) + 0.5f) * h;
+
+              const float da = (x - a.x) * (x - a.x) + (y - a.y) * (y - a.y) + (z - a.z) * (z - a.z);
+              const float innerA = a.radius - 0.5f * h;
+              if (da <= innerA * innerA) {
+                if (mask[index] != 2u) ++maskErrors;
+                const float u = velocity[index * 4 + 0];
+                const float v = velocity[index * 4 + 1];
+                const float w = velocity[index * 4 + 2];
+                worstA = (std::max)(worstA, (std::max)(std::fabs(u - av[0]),
+                            (std::max)(std::fabs(v - av[1]), std::fabs(w - av[2]))));
+                ++cellsA;
+                continue;
+              }
+              const float db = (x - b.x) * (x - b.x) + (y - b.y) * (y - b.y) + (z - b.z) * (z - b.z);
+              const float innerB = b.radius - 0.5f * h;
+              if (db <= innerB * innerB) {
+                if (mask[index] != 3u) ++maskErrors;
+                const float u = velocity[index * 4 + 0];
+                const float v = velocity[index * 4 + 1];
+                const float w = velocity[index * 4 + 2];
+                worstB = (std::max)(worstB, (std::max)(std::fabs(u - bv[0]),
+                            (std::max)(std::fabs(v - bv[1]), std::fabs(w - bv[2]))));
+                ++cellsB;
+              }
+            }
+        T8_LOG_INFO("[BackyardSelfTest] multi-body  body0 cells=%d maskErrors=%d worst=%.5f m/s | "
+                    "body1 cells=%d worst=%.5f m/s (mask 2 and 3)",
+                    cellsA, maskErrors, worstA, cellsB, worstB);
+        if (cellsA < 20 || cellsB < 12) {
+          T8_LOG_ERROR("[BackyardSelfTest] multi-body: only %d/%d interior cells sampled", cellsA, cellsB);
+          ++failures;
+        } else if (maskErrors != 0) {
+          T8_LOG_ERROR("[BackyardSelfTest] multi-body: %d body cells do not carry their 2+k mask value",
+                       maskErrors);
+          ++failures;
+        } else if (worstA > 0.01f || worstB > 0.01f) {
+          T8_LOG_ERROR("[BackyardSelfTest] multi-body: a footprint face carries the wrong body's "
+                       "velocity (deviation %.5f / %.5f m/s)", worstA, worstB);
+          ++failures;
+        }
+      }
+    }
+    fluid.RemoveBodiesFrom(1);
+  }
+
   fluid.Shutdown(driver);
   if (failures == 0) {
     T8_LOG_INFO("[BackyardSelfTest] PASS: api=%s", api);

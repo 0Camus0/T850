@@ -170,7 +170,7 @@ command run, and anything you could not verify.
 | 4. Data-driven tunables | W-11 | M | **DONE** — `Scenes/BackyardWater.json` drives all 101 settable fields; three solver literals promoted; strict key validation. See Stage 4 |
 | 4a. House roof | W-24 | S | **DONE** — sign flipped, gables closed, 78 → 80 meshes, layout JSON unchanged |
 | 4b. Textured materials | W-23 | M | **DONE** — CC0 ambientCG textures with NormalGL, metric world-box UVs, JPEGs embedded; −5.5 % fps; layout unchanged |
-| 4c. Spawn more balls | W-22 | M–L | Owner request; body list in the solver and two kernels. Before 5a so the body abstraction exists when 6a makes it analytic |
+| 4c. Spawn more balls | W-22 | M–L | **DONE** — mask-encoded body index, 8 bodies, gate 9 multi-body PASS, GUI spawn/clear, −9.9 % fps with 7 balls |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
@@ -1323,7 +1323,63 @@ the warm tint restores most of the sand colour but not all of it. A warmer plast
 
 ### Stage 4c — W-22
 
-_Pending. Design review done ahead of implementation — see the notes below._
+Done. The solver now holds a body list instead of one sphere, and the GUI has **Spawn ball** /
+**Clear spawned balls** buttons.
+
+**Design, as the catalogue specified.** Body *k* is stamped into the wall mask as `2u + k`; static
+solids stay `1u`. Every existing mask reader only tests `!= 0`, so nothing else changed.
+`ObjectConstants` (b1) became `uint BodyCount; uint3 pad; float4 BodyVelocity[8]` = **36 DWORDs**
+(was 12), and both kernels now recover the body index with `mask - 2u` instead of testing a centre
+and radius. The registry's `constant_count` for register b1 in `CS_FluidGradient3D` and
+`CS_FluidObstacleVelocity3D` went 12 → 36 in the same commit — R2 again: with the struct grown and
+the registry left at 12 the pipelines would fail to create silently. `kMaxBodies = 8` keeps the
+gradient root signature at 62 of 64 DWORDs.
+
+**Host.** `std::vector<FluidSphere> m_bodies` (always at least one, so `DroppedSphere()` stays valid);
+`AddBody` / `RemoveBodiesFrom` (clamped so body 0, the scripted ball, can never be removed) /
+`BodyCount` / `Bodies`. `AdvanceSphere` loops and then resolves sphere–sphere contacts — 28 pairs,
+fixed `i < j` order, inverse-mass-weighted positional correction plus a normal impulse with the mean
+restitution, two passes for chains. Stamping loops over every body and stamps `2u + k`; the
+unchanged-footprint check now compares **each** body's cell AABB and the active count, because two
+bodies moving in opposite directions can leave a union AABB unchanged. Substeps take the fastest
+body; the volume correction sums every submerged body.
+
+**Scene.** `m_ballPrimitive` is captured at asset load; each spawned ball shares it and gets its own
+`PrimitiveInst`, welded to its body every frame. Placement comes from the solver's basin bounds (never
+literals) with one cell of margin, radius and density drawn independently, the radius clamped to
+≥ 1.2 × `cellSize`, a straight drop from `waterPlaneY + r + 0.5…2.0 m`, up to 32 rejection tries
+against existing bodies. Eight new `WaterTunables` keys (`spawnMaxBalls`, `spawnRadiusMin/Max`,
+`spawnDensityMin/Max`, `spawnHeightMin/Max`, `spawnSeed`) are in the `glz::meta` (key count 101 → 109)
+and shipped in `BackyardScene`'s water JSON. `Reset simulation` clears the spawned balls. New test
+hook `--backyard-spawn N` drops N balls at startup so the multi-body path can be exercised without
+the GUI.
+
+**New gate 9 — the acceptance GLM asked for.** Two bodies with *different* velocities, one step:
+
+```
+[BackyardSelfTest] multi-body  body0 cells=47 maskErrors=0 worst=0.00024 m/s |
+                     body1 cells=21 worst=0.00015 m/s (mask 2 and 3)
+```
+
+That is the exact failure a single-ball run cannot see: a kernel still comparing `mask == 1u`, or an
+off-by-one index handing one ball the other's velocity. PASS on D3D12 and Vulkan.
+
+**Measured**
+
+| Check | Result |
+|---|---|
+| Spawn 7 with the cap at 7 | 8 bodies, all positions inside the basin, radii 0.13–0.25 m, densities 0.36–1.54 | 
+| `spawnSeed` reproducibility | seed 12345, two runs → byte-identical positions, radii, densities, masses |
+| fps, same session, 1200 frames at 720p D3D12 | 0 extra **159.4** fps, 1 extra **152.7**, 7 extra **143.7** (−9.9 % for 7) |
+| Scenes 0/1/6 and 7-with-2-spawned × 5 APIs | **20/20 zero errors** |
+| Frame-300 dump | four spawned balls visible at different sizes and depths, each with its own ripple |
+| `--backyard-selftest` (8 gates + gate 9) | PASS on D3D12 and Vulkan |
+
+The fps delta with 7 balls is W-05's motivation: every footprint change re-uploads the whole mask.
+
+**Note discovered while testing:** `T850/bin/x64/Release/Scenes` is a **junction** to
+`T850/Assets/Scenes`, so the runtime reads the source tree directly. Editing either path edits the
+same file — worth knowing before "syncing" a JSON twice.
 
 **Design notes from the GLM/Qwen consultation (2026-10-29), to apply when the stage runs:**
 

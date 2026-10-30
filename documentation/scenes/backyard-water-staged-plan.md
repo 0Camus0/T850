@@ -8,15 +8,15 @@ The task catalogue is the source of truth for **what** each task is and how to p
 document is only about **order and session boundaries**, so each stage can be executed cold, in
 one context, without carrying the whole backlog.
 
-Stage 0 baseline: `01ccbd82`. Stages 0–3 and 3c are done and reviewed, plus the review fixes, the
-debug view and the W-15 fixes logged in section 4. **Next: Stage 4 (W-11)**, starting from the tip of
+Stage 0 baseline: `01ccbd82`. Stages 0–4 and 3c are done and reviewed, plus the review fixes, the
+debug view and the W-15 fixes logged in section 4. **Next: Stage 5a (W-02)**, starting from the tip of
 `backyard_scene`. Section 0 is the step-by-step brief.
 
 ---
 
-## 0. Next steps for the local agents (as of `caaea83e`, 2026-10-29)
+## 0. Next steps for the local agents (as of `e974f4e5`, 2026-10-29)
 
-Start every session from the tip of `backyard_scene` (at or after `caaea83e`) and build:
+Start every session from the tip of `backyard_scene` (at or after `e974f4e5`) and build:
 
 ```powershell
 cd D:\Code\QwenFlashT850\T850-backyard\T850
@@ -27,71 +27,54 @@ If the build fails with C2011 `align_val_t` after a project or header change, de
 `Lib\VStuff\Framework\Release\x64\*.pch` and rebuild. Shader and JSON edits need no rebuild: assets
 load from the source tree. Scene ids: 0 Sandbox, 1 DayScene, 6 Minecraft, 7 Backyard.
 
-### Step 1 — Stage 3c, W-21 — DONE (kept for reference)
+### Done since the previous brief
 
-**Result: uninitialised volume memory, fixed in `FluidSimulation::TryInitialize`.** The three
-diagnostics below were run; none of the frame-ownership candidates held. See Stage 3c in section 4
-for the full measurement table.
+- **Stage 3c (W-21)** — `5798477c`: the failure was uninitialised volume memory;
+  `FluidSimulation::TryInitialize` now clears every volume. Accepted.
+- **Stage 4 (W-11)** — `5511e7e9`: `Scenes/BackyardWater.json`, three promoted solver values, strict
+  key validation. Accepted; the review added the missing Android registration (`e974f4e5`).
+- Details of both, and of the review, are in section 4.
 
-Facts already established — start from them, do not re-measure:
+### Step 1 — Stage 5a, W-02 (next session)
 
-- Fails **only on Vulkan and only under `--scene 7`**: 8/8 FAIL. Under DayScene (`--scene 1`) 3/3
-  PASS, Minecraft (`--scene 6`) 3/3 PASS, scene 0 5/5 PASS; D3D12 under scene 7 8/8 PASS. So it is
-  something Backyard's initialisation does, not "any scene".
-- The fluid self-test runs in `main()` straight after `OnCreateApplication`, before the frame
-  loop. The Backyard solver is therefore **initialised (resources created, volume fraction seeded)
-  but never stepped**. The first write-up's "two solvers stepping together" was wrong.
-- `--backyard-selftest` (100×22×50, the scene's grid) passes after the same initialisation;
-  `--fluid-selftest` (32×16×16) fails.
-- Per-dispatch state is not shared: `VulkanDriver::DispatchCompute` allocates a fresh descriptor
-  set and constant slice for every dispatch, and each `FluidSimulation` owns its pipelines.
-  Per-**frame** state is shared: the descriptor pool, the CB ring, `m_frameStarted` /
-  `m_frameOpenedByCompute`, and `RecycleOverflowingComputeFrame` only recycles frames that compute
-  opened.
+Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Before starting:
 
-Three diagnostics, in order. Each is a temporary change, reverted before the real fix; record each
-result under "Stage 3c" in section 4 before writing the fix:
-
-1. Run `--scene 7 --api vulkan --fluid-selftest --logLevel debug` and look for
-   `[Vulkan][Compute] Recycling`, CB-ring and `AllocateDescriptorSets failed` lines, and whether a
-   frame is already open (and who opened it) when the self-test starts.
-2. In `App.cpp`, just before the fluid self-test, submit and drain whatever frame the scene left
-   open (`CompleteFrame(SubmitNoPresent)` + `WaitForGPU()`). If the failure disappears, the cause is
-   frame ownership, and the fix belongs in the Vulkan driver (compute must not depend on who opened
-   the frame), not in the harness.
-3. Temporarily give the self-test the scene's 100×22×50 grid. If it then passes, look for state
-   that depends on volume size or resource identity — e.g. barriers or image-layout transitions for
-   newly created 3D images.
-
-Acceptance and the full measurement table: remaining-work W-21. Likely files: `VulkanDriver.cpp`,
-`VulkanCompute.cpp`; `App.cpp` only if the harness is proven to be the only affected path.
-
-### Step 2 — Stage 4, W-11 (the session after 3c)
-
-Scope is in section 3. Traps found in the review:
-
-- **`WaterTunables::floorTextureBound` is runtime state, not a tunable.** Stage 3a added it; the scene
-  sets it when the floor texture binds. Keep it out of the glaze metadata (or move it out of
-  `WaterTunables`) so JSON can neither set it nor be rejected because of it.
-- **Freeboard has two sources and the tunable loses.** `WaterTunables::freeboard` is copied into
-  `FluidSettings`, then `FluidSimulation` overwrites it with `pool.freeboard` from
-  `Models/Backyard/backyard_layout.json`. Keep one source of truth (the layout) and make the GUI and
-  JSON edit that; do not add a third.
-- Load strictly: `glz::opts{.error_on_unknown_keys = true}` as in `SceneDescriptor.cpp`. A missing
-  `"water"` object falls back to the C++ defaults; an unknown key is an error that names the key.
-- Show the example the acceptance asks for: one JSON edit, the log line or metric that changed, no
-  rebuild.
+- **Record the performance baseline first, in this session.** Vulkan on this machine currently
+  measures ≈ 176 fps at 720p, not the 313 in W-15; that drop is environmental (W-15 explains it).
+  Run `perf.ps1` on D3D12 and Vulkan before changing anything. 5a should *gain* frame rate — α,
+  pressure and divergence go from 8-byte RGBA16F texels to 4-byte R32F (W-15's P2) — so report
+  the delta against your own baseline, never against a number in these documents.
+- **Blast radius.** Five compute backends plus the registry, the reflection map and the kernels. The
+  solver runs on D3D11, D3D12 and Vulkan; on GL and WebGPU it reports "Fluid solver unavailable" by
+  design, so those two need the format mapped (or rejected with a clear message), not a working
+  solver. Scene 7 must still log 0 errors on all five APIs.
+- **Vulkan storage images are write-only here** (implementation record section 4, constraint 1).
+  Keep the existing pattern: write through `RWTexture3D<float>` with `[[spv::format_r32f]]`, read
+  through `Texture3D<float>`.
+- **Two commits.** First the format plus an R32F round trip in `ComputeSelfTest`
+  (`--compute-selftest` on D3D11, D3D12 and Vulkan); then switch α, pressure, divergence and the
+  clear kernel. A failure is then bisectable.
+- Keep `ReadVolumeFraction`'s CPU output (one float per voxel) unchanged; the self-tests and
+  `FluidDebugRenderer` consume it. **Do not touch the transport scheme** — that is 5b.
+- After any Framework header change, delete the PCH before trusting the binary. In Stage 3c a stale
+  binary silently kept the old behaviour.
 
 ### After that
 
-Stage 5a (W-02, R32F storage), then 5b (W-03). Before designing 5b, read the two Stage 5b leads in
+Stage 5b (W-03), the conservative transport. Before designing it, read the two Stage 5b leads in
 section 4 (the still-pool sink depends on how full the waterline cell is; the bulk water is
 diluted after the impact) and confirm the first hypothesis before building on it.
 
-### Standing rules from the Stage 3 review
+### Standing rules from the reviews
 
-- **Self-tests:** `--fluid-selftest` with `--scene 0` (until W-21 is fixed); `--backyard-selftest` and
-  every scene run with `--scene 7`.
+- **Self-tests:** `--fluid-selftest`, `--backyard-selftest` and every scene run with `--scene 7` (W-21
+  is fixed; the scene-0 exception is gone).
+- **Performance claims are same-session A/B only.** Measure the parent commit and the change in one
+  session; `backyard-diag\bisect_perf.ps1 -Commit <sha> -Apis vulkan,d3d12 -Restore` builds the
+  old tree, measures with `perf.ps1` and restores HEAD.
+- **Register every new source file in all three build lists:** the vcxproj, the CMakeLists and
+  `cmake/AndroidBuild.cmake`. `ValidateBuildRegistration.ps1` does not check Backyard or fluid files,
+  so its PASS proves nothing here (Stage 4 missed Android this way).
 - **Before adding a render pass, dump what the existing targets already hold.** Stage 3b re-drew the
   water into a new target that duplicated `Deferred:DEPTH`.
 - **A zero-difference A/B is not a result until the target is shown to be non-empty and not
@@ -1154,6 +1137,22 @@ log line and the surface probe; an injected typo errors with the key name and ex
 missing-file path falls back to defaults; all 101 keys round-trip (`101 of 101 keys set`). Gates PASS
 on both APIs and all 20 scene/API combinations log 0 errors. My earlier "blocked, field count"
 diagnosis in this document was wrong and is corrected in the section above.
+
+### Review of Stage 3c and Stage 4 (2026-10-29) — by the reviewer
+
+1. **Stage 3c accepted.** The diagnosis (an intermittent failure with two discrete outcomes means
+   uninitialised memory) and the fix in the solver rather than the harness are right.
+2. **Stage 4 accepted**, including the separate `Scenes/BackyardWater.json` and the hand-rolled
+   key validation. Checked that the 19 shipped values equal the C++ defaults and that the three
+   promoted values equal the old literals, so the run is unchanged.
+3. `e974f4e5` — **Android build fixed.** `BackyardScene.cpp` calls `LoadBackyardWaterTunables`,
+   defined only in `BackyardWaterJson.cpp`, which was missing from `cmake/AndroidBuild.cmake`. The
+   registration validator does not cover Backyard files, so it still printed PASS. Also indented
+   the three new GUI slider lines.
+4. **Reported Vulkan slowdown: not from these stages.** HEAD measures D3D12 216 / Vulkan 176 fps, and
+   Vulkan is 171–183 fps at every earlier commit tested, down to `3a371903`, which measured 313 on
+   10-28. Environmental and still unexplained; the evidence and what was ruled out are in
+   remaining-work W-15.
 
 ### Stage 5a — W-02
 

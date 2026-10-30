@@ -211,7 +211,9 @@ compute layout supports one bind group containing:
 - read-only and read-write storage buffers;
 - sampled float 2D textures;
 - non-comparison filtering samplers;
-- write-only `rgba8unorm` or `rgba16float` storage textures.
+- write-only `rgba8unorm` or `rgba16float` storage textures (and `r32float` on the native
+  compute backends: D3D11, D3D12 and Vulkan accept it for 2D and 3D storage; WebGPU has no
+  WGSL `r32float` storage path in this build and rejects it loudly).
 
 All eight maintained compute families have direct `.wgsl` siblings: Arithmetic,
 ImagePatternWrite, ImagePatternRead, Blur, Bright, GodRays, HDRComposite and

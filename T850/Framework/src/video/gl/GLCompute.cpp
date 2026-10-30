@@ -20,6 +20,21 @@
 
 namespace t850 {
 namespace {
+  // One place maps a compute storage format to a GL sized internal format, so the image
+  // unit binding and the shader's layout() qualifier agree.
+  GLenum ToGLStorageFormat(ComputeStorageFormat format) {
+    switch (format) {
+      case ComputeStorageFormat::Rgba8Unorm:  return GL_RGBA8;
+      case ComputeStorageFormat::Rgba16Float: return GL_RGBA16F;
+      case ComputeStorageFormat::R32Float:    return GL_R32F;
+      default:                                return 0;
+    }
+  }
+
+  bool IsSupportedStorageFormat(GLenum internalFormat) {
+    return internalFormat == GL_RGBA8 || internalFormat == GL_RGBA16F || internalFormat == GL_R32F;
+  }
+
   bool LoadComputeSource(const ComputePipelineDesc& desc, std::string& source) {
     std::filesystem::path path(desc.debugName);
     path.replace_extension(".glsl");
@@ -216,11 +231,11 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
       }
       if (binding.type == ComputeBindingType::ReadWriteTexture &&
           (!SupportsComputeTextures() || layout->bindingIndex >= static_cast<uint32_t>(maxImageUnits) ||
-           (texture->glInternalFormat != GL_RGBA8 && texture->glInternalFormat != GL_RGBA16F))) return false;
+           !IsSupportedStorageFormat(texture->glInternalFormat))) return false;
       if (binding.type == ComputeBindingType::ReadWriteTexture) {
         for (const auto& reflected : pipeline->bindingLayout) {
           if (reflected.type == binding.type && reflected.shaderRegister == binding.shaderRegister &&
-              texture->glInternalFormat != (reflected.storageFormat == ComputeStorageFormat::Rgba16Float ? GL_RGBA16F : GL_RGBA8))
+              texture->glInternalFormat != ToGLStorageFormat(reflected.storageFormat))
             return false;
         }
       }

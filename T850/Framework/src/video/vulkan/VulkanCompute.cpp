@@ -39,6 +39,17 @@ namespace {
     return false;
   }
 
+  // One place maps a compute storage format to a VkFormat, so the image and every view
+  // derive from the same value; the shader's [[spv::format_*]] must match it.
+  VkFormat ToVulkanStorageFormat(ComputeStorageFormat format) {
+    switch (format) {
+      case ComputeStorageFormat::Rgba8Unorm:  return VK_FORMAT_R8G8B8A8_UNORM;
+      case ComputeStorageFormat::Rgba16Float: return VK_FORMAT_R16G16B16A16_SFLOAT;
+      case ComputeStorageFormat::R32Float:    return VK_FORMAT_R32_SFLOAT;
+      default:                                return VK_FORMAT_UNDEFINED;
+    }
+  }
+
   bool CompileCompute(const ComputePipelineDesc& desc,
                       std::vector<uint32_t>& spirv,
                       std::array<uint32_t, 3>& threadGroupSize) {
@@ -221,8 +232,11 @@ bool VulkanComputeTexture3D::Create(VulkanDriver* driver, const ComputeTexture3D
       desc.format == ComputeStorageFormat::Unspecified || initialData) return false;
   owner = driver;
   descriptor = desc;
-  const VkFormat format = desc.format == ComputeStorageFormat::Rgba16Float
-    ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+  const VkFormat format = ToVulkanStorageFormat(desc.format);
+  if (format == VK_FORMAT_UNDEFINED) {
+    T8_LOG_ERROR("[Vulkan][Compute] Volume '%s' has an unsupported storage format", desc.debugName.c_str());
+    return false;
+  }
 
   VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   imageInfo.imageType = VK_IMAGE_TYPE_3D;
@@ -289,8 +303,7 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
         if (!texture->m_storageUsage) return false;
         for (const auto& layout : pipeline->bindingLayout) {
           if (layout.type != binding.type || layout.shaderRegister != binding.shaderRegister) continue;
-          const auto format = layout.storageFormat == ComputeStorageFormat::Rgba16Float
-            ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+          const VkFormat format = ToVulkanStorageFormat(layout.storageFormat);
           if (texture->m_format != format) return false;
         }
       }
@@ -305,6 +318,18 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
           volume->descriptor.access != ComputeBufferAccess::ReadWrite) {
         T8_LOG_ERROR("[Vulkan][Compute] Volume u%u is not writable", binding.shaderRegister);
         return false;
+      }
+      // The volume's format must equal the shader's [[spv::format_*]]; a mismatch is
+      // undefined behaviour, not a validation error, when layers are off.
+      for (const auto& layout : pipeline->bindingLayout) {
+        if (layout.shaderRegister != binding.shaderRegister) continue;
+        if (layout.storageFormat == ComputeStorageFormat::Unspecified) break;
+        if (ToVulkanStorageFormat(volume->descriptor.format) != ToVulkanStorageFormat(layout.storageFormat)) {
+          T8_LOG_ERROR("[Vulkan][Compute] Volume u%u format does not match the shader's storage format",
+                       binding.shaderRegister);
+          return false;
+        }
+        break;
       }
     }
   }

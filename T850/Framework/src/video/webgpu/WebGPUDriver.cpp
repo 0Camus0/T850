@@ -38,6 +38,16 @@ void Require(bool success, const std::string& message) {
     throw std::runtime_error("[WebGPU] " + message);
   }
 }
+// One place maps a compute storage format to a wgpu texture format; the binding check and
+// the bind-group entry must agree (a mismatch throws, so this only matters for clarity).
+wgpu::TextureFormat ToWebGPUStorageFormat(ComputeStorageFormat format) {
+  switch (format) {
+    case ComputeStorageFormat::Rgba8Unorm:  return wgpu::TextureFormat::RGBA8Unorm;
+    case ComputeStorageFormat::Rgba16Float: return wgpu::TextureFormat::RGBA16Float;
+    case ComputeStorageFormat::R32Float:    return wgpu::TextureFormat::R32Float;
+    default:                                return wgpu::TextureFormat::Undefined;
+  }
+}
 void Require(bool success, const char* message) {
   if (!success) Require(false, std::string(message));
 }
@@ -873,7 +883,8 @@ public:
           Require(resource.dimension == webgpu::TextureDimension::D2,
                   "Compute storage textures must be 2D");
           Require(resource.storageRgba8Unorm || resource.storageRgba16Float,
-                  "Compute storage texture format must be rgba8unorm or rgba16float");
+                  "Compute storage texture format must be rgba8unorm or rgba16float (r32float has no "
+                  "WGSL storage path in this build)");
           entry.storageTexture.access = wgpu::StorageTextureAccess::WriteOnly;
           entry.storageTexture.format = resource.storageRgba16Float
             ? wgpu::TextureFormat::RGBA16Float : wgpu::TextureFormat::RGBA8Unorm;
@@ -1334,8 +1345,7 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
         if (!(texture->gpu.GetUsage() & wgpu::TextureUsage::StorageBinding)) return false;
         for (const auto& layout : pipeline->bindingLayout)
           if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
-              texture->format != (layout.storageFormat == ComputeStorageFormat::Rgba16Float
-                ? wgpu::TextureFormat::RGBA16Float : wgpu::TextureFormat::RGBA8Unorm)) return false;
+              texture->format != ToWebGPUStorageFormat(layout.storageFormat)) return false;
       }
     }
   }

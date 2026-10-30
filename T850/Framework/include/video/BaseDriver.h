@@ -51,7 +51,10 @@ namespace t850 {
     Sampler
   };
 
-  enum class ComputeStorageFormat { Unspecified, Rgba8Unorm, Rgba16Float };
+  // Storage formats a compute binding can declare. R32Float exists because the fluid's
+  // alpha, pressure and divergence fields only use .x: a 4-byte texel halves their
+  // bandwidth and lets the pressure solve stay a plain float (W-02).
+  enum class ComputeStorageFormat { Unspecified, Rgba8Unorm, Rgba16Float, R32Float };
 
   enum class ComputeTextureDimension { Tex2D, Tex3D };
 

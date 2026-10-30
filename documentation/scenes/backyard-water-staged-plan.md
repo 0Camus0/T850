@@ -1,7 +1,7 @@
 # Backyard Water — Staged Plan
 
 Companion to [backyard-water-remaining-work.md](backyard-water-remaining-work.md) (the task
-catalogue W-01…W-21, with current status in its section 0) and
+catalogue W-01…W-24, with current status in its section 0) and
 [backyard-water-simulation.md](backyard-water-simulation.md) (the implementation record).
 
 The task catalogue is the source of truth for **what** each task is and how to prove it. This
@@ -9,14 +9,15 @@ document is only about **order and session boundaries**, so each stage can be ex
 one context, without carrying the whole backlog.
 
 Stage 0 baseline: `01ccbd82`. Stages 0–4 and 3c are done and reviewed, plus the review fixes, the
-debug view and the W-15 fixes logged in section 4. **Next: Stage 5a (W-02)**, starting from the tip of
-`backyard_scene`. Section 0 is the step-by-step brief.
+debug view and the W-15 fixes logged in section 4. **Next: Stage 4a (W-24 roof), 4b (W-23 textures),
+4c (W-22 more balls), then Stage 5a (W-02)**, starting from the tip of `backyard_scene`. Section 0 is
+the step-by-step brief.
 
 ---
 
-## 0. Next steps for the local agents (as of `e974f4e5`, 2026-10-29)
+## 0. Next steps for the local agents (2026-10-29, after `aa1e9ee1`)
 
-Start every session from the tip of `backyard_scene` (at or after `e974f4e5`) and build:
+Start every session from the tip of `backyard_scene` and build:
 
 ```powershell
 cd D:\Code\QwenFlashT850\T850-backyard\T850
@@ -35,7 +36,50 @@ load from the source tree. Scene ids: 0 Sandbox, 1 DayScene, 6 Minecraft, 7 Back
   key validation. Accepted; the review added the missing Android registration (`e974f4e5`).
 - Details of both, and of the review, are in section 4.
 
-### Step 1 — Stage 5a, W-02 (next session)
+The owner then asked for three things before the solver work resumes, in this order (one stage per
+session, smallest first). Full specifications are in remaining-work W-24, W-23 and W-22.
+
+### Step 1 — Stage 4a, W-24: the house roof is upside down (small)
+
+- One sign in `build_house()` (`T850/scripts/blender/build_backyard.py`): the roof slabs **and** the
+  standing seams use `rot=(sign * angle, ...)`; it must be `-sign * angle`. A +X rotation raises the
+  +Y end, so today both slabs lift their outer edge and the roof is a V.
+- Close the two gable triangles that the corrected roof exposes (walls stop at the eave height).
+- Regenerate with the Blender command in the implementation record 3.1. `backyard_layout.json` must
+  not change (`git diff` empty). Prove it with a frame-300 back-buffer dump and the printed min/max
+  Z of the slabs (eave 3.2 m, ridge 5.1 m).
+
+### Step 2 — Stage 4b, W-23: real textures with normal maps
+
+- Asset task: the engine already loads glTF base colour, normal (MikkTSpace tangents when missing),
+  metallic-roughness, occlusion and emissive textures, embedded or external, with
+  `KHR_texture_transform`.
+- Source: ambientCG, CC0 (`https://ambientcg.com/get?file=<ID>_1K-JPG.zip`); use the `NormalGL` map,
+  never `NormalDX`. Candidate IDs per surface are in W-23 — pick by preview.
+- A fetch script with pinned IDs and sha256 downloads into an uncommitted cache; the Blender
+  generator wires Image Texture → Principled BSDF / Normal Map, generates **UVs in metres**
+  (world box projection; `smart_project` scale is arbitrary), exports tangents and embeds the
+  JPEGs in the generated `.glb`.
+- Do not texture or re-UV the water mesh. Layout JSON unchanged; scenes 7/1/6 on five APIs 0 errors;
+  same-session fps before/after.
+
+### Step 3 — Stage 4c, W-22: a button that spawns more balls
+
+- The solver has one body. The design in W-22 stores the body index in the wall mask (`2u + k`;
+  static solids stay `1u`; every reader only tests `!= 0u`), so the two body kernels look up
+  `BodyVelocity[mask − 2]` and `ObjectConstants` shrinks to a header plus one `float4` per body. That
+  keeps D3D12's 64-DWORD root signature at 62 with **8 bodies** (measured budget in W-22).
+- Host: body list in `FluidSimulation` (body 0 stays the scripted ball so the self-tests and gates
+  7/8 are untouched), sphere–sphere contact, multi-body stamping, fastest-body substeps, volume
+  correction summed over bodies.
+- Scene: one render instance per ball sharing the ball primitive; random placement inside the basin
+  minus radius and one cell, dropped straight down from above the water so it always lands in the
+  pool; random radius (≥ 1.2 × cell) and density, mass derived and logged; `spawnSeed` for
+  reproducible tests; new keys also go into the `glz::meta` in `BackyardWaterJson.cpp`.
+- Measure fps with 0, 1 and 7 extra balls in one session: every footprint change re-uploads the mask
+  (W-05), so the cost grows with the ball count.
+
+### Step 4 — Stage 5a, W-02 (after 4a–4c)
 
 Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Before starting:
 
@@ -124,6 +168,9 @@ command run, and anything you could not verify.
 | 3. Rendering correctness | W-19, W-09, W-10 | M | **DONE, reviewed** — W-19 (`fa5422ff`), W-09 (`517ae6bf`), W-10 (`96d84638`, redesigned in review `47500166`: CoC consumes the nearer depth, no extra pass) |
 | 3c. Vulkan fluid self-test after Backyard init | W-21 | S–M | **DONE** — root cause was NOT frame ownership: it was uninitialised GPU volume memory. Fixed in `TryInitialize` |
 | 4. Data-driven tunables | W-11 | M | **DONE** — `Scenes/BackyardWater.json` drives all 101 settable fields; three solver literals promoted; strict key validation. See Stage 4 |
+| 4a. House roof | W-24 | S | Visible defect, one sign; independent of the solver |
+| 4b. Textured materials | W-23 | M | Asset-only; the engine already supports glTF PBR textures |
+| 4c. Spawn more balls | W-22 | M–L | Owner request; body list in the solver and two kernels. Before 5a so the body abstraction exists when 6a makes it analytic |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
@@ -726,6 +773,50 @@ need the struct split to land first.
 
 ---
 
+### Stage 4a — House roof (W-24)
+
+**Scope** — flip the roof-slab and seam rotation sign in `build_house()`, add the two gable walls,
+regenerate.
+
+**Files** — `T850/scripts/blender/build_backyard.py` only.
+
+**Acceptance** — remaining-work W-24.
+
+**Exit** — pitched roof with the ridge highest; layout JSON unchanged.
+
+---
+
+### Stage 4b — Textured materials (W-23)
+
+**Scope** — CC0 textures (ambientCG) with normal maps on house, walls, ground, patio, pool shell,
+coping and pergola; metric UVs; embedded in the generated GLBs.
+
+**Files** — new `T850/scripts/textures/fetch_backyard_textures.py`, `build_backyard.py`; no engine
+code. If an engine change turns out to be necessary (e.g. missing mips), stop and report it rather
+than widening the stage.
+
+**Acceptance** — remaining-work W-23.
+
+**Exit** — every non-water surface textured at a believable scale; five APIs clean.
+
+---
+
+### Stage 4c — Spawn more balls (W-22)
+
+**Scope** — body list in `FluidSimulation`, body index in the wall mask, `ObjectConstants` as
+header + per-body velocity (cap 8), sphere–sphere contact, spawn/clear GUI and JSON tunables.
+
+**Files** — `FluidSimulation.h/.cpp`, `CS_FluidGradient3D.hlsl`, `CS_FluidObstacleVelocity3D.hlsl`,
+`compute_kernels.json`, `BackyardScene.h/.cpp`, `WaterTunables.h`, `BackyardWaterJson.cpp`,
+`Scenes/BackyardWater.json`.
+
+**Acceptance** — remaining-work W-22. The default run (no spawned balls) must reproduce every
+self-test number exactly.
+
+**Exit** — up to 8 balls at once, all landing in the pool, floating or sinking by their density.
+
+---
+
 ### Stage 5a — 32-bit storage for α, pressure, divergence (W-02)
 
 **Scope** — add `R32Float` to `ComputeStorageFormat`, the registry parser, the reflection map,
@@ -1153,6 +1244,18 @@ diagnosis in this document was wrong and is corrected in the section above.
    Vulkan is 171–183 fps at every earlier commit tested, down to `3a371903`, which measured 313 on
    10-28. Environmental and still unexplained; the evidence and what was ruled out are in
    remaining-work W-15.
+
+### Stage 4a — W-24
+
+_Pending._
+
+### Stage 4b — W-23
+
+_Pending._
+
+### Stage 4c — W-22
+
+_Pending._
 
 ### Stage 5a — W-02
 

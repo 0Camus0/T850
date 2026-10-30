@@ -91,8 +91,8 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | `.t8scene` and runtime loading | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Strict owned-schema behavior verified 2026-09-26 |
 | SceneDescriptor/SceneSetup | [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md) | Strict descriptor behavior verified 2026-09-26 |
 | Backyard scene and GPU pool water simulation | [scenes/backyard-water-simulation.md](scenes/backyard-water-simulation.md) | Implemented; D3D12 + Vulkan verified 2026-10-28 |
-| Backyard water: remaining work and implementation directions | [scenes/backyard-water-remaining-work.md](scenes/backyard-water-remaining-work.md) | 21 tasks (W-01..W-21); 8 done, W-11 and W-15 in part; Stage 3 reviewed 2026-10-29, next W-21 then Stage 4 |
-| Backyard water: staged execution plan | [scenes/backyard-water-staged-plan.md](scenes/backyard-water-staged-plan.md) | 11 stages, one session each, with dependency edges and exit criteria |
+| Backyard water: remaining work and implementation directions | [scenes/backyard-water-remaining-work.md](scenes/backyard-water-remaining-work.md) | 24 tasks (W-01..W-24); 10 done, W-11 and W-15 in part; Stages 3c and 4 reviewed 2026-10-29; next W-24 roof, W-23 textures, W-22 more balls, then W-02 |
+| Backyard water: staged execution plan | [scenes/backyard-water-staged-plan.md](scenes/backyard-water-staged-plan.md) | 14 stages, one session each, with dependency edges and exit criteria; section 0 is the current brief |
 
 ## Governance
 

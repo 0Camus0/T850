@@ -15,6 +15,7 @@
 #include <utils/ResourceLocator.h>
 
 #include <map>
+#include <set>
 #include <string>
 
 // W-11: explicit glaze meta for the water tunables.
@@ -163,6 +164,57 @@ namespace t850 {
 
     T8_LOG_INFO("[Backyard] Water tunables loaded from '%s': %zu of %zu keys set, the rest keep "
                 "their C++ defaults", path, entries.size(), kKeys.size());
+    return true;
+  }
+
+  namespace {
+    // Ids and map names become path segments under Textures/Ball/, so only plain names
+    // are accepted: no separators, no leading dot, nothing that could leave the folder.
+    bool IsPlainName(const std::string& name) {
+      if (name.empty() || name.size() > 64 || name.front() == '.') return false;
+      for (char c : name) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                        (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
+        if (!ok) return false;
+      }
+      return name.find("..") == std::string::npos;
+    }
+  }
+
+  bool LoadBackyardBallPalette(const char* path, BackyardBallPalette& out) {
+    out = BackyardBallPalette{};
+    std::string text;
+    if (!ResourceLocator::Instance().ReadText(path, text)) {
+      T8_LOG_INFO("[Backyard] No ball palette '%s'; balls keep the GLB material", path);
+      return true;
+    }
+    BackyardBallPalette palette;
+    if (auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(palette, text)) {
+      T8_LOG_ERROR("[Backyard] Cannot parse '%s': %s", path, glz::format_error(ec, text).c_str());
+      return false;
+    }
+    if (palette.version != 1) {
+      T8_LOG_ERROR("[Backyard] '%s' has version %d; this build reads version 1", path, palette.version);
+      return false;
+    }
+    for (const std::string* map : {&palette.maps.color, &palette.maps.normal, &palette.maps.orm}) {
+      if (!IsPlainName(*map)) {
+        T8_LOG_ERROR("[Backyard] '%s': map file name '%s' is not a plain file name", path, map->c_str());
+        return false;
+      }
+    }
+    std::set<std::string> seen;
+    for (const BackyardBallMaterial& material : palette.materials) {
+      if (!IsPlainName(material.id)) {
+        T8_LOG_ERROR("[Backyard] '%s': material id '%s' is not a plain name", path, material.id.c_str());
+        return false;
+      }
+      if (!seen.insert(material.id).second) {
+        T8_LOG_ERROR("[Backyard] '%s': material id '%s' is listed twice", path, material.id.c_str());
+        return false;
+      }
+    }
+    out = std::move(palette);
     return true;
   }
 

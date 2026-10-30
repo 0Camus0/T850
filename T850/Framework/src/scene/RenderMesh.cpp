@@ -2407,8 +2407,11 @@ namespace t850 {
         auto matTex = [&](MatTexSlot slot) -> Texture* {
           return mat ? mat->textures[(int)slot] : nullptr;
         };
+        auto instanceTex = [&](int slot) -> Texture* {
+          return m_instanceMaterialMaps ? Textures[slot] : nullptr;
+        };
         if (s->key.has(ShaderKey::DIFFUSE_MAP)) {
-          Texture* t = matTex(MatTexSlot::BaseColor); if (!t) t = sub_info->DiffuseTex;
+          Texture* t = instanceTex(0); if (!t) t = matTex(MatTexSlot::BaseColor); if (!t) t = sub_info->DiffuseTex;
           bindTextureOnce(t, 0, "DiffuseTex", MaterialSamplerSlot);
         }
         if (s->key.has(ShaderKey::SPECULAR_MAP)) {
@@ -2422,7 +2425,7 @@ namespace t850 {
         }
 
         if (s->key.has(ShaderKey::NORMAL_MAP)) {
-          Texture* t = matTex(MatTexSlot::Normal); if (!t) t = Textures[3]; if (!t) t = sub_info->NormalTex;
+          Texture* t = instanceTex(3); if (!t) t = matTex(MatTexSlot::Normal); if (!t) t = Textures[3]; if (!t) t = sub_info->NormalTex;
           bindTextureOnce(t, 3, "NormalTex", 3);
         }
         if (EnvMap) {
@@ -2440,7 +2443,7 @@ namespace t850 {
           bindTextureOnce(t, 5, "HeightTex", 5);
         }
         if (s->key.has(ShaderKey::METALLIC_MAP)) {
-          Texture* t = matTex(MatTexSlot::Metallic); if (!t) t = sub_info->MetallicTex;
+          Texture* t = instanceTex(6); if (!t) t = matTex(MatTexSlot::Metallic); if (!t) t = sub_info->MetallicTex;
           bindTextureOnce(t, 6, "MetallicTex", 6);
         }
         bindTextureOnce(Textures[7], 7, "SceneDepthTex", 7);

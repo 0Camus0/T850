@@ -1,5 +1,6 @@
 #pragma once
 
+#include <BackyardWaterJson.h>
 #include <core/Core.h>
 #include <debug/FrameDumper.h>
 #include <scene/RenderContainer.h>
@@ -90,6 +91,27 @@ private:
   // Welds every spawned ball's instance to its simulated body.
   void UpdateExtraBallTransforms();
   float NextSpawnRandom();
+  // ── Per-ball PBR materials (W-25) ──
+  // Textures are created on a material's first use and kept until DestroyAssets, so
+  // the resident set is bounded by the palette, not by the ball count.
+  struct BallMaterialMaps {
+    int colorIndex = -1, normalIndex = -1, ormIndex = -1;
+    t850::Texture* color = nullptr;
+    t850::Texture* normal = nullptr;
+    t850::Texture* orm = nullptr;
+    bool attempted = false;
+  };
+  t850::BackyardBallPalette m_ballPalette;
+  std::vector<BallMaterialMaps> m_ballMaterialMaps;   // parallel to m_ballPalette.materials
+  // Shuffle bag: every material is used once before any repeats.
+  std::vector<uint32_t> m_ballMaterialBag;
+  // Separate from m_spawnRng so material picks never shift the seeded spawn positions.
+  uint32_t m_materialRng = 1u;
+  void LoadBallPalette();
+  void DestroyBallMaterials();
+  // Gives the instance a random palette material; returns its label, or nullptr when
+  // no material is available (the GLB's own placeholder look stays).
+  const char* AssignBallMaterial(t850::PrimitiveInst& inst);
   t850::FluidDebugRenderer m_fluidDebug;
   t850::FluidDebugView m_fluidDebugView;
   bool m_fluidDebugMeshBound = false;

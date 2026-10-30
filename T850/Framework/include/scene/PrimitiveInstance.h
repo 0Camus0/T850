@@ -57,6 +57,10 @@ namespace t850 {
     // mesh out of a depth-writing pass (the water must not write GBuffer depth,
     // or screen-space reflections have nothing behind them to trace against).
     uint64_t DrawPassMask = ~0ull;
+    // When set, instance slots 0 (base colour), 3 (normal) and 6 (metallic-roughness)
+    // take priority over the shared material's maps, so instances of one mesh can wear
+    // different materials without a new shader permutation.
+    bool InstanceMaterialMaps = false;
     bool AllowsPass(uint8_t pass) const {
       return pass < 64 && ((DrawPassMask >> pass) & 1ull) != 0ull;
     }

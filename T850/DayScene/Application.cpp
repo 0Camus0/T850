@@ -1132,7 +1132,7 @@ bool App::IsModalActive() const {
 }
 
 bool App::AllowsMouseCapture() const {
-  return m_actualScene && m_actualScene->AllowsMouseCapture();
+  return !g_config.unattended && m_actualScene && m_actualScene->AllowsMouseCapture();
 }
 
 bool App::WantsRelativeMouseMode() const {

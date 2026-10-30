@@ -841,6 +841,9 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
         cfg.regressionFixedDt = value;
       }
     }
+    else if (arg == "--unattended") {
+      cfg.unattended = true;
+    }
     else if (arg == "--cullDisabled") {
       cfg.cullingLoadMode = Config::CullingLoadMode::Disabled;
       cfg.flags.cullDisabled = true;
@@ -943,6 +946,7 @@ void PrintHelp() {
     << "  --benchmarkHoldFrame <N>            Freeze simulation after N runtime frames; keep rendering\n"
     << "  --benchmarkNoPresent                Offscreen submit-only benchmark with no compositor presents\n"
     << "  --regressionFixedDt <seconds>       Fixed dt with real-time pacing for deterministic captures\n"
+    << "  --unattended                       Never capture the mouse or take window focus (automated runs)\n"
     << "  --culling <full|lazy|disabled>      Culling metadata load policy\n"
     << "  --cullDisabled                      Legacy alias for --culling disabled\n"
     << "  --offscreen                         Render the default target to rotating offscreen RTs instead of presenting\n"

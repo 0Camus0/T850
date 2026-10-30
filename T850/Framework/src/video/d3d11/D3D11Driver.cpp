@@ -24,6 +24,7 @@
 #include <fstream>
 #include <vector>
 #include <utils/Log.h>
+#include <SDL3/SDL.h>
 
 
 
@@ -266,7 +267,10 @@ namespace t850 {
   }
 
   void D3DXDriver::SetWindow(void *window) {
-    hwnd = GetActiveWindow(); // Get the HWND of the window
+    // The given window, not the active one: an unattended window is never activated.
+    hwnd = window ? static_cast<HWND>(SDL_GetPointerProperty(
+        SDL_GetWindowProperties(static_cast<SDL_Window*>(window)), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) : nullptr;
+    if (!hwnd) hwnd = GetActiveWindow();
   }
 
   void D3DXDriver::SetWindowHandle(const WindowHandle& handle) {

@@ -790,6 +790,8 @@ namespace t850 {
       flags |= SDL_WINDOW_VULKAN;
     }
 
+    if (g_config.unattended)
+      SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     m_pWindow = SDL_CreateWindow(title.c_str(), aplicationDescriptor.width, aplicationDescriptor.height, flags);
     if (!m_pWindow) {
       printf("Window creation failed: %s\n", SDL_GetError());

@@ -53,6 +53,17 @@ namespace t850 {
     // damped; viscosity is what actually dissipates a pool's waves.
     float damping = 0.05f;
     float surfaceLevel = 0.96f;
+    // ── Solver values promoted to tunables in W-11 (previously literals) ──
+    // CFL cap on the unsplit upwind alpha transport: (|u|+|v|+|w|)*dt/h <= 1.
+    // This was a FluidSettings literal of 1/120 and not reachable from anywhere.
+    float maxSubstepDt = 1.0f / 120.0f;
+    // Interface sharpening for the flux-form alpha advection (0 = pure upwind,
+    // which smears entrained air through the whole pool). Also a FluidSettings
+    // literal before W-11.
+    float alphaCompression = 0.5f;
+    // Substeps between volume-correction passes. This was a hardcoded 15 inside
+    // FluidSimulation with no setter at all before W-11.
+    int volumeCheckInterval = 15;
     // SOR factor for the red-black Gauss-Seidel pressure sweep.
     float sorOmega = 1.8f;
 
@@ -217,7 +228,7 @@ namespace t850 {
   };
 
   // Mirrors the tail of MeshMaterialCBuffer and the HLSL MeshMaterialCB exactly.
-  // Fifteen float4 groups; field names are identical on both sides so the layout
+  // Twenty-four float4 groups; field names are identical on both sides so the layout
   // is checkable by eye.
   struct WaterGpuParams {
     XVECTOR3 WaterOptics0;

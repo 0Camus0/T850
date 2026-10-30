@@ -4,6 +4,7 @@
 
 #include <core/Config.h>
 #include <core/EngineContext.h>
+#include <BackyardWaterJson.h>
 #include <imgui/DevGuiContext.h>
 #include <scene/IBLResources.h>
 #include <scene/RenderMesh.h>
@@ -19,6 +20,10 @@
 namespace {
   constexpr const char* kSceneDescriptorPath = "Scenes/BackyardScene.json";
   constexpr const char* kRenderGraphPath = "Scenes/BackyardScene_RenderGraph.json";
+  // W-11: the water tunables file. Separate from the scene descriptor because glaze
+  // cannot be included in SceneDescriptor.h without breaking DayScene.cpp (see
+  // BackyardWaterJson.h).
+  constexpr const char* kWaterTunablesPath = "Scenes/BackyardWater.json";
 
   struct BackyardAsset {
     const char* path;
@@ -60,6 +65,13 @@ void BackyardScene::InitVars() {
   SceneProp = SceneProps{};
   if (!m_sceneSetup.Load(kSceneDescriptorPath)) {
     throw std::runtime_error(std::string("Backyard scene requires a valid descriptor: ") + kSceneDescriptorPath);
+  }
+  // W-11: the water tunables come from Scenes/BackyardWater.json (see BackyardWaterJson.h
+  // for why they are not inline in the scene descriptor). A bad key is fatal so a typo
+  // never silently falls back to a default.
+  if (!t850::LoadBackyardWaterTunables(kWaterTunablesPath, SceneProp.Water)) {
+    throw std::runtime_error(std::string("Backyard scene has an invalid water tunables file: ") +
+                             kWaterTunablesPath);
   }
   if (m_sceneSetup.cameras.empty() || m_sceneSetup.lightCameras.empty()) {
     throw std::runtime_error("Backyard scene requires at least one camera and one light camera");
@@ -340,6 +352,9 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   // rather than act as a wall. The solver keeps this off by default so the
   // synthetic closed-box tests stay closed.
   settings.openCeiling = w.openCeiling;
+  // W-11: solver values that were literals before, now data-driven.
+  settings.maxSubstepDt = (std::max)(w.maxSubstepDt, 1.0f / 1000.0f);
+  settings.alphaCompression = (std::min)((std::max)(w.alphaCompression, 0.0f), 1.0f);
   return settings;
 }
 
@@ -535,6 +550,10 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_fluid.SetPressureIterations(static_cast<uint32_t>((std::max)(w.pressureIterations, 0)));
     m_fluid.SetSurfaceLevel((std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f));
     m_fluid.SetSOROmega((std::min)((std::max)(w.sorOmega, 1.0f), 1.99f));
+    // W-11: the three promoted solver values, pushed live like their neighbours.
+    m_fluid.SetMaxSubstepDt((std::max)(w.maxSubstepDt, 1.0f / 1000.0f));
+    m_fluid.SetAlphaCompression((std::min)((std::max)(w.alphaCompression, 0.0f), 1.0f));
+    m_fluid.SetVolumeCheckInterval(static_cast<uint32_t>((std::max)(w.volumeCheckInterval, 1)));
     m_fluid.SetForcingAmplitude((std::max)(w.forcingAmplitude, 0.0f));
     m_fluid.SetViscosity((std::max)(w.viscosity, 0.0f));
     m_fluid.SetGravity(w.gravity);
@@ -817,6 +836,9 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     }
     sliderInt("water_iterations", "pressure iterations", w.pressureIterations, 1.0f, 200.0f, 1.0f);
     slider("water_sor_omega", "SOR omega (1 = Gauss-Seidel)", w.sorOmega, 1.0f, 1.99f, 0.001f);
+slider("water_alpha_compression", "alpha compression (0 = pure upwind)", w.alphaCompression, 0.0f, 1.0f, 0.01f);
+slider("water_max_substep_dt", "max substep dt (s)", w.maxSubstepDt, 1.0f / 400.0f, 1.0f / 30.0f, 0.0005f);
+sliderInt("water_volume_check_interval", "volume check interval (substeps)", w.volumeCheckInterval, 1, 120, 1);
     slider("water_dt", "fixed step (s, only when fixed)", w.deltaTime, 1.0f / 240.0f, 1.0f / 15.0f, 0.0001f);
     slider("water_max_dt", "max delta (s)", w.maxDeltaTime, 1.0f / 240.0f, 1.0f / 10.0f, 0.0001f);
     slider("water_time_scale", "time scale (1 = real time)", w.timeScale, 0.05f, 3.0f, 0.01f);

@@ -182,6 +182,8 @@ namespace t850 {
     void SetSOROmega(float omega) { m_settings.sorOmega = omega; }
     void SetDeltaTime(float seconds) { m_settings.deltaTime = seconds; }
     void SetMaxSubstepDt(float seconds) { m_settings.maxSubstepDt = seconds; }
+    void SetAlphaCompression(float compression) { m_settings.alphaCompression = compression; }
+    void SetVolumeCheckInterval(uint32_t interval) { m_volumeCheckInterval = (std::max)(interval, 1u); }
     void SetForcingAmplitude(float amplitude) { m_settings.forcingAmplitude = amplitude; }
     void SetViscosity(float viscosity) { m_settings.viscosity = viscosity; }
     void SetGravity(float gravity) { m_settings.gravity = gravity; }

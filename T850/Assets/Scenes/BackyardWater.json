@@ -1,0 +1,29 @@
+{
+  "water": {
+    
+
+    "pressureIterations": 60,
+    "cellSize": 0.09,
+    "openCeiling": true,
+
+    "deltaTime": 0.0166667,
+    "maxDeltaTime": 0.0333333,
+    "timeScale": 1.0,
+    "fixedTimeStep": false,
+    "viscosity": 1.0e-6,
+    "gravity": 9.81,
+
+    "windX": 0.6,
+    "windY": 0.0,
+    "windZ": -0.35,
+    "damping": 0.05,
+    "surfaceLevel": 0.96,
+    "sorOmega": 1.8,
+
+    "maxSubstepDt": 0.0083333,
+    "alphaCompression": 0.5,
+    "volumeCheckInterval": 15,
+
+    "refractionStrength": 0.025
+  }
+}

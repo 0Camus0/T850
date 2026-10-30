@@ -17,6 +17,8 @@
 #include <chrono>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
   constexpr const char* kSceneDescriptorPath = "Scenes/BackyardScene.json";
@@ -25,6 +27,7 @@ namespace {
   // cannot be included in SceneDescriptor.h without breaking DayScene.cpp (see
   // BackyardWaterJson.h).
   constexpr const char* kWaterTunablesPath = "Scenes/BackyardWater.json";
+  constexpr const char* kBallPalettePath = "Scenes/BackyardBallMaterials.json";
 
   struct BackyardAsset {
     const char* path;
@@ -81,6 +84,7 @@ void BackyardScene::InitVars() {
   m_spawnRng = SceneProp.Water.spawnSeed != 0
       ? static_cast<uint32_t>(SceneProp.Water.spawnSeed)
       : static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+  m_materialRng = m_spawnRng ^ 0x9E3779B9u;
   m_extraBallHandles.clear();
   if (m_sceneSetup.cameras.empty() || m_sceneSetup.lightCameras.empty()) {
     throw std::runtime_error("Backyard scene requires at least one camera and one light camera");
@@ -206,6 +210,14 @@ void BackyardScene::CreateAssets() {
     T8_LOG_ERROR("[Backyard] Only %zu/%zu assets loaded", m_instances.size(), kBackyardAssets.size());
   } else {
     T8_LOG_INFO("[Backyard] Ready: %zu mesh instances", m_instances.size());
+  }
+
+  LoadBallPalette();
+  if (m_ballHandle.IsValid()) {
+    if (t850::PrimitiveInst* ball = m_renderContainer.GetMesh(m_ballHandle)) {
+      if (const char* material = AssignBallMaterial(*ball))
+        T8_LOG_INFO("[Backyard] Scripted ball material: %s", material);
+    }
   }
 
   // Grid matches the pool basin: 9.0 m (X) x 1.6 m (Y) x 4.5 m (Z) at a
@@ -390,6 +402,7 @@ void BackyardScene::DestroyAssets() {
   m_waterFloorTexture = -1;
   m_waterFloorWidth = 0;
   m_waterFloorDepth = 0;
+  DestroyBallMaterials();
   SceneProp.Water.floorTextureBound = false;
   m_instances.clear();
   m_primitiveIndices.clear();
@@ -474,6 +487,83 @@ float BackyardScene::NextSpawnRandom() {
   // spawn sequence reproducible, which the acceptance test relies on.
   m_spawnRng = m_spawnRng * 1664525u + 1013904223u;
   return static_cast<float>((m_spawnRng >> 8) & 0x00FFFFFFu) / 16777216.0f;
+}
+
+void BackyardScene::LoadBallPalette() {
+  DestroyBallMaterials();
+  if (!t850::LoadBackyardBallPalette(kBallPalettePath, m_ballPalette)) {
+    m_ballPalette = t850::BackyardBallPalette{};
+    return;
+  }
+  // The texture files are fetched by scripts/DownloadTextures.ps1, not committed, so a
+  // set missing on disk is dropped once here instead of failing at every spawn.
+  const auto& locator = t850::ResourceLocator::Instance();
+  const t850::BackyardBallMaps& maps = m_ballPalette.maps;
+  const size_t listed = m_ballPalette.materials.size();
+  std::erase_if(m_ballPalette.materials, [&](const t850::BackyardBallMaterial& material) {
+    const std::string folder = "Textures/Ball/" + material.id + "/";
+    return !locator.Exists(folder + maps.color) || !locator.Exists(folder + maps.normal) ||
+           !locator.Exists(folder + maps.orm);
+  });
+  m_ballMaterialMaps.assign(m_ballPalette.materials.size(), BallMaterialMaps{});
+  if (m_ballPalette.materials.size() < listed) {
+    T8_LOG_INFO("[Backyard] Ball palette: only %zu of %zu materials are on disk; run "
+                "scripts/DownloadTextures.ps1 to fetch the rest", m_ballPalette.materials.size(), listed);
+  } else {
+    T8_LOG_INFO("[Backyard] Ball palette: %zu materials from '%s'", listed, kBallPalettePath);
+  }
+}
+
+void BackyardScene::DestroyBallMaterials() {
+  t850::BaseDriver* driver = pFramework ? pFramework->pVideoDriver : nullptr;
+  if (driver) {
+    for (const BallMaterialMaps& maps : m_ballMaterialMaps) {
+      for (int index : {maps.colorIndex, maps.normalIndex, maps.ormIndex})
+        if (index >= 0) driver->DestroyTexture(index);
+    }
+  }
+  m_ballMaterialMaps.clear();
+  m_ballMaterialBag.clear();
+}
+
+const char* BackyardScene::AssignBallMaterial(t850::PrimitiveInst& inst) {
+  t850::BaseDriver* driver = pFramework ? pFramework->pVideoDriver : nullptr;
+  const uint32_t count = static_cast<uint32_t>(m_ballMaterialMaps.size());
+  if (!driver || count == 0) return nullptr;
+  // A set that fails to load is skipped; at most one full pass over the palette.
+  for (uint32_t attempt = 0; attempt < count; ++attempt) {
+    if (m_ballMaterialBag.empty()) {
+      m_ballMaterialBag.resize(count);
+      for (uint32_t i = 0; i < count; ++i) m_ballMaterialBag[i] = i;
+      for (uint32_t i = count - 1; i > 0; --i) {
+        m_materialRng = m_materialRng * 1664525u + 1013904223u;
+        std::swap(m_ballMaterialBag[i], m_ballMaterialBag[(m_materialRng >> 8) % (i + 1)]);
+      }
+    }
+    const uint32_t index = m_ballMaterialBag.back();
+    m_ballMaterialBag.pop_back();
+
+    BallMaterialMaps& maps = m_ballMaterialMaps[index];
+    if (!maps.attempted) {
+      maps.attempted = true;
+      const std::string folder = "Ball/" + m_ballPalette.materials[index].id + "/";
+      auto load = [&](const std::string& file, int& slot) -> t850::Texture* {
+        slot = driver->CreateTexture(folder + file);
+        return slot >= 0 ? driver->GetTexture(slot) : nullptr;
+      };
+      maps.color = load(m_ballPalette.maps.color, maps.colorIndex);
+      maps.normal = load(m_ballPalette.maps.normal, maps.normalIndex);
+      maps.orm = load(m_ballPalette.maps.orm, maps.ormIndex);
+    }
+    if (maps.color && maps.normal && maps.orm) {
+      inst.SetTexture(maps.color, 0);
+      inst.SetTexture(maps.normal, 3);
+      inst.SetTexture(maps.orm, 6);
+      inst.InstanceMaterialMaps = true;
+      return m_ballPalette.materials[index].label.c_str();
+    }
+  }
+  return nullptr;
 }
 
 void BackyardScene::UpdateExtraBallTransforms() {
@@ -585,6 +675,7 @@ bool BackyardScene::SpawnBall() {
   instance.TranslateAbsolute(body.x, body.y, body.z);
   instance.ScaleAbsolute(body.radius, body.radius, body.radius);
   instance.Update();
+  const char* material = AssignBallMaterial(instance);
   const t850::RenderInstanceHandle handle = m_renderContainer.AddMeshInstance(instance);
   if (!handle.IsValid()) {
     T8_LOG_ERROR("[Backyard] Cannot add the render instance for a spawned ball");
@@ -594,10 +685,11 @@ bool BackyardScene::SpawnBall() {
   m_extraBallHandles.push_back(handle);
 
   T8_LOG_INFO("[Backyard] Spawned ball %d: position (%.2f, %.2f, %.2f) radius %.2f m, "
-              "density %.2f x water, mass %.2f kg; %u bodies",
+              "density %.2f x water, mass %.2f kg, material %s; %u bodies",
               index, body.x, body.y, body.z, body.radius, body.densityRatio,
               body.densityRatio * w.sphereWaterDensity * (4.0f / 3.0f) * 3.14159265f *
               body.radius * body.radius * body.radius,
+              material ? material : "GLB default",
               m_fluid.BodyCount());
   return true;
 }

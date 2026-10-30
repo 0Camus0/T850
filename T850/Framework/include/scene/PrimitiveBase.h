@@ -98,6 +98,8 @@ namespace t850 {
 	}
     Texture*				 Textures[MaxPrimitiveTextures];
     Texture*			     EnvMap;
+    // Set by PrimitiveInst::Draw for the duration of one instance draw.
+    bool m_instanceMaterialMaps = false;
     ShaderKey gKey;
     float m_brightness;
 	float m_fParallaxLowSamples;

@@ -137,6 +137,7 @@ namespace t850 {
     }
     Texture* previousEnvMap = pBase->EnvMap;
     ShaderKey previousKey = pBase->gKey;
+    const bool previousInstanceMaterialMaps = pBase->m_instanceMaterialMaps;
     const float previousBrightness = pBase->m_brightness;
     const float previousParallaxLowSamples = pBase->m_fParallaxLowSamples;
     const float previousParallaxHighSamples = pBase->m_fParallaxHighSamples;
@@ -154,6 +155,7 @@ namespace t850 {
       pBase->SetTexture(Textures[i], i);
     }
     pBase->SetBrightness(m_brightness);
+    pBase->m_instanceMaterialMaps = InstanceMaterialMaps;
 	pBase->SetParallaxSettings(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
     pBase->Draw(&Final.m[0][0], &(*pViewProj).m[0][0]);
 
@@ -162,6 +164,7 @@ namespace t850 {
     }
     pBase->EnvMap = previousEnvMap;
     pBase->gKey = previousKey;
+    pBase->m_instanceMaterialMaps = previousInstanceMaterialMaps;
     pBase->m_brightness = previousBrightness;
     pBase->m_fParallaxLowSamples = previousParallaxLowSamples;
     pBase->m_fParallaxHighSamples = previousParallaxHighSamples;

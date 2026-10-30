@@ -44,7 +44,8 @@ stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` 
   above), and `97009aef` removed the ball cap — any number of balls, a new inline-buffer compute
   binding, and a **Spawn 10 balls** button (section 4, "No ball cap"). Both fixes were verified
   independently by the local agent (section 4, "Independent verification after the two review
-  fixes"). **Next is Step 4 (Stage 4d).** Steps 1–3 below are kept for reference.
+  fixes"). **Stage 4d is done** (`e055efec`, section 4, "Stage 4d, part 2"): every ball gets a
+  random palette material. **Next is Step 5 (Stage 5a).** Steps 1–4 below are kept for reference.
 
 The owner then asked for three things before the solver work resumes, in this order (one stage per
 session, smallest first). Full specifications are in remaining-work W-24, W-23 and W-22. After
@@ -91,7 +92,14 @@ those the owner added a fourth scene request — **a different PBR material on e
 - Measure fps with 0, 1 and 7 extra balls in one session: every footprint change re-uploads the mask
   (W-05), so the cost grows with the ball count.
 
-### Step 4 — Stage 4d, W-25: a different PBR material on every ball (owner request)
+### Step 4 — Stage 4d, W-25: a different PBR material on every ball (owner request) — DONE
+
+**Done in `e055efec` by the reviewer** (section 4, "Stage 4d, part 2"). It differs from the plan
+below in three places: the override is a plain `PrimitiveInst::InstanceMaterialMaps` flag, not a
+`ShaderKey` bit (no new permutation to compile); the ball GLB declares the three maps itself as 1×1
+placeholders, so the textured permutation and the tangents come from the normal glTF path; and the
+owner asked for **random** materials, so a seeded shuffle bag replaces `(k - 1) % 32`. Gate 10 and
+the frame probe script were not written; the evidence is the spawn log and a frame dump.
 
 Every spawned ball shows its own PBR material, from a palette of **32 verified CC0 sets**. The
 palette table is in remaining-work W-25; the data lives in `Scenes/BackyardBallMaterials.json`.
@@ -231,7 +239,7 @@ command run, and anything you could not verify.
 | 4a. House roof | W-24 | S | **DONE** — sign flipped, gables closed, 78 → 80 meshes, layout JSON unchanged |
 | 4b. Textured materials | W-23 | M | **DONE** — CC0 ambientCG textures with NormalGL, metric world-box UVs, JPEGs embedded; −5.5 % fps; layout unchanged |
 | 4c. Spawn more balls | W-22 | M–L | **DONE** — mask-encoded body index, gate 9 multi-body PASS, GUI spawn/clear. Review: Z-mirror fixed (`9f6e7a2f`), **cap removed** (`97009aef`, 100 balls tested) |
-| 4d. Per-ball PBR materials | W-25 | M | **Owner request** — 32 verified CC0 sets published to R2 (part 1 **DONE**, section 4); per-instance base-colour/normal/ORM maps behind a new key bit, gate 10 + frame probe still to do |
+| 4d. Per-ball PBR materials | W-25 | M | **DONE** — 32 CC0 sets in R2 (part 1); `e055efec`: cube-sphere GLB with UVs, per-instance maps behind `InstanceMaterialMaps` (no new permutation), random shuffle-bag assignment, 0 errors on five APIs. Gate 10 not written |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
@@ -904,6 +912,11 @@ Shader-permutation count grows by the ball variants only.
 
 **Exit** — 32 balls spawn with 32 visibly different materials; `BackyardBallMaterials.json` lists
 them; a missing texture file logs one warning naming the fetch script and does not abort the scene.
+
+**Outcome** — done in `e055efec`; the files actually touched are `PrimitiveBase.h`,
+`PrimitiveInstance.h/.cpp`, `RenderMesh.cpp`, `build_ball.py`, `BackyardWaterJson.h/.cpp` (palette
+loader, so no new build registration) and `BackyardScene.h/.cpp`. `Descriptors.h` is untouched.
+See section 4, "Stage 4d, part 2".
 
 ---
 
@@ -1615,8 +1628,58 @@ current" and publishes nothing. `DownloadTextures.ps1` reports 138/138 ready, an
 - **Never skip an upload on size alone.** New entries carry a `sha256`, so re-runs are genuinely
   idempotent; entries without one are compared by size and can only be forced with `-Force`.
 
-**Still open (Stage 4d proper):** the ball GLB has no UVs, the renderer has no
-`INSTANCE_MATERIAL_MAPS` fallbacks, the scene does not assign materials, and gate 10 does not exist.
+### Stage 4d, part 2 — a random material on every ball (2026-10-30, reviewer, `e055efec`)
+
+**Asset.** `scripts/models/build_ball.py` now writes a spherified cube (16×16 quads per face, 1734
+vertices, 3072 triangles) instead of a UV sphere. The balls never rotate and the camera looks down,
+so a UV sphere's pinched pole would sit exactly where the viewer looks. Each face has a full 0..1 UV
+square and the four side faces join seamlessly for tiling textures. The material declares
+`baseColorTexture`, `normalTexture` and `metallicRoughnessTexture` as embedded 1×1 PNGs that
+reproduce the old red rubber look, with every factor 1.0. Declaring the maps is the point: the glTF
+loader then sets `DIFFUSE_MAP | NORMAL_MAP | METALLIC_MAP` and generates MikkTSpace tangents
+(`GLTFMesh.cpp`, UV0 + normals present), so no tangent attribute and no key surgery are needed.
+The JSON chunk is now space-padded as the glTF spec requires (it was NUL-padded; the engine
+tolerated it, Python's `json` did not).
+
+**Renderer.** `RenderMesh::Draw` bound material textures first and only fell back to the instance
+(normal slot only), so a per-instance swap did nothing. `PrimitiveInst::InstanceMaterialMaps` (pushed
+into `PrimitiveBase::m_instanceMaterialMaps` for one draw, then restored, like the textures) makes
+instance slots 0, 3 and 6 win. It is a plain flag, not a `ShaderKey` bit, so it creates no
+permutation and needs no precompile. Scenes that never set it are unchanged.
+
+**Scene.** `LoadBackyardBallPalette` lives in `BackyardWaterJson.cpp` (the existing glaze leaf TU,
+so no vcxproj/CMake/Android registration). Ids and map names must be plain names, because they
+become path segments. Sets whose files are not on disk are dropped once at load with a message
+naming `DownloadTextures.ps1`. A set's three textures are created on first use and destroyed in
+`DestroyAssets`. The pick is a shuffle bag (every material once before a repeat) driven by its own
+LCG seeded from the spawn seed, so `spawnSeed` still reproduces positions exactly. The scripted ball
+also draws from the bag, and each spawn log line names its material.
+
+**Verified.**
+
+- `--backyard-spawn 32`, D3D12: 0 errors; 31 spawned + the scripted ball = 32 distinct materials;
+  the frame dump shows chain mail, polished silver reflecting the sky, copper, marble, rock and cork,
+  with no visible pole.
+- `--backyard-spawn 100` on Vulkan and D3D11: 0 errors, all 32 materials used.
+- Self-tests PASS on D3D12 and Vulkan; gate 9 is unchanged (`body0 cells=47 maskErrors=0
+  worst=0.00024`). Scenes 7, 1 and 6 on five APIs: 0 errors. GL and WebGPU load the palette (the
+  scripted ball wears it; there is no solver to spawn with). The full x64 solution, including
+  T8ditor, builds.
+- fps, D3D12 720p, same session: 100 balls with materials **140.6** against **147.2** with the
+  placeholders (palette file hidden). The 600-frame windows overlap (132–148 against 131–148), and
+  the recorded 100-ball baseline was 141. 0 balls: 215.5.
+
+**Not done.** Gate 10 and `probe_ball_materials.py` from the plan. No per-ball AO (subset-gated),
+no per-ball tint. A fresh clone without `DownloadTextures.ps1` shows the red placeholder balls and
+logs `Ball palette: only 0 of 32 materials are on disk`.
+
+**Rules learned here.**
+
+- **Let the asset declare the maps and swap textures per instance; do not inject map bits.** The
+  loader only builds a textured permutation, and tangents, for maps the material declares.
+- **Material textures beat instance textures in `RenderMesh::Draw`.** A per-instance override needs
+  the explicit opt-in.
+- **A second RNG for cosmetic picks keeps seeded physics reproducible.**
 
 ### Stage 5a — W-02
 

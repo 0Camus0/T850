@@ -38,6 +38,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-22 Spawn more balls (random place, size, weight) | **Done**, uncapped in review | `0a981b8b` + `9f6e7a2f` + `97009aef` | Any number of balls (100 tested on D3D12/Vulkan/D3D11); water Z-mirror fixed; see W-22 |
 | W-23 Textured materials with normal maps | **Open** (requested 2026-10-29) | — | Stage 4b; every mesh is a flat colour |
 | W-24 House roof is upside down | **Open** (found 2026-10-29) | — | Stage 4a; sign error in `build_backyard.py` |
+| W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 not written |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -1497,7 +1498,7 @@ for the process lifetime (resident count ≤ palette size, independent of the ba
 (the factors are shared; a texture-level variation would be needed), palette bounded at 32 resident
 sets, and texture files are not committed so a fresh clone must run `DownloadTextures.ps1`.
 
-**Outcome so far (2026-10-30) — the asset half is done, the engine half is not.**
+**Outcome (2026-10-30) — done: the asset half by the local agent, the engine half by the reviewer.**
 
 - `scripts/textures/fetch_ball_materials.py` packs all 32 sets at 512² (96 files, 16.78 MB) from the
   pinned ambientCG archives; a corrupted archive aborts with a sha256 mismatch (negative-tested).
@@ -1510,9 +1511,18 @@ sets, and texture files are not committed so a fresh clone must run `DownloadTex
   a second run reports "the manifest is already current" and publishes nothing.
 - `DownloadTextures.ps1` reports 138/138 ready, and deleting `Ball/Marble016/ORM.png` made it
   re-download the file and verify its sha256.
-- Not done (Stage 4d proper): the ball GLB has no UVs yet, the renderer has no
-  `INSTANCE_MATERIAL_MAPS` fallbacks, the scene does not assign materials, and gate 10 does not
-  exist.
+- **Engine half done in `e055efec` (reviewer).** It differs from the plan above in three ways.
+  - The ball is a spherified cube with UVs, so no pole faces the camera.
+  - The GLB declares the three maps as 1×1 placeholders, so the textured permutation and the
+    MikkTSpace tangents come from the glTF loader.
+  - The override is a plain `PrimitiveInst::InstanceMaterialMaps` flag, not a `ShaderKey` bit, and
+    the owner asked for random picks, so a seeded shuffle bag on its own RNG replaces
+    `(k - 1) % 32`.
+
+  Verified: 32 distinct materials across 32 bodies, all 32 used by 100 balls on D3D12, Vulkan and
+  D3D11 with 0 errors, gate 9 unchanged, scenes 7/1/6 on five APIs 0 errors, and 100-ball fps within
+  noise of the placeholder look. Gate 10 and the frame probe script were not written. Details are in
+  the staged plan, section 4, "Stage 4d, part 2".
 
 ---
 

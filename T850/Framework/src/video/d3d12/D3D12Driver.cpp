@@ -15,6 +15,7 @@
 #include <debug/RuntimeTelemetry.h>
 #include <debug/GpuTimestampProfiler.h>
 #include <core/Config.h>
+#include <SDL3/SDL.h>
 #include <iostream>
 #include <string>
 #include <cassert>
@@ -394,7 +395,12 @@ namespace t850 {
   //  D3D12Driver — Core lifecycle
   // ══════════════════════════════════════════════════════
 
-  void D3D12Driver::SetWindow(void* window) { m_hwnd = GetActiveWindow(); }
+  void D3D12Driver::SetWindow(void* window) {
+    // The given window, not the active one: an unattended window is never activated.
+    m_hwnd = window ? static_cast<HWND>(SDL_GetPointerProperty(
+        SDL_GetWindowProperties(static_cast<SDL_Window*>(window)), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) : nullptr;
+    if (!m_hwnd) m_hwnd = GetActiveWindow();
+  }
 
   void D3D12Driver::SetWindowHandle(const WindowHandle& handle) {
     // Editor host path: honor an explicit HWND (e.g. an editor child window

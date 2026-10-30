@@ -325,6 +325,7 @@ bool BackyardScene::RebuildFluid() {
       SceneProp.Water.floorTextureBound = true;
     else
       SceneProp.Water.floorTextureBound = false;
+    WaterUVMatchesSolver(water);
     // Only now — with a live solver and a bound surface texture — may the
     // displacement permutation be selected.
     water->PersistentFeatureBits |= t850::ShaderKey::FLUID_SURFACE;
@@ -599,6 +600,30 @@ bool BackyardScene::SpawnBall() {
               body.radius * body.radius * body.radius,
               m_fluid.BodyCount());
   return true;
+}
+
+bool BackyardScene::WaterUVMatchesSolver(t850::PrimitiveInst* water) const {
+  auto* mesh = water ? dynamic_cast<t850::RenderMesh*>(water->pBase) : nullptr;
+  if (!mesh || !mesh->xFile || mesh->xFile->XMeshDataBase.empty() || !mesh->xFile->XMeshDataBase[0])
+    return true;
+  float zAtMinV = 0.0f, zAtMaxV = 0.0f;
+  float minV = 0.0f, maxV = 0.0f;
+  bool any = false;
+  for (const xF::xMeshGeometry& geom : mesh->xFile->XMeshDataBase[0]->Geometry) {
+    const std::vector<XVECTOR2>& uv = geom.TexCoordinates[0];
+    if (uv.size() != geom.Positions.size()) continue;
+    for (size_t v = 0; v < uv.size(); ++v) {
+      if (!any || uv[v].y < minV) { minV = uv[v].y; zAtMinV = geom.Positions[v].z; }
+      if (!any || uv[v].y > maxV) { maxV = uv[v].y; zAtMaxV = geom.Positions[v].z; }
+      any = true;
+    }
+  }
+  if (!any || zAtMinV <= zAtMaxV) return true;
+  T8_LOG_ERROR("[Backyard] Water mesh UV is mirrored in Z (v=%.2f at z=%.2f, v=%.2f at z=%.2f): "
+               "waves and the ball's footprint draw on the wrong side of the pool. Regenerate "
+               "Backyard_Water.glb with scripts/blender/build_backyard.py",
+               minV, zAtMinV, maxV, zAtMaxV);
+  return false;
 }
 
 void BackyardScene::SetWaterFluidFeature(bool enabled) {  if (!m_waterHandle.IsValid()) return;

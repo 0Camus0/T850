@@ -53,6 +53,9 @@ private:
   // Builds and binds the static per-column floor height texture at t24, so the
   // water shader can use the real depth over the submerged steps.
   bool BindFloorHeightTexture(t850::BaseDriver* driver, t850::PrimitiveInst* water);
+  // The solver's surface texture has row 0 at basinMinZ, so the water mesh's UV v must
+  // grow with world Z. Returns false (and logs) for a mirrored mesh.
+  bool WaterUVMatchesSolver(t850::PrimitiveInst* water) const;
   int m_waterFloorTexture = -1;
   uint32_t m_waterFloorWidth = 0;
   uint32_t m_waterFloorDepth = 0;

@@ -30,11 +30,11 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-20 Scene index ignored with `--api` | Resolved: by design, documented | — | `config.json` is only read with `--config`; always pass `--scene 7` |
 | Tooling: fluid debug view | Done (review) | `4d21e836`, `93dff3d9`, `5d640c2e` | Wireframe, voxel and whole-volume velocity overlays in the ImGui panel; D3D12 upload-ring crash fixed (per-layer caps); bulk-water α statistic; see 4.5 |
 | W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked |
-| W-11 items 1, 2, 4: JSON tunables, three solver values, comment | **Done** (Stage 4) | — | `Scenes/BackyardWater.json` drives 101 settable keys; strict key validation; `alphaCompression`, `maxSubstepDt` and the volume-check interval are tunables with GUI sliders; see Stage 4 in the staged plan |
-| W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p; P1–P9 open |
+| W-11 items 1, 2, 4: JSON tunables, three solver values, comment | **Done** (Stage 4) | `5511e7e9` + `e974f4e5` | Accepted. `Scenes/BackyardWater.json` drives 101 settable keys; strict key validation; `alphaCompression`, `maxSubstepDt` and the volume-check interval are tunables with GUI sliders. Review added the missing Android registration of `BackyardWaterJson.cpp` |
+| W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p on 2026-10-28. **On 2026-10-29 Vulkan measures 172–177 fps at every commit back to `3a371903`** — environmental, see W-15; P1–P9 open |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
 | W-10 Water invisible to depth post effects | Done, **redesigned in review** | `96d84638` + `47500166` | The extra pass duplicated `Deferred:DEPTH`; removed. CoC now uses the nearer depth; see W-10 |
-| W-21 Vulkan fluid self-test fails inside scene 7 | **Done** (Stage 3c) | — | Root cause was uninitialised volume memory, not Vulkan frame state; `TryInitialize` now clears; 6/6 PASS scene 7 Vulkan |
+| W-21 Vulkan fluid self-test fails inside scene 7 | **Done** (Stage 3c) | `5798477c` | Accepted. Root cause was uninitialised volume memory, not Vulkan frame state; `TryInitialize` now clears; 6/6 PASS scene 7 Vulkan |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -58,8 +58,16 @@ target was correct but redundant — the forward pass already writes the water i
 identical pixel for pixel — and had no consumer. The reviewer removed the pass and made CoC consume
 the nearer depth (`47500166`, details in W-10). Re-run: `--backyard-selftest` PASS on D3D12 and
 Vulkan; scenes 7, 1 and 6 log 0 errors on D3D12, Vulkan, D3D11, GL and WebGPU. Found in passing:
-W-21. **Next: W-21 (Stage 3c, small), then Stage 4 (W-11).** Step-by-step brief: section 0 of
-[backyard-water-staged-plan.md](backyard-water-staged-plan.md).
+W-21. Step-by-step brief: section 0 of [backyard-water-staged-plan.md](backyard-water-staged-plan.md).
+
+Review of Stage 3c and Stage 4 (`5798477c`, `5511e7e9`, 2026-10-29): both accepted. W-21's diagnosis
+(intermittent, two discrete outcomes → uninitialised memory) and its fix in the solver rather than
+the harness are right. Stage 4's separate `Scenes/BackyardWater.json` is an accepted deviation. One
+defect fixed by the reviewer (`e974f4e5`): `BackyardWaterJson.cpp` was not in
+`cmake/AndroidBuild.cmake`, so the Android link would fail; `ValidateBuildRegistration.ps1` does not
+check Backyard files, which is why it still said PASS. A reported Vulkan slowdown is **not** from
+these stages: the same 172–177 fps reproduces at `7bd0afe9`, `945b2f7c` and `3a371903` (W-15).
+**Next: Stage 5a (W-02).**
 
 ---
 
@@ -212,15 +220,14 @@ Shader-only changes do not need a rebuild: kernels are compiled at startup from
 
 ```powershell
 cd D:\Code\QwenFlashT850\T850-backyard\T850\bin\x64\Release
-.\DayScene.exe --scene 0 --api d3d12  --fluid-selftest --logLevel info --logFile selftest_d3d12.log
-.\DayScene.exe --scene 0 --api vulkan --fluid-selftest --logLevel info --logFile selftest_vk.log
+.\DayScene.exe --scene 7 --api d3d12  --fluid-selftest --logLevel info --logFile selftest_d3d12.log
+.\DayScene.exe --scene 7 --api vulkan --fluid-selftest --logLevel info --logFile selftest_vk.log
 ```
 
 Look for `[FluidSelfTest] PASS`. Report the `projection` and `massConservation` lines.
 
-`--fluid-selftest` checks the solver in isolation on its own 32×16×16 grid, so it runs under scene
-0 (this is the one exception to "always pass `--scene 7`"). Under scene 7 it fails on Vulkan after
-the Backyard scene initialises — that is W-21, not a regression of your change.
+`--fluid-selftest` checks the solver in isolation on its own 32×16×16 grid. Since W-21 it passes
+under any scene, so use `--scene 7` like every other command.
 
 The pool-level gates (still pool, isotropy, mass, moving boundary, surface texture readback, open
 ceiling, floating body, floating-body flicker) run the real Backyard solver headless:
@@ -844,6 +851,28 @@ silently dropped. Use frame-rate A/B with `perf.ps1`, or move the profiler's fra
 `OnUpdate`. In review the Vulkan `--profile --profileFrames 1200` run never exited (killed at
 300 s); D3D12 exits normally.
 
+**The Vulkan numbers above no longer reproduce on this machine (2026-10-29).** `perf.ps1`, same
+settings, rebuilt with the PCH cleared each time:
+
+| Tree | D3D12 | Vulkan |
+|---|---|---|
+| HEAD (`5511e7e9`, Stage 4) | 216 fps | 176 fps |
+| `7bd0afe9` (before Stage 3c/4) | — | 173–178 fps |
+| `945b2f7c` (before Stage 3) | — | 171–183 fps |
+| `3a371903` (measured **313** on 10-28) | — | **172 fps** |
+
+So the drop is environmental, not a code regression, and D3D12 is unaffected. Vulkan is CPU-bound
+in it (0.88 of a core busy against 0.43 for D3D12; GPU 56 % busy, P0, no throttle reasons). Ruled
+out: implicit Vulkan layers (OBS hook and all implicit layers disabled → no change), presentation
+(`--benchmarkNoPresent` → 175 fps), CPU clocks (boosting, AC, "Performance" plan), P-core pinning,
+background load. Not ruled out: the machine has not rebooted since 2026-10-12, and the NVIDIA driver
+logged an error (event 153) at 2026-10-28 21:31 during Thunderbolt/display changes, two hours after
+the 313 fps run. Re-measure after a reboot before trusting any Vulkan figure.
+
+**Rule for every performance claim:** never compare against a number in this document. Measure the
+parent commit and the change in the same session (`backyard-diag\bisect_perf.ps1 -Commit <sha>
+-Apis vulkan,d3d12 -Restore` builds the old tree, measures with `perf.ps1` and restores HEAD).
+
 **Acceptance (per item).** Before/after table from `perf.ps1` (median of the four windows) on
 D3D12 and Vulkan; `--backyard-selftest` and `--fluid-selftest` PASS on both; the scene metrics in
 2.4 unchanged.
@@ -1060,7 +1089,9 @@ Section 4.2 no longer needs `--scene 0` for the fluid self-test: it now passes u
 * [ ] Only the files the task names were changed (plus registry entries the task requires).
 * [ ] R1–R9 checked; every new buffer/texture read is guarded (R1).
 * [ ] x64 Release builds with no new warnings.
-* [ ] Fluid self-test (`--scene 0`, see 4.2) and `--backyard-selftest` (`--scene 7`) PASS on D3D12 and Vulkan.
+* [ ] Fluid self-test and `--backyard-selftest` (both with `--scene 7`) PASS on D3D12 and Vulkan.
+* [ ] Every new source file is in `DayScene.vcxproj`, `DayScene/CMakeLists.txt` **and**
+  `cmake/AndroidBuild.cmake` (the registration validator does not check Backyard files).
 * [ ] Scene 7 run: 0 `[ERROR]` lines; the section 2.4 metrics reported before and after.
 * [ ] Visual check (4.4) still shows circular rings.
 * [ ] `T850/config.json` and generated assets not committed.

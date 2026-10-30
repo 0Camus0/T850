@@ -320,11 +320,6 @@ void main(){
 		discard;
 	}
 
-	highp float Shadow = 1.0;
-#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
-	Shadow = SampleTexture2DLod(tex5, coords, 0.0).r;
-#endif
-
 	highp vec4 SpecularOcclusionData = SampleTexture2DLod(tex7, coords, 0.0);
 	highp float specularFactor = max(Albedo.a, 0.0);
 	Albedo.xyz = pow(Albedo.xyz, vec3(2.2));
@@ -348,7 +343,6 @@ void main(){
 	highp float clearcoatRoughness = clamp(packedMaterial * 2.0, 0.04, 1.0);
 	highp float clearcoatFactor = clamp(PBRData.b, 0.0, 1.0);
 
-	highp float selfShadow = PBRData.g;
 	int tileSize = max(int(LightCameraInfo.x + 0.5), 1);
 	int tileCountX = max(int(LightCameraInfo.y + 0.5), 1);
 	int tileCountY = max(int(LightCameraInfo.z + 0.5), 1);
@@ -407,7 +401,8 @@ void main(){
 		directLight += layerLight;
 	}
 
-	Final.xyz = directLight * Shadow * selfShadow;
+	// Point lights only; the shadow map belongs to the sun.
+	Final.xyz = directLight;
 
 #ifdef ES_30
 	colorOut = Final;
@@ -422,6 +417,7 @@ void main(){
 
 	highp vec4 Final  =  vec4(0.0,0.0,0.0,1.0);
 	highp float Shadow = 1.0;
+	highp float ambientOcclusion = 1.0;
 
 	highp vec4 ToLineal = vec4(2.2f, 2.2f, 2.2f, 2.2f);
 	highp vec4 TosRGB = vec4(1.0f/2.2f, 1.0f/2.2f, 1.0f/2.2f, 1.0f/2.2f);
@@ -481,11 +477,15 @@ void main(){
 
 #if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
 		#ifdef ES_30
-		Shadow = SampleTexture2DLod(tex5, coords, 0.0).r;
+		highp vec2 shadowAndAO = SampleTexture2DLod(tex5, coords, 0.0).rg;
 		#else
-		Shadow = texture2D(tex5, coords).r;
+		highp vec2 shadowAndAO = texture2D(tex5, coords).rg;
 		#endif
+		Shadow = shadowAndAO.r;
+		ambientOcclusion = shadowAndAO.g;
 #endif
+		// The shadow map is the sun's: it gates directional lights only.
+		highp float sunVisibility = Shadow * PBRData.g;
 
 		#ifdef ES_30
 			highp vec4 normalmap = SampleTexture2DLod(tex1, coords, 0.0);
@@ -574,7 +574,7 @@ void main(){
 						highp vec3 clearcoatLight = CalculateClearcoat(normal, EyeDir, Half, LightDir, clearcoatRoughness) * lightRadiance;
 						layerLight = mix(layerLight, clearcoatLight, clearcoatWeight);
 					}
-					directLight += layerLight;
+					directLight += layerLight * sunVisibility;
 				} else {
 					// Point light
 					highp float Rad = LightRadius[i >> 2][i & 3];
@@ -616,8 +616,7 @@ void main(){
 			}
 
 		// Apply shadow only to direct lighting
-		highp float selfShadow = PBRData.g;
-		Final.xyz += directLight * Shadow * selfShadow;
+		Final.xyz += directLight;
 
 		// Indirect lighting (IBL + ambient) — NOT affected by shadow
 			highp float iblMaxMip = max(toogles.w, 0.0);
@@ -648,7 +647,7 @@ void main(){
 				highp vec3 sheenIBL = GetIBLRadianceCharlie(normal, EyeDir, sheenRoughness, sheenColor, iblMaxMip) * toogles.z;
 				indirectLight = sheenIBL + indirectLight * albedoSheenScaling;
 			}
-			Final.xyz += indirectLight * occlusion;
+			Final.xyz += indirectLight * occlusion * ambientOcclusion;
 			if (clearcoatFactor > 0.001) {
 				highp vec3 clearcoatSpec = SampleCubeLod(texIBLSpecular, ReflectedVec, clearcoatRoughness * iblMaxMip);
 				highp float clearcoatAtten = hasBrdfLUT ? 1.0 : (1.0 - clearcoatRoughness) * (1.0 - clearcoatRoughness);
@@ -928,6 +927,7 @@ highp float GetOcclusion(highp float depth,highp vec2 uv, highp vec4 position, h
 #endif
 
 void main(){
+	// R = sun shadow (direct light only), G = SSAO (indirect light only).
 	highp vec4 Fcolor = vec4(1.0,1.0,1.0,1.0);
 	
 	
@@ -952,13 +952,12 @@ void main(){
 
 	#ifdef ENABLE_SHADOWS
 		highp float viewDepth = (World * position).z;
-		Fcolor = CalculateShadow(position, viewDepth);
+		Fcolor.r = CalculateShadow(position, viewDepth).r;
 	#endif
 
 	#ifdef ENABLE_SSAO
 		highp vec3 normal = GetNormal(coords);
-		highp float Occlusion = GetOcclusion(depth, coords.xy, position, normal);
-		Fcolor *= Occlusion;
+		Fcolor.g = GetOcclusion(depth, coords.xy, position, normal);
 	#endif
 
 	

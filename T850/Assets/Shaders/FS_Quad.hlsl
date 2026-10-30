@@ -292,9 +292,14 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float3 RefCol = T850_SAMPLE_ENVIRONMENT(texEnv, SS6, skyDir, 0.0f).xyz;
 		Final.xyz = RefCol.xyz * toogles.x;
 	} else if(MatId > 0) {
+		float ambientOcclusion = 1.0;
 		#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
-		Shadow = tex5.SampleLevel(SS5, input.texture0, 0.0f).r;
+		float2 shadowAndAO = tex5.SampleLevel(SS5, input.texture0, 0.0f).rg;
+		Shadow = shadowAndAO.r;
+		ambientOcclusion = shadowAndAO.g;
 		#endif
+		// The shadow map is the sun's: it gates directional lights only.
+		float sunVisibility = Shadow * PBRData.g;
 
 		float4 normalmap = tex1.SampleLevel(SS1, input.texture0, 0.0f);
 		float3 normal = normalmap.xyz * 2.0 - 1.0;
@@ -353,7 +358,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 					float3 clearcoatLight = CalculateClearcoat(normal, EyeDir, Half, LightDir, clearcoatRoughness) * lightRadiance;
 					layerLight = lerp(layerLight, clearcoatLight, clearcoatWeight);
 				}
-				directLight += layerLight;
+				directLight += layerLight * sunVisibility;
 			} else {
 				// Point light
 				float Rad = LightRadius[i >> 2][i & 3];
@@ -395,8 +400,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		}
 
 		// Apply shadow only to direct lighting
-		float selfShadow = PBRData.g;
-		Final.xyz += directLight * Shadow * selfShadow;
+		Final.xyz += directLight;
 
 		// Indirect lighting (IBL + ambient) — NOT affected by shadow
 		float iblMaxMip = max(toogles.w, 0.0f);
@@ -427,7 +431,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 			float3 sheenIBL = GetIBLRadianceCharlie(normal, EyeDir, sheenRoughness, sheenColor, iblMaxMip) * toogles.z;
 			indirectLight = sheenIBL + indirectLight * albedoSheenScaling;
 		}
-		Final.xyz += indirectLight * occlusion;
+		Final.xyz += indirectLight * occlusion * ambientOcclusion;
 		if (clearcoatFactor > 0.001f) {
 			float3 clearcoatSpec = T850_SAMPLE_ENVIRONMENT(texIBLSpecular, SS11, ReflectedVec, clearcoatRoughness * iblMaxMip).xyz;
 			float clearcoatAtten = hasBrdfLUT ? 1.0f : (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
@@ -513,9 +517,14 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		float3 RefCol = T850_SAMPLE_ENVIRONMENT(texEnv, SS6, EyeDir_mod, 0.0f).xyz;
 		Final.xyz = RefCol.xyz * 2.0;
 	} else if (MatId > 0) {
+		float ambientOcclusion = 1.0;
 		#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
-		Shadow = tex5.SampleLevel(SS5, input.texture0, 0.0f).r;
+		float2 shadowAndAO = tex5.SampleLevel(SS5, input.texture0, 0.0f).rg;
+		Shadow = shadowAndAO.r;
+		ambientOcclusion = shadowAndAO.g;
 		#endif
+		// The shadow map is the sun's: it gates directional lights only.
+		float sunVisibility = Shadow * PBRData.g;
 		float4 normalmap = tex1.SampleLevel(SS1, input.texture0, 0.0f);
 		float3 normal = normalize(normalmap.xyz * 2.0 - 1.0);
 		float4 geoData = tex3.SampleLevel(SS3, input.texture0, 0.0f);
@@ -563,7 +572,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 					float3 clearcoatLight = CalculateClearcoat(normal, EyeDir, Half, LightDir, clearcoatRoughness) * lightRadiance;
 					layerLight = lerp(layerLight, clearcoatLight, clearcoatWeight);
 				}
-				Final.xyz += layerLight;
+				Final.xyz += layerLight * sunVisibility;
 			} else {
 				float Rad = LightRadius[i >> 2][i & 3];
 				float dist = distance(LightPositions[i].xyz, position.xyz);
@@ -598,7 +607,6 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 				}
 			}
 		}
-		float3 directLight = Final.xyz;
 
 		// Reduced env reflections for LDR
 		float3 ReflectedVec = reflect(-EyeDir, normal.xyz);
@@ -619,7 +627,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 			float3 sheenIBL = GetIBLRadianceCharlie(normal, EyeDir, sheenRoughness, sheenColor, iblMaxMip) * toogles.z;
 			ldrIBL = sheenIBL + ldrIBL * albedoSheenScaling;
 		}
-		Final.xyz += ldrIBL * occlusion;
+		Final.xyz += ldrIBL * occlusion * ambientOcclusion;
 		if (clearcoatFactor > 0.001f) {
 			float3 clearcoatSpec = T850_SAMPLE_ENVIRONMENT(texIBLSpecular, SS11, ReflectedVec, clearcoatRoughness * iblMaxMip).xyz;
 			float clearcoatAtten = hasBrdfLUT ? 1.0f : (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
@@ -628,9 +636,6 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 			Final.xyz = lerp(Final.xyz, clearcoatSpec * clearcoatAtten * toogles.z, clearcoatWeight);
 		}
 
-		float selfShadow = PBRData.g;
-		float3 indirectAccum = Final.xyz - directLight;
-		Final.xyz = directLight * Shadow * selfShadow + indirectAccum;
 		Final.xyz += emissive;
 		if (unlitMaterial) {
 			Final.xyz = Albedo.xyz + emissive;
@@ -699,11 +704,6 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		return Final;
 	}
 
-	float Shadow = 1.0f;
-	#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
-	Shadow = tex5.SampleLevel(SS5, coords, 0.0f).r;
-	#endif
-
 	float4 SpecularOcclusionData = tex7.SampleLevel(SS8, coords, 0.0f);
 	float specularFactor = max(Albedo.a, 0.0f);
 	Albedo.xyz = pow(Albedo.xyz, float3(2.2f, 2.2f, 2.2f));
@@ -727,7 +727,6 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 	float clearcoatRoughness = clamp(packedMaterial * 2.0f, 0.04f, 1.0f);
 	float clearcoatFactor = saturate(PBRData.b);
 
-	float selfShadow = PBRData.g;
 	int tileSize = max((int)(LightCameraInfo.x + 0.5f), 1);
 	int tileCountX = max((int)(LightCameraInfo.y + 0.5f), 1);
 	int tileCountY = max((int)(LightCameraInfo.z + 0.5f), 1);
@@ -779,7 +778,8 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		directLight += layerLight;
 	}
 
-	Final.xyz = directLight * Shadow * selfShadow;
+	// Point lights only; the shadow map belongs to the sun.
+	Final.xyz = directLight;
 	return Final;
 }
 
@@ -977,6 +977,7 @@ float GetOcclusion(float depth, float2 uv, float4 position, float3 normal, float
 #endif
 
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
+	// R = sun shadow (direct light only), G = SSAO (indirect light only).
 	float4 Fcolor = float4(1.0,1.0,1.0,1.0);
 	#ifdef ENABLE_SSAO
 		float2 uvDx = ddx(input.texture0);
@@ -990,13 +991,12 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 	#ifdef ENABLE_SHADOWS
 		float viewDepth = mul(World, position).z;
-		Fcolor = CalculateShadow(position, viewDepth);
+		Fcolor.r = CalculateShadow(position, viewDepth).r;
 	#endif
 
 	#ifdef ENABLE_SSAO
 		float3 normal = GetNormal(input.texture0);
-		float Occlusion = GetOcclusion(depth, input.texture0.xy, position, normal, uvDx, uvDy);
-		Fcolor *= Occlusion;
+		Fcolor.g = GetOcclusion(depth, input.texture0.xy, position, normal, uvDx, uvDy);
 	#endif
 
 	return Fcolor;

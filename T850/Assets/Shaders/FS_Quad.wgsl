@@ -422,9 +422,14 @@ fn ComputeScattering(lightDotView: f32) -> f32 {
         surface.clearcoatFactor = clamp(pbr.b, 0.0, 1.0);
         surface.clearcoatRoughness = clamp(select(geoData.a, geoData.a - 0.5, unlit) * 2.0, 0.04, 1.0);
         var shadow = 1.0;
+        var ambientOcclusion = 1.0;
 #if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
-        shadow = textureSampleLevel(tex5, SS5, coords, 0.0).r;
+        let shadowAndAO = textureSampleLevel(tex5, SS5, coords, 0.0).rg;
+        shadow = shadowAndAO.r;
+        ambientOcclusion = shadowAndAO.g;
 #endif
+        // The shadow map is the sun's: it gates directional lights only.
+        let sunVisibility = shadow * pbr.g;
         var directLight = vec3<f32>(0.0);
 #ifdef DEFERRED_LIGHT_VOLUME_PASS
         let tileSize = max(i32(frame.LightCameraInfo.x + 0.5), 1);
@@ -440,11 +445,11 @@ fn ComputeScattering(lightDotView: f32) -> f32 {
             let attenuation = RangeAttenuation(quadPass.LightRadius[index >> 2][index & 3] * 2.0, distance(lightPosition, position.xyz));
             if (attenuation > 0.0) { directLight += DeferredLight(surface, index, attenuation, normalize(lightPosition - position.xyz)); }
         }
-        finalColor = directLight * shadow * pbr.g;
+        finalColor = directLight;
 #else
         for (var index = 0; index < i32(frame.CameraInfo.w); index++) {
             let light = quadPass.LightPositions[index];
-            if (light.w < 0.5) { directLight += DeferredLight(surface, index, 1.0, normalize(-light.xyz)); }
+            if (light.w < 0.5) { directLight += DeferredLight(surface, index, 1.0, normalize(-light.xyz)) * sunVisibility; }
             else {
                 let attenuation = RangeAttenuation(quadPass.LightRadius[index >> 2][index & 3] * 2.0, distance(light.xyz, position.xyz));
                 if (attenuation > 0.0) { directLight += DeferredLight(surface, index, attenuation, normalize(light.xyz - position.xyz)); }
@@ -470,20 +475,13 @@ fn ComputeScattering(lightDotView: f32) -> f32 {
             let scaling = 1.0 - sheenStrength * AlbedoSheenScalingLUT(NdotV, surface.sheenRoughness);
             indirectLight = GetIBLRadianceCharlie(surface.normal, eyeDir, surface.sheenRoughness, surface.sheenColor, maxMip) * quadPass.toogles.z + indirectLight * scaling;
         }
-#ifdef DEFERRED_LDR_PASS
-        finalColor = directLight + indirectLight * clamp(specularOcclusion.a, 0.0, 1.0);
-#else
-        finalColor = directLight * shadow * pbr.g + indirectLight * clamp(specularOcclusion.a, 0.0, 1.0);
-#endif
+        finalColor = directLight + indirectLight * clamp(specularOcclusion.a, 0.0, 1.0) * ambientOcclusion;
         if (surface.clearcoatFactor > 0.001) {
             let coat = T850_SAMPLE_ENVIRONMENT(texIBLSpecular, SS11, reflected, surface.clearcoatRoughness * maxMip).xyz;
             let attenuation = select((1.0 - surface.clearcoatRoughness) * (1.0 - surface.clearcoatRoughness), 1.0, hasLUT);
             let weight = clamp(surface.clearcoatFactor * Max3(FresnelCalc(clamp(dot(surface.normal, eyeDir), 0.0, 1.0), vec3<f32>(0.04))), 0.0, 1.0);
             finalColor = mix(finalColor, coat * attenuation * quadPass.toogles.z, weight);
         }
-#ifdef DEFERRED_LDR_PASS
-        finalColor = directLight * shadow * pbr.g + (finalColor - directLight);
-#endif
         let emissive = textureSampleLevel(tex8, SS9, coords, 0.0).rgb;
         finalColor += emissive;
         if (unlit) { finalColor = surface.albedo + emissive; }
@@ -516,12 +514,13 @@ fn ComputeScattering(lightDotView: f32) -> f32 {
     let depth = textureSampleLevel(tex0, SS, input.texture0, 0.0).r;
     if (!IsSceneDepthValid(depth)) { return vec4<f32>(1.0); }
     let position = ReconstructPosition(input.ClipPos, depth);
+    // R = sun shadow (direct light only), G = SSAO (indirect light only).
     var color = vec4<f32>(1.0);
 #ifdef ENABLE_SHADOWS
-    color = CalculateShadow(position, (frame.World * position).z);
+    color.r = CalculateShadow(position, (frame.World * position).z).r;
 #endif
 #ifdef ENABLE_SSAO
-    color *= GetOcclusion(depth, input.texture0, position, GetNormal(input.texture0), uvDx, uvDy);
+    color.g = GetOcclusion(depth, input.texture0, position, GetNormal(input.texture0), uvDx, uvDy);
 #endif
     return color;
 }

@@ -34,6 +34,9 @@ public:
   void ResetSimulation();
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override { m_cameraController.ClearInput(); }
+  // Test hook: spawn this many balls as soon as the solver is ready. Used by
+  // --backyard-spawn so the multi-body path can be exercised without the GUI.
+  static void SetSpawnOnStart(int count) { s_spawnOnStart = count; }
 
 private:
   struct AssetRequest {
@@ -70,6 +73,20 @@ private:
   t850::RenderInstanceHandle m_waterHandle;
   t850::RenderInstanceHandle m_ballHandle;  t850::FluidSimulation m_fluid;
   bool m_fluidReady = false;
+  // ── Spawned balls (W-22) ──
+  // m_ballPrimitive is the primitive loaded for Backyard_Ball.glb; every spawned ball
+  // shares it and only differs by transform and scale.
+  int m_ballPrimitive = -1;
+  std::vector<t850::RenderInstanceHandle> m_extraBallHandles;
+  // Deterministic LCG state for spawn placement: spawnSeed != 0 reproduces a run.
+  uint32_t m_spawnRng = 1u;
+  // Drops one ball at a random place inside the basin, at a random radius and density.
+  // Returns false at the cap or when no free spot was found.
+  bool SpawnBall();
+  void ClearSpawnedBalls();
+  // Welds every spawned ball's instance to its simulated body.
+  void UpdateExtraBallTransforms();
+  float NextSpawnRandom();
   t850::FluidDebugRenderer m_fluidDebug;
   t850::FluidDebugView m_fluidDebugView;
   bool m_fluidDebugMeshBound = false;
@@ -99,4 +116,5 @@ private:
 
   float m_deltaSeconds = 0.0f;
   bool m_assetsCreated = false;
+  static int s_spawnOnStart;
 };

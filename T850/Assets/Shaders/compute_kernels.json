@@ -477,7 +477,7 @@
           "type": "constants",
           "shader_register": 1,
           "binding_index": 6,
-          "constant_count": 12
+          "constant_count": 36
         }
       ]
     },
@@ -792,7 +792,7 @@
           "type": "constants",
           "shader_register": 1,
           "binding_index": 2,
-          "constant_count": 12
+          "constant_count": 36
         },
         {
           "type": "read_only_buffer",

@@ -1186,6 +1186,20 @@ D3D12 ("passed N bindings, pipeline expects M") — R2. A stale PCH after editin
 **Later (with W-05).** When the body becomes analytic instead of stamped, the list moves to a
 structured buffer updated through a new upload API, and the 8-body cap goes away.
 
+**Outcome (Stage 4c) — DONE.** Mask `2u + k`, `ObjectConstants` 12 → 36 DWORDs (registry updated in
+the same commit), `kMaxBodies = 8`, body list with contact resolution, per-body stamping with a
+per-body footprint check, fastest-body substeps, volume correction summed. Scene: shared ball
+primitive, one instance per body welded each frame, basin-derived placement with 32 rejection tries,
+8 new tunables in the meta (109 keys), GUI Spawn/Clear, `--backyard-spawn N` test hook. New gate 9
+(two bodies, different velocities): `body0 cells=47 maskErrors=0 worst=0.00024`, `body1 cells=21
+worst=0.00015` (mask 2 and 3), PASS both APIs. Measured: 7 balls spawned inside the basin with
+radii 0.13–0.25 and densities 0.36–1.54; spawnSeed 12345 reproduced identical placement across two
+runs; fps 159.4 / 152.7 / 143.7 for 0 / 1 / 7 extra balls (same session); 20/20 scene×API
+combinations 0 errors; frame-300 dump shows the balls at different sizes and depths.
+Not done from the spec: the optional per-instance tint (item 6), and the "submerged fraction ≈
+density" and "body voxels count" acceptance lines were not measured explicitly — the gate 9 and fps
+numbers are the evidence recorded here.
+
 ---
 
 ### W-23 — Textured materials with normal maps (P2, M, suggested: GLM)

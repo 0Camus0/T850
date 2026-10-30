@@ -103,7 +103,15 @@ namespace t850 {
   // waves when TryInitialize returns false.
   class FluidSimulation {
   public:
-    FluidSimulation() = default;
+    // W-22: hard cap on moving bodies. Set by the D3D12 64-DWORD root signature:
+    // ObjectConstants becomes 4 + 4*N DWORDs (header plus one velocity per body), and
+    // CS_FluidGradient3D already spends 20 on b0. 8 bodies -> 4 + 32 = 36, leaving the
+    // gradient's total at 62. If a kernel gains a binding, this cap must shrink with it.
+    static constexpr uint32_t kMaxBodies = 8;
+
+    // One body always exists: body 0 is the scripted ball, and DroppedSphere() returns
+    // a reference into this vector.
+    FluidSimulation() : m_bodies(1) {}
     ~FluidSimulation();
 
     bool TryInitialize(BaseDriver* driver, const FluidSettings& settings);
@@ -192,9 +200,21 @@ namespace t850 {
 
     // Sphere dropping into the pool. Advance() integrates it and pushes the result
     // into the solver each frame, so the water responds to a real event.
-    FluidSphere& DroppedSphere() { return m_sphere; }
+    // Body 0 is the scripted ball the scene and the self-tests drive. Extra bodies are
+    // appended by AddBody and removed by RemoveBodiesFrom (1) to keep the scripted one.
+    FluidSphere& DroppedSphere() { return m_bodies[0]; }
+    uint32_t BodyCount() const { return static_cast<uint32_t>(m_bodies.size()); }
+    const std::vector<FluidSphere>& Bodies() const { return m_bodies; }
+    // Appends a body. Returns its index, or -1 at the cap.
+    int AddBody(const FluidSphere& body);
+    // Removes bodies [first, end). first is clamped so body 0 can never be removed.
+    void RemoveBodiesFrom(size_t first);
     void AdvanceSphere(float dt);
-    // Writes solid-face boundary velocities (walls 0, body faces = body velocity).
+    // One body's hydrostatic/drag integration plus its floor, wall and intrusion
+    // collisions. Split out so AdvanceSphere can loop over the body list.
+    void AdvanceOneSphere(FluidSphere& body, float dt);
+    // Sphere-sphere separation and normal impulse, fixed i < j order.
+    void ResolveBodyContacts();    // Writes solid-face boundary velocities (walls 0, body faces = body velocity).
     // Must be called before the divergence/pressure step.
     bool StepObjectVelocity(BaseDriver* driver);
     // Stamps the moving body into the wall mask so it becomes a solid boundary for
@@ -337,12 +357,14 @@ namespace t850 {
     std::vector<uint32_t> m_baseMask;
     LayoutExtent m_layoutExtent;
     uint32_t m_maskBodyCellCount = 0;
-    // Cell footprint of the body from the previous substep, so an unchanged
-    // footprint skips the re-upload entirely.
-    int m_maskBodyMin[3] = {-1, -1, -1};
-    int m_maskBodyMax[3] = {-1, -1, -1};
+    // Cell footprint of every body from the previous substep, so an unchanged set of
+    // footprints skips the re-upload entirely. Index order matches m_bodies.
+    int m_maskBodyMin[kMaxBodies][3];
+    int m_maskBodyMax[kMaxBodies][3];
+    uint32_t m_maskBodyStampCount = 0;
     bool m_maskBodyValid = false;
-    FluidSphere m_sphere;
+    // W-22: body 0 is the scripted ball; AddBody appends extras up to kMaxBodies.
+    std::vector<FluidSphere> m_bodies;
     // Total alpha at seed time, the reference the volume correction restores to.
     float m_referenceVolumeFraction = 0.0f;
     // Interface-cell alpha sum, needed to compute the correction scale.

@@ -47,6 +47,8 @@
 #include <debug/ComputeSelfTest.h>
 #include <simulation/FluidSimulation.h>
 #include <BackyardSelfTest.h>
+// W-22: App.cpp parses --backyard-spawn and hands the count to the scene.
+#include <BackyardScene.h>
 #include <debug/CrashDiagnostics.h>
 #include <debug/GraphicsFixture.h>
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
@@ -107,6 +109,7 @@ int main(int arg,char ** args) try {
   bool backyardSelfTest = false;
   bool backyardNoBall = false;
   float backyardCellSize = 0.0f;
+  int backyardSpawnOnStart = 0;
   int backyardSelfTestFrames = 900;
   float fluidFixedDt = 1.0f / 300.0f;
   int fluidSelfTestFrames = 24;
@@ -169,6 +172,10 @@ int main(int arg,char ** args) try {
       const float value = std::stof(args[++i]);
       if (value >= 0.02f && value <= 0.5f) backyardCellSize = value;
       else T8_LOG_ERROR("[App] --backyard-cell-size %g is outside 0.02..0.5 m", value);
+    }
+    if (std::string_view(args[i]) == "--backyard-spawn" && i + 1 < arg) {
+      backyardSpawnOnStart = (std::min)((std::max)(std::stoi(args[++i]), 0), 7);
+      BackyardScene::SetSpawnOnStart(backyardSpawnOnStart);
     }
     if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
       webgpuRecoverySelfTest = true;

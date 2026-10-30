@@ -175,37 +175,54 @@ std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked, 
   return words;
 }
 
-// Mirrors `cbuffer ObjectConstants : register(b1)` in CS_FluidSphere3D.hlsl.
-// The word count must match the reflected layout exactly or the dispatch is
-// rejected by base binding validation.
 namespace {
+  // Mirrors `cbuffer ObjectConstants : register(b1)` in CS_FluidGradient3D and
+  // CS_FluidObstacleVelocity3D. W-22 replaced the single body description with a body
+  // list: the kernels no longer need a centre or radius, because the wall mask already
+  // encodes which body (2u + k) owns each cell. 4 DWORDs of header plus one velocity
+  // per body slot keeps the D3D12 root signature inside its 64-DWORD budget.
+  // The registry's constant_count for register b1 in those two kernels must stay
+  // equal to 4 + 4 * FluidSimulation::kMaxBodies.
   struct ObjectConstantsBlob {
-    float centreX, centreY, centreZ, radius;
-    float velX, velY, velZ, enabled;
-    float worldOriginX, worldOriginZ, basinMinY, padding0;
+    uint32_t bodyCount;
+    uint32_t pad0;
+    uint32_t pad1;
+    uint32_t pad2;
+    float bodyVelocity[FluidSimulation::kMaxBodies][4];
   };
+  static_assert(sizeof(ObjectConstantsBlob) ==
+                4u * (4u + 4u * FluidSimulation::kMaxBodies));
 }
 
 std::vector<uint32_t> FluidSimulation::BuildObjectConstants() const {
   ObjectConstantsBlob blob{};
-  blob.centreX = m_sphere.x;
-  blob.centreY = m_sphere.y;
-  blob.centreZ = m_sphere.z;
-  blob.radius = m_sphere.radius;
-  blob.velX = m_sphere.vx;
-  blob.velY = m_sphere.vy;
-  blob.velZ = m_sphere.vz;
-  blob.enabled = m_sphere.enabled ? 1.0f : 0.0f;
-  // Centre of grid cell (0, *, 0) in world space, and the world Y of the bottom
-  // face of row 0. Derived from the basin bounds, which come from the pool
-  // layout JSON, so nothing about the pool placement is baked into the kernel.
-  blob.worldOriginX = m_settings.basinMinX + 0.5f * m_settings.cellSize;
-  blob.worldOriginZ = m_settings.basinMinZ + 0.5f * m_settings.cellSize;
-  blob.basinMinY = m_settings.basinMinY;
-  blob.padding0 = 0.0f;
+  blob.bodyCount = static_cast<uint32_t>(m_bodies.size());
+  for (size_t i = 0; i < m_bodies.size() && i < kMaxBodies; ++i) {
+    const FluidSphere& body = m_bodies[i];
+    blob.bodyVelocity[i][0] = body.enabled ? body.vx : 0.0f;
+    blob.bodyVelocity[i][1] = body.enabled ? body.vy : 0.0f;
+    blob.bodyVelocity[i][2] = body.enabled ? body.vz : 0.0f;
+    blob.bodyVelocity[i][3] = 0.0f;
+  }
   std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
   std::memcpy(words.data(), &blob, sizeof(blob));
   return words;
+}
+
+int FluidSimulation::AddBody(const FluidSphere& body) {
+  if (m_bodies.size() >= kMaxBodies) return -1;
+  m_bodies.push_back(body);
+  m_maskBodyValid = false;   // the new footprint has to be stamped
+  return static_cast<int>(m_bodies.size() - 1);
+}
+
+void FluidSimulation::RemoveBodiesFrom(size_t first) {
+  // Body 0 is the scripted ball: the scene, the self-tests and surface gates 7 and 8
+  // all assume it exists and keeps its state.
+  if (first < 1) first = 1;
+  if (first >= m_bodies.size()) return;
+  m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(first), m_bodies.end());
+  m_maskBodyValid = false;
 }
 
 // Mirrors `cbuffer CorrectionConstants : register(b1)` in
@@ -436,8 +453,13 @@ bool FluidSimulation::BuildWallMask(BaseDriver* driver) {
   m_baseMask = std::move(mask);
   m_maskBodyCellCount = 0;
   m_maskBodyValid = false;
-  m_maskBodyMin[0] = m_maskBodyMin[1] = m_maskBodyMin[2] = -1;
-  m_maskBodyMax[0] = m_maskBodyMax[1] = m_maskBodyMax[2] = -1;
+  m_maskBodyStampCount = 0;
+  for (uint32_t b = 0; b < kMaxBodies; ++b) {
+    for (int axis = 0; axis < 3; ++axis) {
+      m_maskBodyMin[b][axis] = -1;
+      m_maskBodyMax[b][axis] = -1;
+    }
+  }
 
   T8_LOG_INFO("[Fluid] Wall mask %ux%ux%u: %u solid of %u voxels (%.1f%% fluid)",
               width, height, depth, m_solidVoxelCount, voxelCount,
@@ -461,53 +483,96 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
   const float stepY = sizeY / static_cast<float>(height);
   const float stepZ = sizeZ / static_cast<float>(depth);
 
-  const bool wantBody = m_sphere.enabled && m_sphere.radius > 0.0f;
+  auto indexOf = [](float value, float origin, float step, uint32_t count) {
+    const int index = static_cast<int>(std::floor((value - origin) / step));
+    return (std::min)((std::max)(index, 0), static_cast<int>(count) - 1);
+  };
 
-  // Only the cells the body can reach are re-stamped: the authored mask is untouched
-  // everywhere else. This matters now that the solver substeps up to a dozen times
-  // per frame, so re-scanning the whole volume would cost 12x what it used to.
-  int minI = -1, minJ = -1, minK = -1, maxI = -1, maxJ = -1, maxK = -1;
-  if (wantBody) {
-    auto indexOf = [](float value, float origin, float step, uint32_t count) {
-      const int index = static_cast<int>(std::floor((value - origin) / step));
-      return (std::min)((std::max)(index, 0), static_cast<int>(count) - 1);
-    };
-    const float reach = m_sphere.radius + cell;   // one cell of margin
-    minI = indexOf(m_sphere.x - reach, m_settings.basinMinX, stepX, width);
-    maxI = indexOf(m_sphere.x + reach, m_settings.basinMinX, stepX, width);
-    minJ = indexOf(m_sphere.y - reach, m_settings.basinMinY, stepY, height);
-    maxJ = indexOf(m_sphere.y + reach, m_settings.basinMinY, stepY, height);
-    minK = indexOf(m_sphere.z - reach, m_settings.basinMinZ, stepZ, depth);
-    maxK = indexOf(m_sphere.z + reach, m_settings.basinMinZ, stepZ, depth);
+  // W-22: every enabled body gets a cell AABB, and only those cells are re-stamped.
+  // The authored mask is untouched everywhere else: the solver substeps up to a dozen
+  // times per frame, so re-scanning the whole volume would cost 12x what it used to.
+  struct BodyFootprint {
+    int lo[3];
+    int hi[3];
+    bool valid;
+  };
+  BodyFootprint footprint[kMaxBodies];
+  uint32_t activeBodies = 0;
+  for (uint32_t b = 0; b < kMaxBodies; ++b) {
+    footprint[b].valid = false;
+    if (b >= m_bodies.size()) continue;
+    const FluidSphere& body = m_bodies[b];
+    if (!body.enabled || body.radius <= 0.0f) continue;
+    const float reach = body.radius + cell;   // one cell of margin
+    footprint[b].lo[0] = indexOf(body.x - reach, m_settings.basinMinX, stepX, width);
+    footprint[b].hi[0] = indexOf(body.x + reach, m_settings.basinMinX, stepX, width);
+    footprint[b].lo[1] = indexOf(body.y - reach, m_settings.basinMinY, stepY, height);
+    footprint[b].hi[1] = indexOf(body.y + reach, m_settings.basinMinY, stepY, height);
+    footprint[b].lo[2] = indexOf(body.z - reach, m_settings.basinMinZ, stepZ, depth);
+    footprint[b].hi[2] = indexOf(body.z + reach, m_settings.basinMinZ, stepZ, depth);
+    footprint[b].valid = true;
+    ++activeBodies;
   }
 
-  // Identical cell footprint to the previous substep: the buffer already matches.
-  if (m_maskBodyValid &&
-      minI == m_maskBodyMin[0] && maxI == m_maskBodyMax[0] &&
-      minJ == m_maskBodyMin[1] && maxJ == m_maskBodyMax[1] &&
-      minK == m_maskBodyMin[2] && maxK == m_maskBodyMax[2])
-    return true;
+  // Identical footprints and body count to the previous substep: the buffer already
+  // matches. Comparing every body, not just a union AABB: two bodies moving in
+  // opposite directions can leave the union unchanged while their footprints moved.
+  bool sameFootprints = m_maskBodyValid && m_maskBodyStampCount == activeBodies;
+  if (sameFootprints) {
+    for (uint32_t b = 0; b < kMaxBodies && sameFootprints; ++b) {
+      if (footprint[b].valid != (b < m_bodies.size() && m_bodies[b].enabled &&
+                                 m_bodies[b].radius > 0.0f))
+        { sameFootprints = false; break; }
+      if (!footprint[b].valid) continue;
+      for (int axis = 0; axis < 3; ++axis) {
+        if (footprint[b].lo[axis] != m_maskBodyMin[b][axis] ||
+            footprint[b].hi[axis] != m_maskBodyMax[b][axis]) {
+          sameFootprints = false;
+          break;
+        }
+      }
+    }
+  }
+  if (sameFootprints) return true;
 
   std::vector<uint32_t> mask = m_baseMask;
   uint32_t stamped = 0;
-  if (wantBody) {
-    // Cell centres, matching the convention BuildWallMask() uses for the authored
-    // intrusions and the kernels use for their stencil neighbours.
-    const float radius2 = m_sphere.radius * m_sphere.radius;
-    for (int k = minK; k <= maxK; ++k) {
+  for (uint32_t b = 0; b < kMaxBodies; ++b) {
+    if (!footprint[b].valid) continue;
+    const FluidSphere& body = m_bodies[b];
+    // Body k is stamped as 2u + k. Static solids stay 1u, and every kernel keeps
+    // treating "non-zero" as solid; the two body kernels recover the index with
+    // mask - 2u to look up that body's velocity. Cell centres, matching the convention
+    // BuildWallMask() uses for the authored intrusions and the kernels use for their
+    // stencil neighbours.
+    const uint32_t stamp = 2u + b;
+    const float radius2 = body.radius * body.radius;
+    for (int k = footprint[b].lo[2]; k <= footprint[b].hi[2]; ++k) {
       const float pz = m_settings.basinMinZ + (k + 0.5f) * stepZ;
-      const float dz = pz - m_sphere.z;
-      for (int j = minJ; j <= maxJ; ++j) {
+      const float dz = pz - body.z;
+      for (int j = footprint[b].lo[1]; j <= footprint[b].hi[1]; ++j) {
         const float py = m_settings.basinMinY + (j + 0.5f) * stepY;
-        const float dy = py - m_sphere.y;
-        for (int i = minI; i <= maxI; ++i) {
+        const float dy = py - body.y;
+        for (int i = footprint[b].lo[0]; i <= footprint[b].hi[0]; ++i) {
           const float px = m_settings.basinMinX + (i + 0.5f) * stepX;
-          const float dx = px - m_sphere.x;
+          const float dx = px - body.x;
           if (dx * dx + dy * dy + dz * dz > radius2) continue;
           const size_t index = static_cast<size_t>(i + width * (j + height * k));
-          if (mask[index] == 0u) { mask[index] = 1u; ++stamped; }
+          if (mask[index] == 0u) {
+            mask[index] = stamp;
+            ++stamped;
+          } else if (mask[index] >= 2u) {
+            // Overlapping bodies: the later index wins, which is the same rule as
+            // before and keeps the stamp deterministic from the body order.
+            mask[index] = stamp;
+            ++stamped;
+          }
         }
       }
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      m_maskBodyMin[b][axis] = footprint[b].lo[axis];
+      m_maskBodyMax[b][axis] = footprint[b].hi[axis];
     }
   }
 
@@ -518,11 +583,19 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
   bufferDesc.debugName = "Fluid Wall Mask";
   m_wallMask = driver->CreateComputeBuffer(bufferDesc, mask.data());
   if (!m_wallMask) {
-    T8_LOG_ERROR("[Fluid] Cannot reallocate the wall mask for the moving body");
+    T8_LOG_ERROR("[Fluid] Cannot reallocate the wall mask for the moving bodies");
     return false;
   }
-  m_maskBodyMin[0] = minI; m_maskBodyMin[1] = minJ; m_maskBodyMin[2] = minK;
-  m_maskBodyMax[0] = maxI; m_maskBodyMax[1] = maxJ; m_maskBodyMax[2] = maxK;
+  // Bodies that were disabled or removed leave stale footprints behind: clear them so
+  // the next comparison cannot match by accident.
+  for (uint32_t b = 0; b < kMaxBodies; ++b) {
+    if (footprint[b].valid) continue;
+    for (int axis = 0; axis < 3; ++axis) {
+      m_maskBodyMin[b][axis] = -1;
+      m_maskBodyMax[b][axis] = -1;
+    }
+  }
+  m_maskBodyStampCount = activeBodies;
   m_maskBodyValid = true;
   m_maskBodyCellCount = stamped;
   (void)cell;
@@ -736,12 +809,15 @@ bool FluidSimulation::CorrectVolumeFraction(BaseDriver* driver, float& appliedSc
   // enough to launch a wave. The physically correct target is
   // (seed water) - (volume the submerged part of the body displaces).
   float reference = m_referenceVolumeFraction;
-  if (m_sphere.enabled && m_sphere.radius > 0.0f && m_sphere.submerged > 0.0f) {
-    const double radius = static_cast<double>(m_sphere.radius);
+  // W-22: sum over every body. Each body's submerged spherical cap displaces its own
+  // volume, so the reference target is (seed water) minus all of them.
+  for (const FluidSphere& body : m_bodies) {
+    if (!body.enabled || body.radius <= 0.0f || body.submerged <= 0.0f) continue;
+    const double radius = static_cast<double>(body.radius);
     const double cell = static_cast<double>((std::max)(m_settings.cellSize, 1e-4f));
     const double ballCells = (4.0 / 3.0) * 3.14159265358979 * radius * radius * radius /
                              (cell * cell * cell);
-    reference -= static_cast<float>(ballCells * m_sphere.submerged);
+    reference -= static_cast<float>(ballCells * body.submerged);
   }
   if (reference <= 1.0f) reference = m_referenceVolumeFraction;
 
@@ -980,7 +1056,65 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
 }
 
 void FluidSimulation::AdvanceSphere(float dt) {
-  FluidSphere& s = m_sphere;
+  if (dt <= 0.0f) return;
+  for (FluidSphere& body : m_bodies) AdvanceOneSphere(body, dt);
+  // W-22: without contact resolution two overlapping bodies stamp the same cells and
+  // the later index simply wins, which looks like one ball swallowing the other.
+  // Two passes settle a short chain (a ball resting on another ball).
+  for (int pass = 0; pass < 2; ++pass) ResolveBodyContacts();
+}
+
+void FluidSimulation::ResolveBodyContacts() {
+  // Fixed i < j order and inverse-mass weighting: deterministic, so a spawnSeed gives
+  // the same run every time. 28 pairs at the cap; no broad phase needed.
+  for (size_t i = 0; i < m_bodies.size(); ++i) {
+    if (!m_bodies[i].enabled) continue;
+    for (size_t j = i + 1; j < m_bodies.size(); ++j) {
+      if (!m_bodies[j].enabled) continue;
+      FluidSphere& a = m_bodies[i];
+      FluidSphere& b = m_bodies[j];
+      const float dx = b.x - a.x;
+      const float dy = b.y - a.y;
+      const float dz = b.z - a.z;
+      const float sum = a.radius + b.radius;
+      const float distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq >= sum * sum || distSq <= 1e-12f) continue;
+
+      const float dist = std::sqrt(distSq);
+      const float nx = dx / dist, ny = dy / dist, nz = dz / dist;
+      const float overlap = sum - dist;
+      // Density ratio stands in for mass: both bodies are spheres of unit volume
+      // factor, so a denser ball moves less. Clamped like the integrator's terms.
+      const float invA = 1.0f / (std::max)(a.densityRatio, 0.02f);
+      const float invB = 1.0f / (std::max)(b.densityRatio, 0.02f);
+      const float invSum = invA + invB;
+
+      const float shareA = invA / invSum;
+      const float shareB = invB / invSum;
+      a.x -= nx * overlap * shareA;
+      a.y -= ny * overlap * shareA;
+      a.z -= nz * overlap * shareA;
+      b.x += nx * overlap * shareB;
+      b.y += ny * overlap * shareB;
+      b.z += nz * overlap * shareB;
+
+      // Normal impulse, only when they are closing.
+      const float rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny + (b.vz - a.vz) * nz;
+      if (rel >= 0.0f) continue;
+      const float restitution =
+          (std::min)((std::max)(0.5f * (a.restitution + b.restitution), 0.0f), 0.99f);
+      const float impulse = -(1.0f + restitution) * rel / invSum;
+      a.vx -= impulse * invA * nx;
+      a.vy -= impulse * invA * ny;
+      a.vz -= impulse * invA * nz;
+      b.vx += impulse * invB * nx;
+      b.vy += impulse * invB * ny;
+      b.vz += impulse * invB * nz;
+    }
+  }
+}
+
+void FluidSimulation::AdvanceOneSphere(FluidSphere& s, float dt) {
   if (!s.enabled || dt <= 0.0f) return;
 
   const float floorY = m_settings.basinMinY;
@@ -1239,10 +1373,16 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   // configuration and a consistent dt.
   uint32_t bodySubsteps = 1;
   float bodySpeed = 0.0f;
-  if (m_sphere.enabled) {
-    bodySpeed = std::sqrt(m_sphere.vx * m_sphere.vx +
-                          m_sphere.vy * m_sphere.vy +
-                          m_sphere.vz * m_sphere.vz);
+  // W-22: the fastest body sets the substep count. A slow body does not need its own
+  // cadence: every body is stamped and coupled in every substep.
+  for (const FluidSphere& body : m_bodies) {
+    if (!body.enabled) continue;
+    const float speed = std::sqrt(body.vx * body.vx +
+                                  body.vy * body.vy +
+                                  body.vz * body.vz);
+    bodySpeed = (std::max)(bodySpeed, speed);
+  }
+  if (bodySpeed > 0.0f) {
     const float travel = bodySpeed * frameDt;
     if (travel > 0.5f * cell)
       bodySubsteps = static_cast<uint32_t>(std::ceil(travel / (0.5f * cell)));

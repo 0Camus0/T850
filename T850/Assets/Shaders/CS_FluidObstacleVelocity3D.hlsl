@@ -45,20 +45,15 @@ Texture3D<float4> VelocityIn : register(t0);
 #endif
 cbuffer ObjectConstants : register(b1)
 {
-    float ObjectCentreX;
-    float ObjectCentreY;
-    float ObjectCentreZ;
-    float ObjectRadius;
-
-    float ObjectVelX;
-    float ObjectVelY;
-    float ObjectVelZ;
-    float ObjectEnabled;
-
-    float WorldOriginX;
-    float WorldOriginZ;
-    float BasinMinY;
-    float ObjectPadding0;
+    // W-22: a body list. The wall mask encodes which body owns a cell as 2u + k, so the
+    // kernels need no centre or radius - the stamp already carries the footprint - and
+    // only each body's velocity is needed here. 4 DWORDs of header plus 4 per body keeps
+    // the D3D12 root signature inside its 64-DWORD budget for kMaxBodies = 8.
+    uint BodyCount;
+    uint ObjectPad0;
+    uint ObjectPad1;
+    uint ObjectPad2;
+    float4 BodyVelocity[8];
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -88,25 +83,27 @@ bool IsSolid(int3 cell)
     return WallMask[CellIndex(cell)] != 0u;
 }
 
-bool IsBodyCell(int3 cell)
+// A cell stamped with 2u + k belongs to body k; static solids are 1u. The index is
+// clamped and only used when the mask really is a body value (R1: HLSL does not
+// short-circuit, so the comparison is done before the lookup).
+bool IsBodyCell(int3 cell, out uint bodyIndex)
 {
+    bodyIndex = 0u;
     if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
         cell.x >= int(Width) || cell.y >= int(Height) || cell.z >= int(Depth))
         return false;
-    if (ObjectEnabled < 0.5f || ObjectRadius <= 0.0f)
+    const uint mask = WallMask[CellIndex(cell)];
+    if (mask < 2u)
         return false;
-    const float3 centre = float3(WorldOriginX + float(cell.x) * CellSize,
-                                 BasinMinY + (float(cell.y) + 0.5f) * CellSize,
-                                 WorldOriginZ + float(cell.z) * CellSize);
-    const float3 d = centre - float3(ObjectCentreX, ObjectCentreY, ObjectCentreZ);
-    return dot(d, d) <= ObjectRadius * ObjectRadius;
+    bodyIndex = min(mask - 2u, BodyCount - 1u);
+    return true;
 }
-
 // Boundary value for a solid face whose solid cell is `solidCell`.
 float SolidBoundaryValue(int3 solidCell, int axis)
 {
-    if (IsBodyCell(solidCell))
-        return axis == 0 ? ObjectVelX : (axis == 1 ? ObjectVelY : ObjectVelZ);
+    uint bodyIndex = 0u;
+    if (IsBodyCell(solidCell, bodyIndex))
+        return BodyVelocity[bodyIndex][axis];
     return 0.0f;
 }
 

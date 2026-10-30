@@ -169,7 +169,7 @@ command run, and anything you could not verify.
 | 3c. Vulkan fluid self-test after Backyard init | W-21 | S–M | **DONE** — root cause was NOT frame ownership: it was uninitialised GPU volume memory. Fixed in `TryInitialize` |
 | 4. Data-driven tunables | W-11 | M | **DONE** — `Scenes/BackyardWater.json` drives all 101 settable fields; three solver literals promoted; strict key validation. See Stage 4 |
 | 4a. House roof | W-24 | S | **DONE** — sign flipped, gables closed, 78 → 80 meshes, layout JSON unchanged |
-| 4b. Textured materials | W-23 | M | Asset-only; the engine already supports glTF PBR textures |
+| 4b. Textured materials | W-23 | M | **DONE** — CC0 ambientCG textures with NormalGL, metric world-box UVs, JPEGs embedded; −5.5 % fps; layout unchanged |
 | 4c. Spawn more balls | W-22 | M–L | Owner request; body list in the solver and two kernels. Before 5a so the body abstraction exists when 6a makes it analytic |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
@@ -1277,7 +1277,49 @@ output. Call `blender.exe` directly to see the `[house]` proof lines.
 
 ### Stage 4b — W-23
 
-_Pending._
+Done. Assets only — the engine already loaded glTF PBR textures, so nothing engine-side changed.
+
+**Fetching.** New [fetch_backyard_textures.py](../../T850/scripts/textures/fetch_backyard_textures.py) with
+a pinned table `{material: (ambientCG id, zip sha256)}`, downloading `_1K-JPG.zip` archives into the
+uncommitted `T850/build/texture-cache/`, verifying each hash and extracting **Color, NormalGL,
+Roughness and AmbientOcclusion when present**. NormalGL only: the archives also ship NormalDX, which
+would invert every bump. Six surfaces: `Plaster001` (house walls), `CorrugatedSteel005` (roof),
+`Concrete034` (patio), `Gravel043` (ground), `PavingStones150` (pool coping), `Plaster007` (yard wall).
+
+Gotcha worth recording: **ambientCG answers 403 to clients with no User-Agent**, which is what
+`urllib` sends by default. The script sets one. All six hashes are now pinned, so a changed upstream
+file fails loudly instead of silently altering the look.
+
+**Generator.** `material()` takes the texture entry and wires Image Texture → Base Color (through a
+Mix/RGBA multiply tint where the scan is neutral grey), Image Texture → Roughness, and Image Texture →
+Normal Map → Normal. `uv_world_box()` replaces `smart_project` for textured parts: per face, the
+dominant world-normal axis picks the two world coordinates, divided by `tile_m`. That makes UVs
+metric (a 1 m feature reads as 1 m on every box, whatever its size) — `smart_project`'s scale is
+arbitrary per object and would tile differently on each box. Untextured parts keep `smart_project`.
+Export now passes `export_tangents=True` and `export_image_format="JPEG"`; the water is exported with
+`tangents=False` (no normal map, and tangents would only bloat its 41k-vertex mesh) and its UVs are
+untouched — they are the solver mapping.
+
+**Measured**
+
+| Check | Result |
+|---|---|
+| `git diff backyard_layout.json` | **empty** — textures moved no geometry |
+| GLB sizes | house 0.12 → **5.17 MB**, ground 5 KB → 5.13 MB, wall 6 KB → 3.07 MB, pool 24 KB → 1.80 MB (JPEGs embedded); water unchanged at 1.80 MB |
+| glTF material check | `House_Stucco`: `baseColorFactor (1, 0.88, 0.74)` + baseColorTexture + normalTexture + metallicRoughnessTexture |
+| KeyFlags | 77 of 128 material instances now read `baseColorMap=1 normalMap=1 tangents=1 metallicMap=1`; the other 51 are deliberately untextured (trim, glass, pergola) |
+| Frame-300 dump | plaster, corrugated seams, concrete patio, gravel ground, paving coping all visible at believable scale |
+| fps, same-session A/B, 3 runs × 1200 frames at 720p D3D12 | **187.5 → 177.2 fps (−10.3 fps, −5.5 %)** |
+| Scenes 7, 1, 6 × 5 APIs | **15/15 zero errors** (GL and WebGPU decode the embedded JPEGs) |
+| `--backyard-selftest`, `--fluid-selftest` | PASS on D3D12 and Vulkan |
+
+**Known limitation:** occlusion maps are not wired (no `occlusionTexture` in the export). The
+archives with AO provide one, but the exporter needs the "glTF Material Output" group; that is the
+next step if ambient occlusion is wanted. Not hidden — reported.
+
+**Note:** the house walls read grey-ish under the dusk lighting because the plaster scan is neutral;
+the warm tint restores most of the sand colour but not all of it. A warmer plaster asset (e.g.
+`PaintedPlaster017`) is the alternative if the owner prefers the reference photo's tone.
 
 ### Stage 4c — W-22
 

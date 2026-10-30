@@ -95,6 +95,9 @@ those the owner added a fourth scene request — **a different PBR material on e
 
 Every spawned ball shows its own PBR material, from a palette of **32 verified CC0 sets**. The
 palette table is in remaining-work W-25; the data lives in `Scenes/BackyardBallMaterials.json`.
+**Owner decisions (2026-10-30):** palette stays at 32, textures at 512², texture files are fetched by
+script and not committed, and the two local models are consulted at each step as usual. The owner
+has not started the stage yet — this brief is what the next session executes.
 
 - **Read the shader before designing around it.** `METALLIC_MAP` samples a *metallic-roughness*
   texture: `metallic = PBRParams.x * sample.b`, `roughness = PBRParams.y * sample.g`. So a palette

@@ -148,6 +148,43 @@ def bevel(obj, width=0.03, segments=2):
     bpy.ops.object.modifier_apply(modifier=mod.name)
 
 
+def gable(name, x_inner, x_outer, y_min, y_max, y_ridge, z_eave, z_ridge, mat, flip=False):
+    """Closed triangular prism that caps a gable end.
+
+    A triangle in the Y-Z plane (base on the eave line, apex at the ridge) extruded
+    along X by `x_outer - x_inner`. The outer face is flush with the wall's outer
+    face, so the roof overhang covers its top edge instead of leaving a ledge.
+
+    Built with from_pydata rather than bpy.ops: a triangle cannot be made from the
+    cube primitive, and the winding below is checked to keep the normals outward
+    (the engine culls front faces, so inverted normals are visible).
+    """
+    verts = [
+        (x_inner, y_min, z_eave),      # 0
+        (x_inner, y_max, z_eave),      # 1
+        (x_inner, y_ridge, z_ridge),   # 2
+        (x_outer, y_min, z_eave),      # 3
+        (x_outer, y_max, z_eave),      # 4
+        (x_outer, y_ridge, z_ridge),   # 5
+    ]
+    faces = [
+        (0, 1, 2),        # inner triangle, normal -X
+        (5, 4, 3),        # outer triangle, normal +X
+        (0, 3, 4, 1),     # bottom, normal -Z
+        (1, 4, 5, 2),     # slope toward y_max
+        (2, 5, 3, 0),     # slope toward y_min
+    ]
+    if flip:
+        faces = [tuple(reversed(f)) for f in faces]
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    obj.data.materials.append(mat)
+    return obj
+
+
 def export_objects(objects, asset_name):
     for obj in bpy.context.scene.objects:
         obj.select_set(False)
@@ -305,10 +342,28 @@ def build_house():
                 (w + 0.8, slope_len, 0.10),
                 (cx, cy + sign * run * 0.5, h + rise * 0.5),
                 metal,
-                rot=(sign * angle, 0.0, 0.0),
+                # Rotating about X by +theta raises the +Y end of the slab. The front
+                # slab's eave is its +Y end, so it needs the negative angle to drop the
+                # eave and lift the ridge side; the back slab is the mirror. Using
+                # +sign*angle instead gave a V roof with the ridge cap floating over a
+                # valley (W-24).
+                rot=(-sign * angle, 0.0, 0.0),
             )
         )
     parts.append(box("House_Ridge", (w + 0.8, 0.30, 0.12), (cx, cy, ridge), metal))
+
+    # The pitched roof exposes the two gable ends: the walls stop at the eave height,
+    # so without these the roof floats over an open triangle.
+    parts.append(gable("House_Gable_Left", HOUSE["min_x"] + t, HOUSE["min_x"],
+                       HOUSE["min_y"], HOUSE_MAX_Y, cy, h, ridge, stucco, flip=True))
+    parts.append(gable("House_Gable_Right", HOUSE_MAX_X - t, HOUSE_MAX_X,
+                       HOUSE["min_y"], HOUSE_MAX_Y, cy, h, ridge, stucco, flip=False))
+
+    for name in ("House_Roof_Front", "House_Roof_Back"):
+        slab = bpy.data.objects[name]
+        zs = [(slab.matrix_world @ v.co).z for v in slab.data.vertices]
+        print("[house] %s world Z %.3f .. %.3f m (eave %.1f, ridge %.1f)"
+              % (name, min(zs), max(zs), h, ridge))
 
     seam_count = 26
     for i in range(seam_count):
@@ -320,7 +375,7 @@ def build_house():
                     (0.04, slope_len * 0.98, 0.04),
                     (x, cy + sign * run * 0.5, h + rise * 0.5 + 0.06),
                     metal,
-                    rot=(sign * angle, 0.0, 0.0),
+                    rot=(-sign * angle, 0.0, 0.0),
                 )
             )
 

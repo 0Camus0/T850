@@ -168,7 +168,7 @@ command run, and anything you could not verify.
 | 3. Rendering correctness | W-19, W-09, W-10 | M | **DONE, reviewed** — W-19 (`fa5422ff`), W-09 (`517ae6bf`), W-10 (`96d84638`, redesigned in review `47500166`: CoC consumes the nearer depth, no extra pass) |
 | 3c. Vulkan fluid self-test after Backyard init | W-21 | S–M | **DONE** — root cause was NOT frame ownership: it was uninitialised GPU volume memory. Fixed in `TryInitialize` |
 | 4. Data-driven tunables | W-11 | M | **DONE** — `Scenes/BackyardWater.json` drives all 101 settable fields; three solver literals promoted; strict key validation. See Stage 4 |
-| 4a. House roof | W-24 | S | Visible defect, one sign; independent of the solver |
+| 4a. House roof | W-24 | S | **DONE** — sign flipped, gables closed, 78 → 80 meshes, layout JSON unchanged |
 | 4b. Textured materials | W-23 | M | Asset-only; the engine already supports glTF PBR textures |
 | 4c. Spawn more balls | W-22 | M–L | Owner request; body list in the solver and two kernels. Before 5a so the body abstraction exists when 6a makes it analytic |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
@@ -1247,7 +1247,33 @@ diagnosis in this document was wrong and is corrected in the section above.
 
 ### Stage 4a — W-24
 
-_Pending._
+Done. Root cause was one sign, as the brief said: both roof slabs and all 26 standing seams used
+`rot=(sign * angle, 0, 0)`. A positive X rotation lifts a point at +y, so each slab lifted its
+**outer** edge and the roof was a V with the ridge cap floating over the valley. Now
+`rot=(-sign * angle, 0, 0)` for both slabs and both seam sets, so the ridge-side edge rises.
+
+Two gable prisms were added (`House_Gable_Left` / `House_Gable_Right`) because the corrected roof
+exposes open triangles at `x = min_x` and `x = max_x` — the walls stop at the eave. Each is a closed
+triangular prism (`from_pydata`, 6 verts, 5 faces, outward winding) with its outer face flush with
+the wall face so the 0.4 m roof overhang covers its top edge. `from_pydata` rather than bpy.ops
+because a triangle cannot come from the cube primitive.
+
+**Measured.** The generator now prints the proof the acceptance asks for:
+
+```
+[house] House_Roof_Front world Z 3.152 .. 5.148 m (eave 3.2, ridge 5.1)
+[house] House_Roof_Back  world Z 3.152 .. 5.148 m (eave 3.2, ridge 5.1)
+```
+
+Those are the slab's own 0.10 m thickness either side of the mid-plane, which spans exactly 3.20
+(eave, with the 0.5 m overhang) to 5.10 (ridge). `Backyard_House.glb` went from **78 to 80 meshes**
+(the two gables), `git diff backyard_layout.json` is **empty**, so the house extents and the pool
+layout the solver reads are untouched. The frame-300 back-buffer dump shows a pitched roof with the
+ridge highest at the centre and the eaves on the walls. Scene 7 logs 0 errors on D3D12, Vulkan,
+D3D11, GL and WebGPU; both self-tests PASS on both APIs.
+
+**Note for future asset runs:** `blender-launcher.exe` returns immediately and swallows console
+output. Call `blender.exe` directly to see the `[house]` proof lines.
 
 ### Stage 4b — W-23
 

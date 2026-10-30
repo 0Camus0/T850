@@ -11,7 +11,7 @@ add_executable(DayScene
 	VoxelScene.cpp
 	MinecraftScene.cpp
 	BackyardScene.cpp
-BackyardWaterJson.cpp
+	BackyardWaterJson.cpp
 	BackyardSelfTest.cpp)
 
 t850_apply_app(DayScene)

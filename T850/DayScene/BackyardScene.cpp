@@ -836,9 +836,9 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     }
     sliderInt("water_iterations", "pressure iterations", w.pressureIterations, 1.0f, 200.0f, 1.0f);
     slider("water_sor_omega", "SOR omega (1 = Gauss-Seidel)", w.sorOmega, 1.0f, 1.99f, 0.001f);
-slider("water_alpha_compression", "alpha compression (0 = pure upwind)", w.alphaCompression, 0.0f, 1.0f, 0.01f);
-slider("water_max_substep_dt", "max substep dt (s)", w.maxSubstepDt, 1.0f / 400.0f, 1.0f / 30.0f, 0.0005f);
-sliderInt("water_volume_check_interval", "volume check interval (substeps)", w.volumeCheckInterval, 1, 120, 1);
+    slider("water_alpha_compression", "alpha compression (0 = pure upwind)", w.alphaCompression, 0.0f, 1.0f, 0.01f);
+    slider("water_max_substep_dt", "max substep dt (s)", w.maxSubstepDt, 1.0f / 400.0f, 1.0f / 30.0f, 0.0005f);
+    sliderInt("water_volume_check_interval", "volume check interval (substeps)", w.volumeCheckInterval, 1, 120, 1);
     slider("water_dt", "fixed step (s, only when fixed)", w.deltaTime, 1.0f / 240.0f, 1.0f / 15.0f, 0.0001f);
     slider("water_max_dt", "max delta (s)", w.maxDeltaTime, 1.0f / 240.0f, 1.0f / 10.0f, 0.0001f);
     slider("water_time_scale", "time scale (1 = real time)", w.timeScale, 0.05f, 3.0f, 0.01f);

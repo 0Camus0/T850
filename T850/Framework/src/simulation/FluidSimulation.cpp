@@ -8,12 +8,15 @@
 
 #include <glaze/glaze.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cstring>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 
 namespace t850 {
 
@@ -177,40 +180,39 @@ std::vector<uint32_t> FluidSimulation::BuildConstants(uint32_t iterationPacked, 
 
 namespace {
   // Mirrors `cbuffer ObjectConstants : register(b1)` in CS_FluidGradient3D and
-  // CS_FluidObstacleVelocity3D. W-22 replaced the single body description with a body
-  // list: the kernels no longer need a centre or radius, because the wall mask already
-  // encodes which body (2u + k) owns each cell. 4 DWORDs of header plus one velocity
-  // per body slot keeps the D3D12 root signature inside its 64-DWORD budget.
-  // The registry's constant_count for register b1 in those two kernels must stay
-  // equal to 4 + 4 * FluidSimulation::kMaxBodies.
+  // CS_FluidObstacleVelocity3D: just the body count. The wall mask encodes which body
+  // (2u + k) owns each cell, and the velocities come from BodyVelocity (t9), so the
+  // registry's constant_count for b1 in those two kernels is 4.
   struct ObjectConstantsBlob {
     uint32_t bodyCount;
     uint32_t pad0;
     uint32_t pad1;
     uint32_t pad2;
-    float bodyVelocity[FluidSimulation::kMaxBodies][4];
   };
-  static_assert(sizeof(ObjectConstantsBlob) ==
-                4u * (4u + 4u * FluidSimulation::kMaxBodies));
+  static_assert(sizeof(ObjectConstantsBlob) == 16u);
 }
 
 std::vector<uint32_t> FluidSimulation::BuildObjectConstants() const {
   ObjectConstantsBlob blob{};
   blob.bodyCount = static_cast<uint32_t>(m_bodies.size());
-  for (size_t i = 0; i < m_bodies.size() && i < kMaxBodies; ++i) {
-    const FluidSphere& body = m_bodies[i];
-    blob.bodyVelocity[i][0] = body.enabled ? body.vx : 0.0f;
-    blob.bodyVelocity[i][1] = body.enabled ? body.vy : 0.0f;
-    blob.bodyVelocity[i][2] = body.enabled ? body.vz : 0.0f;
-    blob.bodyVelocity[i][3] = 0.0f;
-  }
   std::vector<uint32_t> words(sizeof(blob) / sizeof(uint32_t));
   std::memcpy(words.data(), &blob, sizeof(blob));
   return words;
 }
 
+std::vector<float> FluidSimulation::BuildBodyVelocities() const {
+  std::vector<float> velocities(m_bodies.size() * 4u, 0.0f);
+  for (size_t i = 0; i < m_bodies.size(); ++i) {
+    const FluidSphere& body = m_bodies[i];
+    if (!body.enabled) continue;
+    velocities[i * 4u + 0u] = body.vx;
+    velocities[i * 4u + 1u] = body.vy;
+    velocities[i * 4u + 2u] = body.vz;
+  }
+  return velocities;
+}
+
 int FluidSimulation::AddBody(const FluidSphere& body) {
-  if (m_bodies.size() >= kMaxBodies) return -1;
   m_bodies.push_back(body);
   m_maskBodyValid = false;   // the new footprint has to be stamped
   return static_cast<int>(m_bodies.size() - 1);
@@ -454,12 +456,7 @@ bool FluidSimulation::BuildWallMask(BaseDriver* driver) {
   m_maskBodyCellCount = 0;
   m_maskBodyValid = false;
   m_maskBodyStampCount = 0;
-  for (uint32_t b = 0; b < kMaxBodies; ++b) {
-    for (int axis = 0; axis < 3; ++axis) {
-      m_maskBodyMin[b][axis] = -1;
-      m_maskBodyMax[b][axis] = -1;
-    }
-  }
+  m_maskBodyFootprints.clear();
 
   T8_LOG_INFO("[Fluid] Wall mask %ux%ux%u: %u solid of %u voxels (%.1f%% fluid)",
               width, height, depth, m_solidVoxelCount, voxelCount,
@@ -491,16 +488,9 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
   // W-22: every enabled body gets a cell AABB, and only those cells are re-stamped.
   // The authored mask is untouched everywhere else: the solver substeps up to a dozen
   // times per frame, so re-scanning the whole volume would cost 12x what it used to.
-  struct BodyFootprint {
-    int lo[3];
-    int hi[3];
-    bool valid;
-  };
-  BodyFootprint footprint[kMaxBodies];
+  std::vector<CellBox> footprint(m_bodies.size());
   uint32_t activeBodies = 0;
-  for (uint32_t b = 0; b < kMaxBodies; ++b) {
-    footprint[b].valid = false;
-    if (b >= m_bodies.size()) continue;
+  for (size_t b = 0; b < m_bodies.size(); ++b) {
     const FluidSphere& body = m_bodies[b];
     if (!body.enabled || body.radius <= 0.0f) continue;
     const float reach = body.radius + cell;   // one cell of margin
@@ -517,19 +507,17 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
   // Identical footprints and body count to the previous substep: the buffer already
   // matches. Comparing every body, not just a union AABB: two bodies moving in
   // opposite directions can leave the union unchanged while their footprints moved.
-  bool sameFootprints = m_maskBodyValid && m_maskBodyStampCount == activeBodies;
-  if (sameFootprints) {
-    for (uint32_t b = 0; b < kMaxBodies && sameFootprints; ++b) {
-      if (footprint[b].valid != (b < m_bodies.size() && m_bodies[b].enabled &&
-                                 m_bodies[b].radius > 0.0f))
-        { sameFootprints = false; break; }
-      if (!footprint[b].valid) continue;
-      for (int axis = 0; axis < 3; ++axis) {
-        if (footprint[b].lo[axis] != m_maskBodyMin[b][axis] ||
-            footprint[b].hi[axis] != m_maskBodyMax[b][axis]) {
-          sameFootprints = false;
-          break;
-        }
+  bool sameFootprints = m_maskBodyValid && m_maskBodyStampCount == activeBodies &&
+                        m_maskBodyFootprints.size() == footprint.size();
+  for (size_t b = 0; b < footprint.size() && sameFootprints; ++b) {
+    const CellBox& now = footprint[b];
+    const CellBox& before = m_maskBodyFootprints[b];
+    if (now.valid != before.valid) { sameFootprints = false; break; }
+    if (!now.valid) continue;
+    for (int axis = 0; axis < 3; ++axis) {
+      if (now.lo[axis] != before.lo[axis] || now.hi[axis] != before.hi[axis]) {
+        sameFootprints = false;
+        break;
       }
     }
   }
@@ -537,7 +525,7 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
 
   std::vector<uint32_t> mask = m_baseMask;
   uint32_t stamped = 0;
-  for (uint32_t b = 0; b < kMaxBodies; ++b) {
+  for (size_t b = 0; b < footprint.size(); ++b) {
     if (!footprint[b].valid) continue;
     const FluidSphere& body = m_bodies[b];
     // Body k is stamped as 2u + k. Static solids stay 1u, and every kernel keeps
@@ -545,7 +533,7 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
     // mask - 2u to look up that body's velocity. Cell centres, matching the convention
     // BuildWallMask() uses for the authored intrusions and the kernels use for their
     // stencil neighbours.
-    const uint32_t stamp = 2u + b;
+    const uint32_t stamp = 2u + static_cast<uint32_t>(b);
     const float radius2 = body.radius * body.radius;
     for (int k = footprint[b].lo[2]; k <= footprint[b].hi[2]; ++k) {
       const float pz = m_settings.basinMinZ + (k + 0.5f) * stepZ;
@@ -570,10 +558,6 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
         }
       }
     }
-    for (int axis = 0; axis < 3; ++axis) {
-      m_maskBodyMin[b][axis] = footprint[b].lo[axis];
-      m_maskBodyMax[b][axis] = footprint[b].hi[axis];
-    }
   }
 
   ComputeBufferDesc bufferDesc;
@@ -586,15 +570,9 @@ bool FluidSimulation::UpdateWallMaskForBody(BaseDriver* driver) {
     T8_LOG_ERROR("[Fluid] Cannot reallocate the wall mask for the moving bodies");
     return false;
   }
-  // Bodies that were disabled or removed leave stale footprints behind: clear them so
-  // the next comparison cannot match by accident.
-  for (uint32_t b = 0; b < kMaxBodies; ++b) {
-    if (footprint[b].valid) continue;
-    for (int axis = 0; axis < 3; ++axis) {
-      m_maskBodyMin[b][axis] = -1;
-      m_maskBodyMax[b][axis] = -1;
-    }
-  }
+  // Remember this substep's footprints; disabled or removed bodies are stored as
+  // invalid so the next comparison cannot match by accident.
+  m_maskBodyFootprints = std::move(footprint);
   m_maskBodyStampCount = activeBodies;
   m_maskBodyValid = true;
   m_maskBodyCellCount = stamped;
@@ -1066,11 +1044,8 @@ void FluidSimulation::AdvanceSphere(float dt) {
 
 void FluidSimulation::ResolveBodyContacts() {
   // Fixed i < j order and inverse-mass weighting: deterministic, so a spawnSeed gives
-  // the same run every time. 28 pairs at the cap; no broad phase needed.
-  for (size_t i = 0; i < m_bodies.size(); ++i) {
-    if (!m_bodies[i].enabled) continue;
-    for (size_t j = i + 1; j < m_bodies.size(); ++j) {
-      if (!m_bodies[j].enabled) continue;
+  // the same run every time.
+  auto resolvePair = [this](size_t i, size_t j) {
       FluidSphere& a = m_bodies[i];
       FluidSphere& b = m_bodies[j];
       const float dx = b.x - a.x;
@@ -1078,7 +1053,7 @@ void FluidSimulation::ResolveBodyContacts() {
       const float dz = b.z - a.z;
       const float sum = a.radius + b.radius;
       const float distSq = dx * dx + dy * dy + dz * dz;
-      if (distSq >= sum * sum || distSq <= 1e-12f) continue;
+      if (distSq >= sum * sum || distSq <= 1e-12f) return;
 
       const float dist = std::sqrt(distSq);
       const float nx = dx / dist, ny = dy / dist, nz = dz / dist;
@@ -1100,7 +1075,7 @@ void FluidSimulation::ResolveBodyContacts() {
 
       // Normal impulse, only when they are closing.
       const float rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny + (b.vz - a.vz) * nz;
-      if (rel >= 0.0f) continue;
+      if (rel >= 0.0f) return;
       const float restitution =
           (std::min)((std::max)(0.5f * (a.restitution + b.restitution), 0.0f), 0.99f);
       const float impulse = -(1.0f + restitution) * rel / invSum;
@@ -1110,7 +1085,58 @@ void FluidSimulation::ResolveBodyContacts() {
       b.vx += impulse * invB * nx;
       b.vy += impulse * invB * ny;
       b.vz += impulse * invB * nz;
+  };
+
+  // Small lists test every pair, exactly as before, so existing runs are unchanged.
+  constexpr size_t kBroadPhaseThreshold = 32;
+  if (m_bodies.size() <= kBroadPhaseThreshold) {
+    for (size_t i = 0; i < m_bodies.size(); ++i) {
+      if (!m_bodies[i].enabled) continue;
+      for (size_t j = i + 1; j < m_bodies.size(); ++j) {
+        if (m_bodies[j].enabled) resolvePair(i, j);
+      }
     }
+    return;
+  }
+
+  // Any number of bodies: a uniform grid as wide as the largest diameter puts every
+  // overlapping pair in the same or a neighbouring cell. Each body's candidates are
+  // resolved in ascending index, so the order stays deterministic.
+  float maxRadius = 0.0f;
+  for (const FluidSphere& body : m_bodies)
+    if (body.enabled) maxRadius = (std::max)(maxRadius, body.radius);
+  if (maxRadius <= 0.0f) return;
+  const float gridCell = 2.0f * maxRadius;
+  auto cellKey = [](int x, int y, int z) {
+    return (static_cast<int64_t>(x & 0x1FFFFF) << 42) |
+           (static_cast<int64_t>(y & 0x1FFFFF) << 21) |
+           static_cast<int64_t>(z & 0x1FFFFF);
+  };
+  std::vector<std::array<int, 3>> cellOf(m_bodies.size());
+  std::unordered_map<int64_t, std::vector<uint32_t>> grid;
+  grid.reserve(m_bodies.size());
+  for (size_t i = 0; i < m_bodies.size(); ++i) {
+    const FluidSphere& body = m_bodies[i];
+    if (!body.enabled) continue;
+    cellOf[i] = {static_cast<int>(std::floor(body.x / gridCell)),
+                 static_cast<int>(std::floor(body.y / gridCell)),
+                 static_cast<int>(std::floor(body.z / gridCell))};
+    grid[cellKey(cellOf[i][0], cellOf[i][1], cellOf[i][2])].push_back(static_cast<uint32_t>(i));
+  }
+  std::vector<uint32_t> candidates;
+  for (size_t i = 0; i < m_bodies.size(); ++i) {
+    if (!m_bodies[i].enabled) continue;
+    candidates.clear();
+    for (int oz = -1; oz <= 1; ++oz)
+      for (int oy = -1; oy <= 1; ++oy)
+        for (int ox = -1; ox <= 1; ++ox) {
+          const auto found = grid.find(cellKey(cellOf[i][0] + ox, cellOf[i][1] + oy, cellOf[i][2] + oz));
+          if (found == grid.end()) continue;
+          for (uint32_t j : found->second)
+            if (j > i) candidates.push_back(j);
+        }
+    std::sort(candidates.begin(), candidates.end());
+    for (uint32_t j : candidates) resolvePair(i, j);
   }
 }
 
@@ -1281,13 +1307,21 @@ bool FluidSimulation::StepObjectVelocity(BaseDriver* driver) {
   const uint32_t target = (m_current + 1) % kVelocityCount;
   const std::vector<uint32_t> constants = BuildConstants();
   const std::vector<uint32_t> objectConstants = BuildObjectConstants();
-  const std::vector<ComputeBindingDesc> bindings = {
+  const std::vector<float> bodyVelocities = BuildBodyVelocities();
+  std::vector<ComputeBindingDesc> bindings = {
     {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
     {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
     {ComputeBindingType::Constants32, 1, nullptr, objectConstants.data(), static_cast<uint32_t>(objectConstants.size())},
     {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
     {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[target].get()}
   };
+  ComputeBindingDesc velocityBinding;
+  velocityBinding.type = ComputeBindingType::ReadOnlyBuffer;
+  velocityBinding.shaderRegister = 9;
+  velocityBinding.inlineData = bodyVelocities.data();
+  velocityBinding.inlineBytes = static_cast<uint32_t>(bodyVelocities.size() * sizeof(float));
+  velocityBinding.inlineStride = 4u * sizeof(float);
+  bindings.push_back(velocityBinding);
   const uint32_t gx = (m_settings.width + m_objectVelocityPipeline->threadGroupSize[0] - 1) / m_objectVelocityPipeline->threadGroupSize[0];
   const uint32_t gy = (m_settings.height + m_objectVelocityPipeline->threadGroupSize[1] - 1) / m_objectVelocityPipeline->threadGroupSize[1];
   const uint32_t gz = (m_settings.depth + m_objectVelocityPipeline->threadGroupSize[2] - 1) / m_objectVelocityPipeline->threadGroupSize[2];
@@ -1301,8 +1335,10 @@ bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeli
                                      ComputeTexture3D* sampledA, ComputeTexture3D* sampledB,
                                      ComputeTexture3D* target, uint32_t iterationPacked,
                                      bool withAlpha, float paddingOverride,
-                                     const std::vector<uint32_t>* objectConstants) {
+                                     bool withBodies) {
   const std::vector<uint32_t> constants = BuildConstants(iterationPacked, paddingOverride);
+  const std::vector<uint32_t> objectConstants = withBodies ? BuildObjectConstants() : std::vector<uint32_t>();
+  const std::vector<float> bodyVelocities = withBodies ? BuildBodyVelocities() : std::vector<float>();
   std::vector<ComputeBindingDesc> bindings;
   bindings.push_back({ComputeBindingType::Constants32, 0, nullptr, constants.data(),
                       static_cast<uint32_t>(constants.size())});
@@ -1317,10 +1353,19 @@ bool FluidSimulation::DispatchVolume(BaseDriver* driver, ComputePipeline& pipeli
   if (withAlpha && m_alpha[m_alphaCurrent])
     bindings.push_back({ComputeBindingType::ReadOnlyTexture, 2, nullptr, nullptr, 0, nullptr,
                         m_alpha[m_alphaCurrent].get()});
-  // Only kernels that declare b1 (divergence, gradient) receive the body constants.
-  if (objectConstants)
-    bindings.push_back({ComputeBindingType::Constants32, 1, nullptr, objectConstants->data(),
-                        static_cast<uint32_t>(objectConstants->size())});
+  // Only the body kernels (gradient) declare b1 and t9: the body count and one
+  // velocity per body, the latter uploaded per dispatch so the count is unbounded.
+  if (withBodies) {
+    bindings.push_back({ComputeBindingType::Constants32, 1, nullptr, objectConstants.data(),
+                        static_cast<uint32_t>(objectConstants.size())});
+    ComputeBindingDesc velocityBinding;
+    velocityBinding.type = ComputeBindingType::ReadOnlyBuffer;
+    velocityBinding.shaderRegister = 9;
+    velocityBinding.inlineData = bodyVelocities.data();
+    velocityBinding.inlineBytes = static_cast<uint32_t>(bodyVelocities.size() * sizeof(float));
+    velocityBinding.inlineStride = 4u * sizeof(float);
+    bindings.push_back(velocityBinding);
+  }
 
   const uint32_t groupsX = (m_settings.width + pipeline.threadGroupSize[0] - 1) / pipeline.threadGroupSize[0];
   const uint32_t groupsY = (m_settings.height + pipeline.threadGroupSize[1] - 1) / pipeline.threadGroupSize[1];
@@ -1455,7 +1500,6 @@ bool FluidSimulation::StepInternal(BaseDriver* driver, bool writeSurface) {
     return false;
 
   // 3. Divergence, restricted to wet cells.
-  const std::vector<uint32_t> objectConstants = BuildObjectConstants();
   if (!DispatchVolume(driver, *m_divergencePipeline, m_velocity[m_current].get(), nullptr,
                       m_divergence.get(), 0, true))
     return false;
@@ -1481,7 +1525,7 @@ bool FluidSimulation::StepInternal(BaseDriver* driver, bool writeSurface) {
   const uint32_t projected = (m_current + 1) % kVelocityCount;
   if (!DispatchVolume(driver, *m_gradientPipeline, m_velocity[m_current].get(),
                       m_pressure[m_pressureCurrent].get(), m_velocity[projected].get(), 0, true,
-                      -1.0f, &objectConstants))
+                      -1.0f, true))
     return false;
   m_current = projected;
 
@@ -1639,10 +1683,9 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
     return true;
   }
   if (name == "gradient") {
-    const std::vector<uint32_t> objectConstants = BuildObjectConstants();
     if (!DispatchVolume(driver, *m_gradientPipeline, m_velocity[m_current].get(),
                         m_pressure[m_pressureCurrent].get(), m_velocity[next].get(), 0, true,
-                        -1.0f, &objectConstants))
+                        -1.0f, true))
       return false;
     m_current = next;
     return true;

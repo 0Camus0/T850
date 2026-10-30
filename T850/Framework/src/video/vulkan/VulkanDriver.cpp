@@ -1116,7 +1116,9 @@ namespace t850 {
     {
       VkBufferCreateInfo bufInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
       bufInfo.size = kCBRingBufferSize;
-      bufInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+      // STORAGE_BUFFER: compute dispatches bind per-dispatch inline data from this ring.
+      bufInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
       bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
       VmaAllocationCreateInfo allocCI = {};

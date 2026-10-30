@@ -477,7 +477,12 @@
           "type": "constants",
           "shader_register": 1,
           "binding_index": 6,
-          "constant_count": 36
+          "constant_count": 4
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 9,
+          "binding_index": 7
         }
       ]
     },
@@ -792,7 +797,7 @@
           "type": "constants",
           "shader_register": 1,
           "binding_index": 2,
-          "constant_count": 36
+          "constant_count": 4
         },
         {
           "type": "read_only_buffer",
@@ -805,6 +810,11 @@
           "binding_index": 4,
           "dimension": "3d",
           "storage_format": "rgba16float"
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 9,
+          "binding_index": 5
         }
       ]
     },

@@ -69,16 +69,19 @@ Texture3D<float4> AlphaIn : register(t2);
 #endif
 cbuffer ObjectConstants : register(b1)
 {
-    // W-22: a body list. The wall mask encodes which body owns a cell as 2u + k, so the
-    // kernels need no centre or radius - the stamp already carries the footprint - and
-    // only each body's velocity is needed here. 4 DWORDs of header plus 4 per body keeps
-    // the D3D12 root signature inside its 64-DWORD budget for kMaxBodies = 8.
+    // W-22: the wall mask encodes which body owns a cell as 2u + k, so only each body's
+    // velocity is needed here. It lives in BodyVelocity (t9), not in these constants, so
+    // the body count is not bounded by the D3D12 root-signature budget.
     uint BodyCount;
     uint ObjectPad0;
     uint ObjectPad1;
     uint ObjectPad2;
-    float4 BodyVelocity[8];
 };
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(7, 0)]]
+#endif
+StructuredBuffer<float4> BodyVelocity : register(t9);
 
 #define T8_LIQUID_THRESHOLD 0.5f
 

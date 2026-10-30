@@ -241,6 +241,8 @@ namespace t850 {
       D3DXTexture* texture = nullptr;
       D3D11ComputeTexture3D* texture3D = nullptr;
       Microsoft::WRL::ComPtr<ID3D11Buffer> constants;
+      Microsoft::WRL::ComPtr<ID3D11Buffer> inlineBuffer;
+      Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> inlineSrv;
     };
     std::unordered_set<uint32_t> constants, bufferSrvs, bufferUavs;
     std::unordered_set<uint32_t> textureSrvs, textureUavs, samplers;
@@ -293,8 +295,28 @@ namespace t850 {
         }
         case ComputeBindingType::ReadOnlyBuffer: {
           item.buffer = dynamic_cast<D3D11ComputeBuffer*>(binding.buffer);
-          if (!item.buffer || !item.buffer->srv || !pipeline->bufferSrvs.count(binding.shaderRegister) ||
+          if (!pipeline->bufferSrvs.count(binding.shaderRegister) ||
               !bufferSrvs.insert(binding.shaderRegister).second) return false;
+          if (item.buffer) {
+            if (!item.buffer->srv) return false;
+            break;
+          }
+          if (!binding.inlineData || !binding.inlineBytes || !binding.inlineStride) return false;
+          D3D11_BUFFER_DESC desc = {};
+          desc.ByteWidth = binding.inlineBytes;
+          desc.Usage = D3D11_USAGE_IMMUTABLE;
+          desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+          desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+          desc.StructureByteStride = binding.inlineStride;
+          D3D11_SUBRESOURCE_DATA data = {};
+          data.pSysMem = binding.inlineData;
+          if (FAILED(device->CreateBuffer(&desc, &data, &item.inlineBuffer))) return false;
+          D3D11_SHADER_RESOURCE_VIEW_DESC view = {};
+          view.Format = DXGI_FORMAT_UNKNOWN;
+          view.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+          view.Buffer.FirstElement = 0;
+          view.Buffer.NumElements = binding.inlineBytes / binding.inlineStride;
+          if (FAILED(device->CreateShaderResourceView(item.inlineBuffer.Get(), &view, &item.inlineSrv))) return false;
           break;
         }
         case ComputeBindingType::ReadWriteBuffer: {
@@ -356,7 +378,7 @@ namespace t850 {
           break;
         }
         case ComputeBindingType::ReadOnlyBuffer: {
-          ID3D11ShaderResourceView* raw = item.buffer->srv.Get();
+          ID3D11ShaderResourceView* raw = item.buffer ? item.buffer->srv.Get() : item.inlineSrv.Get();
           context->CSSetShaderResources(binding.shaderRegister, 1, &raw);
           break;
         }

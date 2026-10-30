@@ -8,14 +8,13 @@ The task catalogue is the source of truth for **what** each task is and how to p
 document is only about **order and session boundaries**, so each stage can be executed cold, in
 one context, without carrying the whole backlog.
 
-Stage 0 baseline: `01ccbd82`. Stages 0–4 and 3c are done and reviewed, plus the review fixes, the
-debug view and the W-15 fixes logged in section 4. **Next: Stage 4a (W-24 roof), 4b (W-23 textures),
-4c (W-22 more balls), then Stage 5a (W-02)**, starting from the tip of `backyard_scene`. Section 0 is
-the step-by-step brief.
+Stage 0 baseline: `01ccbd82`. Stages 0–4, 3c and 4a–4c are done, plus the review fixes, the debug
+view and the W-15 fixes logged in section 4. **Next: Stage 5a (W-02)**, starting from the tip of
+`backyard_scene`. Section 0 is the step-by-step brief.
 
 ---
 
-## 0. Next steps for the local agents (2026-10-29, after `aa1e9ee1`)
+## 0. Next steps for the local agents (2026-10-30, after `97009aef`)
 
 Start every session from the tip of `backyard_scene` and build:
 
@@ -40,6 +39,11 @@ stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` 
 - **Stage 4 (W-11)** — `5511e7e9`: `Scenes/BackyardWater.json`, three promoted solver values, strict
   key validation. Accepted; the review added the missing Android registration (`e974f4e5`).
 - Details of both, and of the review, are in section 4.
+- **Stages 4a–4c (W-24 roof, W-23 textures, W-22 more balls)** — `2114fa0e`, `507ef1a4`, `0a981b8b`.
+  Reviewer follow-ups: `9f6e7a2f` fixed the water drawn mirrored in Z (regenerate the GLBs, see
+  above), and `97009aef` removed the ball cap — any number of balls, a new inline-buffer compute
+  binding, and a **Spawn 10 balls** button (section 4, "No ball cap"). **Next is Step 4 (Stage 5a).**
+  Steps 1–3 below are kept for reference.
 
 The owner then asked for three things before the solver work resumes, in this order (one stage per
 session, smallest first). Full specifications are in remaining-work W-24, W-23 and W-22.
@@ -72,8 +76,8 @@ session, smallest first). Full specifications are in remaining-work W-24, W-23 a
 
 - The solver has one body. The design in W-22 stores the body index in the wall mask (`2u + k`;
   static solids stay `1u`; every reader only tests `!= 0u`), so the two body kernels look up
-  `BodyVelocity[mask − 2]` and `ObjectConstants` shrinks to a header plus one `float4` per body. That
-  keeps D3D12's 64-DWORD root signature at 62 with **8 bodies** (measured budget in W-22).
+  `BodyVelocity[mask − 2]`. *Done; since `97009aef` the velocities are a per-dispatch structured
+  buffer and there is no body cap — see W-22 "Follow-up fixes".*
 - Host: body list in `FluidSimulation` (body 0 stays the scripted ball so the self-tests and gates
   7/8 are untouched), sphere–sphere contact, multi-body stamping, fastest-body substeps, volume
   correction summed over bodies.
@@ -88,11 +92,12 @@ session, smallest first). Full specifications are in remaining-work W-24, W-23 a
 
 Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Before starting:
 
-- **Record the performance baseline first, in this session.** Vulkan on this machine currently
-  measures ≈ 176 fps at 720p, not the 313 in W-15; that drop is environmental (W-15 explains it).
-  Run `perf.ps1` on D3D12 and Vulkan before changing anything. 5a should *gain* frame rate — α,
-  pressure and divergence go from 8-byte RGBA16F texels to 4-byte R32F (W-15's P2) — so report
-  the delta against your own baseline, never against a number in these documents.
+- **Record the performance baseline first, in this session.** On 2026-10-30 this machine measures
+  D3D12 220 fps and Vulkan 315 fps at 720p with no spawned balls (the 2026-10-29 Vulkan drop was
+  environmental and is gone). Still run `perf.ps1` on D3D12 and Vulkan before changing anything. 5a
+  should *gain* frame rate — α, pressure and divergence go from 8-byte RGBA16F texels to 4-byte R32F
+  (W-15's P2) — so report the delta against your own baseline, never against a number in these
+  documents.
 - **Blast radius.** Five compute backends plus the registry, the reflection map and the kernels. The
   solver runs on D3D11, D3D12 and Vulkan; on GL and WebGPU it reports "Fluid solver unavailable" by
   design, so those two need the format mapped (or rejected with a clear message), not a working
@@ -178,7 +183,7 @@ command run, and anything you could not verify.
 | 4. Data-driven tunables | W-11 | M | **DONE** — `Scenes/BackyardWater.json` drives all 101 settable fields; three solver literals promoted; strict key validation. See Stage 4 |
 | 4a. House roof | W-24 | S | **DONE** — sign flipped, gables closed, 78 → 80 meshes, layout JSON unchanged |
 | 4b. Textured materials | W-23 | M | **DONE** — CC0 ambientCG textures with NormalGL, metric world-box UVs, JPEGs embedded; −5.5 % fps; layout unchanged |
-| 4c. Spawn more balls | W-22 | M–L | **DONE** — mask-encoded body index, 8 bodies, gate 9 multi-body PASS, GUI spawn/clear, −9.9 % fps with 7 balls |
+| 4c. Spawn more balls | W-22 | M–L | **DONE** — mask-encoded body index, gate 9 multi-body PASS, GUI spawn/clear. Review: Z-mirror fixed (`9f6e7a2f`), **cap removed** (`97009aef`, 100 balls tested) |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
@@ -1439,6 +1444,26 @@ Self-tests PASS on D3D12 and Vulkan (fluid meanSpeed 0.1083 / 0.1086, unchanged)
 five APIs; `backyard_layout.json` unchanged. Visual side effect: the tiling normal-map drift now runs
 the other way along Z in world space, because it is UV-driven; retune `normalDriftZ` /
 `normalDrift2Z` only if it looks wrong against the wind.
+
+### No ball cap (reviewer change `97009aef`, 2026-10-30)
+
+The owner asked for any number of balls. The 8-body cap came from D3D12 root constants (64 DWORDs
+per root signature). Per-body velocities now reach `CS_FluidGradient3D` and
+`CS_FluidObstacleVelocity3D` as `StructuredBuffer<float4> BodyVelocity` (t9), uploaded per dispatch
+through a new engine feature: a `ReadOnlyBuffer` compute binding with inline data (D3D12 upload
+ring as a root SRV, Vulkan CB ring, D3D11 immutable structured buffer). `ObjectConstants` is a
+4-DWORD header. `kMaxBodies` and `spawnMaxBalls` are gone. Contacts keep the exact all-pairs loop up
+to 32 bodies and use a deterministic uniform-grid broad phase above that. A crowded spawn stacks the
+ball above whatever it would touch instead of failing. New **Spawn 10 balls** button.
+
+Measured: seeded 4-ball frame 600 byte-identical to the previous build; 100 balls 0 errors on
+D3D12, Vulkan and D3D11, all in the pool; self-tests unchanged (gate 9 included); scene 7 0 errors
+on five APIs. fps at 720p, same session: D3D12 220 / 199 / 141 and Vulkan 315 / 300 / 222 for 0 / 7 /
+100 balls. The slope is per-ball draws plus the whole-mask re-upload on footprint changes (W-05).
+
+**Rule for later stages.** For small per-dispatch arrays (body lists, per-object parameters) use
+the inline `ReadOnlyBuffer` binding, not a bigger root-constant block: D3D12 shares 64 DWORDs across
+the whole root signature. Test spawn changes with `--backyard-spawn 100` as well as a few balls.
 
 ### Stage 5a — W-02
 

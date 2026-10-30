@@ -31,11 +31,11 @@ task W-16 updates them. The order in which the tasks are executed is in
 | Tooling: fluid debug view | Done (review) | `4d21e836`, `93dff3d9`, `5d640c2e` | Wireframe, voxel and whole-volume velocity overlays in the ImGui panel; D3D12 upload-ring crash fixed (per-layer caps); bulk-water α statistic; see 4.5 |
 | W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked |
 | W-11 items 1, 2, 4: JSON tunables, three solver values, comment | **Done** (Stage 4) | `5511e7e9` + `e974f4e5` | Accepted. `Scenes/BackyardWater.json` drives 101 settable keys; strict key validation; `alphaCompression`, `maxSubstepDt` and the volume-check interval are tunables with GUI sliders. Review added the missing Android registration of `BackyardWaterJson.cpp` |
-| W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p on 2026-10-28. **On 2026-10-29 Vulkan measures 172–177 fps at every commit back to `3a371903`** — environmental, see W-15; P1–P9 open |
+| W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p on 2026-10-28. A 172–177 fps Vulkan reading on 2026-10-29 was environmental: on 2026-10-30 Vulkan measures **315 fps** again (D3D12 220); P1–P9 open |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
 | W-10 Water invisible to depth post effects | Done, **redesigned in review** | `96d84638` + `47500166` | The extra pass duplicated `Deferred:DEPTH`; removed. CoC now uses the nearer depth; see W-10 |
 | W-21 Vulkan fluid self-test fails inside scene 7 | **Done** (Stage 3c) | `5798477c` | Accepted. Root cause was uninitialised volume memory, not Vulkan frame state; `TryInitialize` now clears; 6/6 PASS scene 7 Vulkan |
-| W-22 Spawn more balls (random place, size, weight) | **Open** (requested 2026-10-29) | — | Stage 4c; one body today, the solver needs a body list |
+| W-22 Spawn more balls (random place, size, weight) | **Done**, uncapped in review | `0a981b8b` + `9f6e7a2f` + `97009aef` | Any number of balls (100 tested on D3D12/Vulkan/D3D11); water Z-mirror fixed; see W-22 |
 | W-23 Textured materials with normal maps | **Open** (requested 2026-10-29) | — | Stage 4b; every mesh is a flat colour |
 | W-24 House roof is upside down | **Open** (found 2026-10-29) | — | Stage 4a; sign error in `build_backyard.py` |
 | All others | Open | — | — |
@@ -872,6 +872,9 @@ background load. Not ruled out: the machine has not rebooted since 2026-10-12, a
 logged an error (event 153) at 2026-10-28 21:31 during Thunderbolt/display changes, two hours after
 the 313 fps run. Re-measure after a reboot before trusting any Vulkan figure.
 
+**Resolved 2026-10-30:** the same `perf.ps1` run measures Vulkan **315 fps** and D3D12 **220 fps** at
+HEAD (`97009aef`, 0 spawned balls), so the drop was the machine state, not the code.
+
 **Rule for every performance claim:** never compare against a number in this document. Measure the
 parent commit and the change in the same session (`backyard-diag\bisect_perf.ps1 -Commit <sha>
 -Apis vulkan,d3d12 -Restore` builds the old tree, measures with `perf.ps1` and restores HEAD).
@@ -1184,7 +1187,8 @@ D3D12 ("passed N bindings, pipeline expects M") — R2. A stale PCH after editin
 7 and 8 guard it.
 
 **Later (with W-05).** When the body becomes analytic instead of stamped, the list moves to a
-structured buffer updated through a new upload API, and the 8-body cap goes away.
+structured buffer updated through a new upload API, and the 8-body cap goes away. *(Done early, in
+`97009aef` — see "Uncapped" below.)*
 
 **Outcome (Stage 4c) — DONE.** Mask `2u + k`, `ObjectConstants` 12 → 36 DWORDs (registry updated in
 the same commit), `kMaxBodies = 8`, body list with contact resolution, per-body stamping with a
@@ -1199,6 +1203,46 @@ combinations 0 errors; frame-300 dump shows the balls at different sizes and dep
 Not done from the spec: the optional per-instance tint (item 6), and the "submerged fraction ≈
 density" and "body voxels count" acceptance lines were not measured explicitly — the gate 9 and fps
 numbers are the evidence recorded here.
+
+**Follow-up fixes by the reviewer (2026-10-30).**
+
+* `9f6e7a2f` — **balls and their ripples were mirrored in Z.** Not a body bug: the water mesh's UV
+  ran opposite to world Z, so the water drew the solver mirrored about the pool's centre line, where
+  the scripted ball drops. Fixed in the generator; details in the staged plan, section 4, "Water
+  mirrored in Z".
+* `97009aef` — **no ball cap.** The owner asked for any number of balls.
+  * GPU: per-body velocities moved out of `ObjectConstants` into `StructuredBuffer<float4>
+    BodyVelocity : register(t9)` in `CS_FluidGradient3D` and `CS_FluidObstacleVelocity3D` (Vulkan
+    bindings 7 and 5). `ObjectConstants` (b1) is now a 4-DWORD header holding `BodyCount`. Registry:
+    b1 `constant_count` 36 → 4, plus a `read_only_buffer` at t9. The D3D12 root signature no longer
+    grows with the body count.
+  * Engine: a `ReadOnlyBuffer` compute binding may carry **inline data** instead of a persistent
+    buffer (`ComputeBindingDesc::inlineData / inlineBytes / inlineStride`). The backend uploads it for
+    that dispatch only: D3D12 from the per-frame upload ring as a root SRV (upload-heap memory is
+    `GENERIC_READ`); Vulkan from the CB ring, which now also has `STORAGE_BUFFER` usage; D3D11 as an
+    immutable structured buffer + SRV (the same per-dispatch pattern its constants use). GL and
+    WebGPU reject a null buffer, as before; the solver does not run there. Use this for any small
+    per-dispatch array instead of growing a root-constant block.
+  * Host: `kMaxBodies` is gone; the footprint cache is a vector. `ResolveBodyContacts` keeps the
+    exact all-pairs loop up to 32 bodies, so existing runs are unchanged. Above 32 it uses a
+    uniform-grid broad phase (cell = largest diameter, candidates in ascending index, so it stays
+    deterministic).
+  * Scene: `spawnMaxBalls` removed (tunable, meta 109 → 108 keys, JSON, GUI). `--backyard-spawn N` is
+    no longer clamped. New **Spawn 10 balls** button. When no free spot is found after 32 tries, the
+    ball is dropped from above whatever it would touch instead of the spawn failing.
+  * Measured: seeded 4-ball frame 600 **byte-identical** to the previous build; **100 balls (101
+    bodies)** run 1200 frames with 0 errors on D3D12, Vulkan and D3D11, all landing in the pool.
+    Self-tests PASS on D3D12 and Vulkan with unchanged numbers, gate 9 included. Scene 7 logs 0
+    errors on all five APIs; T8ditor builds. fps at 720p, same session (`perf.ps1`):
+
+    | Spawned balls | D3D12 | Vulkan |
+    |---|---|---|
+    | 0 | 220 | 315 |
+    | 7 | 199 | 300 |
+    | 100 | 141 | 222 |
+
+    The cost is per-ball draws plus the whole wall-mask re-upload on every footprint change, which is
+    exactly W-05's target.
 
 ---
 

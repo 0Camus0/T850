@@ -884,6 +884,42 @@ parent commit and the change in the same session (`backyard-diag\bisect_perf.ps1
 D3D12 and Vulkan; `--backyard-selftest` and `--fluid-selftest` PASS on both; the scene metrics in
 2.4 unchanged.
 
+**Profiling pass 2026-10-30 (reviewer, `c911381a`): three CPU–GPU stalls removed.** Measured with
+the engine's runtime telemetry, not FPS alone: `backyard-diag\telemetry.ps1` runs the scene
+`--unattended` at log level `error` (the owner's setting; `perf.ps1`'s `info` level adds a
+60-frame readback probe) and reports per-frame medians of `scene.update` (solver recording),
+`frame.draw`, `gpu.gpu_wait` (CPU blocked on the GPU), plus mean fps, p99 and spike count. Median
+fps alone hid the periodic stalls.
+
+| 1280×720, 0 balls, same session | D3D12 mean fps (p99) | Vulkan mean fps (p99) |
+|---|---|---|
+| Before | 222 (8.8 ms), 1 spike | 322 (10.9 ms), 45 spikes / 600 frames |
+| After `c911381a` | 292–305 (4.4 ms), 0 spikes | 344–361 (3.7–4.0 ms), 0 spikes |
+
+1. **D3D12 `UpdateFloatData` waited on the GPU** (new allocator, list, fence and event per call,
+   then a blocking wait). The tiled deferred-light pass uploads two float textures per frame, so
+   3.1 ms of every D3D12 frame was this wait (`render.pass.Deferred Light Volumes` 3.11 → 0.15 ms).
+   Inside a frame the copy is now staged in the per-frame ring and recorded in the frame's command
+   list, like Vulkan. Same-API A/B on a deterministic DayScene frame: byte-identical. Engine-wide:
+   every scene with point lights on D3D12 benefits.
+2. **P1 done differently: the volume correction never reads back.** `CS_FluidVolumeReduce3D` sums
+   total, interface headroom and interface alpha on the GPU (fixed-point atomics, two slots), and
+   `CS_FluidVolumeCorrect3D` derives the deficit and its guards itself. The old full-volume readback
+   stalled one frame in 15 (10–15 ms). Mass gate unchanged.
+3. **P6 done: the wall mask is restamped on the GPU.** A persistent read-write mask is rewritten by
+   `CS_FluidStampBodies3D` from a static base mask plus an inline body list whenever a footprint
+   changes; the old path re-created the buffer through a blocking upload (~10 ms). Gate 9
+   identical. The scene's 600-frame timing line also no longer reads the volume back unless info
+   logging is on.
+
+**Where the frame goes now.** Both APIs are GPU-bound (`gpu.gpu_wait` 1.0–1.7 ms). The solver's
+≈127 small dependent dispatches dominate: removing 60 pressure dispatches (60 → 30 iterations)
+saved 0.56 ms (D3D12) and 0.70 ms (Vulkan), ≈9–12 µs of GPU time per dispatch on a 90k-cell grid,
+so the cost is per-dispatch fill and drain, not arithmetic. Batching D3D12 barriers (part of P3)
+measured no gain and was reverted. The next lever is P2 (in-place red-black on R32F after W-02,
+dispatching only the active colour, then fewer or fused sweeps). Vulkan still spends ≈1.5 ms of
+CPU recording those dispatches (P4).
+
 ---
 
 ### W-16 — The implementation record is out of date (P2, S, suggested: either)

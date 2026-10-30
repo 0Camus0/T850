@@ -770,6 +770,75 @@
           "binding_index": 3,
           "dimension": "3d",
           "storage_format": "rgba16float"
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 4
+        }
+      ]
+    },
+    {
+      "id": "fluid_stamp_bodies",
+      "source": "CS_FluidStampBodies3D.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 20
+        },
+        {
+          "type": "constants",
+          "shader_register": 1,
+          "binding_index": 1,
+          "constant_count": 8
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 2
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 3
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 4
+        }
+      ]
+    },
+    {
+      "id": "fluid_volume_reduce",
+      "source": "CS_FluidVolumeReduce3D.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 20
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 0,
+          "binding_index": 1,
+          "dimension": "3d"
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 2
         }
       ]
     },

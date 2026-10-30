@@ -1737,6 +1737,23 @@ namespace t850 {
     return gpuAddr;
   }
 
+  bool D3D12Driver::AllocateRingUpload(UINT64 size, UINT64 alignment, ID3D12Resource*& resource,
+                                       UINT64& offset, void*& mapped) {
+    if (!m_frameStarted || size == 0 || alignment == 0) return false;
+    const UINT64 start = (static_cast<UINT64>(m_cbRingOffset) + alignment - 1) / alignment * alignment;
+    // Keep the ring's 256-byte granularity for the CB allocations that follow.
+    const UINT64 end = (start + size + 255) & ~static_cast<UINT64>(255);
+    if (end > kCBRingBufferSize) return false;
+    resource = m_cbRingBuffers[m_currentBackBuffer].Get();
+    offset = start;
+    mapped = static_cast<unsigned char*>(m_cbRingMapped[m_currentBackBuffer]) + start;
+    m_cbRingOffset = static_cast<UINT>(end);
+    RuntimeTelemetry::RecordActiveStaging(size);
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
+    return true;
+  }
+
   D3D12_GPU_DESCRIPTOR_HANDLE D3D12Driver::AllocateDynamicCBV(const void* data, UINT dataSize) {
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = AllocateCBData(data, dataSize);
 

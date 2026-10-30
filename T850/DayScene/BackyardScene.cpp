@@ -1029,7 +1029,9 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
       reportedSim += fluidDelta;
       if (++reportFrames == 600) {
         float volume = 0.0f;
-        if (m_fluid.MeasureVolumeFraction(pFramework->pVideoDriver, volume)) {
+        // The measurement is a full readback stall, so only pay it when the line is logged.
+        if (t850::Log::GetMaxLevel() >= t850::Log::LVL_INFO &&
+            m_fluid.MeasureVolumeFraction(pFramework->pVideoDriver, volume)) {
           if (initialVolume < 0.0f) initialVolume = volume;
           T8_LOG_INFO("[Backyard][timing] sim/wall ratio = %.2f (%d frames); alpha volume = %.0f cells (%+.3f%% vs start)",
                       reportedWall > 0.0f ? reportedSim / reportedWall : 0.0f,

@@ -49,19 +49,19 @@ cbuffer FluidConstants : register(b0)
 #endif
 Texture3D<float4> AlphaIn : register(t0);
 
-// (InterfaceHeadroom, VolumeDelta, InterfaceAlpha, padding). Passed as constants
-// because ComputeBuffer has no update path.
+// (InterfaceHeadroom, VolumeDelta, InterfaceAlpha) come from CS_FluidVolumeReduce3D's
+// sums, read on the GPU, so the correction never reads the volume back to the CPU.
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(2, 0)]]
 #endif
 cbuffer CorrectionConstants : register(b1)
 {
-    float InterfaceHeadroom;
-    // The delta to distribute, in cells. Negative means removing water.
-    float VolumeDelta;
-    // Summed alpha over the interface band, used to weight removal.
-    float InterfaceAlpha;
-    float CorrectionPadding;
+    // Target total alpha in cells: seed volume minus what the bodies displace.
+    float ReferenceVolume;
+    // Sum slot written by this round's reduction; the other slot is cleared here.
+    uint SumSlot;
+    float CorrectionPad0;
+    float CorrectionPad1;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -73,12 +73,42 @@ cbuffer CorrectionConstants : register(b1)
 #endif
 RWTexture3D<float4> AlphaOut : register(u0);
 
+// Fixed-point sums from CS_FluidVolumeReduce3D (whole cells, 1/65536 fractions).
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(4, 0)]]
+#endif
+RWStructuredBuffer<uint4> Sums : register(u1);
+
+float Unsplit(uint whole, uint frac)
+{
+    return (float)whole + (float)frac * (1.0f / 65536.0f);
+}
+
 [numthreads(4, 4, 4)]
 void CS(uint3 id : SV_DispatchThreadID)
 {
+    const uint entry = (SumSlot & 1u) * 2u;
+    const uint4 sumsA = Sums[entry];
+    const uint4 sumsB = Sums[entry + 1u];
+    // The next round accumulates into the other slot, so it must start from zero.
+    if (all(id == uint3(0u, 0u, 0u))) {
+        const uint other = ((SumSlot + 1u) & 1u) * 2u;
+        Sums[other] = uint4(0u, 0u, 0u, 0u);
+        Sums[other + 1u] = uint4(0u, 0u, 0u, 0u);
+    }
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
     const float alpha = saturate(AlphaIn.Load(int4(int3(id), 0)).x);
+
+    const float total = Unsplit(sumsA.x, sumsA.y);
+    const float InterfaceHeadroom = Unsplit(sumsA.z, sumsA.w);
+    const float InterfaceAlpha = Unsplit(sumsB.x, sumsB.y);
+    // Within noise, or no interface room to put water / water to take: leave it alone.
+    float VolumeDelta = ReferenceVolume - total;
+    if (abs(VolumeDelta) <= 0.5f ||
+        (VolumeDelta > 0.0f && InterfaceHeadroom <= 1.0f) ||
+        (VolumeDelta < 0.0f && InterfaceAlpha <= 1.0f))
+        VolumeDelta = 0.0f;
 
     // Only liquid cells with room are touched. Lost water comes from clipped
     // bulk cells, and depositing into air-classified cells would float it.

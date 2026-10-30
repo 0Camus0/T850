@@ -145,6 +145,11 @@ namespace t850 {
     // Per-frame ring allocator for vertex/index data (16-byte aligned)
     D3D12_GPU_VIRTUAL_ADDRESS AllocateRingData(const void* data, UINT dataSize);
 
+    // Upload space in the per-frame ring for a copy recorded in this frame's command list.
+    // Returns false when no frame is recording or the ring is full (callers fall back).
+    bool AllocateRingUpload(UINT64 size, UINT64 alignment, ID3D12Resource*& resource,
+                            UINT64& offset, void*& mapped);
+
     // Per-frame dynamic CBV descriptor: copies data to ring buffer, creates CBV, returns GPU handle
     D3D12_GPU_DESCRIPTOR_HANDLE AllocateDynamicCBV(const void* data, UINT dataSize);
 

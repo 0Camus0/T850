@@ -28,6 +28,11 @@ If the build fails with C2011 `align_val_t` after a project or header change, de
 `Lib\VStuff\Framework\Release\x64\*.pch` and rebuild. Shader and JSON edits need no rebuild: assets
 load from the source tree. Scene ids: 0 Sandbox, 1 DayScene, 6 Minecraft, 7 Backyard.
 
+**Regenerate the Backyard GLBs after pulling `9f6e7a2f`** (Blender command in the implementation
+record 3.1). That commit fixes the water mesh's UV, which ran opposite to world Z and drew every
+ripple and ball footprint mirrored across the pool (details in section 4, "Water mirrored in Z"). A
+stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` at startup.
+
 ### Done since the previous brief
 
 - **Stage 3c (W-21)** — `5798477c`: the failure was uninitialised volume memory;
@@ -111,6 +116,9 @@ diluted after the impact) and confirm the first hypothesis before building on it
 
 ### Standing rules from the reviews
 
+- **Test spatial changes off-centre.** The scripted ball drops on the pool's centre line, which is
+  the axis of any mirror, so a flipped axis looks correct with it. Use `--backyard-spawn N` with a
+  fixed `spawnSeed` and check that each ball's ripple is centred on the ball.
 - **Self-tests:** `--fluid-selftest`, `--backyard-selftest` and every scene run with `--scene 7` (W-21
   is fixed; the scene-0 exception is gone).
 - **Performance claims are same-session A/B only.** Measure the parent commit and the change in one
@@ -1405,6 +1413,32 @@ same file — worth knowing before "syncing" a JSON twice.
   velocity (no slip-through), (2) the stationary ball behaves exactly like the pre-change single-body
   path, (3) mask values around both read `2 + k`. Qwen adds: no sphere centre may violate the wall
   by more than one voxel over a long run.
+
+### Water mirrored in Z (reviewer fix `9f6e7a2f`, 2026-10-30)
+
+**Symptom.** Spawned balls and their ripples/footprints were on different sides of the pool, as if
+flipped on one axis.
+
+**Cause.** The water mesh's UV `v` ran opposite to world Z. `build_water_surface()` authored
+`v = j/nz`, and the Blender glTF exporter writes `V = 1 − v`, so the GLB had `v = 0` at z = −4.5 and
+`v = 1` at z = −9.0 (checked by reading the file). The solver's surface texture has row 0 at
+`basinMinZ` = −9.0. Every consumer that maps mesh UV to solver rows — vertex displacement in
+`VS_Mesh`, the normal/foam/floor-depth lookups in `FS_Mesh`, the debug wireframe — drew the solver
+mirrored about z = −6.75. The solver and the rendered balls use world coordinates and were right.
+The scripted ball drops at z = −6.75, exactly on the mirror line, so the bug was invisible until
+W-22 spawned balls off-centre. Because the debug wireframe reads the same UVs, it looked consistent
+with the water and could not reveal it.
+
+**Fix.** Author `v = 1 − j/nz` in the generator (so exported V grows with +Z); regenerate.
+`BackyardScene::WaterUVMatchesSolver` checks the orientation when the water binds to the solver and
+logs an error naming the generator for a mirrored mesh (proved to fire on the old GLB).
+
+**Measured.** Seed 12345, 4 spawned balls, frame 600, D3D12: before, ball 2 (z = −8.49, near the
+camera) had its ring drawn near z = −5.0 by the steps; after, every ring is centred on its ball.
+Self-tests PASS on D3D12 and Vulkan (fluid meanSpeed 0.1083 / 0.1086, unchanged); scene 7 0 errors on
+five APIs; `backyard_layout.json` unchanged. Visual side effect: the tiling normal-map drift now runs
+the other way along Z in world space, because it is UV-driven; retune `normalDriftZ` /
+`normalDrift2Z` only if it looks wrong against the wind.
 
 ### Stage 5a — W-02
 

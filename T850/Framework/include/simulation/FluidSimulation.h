@@ -93,6 +93,9 @@ namespace t850 {
     // Heave damping ratio standing in for the energy a bobbing body radiates as waves.
     float heaveDamping = 0.15f;
     bool enabled = false;
+    // Held by the user (mouse drag): the caller sets the velocity, gravity, buoyancy and
+    // drag are skipped, and other bodies are pushed away without pushing back.
+    bool held = false;
     // Submerged depth below the water plane, used to damp the fall and to decide
     // when it has settled on the floor.
     float submerged = 0.0f;
@@ -200,6 +203,7 @@ namespace t850 {
     FluidSphere& DroppedSphere() { return m_bodies[0]; }
     uint32_t BodyCount() const { return static_cast<uint32_t>(m_bodies.size()); }
     const std::vector<FluidSphere>& Bodies() const { return m_bodies; }
+    FluidSphere* Body(uint32_t index) { return index < m_bodies.size() ? &m_bodies[index] : nullptr; }
     // Appends a body and returns its index.
     int AddBody(const FluidSphere& body);
     // Removes bodies [first, end). first is clamped so body 0 can never be removed.

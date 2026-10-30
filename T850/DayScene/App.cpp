@@ -177,6 +177,9 @@ int main(int arg,char ** args) try {
       backyardSpawnOnStart = (std::max)(std::stoi(args[++i]), 0);
       BackyardScene::SetSpawnOnStart(backyardSpawnOnStart);
     }
+    if (std::string_view(args[i]) == "--backyard-pick-test") {
+      BackyardScene::SetPickTest(true);
+    }
     if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
       webgpuRecoverySelfTest = true;
     }

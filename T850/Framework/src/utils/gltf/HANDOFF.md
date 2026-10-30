@@ -275,6 +275,12 @@ patches we want, re-vendor wholesale.
      the per-corner output on uniformly-mapped meshes.
   3. Returns `false` on degenerate input — caller falls back to the
      naive accumulator so a normal-mapped mesh always gets *something*.
+  4. **Handedness (`c4c680dc`).** glTF V runs down the image while glTF
+     normal maps put +Y up, so MikkTSpace fed raw glTF UVs returns the
+     opposite bitangent sign. The stored `w` is `-sign` (what Blender
+     exports); before this fix normal-map bumps were inverted on every
+     mesh without a `TANGENT` attribute. The naive fallback now takes the
+     normals and applies the same rule.
 
 **Caller change** (also `GLTFMesh.cpp`):
 ```cpp
@@ -282,7 +288,7 @@ if (!hasTangent && hasUV0 && hasNormal) {
   if (GenerateMikkTSpaceTangents(pos, nrm, uv0, tris, tan)) {
     hasTangent = true;
   } else {
-    GenerateNaiveTangents(pos, uv0, tris, tan);
+    GenerateNaiveTangents(pos, nrm, uv0, tris, tan);
     hasTangent = (tan.size() == N * 4);
   }
 }

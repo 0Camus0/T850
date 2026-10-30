@@ -148,9 +148,15 @@ rate than the texture for the interpolation to be visible.
 python T850/scripts/models/build_ball.py
 ```
 
-Produces `Backyard_Ball.glb`: a unit-radius UV sphere (48 segments × 32 rings, 1490 verts,
-2976 tris) at the origin with an identity transform, base colour dark red, roughness 0.35.
-Radius and placement come from the scene, not the asset.
+Produces `Backyard_Ball.glb`: a unit-radius **spherified cube** (16×16 quads per face, 1734
+verts, 3072 tris) at the origin with an identity transform. Each face carries a full 0..1 UV
+square; the balls never rotate and the camera looks down, so a UV sphere's pinched pole would
+sit where the viewer looks. The material declares base colour, normal and metallic-roughness
+maps as embedded 1×1 PNGs (the old red rubber look) with every factor 1.0. Declaring them makes
+the loader build the textured permutation and MikkTSpace tangents; at runtime each ball gets a
+random palette set through `PrimitiveInst::InstanceMaterialMaps` (W-25,
+`Scenes/BackyardBallMaterials.json`, textures `Textures/Ball/<id>/` from
+`scripts/DownloadTextures.ps1`). Radius and placement come from the scene, not the asset.
 
 ### 3.4 Water normal map generator
 
@@ -202,6 +208,8 @@ class ComputeTexture3D { public: virtual ~ComputeTexture3D() = default;
 
 // ComputeBindingDesc gained:
 ComputeTexture3D* texture3D = nullptr;
+// ...and later (97009aef) per-dispatch data for a ReadOnlyBuffer without a persistent buffer:
+const void* inlineData = nullptr; uint32_t inlineBytes = 0, inlineStride = 0;
 
 virtual bool SupportsComputeTextures3D() const { return false; }
 virtual std::unique_ptr<ComputeTexture3D> CreateComputeTexture3D(
@@ -249,7 +257,17 @@ easy to get this wrong:
   **silently reject the pipeline** (no error logged) — this cost significant debugging time.
 - `constant_count: 16` for the 64-byte `FluidConstants` (4×uint + 12×float).
 
-The 16 fluid kernels:
+The fluid kernels below are the original set. Later additions, each with its exact binding list
+in `compute_kernels.json`: `fluid_extrapolate` (air-velocity extrapolation), `fluid_surface_to_buffer`
+(surface readback), `fluid_volume_reduce` (`CS_FluidVolumeReduce3D`: GPU sums for the volume
+correction, §10), and `fluid_stamp_bodies` (`CS_FluidStampBodies3D`: bodies stamped into the
+wall mask on the GPU, §8.3). `fluid_volume_correct` now also binds the sums buffer
+(`read_write_buffer:1@4`), and the body kernels bind `BodyVelocity` at t9 as an inline buffer.
+`FluidConstants` is now 20 DWORDs (`constant_count: 20`, open-ceiling fields added).
+`fluid_sphere` (`CS_FluidSphere3D`) is no longer registered or loaded; the body is a wall-mask
+solid plus `CS_FluidObstacleVelocity3D`.
+
+The 16 original fluid kernels:
 
 | id | source | bindings (type:register@binding_index) |
 |---|---|---|
@@ -322,9 +340,9 @@ StepInternal():                    // m_settings.deltaTime == subDt
   gradient subtraction + no-penetration clamp
   advect alpha (flux form, conservative)
   clear body footprint (via the wall mask, not a separate pass)
-  every 15 frames: CorrectVolumeFraction
-  derive 2D surface texture (ping-pong)
-  copy surface to the stable output target
+  last substep only: derive 2D surface texture (ping-pong), copy to the stable output target
+after the substeps, every volumeCheckInterval (15) frames: CorrectVolumeFraction
+  (two dispatches, no readback: §10)
 ```
 
 The ordering is load-bearing:
@@ -371,6 +389,12 @@ zeroed (see §7 bugs).
 **`CS_FluidAlphaAdvect3D`** — flux-form conservative transport. See §6.5.
 
 **`CS_FluidVolumeCorrect3D`** — global mass correction. See §10.
+
+**`CS_FluidVolumeReduce3D`** — sums total α, interface headroom and interface α for the
+correction, on the GPU. See §10.
+
+**`CS_FluidStampBodies3D`** — rewrites the wall mask from the static base mask plus the body
+list. See §8.3.
 
 ### 6.4 Pressure solve maths
 
@@ -530,16 +554,32 @@ real values. A `T8_LOG_DEBUG` line reports `substeps`, `bodySpeed` and `travel`.
 
 ### 8.3 Wall mask stamping (`UpdateWallMaskForBody`)
 
-The authored mask is kept on the CPU (`m_baseMask`). The body is stamped into a copy:
+The authored mask lives in two places: `m_baseMask` on the CPU and `m_baseMaskBuffer` on the
+GPU (static). The live mask `m_wallMask` is a persistent **read-write** buffer that every
+kernel binds read-only at t8. Every body is stamped as `2u + k` (static solids stay 1), so the
+body kernels can look up that body's velocity:
 
-- Only cells inside the body's **bounding box** are scanned — not the whole 110,000-voxel
-  volume. This matters because substepping can call it 12× per frame.
-- The re-upload is **skipped entirely** when the body's quantised cell footprint is unchanged
-  (`m_maskBodyMin/Max` + `m_maskBodyValid`).
-- Uploading the mask is ~440 kB; acceptable because it is only on footprint change.
+- Each substep computes every enabled body's cell footprint. When all footprints and the body
+  count match the previous substep, nothing happens.
+- Otherwise `CS_FluidStampBodies3D` rewrites the whole mask in one dispatch from the base mask
+  plus an inline list of `(x, y, z, radius)` per body: cell centre inside a sphere → `2 + k`,
+  later bodies win on overlap, authored solids untouched (the same rules as the CPU stamp).
+- The CPU stamp (copy the base mask, stamp, re-create the buffer) is kept only as a fallback
+  when the GPU path is unavailable. It used to run on every footprint change and its blocking
+  re-upload stalled the frame for ~10 ms while a ball moved (W-15 P6, fixed in `c911381a`).
 
 Making the body solid in the mask is what clears its footprint from the alpha field: the
 advection kernel writes solid cells to zero, so no separate removal pass is needed.
+
+### 8.3.1 Picking and dragging a body
+
+Ctrl + left click picks a ball (see `documentation/input/camera-and-controls.md`, "Backyard").
+`FluidSphere::held = true` makes `AdvanceOneSphere` skip gravity, buoyancy, heave damping and
+drag, so the velocity the scene sets each frame (toward the cursor target, capped at 6 m/s, and
+clamped to the basin) is what moves it. `ResolveBodyContacts` gives a held body zero inverse
+mass, so it pushes other balls without being pushed. Releasing clears `held` and keeps the last
+velocity, which throws the ball. Clearing balls, rebuilding the solver and destroying the scene
+all release a held body first.
 
 ### 8.4 Reset (`ResetToRest`)
 
@@ -684,8 +724,21 @@ Two mechanisms:
 **1. Conservative transport.** Flux-form advection, with antisymmetric compression, is
 conservative up to the clamping that keeps α in [0,1].
 
-**2. Global correction.** `CorrectVolumeFraction` runs every 15 frames (a readback is a hard
-pipeline stall, so not every frame).
+**2. Global correction.** `CorrectVolumeFraction` runs every `volumeCheckInterval` frames
+(default 15) and never leaves the GPU (`c911381a`):
+
+1. `CS_FluidVolumeReduce3D` sums total α, interface headroom `Σ(1 − α)` and interface α over
+   the band `[0.5, 0.999)` into a 4×`uint4` buffer: group-shared tree reduction, then one
+   fixed-point atomic per group (whole cells + 1/65536 fractions, so 32-bit atomics neither
+   overflow nor lose sub-cell precision). Two sum slots alternate.
+2. `CS_FluidVolumeCorrect3D` reads its slot, computes `deficit = reference − total` and the
+   same guards the CPU used to apply (|deficit| ≤ 0.5, no headroom to add into, no interface
+   water to take from), applies the correction, and clears the other slot for the next round.
+
+The CPU only supplies `reference` (below), which it knows without reading anything back. The
+old path copied the whole α volume to the CPU and summed it, a full stall that showed as one
+10–15 ms frame every 15 frames. At `--logLevel debug` the 64-byte sums are read back for a log
+line; that is the only readback left.
 
 The original correction rescaled interface cells multiplicatively:
 
@@ -781,7 +834,9 @@ back-solves density, so editing either updates the other without them fighting e
 
 ## 12. Diagnostics and test tooling
 
-- `MeasureVolumeFraction` — summed α, plus interface sum and headroom, read back to CPU.
+- `MeasureVolumeFraction` — summed α, plus interface sum and headroom, read back to CPU. A full
+  stall: used by the self-tests, the seed, and the scene's 600-frame timing line only when info
+  logging is on. The live correction no longer uses it (§10).
 - `ReadVolumeFraction` — the **raw α of every voxel**. This is the instrument that matters: a
   still image cannot distinguish "a dimple that tracks the body" from "a wave that propagates".
   The scene logs a **per-column elevation profile** along X through the ball's Z row:
@@ -793,12 +848,26 @@ back-solves density, so editing either updates the other without them fighting e
   projection residual ratio vs iteration count, wall no-penetration (`solidSpeedSum`,
   `maxWallPenetration`).
 - `T8_LOG_DEBUG("[Fluid] substeps=… bodySpeed=… travel=…")` per frame.
-- `T8_LOG_DEBUG("[Fluid] VolumeCorrection … was= deficit= headroom= -> now=`)` on each correction.
+- `T8_LOG_DEBUG("[Fluid] VolumeCorrection t= was= deficit= headroom=")` on each correction
+  (debug level only; reads back the 64-byte GPU sums).
 - Scene probe at every 60th frame: solver diagnostics, surface contract probe, sphere state,
   column profile.
 - Later additions (details in [backyard-water-remaining-work.md](backyard-water-remaining-work.md)
-  section 4): `ReadSurface`/`ReadWallMask` readbacks, the 8-gate `--backyard-selftest`, and the
+  section 4): `ReadSurface`/`ReadWallMask` readbacks, the 9-gate `--backyard-selftest`, and the
   ImGui "Debug view" (`FluidDebugRenderer`: displaced mesh wireframe, voxels, velocity slice).
+- `--backyard-spawn N` drops N extra balls at startup; `--backyard-pick-test` exercises Ctrl +
+  click picking, dragging into another ball, release and re-grab by feeding a synthetic
+  `InputManager` to `BackyardScene::ProcessSceneInput` (no OS input), logs
+  `[BackyardPickTest] PASS|FAIL`, and dumps a frame with the ball held at a logged pixel. Run it
+  with `--unattended --regressionFixedDt 0.0033 --backyard-spawn 6`.
+- `D:\Code\QwenFlashT850\backyard-diag` (local, untracked) holds the scripts the reviewer uses;
+  every one passes `--unattended`:
+  - `s3matrix.ps1`: self-tests plus scenes 7/1/6 on five APIs, error counts.
+  - `telemetry.ps1`: per-frame CPU phases (`scene.update`, `frame.draw`, `gpu.gpu_wait`),
+    mean fps, p99 and spike count.
+  - `pick_test.ps1`: the pick test above.
+  - `many_balls.ps1`: N spawned balls on one API.
+  - `perf.ps1`: the older info-level fps method.
 
 ---
 
@@ -823,7 +892,9 @@ back-solves density, so editing either updates the other without them fighting e
 | `T850/Assets/Shaders/CS_FluidSeed3D.hlsl` | Initial velocity seed |
 | `T850/Assets/Shaders/CS_FluidSeedAlpha3D.hlsl` | Initial volume fraction seed |
 | `T850/Assets/Shaders/CS_FluidAlphaAdvect3D.hlsl` | Conservative flux-form α transport |
-| `T850/Assets/Shaders/CS_FluidVolumeCorrect3D.hlsl` | Additive headroom-weighted mass correction |
+| `T850/Assets/Shaders/CS_FluidVolumeCorrect3D.hlsl` | Additive headroom-weighted mass correction (deficit computed on the GPU) |
+| `T850/Assets/Shaders/CS_FluidVolumeReduce3D.hlsl` | GPU sums for the volume correction |
+| `T850/Assets/Shaders/CS_FluidStampBodies3D.hlsl` | Bodies stamped into the wall mask on the GPU |
 | `T850/Assets/Shaders/CS_FluidSphere3D.hlsl` | Per-column body cavity bookkeeping (now unused by the frame loop) |
 | `T850/Assets/Shaders/CS_FluidObstacleVelocity3D.hlsl` | No-penetration at the moving body |
 | `T850/Assets/Shaders/CS_FluidClear3D.hlsl` | Zero a volume (reset path) |

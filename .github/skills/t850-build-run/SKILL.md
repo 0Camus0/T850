@@ -106,7 +106,7 @@ Set-Location (Join-Path $SourceRoot 'bin\x64\Release')
 .\DayScene.exe --api d3d11 --scene 4 --sceneFile Scenes/DayScene.t8scene
 ```
 
-Scene indices: 0 Sandbox, 1 DayScene, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTemplate, 5 VoxelScene, 6 Minecraft.
+Scene indices: 0 Sandbox, 1 DayScene, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTemplate, 5 VoxelScene, 6 Minecraft, 7 Backyard.
 
 Use `--help` instead of guessing a flag:
 
@@ -133,6 +133,10 @@ Set-Location $SourceRoot
 Use it for interactive build/run/config/device selection. For automated evidence, prefer direct scripts.
 
 ## 4. Tests
+
+Add `--unattended` to every DayScene run an agent or script starts: the window is not
+activated and the app never captures the mouse. Never move or click the real cursor or send
+keystrokes; test input in-process (for example `--backyard-pick-test`).
 
 ### Gameplay suite
 

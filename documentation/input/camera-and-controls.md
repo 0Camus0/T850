@@ -189,7 +189,8 @@ Generic Android touch fallback:
 
 Desktop runtime behavior:
 
-- `App::AllowsMouseCapture()` follows the active scene's policy. `SceneBase` allows capture by default; DayScene and Sandbox override it to false, keeping the cursor visible and free to leave the window. Other scenes, including Quake and Minecraft, retain their existing capture policy.
+- `App::AllowsMouseCapture()` follows the active scene's policy. `SceneBase` allows capture by default; DayScene and Sandbox override it to false, keeping the cursor visible and free to leave the window. Other scenes, including Quake and Minecraft, retain their existing capture policy. Backyard captures by default but releases the mouse while Ctrl is held or a ball is being dragged (see "Backyard" below).
+- `--unattended` makes `App::AllowsMouseCapture()` return false for the whole run and creates the window without activating it (`SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN=0`), so automated runs on a machine someone is using never grab the cursor or take keyboard focus. Every test script should pass it.
 - `WantsRelativeMouseMode()` returns true only when the scene allows capture, regression fixed-step mode is disabled, ImGui is ready, the runtime GUI is hidden, and no modal text/keyboard input is active.
 - Runtime GUI calls `SubmitRuntimeGamepadGuiInput()` before drawing panels.
 - When GUI is visible, `DrawHandheldGuiFooter()` draws controller hints.
@@ -449,6 +450,27 @@ SceneTemplate saves the active camera profile index into sandbox save state as `
 - save-state persistence of active profile/pose/orbit state.
 
 When changing camera profile behavior, update SceneTemplate first and audit these older scene variants for duplicated logic.
+
+## Backyard (scene 7)
+
+`BackyardScene` uses the Free Fly profile with its own input mapping in
+`BackyardScene::ProcessSceneInput()`:
+
+- W/S/A/D move, Space rises, Shift sprints; Ctrl is **not** crouch here.
+- Holding a mouse button (left or right) looks around; the GUI and a held ball block the look.
+- **Ctrl frees the mouse**: while Ctrl is held the scene's `AllowsMouseCapture()` override
+  returns false, so relative mode is released and the cursor is visible even with the GUI
+  hidden.
+- **Ctrl + left click on a ball picks it** (ray from the cursor through the inverse view-
+  projection, nearest sphere hit). It stays held, and the cursor free, until the left button is
+  released, even if Ctrl is let go. The wheel moves it nearer or farther; release throws it with
+  its last velocity. A held `FluidSphere` has `held = true`: the scene steers its velocity
+  toward the cursor (capped at 6 m/s), gravity, buoyancy and drag are skipped, and contacts
+  treat it as infinitely heavy, so it shoves other balls.
+- A plain left click without Ctrl is always a camera gesture, never a pick.
+
+`--backyard-pick-test` drives this exact path with a synthetic `InputManager` (no OS input):
+see `documentation/scenes/backyard-water-simulation.md`, section 12.
 
 ## Android virtual controls
 

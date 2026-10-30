@@ -300,6 +300,7 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 --debugFrames
 --replaySnapshot PATH
 --keepRunning
+--unattended
 --dumpMatrices N
 --culling full|lazy|disabled
 --cullDisabled
@@ -316,6 +317,10 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 `--debugFrames` enables manual dump requests. A normal dump exits unless `--keepRunning` is present.
 
 `--regressionFixedDt SECONDS` uses a fixed update delta with real-time pacing and suppresses live input/random startup variation for unattended deterministic captures. Use it for regression tooling, not ordinary gameplay.
+
+`--unattended` is for any automated run on a machine someone is using: the window is created without taking focus and the mouse is never captured (no relative mode, no cursor confinement). It changes nothing else, so timing and output are the same as a normal run.
+
+D3D11 and D3D12 take their swap-chain window from the SDL window they are given, not from `GetActiveWindow()`, which is null for a window that never received focus.
 
 ### Benchmark
 

@@ -31,13 +31,15 @@ task W-16 updates them. The order in which the tasks are executed is in
 | Tooling: fluid debug view | Done (review) | `4d21e836`, `93dff3d9`, `5d640c2e` | Wireframe, voxel and whole-volume velocity overlays in the ImGui panel; D3D12 upload-ring crash fixed (per-layer caps); bulk-water α statistic; see 4.5 |
 | W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked |
 | W-11 items 1, 2, 4: JSON tunables, three solver values, comment | **Done** (Stage 4) | `5511e7e9` + `e974f4e5` | Accepted. `Scenes/BackyardWater.json` drives 101 settable keys; strict key validation; `alphaCompression`, `maxSubstepDt` and the volume-check interval are tunables with GUI sliders. Review added the missing Android registration of `BackyardWaterJson.cpp` |
-| W-15 Solver and frame cost | Measured; 3 fixes done (review) | `3a371903` | D3D12 191 → 219 fps, Vulkan 298 → 313 fps at 720p on 2026-10-28. A 172–177 fps Vulkan reading on 2026-10-29 was environmental: on 2026-10-30 Vulkan measures **315 fps** again (D3D12 220); P1–P9 open |
+| W-15 Solver and frame cost | Measured; P1, P6 and a D3D12 upload stall fixed (review) | `3a371903`, `c911381a` | 720p, 0 balls, same session: D3D12 222 → 292–305 fps, Vulkan 322 → 344–361 fps, 0 spikes. P2–P5 and P7–P9 open; see the profiling pass in W-15 |
+| W-04 GPU→CPU readbacks stall the frame | Mostly done (review) | `c911381a` | The correction no longer reads back (GPU reduce + GPU deficit); probes run only at info logging. Steps 3 and 5 open |
+| W-05 Moving body re-uploads the wall mask | Done differently (review) | `c911381a` | Mask restamped on the GPU in a persistent buffer; no upload after startup. The analytic-body design is no longer needed for cost |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
 | W-10 Water invisible to depth post effects | Done, **redesigned in review** | `96d84638` + `47500166` | The extra pass duplicated `Deferred:DEPTH`; removed. CoC now uses the nearer depth; see W-10 |
 | W-21 Vulkan fluid self-test fails inside scene 7 | **Done** (Stage 3c) | `5798477c` | Accepted. Root cause was uninitialised volume memory, not Vulkan frame state; `TryInitialize` now clears; 6/6 PASS scene 7 Vulkan |
 | W-22 Spawn more balls (random place, size, weight) | **Done**, uncapped in review | `0a981b8b` + `9f6e7a2f` + `97009aef` | Any number of balls (100 tested on D3D12/Vulkan/D3D11); water Z-mirror fixed; see W-22 |
-| W-23 Textured materials with normal maps | **Open** (requested 2026-10-29) | — | Stage 4b; every mesh is a flat colour |
-| W-24 House roof is upside down | **Open** (found 2026-10-29) | — | Stage 4a; sign error in `build_backyard.py` |
+| W-23 Textured materials with normal maps | **Done** (Stage 4b) | `507ef1a4` | CC0 ambientCG textures with NormalGL, world-box UVs |
+| W-24 House roof is upside down | **Done** (Stage 4a) | `2114fa0e` | Sign flipped, gables closed |
 | W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 not written |
 | All others | Open | — | — |
 
@@ -456,6 +458,12 @@ fewer than 1 % of bulk cells below 0.98, before and 10 s after the impact.
 
 ### W-04 — GPU→CPU readbacks stall the frame (P2, M, suggested: GLM)
 
+**Status (`c911381a`).** Steps 1 and 2 are done, and further than planned: `CS_FluidVolumeReduce3D`
+writes the sums and `CS_FluidVolumeCorrect3D` computes the deficit itself, so the live correction
+reads nothing back (only `--logLevel debug` reads the 64-byte sums). Step 4 is done: the probes run
+only when info logging is on. Open: step 3 (`ReadDiagnostics` still creates its buffer per call)
+and step 5 (asynchronous readback, which W-06 needs).
+
 **Problem.** `CorrectVolumeFraction` calls `MeasureVolumeFraction` twice (before and after), and
 each copies the entire volume (110 000 × 16 bytes) to a buffer and reads it back synchronously.
 `BackyardScene::OnDraw` additionally calls `ReadDiagnostics` (allocates a new buffer every call)
@@ -483,6 +491,11 @@ Report frame-time max and p99 over a 3000-frame run before and after, using `--p
 ---
 
 ### W-05 — Moving the ball re-uploads the wall mask synchronously (P2, M, suggested: DeepSeek)
+
+**Status (`c911381a`): done another way.** The mask is now a persistent read-write buffer;
+`CS_FluidStampBodies3D` rewrites it on the GPU from a static base mask plus an inline body list
+whenever a footprint changes. No mask buffer is created after startup and nothing waits. The
+analytic-body design below is kept for reference only; revisit it only if W-07 needs it.
 
 **Problem.** `UpdateWallMaskForBody` stamps the ball into a CPU copy of the mask and calls
 `CreateComputeBuffer` with initial data whenever the ball's cell footprint changes — up to 12
@@ -799,7 +812,7 @@ add a test that compares the cbuffer text of all fluid kernels.
 
 ---
 
-### W-15 — Solver and frame cost (P1, M–L) — measured in review; three fixes done, P1–P9 open
+### W-15 — Solver and frame cost (P1, M–L) — measured in review; P1 and P6 done (`c911381a`), P2–P5 and P7–P9 open
 
 **Measured** (review, 2026-10-28; RTX 4080 Laptop, x64 Release, scene 7, 1280×720,
 `--logLevel info`; median of four 600-frame windows after the drop, from the timestamps of the
@@ -835,12 +848,12 @@ GBuffer 0.15 ms, everything else ≤ 0.04 ms.
 
 | # | Finding | Where | Fix | Expected |
 |---|---|---|---|---|
-| P1 | Volume correction is a synchronous readback of the whole α volume as RGBA (16 B/voxel, 4× what is needed) plus a CPU sum, every 15 frames. D3D12 `ReadComputeBuffer` also creates a new committed readback resource per call and calls `WaitForGPU` | `MeasureVolumeFraction`, `D3D12Driver::ReadComputeBuffer` | GPU reduction (α total, interface α, headroom) into a 3-float buffer; read the previous frame's result through a persistent readback buffer and a fence (W-04 step 5) | ≈ 1.0 ms D3D12, 0.7 ms Vulkan |
+| P1 | Volume correction is a synchronous readback of the whole α volume as RGBA (16 B/voxel, 4× what is needed) plus a CPU sum, every 15 frames. D3D12 `ReadComputeBuffer` also creates a new committed readback resource per call and calls `WaitForGPU` | `MeasureVolumeFraction`, `D3D12Driver::ReadComputeBuffer` | **Done in `c911381a`**, without any readback: GPU reduction plus a GPU-side deficit (see the profiling pass below) | ≈ 1.0 ms D3D12, 0.7 ms Vulkan; measured: a 10–15 ms stall every 15 frames removed |
 | P2 | Pressure: 60 red-black iterations = 120 full-grid dispatches per substep. Half the threads only copy the other colour through (write-only storage + ping-pong), and the scalar lives in RGBA16F | `CS_FluidPressure3D`, `StepInternal` | After W-02 (R32F): in-place red-black on `RWTexture3D<float>` (typed UAV loads of R32F are universal), dispatching only the active colour. Then fewer iterations with a logged residual, several sweeps per dispatch in groupshared tiles, or MGPCG | up to ≈ 1.2–1.8 ms D3D12 |
 | P3 | D3D12 barriers: every dispatch issues a transition SRV→UAV, a UAV barrier, then a transition UAV→SRV, each in its own `ResourceBarrier` call. The transition back is unnecessary for compute-only 3D volumes, and the UAV barrier is redundant when a transition follows | `D3D12Driver::DispatchCompute` | Leave volumes in their tracked state; batch pending transitions into one call at the next dispatch; UAV barriers only for UAV→UAV reuse | GPU idle between the ≈ 130 dispatches; engine-wide, test every compute user |
 | P4 | Vulkan records ≈ 10 µs per dispatch (1.3 ms per frame) | Vulkan compute dispatch (descriptor set allocation and update per dispatch) | Cache descriptor sets per pipeline + binding set; the solver alternates between two ping-pong states, so a small cache almost always hits | ≈ 1 ms CPU on Vulkan |
 | P5 | D3D12 CPU per dispatch: six `unordered_set`s and a vector allocated, `dynamic_cast` per binding, keep-alive map insert per resource, `SetDescriptorHeaps`/root signature/PSO rebound even when unchanged (the pressure PSO 120× in a row) | `D3D12Driver::DispatchCompute` | Validate once per pipeline and layout, small fixed arrays, skip redundant state | 0.37 ms today; matters once the GPU side is fixed |
-| P6 | The moving body re-creates the whole wall-mask buffer (copy of 110k words, new GPU buffer, upload) whenever its cell footprint changes: every substep while it falls or bobs | `UpdateWallMaskForBody` | W-05 (analytic body in the kernels) removes it; interim: one persistent buffer updated in place | allocation churn and spikes during the drop |
+| P6 | The moving body re-creates the whole wall-mask buffer (copy of 110k words, new GPU buffer, upload) whenever its cell footprint changes: every substep while it falls or bobs | `UpdateWallMaskForBody` | **Done in `c911381a`**: a persistent read-write mask restamped on the GPU (`CS_FluidStampBodies3D`) | measured: a ≈ 10 ms stall per footprint change removed |
 | P7 | The surface kernel no longer reads its previous output, so the surface ping-pong pair and the copy dispatch are unnecessary | `StepInternal`, `PublishSurface` | Write straight into the output texture (it already has the storage flag) | one dispatch and barrier per frame |
 | P8 | The render graph carries template passes the backyard never uses: Torch Particles (a full-resolution RGBA16F target cleared and filled by compute every frame), Light Add (adds that empty target) and Debug Cascade Regions (a debug fullscreen pass drawn every frame) | `BackyardScene_RenderGraph.json` | Remove Torch; make Light Add a plain copy or rewire the HDR chain; enable the debug pass only when toggled | ≈ 0.03 ms at 720p, ×4 at 1440p; 7–29 MB |
 | P9 | Readbacks go texture → compute copy → structured buffer → copy → readback heap | `ReadVolumeFraction`, `ReadVelocity`, `ReadSurface` | A driver call that copies a texture region straight to a readback buffer | debug paths; low |

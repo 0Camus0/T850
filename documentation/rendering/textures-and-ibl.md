@@ -242,6 +242,14 @@ Binding:
 - `SetSampler()` calls `PSSetSamplers(slot, 1, sampler)`.
 - `UpdateFloatData()` calls `UpdateSubresource()`.
 
+`UpdateFloatData()` is a per-frame path (bone textures, tiled-light header and index
+textures). D3D11 and Vulkan record the copy into the current frame. D3D12 does the same when
+a frame is recording: the data is staged in the per-frame upload ring
+(`D3D12Driver::AllocateRingUpload`) and the copy plus its two barriers go into the frame's
+command list. Outside a frame it falls back to a one-off command list and a blocking fence
+wait. Before `c911381a` D3D12 always took the blocking path, which cost about 3 ms per frame
+in every scene with tiled point lights.
+
 ### D3D12
 
 D3D12 textures use:

@@ -93,6 +93,12 @@ WPF-based launcher that lets you pick target (Windows/Android), architecture, co
 
 Current expected gameplay result: 78 PASS lines and exit code 0.
 
+Automated runs must not touch the user's desktop. Pass `--unattended` to every DayScene run
+you start: the window is not activated (no focus stealing) and the app never grabs, hides or
+warps the mouse. Never move or click the real cursor or send keystrokes to test input; drive
+input in-process instead (for example `--backyard-pick-test`, which feeds a synthetic
+`InputManager`).
+
 Use the focused workspace skills for exact procedures:
 
 - `t850-build-run`

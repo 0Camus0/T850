@@ -94,6 +94,12 @@ It stores:
 - transform matrices: `Scale`, `RotationX`, `RotationY`, `RotationZ`, `Position`, and final `Final`.
 - `gKey`: global pass/effect key supplied by the scene or render graph.
 - per-instance override textures and environment map.
+- `InstanceMaterialMaps`: when true, the instance's slots 0 (base colour), 3 (normal) and 6
+  (metallic-roughness) take priority over the shared material's maps in `RenderMesh::Draw()`.
+  Otherwise material textures win and instance slots are only fallbacks (slot 3 for normals).
+  It is a plain flag, not a `ShaderKey` bit, so it adds no shader permutation; the mesh's own
+  material must declare those maps for the textured permutation to exist (Backyard balls ship
+  1×1 placeholders for exactly this).
 - visibility and physics/ragdoll handles.
 
 `PrimitiveInst::Update()` composes the world matrix as:
@@ -106,7 +112,7 @@ Final = Scale * RotationX * RotationY * RotationZ * Position
 
 1. Early-outs when not visible or no primitive is bound.
 2. Saves the current mutable state on `pBase`.
-3. Copies instance textures, environment map, global key, brightness, and parallax state into `pBase`.
+3. Copies instance textures, environment map, global key, brightness, parallax state and the `InstanceMaterialMaps` flag into `pBase`.
 4. Calls `pBase->Draw(&Final.m[0][0], &pViewProj->m[0][0])`.
 5. Restores the previous `pBase` state.
 

@@ -103,6 +103,9 @@ Escape closes the application unless `AppBase::IsModalActive()` returns true.
 `Win32Framework` supports:
 
 - relative mouse mode when `AppBase::WantsRelativeMouseMode()` is true;
+- no capture at all while `AppBase::AllowsMouseCapture()` is false (scene policy, Backyard's
+  Ctrl modifier, or `--unattended`);
+- windows created without activation under `--unattended`;
 - cursor hide/show;
 - cursor confinement for modal UI;
 - mouse delta reset on window state changes.

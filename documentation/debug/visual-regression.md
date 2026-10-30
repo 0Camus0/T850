@@ -127,6 +127,9 @@ This mode:
 - disables relative mouse capture;
 - keeps unattended cameras stable.
 
+Add `--unattended` as well on a machine someone is using: it also stops the window from taking
+focus and blocks mouse capture even in modes `--regressionFixedDt` does not cover.
+
 At default five seconds, the timed dump occurs at deterministic frame 300. This is distinct from benchmark fixed delta and should not be used for ordinary interactive play.
 
 ## Baseline Matrix

@@ -38,7 +38,12 @@ flowchart LR
   the explicit cross-backend binding layout;
 - `ComputeBufferDesc`: byte size, structure stride, access, and debug name;
 - `ComputeBindingDesc`: constants, structured buffers, textures, and samplers by shader
-  register;
+  register. A `ReadOnlyBuffer` binding may instead carry per-dispatch data
+  (`inlineData`, `inlineBytes`, `inlineStride`) with no persistent buffer: D3D12 copies it
+  into the per-frame upload ring and binds a root SRV, Vulkan into the frame's uniform ring
+  (created with storage-buffer usage), and D3D11 into an immutable structured buffer plus SRV.
+  This is how a kernel receives a variable-length list (the fluid solver's per-body velocities
+  and body spheres) without growing root constants;
 - `ComputePipeline` and `ComputeBuffer`: backend-owned polymorphic resources;
 - `CreateComputePipeline`, `CreateComputeBuffer`, `DispatchCompute`, and
   `ReadComputeBuffer` virtual methods;
@@ -66,7 +71,7 @@ Current implementation status:
 |---|---|
 | D3D11 | supported (CS 5.0, `TEXTURE3D` SRV/UAV) |
 | D3D12 | supported (`TEXTURE3D` resource plus SRV/UAV descriptors) |
-| Vulkan | not yet; capability false, callers fall back |
+| Vulkan | supported (storage images are write-only: `[[spv::nonreadable]]`, so fields ping-pong) |
 | WebGPU/Dawn | not yet; capability false, callers fall back |
 | OpenGL | not yet; capability false, callers fall back |
 

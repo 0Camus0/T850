@@ -8,13 +8,14 @@ The task catalogue is the source of truth for **what** each task is and how to p
 document is only about **order and session boundaries**, so each stage can be executed cold, in
 one context, without carrying the whole backlog.
 
-Stage 0 baseline: `01ccbd82`. Stages 0–4, 3c and 4a–4c are done, plus the review fixes, the debug
-view and the W-15 fixes logged in section 4. **Next: Stage 5a (W-02)**, starting from the tip of
-`backyard_scene`. Section 0 is the step-by-step brief.
+Stage 0 baseline: `01ccbd82`. Stages 0–4, 3c and 4a–4d are done, plus the review fixes, the debug
+view, pick and drag, `--unattended`, and the W-15 performance pass (`c911381a`) logged in section 4.
+**Next: Stage 5a (W-02)**, starting from the tip of `backyard_scene`. Section 0 is the step-by-step
+brief.
 
 ---
 
-## 0. Next steps for the local agents (2026-10-30, after `97009aef`)
+## 0. Next steps for the local agents (2026-10-30, after `c911381a` and the doc pass)
 
 Start every session from the tip of `backyard_scene` and build:
 
@@ -54,6 +55,12 @@ stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` 
 - **Owner requests after 4d (reviewer, section 4, "Pick and drag, PBR fixes, unattended runs")** —
   `c4c680dc` PBR lighting fixes in all three `FS_Quad` languages, `210cb571` `--unattended`, and
   `c920c9a5` Ctrl + left-drag moves a ball.
+- **Performance pass (reviewer, section 4, "Performance pass and documentation audit")** —
+  `c911381a` removed three CPU–GPU stalls: the D3D12 float-texture upload wait (engine-wide), the
+  volume-correction readback (W-15 P1, most of W-04), and the wall-mask re-upload (W-15 P6, W-05).
+  Stage 6a shrank accordingly. Measure with `backyard-diag\telemetry.ps1`, not FPS alone.
+- **Documentation audit** — every engine document touched by these Framework changes now matches
+  the code (list in section 4). Keep it that way: a Framework change ships with its doc update.
 
 The owner then asked for three things before the solver work resumes, in this order (one stage per
 session, smallest first). Full specifications are in remaining-work W-24, W-23 and W-22. After
@@ -250,9 +257,9 @@ command run, and anything you could not verify.
 | 4d. Per-ball PBR materials | W-25 | M | **DONE** — 32 CC0 sets in R2 (part 1); `e055efec`: cube-sphere GLB with UVs, per-instance maps behind `InstanceMaterialMaps` (no new permutation), random shuffle-bag assignment, 0 errors on five APIs. Gate 10 not written |
 | 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
-| 6a. Analytic body + cheap readback | W-05, W-04 | M | Removes per-substep uploads; unblocks 6b |
-| 6b. Displacement + ball feels water | W-07, W-06 | M | Needs 6a's previous/current body state and async readback |
-| 7. Solver cost | W-15 | M | Measured in review (`3a371903`); P3, P4, P5, P7, P8 here. P1 lands with W-04 (6a), P2 after W-02 (5a), P6 with W-05 (6a) |
+| 6a. Analytic body + cheap readback | W-05, W-04 | S | **Mostly done in `c911381a`** — no mask upload after startup (GPU stamp), no correction readback. Left: W-04 steps 3 and 5 (persistent diagnostics buffer, async readback for 6b) |
+| 6b. Displacement + ball feels water | W-07, W-06 | M | Needs previous/current body footprints and 6a's async readback |
+| 7. Solver cost | W-15 | M | Measured (`3a371903`); P1 and P6 done in `c911381a` with a D3D12 upload fix. P3, P4, P5, P7, P8 here; P2 after W-02 (5a) and is now the largest lever |
 | 8. Cleanup, docs, platforms | W-14, W-16, W-17 | S–M | Only once the code is stable |
 
 ### Additions found during Stage 0
@@ -971,6 +978,12 @@ bulk cells below 0.98, before and 10 s after the impact.
 
 ### Stage 6a — Analytic body and cheap readback (W-05, W-04)
 
+**Status (`c911381a`).** The exit criteria below are met by a different design: the mask is
+restamped on the GPU (`CS_FluidStampBodies3D`) instead of making the body analytic, and the
+correction's sums and deficit stay on the GPU (`CS_FluidVolumeReduce3D`) instead of a 16-byte
+readback. What remains is W-04 step 3 (persist the diagnostics buffer) and step 5 (asynchronous
+readback, which W-06 in 6b needs). The original plan follows for reference.
+
 **Scope**
 - **W-05** — the body becomes analytic in every kernel (`IsSolid` = static mask **or**
   `IsBodyCell`), so `UpdateWallMaskForBody` uploads the static mask only once at startup. The
@@ -1016,7 +1029,9 @@ height increases; ball at rest submerged 0.60 ± 0.02; dropping again over runni
 **Scope** — measurement is done (W-15 table; the solver is 58–63 % of the frame). Implement the
 engine-side findings P3 (D3D12 barrier batching), P4 (Vulkan descriptor-set cache), P5 (D3D12
 per-dispatch CPU work), P7 (surface written in place) and P8 (unused template passes), one
-commit each. P1, P2 and P6 belong to stages 6a, 5a and 6a; if those are done, re-measure them here.
+commit each. P1 and P6 are done (`c911381a`); P2 belongs to stage 5a. The W-15 profiling pass
+shows the cost is now ≈ 127 dependent dispatches at ≈ 10 µs each, so P2 matters most and D3D12
+barrier batching alone measured no gain.
 
 **Files** — `D3D12Compute.cpp`, the Vulkan compute dispatch, `FluidSimulation.cpp`,
 `BackyardScene_RenderGraph.json`. P3–P5 are engine-wide: also run `--compute-selftest` on all
@@ -1730,6 +1745,39 @@ window. The 19-run matrix is 0 errors with the flag on every run.
 
 - **Never drive the owner's real input from a test.** Use `--unattended` and in-process input.
 - **`GetActiveWindow()` is not "my window".** Take the handle from the window you created.
+
+### Performance pass and documentation audit (2026-10-30, reviewer)
+
+**`c911381a`: three stalls removed.** Numbers, method and the remaining cost breakdown are in
+remaining-work W-15, "Profiling pass 2026-10-30". In short:
+
+- **D3D12 float uploads wait no more.** `D3D12Texture::UpdateFloatData` stages the data in the
+  frame's upload ring (`D3D12Driver::AllocateRingUpload`) and records the copy in the frame's
+  command list; outside a frame it keeps the old blocking path. The point-light pass uploads two
+  such textures per frame, so this was 3.1 ms of every D3D12 frame in every scene with point lights.
+- **Volume correction without readback.** `CS_FluidVolumeReduce3D` plus a GPU-side deficit in
+  `CS_FluidVolumeCorrect3D` (implementation record §10).
+- **Wall mask restamped on the GPU.** `CS_FluidStampBodies3D` (implementation record §8.3).
+
+Validation: both self-tests PASS on D3D12 and Vulkan, gate 9 identical, mass drift unchanged, the
+19-run matrix 0 errors, and a D3D12 DayScene frame byte-identical between the old and new upload.
+Result at 720p with 0 balls, same session: D3D12 222 → 292–305 fps, Vulkan 322 → 344–361 fps,
+p99 ≈ 4 ms, 0 spikes.
+
+**Documentation audit.** The engine documents now match the Framework changes since `47500166`:
+
+| Change | Document |
+|---|---|
+| `ShadowAccum` R = sun shadow, G = SSAO; how deferred lighting applies them | `rendering/cascaded-shadow-maps.md` |
+| Inline `ReadOnlyBuffer` data; Vulkan 3D storage (the table said "not yet") | `rendering/compute-shader-implementation.md` |
+| `UpdateFloatData` per API, D3D12 ring path | `rendering/textures-and-ibl.md` |
+| Generated tangent handedness | `geometry/loading-geometry.md`, `Framework/src/utils/gltf/HANDOFF.md` |
+| `PrimitiveInst::InstanceMaterialMaps` | `rendering/geometry-rendering-flow.md` |
+| `--unattended`, `App::AllowsMouseCapture`, HWND from the SDL window | `development/runtime-configuration.md`, `architecture/platform-event-loop.md`, `input/camera-and-controls.md`, `debug/visual-regression.md`, `AGENTS.md` |
+| Kernels, wall mask, correction, picking, tools | `scenes/backyard-water-simulation.md` |
+
+**Rule.** A Framework change is not done until the engine document that describes it is updated in
+the same commit or the next one.
 
 ### Stage 5a — W-02
 

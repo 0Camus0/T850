@@ -62,6 +62,29 @@ YARD_WALL = {"height": 2.1, "thickness": 0.25, "inset": 14.0, "min_y": -16.0, "m
 
 ASSET_DIR = None
 
+# ---------------------------------------------------------------------------
+# PBR textures (W-23). CC0 from ambientCG, fetched by
+# scripts/textures/fetch_backyard_textures.py into an uncommitted cache.
+#
+# tile_m is metres per texture repeat: a 1K map covers tile_m x tile_m of surface,
+# so UVs are generated in metres and a 1 m feature reads as 1 m on every object,
+# whatever its size. Only materials listed here get textures and world-box UVs.
+# ---------------------------------------------------------------------------
+TEXTURE_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "..", "..", "build", "texture-cache")
+TEXTURE_TILES = {
+    # material: (ambientCG id, metres per repeat, colour tint multiplied over the map)
+    # A tint near white is "no tint". The stucco and adobe scans are neutral grey, so
+    # a warm tint restores the sand colour the flat material had without hiding the
+    # plaster detail.
+    "House_Stucco":    ("Plaster001", 2.0, (1.00, 0.88, 0.74)),
+    "House_RoofMetal": ("CorrugatedSteel005", 1.0, (1.00, 1.00, 1.00)),
+    "Ground_Patio":    ("Concrete034", 3.0, (1.00, 1.00, 1.00)),
+    "Ground_Gravel":   ("Gravel043", 2.0, (1.00, 1.00, 1.00)),
+    "Pool_Coping":     ("PavingStones150", 2.0, (1.00, 1.00, 1.00)),
+    "Wall_Adobe":      ("Plaster007", 2.0, (1.00, 0.92, 0.82)),
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -92,7 +115,110 @@ def material(name, base_color, metallic=0.0, roughness=0.8, emission=None, emiss
             bsdf.inputs["Emission"].default_value = (emission[0], emission[1], emission[2], 1.0)
         if "Emission Strength" in bsdf.inputs:
             bsdf.inputs["Emission Strength"].default_value = emission_strength
+    if name in TEXTURE_TILES:
+        tile = TEXTURE_TILES[name]
+        add_texture_nodes(mat, tile[0], tile[2])
     return mat
+
+
+def load_image(path, non_color):
+    """Loads a texture from the cache, or returns None when it is missing."""
+    if not os.path.exists(path):
+        print("  texture missing: %s (run scripts/textures/fetch_backyard_textures.py)" % path)
+        return None
+    image = bpy.data.images.load(path, check_existing=True)
+    image.colorspace_settings.name = "Non-Color" if non_color else "sRGB"
+    return image
+
+
+def add_texture_nodes(mat, asset_id, tint=(1.0, 1.0, 1.0)):
+    """Wires Color / Roughness / NormalGL into the Principled BSDF.
+
+    This is the graph the glTF exporter understands: an Image Texture into Base
+    Color (optionally through a multiply tint), into Roughness, and through a
+    Normal Map node into Normal. NormalGL (OpenGL convention, +Y up) is the glTF
+    convention; the archive's NormalDX is never used because it inverts every bump.
+    """
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    bsdf = nodes.get("Principled BSDF")
+    root = os.path.join(TEXTURE_CACHE, asset_id)
+
+    color = load_image(os.path.join(root, "Color.jpg"), non_color=False)
+    if color:
+        tex = nodes.new("ShaderNodeTexImage")
+        tex.image = color
+        tex.interpolation = "Linear"
+        tex.location = (-700, 300)
+        tinted = tuple(tint) != (1.0, 1.0, 1.0)
+        if tinted:
+            mix = nodes.new("ShaderNodeMix")
+            mix.data_type = "RGBA"
+            mix.blend_type = "MULTIPLY"
+            mix.location = (-380, 300)
+            mix.inputs["Factor"].default_value = 1.0
+            mix.inputs[7].default_value = (tint[0], tint[1], tint[2], 1.0)
+            links.new(tex.outputs["Color"], mix.inputs[6])
+            links.new(mix.outputs[2], bsdf.inputs["Base Color"])
+        else:
+            links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+
+    roughness = load_image(os.path.join(root, "Roughness.jpg"), non_color=True)
+    if roughness:
+        tex = nodes.new("ShaderNodeTexImage")
+        tex.image = roughness
+        tex.interpolation = "Linear"
+        tex.location = (-700, 0)
+        links.new(tex.outputs["Color"], bsdf.inputs["Roughness"])
+
+    normal = load_image(os.path.join(root, "NormalGL.jpg"), non_color=True)
+    if normal:
+        tex = nodes.new("ShaderNodeTexImage")
+        tex.image = normal
+        tex.interpolation = "Linear"
+        tex.location = (-700, -300)
+        normal_map = nodes.new("ShaderNodeNormalMap")
+        normal_map.uv_map = "UVMap"
+        normal_map.location = (-380, -300)
+        links.new(tex.outputs["Color"], normal_map.inputs["Color"])
+        links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
+
+
+def uv_world_box(obj, tile_m):
+    """Projects UVs from world coordinates, in metres divided by `tile_m`.
+
+    smart_project's scale is arbitrary per object, so a tiling texture would come
+    out at a different size on every box. World-space box projection makes the
+    scale identical across the scene and physically meaningful: one texture
+    repeat covers tile_m metres.
+    """
+    mesh = obj.data
+    uv_layer = mesh.uv_layers.get("UVMap") or mesh.uv_layers.new(name="UVMap")
+    to_world = obj.matrix_world
+    normals = to_world.to_3x3()
+    for polygon in mesh.polygons:
+        normal = (normals @ polygon.normal).normalized()
+        axis = max(range(3), key=lambda i: abs(normal[i]))
+        for loop_index in polygon.loop_indices:
+            vertex = mesh.vertices[mesh.loops[loop_index].vertex_index]
+            co = to_world @ vertex.co
+            if axis == 0:
+                u, v = co.y, co.z
+            elif axis == 1:
+                u, v = co.x, co.z
+            else:
+                u, v = co.x, co.y
+            uv_layer.data[loop_index].uv = (u / tile_m, v / tile_m)
+
+
+def uv_apply(obj):
+    """World-box UVs for a textured material, smart_project for everything else."""
+    mat = obj.data.materials[0] if len(obj.data.materials) else None
+    name = mat.name if mat is not None else ""
+    if name in TEXTURE_TILES:
+        uv_world_box(obj, TEXTURE_TILES[name][1])
+    else:
+        uv_unwrap(obj)
 
 
 def box(name, size, location, mat, rot=(0.0, 0.0, 0.0)):
@@ -185,7 +311,7 @@ def gable(name, x_inner, x_outer, y_min, y_max, y_ridge, z_eave, z_ridge, mat, f
     return obj
 
 
-def export_objects(objects, asset_name):
+def export_objects(objects, asset_name, tangents=True):
     for obj in bpy.context.scene.objects:
         obj.select_set(False)
     for obj in objects:
@@ -198,11 +324,22 @@ def export_objects(objects, asset_name):
         use_selection=True,
         export_apply=True,
         export_yup=True,
+        # glTF stores normals in tangent space; the exporter needs explicit tangents
+        # and MikkTSpace when the mesh has none (it does, from world-box UVs).
+        # tangents=False for the water: it has no normal map, so tangents would only
+        # bloat a 41k-vertex mesh.
+        export_tangents=tangents,
+        # Images are embedded in the GLB: the generated assets are never committed,
+        # so embedding is the simplest delivery. JPEG keeps the house under a few MB.
+        export_image_format="JPEG",
     )
     try:
         bpy.ops.export_scene.gltf(**kwargs)
     except TypeError:
-        kwargs.pop("export_yup", None)
+        # Older/newer exporters may not accept every keyword: drop the optional ones
+        # rather than failing the whole export.
+        for key in ("export_yup", "export_tangents", "export_image_format"):
+            kwargs.pop(key, None)
         bpy.ops.export_scene.gltf(**kwargs)
     print("exported", path)
     for obj in objects:
@@ -270,7 +407,7 @@ def build_pool():
                      (cx, POOL_MAX_Y - band_inset * 0.5, -band * 0.5 - 0.02), tiles))
 
     for part in parts:
-        uv_unwrap(part)
+        uv_apply(part)
     return parts
 
 
@@ -401,7 +538,7 @@ def build_house():
     parts.append(box("House_PergolaJoist", (0.10, 8.0, 0.14), (-0.55, 0.2, 3.06), post_mat))
 
     for part in parts:
-        uv_unwrap(part)
+        uv_apply(part)
     return parts
 
 
@@ -497,7 +634,7 @@ def build_ground():
         )
     )
     for part in parts:
-        uv_unwrap(part)
+        uv_apply(part)
     return parts
 
 
@@ -515,7 +652,7 @@ def build_yard_wall():
     parts.append(box("Wall_Back", (inset * 2.0, t, h), (0.0, min_y, h * 0.5), adobe))
     parts.append(box("Wall_Cap", (inset * 2.0 + t, 0.12, 0.10), (0.0, min_y, h + 0.05), adobe))
     for part in parts:
-        uv_unwrap(part)
+        uv_apply(part)
     return parts
 
 
@@ -543,7 +680,7 @@ def build_props():
         parts.append(cylinder("Prop_Shrub_%d" % i, r, hgt, (x, y, hgt * 0.5), leaf, vertices=18))
 
     for part in parts:
-        uv_unwrap(part)
+        uv_apply(part)
     return parts
 
 
@@ -642,7 +779,7 @@ def main():
     prop_path = export_objects(prop_parts, "Backyard_Props")
 
     water_parts = build_water_surface()
-    water_path = export_objects(water_parts, "Backyard_Water")
+    water_path = export_objects(water_parts, "Backyard_Water", tangents=False)
 
     write_layout(
         pool_path,

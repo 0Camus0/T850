@@ -1249,6 +1249,16 @@ looking at the previews on `https://ambientcg.com/a/<ID>`:
   steel and paving visible at a believable scale (a 1 m feature looks 1 m). Check grazing angles on
   the ground for shimmering; if it shimmers, mips are missing — report it, do not hide it with blur.
 * Scenes 7, 1 and 6 on all five APIs: 0 errors (GL and WebGPU decode the JPEGs to RGBA8).
+
+**Outcome (Stage 4b) — DONE.** `scripts/textures/fetch_backyard_textures.py` with six pinned
+ambientCG sets (sha256 verified), NormalGL only; `material()` gains texture nodes;
+`uv_world_box()` gives metric UVs (tile_m per repeat); tangents and embedded JPEGs on export, water
+excluded. Measured: layout diff empty; house GLB 0.12 → 5.17 MB; `House_Stucco` exports
+`baseColorFactor (1, 0.88, 0.74)` + baseColor + normal + metallicRoughness; 77/128 material
+instances textured with `baseColorMap=1 normalMap=1 tangents=1`; frame-300 dump shows all surfaces;
+fps 187.5 → 177.2 (−5.5 %) same-session on D3D12; 15/15 scene/API combinations 0 errors; both
+self-tests PASS. Limitation: no occlusionTexture (needs the glTF Material Output group). Gotcha:
+ambientCG returns 403 without a User-Agent.
 * Same-session fps before/after on D3D12 and Vulkan; a few percent is acceptable, report it.
 * Pool, water and solver untouched: `--backyard-selftest` PASS with identical numbers.
 

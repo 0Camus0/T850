@@ -467,6 +467,23 @@ report the `VolumeCorrection` deficit before/after (debug log); report surface r
    projection draws the meniscus around the ball more strongly; W-26 (the trapped-air
    compensation) is what should bring them back.
 
+   **Attempt 1 at the transport itself was measured and rejected** (2026-10-31, nothing shipped —
+   the code was reverted). An operator-split, exactly conservative, exactly bounded per-axis scheme
+   (three passes per substep, donor/receiver limiter, no `saturate`) is **three times more diffusive**
+   than the current unsplit pass: per-column interface width **3.35 → 10.67 cells**, bulk
+   0.9969 → 0.9950, same deficit (+53.8, i.e. the displaced body). Three 1D upwind sweeps smear far
+   more than one 3D sweep; raising `alphaCompression` to 1.0 made it worse (12.63). Sub-cycling the
+   *existing* pass 3× or 6× per substep changed nothing (3.40 / 3.37 cells). What does sharpen the
+   surface is solver substeps: `maxSubstepDt` 1/120 → 1/360 → 1/720 gives **3.37 → 3.08 → 2.57**
+   cells (bulk 0.9968 → 0.9976 → 0.9984) at 3–6× the whole solver cost.
+
+   **W-03 is therefore re-scoped.** Total α already sits at the body-adjusted reference within
+   0.1 cells and the correction is idle, so mass is not the remaining defect: the "diluted bulk" is
+   air smeared in by a first-order upwind flux. The acceptance numbers (bulk ≥ 0.999, interface
+   1–2 cells) need a **less diffusive flux**, not another conservation scheme — next attempt is a
+   per-axis SLIC / Hirt–Nichols donor-acceptor flux inside the one unsplit kernel. The staged plan's
+   "Stage 5b, attempt 1" has both candidate designs and their costs.
+
 **Baseline after those fixes, measured with `--backyard-mass-audit 60` (deterministic; D3D12 =
 Vulkan)** — scripted 0.25 m / 39.27 kg ball, 4.43 m/s impact:
 

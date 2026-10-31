@@ -1047,10 +1047,12 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
         t850::FluidSimulation::MassAudit audit;
         if (m_fluid.AuditMass(pFramework->pVideoDriver, audit)) {
           T8_LOG_INFO("[Backyard][mass] t=%.2f total=%.0f gpuTotal=%.0f ref=%.0f deficit=%+.1f cells | bulk mean=%.4f min=%.4f "
-                      "below98=%u of %u | interface width mean=%.2f max=%.2f over %u columns",
+                      "below98=%u of %u | interface width mean=%.2f max=%.2f over %u columns | div rms=%.4f max=%.3f 1/s "
+                      "saturated=%u",
                       m_fluid.SimulationTime(), audit.totalAlpha, audit.totalAlphaGpu, audit.referenceAlpha,
                       audit.deficit, audit.bulkMeanAlpha, audit.bulkMinAlpha, audit.bulkBelow98, audit.bulkCells,
-                      audit.interfaceWidthMean, audit.interfaceWidthMax, audit.interfaceColumns);
+                      audit.interfaceWidthMean, audit.interfaceWidthMax, audit.interfaceColumns,
+                      audit.divergenceRms, audit.divergenceMax, audit.saturatedCells);
         } else {
           T8_LOG_ERROR("[Backyard][mass] audit readback failed");
         }

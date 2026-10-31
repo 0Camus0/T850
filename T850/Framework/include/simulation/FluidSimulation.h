@@ -149,6 +149,16 @@ namespace t850 {
       float interfaceWidthMean = 0.0f;
       float interfaceWidthMax = 0.0f;
       uint32_t interfaceColumns = 0;
+      // Residual divergence of the MAC field the projection should have made divergence
+      // free. Measured on the CPU from the same readback: every cell whose net outflow is
+      // non-zero loses alpha to a neighbour that is already at alpha = 1, where saturate()
+      // discards it. That clip is the mass "loss" measured here, so this number explains
+      // the deficit instead of leaving it a mystery (60 iterations: +29.6 cells,
+      // 120: +4.4, 240: +0.1 on the still pool).
+      float divergenceRms = 0.0f;
+      float divergenceMax = 0.0f;
+      // Cells already full, i.e. with no headroom to absorb an inflow: the clip-prone set.
+      uint32_t saturatedCells = 0;
     };
     bool AuditMass(BaseDriver* driver, MassAudit& out);
 

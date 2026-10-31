@@ -228,10 +228,13 @@ Plus driver headers (`D3D11Driver.h`, `D3D12Driver.h`, `VulkanDriver.h`) and
 ### Critical discovered constraints
 
 1. **Storage images are write-only on Vulkan.** `SPV_REFLECT_DECORATION_NON_READABLE` must be
-   *set*, and the SPIR-V needs `[[spv::nonreadable]]` / `[[spv::format_rgba16f]]`. Consequence:
+   *set*, and the SPIR-V needs `[[spv::nonreadable]]` plus the format (`[[spv::format_rgba16f]]`,
+   or `[[spv::format_r32f]]` for the scalar fields). Consequence:
    **every field needs ping-pong** — no in-place updates anywhere in the solver.
-2. **Only `RGBA8` and `RGBA16F` storage formats exist.** No `R32F`, `R16F`. So scalars are
-   packed into `.x` of an RGBA16F volume.
+2. **Originally only `RGBA8` and `RGBA16F` storage formats existed**, so scalars were packed into
+   `.x` of an RGBA16F volume. Since W-02 (`14c705f4` format, then the switch) `R32Float` exists
+   on D3D11/D3D12/Vulkan/GL; α, pressure and divergence are R32F and velocity stays RGBA16F.
+   Readers still declare `Texture3D<float4>` and read `.x`: an R32F view returns `(r, 0, 0, 1)`.
 3. Storage textures cannot be hardware-filtered — all reconstruction is manual (see §9.5).
 
 ### ComputeSelfTest
@@ -265,7 +268,10 @@ wall mask on the GPU, §8.3). `fluid_volume_correct` now also binds the sums buf
 (`read_write_buffer:1@4`), and the body kernels bind `BodyVelocity` at t9 as an inline buffer.
 `FluidConstants` is now 20 DWORDs (`constant_count: 20`, open-ceiling fields added).
 `fluid_sphere` (`CS_FluidSphere3D`) is no longer registered or loaded; the body is a wall-mask
-solid plus `CS_FluidObstacleVelocity3D`.
+solid plus `CS_FluidObstacleVelocity3D`. Since W-02 the storage binding of `fluid_divergence`,
+`fluid_pressure`, `fluid_seed_alpha`, `fluid_alpha_advect` and `fluid_volume_correct` declares
+`r32float`, and `fluid_clear_float` (`CS_FluidClearFloat3D`) clears those volumes on reset; the
+storage format is part of the binding, so `fluid_clear` cannot serve both.
 
 The 16 original fluid kernels:
 
@@ -451,11 +457,20 @@ clamping that destroyed mass, and zeroing air velocity in the gradient.
    dragged the water mesh's edge vertices down the whole depth. A probe caught this: texel
    (0,0) reported −1.5596.
 
-Elevation is the column integral of α:
+Elevation is the column integral of α, plus the air that sits well below the surface:
 
 ```
-elevation = BasinMinY + (sum of alpha over rows) * CellSize
+water     = sum of alpha over the open rows (solids under wet water count as full)
+trapped   = sum over open rows k of saturate(water - (k + 0.5) - 2) * (1 - alpha_k)
+elevation = BasinMinY + (water + trapped) * CellSize
 ```
+
+Air more than two cells under the integral surface lifts the surface instead of lowering it. The
+solver has no bubble buoyancy, so air a plunging body entrains stays beside it; with exact R32F
+α that air (0.1–0.2 cells per column, against 0.003 far away) drew a 1.7–3 cm moat round a
+floating ball. The weight ramps from 0 at two cells to 1 at three, below the interface smear
+(about two cells), and is continuous in the level, so it adds no jitter. fp16 α hid the effect:
+it diluted the whole pool by 0.55 cells per column, so every column read low by the same amount.
 
 A column with no water is a wall column and reports the water plane, contributing zero delta.
 
@@ -466,7 +481,12 @@ elevation is staircase-quantised on 0.09 m cells and read as blocks at the water
 
 A separable 3×3 tent (weights 1,2,1 / 16) is applied to the 3×3 neighbourhood of column
 elevations **before** the slopes are taken, so the normal cannot disagree with the surface.
-This costs 9 column sums (9 × 22 volume loads) per texel, which is affordable.
+Each 8×8 thread group integrates its 10×10 neighbourhood of columns once into `groupshared`
+memory and the tent reads from there. It used to call `ColumnElevation` per tap, 9 times per
+texel, and a column next to a body also walks up to 64 neighbouring columns to inpaint, so the
+kernel cost 0.5–1 ms a frame; the tiled version made scene 7 run 306.8 → 415.3 fps (D3D12) and
+353.4 → 402.3 fps (Vulkan) at 720p with no spawned balls, and 266.7 → 377.0 / 327.2 → 360.2 fps
+with 30, same session, together with the R32F switch.
 
 Note this also fixed a factor-of-2 error: the shader multiplies slope by `2/cellSize`, and the
 tent-weighted difference is (1/4)·Δ rather than (1/2)·Δ, so the two combine to the correct
@@ -583,7 +603,8 @@ all release a held body first.
 
 ### 8.4 Reset (`ResetToRest`)
 
-`CS_FluidClear3D.hlsl` zeroes a volume. Reset clears:
+`CS_FluidClear3D.hlsl` zeroes the RGBA16F velocity volumes and `CS_FluidClearFloat3D.hlsl` the
+R32F scalar ones. Reset clears:
 - both velocity volumes, both pressure volumes, the divergence volume, both alpha volumes
 - `m_current`, `m_pressureCurrent`, `m_time`, the volume-check counter
 - `m_maskBodyValid` so the body footprint is re-stamped cleanly
@@ -853,7 +874,7 @@ back-solves density, so editing either updates the other without them fighting e
 - Scene probe at every 60th frame: solver diagnostics, surface contract probe, sphere state,
   column profile.
 - Later additions (details in [backyard-water-remaining-work.md](backyard-water-remaining-work.md)
-  section 4): `ReadSurface`/`ReadWallMask` readbacks, the 9-gate `--backyard-selftest`, and the
+  section 4): `ReadSurface`/`ReadWallMask` readbacks, the 10-gate `--backyard-selftest`, and the
   ImGui "Debug view" (`FluidDebugRenderer`: displaced mesh wireframe, voxels, velocity slice).
 - `--backyard-spawn N` drops N extra balls at startup; `--backyard-pick-test` exercises Ctrl +
   click picking, dragging into another ball, release and re-grab by feeding a synthetic
@@ -898,6 +919,7 @@ back-solves density, so editing either updates the other without them fighting e
 | `T850/Assets/Shaders/CS_FluidSphere3D.hlsl` | Per-column body cavity bookkeeping (now unused by the frame loop) |
 | `T850/Assets/Shaders/CS_FluidObstacleVelocity3D.hlsl` | No-penetration at the moving body |
 | `T850/Assets/Shaders/CS_FluidClear3D.hlsl` | Zero a volume (reset path) |
+| `T850/Assets/Shaders/CS_FluidClearFloat3D.hlsl` | Zero an R32F scalar volume (reset path) |
 | `T850/Assets/Shaders/CS_VolumePatternWrite.hlsl` | 3D compute self-test |
 | `T850/Assets/Shaders/CS_VolumePatternRead.hlsl` | 3D compute self-test |
 | `T850/Assets/Textures/Backyard/WaterNormal.png` | 256² band-limited spectrum normal map |
@@ -951,7 +973,9 @@ behaviour, not errors.
 ### Compute layer
 1. **Storage images must be declared non-readable on Vulkan.** Missing
    `[[spv::nonreadable]]` / `[[spv::format_rgba16f]]` broke storage image creation.
-2. **No `R32F` storage format.** Scalars must live in `.x` of RGBA16F.
+2. **No `R32F` storage format** (fixed by W-02). Scalars lived in `.x` of RGBA16F, and fp16 α
+   lost 0.69 % of a still pool in 2 s while diluting the bulk by 0.55 cells per column; R32F
+   loses 0.001 %.
 3. **`constant_count` mismatches silently reject pipelines.** A 2-float cbuffer reflects as 4
    DWORDs. Declaring 2 makes the driver return null with **no diagnostic**.
 4. **`ComputeBuffer` has no update path.** A buffer created with seed data is immutable in
@@ -997,6 +1021,17 @@ behaviour, not errors.
 22. **Nearest-texel shading with bilinear geometry** caused the flashing surface (§9.5).
 23. **Surface texture contract**: R must be a *delta*; slopes are per-texel *differences*; wall
     columns must report the water plane.
+24. **Trapped air read as missing water** (W-02). The column integral treats air under the surface
+    as a lower surface; once α was exact, the air a plunge leaves beside a floating ball drew a
+    1.7–3 cm moat. Air deeper than two cells now counts as volume (§7).
+25. **The surface kernel did 9× its work.** Each tent tap recomputed a column (and its inpainting
+    walks next to a body). A groupshared tile computes each column once (§7.1).
+
+### Self-test
+26. **The isotropy annulus sat 9 cm off the impact in Z.** `uint(2.25f / 0.09f)` is 24, not 25,
+    so the −Z and +Z halves sampled the wave at 0.56 m and 0.44 m. The quadrant index is
+    `(dx > 0) + 2 (dz > 0)`, so the "axis" gate really compared −Z with +Z, and its 10.7 mm
+    "operator-split anisotropy" band was this bug; centred, both halves agree within 0.6 mm.
 
 ### Body coupling
 24. **Volume-only coupling produces no waves.** The body must be a solid in the pressure solve

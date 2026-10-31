@@ -32,7 +32,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked |
 | W-11 items 1, 2, 4: JSON tunables, three solver values, comment | **Done** (Stage 4) | `5511e7e9` + `e974f4e5` | Accepted. `Scenes/BackyardWater.json` drives 101 settable keys; strict key validation; `alphaCompression`, `maxSubstepDt` and the volume-check interval are tunables with GUI sliders. Review added the missing Android registration of `BackyardWaterJson.cpp` |
 | W-15 Solver and frame cost | Measured; P1, P6 and a D3D12 upload stall fixed (review) | `3a371903`, `c911381a` | 720p, 0 balls, same session: D3D12 222 → 292–305 fps, Vulkan 322 → 344–361 fps, 0 spikes. P2–P5 and P7–P9 open; see the profiling pass in W-15 |
-| W-02 R32F storage for α/pressure/divergence | Part 1 done, part 2 blocked | `14c705f4` | Format exists on five backends with an exact 3D round trip; switching the volumes shifts three calibrated gates, so it needs the measurement recorded in the staged plan first |
+| W-02 R32F storage for α/pressure/divergence | **Done** | `14c705f4` + part 2 | α, pressure, divergence are R32F; still-pool loss 0.693 % → 0.001 %. The gate shift was an off-centre isotropy probe, an fp16-calibrated gate 5 floor and trapped air read as missing water. Tiled surface kernel: 720p D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 |
 | W-04 GPU→CPU readbacks stall the frame | Mostly done (review) | `c911381a` | The correction no longer reads back (GPU reduce + GPU deficit); probes run only at info logging. Steps 3 and 5 open |
 | W-05 Moving body re-uploads the wall mask | Done differently (review) | `c911381a` | Mask restamped on the GPU in a persistent buffer; no upload after startup. The analytic-body design is no longer needed for cost |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
@@ -367,7 +367,8 @@ explicitly — `config.json`'s `"scene": 7` is not honoured on the `--api`-only 
 
 ### W-02 — 32-bit storage for volume fraction and pressure (P1, M, suggested: GLM)
 
-**Part 1 done (`14c705f4`); part 2 blocked on a measured gate shift (2026-10-30).**
+**Done (2026-10-30).** Part 1 `14c705f4` (local agent), part 2 by the reviewer. The staged plan,
+section 4 "Stage 5a — W-02", has the measurements.
 
 - **Part 1:** `ComputeStorageFormat::R32Float` exists on D3D11, D3D12, Vulkan, GL and WebGPU (WebGPU
   rejects it loudly: no WGSL storage path for it in this build). Each backend resolves a storage
@@ -375,15 +376,14 @@ explicitly — `config.json`'s `"scene": 7` is not honoured on the `--api`-only 
   format on D3D12 and Vulkan — that mismatch used to be silent garbage. The compute self-test runs the
   same 3D workload as RGBA16F and R32F, and the R32F case writes a value fp16 cannot hold: PASS on
   D3D12, Vulkan and D3D11.
-- **Part 2 (switch α, pressure, divergence) is not accepted yet.** It compiles and runs on all three
-  solver APIs and is more accurate globally (still-pool loss 0.693 % → 0.001 %; the fluid self-test's
-  projection residual meanX +0.0201 → +0.0066), but it moves three calibrated gates: early isotropy
-  10.7 → 29.2 mm with a mirror-symmetric quadrupole, gate 7's funnel −1.2 → −17.1 mm (limit 15 mm), and
-  the surface-texture Y median 2.4 → 0.8 mm. Reverting α alone brings the quadrupole back to all-rise
-  but then gate 7 fails the other way (+43 mm ring, −41 mm pool level), so the interaction is between
-  exact α, the volume correction and W-19's waterline seeding — not a format bug. The staged plan's
-  section 3 "Stage 5a" records the measurements and the three steps the next session must take before
-  switching α; gate limits must not be relaxed without that measurement.
+- **Part 2:** α, pressure and divergence are R32F; velocity stays RGBA16F. Still-pool loss 0.693 % →
+  0.001 %, the fluid self-test's projection meanX +0.0201 → +0.0066. The three gates that moved were
+  not solver physics: the isotropy annulus sat 9 cm off the impact (truncated cell index), gate 5's
+  1 mm floor leaned on fp16 noise, and the surface kernel read air trapped beside a floating ball as
+  missing water (now counted as volume below two cells). Gate 1 became strict (2 mm, 0.05 %).
+  The surface kernel now computes each column once per group (it did so 9×), which with the format
+  change took scene 7 from 306.8 to 415.3 fps on D3D12 and 353.4 to 402.3 on Vulkan (720p, same
+  session).
 
 **Problem.** Every field is RGBA16F. Near α = 1 a half float has a step of 2⁻¹¹ ≈ 0.00049, so a
 per-substep flux smaller than ~0.00024 is rounded away. This is a likely contributor to the

@@ -33,7 +33,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-11 items 1, 2, 4: JSON tunables, three solver values, comment | **Done** (Stage 4) | `5511e7e9` + `e974f4e5` | Accepted. `Scenes/BackyardWater.json` drives 101 settable keys; strict key validation; `alphaCompression`, `maxSubstepDt` and the volume-check interval are tunables with GUI sliders. Review added the missing Android registration of `BackyardWaterJson.cpp` |
 | W-15 Solver and frame cost | Measured; P1, P6 and a D3D12 upload stall fixed (review) | `3a371903`, `c911381a`, `44c3d514` | 720p, 0 balls: D3D12 222 → 292–305 fps (review) → **295.4** after the sweeps went to 120 in `44c3d514`'s follow-up; Vulkan 274.2; 30 balls 273.0 / 255.5. 0 spikes. P2–P5 and P7–P9 open; see the profiling pass in W-15 |
 | W-02 R32F storage for α/pressure/divergence | **Done** | `14c705f4` + part 2 | α, pressure, divergence are R32F; still-pool loss 0.693 % → 0.001 %. The gate shift was an off-centre isotropy probe, an fp16-calibrated gate 5 floor and trapped air read as missing water. Tiled surface kernel: 720p D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 |
-| W-26 The surface kernel compensates for trapped air | **Open** (debt from W-02) | `3c4e33c0` | `TRAPPED_AIR_DEPTH_CELLS` in `CS_FluidSurface3D` counts air deeper than two cells as volume, so the drawn surface hides the air a plunge entrains (no bubble buoyancy). Remove it once W-03/W-07 sharpen the transport, and re-run gate 7 |
+| W-03 Mass lost every substep | **Mostly done** (attempt 3) | `b5ae57fa`, van Leer flux | Transport loss is ~0 (deficit is the displaced body volume); van Leer/minmod face value lifts bulk 0.9969 → 0.9987 and cuts cells below 0.98 by 79 % for free. Splitting and SLIC measured and rejected. Three acceptance lines marginal — see W-03 |
 | W-04 GPU→CPU readbacks stall the frame | Mostly done (review) | `c911381a` | The correction no longer reads back (GPU reduce + GPU deficit); probes run only at info logging. Steps 3 and 5 open |
 | W-05 Moving body re-uploads the wall mask | Done differently (review) | `c911381a` | Mask restamped on the GPU in a persistent buffer; no upload after startup. The analytic-body design is no longer needed for cost |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
@@ -43,6 +43,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-23 Textured materials with normal maps | **Done** (Stage 4b) | `507ef1a4` | CC0 ambientCG textures with NormalGL, world-box UVs |
 | W-24 House roof is upside down | **Done** (Stage 4a) | `2114fa0e` | Sign flipped, gables closed |
 | W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` + `ff66c039` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 (headless) and the frame probe landed in `ff66c039` |
+| W-26 The surface kernel compensates for trapped air | **Open** (debt from W-02) | `3c4e33c0` | `TRAPPED_AIR_DEPTH_CELLS` in `CS_FluidSurface3D` counts air deeper than two cells as volume, so the drawn surface hides the air a plunge entrains (no bubble buoyancy). Remove it once W-03/W-07 sharpen the transport, and re-run gate 7. The van Leer flux already halved the float gates' distance from their limits |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -480,9 +481,31 @@ report the `VolumeCorrection` deficit before/after (debug log); report surface r
    **W-03 is therefore re-scoped.** Total α already sits at the body-adjusted reference within
    0.1 cells and the correction is idle, so mass is not the remaining defect: the "diluted bulk" is
    air smeared in by a first-order upwind flux. The acceptance numbers (bulk ≥ 0.999, interface
-   1–2 cells) need a **less diffusive flux**, not another conservation scheme — next attempt is a
-   per-axis SLIC / Hirt–Nichols donor-acceptor flux inside the one unsplit kernel. The staged plan's
-   "Stage 5b, attempt 1" has both candidate designs and their costs.
+   1–2 cells) need a **less diffusive flux**, not another conservation scheme.
+
+   **Attempts 2 and 3 (later the same day).** SLIC / Hirt–Nichols donor-acceptor was tried and
+   **rejected** (its far-side branch donates nothing when `cfl < 1 − alpha`, so smeared cells freeze:
+   bulk 0.9637, interface 7.43, 22 133 cells below 0.98). A **van Leer / minmod limited face value**
+   was then adopted: keep the single conservative face flux and replace only the advected value with
+
+   ```
+   slope  = minmod(a_donor - a_far, a_receiver - a_donor)
+   a_face = clamp(a_donor + 0.5 * slope * (1 - cfl), 0, 1)
+   amount = min(cfl * a_face, a_donor)
+   ```
+
+   Sharp fronts advect at full cell value; smeared fronts get a reconstruction *below* the average, so
+   the profile steepens instead of spreading, and nothing can freeze because the formula is continuous
+   in the gradient. Measured at t ≈ 8.2 s after a 4.43 m/s impact (deterministic, D3D12 = Vulkan):
+   bulk **0.9969 → 0.9987**, cells below 0.98 **3 998 → 852 (−79 %)**, interface **3.35 → 2.66**
+   cells, deficit unchanged (still exactly the displaced body volume). All ten gates PASS on three
+   APIs, and the surface gates improved with it: isotropy mirror 1.50/0.72 → **0.01/0.00** mm at
+   +0.30 s, float `ring−far` −5.6 → **−1.4…−2.1** mm, `covered min−ring` −17.3 → **−13.8…−15.9** mm.
+   Cost is in the noise: same-session A/B on D3D12, 284.6 → **284.9 fps** (`update` 2.632 → 2.604 ms).
+   A compression sweep confirms 0.5 stays the best setting. Acceptance: five of seven lines met,
+   three marginal (bulk 0.9987 against 0.999, 1.1 % against 1 %, interface 2.66 against 1–2) — all
+   pointing at the ~850 cells the splash leaves diluted, which is W-07's and W-26's territory now.
+   Details in the staged plan, "Stage 5b, attempts 2 and 3".
 
 **Baseline after those fixes, measured with `--backyard-mass-audit 60` (deterministic; D3D12 =
 Vulkan)** — scripted 0.25 m / 39.27 kg ball, 4.43 m/s impact:

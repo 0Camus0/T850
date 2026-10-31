@@ -106,33 +106,72 @@ float FaceVelocity(int3 n, int c)
 }
 
 // Signed volume flux LEAVING `cell` across one face, in alpha-cells per second.
-// Both cells sharing the face read the same stored U, so the mirror flux is its
-// exact negation and the domain sum telescopes.
+// Both cells sharing the face read the same stored U and the same three alphas, so the
+// mirror flux is its exact negation and the domain sum telescopes.
+//
+// W-03: the donated amount is not `cfl * alpha_donor` (the cell average, which smears the
+// front by construction) but `cfl * a_face`, where a_face is a van Leer / minmod limited
+// reconstruction of the alpha at the upwind side of the face:
+//
+//   d1 = alpha_donor - alpha_far,  d2 = alpha_receiver - alpha_donor
+//   slope = minmod(d1, d2)                      (0 when the three are not monotone)
+//   a_face = clamp(alpha_donor + 0.5 * slope * (1 - cfl), 0, 1)
+//
+// For a sharp front (1, 1, 0) the slope is 0 and the full cell value advects, so the front
+// moves at exactly the flow speed. For a smeared front (1, 0.5, 0.25) the slope is negative
+// and the reconstruction is *below* the cell average, so less than the average leaves and
+// the profile steepens instead of spreading. That is the anti-diffusive behaviour this
+// stage needs; the minmod keeps it monotone, so no new maxima appear.
+//
+// A two-branch SLIC / Hirt-Nichols donor-acceptor amount was tried first and rejected: its
+// far-side branch sends nothing when cfl < 1 - alpha, so every smeared cell froze and the
+// band of 0.5 cells widened (bulk 0.9637, interface 7.43 cells, 22 133 cells below 0.98).
 float FaceFluxOut(int3 cell, int3 offset, int axis, float outwardSign)
 {
-    const int3 neighbour = cell + offset;
-    const float alphaCell = AlphaAt(cell);
-    const float alphaNeighbour = AlphaAt(neighbour);
-
-    // Stored MAC face velocity: + face uses texel(cell), - face uses texel(cell - e_c).
-    float u;
-    if (outwardSign > 0.0f)
-        u = FaceVelocity(cell, axis);
-    else
-        u = FaceVelocity(cell + offset, axis);
-
-    const float s = outwardSign * u;
-
-    if (IsSolidCell(neighbour))
+    const int3 step = (axis == 0) ? int3(1, 0, 0) : ((axis == 1) ? int3(0, 1, 0) : int3(0, 0, 1));
+    // The face's canonical owner is the lower cell, so both cells compute identical values.
+    const bool plusFace = outwardSign > 0.0f;
+    const int3 lower = plusFace ? cell : cell - step;
+    const int3 upper = lower + step;
+    if (IsSolidCell(lower) || IsSolidCell(upper))
         return 0.0f;
 
-    float flux = s > 0.0f ? s * alphaCell : s * alphaNeighbour;
-    // Interface sharpening (OpenFOAM-style): moves water toward the fuller side,
-    // scaled by a(1-a); the ramp keeps near-equal bulk cells from being amplified.
-    const float faceAlpha = 0.5f * (alphaCell + alphaNeighbour);
-    const float direction = clamp((alphaNeighbour - alphaCell) * 4.0f, -1.0f, 1.0f);
-    flux += Padding0 * abs(s) * faceAlpha * (1.0f - faceAlpha) * direction;
-    return flux;
+    const float u = FaceVelocity(lower, axis);
+    const float alphaLower = AlphaAt(lower);
+    const float alphaUpper = AlphaAt(upper);
+
+    float flux = 0.0f;
+    if (u != 0.0f)
+    {
+        const float cfl = min(abs(u) * DeltaTime / CellSize, 1.0f);
+        const bool forward = u > 0.0f;
+        const float alphaDonor = forward ? alphaLower : alphaUpper;
+        const float alphaReceiver = forward ? alphaUpper : alphaLower;
+        const int3 farCell = forward ? (lower - step) : (upper + step);
+        const float alphaFar = AlphaAt(farCell);
+
+        const float d1 = alphaDonor - alphaFar;
+        const float d2 = alphaReceiver - alphaDonor;
+        // minmod: only a monotone stencil contributes a slope.
+        const float slope = (d1 * d2 > 0.0f) ? (abs(d1) < abs(d2) ? d1 : d2) : 0.0f;
+        const float faceAlpha = clamp(alphaDonor + 0.5f * slope * (1.0f - cfl), 0.0f, 1.0f);
+        const float amount = min(cfl * faceAlpha, alphaDonor);
+        // Amount per step -> rate, signed in the +axis direction.
+        const float rate = amount * CellSize / max(DeltaTime, 1e-8f);
+        flux = forward ? rate : -rate;
+    }
+
+    // Interface sharpening (OpenFOAM-style): moves water toward the fuller side, scaled by
+    // a(1-a); the ramp keeps near-equal bulk cells from being amplified. Antisymmetric
+    // between the two cells, so it conserves.
+    const float s = abs(u);
+    const float faceAverage = 0.5f * (alphaLower + alphaUpper);
+    const float direction = clamp((alphaUpper - alphaLower) * 4.0f, -1.0f, 1.0f);
+    flux += Padding0 * s * faceAverage * (1.0f - faceAverage) * direction;
+
+    // Convert to "leaving `cell`": the canonical flux is positive in +axis, and a face on
+    // the -axis side of the cell is crossed in the opposite sense.
+    return plusFace ? flux : -flux;
 }
 
 [numthreads(4, 4, 4)]

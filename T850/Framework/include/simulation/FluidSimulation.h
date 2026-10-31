@@ -136,7 +136,8 @@ namespace t850 {
     // "Bulk" matches the debug view: a liquid cell with no air face-neighbour, which
     // should all be alpha = 1 away from the surface.
     struct MassAudit {
-      float totalAlpha = 0.0f;        // summed alpha, in cells
+      float totalAlpha = 0.0f;        // summed alpha, in cells (CPU sum of the raw field)
+      float totalAlphaGpu = 0.0f;     // same field through the GPU reduction the correction uses
       float referenceAlpha = 0.0f;    // seed-time target, minus submerged body volume
       float deficit = 0.0f;           // referenceAlpha - totalAlpha, in cells
       uint32_t bulkCells = 0;

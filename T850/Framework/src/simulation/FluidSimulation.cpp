@@ -1036,6 +1036,11 @@ bool FluidSimulation::AuditMass(BaseDriver* driver, MassAudit& out) {
   }
 
   out.totalAlpha = static_cast<float>(total);
+  // The correction aims at this number, so a disagreement here is a silent offset in
+  // every deficit measurement (and in what the correction repays).
+  float gpuTotal = 0.0f;
+  float gpuInterface = 0.0f;
+  if (MeasureVolumeFraction(driver, gpuTotal, gpuInterface)) out.totalAlphaGpu = gpuTotal;
   out.referenceAlpha = m_referenceVolumeFraction;
   out.deficit = m_referenceVolumeFraction - static_cast<float>(total);
   if (out.bulkCells > 0) {
@@ -1136,6 +1141,7 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
   interfaceSum = 0.0f;
   float interfaceHeadroom = 0.0f;
   float interfaceAlpha = 0.0f;
+  double totalSum = 0.0;
   if (!driver || !m_copyPipeline || !m_alpha[0]) return false;
   const uint32_t width = m_settings.width;
   const uint32_t height = m_settings.height;
@@ -1176,7 +1182,11 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
   for (uint32_t index = 0; index < voxelCount; ++index) {
     float value = 0.0f;
     std::memcpy(&value, &raw[index * 4 + 0], sizeof(float));
-    totalAlpha += value;
+    // Summed in double: 106k float32 additions of values near 1 lose ~25 cells by the time
+    // the total reaches 83k (measured: 82 964 in float against 82 941 in double). That
+    // inflated the seed reference by the same amount, so the correction was aiming at a
+    // number the field could never reach and every deficit reading was 25-30 cells high.
+    totalSum += static_cast<double>(value);
     // Same band the correction kernel touches: liquid cells with room, [airThreshold, 0.999).
     if (value >= m_settings.airThreshold && value < 0.999f) {
       interfaceSum += value;
@@ -1184,6 +1194,7 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
       interfaceAlpha += value;
     }
   }
+  totalAlpha = static_cast<float>(totalSum);
   m_lastInterfaceHeadroom = interfaceHeadroom;
   m_lastInterfaceAlpha = interfaceAlpha;
   return true;

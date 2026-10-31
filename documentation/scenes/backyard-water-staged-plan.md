@@ -1019,6 +1019,17 @@ itself is already 30 cells short of what it wrote. **Check that first** — it s
 The interface width is the number to watch for the transport itself: 3.49 cells on average with a
 13-cell maximum, over all 5 000 columns of a pool whose surface should be 1–2 cells thick.
 
+**Two measurement faults found and fixed before the transport work (2026-10-31).** (a)
+`MeasureVolumeFraction` summed 106 304 float32 values in float, losing ~25 cells and inflating the
+seed reference by the same amount; it now sums in `double`, and gate 1's honest still-pool loss is
+0.013 % (was reported as 0.001 %). (b) The first two α advections lose 30 cells at rest with a zero
+velocity field: `AlphaAt()` returns air for the row above the domain while the mirror flux is never
+returned, so boundary α escapes upward — a boundary bug, independent of upwind diffusion. Both are
+in W-03's "two measurement faults" note. **Also: compare the deficit against the body-adjusted
+target.** At 8.73 s the ball floats with `submerged = 0.60`, so the correction's target is
+`ref − 53.8 = 82 917` and total alpha sits exactly there: the "+53.8" is the displaced body volume,
+not lost water.
+
 **Acceptance** (unchanged from W-03) — deficit < 20 cells per 15 frames over 3000 frames, at rest
 **and** after impact; mass drift ±0.05 %; surface rms ≤ 2.5 cm at t ≈ 11 s; bulk mean α ≥ 0.999 with
 < 1 % of bulk cells below 0.98 before and 10 s after the impact; rings still render. Measured with

@@ -425,6 +425,45 @@ report the `VolumeCorrection` deficit before/after (debug log); report surface r
 
 ### W-03 — Mass is lost every substep and re-added by a global correction (P1, L, suggested: DeepSeek for the kernel, GLM for the host)
 
+**2026-10-31 — two measurement faults found before the transport work; both fixed.**
+
+1. **`MeasureVolumeFraction` summed 106 304 float32 values in float.** At a total of 83 000 that
+   loses ~25 cells to rounding (measured: 82 964 in float against 82 941 in double on the same
+   field). Since this function also *locks the seed reference*, the reference was inflated by the
+   same amount, so the correction aimed at a number the field could never reach and every deficit
+   reading was 25–30 cells high. Now accumulated in `double`. Consequence: the still-pool gate's
+   "0.001 % loss" was partly the same rounding; the honest figure is **0.013 %** (gate 1's 0.05 %
+   limit stands, ~4× margin; mass start 82 910 → 82 917, drift +0.008 %).
+2. **The first α advections lose 30 cells at rest, with a zero velocity field.** Measured by
+   logging the total either side of the advect dispatch: step 1 −21.48 cells, step 2 −8.14, step 3
+   +0.00, then constant for the rest of the run. With the advect disabled the total stays exactly at
+   the reference (deficit +0.0). **`AlphaAt()` treats out-of-domain as air (`return 0`)** for the
+   open-ceiling case, so a boundary cell whose stored outward face velocity is a tiny non-zero value
+   (the first pressure projection produces a spurious sub-cell velocity from the partial waterline
+   cells) loses α into the row above the domain, which is never written back. The `saturate()`
+   then turns an inflow that would arrive from above into nothing. This is a **boundary bug in the
+   transport, not upwind diffusion**, and it sets a ~30-cell floor that the correction cannot
+   repair.
+
+   Fix with W-03: make out-of-domain sampling consistent with `IsSolidCell` (`openCeiling` means the
+   face above the top row is a *free* face: either sample it as air **and** allow the mirror flux to
+   return, or treat the top row as no-flux), and assert per-pass conservation in a debug mode.
+
+**Baseline after those fixes, measured with `--backyard-mass-audit 60` (deterministic; D3D12 =
+Vulkan)** — scripted 0.25 m / 39.27 kg ball, 4.43 m/s impact:
+
+| t | total | ref | deficit | bulk mean | bulk min | below 0.98 | interface width (mean / max / columns) |
+|---|---|---|---|---|---|---|---|
+| 0.21 s | 82 941 | 82 971 | +30.2 | 0.9997 | 0.9991 | 0 of 76 304 | 0.00 / 0 / 0 |
+| 1.99 s | 82 946 | 82 971 | +24.8 | 0.9985 | 0.5798 | 1 229 | 2.51 / 13 / 3 013 |
+| 3.97 s | 82 907 | 82 971 | +64.1 | 0.9977 | 0.5359 | 2 620 | 2.69 / 13 / 5 000 |
+| **8.73 s** | **82 917** | 82 971 | **+53.8** | **0.9965** | 0.7502 | **4 056 of 76 276 (5.3 %)** | **3.49 / 13 / 5 000** |
+
+At 8.73 s the ball floats with `submerged = 0.60`, so the correction's own target is
+`ref − 53.8 = 82 917` — i.e. **the correction is holding total alpha exactly at its target**; the
+"+53.8 deficit" is the submerged body volume, not lost water. Measure the deficit against the
+body-adjusted target, not against the seed value.
+
 **Problem.** Even with the pool at rest, `CorrectVolumeFraction` adds ≈ 300 cells (0.36 % of the
 water) every 15 frames. The correction is a stop-gap: it does a full-volume GPU→CPU readback (a
 hard stall, see W-04), and it puts water back where there is room, not where it was lost.

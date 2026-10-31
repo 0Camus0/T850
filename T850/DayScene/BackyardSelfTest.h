@@ -20,7 +20,11 @@ namespace t850 {
     // Pressure sweeps. Must match production (60): at 20 sweeps the pressure solve
     // leaves residual divergence and the pool drifts instead of staying still, which
     // made the still-pool gate measure convergence depth rather than surface shape.
-    uint32_t pressureIterations = 60;
+    // Sweeps per substep for the gates. Kept equal to WaterTunables and to
+    // Scenes/BackyardWater.json so the gates validate the configuration that ships:
+    // conservation depends on projection convergence (+29.6 cells lost at 60, +4.4 at 120,
+    // +0.1 at 240 on the still pool).
+    uint32_t pressureIterations = 120;
     // Skip the drop gates and run only the still-pool and mass gates.
     bool skipBall = false;
     // Requested cell size in metres; 0 keeps the WaterTunables default. The grid follows.

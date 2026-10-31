@@ -16,7 +16,13 @@ namespace t850 {
     int   gridWidth = 100;
     int   gridHeight = 18;
     int   gridDepth = 50;
-    int   pressureIterations = 60;
+    // Red-black Gauss-Seidel sweeps per substep. Conservation is tied to this number: the
+    // transport clips alpha at 1 in cells that receive inflow while full, so residual
+    // divergence destroys mass (measured on the still pool: +29.6 cells lost at 60 sweeps,
+    // +4.4 at 120, +0.1 at 240). 120 costs ~0.9 ms of solver recording at 720p on D3D12
+    // (397 -> 298 fps with nothing else running) and is the shipped setting; W-15 P2
+    // (in-place red-black on R32F) is what makes 240 affordable later.
+    int   pressureIterations = 120;
     float cellSize = 0.09f;
     // Absolute world Y of the still-water surface (the plane the water mesh is
     // authored at), and the metres of air the solver keeps above it so a free

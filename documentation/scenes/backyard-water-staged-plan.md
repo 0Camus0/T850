@@ -1010,10 +1010,19 @@ last digit because the run is deterministic:
 | 1.99 s | 82 946 | 82 971 | +24.8 | 0.9985 | 0.5798 | 1 229 | 2.51 / 13 / 3 013 |
 | 3.97 s | 82 907 | 82 971 | +64.1 | 0.9977 | 0.5359 | 2 620 | 2.69 / 13 / 5 000 |
 | **8.73 s (steady)** | **82 917** | 82 971 | **+53.8** | **0.9965** | 0.7502 | **4 056 of 76 276 (5.3 %)** | **3.49 / 13 / 5 000** |
-The +30 cells at t = 0.21 s is present *before any impact*, and `m_referenceVolumeFraction` is captured
-with a `MeasureVolumeFraction` right after seeding, so the two should agree exactly: the seeding pass
-itself is already 30 cells short of what it wrote. **Check that first** — it sets the floor for the
-"deficit < 20 cells" acceptance and it is not transport.
+
+The same audit with the shipped **120 sweeps** (scene 7, wind and ball on, D3D12; Vulkan agrees):
+
+| t | total | ref | deficit | bulk mean | bulk min | below 0.98 | interface width (mean / max / columns) | div rms |
+|---|---|---|---|---|---|---|---|---|
+| 0.21 s | 82 966 | 82 971 | **+4.4** | **1.0000** | 0.9999 | **0 of 76 304** | 0.00 / 0 / 0 | 0.0000 |
+| 8.13 s | 82 917 | 82 971 | +53.5 (all body) | 0.9969 | 0.7571 | 3 998 | 3.35 / 13 / 5 000 | 0.0313 |
+| 8.33 s | 82 917 | 82 971 | +54.0 (all body) | 0.9968 | 0.7502 | 4 036 | 3.37 / 13 / 5 000 | 0.0318 |
+
+So the **initialisation transient is gone** (30 → 4.4 cells, bulk exactly 1.0 at t = 0.21 s) and the
+interface is a little sharper, but the **post-impact dilution is unchanged** — that part is the
+transport's own clip under residual divergence during the splash, which is what the per-axis scheme
+below has to fix.
 
 The interface width is the number to watch for the transport itself: 3.49 cells on average with a
 13-cell maximum, over all 5 000 columns of a pool whose surface should be 1–2 cells thick.
@@ -1028,11 +1037,20 @@ neighbours that are already full. The iteration sweep proves it (still pool, no 
 deficit **+29.6 cells at 60 sweeps, +4.4 at 120, +0.1 at 240**, for D3D12 397 / 298 / 189 fps at
 720p. So the transport conserves exactly *given a divergence-free field*, and W-03 has two levers:
 the per-axis conservative dilation (no clip at all) and more sweeps once W-15 P2 makes them cheap.
-The audit now reports the divergence residual (`div rms`/`max`) and the saturated-cell count, so the
+The audit reports the divergence residual (`div rms`/`max`) and the saturated-cell count, so the
 clip can be attributed in one line. **Also: compare the deficit against the body-adjusted target.**
 At 8.73 s the ball floats with `submerged = 0.60`, so the correction's target is
 `ref − 53.8 = 82 917` and total alpha sits exactly there: the "+53.8" is the displaced body volume,
 not lost water.
+
+**Sweeps raised to 120 on 2026-10-31** (`WaterTunables`, `Scenes/BackyardWater.json` and
+`BackyardSelfTestOptions` together, so the gates validate the shipped setting). Same-session A/B at
+720p with 0 balls: D3D12 **401.9 → 295.4 fps** (`scene.update` 1.53 → 2.45 ms), Vulkan
+**391.6 → 274.2**; 30 balls 273.0 / 255.5. Gates improved rather than just passing: still-pool loss
+0.013 % → **0.002 %**, mean offset −0.2 → **−0.0 mm**, `maxAbs` 0.3 → 0.1 mm. The float gates moved
+toward their limits (`ring−far` −4.9 → −5.6 mm against 15, `covered min−ring` −15.9 → −17.3 mm
+against 20) because the sharper projection draws a stronger meniscus; W-26 should recover that
+margin.
 
 **Acceptance** (unchanged from W-03) — deficit < 20 cells per 15 frames over 3000 frames, at rest
 **and** after impact; mass drift ±0.05 %; surface rms ≤ 2.5 cm at t ≈ 11 s; bulk mean α ≥ 0.999 with

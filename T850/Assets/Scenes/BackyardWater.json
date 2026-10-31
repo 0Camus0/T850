@@ -1,6 +1,6 @@
 {
   "water": {
-    "pressureIterations": 60,
+    "pressureIterations": 120,
     "cellSize": 0.09,
     "openCeiling": true,
     "deltaTime": 0.0166667,

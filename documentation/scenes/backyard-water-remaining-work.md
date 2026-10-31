@@ -31,7 +31,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | Tooling: fluid debug view | Done (review) | `4d21e836`, `93dff3d9`, `5d640c2e` | Wireframe, voxel and whole-volume velocity overlays in the ImGui panel; D3D12 upload-ring crash fixed (per-layer caps); bulk-water α statistic; see 4.5 |
 | W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked |
 | W-11 items 1, 2, 4: JSON tunables, three solver values, comment | **Done** (Stage 4) | `5511e7e9` + `e974f4e5` | Accepted. `Scenes/BackyardWater.json` drives 101 settable keys; strict key validation; `alphaCompression`, `maxSubstepDt` and the volume-check interval are tunables with GUI sliders. Review added the missing Android registration of `BackyardWaterJson.cpp` |
-| W-15 Solver and frame cost | Measured; P1, P6 and a D3D12 upload stall fixed (review) | `3a371903`, `c911381a` | 720p, 0 balls, same session: D3D12 222 → 292–305 fps, Vulkan 322 → 344–361 fps, 0 spikes. P2–P5 and P7–P9 open; see the profiling pass in W-15 |
+| W-15 Solver and frame cost | Measured; P1, P6 and a D3D12 upload stall fixed (review) | `3a371903`, `c911381a`, `44c3d514` | 720p, 0 balls: D3D12 222 → 292–305 fps (review) → **295.4** after the sweeps went to 120 in `44c3d514`'s follow-up; Vulkan 274.2; 30 balls 273.0 / 255.5. 0 spikes. P2–P5 and P7–P9 open; see the profiling pass in W-15 |
 | W-02 R32F storage for α/pressure/divergence | **Done** | `14c705f4` + part 2 | α, pressure, divergence are R32F; still-pool loss 0.693 % → 0.001 %. The gate shift was an off-centre isotropy probe, an fp16-calibrated gate 5 floor and trapped air read as missing water. Tiled surface kernel: 720p D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 |
 | W-26 The surface kernel compensates for trapped air | **Open** (debt from W-02) | `3c4e33c0` | `TRAPPED_AIR_DEPTH_CELLS` in `CS_FluidSurface3D` counts air deeper than two cells as volume, so the drawn surface hides the air a plunge entrains (no bubble buoyancy). Remove it once W-03/W-07 sharpen the transport, and re-run gate 7 |
 | W-04 GPU→CPU readbacks stall the frame | Mostly done (review) | `c911381a` | The correction no longer reads back (GPU reduce + GPU deficit); probes run only at info logging. Steps 3 and 5 open |
@@ -448,16 +448,24 @@ report the `VolumeCorrection` deficit before/after (debug log); report surface r
 
    | `pressureIterations` | deficit at t = 0.21 s | D3D12 fps, 720p, 0 balls |
    |---|---|---|
-   | 60 (shipped default) | **+29.6 cells** | 397.1 |
-   | 120 | **+4.4 cells** | 297.8 |
+   | 60 (the old default) | **+29.6 cells** | 397.1 |
+   | 120 (**now shipped**) | **+4.4 cells** | 297.8 |
    | 240 | **+0.1 cells** | 188.9 |
 
    The transport is conservative **when the velocity field is divergence free**; the loss is created
    by projection residual and destroyed by the clip. Two independent levers follow, and W-03 should
    use both: the per-axis conservative dilation scheme (no clip, so residual divergence cannot
-   destroy mass), and more sweeps once W-15 P2 makes them affordable. `pressureIterations` is
-   already a JSON/GUI tunable, and 120 costs ~0.9 ms of solver recording for a 7× smaller floor —
-   an owner-facing quality dial, not a code change.
+   destroy mass), and more sweeps once W-15 P2 makes them affordable.
+
+   **Acted on 2026-10-31** (`pressureIterations` is now 120 in `WaterTunables`, in
+   `Scenes/BackyardWater.json` and in `BackyardSelfTestOptions`, so the gates validate what ships).
+   Same-session A/B, 720p, 0 balls: D3D12 **401.9 → 295.4 fps** (`scene.update` 1.53 → 2.45 ms),
+   Vulkan **391.6 → 274.2 fps**; with 30 balls 273.0 / 255.5 fps. Still 4–5× a 60 fps budget, and
+   the gates improved: still-pool loss **0.013 % → 0.002 %**, mean offset **−0.2 mm → −0.0 mm**,
+   `maxAbs` 0.3 → 0.1 mm. The two float gates moved *toward* their limits (`ring−far`
+   −4.9 → −5.6 mm against 15, `covered min−ring` −15.9 → −17.3 mm against 20) because a sharper
+   projection draws the meniscus around the ball more strongly; W-26 (the trapped-air
+   compensation) is what should bring them back.
 
 **Baseline after those fixes, measured with `--backyard-mass-audit 60` (deterministic; D3D12 =
 Vulkan)** — scripted 0.25 m / 39.27 kg ball, 4.43 m/s impact:
@@ -882,6 +890,14 @@ add a test that compares the cbuffer text of all fluid kernels.
 ---
 
 ### W-15 — Solver and frame cost (P1, M–L) — measured in review; P1 and P6 done (`c911381a`), P2–P5 and P7–P9 open
+
+**`pressureIterations` 60 → 120 (2026-10-31).** Conservation is tied to projection convergence, so
+the shipped sweeps doubled (W-03's note has the sweep table). Same-session A/B at 720p with
+`backyard-diag\telemetry.ps1`, 0 balls: **D3D12 401.9 → 295.4 fps** (`scene.update` 1.526 → 2.445 ms),
+**Vulkan 391.6 → 274.2 fps** (`update` 1.287 → 2.338 ms). With 30 balls: D3D12 273.0, Vulkan 255.5,
+0 spikes. The cost is ~0.92 ms of solver recording per frame on D3D12 — the per-dispatch fill/drain
+of 60 extra pressure sweeps, which is exactly what P2 (in-place red-black on R32F) targets: halving
+the dispatch count is what buys the sweeps back.
 
 **Measured** (review, 2026-10-28; RTX 4080 Laptop, x64 Release, scene 7, 1280×720,
 `--logLevel info`; median of four 600-frame windows after the drop, from the timestamps of the

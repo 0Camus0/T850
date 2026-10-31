@@ -368,7 +368,7 @@
           "shader_register": 0,
           "binding_index": 2,
           "dimension": "3d",
-          "storage_format": "rgba16float"
+          "storage_format": "r32float"
         },
         {
           "type": "read_only_buffer",
@@ -414,7 +414,7 @@
           "shader_register": 0,
           "binding_index": 3,
           "dimension": "3d",
-          "storage_format": "rgba16float"
+          "storage_format": "r32float"
         },
         {
           "type": "read_only_buffer",
@@ -694,7 +694,7 @@
           "shader_register": 0,
           "binding_index": 2,
           "dimension": "3d",
-          "storage_format": "rgba16float"
+          "storage_format": "r32float"
         }
       ]
     },
@@ -729,7 +729,7 @@
           "shader_register": 0,
           "binding_index": 3,
           "dimension": "3d",
-          "storage_format": "rgba16float"
+          "storage_format": "r32float"
         },
         {
           "type": "read_only_buffer",
@@ -769,7 +769,7 @@
           "shader_register": 0,
           "binding_index": 3,
           "dimension": "3d",
-          "storage_format": "rgba16float"
+          "storage_format": "r32float"
         },
         {
           "type": "read_write_buffer",
@@ -907,6 +907,29 @@
           "binding_index": 1,
           "dimension": "3d",
           "storage_format": "rgba16float"
+        }
+      ]
+    },
+    {
+      "id": "fluid_clear_float",
+      "source": "CS_FluidClearFloat3D.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 20
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 0,
+          "binding_index": 1,
+          "dimension": "3d",
+          "storage_format": "r32float"
         }
       ]
     },

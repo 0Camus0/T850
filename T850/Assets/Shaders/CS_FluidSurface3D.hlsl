@@ -108,6 +108,10 @@ struct Column
     bool wet;
 };
 
+// Depth below the column-integral surface, in cells, past which air counts as volume.
+// The far-field interface smears over ~2 cells (0.94 / 0.79 / 0.43 / 0.14 with R32F).
+static const float TRAPPED_AIR_DEPTH_CELLS = 2.0f;
+
 Column ReadColumn(int x, int z)
 {
     Column col;
@@ -151,8 +155,25 @@ Column ReadColumn(int x, int z)
     if (!col.hasBody)
         col.waterAbove = 0.0f;
     col.wet = water > 0.001f;
-    if (col.wet)
-        col.elevation = BasinMinY + water * CellSize;
+    if (col.wet) {
+        // Air well below the free surface lifts it instead of lowering it. The solver has
+        // no bubble buoyancy, so air a plunging body leaves behind (W-07) stays where it
+        // is; read as missing water it drew a 2-3 cm moat round a floating ball once
+        // alpha became exact (W-02). The ramp starts below the interface smear and is
+        // continuous in the level, so it cannot add quantisation jitter.
+        float trapped = 0.0f;
+        for (uint k = 0; k < Height; ++k) {
+            const float depthCells = water - (float(k) + 0.5f);
+            if (depthCells <= TRAPPED_AIR_DEPTH_CELLS)
+                break;
+            const int3 c = int3(x, int(k), z);
+            if (IsSolid(c))
+                continue;
+            trapped += saturate(depthCells - TRAPPED_AIR_DEPTH_CELLS) *
+                       (1.0f - saturate(AlphaIn.Load(int4(c, 0)).x));
+        }
+        col.elevation = BasinMinY + (water + trapped) * CellSize;
+    }
     return col;
 }
 
@@ -218,9 +239,21 @@ float SurfaceFoam(int x, int z, int surfaceRow)
     return saturate(divergence * 0.35f);
 }
 
+// Column elevations for an 8x8 group plus a one-column border, so each column is
+// integrated once per group instead of once per tent tap (9x).
+groupshared float s_elevation[10][10];
+
 [numthreads(8, 8, 1)]
-void CS(uint3 id : SV_DispatchThreadID)
+void CS(uint3 id : SV_DispatchThreadID, uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 {
+    const uint flat = gtid.x + 8u * gtid.y;
+    for (uint slot = flat; slot < 100u; slot += 64u) {
+        const int tx = int(slot % 10u);
+        const int tz = int(slot / 10u);
+        s_elevation[tz][tx] = ColumnElevation(int(gid.x) * 8 + tx - 1, int(gid.y) * 8 + tz - 1);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
     // Dispatched as (width, depth, 1): the grid row lives in id.y.
     if (id.x >= Width || id.y >= Depth)
         return;
@@ -228,12 +261,11 @@ void CS(uint3 id : SV_DispatchThreadID)
     const int cx = int(id.x);
     const int cz = int(id.y);
 
-    // Raw column elevations around this texel. These 9 sums replace 9 separate
-    // ColumnElevation calls below, so the smoothing costs one pass of loads.
+    // Raw column elevations around this texel, read from the group's tile.
     float e[3][3];
     for (int dz = -1; dz <= 1; ++dz) {
         for (int dx = -1; dx <= 1; ++dx) {
-            e[dz + 1][dx + 1] = ColumnElevation(cx + dx, cz + dz);
+            e[dz + 1][dx + 1] = s_elevation[int(gtid.y) + 1 + dz][int(gtid.x) + 1 + dx];
         }
     }
 

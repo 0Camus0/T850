@@ -113,12 +113,13 @@ namespace t850 {
 
 FluidSimulation::~FluidSimulation() = default;
 
-std::unique_ptr<ComputeTexture3D> FluidSimulation::CreateVolume(BaseDriver* driver, const char* debugName) {
+std::unique_ptr<ComputeTexture3D> FluidSimulation::CreateVolume(BaseDriver* driver, ComputeStorageFormat format,
+                                                                const char* debugName) {
   ComputeTexture3DDesc desc;
   desc.width = m_settings.width;
   desc.height = m_settings.height;
   desc.depth = m_settings.depth;
-  desc.format = ComputeStorageFormat::Rgba16Float;
+  desc.format = format;
   desc.access = ComputeBufferAccess::ReadWrite;
   desc.debugName = debugName ? debugName : "T850 Fluid Volume";
   return driver->CreateComputeTexture3D(desc);
@@ -670,12 +671,16 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   LoadPoolLayout();
 
   for (size_t i = 0; i < kVelocityCount; ++i)
-    m_velocity[i] = CreateVolume(driver, i == 0 ? "Fluid Velocity A" : "Fluid Velocity B");
-  m_divergence = CreateVolume(driver, "Fluid Divergence");
+    m_velocity[i] = CreateVolume(driver, ComputeStorageFormat::Rgba16Float,
+                                 i == 0 ? "Fluid Velocity A" : "Fluid Velocity B");
+  // The scalar fields are R32F (W-02): fp16 alpha lost 0.69 % of the pool in 2 s.
+  m_divergence = CreateVolume(driver, ComputeStorageFormat::R32Float, "Fluid Divergence");
   for (size_t i = 0; i < kPressureCount; ++i)
-    m_pressure[i] = CreateVolume(driver, i == 0 ? "Fluid Pressure A" : "Fluid Pressure B");
+    m_pressure[i] = CreateVolume(driver, ComputeStorageFormat::R32Float,
+                                 i == 0 ? "Fluid Pressure A" : "Fluid Pressure B");
   for (int i = 0; i < 2; ++i)
-    m_alpha[i] = CreateVolume(driver, i == 0 ? "Fluid Alpha A" : "Fluid Alpha B");
+    m_alpha[i] = CreateVolume(driver, ComputeStorageFormat::R32Float,
+                              i == 0 ? "Fluid Alpha A" : "Fluid Alpha B");
 
   // Wall mask from the authored pool geometry. LoadPoolLayout() must run before
   // this so the basin bounds match the cells being classified.
@@ -698,6 +703,7 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_stampBodiesPipeline = CreatePipeline(driver, "CS_FluidStampBodies3D.hlsl");
   m_objectVelocityPipeline = CreatePipeline(driver, "CS_FluidObstacleVelocity3D.hlsl");
   m_clearPipeline = CreatePipeline(driver, "CS_FluidClear3D.hlsl");
+  m_clearFloatPipeline = CreatePipeline(driver, "CS_FluidClearFloat3D.hlsl");
   m_surfaceToBufferPipeline = CreatePipeline(driver, "CS_FluidSurfaceToBuffer.hlsl");
   m_extrapolatePipeline = CreatePipeline(driver, "CS_FluidExtrapolate3D.hlsl");
 
@@ -706,7 +712,7 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
                   m_alphaAdvectPipeline && m_volumeCorrectPipeline && m_volumeReducePipeline &&
                   m_stampBodiesPipeline && m_baseMaskBuffer &&
-                  m_objectVelocityPipeline && m_clearPipeline &&
+                  m_objectVelocityPipeline && m_clearPipeline && m_clearFloatPipeline &&
                   m_surfaceToBufferPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
@@ -778,6 +784,7 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_baseMaskBuffer.reset();
   m_objectVelocityPipeline.reset();
   m_clearPipeline.reset();
+  m_clearFloatPipeline.reset();
   m_surfaceToBufferPipeline.reset();
   m_surfaceReadbackBuffer.reset();
   m_surfaceReadbackTexels = 0;
@@ -1343,29 +1350,31 @@ void FluidSimulation::AdvanceOneSphere(FluidSphere& s, float dt) {
 }
 
 bool FluidSimulation::ResetToRest(BaseDriver* driver) {
-  if (!m_ready || !driver || !m_clearPipeline) return false;
+  if (!m_ready || !driver || !m_clearPipeline || !m_clearFloatPipeline) return false;
 
   const std::vector<uint32_t> constants = BuildConstants();
   const uint32_t px = (m_settings.width + m_clearPipeline->threadGroupSize[0] - 1) / m_clearPipeline->threadGroupSize[0];
   const uint32_t py = (m_settings.height + m_clearPipeline->threadGroupSize[1] - 1) / m_clearPipeline->threadGroupSize[1];
   const uint32_t pz = (m_settings.depth + m_clearPipeline->threadGroupSize[2] - 1) / m_clearPipeline->threadGroupSize[2];
 
-  auto clear = [&](ComputeTexture3D* volume) {
+  auto clearWith = [&](ComputePipeline& pipeline, ComputeTexture3D* volume) {
     if (!volume) return true;
     const std::vector<ComputeBindingDesc> bindings = {
       {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
       {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, volume}
     };
-    return driver->DispatchCompute(*m_clearPipeline, bindings, px, py, pz);
+    return driver->DispatchCompute(pipeline, bindings, px, py, pz);
   };
+  auto clear = [&](ComputeTexture3D* volume) { return clearWith(*m_clearPipeline, volume); };
+  auto clearScalar = [&](ComputeTexture3D* volume) { return clearWith(*m_clearFloatPipeline, volume); };
 
   // Clearing momentum is the point of a reset: without it the next drop lands in
   // water the previous one set moving, and two runs at different heights are not
   // comparable.
   if (!clear(m_velocity[0].get()) || !clear(m_velocity[1].get())) return false;
-  if (!clear(m_pressure[0].get()) || !clear(m_pressure[1].get())) return false;
-  if (!clear(m_divergence.get())) return false;
-  if (!clear(m_alpha[0].get()) || !clear(m_alpha[1].get())) return false;
+  if (!clearScalar(m_pressure[0].get()) || !clearScalar(m_pressure[1].get())) return false;
+  if (!clearScalar(m_divergence.get())) return false;
+  if (!clearScalar(m_alpha[0].get()) || !clearScalar(m_alpha[1].get())) return false;
 
   m_current = 0;
   m_pressureCurrent = 0;

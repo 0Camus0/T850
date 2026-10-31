@@ -41,9 +41,9 @@ StructuredBuffer<uint> WallMask : register(t8);
 #endif
 #ifdef T850_SPIRV
 [[spv::nonreadable]]
-[[spv::format_rgba16f]]
+[[spv::format_r32f]]
 #endif
-RWTexture3D<float4> AlphaOut : register(u0);
+RWTexture3D<float> AlphaOut : register(u0);
 
 uint CellIndex(int3 cell)
 {
@@ -66,7 +66,7 @@ void CS(uint3 id : SV_DispatchThreadID)
     int3 cell = int3(id);
     // Solid voxels hold no water at all.
     if (IsSolid(cell)) {
-        AlphaOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        AlphaOut[id] = 0.0f;
         return;
     }
 
@@ -85,5 +85,5 @@ void CS(uint3 id : SV_DispatchThreadID)
     else
         alpha = fillHeight - cellBottom;   // partial cell at the waterline
 
-    AlphaOut[id] = float4(alpha, 0.0f, 0.0f, 0.0f);
+    AlphaOut[id] = alpha;
 }

@@ -33,6 +33,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-11 items 1, 2, 4: JSON tunables, three solver values, comment | **Done** (Stage 4) | `5511e7e9` + `e974f4e5` | Accepted. `Scenes/BackyardWater.json` drives 101 settable keys; strict key validation; `alphaCompression`, `maxSubstepDt` and the volume-check interval are tunables with GUI sliders. Review added the missing Android registration of `BackyardWaterJson.cpp` |
 | W-15 Solver and frame cost | Measured; P1, P6 and a D3D12 upload stall fixed (review) | `3a371903`, `c911381a` | 720p, 0 balls, same session: D3D12 222 → 292–305 fps, Vulkan 322 → 344–361 fps, 0 spikes. P2–P5 and P7–P9 open; see the profiling pass in W-15 |
 | W-02 R32F storage for α/pressure/divergence | **Done** | `14c705f4` + part 2 | α, pressure, divergence are R32F; still-pool loss 0.693 % → 0.001 %. The gate shift was an off-centre isotropy probe, an fp16-calibrated gate 5 floor and trapped air read as missing water. Tiled surface kernel: 720p D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 |
+| W-26 The surface kernel compensates for trapped air | **Open** (debt from W-02) | `3c4e33c0` | `TRAPPED_AIR_DEPTH_CELLS` in `CS_FluidSurface3D` counts air deeper than two cells as volume, so the drawn surface hides the air a plunge entrains (no bubble buoyancy). Remove it once W-03/W-07 sharpen the transport, and re-run gate 7 |
 | W-04 GPU→CPU readbacks stall the frame | Mostly done (review) | `c911381a` | The correction no longer reads back (GPU reduce + GPU deficit); probes run only at info logging. Steps 3 and 5 open |
 | W-05 Moving body re-uploads the wall mask | Done differently (review) | `c911381a` | Mask restamped on the GPU in a persistent buffer; no upload after startup. The analytic-body design is no longer needed for cost |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
@@ -41,7 +42,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-22 Spawn more balls (random place, size, weight) | **Done**, uncapped in review | `0a981b8b` + `9f6e7a2f` + `97009aef` | Any number of balls (100 tested on D3D12/Vulkan/D3D11); water Z-mirror fixed; see W-22 |
 | W-23 Textured materials with normal maps | **Done** (Stage 4b) | `507ef1a4` | CC0 ambientCG textures with NormalGL, world-box UVs |
 | W-24 House roof is upside down | **Done** (Stage 4a) | `2114fa0e` | Sign flipped, gables closed |
-| W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 not written |
+| W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` + `ff66c039` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 (headless) and the frame probe landed in `ff66c039` |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -1598,6 +1599,34 @@ sets, and texture files are not committed so a fresh clone must run `DownloadTex
   and one with the palette file moved aside, each ball projected with the engine's `camVP` and its
   patch required to change (mean difference 76.6 / 76.7 on D3D12 / Vulkan). `--backyard-spawn-seed`
   was added so the layout is reproducible. Details in the staged plan, "Stage 4d, part 3".
+
+---
+
+### W-26 — The surface kernel compensates for trapped air (P2, S) — debt from W-02
+
+**Problem.** `CS_FluidSurface3D` computes a column's elevation from `water`, the integral of α in
+that column. With exact (R32F) α the air a plunging body entrains stays beside the ball — the solver
+has no bubble buoyancy (W-07) — so the integral reads as missing water and the drawn surface dipped
+in a 1.7–3 cm moat around a floating ball. `3c4e33c0` made it look right by counting air deeper than
+`TRAPPED_AIR_DEPTH_CELLS = 2.0` as volume:
+
+```
+trapped   = Σ over open rows k of saturate(water − (k + 0.5) − 2) · (1 − α_k)
+elevation = BasinMinY + (water + trapped) · CellSize
+```
+
+That is a **renderer-side compensation for a solver gap**: it hides entrained air rather than moving
+it, so it cannot stay forever. Two concrete risks: (a) once W-07 displaces water instead of deleting
+it, or a bubble mechanism exists, the term double-counts and the surface reads high; (b) it is a
+`Height`-deep loop per column, so it scales with pool depth.
+
+**Fix.** Remove the term and re-run gate 7 (float ring−far and covered min−ring). If the moat returns,
+it means the transport is still leaving air where it should not, and the correct response is W-03 /
+W-07, not a larger ramp. Record the measured before/after in the implementation record §7 either way.
+
+**Acceptance.** Gate 7 within its limits **without** the term, on D3D12 and Vulkan, with the
+surface-texture gate and the full backyard self-test unchanged; the frame-dump check that the water
+around a floating ball is level.
 
 ---
 

@@ -999,6 +999,31 @@ this stage.**
 
 ### Stage 5b — Conservative, bounded transport (W-03)
 
+**Baseline measured 2026-10-31 at `484443c9`** with `--backyard-mass-audit 60 --regressionFixedDt 0.0033
+--dump-frame 3000` (scripted 0.25 m / 39.27 kg ball, 4.43 m/s impact), D3D12 and Vulkan agreeing to the
+last digit because the run is deterministic:
+
+| t | total (cells) | ref | deficit | bulk mean | bulk min | below 0.98 | interface width (mean / max / columns) |
+|---|---|---|---|---|---|---|---|
+| 0.21 s (before the drop) | 82 941 | 82 971 | **+30.2** | 0.9997 | 0.9991 | 0 of 76 304 | 0.00 / 0 / 0 |
+| 0.61 s | 82 881 | 82 971 | +89.8 | 0.9995 | 0.8062 | 184 | 3.39 / 8 / 216 |
+| 1.99 s | 82 946 | 82 971 | +24.8 | 0.9985 | 0.5798 | 1 229 | 2.51 / 13 / 3 013 |
+| 3.97 s | 82 907 | 82 971 | +64.1 | 0.9977 | 0.5359 | 2 620 | 2.69 / 13 / 5 000 |
+| **8.73 s (steady)** | **82 917** | 82 971 | **+53.8** | **0.9965** | 0.7502 | **4 056 of 76 276 (5.3 %)** | **3.49 / 13 / 5 000** |
+
+The +30 cells at t = 0.21 s is present *before any impact*, and `m_referenceVolumeFraction` is captured
+with a `MeasureVolumeFraction` right after seeding, so the two should agree exactly: the seeding pass
+itself is already 30 cells short of what it wrote. **Check that first** — it sets the floor for the
+"deficit < 20 cells" acceptance and it is not transport.
+
+The interface width is the number to watch for the transport itself: 3.49 cells on average with a
+13-cell maximum, over all 5 000 columns of a pool whose surface should be 1–2 cells thick.
+
+**Acceptance** (unchanged from W-03) — deficit < 20 cells per 15 frames over 3000 frames, at rest
+**and** after impact; mass drift ±0.05 %; surface rms ≤ 2.5 cm at t ≈ 11 s; bulk mean α ≥ 0.999 with
+< 1 % of bulk cells below 0.98 before and 10 s after the impact; rings still render. Measured with
+`--backyard-mass-audit`, not by eye.
+
 **Scope** — replace the upwind + `saturate` clip with either the Weymouth–Yue operator-split
 dilation scheme (preferred) or a Zalesak-style flux limiter on the existing unsplit form. Keep
 the global correction as a safety net and log its deficit; it should approach zero.

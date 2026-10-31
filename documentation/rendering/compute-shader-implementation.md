@@ -61,7 +61,7 @@ capability selection a render-graph concern instead of a scene-side API switch.
 requires `ComputeBindingDesc::texture3D` instead of `texture`.
 
 Reflection rejects a declared 2D/3D mismatch, so a kernel declaring `Texture3D` cannot be
-fed a 2D texture and vice versa. Volumes accept RGBA16F or RGBA8 UNORM storage, are
+fed a 2D texture and vice versa. Volumes accept RGBA16F, RGBA8 UNORM or R32F storage, are
 created empty, and are seeded by a dispatch; CPU initial data is rejected. Dispatch depth
 is the third workgroup dimension and is still limited to 65535 groups.
 

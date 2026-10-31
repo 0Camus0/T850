@@ -8,14 +8,14 @@ The task catalogue is the source of truth for **what** each task is and how to p
 document is only about **order and session boundaries**, so each stage can be executed cold, in
 one context, without carrying the whole backlog.
 
-Stage 0 baseline: `01ccbd82`. Stages 0–4, 3c and 4a–4d are done, plus the review fixes, the debug
-view, pick and drag, `--unattended`, and the W-15 performance pass (`c911381a`) logged in section 4.
-**Next: Stage 5a (W-02)**, starting from the tip of `backyard_scene`. Section 0 is the step-by-step
-brief.
+Stage 0 baseline: `01ccbd82`. Stages 0–4, 3c, 4a–4d and **5a** are done, plus the review fixes,
+the debug view, pick and drag, `--unattended`, and the W-15 performance pass (`c911381a`) logged in
+section 4. **Next: Stage 5b (W-03)**, starting from the tip of `backyard_scene`. Section 0 is the
+step-by-step brief.
 
 ---
 
-## 0. Next steps for the local agents (2026-10-30, after `c911381a` and the doc pass)
+## 0. Next steps for the local agents (2026-10-30, after Stage 5a)
 
 Start every session from the tip of `backyard_scene` and build:
 
@@ -61,6 +61,13 @@ stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` 
   Stage 6a shrank accordingly. Measure with `backyard-diag\telemetry.ps1`, not FPS alone.
 - **Documentation audit** — every engine document touched by these Framework changes now matches
   the code (list in section 4). Keep it that way: a Framework change ships with its doc update.
+- **Stage 5a (W-02) is done** (section 4, "Stage 5a — W-02"). Part 1 (`14c705f4`) added the format;
+  part 2 switched α, pressure and divergence to R32F. The gate shift that blocked part 2 was two
+  test-side faults and one render artefact, not solver physics: the isotropy probe sat 9 cm off the
+  impact, gate 5 leaned on fp16 noise, and the surface kernel read air trapped beside a floating ball
+  as missing water. The surface kernel also got a groupshared tile (it recomputed every column 9×).
+  Same session at 720p: D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 fps (0 balls); with 30 balls
+  266.7 → 377.0 and 327.2 → 360.2. **Next is Stage 5b (W-03)**, see "After that" below.
 
 The owner then asked for three things before the solver work resumes, in this order (one stage per
 session, smallest first). Full specifications are in remaining-work W-24, W-23 and W-22. After
@@ -160,7 +167,9 @@ the engine work below is what the next session executes.
   each ball's centre from `snapshot.json`'s `camVP` into the dumped back buffer (`RT_Dump_*.ppm`)
   and asserts the sampled colours are pairwise distinct.
 
-### Step 5 — Stage 5a, W-02 (after 4a–4d)
+### Step 5 — Stage 5a, W-02 (after 4a–4d) — DONE
+
+**Done** (section 4, "Stage 5a — W-02"). The notes below are kept for reference.
 
 Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Before starting:
 
@@ -185,11 +194,16 @@ Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Befor
 - After any Framework header change, delete the PCH before trusting the binary. In Stage 3c a stale
   binary silently kept the old behaviour.
 
-### After that
+### After that — the next stage
 
 Stage 5b (W-03), the conservative transport. Before designing it, read the two Stage 5b leads in
 section 4 (the still-pool sink depends on how full the waterline cell is; the bulk water is
-diluted after the impact) and confirm the first hypothesis before building on it.
+diluted after the impact) and confirm the first hypothesis before building on it. Both leads were
+measured on fp16 α: with R32F the still pool no longer sinks (0.001 % in 2 s) and the bulk stays
+at α = 1 away from a plunge, so re-measure them first. What R32F still shows is the upwind smear:
+the far-field interface spans about four cells (0.944 / 0.79 / 0.43 / 0.14), and air a plunging
+ball entrains stays beside it (no bubble buoyancy). The surface kernel compensates for the trapped
+air (implementation record §7); a sharper transport should make that compensation unnecessary.
 
 ### Standing rules from the reviews
 
@@ -257,7 +271,7 @@ command run, and anything you could not verify.
 | 4b. Textured materials | W-23 | M | **DONE** — CC0 ambientCG textures with NormalGL, metric world-box UVs, JPEGs embedded; −5.5 % fps; layout unchanged |
 | 4c. Spawn more balls | W-22 | M–L | **DONE** — mask-encoded body index, gate 9 multi-body PASS, GUI spawn/clear. Review: Z-mirror fixed (`9f6e7a2f`), **cap removed** (`97009aef`, 100 balls tested) |
 | 4d. Per-ball PBR materials | W-25 | M | **DONE** — 32 CC0 sets in R2 (part 1); `e055efec`: cube-sphere GLB with UVs, per-instance maps behind `InstanceMaterialMaps` (no new permutation), random shuffle-bag assignment, 0 errors on five APIs. Gate 10 not written |
-| 5a. 32-bit storage | W-02 | M | Prerequisite for the transport work |
+| 5a. 32-bit storage | W-02 | M | **DONE** — `14c705f4` format on five backends; part 2 switched α/pressure/divergence to R32F, fixed the isotropy probe, the trapped-air moat and the 9× surface kernel. +35 % fps D3D12, +14 % Vulkan (0 balls) |
 | 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
 | 6a. Analytic body + cheap readback | W-05, W-04 | S | **Mostly done in `c911381a`** — no mask upload after startup (GPU stamp), no correction readback. Left: W-04 steps 3 and 5 (persistent diagnostics buffer, async readback for 6b) |
 | 6b. Displacement + ball feels water | W-07, W-06 | M | Needs previous/current body footprints and 6a's async readback |
@@ -436,6 +450,9 @@ before, because the Vulkan gate was broken.
    (0.65 mm) but X and Z amplitudes differ by **10.3 mm** at r = 0.5 m, 0.3 s after impact. The
    alpha transport is operator-split and sweeps one axis at a time, so this is expected. The axis
    band exists to catch a regression and should shrink once the conservative scheme lands.
+   *Corrected in Stage 5a: this was a test bug. The annulus centre truncated 24.999998 to cell 24,
+   9 cm off the impact in Z, and the "axis" value compares the −Z half with the +Z half (each
+   quadrant spans both axes). Centred, both halves agree within 0.2 mm (fp16) / 0.6 mm (R32F).*
 3. **Arrival is much faster than shallow-water speed.** 0.04 s for 0.5 m implies ~12 m/s, not
    √(g·h) = 3.9 m/s. The near field right after impact is cavity collapse, not a gravity wave, so
    the lower bound only guards a false positive; the meaningful direction is a **stalled** front.
@@ -948,36 +965,16 @@ compute self-test runs the same 3D workload as RGBA16F **and** R32F, and the R32
 `value + 1/3` with a `1e-4` tolerance, which fp16 cannot hold, so a backend that quietly stores 16-bit
 fails: PASS on D3D12, Vulkan and D3D11 with `mismatches=0, visited=3927` on the 33×17×7 case.
 
-**Part 2 (switching the volumes) is BLOCKED on a measured behaviour shift, not on a format bug.**
-Switching α, pressure and divergence to R32F compiles, decodes and runs on all three solver APIs,
-and it is *more* accurate by every global measure, but three calibrated gates move:
+**Part 2 is done** (section 4, "Stage 5a — W-02"). It had been held back because three calibrated
+gates moved when α, pressure and divergence switched; the measurements below are the other agent's,
+and section 4 explains each one. None was solver physics, and no limit was relaxed to pass:
 
-| Gate | RGBA16F (today) | R32F (measured) |
-|---|---|---|
-| still-pool volume loss over 2 s | 0.693 % | **0.001 %** |
-| fluid self-test projection (meanX after 24 frames) | +0.0201 | **+0.0066** |
-| early isotropy (X vs Z, +0.30 s) | 10.7 mm, all quadrants rise | 29.2 mm, X pair up / Z pair down |
-| late isotropy (+1.00 s) | 7.9 mm | 3.0 mm, all quadrants rise |
-| gate 7 funnel (`ring-far`) | −1.2 mm | −17.1 mm (limit 15 mm) |
-| surface-texture Y median | 2.4 mm | 0.8 mm |
-
-The early-isotropy quadrupole is mirror-symmetric (0.9 mm) and comes from **α**: with pressure and
-divergence in R32F but α back in RGBA16F, all four quadrants rise again (+3.8/+3.8/+2.5/+2.5 cm,
-axis 13 mm) — but that run then fails gate 7 differently (`ring-far` +43 mm, pool level −41 mm). The
-fp16 α rounding that the 0.69 % loss came from is also what the volume correction and the waterline
-treatment (W-19) were calibrated against: the correction injects α every 15 frames, a uniform rise
-that dominated the early-isotropy measurement. With exact α the correction has nothing to do, and the
-scheme's own split-sweep anisotropy and the real meniscus around the ball become visible.
-
-**What the next session must do before switching α** (do not relax a gate to make it pass):
-
-1. Decide whether the −17 mm ring around a floating ball is the real meniscus or a kernel artefact:
-   dump the surface field around the ball at rest on both formats, and read W-19's seeding of the
-   waterline cells (it may rely on fp16 quantisation making partly-filled cells round to 1).
-2. Re-derive gate 7 and the early isotropy band from that measurement, with the numbers and the
-   reason recorded next to the constant, the way the gate comments already do.
-3. Then switch pressure and divergence first (they are the perf-relevant fields: 60 dispatches per
-   substep) and α second, each with its own self-test run on D3D12 and Vulkan.
+| Gate | RGBA16F | R32F, as first measured | Cause | R32F now |
+|---|---|---|---|---|
+| early isotropy ("X vs Z", +0.30 s) | 10.7 mm | 29.2 mm | probe 9 cm off the impact in Z | Z mirror 0.5 mm (limit now 3 mm) |
+| gate 7 `ring-far` | −1.2 mm | −17.1 mm | trapped air read as missing water | −4.9 mm (limit 15 mm) |
+| gate 5 surface-texture Y median | 2.4 mm | 0.8 mm | the 1 mm limit leaned on fp16 noise | 0.7 mm (limit now 0.25 mm; the bug reads 0) |
+| still-pool loss over 2 s | 0.693 % | 0.001 % | fp16 rounding | 0.001 % (limit now 0.05 %, was 0.80 %) |
 
 **Original scope** — add `R32Float` to `ComputeStorageFormat`, the registry parser, the reflection map,
 and every backend that maps or validates formats. `CreateVolume` takes a format; α, pressure and
@@ -1195,7 +1192,8 @@ See the Stage 1a section in §3 for the full measurement table.
 
 Key findings: the correction deficit is **not** constant (202 → 749 cells over 2 s at rest with no
 body, repaying only ~174 per check) and the pool sinks 1.1 cm/s; X-vs-Z anisotropy of 10.3 mm is a
-property of the operator-split transport, not a bug. See the Stage 1b section in §3.
+property of the operator-split transport, not a bug (*corrected in Stage 5a: an off-centre probe*).
+See the Stage 1b section in §3.
 
 ### Stage 1c — gates 4, 5 and boundedness
 
@@ -1875,8 +1873,69 @@ reproduce a spawn layout without editing `Scenes/BackyardWater.json`.
 
 ### Stage 5a — W-02
 
-Part 1 done (`14c705f4`); part 2 blocked on a measured gate shift. Details, numbers and the required
-next steps are in section 3, "Stage 5a".
+**Part 1** (`14c705f4`, local agent): the `R32Float` format on five backends and an exact R32F 3D
+round trip in the compute self-test. **Part 2** (reviewer): the switch, after the local agent had
+measured it, reverted it and handed over three hypotheses.
+
+**The switch.** The five writer kernels (`CS_FluidSeedAlpha3D`, `CS_FluidAlphaAdvect3D`,
+`CS_FluidVolumeCorrect3D`, `CS_FluidDivergence3D`, `CS_FluidPressure3D`) write `RWTexture3D<float>`
+with `[[spv::format_r32f]]`; their registry bindings declare `r32float`; `CreateVolume` takes a
+format; `CS_FluidClearFloat3D` clears the scalar volumes on reset. Readers are unchanged: they read
+`.x` through `Texture3D<float4>`, and an R32F view returns `(r, 0, 0, 1)`. That also covers
+`CS_FluidCopy3D`, so `ReadVolumeFraction` still returns one float per voxel.
+
+**Why the gates moved, measured** (D3D12; Vulkan and D3D11 agree):
+
+1. **The isotropy probe was off-centre.** `centreZ = uint((ball.z − basinMinZ) / cellSize)`
+   evaluates 2.25 / 0.09f = 24.999998 → 24, so the annulus sat one cell toward −Z. The quadrant index
+   is `(dx > 0) + 2 (dz > 0)`, so the "axis" value is the −Z half against the +Z half: the gate was
+   reading the wave's radial profile at 0.56 m and 0.44 m. R32F's sharper wave turned that into "X up,
+   Z down" (29.2 mm); fp16 gave 10.7 mm, which Stage 1b had recorded as operator-split anisotropy.
+   Centred on the impact (fractional grid coordinates), fp16 measures mirrorX 0.06 mm / mirrorZ
+   0.2 mm and R32F 0.76 / 0.5 mm at +0.30 s. The gate is renamed mirrorZ and shares the 3 mm
+   limit. Quadrants span both axes, so it cannot measure X-vs-Z anisotropy at all.
+2. **fp16 α diluted the whole pool; R32F leaves air only where a plunge put it.** Column dumps of the
+   floating-ball test at 8 s: fp16 carries 0.55 cells of air below the surface band in *every*
+   column, so all columns read low by the same amount and the surface looked flat. R32F carries
+   0.003 cells far away but 0.10–0.21 cells within 0.3 m of the ball (air the plunge entrained, which
+   has no buoyancy to leave). The free surface itself is flat, but the column integral counts that
+   air as missing water and drew a 1.7–3 cm moat. `CS_FluidSurface3D` now counts air deeper than two
+   cells as volume (ramped, continuous): ring −17.1 → −4.9 mm, covered 19.0 → 15.9 mm, flicker
+   0.7 mm. Gate 7's limits are unchanged.
+3. **Gate 5's 1 mm floor leaned on fp16 noise.** It catches a surface kernel that copies row 0 into
+   every row, which makes the across-Y median exactly 0; R32F's correct kernel measures 3.0 mm / 0.7
+   mm. The floor is 0.25 mm with the measurement next to it.
+4. **Gate 1 is strict now.** The still pool no longer sinks (mean −0.2 mm, loss 0.001 % on three
+   APIs), so its regression band (12 mm, 0.80 %) became 2 mm and 0.05 %, as its comment promised.
+
+The other agent's third hypothesis ("α fp16 + pressure fp32 gives a +43 mm mound") was not pursued:
+all three fields switched together pass, and that mixed configuration does not ship.
+
+**The surface kernel was the biggest cost in the frame.** The first trapped-air version cost about
+0.5 ms, which exposed that the kernel recomputed every column 9 times (once per tent tap, each with
+up to 64 inpainting column walks beside a body). An 8×8 group now integrates its 10×10
+neighbourhood once into `groupshared` memory; gate numbers are identical to the 0.1 mm.
+
+| 720p, same session, `telemetry.ps1` | HEAD (fp16) | R32F only | R32F + tiled surface |
+|---|---|---|---|
+| D3D12, 0 balls: mean fps (p99) | 306.8 (4.62 ms) | 315.8 | **415.3 (3.79 ms)** |
+| Vulkan, 0 balls | 353.4 (3.95 ms) | 368.4 | **402.3 (3.70 ms)** |
+| D3D12, 30 balls | 266.7 (4.97 ms) | — | **377.0 (3.94 ms)** |
+| Vulkan, 30 balls | 327.2 (4.39 ms) | — | **360.2 (3.88 ms)** |
+
+Validation on the final binary: `--backyard-selftest` PASS on D3D12, Vulkan and D3D11 (all 10
+gates); `--fluid-selftest` PASS on all three (meanX +0.0066, was +0.0201); `--compute-selftest`
+exit 0 on all three; scene 7 with 8 balls on five APIs, 0 errors; material probe PASS.
+
+**Rules learned here.**
+
+- **A gate that moves when accuracy improves is suspect first.** Two of three were measuring the
+  test or the old noise, not the solver.
+- **Never truncate a physical position to a cell index for a probe.** Use fractional grid
+  coordinates; float32 division lands just below integers.
+- **Name a gate after what its arithmetic compares.** The "axis" gate compared −Z with +Z for two
+  stages while its comment said X vs Z.
+- **Profile a fix before calling it done.** The correct surface fix first cost 15 % of the frame.
 
 ### Stage 5b — W-03
 

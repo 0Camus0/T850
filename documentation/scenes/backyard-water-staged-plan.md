@@ -196,14 +196,13 @@ Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Befor
 
 ### After that — the next stage
 
-Stage 5b (W-03), the conservative transport. Before designing it, read the two Stage 5b leads in
-section 4 (the still-pool sink depends on how full the waterline cell is; the bulk water is
-diluted after the impact) and confirm the first hypothesis before building on it. Both leads were
-measured on fp16 α: with R32F the still pool no longer sinks (0.001 % in 2 s) and the bulk stays
-at α = 1 away from a plunge, so re-measure them first. What R32F still shows is the upwind smear:
-the far-field interface spans about four cells (0.944 / 0.79 / 0.43 / 0.14), and air a plunging
-ball entrains stays beside it (no bubble buoyancy). The surface kernel compensates for the trapped
-air (implementation record §7); a sharper transport should make that compensation unnecessary.
+Stage 5b (W-03), the conservative transport. **Attempt 1 was measured and rejected on 2026-10-31**
+(section 3, "Stage 5b, attempt 1"): operator splitting with upwind fluxes is exactly conservative and
+bounded but three times more diffusive (interface 3.35 → 10.67 cells), so it was reverted rather than
+shipped. The re-scoped target is a **less diffusive flux** — per-axis SLIC / Hirt–Nichols
+donor-acceptor inside the one unsplit kernel — because the remaining defect is air smeared into the
+bulk by first-order upwinding, not lost mass (total α already matches the body-adjusted reference
+within 0.1 cells). Both candidate designs and their costs are in that section.
 
 ### Standing rules from the reviews
 
@@ -1057,9 +1056,73 @@ margin.
 < 1 % of bulk cells below 0.98 before and 10 s after the impact; rings still render. Measured with
 `--backyard-mass-audit`, not by eye.
 
-**Scope** — replace the upwind + `saturate` clip with either the Weymouth–Yue operator-split
-dilation scheme (preferred) or a Zalesak-style flux limiter on the existing unsplit form. Keep
-the global correction as a safety net and log its deficit; it should approach zero.
+---
+
+### Stage 5b, attempt 1 — operator splitting was measured and rejected (2026-10-31)
+
+**What was built.** `CS_FluidAlphaAdvectAxis3D.hlsl`: one axis per dispatch, three per substep with
+the order alternating, every face flux a single number both cells use (exactly conservative) and a
+donor/receiver limiter that caps each cell's outflow at its own α and its inflow at its headroom, so
+α cannot leave [0, 1] and no `saturate()` is needed. Full host plumbing (axis in the constants'
+`Iteration` slot, ping-pong between the two α volumes) and a JSON switch.
+
+**What it measured** (same binary, one flag, deterministic, D3D12 = Vulkan, t ≈ 8.2 s after a
+4.43 m/s impact):
+
+| | deficit | bulk mean | below 0.98 | interface width | saturated cells |
+|---|---|---|---|---|---|
+| unsplit upwind (today) | +53.5 | 0.9969 | 3 998 | **3.35** | 47 636 |
+| operator-split + limiter | +53.8 | 0.9950 | 4 777 | **10.67** | 343 |
+| split, `alphaCompression` 1.0 | +47.4 | 0.9955 | 3 828 | **12.63** | 1 235 |
+
+So the split path is **exactly as conservative** (deficit unchanged — it is the displaced body
+volume) and **bounded** (343 cells at α ≥ 0.9999 rather than 47 636, i.e. nothing is being clipped at
+1), but it is **three times more diffusive** and dilutes the bulk slightly more. Three sequential 1D
+upwind passes per substep apply roughly three times the numerical diffusion of one unsplit 3D pass;
+raising the compression term makes it worse, not better. It fails the acceptance on the metric that
+matters and was reverted rather than shipped behind a switch.
+
+**Transport sub-cycling, also measured.** Running the *existing* unsplit pass 1, 3 or 6 times per
+substep (same projected velocity, dt divided, dispatches only — no extra pressure work) changed
+nothing: interface 3.35 / 3.40 / 3.37 cells, bulk 0.9969 / 0.9967 / 0.9968, deficit +53.5 / +53.8 /
++53.5. The advection is not the diffusion source at this step size.
+
+**What actually moves the metric: solver substeps.** Halving the substep length sharpens the surface
+measurably, because the projection is then far more converged for the step it drives:
+
+| `maxSubstepDt` | substeps at 180 fps | bulk mean | below 0.98 | interface width | div rms | D3D12 / Vulkan fps |
+|---|---|---|---|---|---|---|
+| 1/120 (shipped) | 1 | 0.9968 | 4 036 | 3.37 | 0.0318 | 295 / 274 |
+| 1/360 | 3 | 0.9976 | 2 980 | 3.08 | 0.0095 | 111 / 58 |
+| 1/720 | 6 | 0.9984 | 1 966 | **2.57** | 0.0038 | — |
+
+That is the CFL/divergence lever, and it costs 3–6× the whole solver (each substep re-runs all 120
+pressure sweeps), which is why it cannot be the fix.
+
+**Conclusion — W-03 is re-scoped.** Mass is *not* the remaining problem: total α sits at the
+body-adjusted reference to within 0.1 cells, and the correction is effectively idle. What the audit
+calls "dilution" is air smeared into the bulk by the **first-order upwind flux**, i.e. a
+distribution error, and no conservation or clipping change can touch it. The acceptance numbers
+(bulk ≥ 0.999, interface 1–2 cells) need a **less diffusive flux**, which means interface
+reconstruction. Two candidate designs, in order of expected value per line of code:
+
+1. **Per-axis SLIC / Hirt–Nichols donor-acceptor flux** inside the existing unsplit kernel: decide
+   per face whether the fluid sits against the face or at the far side from the two neighbour α
+   values, then send `min(α_donor, cfl)` or `max(0, α_donor − (1 − cfl))` instead of `|u|·α_donor`.
+   Cheap (a few loads), keeps one dispatch, and is the classic fix for exactly this smear. Needs a
+   boundedness guard for the far-side case.
+2. **Two-pass FCT on the same stencil**: pass 1 computes each cell's raw out/in sums into a scratch
+   3D texture, pass 2 scales every face by `min(λ_donor, λ_in_receiver)`. Strictly conservative and
+   bounded, but it changes only the clipping, not the diffusion, so on its own it will not move the
+   acceptance numbers.
+
+Do (1) first and measure with `--backyard-mass-audit` at t ≈ 8 s; keep (2) only if clipping shows up
+again once the interface is sharp.
+
+**Original scope (superseded — see the attempt-1 result above).** Replace the upwind + `saturate` clip
+with either the Weymouth–Yue operator-split dilation scheme or a Zalesak-style flux limiter on the
+existing unsplit form. Keep the global correction as a safety net and log its deficit; it should
+approach zero.
 
 **Files** — `CS_FluidAlphaAdvect3D.hlsl` (+ possibly new per-axis kernels),
 `compute_kernels.json`, `FluidSimulation.cpp`.
@@ -1997,7 +2060,8 @@ exit 0 on all three; scene 7 with 8 balls on five APIs, 0 errors; material probe
 
 ### Stage 5b — W-03
 
-_Pending._
+Attempt 1 (operator splitting) measured and rejected; the stage is re-scoped to a less diffusive flux.
+Numbers, tables and the two candidate designs are in section 3, "Stage 5b, attempt 1".
 
 ### Stage 6a — W-05, W-04
 

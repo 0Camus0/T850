@@ -684,6 +684,37 @@ gather from the receiving side).
 half compared with the baseline. Impact rim height (max of `[columns]` in the first 0.3 s after
 impact) increases.
 
+**Attempt 1 (2026-10-31) — implemented, measured, reverted.** A gather pass
+(`CS_FluidDisplaceBody3D`) ran after the mask restamp and before the α advection: every free cell took
+an equal share of each adjacent *body* cell's water, split by how many free faces that body cell has,
+so the covered cells were emptied into their neighbourhood instead of being zeroed by the transport.
+It conserved what it moved (up to the receiver's headroom), needed no previous mask and no atomics,
+and cost one dispatch per substep while a body was enabled.
+
+Measured, same binary and settings, D3D12 = Vulkan:
+
+| | t = 2.19 s | | t = 8.13 s | |
+|---|---|---|---|---|
+| | no pass | with pass | no pass | with pass |
+| bulk mean | 0.9996 | 0.9995 | 0.9987 | 0.9987 |
+| cells below 0.98 | 114 | **368** | 852 | **941** |
+| interface width | 1.65 | 1.61 | 2.66 | 2.71 |
+| deficit | +8.0 | +8.0 | +53.8 | +53.8 |
+
+So the *global* numbers are unchanged — as they should be, since the volume correction already
+restores the displaced volume — and the local effect is below the audit's resolution. What it did do
+is **fail gate 8**: "the surface near the body flickers by 0.0339 m between frames (limit 0.010)",
+because a floating ball's footprint flickers as it bobs across cell boundaries and each flip moved a
+whole cell of water into one neighbour. The still-pool isotropy deltas also flipped sign at +0.30 s
+(+0.0083 → −0.0068 m).
+
+**Next design, if this is taken up again:** distribute upward- and velocity-biased instead of equally
+(as the fix above originally said), weight by distance so a single cell flip spreads over several
+receivers, and run it only on the substeps where the footprint actually changed — then re-check gate 8
+before anything else, because that gate is what caught this. The mass argument for the pass is
+weaker than it looked: the correction already holds total α at the body-adjusted reference, so the
+prize is the *local* rim, and that needs a probe that can see it (the audit cannot).
+
 ---
 
 ### W-08 — The domain ceiling is a lid (P2, S, suggested: DeepSeek)

@@ -108,14 +108,14 @@ namespace {
   };
 
   bool AnnulusMedian(const FluidSimulation& fluid, const SurfaceField& field,
-                     uint32_t centreX, uint32_t centreZ, float radius, float halfBand,
+                     float centreX, float centreZ, float radius, float halfBand,
                      Quadrant quadrant[4]) {
     const FluidSettings& fs = fluid.Settings();
     std::vector<float> values[4];
     for (uint32_t z = 0; z < field.depth; ++z) {
       for (uint32_t x = 0; x < field.width; ++x) {
-        const float dx = (static_cast<float>(x) + 0.5f - static_cast<float>(centreX)) * fs.cellSize;
-        const float dz = (static_cast<float>(z) + 0.5f - static_cast<float>(centreZ)) * fs.cellSize;
+        const float dx = (static_cast<float>(x) + 0.5f - centreX) * fs.cellSize;
+        const float dz = (static_cast<float>(z) + 0.5f - centreZ) * fs.cellSize;
         const float r = std::sqrt(dx * dx + dz * dz);
         if (r < radius - halfBand || r > radius + halfBand) continue;
         // Skip the axis band so a column cannot belong to two quadrants.
@@ -140,7 +140,7 @@ namespace {
   // -10 mm bias of its own, so an absolute threshold reports a "front" out at the wall
   // before the ball has even landed.
   float FrontRadius(const FluidSimulation& fluid, const SurfaceField& field,
-                    const SurfaceField& reference, uint32_t centreX, uint32_t centreZ,
+                    const SurfaceField& reference, float centreX, float centreZ,
                     float threshold) {
     const FluidSettings& fs = fluid.Settings();
     const float maxRadius = 4.0f;   // pool is 4.5 m from centre to the near wall
@@ -167,7 +167,11 @@ namespace {
 
   // Gate 7: around a floating body at rest the rendered surface must sit at the
   // far-field level. Before the fix: ring -2.3 cm, covered texels -34 cm (the "funnel");
-  // after: ring -0.1..-0.2 cm, covered within 0.7 cm of the ring.
+  // after: ring -0.1..-0.2 cm, covered within 0.7 cm of the ring (fp16 alpha).
+  // With R32F alpha (W-02) the air the plunge entrains stays beside the ball (0.1-0.2
+  // cells per column, against 0.003 far away) and read as missing water: ring -17.1 mm.
+  // The surface kernel now counts air deeper than two cells as volume: ring -4.9 mm,
+  // covered 15.9 mm below the ring.
   constexpr float kFloatRingMax = 0.015f;
   constexpr float kFloatCoveredMax = 0.02f;
   // Largest |h(t) - 2h(t-1) + h(t-2)| per texel near the settling ball, 3-4 s after the
@@ -295,19 +299,17 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
       T8_LOG_INFO("[BackyardSelfTest] still pool  mean=%+.4f m rms=%.4f m maxAbs=%.4f m at x=%d z=%d meanSpeed=%.4f m/s volumeLoss=%.3f%%",
                   s.mean, s.rms, s.maxAbs, worstX, worstZ, diagnostics.meanSpeed, lossPct);
 
-      // Bias gate. The measured bias at production settings is a steady -1.1 cm/s sink
-      // that grows linearly over time (mean -1.5 mm at 0.2 s to -10.5 mm at 2.0 s, with
-      // the correction deficit climbing 202 -> 749 cells and repaying only ~174 cells
-      // per check). A threshold tight enough to catch drift would fail today's branch,
-      // and a threshold loose enough to pass it cannot detect drift at all. So this
-      // gate is calibrated as a REGRESSION BAND around the measured behaviour and is
-      // replaced by a strict "the pool must not sink" gate once W-03 lands in Stage 5b.
-      if (std::fabs(s.mean) > 0.0120f) {
-        T8_LOG_ERROR("[BackyardSelfTest] still pool: mean surface offset %+.4f m outside the -12 mm band (baseline is -10.5 mm at 2 s)", s.mean);
+      // Bias gate. With RGBA16F fields the still pool sank -1.1 cm/s (mean -10.5 mm and
+      // 0.69 % lost at 2 s, the correction repaying only ~174 cells per check), so this
+      // was a regression band. R32F fields (W-02) removed the sink: mean -0.2 mm and
+      // 0.001 % on D3D12, Vulkan and D3D11. The gate is now strict, with 10x margin on
+      // the mean and 50x on the loss.
+      if (std::fabs(s.mean) > 0.0020f) {
+        T8_LOG_ERROR("[BackyardSelfTest] still pool: mean surface offset %+.4f m outside the 2 mm band (R32F measures -0.2 mm at 2 s)", s.mean);
         ++failures;
       }
-      if (lossPct > 0.80f) {
-        T8_LOG_ERROR("[BackyardSelfTest] still pool: lost %.3f%% of the water in 2 s with no body (baseline loses ~0.69%%)", lossPct);
+      if (lossPct > 0.05f) {
+        T8_LOG_ERROR("[BackyardSelfTest] still pool: lost %.3f%% of the water in 2 s with no body (R32F loses ~0.001%%)", lossPct);
         ++failures;
       }
       // Noise gate, tight. This is the one that would have caught the synthetic stir
@@ -343,10 +345,11 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
     ball.vx = ball.vy = ball.vz = 0.0f;
     ball.submerged = 0.0f;
 
-    const uint32_t centreX = fs.width / 2;
-    const float centreZf = (ball.z - fs.basinMinZ) / fs.cellSize;
-    const uint32_t centreZ = static_cast<uint32_t>(
-        (std::min)((std::max)(centreZf, 0.0f), static_cast<float>(fs.depth - 1)));
+    // Impact point in grid units (cell corners are integers). Truncating it to a cell
+    // index put the annulus 9 cm off the impact in Z (2.25 / 0.09f = 24.999998 -> 24),
+    // so the -Z and +Z halves sampled the wave at 0.56 m and 0.44 m.
+    const float centreX = (ball.x - fs.basinMinX) / fs.cellSize;
+    const float centreZ = (ball.z - fs.basinMinZ) / fs.cellSize;
 
     SurfaceField reference;
     if (!CaptureSurface(fluid, driver, reference)) {
@@ -356,7 +359,7 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
 
     float impactTime = -1.0f;
     float arrivalTime = -1.0f;
-    float frontAtHalf = 0.0f;
+    bool earlyIsotropySampled = false;
     int stallCount = 0;
     int sustainedFrames = 0;
     float previousFront = -1.0f;
@@ -410,44 +413,40 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
           break;
         }
         // Measure the CHANGE from the pre-drop surface, so the pool's own tilt does
-        // not masquerade as asymmetry.
-        // Two different properties, and they deserve different gates:
-        //  - MIRROR symmetry (X+ vs X-, Z+ vs Z-) is the hard one. A kernel reading the
-        //    wrong axis, or an asymmetry bug, breaks left/right immediately. Measured
-        //    0.7 mm and 0.4 mm.
-        //  - AXIS difference (X vs Z) is softer: the alpha transport is operator-split
-        //    and sweeps one axis at a time, so some X-vs-Z anisotropy is a property of
-        //    the scheme, not a bug. Measured 10.8 mm at r=0.5 m, 0.3 s after impact;
-        //    this band exists to catch a regression, and shrinks when the conservative
-        //    scheme lands in Stage 5b.
+        // not masquerade as asymmetry. Quadrant q = (dx > 0) + 2 (dz > 0), so:
+        //  - mirrorSpread compares -X with +X inside each Z half;
+        //  - zSpread compares the -Z half with the +Z half.
+        // Each quadrant spans both axes, so true X-vs-Z anisotropy is invisible here.
+        // zSpread used to be called the "axis" gate with a 16 mm / 12 mm band for
+        // "operator-split anisotropy"; that 10.7 mm was the annulus sitting 9 cm off the
+        // impact in Z. Centred, both halves agree within 0.6 mm (fp16 and R32F alike;
+        // mirror 0.06-1.0 mm), so both gates share the 3 mm mirror limit.
         float medians[4];
         for (int i = 0; i < 4; ++i) medians[i] = q[i].median - qRef[i].median;
         const float mirrorSpread = (std::max)(std::fabs(medians[0] - medians[1]),
                                               std::fabs(medians[2] - medians[3]));
-        float axisSpread = 0.0f;
-        axisSpread = (std::max)(axisSpread, std::fabs(0.5f * (medians[0] + medians[1]) -
-                                                     0.5f * (medians[2] + medians[3])));
+        const float zSpread = std::fabs(0.5f * (medians[0] + medians[1]) -
+                                        0.5f * (medians[2] + medians[3]));
         bool sameSign = true;
         for (int i = 1; i < 4; ++i)
           if ((medians[i] > 0.0f) != (medians[0] > 0.0f)) sameSign = false;
         const float mirrorLimit = 0.003f;
-        const float axisLimit = checkEarly ? 0.016f : 0.012f;
-        T8_LOG_INFO("[BackyardSelfTest] isotropy %+.2fs quadrant deltas %+.4f %+.4f %+.4f %+.4f m mirror=%.5f m axis=%.4f m (limits %.4f / %.4f)",
+        T8_LOG_INFO("[BackyardSelfTest] isotropy %+.2fs quadrant deltas %+.4f %+.4f %+.4f %+.4f m mirrorX=%.5f m mirrorZ=%.5f m (limit %.4f)",
                     t - impactTime, medians[0], medians[1], medians[2], medians[3],
-                    mirrorSpread, axisSpread, mirrorLimit, axisLimit);
+                    mirrorSpread, zSpread, mirrorLimit);
         if (mirrorSpread > mirrorLimit) {
-          T8_LOG_ERROR("[BackyardSelfTest] waves are not mirror-symmetric: %.5f m exceeds %.4f m", mirrorSpread, mirrorLimit);
+          T8_LOG_ERROR("[BackyardSelfTest] waves are not mirror-symmetric in X: %.5f m exceeds %.4f m", mirrorSpread, mirrorLimit);
           ++failures;
         }
-        if (axisSpread > axisLimit) {
-          T8_LOG_ERROR("[BackyardSelfTest] X vs Z amplitude differs by %.4f m (limit %.4f m)", axisSpread, axisLimit);
+        if (zSpread > mirrorLimit) {
+          T8_LOG_ERROR("[BackyardSelfTest] waves are not mirror-symmetric in Z: %.5f m exceeds %.4f m", zSpread, mirrorLimit);
           ++failures;
         }
         if (!sameSign) {
           T8_LOG_ERROR("[BackyardSelfTest] a quadrant moved opposite to the others");
           ++failures;
         }
-        if (checkEarly) frontAtHalf = axisSpread;
+        if (checkEarly) earlyIsotropySampled = true;
       }
     }
 
@@ -471,7 +470,7 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
           T8_LOG_ERROR("[BackyardSelfTest] wave travelled 0.5 m in %.3fs (expected 0.01..0.45; a stalled front fails)", travel);
           ++failures;
         }
-        if (frontAtHalf <= 0.0f) {
+        if (!earlyIsotropySampled) {
           T8_LOG_ERROR("[BackyardSelfTest] isotropy checkpoint was never sampled");
           ++failures;
         }
@@ -662,10 +661,12 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
       // 5 mm on both axes, which would FAIL today's correct kernel: the medians are
       // 4.5 mm along X and 2.2 mm along Y, because a median over rows/columns is
       // dominated by the far field where the disturbance has decayed. What matters is
-      // the discrimination: the id.z bug makes the across-Y median EXACTLY zero, while
-      // still-pool noise gives a range of about 0.4 mm over 50 samples. 1 mm sits
-      // comfortably above noise and below the correct signal.
-      constexpr float kAxisVariationMin = 0.001f;
+      // the discrimination: the id.z bug makes the across-Y median EXACTLY zero.
+      // The 1 mm limit leaned on fp16 noise in the far field; with R32F fields (W-02)
+      // that noise is gone and the correct kernel measures 3.0 mm along X and 0.8 mm
+      // along Y (fp16: 4.0 / 2.4 mm). 0.25 mm keeps 3x margin to the signal and the
+      // bug still reads exactly 0.
+      constexpr float kAxisVariationMin = 0.00025f;
       T8_LOG_INFO("[BackyardSelfTest] surface texture  rowMedian=%.4f m colMedian=%.4f m  extreme=%.4f m at x=%d y=%d (centre %d,%d)",
                   rowMedian, colMedian, minValue, minX, minY, centreX, centreY);
       if (rowMedian < kAxisVariationMin || colMedian < kAxisVariationMin) {

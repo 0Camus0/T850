@@ -44,9 +44,9 @@ Texture3D<float4> VelocityIn : register(t0);
 #endif
 #ifdef T850_SPIRV
 [[spv::nonreadable]]
-[[spv::format_rgba16f]]
+[[spv::format_r32f]]
 #endif
-RWTexture3D<float4> DivergenceOut : register(u0);
+RWTexture3D<float> DivergenceOut : register(u0);
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(3, 0)]]
@@ -110,7 +110,7 @@ void CS(uint3 id : SV_DispatchThreadID)
     int3 cell = int3(id);
     if (!IsLiquid(cell))
     {
-        DivergenceOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        DivergenceOut[id] = 0.0f;
         return;
     }
 
@@ -122,5 +122,5 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float wMinus = FaceComponent(cell + int3(0, 0, -1), 2);
 
     const float divergence = (uPlus - uMinus + vPlus - vMinus + wPlus - wMinus) / CellSize;
-    DivergenceOut[id] = float4(divergence, 0.0f, 0.0f, 0.0f);
+    DivergenceOut[id] = divergence;
 }

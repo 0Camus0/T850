@@ -281,7 +281,8 @@ namespace t850 {
     bool StepStage(BaseDriver* driver, const char* stage);
 
   private:
-    std::unique_ptr<ComputeTexture3D> CreateVolume(BaseDriver* driver, const char* debugName);
+    std::unique_ptr<ComputeTexture3D> CreateVolume(BaseDriver* driver, ComputeStorageFormat format,
+                                                   const char* debugName);
     std::unique_ptr<ComputePipeline> CreatePipeline(BaseDriver* driver, const char* source);
     std::vector<uint32_t> BuildConstants(uint32_t iterationPacked = 0,
                                          float paddingOverride = -1.0f) const;
@@ -324,7 +325,7 @@ namespace t850 {
     std::unique_ptr<ComputeTexture3D> m_velocity[kVelocityCount];
     std::unique_ptr<ComputeTexture3D> m_divergence;
     std::unique_ptr<ComputeTexture3D> m_pressure[kPressureCount];
-    // Free-surface volume fraction, ping-ponged. RGBA16F holds alpha in .x.
+    // Free-surface volume fraction, ping-ponged. R32F, one float per cell.
     std::unique_ptr<ComputeTexture3D> m_alpha[2];
     uint32_t m_alphaCurrent = 0;
 
@@ -354,8 +355,9 @@ namespace t850 {
     // solid boundary). Without this there is no divergence from the impact, so the
     // pressure solve has nothing to react to and no wave can radiate.
     std::unique_ptr<ComputePipeline> m_objectVelocityPipeline;
-    // Zeroing kernel used by the reset path.
+    // Zeroing kernels used by the reset path: RGBA16F velocity, R32F scalar fields.
     std::unique_ptr<ComputePipeline> m_clearPipeline;
+    std::unique_ptr<ComputePipeline> m_clearFloatPipeline;
     // Surface texture -> buffer, for the readback gate.
     std::unique_ptr<ComputePipeline> m_surfaceToBufferPipeline;
     std::unique_ptr<ComputeBuffer> m_surfaceReadbackBuffer;

@@ -69,9 +69,9 @@ cbuffer CorrectionConstants : register(b1)
 #endif
 #ifdef T850_SPIRV
 [[spv::nonreadable]]
-[[spv::format_rgba16f]]
+[[spv::format_r32f]]
 #endif
-RWTexture3D<float4> AlphaOut : register(u0);
+RWTexture3D<float> AlphaOut : register(u0);
 
 // Fixed-point sums from CS_FluidVolumeReduce3D (whole cells, 1/65536 fractions).
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -113,7 +113,7 @@ void CS(uint3 id : SV_DispatchThreadID)
     // Only liquid cells with room are touched. Lost water comes from clipped
     // bulk cells, and depositing into air-classified cells would float it.
     if (alpha < T8_LIQUID_THRESHOLD || alpha >= 0.999f) {
-        AlphaOut[id] = float4(alpha, 0.0f, 0.0f, 0.0f);
+        AlphaOut[id] = alpha;
         return;
     }
     float corrected = alpha;
@@ -126,5 +126,5 @@ void CS(uint3 id : SV_DispatchThreadID)
         // Weight by alpha so removal comes from cells that actually hold water.
         corrected = saturate(alpha + VolumeDelta * alpha / InterfaceAlpha);
     }
-    AlphaOut[id] = float4(corrected, 0.0f, 0.0f, 0.0f);
+    AlphaOut[id] = corrected;
 }

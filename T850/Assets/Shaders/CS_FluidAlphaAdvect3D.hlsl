@@ -49,9 +49,9 @@ Texture3D<float4> AlphaIn : register(t1);
 #endif
 #ifdef T850_SPIRV
 [[spv::nonreadable]]
-[[spv::format_rgba16f]]
+[[spv::format_r32f]]
 #endif
-RWTexture3D<float4> AlphaOut : register(u0);
+RWTexture3D<float> AlphaOut : register(u0);
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(4, 0)]]
@@ -144,7 +144,7 @@ void CS(uint3 id : SV_DispatchThreadID)
 
     if (IsSolidCell(cell))
     {
-        AlphaOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        AlphaOut[id] = 0.0f;
         return;
     }
 
@@ -160,5 +160,5 @@ void CS(uint3 id : SV_DispatchThreadID)
         FaceFluxOut(cell, int3( 0, 0,-1), 2, -1.0f);
 
     float alpha = saturate(center - dtOverH * fluxOut);
-    AlphaOut[id] = float4(alpha, 0.0f, 0.0f, 0.0f);
+    AlphaOut[id] = alpha;
 }

@@ -53,9 +53,9 @@ Texture3D<float4> DivergenceIn : register(t1);
 #endif
 #ifdef T850_SPIRV
 [[spv::nonreadable]]
-[[spv::format_rgba16f]]
+[[spv::format_r32f]]
 #endif
-RWTexture3D<float4> PressureOut : register(u0);
+RWTexture3D<float> PressureOut : register(u0);
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(4, 0)]]
@@ -151,7 +151,7 @@ void CS(uint3 id : SV_DispatchThreadID)
     int3 cell = int3(id);
     if (!IsLiquid(cell))
     {
-        PressureOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        PressureOut[id] = 0.0f;
         return;
     }
 
@@ -160,7 +160,7 @@ void CS(uint3 id : SV_DispatchThreadID)
     const uint parity = Iteration & 1u;
     if (((cell.x + cell.y + cell.z) & 1) != int(parity))
     {
-        PressureOut[id] = float4(center, 0.0f, 0.0f, 0.0f);
+        PressureOut[id] = center;
         return;
     }
 
@@ -179,5 +179,5 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float target = diag > 0.0f ? (sum - divergence * PressureScale) / diag : 0.0f;
     const float omega = clamp(Padding0, 0.05f, 1.99f);
     const float pressure = lerp(center, target, omega);
-    PressureOut[id] = float4(pressure, 0.0f, 0.0f, 0.0f);
+    PressureOut[id] = pressure;
 }

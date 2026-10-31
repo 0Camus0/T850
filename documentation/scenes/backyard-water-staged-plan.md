@@ -1010,7 +1010,6 @@ last digit because the run is deterministic:
 | 1.99 s | 82 946 | 82 971 | +24.8 | 0.9985 | 0.5798 | 1 229 | 2.51 / 13 / 3 013 |
 | 3.97 s | 82 907 | 82 971 | +64.1 | 0.9977 | 0.5359 | 2 620 | 2.69 / 13 / 5 000 |
 | **8.73 s (steady)** | **82 917** | 82 971 | **+53.8** | **0.9965** | 0.7502 | **4 056 of 76 276 (5.3 %)** | **3.49 / 13 / 5 000** |
-
 The +30 cells at t = 0.21 s is present *before any impact*, and `m_referenceVolumeFraction` is captured
 with a `MeasureVolumeFraction` right after seeding, so the two should agree exactly: the seeding pass
 itself is already 30 cells short of what it wrote. **Check that first** — it sets the floor for the
@@ -1022,11 +1021,16 @@ The interface width is the number to watch for the transport itself: 3.49 cells 
 **Two measurement faults found and fixed before the transport work (2026-10-31).** (a)
 `MeasureVolumeFraction` summed 106 304 float32 values in float, losing ~25 cells and inflating the
 seed reference by the same amount; it now sums in `double`, and gate 1's honest still-pool loss is
-0.013 % (was reported as 0.001 %). (b) The first two α advections lose 30 cells at rest with a zero
-velocity field: `AlphaAt()` returns air for the row above the domain while the mirror flux is never
-returned, so boundary α escapes upward — a boundary bug, independent of upwind diffusion. Both are
-in W-03's "two measurement faults" note. **Also: compare the deficit against the body-adjusted
-target.** At 8.73 s the ball floats with `submerged = 0.60`, so the correction's target is
+0.013 % (was reported as 0.001 %). (b) The 30-cell early loss is **projection residual, not the
+boundary and not upwind diffusion**: the per-cell diff shows −21.47 cells spread evenly over 48 112
+cells with **zero** cells gaining, i.e. the `saturate()` clip — cells with net outflow lose α to
+neighbours that are already full. The iteration sweep proves it (still pool, no ball, no wind):
+deficit **+29.6 cells at 60 sweeps, +4.4 at 120, +0.1 at 240**, for D3D12 397 / 298 / 189 fps at
+720p. So the transport conserves exactly *given a divergence-free field*, and W-03 has two levers:
+the per-axis conservative dilation (no clip at all) and more sweeps once W-15 P2 makes them cheap.
+The audit now reports the divergence residual (`div rms`/`max`) and the saturated-cell count, so the
+clip can be attributed in one line. **Also: compare the deficit against the body-adjusted target.**
+At 8.73 s the ball floats with `submerged = 0.60`, so the correction's target is
 `ref − 53.8 = 82 917` and total alpha sits exactly there: the "+53.8" is the displaced body volume,
 not lost water.
 

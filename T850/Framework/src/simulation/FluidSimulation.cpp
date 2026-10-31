@@ -1014,6 +1014,7 @@ bool FluidSimulation::AuditMass(BaseDriver* driver, MassAudit& out) {
         const float a = alphaAt(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z));
         total += a;
         if (a > threshold && a < 0.999f) widthSum += 1.0f;
+        if (a >= 0.9999f) ++out.saturatedCells;
         if (a >= threshold) {
           const int xi = static_cast<int>(x), yi = static_cast<int>(y), zi = static_cast<int>(z);
           const bool touchesAir = airAt(xi - 1, yi, zi) || airAt(xi + 1, yi, zi) || airAt(xi, yi - 1, zi) ||
@@ -1041,6 +1042,45 @@ bool FluidSimulation::AuditMass(BaseDriver* driver, MassAudit& out) {
   float gpuTotal = 0.0f;
   float gpuInterface = 0.0f;
   if (MeasureVolumeFraction(driver, gpuTotal, gpuInterface)) out.totalAlphaGpu = gpuTotal;
+
+  // Residual divergence of the MAC field, from the same kind of readback. The staggered
+  // layout stores the +X/+Y/+Z face of each cell, so the divergence of cell (i,j,k) uses
+  // u(i,j,k) - u(i-1,j,k) and so on, with solid faces counting as zero.
+  std::vector<float> velocity;
+  if (ReadVelocity(driver, velocity) &&
+      velocity.size() == static_cast<size_t>(width) * height * depth * 4u) {
+    const float invH = 1.0f / (std::max)(m_settings.cellSize, 1e-4f);
+    auto faceU = [&](int x, int y, int z, int axis) {
+      if (x < 0 || y < 0 || z < 0 || x >= static_cast<int>(width) || y >= static_cast<int>(height) ||
+          z >= static_cast<int>(depth))
+        return 0.0f;
+      const size_t base = (static_cast<size_t>(x) + static_cast<size_t>(width) *
+                           (static_cast<size_t>(y) + static_cast<size_t>(height) * static_cast<size_t>(z))) * 4u;
+      return velocity[base + static_cast<size_t>(axis)];
+    };
+    double sumSquares = 0.0;
+    float worst = 0.0f;
+    uint32_t counted = 0;
+    for (uint32_t z = 0; z < depth; ++z) {
+      for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+          if (IsMaskSolid(x, y, z)) continue;
+          const int xi = static_cast<int>(x), yi = static_cast<int>(y), zi = static_cast<int>(z);
+          const float divergence =
+            ((faceU(xi, yi, zi, 0) - faceU(xi - 1, yi, zi, 0)) +
+             (faceU(xi, yi, zi, 1) - faceU(xi, yi - 1, zi, 1)) +
+             (faceU(xi, yi, zi, 2) - faceU(xi, yi, zi - 1, 2))) * invH;
+          sumSquares += static_cast<double>(divergence) * divergence;
+          worst = (std::max)(worst, std::fabs(divergence));
+          ++counted;
+        }
+      }
+    }
+    if (counted > 0) {
+      out.divergenceRms = static_cast<float>(std::sqrt(sumSquares / counted));
+      out.divergenceMax = worst;
+    }
+  }
   out.referenceAlpha = m_referenceVolumeFraction;
   out.deficit = m_referenceVolumeFraction - static_cast<float>(total);
   if (out.bulkCells > 0) {

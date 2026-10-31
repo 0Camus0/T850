@@ -434,20 +434,30 @@ report the `VolumeCorrection` deficit before/after (debug log); report surface r
    reading was 25–30 cells high. Now accumulated in `double`. Consequence: the still-pool gate's
    "0.001 % loss" was partly the same rounding; the honest figure is **0.013 %** (gate 1's 0.05 %
    limit stands, ~4× margin; mass start 82 910 → 82 917, drift +0.008 %).
-2. **The first α advections lose 30 cells at rest, with a zero velocity field.** Measured by
-   logging the total either side of the advect dispatch: step 1 −21.48 cells, step 2 −8.14, step 3
-   +0.00, then constant for the rest of the run. With the advect disabled the total stays exactly at
-   the reference (deficit +0.0). **`AlphaAt()` treats out-of-domain as air (`return 0`)** for the
-   open-ceiling case, so a boundary cell whose stored outward face velocity is a tiny non-zero value
-   (the first pressure projection produces a spurious sub-cell velocity from the partial waterline
-   cells) loses α into the row above the domain, which is never written back. The `saturate()`
-   then turns an inflow that would arrive from above into nothing. This is a **boundary bug in the
-   transport, not upwind diffusion**, and it sets a ~30-cell floor that the correction cannot
-   repair.
+2. **The first α advections lose 30 cells at rest — and it is the projection, not the boundary.**
+   Measured by logging the total either side of the advect dispatch: step 1 −21.48 cells, step 2
+   −8.14, step 3 +0.00, then constant for the rest of the run; with the advect disabled the total
+   stays exactly at the reference. The per-cell diff names the mechanism: the −21.47 is spread over
+   **48 112 cells (≈4.5 × 10⁻⁴ each) and exactly 0 cells gain anything**. That is the
+   `saturate()` clip: residual divergence makes each cell with net outflow lose α to a neighbour
+   that is already at α = 1, where the gain is discarded. An earlier note here blamed
+   `AlphaAt()` returning air above the open ceiling — **that was wrong**: `IsSolidCell` is checked
+   first and returns 0 flux for every out-of-domain face, so no α can leave that way.
 
-   Fix with W-03: make out-of-domain sampling consistent with `IsSolidCell` (`openCeiling` means the
-   face above the top row is a *free* face: either sample it as air **and** allow the mirror flux to
-   return, or treat the top row as no-flux), and assert per-pass conservation in a debug mode.
+   The proof is the iteration sweep, with everything else fixed (still pool, no ball, no wind):
+
+   | `pressureIterations` | deficit at t = 0.21 s | D3D12 fps, 720p, 0 balls |
+   |---|---|---|
+   | 60 (shipped default) | **+29.6 cells** | 397.1 |
+   | 120 | **+4.4 cells** | 297.8 |
+   | 240 | **+0.1 cells** | 188.9 |
+
+   The transport is conservative **when the velocity field is divergence free**; the loss is created
+   by projection residual and destroyed by the clip. Two independent levers follow, and W-03 should
+   use both: the per-axis conservative dilation scheme (no clip, so residual divergence cannot
+   destroy mass), and more sweeps once W-15 P2 makes them affordable. `pressureIterations` is
+   already a JSON/GUI tunable, and 120 costs ~0.9 ms of solver recording for a 7× smaller floor —
+   an owner-facing quality dial, not a code change.
 
 **Baseline after those fixes, measured with `--backyard-mass-audit 60` (deterministic; D3D12 =
 Vulkan)** — scripted 0.25 m / 39.27 kg ball, 4.43 m/s impact:

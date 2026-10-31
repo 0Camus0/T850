@@ -269,9 +269,9 @@ command run, and anything you could not verify.
 | 4a. House roof | W-24 | S | **DONE** — sign flipped, gables closed, 78 → 80 meshes, layout JSON unchanged |
 | 4b. Textured materials | W-23 | M | **DONE** — CC0 ambientCG textures with NormalGL, metric world-box UVs, JPEGs embedded; −5.5 % fps; layout unchanged |
 | 4c. Spawn more balls | W-22 | M–L | **DONE** — mask-encoded body index, gate 9 multi-body PASS, GUI spawn/clear. Review: Z-mirror fixed (`9f6e7a2f`), **cap removed** (`97009aef`, 100 balls tested) |
-| 4d. Per-ball PBR materials | W-25 | M | **DONE** — 32 CC0 sets in R2 (part 1); `e055efec`: cube-sphere GLB with UVs, per-instance maps behind `InstanceMaterialMaps` (no new permutation), random shuffle-bag assignment, 0 errors on five APIs. Gate 10 not written |
-| 5a. 32-bit storage | W-02 | M | **DONE** — `14c705f4` format on five backends; part 2 switched α/pressure/divergence to R32F, fixed the isotropy probe, the trapped-air moat and the 9× surface kernel. +35 % fps D3D12, +14 % Vulkan (0 balls) |
-| 5b. Conservative transport | W-03 | L | The remaining source of mass loss |
+| 4d. Per-ball PBR materials | W-25 | M | **DONE** — 32 CC0 sets in R2 (part 1); `e055efec`: cube-sphere GLB with UVs, per-instance maps behind `InstanceMaterialMaps` (no new permutation), random shuffle-bag assignment, 0 errors on five APIs. Gate 10 + the pixel probe landed in `ff66c039` |
+| 5a. 32-bit storage | W-02 | M | **DONE** — `14c705f4` format on five backends; part 2 switched α/pressure/divergence to R32F, fixed the isotropy probe, the trapped-air moat and the 9× surface kernel. Sweeps then went to 120 (`b5ae57fa`): still-pool loss 0.002 %, D3D12 295 fps |
+| 5b. Conservative transport | W-03 | L | **Attempt 3 accepted** — van Leer/minmod limited face value: bulk 0.9969 → **0.9987**, cells below 0.98 −79 %, interface 3.35 → **2.66** cells, free (284.6 → 284.9 fps). Splitting and SLIC were measured and rejected. Two acceptance lines remain marginal |
 | 6a. Analytic body + cheap readback | W-05, W-04 | S | **Mostly done in `c911381a`** — no mask upload after startup (GPU stamp), no correction readback. Left: W-04 steps 3 and 5 (persistent diagnostics buffer, async readback for 6b) |
 | 6b. Displacement + ball feels water | W-07, W-06 | M | Needs previous/current body footprints and 6a's async readback |
 | 7. Solver cost | W-15 | M | Measured (`3a371903`); P1 and P6 done in `c911381a` with a D3D12 upload fix. P3, P4, P5, P7, P8 here; P2 after W-02 (5a) and is now the largest lever |
@@ -1059,7 +1059,6 @@ margin.
 ---
 
 ### Stage 5b, attempt 1 — operator splitting was measured and rejected (2026-10-31)
-
 **What was built.** `CS_FluidAlphaAdvectAxis3D.hlsl`: one axis per dispatch, three per substep with
 the order alternating, every face flux a single number both cells use (exactly conservative) and a
 donor/receiver limiter that caps each cell's outflow at its own α and its inflow at its headroom, so
@@ -1119,10 +1118,83 @@ reconstruction. Two candidate designs, in order of expected value per line of co
 Do (1) first and measure with `--backyard-mass-audit` at t ≈ 8 s; keep (2) only if clipping shows up
 again once the interface is sharp.
 
-**Original scope (superseded — see the attempt-1 result above).** Replace the upwind + `saturate` clip
-with either the Weymouth–Yue operator-split dilation scheme or a Zalesak-style flux limiter on the
-existing unsplit form. Keep the global correction as a safety net and log its deficit; it should
-approach zero.
+### Stage 5b, attempts 2 and 3 — a limited flux, not a better limiter (2026-10-31)
+
+**Attempt 2 — SLIC / Hirt–Nichols donor-acceptor, rejected.** Replace the donated amount
+`cfl * alpha_donor` with the geometric one — `min(alpha_donor, cfl)` when the fluid sits against the
+face, `max(0, alpha_donor − (1 − cfl))` when it sits at the far side. Measured far worse: at
+t ≈ 8.3 s the bulk fell to **0.9637** with **22 133** cells below 0.98 and the interface at **7.43**
+cells (baseline 0.9968 / 4 036 / 3.37). Cause, visible in the audit's `min=0.5000`: the far-side
+branch donates **nothing** whenever `cfl < 1 − alpha`, so every smeared cell freezes at its average
+and the 0.5 band widens. Plain SLIC needs the fluid fraction to be geometrically known, not guessed
+from two neighbours; guessing it stalls.
+
+**Attempt 3 — van Leer / minmod limited face value, accepted.** Keep the single-flux conservative
+form and replace only the value that gets advected:
+
+```
+d1 = a_donor - a_far,  d2 = a_receiver - a_donor
+slope  = minmod(d1, d2)                       // 0 unless the three cells are monotone
+a_face = clamp(a_donor + 0.5 * slope * (1 - cfl), 0, 1)
+amount = min(cfl * a_face, a_donor)
+```
+
+Sharp front (1, 1, 0): slope 0, the full cell value advects, the front moves at flow speed. Smeared
+front (1, 0.5, 0.25): slope negative, the reconstruction is *below* the cell average, less than the
+average leaves and the profile steepens. Nothing can freeze because the formula is continuous in the
+gradient. It is a bounded (minmod) and conservative (single face flux) scheme, and the existing
+compression term stays as it was.
+
+Measured on the same binary, deterministic, D3D12 = Vulkan:
+
+| t ≈ 8.2 s after a 4.43 m/s impact | upwind (before) | SLIC (rejected) | **van Leer (now)** |
+|---|---|---|---|
+| deficit vs the *body-adjusted* target | +53.5 | +53.8 | **+53.8** (all body — transport loss ~0) |
+| bulk mean | 0.9969 | 0.9637 | **0.9987** |
+| cells below 0.98 | 3 998 | 22 133 | **852** (−79 %) |
+| interface width (cells, per column) | 3.35 | 7.43 | **2.66** (−21 %) |
+| cells at α ≥ 0.9999 | 47 636 | 42 115 | 51 708 |
+
+All ten gates PASS on D3D12, Vulkan and D3D11, and every one that touches the surface improved:
+
+| gate | before | after |
+|---|---|---|
+| boundedness (cells outside [0,1]) | 0 | **0** |
+| isotropy mirror X / Z, +0.30 s | 1.50 / 0.72 mm | **0.01 / 0.00 mm** |
+| isotropy mirror X / Z, +1.00 s | 1.14 / 0.28 mm | 0.82 / 0.28 mm |
+| float `ring−far` | −5.6 mm | **−1.4…−2.1 mm** |
+| float `covered min−ring` | −17.3 mm | **−13.8…−15.9 mm** |
+| still pool mean / loss | −0.0 mm / 0.002 % | −0.0 mm / 0.002 % |
+| mass drift | +0.008 % | +0.008 % |
+
+Cost: **nothing measurable.** Same-session A/B on D3D12 at 720p with 0 balls: 284.6 fps before,
+284.9 fps after (`scene.update` 2.632 → 2.604 ms). The three extra alpha loads per face are lost in
+the noise of a 2.6 ms solver. Five APIs with 8 seeded balls: 0 errors; fluid self-test PASS on
+D3D12 and Vulkan.
+
+A compression sweep with the new flux confirms 0.5 remains the best setting (0.0 → interface 2.86 and
+3 262 cells below 0.98; 0.75 → 2.96 / 2 732; 1.0 → 3.81 / 9 696), so no tunable changed.
+
+**Acceptance status — met except two lines, both now marginal rather than wrong:**
+
+| W-03 acceptance | result | status |
+|---|---|---|
+| deficit < 20 cells / 15 frames, at rest | +4.4 cells at t = 0.21 s | **met** |
+| deficit after impact | total α sits on the body-adjusted target (the +53.8 is the displaced body) | **met** |
+| mass drift ±0.05 % | +0.008 % | **met** |
+| bulk mean α ≥ 0.999, before / 10 s after | 1.0000 / **0.9987** | short by 0.0003 after impact |
+| < 1 % of bulk cells below 0.98 | 0 % / **1.1 %** | short after impact |
+| interface 1–2 cells | 2.66 | short |
+| rings still render, five APIs clean | 0 errors, float gate passes | **met** |
+
+The three short lines all point at the same residue: the ~850 cells that remain diluted after the
+splash. That is where W-07 and W-26 now take over — the next stage's displacement pass should stop
+the footprint from deleting water in the first place, and removing W-26's trapped-air term once the
+transport is sharper should recover the float margin.
+
+**The original scope, superseded by attempts 1–3.** Replace the upwind + `saturate` clip with either
+the Weymouth–Yue operator-split dilation scheme or a Zalesak-style flux limiter on the existing
+unsplit form; keep the global correction as a safety net and log its deficit.
 
 **Files** — `CS_FluidAlphaAdvect3D.hlsl` (+ possibly new per-axis kernels),
 `compute_kernels.json`, `FluidSimulation.cpp`.

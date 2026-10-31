@@ -180,6 +180,9 @@ int main(int arg,char ** args) try {
     if (std::string_view(args[i]) == "--backyard-spawn-seed" && i + 1 < arg) {
       BackyardScene::SetSpawnSeed(static_cast<uint32_t>((std::max)(std::stoul(args[++i]), 0ul)));
     }
+    if (std::string_view(args[i]) == "--backyard-mass-audit" && i + 1 < arg) {
+      BackyardScene::SetMassAuditFrames(std::stoi(args[++i]));
+    }
     if (std::string_view(args[i]) == "--backyard-pick-test") {
       BackyardScene::SetPickTest(true);
     }

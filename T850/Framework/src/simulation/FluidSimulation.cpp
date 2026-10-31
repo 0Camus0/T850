@@ -973,6 +973,80 @@ bool FluidSimulation::ReadVolumeFraction(BaseDriver* driver, std::vector<float>&
   return true;
 }
 
+bool FluidSimulation::AuditMass(BaseDriver* driver, MassAudit& out) {
+  out = MassAudit{};
+  std::vector<float> alpha;
+  if (!ReadVolumeFraction(driver, alpha)) return false;
+  if (!RefreshMaskSnapshot(driver)) return false;
+
+  const uint32_t width = m_settings.width;
+  const uint32_t height = m_settings.height;
+  const uint32_t depth = m_settings.depth;
+  if (alpha.size() != static_cast<size_t>(width) * height * depth) return false;
+  const float threshold = m_settings.airThreshold;
+
+  auto solid = [&](int x, int y, int z) {
+    if (x < 0 || y < 0 || z < 0 || x >= static_cast<int>(width) || y >= static_cast<int>(height) ||
+        z >= static_cast<int>(depth))
+      return true;
+    return IsMaskSolid(static_cast<uint32_t>(x), static_cast<uint32_t>(y), static_cast<uint32_t>(z));
+  };
+  auto alphaAt = [&](int x, int y, int z) {
+    return alpha[static_cast<size_t>(x) + static_cast<size_t>(width) *
+                 (static_cast<size_t>(y) + static_cast<size_t>(height) * static_cast<size_t>(z))];
+  };
+  auto airAt = [&](int x, int y, int z) {
+    if (x < 0 || z < 0 || x >= static_cast<int>(width) || z >= static_cast<int>(depth)) return false;
+    if (y >= static_cast<int>(height)) return true;   // open air above the domain
+    if (y < 0) return false;
+    if (solid(x, y, z)) return false;
+    return alphaAt(x, y, z) < threshold;
+  };
+
+  double bulkSum = 0.0;
+  double total = 0.0;
+  float bulkMin = 1.0f;
+  for (uint32_t z = 0; z < depth; ++z) {
+    for (uint32_t x = 0; x < width; ++x) {
+      float widthSum = 0.0f;
+      for (uint32_t y = 0; y < height; ++y) {
+        if (IsMaskSolid(x, y, z)) continue;
+        const float a = alphaAt(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z));
+        total += a;
+        if (a > threshold && a < 0.999f) widthSum += 1.0f;
+        if (a >= threshold) {
+          const int xi = static_cast<int>(x), yi = static_cast<int>(y), zi = static_cast<int>(z);
+          const bool touchesAir = airAt(xi - 1, yi, zi) || airAt(xi + 1, yi, zi) || airAt(xi, yi - 1, zi) ||
+                                  airAt(xi, yi + 1, zi) || airAt(xi, yi, zi - 1) || airAt(xi, yi, zi + 1);
+          if (!touchesAir) {
+            bulkSum += a;
+            bulkMin = (std::min)(bulkMin, a);
+            ++out.bulkCells;
+            if (a < 0.98f) ++out.bulkBelow98;
+          }
+        }
+      }
+      // A column with no partially filled cell is fully wet or fully dry, not a width sample.
+      if (widthSum > 0.0f) {
+        out.interfaceWidthMean += widthSum;
+        out.interfaceWidthMax = (std::max)(out.interfaceWidthMax, widthSum);
+        ++out.interfaceColumns;
+      }
+    }
+  }
+
+  out.totalAlpha = static_cast<float>(total);
+  out.referenceAlpha = m_referenceVolumeFraction;
+  out.deficit = m_referenceVolumeFraction - static_cast<float>(total);
+  if (out.bulkCells > 0) {
+    out.bulkMeanAlpha = static_cast<float>(bulkSum / out.bulkCells);
+    out.bulkMinAlpha = bulkMin;
+  }
+  if (out.interfaceColumns > 0)
+    out.interfaceWidthMean /= static_cast<float>(out.interfaceColumns);
+  return true;
+}
+
 bool FluidSimulation::ReadVelocity(BaseDriver* driver, std::vector<float>& out) {
   out.clear();
   if (!m_ready || !driver || !m_velocity[m_current]) return false;

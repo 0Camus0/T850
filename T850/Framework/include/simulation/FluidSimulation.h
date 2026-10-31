@@ -130,6 +130,27 @@ namespace t850 {
     // rather than a rendered frame (a still image cannot tell a dimple that tracks
     // the body apart from waves that actually propagate).
     bool ReadVolumeFraction(BaseDriver* driver, std::vector<float>& out);
+
+    // W-03 acceptance numbers in one readback: mass, the bulk-water dilution the
+    // correction currently hides, and how many cells the free surface smears over.
+    // "Bulk" matches the debug view: a liquid cell with no air face-neighbour, which
+    // should all be alpha = 1 away from the surface.
+    struct MassAudit {
+      float totalAlpha = 0.0f;        // summed alpha, in cells
+      float referenceAlpha = 0.0f;    // seed-time target, minus submerged body volume
+      float deficit = 0.0f;           // referenceAlpha - totalAlpha, in cells
+      uint32_t bulkCells = 0;
+      float bulkMeanAlpha = 0.0f;
+      float bulkMinAlpha = 1.0f;
+      uint32_t bulkBelow98 = 0;
+      // Free-surface width: per column, the number of cells whose alpha lies strictly
+      // inside (airThreshold, 1). A sharp VOF scheme gives 1..2; upwind smears 4.
+      float interfaceWidthMean = 0.0f;
+      float interfaceWidthMax = 0.0f;
+      uint32_t interfaceColumns = 0;
+    };
+    bool AuditMass(BaseDriver* driver, MassAudit& out);
+
     // Raw velocity of every voxel, 4 floats each. Staggered layout: texel (i,j,k).x is
     // the +X face of cell (i,j,k), .y the +Y face, .z the +Z face.
     bool ReadVelocity(BaseDriver* driver, std::vector<float>& out);

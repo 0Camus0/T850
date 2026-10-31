@@ -48,6 +48,8 @@ public:
   static void SetSpawnOnStart(int count) { s_spawnOnStart = count; }
   // Test hook (--backyard-spawn-seed): fixes the spawn RNG so a run is reproducible.
   static void SetSpawnSeed(uint32_t seed) { s_spawnSeed = seed; }
+  // Test hook (--backyard-mass-audit N): log the W-03 mass audit every N frames.
+  static void SetMassAuditFrames(int frames) { s_massAuditFrames = frames > 0 ? frames : 0; }
   // Test hook (--backyard-pick-test): drives the real pick/drag input path with a
   // synthetic InputManager, so no OS mouse or keyboard input is ever generated.
   static void SetPickTest(bool enabled) { s_pickTest = enabled; }
@@ -183,4 +185,6 @@ private:
   bool m_assetsCreated = false;
   static int s_spawnOnStart;
   static uint32_t s_spawnSeed;
+  static int s_massAuditFrames;
+  int m_massAuditCounter = 0;
 };

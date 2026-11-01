@@ -313,14 +313,19 @@ So no new download code is expected; the item is to *prove* it and close the gap
   - `--help` and `development/runtime-configuration.md` document none of the Backyard flags:
     `--backyard-selftest`, `--backyard-spawn`, `--backyard-spawn-seed`, `--backyard-pick-test`,
     `--backyard-ball-probe`, `--backyard-mass-audit`, `--fluid-selftest`.
+    **Done 2026-11-01:** a "Backyard water scene (7)" section in `PrintHelp()` and a matching
+    section in the runtime-configuration doc, with the probe's line format explained.
   - The `documentation/README.md` Backyard rows still say "24 tasks … next W-24 roof"; index the
     session records too.
-- **W-14:** one `FluidConstants` include for the 17 kernel copies. First confirm the compute
-  shader path resolves `#include` on all three backends.
+- **W-14:** one `FluidConstants` include for the 20 kernel copies. First confirm the compute
+  shader path resolves `#include` on all three backends. **Answered 2026-11-01: no** (DXC gets a
+  null include handler; glslang/Tint get one string). A layout guard script landed instead; see
+  Stage 8 in the log.
 - **W-16:** the implementation record's sections 6 and 8.
 - **Diagnostic scripts:** move the reusable ones from the untracked `D:\Code\QwenFlashT850\backyard-diag`
   (`telemetry.ps1`, `pick_test.ps1`, `cmp_ppm.py`, `ppm2png.py`) into `T850/scripts/validation/`
-  with repo-relative paths, so CI and other machines can run them.
+  with repo-relative paths, so CI and other machines can run them. `check_fluid_constants.py` and
+  `check_ball_textures.ps1` are already there (2026-11-01).
 - **Dead code:** after the P7 surface change, check `m_surfaceCopyPipeline` and the ping-pong pair
   (still needed headless).
 - **Never commit** `T850/config.json`, generated dumps, or `Assets/Textures/Ball/`.
@@ -2457,4 +2462,37 @@ _Pending._
 
 ### Stage 8 — W-14, W-16, W-17
 
-_Pending._
+**W-14 (2026-11-01, local agent): the include route is blocked, a guard test landed.** D3D12 calls
+`IDxcCompiler3::Compile(..., nullptr, ...)` — no include handler — and Vulkan/GL/WebGPU compile one
+source string per kernel, so a shared `.hlsli` needs an engine feature plus disk-cache coverage of
+the included text. What shipped instead is `T850/scripts/validation/check_fluid_constants.py`: it
+fails when a fluid kernel's cbuffer layout differs from the other copies, or when a registered
+`constant_count` disagrees with the cbuffer's DWORD size (the silent-pipeline-rejection fault from
+the implementation record). It compares sizes rather than names because word 15 is a deliberate
+alias (`Padding0` / `ForcingAmplitude`). Negative-tested by breaking the tree twice and reverting.
+`FluidConstants` is now copied into 20 kernels.
+
+**Baseline platform matrix (2026-11-01, local agent).** `RunWindowsBuildMatrix.ps1` over
+Win32/x64/ARM64 × Debug/Release: **6/6 cells build**, and the 4 runnable cells report 78/78 gameplay
+tests each (312 PASS lines; the 12 `[ERROR]` lines are the suite's deliberate negative tests). Two
+pre-existing breaks were found and fixed before the matrix could pass:
+
+* **Win32 x86** build break in the Vulkan descriptor cache: `reinterpret_cast<uintptr_t>` on a
+  `VkDescriptorSetLayout`, which is a pointer on 64-bit and a `uint64_t` on 32-bit. Replaced by a
+  `HandleKey()` helper that copies the bits, so it compiles in both representations.
+* **ARM64** could not build at all: the Dawn package metadata was missing (`SetupDawn.ps1
+  -Architecture ARM64 -Mode Install` provisioned it; the packages were already in vcpkg).
+
+Still to do for the PR: Android, Steam Deck and Web builds (`BuildWeb.ps1`), which need their own
+toolchains.
+
+**Launcher ball textures (2026-11-01, local agent).** Verified read-only: the live R2 manifest
+(`…t850-textures.r2.dev/manifest.json`) lists 138 textures, **96 of them under `Textures/Ball/`**,
+`Get-T850CloudTexturesStatus` reports 138/138 ready with 0 missing, and the 32 palette sets × 3 maps
+are on disk. `T850/scripts/validation/check_ball_textures.ps1` now asserts all of that offline-or-
+online without downloading or writing to R2, and fails when a single map is removed (tested). Gate
+10's failure message now points at the launcher's Download Assets button as well as
+`DownloadTextures.ps1`.
+
+**W-06 step 4 re-measured after the sign fix** — table in W-06: 0.15 → 20 mm of settled bob,
+0.05 → 81 mm, 0.00 → 243 mm, 0.40 → 7 mm. 0.15 stays.

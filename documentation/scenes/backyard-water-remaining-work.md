@@ -735,19 +735,20 @@ needed because **the wind tunable turns out to be inert** — see W-27.
 **Step 4 — heave damping is measured, not guessed.** With the body now floating on the real
 surface, the question was whether 0.15 can come down. It cannot, and the reason is structural: the
 coupling is one-way, so nothing radiates the body's heave energy away, and the damping ratio is the
-only sink. Scene 7, `--backyard-ball-probe 30`, settled window t = 5…10 s:
+only sink. Scene 7, `--backyard-ball-probe 30`, settled window t = 5…10 s (re-measured 2026-11-01
+after the sign fix, since the first table was taken with the packed-uint bug):
 
 | `sphereHeaveDamping` | y range in the settled window | y min … max | max \|vy\| |
 |---|---|---|---|
-| **0.15 (shipped)** | **18 mm** | −0.083 … −0.065 m | 0.050 m/s |
-| 0.05 | 128 mm | −0.145 … −0.017 m | 0.365 m/s |
-| 0.00 | 307 mm | −0.225 … +0.082 m | 0.875 m/s |
+| **0.15 (shipped)** | **20 mm** | −0.086 … −0.066 m | 0.055 m/s |
+| 0.05 | 81 mm | −0.122 … −0.041 m | 0.252 m/s |
+| 0.00 | 243 mm | −0.211 … +0.032 m | 0.785 m/s |
+| 0.40 | 7 mm | −0.079 … −0.072 m | 0.030 m/s |
 
-At 0.15 the residual 18 mm is the body following the pool's remaining motion (the sampled level
-sits within 4 mm of the plane over the same window), not a free oscillation. 0.15 is also inside the
-0.1–0.3 band a real heaving sphere radiates at, so it stays, and it is now a justified number rather
-than a fudge factor. A two-way coupling (the body pushing α out of its cells, i.e. W-07) is what
-would let it come down.
+The table brackets the choice: 0.15 keeps 20 mm of motion, 0.4 would pin the body to the mean level
+(7 mm, i.e. it stops riding the surface as well). 0.15 also sits in the 0.1–0.3 band a real heaving
+sphere radiates at, so it stays, and it is a justified number rather than a fudge factor. A two-way
+coupling (the body pushing α out of its cells, i.e. W-07) is what would let it come down.
 
 **Review (2026-11-01): two kernel bugs invalidated steps 3 and 4's measurements; fixed.**
 
@@ -1082,17 +1083,33 @@ APIs), `--backyard-selftest` (both APIs) and the scene are unchanged.
 
 ### W-14 — Duplicated constants across kernels (P3, S–M, suggested: either)
 
-The `FluidConstants` cbuffer is copied into 16 kernels, `ObjectConstants` into 3, and
-`T8_LIQUID_THRESHOLD` into 5 kernels plus `FluidSettings::airThreshold` in C++. A change to one
-copy silently diverges from the others.
+**Status (2026-11-01): the `#include` route is blocked; a guard test landed instead.**
+`FluidConstants` is copied into **20** fluid kernels (the surface, body-level and volume-reduce
+kernels joined the original 16), `ObjectConstants`/`StampConstants` into several more, and
+`T8_LIQUID_THRESHOLD` into 5 kernels plus `FluidSettings::airThreshold` in C++.
 
-**Fix.** First check whether the compute compile path resolves `#include` (pipelines are created
-from source text read by `ResourceLocator`; DXC and glslang need an include handler). If it does,
-move the shared declarations into `Shaders/FluidCommon.hlsli`. If not, pass the threshold through
-the constants (`Padding0` is already per-kernel, so add it to `ObjectConstants` or a new field) and
-add a test that compares the cbuffer text of all fluid kernels.
+*The include question is answered:* no. D3D12 calls `state.compiler->Compile(&sourceBuffer, ...,
+nullptr, ...)` in `D3D12Shader.cpp` — no `IDxcIncludeHandler` — and Vulkan/GL hand glslang a single
+source string per kernel, with WebGPU preprocessing the same string before Tint. So a shared
+`.hlsli` needs an engine feature (an include handler for DXC, an includer for glslang, and
+pre-expansion before the WGSL path) and the shader disk-cache keys would have to cover the included
+text.
 
-**Acceptance.** Self-test and scene run unchanged; one place to change the threshold.
+*What did land:* `T850/scripts/validation/check_fluid_constants.py` (CI-able, no build needed). It
+fails when (a) a fluid kernel's cbuffer has a different **layout** from the other copies, or (b) a
+registered `constant_count` does not match the DWORD size of the cbuffer at that register — the
+silent-rejection failure recorded in the implementation doc. It compares member *sizes*, not names,
+because word 15 is a deliberate alias: `Padding0` everywhere except `CS_FluidForces3D.hlsl`, which
+calls it `ForcingAmplitude`, and `BuildConstants(paddingOverride)` passes the SOR factor, the
+alpha-compression strength or the forcing gain depending on the dispatch. Both failure modes were
+tested by breaking the tree on purpose (`constant_count` 8 → 12, and an extra member in
+`CS_FluidPressure3D`), and the script caught each and passed again after the revert.
+
+*Still open:* one shared declaration. Route: add an include handler to the three compile paths, or
+generate the prelude text from `FluidSimulation.cpp` and prepend it before compiling.
+
+**Acceptance.** Self-test and scene run unchanged; one place to change the threshold. The guard is
+the interim proof that the copies agree.
 
 ---
 
@@ -1973,6 +1990,20 @@ still-pool gate is unaffected at the default wind.
 
 **Acceptance.** A scene-7 run with `windX` 0 vs 2 differs measurably (`flow` in
 `--backyard-ball-probe`), still-pool gate unchanged, no new self-test failures.
+
+**Independent verification of the fix (2026-11-01, local agent).** The acceptance line above is
+wrong as written and should not be used: 2 m/s of wind is ρ_air/ρ_water · Cd · U² ≈ 6e-5 m/s² of
+surface stress, which is below the settled pool's residual motion. What was measured instead, scene
+7, D3D12, `--backyard-ball-probe 30`, mean `flow` over the last 40 samples:
+
+| `windX` | mean flow x | note |
+|---|---|---|
+| 0 | +0.0005 m/s | settled pool's own residual |
+| 100 | **+0.2236 m/s** | 400× response, so the path is live |
+
+So the tunable works and the magnitude is physics, not a bug: the stress is `ρ_air/ρ_water ≈ 1.2e-3`
+of the dynamic pressure, and the 0.05/s damping plus slow momentum diffusion keep a breeze invisible
+deep in the pool. Use the 100 m/s sanity check if this path is ever touched again.
 
 ---
 

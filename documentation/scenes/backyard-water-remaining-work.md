@@ -35,7 +35,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-02 R32F storage for α/pressure/divergence | **Done** | `14c705f4` + part 2 | α, pressure, divergence are R32F; still-pool loss 0.693 % → 0.001 %. The gate shift was an off-centre isotropy probe, an fp16-calibrated gate 5 floor and trapped air read as missing water. Tiled surface kernel: 720p D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 |
 | W-03 Mass lost every substep | **Mostly done** (attempt 3) | `b5ae57fa`, van Leer flux | Transport loss is ~0 (deficit is the displaced body volume); van Leer/minmod face value lifts bulk 0.9969 → 0.9987 and cuts cells below 0.98 by 79 % for free. Splitting and SLIC measured and rejected. Three acceptance lines marginal — see W-03 |
 | W-04 GPU→CPU readbacks | **Done** | `c911381a`, `ad7e019e`, `4e93d9d5` | Correction no longer reads back (GPU reduce + GPU deficit); probes only at info logging. Step 5 added the async readback pair on D3D12/Vulkan (`Request/ConsumeComputeReadback`); step 3 made the diagnostics buffer persistent with a kernel-side clear. Review fixed the D3D12 copy from `UNORDERED_ACCESS` (debug-layer error) and ticket matching |
-| W-06 Ball does not feel the water | **Done for body 0 only; step 4 to re-measure** | `4e93d9d5`, `a9e3c683`, review | Buoyancy floats on the simulated surface averaged over an annulus; step 3 added the annulus current. Review: the kernel dropped every negative level offset and current (unsigned cast), and the level/current reach the scripted ball only. Fixed the sign; heave table and all-bodies are open |
+| W-06 Ball does not feel the water | **Done; step 4 to re-measure** | `4e93d9d5`, `a9e3c683`, review, 2026-11-01 | Buoyancy floats on the simulated surface averaged over an annulus; step 3 added the annulus current. Review fixed the dropped negative values; every body (not just the scripted one) now gets the level and current. Heave table to re-run |
 | W-07 Water under the ball is deleted | **Attempts 1 and 2 measured, not shipped** | — | Attempt 1 failed gate 8 (0.034 m flicker). Attempt 2 established *why*: any pass that respects the binary wall mask moves a whole cell when the footprint flips, so the fix needs a per-cell solid fraction (sub-cell coverage) in the mask and the transport, not a smarter displacement pass. Design recorded in W-07 |
 | W-05 Moving body re-uploads the wall mask | Done differently (review) | `c911381a` | Mask restamped on the GPU in a persistent buffer; no upload after startup. The analytic-body design is no longer needed for cost |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
@@ -46,7 +46,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-24 House roof is upside down | **Done** (Stage 4a) | `2114fa0e` | Sign flipped, gables closed |
 | W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` + `ff66c039` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 (headless) and the frame probe landed in `ff66c039` |
 | W-26 The surface kernel compensates for trapped air | **Measured; cannot be removed yet** | this session | Removing it costs 4.8 mm more moat: `covered min−ring` −15.9 → **−20.7 mm** (D3D12, limit 20) and −13.8 → −19.1 (Vulkan). The term is still hiding water W-07 deletes, so it stays until W-07 lands; the measurement is recorded in W-26 and in the implementation record §7 |
-| W-27 The wind tunable does nothing | **Open** (found this session) | — | Wind is applied only above `SurfaceLevel · Height`, which with `surfaceLevel` 0.96 and fill 0.788 lands in the air rows. 8× wind left a scene-7 run bit-identical. Not fixed here because it is not on the water path this session touched |
+| W-27 The wind tunable does nothing | **Done** (2026-11-01) | this commit | The diagnosis below was half right: at run time `SurfaceLevel` is the layout fill (0.788), so the band did reach the waterline. Wind was multiplied by `ForcingAmplitude`, which ships at 0. Wind is now surface stress on the top wet layer; 10 m/s along X moves the scripted ball 1.2 cm in 20 s, 0 m/s leaves it still |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -760,9 +760,10 @@ would let it come down.
   biased high. Step 3's direction check forced the flow in C++, so it never exercised the kernel.
 * The open-water test read `WallMask[x + Width * z]`, a cell near the z = 0 wall; it now reads
   the column's waterline cell, `x + Width * (row + Height * z)`.
-* **The level and the current reach `m_bodies[0]` only.** Spawned balls still float on the
-  authored plane and feel no current. Step 4's heave table was measured on the biased level and
-  must be re-run.
+* **The level and the current reached `m_bodies[0]` only** (fixed 2026-11-01). The query is now one
+  thread per body over an inline body list: with 30 spawned balls all 31 bodies report a simulated
+  level (−3.4 … +2.6 cm from the plane) and currents up to 0.12 m/s. Step 4's heave table was
+  measured on the biased level and must be re-run.
 
 ---
 
@@ -1934,7 +1935,19 @@ target for that stage. The flicker and the buoyancy are unaffected, so the risk 
 
 ---
 
-### W-27 — The wind tunable does nothing (P3, S) — found 2026-10-31
+### W-27 — The wind tunable does nothing (P3, S) — found 2026-10-31, **done 2026-11-01**
+
+**Resolution.** The band test below was not the cause: `LoadPoolLayout` overwrites `surfaceLevel`
+with the fill fraction (0.788), so rows above 15.3 — the waterline included — were in the band. The
+wind was multiplied by `ForcingAmplitude · dt`, the synthetic stir's gain, which ships at 0. Wind
+is now a surface stress `ρ_air · 1.3e-3 · |U| U` (U in m/s) on the top wet face of each column,
+found from α, which the forces kernel now binds at t2. Measured on scene 7 with no spawned balls, 20
+s: wind 0 → flow (+0.001, −0.000) m/s, ball x +0.001 m; wind 10 m/s along X → flow (+0.006, −0.000),
+ball x +0.013 m. The default 0.7 m/s is negligible, but it does perturb gate 7's single-frame sample
+(`covered min−ring` −15.9 → −11.3 mm on D3D12; with the wind zeroed it is −15.9 again), so gate 7
+is worth only a few millimetres of resolution. GUI sliders now span ±20 m/s; `windY` is ignored.
+
+The original report follows.
 
 **Problem.** `windX` / `windY` / `windZ` are JSON tunables, sliders, and a forcing term in
 `CS_FluidForces3D`, but they are applied only to the top rows of the domain:

@@ -99,6 +99,10 @@ namespace t850 {
     // Submerged depth below the water plane, used to damp the fall and to decide
     // when it has settled on the floor.
     float submerged = 0.0f;
+    // W-06: the simulated water level under this body, from the asynchronous surface query.
+    // Until the first answer arrives, buoyancy uses the authored water plane.
+    bool hasSimulatedLevel = false;
+    float simulatedLevel = 0.0f;
   };
 
   // GPU volumetric Navier-Stokes solver for a bounded pool volume.
@@ -207,6 +211,12 @@ namespace t850 {
 
     // Advances the solver one frame and refreshes the 2D surface target.
     bool Step(BaseDriver* driver);
+
+    // W-06: asks the GPU for the simulated water level in an annulus around a body and,
+    // when an earlier answer is ready, hands it back. The query is asynchronous (W-04 step
+    // 5): the result is consumed two or three frames later, which is invisible to a body
+    // whose bobbing period is far longer.
+    void QueryBodyWaterLevel(BaseDriver* driver);
     bool Reset(BaseDriver* driver);
 
     bool IsReady() const { return m_ready; }
@@ -383,6 +393,14 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_surfaceCopyPipeline;
     std::unique_ptr<ComputePipeline> m_seedAlphaPipeline;
     std::unique_ptr<ComputePipeline> m_alphaAdvectPipeline;
+    // W-06: averages the surface over an annulus around a body.
+    std::unique_ptr<ComputePipeline> m_bodyLevelPipeline;
+    std::unique_ptr<ComputeBuffer> m_bodyLevelBuffer;
+    // W-04 step 3: one persistent diagnostics accumulator, cleared by the kernel itself.
+    std::unique_ptr<ComputeBuffer> m_diagnosticsBuffer;
+    int m_bodyLevelTicket = -1;
+    uint32_t m_bodyLevelSlots = 0;
+    float m_lastBodyLevel = 0.0f;
     std::unique_ptr<ComputePipeline> m_volumeCorrectPipeline;
     // GPU sums for the correction (two slots, 4 x uint4), so it needs no readback.
     std::unique_ptr<ComputePipeline> m_volumeReducePipeline;

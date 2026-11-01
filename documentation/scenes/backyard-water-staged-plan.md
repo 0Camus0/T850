@@ -67,7 +67,14 @@ stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` 
   impact, gate 5 leaned on fp16 noise, and the surface kernel read air trapped beside a floating ball
   as missing water. The surface kernel also got a groupshared tile (it recomputed every column 9×).
   Same session at 720p: D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 fps (0 balls); with 30 balls
-  266.7 → 377.0 and 327.2 → 360.2. **Next is Stage 5b (W-03)**, see "After that" below.
+  266.7 → 377.0 and 327.2 → 360.2. See "After that" below for where this leaves the solver.
+- **Stage 5b (W-03) attempt 3, Stage 6a (W-04), Stage 6b (W-06)** — `97a4180b` van Leer flux
+  (`b5ae57fa` raised the sweeps to 120), `ad7e019e` + `4e93d9d5` for the async readback, the
+  persistent diagnostics buffer and buoyancy from the simulated surface. The ball now floats on the
+  measured surface instead of the authored plane. Details and the A/B tables are in section 4.
+- **Performance pass 2 (W-15 P2–P9)** — `11357fab` (P7, P8) and `efdac3d8` (P4, P5) landed; P2 and
+  P3 were built and rejected on measurement. Same-session 720p, 0 balls: D3D12 283.7 → 298.6 fps,
+  Vulkan 264.0 → 280.6. See W-15.
 
 The owner then asked for three things before the solver work resumes, in this order (one stage per
 session, smallest first). Full specifications are in remaining-work W-24, W-23 and W-22. After
@@ -196,13 +203,19 @@ Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Befor
 
 ### After that — the next stage
 
-Stage 5b (W-03), the conservative transport. **Attempt 1 was measured and rejected on 2026-10-31**
-(section 3, "Stage 5b, attempt 1"): operator splitting with upwind fluxes is exactly conservative and
-bounded but three times more diffusive (interface 3.35 → 10.67 cells), so it was reverted rather than
-shipped. The re-scoped target is a **less diffusive flux** — per-axis SLIC / Hirt–Nichols
-donor-acceptor inside the one unsplit kernel — because the remaining defect is air smeared into the
-bulk by first-order upwinding, not lost mass (total α already matches the body-adjusted reference
-within 0.1 cells). Both candidate designs and their costs are in that section.
+Stage 6b's remaining half is **W-07** (displace, don't delete): attempt 1 was rejected, and the
+next design needs a local probe of the entry rim before the kernel is written. **W-26** is the
+cheapest open item — the trapped-air compensation in `CS_FluidSurface3D` now hides air the van Leer
+flux already keeps out, so removing it and re-running gate 7 is a small, self-contained change.
+
+Stage 5b (W-03), the conservative transport, is **done as far as measurement supports it**
+(attempt 3, section 3, "Stage 5b, attempts 2 and 3"). Attempt 1 was measured and rejected on
+2026-10-31: operator splitting with upwind fluxes is exactly conservative and bounded but three
+times more diffusive (interface 3.35 → 10.67 cells). What shipped instead is a **van Leer/minmod
+limited face value** inside the one unsplit kernel: bulk 0.9969 → 0.9987, cells below 0.98 down
+79 %, interface 3.35 → 2.66 cells, cost in the noise. Three acceptance lines remain marginal
+(bulk 0.9987 vs 0.999, 1.1 % vs 1 % below 0.98, interface 2.66 vs 1–2 cells) and are recorded as
+such rather than relaxed.
 
 ### Standing rules from the reviews
 
@@ -1210,11 +1223,14 @@ bulk cells below 0.98, before and 10 s after the impact.
 
 ### Stage 6a — Analytic body and cheap readback (W-05, W-04)
 
-**Status (`c911381a`).** The exit criteria below are met by a different design: the mask is
-restamped on the GPU (`CS_FluidStampBodies3D`) instead of making the body analytic, and the
-correction's sums and deficit stay on the GPU (`CS_FluidVolumeReduce3D`) instead of a 16-byte
-readback. What remains is W-04 step 3 (persist the diagnostics buffer) and step 5 (asynchronous
-readback, which W-06 in 6b needs). The original plan follows for reference.
+**Status: done** (`c911381a`, `ad7e019e` step 5, `4e93d9d5` step 3). The exit criteria below are
+met by a different design: the mask is restamped on the GPU (`CS_FluidStampBodies3D`) instead of
+making the body analytic, and the correction's sums and deficit stay on the GPU
+(`CS_FluidVolumeReduce3D`) instead of a 16-byte readback. The asynchronous readback is now in
+`BaseDriver` (`RequestComputeReadback` / `ConsumeComputeReadback`, default `-1` / `false`, so the
+other three backends keep their synchronous path), and the diagnostics buffer is created once,
+cleared by the kernel itself through an `Iteration == 0xFFFFFFFF` sentinel. The original plan
+follows for reference.
 
 **Scope**
 - **W-05** — the body becomes analytic in every kernel (`IsSolid` = static mask **or**
@@ -1238,12 +1254,18 @@ submerged 0.60 at rest; self-test passes; frame-time max/p99 over 3000 frames be
 
 ### Stage 6b — Displace, don't delete; ball feels the water (W-07, W-06)
 
+**Status: W-06 done** (`4e93d9d5`); W-07 still open, attempt 1 rejected.
+
 **Scope**
 - **W-07** — a displacement kernel pushes α out of newly covered body cells into neighbours,
   preferring the body's velocity direction then upward, conserving the moved amount exactly.
-- **W-06** — the ball uses the local simulated surface level for its spherical cap instead of the
-  authored plane, and optionally drags against the local liquid velocity. Retune
-  `sphereHeaveDamping` down once the ball reacts to real waves and document the new default.
+  Attempt 1 (a gather, conservative up to receiver headroom) changed no global metric and failed
+  gate 8 with a 0.034 m flicker against a 0.010 m limit, because a bobbing ball's footprint
+  flickers across cell boundaries; the next design needs a local entry-rim probe first.
+- **W-06** — done: `CS_FluidBodyLevel.hlsl` averages the surface over an annulus around the body
+  (inner 1.05 r, outer 2 r + h) and `AdvanceOneSphere` floats on that level instead of the authored
+  plane. The ball now settles oscillating around y = −0.05 … −0.08 m with `submerged` 0.54–0.63
+  instead of being pinned. Optional drift and the `sphereHeaveDamping` retune are still open.
 
 **Files** — new displacement kernel, `CS_FluidReduce3D.hlsl` (column average),
 `FluidSimulation.cpp`, `WaterTunables.h`, `BackyardScene.cpp`.
@@ -2137,11 +2159,43 @@ Numbers, tables and the two candidate designs are in section 3, "Stage 5b, attem
 
 ### Stage 6a — W-05, W-04
 
-_Pending._
+**Async readback and a persistent diagnostics buffer (`ad7e019e`, `4e93d9d5`).** `BaseDriver` grew
+`RequestComputeReadback` / `ConsumeComputeReadback`, defaulting to "unsupported", so D3D11, GL and
+WebGPU compile unchanged and fall back to the synchronous read. D3D12 keeps one READBACK-heap
+resource per frame slot and Vulkan one host-visible VMA staging buffer; the hard part was frame
+identity, since offscreen compute frames pin the back buffer and overwrite
+`m_frameFencesValues[slot]` every frame. A monotonic `m_frameSerial` stored in the ticket plus
+fence stamping at submit fixed it. Cost measured at under 1 % on four rows.
+
+`ReadDiagnostics` no longer allocates: the buffer is persistent and `CS_FluidDiagnostics3D` clears
+its own counters when `Iteration == 0xFFFFFFFF` (there is no buffer-write API). The mass audit is
+the proof the clear happens — `div rms` decays monotonically instead of growing frame after frame.
 
 ### Stage 6b — W-07, W-06
 
-_Pending._
+**W-07 still open; W-06 landed (`4e93d9d5`).** W-07 attempt 1 (gather displacement) was reverted:
+it conserved what it moved but changed no global metric and failed gate 8 (0.034 m flicker vs
+0.010), because a bobbing ball's footprint flickers across cell boundaries.
+
+W-06 floats the body on the simulated surface. `CS_FluidBodyLevel.hlsl` averages the surface over
+an annulus around body 0 (inner 1.05 r to stay outside the ball's own meniscus, outer 2 r + h to
+stay inside the next body), one slot per thread group so there are no atomics and no clearing, in
+fixed point at 1/1024 m, and `AdvanceOneSphere` uses `waterPlaneY + average`. **Four traps, all
+found by measurement:** the surface texture holds a *delta* from the authored plane, so the plane
+must be added back; the kernel is dispatched `(width, depth, 1)` so the row is `id.y` and using
+`id.z` averaged row 0 and still looked plausible; the value arrives two or three frames late and
+must be held between arrivals; and the annulus inner radius has to clear the ball's own meniscus or
+the level chases its own depression.
+
+Result: the ball settles oscillating around y = −0.05 … −0.08 m with `submerged` 0.54–0.63
+(gate 6 reports 0.60), riding crests instead of standing on the authored plane. Perf A/B in the
+same session (rebuild from a stash, 1 200 profiled frames, 720p): D3D12 287.3 → 287.7 fps and
+Vulkan 268.9 → 268.1 at 0 balls; D3D12 262.7 → 261.3 and Vulkan 260.3 → 258.3 at 30 balls. The
+298.6 / 280.6 fps recorded after P4/P5 came from an earlier session and today's baseline is 287.3,
+which is exactly why the A side is rebuilt rather than quoted.
+
+Still open: W-06 step 3 (horizontal drift from the local liquid velocity) and step 4 (retune
+`sphereHeaveDamping`, 0.15, now the only hand-tuned stand-in for wave radiation).
 
 ### Stage 7 — W-15
 

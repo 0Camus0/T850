@@ -34,8 +34,8 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-15 Solver and frame cost | **Done where it pays** (P1, P4, P5, P6, P7, P8) | `3a371903`, `c911381a`, `11357fab`, `efdac3d8` | 720p, 0 balls: D3D12 222 → **298.6** fps, Vulkan → **280.6**; 30 balls 268.6 / 259.8; 0 spikes. P2 and P3 were attempted and rejected on measurement, P9 is debug-only. See the 2026-10-31 pass in W-15 |
 | W-02 R32F storage for α/pressure/divergence | **Done** | `14c705f4` + part 2 | α, pressure, divergence are R32F; still-pool loss 0.693 % → 0.001 %. The gate shift was an off-centre isotropy probe, an fp16-calibrated gate 5 floor and trapped air read as missing water. Tiled surface kernel: 720p D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 |
 | W-03 Mass lost every substep | **Mostly done** (attempt 3) | `b5ae57fa`, van Leer flux | Transport loss is ~0 (deficit is the displaced body volume); van Leer/minmod face value lifts bulk 0.9969 → 0.9987 and cuts cells below 0.98 by 79 % for free. Splitting and SLIC measured and rejected. Three acceptance lines marginal — see W-03 |
-| W-04 GPU→CPU readbacks | Mostly done (review) | `c911381a` | Correction no longer reads back (GPU reduce + GPU deficit); probes only at info logging. **Open: step 3** (`ReadDiagnostics` allocates a buffer per call) **and step 5** (async readback, which W-06 needs) |
-| W-06 Ball does not feel the water | **Open** | — | Buoyancy uses the authored water plane, not the simulated surface; the ball cannot ride waves and the energy it should radiate as waves is a hand-tuned heave damping (0.15). Needs W-04 step 5 |
+| W-04 GPU→CPU readbacks | **Done** | `c911381a`, `ad7e019e`, `4e93d9d5` | Correction no longer reads back (GPU reduce + GPU deficit); probes only at info logging. Step 5 added the async readback pair on D3D12/Vulkan (`Request/ConsumeComputeReadback`); step 3 made the diagnostics buffer persistent with a kernel-side clear. Under 1 % on every perf row |
+| W-06 Ball does not feel the water | **Done** | `4e93d9d5` | Buoyancy now floats on the simulated surface averaged over an annulus around the body, so the ball rises on a crest and drops into a trough; it settles oscillating around y = −0.05…−0.08 m with `submerged` 0.54–0.63 instead of sitting on the authored plane. `sphereHeaveDamping` (0.15) is now the leftover hand-tuned term to revisit |
 | W-07 Water under the ball is deleted | **Attempt 1 rejected** | — | The gather pass conserves what it moves but changes no global metric and fails gate 8 (0.034 m flicker, limit 0.010). Next design recorded in W-07 |
 | W-05 Moving body re-uploads the wall mask | Done differently (review) | `c911381a` | Mask restamped on the GPU in a persistent buffer; no upload after startup. The analytic-body design is no longer needed for cost |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
@@ -577,11 +577,33 @@ fewer than 1 % of bulk cells below 0.98, before and 10 s after the impact.
 
 ### W-04 — GPU→CPU readbacks stall the frame (P2, M, suggested: GLM)
 
-**Status (`c911381a`).** Steps 1 and 2 are done, and further than planned: `CS_FluidVolumeReduce3D`
-writes the sums and `CS_FluidVolumeCorrect3D` computes the deficit itself, so the live correction
-reads nothing back (only `--logLevel debug` reads the 64-byte sums). Step 4 is done: the probes run
-only when info logging is on. Open: step 3 (`ReadDiagnostics` still creates its buffer per call)
-and step 5 (asynchronous readback, which W-06 needs).
+**Status: done** (`c911381a` steps 1, 2, 4; `ad7e019e` step 5; `4e93d9d5` step 3).
+`CS_FluidVolumeReduce3D` writes the sums and `CS_FluidVolumeCorrect3D` computes the deficit itself,
+so the live correction reads nothing back (only `--logLevel debug` reads the 64-byte sums). The
+probes run only when info logging is on.
+
+Step 5, the asynchronous readback, is the API W-06 needed:
+
+```cpp
+int  RequestComputeReadback(ComputeBuffer& buffer, size_t bytes);  // ticket, or -1
+bool ConsumeComputeReadback(int ticket, void* out, size_t bytes);  // false until retired
+```
+
+Both default to `-1` / `false` in `BaseDriver`, so a backend without the pair keeps compiling and
+the caller falls back to the synchronous `ReadComputeBuffer`. D3D12 keeps a READBACK-heap resource
+per frame slot plus the frame's list; Vulkan uses a host-visible VMA staging buffer per frame slot.
+**The pitfall is frame identity:** offscreen compute frames do not rotate the back buffer, so
+`m_currentBackBuffer` is pinned and `m_frameFencesValues[slot]` is overwritten every frame — the
+slot index can never say "this copy has been submitted". D3D12 therefore tracks `m_frameSerial`
+(incremented in `CompleteFrame`), stores it in the ticket, and stamps the fence value onto every
+pending copy of the frame being completed, before the fence array is reused. Measured cost:
+under 1 % at 720p with 0 and 30 balls (`4e93d9d5`).
+
+Step 3 is done differently from the plan: the diagnostics buffer is created once, and because
+there is still no buffer-write API, `CS_FluidDiagnostics3D` clears its own two `uint4` counters
+from thread (0,0,0) when `Iteration == 0xFFFFFFFF`, dispatched as a pass before the measuring one.
+The mass audit is the check that the clear happens: `div rms` decays monotonically as the pool
+settles (0.504 at t = 1.9 s → 0.0037 at t = 18.3 s) instead of growing every frame.
 
 **Problem.** `CorrectVolumeFraction` calls `MeasureVolumeFraction` twice (before and after), and
 each copies the entire volume (110 000 × 16 bytes) to a buffer and reads it back synchronously.
@@ -606,6 +628,7 @@ frame time spikes every 15 frames and the real-time step (`deltaSeconds`) become
 Report frame-time max and p99 over a 3000-frame run before and after, using `--profile
 --profileFrames 3000` or the PresentMon workflow in
 [gpu-performance-profiling-workflow.md](../rendering/gpu-performance-profiling-workflow.md).
+Done: 1 200 profiled frames per API, 0 spikes, p99 within 0.4 ms of the baseline.
 
 ---
 
@@ -665,6 +688,28 @@ energy it should lose by radiating waves is replaced by an artificial heave damp
 **Acceptance.** Ball at rest: submerged 0.60 ± 0.02. Drop a second time with "Drop now" while
 waves are still running: the ball's `y` in the log must correlate with the local surface (show
 both series). No new stalls (W-04 metric).
+
+**Status: done** (`4e93d9d5`), steps 1 and 2. `CS_FluidBodyLevel.hlsl` averages the surface
+texture over an annulus around body 0 — inner radius 1.05 r (outside the ball's own meniscus),
+outer 2 r + h (inside the next body) — and `AdvanceOneSphere` floats on
+`waterPlaneY + average`. Notes:
+
+* One output slot per thread group, so there are no atomics and no zeroing: the buffer needs no
+  clear between frames, which matters because there is no buffer-write API. Sums are fixed point
+  at 1/1024 m so the readback is an integer ring average (32-bit sum, 32-bit count per slot).
+* The kernel is dispatched `(width, depth, 1)`; the grid row is `id.y`, **not** `id.z`. Using
+  `id.z` silently averaged row 0 only and looked plausible.
+* The surface texture stores a **delta** from the authored plane (`height = elevation −
+  WaterPlaneY`), so the absolute level is the plane plus the sampled average. Without the add the
+  ball sank to the floor.
+* The value arrives one to three frames late through W-04 step 5 and is held between arrivals; if
+  a backend has no async path the query pays one 40-byte stall rather than losing the feature.
+
+Measured: with the ball floating it settles oscillating around `y` = −0.05 … −0.08 m and
+`submerged` 0.54–0.63 (gate 6 still reports 0.60), so it now rides the surface instead of sitting
+on the authored plane. Steps 3 (horizontal drift) and 4 (retune `sphereHeaveDamping`) are still
+open — that 0.15 ratio is now the only hand-tuned term standing in for the wave radiation the ball
+should produce.
 
 ---
 

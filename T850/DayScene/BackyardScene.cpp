@@ -1145,6 +1145,10 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
 
 void BackyardScene::OnInput(InputManager* input) {
   if (!input) return;
+  // The in-process pick test (--backyard-pick-test) drives its own synthetic InputManager from
+  // RunPickTestStep. Forwarding the real one as well ends every synthetic drag on the next frame,
+  // because HandleBallDrag sees the physical button up, which is what made the hold checks fail.
+  if (s_pickTest) return;
   bool imguiWantsMouse = false;
 #ifndef OS_ANDROID
   imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;

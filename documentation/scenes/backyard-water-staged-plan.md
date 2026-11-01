@@ -201,36 +201,148 @@ Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Befor
 - After any Framework header change, delete the PCH before trusting the binary. In Stage 3c a stale
   binary silently kept the old behaviour.
 
-### After that — the next stage
+### Next: port, verify every platform, and prepare the PR (owner request, 2026-11-01)
 
-**Ordered by the review of 2026-11-01** (section 4, "Review of the 2026-10-31 sessions"). One item
-per session; each needs D3D12 + Vulkan + D3D11 self-tests and a same-session `telemetry.ps1` A/B.
+State at the start: the bugs from the 2026-11-01 review and W-06 (every body) and W-27 (wind) are
+fixed (section 4, "Fixes after the review"). The branch is 99+ commits ahead of `origin/master` and
+0 behind, never pushed. **Pushing and opening the PR need the owner's explicit go-ahead.**
 
-1. **Re-measure W-06 step 4** on the fixed body-level kernel: the heave table (0.15 / 0.05 / 0.00)
-   was taken while every negative level offset was dropped. Three JSON-only runs, no rebuild.
-2. **W-06 for every body.** Only `m_bodies[0]` gets the simulated level and current; spawned balls
-   float on the authored plane. One annulus query per body (the body list is already an inline
-   buffer), results consumed through the same async ticket.
-3. **W-27** (the wind tunable is inert): one constant and a still-pool check. Then verify the
-   W-06 current against a real wind-driven flow instead of a forced one.
-4. **Decide `pressureIterations`.** 120 sweeps cost 26–30 % of the frame (D3D12 401.9 → 295.4
-   fps, Vulkan 391.6 → 274.2) to save ~25 cells of still-pool loss in 2 s, which the correction
-   repays anyway. Re-measure 60 / 80 / 120 with the van Leer flux in place; ship the smallest
-   count that keeps every gate, with the table next to the constant.
-5. **W-14** (duplicated `FluidConstants`, now four copies).
-6. **W-07 stage**: per-cell solid fraction. The acceptance target is W-26's table.
-7. **W-16 rest** and **W-17** platforms.
+Execution order, one session each. Item 2 runs twice: a baseline first, so porting never hides an
+existing break, and a final pass after everything else.
 
-Background for items 6 and 7:
+| Order | Item | Size |
+|---|---|---|
+| 1st | 2a. Baseline build of every platform | S–M |
+| 2nd | 3. Launcher ball textures | S |
+| 3rd | 4. Clean-up | M |
+| 4th | 1a. WebGPU port (native, then browser) | L |
+| 5th | 1b. OpenGL port | L |
+| 6th | 2b. Final matrix, PR text, owner sign-off | M |
+
+#### 1. Porting the solver to the other APIs (including WebGPU)
+
+Today the solver runs on D3D11, D3D12 and Vulkan only. On GL and WebGPU,
+`SupportsComputeTextures3D()` is false, the self-tests SKIP and scene 7 shows the static pool.
+Since 2026-11-01 a SKIP is only allowed where that capability is false; a backend that claims it
+and fails to initialize is a FAIL.
+
+**1a. WebGPU.** Compute kernels already go HLSL → SPIR-V → WGSL through Tint at run time, so most
+of the work is in the backend, not in 24 hand-written WGSL files.
+- 3D storage textures: `RGBA16F` and `R32F` write-only (`texture_storage_3d`), and 3D sampled reads.
+  WebGPU currently rejects `R32Float` storage (compute doc).
+- Inline `ReadOnlyBuffer` bindings, and `RequestComputeReadback` / `ConsumeComputeReadback` on
+  `MapAsync`.
+- Check that Tint accepts what the kernels use: `RWTexture3D<float>` with `spv::format_r32f`,
+  `StructuredBuffer<float4>`, `groupshared` with barriers (the surface kernel's tile), 2D `Load`
+  with `int3`.
+- Then report the capability and run every gate natively with `--api webgpu`.
+- Browser: scene 7 is not in `T850/web/scenes.json`. Add it only after native WebGPU passes, then
+  run `test-firefox.mjs` (Chrome and Firefox).
+
+**1b. OpenGL.** `GLCompute` loads a `.glsl` twin per kernel (`path.replace_extension(".glsl")`), and no
+fluid kernel has one.
+- Measure first: hand-write about 24 twins, or translate HLSL → SPIR-V → GLSL once at build time.
+  Check whether SPIRV-Cross is already a vcpkg dependency before adding one.
+- Backend: `glTexStorage3D` volumes, `glBindImageTexture(..., layered = GL_TRUE, ...)`, and image
+  formats `rgba16f` / `r32f`. Async readback can stay synchronous (the base default).
+
+**Acceptance per API.** All of these, plus a same-session `telemetry.ps1` row:
+- `--compute-selftest`, including the 3D RGBA16F and R32F cases.
+- `--fluid-selftest`.
+- `--backyard-selftest`, with every gate inside the D3D12/Vulkan spread recorded in section 4.
+- `pick_test.ps1`.
+- Scene 7 with `--backyard-spawn 8 --backyard-spawn-seed 777`: a frame-300 dump compared with
+  `cmp_ppm.py` against D3D12.
+
+#### 2. PR preparation: every platform builds and passes
+
+CI (`.github/workflows/build.yml`) runs these jobs:
+- `validate-build-registration`
+- `build`: Win32, x64 and ARM64 × Debug and Release, plus the WebAssembly bundle
+- `browser-webgpu`, `android`, `steamdeck`, `release`
+
+Reproduce them locally before pushing:
+- `scripts\RunWindowsBuildMatrix.ps1`, from the source root: six Windows builds plus the Win32/x64
+  self-tests. The gameplay suite (`--game-selftest`) must report 78 PASS.
+- ARM64 builds only `Framework;DayScene`, with Community MSBuild.
+- Android: `SetupAndroidToolchain.bat`, then `Scripts\Bat\BuildAndroid.bat Release`.
+- Web: `scripts\BuildWeb.ps1`.
+- Steam Deck: through its remote update script.
+- `ValidateBuildRegistration.ps1` does **not** check Backyard files. Checked by hand on 2026-11-01:
+  `BackyardScene.cpp` and `BackyardWaterJson.cpp` are in MSBuild, DayScene CMake and Android;
+  `BackyardSelfTest.cpp` is in MSBuild and CMake (Android's entry point does not compile `App.cpp`);
+  `FluidSimulation.cpp` and `FluidDebugRenderer.cpp` are in every Framework list. Re-check after
+  porting adds files.
+
+Engine-wide changes on this branch touch every scene:
+- PBR channel split
+- `ShadowAccum` RGBA8
+- D3D12 ring uploads
+- P4/P5 bind caches
+- the async readback API
+
+So also run, on the final binary:
+- Visual baselines: `CaptureVisualBaselines.ps1` against a master baseline. Expect lighting
+  differences from `c4c680dc` and explain each.
+- Scenes 0–7 on five APIs with 0 `[ERROR]` lines.
+- `--d3d12debug` and Vulkan validation on scenes 1, 6 and 7.
+
+#### 3. Launcher and release launcher download the ball textures
+
+Measured 2026-11-01:
+- `Launcher.ps1` and `Launcher_Release.ps1` both dot-source `scripts/ModelCloud.ps1` and call
+  `Ensure-T850CloudTextures`, the same function `DownloadTextures.ps1` uses.
+- It downloads everything in the R2 manifest with no folder filter. The live manifest has 138
+  texture entries, 96 of them under `Textures/Ball/`.
+- `Get-T850CloudTexturesStatus` reports 138/138 ready on this machine.
+
+So no new download code is expected; the item is to *prove* it and close the gaps:
+- From an **empty** asset root, the dev launcher's Download Assets fetches all 96 ball files. So
+  does the compiled `T850Launcher.exe` from `build_launcher_release.ps1`, run from the release
+  layout, where `ModelCloud.ps1` must be found next to it or under `scripts\`.
+- `ValidateReleasePackages.ps1` / the `release` job: decide whether packages carry textures or rely
+  on the first-run download, and document it in `documentation/development/cloud-assets.md`.
+- Gate 10's failure message says to run `scripts/DownloadTextures.ps1`; add the launcher's
+  Download Assets button to it.
+- Add a check to `TestLauncherWebGPU.ps1` (it runs in CI) that the texture status counts the
+  `Textures/Ball/` entries. It must be read-only and must not write to R2.
+
+#### 4. Clean-up and preparation to merge
+
+- **Documentation:**
+  - `--help` and `development/runtime-configuration.md` document none of the Backyard flags:
+    `--backyard-selftest`, `--backyard-spawn`, `--backyard-spawn-seed`, `--backyard-pick-test`,
+    `--backyard-ball-probe`, `--backyard-mass-audit`, `--fluid-selftest`.
+  - The `documentation/README.md` Backyard rows still say "24 tasks … next W-24 roof"; index the
+    session records too.
+- **W-14:** one `FluidConstants` include for the 17 kernel copies. First confirm the compute
+  shader path resolves `#include` on all three backends.
+- **W-16:** the implementation record's sections 6 and 8.
+- **Diagnostic scripts:** move the reusable ones from the untracked `D:\Code\QwenFlashT850\backyard-diag`
+  (`telemetry.ps1`, `pick_test.ps1`, `cmp_ppm.py`, `ppm2png.py`) into `T850/scripts/validation/`
+  with repo-relative paths, so CI and other machines can run them.
+- **Dead code:** after the P7 surface change, check `m_surfaceCopyPipeline` and the ping-pong pair
+  (still needed headless).
+- **Never commit** `T850/config.json`, generated dumps, or `Assets/Textures/Ball/`.
+- **Owner decisions to collect before merging:**
+  - `pressureIterations` 120 (26–30 % of the frame; re-measure 60/80/120).
+  - Whether wind should also push the balls (aerodynamic drag on the exposed cap; not implemented).
+  - Merge strategy: the documents cite commit hashes, so squashing breaks every reference.
+    Recommend a merge commit.
+
+Still open from the review, to do inside one of the sessions above:
+- **Re-measure W-06 step 4** (the heave table was taken with the sign bug). Then turn on simulated
+  buoyancy in the self-tests: the headless query uses the authored plane today, because enabling it
+  put Vulkan's gate 7 at −19.9 mm of 20 while the ball was still bobbing.
+- The **W-07 solid-fraction stage**. It is the last physics gap but is not needed for the PR.
+
+Background:
 
 - **W-07** (displace, don't delete): attempts 1 and 2 are measured/analysed and neither ships.
   Attempt 2's conclusion is that the flicker is the *binary mask flip*, not the distribution, so the
   body needs a **per-cell solid fraction** (sub-cell coverage) in the mask, the transport and the
   seven kernels that test `IsSolid`. That is a stage of its own; the acceptance target is the table
   in W-26 (remove the trapped-air term, `covered min−ring` back under 20 mm, band profile flat).
-- **W-27** (the wind tunable is inert): wind is applied only above `SurfaceLevel · Height`, which on
-  this pool is two rows of *air*. One constant and one re-check; it also unblocks verifying W-06's
-  current with a real wind-driven flow instead of a forced one.
 - **W-16** still owes sections 6–8 of the implementation record; §7 and §8.1 were refreshed this
   session, together with the kernel table and the readback contract.
 
@@ -2316,6 +2428,28 @@ still-pool loss per 2 s (brief, item 4). The engine compute document now describ
 - **A new readback path gets one `--d3d12debug` run.** NVIDIA tolerated the wrong resource state.
 - **A bind cache needs every out-of-band binder to invalidate it.** Grep for direct
   `SetPipelineState` / `SetDescriptorHeaps` calls outside the driver before skipping binds.
+
+### Fixes after the review (2026-11-01, reviewer)
+
+| Fix | Measured |
+|---|---|
+| **W-06 for every body.** `CS_FluidBodyLevel` is one thread per body over an inline `(x, y, z, r)` list; one dispatch and one readback answer every ball, and answers are dropped if bodies were spawned or cleared since the request | 30 spawned balls: 31/31 bodies with a simulated level (−3.4 … +2.6 cm), currents up to 0.12 m/s |
+| **W-27 wind.** The real cause was the gain (`ForcingAmplitude`, 0), not the row band. Wind is now surface stress `ρ_air · 1.3e-3 · \|U\| U` on the top wet face, found from α (forces kernel binds t2). Sliders ±20 m/s, units in the tunable | Scene 7, 20 s: wind 0 → ball x +0.001 m, flow +0.001; wind 10 m/s X → +0.013 m, flow +0.006 m/s |
+| **Self-tests could pass on a broken solver.** A rejected kernel made `TryInitialize` fail and all three tests (fluid, backyard, pick) printed SKIP with exit 0. They now FAIL when the driver reports 3D compute storage | Wind-zeroed kernel (compiler dropped `AlphaIn`, layout mismatch): before SKIP/exit 0, after FAIL/exit 1 on both self-tests; GL and WebGPU still SKIP |
+| Ball probe prints a third line with every body's level range and the largest current | — |
+
+Gate 7 is sensitive to tiny perturbations: the default 0.7 m/s wind changes `covered min−ring` from
+−15.9 to −11.3 mm on D3D12 (zeroing the wind restores −15.9). Enabling simulated buoyancy in the
+self-test put Vulkan at −19.9 mm against 20 while the ball was still bobbing at 8 s, so the headless
+query stays on the authored plane until W-06 step 4 is re-measured.
+
+Validation on the final binary:
+- Backyard and fluid self-tests PASS on D3D12, Vulkan and D3D11; `--compute-selftest` exit 0 on all
+  three.
+- The pick test passes on all three.
+- Scenes 7, 1 and 6 on five APIs run with 0 errors.
+
+**Rule learned here.** A test that SKIPs must ask the capability, not infer it from a failure.
 
 ### Stage 7 — W-15
 

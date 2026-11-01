@@ -279,7 +279,7 @@ The 16 original fluid kernels:
 | id | source | bindings (type:register@binding_index) |
 |---|---|---|
 | `fluid_advect` | `CS_FluidAdvect3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), storage_texture:0@2(3d), read_only_buffer:8@3 |
-| `fluid_forces` | `CS_FluidForces3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), storage_texture:0@2(3d), read_only_buffer:8@3 |
+| `fluid_forces` | `CS_FluidForces3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), storage_texture:0@2(3d), read_only_buffer:8@3, **sampled_texture:2@4(3d) (α, for the wind)** |
 | `fluid_divergence` | `CS_FluidDivergence3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), storage_texture:0@2(3d), read_only_buffer:8@3, sampled_texture:2@4(3d) |
 | `fluid_pressure` | `CS_FluidPressure3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), sampled_texture:1@2(3d), storage_texture:0@3(3d), read_only_buffer:8@4, sampled_texture:2@5(3d) |
 | `fluid_gradient` | `CS_FluidGradient3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), sampled_texture:1@2(3d), storage_texture:0@3(3d), read_only_buffer:8@4, sampled_texture:2@5(3d) |
@@ -294,7 +294,7 @@ The 16 original fluid kernels:
 | `fluid_sphere` | `CS_FluidSphere3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), **constants:1@2[12]**, read_only_buffer:8@3, storage_texture:0@4(3d), read_write_buffer:1@5 |
 | `fluid_obstacle_velocity` | `CS_FluidObstacleVelocity3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), sampled_texture:1@2(3d), **constants:1@3[12]**, read_only_buffer:8@4, storage_texture:0@5(3d) |
 | `fluid_clear` | `CS_FluidClear3D.hlsl` | constants:0@0[16], storage_texture:0@1(3d) |
-| `fluid_body_level` | `CS_FluidBodyLevel.hlsl` | constants:0@0[20], **constants:1@1[12]**, sampled_texture:0@2, **sampled_texture:1@3(3d)**, read_only_buffer:8@4, read_write_buffer:0@5 |
+| `fluid_body_level` | `CS_FluidBodyLevel.hlsl` | constants:0@0[20], **constants:1@1[8]**, sampled_texture:0@2, **sampled_texture:1@3(3d)**, read_only_buffer:8@4, **read_only_buffer:9@5 (inline bodies)**, read_write_buffer:0@6 |
 
 Also modified: [shader_permutations.json](../../T850/Assets/Shaders/shader_permutations.json),
 `Framework/src/utils/ComputeKernelRegistry.cpp`, `Framework/src/utils/ComputeReflection.cpp`.
@@ -366,9 +366,13 @@ The ordering is load-bearing:
 
 **`CS_FluidAdvect3D`** — semi-Lagrangian velocity self-advection.
 
-**`CS_FluidForces3D`** — viscous diffusion from six neighbours, plus gravity, plus (optional,
-default off) a synthetic surface stir. Ends with
-`velocity *= saturate(1 - Damping*dt)` and `clamp(velocity, ±12)`.
+**`CS_FluidForces3D`** — viscous diffusion from six neighbours, plus gravity, plus wind, plus
+(optional, default off) a synthetic surface stir. Wind (W-27) is a surface stress
+`τ = ρ_air · 1.3e-3 · |U| U` (U in m/s, `windX`/`windZ`) applied as `τ / (ρ_water · h)` to the
+one horizontal face per column that is wet with air above it, found from α (bound at t2). It
+used to be multiplied by `ForcingAmplitude` (0 in the shipped scene), so wind did nothing. At the
+shipped 0.7 m/s it is negligible; 10 m/s along X builds about 6 mm/s of surface current in 20 s.
+Ends with `velocity *= saturate(1 - Damping*dt)` and `clamp(velocity, ±12)`.
 
 **`CS_FluidDivergence3D`** — central-difference divergence with `scale = 0.5/CellSize`.
 Solid neighbours contribute zero flux (wall no-penetration via the mask). Air cells get
@@ -407,11 +411,13 @@ correction, on the GPU. See §10.
 **`CS_FluidStampBodies3D`** — rewrites the wall mask from the static base mask plus the body
 list. See §8.3.
 
-**`CS_FluidBodyLevel`** — averages the surface texture over an annulus around body 0 and, in the same
-pass, the horizontal liquid velocity at the shallower of the column's waterline row and the body's
-centre row. One slot per thread group (no atomics, no clearing, no allocation), a `uint4` of
-Σheight·1024, Σcount, Σu·1024 and Σw·1024. Feeds the buoyancy water line (level) and the drag
-reference (current) in §8.1; the host reads it back asynchronously one to three frames later.
+**`CS_FluidBodyLevel`** — one thread per body walks the columns of an annulus around that body and
+averages the surface height and the horizontal liquid velocity at the shallower of the column's
+waterline row and the body's centre row. Bodies come in as an inline `(x, y, z, radius)` list
+(radius 0 for a disabled body); the result is one `float4` per body (mean level offset, current x,
+current z, sample count), so every ball is answered by one dispatch and one readback. Feeds the
+buoyancy water line (level) and the drag reference (current) in §8.1; the host reads it back
+asynchronously one to three frames later.
 
 ### 6.4 Pressure solve maths
 
@@ -543,13 +549,15 @@ level     = waterPlaneY + mean(surface height over an annulus around the body)
 submerged = clamp((level - (y - radius)) / (2*radius), 0, 1)
 ```
 
-`CS_FluidBodyLevel.hlsl` produces that mean on the GPU: it averages `m_surfaceOutput` over an
-annulus whose inner radius (1.05 r) clears the body's own meniscus and whose outer radius (2 r + h)
-stays inside the next body, one output slot per thread group in fixed point at 1/1024 m. The
-result comes back through the asynchronous readback (W-04 step 5) one to three frames late and is
-held in between, so a backend without an async path pays one 40-byte stall per frame instead of
-losing the coupling. The surface texture stores a delta from the authored plane, so the plane is
-added back; forgetting that puts the body on the pool floor.
+`CS_FluidBodyLevel.hlsl` produces that mean on the GPU for every body at once: it averages
+`m_surfaceOutput` over an annulus whose inner radius (1.05 r) clears the body's own meniscus and
+whose outer radius (2 r + h) stays inside the next body, skipping columns whose waterline cell is
+a wall or another body. The result comes back through the asynchronous readback (W-04 step 5) one
+to three frames late with one query in flight; each body keeps its last answer, and an answer is
+dropped if bodies were spawned or cleared since it was requested. A backend without an async path
+pays one small stall per frame instead of losing the coupling. The surface texture stores a delta
+from the authored plane, so the plane is added back; forgetting that puts the body on the pool
+floor. Headless runs (no bound surface output, i.e. the self-tests) keep the authored plane.
 
 Archimedes, net of gravity:
 

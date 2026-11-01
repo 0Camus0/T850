@@ -57,6 +57,7 @@ namespace {
 int BackyardScene::s_spawnOnStart = 0;
 uint32_t BackyardScene::s_spawnSeed = 0;
 int BackyardScene::s_massAuditFrames = 0;
+int BackyardScene::s_ballProbeFrames = 0;
 bool BackyardScene::s_pickTest = false;
 
 BackyardScene::BackyardScene() = default;
@@ -1055,6 +1056,72 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
                       audit.divergenceRms, audit.divergenceMax, audit.saturatedCells);
         } else {
           T8_LOG_ERROR("[Backyard][mass] audit readback failed");
+        }
+      }
+      // W-06 / W-07 acceptance probe: the ball's own vertical state plus the radial
+      // surface profile around it. The mass audit averages the whole pool and cannot see
+      // the ~2 cm moat a floating body leaves, which is exactly what W-06 and W-07 are
+      // judged on. Reads the same surface texture the renderer draws (opt-in: N frames).
+      if (s_ballProbeFrames > 0 && m_fluidReady && ++m_ballProbeCounter >= s_ballProbeFrames) {
+        m_ballProbeCounter = 0;
+        std::vector<float> surface;
+        const t850::FluidSphere& ball = m_fluid.Bodies()[0];
+        const t850::FluidSettings& fs = m_fluid.Settings();
+        if (ball.enabled && m_fluid.ReadSurface(pFramework->pVideoDriver, surface) &&
+            surface.size() >= static_cast<size_t>(fs.width) * fs.depth * 4u) {
+          const float h = fs.cellSize;
+          const float r = ball.radius;
+          constexpr int kBands = 8;
+          double farSum = 0.0, ringSum = 0.0;
+          uint32_t farCount = 0, ringCount = 0;
+          float coveredMin = 0.0f;
+          bool haveCovered = false;
+          double bandSum[kBands] = {};
+          uint32_t bandCount[kBands] = {};
+          for (uint32_t z = 0; z < fs.depth; ++z) {
+            for (uint32_t x = 0; x < fs.width; ++x) {
+              const float dx = fs.basinMinX + (static_cast<float>(x) + 0.5f) * h - ball.x;
+              const float dz = fs.basinMinZ + (static_cast<float>(z) + 0.5f) * h - ball.z;
+              const float dist = std::sqrt(dx * dx + dz * dz);
+              const float value =
+                  surface[(static_cast<size_t>(x) + static_cast<size_t>(fs.width) * z) * 4];
+              if (dist >= 1.0f && dist <= 1.5f) { farSum += value; ++farCount; }
+              if (dist >= r + 0.5f * h && dist <= r + 1.5f * h) { ringSum += value; ++ringCount; }
+              if (dist <= r - 0.5f * h && (!haveCovered || value < coveredMin)) {
+                coveredMin = value;
+                haveCovered = true;
+              }
+              const int band = static_cast<int>(dist / 0.1f);
+              if (band < kBands) { bandSum[band] += value; ++bandCount[band]; }
+            }
+          }
+          if (farCount > 0 && ringCount > 0 && haveCovered) {
+            const float farLevel = static_cast<float>(farSum / farCount);
+            const float ringLevel = static_cast<float>(ringSum / ringCount);
+            std::string profile;
+            char cell[24];
+            for (int b = 0; b < kBands; ++b) {
+              std::snprintf(cell, sizeof(cell), " %+.1f",
+                            bandCount[b] == 0 ? 0.0f
+                                              : 100.0f * (static_cast<float>(bandSum[b] / bandCount[b]) - farLevel));
+              profile += cell;
+            }
+            // Running extremes over the whole run, so a transient rim or moat is not
+            // missed between samples: rim = the highest ring cell seen, moat = the lowest.
+            const float rim = ringLevel - farLevel;
+            m_probeRimPeak = (std::max)(m_probeRimPeak, rim);
+            m_probeMoatMin = (std::min)(m_probeMoatMin, coveredMin - ringLevel);
+            T8_LOG_INFO("[Backyard][ball] t=%.2f y=%+.3f vy=%+.3f level=%+.3f plane=%+.3f submerged=%.2f "
+                        "flow=(%+.3f %+.3f) xz=(%+.3f %+.3f) vxz=(%+.3f %+.3f)",
+                        m_fluid.SimulationTime(), ball.y, ball.vy,
+                        ball.hasSimulatedLevel ? ball.simulatedLevel : fs.waterPlaneY,
+                        fs.waterPlaneY, ball.submerged, ball.flowX, ball.flowZ,
+                        ball.x, ball.z, ball.vx, ball.vz);
+            T8_LOG_INFO("[Backyard][ball] far=%+.4f ring-far=%+.4f covered min-ring=%+.4f "
+                        "rimPeak=%+.4f moatMin=%+.4f bands(cm):%s",
+                        farLevel, ringLevel - farLevel, coveredMin - ringLevel,
+                        m_probeRimPeak, m_probeMoatMin, profile.c_str());
+          }
         }
       }
     }

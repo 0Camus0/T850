@@ -1260,26 +1260,31 @@ void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
                            m_bodyLevelPipeline->threadGroupSize[1];
   (void)gx; (void)gy;
   const uint32_t slotCount = groupsX * groupsY;
-  const size_t readBytes = static_cast<size_t>(slotCount) * 2u * sizeof(uint32_t);
+  const size_t slotBytes = 4u * sizeof(uint32_t);
+  const size_t readBytes = static_cast<size_t>(slotCount) * slotBytes;
 
   // Consume an earlier answer first. The copy is queued at the end of the frame that
   // recorded it, so the first result of a run arrives two or three frames in, and every
   // later one is one query old.
   if (m_bodyLevelTicket > 0) {
-    std::vector<uint32_t> raw(slotCount * 2u, 0u);
+    std::vector<uint32_t> raw(slotCount * 4u, 0u);
     if (driver->ConsumeComputeReadback(m_bodyLevelTicket, raw.data(), readBytes)) {
       m_bodyLevelTicket = -1;
-      int64_t sum = 0;
+      int64_t sumH = 0, sumU = 0, sumW = 0;
       uint64_t count = 0;
       for (uint32_t slot = 0; slot < slotCount; ++slot) {
-        sum += static_cast<int32_t>(raw[slot * 2u + 0u]);
-        count += raw[slot * 2u + 1u];
+        sumH += static_cast<int32_t>(raw[slot * 4u + 0u]);
+        count += raw[slot * 4u + 1u];
+        sumU += static_cast<int32_t>(raw[slot * 4u + 2u]);
+        sumW += static_cast<int32_t>(raw[slot * 4u + 3u]);
       }
       if (count > 0) {
         // The surface texture holds a delta from the authored plane, so the absolute level
         // the body floats on is that plane plus the sampled average.
         m_lastBodyLevel = m_settings.waterPlaneY +
-                          static_cast<float>(sum) / 1024.0f / static_cast<float>(count);
+                          static_cast<float>(sumH) / 1024.0f / static_cast<float>(count);
+        m_bodies[0].flowX = static_cast<float>(sumU) / 1024.0f / static_cast<float>(count);
+        m_bodies[0].flowZ = static_cast<float>(sumW) / 1024.0f / static_cast<float>(count);
         m_bodies[0].hasSimulatedLevel = true;
       }
     }
@@ -1291,7 +1296,7 @@ void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
   if (!m_bodyLevelBuffer || m_bodyLevelSlots != slotCount) {
     ComputeBufferDesc desc;
     desc.byteWidth = static_cast<uint32_t>(readBytes);
-    desc.structureStride = 2 * sizeof(uint32_t);
+    desc.structureStride = static_cast<uint32_t>(slotBytes);
     desc.access = ComputeBufferAccess::ReadWrite;
     desc.debugName = "Fluid Body Water Level";
     m_bodyLevelBuffer = driver->CreateComputeBuffer(desc);
@@ -1302,18 +1307,22 @@ void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
 
   const std::vector<uint32_t> constants = BuildConstants();
   struct LevelConstants {
-    float basinMinX, basinMinZ, bodyX, bodyZ, bodyRadius, stepX, stepZ, pad;
-  } level{m_settings.basinMinX, m_settings.basinMinZ,
-          m_bodies[0].x, m_bodies[0].z, m_bodies[0].radius,
+    float basinMinX, basinMinY, basinMinZ, waterPlaneY;
+    float bodyX, bodyY, bodyZ, bodyRadius;
+    float stepX, stepY, stepZ, pad;
+  } level{m_settings.basinMinX, m_settings.basinMinY, m_settings.basinMinZ, m_settings.waterPlaneY,
+          m_bodies[0].x, m_bodies[0].y, m_bodies[0].z, m_bodies[0].radius,
           (m_settings.basinMaxX - m_settings.basinMinX) / static_cast<float>(m_settings.width),
+          (m_settings.basinMaxY - m_settings.basinMinY) / static_cast<float>(m_settings.height),
           (m_settings.basinMaxZ - m_settings.basinMinZ) / static_cast<float>(m_settings.depth),
           0.0f};
-  std::array<uint32_t, 8> levelWords{};
+  std::array<uint32_t, 12> levelWords{};
   std::memcpy(levelWords.data(), &level, sizeof(level));
   const std::vector<ComputeBindingDesc> bindings = {
     {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
-    {ComputeBindingType::Constants32, 1, nullptr, levelWords.data(), 8u},
+    {ComputeBindingType::Constants32, 1, nullptr, levelWords.data(), 12u},
     {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, m_surfaceOutput},
+    {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
     {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
     {ComputeBindingType::ReadWriteBuffer, 0, m_bodyLevelBuffer.get(), nullptr, 0}
   };
@@ -1325,17 +1334,21 @@ void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
   if (m_bodyLevelTicket > 0) return;
 
   // Backend without an asynchronous path: pay one stall rather than lose the feature.
-  std::vector<uint32_t> raw(slotCount * 2u, 0u);
+  std::vector<uint32_t> raw(slotCount * 4u, 0u);
   if (!driver->ReadComputeBuffer(*m_bodyLevelBuffer, raw.data(), readBytes)) return;
-  int64_t sum = 0;
+  int64_t sumH = 0, sumU = 0, sumW = 0;
   uint64_t count = 0;
   for (uint32_t slot = 0; slot < slotCount; ++slot) {
-    sum += static_cast<int32_t>(raw[slot * 2u + 0u]);
-    count += raw[slot * 2u + 1u];
+    sumH += static_cast<int32_t>(raw[slot * 4u + 0u]);
+    count += raw[slot * 4u + 1u];
+    sumU += static_cast<int32_t>(raw[slot * 4u + 2u]);
+    sumW += static_cast<int32_t>(raw[slot * 4u + 3u]);
   }
   if (count > 0) {
     m_lastBodyLevel = m_settings.waterPlaneY +
-                      static_cast<float>(sum) / 1024.0f / static_cast<float>(count);
+                      static_cast<float>(sumH) / 1024.0f / static_cast<float>(count);
+    m_bodies[0].flowX = static_cast<float>(sumU) / 1024.0f / static_cast<float>(count);
+    m_bodies[0].flowZ = static_cast<float>(sumW) / 1024.0f / static_cast<float>(count);
     m_bodies[0].hasSimulatedLevel = true;
     m_bodies[0].simulatedLevel = m_lastBodyLevel;
   }
@@ -1473,8 +1486,12 @@ void FluidSimulation::AdvanceOneSphere(FluidSphere& s, float dt) {
   // Net vertical acceleration: a_y = g * (f - rho) / (rho + Ca*f)
   const float accel = m_settings.gravity * (s.submerged - ratio) / effectiveMass;
 
-  // Quadratic drag: a_drag = 3*Cd*f*|v|^2 / (8*r*effectiveMass)
-  const float speed = std::sqrt(s.vx * s.vx + s.vy * s.vy + s.vz * s.vz);
+  // W-06 step 3: drag acts on the velocity RELATIVE to the surrounding water, so a current
+  // carries the body instead of the water acting as an absolute brake. The current is the
+  // annulus mean from the same query as the level, so it lags by the same two or three frames.
+  const float relVx = s.vx - s.flowX;
+  const float relVz = s.vz - s.flowZ;
+  const float speed = std::sqrt(relVx * relVx + s.vy * s.vy + relVz * relVz);
   float dragScale = 0.0f;
   if (s.submerged > 0.0f && speed > 1e-5f) {
     const float dragAccel = (3.0f * s.dragCoefficient * s.submerged * speed * speed) /
@@ -1491,11 +1508,13 @@ void FluidSimulation::AdvanceOneSphere(FluidSphere& s, float dt) {
       const float omega = std::sqrt(m_settings.gravity * stiffness / effectiveMass);
       s.vy /= 1.0f + 2.0f * (std::max)(s.heaveDamping, 0.0f) * omega * dt;
     }
-    // Implicit drag integration: v /= (1 + (a_drag/|v|) * dt)
+    // Implicit drag integration: (v - flow) /= (1 + (a_drag/|v_rel|) * dt). Solving for the
+    // relative velocity and adding the flow back keeps the body asymptotically matching a
+    // steady current instead of being pulled to rest in the world frame.
     const float dragFactor = 1.0f + dragScale * dt;
-    s.vx /= dragFactor;
+    s.vx = s.flowX + relVx / dragFactor;
     s.vy /= dragFactor;
-    s.vz /= dragFactor;
+    s.vz = s.flowZ + relVz / dragFactor;
   }
 
   s.x += s.vx * dt;

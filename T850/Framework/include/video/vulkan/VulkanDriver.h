@@ -159,6 +159,19 @@ namespace t850 {
     // Descriptor set allocation from the per-frame pool
     VkDescriptorSet AllocateDescriptorSet(VkDescriptorSetLayout layout);
 
+    // P4: per-frame cache of fully-written compute descriptor sets. The solver
+    // re-dispatches the same pipeline with the same resources many times per frame (the
+    // pressure solve alone 120 times), so recording the set once and rebinding it saves
+    // the allocation and the vkUpdateDescriptorSets each time. Cleared with the pool,
+    // because a reset invalidates every set allocated from it.
+    VkDescriptorSet FindCachedComputeDescriptorSet(uint64_t key) const {
+      const auto found = m_descriptorSetCache.find(key);
+      return found == m_descriptorSetCache.end() ? VK_NULL_HANDLE : found->second;
+    }
+    void CacheComputeDescriptorSet(uint64_t key, VkDescriptorSet set) {
+      m_descriptorSetCache[key] = set;
+    }
+
     // Write pending CB + textures into a descriptor set and bind it
     void BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader);
     void ClearPendingTextureBinding(int slot) override {

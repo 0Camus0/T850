@@ -800,9 +800,17 @@ namespace t850 {
       m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
       m_heaps[D3D12Heap::SAMPLER].GetHeap()
     };
-    commandList->SetDescriptorHeaps(2, heaps);
-    commandList->SetComputeRootSignature(pipeline->GetRootSignature());
-    commandList->SetPipelineState(pipeline->GetPipelineState());
+    // P5: the pressure solve dispatches the same pipeline 120 times in a row, so the
+    // pipeline state, root signature and descriptor heaps only need setting when they
+    // actually change. The graphics path compares against the same trackers, and a compute
+    // PSO never equals a graphics one, so it still rebinds its own.
+    if (m_lastPSO != pipeline->GetPipelineState() || m_lastRootSig != pipeline->GetRootSignature()) {
+      commandList->SetDescriptorHeaps(2, heaps);
+      commandList->SetComputeRootSignature(pipeline->GetRootSignature());
+      commandList->SetPipelineState(pipeline->GetPipelineState());
+      m_lastPSO = pipeline->GetPipelineState();
+      m_lastRootSig = pipeline->GetRootSignature();
+    }
     auto& keepAlive = m_computeKeepAlive[m_currentBackBuffer];
     keepAlive.try_emplace(pipeline->GetPipelineState(), pipeline->GetPipelineState());
     keepAlive.try_emplace(pipeline->GetRootSignature(), pipeline->GetRootSignature());
@@ -886,9 +894,10 @@ namespace t850 {
         TransitionVolume(commandList, *item.texture3D, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
 
-    // Graphics state must be rebound after a compute pipeline/root signature.
-    m_lastPSO = nullptr;
-    m_lastRootSig = nullptr;
+    // Graphics state must be rebound after a compute pipeline/root signature: the tracked
+    // PSO and root signature stay pointing at the compute objects (a graphics draw compares
+    // against them, sees a different pointer and binds its own), but the cached shader and
+    // constant buffer are cleared because compute does not bind through them.
     T8DeviceContext->actualShaderSet = nullptr;
     T8DeviceContext->actualConstantBuffer = nullptr;
     T8_LOG_TRACE("[D3D12][Compute] Dispatched %u x %u x %u workgroups",

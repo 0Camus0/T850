@@ -343,7 +343,38 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
   if (openedFrame) m_frameOpenedByCompute = true;
   VkCommandBuffer cmd = GetCmdBuffer();
   EndRenderPassIfActive(cmd);
-  VkDescriptorSet set = AllocateDescriptorSet(pipeline->descriptorSetLayout);
+
+  // P4: the solver dispatches the same pipeline with the same resources many times in a
+  // frame (the pressure solve alone 120 times), so the descriptor set is recorded once and
+  // rebound. The key covers the layout and every bound identity plus the constant bytes,
+  // which change per iteration. The cache is cleared with the pool.
+  uint64_t descriptorKey = 1469598103934665603ull;
+  auto mix = [&descriptorKey](uint64_t value) {
+    descriptorKey ^= value;
+    descriptorKey *= 1099511628211ull;
+  };
+  mix(reinterpret_cast<uintptr_t>(pipeline->descriptorSetLayout));
+  for (const auto& binding : bindings) {
+    mix(static_cast<uint64_t>(binding.type));
+    mix(binding.shaderRegister);
+    mix(reinterpret_cast<uintptr_t>(binding.buffer));
+    mix(reinterpret_cast<uintptr_t>(binding.texture));
+    mix(reinterpret_cast<uintptr_t>(binding.texture3D));
+    if (binding.constants && binding.constantCount) {
+      for (uint32_t word = 0; word < binding.constantCount; ++word)
+        mix(binding.constants[word]);
+    }
+    if (binding.inlineData && binding.inlineBytes) {
+      // Per-dispatch transient data: hash the identity, not the payload. The bytes live in
+      // a fresh ring region each call, so the pointer changes and the entry misses anyway;
+      // hashing 512 bytes per dispatch cost more than the allocation it saved.
+      mix(reinterpret_cast<uintptr_t>(binding.inlineData));
+      mix(binding.inlineBytes);
+    }
+  }
+  const bool cachedSet = FindCachedComputeDescriptorSet(descriptorKey) != VK_NULL_HANDLE;
+  VkDescriptorSet set = cachedSet ? FindCachedComputeDescriptorSet(descriptorKey)
+                                  : AllocateDescriptorSet(pipeline->descriptorSetLayout);
   if (!set) return false;
   std::vector<VkDescriptorBufferInfo> infos;
   std::vector<VkDescriptorImageInfo> imageInfos;
@@ -371,11 +402,13 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     if (binding.type == ComputeBindingType::Constants32 ||
       binding.type == ComputeBindingType::ReadOnlyBuffer ||
       binding.type == ComputeBindingType::ReadWriteBuffer) {
-      infos.push_back(info);
-      VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-      write.dstSet = set; write.dstBinding = layout->bindingIndex; write.descriptorCount = 1;
-      write.descriptorType = DescriptorType(binding.type); write.pBufferInfo = &infos.back();
-      writes.push_back(write);
+      if (!cachedSet) {
+        infos.push_back(info);
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set; write.dstBinding = layout->bindingIndex; write.descriptorCount = 1;
+        write.descriptorType = DescriptorType(binding.type); write.pBufferInfo = &infos.back();
+        writes.push_back(write);
+      }
       continue;
     }
 
@@ -437,20 +470,25 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     } else {
       return false;
     }
-    imageInfos.push_back(imageInfo);
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = set; write.dstBinding = layout->bindingIndex; write.descriptorCount = 1;
-    write.descriptorType = DescriptorType(binding.type); write.pImageInfo = &imageInfos.back();
-    writes.push_back(write);
+    if (!cachedSet) {
+      imageInfos.push_back(imageInfo);
+      VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+      write.dstSet = set; write.dstBinding = layout->bindingIndex; write.descriptorCount = 1;
+      write.descriptorType = DescriptorType(binding.type); write.pImageInfo = &imageInfos.back();
+      writes.push_back(write);
+    }
   }
-  if (writes.size() != pipeline->bindings.size() ||
-      boundLayouts.size() != pipeline->bindings.size()) {
+  if (!cachedSet && (writes.size() != pipeline->bindings.size() ||
+      boundLayouts.size() != pipeline->bindings.size())) {
     T8_LOG_ERROR("[Vulkan][Compute] Incomplete descriptor writes for '%s' (writes=%zu bound=%zu expected=%zu)",
                  pipeline->bindings.size() ? "compute" : "compute",
                  writes.size(), boundLayouts.size(), pipeline->bindings.size());
     return false;
   }
-  vkUpdateDescriptorSets(GetDevice(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+  if (!cachedSet) {
+    vkUpdateDescriptorSets(GetDevice(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    CacheComputeDescriptorSet(descriptorKey, set);
+  }
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->pipelineLayout, 0, 1, &set, 0, nullptr);
   vkCmdDispatch(cmd, gx, gy, gz);

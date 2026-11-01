@@ -272,8 +272,8 @@ command run, and anything you could not verify.
 | 4d. Per-ball PBR materials | W-25 | M | **DONE** — 32 CC0 sets in R2 (part 1); `e055efec`: cube-sphere GLB with UVs, per-instance maps behind `InstanceMaterialMaps` (no new permutation), random shuffle-bag assignment, 0 errors on five APIs. Gate 10 + the pixel probe landed in `ff66c039` |
 | 5a. 32-bit storage | W-02 | M | **DONE** — `14c705f4` format on five backends; part 2 switched α/pressure/divergence to R32F, fixed the isotropy probe, the trapped-air moat and the 9× surface kernel. Sweeps then went to 120 (`b5ae57fa`): still-pool loss 0.002 %, D3D12 295 fps |
 | 5b. Conservative transport | W-03 | L | **Attempt 3 accepted** — van Leer/minmod limited face value: bulk 0.9969 → **0.9987**, cells below 0.98 −79 %, interface 3.35 → **2.66** cells, free (284.6 → 284.9 fps). Splitting and SLIC were measured and rejected. Two acceptance lines remain marginal |
-| 6a. Analytic body + cheap readback | W-05, W-04 | S | **Mostly done in `c911381a`** — no mask upload after startup (GPU stamp), no correction readback. Left: W-04 steps 3 and 5 (persistent diagnostics buffer, async readback for 6b) |
-| 6b. Displacement + ball feels water | W-07, W-06 | M | Needs previous/current body footprints and 6a's async readback |
+| 6a. Analytic body + cheap readback | W-05, W-04 | S | **Mostly done in `c911381a`** — no mask upload after startup (GPU stamp), no correction readback. **Open: W-04 step 3** (`ReadDiagnostics` allocates a buffer per call) **and step 5** (async readback, which W-06 needs) |
+| 6b. Displacement + ball feels water | W-07, W-06 | M | **W-07 attempt 1 measured and reverted** (no global gain, fails gate 8 by 0.034 m). **W-06 not started**: the ball's buoyancy uses the authored water plane, not the simulated surface |
 | 7. Solver cost | W-15 | M | Measured (`3a371903`); P1 and P6 done in `c911381a` with a D3D12 upload fix. P3, P4, P5, P7, P8 here; P2 after W-02 (5a) and is now the largest lever |
 | 8. Cleanup, docs, platforms | W-14, W-16, W-17 | S–M | Only once the code is stable |
 

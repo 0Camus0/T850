@@ -222,6 +222,7 @@ namespace t850 {
     // 5): the result is consumed two or three frames later, which is invisible to a body
     // whose bobbing period is far longer.
     void QueryBodyWaterLevel(BaseDriver* driver);
+    void ApplyBodyLevels(const std::vector<float>& results, uint32_t count);
     bool Reset(BaseDriver* driver);
 
     bool IsReady() const { return m_ready; }
@@ -398,14 +399,18 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_surfaceCopyPipeline;
     std::unique_ptr<ComputePipeline> m_seedAlphaPipeline;
     std::unique_ptr<ComputePipeline> m_alphaAdvectPipeline;
-    // W-06: averages the surface over an annulus around a body.
+    // W-06: water level and current in an annulus around every body, one thread per body.
     std::unique_ptr<ComputePipeline> m_bodyLevelPipeline;
     std::unique_ptr<ComputeBuffer> m_bodyLevelBuffer;
     // W-04 step 3: one persistent diagnostics accumulator, cleared by the kernel itself.
     std::unique_ptr<ComputeBuffer> m_diagnosticsBuffer;
     int m_bodyLevelTicket = -1;
-    uint32_t m_bodyLevelSlots = 0;
-    float m_lastBodyLevel = 0.0f;
+    uint32_t m_bodyLevelCapacity = 0;
+    uint32_t m_bodyLevelCount = 0;
+    uint32_t m_bodyLevelGeneration = 0;
+    // Bumped whenever bodies are added or removed, so a late answer is never applied by index
+    // to a different body.
+    uint32_t m_bodyListGeneration = 0;
     std::unique_ptr<ComputePipeline> m_volumeCorrectPipeline;
     // GPU sums for the correction (two slots, 4 x uint4), so it needs no readback.
     std::unique_ptr<ComputePipeline> m_volumeReducePipeline;

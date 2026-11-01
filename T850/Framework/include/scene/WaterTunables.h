@@ -51,6 +51,8 @@ namespace t850 {
     // numerical diffusion at 9 cm cells, so this only matters when raised.
     float viscosity = 1.0e-6f;
     float gravity = 9.81f;
+    // Wind speed in m/s; surface stress rho_air * 1.3e-3 * |U| U on the top wet layer (W-27).
+    // windY exerts no tangential stress and is ignored by the solver.
     float windX = 0.6f;
     float windY = 0.0f;
     float windZ = -0.35f;

@@ -1121,6 +1121,20 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
                         "rimPeak=%+.4f moatMin=%+.4f bands(cm):%s",
                         farLevel, ringLevel - farLevel, coveredMin - ringLevel,
                         m_probeRimPeak, m_probeMoatMin, profile.c_str());
+            // Every body, so a spawned ball that floats on the authored plane shows up.
+            uint32_t withLevel = 0;
+            float maxFlow = 0.0f, levelMin = 1e9f, levelMax = -1e9f;
+            for (uint32_t b = 0; b < m_fluid.BodyCount(); ++b) {
+              const t850::FluidSphere* body = m_fluid.Body(b);
+              if (!body || !body->enabled || !body->hasSimulatedLevel) continue;
+              ++withLevel;
+              maxFlow = (std::max)(maxFlow, std::sqrt(body->flowX * body->flowX + body->flowZ * body->flowZ));
+              levelMin = (std::min)(levelMin, body->simulatedLevel - fs.waterPlaneY);
+              levelMax = (std::max)(levelMax, body->simulatedLevel - fs.waterPlaneY);
+            }
+            T8_LOG_INFO("[Backyard][ball] bodies=%u withLevel=%u level-plane=%+.4f..%+.4f maxFlow=%.3f",
+                        m_fluid.BodyCount(), withLevel, withLevel ? levelMin : 0.0f,
+                        withLevel ? levelMax : 0.0f, maxFlow);
           }
         }
       }
@@ -1214,7 +1228,12 @@ void BackyardScene::RunPickTestStep() {
   };
 
   if (!m_fluidReady) {
-    T8_LOG_INFO("[BackyardPickTest] SKIP: no fluid solver (and so no balls) on this API");
+    if (pFramework && pFramework->pVideoDriver && pFramework->pVideoDriver->SupportsComputeTextures3D()) {
+      ++m_pickTestFailures;
+      T8_LOG_ERROR("[BackyardPickTest] FAIL: the API supports 3D compute storage but the fluid solver is not ready");
+    } else {
+      T8_LOG_INFO("[BackyardPickTest] SKIP: no fluid solver (and so no balls) on this API");
+    }
     m_pickTestDone = true;
     m_dumper.RequestDump();
     return;
@@ -1540,9 +1559,9 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
                  w.fixedTimeStep);
     slider("water_viscosity", "viscosity (m^2/s)", w.viscosity, 0.0f, 0.01f, 0.000001f);
     slider("water_gravity", "gravity", w.gravity, 0.0f, 30.0f, 0.01f);
-    slider("water_wind_x", "wind X", w.windX, -5.0f, 5.0f, 0.01f);
-    slider("water_wind_y", "wind Y", w.windY, -5.0f, 5.0f, 0.01f);
-    slider("water_wind_z", "wind Z", w.windZ, -5.0f, 5.0f, 0.01f);
+    slider("water_wind_x", "wind X (m/s)", w.windX, -20.0f, 20.0f, 0.1f);
+    slider("water_wind_y", "wind Y (unused)", w.windY, -5.0f, 5.0f, 0.01f);
+    slider("water_wind_z", "wind Z (m/s)", w.windZ, -20.0f, 20.0f, 0.1f);
     slider("water_damping", "damping", w.damping, 0.0f, 4.0f, 0.01f);
     slider("water_surface_level", "surface level", w.surfaceLevel, 0.05f, 0.99f, 0.001f);
     gui.Separator();

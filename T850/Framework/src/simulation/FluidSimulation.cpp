@@ -216,6 +216,7 @@ std::vector<float> FluidSimulation::BuildBodyVelocities() const {
 int FluidSimulation::AddBody(const FluidSphere& body) {
   m_bodies.push_back(body);
   m_maskBodyValid = false;   // the new footprint has to be stamped
+  ++m_bodyListGeneration;
   return static_cast<int>(m_bodies.size() - 1);
 }
 
@@ -226,6 +227,7 @@ void FluidSimulation::RemoveBodiesFrom(size_t first) {
   if (first >= m_bodies.size()) return;
   m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(first), m_bodies.end());
   m_maskBodyValid = false;
+  ++m_bodyListGeneration;
 }
 
 // Mirrors `cbuffer CorrectionConstants : register(b1)` in
@@ -781,7 +783,8 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_bodyLevelBuffer.reset();
   m_diagnosticsBuffer.reset();
   m_bodyLevelTicket = -1;
-  m_bodyLevelSlots = 0;
+  m_bodyLevelCapacity = 0;
+  m_bodyLevelCount = 0;
   m_volumeCorrectPipeline.reset();
   m_volumeReducePipeline.reset();
   m_volumeSums.reset();
@@ -1246,114 +1249,102 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
   return true;
 }
 
-void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
-  if (!m_ready || !driver || !m_bodyLevelPipeline || !m_surfaceOutput) return;
-  if (m_bodies.empty()) return;
-
-  const float gx = static_cast<float>(m_settings.width) /
-                   static_cast<float>(m_bodyLevelPipeline->threadGroupSize[0]);
-  const float gy = static_cast<float>(m_settings.depth) /
-                   static_cast<float>(m_bodyLevelPipeline->threadGroupSize[1]);
-  const uint32_t groupsX = (m_settings.width + m_bodyLevelPipeline->threadGroupSize[0] - 1) /
-                           m_bodyLevelPipeline->threadGroupSize[0];
-  const uint32_t groupsY = (m_settings.depth + m_bodyLevelPipeline->threadGroupSize[1] - 1) /
-                           m_bodyLevelPipeline->threadGroupSize[1];
-  (void)gx; (void)gy;
-  const uint32_t slotCount = groupsX * groupsY;
-  const size_t slotBytes = 4u * sizeof(uint32_t);
-  const size_t readBytes = static_cast<size_t>(slotCount) * slotBytes;
-
-  // Consume an earlier answer first. The copy is queued at the end of the frame that
-  // recorded it, so the first result of a run arrives two or three frames in, and every
-  // later one is one query old.
-  if (m_bodyLevelTicket > 0) {
-    std::vector<uint32_t> raw(slotCount * 4u, 0u);
-    if (driver->ConsumeComputeReadback(m_bodyLevelTicket, raw.data(), readBytes)) {
-      m_bodyLevelTicket = -1;
-      int64_t sumH = 0, sumU = 0, sumW = 0;
-      uint64_t count = 0;
-      for (uint32_t slot = 0; slot < slotCount; ++slot) {
-        sumH += static_cast<int32_t>(raw[slot * 4u + 0u]);
-        count += raw[slot * 4u + 1u];
-        sumU += static_cast<int32_t>(raw[slot * 4u + 2u]);
-        sumW += static_cast<int32_t>(raw[slot * 4u + 3u]);
-      }
-      if (count > 0) {
-        // The surface texture holds a delta from the authored plane, so the absolute level
-        // the body floats on is that plane plus the sampled average.
-        m_lastBodyLevel = m_settings.waterPlaneY +
-                          static_cast<float>(sumH) / 1024.0f / static_cast<float>(count);
-        m_bodies[0].flowX = static_cast<float>(sumU) / 1024.0f / static_cast<float>(count);
-        m_bodies[0].flowZ = static_cast<float>(sumW) / 1024.0f / static_cast<float>(count);
-        m_bodies[0].hasSimulatedLevel = true;
-      }
-    }
+void FluidSimulation::ApplyBodyLevels(const std::vector<float>& results, uint32_t count) {
+  const size_t bodies = (std::min)(static_cast<size_t>(count), m_bodies.size());
+  for (size_t i = 0; i < bodies; ++i) {
+    if (results[i * 4u + 3u] <= 0.0f) continue;   // no open water in the annulus
+    FluidSphere& body = m_bodies[i];
+    // The surface texture holds a delta from the authored plane.
+    body.simulatedLevel = m_settings.waterPlaneY + results[i * 4u + 0u];
+    body.flowX = results[i * 4u + 1u];
+    body.flowZ = results[i * 4u + 2u];
+    body.hasSimulatedLevel = true;
   }
-  if (m_bodies[0].hasSimulatedLevel) m_bodies[0].simulatedLevel = m_lastBodyLevel;
-  // One query in flight: re-requesting while an answer is pending would orphan its ticket.
-  if (m_bodyLevelTicket > 0) return;
+}
 
-  // One slot per thread group, written unconditionally, so the buffer needs no clearing
-  // between queries: no allocation and no zeroing in the steady state.
-  if (!m_bodyLevelBuffer || m_bodyLevelSlots != slotCount) {
+void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
+  if (!m_ready || !driver || !m_bodyLevelPipeline || m_bodies.empty()) return;
+  // Headless runs keep the authored plane: gate 7 with simulated buoyancy is open work (W-06 step 4).
+  Texture* surface = m_surfaceOutput;
+  if (!surface) return;
+
+  // Consume the answer in flight first; its copy retires one to three frames after it was
+  // queued. Each body keeps its last answer until the next one arrives.
+  if (m_bodyLevelTicket > 0) {
+    std::vector<float> results(static_cast<size_t>(m_bodyLevelCount) * 4u, 0.0f);
+    if (!driver->ConsumeComputeReadback(m_bodyLevelTicket, results.data(),
+                                        results.size() * sizeof(float)))
+      return;   // one query in flight: re-requesting would orphan the ticket
+    m_bodyLevelTicket = -1;
+    // Bodies spawned or cleared since the request would take another body's answer.
+    if (m_bodyLevelGeneration == m_bodyListGeneration)
+      ApplyBodyLevels(results, m_bodyLevelCount);
+  }
+
+  const uint32_t bodyCount = static_cast<uint32_t>(m_bodies.size());
+  const size_t readBytes = static_cast<size_t>(bodyCount) * 4u * sizeof(float);
+  if (!m_bodyLevelBuffer || m_bodyLevelCapacity < bodyCount) {
+    const uint32_t capacity = (std::max)(bodyCount, 2u * m_bodyLevelCapacity);
     ComputeBufferDesc desc;
-    desc.byteWidth = static_cast<uint32_t>(readBytes);
-    desc.structureStride = static_cast<uint32_t>(slotBytes);
+    desc.byteWidth = capacity * 4u * static_cast<uint32_t>(sizeof(float));
+    desc.structureStride = 4u * static_cast<uint32_t>(sizeof(float));
     desc.access = ComputeBufferAccess::ReadWrite;
     desc.debugName = "Fluid Body Water Level";
     m_bodyLevelBuffer = driver->CreateComputeBuffer(desc);
-    if (!m_bodyLevelBuffer) return;
-    m_bodyLevelSlots = slotCount;
-    m_bodyLevelTicket = -1;
+    if (!m_bodyLevelBuffer) { m_bodyLevelCapacity = 0; return; }
+    m_bodyLevelCapacity = capacity;
   }
 
-  const std::vector<uint32_t> constants = BuildConstants();
+  std::vector<float> bodyList(static_cast<size_t>(bodyCount) * 4u, 0.0f);
+  for (uint32_t i = 0; i < bodyCount; ++i) {
+    const FluidSphere& body = m_bodies[i];
+    bodyList[i * 4u + 0u] = body.x;
+    bodyList[i * 4u + 1u] = body.y;
+    bodyList[i * 4u + 2u] = body.z;
+    bodyList[i * 4u + 3u] = body.enabled ? body.radius : 0.0f;
+  }
   struct LevelConstants {
     float basinMinX, basinMinY, basinMinZ, waterPlaneY;
-    float bodyX, bodyY, bodyZ, bodyRadius;
-    float stepX, stepY, stepZ, pad;
+    float stepX, stepY, stepZ;
+    uint32_t bodyCount;
   } level{m_settings.basinMinX, m_settings.basinMinY, m_settings.basinMinZ, m_settings.waterPlaneY,
-          m_bodies[0].x, m_bodies[0].y, m_bodies[0].z, m_bodies[0].radius,
           (m_settings.basinMaxX - m_settings.basinMinX) / static_cast<float>(m_settings.width),
           (m_settings.basinMaxY - m_settings.basinMinY) / static_cast<float>(m_settings.height),
           (m_settings.basinMaxZ - m_settings.basinMinZ) / static_cast<float>(m_settings.depth),
-          0.0f};
-  std::array<uint32_t, 12> levelWords{};
+          bodyCount};
+  std::array<uint32_t, 8> levelWords{};
+  static_assert(sizeof(LevelConstants) == sizeof(levelWords));
   std::memcpy(levelWords.data(), &level, sizeof(level));
+
+  const std::vector<uint32_t> constants = BuildConstants();
+  ComputeBindingDesc bodyBinding;
+  bodyBinding.type = ComputeBindingType::ReadOnlyBuffer;
+  bodyBinding.shaderRegister = 9;
+  bodyBinding.inlineData = bodyList.data();
+  bodyBinding.inlineBytes = static_cast<uint32_t>(bodyList.size() * sizeof(float));
+  bodyBinding.inlineStride = 4u * sizeof(float);
   const std::vector<ComputeBindingDesc> bindings = {
     {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
-    {ComputeBindingType::Constants32, 1, nullptr, levelWords.data(), 12u},
-    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, m_surfaceOutput},
+    {ComputeBindingType::Constants32, 1, nullptr, levelWords.data(), static_cast<uint32_t>(levelWords.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, surface},
     {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
     {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
+    bodyBinding,
     {ComputeBindingType::ReadWriteBuffer, 0, m_bodyLevelBuffer.get(), nullptr, 0}
   };
-  const uint32_t gxGroups = (m_settings.width + m_bodyLevelPipeline->threadGroupSize[0] - 1) / m_bodyLevelPipeline->threadGroupSize[0];
-  const uint32_t gyGroups = (m_settings.depth + m_bodyLevelPipeline->threadGroupSize[1] - 1) / m_bodyLevelPipeline->threadGroupSize[1];
-  if (!driver->DispatchCompute(*m_bodyLevelPipeline, bindings, gxGroups, gyGroups, 1)) return;
+  const uint32_t groups = (bodyCount + m_bodyLevelPipeline->threadGroupSize[0] - 1) /
+                          m_bodyLevelPipeline->threadGroupSize[0];
+  if (!driver->DispatchCompute(*m_bodyLevelPipeline, bindings, groups, 1, 1)) return;
 
+  m_bodyLevelCount = bodyCount;
+  m_bodyLevelGeneration = m_bodyListGeneration;
   m_bodyLevelTicket = driver->RequestComputeReadback(*m_bodyLevelBuffer, readBytes);
   if (m_bodyLevelTicket > 0) return;
 
   // Backend without an asynchronous path: pay one stall rather than lose the feature.
-  std::vector<uint32_t> raw(slotCount * 4u, 0u);
-  if (!driver->ReadComputeBuffer(*m_bodyLevelBuffer, raw.data(), readBytes)) return;
-  int64_t sumH = 0, sumU = 0, sumW = 0;
-  uint64_t count = 0;
-  for (uint32_t slot = 0; slot < slotCount; ++slot) {
-    sumH += static_cast<int32_t>(raw[slot * 4u + 0u]);
-    count += raw[slot * 4u + 1u];
-    sumU += static_cast<int32_t>(raw[slot * 4u + 2u]);
-    sumW += static_cast<int32_t>(raw[slot * 4u + 3u]);
-  }
-  if (count > 0) {
-    m_lastBodyLevel = m_settings.waterPlaneY +
-                      static_cast<float>(sumH) / 1024.0f / static_cast<float>(count);
-    m_bodies[0].flowX = static_cast<float>(sumU) / 1024.0f / static_cast<float>(count);
-    m_bodies[0].flowZ = static_cast<float>(sumW) / 1024.0f / static_cast<float>(count);
-    m_bodies[0].hasSimulatedLevel = true;
-    m_bodies[0].simulatedLevel = m_lastBodyLevel;
-  }
+  std::vector<float> results(static_cast<size_t>(bodyCount) * 4u, 0.0f);
+  if (driver->ReadComputeBuffer(*m_bodyLevelBuffer, results.data(), readBytes))
+    ApplyBodyLevels(results, bodyCount);
 }
 
 void FluidSimulation::AdvanceSphere(float dt) {
@@ -1831,7 +1822,7 @@ bool FluidSimulation::StepInternal(BaseDriver* driver, bool writeSurface) {
   // forcing gain, so it is overridden rather than defaulting to the SOR factor.
   const uint32_t forced = (m_current + 1) % kVelocityCount;
   if (!DispatchVolume(driver, *m_forces, m_velocity[m_current].get(), nullptr,
-                      m_velocity[forced].get(), 0, false, m_settings.forcingAmplitude))
+                      m_velocity[forced].get(), 0, true, m_settings.forcingAmplitude))
     return false;
   m_current = forced;
 
@@ -2003,7 +1994,8 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
     return true;
   }
   if (name == "forces") {
-    if (!DispatchVolume(driver, *m_forces, m_velocity[m_current].get(), nullptr, m_velocity[next].get()))
+    if (!DispatchVolume(driver, *m_forces, m_velocity[m_current].get(), nullptr, m_velocity[next].get(),
+                        0, true, m_settings.forcingAmplitude))
       return false;
     m_current = next;
     return true;

@@ -1073,7 +1073,8 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
         ++failures;
       } else if (onDisk != count) {
         T8_LOG_ERROR("[BackyardSelfTest] ball materials: %u of %u sets are on disk (first missing: set %u); "
-                     "run scripts/DownloadTextures.ps1", onDisk, count, firstFailure);
+                     "run scripts/DownloadTextures.ps1, or the launcher's Download Assets button, which "
+                     "fetches the same manifest through scripts/ModelCloud.ps1", onDisk, count, firstFailure);
         ++failures;
       } else if (decoded != count) {
         T8_LOG_ERROR("[BackyardSelfTest] ball materials: %u of %u sets failed to decode on %s (first: set %u)",

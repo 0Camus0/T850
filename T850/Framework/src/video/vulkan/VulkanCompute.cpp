@@ -20,6 +20,18 @@
 namespace t850 {
 extern DeviceContext* T8DeviceContext;
 namespace {
+  // A Vulkan handle is a pointer on 64-bit builds and a uint64_t on 32-bit ones
+  // (VK_USE_64_BIT_PTR_DEFINES), so reinterpret_cast<uintptr_t> compiles on only one of them.
+  // Copy the bits instead: the value is unique in both representations, which is all a
+  // descriptor-cache key needs.
+  template <typename Handle>
+  uint64_t HandleKey(Handle handle) {
+    static_assert(sizeof(handle) <= sizeof(uint64_t), "handle wider than the cache key");
+    uint64_t key = 0;
+    std::memcpy(&key, &handle, sizeof(handle));
+    return key;
+  }
+
   bool ReadLocalSize(const std::vector<uint32_t>& spirv,
                      std::array<uint32_t, 3>& threadGroupSize) {
     constexpr uint16_t kOpExecutionMode = 16;
@@ -355,7 +367,7 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     descriptorKey *= 1099511628211ull;
   };
   bool cacheable = true;
-  mix(reinterpret_cast<uintptr_t>(pipeline->descriptorSetLayout));
+  mix(HandleKey(pipeline->descriptorSetLayout));
   for (const auto& binding : bindings) {
     mix(static_cast<uint64_t>(binding.type));
     mix(binding.shaderRegister);

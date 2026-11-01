@@ -402,8 +402,14 @@ int main(int arg,char ** args) try {
     settings.deltaTime = 1.0f / 60.0f;
     settings.cellSize = 0.09f;
     if (!fluid.TryInitialize(driver, settings)) {
-      T8_LOG_INFO("[FluidSelfTest] SKIP: API=%s has no volumetric compute storage", driver->ApiTag());
-      result = 0;
+      // SKIP only when the backend lacks the capability; a rejected kernel must not pass.
+      if (driver->SupportsComputeTextures3D()) {
+        T8_LOG_ERROR("[FluidSelfTest] FAIL: API=%s supports 3D compute storage but the solver did not initialize", driver->ApiTag());
+        result = 1;
+      } else {
+        T8_LOG_INFO("[FluidSelfTest] SKIP: API=%s has no volumetric compute storage", driver->ApiTag());
+        result = 0;
+      }
     } else {
       int failures = 0;
       fluid.SeedVolumeFraction(driver);

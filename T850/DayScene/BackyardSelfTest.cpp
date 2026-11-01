@@ -229,6 +229,11 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
   settings.openCeiling = w.openCeiling;
 
   if (!fluid.TryInitialize(driver, settings)) {
+    // SKIP only when the backend lacks the capability; a rejected kernel must not pass.
+    if (driver->SupportsComputeTextures3D()) {
+      T8_LOG_ERROR("[BackyardSelfTest] FAIL: api=%s supports 3D compute storage but the solver did not initialize", api);
+      return 1;
+    }
     T8_LOG_INFO("[BackyardSelfTest] SKIP: api=%s has no volumetric compute storage", api);
     return 0;
   }

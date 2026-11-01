@@ -51,6 +51,16 @@ RWTexture3D<float4> VelocityOut : register(u0);
 #endif
 StructuredBuffer<uint> WallMask : register(t8);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(4, 0)]]
+#endif
+Texture3D<float4> AlphaIn : register(t2);
+
+// Wind stress on the water surface, tau = rho_air * Cd * |U| U, with U the wind speed in m/s.
+static const float AIR_DENSITY = 1.2f;
+static const float WIND_DRAG_COEFFICIENT = 1.3e-3f;
+static const float WATER_DENSITY = 1000.0f;
+
 uint CellIndex(int3 cell)
 {
     return uint(cell.x) + Width * (uint(cell.y) + Height * uint(cell.z));
@@ -73,6 +83,23 @@ bool IsSolidFace(int3 a, int axis)
     else if (axis == 1) b.y += 1;
     else b.z += 1;
     return IsSolidCell(b);
+}
+
+float AlphaAt(int3 cell)
+{
+    if (IsSolidCell(cell))
+        return 0.0f;
+    return saturate(AlphaIn.Load(int4(cell, 0)).x);
+}
+
+// The horizontal face between `cell` and `cell + across` carries the wind stress when it is
+// wet and the face above it is not: one face per column, wherever the waterline is.
+bool IsTopWetFace(int3 cell, int3 across)
+{
+    const int3 up = int3(0, 1, 0);
+    const float wet = 0.5f * (AlphaAt(cell) + AlphaAt(cell + across));
+    const float above = 0.5f * (AlphaAt(cell + up) + AlphaAt(cell + across + up));
+    return wet >= 0.5f && above < 0.5f;
 }
 
 // Same-component neighbour value; out-of-range texel contributes the centre value.
@@ -146,7 +173,20 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (!IsSolidFace(cell, 1))
         v -= Gravity * DeltaTime;
 
-    // Wind drives the surface layer; amplitude comes from JSON via FluidSettings.
+    // Wind: surface stress on the top wet layer, as an acceleration of that one-cell layer.
+    // It used to be scaled by ForcingAmplitude, which ships at 0, so wind did nothing (W-27).
+    const float windSpeed = length(float2(WindX, WindZ));
+    if (windSpeed > 0.0f)
+    {
+        const float windAccel = AIR_DENSITY * WIND_DRAG_COEFFICIENT * windSpeed /
+                                (WATER_DENSITY * CellSize);
+        if (!IsSolidFace(cell, 0) && IsTopWetFace(cell, int3(1, 0, 0)))
+            u += windAccel * WindX * DeltaTime;
+        if (!IsSolidFace(cell, 2) && IsTopWetFace(cell, int3(0, 0, 1)))
+            w += windAccel * WindZ * DeltaTime;
+    }
+
+    // Optional synthetic stir of the top rows (ForcingAmplitude, 0 in the shipped scene).
     const float surfaceY = SurfaceLevel * float(Height);
     if (float(id.y) > surfaceY - 2.0f)
     {
@@ -154,11 +194,11 @@ void CS(uint3 id : SV_DispatchThreadID)
         const float stirX = sin(TimeValue * 0.9f + float(id.x) * 0.31f + float(id.z) * 0.17f);
         const float stirZ = cos(TimeValue * 0.7f + float(id.z) * 0.29f + float(id.x) * 0.13f);
         if (!IsSolidFace(cell, 0))
-            u += (WindX + stirX * 0.45f) * gain;
+            u += stirX * 0.45f * gain;
         if (!IsSolidFace(cell, 2))
-            w += (WindZ + stirZ * 0.45f) * gain;
+            w += stirZ * 0.45f * gain;
         if (!IsSolidFace(cell, 1))
-            v += (WindY + stirX * stirZ * 0.25f) * gain;
+            v += stirX * stirZ * 0.25f * gain;
     }
 
     const float damp = saturate(1.0f - Damping * DeltaTime);

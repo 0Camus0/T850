@@ -203,8 +203,25 @@ Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Befor
 
 ### After that — the next stage
 
-**W-07 needs a real design change, and W-27 is the cheapest open item.** Both were established this
-session:
+**Ordered by the review of 2026-11-01** (section 4, "Review of the 2026-10-31 sessions"). One item
+per session; each needs D3D12 + Vulkan + D3D11 self-tests and a same-session `telemetry.ps1` A/B.
+
+1. **Re-measure W-06 step 4** on the fixed body-level kernel: the heave table (0.15 / 0.05 / 0.00)
+   was taken while every negative level offset was dropped. Three JSON-only runs, no rebuild.
+2. **W-06 for every body.** Only `m_bodies[0]` gets the simulated level and current; spawned balls
+   float on the authored plane. One annulus query per body (the body list is already an inline
+   buffer), results consumed through the same async ticket.
+3. **W-27** (the wind tunable is inert): one constant and a still-pool check. Then verify the
+   W-06 current against a real wind-driven flow instead of a forced one.
+4. **Decide `pressureIterations`.** 120 sweeps cost 26–30 % of the frame (D3D12 401.9 → 295.4
+   fps, Vulkan 391.6 → 274.2) to save ~25 cells of still-pool loss in 2 s, which the correction
+   repays anyway. Re-measure 60 / 80 / 120 with the van Leer flux in place; ship the smallest
+   count that keeps every gate, with the table next to the constant.
+5. **W-14** (duplicated `FluidConstants`, now four copies).
+6. **W-07 stage**: per-cell solid fraction. The acceptance target is W-26's table.
+7. **W-16 rest** and **W-17** platforms.
+
+Background for items 6 and 7:
 
 - **W-07** (displace, don't delete): attempts 1 and 2 are measured/analysed and neither ships.
   Attempt 2's conclusion is that the flicker is the *binary mask flip*, not the distribution, so the
@@ -2265,6 +2282,40 @@ probe logs, every N frames: the body's `y`, `vy`, `x`, `z`, `vx`, `vz`, the samp
 `submerged`, the sampled current, and the radial surface profile (far-field level, ring−far, covered
 min−ring, running `rimPeak`/`moatMin`, plus eight 10 cm bands). It reads the same surface texture the
 renderer draws, runs headless, and needs no input.
+
+### Review of the 2026-10-31 sessions (2026-11-01, reviewer)
+
+Sixteen commits `44c3d514`…`47d8cf43`: W-03 attempts 1–3, W-07 attempts 1–2, W-15 P4/P5/P7/P8, W-04
+steps 3 and 5, W-06 steps 1–4, the ball probe. The measurements are careful and the rejected
+attempts are recorded honestly. Found and fixed:
+
+| Finding | Effect | Fix |
+|---|---|---|
+| Eight working-tree files rewritten in one second (11-01 00:02:24), each byte-identical to an older commit | Silently reverted the van Leer flux, W-06, `MassAudit`, P7 and ~1 000 doc lines | `git restore` from HEAD. Same stale-editor-buffer pattern as before: run `git status` first every session |
+| `CS_FluidBodyLevel` packed negatives with `(uint)` | Every negative current and level offset was 0; the ball drifted +X/+Z and floated high. 0/30 → 16/30 negative samples after the fix | `asuint((int)round(...))` |
+| Body-level wall-mask index `x + Width * z` | Tested a cell near the z = 0 wall, not the column | Waterline cell `x + Width * (row + Height * z)` |
+| D3D12 `RequestComputeReadback` copied from `UNORDERED_ACCESS` | Debug-layer error 538 (`CopyBufferRegion` resource state) under `--d3d12debug` | Transition to `COPY_SOURCE` first; layer clean after |
+| `ConsumeComputeReadback` ignored the ticket; the caller re-requested every frame | Answers could arrive out of order; a pending ticket was orphaned each frame | Ticket matched in both backends; one query in flight |
+| Vulkan descriptor cache keyed inline data by CPU pointer | Latent stale read (safe today only because `TimeValue` changes per substep) | Inline-data dispatches are never cached |
+| D3D12 P5 trackers not cleared after ImGui or the mid-frame screenshot reset | Latent: a matching dispatch would skip its PSO/heap bind | `D3D12Driver::InvalidatePipelineStateCache()` at both sites |
+
+The fixes are faster, not slower: same session, 720p, 8 balls, D3D12 292.1 → 301.5 fps, Vulkan
+268.8 → 275.2 (the body query no longer dispatches every frame). Validation on the final binary:
+backyard and fluid self-tests PASS on D3D12, Vulkan and D3D11 (gate 7 unchanged); compute
+self-test exit 0 on all three; scenes 7, 1 and 6 on five APIs, 0 errors; `--d3d12debug` scene 7
+and self-test clean apart from the long-standing warning 1328.
+
+Not changed, decision needed: `pressureIterations` 120 costs 26–30 % of the frame for ~25 cells of
+still-pool loss per 2 s (brief, item 4). The engine compute document now describes the P4/P5 caches
+(it did not, against the "Framework change ships with its doc update" rule).
+
+**Rules learned here.**
+
+- **Test a sign with data that has both signs.** Forcing the input in C++ skips the kernel that
+  produced the bug.
+- **A new readback path gets one `--d3d12debug` run.** NVIDIA tolerated the wrong resource state.
+- **A bind cache needs every out-of-band binder to invalidate it.** Grep for direct
+  `SetPipelineState` / `SetDescriptorHeaps` calls outside the driver before skipping binds.
 
 ### Stage 7 — W-15
 

@@ -109,6 +109,10 @@ namespace t850 {
     bool DispatchCompute(ComputePipeline& pipeline, const std::vector<ComputeBindingDesc>& bindings,
                uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
     bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
+    // W-04 step 5: copy into a host-visible staging slot recorded in the current frame and
+    // report readiness from that frame's in-flight fence.
+    int RequestComputeReadback(ComputeBuffer& buffer, size_t byteCount) override;
+    bool ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) override;
 
     // Closes a compute-owned offscreen frame when its descriptor pool is nearly
     // exhausted, waits for the GPU, and lets the next BeginFrame() start a clean
@@ -316,6 +320,18 @@ namespace t850 {
     VkSemaphore     m_renderFinishedSemaphores[kBackBufferCount] = {};
     std::vector<VkSemaphore> m_imageRenderFinishedSemaphores;
     VkFence         m_inFlightFences[kBackBufferCount] = {};
+
+    // W-04 step 5: one host-visible staging slot per frame in flight.
+    struct PendingReadback {
+      VkBuffer buffer = VK_NULL_HANDLE;
+      VmaAllocation allocation = nullptr;
+      void* mapped = nullptr;
+      size_t byteCount = 0;
+      uint32_t frame = 0;
+      bool pending = false;
+    };
+    PendingReadback m_pendingReadbacks[kBackBufferCount];
+    int m_readbackTicketCounter = 0;
     uint32_t        m_currentFrame = 0;
     uint64_t        m_gpuSubmissionSerial = 0;
     uint64_t        m_gpuCompletedSubmissionSerial = 0;

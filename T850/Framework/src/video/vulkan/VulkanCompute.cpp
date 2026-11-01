@@ -513,6 +513,65 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
   return true;
 }
 
+int VulkanDriver::RequestComputeReadback(ComputeBuffer& bufferBase, size_t byteCount) {
+  auto* source = dynamic_cast<VulkanComputeBuffer*>(&bufferBase);
+  if (!source || !source->buffer || byteCount == 0 || byteCount > source->descriptor.byteWidth)
+    return -1;
+  if (!m_frameStarted) return -1;
+  VkCommandBuffer cmd = GetCmdBuffer();
+  if (cmd == VK_NULL_HANDLE) return -1;
+
+  PendingReadback& slot = m_pendingReadbacks[m_currentFrame];
+  if (!slot.buffer || slot.byteCount != byteCount) {
+    if (slot.buffer) {
+      vmaUnmapMemory(m_allocator, slot.allocation);
+      vmaDestroyBuffer(m_allocator, slot.buffer, slot.allocation);
+      slot = PendingReadback{};
+    }
+    VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bufferInfo.size = byteCount;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VmaAllocationCreateInfo allocationInfo{};
+    allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    allocationInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+                           VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(m_allocator, &bufferInfo, &allocationInfo, &slot.buffer, &slot.allocation,
+                        &info) != VK_SUCCESS)
+      return -1;
+    slot.mapped = info.pMappedData;
+    slot.byteCount = byteCount;
+  }
+
+  VkBufferCopy region{};
+  region.size = byteCount;
+  vkCmdCopyBuffer(cmd, source->buffer, slot.buffer, 1, &region);
+  VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
+                       1, &barrier, 0, nullptr, 0, nullptr);
+  slot.frame = m_currentFrame;
+  slot.pending = true;
+  return ++m_readbackTicketCounter;
+}
+
+bool VulkanDriver::ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) {
+  if (ticket <= 0 || !destination) return false;
+  for (uint32_t frame = 0; frame < kBackBufferCount; ++frame) {
+    PendingReadback& slot = m_pendingReadbacks[frame];
+    if (!slot.pending || slot.byteCount < byteCount || !slot.mapped) continue;
+    if (m_frameStarted && frame == m_currentFrame) return false;
+    if (!m_inFlightFences[frame] || vkGetFenceStatus(m_device, m_inFlightFences[frame]) != VK_SUCCESS)
+      return false;
+    std::memcpy(destination, slot.mapped, byteCount);
+    slot.pending = false;
+    return true;
+  }
+  return false;
+}
+
 bool VulkanDriver::ReadComputeBuffer(ComputeBuffer& bufferBase, void* destination, size_t byteCount) {
   auto* source = dynamic_cast<VulkanComputeBuffer*>(&bufferBase);
   if (!source || source->owner != this || !destination || !byteCount || byteCount % 4 || byteCount > source->descriptor.byteWidth) return false;

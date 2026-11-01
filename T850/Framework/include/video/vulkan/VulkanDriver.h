@@ -328,6 +328,7 @@ namespace t850 {
       void* mapped = nullptr;
       size_t byteCount = 0;
       uint32_t frame = 0;
+      int ticket = 0;
       bool pending = false;
     };
     PendingReadback m_pendingReadbacks[kBackBufferCount];

@@ -92,6 +92,13 @@ RWStructuredBuffer<uint4> Result : register(u0);
 // sums keep the reduction exact and the readback trivial.
 #define LEVEL_SCALE 1024.0f
 
+// Two's complement in a uint lane: a plain (uint) cast of a negative float is 0 (ftou) or
+// undefined, which dropped every negative level offset and current. The host reads int32.
+uint PackSigned(float value)
+{
+    return asuint((int)round(clamp(value * LEVEL_SCALE, -60000.0f, 60000.0f)));
+}
+
 groupshared uint4 g_partial[64];
 
 [numthreads(8, 8, 1)]
@@ -109,21 +116,24 @@ void CS(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex)
         // actually displaces without the crater it sits in.
         const float inner = BodyRadius * 1.05f;
         const float outer = BodyRadius * 2.0f + StepX;
-        const uint solid = WallMask[(id.x) + Width * (id.y)];
-        if (solid == 0u && distance >= inner && distance <= outer) {
+        if (distance >= inner && distance <= outer) {
             const float level = SurfaceIn.Load(int3(id.x, id.y, 0)).x;
-            value.x = (uint)clamp(level * LEVEL_SCALE, -60000.0f, 60000.0f);
-            value.y = 1u;
-            // The current that matters for drag is the one at the body's own depth, not the
-            // orbital velocity at the wave crest: sample the column's topmost wet cell, then
-            // the row nearest the body's centre if that is deeper.
             const int topRow =
                 clamp((int)((WaterPlaneY + level - BasinMinY) / StepY), 0, (int)Height - 1);
-            const int bodyRow = clamp((int)((BodyY - BasinMinY) / StepY), 0, (int)Height - 1);
-            const int row = min(topRow, bodyRow);
-            const float4 v = VelocityIn.Load(int4(id.x, row, id.y, 0));
-            value.z = (uint)clamp(v.x * LEVEL_SCALE, -60000.0f, 60000.0f);
-            value.w = (uint)clamp(v.z * LEVEL_SCALE, -60000.0f, 60000.0f);
+            // Walls and other bodies at the waterline are not open water.
+            const uint solid = WallMask[id.x + Width * ((uint)topRow + Height * id.y)];
+            if (solid == 0u) {
+                value.x = PackSigned(level);
+                value.y = 1u;
+                // The current that matters for drag is the one at the body's own depth, not
+                // the orbital velocity at the wave crest: sample the column's topmost wet
+                // cell, then the row nearest the body's centre if that is deeper.
+                const int bodyRow = clamp((int)((BodyY - BasinMinY) / StepY), 0, (int)Height - 1);
+                const int row = min(topRow, bodyRow);
+                const float4 v = VelocityIn.Load(int4(id.x, row, id.y, 0));
+                value.z = PackSigned(v.x);
+                value.w = PackSigned(v.z);
+            }
         }
     }
     g_partial[index] = value;

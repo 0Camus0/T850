@@ -1291,6 +1291,7 @@ namespace t850 {
       m_heaps[D3D12Heap::SAMPLER].GetHeap()
     };
     m_commandLists[m_currentBackBuffer]->SetDescriptorHeaps(2, heaps);
+    InvalidatePipelineStateCache();
 
     // Rebind back buffer render targets, viewport, and scissor
     // (OM state is lost after command list reset)

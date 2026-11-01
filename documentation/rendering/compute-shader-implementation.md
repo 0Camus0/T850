@@ -111,7 +111,19 @@ cases whenever the backend reports the capability, and skips them otherwise.
   last value between arrivals (the first answer is two or three frames in), and
   never derive frame identity from the back-buffer index — offscreen compute
   frames pin it and overwrite the per-slot fence values, so D3D12 tracks a
-  monotonic frame serial and stamps the fence value at submit time.
+  monotonic frame serial and stamps the fence value at submit time. `Consume`
+  matches the ticket, and a slot is reused by the next request recorded in its
+  frame, so keep one request in flight per buffer. D3D12 transitions the source
+  to `COPY_SOURCE` before the copy (the debug layer rejects a copy from
+  `UNORDERED_ACCESS`).
+- **Driver-side bind caching (W-15 P4/P5).** Vulkan caches each fully written
+  compute descriptor set for the frame, keyed by the set layout, every bound
+  resource identity and the constant bytes, and clears it with the descriptor pool.
+  A dispatch that binds inline `ReadOnlyBuffer` data is never cached: the key cannot
+  see those bytes. D3D12 skips `SetDescriptorHeaps`, the root signature and the PSO
+  when they match the last ones bound. Code that binds any of these directly on the
+  command list (the ImGui backend, a mid-frame command-list reset) must call
+  `D3D12Driver::InvalidatePipelineStateCache()` afterwards.
 - Compute buffers/pipelines are CPU-owned, and their driver must outlive them.
   Vulkan retires native compute handles after frame completion; D3D12 retains
   referenced native objects per frame. Texture/view owners must synchronize

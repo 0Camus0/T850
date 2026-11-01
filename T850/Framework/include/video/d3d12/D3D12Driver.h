@@ -114,6 +114,10 @@ namespace t850 {
     int RequestComputeReadback(ComputeBuffer& buffer, size_t byteCount) override;
     bool ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) override;
 
+    // Call after binding a PSO, root signature or descriptor heaps directly on the command
+    // list (ImGui, a mid-frame list reset): dispatches and draws skip binds that match the trackers.
+    void InvalidatePipelineStateCache() { m_lastPSO = nullptr; m_lastRootSig = nullptr; }
+
     // ── Helpers for resource creation ──
     D3D12Heap& GetHeap(D3D12Heap::Type type) { return m_heaps[type]; }
     ID3D12GraphicsCommandList* GetCmdList() const { return m_commandLists[m_currentBackBuffer].Get(); }
@@ -204,6 +208,7 @@ namespace t850 {
       size_t byteCount = 0;
       uint32_t frame = 0;
       uint64_t serial = 0;
+      int ticket = 0;
       bool pending = false;
     };
     PendingReadback m_pendingReadbacks[kBackBufferCount];

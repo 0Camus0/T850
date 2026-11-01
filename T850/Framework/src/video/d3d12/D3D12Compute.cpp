@@ -938,20 +938,23 @@ namespace t850 {
     }
 
     ID3D12GraphicsCommandList* cmdList = GetCmdList();
+    TransitionBuffer(cmdList, *buffer, D3D12_RESOURCE_STATE_COPY_SOURCE);
     cmdList->CopyBufferRegion(slot.resource.Get(), 0, buffer->GetResource(), 0, byteCount);
     // The frame's fence value is decided when the frame is submitted; record the frame so
     // Consume can ask the fence that will actually cover this copy.
     slot.frame = m_currentBackBuffer;
     slot.serial = m_frameSerial;
+    slot.fenceValue = 0;
     slot.pending = true;
-    return ++m_readbackTicketCounter;
+    slot.ticket = ++m_readbackTicketCounter;
+    return slot.ticket;
   }
 
   bool D3D12Driver::ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) {
     if (ticket <= 0 || !destination) return false;
     for (uint32_t frame = 0; frame < kBackBufferCount; ++frame) {
       PendingReadback& slot = m_pendingReadbacks[frame];
-      if (!slot.pending || slot.byteCount < byteCount) continue;
+      if (!slot.pending || slot.ticket != ticket || slot.byteCount < byteCount) continue;
       // The copy was recorded into the frame that was open when it was requested; that frame
       // has completed once the serial has advanced past it, and its fence value then covers
       // the copy.

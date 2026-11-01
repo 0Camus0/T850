@@ -1290,6 +1290,8 @@ void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
     }
   }
   if (m_bodies[0].hasSimulatedLevel) m_bodies[0].simulatedLevel = m_lastBodyLevel;
+  // One query in flight: re-requesting while an answer is pending would orphan its ticket.
+  if (m_bodyLevelTicket > 0) return;
 
   // One slot per thread group, written unconditionally, so the buffer needs no clearing
   // between queries: no allocation and no zeroing in the steady state.

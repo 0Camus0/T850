@@ -347,12 +347,14 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
   // P4: the solver dispatches the same pipeline with the same resources many times in a
   // frame (the pressure solve alone 120 times), so the descriptor set is recorded once and
   // rebound. The key covers the layout and every bound identity plus the constant bytes,
-  // which change per iteration. The cache is cleared with the pool.
+  // which change per iteration. The cache is cleared with the pool. A dispatch that binds
+  // inline data is never cached: the key cannot see those bytes.
   uint64_t descriptorKey = 1469598103934665603ull;
   auto mix = [&descriptorKey](uint64_t value) {
     descriptorKey ^= value;
     descriptorKey *= 1099511628211ull;
   };
+  bool cacheable = true;
   mix(reinterpret_cast<uintptr_t>(pipeline->descriptorSetLayout));
   for (const auto& binding : bindings) {
     mix(static_cast<uint64_t>(binding.type));
@@ -364,17 +366,11 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
       for (uint32_t word = 0; word < binding.constantCount; ++word)
         mix(binding.constants[word]);
     }
-    if (binding.inlineData && binding.inlineBytes) {
-      // Per-dispatch transient data: hash the identity, not the payload. The bytes live in
-      // a fresh ring region each call, so the pointer changes and the entry misses anyway;
-      // hashing 512 bytes per dispatch cost more than the allocation it saved.
-      mix(reinterpret_cast<uintptr_t>(binding.inlineData));
-      mix(binding.inlineBytes);
-    }
+    if (binding.inlineData && binding.inlineBytes) cacheable = false;
   }
-  const bool cachedSet = FindCachedComputeDescriptorSet(descriptorKey) != VK_NULL_HANDLE;
-  VkDescriptorSet set = cachedSet ? FindCachedComputeDescriptorSet(descriptorKey)
-                                  : AllocateDescriptorSet(pipeline->descriptorSetLayout);
+  const VkDescriptorSet cached = cacheable ? FindCachedComputeDescriptorSet(descriptorKey) : VK_NULL_HANDLE;
+  const bool cachedSet = cached != VK_NULL_HANDLE;
+  VkDescriptorSet set = cachedSet ? cached : AllocateDescriptorSet(pipeline->descriptorSetLayout);
   if (!set) return false;
   std::vector<VkDescriptorBufferInfo> infos;
   std::vector<VkDescriptorImageInfo> imageInfos;
@@ -554,14 +550,15 @@ int VulkanDriver::RequestComputeReadback(ComputeBuffer& bufferBase, size_t byteC
                        1, &barrier, 0, nullptr, 0, nullptr);
   slot.frame = m_currentFrame;
   slot.pending = true;
-  return ++m_readbackTicketCounter;
+  slot.ticket = ++m_readbackTicketCounter;
+  return slot.ticket;
 }
 
 bool VulkanDriver::ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) {
   if (ticket <= 0 || !destination) return false;
   for (uint32_t frame = 0; frame < kBackBufferCount; ++frame) {
     PendingReadback& slot = m_pendingReadbacks[frame];
-    if (!slot.pending || slot.byteCount < byteCount || !slot.mapped) continue;
+    if (!slot.pending || slot.ticket != ticket || slot.byteCount < byteCount || !slot.mapped) continue;
     if (m_frameStarted && frame == m_currentFrame) return false;
     if (!m_inFlightFences[frame] || vkGetFenceStatus(m_device, m_inFlightFences[frame]) != VK_SUCCESS)
       return false;

@@ -263,8 +263,9 @@ easy to get this wrong:
 The fluid kernels below are the original set. Later additions, each with its exact binding list
 in `compute_kernels.json`: `fluid_extrapolate` (air-velocity extrapolation), `fluid_surface_to_buffer`
 (surface readback), `fluid_volume_reduce` (`CS_FluidVolumeReduce3D`: GPU sums for the volume
-correction, §10), and `fluid_stamp_bodies` (`CS_FluidStampBodies3D`: bodies stamped into the
-wall mask on the GPU, §8.3). `fluid_volume_correct` now also binds the sums buffer
+correction, §10), `fluid_stamp_bodies` (`CS_FluidStampBodies3D`: bodies stamped into the
+wall mask on the GPU, §8.3) and `fluid_body_level` (`CS_FluidBodyLevel.hlsl`: the body's water
+line sampled from the surface, §8.1). `fluid_volume_correct` now also binds the sums buffer
 (`read_write_buffer:1@4`), and the body kernels bind `BodyVelocity` at t9 as an inline buffer.
 `FluidConstants` is now 20 DWORDs (`constant_count: 20`, open-ceiling fields added).
 `fluid_sphere` (`CS_FluidSphere3D`) is no longer registered or loaded; the body is a wall-mask
@@ -293,6 +294,7 @@ The 16 original fluid kernels:
 | `fluid_sphere` | `CS_FluidSphere3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), **constants:1@2[12]**, read_only_buffer:8@3, storage_texture:0@4(3d), read_write_buffer:1@5 |
 | `fluid_obstacle_velocity` | `CS_FluidObstacleVelocity3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), sampled_texture:1@2(3d), **constants:1@3[12]**, read_only_buffer:8@4, storage_texture:0@5(3d) |
 | `fluid_clear` | `CS_FluidClear3D.hlsl` | constants:0@0[16], storage_texture:0@1(3d) |
+| `fluid_body_level` | `CS_FluidBodyLevel.hlsl` | constants:0@0[20], **constants:1@1[8]**, sampled_texture:0@2, read_only_buffer:8@3, read_write_buffer:0@4 |
 
 Also modified: [shader_permutations.json](../../T850/Assets/Shaders/shader_permutations.json),
 `Framework/src/utils/ComputeKernelRegistry.cpp`, `Framework/src/utils/ComputeReflection.cpp`.
@@ -386,7 +388,10 @@ zeroed (see §7 bugs).
 
 **`CS_FluidSurface3D`** — derives the renderable 2D surface from the volume fraction. See §7.
 
-**`CS_FluidDiagnostics3D`** — reduces speed/divergence statistics to a buffer for readback.
+**`CS_FluidDiagnostics3D`** — reduces speed/divergence statistics to a buffer for readback. The
+buffer is persistent (allocated once, not per call), so the kernel clears its own two `uint4`
+counters from thread (0,0,0) when `Iteration == 0xFFFFFFFF`, dispatched as a pass before the
+measuring one — there is no buffer-write API to do it from the host.
 
 **`CS_FluidCopy3D`** — volume→buffer readback copy.
 
@@ -401,6 +406,11 @@ correction, on the GPU. See §10.
 
 **`CS_FluidStampBodies3D`** — rewrites the wall mask from the static base mask plus the body
 list. See §8.3.
+
+**`CS_FluidBodyLevel`** — averages the surface texture over an annulus around body 0 and writes
+one slot per thread group (no atomics, no clearing, no allocation), in fixed point at 1/1024 m.
+Feeds the buoyancy water line in §8.1; the host reads it back asynchronously one to three frames
+later.
 
 ### 6.4 Pressure solve maths
 
@@ -524,18 +534,30 @@ to and **no wave can radiate**. Without (1) the projection cancels (2).
 
 ### 8.1 Body integration (`AdvanceSphere`)
 
-Submerged fraction from the water plane:
+Submerged fraction from the water line the body floats on — the **simulated** surface sampled
+around the body (W-06), not the authored plane:
 
 ```
-submerged = clamp((waterPlaneY - (y - radius)) / (2*radius), 0, 1)
+level     = waterPlaneY + mean(surface height over an annulus around the body)
+submerged = clamp((level - (y - radius)) / (2*radius), 0, 1)
 ```
+
+`CS_FluidBodyLevel.hlsl` produces that mean on the GPU: it averages `m_surfaceOutput` over an
+annulus whose inner radius (1.05 r) clears the body's own meniscus and whose outer radius (2 r + h)
+stays inside the next body, one output slot per thread group in fixed point at 1/1024 m. The
+result comes back through the asynchronous readback (W-04 step 5) one to three frames late and is
+held in between, so a backend without an async path pays one 40-byte stall per frame instead of
+losing the coupling. The surface texture stores a delta from the authored plane, so the plane is
+added back; forgetting that puts the body on the pool floor.
 
 Archimedes, net of gravity:
 
 $$a_\text{net} = g\left(\frac{\text{submerged}}{\rho_\text{rel}} - 1\right)$$
 
 Equilibrium is `submerged = ρ_rel`, which is why **density alone** decides floating depth and
-mass does not enter this term.
+mass does not enter this term. Because the level now follows the surface, a body rides a crest and
+drops into a trough; `sphereHeaveDamping` (0.15) is the remaining hand-tuned stand-in for the
+energy it should radiate as waves.
 
 Quadratic drag **with added mass**:
 
@@ -1072,7 +1094,9 @@ The body uses an analytic Archimedes integrator (`a_net = g(submerged/ρ_rel −
 Jolt. Jolt is present in the engine and was the stated intention, but coupling a rigid body to a
 VOF volume needs a custom submerged-volume query, and the analytic sphere gives that exactly. The
 integrator is honest about being a sphere model: it has no rotation, no added-mass tensor, and no
-contact with the pool steps.
+contact with the pool steps. Its water line is sampled from the simulated surface (§8.1), so it is
+coupled to the solver in both directions, but only through that level — the body does not displace
+α out of the cells it occupies (W-07, still open).
 
 ### "Everything from JSON": partial
 The pool layout is JSON and authoritative (`waterPlaneY`, `freeboard`, step AABBs, grid height

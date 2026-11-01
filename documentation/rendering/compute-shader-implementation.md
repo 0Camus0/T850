@@ -45,8 +45,9 @@ flowchart LR
   This is how a kernel receives a variable-length list (the fluid solver's per-body velocities
   and body spheres) without growing root constants;
 - `ComputePipeline` and `ComputeBuffer`: backend-owned polymorphic resources;
-- `CreateComputePipeline`, `CreateComputeBuffer`, `DispatchCompute`, and
-  `ReadComputeBuffer` virtual methods;
+- `CreateComputePipeline`, `CreateComputeBuffer`, `DispatchCompute`,
+  `ReadComputeBuffer`, and the asynchronous pair `RequestComputeReadback` /
+  `ConsumeComputeReadback` virtual methods;
 - `SupportsComputeShaders`, `SupportsComputeTextures`, and `ApiTag` capabilities.
 
 The base implementations fail explicitly. This keeps unsupported backends safe and makes
@@ -97,6 +98,20 @@ cases whenever the backend reports the capability, and skips them otherwise.
   remain open; pending commands may be submitted and waited without presentation.
   Rebind graphics resources and topology before the next draw; raw backend
   command state is not preserved across recording resets.
+- **Prefer `RequestComputeReadback` / `ConsumeComputeReadback` when the answer is
+  not needed this frame.** `int RequestComputeReadback(ComputeBuffer&, size_t)`
+  queues the copy at the end of the current frame's command list and returns a
+  ticket, or `-1` when the backend has no asynchronous path — both base
+  implementations return `-1` / `false`, so D3D11, GL and WebGPU keep the
+  synchronous behaviour and the caller falls back. `bool
+  ConsumeComputeReadback(int, void*, size_t)` returns `false` until the frame
+  behind the copy has retired, then fills the caller's buffer once and
+  invalidates the ticket. D3D12 uses one READBACK-heap resource per frame slot and
+  Vulkan one host-visible VMA staging buffer per frame slot. Two rules: hold the
+  last value between arrivals (the first answer is two or three frames in), and
+  never derive frame identity from the back-buffer index — offscreen compute
+  frames pin it and overwrite the per-slot fence values, so D3D12 tracks a
+  monotonic frame serial and stamps the fence value at submit time.
 - Compute buffers/pipelines are CPU-owned, and their driver must outlive them.
   Vulkan retires native compute handles after frame completion; D3D12 retains
   referenced native objects per frame. Texture/view owners must synchronize

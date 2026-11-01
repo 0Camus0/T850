@@ -349,6 +349,43 @@ ordinary gameplay pause.
 presentation entirely. The completion marker is emitted only after `WaitForGPU`,
 so its throughput includes the final queue drain and excludes DWM/swapchain pacing.
 
+### Backyard Water (scene 7) and the Fluid Solver
+
+These are parsed by DayScene, not by `ConfigRuntime`, and every one of them implies `--scene 7` for
+the Backyard ones. Every automated run also passes `--unattended`.
+
+```text
+--backyard-selftest                run the ten water gates, then exit
+--backyard-selftest-frames N       frames per gate run
+--backyard-no-ball                 run the gates without the scripted ball
+--backyard-cell-size METRES        override the grid's derived cell size (debug)
+--backyard-spawn N                 spawn N extra balls once the solver is ready
+--backyard-spawn-seed N            fix the spawn and material RNG for a reproducible run
+--backyard-pick-test               drive the pick/drag input path in-process, then exit
+--backyard-ball-probe N            log body 0 every N frames (see below)
+--backyard-mass-audit N            log the W-03 mass audit every N frames
+--fluid-selftest                   run the solver self-test, then exit
+--fluid-selftest-frames N          frames for the solver self-test
+--fluid-iterations N               override pressure iterations for one run
+--fluid-fixed-dt SECONDS           fixed solver step for a deterministic run
+--fluid-dump-volume FRAME          dump the alpha/velocity volume at a frame
+```
+
+`--backyard-ball-probe` is the only instrument that sees a *local* defect: the mass audit averages
+the whole pool, where a 2 cm moat around a 0.25 m ball is 7 cells out of 82 917. It prints two lines
+per sample, read from the same surface texture the renderer draws:
+
+```text
+[Backyard][ball] t=8.13 y=-0.059 vy=+0.096 level=-0.018 plane=-0.040 submerged=0.62 flow=(+0.054 +0.122) xz=(+0.098 -6.652) vxz=(+0.018 +0.018)
+[Backyard][ball] far=+0.0012 ring-far=-0.0167 covered min-ring=-0.0133 rimPeak=+0.0543 moatMin=-0.1464 bands(cm): -2.4 -2.3 -2.4 -1.6 -1.3 -1.2 -1.2 -1.0
+```
+
+`level` is the sampled water line and `plane` the authored one, so the coupling is visible directly;
+`ring-far` and `covered min-ring` are the float gate's two comparisons recomputed per sample;
+`rimPeak`/`moatMin` are running extremes so a transient crest or crater between samples is not
+lost; `bands` is the profile in eight 10 cm radial bands, which separates a *moat* (a dip in bands
+0–3) from the *crater* of an impact (dip in band 0, crest in bands 1–3).
+
 ### Logging, Profiling, and Telemetry
 
 ```text

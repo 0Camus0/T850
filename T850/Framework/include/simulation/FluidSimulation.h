@@ -103,6 +103,11 @@ namespace t850 {
     // Until the first answer arrives, buoyancy uses the authored water plane.
     bool hasSimulatedLevel = false;
     float simulatedLevel = 0.0f;
+    // W-06 step 3: the alpha-weighted horizontal liquid velocity in the annulus around the
+    // body, from the same query. Drag acts on (v - flow) instead of on v, so a current
+    // carries the body with it instead of being an absolute brake.
+    float flowX = 0.0f;
+    float flowZ = 0.0f;
   };
 
   // GPU volumetric Navier-Stokes solver for a bounded pool volume.

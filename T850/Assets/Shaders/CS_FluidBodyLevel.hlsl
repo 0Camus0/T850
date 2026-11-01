@@ -1,17 +1,22 @@
-// T850 pool fluid: the simulated water level around one body, for its buoyancy (W-06).
+// T850 pool fluid: the simulated water level and current around one body, for its
+// buoyancy and drag (W-06).
 //
 // The body integrator used to float on the *authored* water plane, so it could not ride a
 // wave and its energy loss had to be faked with a heave damping ratio. This kernel averages
 // the solver's own surface over an annulus just outside the body's footprint — outside, so
 // the dip the body presses into the water does not drag its own reference level down with
-// it — and writes the result to a one-float buffer the host reads asynchronously.
+// it — and writes the result to a small buffer the host reads asynchronously.
 //
 // Since W-19 the surface texture's covered texels already hold the inpainted free-surface
 // level, so sampling the annulus is equivalent to re-deriving the level from alpha columns
 // (which stop at the body's underside) but far cheaper.
 //
+// W-06 step 3 rides along in the same pass: the horizontal liquid velocity at the waterline
+// of the same annulus cells, so the host can apply drag to (v - flow) instead of to v.
+// Without it the drag term is an absolute brake and a current cannot carry the body.
+//
 // One dispatch per query per frame; the whole grid is covered so the annulus is sampled from
-// every texel that overlaps it, and the sum is a fixed-point InterlockedAdd pair.
+// every texel that overlaps it, and the sum is a fixed-point reduction per thread group.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -40,19 +45,23 @@ cbuffer FluidConstants : register(b0)
     float OpenCeilingPad2;
 };
 
-// Body position and radius in world units, packed like StampConstants so the host code and
-// the kernel agree on one layout.
+// Domain origin, authored water plane, body position and radius in world units, plus the
+// column step. Same order as the host's LevelConstants, so one memcpy fills both.
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(1, 0)]]
 #endif
 cbuffer BodyLevelConstants : register(b1)
 {
     float BasinMinX;
+    float BasinMinY;
     float BasinMinZ;
+    float WaterPlaneY;
     float BodyX;
+    float BodyY;
     float BodyZ;
     float BodyRadius;
     float StepX;
+    float StepY;
     float StepZ;
     float LevelPad;
 };
@@ -63,24 +72,33 @@ cbuffer BodyLevelConstants : register(b1)
 #endif
 Texture2D<float4> SurfaceIn : register(t0);
 
+// Staggered velocity volume: texel c holds the cell's +X/+Y/+Z face velocities.
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(3, 0)]]
 #endif
-StructuredBuffer<uint> WallMask : register(t8);
+Texture3D<float4> VelocityIn : register(t1);
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(4, 0)]]
 #endif
-RWStructuredBuffer<uint2> Result : register(u0);
+StructuredBuffer<uint> WallMask : register(t8);
 
-groupshared uint2 g_partial[64];
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(5, 0)]]
+#endif
+RWStructuredBuffer<uint4> Result : register(u0);
+
+// Fixed point: height in 1/1024 m, velocity in 1/1024 m/s, and the sample count. Integer
+// sums keep the reduction exact and the readback trivial.
+#define LEVEL_SCALE 1024.0f
+
+groupshared uint4 g_partial[64];
 
 [numthreads(8, 8, 1)]
 void CS(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex)
 {
-    // Fixed-point: height in 1/1024 m and the sample count, so the sum stays exact.
     // Dispatched as (width, depth, 1): the grid row lives in id.y.
-    uint2 value = uint2(0u, 0u);
+    uint4 value = uint4(0u, 0u, 0u, 0u);
     if (id.x < Width && id.y < Depth) {
         const float wx = BasinMinX + ((float)id.x + 0.5f) * StepX;
         const float wz = BasinMinZ + ((float)id.y + 0.5f) * StepZ;
@@ -94,8 +112,18 @@ void CS(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex)
         const uint solid = WallMask[(id.x) + Width * (id.y)];
         if (solid == 0u && distance >= inner && distance <= outer) {
             const float level = SurfaceIn.Load(int3(id.x, id.y, 0)).x;
-            value.x = (uint)clamp(level * 1024.0f, -60000.0f, 60000.0f);
+            value.x = (uint)clamp(level * LEVEL_SCALE, -60000.0f, 60000.0f);
             value.y = 1u;
+            // The current that matters for drag is the one at the body's own depth, not the
+            // orbital velocity at the wave crest: sample the column's topmost wet cell, then
+            // the row nearest the body's centre if that is deeper.
+            const int topRow =
+                clamp((int)((WaterPlaneY + level - BasinMinY) / StepY), 0, (int)Height - 1);
+            const int bodyRow = clamp((int)((BodyY - BasinMinY) / StepY), 0, (int)Height - 1);
+            const int row = min(topRow, bodyRow);
+            const float4 v = VelocityIn.Load(int4(id.x, row, id.y, 0));
+            value.z = (uint)clamp(v.x * LEVEL_SCALE, -60000.0f, 60000.0f);
+            value.w = (uint)clamp(v.z * LEVEL_SCALE, -60000.0f, 60000.0f);
         }
     }
     g_partial[index] = value;

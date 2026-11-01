@@ -50,6 +50,10 @@ public:
   static void SetSpawnSeed(uint32_t seed) { s_spawnSeed = seed; }
   // Test hook (--backyard-mass-audit N): log the W-03 mass audit every N frames.
   static void SetMassAuditFrames(int frames) { s_massAuditFrames = frames > 0 ? frames : 0; }
+  // Test hook (--backyard-ball-probe N): log the ball's vertical state and the radial
+  // surface profile around it every N frames. This is the instrument W-06 and W-07 need:
+  // the mass audit averages over the whole pool and cannot see a 2 cm moat.
+  static void SetBallProbeFrames(int frames) { s_ballProbeFrames = frames > 0 ? frames : 0; }
   // Test hook (--backyard-pick-test): drives the real pick/drag input path with a
   // synthetic InputManager, so no OS mouse or keyboard input is ever generated.
   static void SetPickTest(bool enabled) { s_pickTest = enabled; }
@@ -187,4 +191,8 @@ private:
   static uint32_t s_spawnSeed;
   static int s_massAuditFrames;
   int m_massAuditCounter = 0;
+  static int s_ballProbeFrames;
+  int m_ballProbeCounter = 0;
+  float m_probeRimPeak = 0.0f;
+  float m_probeMoatMin = 0.0f;
 };

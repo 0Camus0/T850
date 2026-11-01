@@ -265,7 +265,15 @@ namespace t850 {
     void SetSurfaceOutput(Texture* texture) { m_surfaceOutput = texture; }
 
     // Sampled 2D surface (height, foam, slopeX, slopeZ) produced by Step().
-    Texture* SurfaceTexture() const { return m_surfaceTexture[m_surfaceCurrent]; }
+    // P7: the surface kernel reads only the volume, so it writes the stable output
+    // texture directly when one is bound: no ping-pong pair and no copy dispatch per
+    // frame. The pair remains for the headless case, where nothing binds an output.
+    Texture* SurfaceTarget() const {
+      return m_surfaceOutput ? m_surfaceOutput : m_surfaceTexture[(m_surfaceCurrent + 1) % 2];
+    }
+    Texture* SurfaceTexture() const {
+      return m_surfaceOutput ? m_surfaceOutput : m_surfaceTexture[m_surfaceCurrent];
+    }
     int SurfaceRenderTarget() const { return m_surfaceRT[m_surfaceCurrent]; }
 
     struct Diagnostics {

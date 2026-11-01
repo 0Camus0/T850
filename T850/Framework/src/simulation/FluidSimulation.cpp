@@ -1141,7 +1141,7 @@ bool FluidSimulation::ReadWallMask(BaseDriver* driver, std::vector<uint32_t>& ou
 bool FluidSimulation::ReadSurface(BaseDriver* driver, std::vector<float>& out) {
   out.clear();
   if (!m_ready || !driver || !m_surfaceToBufferPipeline) return false;
-  Texture* surface = m_surfaceTexture[m_surfaceCurrent];
+  Texture* surface = SurfaceTexture();
   if (!surface) return false;
 
   const uint32_t texels = m_settings.width * m_settings.depth;
@@ -1789,6 +1789,7 @@ bool FluidSimulation::StepInternal(BaseDriver* driver, bool writeSurface) {
   // the previous surface and writes a separate target (ping-pong): a resource
   // cannot be both read and written in one dispatch.
   const uint32_t surfaceNext = (m_surfaceCurrent + 1) % 2;
+  const bool directOutput = m_surfaceOutput != nullptr;
   const std::vector<uint32_t> constants = BuildConstants();
   const std::vector<uint32_t> geometryConstants = BuildGeometryConstants();
   const std::vector<ComputeBindingDesc> surfaceBindings = {
@@ -1802,18 +1803,18 @@ bool FluidSimulation::StepInternal(BaseDriver* driver, bool writeSurface) {
     // Basin floor and authored water plane, from the pool layout JSON. These used
     // to be literals in the kernel.
     {ComputeBindingType::Constants32, 1, nullptr, geometryConstants.data(), static_cast<uint32_t>(geometryConstants.size())},
-    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]},
+    {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0,
+     directOutput ? m_surfaceOutput : m_surfaceTexture[surfaceNext]},
     {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0}
   };
   const uint32_t groupsX = (m_settings.width + m_surfacePipeline->threadGroupSize[0] - 1) / m_surfacePipeline->threadGroupSize[0];
   const uint32_t groupsY = (m_settings.depth + m_surfacePipeline->threadGroupSize[1] - 1) / m_surfacePipeline->threadGroupSize[1];
   if (!driver->DispatchCompute(*m_surfacePipeline, surfaceBindings, groupsX, groupsY, 1))
     return false;
+  if (directOutput) return true;   // P7: written in place, nothing to copy
   m_surfaceCurrent = surfaceNext;
 
-  // Copy the freshly written surface into the fixed output texel set. Keeping
-  // the output stable lets a mesh bind one texture for the whole frame instead
-  // of chasing the ping-pong pair.
+  // Headless: copy into the fixed texel set so the caller keeps one texture bound.
   if (m_surfaceOutput) {
     const std::vector<ComputeBindingDesc> copyBindings = {
       {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[m_surfaceCurrent]},
@@ -1905,6 +1906,7 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
   }
   if (name == "surface") {
     const uint32_t surfaceNext = (m_surfaceCurrent + 1) % 2;
+    const bool directOutput = m_surfaceOutput != nullptr;
     const std::vector<uint32_t> constants = BuildConstants();
     const std::vector<uint32_t> geometryConstants = BuildGeometryConstants();
     const std::vector<ComputeBindingDesc> bindings = {
@@ -1913,12 +1915,14 @@ bool FluidSimulation::StepStage(BaseDriver* driver, const char* stage) {
       {ComputeBindingType::ReadOnlyTexture, 1, nullptr, nullptr, 0, nullptr,
        (m_alpha[m_alphaCurrent] ? m_alpha[m_alphaCurrent].get() : m_velocity[m_current].get())},
       {ComputeBindingType::Constants32, 1, nullptr, geometryConstants.data(), static_cast<uint32_t>(geometryConstants.size())},
-      {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, m_surfaceTexture[surfaceNext]},
+      {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0,
+       directOutput ? m_surfaceOutput : m_surfaceTexture[surfaceNext]},
       {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0}
     };
     const uint32_t groupsX = (m_settings.width + m_surfacePipeline->threadGroupSize[0] - 1) / m_surfacePipeline->threadGroupSize[0];
     const uint32_t groupsY = (m_settings.depth + m_surfacePipeline->threadGroupSize[1] - 1) / m_surfacePipeline->threadGroupSize[1];
     if (!driver->DispatchCompute(*m_surfacePipeline, bindings, groupsX, groupsY, 1)) return false;
+    if (directOutput) return true;   // P7: written in place, nothing to copy
     m_surfaceCurrent = surfaceNext;
     return PublishSurface(driver);
   }

@@ -905,6 +905,74 @@ namespace t850 {
     return true;
   }
 
+  int D3D12Driver::RequestComputeReadback(ComputeBuffer& bufferBase, size_t byteCount) {
+    auto* buffer = dynamic_cast<D3D12ComputeBuffer*>(&bufferBase);
+    if (!buffer || byteCount == 0 || byteCount % 4 || byteCount > buffer->descriptor.byteWidth)
+      return -1;
+    // A copy has to be recorded into a command list, so this needs an open frame.
+    if (!m_frameStarted || !GetCmdList()) return -1;
+
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    PendingReadback& slot = m_pendingReadbacks[m_currentBackBuffer];
+    if (!slot.resource || slot.byteCount != byteCount) {
+      D3D12_HEAP_PROPERTIES readbackHeap = {};
+      readbackHeap.Type = D3D12_HEAP_TYPE_READBACK;
+      D3D12_RESOURCE_DESC readbackDesc = {};
+      readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+      readbackDesc.Width = byteCount;
+      readbackDesc.Height = 1;
+      readbackDesc.DepthOrArraySize = 1;
+      readbackDesc.MipLevels = 1;
+      readbackDesc.SampleDesc.Count = 1;
+      readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      slot.resource.Reset();
+      const HRESULT hr = device->CreateCommittedResource(
+        &readbackHeap, D3D12_HEAP_FLAG_NONE, &readbackDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&slot.resource));
+      if (FAILED(hr)) {
+        T8_LOG_ERROR("[D3D12][Compute] Async readback slot creation failed (hr=0x%08X)",
+                     static_cast<unsigned>(hr));
+        return -1;
+      }
+      slot.byteCount = byteCount;
+    }
+
+    ID3D12GraphicsCommandList* cmdList = GetCmdList();
+    cmdList->CopyBufferRegion(slot.resource.Get(), 0, buffer->GetResource(), 0, byteCount);
+    // The frame's fence value is decided when the frame is submitted; record the frame so
+    // Consume can ask the fence that will actually cover this copy.
+    slot.frame = m_currentBackBuffer;
+    slot.serial = m_frameSerial;
+    slot.pending = true;
+    return ++m_readbackTicketCounter;
+  }
+
+  bool D3D12Driver::ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) {
+    if (ticket <= 0 || !destination) return false;
+    for (uint32_t frame = 0; frame < kBackBufferCount; ++frame) {
+      PendingReadback& slot = m_pendingReadbacks[frame];
+      if (!slot.pending || slot.byteCount < byteCount) continue;
+      // The copy was recorded into the frame that was open when it was requested; that frame
+      // has completed once the serial has advanced past it, and its fence value then covers
+      // the copy.
+      if (m_frameSerial <= slot.serial) {
+        T8_LOG_DEBUG("[D3D12][Compute] readback not ready: serial %llu <= %llu",
+                     static_cast<unsigned long long>(m_frameSerial),
+                     static_cast<unsigned long long>(slot.serial));
+        return false;
+      }
+      if (slot.fenceValue != 0 && GetCompletedFenceValue() < slot.fenceValue) return false;
+      void* mapped = nullptr;
+      const D3D12_RANGE readRange = {0, byteCount};
+      if (FAILED(slot.resource->Map(0, &readRange, &mapped)) || !mapped) return false;
+      std::memcpy(destination, mapped, byteCount);
+      slot.resource->Unmap(0, nullptr);
+      slot.pending = false;
+      return true;
+    }
+    return false;
+  }
+
   bool D3D12Driver::ReadComputeBuffer(ComputeBuffer& bufferBase,
                                       void* destination,
                                       size_t byteCount) {

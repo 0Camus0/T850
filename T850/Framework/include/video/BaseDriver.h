@@ -514,6 +514,17 @@ namespace t850 {
       (void)buffer; (void)destination; (void)byteCount; return false;
     }
 
+    // Asynchronous compute readback (W-04 step 5). Request queues a copy of a compute
+    // buffer into a driver-owned staging slot and returns a ticket; Consume returns true
+    // once that copy has completed, filling `destination`. Both default to "unsupported",
+    // and the caller then falls back to ReadComputeBuffer, which stalls the frame.
+    virtual int RequestComputeReadback(ComputeBuffer& buffer, size_t byteCount) {
+      (void)buffer; (void)byteCount; return -1;
+    }
+    virtual bool ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) {
+      (void)ticket; (void)destination; (void)byteCount; return false;
+    }
+
     // Resize the swapchain, back-buffer RTVs, and depth buffer to the new
     // pixel dimensions. Returns true on success. Implementations must flush
     // the GPU before releasing/recreating resources.

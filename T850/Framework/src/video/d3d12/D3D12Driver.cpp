@@ -972,6 +972,16 @@ namespace t850 {
     if (!m_frameStarted) {
       return;
     }
+    // Every path below submits this frame, so async readbacks recorded in it become ready.
+    // Stamp the fence value onto them here: the back-buffer index is pinned for offscreen
+    // compute frames, so m_frameFenceValues[] would be overwritten by the next frame before
+    // anyone could read it.
+    const uint64_t completingSerial = m_frameSerial++;
+    auto stampReadbacks = [this, completingSerial](UINT64 value) {
+      for (PendingReadback& readback : m_pendingReadbacks)
+        if (readback.pending && readback.serial == completingSerial)
+          readback.fenceValue = value;
+    };
 #if T850_ENABLE_GPU_PROFILING
     if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->EndFrame();
 #endif
@@ -988,6 +998,7 @@ namespace t850 {
       const UINT64 fenceVal = m_nextFenceValue++;
       m_commandQueue->Signal(m_fence.Get(), fenceVal);
       m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+      stampReadbacks(fenceVal);
     #if T850_ENABLE_GPU_PROFILING
       if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(fenceVal);
     #endif
@@ -1032,6 +1043,7 @@ namespace t850 {
     const UINT64 fenceVal = m_nextFenceValue++;
     m_commandQueue->Signal(m_fence.Get(), fenceVal);
     m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+    stampReadbacks(fenceVal);
   #if T850_ENABLE_GPU_PROFILING
     if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(fenceVal);
   #endif

@@ -109,6 +109,10 @@ namespace t850 {
                uint32_t groupCountY,
                uint32_t groupCountZ) override;
     bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
+    // W-04 step 5: queue a copy into a readback-heap slot owned by the current frame and
+    // report readiness from the frame fence, so no call has to wait for the GPU.
+    int RequestComputeReadback(ComputeBuffer& buffer, size_t byteCount) override;
+    bool ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) override;
 
     // ── Helpers for resource creation ──
     D3D12Heap& GetHeap(D3D12Heap::Type type) { return m_heaps[type]; }
@@ -191,6 +195,23 @@ namespace t850 {
     ComPtr<ID3D12CommandQueue>         m_commandQueue;
     ComPtr<ID3D12CommandAllocator>     m_commandAllocators[kBackBufferCount];
     ComPtr<ID3D12GraphicsCommandList>  m_commandLists[kBackBufferCount];
+
+    // W-04 step 5: one readback resource per frame in flight, with the fence value that
+    // guarantees the copy has completed.
+    struct PendingReadback {
+      Microsoft::WRL::ComPtr<ID3D12Resource> resource;
+      uint64_t fenceValue = 0;
+      size_t byteCount = 0;
+      uint32_t frame = 0;
+      uint64_t serial = 0;
+      bool pending = false;
+    };
+    PendingReadback m_pendingReadbacks[kBackBufferCount];
+    int m_readbackTicketCounter = 0;
+    // Completed-frame counter: a readback is ready once the frame that recorded its copy has
+    // been submitted. The back-buffer index cannot serve that role because offscreen compute
+    // frames keep it pinned to the swap chain's current buffer.
+    uint64_t m_frameSerial = 0;
 
     // Synchronization — single monotonically increasing fence
     ComPtr<ID3D12Fence> m_fence;

@@ -698,6 +698,7 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_surfaceCopyPipeline = CreatePipeline(driver, "CS_FluidSurfaceCopy.hlsl");
   m_seedAlphaPipeline = CreatePipeline(driver, "CS_FluidSeedAlpha3D.hlsl");
   m_alphaAdvectPipeline = CreatePipeline(driver, "CS_FluidAlphaAdvect3D.hlsl");
+  m_bodyLevelPipeline = CreatePipeline(driver, "CS_FluidBodyLevel.hlsl");
   m_volumeCorrectPipeline = CreatePipeline(driver, "CS_FluidVolumeCorrect3D.hlsl");
   m_volumeReducePipeline = CreatePipeline(driver, "CS_FluidVolumeReduce3D.hlsl");
   m_stampBodiesPipeline = CreatePipeline(driver, "CS_FluidStampBodies3D.hlsl");
@@ -710,7 +711,7 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_extrapolatePipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
-                  m_alphaAdvectPipeline && m_volumeCorrectPipeline && m_volumeReducePipeline &&
+                  m_alphaAdvectPipeline && m_bodyLevelPipeline && m_volumeCorrectPipeline && m_volumeReducePipeline &&
                   m_stampBodiesPipeline && m_baseMaskBuffer &&
                   m_objectVelocityPipeline && m_clearPipeline && m_clearFloatPipeline &&
                   m_surfaceToBufferPipeline;
@@ -776,6 +777,11 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_alpha[1].reset();
   m_seedAlphaPipeline.reset();
   m_alphaAdvectPipeline.reset();
+  m_bodyLevelPipeline.reset();
+  m_bodyLevelBuffer.reset();
+  m_diagnosticsBuffer.reset();
+  m_bodyLevelTicket = -1;
+  m_bodyLevelSlots = 0;
   m_volumeCorrectPipeline.reset();
   m_volumeReducePipeline.reset();
   m_volumeSums.reset();
@@ -1240,6 +1246,101 @@ bool FluidSimulation::MeasureVolumeFraction(BaseDriver* driver, float& totalAlph
   return true;
 }
 
+void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
+  if (!m_ready || !driver || !m_bodyLevelPipeline || !m_surfaceOutput) return;
+  if (m_bodies.empty()) return;
+
+  const float gx = static_cast<float>(m_settings.width) /
+                   static_cast<float>(m_bodyLevelPipeline->threadGroupSize[0]);
+  const float gy = static_cast<float>(m_settings.depth) /
+                   static_cast<float>(m_bodyLevelPipeline->threadGroupSize[1]);
+  const uint32_t groupsX = (m_settings.width + m_bodyLevelPipeline->threadGroupSize[0] - 1) /
+                           m_bodyLevelPipeline->threadGroupSize[0];
+  const uint32_t groupsY = (m_settings.depth + m_bodyLevelPipeline->threadGroupSize[1] - 1) /
+                           m_bodyLevelPipeline->threadGroupSize[1];
+  (void)gx; (void)gy;
+  const uint32_t slotCount = groupsX * groupsY;
+  const size_t readBytes = static_cast<size_t>(slotCount) * 2u * sizeof(uint32_t);
+
+  // Consume an earlier answer first. The copy is queued at the end of the frame that
+  // recorded it, so the first result of a run arrives two or three frames in, and every
+  // later one is one query old.
+  if (m_bodyLevelTicket > 0) {
+    std::vector<uint32_t> raw(slotCount * 2u, 0u);
+    if (driver->ConsumeComputeReadback(m_bodyLevelTicket, raw.data(), readBytes)) {
+      m_bodyLevelTicket = -1;
+      int64_t sum = 0;
+      uint64_t count = 0;
+      for (uint32_t slot = 0; slot < slotCount; ++slot) {
+        sum += static_cast<int32_t>(raw[slot * 2u + 0u]);
+        count += raw[slot * 2u + 1u];
+      }
+      if (count > 0) {
+        // The surface texture holds a delta from the authored plane, so the absolute level
+        // the body floats on is that plane plus the sampled average.
+        m_lastBodyLevel = m_settings.waterPlaneY +
+                          static_cast<float>(sum) / 1024.0f / static_cast<float>(count);
+        m_bodies[0].hasSimulatedLevel = true;
+      }
+    }
+  }
+  if (m_bodies[0].hasSimulatedLevel) m_bodies[0].simulatedLevel = m_lastBodyLevel;
+
+  // One slot per thread group, written unconditionally, so the buffer needs no clearing
+  // between queries: no allocation and no zeroing in the steady state.
+  if (!m_bodyLevelBuffer || m_bodyLevelSlots != slotCount) {
+    ComputeBufferDesc desc;
+    desc.byteWidth = static_cast<uint32_t>(readBytes);
+    desc.structureStride = 2 * sizeof(uint32_t);
+    desc.access = ComputeBufferAccess::ReadWrite;
+    desc.debugName = "Fluid Body Water Level";
+    m_bodyLevelBuffer = driver->CreateComputeBuffer(desc);
+    if (!m_bodyLevelBuffer) return;
+    m_bodyLevelSlots = slotCount;
+    m_bodyLevelTicket = -1;
+  }
+
+  const std::vector<uint32_t> constants = BuildConstants();
+  struct LevelConstants {
+    float basinMinX, basinMinZ, bodyX, bodyZ, bodyRadius, stepX, stepZ, pad;
+  } level{m_settings.basinMinX, m_settings.basinMinZ,
+          m_bodies[0].x, m_bodies[0].z, m_bodies[0].radius,
+          (m_settings.basinMaxX - m_settings.basinMinX) / static_cast<float>(m_settings.width),
+          (m_settings.basinMaxZ - m_settings.basinMinZ) / static_cast<float>(m_settings.depth),
+          0.0f};
+  std::array<uint32_t, 8> levelWords{};
+  std::memcpy(levelWords.data(), &level, sizeof(level));
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
+    {ComputeBindingType::Constants32, 1, nullptr, levelWords.data(), 8u},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, m_surfaceOutput},
+    {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0},
+    {ComputeBindingType::ReadWriteBuffer, 0, m_bodyLevelBuffer.get(), nullptr, 0}
+  };
+  const uint32_t gxGroups = (m_settings.width + m_bodyLevelPipeline->threadGroupSize[0] - 1) / m_bodyLevelPipeline->threadGroupSize[0];
+  const uint32_t gyGroups = (m_settings.depth + m_bodyLevelPipeline->threadGroupSize[1] - 1) / m_bodyLevelPipeline->threadGroupSize[1];
+  if (!driver->DispatchCompute(*m_bodyLevelPipeline, bindings, gxGroups, gyGroups, 1)) return;
+
+  m_bodyLevelTicket = driver->RequestComputeReadback(*m_bodyLevelBuffer, readBytes);
+  if (m_bodyLevelTicket > 0) return;
+
+  // Backend without an asynchronous path: pay one stall rather than lose the feature.
+  std::vector<uint32_t> raw(slotCount * 2u, 0u);
+  if (!driver->ReadComputeBuffer(*m_bodyLevelBuffer, raw.data(), readBytes)) return;
+  int64_t sum = 0;
+  uint64_t count = 0;
+  for (uint32_t slot = 0; slot < slotCount; ++slot) {
+    sum += static_cast<int32_t>(raw[slot * 2u + 0u]);
+    count += raw[slot * 2u + 1u];
+  }
+  if (count > 0) {
+    m_lastBodyLevel = m_settings.waterPlaneY +
+                      static_cast<float>(sum) / 1024.0f / static_cast<float>(count);
+    m_bodies[0].hasSimulatedLevel = true;
+    m_bodies[0].simulatedLevel = m_lastBodyLevel;
+  }
+}
+
 void FluidSimulation::AdvanceSphere(float dt) {
   if (dt <= 0.0f) return;
   for (FluidSphere& body : m_bodies) AdvanceOneSphere(body, dt);
@@ -1355,8 +1456,14 @@ void FluidSimulation::AdvanceOneSphere(FluidSphere& s, float dt) {
   const float floorY = m_settings.basinMinY;
   const float radius = (std::max)(s.radius, 0.001f);
 
+  // W-06: buoyancy follows the simulated surface under the body, not the authored plane, so
+  // the body rides waves and rises in the trough they leave. The level arrives from the
+  // asynchronous ring query two or three frames late; until the first result the authored
+  // plane stands in.
+  const float waterLevel = s.hasSimulatedLevel ? s.simulatedLevel : m_settings.waterPlaneY;
+
   // Spherical-cap volume fraction: f = h^2(3r-h)/(4r^3)
-  const float h = (std::min)((std::max)(m_settings.waterPlaneY - (s.y - radius), 0.0f), 2.0f * radius);
+  const float h = (std::min)((std::max)(waterLevel - (s.y - radius), 0.0f), 2.0f * radius);
   s.submerged = (h * h * (3.0f * radius - h)) / (4.0f * radius * radius * radius);
 
   const float ratio = (std::max)(s.densityRatio, 0.02f);
@@ -1785,6 +1892,9 @@ bool FluidSimulation::StepInternal(BaseDriver* driver, bool writeSurface) {
   // exactly the amount the body's submerged volume displaced.
 
   if (!writeSurface) return true;
+  // W-06: ask for the water level around the body now that this frame's surface exists. The
+  // answer is consumed by the next query, so buoyancy lags the surface by one to three frames.
+  QueryBodyWaterLevel(driver);
   // Derive the renderable 2D surface from the volume. The surface pass samples
   // the previous surface and writes a separate target (ping-pong): a resource
   // cannot be both read and written in one dispatch.
@@ -2145,24 +2255,37 @@ bool FluidSimulation::ReadDiagnostics(BaseDriver* driver, Diagnostics& out) {
   out = Diagnostics{};
   if (!m_ready || !driver || !m_diagnosticsPipeline) return false;
 
-  ComputeBufferDesc bufferDesc;
-  bufferDesc.byteWidth = 8 * sizeof(uint32_t);
-  bufferDesc.structureStride = 4 * sizeof(uint32_t);
-  bufferDesc.access = ComputeBufferAccess::ReadWrite;
-  bufferDesc.debugName = "Fluid Diagnostics";
-  const std::array<uint32_t, 8> seed = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
-  std::unique_ptr<ComputeBuffer> buffer = driver->CreateComputeBuffer(bufferDesc, seed.data());
-  if (!buffer) return false;
+  // W-04 step 3: one persistent accumulator instead of a fresh buffer per call. The kernel
+  // clears it itself (a sentinel in the Iteration slot), which costs one extra dispatch of a
+  // kernel that only touches two uint4 slots.
+  if (!m_diagnosticsBuffer) {
+    ComputeBufferDesc bufferDesc;
+    bufferDesc.byteWidth = 8 * sizeof(uint32_t);
+    bufferDesc.structureStride = 4 * sizeof(uint32_t);
+    bufferDesc.access = ComputeBufferAccess::ReadWrite;
+    bufferDesc.debugName = "Fluid Diagnostics";
+    const std::array<uint32_t, 8> seed = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    m_diagnosticsBuffer = driver->CreateComputeBuffer(bufferDesc, seed.data());
+    if (!m_diagnosticsBuffer) return false;
+  }
+  ComputeBuffer* buffer = m_diagnosticsBuffer.get();
 
+  const std::vector<uint32_t> resetConstants = BuildConstants(0xFFFFFFFFu);
+  const std::vector<ComputeBindingDesc> resetBindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, resetConstants.data(), static_cast<uint32_t>(resetConstants.size())},
+    {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
+    {ComputeBindingType::ReadWriteBuffer, 0, buffer, nullptr, 0}
+  };
   const std::vector<uint32_t> constants = BuildConstants();
   const std::vector<ComputeBindingDesc> bindings = {
     {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},
     {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_velocity[m_current].get()},
-    {ComputeBindingType::ReadWriteBuffer, 0, buffer.get(), nullptr, 0}
+    {ComputeBindingType::ReadWriteBuffer, 0, buffer, nullptr, 0}
   };
   const uint32_t groupsX = (m_settings.width + m_diagnosticsPipeline->threadGroupSize[0] - 1) / m_diagnosticsPipeline->threadGroupSize[0];
   const uint32_t groupsY = (m_settings.height + m_diagnosticsPipeline->threadGroupSize[1] - 1) / m_diagnosticsPipeline->threadGroupSize[1];
   const uint32_t groupsZ = (m_settings.depth + m_diagnosticsPipeline->threadGroupSize[2] - 1) / m_diagnosticsPipeline->threadGroupSize[2];
+  if (!driver->DispatchCompute(*m_diagnosticsPipeline, resetBindings, groupsX, groupsY, groupsZ)) return false;
   if (!driver->DispatchCompute(*m_diagnosticsPipeline, bindings, groupsX, groupsY, groupsZ)) return false;
 
   std::array<uint32_t, 8> raw = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};

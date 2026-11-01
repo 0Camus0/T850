@@ -210,6 +210,13 @@ fixed (section 4, "Fixes after the review"). The branch is 99+ commits ahead of 
 Execution order, one session each. Item 2 runs twice: a baseline first, so porting never hides an
 existing break, and a final pass after everything else.
 
+**Progress (2026-11-01, local agent):** item 1st done — 6/6 Windows cells build, 78/78 gameplay
+tests per runnable cell; two breaks found and fixed (Win32 Vulkan handle cast, ARM64 Dawn metadata).
+Item 2nd done — the launcher's texture path is proven and guarded by a read-only script. Item 3rd
+partly done — CLI flags documented in `--help` and the runtime-configuration doc, W-14 answered (no
+include handler; layout guard shipped instead), W-16 sections 6/8 still open, scripts not yet moved.
+Android, Steam Deck and Web builds are untouched. Detail in the Stage 8 log.
+
 | Order | Item | Size |
 |---|---|---|
 | 1st | 2a. Baseline build of every platform | S–M |
@@ -2496,3 +2503,19 @@ online without downloading or writing to R2, and fails when a single map is remo
 
 **W-06 step 4 re-measured after the sign fix** — table in W-06: 0.15 → 20 mm of settled bob,
 0.05 → 81 mm, 0.00 → 243 mm, 0.40 → 7 mm. 0.15 stays.
+
+**Pick test was failing; fixed (`ea702c6a`).** The 2026-11-01 review reported the pick test passing on
+all three APIs; it does not. `--backyard-pick-test` drives a synthetic `InputManager`, but DevLayer
+also forwards the *physical* input to `Scene::OnInput` every frame, so `HandleBallDrag` saw the real
+button up and ended the synthetic drag one frame after the grab. Both hold checks failed on D3D12,
+Vulkan and D3D11. `OnInput` now returns early while the pick test owns the input (which is also the
+owner's rule: an automated run must not react to the real mouse). After the fix: **PASS (0 failures)**
+on all three, and the backyard self-test still PASSes.
+
+Two false alarms worth recording, because both look like regressions and are not:
+
+* The pick test needs `--backyard-spawn 2`; without it the first check fails with a clear message.
+* `kSettleFrames = 600` is 600 *frames*, which under `--unattended` at ~300 fps is only 2 s, so the
+  "settled" ball in that test is still riding the splash crest (`y = +0.09`). The interactive float
+  height is fine: `--backyard-ball-probe 60` with two spawned balls shows `y` −0.066…−0.085,
+  `level` −0.035…−0.050, `submerged` 0.58–0.62 from t = 4 s on.

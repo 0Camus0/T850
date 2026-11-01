@@ -203,10 +203,19 @@ Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Befor
 
 ### After that — the next stage
 
-Stage 6b's remaining half is **W-07** (displace, don't delete): attempt 1 was rejected, and the
-next design needs a local probe of the entry rim before the kernel is written. **W-26** is the
-cheapest open item — the trapped-air compensation in `CS_FluidSurface3D` now hides air the van Leer
-flux already keeps out, so removing it and re-running gate 7 is a small, self-contained change.
+**W-07 needs a real design change, and W-27 is the cheapest open item.** Both were established this
+session:
+
+- **W-07** (displace, don't delete): attempts 1 and 2 are measured/analysed and neither ships.
+  Attempt 2's conclusion is that the flicker is the *binary mask flip*, not the distribution, so the
+  body needs a **per-cell solid fraction** (sub-cell coverage) in the mask, the transport and the
+  seven kernels that test `IsSolid`. That is a stage of its own; the acceptance target is the table
+  in W-26 (remove the trapped-air term, `covered min−ring` back under 20 mm, band profile flat).
+- **W-27** (the wind tunable is inert): wind is applied only above `SurfaceLevel · Height`, which on
+  this pool is two rows of *air*. One constant and one re-check; it also unblocks verifying W-06's
+  current with a real wind-driven flow instead of a forced one.
+- **W-16** still owes sections 6–8 of the implementation record; §7 and §8.1 were refreshed this
+  session, together with the kernel table and the readback contract.
 
 Stage 5b (W-03), the conservative transport, is **done as far as measurement supports it**
 (attempt 3, section 3, "Stage 5b, attempts 2 and 3"). Attempt 1 was measured and rejected on
@@ -2175,7 +2184,46 @@ the proof the clear happens — `div rms` decays monotonically instead of growin
 
 **W-07 still open; W-06 landed (`4e93d9d5`).** W-07 attempt 1 (gather displacement) was reverted:
 it conserved what it moved but changed no global metric and failed gate 8 (0.034 m flicker vs
-0.010), because a bobbing ball's footprint flickers across cell boundaries.
+0.010), because a bobbing ball's footprint flickers across cell boundaries. Attempt 2 was an
+analysis: the flicker is the *binary mask flip* itself, so the fix needs a per-cell solid fraction
+across the mask and the transport — scoped in W-07, not started.
+
+**Session 2026-10-31 (late): W-26 measured, W-06 steps 3–4, the probe.**
+
+Order attempted was W-26 → W-06 → W-07 → W-16; W-26 and W-07 both ended as measurements rather than
+changes, for opposite reasons (W-26 is still needed, W-07 needs a bigger design).
+
+*W-26.* `TRAPPED_AIR_DEPTH_CELLS` set to 1000 (term identically zero), self-test on D3D12 and Vulkan:
+`ring−far` −2.0/−1.4 → −7.4/−6.7 mm, `covered min−ring` −15.9/−13.8 → **−20.7**/−19.1 mm (limit 20),
+band profile −0.9 −1.0 −0.8 → −1.8 −2.0 −1.7 cm, flicker 0.0005 → 0.0006 m, `submerged` and `y`
+unchanged. The term was restored: it is worth 4.8 mm and the gate is decided by a ±0.8 mm
+API-to-API spread, so relaxing it would hide water rather than measure it. What the numbers do say is
+that **W-03's sharper flux did not reduce the moat** — it is body-deleted water, i.e. W-07.
+
+*W-06 step 3.* `CS_FluidBodyLevel` returns Σu and Σw in the same `uint4` slot (annulus mean at the
+shallower of the column's waterline row and the body's centre row), and `AdvanceOneSphere` applies
+drag to `(v − flow)` and adds the flow back. Direction verified by forcing the flow to (+0.5, −0.25)
+for one build: the body ended at the +X and −Z walls, exactly as forced; the override was removed
+before the final build. Cost, same-session A/B, 720p, 0 balls: D3D12 **310.1 → 312.5 fps**, Vulkan
+**291.9 → 295.5**.
+
+*W-06 step 4.* Heave damping is measured, not tuned by feel. Settled window t = 5…10 s, scene 7,
+`--backyard-ball-probe 30`: **0.15 → 18 mm** residual bob, 0.05 → 128 mm, 0.00 → 307 mm, with the
+sampled level inside 4 mm of the plane over the same window. Kept at 0.15, now justified as the
+radiation damping a one-way coupling cannot produce.
+
+*New instrument.* `--backyard-ball-probe N` logs the body's position, velocity, sampled level,
+`submerged`, sampled current and the radial surface profile (far, ring−far, covered min−ring, running
+rim/moat extremes, eight bands) from the surface texture the renderer draws. It was needed because
+the mass audit cannot see a 2 cm moat: that is why W-07 attempt 1 could not tell whether it had helped.
+
+*Found and filed (W-27).* The wind tunables do nothing: `CS_FluidForces3D` drives rows above
+`SurfaceLevel · Height` (21.1) while the pool is only filled to row ≈ 17, so wind touches only air.
+8× `windX` left a scene-7 run bit-identical.
+
+Verification on the final binary: `--backyard-selftest` PASS on D3D12, Vulkan and D3D11 (all ten
+gates; float `far` −2.4/−2.8/−2.3 mm, `ring−far` −2.0/−1.4/−2.1 mm, `covered min−ring`
+−15.9/−13.8/−13.8 mm, `submerged` 0.60 on all three — the D3D11 synchronous fallback included).
 
 W-06 floats the body on the simulated surface. `CS_FluidBodyLevel.hlsl` averages the surface over
 an annulus around body 0 (inner 1.05 r to stay outside the ball's own meniscus, outer 2 r + h to
@@ -2194,8 +2242,29 @@ Vulkan 268.9 → 268.1 at 0 balls; D3D12 262.7 → 261.3 and Vulkan 260.3 → 25
 298.6 / 280.6 fps recorded after P4/P5 came from an earlier session and today's baseline is 287.3,
 which is exactly why the A side is rebuilt rather than quoted.
 
-Still open: W-06 step 3 (horizontal drift from the local liquid velocity) and step 4 (retune
-`sphereHeaveDamping`, 0.15, now the only hand-tuned stand-in for wave radiation).
+Still open: W-07 (the moat), W-27 (the wind tunable is inert), and W-16's remaining sections.
+
+**W-06 step 3 (the body feels the current) and step 4 (heave damping), 2026-10-31.** The annulus
+kernel now also returns the horizontal liquid velocity, so drag acts on `(v − flow)`; heave damping
+0.15 was re-measured and kept (0.05 → 128 mm residual bob, 0.00 → 307 mm, shipped → 18 mm). Both are
+recorded under W-06, with the A/B (D3D12 310.1 → 312.5 fps, Vulkan 291.9 → 295.5 at 720p, 0 balls).
+
+**W-26 was measured and the term kept.** Setting `TRAPPED_AIR_DEPTH_CELLS` to 1000 costs 4.8 mm of
+moat and pushes D3D12's gate 7 to 20.7 mm against a 20 mm limit (Vulkan 19.1). The transport was not
+the culprit: the moat is water the body deletes, so the term waits for W-07. Table in W-26.
+
+**W-07 attempt 2 was analysis, not code.** The cheap route ("displace only on footprint change,
+distance-weighted") cannot pass gate 8, because the flicker comes from the *binary mask flip* — one
+full cell of water changes hands in a single substep no matter how it is spread. The real fix is a
+per-cell solid fraction (sub-cell coverage) in the mask, the transport and the seven kernels that
+test `IsSolid`. Scoped in W-07; not started.
+
+**New instrument: `--backyard-ball-probe N`.** The mass audit averages the whole pool and cannot see
+a 2 cm moat, which is why both W-06's acceptance and W-07's first attempt were flying blind. The
+probe logs, every N frames: the body's `y`, `vy`, `x`, `z`, `vx`, `vz`, the sampled level and plane,
+`submerged`, the sampled current, and the radial surface profile (far-field level, ring−far, covered
+min−ring, running `rimPeak`/`moatMin`, plus eight 10 cm bands). It reads the same surface texture the
+renderer draws, runs headless, and needs no input.
 
 ### Stage 7 — W-15
 

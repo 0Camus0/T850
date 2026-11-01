@@ -35,8 +35,8 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-02 R32F storage for α/pressure/divergence | **Done** | `14c705f4` + part 2 | α, pressure, divergence are R32F; still-pool loss 0.693 % → 0.001 %. The gate shift was an off-centre isotropy probe, an fp16-calibrated gate 5 floor and trapped air read as missing water. Tiled surface kernel: 720p D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 |
 | W-03 Mass lost every substep | **Mostly done** (attempt 3) | `b5ae57fa`, van Leer flux | Transport loss is ~0 (deficit is the displaced body volume); van Leer/minmod face value lifts bulk 0.9969 → 0.9987 and cuts cells below 0.98 by 79 % for free. Splitting and SLIC measured and rejected. Three acceptance lines marginal — see W-03 |
 | W-04 GPU→CPU readbacks | **Done** | `c911381a`, `ad7e019e`, `4e93d9d5` | Correction no longer reads back (GPU reduce + GPU deficit); probes only at info logging. Step 5 added the async readback pair on D3D12/Vulkan (`Request/ConsumeComputeReadback`); step 3 made the diagnostics buffer persistent with a kernel-side clear. Under 1 % on every perf row |
-| W-06 Ball does not feel the water | **Done** | `4e93d9d5` | Buoyancy now floats on the simulated surface averaged over an annulus around the body, so the ball rises on a crest and drops into a trough; it settles oscillating around y = −0.05…−0.08 m with `submerged` 0.54–0.63 instead of sitting on the authored plane. `sphereHeaveDamping` (0.15) is now the leftover hand-tuned term to revisit |
-| W-07 Water under the ball is deleted | **Attempt 1 rejected** | — | The gather pass conserves what it moves but changes no global metric and fails gate 8 (0.034 m flicker, limit 0.010). Next design recorded in W-07 |
+| W-06 Ball does not feel the water | **Done** | `4e93d9d5`, this session | Buoyancy floats on the simulated surface averaged over an annulus; step 3 added the annulus current so drag acts on (v − flow). Step 4 measured: heave damping 0.15 stays (0.05 → 128 mm residual bob, 0 → 307 mm) |
+| W-07 Water under the ball is deleted | **Attempts 1 and 2 measured, not shipped** | — | Attempt 1 failed gate 8 (0.034 m flicker). Attempt 2 established *why*: any pass that respects the binary wall mask moves a whole cell when the footprint flips, so the fix needs a per-cell solid fraction (sub-cell coverage) in the mask and the transport, not a smarter displacement pass. Design recorded in W-07 |
 | W-05 Moving body re-uploads the wall mask | Done differently (review) | `c911381a` | Mask restamped on the GPU in a persistent buffer; no upload after startup. The analytic-body design is no longer needed for cost |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
 | W-10 Water invisible to depth post effects | Done, **redesigned in review** | `96d84638` + `47500166` | The extra pass duplicated `Deferred:DEPTH`; removed. CoC now uses the nearer depth; see W-10 |
@@ -45,7 +45,8 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-23 Textured materials with normal maps | **Done** (Stage 4b) | `507ef1a4` | CC0 ambientCG textures with NormalGL, world-box UVs |
 | W-24 House roof is upside down | **Done** (Stage 4a) | `2114fa0e` | Sign flipped, gables closed |
 | W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` + `ff66c039` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 (headless) and the frame probe landed in `ff66c039` |
-| W-26 The surface kernel compensates for trapped air | **Open** (debt from W-02) | `3c4e33c0` | `TRAPPED_AIR_DEPTH_CELLS` in `CS_FluidSurface3D` counts air deeper than two cells as volume, so the drawn surface hides the air a plunge entrains (no bubble buoyancy). Remove it once W-03/W-07 sharpen the transport, and re-run gate 7. The van Leer flux already halved the float gates' distance from their limits |
+| W-26 The surface kernel compensates for trapped air | **Measured; cannot be removed yet** | this session | Removing it costs 4.8 mm more moat: `covered min−ring` −15.9 → **−20.7 mm** (D3D12, limit 20) and −13.8 → −19.1 (Vulkan). The term is still hiding water W-07 deletes, so it stays until W-07 lands; the measurement is recorded in W-26 and in the implementation record §7 |
+| W-27 The wind tunable does nothing | **Open** (found this session) | — | Wind is applied only above `SurfaceLevel · Height`, which with `surfaceLevel` 0.96 and fill 0.788 lands in the air rows. 8× wind left a scene-7 run bit-identical. Not fixed here because it is not on the water path this session touched |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -711,6 +712,43 @@ on the authored plane. Steps 3 (horizontal drift) and 4 (retune `sphereHeaveDamp
 open — that 0.15 ratio is now the only hand-tuned term standing in for the wave radiation the ball
 should produce.
 
+**Step 3 — the body is carried by the current (2026-10-31).** `CS_FluidBodyLevel` now also averages
+the horizontal liquid velocity in the same annulus, at the shallower of the column's waterline row
+and the body's own centre row, and returns it as two more fixed-point integers in the same slot
+(the buffer is `uint4`: Σheight, Σcount, Σu, Σw, all at 1/1024). `AdvanceOneSphere` applies drag to
+`(v − flow)` and adds the flow back:
+
+```
+vx = flowX + (vx − flowX) / (1 + a_drag/|v_rel| · dt)
+```
+
+so a current carries the body asymptotically instead of the water being an absolute brake. Cost:
+one extra texture fetch in a 91-group dispatch; same-session A/B at 720p with 0 balls, D3D12
+**310.1 → 312.5 fps**, Vulkan **291.9 → 295.5** (inside run variance, no regression).
+
+Verified two ways. (a) A 30-ball run produces a real current (`flow` reaches +0.05…+0.13 m/s) and
+the body drifts with it. (b) A direction check with the flow forced to (+0.5, −0.25) in the
+integrator for one build: the body crossed to `x = +4.249` (the +X wall) and `z = −8.750` (the −Z
+wall), i.e. exactly the forced direction; the temporary override was then removed. That check was
+needed because **the wind tunable turns out to be inert** — see W-27.
+
+**Step 4 — heave damping is measured, not guessed.** With the body now floating on the real
+surface, the question was whether 0.15 can come down. It cannot, and the reason is structural: the
+coupling is one-way, so nothing radiates the body's heave energy away, and the damping ratio is the
+only sink. Scene 7, `--backyard-ball-probe 30`, settled window t = 5…10 s:
+
+| `sphereHeaveDamping` | y range in the settled window | y min … max | max \|vy\| |
+|---|---|---|---|
+| **0.15 (shipped)** | **18 mm** | −0.083 … −0.065 m | 0.050 m/s |
+| 0.05 | 128 mm | −0.145 … −0.017 m | 0.365 m/s |
+| 0.00 | 307 mm | −0.225 … +0.082 m | 0.875 m/s |
+
+At 0.15 the residual 18 mm is the body following the pool's remaining motion (the sampled level
+sits within 4 mm of the plane over the same window), not a free oscillation. 0.15 is also inside the
+0.1–0.3 band a real heaving sphere radiates at, so it stays, and it is now a justified number rather
+than a fudge factor. A two-way coupling (the body pushing α out of its cells, i.e. W-07) is what
+would let it come down.
+
 ---
 
 ### W-07 — Water under the ball is deleted, not displaced (P2, M, suggested: DeepSeek)
@@ -761,6 +799,41 @@ receivers, and run it only on the substeps where the footprint actually changed 
 before anything else, because that gate is what caught this. The mass argument for the pass is
 weaker than it looked: the correction already holds total α at the body-adjusted reference, so the
 prize is the *local* rim, and that needs a probe that can see it (the audit cannot).
+
+**Attempt 2 (2026-10-31) — the design was analysed and the cheap route rejected before writing it.**
+The probe this item needed now exists (`--backyard-ball-probe N`, see the hand-back in the staged
+plan), so the local rim is finally measurable: the settled float leaves a **−2.0 mm** ring offset
+and a **−15.9 mm** covered-column dip against the far field, with a 10 cm band profile of
+−0.9 −1.0 −0.8 −0.2 cm. Attempt 2's plan was "displace only when the footprint changed, weighted by
+distance". Analysed, that cannot work:
+
+1. **The mask flip is the quantisation, not the distribution.** A body cell holds α = 0 after the
+   transport, so a gather pass only ever picks up water from cells that *just* became solid — attempt
+   1 was already "on change" in effect. Its whole-cell flicker came from the *binary mask*, not from
+   re-moving water: the ball's centre crosses a cell boundary, the mask flips, and one full cell
+   (0.73 L) changes hands in a single substep regardless of how the amount is then spread. Weighting
+   by 1/distance reduces the *peak* per receiver only linearly, so gate 8's 10 mm limit is still
+   exceeded for realistic flip rates (a floating ball crosses a boundary about twice a second).
+2. **Sub-cell coverage cannot be bolted onto the displacement pass alone.** The excluded volume that
+   matters is `α · (coverage(t) − coverage(t−dt))`, but `coverage` is only meaningful if the *mask
+   itself* is a solid fraction: `IsSolid` in seven kernels, the wall-mask encoding of the body index
+   (`2u + k`), and the transport's zeroing rule all assume a bit. Passing an analytic sphere to one
+   extra pass changes the water that moves without changing what the surface integral reads, so the
+   moat stays.
+
+So the real task is Qwen's suggestion in the review of this attempt: **replace the body's binary
+mask with a per-cell solid fraction** — a `solidFraction` volume, `freeVolume = 1 − solidFraction`,
+α measured per unit free volume, an analytic sphere-cube coverage for the body, and every kernel's
+`IsSolid` reading the fraction (or a threshold plus the fraction for the transport). Then a 5 mm bob
+changes a cell's solid fraction by 5.5 % instead of flipping it, the displaced volume per substep is
+smooth, and gate 8 is satisfied by construction. That is a stage, not a patch: seven kernels, the
+mask encoding, the stamp kernel and the surface kernel's body-column logic. It is scoped here and
+deliberately not started in the same session as the probes it would need.
+
+**What would have to be true to accept it:** the same band profile at the settled float (currently
+−0.9 −1.0 −0.8 −0.2 cm) flattens toward 0 with the far field, `covered min−ring` shrinks from
+−15.9 mm without the trapped-air term (which is what W-26 wants), gate 8 stays under 10 mm, gate 6
+stays 0.60 ± 0.02, and the volume correction's deficit is unchanged.
 
 ---
 
@@ -1824,6 +1897,54 @@ W-07, not a larger ramp. Record the measured before/after in the implementation 
 **Acceptance.** Gate 7 within its limits **without** the term, on D3D12 and Vulkan, with the
 surface-texture gate and the full backyard self-test unchanged; the frame-dump check that the water
 around a floating ball is level.
+
+**Attempt 1 (2026-10-31) — measured, term kept.** `TRAPPED_AIR_DEPTH_CELLS` was set to 1000 (term
+identically zero) and the self-test run on both APIs:
+
+| | with the term | without it |
+|---|---|---|
+| `ring−far` D3D12 / Vulkan | −2.0 / −1.4 mm | **−7.4 / −6.7 mm** |
+| `covered min−ring` D3D12 / Vulkan | −15.9 / −13.8 mm | **−20.7** / −19.1 mm (limit 20) |
+| band profile vs far (cm) | −0.9 −1.0 −0.8 −0.2 | −1.8 −2.0 −1.7 −0.7 |
+| float flicker | 0.0005 m | 0.0006 m |
+| `submerged`, ball `y` | 0.60, −0.073 | 0.60, −0.073 |
+
+So the term is worth **4.8 mm** of moat and D3D12 then exceeds gate 7 by 0.7 mm; Vulkan scrapes in
+at 19.1. Two conclusions: (a) the van Leer flux did **not** reduce the moat — it sharpened the
+far-field interface, but the moat is water the *body deletes*, which is W-07 by definition; (b) a
+gate decided by ±0.8 mm between two APIs, on a term worth 4.8 mm, is not something to relax. The
+term therefore stays until W-07 gives the body sub-cell coverage, and this table is the acceptance
+target for that stage. The flicker and the buoyancy are unaffected, so the risk named in (a) above
+(air hidden, double counting later) is the only live one.
+
+---
+
+### W-27 — The wind tunable does nothing (P3, S) — found 2026-10-31
+
+**Problem.** `windX` / `windY` / `windZ` are JSON tunables, sliders, and a forcing term in
+`CS_FluidForces3D`, but they are applied only to the top rows of the domain:
+
+```hlsl
+const float surfaceY = SurfaceLevel * float(Height);
+if (float(id.y) > surfaceY - 2.0f) { /* u += WindX * gain; ... */ }
+```
+
+`SurfaceLevel` (0.96 from `BackyardWater.json`) is a fraction of the **domain height**, not of the
+water depth. The pool's domain spans Y −1.60…+0.38 m but the water only fills 0.788 of it, so the
+waterline sits at row ≈ 17 of 22 while `SurfaceLevel · Height` is 21.1: the wind only ever touches
+rows 20–21, which are **air**. Measured: raising `windX` from 0.6 to 5.0 (8×) left a scene-7 run
+bit-identical — same ball path, same sampled flow, to three decimals.
+
+**Why it matters now.** W-06 step 3 (the body feels the current) had to be verified with a forced
+flow in the integrator instead of with a real wind-driven current, because there is none.
+
+**Fix.** Drive the `SurfaceLevel` fraction off `basinMaxY − basinMinY` against the fill level the
+solver actually seeds (the layout's `waterPlaneY`), or pass the waterline row in the constants
+instead of deriving it from a fraction. Then re-check that a 2× wind moves the ball, and that the
+still-pool gate is unaffected at the default wind.
+
+**Acceptance.** A scene-7 run with `windX` 0 vs 2 differs measurably (`flow` in
+`--backyard-ball-probe`), still-pool gate unchanged, no new self-test failures.
 
 ---
 

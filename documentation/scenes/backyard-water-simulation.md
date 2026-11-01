@@ -294,7 +294,7 @@ The 16 original fluid kernels:
 | `fluid_sphere` | `CS_FluidSphere3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), **constants:1@2[12]**, read_only_buffer:8@3, storage_texture:0@4(3d), read_write_buffer:1@5 |
 | `fluid_obstacle_velocity` | `CS_FluidObstacleVelocity3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), sampled_texture:1@2(3d), **constants:1@3[12]**, read_only_buffer:8@4, storage_texture:0@5(3d) |
 | `fluid_clear` | `CS_FluidClear3D.hlsl` | constants:0@0[16], storage_texture:0@1(3d) |
-| `fluid_body_level` | `CS_FluidBodyLevel.hlsl` | constants:0@0[20], **constants:1@1[8]**, sampled_texture:0@2, read_only_buffer:8@3, read_write_buffer:0@4 |
+| `fluid_body_level` | `CS_FluidBodyLevel.hlsl` | constants:0@0[20], **constants:1@1[12]**, sampled_texture:0@2, **sampled_texture:1@3(3d)**, read_only_buffer:8@4, read_write_buffer:0@5 |
 
 Also modified: [shader_permutations.json](../../T850/Assets/Shaders/shader_permutations.json),
 `Framework/src/utils/ComputeKernelRegistry.cpp`, `Framework/src/utils/ComputeReflection.cpp`.
@@ -407,10 +407,11 @@ correction, on the GPU. See §10.
 **`CS_FluidStampBodies3D`** — rewrites the wall mask from the static base mask plus the body
 list. See §8.3.
 
-**`CS_FluidBodyLevel`** — averages the surface texture over an annulus around body 0 and writes
-one slot per thread group (no atomics, no clearing, no allocation), in fixed point at 1/1024 m.
-Feeds the buoyancy water line in §8.1; the host reads it back asynchronously one to three frames
-later.
+**`CS_FluidBodyLevel`** — averages the surface texture over an annulus around body 0 and, in the same
+pass, the horizontal liquid velocity at the shallower of the column's waterline row and the body's
+centre row. One slot per thread group (no atomics, no clearing, no allocation), a `uint4` of
+Σheight·1024, Σcount, Σu·1024 and Σw·1024. Feeds the buoyancy water line (level) and the drag
+reference (current) in §8.1; the host reads it back asynchronously one to three frames later.
 
 ### 6.4 Pressure solve maths
 
@@ -559,11 +560,31 @@ mass does not enter this term. Because the level now follows the surface, a body
 drops into a trough; `sphereHeaveDamping` (0.15) is the remaining hand-tuned stand-in for the
 energy it should radiate as waves.
 
-Quadratic drag **with added mass**:
+**The heave damping is measured, not fitted.** With the coupling still one-way nothing radiates the
+body's heave energy away, so the ratio is the only sink. Scene 7, settled window t = 5…10 s
+(`--backyard-ball-probe 30`): 0.15 → **18 mm** residual bob (max |vy| 0.050 m/s), 0.05 → 128 mm
+(0.365), 0.00 → 307 mm (0.875). The sampled level stays inside 4 mm of the plane over that window,
+so the 18 mm is the body following real surface motion rather than a free oscillation, and 0.15 sits
+inside the 0.1–0.3 band a real heaving sphere radiates at. Two-way coupling (W-07) is what would let
+it come down.
 
-$$F_d = \tfrac12 \rho_w C_d A v^2,\qquad
+**Trapped air.** The column integral reads air under a floating body as missing water, so §7's
+`TRAPPED_AIR_DEPTH_CELLS` term is what keeps the drawn free surface level there. Measured
+2026-10-31: zeroing that term moves `ring−far` from −2.0 to −7.4 mm and `covered min−ring` from
+−15.9 to −20.7 mm (gate limit 20), i.e. the term hides 4.8 mm of a moat that only a body that
+displaces α can remove.
+
+Quadratic drag **with added mass**, acting on the velocity *relative to the local current*:
+
+$$F_d = \tfrac12 \rho_w C_d A v_\text{rel}^2,\qquad
 m_\text{eff} = \rho_w V\left(\rho_\text{rel} + \tfrac13\right),\qquad
-a_\text{drag} = \frac{9\,C_d\,v^2}{16\,r\left(\rho_\text{rel} + \tfrac13\right)}$$
+a_\text{drag} = \frac{9\,C_d\,v_\text{rel}^2}{16\,r\left(\rho_\text{rel} + \tfrac13\right)}$$
+
+where $v_\text{rel} = v - u$ and $u$ is the annulus mean horizontal velocity from the same kernel
+that supplies the level. The update solves for the relative velocity and adds the current back
+($v = u + (v-u)/(1 + \tfrac{a_\text{drag}}{|v_\text{rel}|}\Delta t)$), so a current carries the body
+instead of the water being an absolute brake. Measured direction check: with $u$ forced to
+(+0.5, −0.25) the body ends at the +X and −Z walls.
 
 The added-mass term is `½ ρ_w (2/3)πr³` — the water the body drags along. Dividing by the
 *effective* inertia is what makes a dense body punch through the surface while a light one is

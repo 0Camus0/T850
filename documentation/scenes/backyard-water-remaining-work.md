@@ -34,8 +34,8 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-15 Solver and frame cost | **Done where it pays** (P1, P4, P5, P6, P7, P8) | `3a371903`, `c911381a`, `11357fab`, `efdac3d8` | 720p, 0 balls: D3D12 222 → **298.6** fps, Vulkan → **280.6**; 30 balls 268.6 / 259.8; 0 spikes. P2 and P3 were attempted and rejected on measurement, P9 is debug-only. See the 2026-10-31 pass in W-15 |
 | W-02 R32F storage for α/pressure/divergence | **Done** | `14c705f4` + part 2 | α, pressure, divergence are R32F; still-pool loss 0.693 % → 0.001 %. The gate shift was an off-centre isotropy probe, an fp16-calibrated gate 5 floor and trapped air read as missing water. Tiled surface kernel: 720p D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 |
 | W-03 Mass lost every substep | **Mostly done** (attempt 3) | `b5ae57fa`, van Leer flux | Transport loss is ~0 (deficit is the displaced body volume); van Leer/minmod face value lifts bulk 0.9969 → 0.9987 and cuts cells below 0.98 by 79 % for free. Splitting and SLIC measured and rejected. Three acceptance lines marginal — see W-03 |
-| W-04 GPU→CPU readbacks | **Done** | `c911381a`, `ad7e019e`, `4e93d9d5` | Correction no longer reads back (GPU reduce + GPU deficit); probes only at info logging. Step 5 added the async readback pair on D3D12/Vulkan (`Request/ConsumeComputeReadback`); step 3 made the diagnostics buffer persistent with a kernel-side clear. Under 1 % on every perf row |
-| W-06 Ball does not feel the water | **Done** | `4e93d9d5`, this session | Buoyancy floats on the simulated surface averaged over an annulus; step 3 added the annulus current so drag acts on (v − flow). Step 4 measured: heave damping 0.15 stays (0.05 → 128 mm residual bob, 0 → 307 mm) |
+| W-04 GPU→CPU readbacks | **Done** | `c911381a`, `ad7e019e`, `4e93d9d5` | Correction no longer reads back (GPU reduce + GPU deficit); probes only at info logging. Step 5 added the async readback pair on D3D12/Vulkan (`Request/ConsumeComputeReadback`); step 3 made the diagnostics buffer persistent with a kernel-side clear. Review fixed the D3D12 copy from `UNORDERED_ACCESS` (debug-layer error) and ticket matching |
+| W-06 Ball does not feel the water | **Done for body 0 only; step 4 to re-measure** | `4e93d9d5`, `a9e3c683`, review | Buoyancy floats on the simulated surface averaged over an annulus; step 3 added the annulus current. Review: the kernel dropped every negative level offset and current (unsigned cast), and the level/current reach the scripted ball only. Fixed the sign; heave table and all-bodies are open |
 | W-07 Water under the ball is deleted | **Attempts 1 and 2 measured, not shipped** | — | Attempt 1 failed gate 8 (0.034 m flicker). Attempt 2 established *why*: any pass that respects the binary wall mask moves a whole cell when the footprint flips, so the fix needs a per-cell solid fraction (sub-cell coverage) in the mask and the transport, not a smarter displacement pass. Design recorded in W-07 |
 | W-05 Moving body re-uploads the wall mask | Done differently (review) | `c911381a` | Mask restamped on the GPU in a persistent buffer; no upload after startup. The analytic-body design is no longer needed for cost |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
@@ -748,6 +748,21 @@ sits within 4 mm of the plane over the same window), not a free oscillation. 0.1
 0.1–0.3 band a real heaving sphere radiates at, so it stays, and it is now a justified number rather
 than a fudge factor. A two-way coupling (the body pushing α out of its cells, i.e. W-07) is what
 would let it come down.
+
+**Review (2026-11-01): two kernel bugs invalidated steps 3 and 4's measurements; fixed.**
+
+* `CS_FluidBodyLevel` packed its fixed-point sums with `(uint)clamp(v * 1024, ...)`. A negative
+  float converts to 0 (`ftou`; undefined on SPIR-V), so every negative level offset and every
+  negative current was dropped before the host's signed sum. Measured with 30 balls and
+  `--backyard-ball-probe 30`: before, 0 of 30 samples had a negative current on either axis
+  (`flowX` 0.001…0.312); after packing with `asuint((int)round(...))`, 16 of 30 on each axis and
+  12 of 30 levels below the plane. The ball was being pushed toward +X/+Z and floated on a level
+  biased high. Step 3's direction check forced the flow in C++, so it never exercised the kernel.
+* The open-water test read `WallMask[x + Width * z]`, a cell near the z = 0 wall; it now reads
+  the column's waterline cell, `x + Width * (row + Height * z)`.
+* **The level and the current reach `m_bodies[0]` only.** Spawned balls still float on the
+  authored plane and feel no current. Step 4's heave table was measured on the biased level and
+  must be re-run.
 
 ---
 

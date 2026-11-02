@@ -24,7 +24,10 @@ namespace t850 {
     // Scenes/BackyardWater.json so the gates validate the configuration that ships:
     // conservation depends on projection convergence (+29.6 cells lost at 60, +4.4 at 120,
     // +0.1 at 240 on the still pool).
-    uint32_t pressureIterations = 120;
+    // Sweeps per substep for the gates. 0 keeps `WaterTunables::EffectivePressureIterations()`
+    // (120 on desktop, capped on mobile/web) so the gates validate the configuration that
+    // ships; `--backyard-iterations N` forces a value to measure another platform's setting.
+    uint32_t pressureIterations = 0;
     // Skip the drop gates and run only the still-pool and mass gates.
     bool skipBall = false;
     // Requested cell size in metres; 0 keeps the WaterTunables default. The grid follows.

@@ -109,6 +109,7 @@ int main(int arg,char ** args) try {
   bool backyardSelfTest = false;
   bool backyardNoBall = false;
   float backyardCellSize = 0.0f;
+  int backyardIterations = 0;
   int backyardSpawnOnStart = 0;
   int backyardSelfTestFrames = 900;
   float fluidFixedDt = 1.0f / 300.0f;
@@ -172,6 +173,12 @@ int main(int arg,char ** args) try {
       const float value = std::stof(args[++i]);
       if (value >= 0.02f && value <= 0.5f) backyardCellSize = value;
       else T8_LOG_ERROR("[App] --backyard-cell-size %g is outside 0.02..0.5 m", value);
+    }
+    if (std::string_view(args[i]) == "--backyard-iterations" && i + 1 < arg) {
+      backyardSelfTest = true;
+      const int value = std::stoi(args[++i]);
+      if (value >= 1 && value <= 400) backyardIterations = value;
+      else T8_LOG_ERROR("[App] --backyard-iterations %d is outside 1..400", value);
     }
     if (std::string_view(args[i]) == "--backyard-spawn" && i + 1 < arg) {
       backyardSpawnOnStart = (std::max)(std::stoi(args[++i]), 0);
@@ -390,6 +397,10 @@ int main(int arg,char ** args) try {
     options.fixedDt = fluidFixedDt;
     options.skipBall = backyardNoBall;
     options.cellSize = backyardCellSize;
+    // 0 keeps the platform's shipped count (WaterTunables::EffectivePressureIterations); a value
+    // here is how another platform's setting is measured on desktop, e.g. --backyard-iterations 60
+    // to re-check the mobile/web cap.
+    options.pressureIterations = backyardIterations > 0 ? static_cast<uint32_t>(backyardIterations) : 0u;
     result = t850::RunBackyardSelfTest(pFrameWork->pVideoDriver, options);
   } else if (fluidSelfTest) {
     t850::BaseDriver* driver = pFrameWork->pVideoDriver;

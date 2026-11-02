@@ -23,6 +23,11 @@ namespace t850 {
     // (397 -> 298 fps with nothing else running) and is the shipped setting; W-15 P2
     // (in-place red-black on R32F) is what makes 240 affordable later.
     int   pressureIterations = 120;
+    // Mobile and web builds cap the sweep count: a phone GPU or a browser device pays the same
+    // per-sweep cost as a desktop card for a much smaller frame budget. Measured on D3D12 at 60
+    // sweeps (see the staged plan, "Mobile and web defaults") the gates still pass, with the
+    // still-pool loss moving 0.002 % -> 0.013 %, which is why 60 is the cap rather than 30.
+    static constexpr int kMobilePressureIterations = 60;
     float cellSize = 0.09f;
     // Absolute world Y of the still-water surface (the plane the water mesh is
     // authored at), and the metres of air the solver keeps above it so a free
@@ -245,6 +250,18 @@ namespace t850 {
       const float volume = (4.0f / 3.0f) * 3.14159265358979f * r * r * r;
       const float density = massKg / (sphereWaterDensity * (std::max)(volume, 1e-6f));
       return (std::min)((std::max)(density, 0.02f), 20.0f);
+    }
+
+    // Sweeps the scene and the gates should actually run. Mobile and web builds cap the
+    // configured value; desktop keeps whatever the JSON says. One helper so the headless gates
+    // validate the configuration that ships on every platform.
+    int EffectivePressureIterations() const {
+      const int configured = (std::max)(pressureIterations, 1);
+#if defined(__EMSCRIPTEN__) || defined(OS_ANDROID)
+      return (std::min)(configured, kMobilePressureIterations);
+#else
+      return configured;
+#endif
     }
   };
 

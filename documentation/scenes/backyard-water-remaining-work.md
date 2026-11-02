@@ -23,7 +23,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 |---|---|---|---|
 | W-18 Vulkan descriptor-pool exhaustion | Done | `a18d34e5` | Accepted. Recycles only compute-opened frames past 75 % of the pool |
 | W-12 Self-test gaps | Done | `853fff34`, `08d441fa` | Accepted. `--backyard-selftest` PASS on D3D12 and Vulkan; gates are calibrated against measurements |
-| W-01 Water invisible on GL/WebGPU | Done | `ea80665b` | Accepted. GL and WebGPU scene 7: 0 errors |
+| W-01 Water invisible on GL/WebGPU | Done | `ea80665b` | Accepted. GL and WebGPU scene 7: 0 errors. WebGPU went from "static pool fallback" to the full solver on 2026-11-01 (`00e28793`) |
 | W-08 Domain ceiling is a lid | Done, **corrected in review** | `ea80665b` + review commit | Gradient/pressure ghost-pressure mismatch at the ceiling fixed; see W-08 |
 | W-13 Dead code | Done | `ea80665b` | Accepted |
 | W-19 Ball sits in a funnel | Done (review) | `fa5422ff`, `33baad50` | Surface under/around the floating ball flat and stable; gates 7 and 8 |
@@ -375,12 +375,13 @@ explicitly — `config.json`'s `"scene": 7` is not honoured on the `--api`-only 
 **Done (2026-10-30).** Part 1 `14c705f4` (local agent), part 2 by the reviewer. The staged plan,
 section 4 "Stage 5a — W-02", has the measurements.
 
-- **Part 1:** `ComputeStorageFormat::R32Float` exists on D3D11, D3D12, Vulkan, GL and WebGPU (WebGPU
-  rejects it loudly: no WGSL storage path for it in this build). Each backend resolves a storage
-  format in one helper, and a 3D volume's format is now checked against the shader's declared storage
-  format on D3D12 and Vulkan — that mismatch used to be silent garbage. The compute self-test runs the
-  same 3D workload as RGBA16F and R32F, and the R32F case writes a value fp16 cannot hold: PASS on
-  D3D12, Vulkan and D3D11.
+- **Part 1:** `ComputeStorageFormat::R32Float` exists on D3D11, D3D12, Vulkan, GL and WebGPU. (When it
+  landed, WebGPU still rejected it — no 3D storage path in that build — but the 2026-11-01 port added
+  `texture_storage_3d<r32float, write>`, so the R32F volume case now runs on WebGPU too.) Each backend
+  resolves a storage format in one helper, and a 3D volume's format is checked against the shader's
+  declared storage format on D3D12, Vulkan and WebGPU — that mismatch used to be silent garbage. The
+  compute self-test runs the same 3D workload as RGBA16F and R32F, and the R32F case writes a value
+  fp16 cannot hold: PASS on D3D12, Vulkan, D3D11 and WebGPU.
 - **Part 2:** α, pressure and divergence are R32F; velocity stays RGBA16F. Still-pool loss 0.693 % →
   0.001 %, the fluid self-test's projection meanX +0.0201 → +0.0066. The three gates that moved were
   not solver physics: the isotropy annulus sat 9 cm off the impact (truncated cell index), gate 5's
@@ -1278,7 +1279,14 @@ section 7 of the record.
 * Android (Vulkan) and Linux/Steam Deck: the solver uses 3D storage images and compute on every
   substep; neither platform has run scene 7.
 * ARM64 Windows: builds only Framework + DayScene; not run.
-* The fallback path on GL/WebGPU depends on W-01.
+* **WebGPU: done 2026-11-01** (`00e28793`). The solver runs on Dawn/D3D12: `--compute-selftest`
+  (3D RGBA16F and R32F), `--fluid-selftest` (projection 0.596 → 0.211 at 50 iterations, mass drift
+  0.00 %), `--backyard-selftest` (all ten gates, float `ring−far` −1.7 mm, `covered min−ring`
+  −11.3 mm, flicker 0.0005 m) and `--backyard-pick-test` all PASS, and scene 7 with 8 seeded balls
+  logs 0 errors. Open: a frame-300 dump differs from D3D12 by mean |Δ| 24.8/255 on the deferred pass
+  and 1.4/255 on the back buffer, which needs a visual pass before the PR; the browser (Emscripten)
+  build has not been tried.
+* The GL fallback still depends on W-01.
 
 **Fix/acceptance.** Run scene 7 and the fluid self-test on each available platform, record
 results in the implementation record, and file a task for each failure.

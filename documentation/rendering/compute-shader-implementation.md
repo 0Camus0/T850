@@ -73,11 +73,41 @@ Current implementation status:
 | D3D11 | supported (CS 5.0, `TEXTURE3D` SRV/UAV) |
 | D3D12 | supported (`TEXTURE3D` resource plus SRV/UAV descriptors) |
 | Vulkan | supported (storage images are write-only: `[[spv::nonreadable]]`, so fields ping-pong) |
-| WebGPU/Dawn | not yet; capability false, callers fall back |
+| WebGPU/Dawn | supported since 2026-11-01: `texture_storage_3d` write-only for RGBA16F and R32F, `texture_3d` for reads (see below) |
 | OpenGL | not yet; capability false, callers fall back |
 
 `--compute-selftest` runs deterministic 1x1x1, 9x5x3 and 33x17x7 volume write/readback
 cases whenever the backend reports the capability, and skips them otherwise.
+
+#### WebGPU specifics
+
+The volume path is one `wgpu::Texture` with `dimension = e3D` and usage
+`StorageBinding | TextureBinding | CopySrc | CopyDst`, plus a single e3D view used for both the
+storage and the sampled binding (WebGPU never allows both in one dispatch, which matches the
+solver's ping-pong). Initial data goes through `Queue::WriteTexture`.
+
+Three Tint limits shape the shaders, and all three abort the process rather than failing
+gracefully:
+
+1. **`InterlockedAdd` / `InterlockedMax` on a vector component** ICEs the SPIR-V reader
+   (`vector_element_pointer.cc`). Every atomic accumulator is therefore a flat `uint` array:
+   `CS_FluidDiagnostics3D` (8 words), `CS_FluidVolumeReduce3D` (`entry * 4 + word`) and the two
+   volume self-test readers.
+2. **`isfinite` / `isnan` / `isinf` on a float3** hits the same ICE. Test the exponent bits
+   instead — `(asuint(v.x) & 0x7F800000) != 0x7F800000` — which is exact and lowers cleanly.
+3. **A shader family name may not carry a `#permutation` suffix**: the WGSL-first attempt
+   resolves the file from the requested name and rejects any extension but `.hlsl`/`.wgsl`, so
+   `CS_FluidSeed3D.hlsl#divergent` failed to prepare. The driver strips everything from `#`
+   before resolving; the permutation still reaches the disk-cache key through the defines.
+
+Inline `ReadOnlyBuffer` bindings (the solver's per-dispatch body list) have no WebGPU
+equivalent, so the driver copies them into a transient `Storage` buffer per dispatch.
+
+A headless compute loop never reaches the frame end that clears the uniform ring, and one
+submission per dispatch ends in `std::bad_alloc` after roughly a hundred thousand dispatches.
+The compute path therefore owns one encoder and submits it every 64 dispatches, dropping the
+uniform ring with each submit; `ReadComputeBuffer`, `BeginFrame`, `WaitForGPU` and
+`FlushGPUResources` drain the encoder first.
 
 
 ### Portable guarantees

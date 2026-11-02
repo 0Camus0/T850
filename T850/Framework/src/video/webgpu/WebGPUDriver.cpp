@@ -851,8 +851,9 @@ public:
     #else
       Require(RecordShaderPreparation(T8_TELEMETRY_CALL("shader.load", webgpu::LoadShaderFiles(request, artifact, report, diagnostic, desc.source)), artifact, report),
               diagnostic.empty() ? "Compute shader preparation failed" : diagnostic);
-      if (!g_config.webShaderOutput.empty())
-        Require(webgpu::WriteShaderPackage(packagedRequest, artifact, state.flow, report, g_config.webShaderOutput, diagnostic), diagnostic);
+      // The browser package is written once the declarations are known to be valid (`SetValidatedLayout`
+      // below). Writing it here exported junk for the self-test's deliberate invalid layouts and then
+      // failed the export run on a re-write of the same hash.
     #endif
       if (!diagnostic.empty()) T8_LOG_INFO("[WebGPU][Compute] shader warning: %s", diagnostic.c_str());
       const bool comparisonSampler = std::any_of(artifact.bindings.begin(), artifact.bindings.end(),
@@ -945,6 +946,12 @@ public:
         layoutEntries.push_back(entry);
       }
       Require(SetValidatedLayout(desc, reflected, true), "Invalid compute binding layout");
+    #ifndef __EMSCRIPTEN__
+      // Only a shader whose declared layout matches its reflection is worth shipping to the
+      // browser: the self-test's negative cases deliberately mismatch and used to be exported.
+      if (!g_config.webShaderOutput.empty())
+        Require(webgpu::WriteShaderPackage(packagedRequest, artifact, state.flow, report, g_config.webShaderOutput, diagnostic), diagnostic);
+    #endif
 
       wgpu::ShaderSourceWGSL source{};
       source.code = artifact.wgsl.c_str();

@@ -235,7 +235,7 @@ of the *new* list (browser) is in progress: scene 7 is now in `web/scenes.json` 
 | 2nd | 3. Launcher ball textures — **done** | S |
 | 3rd | 4. Clean-up — partly done (flags, W-14); W-16 and the script move open | M |
 | 4th | 1a. WebGPU port, native — **done** | L |
-| 5th | **1c. Browser (Emscripten) build + scene 7 in the catalogue — in progress** | M |
+| 5th | 1c. Browser (Emscripten) build + scene 7 in the catalogue — **done** | M |
 | 6th | **1d. Android build + run** | M–L |
 | 7th | **1e. Steam Deck / Linux Vulkan run** | M |
 | 8th | **1f. OpenGL port (W-28)** | L |
@@ -251,11 +251,36 @@ Two things came out of that run and are fixed: `SetupDawn.ps1` crashed under Win
 when two VS hosts match (the array-vs-object `ConvertFrom-Json` trap), and `server.mjs` skipped
 junctioned asset directories (`Textures/sky`, `Textures/LUT`) so the sky cubemap 404'd.
 
-**Still open in the browser:** `--compute-selftest` in the browser times out after 180 s
-("GPU compute correctness self-test did not complete"), so the 3D volume path is not yet proven *in the
-browser* even though it passes natively on WebGPU. Next step is that diagnosis (likely a missing or
-mismatched packaged kernel for the volume self-test), then a Chrome + Firefox scene-7 run with the
-solver confirmed live, a fps reading, and the launcher's Download Assets path.
+**WebGPU closed 2026-11-02** (second pass):
+
+- **In-browser compute self-test: PASS.** The 180 s timeout was a stale assertion, not the engine:
+  `test-firefox.mjs` waited for `[ComputeSelfTest] PASS: arithmetic and odd-sized image kernels`, but
+  the message grew a clause when the volumetric case landed ("…kernels **and volumetric storage
+  textures**"), and the old substring is not contained in the new sentence. The harness now matches
+  the stable `[ComputeSelfTest] PASS:` prefix and asserts `[ComputeSelfTest] FAIL` is absent. With
+  that, both RGBA16F and R32F 3D volumes pass in Chrome in ~0.5 s — on the hardware adapter **and**
+  with `--software-webgpu`, so no capability gate is needed (Dawn's software adapter does support 3D
+  storage images).
+- **Browser performance recorded** (headless Chrome, scene 7 with the solver, 60 sweeps, three 5 s
+  samples from `window.t850.frames`): **942×352 → 124 / 140 / 140 fps**, **1262×532 → 122 / 116 /
+  124 fps**.
+- **Release package verified** the way CI does it: `BuildWeb.ps1 -AssetMode Cloud` (CloudAssets
+  151 routes), `PackageWebRelease.ps1` under PowerShell 7 (it uses `Path.GetRelativePath`, which 5.1
+  does not have), `ValidateWebReleasePackage.ps1` **PASS: 2002 files, 151 cloud routes**. The zip
+  carries 1813 shader packages, `scenes.json` **with scene 7**, and `previews/7.png`.
+- **Launcher card verified**: `launcher.html` lists all 8 scenes with a 960×540 preview each; the
+  Backyard preview (`web/previews/7.png`, captured from the browser) was missing and is now committed.
+- **Native WebGPU parity measured properly.** With `--regressionFixedDt 1/60` (the earlier 24.8/255
+  came from comparing two real-time runs with different trajectories) the frame difference is mean
+  **−0.27/255** on the back buffer, −0.32 deferred, −0.24 HDR, and the water depth differs in 187
+  pixels by ≤4/255. The only cluster is the scripted ball: a 38×38 px box whose albedo differs by
+  +23.7/255 inside it — a per-mesh material sampling difference, cosmetic, recorded here for the
+  visual pass rather than fixed.
+- **Firefox not validated locally.** Firefox 159 + geckodriver 0.37.1 abort marionette on startup
+  ("Process unexpectedly closed with status 0"; a headless `--screenshot` run also hangs, and a
+  Firefox instance is already running on this machine). CI's `browser-webgpu` job drives Edge, so
+  this is a local-environment gap; re-check on a machine with a matching driver, or add Firefox to the
+  matrix once WebGPU is on by default there.
 
 #### 1. Porting the solver to the other APIs (including WebGPU)
 

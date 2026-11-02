@@ -1290,13 +1290,22 @@ section 7 of the record.
   |Δ| 24.8/255 on the deferred pass and 1.4/255 on the back buffer, and by eye the WebGPU frame
   shows the pool as flat pale water with the balls' submerged halves hidden, where D3D12 shows
   refraction and ripple shading. The fluid data is there, so this is a water-pass shading
-  difference on WebGPU, not a solver difference. The browser (Emscripten) build has not been tried.
-  **Cause found and fixed (`330fd3eb`, same day):** the native `auto` shader flow preferred the
-  hand-written `Assets/Shaders/*.wgsl` twins, and `FS_Mesh.wgsl`/`VS_Mesh.wgsl` contain no
-  `FLUID_SURFACE` code at all — the water rendered from those while the permutation was compiled and
-  bound correctly. `auto` now compiles the HLSL first and falls back to the twin; the water shows
-  waves, refraction and the balls below the surface, and the deferred difference is down to
-  4.19/255. Browser build still untried.
+  difference on WebGPU, not a solver difference. **Cause found and fixed (`330fd3eb`, same day):** the
+  native `auto` shader flow preferred the hand-written `Assets/Shaders/*.wgsl` twins, and
+  `FS_Mesh.wgsl`/`VS_Mesh.wgsl` contain no `FLUID_SURFACE` code at all — the water rendered from those
+  while the permutation was compiled and bound correctly. `auto` now compiles the HLSL first and falls
+  back to the twin; the water shows waves, refraction and the balls below the surface.
+  **Parity re-measured with `--regressionFixedDt 1/60` (2026-11-02):** mean **−0.27/255** on the back
+  buffer, −0.32 deferred, −0.24 HDR, water depth within 4/255 on 187 pixels — the earlier 24.8/255 was
+  two real-time runs with different trajectories. The only cluster is the scripted ball's 38×38 px
+  albedo (+23.7/255 inside that box), a per-mesh material sampling difference for the visual pass.
+  **Browser (Emscripten): done 2026-11-02.** The bundle builds (`BuildWeb.ps1`), scene 7 is in
+  `web/scenes.json` and exported, Chrome renders the pool at 124–140 fps (942×352) and 116–124 fps
+  (1262×532) with the solver at 60 sweeps, the in-browser 3D volume self-test passes on hardware *and*
+  software adapters, the launcher shows the Backyard card, and the CI-style release package
+  (`-AssetMode Cloud` → `PackageWebRelease.ps1` → `ValidateWebReleasePackage.ps1`) is
+  **PASS: 2002 files, 151 cloud routes** with 1813 shader packages. Firefox was not validated locally
+  (geckodriver 0.37.1 + Firefox 159 abort marionette on startup).
 * The GL fallback still depends on W-01.
 
 **Fix/acceptance.** Run scene 7 and the fluid self-test on each available platform, record

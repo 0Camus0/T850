@@ -69,6 +69,9 @@ T850/android/app/build/
 T850/android/build/
 T850/android/java_pid*.hprof
 
+# Generated release packages (CI uploads them as workflow artifacts)
+T850/artifacts/
+
 # Android signing material
 T850/android/signing.properties
 T850/android/app/signing.properties

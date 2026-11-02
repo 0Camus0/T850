@@ -2554,5 +2554,8 @@ encoder and submits every 64 dispatches; and inline `ReadOnlyBuffer` bindings ha
 equivalent, so the driver copies them into a transient buffer per dispatch.
 
 Still open for the port: a WebGPU-vs-D3D12 frame-300 dump differs by mean |Δ| 24.8/255 (deferred) and
-1.4/255 (back buffer) and needs a visual pass; the browser/Emscripten build has not been tried; and
-the OpenGL port (item 5th) is untouched.
+1.4/255 (back buffer), and by eye the WebGPU frame renders the pool as flat pale water with the balls'
+submerged halves hidden, while D3D12 shows refraction and ripple shading — the fluid data is present
+(`[Backyard][surface]` min/max −0.147/+0.174 m, `FLUID_SURFACE` enabled), so this is a water-pass
+shading difference on WebGPU, not a solver one. Also untried: the browser/Emscripten build. The
+OpenGL port (item 5th) is next.

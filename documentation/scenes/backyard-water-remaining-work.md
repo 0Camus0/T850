@@ -1283,9 +1283,13 @@ section 7 of the record.
   (3D RGBA16F and R32F), `--fluid-selftest` (projection 0.596 → 0.211 at 50 iterations, mass drift
   0.00 %), `--backyard-selftest` (all ten gates, float `ring−far` −1.7 mm, `covered min−ring`
   −11.3 mm, flicker 0.0005 m) and `--backyard-pick-test` all PASS, and scene 7 with 8 seeded balls
-  logs 0 errors. Open: a frame-300 dump differs from D3D12 by mean |Δ| 24.8/255 on the deferred pass
-  and 1.4/255 on the back buffer, which needs a visual pass before the PR; the browser (Emscripten)
-  build has not been tried.
+  logs 0 errors. `FLUID_SURFACE` is enabled and the surface has real waves (`[Backyard][surface]`
+  min/max −0.147/+0.174 m), so the solver is driving the mesh.
+  **Open, and the reason the PR needs a visual pass:** a frame-300 dump differs from D3D12 by mean
+  |Δ| 24.8/255 on the deferred pass and 1.4/255 on the back buffer, and by eye the WebGPU frame
+  shows the pool as flat pale water with the balls' submerged halves hidden, where D3D12 shows
+  refraction and ripple shading. The fluid data is there, so this is a water-pass shading
+  difference on WebGPU, not a solver difference. The browser (Emscripten) build has not been tried.
 * The GL fallback still depends on W-01.
 
 **Fix/acceptance.** Run scene 7 and the fluid self-test on each available platform, record

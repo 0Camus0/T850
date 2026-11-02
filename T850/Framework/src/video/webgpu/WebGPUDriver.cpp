@@ -106,6 +106,20 @@ struct WebGPUDriverState {
   bool active = false;
   bool offscreen = false;
   bool clearPending = false;
+  // The compute path records many dispatches into one encoder and submits it in batches: one
+  // submission per dispatch cost a `bad allocation` after ~100k dispatches in a headless run.
+  bool computeOwnsEncoder = false;
+  unsigned computeDispatches = 0;
+  void FlushComputeEncoder() {
+    if (!computeOwnsEncoder || !context.commands) return;
+    EndPass();
+    const wgpu::CommandBuffer pending = context.commands.Finish();
+    context.commands = nullptr;
+    computeOwnsEncoder = false;
+    computeDispatches = 0;
+    if (pending) context.SubmitCommands(pending);
+    context.RecycleComputeUniforms(true);
+  }
   wgpu::Color clearColor{0, 0, 0, 1};
   BaseDriver::BlendStates blend = BaseDriver::BLEND_OPAQUE;
   BaseDriver::DepthStencilStates depth = BaseDriver::READ_WRITE;
@@ -229,6 +243,19 @@ private:
     }
   }
   WebGPUDriverState& m_state;
+};
+
+// One 3D compute volume. `gpu` is the texture, `view` the single 3D view used for both the
+// storage and the sampled binding, and the format is kept so a dispatch can prove the shader's
+// declared storage format matches before it binds.
+class WebGPUComputeTexture3D final : public ComputeTexture3D {
+public:
+  explicit WebGPUComputeTexture3D(WebGPUDriverState& state) : state(state) {}
+  WebGPUDriverState& state;
+  wgpu::Texture gpu;
+  wgpu::TextureView view;
+  wgpu::TextureFormat format = wgpu::TextureFormat::RGBA16Float;
+  uint32_t texelBytes = 8;
 };
 
 class WebGPUTexture final : public Texture {
@@ -723,8 +750,7 @@ public:
   }
 };
 
-bool ComputeBindingMatches(ComputeBindingType type, webgpu::ResourceKind kind) {
-  switch (type) {
+bool ComputeBindingMatches(ComputeBindingType type, webgpu::ResourceKind kind) {  switch (type) {
   case ComputeBindingType::Constants32:
     return kind == webgpu::ResourceKind::UniformBuffer;
   case ComputeBindingType::ReadOnlyBuffer:
@@ -794,6 +820,13 @@ public:
       Require(!desc.source.empty() && !desc.entryPoint.empty(), "Compute shader source and entry point are required");
       webgpu::ShaderFileRequest request;
       request.name = desc.debugName.empty() ? "Shaders/inline-compute.hlsl" : desc.debugName;
+      // A permutation is named "<family>#<permutation>" for the logs and the D3D12 pipeline cache,
+      // but the family must stay a plain "<family>.hlsl" here: the WGSL-first attempt resolves the
+      // file from this name and rejects any extension but .hlsl/.wgsl, which is why
+      // CS_FluidSeed3D.hlsl#divergent failed to prepare. The defines already carry the permutation
+      // into the disk-cache key.
+      if (const size_t permutation = request.name.find('#'); permutation != std::string::npos)
+        request.name.resize(permutation);
       if (!std::filesystem::path(request.name).has_parent_path()) request.name = "Shaders/" + request.name;
       request.stage = webgpu::ShaderStage::Compute;
       request.layout = webgpu::BindingLayout::ComputeV1;
@@ -869,27 +902,35 @@ public:
           entry.buffer.type = wgpu::BufferBindingType::Storage;
           entry.buffer.minBindingSize = resource.minimumBufferSize;
           break;
-        case webgpu::ResourceKind::SampledTexture:
-          Require(resource.dimension == webgpu::TextureDimension::D2 &&
+        case webgpu::ResourceKind::SampledTexture: {
+          // 3D volumes are read with textureLoad only, which is non-filtering by definition, so
+          // D3 is accepted wherever D2 is; the sampler variant is chosen per dispatch below.
+          const bool volume = resource.dimension == webgpu::TextureDimension::D3;
+          Require((volume || resource.dimension == webgpu::TextureDimension::D2) &&
                   resource.sampledType == webgpu::ShaderComponentType::Float,
-                  "Compute sampled textures must be float 2D textures");
+                  "Compute sampled textures must be float 2D or 3D textures");
           entry.texture.sampleType = wgpu::TextureSampleType::Float;
-          entry.texture.viewDimension = wgpu::TextureViewDimension::e2D;
+          entry.texture.viewDimension = volume ? wgpu::TextureViewDimension::e3D
+                                               : wgpu::TextureViewDimension::e2D;
           break;
+        }
         case webgpu::ResourceKind::Sampler:
           entry.sampler.type = wgpu::SamplerBindingType::Filtering;
           break;
-        case webgpu::ResourceKind::WriteOnlyStorageTexture:
-          Require(resource.dimension == webgpu::TextureDimension::D2,
-                  "Compute storage textures must be 2D");
-          Require(resource.storageRgba8Unorm || resource.storageRgba16Float,
-                  "Compute storage texture format must be rgba8unorm or rgba16float (r32float has no "
-                  "WGSL storage path in this build)");
+        case webgpu::ResourceKind::WriteOnlyStorageTexture: {
+          const bool volume = resource.dimension == webgpu::TextureDimension::D3;
+          Require(volume || resource.dimension == webgpu::TextureDimension::D2,
+                  "Compute storage textures must be 2D or 3D");
+          Require(resource.storageRgba8Unorm || resource.storageRgba16Float || resource.storageR32Float,
+                  "Compute storage texture format must be rgba8unorm, rgba16float or r32float");
           entry.storageTexture.access = wgpu::StorageTextureAccess::WriteOnly;
-          entry.storageTexture.format = resource.storageRgba16Float
-            ? wgpu::TextureFormat::RGBA16Float : wgpu::TextureFormat::RGBA8Unorm;
-          entry.storageTexture.viewDimension = wgpu::TextureViewDimension::e2D;
+          entry.storageTexture.format = resource.storageR32Float ? wgpu::TextureFormat::R32Float
+            : (resource.storageRgba16Float ? wgpu::TextureFormat::RGBA16Float
+                                           : wgpu::TextureFormat::RGBA8Unorm);
+          entry.storageTexture.viewDimension = volume ? wgpu::TextureViewDimension::e3D
+                                                      : wgpu::TextureViewDimension::e2D;
           break;
+        }
         case webgpu::ResourceKind::DepthTexture:
           T8_LOG_ERROR("[UnsupportedShaderFeature] backend=webgpu shader=%s stage=compute feature=depth_texture", request.name.c_str());
           return false;
@@ -897,8 +938,9 @@ public:
         resources.emplace(resource.binding, resource);
         auto reflectedBinding = expected->second;
         if (resource.kind == webgpu::ResourceKind::WriteOnlyStorageTexture)
-          reflectedBinding.storageFormat = resource.storageRgba16Float
-            ? ComputeStorageFormat::Rgba16Float : ComputeStorageFormat::Rgba8Unorm;
+          reflectedBinding.storageFormat = resource.storageR32Float ? ComputeStorageFormat::R32Float
+            : (resource.storageRgba16Float ? ComputeStorageFormat::Rgba16Float
+                                           : ComputeStorageFormat::Rgba8Unorm);
         reflected.push_back(reflectedBinding);
         layoutEntries.push_back(entry);
       }
@@ -1319,6 +1361,60 @@ std::unique_ptr<ComputePipeline> WebGPUDriver::CreateComputePipeline(const Compu
   auto pipeline = std::make_unique<WebGPUComputePipeline>(*m_state);
   return pipeline->Create(desc) ? std::move(pipeline) : nullptr;
 }
+
+// A 3D compute volume: one texture, one 3D view, used both as a write-only storage image and as
+// a sampled volume in the kernels that read it. WebGPU allows a format to be either storage or
+// sampled per binding, never both in one dispatch, which matches how the solver ping-pongs.
+bool WebGPUDriver::SupportsComputeTextures3D() const { return true; }
+
+std::unique_ptr<ComputeTexture3D> WebGPUDriver::CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
+                                                                       const void* initialData) {
+  if (!desc.width || !desc.height || !desc.depth) return nullptr;
+  auto volume = std::make_unique<WebGPUComputeTexture3D>(*m_state);
+  volume->format = ToWebGPUStorageFormat(desc.format);
+  if (volume->format == wgpu::TextureFormat::Undefined) {
+    T8_LOG_ERROR("[WebGPU][Compute] Volume '%s' uses an unsupported storage format", desc.debugName.c_str());
+    return nullptr;
+  }
+  volume->texelBytes = desc.format == ComputeStorageFormat::R32Float ? 4u : 8u;
+  wgpu::TextureDescriptor texture{};
+  texture.dimension = wgpu::TextureDimension::e3D;
+  texture.size = {desc.width, desc.height, desc.depth};
+  texture.format = volume->format;
+  texture.mipLevelCount = 1;
+  texture.sampleCount = 1;
+  texture.usage = wgpu::TextureUsage::StorageBinding | wgpu::TextureUsage::TextureBinding |
+                  wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst;
+  volume->gpu = m_state->context.device.CreateTexture(&texture);
+  if (!volume->gpu) return nullptr;
+  wgpu::TextureViewDescriptor view{};
+  view.dimension = wgpu::TextureViewDimension::e3D;
+  view.format = volume->format;
+  view.baseMipLevel = 0;
+  view.mipLevelCount = 1;
+  view.baseArrayLayer = 0;
+  view.arrayLayerCount = 1;
+  volume->view = volume->gpu.CreateView(&view);
+  if (!volume->view) return nullptr;
+  if (initialData) {
+    const size_t rowBytes = static_cast<size_t>(desc.width) * volume->texelBytes;
+    wgpu::TexelCopyBufferLayout layout{};
+    layout.bytesPerRow = static_cast<uint32_t>(rowBytes);
+    layout.rowsPerImage = desc.height;
+    wgpu::TexelCopyTextureInfo destination{};
+    destination.texture = volume->gpu;
+    destination.mipLevel = 0;
+    const wgpu::Extent3D extent{desc.width, desc.height, desc.depth};
+    m_state->context.queue.WriteTexture(&destination, initialData, rowBytes * desc.height * desc.depth,
+                                        &layout, &extent);
+  }
+  m_state->context.CheckHealth();
+  volume->descriptor = desc;
+  if (!desc.debugName.empty())
+    T8_LOG_INFO("[WebGPU][Compute] Volume '%s' created (%ux%ux%u)", desc.debugName.c_str(),
+                desc.width, desc.height, desc.depth);
+  return volume;
+}
 std::unique_ptr<ComputeBuffer> WebGPUDriver::CreateComputeBuffer(const ComputeBufferDesc& desc,
                                                                   const void* initialData) {
   auto buffer = std::make_unique<WebGPUComputeBuffer>(*m_state);
@@ -1335,6 +1431,17 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
     if (binding.buffer) {
       const auto* buffer = dynamic_cast<WebGPUComputeBuffer*>(binding.buffer);
       if (!buffer || &buffer->state != m_state.get() || !buffer->gpu) return false;
+    }
+    // A volume binding carries ComputeTexture3D instead of Texture; ValidateBindings picked the
+    // field from the declared dimension.
+    if (binding.texture3D) {
+      const auto* volume = dynamic_cast<const WebGPUComputeTexture3D*>(binding.texture3D);
+      if (!volume || &volume->state != m_state.get() || !volume->gpu || !volume->view) return false;
+      if (binding.type == ComputeBindingType::ReadWriteTexture) {
+        for (const auto& layout : pipeline->bindingLayout)
+          if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
+              volume->format != ToWebGPUStorageFormat(layout.storageFormat)) return false;
+      }
     }
     if (binding.texture) {
       const auto* texture = dynamic_cast<WebGPUTexture*>(binding.texture);
@@ -1354,9 +1461,12 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
     struct StandaloneCommands {
       webgpu::WebGPUContext& context;
       bool standalone;
-      ~StandaloneCommands() { if (standalone) context.commands = nullptr; }
+      ~StandaloneCommands() { (void)standalone; }
     } commands{m_state->context, !m_state->active};
-    if (commands.standalone) m_state->context.commands = m_state->context.device.CreateCommandEncoder();
+    if (commands.standalone && !m_state->context.commands) {
+      m_state->context.commands = m_state->context.device.CreateCommandEncoder();
+      m_state->computeOwnsEncoder = true;
+    }
     std::vector<bool> consumed(runtimeBindings.size(), false);
     std::vector<wgpu::BindGroupEntry> entries;
     uint64_t nonFiltering = 0;
@@ -1389,6 +1499,22 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
       }
       case ComputeBindingType::ReadOnlyBuffer:
       case ComputeBindingType::ReadWriteBuffer: {
+        if (!runtime->buffer) {
+          // Per-dispatch inline data (the solver's moving body list): copy it into a transient
+          // buffer and bind that. WebGPU has no inline-constant equivalent for a structured
+          // buffer, and Tint has already lowered it to a storage array.
+          if (layout.type != ComputeBindingType::ReadOnlyBuffer || !runtime->inlineData ||
+              !runtime->inlineBytes || !runtime->inlineStride ||
+              runtime->inlineBytes % runtime->inlineStride != 0) return false;
+          wgpu::BufferDescriptor transient{};
+          transient.size = runtime->inlineBytes;
+          transient.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Storage;
+          entry.buffer = m_state->context.device.CreateBuffer(&transient);
+          if (!entry.buffer) return false;
+          m_state->context.queue.WriteBuffer(entry.buffer, 0, runtime->inlineData, runtime->inlineBytes);
+          entry.size = runtime->inlineBytes;
+          break;
+        }
         auto* buffer = dynamic_cast<WebGPUComputeBuffer*>(runtime->buffer);
         if (!buffer || &buffer->state != m_state.get() || !buffer->gpu ||
             (layout.type == ComputeBindingType::ReadWriteBuffer &&
@@ -1398,6 +1524,14 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
         break;
       }
       case ComputeBindingType::ReadOnlyTexture: {
+        if (runtime->texture3D) {
+          auto* volume = dynamic_cast<WebGPUComputeTexture3D*>(runtime->texture3D);
+          if (!volume || &volume->state != m_state.get() || !volume->view) return false;
+          entry.textureView = volume->view;
+          // 3D volumes are read with textureLoad, which WebGPU types as unfilterable for f32.
+          nonFiltering |= uint64_t(1) << layout.bindingIndex;
+          break;
+        }
         auto* texture = dynamic_cast<WebGPUTexture*>(runtime->texture);
         if (!texture || &texture->state != m_state.get() || !texture->gpu) return false;
         entry.textureView = texture->SampleView();
@@ -1405,6 +1539,14 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
         break;
       }
       case ComputeBindingType::ReadWriteTexture: {
+        if (runtime->texture3D) {
+          auto* volume = dynamic_cast<WebGPUComputeTexture3D*>(runtime->texture3D);
+          if (!volume || &volume->state != m_state.get() || !volume->view) return false;
+          if (reflected->second.storageR32Float && volume->format != wgpu::TextureFormat::R32Float) return false;
+          if (reflected->second.storageRgba16Float && volume->format != wgpu::TextureFormat::RGBA16Float) return false;
+          entry.textureView = volume->view;
+          break;
+        }
         auto* texture = dynamic_cast<WebGPUTexture*>(runtime->texture);
         if (!texture || &texture->state != m_state.get() || !texture->gpu ||
             (reflected->second.storageRgba8Unorm && texture->format != wgpu::TextureFormat::RGBA8Unorm) ||
@@ -1438,10 +1580,8 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
     pass.DispatchWorkgroups(groupX, groupY, groupZ);
     pass.End();
     if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.compute_dispatches", 1);
-    if (commands.standalone) {
-      auto command = m_state->context.commands.Finish();
-      m_state->context.SubmitCommands(command);
-    }
+    if (commands.standalone && ++m_state->computeDispatches >= 64)
+      m_state->FlushComputeEncoder();
     m_state->context.CheckHealth();
     return true;
   } catch (const std::exception& error) {
@@ -1454,6 +1594,7 @@ bool WebGPUDriver::ReadComputeBuffer(ComputeBuffer& bufferBase, void* destinatio
   if (!buffer || &buffer->state != m_state.get() || !buffer->gpu || !destination || !byteCount ||
       byteCount > buffer->descriptor.byteWidth || (byteCount % sizeof(uint32_t)) != 0) return false;
   try {
+    m_state->FlushComputeEncoder();
     m_state->EndPass();
     wgpu::BufferDescriptor descriptor{};
     descriptor.size = byteCount;
@@ -1509,6 +1650,7 @@ bool WebGPUDriver::ResumeWindowSurface(void* window, int newWidth, int newHeight
 }
 void WebGPUDriver::BeginFrame(FrameTargetMode target) {
   if (m_state->active) return;
+  m_state->FlushComputeEncoder();
   m_state->offscreen = target == FrameTargetMode::Offscreen;
   m_state->active = m_state->context.BeginFrame(!m_state->offscreen);
   m_state->draws = 0;
@@ -1553,6 +1695,7 @@ void WebGPUDriver::ClearBackbufferWithColor(float red, float green, float blue, 
 void WebGPUDriver::WaitForGPU() {
   std::string deviceFailure;
   if (GetDeviceFailure(deviceFailure)) return;
+  m_state->FlushComputeEncoder();
   m_state->context.WaitForGPU();
 }
 void WebGPUDriver::FlushGPUResources() {
@@ -1560,10 +1703,12 @@ void WebGPUDriver::FlushGPUResources() {
   if (GetDeviceFailure(deviceFailure)) {
     m_state->EndPass();
     m_state->context.commands = nullptr;
+    m_state->computeOwnsEncoder = false;
     m_state->active = false;
     m_state->ResetBindings();
     return;
   }
+  m_state->FlushComputeEncoder();
   if (m_state->active) CompleteFrame(FrameCompletionMode::SubmitNoPresent);
   WaitForGPU();
 }

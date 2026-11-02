@@ -28,7 +28,9 @@ Texture3D<float> Input : register(t0);
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(2, 0)]]
 #endif
-RWStructuredBuffer<uint2> Result : register(u0);
+// Scalar elements: Tint's SPIR-V reader crashes on InterlockedAdd applied to a vector
+// component, and WebGPU has no fallback for that shader.
+RWStructuredBuffer<uint> Result : register(u0);
 
 [numthreads(8, 8, 1)]
 void CS(uint3 id : SV_DispatchThreadID) {
@@ -39,6 +41,6 @@ void CS(uint3 id : SV_DispatchThreadID) {
   float expectedValue = float(expected) + 0.3333333432674408f;
   // fp16 storage rounds by at least 1/64 near 64, so 1e-4 separates the two formats.
   uint mismatched = abs(value - expectedValue) > 1e-4f ? 1u : 0u;
-  InterlockedAdd(Result[0].x, mismatched);
-  InterlockedAdd(Result[0].y, 1u);
+  InterlockedAdd(Result[0], mismatched);
+  InterlockedAdd(Result[1], 1u);
 }

@@ -572,8 +572,13 @@ wgpu::Buffer WebGPUContext::AcquireBuffer(const wgpu::BufferDescriptor& descript
   return device.CreateBuffer(&descriptor);
 }
 
-wgpu::Buffer WebGPUContext::UploadUniform(const void* data, uint64_t size, uint64_t& offset) {
-  T8_TELEMETRY_ADD("webgpu.uniform_snapshot.calls", 1);
+void WebGPUContext::RecycleComputeUniforms(bool force) {
+  if (!force && m_uniformUploads.size() < 8) return;
+  m_uniformUploads.clear();
+  ++m_uniformEpoch;
+}
+
+wgpu::Buffer WebGPUContext::UploadUniform(const void* data, uint64_t size, uint64_t& offset) {  T8_TELEMETRY_ADD("webgpu.uniform_snapshot.calls", 1);
   Require(commands && data && size, "Uniform snapshot requires active commands and data");
   const uint64_t alignedSize = (size + 255) & ~uint64_t(255);
   if (m_uniformUploads.empty() || m_uniformUploads.back().data.size() + alignedSize > m_uniformUploads.back().capacity) {

@@ -300,6 +300,7 @@ bool ReflectShader(const ShaderRequest& request, ShaderArtifact& artifact, std::
       binding.kind = ResourceKind::WriteOnlyStorageTexture;
       binding.storageRgba8Unorm = resource.image_format == Binding::TexelFormat::kRgba8Unorm;
       binding.storageRgba16Float = resource.image_format == Binding::TexelFormat::kRgba16Float;
+      binding.storageR32Float = resource.image_format == Binding::TexelFormat::kR32Float;
       break;
     default:
       diagnostic = Context(request, "Resource kind is not supported by the stage-two compiler");

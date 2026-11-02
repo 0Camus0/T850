@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join, resolve } from 'node:path';
@@ -54,14 +54,23 @@ function launchUrl() {
   return url.href;
 }
 const assets = new Map();
-function catalog(directory, prefix = '') {
+// `Assets` uses directory junctions for the large texture folders (`Textures/sky`, `Textures/LUT`
+// point into the main checkout), and `Dirent.isDirectory()` is false for a junction, so a plain
+// walk silently dropped them and the browser 404'd on `Textures/sky/CubeMap_SkyWater.dds`. Follow
+// links, with a visited set so a cycle cannot hang the server.
+function catalog(directory, prefix = '', visited = new Set()) {
   if (!existsSync(directory)) throw new Error(`Missing asset directory: ${directory}`);
+  const real = realpathSync(directory);
+  if (visited.has(real)) return;
+  visited.add(real);
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (entry.name.startsWith('.')) continue;
     const resource = prefix + entry.name;
     const absolute = join(directory, entry.name);
-    if (entry.isDirectory()) catalog(absolute, resource + '/');
-    else if (entry.isFile()) assets.set(resource, absolute);
+    const isDirectory = entry.isDirectory() || (entry.isSymbolicLink() && statSync(absolute).isDirectory());
+    const isFile = entry.isFile() || (entry.isSymbolicLink() && statSync(absolute).isFile());
+    if (isDirectory) catalog(absolute, resource + '/', visited);
+    else if (isFile) assets.set(resource, absolute);
   }
 }
 catalog(values.assets);

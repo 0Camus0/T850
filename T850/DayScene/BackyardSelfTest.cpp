@@ -212,7 +212,8 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
   settings.width = static_cast<uint32_t>((std::max)(w.gridWidth, 8));
   settings.depth = static_cast<uint32_t>((std::max)(w.gridDepth, 8));
   settings.cellSize = options.cellSize > 0.0f ? options.cellSize : (std::max)(w.cellSize, 0.001f);
-  settings.pressureIterations = options.pressureIterations;
+  settings.pressureIterations = options.pressureIterations > 0
+    ? options.pressureIterations : static_cast<uint32_t>(w.EffectivePressureIterations());
   settings.deltaTime = options.fixedDt;
   settings.maxSubstepDt = options.fixedDt;
   settings.gravity = w.gravity;

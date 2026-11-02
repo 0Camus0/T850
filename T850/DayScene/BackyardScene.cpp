@@ -366,7 +366,7 @@ bool BackyardScene::RebuildFluid() {
   EnsureWaterShaderPermutations(driver);
   T8_LOG_INFO("[Backyard] Fluid solver running on %dx%dx%d, %d pressure iterations",
               m_appliedGridWidth, m_appliedGridHeight, m_appliedGridDepth,
-              static_cast<int>(SceneProp.Water.pressureIterations));
+              SceneProp.Water.EffectivePressureIterations());
   return true;
 }
 
@@ -376,7 +376,7 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   settings.width = static_cast<uint32_t>((std::max)(w.gridWidth, 8));
   settings.height = static_cast<uint32_t>((std::max)(w.gridHeight, 4));
   settings.depth = static_cast<uint32_t>((std::max)(w.gridDepth, 8));
-  settings.pressureIterations = static_cast<uint32_t>((std::max)(w.pressureIterations, 0));
+  settings.pressureIterations = static_cast<uint32_t>(w.EffectivePressureIterations());
   settings.cellSize = (std::max)(w.cellSize, 0.001f);
   settings.deltaTime = (std::max)(w.deltaTime, 1.0f / 1000.0f);
   settings.gravity = w.gravity;
@@ -957,7 +957,7 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     RebuildFluid();
   }
   if (m_fluidReady && pFramework && pFramework->pVideoDriver) {
-    m_fluid.SetPressureIterations(static_cast<uint32_t>((std::max)(w.pressureIterations, 0)));
+    m_fluid.SetPressureIterations(static_cast<uint32_t>(w.EffectivePressureIterations()));
     m_fluid.SetSurfaceLevel((std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f));
     m_fluid.SetSOROmega((std::min)((std::max)(w.sorOmega, 1.0f), 1.99f));
     // W-11: the three promoted solver values, pushed live like their neighbours.

@@ -2559,3 +2559,15 @@ submerged halves hidden, while D3D12 shows refraction and ripple shading — the
 (`[Backyard][surface]` min/max −0.147/+0.174 m, `FLUID_SURFACE` enabled), so this is a water-pass
 shading difference on WebGPU, not a solver one. Also untried: the browser/Emscripten build. The
 OpenGL port (item 5th) is next.
+
+**Resolved the same day (`330fd3eb`): it was the shader *flow*, not the driver or a missing
+permutation.** Both APIs requested the same 73 permutations, drew the same key with no `GetShader`
+miss, and built the same define string — but the native `auto` flow tried the hand-written
+`Assets/Shaders/*.wgsl` twins first, and `FS_Mesh.wgsl`/`VS_Mesh.wgsl` (2026-10-23) have no
+`FLUID_SURFACE` code at all, so the water was drawn without the solver path. Proof came from an
+unconditional `return float4(1,0,1,1)` inside `#ifdef FLUID_SURFACE` (magenta on D3D12, blue on
+WebGPU) and an `#error` guarded by the same define (fired on D3D12 only). `auto` now compiles the
+HLSL first and falls back to the twin; the water shows waves, refraction and the balls under the
+surface, and the deferred difference is 4.19/255. That also exposed two samplers sharing `s0` in
+`FS_Mesh.hlsl`, which glslang mapped to binding 67 and WebGPU rejected; the fluid normal map now
+uses the material sampler and the constants guard rejects duplicate sampler registers.

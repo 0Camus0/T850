@@ -241,6 +241,22 @@ of the *new* list (browser) is in progress: scene 7 is now in `web/scenes.json` 
 | 8th | **1f. OpenGL port (W-28)** | L |
 | 9th | 2b. Final matrix, regression sweep, PR text, owner sign-off | M |
 
+**Browser progress (2026-11-02).** `BuildWeb.ps1` now produces a bundle: emsdk bootstrap, the shader
+export for `auto` and `spirv` (all scenes including 7), the Emscripten build (648 targets, the
+Backyard sources included) and `T850WebSelfTests` 1/1. `build/web/site/scenes.json` lists scene 7, and
+`node web/server.mjs` serves 2117 assets plus 1813 shader packages. **Headless Chrome loads scene 7 and
+renders the pool** (`web/test-firefox.mjs --browser chrome --headless`, passed, 882×492, σ 33.5).
+
+Two things came out of that run and are fixed: `SetupDawn.ps1` crashed under Windows PowerShell 5.1
+when two VS hosts match (the array-vs-object `ConvertFrom-Json` trap), and `server.mjs` skipped
+junctioned asset directories (`Textures/sky`, `Textures/LUT`) so the sky cubemap 404'd.
+
+**Still open in the browser:** `--compute-selftest` in the browser times out after 180 s
+("GPU compute correctness self-test did not complete"), so the 3D volume path is not yet proven *in the
+browser* even though it passes natively on WebGPU. Next step is that diagnosis (likely a missing or
+mismatched packaged kernel for the volume self-test), then a Chrome + Firefox scene-7 run with the
+solver confirmed live, a fps reading, and the launcher's Download Assets path.
+
 #### 1. Porting the solver to the other APIs (including WebGPU)
 
 Today the solver runs on D3D11, D3D12, Vulkan and **WebGPU** (since `00e28793`). On GL,

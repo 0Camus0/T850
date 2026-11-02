@@ -410,14 +410,17 @@ float WaterFoamNoise(float2 p, float timeSeconds, float viewDistance)
 // do, which is why they needed distance fades.
 // Feature toggles, driven by the WaterMisc0 constant group.
 Texture2D<float4> FluidNormalTex : register(t22);
-SamplerState FluidNormalSS : register(s0);
+// The material sampler (s0) is the one the scene binds for this slot; a second
+// `SamplerState ... : register(s0)` was legal in HLSL but D3D resolves both names to the same
+// slot, while glslang's auto-mapping gave the duplicate a fresh binding (67), which WebGPU
+// rejects. One name, one binding.
 
 float2 WaterNormalMapGradient(float2 uv, float timeSeconds)
 {
     float2 uvA = uv * WaterWaves1.xy + WaterWaves1.zw * timeSeconds;
     float2 uvB = uv * WaterWaves2.xy + WaterWaves2.zw * timeSeconds;
-    float3 a = FluidNormalTex.SampleGrad(FluidNormalSS, uvA, ddx(uvA), ddy(uvA)).xyz;
-    float3 b = FluidNormalTex.SampleGrad(FluidNormalSS, uvB, ddx(uvB), ddy(uvB)).xyz;
+    float3 a = FluidNormalTex.SampleGrad(MaterialSS, uvA, ddx(uvA), ddy(uvA)).xyz;
+    float3 b = FluidNormalTex.SampleGrad(MaterialSS, uvB, ddx(uvB), ddy(uvB)).xyz;
     // Guard against a missing texture: an unbound SRV reads as all zeros, which
     // would decode to a -1 normal and produce a wild slope instead of none.
     a = (dot(a, a) < 0.01f) ? float3(0.0f, 0.0f, 1.0f) : a * 2.0f - 1.0f;

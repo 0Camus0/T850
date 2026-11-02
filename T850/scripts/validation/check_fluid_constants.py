@@ -25,6 +25,10 @@ kernel, the compression strength to alpha advection and the forcing gain to forc
 different meaning per dispatch, which is why this compares sizes and reports name differences as
 notes.
 
+It also fails when two `SamplerState` declarations in one HLSL file share a register. D3D resolves
+both names to the same slot, but glslang's auto-mapping gives the second one a fresh binding
+(`FluidNormalSS : register(s0)` became binding 67), which WebGPU rejects at bind time.
+
 Usage:
     python scripts/validation/check_fluid_constants.py [--shaders DIR]
 Exit code 0 when every check passes.
@@ -123,6 +127,18 @@ def main() -> int:
         for register, count in sorted(registers.items()):
             if count % 4:
                 failures.append(f"{source}: b{register} constant_count {count} is not a DWORD count")
+
+    # Two samplers on one register: legal HLSL (D3D resolves both names to the slot) but glslang's
+    # auto-mapping gives the second a fresh binding, which WebGPU then rejects at bind time.
+    sampler_re = re.compile(r"SamplerState\s+(\w+)\s*:\s*register\(\s*s(\d+)\s*\)")
+    for path in sorted(shader_dir.glob("*.hlsl")):
+        registers: dict[str, list[str]] = {}
+        for name, register in sampler_re.findall(COMMENT_RE.sub("", path.read_text(encoding="utf-8", errors="replace"))):
+            registers.setdefault(register, []).append(name)
+        for register, names in sorted(registers.items()):
+            if len(names) > 1:
+                failures.append(f"{path.name}: samplers s{register} declared twice ({', '.join(names)}); "
+                                "WebGPU gets a different binding for the second")
 
     if failures:
         print(f"[constants] FAIL: {len(failures)} problem(s)")

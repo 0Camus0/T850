@@ -1259,7 +1259,9 @@ void WebGPUDriverState::Draw(unsigned count, unsigned firstIndex, unsigned first
           bindingsChanged = true;
         }
       } else if (resource.kind == webgpu::ResourceKind::Sampler) {
-        Require(resource.binding >= 32 && resource.binding - 32 < samplers.size(), "Unsupported sampler binding");
+        Require(resource.binding >= 32 && resource.binding - 32 < samplers.size(),
+                "Unsupported sampler binding " + std::to_string(resource.binding) +
+                " shaderKey=" + std::to_string(shader->key.bits));
         const auto slot = resource.binding - 32;
         const auto* texture = samplers[slot];
         if (!texture) Require(false, "Required sampler not bound at slot " + std::to_string(slot));

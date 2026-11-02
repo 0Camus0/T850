@@ -103,6 +103,21 @@ gracefully:
 Inline `ReadOnlyBuffer` bindings (the solver's per-dispatch body list) have no WebGPU
 equivalent, so the driver copies them into a transient `Storage` buffer per dispatch.
 
+**The WGSL twins are a fallback, not the default.** `Assets/Shaders/*.wgsl` are hand-maintained
+translations, and the native `auto` flow used to try them first. `FS_Mesh.wgsl` and `VS_Mesh.wgsl`
+predate the fluid surface, so scene 7 rendered the pool from a shader with no `FLUID_SURFACE` path
+while the permutation was compiled and bound correctly — the water looked flat and opaque and the
+submerged parts of the balls were hidden. `auto` now compiles the HLSL (`actual=spirv` in the log,
+cached on disk) and only falls back to the twin; `--shaderFlow wgsl` still selects the twins
+explicitly, and the browser build uses packaged WGSL generated from the HLSL. **Keep in mind:** a
+hand-written twin is another copy that can drift, exactly like the duplicated cbuffers in W-14.
+
+**Do not declare two samplers on one register.** `FS_Mesh.hlsl` had both `MaterialSS` and
+`FluidNormalSS` on `s0`. D3D resolves the two names to one slot, but glslang's auto-mapping gave the
+second binding 67, which the WebGPU backend rejects ("Unsupported sampler binding"); the fluid
+normal map now samples through the material sampler. `scripts/validation/check_fluid_constants.py`
+fails when one file declares two samplers on a register.
+
 A headless compute loop never reaches the frame end that clears the uniform ring, and one
 submission per dispatch ends in `std::bad_alloc` after roughly a hundred thousand dispatches.
 The compute path therefore owns one encoder and submits it every 64 dispatches, dropping the

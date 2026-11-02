@@ -1290,6 +1290,12 @@ section 7 of the record.
   shows the pool as flat pale water with the balls' submerged halves hidden, where D3D12 shows
   refraction and ripple shading. The fluid data is there, so this is a water-pass shading
   difference on WebGPU, not a solver difference. The browser (Emscripten) build has not been tried.
+  **Cause found and fixed (`330fd3eb`, same day):** the native `auto` shader flow preferred the
+  hand-written `Assets/Shaders/*.wgsl` twins, and `FS_Mesh.wgsl`/`VS_Mesh.wgsl` contain no
+  `FLUID_SURFACE` code at all — the water rendered from those while the permutation was compiled and
+  bound correctly. `auto` now compiles the HLSL first and falls back to the twin; the water shows
+  waves, refraction and the balls below the surface, and the deferred difference is down to
+  4.19/255. Browser build still untried.
 * The GL fallback still depends on W-01.
 
 **Fix/acceptance.** Run scene 7 and the fluid self-test on each available platform, record

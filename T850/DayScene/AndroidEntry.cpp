@@ -23,6 +23,8 @@ std::vector<std::string> g_args;
 t850::AppBase* pApp = nullptr;
 
 namespace {
+  // Highest index registered in DayScene/Application.cpp (0 Sandbox ... 7 Backyard).
+  constexpr int kMaxSceneIndex = 7;
   constexpr const char* kExtraScene = "com.t850.engine.extra.SCENE";
   constexpr const char* kExtraModel = "com.t850.engine.extra.MODEL";
   constexpr const char* kExtraSceneFile = "com.t850.engine.extra.SCENE_FILE";
@@ -215,7 +217,7 @@ namespace {
 
     if (getIntExtra) {
       int scene = GetIntentIntExtra(env, intent, getIntExtra, kExtraScene, t850::g_config.startScene);
-      if (scene >= 0 && scene <= 4) {
+      if (scene >= 0 && scene <= kMaxSceneIndex) {
         t850::g_config.startScene = scene;
       }
 

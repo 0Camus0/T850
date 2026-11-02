@@ -4731,6 +4731,22 @@
         "USE_TEXCOORD0",
         "FLUID_SURFACE"
       ]
+    },
+    "0x0000080009A0000F": {
+      "key": "0x0000080009A0000F",
+      "bits": "0x0000080009A0000F",
+      "pass": 26,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": [
+        "FLUID_SURFACE",
+        "GLTF_TANGENT_SPACE",
+        "RADIAL_DEPTH_PASS",
+        "USE_BINORMALS",
+        "USE_NORMALS",
+        "USE_TANGENTS",
+        "USE_TEXCOORD0"
+      ]
     }
   },
   "compute_permutations": {
@@ -4812,6 +4828,174 @@
       "key": "CS_TorchParticles.hlsl:CS:base",
       "kind": "compute",
       "computeShader": "CS_TorchParticles.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidAdvect3D.hlsl:CS:base": {
+      "key": "CS_FluidAdvect3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidAdvect3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidAlphaAdvect3D.hlsl:CS:base": {
+      "key": "CS_FluidAlphaAdvect3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidAlphaAdvect3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidBodyLevel.hlsl:CS:base": {
+      "key": "CS_FluidBodyLevel.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidBodyLevel.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidClear3D.hlsl:CS:base": {
+      "key": "CS_FluidClear3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidClear3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidClearFloat3D.hlsl:CS:base": {
+      "key": "CS_FluidClearFloat3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidClearFloat3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidCopy3D.hlsl:CS:base": {
+      "key": "CS_FluidCopy3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidCopy3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidDiagnostics3D.hlsl:CS:base": {
+      "key": "CS_FluidDiagnostics3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidDiagnostics3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidDivergence3D.hlsl:CS:base": {
+      "key": "CS_FluidDivergence3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidDivergence3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidExtrapolate3D.hlsl:CS:base": {
+      "key": "CS_FluidExtrapolate3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidExtrapolate3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidForces3D.hlsl:CS:base": {
+      "key": "CS_FluidForces3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidForces3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidGradient3D.hlsl:CS:base": {
+      "key": "CS_FluidGradient3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidGradient3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidObstacleVelocity3D.hlsl:CS:base": {
+      "key": "CS_FluidObstacleVelocity3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidObstacleVelocity3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidPressure3D.hlsl:CS:base": {
+      "key": "CS_FluidPressure3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidPressure3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidSeed3D.hlsl:CS:base": {
+      "key": "CS_FluidSeed3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidSeed3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidSeedAlpha3D.hlsl:CS:base": {
+      "key": "CS_FluidSeedAlpha3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidSeedAlpha3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidStampBodies3D.hlsl:CS:base": {
+      "key": "CS_FluidStampBodies3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidStampBodies3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidSurface3D.hlsl:CS:base": {
+      "key": "CS_FluidSurface3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidSurface3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidSurfaceCopy.hlsl:CS:base": {
+      "key": "CS_FluidSurfaceCopy.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidSurfaceCopy.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidSurfaceToBuffer.hlsl:CS:base": {
+      "key": "CS_FluidSurfaceToBuffer.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidSurfaceToBuffer.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidVolumeCorrect3D.hlsl:CS:base": {
+      "key": "CS_FluidVolumeCorrect3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidVolumeCorrect3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
+    "CS_FluidVolumeReduce3D.hlsl:CS:base": {
+      "key": "CS_FluidVolumeReduce3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidVolumeReduce3D.hlsl",
       "entryPoint": "CS",
       "permutation": "base",
       "defines": []

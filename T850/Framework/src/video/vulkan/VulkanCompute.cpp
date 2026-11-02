@@ -10,6 +10,7 @@
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 #include <utils/ShaderPermutationDump.h>
 #include <utils/SPIRVReflection.h>
 
@@ -62,10 +63,27 @@ namespace {
     }
   }
 
+#if defined(OS_ANDROID)
+  // Android ships every compute permutation as SPIR-V next to the graphics ones: the
+  // compileT850AndroidShaders Gradle task compiles Assets/Shaders/shader_permutations.json
+  // into Shaders/spirv/<shader>.<permutation>.spv. Loading those bytes avoids running
+  // glslang on the device; a permutation that was not packaged still compiles from HLSL.
+  bool ReadPrecompiledComputeSPIRV(const ComputePipelineDesc& desc, std::vector<uint32_t>& spirv) {
+    if (desc.debugName.empty()) return false;
+    const std::string permutation = desc.permutationName.empty() ? std::string("base") : desc.permutationName;
+    const std::string path = "Shaders/spirv/" + desc.debugName + "." + permutation + ".spv";
+    std::vector<unsigned char> bytes;
+    if (!ResourceLocator::Instance().ReadBinary(path, bytes) || bytes.empty() || (bytes.size() % 4) != 0)
+      return false;
+    spirv.resize(bytes.size() / sizeof(uint32_t));
+    std::memcpy(spirv.data(), bytes.data(), bytes.size());
+    return true;
+  }
+#endif
+
   bool CompileCompute(const ComputePipelineDesc& desc,
                       std::vector<uint32_t>& spirv,
-                      std::array<uint32_t, 3>& threadGroupSize) {
-    T8_TELEMETRY_SCOPE("shader.compile");
+                      std::array<uint32_t, 3>& threadGroupSize) {    T8_TELEMETRY_SCOPE("shader.compile");
     T8_TELEMETRY_ADD("shader.cache.uncached", 1);
     static bool initialized = false;
     if (!initialized) { glslang::InitializeProcess(); initialized = true; }
@@ -163,7 +181,16 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
     }
   }
   std::vector<uint32_t> spirv;
+#if defined(OS_ANDROID)
+  if (ReadPrecompiledComputeSPIRV(desc, spirv)) {
+    T8_TELEMETRY_ADD("shader.cache.hits", 1);
+    T8_LOG_DEBUG("[Vulkan][Compute] Precompiled SPIR-V hit '%s' (%zu words)", desc.debugName.c_str(), spirv.size());
+  } else if (!CompileCompute(desc, spirv, threadGroupSize)) {
+    return false;
+  }
+#else
   if (!CompileCompute(desc, spirv, threadGroupSize)) return false;
+#endif
   std::vector<ComputeBindingLayoutDesc> reflected;
   if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize) ||
       !SetValidatedLayout(desc, reflected, true)) return false;

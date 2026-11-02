@@ -45,6 +45,15 @@ def t850PhysicsDemoAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/rewind_cyborg.glb',
     'Models/porsche_992_gt3_r__www.vecarz.com.glb'
 ]
+def t850BackyardAssetIncludes = t850AndroidCoreAssetIncludes + [
+    'Scenes/Backyard*.json',
+    'Models/Backyard/**',
+    'Textures/Backyard/**',
+    'Textures/Ball/**',
+    'Textures/lens*.png',
+    'Textures/LUT/**',
+    'Textures/sky/CubeMap_SkyWater.dds'
+]
 def t850DoomPorscheAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
     'Models/RagdollEdits/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb.json',
@@ -111,8 +120,8 @@ if (t850AndroidAbis.isEmpty()) {
     throw new GradleException('At least one Android ABI must be specified in t850AndroidAbis.')
 }
 
-if (!(t850AndroidAssetProfile in ['physics-demo', 'doom-porsche', 'q3-sandbox', 'models-full', 'full'])) {
-    throw new GradleException("Unsupported t850AndroidAssetProfile '${t850AndroidAssetProfile}'. Use 'physics-demo', 'doom-porsche', 'q3-sandbox', 'models-full', or 'full'.")
+if (!(t850AndroidAssetProfile in ['physics-demo', 'backyard', 'doom-porsche', 'q3-sandbox', 'models-full', 'full'])) {
+    throw new GradleException("Unsupported t850AndroidAssetProfile '${t850AndroidAssetProfile}'. Use 'physics-demo', 'backyard', 'doom-porsche', 'q3-sandbox', 'models-full', or 'full'.")
 }
 
 def findExecutableOnPath = { String executableName ->
@@ -302,6 +311,7 @@ def configureT850AssetSync = { Sync syncTask, File outputDir, List includes, boo
 
 def getDevelopmentAssetIncludes = {
     if (t850AndroidAssetProfile == 'physics-demo') return t850PhysicsDemoAssetIncludes
+    if (t850AndroidAssetProfile == 'backyard') return t850BackyardAssetIncludes
     if (t850AndroidAssetProfile == 'doom-porsche') return t850DoomPorscheAssetIncludes
     if (t850AndroidAssetProfile == 'q3-sandbox') return t850Q3SandboxAssetIncludes
     if (t850AndroidAssetProfile == 'models-full') return t850ModelAssetIncludes
@@ -387,8 +397,36 @@ tasks.register('compileT850AndroidShaders') {
                 }
             }
             def computePermutations = json.compute_permutations ?: [:]
-            if (!computePermutations.isEmpty()) {
-                logger.lifecycle("[T850] Skipping ${computePermutations.size()} compute permutation(s); Android Vulkan compute precompilation is not implemented yet.")
+            computePermutations.each { key, permutation ->
+                def shaderName = permutation.computeShader?.toString()
+                def shader = shaderByName[shaderName]
+                if (shader == null) {
+                    throw new GradleException("Compute permutation '${key}' references missing shader '${shaderName}'")
+                }
+                def permutationName = (permutation.permutation ?: 'base').toString()
+                def entry = (permutation.entryPoint ?: 'CS').toString()
+                def output = new File(shaderOutputDir, "${shaderName}.${permutationName}.spv")
+                if (!compiledOutputs.add(output.absolutePath)) return
+
+                // VulkanCompute::Create looks up '<shader>.<permutation>.spv' on Android, so the
+                // file name here is part of the runtime contract. T850_VULKAN/T850_SPIRV select the
+                // explicit [[vk::binding]] declarations the reflection step validates against.
+                def args = [validator, '-D', '-V', '-S', 'comp', '-e', entry,
+                            '--auto-map-bindings', '--auto-map-locations', '--auto-sampled-textures',
+                            '-DT850_VULKAN=1', '-DT850_SPIRV=1']
+                (permutation.defines ?: []).each { define ->
+                    // Table entries are either "NAME" or "NAME VALUE"; glslang only takes a
+                    // single-token define, so fold the value in instead of passing it as a file.
+                    def parts = define.toString().trim().split('\\s+', 2)
+                    args << (parts.length > 1 ? "-D${parts[0]}=${parts[1]}" : "-D${parts[0]}")
+                }
+                args << shader.absolutePath
+                args << '-o'
+                args << output.absolutePath
+                shaderCompileCommands << [
+                    label: output.name,
+                    args: args.collect { it.toString() }
+                ]
             }
         } else {
             logger.lifecycle('[T850] No shader_permutations.json found; Android APK will include base SPIR-V only.')

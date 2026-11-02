@@ -38,6 +38,7 @@ struct ShaderBinding {
   std::vector<uint32_t> uniformMemberOffsets;
   bool storageRgba8Unorm = false;
   bool storageRgba16Float = false;
+  bool storageR32Float = false;
   TextureDimension dimension = TextureDimension::None;
   ShaderComponentType sampledType = ShaderComponentType::Float;
   bool comparisonSampler = false;

@@ -48,7 +48,10 @@ Texture3D<float4> AlphaIn : register(t0);
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(2, 0)]]
 #endif
-RWStructuredBuffer<uint4> Sums : register(u0);
+// Flat uint array, not uint4: Tint's SPIR-V reader crashes on InterlockedAdd applied to a vector
+// component and WebGPU has no fallback. Entry e occupies words e*4 .. e*4+3:
+// band 0 whole, band 0 fraction, band 1 whole, band 1 fraction.
+RWStructuredBuffer<uint> Sums : register(u0);
 
 groupshared float3 g_partial[64];
 
@@ -58,11 +61,11 @@ void AddSplit(uint entry, uint component, float value)
     const uint wholeBits = (uint)whole;
     const uint fracBits = (uint)((value - whole) * 65536.0f);
     if (component == 0u) {
-        InterlockedAdd(Sums[entry].x, wholeBits);
-        InterlockedAdd(Sums[entry].y, fracBits);
+        InterlockedAdd(Sums[entry * 4u + 0u], wholeBits);
+        InterlockedAdd(Sums[entry * 4u + 1u], fracBits);
     } else {
-        InterlockedAdd(Sums[entry].z, wholeBits);
-        InterlockedAdd(Sums[entry].w, fracBits);
+        InterlockedAdd(Sums[entry * 4u + 2u], wholeBits);
+        InterlockedAdd(Sums[entry * 4u + 3u], fracBits);
     }
 }
 

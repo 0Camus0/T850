@@ -37,12 +37,17 @@ Texture3D<float4> VelocityIn : register(t0);
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(2, 0)]]
 #endif
-RWStructuredBuffer<uint4> Result : register(u0);
+// Scalar elements rather than uint4: Tint's SPIR-V reader crashes on InterlockedAdd applied to a
+// vector component (vector_element_pointer.cc) and WebGPU has no fallback, so every atomic
+// accumulator in the solver is a flat uint array. Word order is the host's Diagnostics layout:
+// 0 samples, 1 sum speed, 2 max speed, 3 non-finite, 4 sum of (x + 8).
+RWStructuredBuffer<uint> Result : register(u0);
 
 // Sentinel in the constants' Iteration slot: clear the accumulator instead of measuring.
 // The buffer is persistent (no per-call allocation), and there is no buffer-write API, so the
 // kernel clears its own accumulator before each accumulation.
 #define T8_DIAGNOSTICS_RESET 0xFFFFFFFFu
+#define T8_DIAGNOSTICS_WORDS 8u
 
 [numthreads(4, 4, 4)]
 void CS(uint3 id : SV_DispatchThreadID)
@@ -50,23 +55,29 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= Width || id.y >= Height || id.z >= Depth)
         return;
     if (Iteration == T8_DIAGNOSTICS_RESET) {
-        // One thread per counter: every thread in the grid would race otherwise.
+        // One thread per buffer: every thread in the grid would race otherwise.
         if (id.x == 0u && id.y == 0u && id.z == 0u) {
-            Result[0] = uint4(0u, 0u, 0u, 0u);
-            Result[1] = uint4(0u, 0u, 0u, 0u);
+            for (uint word = 0u; word < T8_DIAGNOSTICS_WORDS; ++word)
+                Result[word] = 0u;
         }
         return;
     }
     float3 velocity = VelocityIn.Load(int4(id, 0)).xyz;
-    const bool finite = all(isfinite(velocity));
+    // `isfinite`, `isnan` and `isinf` all trip Tint's SPIR-V reader on WebGPU (a vector-element
+    // pointer ICE that aborts the process), so finiteness is tested on the bit pattern instead:
+    // a NaN or an infinity has the all-ones exponent.
+    const uint3 bits = asuint(velocity);
+    const bool finite = (bits.x & 0x7F800000u) != 0x7F800000u &&
+                        (bits.y & 0x7F800000u) != 0x7F800000u &&
+                        (bits.z & 0x7F800000u) != 0x7F800000u;
     const float speed = finite ? length(velocity) : 0.0f;
     const uint fixed = (uint)min(speed * 1000.0f, 65535.0f);
     // Bias +X so a signed sum stays non-negative for the atomic accumulator.
     const uint fixedX = (uint)clamp((velocity.x + 8.0f) * 1000.0f, 0.0f, 16000.0f);
-    InterlockedAdd(Result[0].x, 1u);
-    InterlockedAdd(Result[0].y, fixed);
-    InterlockedMax(Result[0].z, fixed);
+    InterlockedAdd(Result[0], 1u);
+    InterlockedAdd(Result[1], fixed);
+    InterlockedMax(Result[2], fixed);
     if (!finite)
-        InterlockedAdd(Result[0].w, 1u);
-    InterlockedAdd(Result[1].x, fixedX);
+        InterlockedAdd(Result[3], 1u);
+    InterlockedAdd(Result[4], fixedX);
 }

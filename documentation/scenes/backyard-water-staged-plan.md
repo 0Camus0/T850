@@ -215,7 +215,9 @@ tests per runnable cell; two breaks found and fixed (Win32 Vulkan handle cast, A
 Item 2nd done — the launcher's texture path is proven and guarded by a read-only script. Item 3rd
 partly done — CLI flags documented in `--help` and the runtime-configuration doc, W-14 answered (no
 include handler; layout guard shipped instead), W-16 sections 6/8 still open, scripts not yet moved.
-Android, Steam Deck and Web builds are untouched. Detail in the Stage 8 log.
+**Item 4th done — WebGPU runs the whole solver** (`00e28793`): compute, fluid and backyard self-tests
+plus the pick test PASS on webgpu as well as d3d12/vulkan/d3d11. Android, Steam Deck and Web builds are
+untouched, and the OpenGL port (5th) is next. Detail in the Stage 8 log.
 
 | Order | Item | Size |
 |---|---|---|
@@ -228,7 +230,7 @@ Android, Steam Deck and Web builds are untouched. Detail in the Stage 8 log.
 
 #### 1. Porting the solver to the other APIs (including WebGPU)
 
-Today the solver runs on D3D11, D3D12 and Vulkan only. On GL and WebGPU,
+Today the solver runs on D3D11, D3D12, Vulkan and **WebGPU** (since `00e28793`). On GL,
 `SupportsComputeTextures3D()` is false, the self-tests SKIP and scene 7 shows the static pool.
 Since 2026-11-01 a SKIP is only allowed where that capability is false; a backend that claims it
 and fails to initialize is a FAIL.
@@ -2519,3 +2521,38 @@ Two false alarms worth recording, because both look like regressions and are not
   "settled" ball in that test is still riding the splash crest (`y = +0.09`). The interactive float
   height is fine: `--backyard-ball-probe 60` with two spawned balls shows `y` −0.066…−0.085,
   `level` −0.035…−0.050, `submerged` 0.58–0.62 from t = 4 s on.
+
+**Item 4th done: WebGPU runs the solver (`00e28793`, 2026-11-01).** Designed with Qwen first (the
+layout/view/feature checklist and the Tint traps), then implemented in this order: volume creation →
+layout/view dimension from the reflected `TextureDimension` → dispatch accepts `texture3D` → inline
+buffers → batched submission. Milestones, in the order they were hit:
+
+| Milestone | Before | After |
+|---|---|---|
+| `--compute-selftest` | 3D skipped (capability false) | **PASS**: RGBA16F and R32F, 1x1x1 / 9x5x3 / 33x17x7 |
+| `--fluid-selftest` | SKIP | **PASS**: projection 0.596 → 0.211 at 50 iterations, walls 0, mass drift 0.00 % |
+| `--backyard-selftest` | SKIP | **PASS**: ten gates, `ring−far` −1.7 mm, `covered min−ring` −11.3 mm, flicker 0.0005 m, `submerged` 0.60 |
+| `--backyard-pick-test` | SKIP | **PASS** (0 failures) |
+| scene 7, 8 balls, five APIs | WebGPU static pool | 0 `[ERROR]` lines with the solver live |
+
+Three Tint defects had to be worked around in the *shaders*, and all three **abort the process**
+rather than failing gracefully, which is why they looked like engine crashes:
+
+1. `InterlockedAdd`/`InterlockedMax` on a vector component (`Result[0].x`) → ICE in
+   `vector_element_pointer.cc`. Fixed by making every accumulator a flat `uint` array:
+   `CS_FluidDiagnostics3D` (8 words, same host layout), `CS_FluidVolumeReduce3D` (`entry * 4 + word`),
+   and the two volume self-test readers.
+2. `isfinite`/`isnan`/`isinf` on a `float3` → the same ICE. The diagnostics kernel tests the exponent
+   bits instead, which is exact.
+3. A shader family name carrying `#permutation` is rejected by name resolution, so
+   `CS_FluidSeed3D.hlsl#divergent` could not prepare. The driver now strips from `#`; the defines
+   already carry the permutation into the cache key.
+
+Two engine-side traps: one submission per dispatch ends in `std::bad_alloc` after ~100k dispatches
+(headless runs never reach the frame end that clears the uniform ring), so the compute path owns one
+encoder and submits every 64 dispatches; and inline `ReadOnlyBuffer` bindings have no WebGPU
+equivalent, so the driver copies them into a transient buffer per dispatch.
+
+Still open for the port: a WebGPU-vs-D3D12 frame-300 dump differs by mean |Δ| 24.8/255 (deferred) and
+1.4/255 (back buffer) and needs a visual pass; the browser/Emscripten build has not been tried; and
+the OpenGL port (item 5th) is untouched.

@@ -210,23 +210,36 @@ fixed (section 4, "Fixes after the review"). The branch is 99+ commits ahead of 
 Execution order, one session each. Item 2 runs twice: a baseline first, so porting never hides an
 existing break, and a final pass after everything else.
 
-**Progress (2026-11-01, local agent):** item 1st done — 6/6 Windows cells build, 78/78 gameplay
+**Progress (2026-11-01/02, local agent):** item 1st done — 6/6 Windows cells build, 78/78 gameplay
 tests per runnable cell; two breaks found and fixed (Win32 Vulkan handle cast, ARM64 Dawn metadata).
 Item 2nd done — the launcher's texture path is proven and guarded by a read-only script. Item 3rd
 partly done — CLI flags documented in `--help` and the runtime-configuration doc, W-14 answered (no
 include handler; layout guard shipped instead), W-16 sections 6/8 still open, scripts not yet moved.
-**Item 4th done — WebGPU runs the whole solver** (`00e28793`): compute, fluid and backyard self-tests
-plus the pick test PASS on webgpu as well as d3d12/vulkan/d3d11. Android, Steam Deck and Web builds are
-untouched, and the OpenGL port (5th) is next. Detail in the Stage 8 log.
+**Item 4th done — WebGPU runs the whole solver** (`00e28793`, water-parity fix `330fd3eb`). Item 4th
+of the *new* list (browser) is in progress: scene 7 is now in `web/scenes.json` and
+`BuildWeb.ps1`'s export list, and the export run reaches it.
+
+**Owner decisions on 2026-11-02:**
+
+- **OpenGL is in scope** and gets its own stage (W-28) — the simulation must run on every supported
+  backend, D3D11 included (it already does).
+- **Mobile and web run a lower sweep count**: 60 instead of 120. Measured on D3D12 and Vulkan with
+  `--backyard-iterations 60`, both PASS: still-pool loss 0.002 % → **0.013 %**, still-pool
+  `maxAbs` 0.1 → 0.3 mm, float `ring−far` −1.7 → −2.2 mm, `covered min−ring` −11.3 → −12.5 mm. All
+  inside the gate limits, so 60 ships as `WaterTunables::kMobilePressureIterations`, applied by
+  `EffectivePressureIterations()` on `__EMSCRIPTEN__`/`OS_ANDROID` only.
 
 | Order | Item | Size |
 |---|---|---|
-| 1st | 2a. Baseline build of every platform | S–M |
-| 2nd | 3. Launcher ball textures | S |
-| 3rd | 4. Clean-up | M |
-| 4th | 1a. WebGPU port (native, then browser) | L |
-| 5th | 1b. OpenGL port | L |
-| 6th | 2b. Final matrix, PR text, owner sign-off | M |
+| 1st | 2a. Baseline build of every platform (Windows) — **done** | S–M |
+| 2nd | 3. Launcher ball textures — **done** | S |
+| 3rd | 4. Clean-up — partly done (flags, W-14); W-16 and the script move open | M |
+| 4th | 1a. WebGPU port, native — **done** | L |
+| 5th | **1c. Browser (Emscripten) build + scene 7 in the catalogue — in progress** | M |
+| 6th | **1d. Android build + run** | M–L |
+| 7th | **1e. Steam Deck / Linux Vulkan run** | M |
+| 8th | **1f. OpenGL port (W-28)** | L |
+| 9th | 2b. Final matrix, regression sweep, PR text, owner sign-off | M |
 
 #### 1. Porting the solver to the other APIs (including WebGPU)
 

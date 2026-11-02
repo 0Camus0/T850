@@ -47,6 +47,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` + `ff66c039` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 (headless) and the frame probe landed in `ff66c039` |
 | W-26 The surface kernel compensates for trapped air | **Measured; cannot be removed yet** | this session | Removing it costs 4.8 mm more moat: `covered min−ring` −15.9 → **−20.7 mm** (D3D12, limit 20) and −13.8 → −19.1 (Vulkan). The term is still hiding water W-07 deletes, so it stays until W-07 lands; the measurement is recorded in W-26 and in the implementation record §7 |
 | W-27 The wind tunable does nothing | **Done** (2026-11-01) | this commit | The diagnosis below was half right: at run time `SurfaceLevel` is the layout fill (0.788), so the band did reach the waterline. Wind was multiplied by `ForcingAmplitude`, which ships at 0. Wind is now surface stress on the top wet layer; 10 m/s along X moves the scripted ball 1.2 cm in 20 s, 0 m/s leaves it still |
+| W-28 OpenGL has no solver | **Planned, stage of its own** (owner request 2026-11-02) | — | GL is the last backend without the solver; the design, the twin-vs-generate decision and the acceptance list are in W-28. Not started |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -2025,8 +2026,63 @@ deep in the pool. Use the 100 m/s sanity check if this path is ever touched agai
 
 ---
 
-## 6. Hand-back checklist
+### W-28 — Port the solver to OpenGL (P1 for the PR, L) — owner request 2026-11-02
 
+**Why.** The PR is meant to ship the pool simulation on every supported backend. D3D11, D3D12,
+Vulkan and WebGPU run it; OpenGL still reports `SupportsComputeTextures3D() == false`, so the scene
+falls back to the static pool and every gate SKIPs there. The owner accepted this as a stage of its
+own: *"yes, create its own stage, I acknowledge this is a big one… we need to keep support for all"*.
+
+**What exists today.** `GLCompute` compiles a `.glsl` twin per kernel (`path.replace_extension(".glsl")`)
+and no fluid kernel has one; the GL backend has no `CreateComputeTexture3D`. The scene's static-pool
+fallback is what renders on GL now, and it is the pre-branch behaviour.
+
+**Backend work (`Framework/src/video/gl/GLCompute.cpp`, `GLDriver`).**
+
+1. `SupportsComputeTextures3D()` → true when the context is GL 4.3+ (`GL_ARB_shader_image_load_store`
+   plus `GL_ARB_shader_storage_buffer_object`), which the driver already requires.
+2. `CreateComputeTexture3D`: `glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGBA16F/GL_R32F, w, h, d)`, a
+   write view (`glBindImageTexture(unit, tex, 0, GL_TRUE /*layered*/, 0, GL_WRITE_ONLY, format)`) and
+   a sampled view. Seed with `glTexSubImage3D`.
+3. A `glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT |
+   GL_SHADER_STORAGE_BARRIER_BIT)` between dependent dispatches — the Vulkan/D3D12 backends get this
+   from their own barriers; GL has none today because no kernel wrote images before.
+4. Storage format checks mirroring D3D12/Vulkan/WebGPU: the declared `storageFormat` must match the
+   texture's internal format, which is the silent-garbage path W-02 closed on the other backends.
+5. `ReadWriteBuffer` (SSBO) support already exists for the fluid's buffers; verify `std430` layout
+   against the HLSL `StructuredBuffer` declarations (the `uint`/`float`/`float4` cases only).
+
+**Shader work — the decision to take first.** Two routes:
+
+* (a) ~21 hand-written `.glsl` twins. Duplicates every fluid kernel; this is exactly the drift that
+  made the WebGPU water flat for a session (stale `.wgsl` twins), so it should not be the default.
+* (b) **Generate them**: translate HLSL → SPIR-V (already done by the WebGPU path with glslang) →
+  GLSL via SPIRV-Cross, at build time, and commit the generated `.glsl` next to the `.hlsl`. Check
+  whether SPIRV-Cross is already a vcpkg dependency (glslang does not ship it); if it has to be added,
+  that is a new port and a dependency review, which is the main cost of this route.
+  The engine already has a "compile/export" step (`--compileShaders`, `--webShaderOutput`) to hang
+  this off, and the `check_fluid_constants.py` style guard can verify the generated files match their
+  source.
+
+Recommendation: **(b)**, and if the SPIRV-Cross port is unacceptable, do (a) but add a guard that
+fails when a fluid `.hlsl` is newer than its `.glsl` twin.
+
+**Binding conventions.** glslang's GL path must reproduce the engine's register mapping
+(textures 0…, samplers 32…, UBOs 64…, images/UAVs 96… as the SPIR-V path already shifts them); the
+GL reflection in `GLCompute` maps the same way, so reuse `SPIRVReflection`.
+
+**Acceptance.** Same list the other backends were held to, in this order:
+`--compute-selftest` including the 3D RGBA16F and R32F cases; `--fluid-selftest`;
+`--backyard-selftest` with every gate inside the D3D12/Vulkan spread; `--backyard-pick-test`;
+scene 7 with 8 seeded balls and 0 `[ERROR]`; a frame-300 dump compared with `cmp_ppm.py` against
+D3D12; and a `telemetry.ps1` row. Then `--scene 1` and `--scene 6` on GL to prove nothing else moved.
+
+**Risk.** Driver variance (Mesa vs NVIDIA/AMD) on image3D and layered binds; GL's lack of a
+`R32F` write-only image guarantee on older drivers; and the twin/generation decision above.
+
+---
+
+## 6. Hand-back checklist
 * [ ] Only the files the task names were changed (plus registry entries the task requires).
 * [ ] R1–R9 checked; every new buffer/texture read is guarded (R1).
 * [ ] x64 Release builds with no new warnings.

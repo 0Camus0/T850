@@ -4,7 +4,14 @@ param(
     [string]$CMake = 'cmake',
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [ValidateSet('Embedded', 'Cloud')][string]$AssetMode = 'Embedded',
-    [int[]]$ExportScenes = @(6, 0, 1, 2, 3, 4, 5),
+    # Scene 7 (Backyard) is exported so the browser bundle carries the fluid solver's 21 compute
+    # kernels and the water permutations; without it those shaders are missing at run time.
+    [int[]]$ExportScenes = @(6, 0, 1, 2, 3, 4, 5, 7),
+    # Flows to export a shader package for. `auto` and `spirv` translate the HLSL (and are what the
+    # browser actually runs); `wgsl` means "use the hand-written Assets/Shaders/*.wgsl twins", which
+    # exist for only some kernels — the 3D volume kernels have none, so asking for it fails the
+    # export. Pass -Flows auto,wgsl,spirv when the twins themselves are what you are testing.
+    [ValidateSet('auto', 'wgsl', 'spirv')][string[]]$Flows = @('auto', 'spirv'),
     [switch]$Clean,
     [switch]$SkipShaderExport
 )
@@ -73,7 +80,7 @@ if (-not $SkipShaderExport) {
     Push-Location (Join-Path $sourceRoot 'bin\x64\Release')
     try {
         $shaderOutput = Join-Path $buildRoot 'WebShaders'
-        foreach ($flow in @('auto', 'wgsl', 'spirv')) {
+        foreach ($flow in $Flows) {
             $flowArguments = @('--shaderFlow', $flow)
             Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments (@('--compileShaders', '--api', 'webgpu', '--webShaderOutput', $shaderOutput) + $flowArguments) -LogPath (Join-Path $buildRoot "shader-$flow-export.log") -Operation "Recorded shader export ($flow)"
             Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments (@('--compute-selftest', '--api', 'webgpu', '--webShaderOutput', $shaderOutput) + $flowArguments) -LogPath (Join-Path $buildRoot "compute-selftest-$flow-export.log") -Operation "Compute correctness test shader export ($flow)"

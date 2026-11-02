@@ -400,6 +400,11 @@ namespace t850 {
     uint32_t               m_descriptorSetsThisGeneration = 0;
     bool                   m_screenshotConsumedSemaphore = false;
     bool                   m_swapchainNeedsRecreate = false;
+    // True when this frame actually acquired a swap chain image; only such a frame may
+    // present or wait on the image-available semaphore.
+    bool                   m_frameAcquiredSwapchainImage = false;
+    // Logs the "surface extent not available" deferral once per stalled stretch.
+    bool                   m_swapchainSurfaceWaitLogged = false;
 
     // Last-bound state for redundancy elimination
     VkPipeline      m_lastPipeline = VK_NULL_HANDLE;

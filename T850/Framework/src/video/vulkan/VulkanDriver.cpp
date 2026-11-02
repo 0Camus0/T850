@@ -81,6 +81,29 @@ namespace t850 {
       return VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
     }
 
+    // Resolves the swap chain extent from the surface caps. A freshly created or resized
+    // Android surface reports currentExtent 0x0 until the window is laid out; taking that
+    // verbatim builds a 0x0 swap chain that every vkQueuePresentKHR rejects as
+    // OUT_OF_DATE and that the engine never recovers from. Returns false when the surface
+    // has no usable extent yet, so callers can defer instead of destroying the good chain.
+    bool ResolveSwapchainExtent(const VkSurfaceCapabilitiesKHR& caps, int requestedWidth,
+                                int requestedHeight, VkExtent2D& extent) {
+      if (caps.currentExtent.width != UINT32_MAX && caps.currentExtent.height != UINT32_MAX &&
+          caps.currentExtent.width > 0 && caps.currentExtent.height > 0) {
+        extent = caps.currentExtent;
+        return true;
+      }
+      if (requestedWidth <= 0 || requestedHeight <= 0) return false;
+      if (caps.maxImageExtent.width == 0 || caps.maxImageExtent.height == 0) return false;
+      const uint32_t width = std::clamp(static_cast<uint32_t>(requestedWidth),
+                                        caps.minImageExtent.width, caps.maxImageExtent.width);
+      const uint32_t height = std::clamp(static_cast<uint32_t>(requestedHeight),
+                                         caps.minImageExtent.height, caps.maxImageExtent.height);
+      if (width == 0 || height == 0) return false;
+      extent = { width, height };
+      return true;
+    }
+
     bool ShouldRecreateSwapchainAfterSuboptimal(VkPhysicalDevice physicalDevice,
                                                 VkSurfaceKHR surface,
                                                 VkExtent2D swapchainExtent) {
@@ -765,6 +788,17 @@ namespace t850 {
     m_swapChainExtent = { (uint32_t)width, (uint32_t)height };
     if (surfCaps.currentExtent.width != UINT32_MAX)
       m_swapChainExtent = surfCaps.currentExtent;
+    if (!ResolveSwapchainExtent(surfCaps, width, height, m_swapChainExtent)) {
+      T8_LOG_INFO("[Vulkan] Swap chain not created: surface extent undefined (current=%ux%u, requested %dx%d)",
+                  surfCaps.currentExtent.width, surfCaps.currentExtent.height, width, height);
+      m_swapChainExtent = { 0, 0 };
+      return;
+    }
+    if (surfCaps.currentExtent.width == 0 || surfCaps.currentExtent.height == 0) {
+      T8_LOG_INFO("[Vulkan] Surface extent undefined (current=%ux%u); using requested %ux%u",
+                  surfCaps.currentExtent.width, surfCaps.currentExtent.height,
+                  m_swapChainExtent.width, m_swapChainExtent.height);
+    }
 
     uint32_t imageCount = surfCaps.minImageCount + 1;
     if (surfCaps.maxImageCount > 0 && imageCount > surfCaps.maxImageCount)
@@ -1150,7 +1184,27 @@ namespace t850 {
 
   bool VulkanDriver::ResizeSwapchain(int newW, int newH) {
     if (newW <= 0 || newH <= 0) return false;
-    T8_LOG_INFO("[Vulkan] ResizeSwapchain %dx%d -> %dx%d", width, height, newW, newH);
+
+      // Validate the surface before tearing anything down: recreating against an undefined
+      // (0x0) extent destroys the working swap chain and leaves the window black forever.
+      VkSurfaceCapabilitiesKHR caps = {};
+      VkExtent2D targetExtent = {};
+      if (!m_surface || !m_physicalDevice ||
+          vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physicalDevice, m_surface, &caps) != VK_SUCCESS ||
+          !ResolveSwapchainExtent(caps, newW, newH, targetExtent)) {
+        if (!m_swapchainSurfaceWaitLogged) {
+          T8_LOG_INFO("[Vulkan] ResizeSwapchain deferred: surface extent not available yet "
+                      "(current=%ux%u, requested %dx%d)", caps.currentExtent.width,
+                      caps.currentExtent.height, newW, newH);
+          m_swapchainSurfaceWaitLogged = true;
+        }
+        return false;
+      }
+      m_swapchainSurfaceWaitLogged = false;
+      newW = static_cast<int>(targetExtent.width);
+      newH = static_cast<int>(targetExtent.height);
+
+      T8_LOG_INFO("[Vulkan] ResizeSwapchain %dx%d -> %dx%d", width, height, newW, newH);
 
     // Flush GPU: wait for idle AND reset command buffers/descriptor pools
     // so no stale references to resources we're about to destroy
@@ -1181,6 +1235,12 @@ namespace t850 {
 
     // Recreate swap chain, views, depth, framebuffers
     CreateSwapChain();
+    if (!m_swapChain) {
+      // Surface lost the extent between the probe above and creation; stay on the flag so
+      // the next frame retries instead of presenting to a dead swap chain.
+      m_swapchainNeedsRecreate = true;
+      return false;
+    }
     CreateBackBufferViews();
     CreateDepthBuffer();
     CreateFramebuffers();
@@ -1347,7 +1407,7 @@ namespace t850 {
     VkPipelineStageFlags waitStage[] = { VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
 
     VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    const bool mustWaitForAcquire = m_frameUsesSwapchain && !m_screenshotConsumedSemaphore;
+    const bool mustWaitForAcquire = m_frameAcquiredSwapchainImage && !m_screenshotConsumedSemaphore;
     submitInfo.waitSemaphoreCount = mustWaitForAcquire ? 1 : 0;
     submitInfo.pWaitSemaphores = mustWaitForAcquire ? waitSem : nullptr;
     submitInfo.pWaitDstStageMask = mustWaitForAcquire ? waitStage : nullptr;
@@ -1393,9 +1453,19 @@ namespace t850 {
 
     const bool useSwapchain = target == FrameTargetMode::Swapchain && !IsOffscreenEnabled();
     m_frameUsesSwapchain = useSwapchain;
-    if (useSwapchain && m_swapchainNeedsRecreate) {
+    m_frameAcquiredSwapchainImage = false;
+    if (m_swapchainNeedsRecreate) {
+      // Recover before acquiring even when this frame renders to a render target: the
+      // frame still ends in a present, and presenting a swap chain the surface rejected
+      // keeps it broken forever.
       T8_LOG_INFO("[Vulkan] Recreating suboptimal swapchain before acquire");
-      ResizeSwapchain(width, height);
+      if (!ResizeSwapchain(width, height)) {
+        // No usable surface extent yet (Android window not laid out, minimised window).
+        // Skip the frame; the flag stays set so the next frame retries.
+        m_swapchainNeedsRecreate = true;
+        m_frameStarted = false;
+        return;
+      }
     }
 
     {
@@ -1421,12 +1491,20 @@ namespace t850 {
     }
 
     if (useSwapchain) {
-      VkResult res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
+      VkResult res = m_swapChain ? vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
                                             m_imageAvailableSemaphores[m_currentFrame],
-                                            VK_NULL_HANDLE, &m_imageIndex);
+                                            VK_NULL_HANDLE, &m_imageIndex)
+                                 : VK_ERROR_SURFACE_LOST_KHR;
+      if (res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR) {
+        m_frameAcquiredSwapchainImage = true;
+      }
       if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_ERROR_SURFACE_LOST_KHR) {
         T8_LOG_INFO("[Vulkan] Swap chain out of date (res=%d), recreating...", res);
-        ResizeSwapchain(width, height);
+        if (!ResizeSwapchain(width, height)) {
+          m_swapchainNeedsRecreate = true;
+          m_frameStarted = false;
+          return;
+        }
         // After recreation, fences are re-signaled by WaitForGPU inside ResizeSwapchain.
         // Reset the fence for the current frame before re-acquiring.
         WaitForFence(m_currentFrame);
@@ -1440,6 +1518,7 @@ namespace t850 {
           m_frameStarted = false;
           return;
         }
+        m_frameAcquiredSwapchainImage = true;
       } else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
         T8_LOG_ERROR("[Vulkan] vkAcquireNextImageKHR failed res=%d", res);
         m_frameStarted = false;
@@ -1960,7 +2039,12 @@ namespace t850 {
     }
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
 
-    if (mode == FrameCompletionMode::SubmitNoPresent || IsOffscreenEnabled()) {
+    // Presenting an image this frame never acquired (or a swap chain the surface already
+    // rejected) leaves the window black on drivers that answer OUT_OF_DATE forever.
+    const bool presentToSwapchain = mode == FrameCompletionMode::Present && !IsOffscreenEnabled() &&
+                                    m_frameAcquiredSwapchainImage && m_swapChain != VK_NULL_HANDLE;
+
+    if (!presentToSwapchain) {
       if (m_renderPassActive) {
         vkCmdEndRenderPass(cmd);
         m_renderPassActive = false;
@@ -1974,7 +2058,7 @@ namespace t850 {
 
       VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
       const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-      if (m_frameUsesSwapchain && !m_screenshotConsumedSemaphore) {
+      if (m_frameAcquiredSwapchainImage && !m_screenshotConsumedSemaphore) {
         submitInfo.waitSemaphoreCount = 1;
         submitInfo.pWaitSemaphores = &m_imageAvailableSemaphores[m_currentFrame];
         submitInfo.pWaitDstStageMask = &waitStage;

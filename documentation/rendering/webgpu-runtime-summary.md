@@ -181,12 +181,20 @@ that gate and unavailable SteamRT verification. See the
 
 - [WebGPUShaderCompiler.cpp](../../T850/Framework/src/video/webgpu/WebGPUShaderCompiler.cpp)
   supports in-process HLSL -> glslang/SPIR-V -> Tint/WGSL and direct WGSL paths.
-  All 17 maintained HLSL stage families have WGSL counterparts.
+  The 17 HLSL stage families have hand-written WGSL twins in `Assets/Shaders/*.wgsl`, but the
+  twins drift (they had no fluid-surface code at all while the HLSL grew it), so they are a
+  fallback, not the preferred source — see the flow policy below.
 - Direct WGSL uses the vendored 0BSD simplecpp preprocessor through an in-memory
   adapter. Production shader loading and cache paths use ResourceLocator.
-- `auto` prefers WGSL and falls back only on source preparation failure. Strict
-  `wgsl` and `spirv` never cross-fallback. This policy does not hide pipeline
-  validation failures, device failures or incorrect rendered output.
+- `auto` compiles the **HLSL** first (`actual=spirv` in the load log) and falls back to the WGSL
+  twin only when that fails; the translation is cached on disk, so the cost is one-time. Strict
+  `wgsl` and `spirv` never cross-fallback. Before 2026-11-02 `auto` preferred the twin, which is
+  why Backyard's water rendered without its `FLUID_SURFACE` path for a whole session: the
+  permutation was requested, compiled and bound correctly, and then a stale twin was drawn.
+  This policy does not hide pipeline validation failures, device failures or incorrect output.
+- 3D compute volumes are supported since 2026-11-02: `texture_storage_3d` (write-only, RGBA16F and
+  R32F), `texture_3d` reads, per-dispatch inline buffers and batched compute submission. Details in
+  [compute-shader-implementation.md](compute-shader-implementation.md#webgpu-specifics).
 - Reflection validates stage interfaces, resource types/dimensions, uniform
   sizes/top-level offsets and fragment outputs. Cache identities include source,
   language, defines, binding policy, shader key and compiler/dependency identity.

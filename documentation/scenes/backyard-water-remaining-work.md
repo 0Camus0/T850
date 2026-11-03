@@ -47,7 +47,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` + `ff66c039` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 (headless) and the frame probe landed in `ff66c039` |
 | W-26 The surface kernel compensates for trapped air | **Done** (removed with W-29, 2026-11-02) | this commit | Once the air rises out the term has nothing left to hide: with it off, gate 7 `covered min−ring` −2.4 mm (D3D12) / −1.8 mm (Vulkan) against −2.2 / −1.6 with it on. Removed, because it turned every leftover pocket into a frozen bump |
 | W-27 The wind tunable does nothing | **Done** (2026-11-01) | this commit | The diagnosis below was half right: at run time `SurfaceLevel` is the layout fill (0.788), so the band did reach the waterline. Wind was multiplied by `ForcingAmplitude`, which ships at 0. Wind is now surface stress on the top wet layer; 10 m/s along X moves the scripted ball 1.2 cm in 20 s, 0 m/s leaves it still |
-| W-28 OpenGL has no solver | **Done** (2026-11-02, this commit) | this commit | GL 4.3 now runs the whole solver: 27 generated GLSL twins, `glTexStorage3D` volumes bound with `glBindImageTexture`, inline SSBOs, and the mesh shaders' `FLUID_SURFACE` path hand-ported. `--compute-selftest`, `--fluid-selftest`, all 11 `--backyard-selftest` gates and `--backyard-pick-test` PASS on `--api gl`; scenes 1 and 6 stay byte-identical; scene 7 frame 300 is within +0.16/255 mean of D3D12. GL is 3.5x slower in the solver than D3D12 (8.1 vs 2.3 ms of dispatch recording at 120 sweeps); the remaining lever is listed under W-28 | 
+| W-28 OpenGL has no solver | **Done** (2026-11-02, this commit) | this commit | GL 4.3 now runs the whole solver: 27 generated GLSL twins, `glTexStorage3D` volumes bound with `glBindImageTexture`, inline SSBOs, and the mesh shaders' `FLUID_SURFACE` path hand-ported. `--compute-selftest`, `--fluid-selftest`, all 11 `--backyard-selftest` gates and `--backyard-pick-test` PASS on `--api gl`; scenes 1 and 6 stay byte-identical; scene 7 frame 300 is within +0.22/255 mean of D3D12. GL is **GPU-bound, not CPU-bound**, at 120 sweeps and vsync-locked at the display refresh; the measurements that falsified the CPU hypothesis are under W-28 | 
 | W-29 The mean surface creeps up over long runs | **Done** (2026-11-02) | this commit | Entrained air never left (no bubble buoyancy) and W-26 drew it as frozen bumps. `CS_FluidAirRise3D` lets it rise out: after 30 s bulk cells below 98 % 3614 → 24, interface 3.36 → 1.16 cells; 600 s on D3D12 ends flat to ±1 mm with mean 0.0 mm. Gate 11 guards it. Fixing it exposed two backend bugs (WebGPU headless memory, Vulkan stale readback) |
 | W-30 The wind does not push the balls | **Planned** (owner decision 2026-11-02) | — | Air drag on the exposed cap, horizontal, integrated implicitly together with the water drag; expected leeway ~2.8 % of the wind. Gate 12. Staged plan section 0, item K |
 | W-31 Devices run the water in slow motion | **Planned** (owner request 2026-11-02) | — | The 1/30 s frame clamp plus a fixed 1/120 s substep cost 4 substeps per frame regardless of the flow: Deck 0.53×, tablet 0.53×. Replace them with CFL substeps from a measured velocity bound and a per-frame substep budget. Gate 13. Staged plan section 0, item J |
@@ -2192,18 +2192,46 @@ EnsureWaterShaderPermutations` now reads the `.glsl` sources and passes the `.gl
 | Scenes 1 and 6, frame 300 | **byte-identical** to the dump taken before any of this (18/18 and 12/12 targets) — the merged `CBuffer` shift is consistent between C++ and GLSL |
 | Scene 7 frame 300 vs D3D12 | backbuffer mean **+0.22/255**, HDR mean **+0.04/255** (+0.16 / −0.00 before the dispatch-path changes) |
 | `FLUID_SURFACE` is live | a temporary unconditional magenta `return` inside the block painted the whole pool magenta, then was removed |
-| `telemetry.ps1`, 720p, 0 balls, same session | D3D12 **312.2** fps / update 2.33 ms, Vulkan **281.8** / 2.25 ms, GL **107.5** / 8.12 ms, 0 errors |
+| `telemetry.ps1`, 720p, 0 balls, same session | D3D12 **311.0** fps / update 2.32 ms, Vulkan **291.0** / 2.21 ms, GL **116.8** / 7.85 ms, 0 errors. GL is vsync-locked at the 144 Hz refresh and GPU-bound at 120 sweeps; at 60 sweeps it hits the refresh ceiling. See "The remaining GL cost" |
 
-**The remaining GL cost.** GL's CPU time recording the solver is ~3.5x D3D12's. Two easy levers
-were taken and measured: caching the five `glGet*` limit queries per dispatch (8.26 → 8.21 ms) and
-replacing the per-dispatch `glGenBuffers`/`glBufferData`/`glDeleteBuffers` constant block with a
-1 MiB bump-allocated ring reset in `CompleteFrame` (8.21 → 8.12 ms). So the cost is not allocation
-or limit queries; it is the per-dispatch state round trips that remain — `GL_CURRENT_PROGRAM`,
-`GL_ACTIVE_TEXTURE`, one `GL_TEXTURE_BINDING_2D`/`3D` per sampled texture, `GL_SAMPLER_BINDING` per
-sampler, and the `glGetError` drain, at roughly 4 µs per dispatch over ~2000 dispatches. Removing
-them means the compute path stops saving and restoring graphics state and instead invalidates the
-graphics `MutableGraphicsStateCache`; that is a real correctness risk for every draw after a
-dispatch, so it needs its own A/B and is left open. 108 fps in the heaviest scene is playable.
+**The remaining GL cost — measured, not assumed (2026-11-03).** The note in the first version of
+this resolution ("GL records the solver 3.5x slower than D3D12, the cost is the per-dispatch state
+round trips") was **wrong**. Three hypotheses were tested with a same-session A/B and falsified:
+
+| Experiment (720p, 0 balls, 120 sweeps unless noted) | update ms | fps |
+|---|---|---|
+| baseline | 8.06–8.11 | 115–118 |
+| no per-dispatch `glGetIntegerv` state save/restore, no `glGetError` drain (A/B/A: 8.01, 8.03, 8.11) | 8.01–8.03 | 119–121 |
+| no `glMemoryBarrier` after each dispatch (not removable — the kernels depend on it) | 7.54 | 121 |
+| constant-block ring instead of `glGenBuffers`/`glDeleteBuffers` per dispatch (the 2026-11-02 change) | 8.12 | 111 |
+
+So the state queries, the error drain and the constant allocation are all worth **nothing**, and
+the barrier is worth 0.55 ms (7%) — not enough to justify weakening correctness.
+
+**What the cost actually is.** Sweeping the iteration count with a temporary override in
+`EffectivePressureIterations()` gives the slope:
+
+| sweeps | D3D12 update / fps | GL update / fps | GL `present` |
+|---|---|---|---|
+| 120 | 2.35 ms / 311 | 8.11 ms / 109 | 0.20 ms |
+| 60 | 1.47 ms / 430 | 2.34 ms / 144 | 3.57 ms |
+| 30 | — | 1.49 ms / 145 | 4.42 ms |
+
+- GL's *pure* CPU recording at 60 sweeps (2.34 ms) is the same as D3D12's at 120 (2.35 ms). It is
+  **~1.6x per sweep, not 3.5x**.
+- At 120 sweeps GL's frame is 9.4 ms against a 6.94 ms refresh period, so it is **GPU-bound** and
+  the GPU back-pressure lands *inside* the dispatch calls (`gpu_wait` has no GL scope to land in).
+  The same code costs 2.34 ms at 60 sweeps, so the 8.11 is not CPU work at all.
+- **GL's `SwapBuffers` is vsync-locked and the other backends are not.** Nothing in the engine sets
+  a swap interval, so SDL's GL default applies: GL stops at the display refresh (144.0 / 144.6 fps
+  with `present` = 3.57 ms of pure blocking), while D3D12 reaches 430 fps and Vulkan 311 with
+  `present` ≈ 0.08 ms. Consequence for all future GL work: **a GL perf number can never exceed the
+  refresh rate**, and GL's 60-sweep result is refresh-limited, not solver-limited.
+
+**Recommendation.** Do not optimise GL's dispatch path further. The remaining levers are GPU-side
+or algorithmic (fewer, wider dispatches — e.g. batching the red-black pressure pair), and those
+change the solver for every backend, so they belong to a performance task, not to W-28. The sweep
+count is the knob that matters and items B and J already own it.
 
 --- 
 

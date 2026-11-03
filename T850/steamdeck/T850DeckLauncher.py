@@ -26,6 +26,7 @@ SCENES = [
     ("Ragdoll Editor", 3),
     ("Scene Template", 4),
     ("Minecraft", 6),
+    ("Backyard", 7),
 ]
 SCENE_LABEL_BY_ID = {value: label for label, value in SCENES}
 SCENE_ID_BY_LABEL = {label: value for label, value in SCENES}

@@ -48,6 +48,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-26 The surface kernel compensates for trapped air | **Measured; cannot be removed yet** | this session | Removing it costs 4.8 mm more moat: `covered min−ring` −15.9 → **−20.7 mm** (D3D12, limit 20) and −13.8 → −19.1 (Vulkan). The term is still hiding water W-07 deletes, so it stays until W-07 lands; the measurement is recorded in W-26 and in the implementation record §7 |
 | W-27 The wind tunable does nothing | **Done** (2026-11-01) | this commit | The diagnosis below was half right: at run time `SurfaceLevel` is the layout fill (0.788), so the band did reach the waterline. Wind was multiplied by `ForcingAmplitude`, which ships at 0. Wind is now surface stress on the top wet layer; 10 m/s along X moves the scripted ball 1.2 cm in 20 s, 0 m/s leaves it still |
 | W-28 OpenGL has no solver | **Planned, stage of its own** (owner request 2026-11-02) | — | GL is the last backend without the solver; the design, the twin-vs-generate decision and the acceptance list are in W-28. Not started |
+| W-29 The mean surface creeps up over long runs | **Open** (found 2026-11-02) | — | Same alpha volume, rising interface headroom: +3.5 cm after 2075 s on the tablet (60 sweeps), +0.45 cm after 765 s on D3D12 (120). Needs a long-run gate first |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -2090,6 +2091,47 @@ D3D12; and a `telemetry.ps1` row. Then `--scene 1` and `--scene 6` on GL to prov
 
 **Risk.** Driver variance (Mesa vs NVIDIA/AMD) on image3D and layered binds; GL's lack of a
 `R32F` write-only image guarantee on older drivers; and the twin/generation decision above.
+
+---
+
+### W-29 — The mean surface creeps up over long runs (P2, M) — found 2026-11-02
+
+**Symptom.** With nothing disturbing the pool, the reported mean surface rises steadily while
+the total alpha stays constant, and the floating ball rises with it (W-06 reads the simulated
+level):
+
+| Run | Sweeps | Simulated time | Mean surface vs plane | Ball `y` | Rate |
+|---|---|---|---|---|---|
+| Tablet SM-X920, Vulkan, live | 60 | 368 → 2075 s | +0.6 → +3.5 cm | −0.068 → −0.027 m | ~1.7 cm / 1000 s |
+| Windows D3D12, `--regressionFixedDt 1/30` | 120 | 8 → 765 s | +0.03 → +0.45 cm | −0.069 → −0.069 m | ~0.55 cm / 1000 s |
+
+On the tablet `alpha volume` stays 82 917 cells (−0.001 %) for the whole hour and the volume
+correction's deficit averages −0.06 cells, so the correction is not feeding it. What grows is the
+interface **headroom** (Σ 1−α over interface cells, logged by `VolumeCorrection` at debug): 1205 at
+t = 493 s, 4129 at 889 s, 4758 at 2070 s. Same volume, more partially-filled cells: the interface
+smears and air is held under the surface, so the column top the surface kernel reports sits higher.
+It is slower with more pressure sweeps, which points at residual divergence compressing and
+expanding α every step rather than at the advection alone.
+
+**Why it matters.** Gate 1 checks 2 s, so no gate can see it. A pool left running for an hour on a
+device (the owner did exactly that) ends 3.5 cm high with a visibly higher ball, and W-26's trapped-
+air compensation in the surface kernel may be amplifying the reading.
+
+**Directions, in order.**
+
+1. Add a long-run headless gate: `--backyard-selftest-frames` style, fixed dt 1/30, 900 s simulated,
+   no ball; log mean surface and headroom every 60 s; fail on a mean rise above 5 mm. Run it on
+   D3D12 at 120 and 60 sweeps to get the slope per sweep count.
+2. Measure headroom by depth: is the air spread through the column (compressibility from residual
+   divergence) or concentrated in the top 2–3 cells (interface diffusion that `alphaCompression`
+   should counter)?
+3. Only then pick the fix: a stronger or better-placed interface compression term, a periodic
+   re-sharpening of the column (sum α per column, refill from the bottom; conserves volume exactly),
+   or warm-start / more sweeps only where divergence is large.
+
+**Acceptance.** The long-run gate passes on D3D12 and Vulkan at the shipped sweep counts (120
+desktop, 60 mobile/web), every existing gate still passes, and a 30-minute tablet run keeps the
+mean within ±5 mm.
 
 ---
 

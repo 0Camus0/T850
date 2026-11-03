@@ -45,10 +45,10 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-23 Textured materials with normal maps | **Done** (Stage 4b) | `507ef1a4` | CC0 ambientCG textures with NormalGL, world-box UVs |
 | W-24 House roof is upside down | **Done** (Stage 4a) | `2114fa0e` | Sign flipped, gables closed |
 | W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` + `ff66c039` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 (headless) and the frame probe landed in `ff66c039` |
-| W-26 The surface kernel compensates for trapped air | **Measured; cannot be removed yet** | this session | Removing it costs 4.8 mm more moat: `covered min−ring` −15.9 → **−20.7 mm** (D3D12, limit 20) and −13.8 → −19.1 (Vulkan). The term is still hiding water W-07 deletes, so it stays until W-07 lands; the measurement is recorded in W-26 and in the implementation record §7 |
+| W-26 The surface kernel compensates for trapped air | **Done** (removed with W-29, 2026-11-02) | this commit | Once the air rises out the term has nothing left to hide: with it off, gate 7 `covered min−ring` −2.4 mm (D3D12) / −1.8 mm (Vulkan) against −2.2 / −1.6 with it on. Removed, because it turned every leftover pocket into a frozen bump |
 | W-27 The wind tunable does nothing | **Done** (2026-11-01) | this commit | The diagnosis below was half right: at run time `SurfaceLevel` is the layout fill (0.788), so the band did reach the waterline. Wind was multiplied by `ForcingAmplitude`, which ships at 0. Wind is now surface stress on the top wet layer; 10 m/s along X moves the scripted ball 1.2 cm in 20 s, 0 m/s leaves it still |
 | W-28 OpenGL has no solver | **Planned, stage of its own** (owner request 2026-11-02) | — | GL is the last backend without the solver; the design, the twin-vs-generate decision and the acceptance list are in W-28. Not started |
-| W-29 The mean surface creeps up over long runs | **Open** (found 2026-11-02) | — | Same alpha volume, rising interface headroom: +3.5 cm after 2075 s on the tablet (60 sweeps), +0.45 cm after 765 s on D3D12 (120). Needs a long-run gate first |
+| W-29 The mean surface creeps up over long runs | **Done** (2026-11-02) | this commit | Entrained air never left (no bubble buoyancy) and W-26 drew it as frozen bumps. `CS_FluidAirRise3D` lets it rise out: after 30 s bulk cells below 98 % 3614 → 24, interface 3.36 → 1.16 cells; 600 s on D3D12 ends flat to ±1 mm with mean 0.0 mm. Gate 11 guards it. Fixing it exposed two backend bugs (WebGPU headless memory, Vulkan stale readback) |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -2159,6 +2159,34 @@ and the surface relaxes to flat.
 **Acceptance.** The long-run gate passes on D3D12 and Vulkan at the shipped sweep counts (120
 desktop, 60 mobile/web), every existing gate still passes, and a 30-minute tablet run keeps the
 mean within ±5 mm.
+
+**Resolution (2026-11-02).** Implemented as designed, with `airRiseSpeed = 0.25` m/s (a water
+JSON key, a GUI slider and `--backyard-air-rise` for the gates).
+
+| Check | Before | After |
+|---|---|---|
+| Gate 11, 30 s after the default drop (D3D12) | bulk below 98 % 3614, interface 3.36 cells (FAIL) | 24 (air under solids), 1.16 (PASS) |
+| Gate 11 at 60 sweeps / at 0.1 and 0.5 m/s | — | PASS / PASS / PASS |
+| Scene, D3D12, fixed dt 1/30, 600 s | bumps +1…+2 cm frozen, mean creeping | surface ±1 mm (rms 0.3 mm), mean 0.0 mm, ball steady at −0.073 m |
+| Scene at 60 sweeps, 120 s, air rise off vs on | water speed 0, rms growing 1.8 → 4.7 mm | rms 7.5 → 1.6 mm, still relaxing |
+| Gate 7 `covered min−ring` (D3D12) | −11.3 mm (with the W-26 term) | −2.2 mm (term removed) |
+
+All gates pass on D3D12, Vulkan, D3D11 and WebGPU, on the Steam Deck, and the fluid/compute
+self-tests and pick test are unchanged. A 30-minute tablet run is still to be done (the device
+slept during the attempt).
+
+The long run exposed two backend bugs, both fixed in the same change:
+
+* **WebGPU ran out of memory in gate 11** (`bad allocation`): each 64-dispatch submit retired a
+  1 MB uniform buffer that was only reclaimed at a frame end or a GPU wait, and a headless loop has
+  neither. Every submit now waits for the oldest once eight are in flight (peak 643 MB).
+* **Vulkan left floating balls on a stale water level on GPU-bound devices.** The async readback
+  was "done" only while its frame slot's fence read signaled, but `BeginFrame` resets that fence
+  as soon as it waits on it, so on the Deck and the tablet the W-06 ticket could stay pending for
+  minutes (the Deck ball sat at −0.117 m with vy exactly 0; the tablet ball bobbed on rare jumps).
+  The slot now counts its waits; a later wait proves the copy finished. The Deck reproduced
+  "readback still pending after 60 frames" in 2 of 2 runs before and 0 of 3 after. That message is
+  now logged whenever a body-level answer stalls.
 
 ---
 

@@ -290,6 +290,7 @@ The 16 original fluid kernels:
 | `fluid_surface_copy` | `CS_FluidSurfaceCopy.hlsl` | sampled_texture:0@0, storage_texture:0@1 |
 | `fluid_seed_alpha` | `CS_FluidSeedAlpha3D.hlsl` | constants:0@0[16], read_only_buffer:8@1, storage_texture:0@2(3d) |
 | `fluid_alpha_advect` | `CS_FluidAlphaAdvect3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), sampled_texture:1@2(3d), storage_texture:0@3(3d), read_only_buffer:8@4 |
+| `fluid_air_rise` | `CS_FluidAirRise3D.hlsl` | constants:0@0[20], sampled_texture:0@1(3d), storage_texture:0@2(3d, r32float), read_only_buffer:8@3 |
 | `fluid_volume_correct` | `CS_FluidVolumeCorrect3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), **constants:1@2[4]**, storage_texture:0@3(3d) |
 | `fluid_sphere` | `CS_FluidSphere3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), **constants:1@2[12]**, read_only_buffer:8@3, storage_texture:0@4(3d), read_write_buffer:1@5 |
 | `fluid_obstacle_velocity` | `CS_FluidObstacleVelocity3D.hlsl` | constants:0@0[16], sampled_texture:0@1(3d), sampled_texture:1@2(3d), **constants:1@3[12]**, read_only_buffer:8@4, storage_texture:0@5(3d) |
@@ -347,6 +348,7 @@ StepInternal():                    // m_settings.deltaTime == subDt
   60 × red-black Gauss-Seidel + SOR 1.8   (2 dispatches per sweep)
   gradient subtraction + no-penetration clamp
   advect alpha (flux form, conservative)
+  air rise (vertical drift flux, conservative; airRiseSpeed 0.25 m/s)   // W-29
   clear body footprint (via the wall mask, not a separate pass)
   last substep only: derive 2D surface texture (ping-pong), copy to the stable output target
 after the substeps, every volumeCheckInterval (15) frames: CorrectVolumeFraction
@@ -402,6 +404,18 @@ measuring one — there is no buffer-write API to do it from the host.
 **`CS_FluidSeed3D` / `CS_FluidSeedAlpha3D`** — initial velocity and initial volume fraction.
 
 **`CS_FluidAlphaAdvect3D`** — flux-form conservative transport. See §6.5.
+
+**`CS_FluidAirRise3D`** — entrained air rises back out (W-29). The solver is single-phase with no
+bubble buoyancy, so air a splash pushes under the surface used to stay there for good. Across
+every face between two open cells, water moves down and air up by
+`F = c (1 − α_lower) α_upper`, `c = airRiseSpeed · dt / h ≤ 1`. Both cells read the same two
+values, so each column's water total is conserved exactly, and with `c ≤ 1` every cell stays in
+[0, 1] without a limiter. Fully wet or dry columns and a sharp interface carry no flux; a smeared
+interface is pulled back to a step, which does not change a column's total, so the drawn surface
+is unchanged. Air under a solid (a step, a floating body) stays. Measured over 30 s after the
+default drop: bulk cells below 98 % α 3614 → 24 (the 24 are under solids), interface 3.36 → 1.16
+cells. Every gate passes from 0.1 to 0.5 m/s; 0.25 ships (`airRiseSpeed` in the water JSON, a
+slider in the GUI, `--backyard-air-rise` for the self-test).
 
 **`CS_FluidVolumeCorrect3D`** — global mass correction. See §10.
 
@@ -474,20 +488,19 @@ clamping that destroyed mass, and zeroing air velocity in the gradient.
    dragged the water mesh's edge vertices down the whole depth. A probe caught this: texel
    (0,0) reported −1.5596.
 
-Elevation is the column integral of α, plus the air that sits well below the surface:
+Elevation is the column integral of α:
 
 ```
 water     = sum of alpha over the open rows (solids under wet water count as full)
-trapped   = sum over open rows k of saturate(water - (k + 0.5) - 2) * (1 - alpha_k)
-elevation = BasinMinY + (water + trapped) * CellSize
+elevation = BasinMinY + water * CellSize
 ```
 
-Air more than two cells under the integral surface lifts the surface instead of lowering it. The
-solver has no bubble buoyancy, so air a plunging body entrains stays beside it; with exact R32F
-α that air (0.1–0.2 cells per column, against 0.003 far away) drew a 1.7–3 cm moat round a
-floating ball. The weight ramps from 0 at two cells to 1 at three, below the interface smear
-(about two cells), and is continuous in the level, so it adds no jitter. fp16 α hid the effect:
-it diluted the whole pool by 0.55 cells per column, so every column read low by the same amount.
+From W-02 to W-29 the kernel also counted air more than two cells below the integral surface as
+volume, because the solver could not move entrained air and it drew a 1.7–3 cm moat round a
+floating ball. That term turned every leftover air pocket into a fixed bump: after a splash the
+water stopped moving but the surface stayed wavy (±2 cm) and the mean crept up by centimetres
+per half hour. `CS_FluidAirRise3D` now lets the air leave, and with the term removed gate 7 reads
+`covered min−ring` −2.2 mm (it was −11.3 mm with the term and trapped air).
 
 A column with no water is a wall column and reports the water plane, contributing zero delta.
 
@@ -576,11 +589,10 @@ so the 18 mm is the body following real surface motion rather than a free oscill
 inside the 0.1–0.3 band a real heaving sphere radiates at. Two-way coupling (W-07) is what would let
 it come down.
 
-**Trapped air.** The column integral reads air under a floating body as missing water, so §7's
-`TRAPPED_AIR_DEPTH_CELLS` term is what keeps the drawn free surface level there. Measured
-2026-10-31: zeroing that term moves `ring−far` from −2.0 to −7.4 mm and `covered min−ring` from
-−15.9 to −20.7 mm (gate limit 20), i.e. the term hides 4.8 mm of a moat that only a body that
-displaces α can remove.
+**Trapped air.** Air a plunge pushes beside the ball used to stay there and read as missing water
+(a moat), which the surface kernel hid with a trapped-air term. Since W-29 the air rises out
+(`CS_FluidAirRise3D`) and the term is gone: `ring−far` −1.6 mm, `covered min−ring` −2.2 mm on
+D3D12 (−2.0 / −15.9 mm before).
 
 Quadratic drag **with added mass**, acting on the velocity *relative to the local current*:
 
@@ -925,7 +937,7 @@ back-solves density, so editing either updates the other without them fighting e
 - Scene probe at every 60th frame: solver diagnostics, surface contract probe, sphere state,
   column profile.
 - Later additions (details in [backyard-water-remaining-work.md](backyard-water-remaining-work.md)
-  section 4): `ReadSurface`/`ReadWallMask` readbacks, the 10-gate `--backyard-selftest`, and the
+  section 4): `ReadSurface`/`ReadWallMask` readbacks, the 11-gate `--backyard-selftest`, and the
   ImGui "Debug view" (`FluidDebugRenderer`: displaced mesh wireframe, voxels, velocity slice).
 - `--backyard-spawn N` drops N extra balls at startup; `--backyard-pick-test` exercises Ctrl +
   click picking, dragging into another ball, release and re-grab by feeding a synthetic
@@ -964,6 +976,7 @@ back-solves density, so editing either updates the other without them fighting e
 | `T850/Assets/Shaders/CS_FluidSeed3D.hlsl` | Initial velocity seed |
 | `T850/Assets/Shaders/CS_FluidSeedAlpha3D.hlsl` | Initial volume fraction seed |
 | `T850/Assets/Shaders/CS_FluidAlphaAdvect3D.hlsl` | Conservative flux-form α transport |
+| `T850/Assets/Shaders/CS_FluidAirRise3D.hlsl` | Entrained air rises out (vertical drift flux, W-29) |
 | `T850/Assets/Shaders/CS_FluidVolumeCorrect3D.hlsl` | Additive headroom-weighted mass correction (deficit computed on the GPU) |
 | `T850/Assets/Shaders/CS_FluidVolumeReduce3D.hlsl` | GPU sums for the volume correction |
 | `T850/Assets/Shaders/CS_FluidStampBodies3D.hlsl` | Bodies stamped into the wall mask on the GPU |
@@ -1074,7 +1087,8 @@ behaviour, not errors.
     columns must report the water plane.
 24. **Trapped air read as missing water** (W-02). The column integral treats air under the surface
     as a lower surface; once α was exact, the air a plunge leaves beside a floating ball drew a
-    1.7–3 cm moat. Air deeper than two cells now counts as volume (§7).
+    1.7–3 cm moat. W-02 counted deep air as volume; W-29 replaced that with `CS_FluidAirRise3D`,
+    because the counted air froze into fixed bumps after every splash (§6.3, §7).
 25. **The surface kernel did 9× its work.** Each tent tap recomputed a column (and its inpainting
     walks next to a body). A groupshared tile computes each column once (§7.1).
 

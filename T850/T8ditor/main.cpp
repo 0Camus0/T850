@@ -158,8 +158,8 @@ int t8ditor::RunEditor(int argc, char** argv, EditorHostDesc host) {
   g_pFramework = new t850::LinuxFramework(g_pApp);
   g_pFramework->InitGlobalVars();
   g_pFramework->OnCreateApplication(desc);
-  // LinuxFramework drives its own loop in OnCreateApplication today, matching
-  // DayScene's pattern.
+  g_pFramework->UpdateApplication();
+  g_pFramework->OnDestroyApplication();
 #elif defined(OS_WINDOWS)
   g_pFramework = new t850::Win32Framework(g_pApp);
   g_pFramework->InitGlobalVars();

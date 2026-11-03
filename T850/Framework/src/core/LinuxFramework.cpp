@@ -103,10 +103,8 @@ namespace t850 {
     InitializeGamepads();
     ChangeAPI(GraphicsApi::VULKAN);
     m_inited = pVideoDriver != nullptr;
-    if (m_inited) {
-      UpdateApplication();
-    }
-    OnDestroyApplication();
+    // As on Windows, main() runs the loop (or a self-test) and then OnDestroyApplication.
+    if (!m_inited) m_alive = false;
   }
 
   void LinuxFramework::OnDestroyApplication() {

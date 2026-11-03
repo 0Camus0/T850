@@ -208,7 +208,9 @@ $xaml = @"
                     <ComboBoxItem Content="WebGPU (Dawn/D3D12)" Tag="webgpu"/>
                     <ComboBoxItem Content="WebGPU + Browser (Emscripten)" Tag="webgpu-browser"/>
                     <ComboBoxItem Content="Vulkan" IsSelected="True" Tag="vulkan"/>
-                    <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
+                    <ComboBoxItem Content="OpenGL (Desktop GL 4.3+)"
+                                  Tag="gl"
+                                  ToolTip="Needs a 4.3 or newer compatibility context for the pool solver and the compute-driven post-process passes. A 3.3 context still renders everything but runs raster-only, so the pool falls back to its static surface."/>
                 </ComboBox>
                 <StackPanel Margin="0,12,0,0">
                     <TextBlock Text="Post-process Mode" Style="{StaticResource LabelStyle}"/>

@@ -2117,17 +2117,44 @@ expanding α every step rather than at the advection alone.
 device (the owner did exactly that) ends 3.5 cm high with a visibly higher ball, and W-26's trapped-
 air compensation in the surface kernel may be amplifying the reading.
 
+**What the owner sees (2026-11-02): frozen waves.** After the splash the water stops moving (mean
+speed ~1 mm/s) but the surface never returns to flat: the `[columns]` profile on the tablet was
+identical across 23 s, with +1…+2 cm bumps and a −2 cm dip, ten minutes after the drop.
+
+**Cause, measured** (`--backyard-mass-audit 300`, D3D12, fixed dt 1/30, 120 sweeps): air keeps
+entering the bulk and never leaves.
+
+| t (s) | bulk cells below 98 % alpha | bulk min alpha | interface width (cells) |
+|---|---|---|---|
+| 10 | 798 | 0.59 | 2.81 |
+| 100 | 2645 | 0.50 | 3.30 |
+| 310 | 4212 (still rising) | 0.50 | 3.90 |
+
+Wind is not the source: with wind zeroed the counts are 706 / 2186 / 2462 at 10 / 60 / 90 s against
+798 / 2266 / 2571 with it. The interface diffuses downward under the small residual currents, and
+the solver has no bubble buoyancy, so nothing returns the air to the surface. The surface kernel
+then counts air more than 2 cells deep as volume (W-26), so every pocket is drawn as a fixed bump,
+which is both the frozen-wave look and the rising mean.
+
+**Fix design.** A conservative drift-flux kernel run once per step after alpha advection: in each
+column, air below water rises at a fixed slip speed `u_rise` (≈0.2 m/s, a small-bubble terminal
+velocity), exchanging volume with the cell above. Face flux, top-down limited so no cell leaves
+[0, 1]: `F = min(u_rise·dt/h · (1−α_lower) · α_upper, α_upper, 1−α_lower)`, then `α_upper −= F`,
+`α_lower += F`. It conserves volume exactly, does nothing in a fully wet or fully dry column,
+and needs no pressure coupling. Expected effect: the trapped air reaches the interface within
+seconds, the W-26 compensation stops having anything to compensate (re-measure, then remove it),
+and the surface relaxes to flat.
+
 **Directions, in order.**
 
-1. Add a long-run headless gate: `--backyard-selftest-frames` style, fixed dt 1/30, 900 s simulated,
-   no ball; log mean surface and headroom every 60 s; fail on a mean rise above 5 mm. Run it on
-   D3D12 at 120 and 60 sweeps to get the slope per sweep count.
-2. Measure headroom by depth: is the air spread through the column (compressibility from residual
-   divergence) or concentrated in the top 2–3 cells (interface diffusion that `alphaCompression`
-   should counter)?
-3. Only then pick the fix: a stronger or better-placed interface compression term, a periodic
-   re-sharpening of the column (sum α per column, refill from the bottom; conserves volume exactly),
-   or warm-start / more sweeps only where divergence is large.
+1. Add a long-run headless gate: fixed dt 1/30, 300 s simulated after one drop, using the mass
+   audit; fail if bulk cells below 98 % keep rising after 60 s or the mean surface rises above
+   5 mm. Today's numbers above are the failing baseline.
+2. Implement the drift-flux kernel (new `compute_kernels.json` entry, Android
+   `shader_permutations.json` compute entry, all five backends' compile paths). Sweep `u_rise`
+   0.1 / 0.2 / 0.4 against the new gate and gates 1, 2, 3, 7.
+3. Re-measure W-26 with the kernel in; remove the trapped-air compensation if the moat stays inside
+   the gate 7 limit.
 
 **Acceptance.** The long-run gate passes on D3D12 and Vulkan at the shipped sweep counts (120
 desktop, 60 mobile/web), every existing gate still passes, and a 30-minute tablet run keeps the

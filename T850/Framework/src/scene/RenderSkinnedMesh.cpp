@@ -128,6 +128,7 @@ namespace t850 {
       dst.WVP = src.WVP;
       dst.World = src.World;
       dst.WorldView = src.WorldView;
+      dst.TimeParams = src.TimeParams;
     }
 
     void ExtractMeshFrameCB(RenderMesh::MeshFrameCBuffer& dst, const RenderMesh::CBuffer& src) {
@@ -145,6 +146,7 @@ namespace t850 {
       for (int ri = 0; ri < 32; ri++) {
         dst.LightRadius[ri] = src.LightRadius[ri];
       }
+      dst.CameraVP = src.CameraVP;
     }
 
     void ExtractMeshMaterialCB(RenderMesh::MeshMaterialCBuffer& dst, const RenderMesh::CBuffer& src) {
@@ -987,6 +989,11 @@ namespace t850 {
     wireCB.WorldView = WorldView;
     wireCB.CameraInfo = infoCam;
     wireCB.DiffuseColor = wireColor;
+    // The water fields are OpenGL-only and unused here, but the merged CBuffer is a stack
+    // object, so they must not be left holding garbage.
+    wireCB.TimeParams = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    wireCB.CameraVP = XMATRIX44();
+    wireCB.WaterParams = WaterGpuParams{};
     RenderMesh::MeshInstanceCBuffer wireInstanceCB;
     ExtractMeshInstanceCB(wireInstanceCB, wireCB);
 

@@ -874,8 +874,15 @@ void BackyardScene::EnsureWaterShaderPermutations(t850::BaseDriver* driver) {
   // a draw-time instance flag (FLUID_SURFACE) has no compiled program and the
   // draw is skipped. Create the exact keys the water mesh needs here.
   std::string vertexSource, fragmentSource;
-  if (!t850::ResourceLocator::Instance().ReadText("Shaders/VS_Mesh.hlsl", vertexSource) ||
-      !t850::ResourceLocator::Instance().ReadText("Shaders/FS_Mesh.hlsl", fragmentSource)) {
+  // Match RenderMesh::GatherInfo: GL loads the GLSL twins, and the family hash includes
+  // the source text and the basenames, so both must be the same spelling.
+  const bool useGLSL = driver->UsesGLSL();
+  const char* vertexPath = useGLSL ? "Shaders/VS_Mesh.glsl" : "Shaders/VS_Mesh.hlsl";
+  const char* fragmentPath = useGLSL ? "Shaders/FS_Mesh.glsl" : "Shaders/FS_Mesh.hlsl";
+  const char* vertexName = useGLSL ? "VS_Mesh.glsl" : "VS_Mesh.hlsl";
+  const char* fragmentName = useGLSL ? "FS_Mesh.glsl" : "FS_Mesh.hlsl";
+  if (!t850::ResourceLocator::Instance().ReadText(vertexPath, vertexSource) ||
+      !t850::ResourceLocator::Instance().ReadText(fragmentPath, fragmentSource)) {
     T8_LOG_ERROR("[Backyard] Cannot read mesh shader sources for the water permutation");
     return;
   }
@@ -891,7 +898,7 @@ void BackyardScene::EnsureWaterShaderPermutations(t850::BaseDriver* driver) {
     T8_LOG_INFO("[Backyard] Precompiling water permutation pass=%u", static_cast<unsigned>(pass));
     // Names must match RenderMesh exactly: the shader family hash includes the
     // source text and these basenames, not the resource path.
-    driver->CreateShader(vertexSource, fragmentSource, key, "VS_Mesh.hlsl", "FS_Mesh.hlsl");
+    driver->CreateShader(vertexSource, fragmentSource, key, vertexName, fragmentName);
   }
 }
 

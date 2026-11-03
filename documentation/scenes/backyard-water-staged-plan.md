@@ -212,9 +212,8 @@ already done is in section 4: "Stage 8", "PR preparation notes (moved from secti
 Steam Deck froze" and "Frozen waves".
 
 **How close.** The solver work is complete. It runs on D3D11, D3D12, Vulkan, WebGPU (native and
-browser), Android and the Steam Deck, and all 11 gates pass. Left:
+browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 
-- one large port (OpenGL)
 - the Deck changes (OLED detection and the 60-sweep cap)
 - two features the owner asked for on 2026-11-02: wind on the balls, and real time on slow devices
 - re-verification after the last engine changes
@@ -230,7 +229,7 @@ browser), Android and the Steam Deck, and all 11 gates pass. Left:
 
 | Id | Item | State | Size |
 |---|---|---|---|
-| A | OpenGL port (W-28) | Not started; generator verified on 7 kernels | L |
+| A | OpenGL port (W-28) | **Done 2026-11-02**; see W-28's resolution | L |
 | B | Steam Deck: detect the OLED, run 60 sweeps | Decided 2026-11-02; not implemented | S |
 | C | Browser re-verify after the kernel changes | The web export predates the air-rise kernel | S |
 | D | Android: CI-style build, 30-minute tablet run | APK with every fix installed, no long run yet | S–M |
@@ -246,7 +245,9 @@ browser), Android and the Steam Deck, and all 11 gates pass. Left:
 **Order:**
 
 1. B, then K, then J. All three change the solver or its settings, and J adds a kernel.
-2. A. The generator then covers the final kernel set.
+2. ~~A. The generator then covers the final kernel set.~~ **Done** — but because A landed *after*
+   B/K/J were designed, re-run `generate_gl_compute_twins.ps1` (and commit the twins) whenever those
+   items add or change a kernel. `check_gl_twins.py` fails CI if that is forgotten.
 3. C, then D. Both re-measure after the kernels settle; D includes real time on the tablet.
 4. G, then H.
 
@@ -263,7 +264,26 @@ E and F are independent and fit anywhere before G. I is optional; if attempted, 
 - `m_surfaceCopyPipeline` is live: it is dispatched in `FluidSimulation.cpp` around L1742 and L1969.
   The dead-code item is closed.
 
-#### A. OpenGL port (W-28)
+#### A. OpenGL port (W-28) — **done 2026-11-02**
+
+**Outcome.** Implemented as designed below, with two corrections found while implementing and a
+measured performance result; all of it is written up in
+`backyard-water-remaining-work.md` → W-28 → "W-28 resolution". Summary: 27 generated twins
+(`scripts/shaders/generate_gl_compute_twins.ps1`) + `scripts/validation/check_gl_twins.py`,
+`GLComputeTexture3D` and the 3D/inline dispatch paths, `TimeParams`/`CameraVP`/`WaterParams` in
+`RenderMesh::CBuffer`, the `FLUID_SURFACE` port in `VS_Mesh.glsl`/`FS_Mesh.glsl`, and
+`--api gl` PASS on `--compute-selftest`, `--fluid-selftest`, all 11 `--backyard-selftest` gates and
+`--backyard-pick-test`, with scenes 1/6 byte-identical and scene 7 within +0.16/255 of D3D12.
+
+**Two corrections to the steps below.**
+
+1. `glBindImageTexture` takes `layered = GL_FALSE`, not `GL_TRUE`: `layered` applies to array
+   textures only, and a `GL_TEXTURE_3D` image unit always carries the whole level.
+2. `CS_FluidDiagnostics3D`'s accumulator clear could not stay a loop: NVIDIA's GLSL compiler
+   rejects a writable unsized array indexed by a loop induction variable (`error C5025`). It is now
+   eight explicit stores in the HLSL.
+
+**The original plan follows, for the record.**
 
 **Facts measured on 2026-11-02 (do not re-derive):**
 

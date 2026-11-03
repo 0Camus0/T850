@@ -50,6 +50,7 @@ void CopyInstance(RenderMesh::CBuffer& combined, const RenderMesh::MeshInstanceC
   combined.WVP = instance.WVP;
   combined.World = instance.World;
   combined.WorldView = instance.WorldView;
+  combined.TimeParams = instance.TimeParams;
 }
 
 void CopyFrame(RenderMesh::CBuffer& combined, const RenderMesh::MeshFrameCBuffer& frame) {
@@ -65,6 +66,7 @@ void CopyFrame(RenderMesh::CBuffer& combined, const RenderMesh::MeshFrameCBuffer
     combined.LightColors[index] = frame.LightColors[index];
   }
   for (int index = 0; index < 32; ++index) combined.LightRadius[index] = frame.LightRadius[index];
+  combined.CameraVP = frame.CameraVP;
 }
 
 void CopyMaterial(RenderMesh::CBuffer& combined, const RenderMesh::MeshMaterialCBuffer& material) {
@@ -112,6 +114,7 @@ void CopyMaterial(RenderMesh::CBuffer& combined, const RenderMesh::MeshMaterialC
   combined.TransmissionUVTransform1 = material.TransmissionUVTransform1;
   combined.LightmapUVTransform0 = material.LightmapUVTransform0;
   combined.LightmapUVTransform1 = material.LightmapUVTransform1;
+  combined.WaterParams = material.WaterParams;
 }
 
 bool DrawsInPass(MutableMeshAlphaMode alphaMode, uint8_t pass) {

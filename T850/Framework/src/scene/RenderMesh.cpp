@@ -1819,6 +1819,7 @@ namespace t850 {
     dst.WVP = src.WVP;
     dst.World = src.World;
     dst.WorldView = src.WorldView;
+    dst.TimeParams = src.TimeParams;
   }
 
   static void ApplyMeshFrameCB(RenderMesh::CBuffer& dst, const RenderMesh::MeshFrameCBuffer& src) {
@@ -1836,6 +1837,7 @@ namespace t850 {
     for (int ri = 0; ri < 32; ri++) {
       dst.LightRadius[ri] = src.LightRadius[ri];
     }
+    dst.CameraVP = src.CameraVP;
   }
 
   static void ApplyMeshMaterialCB(RenderMesh::CBuffer& dst, const RenderMesh::MeshMaterialCBuffer& src) {
@@ -1883,6 +1885,7 @@ namespace t850 {
     dst.TransmissionUVTransform1 = src.TransmissionUVTransform1;
     dst.LightmapUVTransform0 = src.LightmapUVTransform0;
     dst.LightmapUVTransform1 = src.LightmapUVTransform1;
+    dst.WaterParams = src.WaterParams;
   }
 
   static void FillMaterialCBFromSubset(RenderMesh::MeshMaterialCBuffer& cb, const RenderMesh::SubSetInfo& subInfo) {

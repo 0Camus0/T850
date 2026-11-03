@@ -32,6 +32,8 @@ namespace t850 {
     bool skipBall = false;
     // Requested cell size in metres; 0 keeps the WaterTunables default. The grid follows.
     float cellSize = 0.0f;
+    // Air rise speed in m/s; negative keeps the WaterTunables default (W-29).
+    float airRiseSpeed = -1.0f;
   };
 
   // Runs the backyard water gates against a standalone solver on the real pool grid,

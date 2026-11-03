@@ -1472,6 +1472,7 @@ namespace t850 {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "VK_FenceWait");
       T8_TELEMETRY_SCOPE("gpu.gpu_wait");
       WaitForFence(m_currentFrame);
+      ++m_frameSlotWaits[m_currentFrame];
     #if T850_ENABLE_GPU_PROFILING
       m_gpuCompletedSubmissionSerial = (std::max)(
         m_gpuCompletedSubmissionSerial, m_frameGpuSubmissionSerial[m_currentFrame]);

@@ -700,6 +700,7 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_surfaceCopyPipeline = CreatePipeline(driver, "CS_FluidSurfaceCopy.hlsl");
   m_seedAlphaPipeline = CreatePipeline(driver, "CS_FluidSeedAlpha3D.hlsl");
   m_alphaAdvectPipeline = CreatePipeline(driver, "CS_FluidAlphaAdvect3D.hlsl");
+  m_airRisePipeline = CreatePipeline(driver, "CS_FluidAirRise3D.hlsl");
   m_bodyLevelPipeline = CreatePipeline(driver, "CS_FluidBodyLevel.hlsl");
   m_volumeCorrectPipeline = CreatePipeline(driver, "CS_FluidVolumeCorrect3D.hlsl");
   m_volumeReducePipeline = CreatePipeline(driver, "CS_FluidVolumeReduce3D.hlsl");
@@ -713,7 +714,7 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_extrapolatePipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
                   m_copyPipeline && m_surfaceCopyPipeline && m_seedAlphaPipeline &&
-                  m_alphaAdvectPipeline && m_bodyLevelPipeline && m_volumeCorrectPipeline && m_volumeReducePipeline &&
+                  m_alphaAdvectPipeline && m_airRisePipeline && m_bodyLevelPipeline && m_volumeCorrectPipeline && m_volumeReducePipeline &&
                   m_stampBodiesPipeline && m_baseMaskBuffer &&
                   m_objectVelocityPipeline && m_clearPipeline && m_clearFloatPipeline &&
                   m_surfaceToBufferPipeline;
@@ -722,13 +723,13 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   complete = complete && m_divergence;
   complete = complete && m_alpha[0] && m_alpha[1];
   if (!complete) {
-    T8_LOG_ERROR("[Fluid] Solver resources are incomplete on %s: adv=%d for=%d div=%d pre=%d grad=%d surf=%d seed=%d diag=%d copy=%d surfCopy=%d seedAlpha=%d advAlpha=%d volCorrect=%d velA=%d velB=%d preA=%d preB=%d divVol=%d alphaA=%d alphaB=%d",
+    T8_LOG_ERROR("[Fluid] Solver resources are incomplete on %s: adv=%d for=%d div=%d pre=%d grad=%d surf=%d seed=%d diag=%d copy=%d surfCopy=%d seedAlpha=%d advAlpha=%d airRise=%d volCorrect=%d velA=%d velB=%d preA=%d preB=%d divVol=%d alphaA=%d alphaB=%d",
                 driver->ApiTag(),
                 m_advect ? 1 : 0, m_forces ? 1 : 0, m_divergencePipeline ? 1 : 0,
                 m_pressurePipeline ? 1 : 0, m_gradientPipeline ? 1 : 0, m_surfacePipeline ? 1 : 0,
                 m_seedPipeline ? 1 : 0, m_diagnosticsPipeline ? 1 : 0, m_copyPipeline ? 1 : 0,
                 m_surfaceCopyPipeline ? 1 : 0, m_seedAlphaPipeline ? 1 : 0,
-                m_alphaAdvectPipeline ? 1 : 0, m_volumeCorrectPipeline ? 1 : 0,
+                m_alphaAdvectPipeline ? 1 : 0, m_airRisePipeline ? 1 : 0, m_volumeCorrectPipeline ? 1 : 0,
                 m_velocity[0] ? 1 : 0, m_velocity[1] ? 1 : 0,
                 m_pressure[0] ? 1 : 0, m_pressure[1] ? 1 : 0,
                 m_divergence ? 1 : 0, m_alpha[0] ? 1 : 0, m_alpha[1] ? 1 : 0);
@@ -779,10 +780,12 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_alpha[1].reset();
   m_seedAlphaPipeline.reset();
   m_alphaAdvectPipeline.reset();
+  m_airRisePipeline.reset();
   m_bodyLevelPipeline.reset();
   m_bodyLevelBuffer.reset();
   m_diagnosticsBuffer.reset();
   m_bodyLevelTicket = -1;
+  m_bodyLevelWaitFrames = 0;
   m_bodyLevelCapacity = 0;
   m_bodyLevelCount = 0;
   m_volumeCorrectPipeline.reset();
@@ -1273,9 +1276,14 @@ void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
   if (m_bodyLevelTicket > 0) {
     std::vector<float> results(static_cast<size_t>(m_bodyLevelCount) * 4u, 0.0f);
     if (!driver->ConsumeComputeReadback(m_bodyLevelTicket, results.data(),
-                                        results.size() * sizeof(float)))
+                                        results.size() * sizeof(float))) {
+      if (++m_bodyLevelWaitFrames == 60)
+        T8_LOG_ERROR("[Fluid] Body water level readback still pending after 60 frames on %s; "
+                     "every body is floating on a stale level", driver->ApiTag());
       return;   // one query in flight: re-requesting would orphan the ticket
+    }
     m_bodyLevelTicket = -1;
+    m_bodyLevelWaitFrames = 0;
     // Bodies spawned or cleared since the request would take another body's answer.
     if (m_bodyLevelGeneration == m_bodyListGeneration)
       ApplyBodyLevels(results, m_bodyLevelCount);
@@ -1896,6 +1904,22 @@ bool FluidSimulation::StepInternal(BaseDriver* driver, bool writeSurface) {
     if (!driver->DispatchCompute(*m_alphaAdvectPipeline, alphaBindings, ax, ay, az))
       return false;
     m_alphaCurrent = alphaNext;
+
+    // W-29: let the air the advection carried under the surface rise back out.
+    if (m_settings.airRiseSpeed > 0.0f) {
+      const uint32_t riseNext = (m_alphaCurrent + 1) % 2;
+      const std::vector<uint32_t> riseConstants = BuildConstants(0, m_settings.airRiseSpeed);
+      const std::vector<ComputeBindingDesc> riseBindings = {
+        {ComputeBindingType::Constants32, 0, nullptr, riseConstants.data(),
+         static_cast<uint32_t>(riseConstants.size())},
+        {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[m_alphaCurrent].get()},
+        {ComputeBindingType::ReadWriteTexture, 0, nullptr, nullptr, 0, nullptr, m_alpha[riseNext].get()},
+        {ComputeBindingType::ReadOnlyBuffer, 8, m_wallMask.get(), nullptr, 0}
+      };
+      if (!driver->DispatchCompute(*m_airRisePipeline, riseBindings, ax, ay, az))
+        return false;
+      m_alphaCurrent = riseNext;
+    }
   }
 
   // The body's own footprint is handled by the wall mask (see UpdateWallMaskForBody

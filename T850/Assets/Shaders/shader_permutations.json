@@ -4848,6 +4848,14 @@
       "permutation": "base",
       "defines": []
     },
+    "CS_FluidAirRise3D.hlsl:CS:base": {
+      "key": "CS_FluidAirRise3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidAirRise3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
+    },
     "CS_FluidBodyLevel.hlsl:CS:base": {
       "key": "CS_FluidBodyLevel.hlsl:CS:base",
       "kind": "compute",

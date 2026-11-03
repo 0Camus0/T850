@@ -110,6 +110,7 @@ int main(int arg,char ** args) try {
   bool backyardNoBall = false;
   float backyardCellSize = 0.0f;
   int backyardIterations = 0;
+  float backyardAirRise = -1.0f;
   int backyardSpawnOnStart = 0;
   int backyardSelfTestFrames = 900;
   float fluidFixedDt = 1.0f / 300.0f;
@@ -179,6 +180,12 @@ int main(int arg,char ** args) try {
       const int value = std::stoi(args[++i]);
       if (value >= 1 && value <= 400) backyardIterations = value;
       else T8_LOG_ERROR("[App] --backyard-iterations %d is outside 1..400", value);
+    }
+    if (std::string_view(args[i]) == "--backyard-air-rise" && i + 1 < arg) {
+      backyardSelfTest = true;
+      const float value = std::stof(args[++i]);
+      if (value >= 0.0f && value <= 2.0f) backyardAirRise = value;
+      else T8_LOG_ERROR("[App] --backyard-air-rise %g is outside 0..2 m/s", value);
     }
     if (std::string_view(args[i]) == "--backyard-spawn" && i + 1 < arg) {
       backyardSpawnOnStart = (std::max)(std::stoi(args[++i]), 0);
@@ -401,6 +408,7 @@ int main(int arg,char ** args) try {
     // here is how another platform's setting is measured on desktop, e.g. --backyard-iterations 60
     // to re-check the mobile/web cap.
     options.pressureIterations = backyardIterations > 0 ? static_cast<uint32_t>(backyardIterations) : 0u;
+    options.airRiseSpeed = backyardAirRise;
     result = t850::RunBackyardSelfTest(pFrameWork->pVideoDriver, options);
   } else if (fluidSelfTest) {
     t850::BaseDriver* driver = pFrameWork->pVideoDriver;

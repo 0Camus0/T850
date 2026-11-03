@@ -401,6 +401,7 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   // W-11: solver values that were literals before, now data-driven.
   settings.maxSubstepDt = (std::max)(w.maxSubstepDt, 1.0f / 1000.0f);
   settings.alphaCompression = (std::min)((std::max)(w.alphaCompression, 0.0f), 1.0f);
+  settings.airRiseSpeed = (std::max)(w.airRiseSpeed, 0.0f);
   return settings;
 }
 
@@ -963,6 +964,7 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     // W-11: the three promoted solver values, pushed live like their neighbours.
     m_fluid.SetMaxSubstepDt((std::max)(w.maxSubstepDt, 1.0f / 1000.0f));
     m_fluid.SetAlphaCompression((std::min)((std::max)(w.alphaCompression, 0.0f), 1.0f));
+    m_fluid.SetAirRiseSpeed((std::max)(w.airRiseSpeed, 0.0f));
     m_fluid.SetVolumeCheckInterval(static_cast<uint32_t>((std::max)(w.volumeCheckInterval, 1)));
     m_fluid.SetForcingAmplitude((std::max)(w.forcingAmplitude, 0.0f));
     m_fluid.SetViscosity((std::max)(w.viscosity, 0.0f));
@@ -1554,6 +1556,7 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     sliderInt("water_iterations", "pressure iterations", w.pressureIterations, 1.0f, 200.0f, 1.0f);
     slider("water_sor_omega", "SOR omega (1 = Gauss-Seidel)", w.sorOmega, 1.0f, 1.99f, 0.001f);
     slider("water_alpha_compression", "alpha compression (0 = pure upwind)", w.alphaCompression, 0.0f, 1.0f, 0.01f);
+    slider("water_air_rise", "air rise speed (m/s, 0 = air stays trapped)", w.airRiseSpeed, 0.0f, 1.0f, 0.01f);
     slider("water_max_substep_dt", "max substep dt (s)", w.maxSubstepDt, 1.0f / 400.0f, 1.0f / 30.0f, 0.0005f);
     sliderInt("water_volume_check_interval", "volume check interval (substeps)", w.volumeCheckInterval, 1, 120, 1);
     slider("water_dt", "fixed step (s, only when fixed)", w.deltaTime, 1.0f / 240.0f, 1.0f / 15.0f, 0.0001f);

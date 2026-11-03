@@ -672,6 +672,9 @@ void WebGPUContext::SubmitCommands(const wgpu::CommandBuffer& command) {
   for (const auto& texture : m_retiredTextures) texture.Destroy();
   m_retiredBuffers.clear();
   m_retiredTextures.clear();
+  // A headless compute loop never reaches BeginFrame, which is what bounds the queue for
+  // frames; without this a 30 s solver run kept ~3000 retired 1 MB uniform buffers alive.
+  CollectCompletedBuffers(m_submissions.size() >= 8);
 }
 
 void WebGPUContext::Shutdown() {

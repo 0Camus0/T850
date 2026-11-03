@@ -74,6 +74,9 @@ namespace t850 {
     // which smears entrained air through the whole pool). Also a FluidSettings
     // literal before W-11.
     float alphaCompression = 0.5f;
+    // Speed in m/s at which entrained air rises back to the surface (W-29). Without it a
+    // splash leaves air pockets that the surface draws as frozen bumps.
+    float airRiseSpeed = 0.25f;
     // Substeps between volume-correction passes. This was a hardcoded 15 inside
     // FluidSimulation with no setter at all before W-11.
     int volumeCheckInterval = 15;

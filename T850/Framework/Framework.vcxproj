@@ -139,6 +139,7 @@
     <ClInclude Include="include\utils\xDefs.h" />
     <ClInclude Include="include\utils\xMaths.h" />
     <ClInclude Include="include\utils\ConfigRuntime.h" />
+    <ClInclude Include="include\utils\DeviceInfo.h" />
     <ClInclude Include="include\utils\RuntimeProfile.h" />
     <ClInclude Include="include\utils\ComputeKernelRegistry.h" />
     <ClInclude Include="include\utils\ShaderPermutationDump.h" />
@@ -336,6 +337,7 @@
     <ClCompile Include="src\utils\XDataBase.cpp" />
     <ClCompile Include="src\utils\XMaths.cpp" />
     <ClCompile Include="src\utils\ConfigRuntime.cpp" />
+    <ClCompile Include="src\utils\DeviceInfo.cpp" />
     <ClCompile Include="src\utils\RuntimeProfile.cpp" />
     <ClCompile Include="src\utils\ComputeKernelRegistry.cpp" />
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp" />

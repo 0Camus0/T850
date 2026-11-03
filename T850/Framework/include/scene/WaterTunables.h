@@ -1,6 +1,7 @@
 #pragma once
 
 #include <utils/xMaths.h>
+#include <utils/DeviceInfo.h>
 
 #include <algorithm>
 #include <cmath>
@@ -256,14 +257,26 @@ namespace t850 {
     }
 
     // Sweeps the scene and the gates should actually run. Mobile and web builds cap the
-    // configured value; desktop keeps whatever the JSON says. One helper so the headless gates
-    // validate the configuration that ships on every platform.
+    // configured value, and so does the Steam Deck at run time: it is a Linux build, so a
+    // compile-time `OS_LINUX` branch would also cap a desktop Linux session. One helper so the
+    // headless gates validate the configuration that ships on every platform.
     int EffectivePressureIterations() const {
       const int configured = (std::max)(pressureIterations, 1);
 #if defined(__EMSCRIPTEN__) || defined(OS_ANDROID)
       return (std::min)(configured, kMobilePressureIterations);
 #else
-      return configured;
+      return GetDeviceInfo().steamDeck ? (std::min)(configured, kMobilePressureIterations) : configured;
+#endif
+    }
+
+    // Why that number is lower than the configured one, for the log line. Empty when it is not.
+    const char* PressureIterationsCapReason() const {
+#if defined(__EMSCRIPTEN__) || defined(OS_ANDROID)
+      return (std::min)((std::max)(pressureIterations, 1), kMobilePressureIterations) <
+                 (std::max)(pressureIterations, 1) ? "mobile/web cap" : "";
+#else
+      return GetDeviceInfo().steamDeck &&
+                 (std::max)(pressureIterations, 1) > kMobilePressureIterations ? "Steam Deck cap" : "";
 #endif
     }
   };

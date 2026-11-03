@@ -7,6 +7,7 @@
 #include <utils/Log.h>
 #include <utils/ThreadPool.h>
 #include <utils/ConfigRuntime.h>
+#include <utils/DeviceInfo.h>
 #include <debug/RuntimeTelemetry.h>
 #include <navigation/NavigationSystem.h>
 
@@ -24,28 +25,6 @@ extern std::vector<std::string> g_args;
 
 namespace t850 {
   namespace {
-    std::string ReadFirstLine(const char* path) {
-      std::ifstream file(path);
-      std::string value;
-      std::getline(file, value);
-      return value;
-    }
-
-    std::string DetectSteamDeckReason() {
-      const std::string product = ReadFirstLine("/sys/devices/virtual/dmi/id/product_name");
-      const std::string board = ReadFirstLine("/sys/devices/virtual/dmi/id/board_name");
-      const std::string vendor = ReadFirstLine("/sys/devices/virtual/dmi/id/sys_vendor");
-      const std::string probe = product + " " + board + " " + vendor;
-      std::string lower = probe;
-      std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-      });
-      if (lower.find("steam deck") != std::string::npos || lower.find("jupiter") != std::string::npos) {
-        return "Steam Deck (" + probe + ")";
-      }
-      return {};
-    }
-
     float NormalizeGamepadAxis(Sint16 value, Sint16 deadzone = 8000) {
       if (std::abs(value) <= deadzone) {
         return 0.0f;
@@ -335,7 +314,7 @@ namespace t850 {
   }
 
   void LinuxFramework::InitializeGamepads() {
-    m_handheldReason = DetectSteamDeckReason();
+    m_handheldReason = GetDeviceInfo().handheldReason;
     m_handheldDetected = !m_handheldReason.empty();
     pBaseApp->IManager.Gamepad.handheldDevice = m_handheldDetected;
     pBaseApp->IManager.Gamepad.handheldReason = m_handheldReason;

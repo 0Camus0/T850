@@ -118,6 +118,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/XMaths.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Technique.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ConfigRuntime.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/DeviceInfo.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/RuntimeProfile.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ComputeKernelRegistry.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderDiskCache.cpp

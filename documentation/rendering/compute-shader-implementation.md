@@ -124,6 +124,14 @@ The compute path therefore owns one encoder and submits it every 64 dispatches, 
 uniform ring with each submit; `ReadComputeBuffer`, `BeginFrame`, `WaitForGPU` and
 `FlushGPUResources` drain the encoder first.
 
+Vulkan has the same shape: a headless loop records into one frame that the compute path
+opened. `RecycleOverflowingComputeFrame` submits it and waits once it holds 6144 descriptor
+sets or 2048 dispatches. The dispatch cap exists because cached descriptor sets let a loop
+record thousands of dispatches into one submit; on the Steam Deck that exceeded amdgpu's 5 s
+job timeout and lost the device in the middle of `--backyard-selftest`. An interactive
+Backyard frame records about 700 dispatches. A frame that has acquired a swap chain image is
+never recycled, because it must present.
+
 
 ### Portable guarantees
 
@@ -519,22 +527,23 @@ DayScene and T8ditor share the parser; `auto` is rejected.
 
 `--compute-selftest` starts a minimal application and defaults to D3D12 on Windows or Vulkan
 on Linux unless an API is explicit. Linux runs the same minimal application through its
-Vulkan framework. The self-test validates arithmetic buffer compute, then writes and reads
+Vulkan framework; before 2026-11-02 `LinuxFramework::OnCreateApplication` ran the interactive
+loop itself, so every self-test flag on Linux silently ran the scene instead. The self-test validates arithmetic buffer compute, then writes and reads
 deterministic RGBA8 images at `1x1`, `7x5`, and `257x129`, checking every pixel after GPU
 readback.
 `--compute-selftest-wait N` adds capture windows before and after dispatch.
 
 Visual Studio projects, filters, desktop CMake, and Android CMake register all new Framework
 sources. Android's shader task validates that graphics permutation keys remain hexadecimal.
-Android Vulkan compute SPIR-V precompilation is not implemented in this change; Android keeps
-the HLSL source and uses runtime compilation.
+It also compiles the `compute_permutations` entries to `<shader>.<permutation>.spv`;
+`VulkanCompute` reads those on Android before falling back to runtime glslang.
 
 On Windows, `--compileShaders` validates/prewarms graphics and compute manifest sections.
 The compute section resolves layouts from `ComputeKernelRegistry`; it is not silently ignored.
 The original seven production entries passed this path on D3D11, D3D12, Vulkan, WebGPU, and
 desktop GL on 2026-09-16. On 2026-09-17, the expanded 290-entry manifest, including all nine
-compute identities, passed D3D12 precompile. Android's independent Gradle task remains
-graphics-only.
+compute identities, passed D3D12 precompile. Android's Gradle task was graphics-only until
+2026-11-02.
 
 The branch also contains earlier reviewed work that:
 
@@ -733,8 +742,6 @@ kernel. On older desktop GL or OpenGL ES, the correct result remains the raster 
 
 - Vulkan validation-layer proof still requires installing the Vulkan SDK and rerunning the
   Debug Vulkan cases.
-- Android Vulkan compute shaders compile at runtime; build-time compute SPIR-V generation is
-  deferred.
 - Torch particles intentionally have no PS implementation. Desktop OpenGL 4.3+ dispatches
   the compute kernel; unsupported GL contexts preserve the base torch and clear the particle
   contribution.

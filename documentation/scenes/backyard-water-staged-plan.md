@@ -2641,15 +2641,24 @@ compute self-tests PASS on Vulkan and D3D12; pick test PASS on Vulkan; scenes 1,
 every frame on Vulkan with 0 errors.
 
 **Still open on the devices (owner decision).** Both run the water in slow motion because the frame
-time exceeds `maxDeltaTime` (1/30 s):
+time exceeds `maxDeltaTime` (1/30 s). Measured at info log level (debug adds a full GPU stall at
+every volume check):
 
 | Device, 1278×721 or 2960×1848 | Sweeps | fps | sim/wall |
 |---|---|---|---|
-| Steam Deck (RADV VanGogh) | 120 (desktop default) | 11.3 | 0.31 |
-| Steam Deck | 60 | 19.9 | 0.51 |
-| Tablet SM-X920 (Mali), fullscreen | 60 (mobile cap) | 13.6 | 0.47 |
+| Steam Deck (RADV VanGogh) | 120 (desktop default) | ~10 | 0.31 |
+| Steam Deck | 60 | 17.0 | 0.53 |
+| Tablet SM-X920 (Mali), fullscreen | 60 (mobile cap) | 15.8 | 0.53 |
 
-The tablet kept presenting for 23 minutes (18,600 frames) after the fix.
+The tablet kept presenting for an hour (62,700 frames) after the fix. The water is calm there after
+the opening drop because nothing else disturbs it: no time limit, the solver kept stepping
+(alpha volume −0.001 % after an hour). Spawn or drop balls from Scene Controls (right triple-tap).
+The same run exposed a slow mean-surface rise, filed as W-29.
+
+The Deck GTK launcher (`steamdeck/T850DeckLauncher.py`) had no Backyard entry; added, and
+`TestSteamDeckScripts.sh` asserts it. The Deck's installed desktop and Steam shortcuts still point
+at an older checkout (`~/Code/T850-minecraft-atlas-test`), so re-run
+`steamdeck/InstallSteamDeckLauncher.sh` from the checkout that should launch.
 
 `kMobilePressureIterations` applies to Android and web only; the Deck is `OS_LINUX` and runs 120.
 Next for 1d/1e: decide the Deck's cap, then profile the device frame (render resolution vs solver)

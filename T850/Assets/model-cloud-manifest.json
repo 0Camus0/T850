@@ -1,7 +1,7 @@
 {
   "bucket": "t850-models",
   "publicBaseUrl": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev",
-  "assetCount": 13,
+  "assetCount": 20,
   "assets": [
     {
       "key": "rewind_cyborg.glb",
@@ -54,6 +54,48 @@
     {
       "key": "bmw_m4_widebody__www.vecarz.com.glb",
       "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/bmw_m4_widebody__www.vecarz.com.glb"
+    },
+    {
+      "key": "Backyard/Backyard_Ball.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Backyard/Backyard_Ball.glb",
+      "size": 94232,
+      "sha256": "92bf8203362a216819b589ccefcd38aa24ab1f4eb8af4de8e5680135dfc6ed8f"
+    },
+    {
+      "key": "Backyard/Backyard_Ground.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Backyard/Backyard_Ground.glb",
+      "size": 5261524,
+      "sha256": "add67efc9330fec898a41e5058c0636c1d3f509f78246bc67b388b1ca62f65e0"
+    },
+    {
+      "key": "Backyard/Backyard_House.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Backyard/Backyard_House.glb",
+      "size": 5297556,
+      "sha256": "2ce4068f2f2bb1dc10bd8db6384778e44a0a0100760515cb6fb56d6f3b7e04d3"
+    },
+    {
+      "key": "Backyard/Backyard_Pool.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Backyard/Backyard_Pool.glb",
+      "size": 1839920,
+      "sha256": "742ba9a63736ec67025fea350d37975ab130555ab6e0d8c248f9de4967c1adb3"
+    },
+    {
+      "key": "Backyard/Backyard_Props.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Backyard/Backyard_Props.glb",
+      "size": 56772,
+      "sha256": "6f29c0452036532a7f68bb9fe4564878adfe55e2f9f65f3c1aa9557400337424"
+    },
+    {
+      "key": "Backyard/Backyard_Wall.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Backyard/Backyard_Wall.glb",
+      "size": 3144252,
+      "sha256": "c8cdc25f34e683c0f9cf45ff43a2f5b4dfe3f5a94df2f7538815d672b3009a50"
+    },
+    {
+      "key": "Backyard/Backyard_Water.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Backyard/Backyard_Water.glb",
+      "size": 1839888,
+      "sha256": "5632e578f7d153cd103e49141788773cc3984190925632db8435cf6d6258128f"
     }
   ]
 }

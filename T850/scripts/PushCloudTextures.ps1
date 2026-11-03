@@ -97,6 +97,11 @@ $ContentTypes = @{
     '.ktx'   = 'application/octet-stream'
     '.json'  = 'application/json'
     '.bin'   = 'application/octet-stream'
+    # Models, for `-Prefix Models/...`: this script maintains the *union* manifest, which holds
+    # model entries too (the model inventory itself is runtime_assets.json, written by
+    # PushCloudModels.ps1).
+    '.glb'   = 'model/gltf-binary'
+    '.gltf'  = 'model/gltf+json'
 }
 
 function Write-Step { param([string]$Message) Write-Host "[T850] $Message" }
@@ -254,6 +259,17 @@ function New-ManifestEntry {
     return [pscustomobject]$entry
 }
 
+function Get-AssetTarget {
+    param([string]$Kind)
+    # The union manifest carries both kinds, and the kind decides both the bucket and the public
+    # base URL. Deriving it from the prefix (Models/* -> model) means `-Prefix Models/<scene>`
+    # publishes models to t850-models instead of mislabelling them as textures.
+    if ($Kind -eq 'model') {
+        return [pscustomobject]@{ Kind = 'model'; Bucket = $ModelsBucket; BaseUrl = $publicBaseModels }
+    }
+    return [pscustomobject]@{ Kind = 'texture'; Bucket = $TexturesBucket; BaseUrl = $publicBaseTextures }
+}
+
 function Get-EntryIndex {
     param([object[]]$Entries)
     # Assets are unique by (bucket, key): the two buckets may legitimately hold the same
@@ -303,14 +319,32 @@ foreach ($prefix in $Prefixes) {
         continue
     }
     $found = Get-ChildItem -LiteralPath $localDir -Recurse -File -Force |
-        Where-Object { $_.Name -notlike '.*' -and $_.Length -gt 0 }
+        Where-Object {
+            if ($_.Length -le 0) { return $false }
+            # Skip dot-files and anything inside a dot-directory: those are engine caches
+            # (Models/<scene>/.t8cache/*.t8mesh) and must never be published.
+            $relativeToPrefix = $_.FullName.Substring($localDir.Length).TrimStart('\', '/')
+            foreach ($segment in $relativeToPrefix.Split([char[]]@('\', '/'), [System.StringSplitOptions]::RemoveEmptyEntries)) {
+                if ($segment.StartsWith('.')) { return $false }
+            }
+            return $true
+        }
     foreach ($file in $found) {
         $relative = $file.FullName.Substring($AssetRoot.Length).TrimStart('\', '/').Replace('\', '/')
-        $key = ConvertTo-R2Key $relative
+        # Models are published with their key relative to Models/ — that is the convention every
+        # existing model entry uses (`key: DamagedHelmet.glb`, `localRelativePath:
+        # Models/DamagedHelmet.glb`) and the one runtime_assets.json and all four model downloaders
+        # expect. Textures keep their Assets/-relative key.
+        $key = if ($relative.StartsWith('Models/', [System.StringComparison]::OrdinalIgnoreCase)) {
+            ConvertTo-R2Key $relative.Substring('Models/'.Length)
+        } else {
+            ConvertTo-R2Key $relative
+        }
         if ($seenKeys.ContainsKey($key)) { throw "Two local files map to the same R2 key '$key'" }
         $seenKeys[$key] = $true
         $files.Add([pscustomobject]@{
             Key               = $key
+            Kind              = if ($relative.StartsWith('Models/', [System.StringComparison]::OrdinalIgnoreCase)) { 'model' } else { 'texture' }
             LocalRelativePath = $relative
             FullName          = $file.FullName
             Size              = [int64]$file.Length
@@ -359,7 +393,10 @@ $unchanged = 0
 $sha256Backfilled = 0
 
 foreach ($file in $files) {
-    $compound = "$TexturesBucket|$($file.Key)"
+    # The compound key must use the file's own bucket: hardcoding $TexturesBucket made a model
+    # invisible to the lookup, so every run appended a second entry for it (and Get-EntryIndex then
+    # refused the next run with "Manifest has duplicate entry").
+    $compound = "$((Get-AssetTarget -Kind $file.Kind).Bucket)|$($file.Key)"
     $existingIndex = if ($entryIndex.ContainsKey($compound)) { $entryIndex[$compound] } else { -1 }
     if ($existingIndex -ge 0) {
         $existing = $entries[$existingIndex]
@@ -387,10 +424,11 @@ foreach ($file in $files) {
             $unchanged++
         }
     } else {
-        $newEntry = New-ManifestEntry -AssetRoot $manifestAssetRoot -Bucket $TexturesBucket `
-            -ContentType $file.ContentType -Key $file.Key -Kind 'texture' `
+        $target = Get-AssetTarget -Kind $file.Kind
+        $newEntry = New-ManifestEntry -AssetRoot $manifestAssetRoot -Bucket $target.Bucket `
+            -ContentType $file.ContentType -Key $file.Key -Kind $target.Kind `
             -LocalRelativePath $file.LocalRelativePath -Size $file.Size -Sha256 $file.Sha256 `
-            -PublicBaseUrl $publicBaseTextures
+            -PublicBaseUrl $target.BaseUrl
         $entries += $newEntry
         $entryIndex[$compound] = $entries.Count - 1
         $newEntries++
@@ -496,10 +534,15 @@ if (-not $Apply) {
 
 function Test-PublicObject {
     param([string]$Url, [int64]$Size, [int]$Attempts = 2)
+    # On PowerShell 7.6 `$response.Headers['Content-Length']` is a String[] of one element and
+    # casting it to [int64] throws, so a swallowed throw used to report every object as unserved.
     for ($i = 0; $i -lt $Attempts; $i++) {
         try {
             $head = Invoke-WebRequest -Uri $Url -Method Head -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
-            if ([int64]$head.Headers['Content-Length'] -eq $Size) { return $true }
+            $value = $head.Headers['Content-Length']
+            $text = if ($value -is [array]) { [string]($value | Select-Object -First 1) } else { [string]$value }
+            $length = [int64]-1
+            if ([int64]::TryParse($text, [ref]$length) -and $length -eq $Size) { return $true }
             return $false
         } catch {
             Start-Sleep -Seconds 1
@@ -511,13 +554,14 @@ function Test-PublicObject {
 $uploaded = 0
 $uploadedBytes = [int64]0
 foreach ($file in $toUpload) {
-    $uri = New-R2ObjectUri -Bucket $TexturesBucket -Key $file.Key
+    $target = Get-AssetTarget -Kind $file.Kind
+    $uri = New-R2ObjectUri -Bucket $target.Bucket -Key $file.Key
     $null = Invoke-R2Request -Method Put -Uri $uri -InFile $file.FullName -ContentType $file.ContentType -CacheControl $TextureCacheControl
 
     # Verify the object, not the HTTP status: read it back through the authenticated API
     # (no edge cache involved) and compare hashes. The ETag returned by a PUT is not
     # surfaced reliably by Invoke-WebRequest.
-    $readBack = Get-R2ObjectBytes -Bucket $TexturesBucket -Key $file.Key
+    $readBack = Get-R2ObjectBytes -Bucket $target.Bucket -Key $file.Key
     $readBackHash = (Get-FileHash -InputStream ([IO.MemoryStream]::new($readBack)) -Algorithm SHA256).Hash
     if ($readBackHash -ine $file.Sha256) {
         throw "Uploaded '$($file.Key)' but the stored object does not match the local file ($readBackHash vs $($file.Sha256))"
@@ -540,11 +584,14 @@ if ($Prune -and $staleEntries.Count -gt 0) {
             Write-Warn "could not delete '$($entry.key)': $($_.Exception.Message)"
         }
     }
-    # Drop the entries too, then republish below.
+    # Drop the entries too, then republish below. This applies to *any* kind under the synced
+    # prefixes: gating on `kind -eq 'texture'` (the previous behaviour) deleted a pruned model
+    # object but left its manifest entry behind, pointing at nothing.
     $keep = @($entries | Where-Object {
-        if ([string]$_.kind -ne 'texture') { return $true }
         if ($seenKeys.ContainsKey([string]$_.key)) { return $true }
-        return -not (Test-KeyUnderPrefixes ([string]$_.localRelativePath))
+        $localRelativePath = if ($_.PSObject.Properties['localRelativePath']) { [string]$_.localRelativePath } else { '' }
+        if (-not $localRelativePath) { return $true }
+        return -not (Test-KeyUnderPrefixes $localRelativePath)
     })
     $newTop['assets'] = $keep
     $newTop['assetCount'] = $keep.Count
@@ -609,7 +656,7 @@ if ($toUpload.Count -gt 0) {
         Sort-Object Key -Unique
     $notYetServed = 0
     foreach ($file in $sample) {
-        $publicUrl = "$publicBaseTextures/$(ConvertTo-R2UrlPath $file.Key)"
+        $publicUrl = "$(Get-AssetTarget -Kind $file.Kind).BaseUrl/$(ConvertTo-R2UrlPath $file.Key)"
         if (Test-PublicObject -Url $publicUrl -Size $file.Size -Attempts 45) {
             Write-Step "public sample ok: $($file.Key)"
         } else {

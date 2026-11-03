@@ -175,10 +175,64 @@ used instead, targeting a P99 slope of 0.42.
 `.gitignore` line 90 excludes `/T850/Assets/Models/**/*.glb`. So:
 
 - **Tracked:** `backyard_layout.json`, `WaterNormal.png`
-- **Generated, NOT tracked:** all `Backyard_*.glb` and `Backyard_Ball.glb`
+- **Generated, NOT tracked:** all `Backyard_*.glb` and `Backyard_Ball.glb`, which are published to
+  Cloudflare R2 instead (see 3.6)
 
-Anyone checking out the branch must re-run the three generators above. This keeps the repo
-small, at the cost of a regeneration step.
+Anyone checking out the branch gets the meshes through `scripts/DownloadModels.ps1` (or the
+launcher's Download Assets button), not from git.
+
+### 3.6 Cloud publishing for the meshes
+
+Because the `.glb` files are not tracked, a checkout without the download step fails at load time
+with `[SceneDescriptor] Cannot open 'Scenes/BackyardScene.json'` / `[glTF] cannot open
+'Models/Backyard/*.glb'`. Measured on the Steam Deck on 2026-11-03: the branch built and ran but
+scene 7 had no geometry until the meshes were installed.
+
+Two R2 buckets and two manifests:
+
+| Object | Bucket | Written by | Read by |
+|---|---|---|---|
+| `Backyard/*.glb` | `t850-models` | `scripts/PushCloudModels.ps1` | all four model downloaders |
+| `runtime_assets.json` | `t850-models` | `scripts/PushCloudModels.ps1` | `DownloadModels.ps1`, the launcher, `steamdeck/DownloadCloudAssets.py`, Android `AssetDownloadActivity`, `web/cloud-assets.mjs` |
+| `manifest.json` (union: models **and** textures) | both buckets, identical copies | `scripts/PushCloudTextures.ps1` | `DownloadTextures.ps1`, the web `TEXTURES` binding |
+
+`runtime_assets.json` entries are `{key, url, size, sha256}` with `key` relative to `Assets/Models/`
+— the contract every downloader implements. The union manifest keeps the same key convention for
+model entries (`key: Backyard/Backyard_House.glb`, `localRelativePath:
+Models/Backyard/Backyard_House.glb`).
+
+```
+# publish or update the Backyard meshes (dry run first, then -Apply)
+pwsh scripts/PushCloudModels.ps1
+pwsh scripts/PushCloudModels.ps1 -Apply
+# -Check verifies the cloud manifest against the local files and exits non-zero on a gap
+pwsh scripts/PushCloudModels.ps1 -Check
+
+# keep the union manifest in step with the same meshes
+pwsh scripts/PushCloudTextures.ps1 -Prefix Models/Backyard -Apply
+```
+
+Measured 2026-11-03: 7 meshes, 16.72 MB; `runtime_assets.json` 13 → 20 assets; the union manifest
+218 assets (80 models, 138 textures) after the repair below. Every object was re-downloaded from
+its public URL and matched its recorded sha256.
+
+**Two bugs this exposed in the shared publishing scripts**, both fixed:
+
+1. **The union manifest duplicated model entries on every run.** The merge lookup keyed on
+   `$TexturesBucket` unconditionally, so a model file (bucket `t850-models`) never matched its
+   existing entry and each run appended another copy; `Get-EntryIndex` then refused the following
+   run with `Manifest has duplicate entry`. The lookup now uses the file's own bucket, the bucket
+   and `kind` come from the prefix (`Models/…` → `model` → `t850-models`), and the prune filter no
+   longer short-circuits on `kind -ne 'texture'` (it used to delete a pruned model's *object* while
+   leaving its manifest entry pointing at nothing).
+2. **`Test-PublicObject` reported every object as unserved on PowerShell 7.6**, because
+   `$response.Headers['Content-Length']` is a `String[]` and casting it to `[int64]` throws; the
+   throw was swallowed by the retry loop. This made a successful 16.72 MB upload look like a
+   failure. Both scripts now parse the header explicitly.
+
+`scripts/RepairCloudManifestDuplicates.ps1` is the one-off that removed the eight duplicate entries
+those two bugs left in the live manifest (226 → 218 assets, `manifestVersion` 4 → 5, both buckets
+byte-identical). It is kept because the failure is loud but not self-repairing.
 
 ---
 

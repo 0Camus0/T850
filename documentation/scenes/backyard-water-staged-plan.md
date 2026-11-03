@@ -233,7 +233,7 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 | B | Steam Deck: detect the OLED, run 60 sweeps | **Done 2026-11-03** (`5b90125a`): shared `utils/DeviceInfo`, run-time cap, verified on the Deck | S |
 | C | Browser re-verify after the kernel changes | The web export predates the air-rise kernel | S |
 | D | Android: CI-style build, 30-minute tablet run | APK with every fix installed, no long run yet | S–M |
-| E | Launcher gaps | Four items: the three small ones plus **the Backyard meshes are missing from the cloud asset manifest** (found 2026-11-03, see item B's verification) | S |
+| E | Launcher gaps | The three small items. ~~The Backyard meshes are missing from the cloud asset manifest~~ — **done 2026-11-03**: `PushCloudModels.ps1`, 7 meshes in `t850-models`, `runtime_assets.json` 13 → 20, union manifest repaired and at 218 assets | S |
 | F | Cleanup: script move, README, W-16 | Partly done | M |
 | G | Final matrix and validation (2b) | Last full run predates the Vulkan/WebGPU/Linux changes | M |
 | H | Remaining owner decisions and PR text | Merge strategy and push approval open | S |
@@ -630,14 +630,20 @@ downloaded by hand for this run (see the asset gap below).
 
 Windows desktop after the change: `Handheld detection: no`, `120 pressure iterations`, no cap note.
 
-**Found while verifying: the Backyard meshes are not in the cloud asset manifest.**
-`runtime_assets.json` has no `Backyard/*.glb` entry, so `DownloadModels.ps1`,
-`steamdeck/DownloadCloudAssets.py` and the launcher's "Download Assets" cannot install scene 7 on a
-machine that has no repository checkout — the scene then dies with
-`[SceneDescriptor] Cannot open 'Scenes/BackyardScene.json'` / `[glTF] cannot open
-'Models/Backyard/*.glb'`. This does not affect the Deck or Android packages (both stage the repo's
-`Assets/`), but it does affect the cloud-download flow and therefore the PR's install story. Pushing
-them needs R2 credentials; recorded under item E.
+**Fixed 2026-11-03: the Backyard meshes are now in the cloud.**
+`runtime_assets.json` had no `Backyard/*.glb` entry, so `DownloadModels.ps1`,
+`steamdeck/DownloadCloudAssets.py` and the launcher's "Download Assets" could not install scene 7 on
+a machine without a repository checkout — the scene died with `[SceneDescriptor] Cannot open
+'Scenes/BackyardScene.json'` / `[glTF] cannot open 'Models/Backyard/*.glb'`.
+
+Now: new `scripts/PushCloudModels.ps1` uploaded the 7 meshes (16.72 MB) to `t850-models` and
+published `runtime_assets.json` (13 → 20 assets, with `size` + `sha256`); the union `manifest.json`
+carries them too (218 assets, 80 models); `Assets/model-cloud-manifest.json` mirrors it. Verified by
+installing into four empty roots (PowerShell downloader, the Deck's Python downloader, the web
+catalog, and a full engine run of scene 7 with a cloud-only asset tree: all seven meshes loaded,
+0 errors, water simulated). Two latent bugs in the publishing scripts were found and fixed on the
+way (duplicate model entries in the union manifest, and a PowerShell 7.6 header cast that reported
+successful uploads as failures); see the implementation record's 3.6.
 #### C. Browser re-verify
 
 `build/web/WebShaders` was exported at 13:26 on 2026-11-02, and `CS_FluidAirRise3D` landed at

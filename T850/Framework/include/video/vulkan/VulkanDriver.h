@@ -333,9 +333,13 @@ namespace t850 {
       uint32_t frame = 0;
       int ticket = 0;
       bool pending = false;
+      // m_frameSlotWaits[frame] when the copy was recorded; any later wait on that slot
+      // proves the copy finished, even though BeginFrame has since reset the fence.
+      uint64_t slotWaitsAtRequest = 0;
     };
     PendingReadback m_pendingReadbacks[kBackBufferCount];
     int m_readbackTicketCounter = 0;
+    uint64_t        m_frameSlotWaits[kBackBufferCount] = {};
     uint32_t        m_currentFrame = 0;
     uint64_t        m_gpuSubmissionSerial = 0;
     uint64_t        m_gpuCompletedSubmissionSerial = 0;

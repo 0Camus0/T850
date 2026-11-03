@@ -170,8 +170,8 @@ namespace {
   // after: ring -0.1..-0.2 cm, covered within 0.7 cm of the ring (fp16 alpha).
   // With R32F alpha (W-02) the air the plunge entrains stays beside the ball (0.1-0.2
   // cells per column, against 0.003 far away) and read as missing water: ring -17.1 mm.
-  // The surface kernel now counts air deeper than two cells as volume: ring -4.9 mm,
-  // covered 15.9 mm below the ring.
+  // Since the air-rise pass (W-29) that air leaves: ring -1.6 mm, covered 2.2 mm below
+  // the ring, with no trapped-air term in the surface kernel.
   constexpr float kFloatRingMax = 0.015f;
   constexpr float kFloatCoveredMax = 0.02f;
   // Largest |h(t) - 2h(t-1) + h(t-2)| per texel near the settling ball, 3-4 s after the
@@ -228,6 +228,7 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
   settings.waterPlaneY = w.waterPlaneY;
   settings.freeboard = w.freeboard;
   settings.openCeiling = w.openCeiling;
+  settings.airRiseSpeed = options.airRiseSpeed >= 0.0f ? options.airRiseSpeed : (std::max)(w.airRiseSpeed, 0.0f);
 
   if (!fluid.TryInitialize(driver, settings)) {
     // SKIP only when the backend lacks the capability; a rejected kernel must not pass.
@@ -1014,6 +1015,56 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
       }
     }
     fluid.RemoveBodiesFrom(1);
+  }
+
+  // ── Gate 11: entrained air leaves the water (W-29) ──────────────────────────────
+  // Without the air-rise pass the drop's air stayed in the bulk for good and the surface
+  // drew each pocket as a frozen bump: 1734 bulk cells below 98 % and an interface 3.09
+  // cells wide after 30 s, still rising. With it: 24 cells (air under solids) and 1.02.
+  // Runs at the scene's own step, because the air accumulates over tens of seconds.
+  if (failures == 0 && !options.skipBall) {
+    if (!fluid.ResetToRest(driver)) { T8_LOG_ERROR("[BackyardSelfTest] air: reset failed"); ++failures; }
+    FluidSphere& ball = fluid.DroppedSphere();
+    ball.enabled = true;
+    ball.radius = 0.25f;
+    ball.densityRatio = 0.6f;
+    ball.dragCoefficient = 0.47f;
+    ball.restitution = 0.30f;
+    ball.x = 0.0f;
+    ball.z = fs.basinMinZ + 0.5f * (fs.basinMaxZ - fs.basinMinZ);
+    ball.y = fs.waterPlaneY + 1.0f;
+    ball.vx = ball.vy = ball.vz = 0.0f;
+    ball.submerged = 0.0f;
+    const float stepDt = (std::max)(w.maxDeltaTime, 1.0f / 240.0f);
+    fluid.SetDeltaTime(stepDt);
+    fluid.SetMaxSubstepDt((std::max)(w.maxSubstepDt, 1.0f / 1000.0f));
+    const uint32_t airSteps = static_cast<uint32_t>(std::ceil(30.0f / stepDt));
+    for (uint32_t i = 0; i < airSteps && failures == 0; ++i)
+      if (!fluid.Step(driver)) { T8_LOG_ERROR("[BackyardSelfTest] air: step failed"); ++failures; }
+    FluidSimulation::MassAudit audit;
+    if (failures == 0 && !fluid.AuditMass(driver, audit)) {
+      T8_LOG_ERROR("[BackyardSelfTest] air: audit readback failed");
+      ++failures;
+    } else if (failures == 0) {
+      constexpr uint32_t kAirBulkMax = 200;
+      constexpr float kAirInterfaceMax = 1.6f;
+      T8_LOG_INFO("[BackyardSelfTest] air  after 30 s: bulk below 98%%=%u of %u (limit %u) min=%.3f  "
+                  "interface width mean=%.2f cells (limit %.1f)",
+                  audit.bulkBelow98, audit.bulkCells, kAirBulkMax, audit.bulkMinAlpha,
+                  audit.interfaceWidthMean, kAirInterfaceMax);
+      if (audit.bulkBelow98 > kAirBulkMax) {
+        T8_LOG_ERROR("[BackyardSelfTest] air: %u bulk cells still hold air 30 s after the drop (limit %u)",
+                     audit.bulkBelow98, kAirBulkMax);
+        ++failures;
+      }
+      if (audit.interfaceWidthMean > kAirInterfaceMax) {
+        T8_LOG_ERROR("[BackyardSelfTest] air: the interface is %.2f cells wide (limit %.1f)",
+                     audit.interfaceWidthMean, kAirInterfaceMax);
+        ++failures;
+      }
+    }
+    fluid.SetDeltaTime(options.fixedDt);
+    fluid.SetMaxSubstepDt(options.fixedDt);
   }
 
   // ── Gate 10: the per-ball material palette (W-25) ────────────────────────────

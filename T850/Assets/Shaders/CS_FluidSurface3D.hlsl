@@ -108,10 +108,6 @@ struct Column
     bool wet;
 };
 
-// Depth below the column-integral surface, in cells, past which air counts as volume.
-// The far-field interface smears over ~2 cells (0.94 / 0.79 / 0.43 / 0.14 with R32F).
-static const float TRAPPED_AIR_DEPTH_CELLS = 2.0f;
-
 Column ReadColumn(int x, int z)
 {
     Column col;
@@ -155,25 +151,10 @@ Column ReadColumn(int x, int z)
     if (!col.hasBody)
         col.waterAbove = 0.0f;
     col.wet = water > 0.001f;
-    if (col.wet) {
-        // Air well below the free surface lifts it instead of lowering it. The solver has
-        // no bubble buoyancy, so air a plunging body leaves behind (W-07) stays where it
-        // is; read as missing water it drew a 2-3 cm moat round a floating ball once
-        // alpha became exact (W-02). The ramp starts below the interface smear and is
-        // continuous in the level, so it cannot add quantisation jitter.
-        float trapped = 0.0f;
-        for (uint k = 0; k < Height; ++k) {
-            const float depthCells = water - (float(k) + 0.5f);
-            if (depthCells <= TRAPPED_AIR_DEPTH_CELLS)
-                break;
-            const int3 c = int3(x, int(k), z);
-            if (IsSolid(c))
-                continue;
-            trapped += saturate(depthCells - TRAPPED_AIR_DEPTH_CELLS) *
-                       (1.0f - saturate(AlphaIn.Load(int4(c, 0)).x));
-        }
-        col.elevation = BasinMinY + (water + trapped) * CellSize;
-    }
+    // Air below the surface rises out in CS_FluidAirRise3D (W-29), so the column integral is
+    // the level. Counting deep air as volume here (W-26) drew every leftover pocket as a bump.
+    if (col.wet)
+        col.elevation = BasinMinY + water * CellSize;
     return col;
 }
 

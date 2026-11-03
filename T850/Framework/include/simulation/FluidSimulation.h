@@ -59,6 +59,9 @@ namespace t850 {
     // Interface sharpening strength for the flux-form alpha advection (0 = pure
     // upwind, which smears entrained air through the whole pool).
     float alphaCompression = 0.5f;
+    // Speed in m/s at which entrained air rises back to the surface (W-29). The solver
+    // has no bubble buoyancy, so at 0 a splash leaves air pockets in the water forever.
+    float airRiseSpeed = 0.25f;
     // CFL cap on the unsplit upwind alpha transport: (|u|+|v|+|w|)*dt/h <= 1.
     float maxSubstepDt = 1.0f / 120.0f;
     // Treat the rows directly above the domain as AIR instead of a solid ceiling.
@@ -238,6 +241,7 @@ namespace t850 {
     void SetDeltaTime(float seconds) { m_settings.deltaTime = seconds; }
     void SetMaxSubstepDt(float seconds) { m_settings.maxSubstepDt = seconds; }
     void SetAlphaCompression(float compression) { m_settings.alphaCompression = compression; }
+    void SetAirRiseSpeed(float metresPerSecond) { m_settings.airRiseSpeed = metresPerSecond; }
     void SetVolumeCheckInterval(uint32_t interval) { m_volumeCheckInterval = (std::max)(interval, 1u); }
     void SetForcingAmplitude(float amplitude) { m_settings.forcingAmplitude = amplitude; }
     void SetViscosity(float viscosity) { m_settings.viscosity = viscosity; }
@@ -399,12 +403,15 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_surfaceCopyPipeline;
     std::unique_ptr<ComputePipeline> m_seedAlphaPipeline;
     std::unique_ptr<ComputePipeline> m_alphaAdvectPipeline;
+    std::unique_ptr<ComputePipeline> m_airRisePipeline;
     // W-06: water level and current in an annulus around every body, one thread per body.
     std::unique_ptr<ComputePipeline> m_bodyLevelPipeline;
     std::unique_ptr<ComputeBuffer> m_bodyLevelBuffer;
     // W-04 step 3: one persistent diagnostics accumulator, cleared by the kernel itself.
     std::unique_ptr<ComputeBuffer> m_diagnosticsBuffer;
     int m_bodyLevelTicket = -1;
+    // Queries since the pending answer was requested; a stuck ticket freezes every body's level.
+    uint32_t m_bodyLevelWaitFrames = 0;
     uint32_t m_bodyLevelCapacity = 0;
     uint32_t m_bodyLevelCount = 0;
     uint32_t m_bodyLevelGeneration = 0;

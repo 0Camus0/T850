@@ -590,6 +590,7 @@ int VulkanDriver::RequestComputeReadback(ComputeBuffer& bufferBase, size_t byteC
                        1, &barrier, 0, nullptr, 0, nullptr);
   slot.frame = m_currentFrame;
   slot.pending = true;
+  slot.slotWaitsAtRequest = m_frameSlotWaits[m_currentFrame];
   slot.ticket = ++m_readbackTicketCounter;
   return slot.ticket;
 }
@@ -600,7 +601,11 @@ bool VulkanDriver::ConsumeComputeReadback(int ticket, void* destination, size_t 
     PendingReadback& slot = m_pendingReadbacks[frame];
     if (!slot.pending || slot.ticket != ticket || slot.byteCount < byteCount || !slot.mapped) continue;
     if (m_frameStarted && frame == m_currentFrame) return false;
-    if (!m_inFlightFences[frame] || vkGetFenceStatus(m_device, m_inFlightFences[frame]) != VK_SUCCESS)
+    // On a GPU-bound device the fence is signaled only briefly before BeginFrame resets it
+    // for the next frame in this slot, so polling it alone could miss every completion.
+    const bool slotWaitedSince = m_frameSlotWaits[frame] > slot.slotWaitsAtRequest;
+    if (!slotWaitedSince &&
+        (!m_inFlightFences[frame] || vkGetFenceStatus(m_device, m_inFlightFences[frame]) != VK_SUCCESS))
       return false;
     std::memcpy(destination, slot.mapped, byteCount);
     slot.pending = false;

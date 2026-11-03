@@ -355,10 +355,12 @@ These are parsed by DayScene, not by `ConfigRuntime`, and every one of them impl
 the Backyard ones. Every automated run also passes `--unattended`.
 
 ```text
---backyard-selftest                run the ten water gates, then exit
+--backyard-selftest                run the eleven water gates, then exit
 --backyard-selftest-frames N       frames per gate run
 --backyard-no-ball                 run the gates without the scripted ball
 --backyard-cell-size METRES        override the grid's derived cell size (debug)
+--backyard-iterations N            run the gates at another platform's sweep count (60 = mobile/web)
+--backyard-air-rise M_PER_S        run the gates at another air-rise speed (0 = old trapped air)
 --backyard-spawn N                 spawn N extra balls once the solver is ready
 --backyard-spawn-seed N            fix the spawn and material RNG for a reproducible run
 --backyard-pick-test               drive the pick/drag input path in-process, then exit

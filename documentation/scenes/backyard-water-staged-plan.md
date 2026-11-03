@@ -2660,6 +2660,25 @@ The Deck GTK launcher (`steamdeck/T850DeckLauncher.py`) had no Backyard entry; a
 at an older checkout (`~/Code/T850-minecraft-atlas-test`), so re-run
 `steamdeck/InstallSteamDeckLauncher.sh` from the checkout that should launch.
 
+**Frozen waves: W-29 fixed, W-26 removed (2026-11-02, reviewer).** The owner saw the tablet pool
+stop moving while staying wavy. The mass audit showed air entering the bulk after every splash and
+never leaving (no bubble buoyancy), and W-26's trapped-air term drew each pocket as a fixed bump.
+`CS_FluidAirRise3D` (a conservative vertical drift flux, 0.25 m/s) now lets it rise out, and the
+W-26 term is gone. Gate 11 (30 s after the default drop) fails 3614 bulk cells / 3.36-cell interface
+with the pass disabled and passes 24 / 1.16 with it; gate 7 improved from −11.3 to −2.2 mm. A 600 s
+D3D12 run ends flat to ±1 mm. Details and the full table are in W-29's resolution.
+
+Two backend bugs surfaced on the way and are fixed: WebGPU headless runs leaked a 1 MB uniform
+buffer per 64 dispatches until `bad allocation` (submits now wait once eight are in flight), and
+Vulkan's async readback could stay "pending" for minutes on a GPU-bound device because the fence it
+polled was reset by `BeginFrame` (the Deck ball sat frozen at −0.117 m; the tablet ball bobbed on
+rare jumps). The Deck reproduced the stale level in 2 of 2 runs before and 0 of 3 after.
+
+Validation: backyard self-test PASS on D3D12, Vulkan, D3D11, WebGPU and the Steam Deck; fluid and
+compute self-tests PASS on D3D12, Vulkan and WebGPU; pick test PASS on three APIs; scenes 7/1/6 on
+five APIs with 0 errors. The tablet APK carries the new kernel precompiled; a long tablet run is
+still to be repeated (the tablet slept during the attempt).
+
 `kMobilePressureIterations` applies to Android and web only; the Deck is `OS_LINUX` and runs 120.
 Next for 1d/1e: decide the Deck's cap, then profile the device frame (render resolution vs solver)
 before touching the solver.

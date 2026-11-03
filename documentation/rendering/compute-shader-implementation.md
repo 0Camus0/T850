@@ -122,7 +122,10 @@ A headless compute loop never reaches the frame end that clears the uniform ring
 submission per dispatch ends in `std::bad_alloc` after roughly a hundred thousand dispatches.
 The compute path therefore owns one encoder and submits it every 64 dispatches, dropping the
 uniform ring with each submit; `ReadComputeBuffer`, `BeginFrame`, `WaitForGPU` and
-`FlushGPUResources` drain the encoder first.
+`FlushGPUResources` drain the encoder first. Every submit also waits for the oldest one once
+eight are in flight: a frame loop gets that bound from `BeginFrame`, but a headless loop with no
+readback kept every submission's retired 1 MB uniform buffer alive and hit `bad allocation`
+after a 30 s solver run (gate 11 of `--backyard-selftest`; peak now 643 MB).
 
 Vulkan has the same shape: a headless loop records into one frame that the compute path
 opened. `RecycleOverflowingComputeFrame` submits it and waits once it holds 6144 descriptor
@@ -168,7 +171,11 @@ never recycled, because it must present.
   matches the ticket, and a slot is reused by the next request recorded in its
   frame, so keep one request in flight per buffer. D3D12 transitions the source
   to `COPY_SOURCE` before the copy (the debug layer rejects a copy from
-  `UNORDERED_ACCESS`).
+  `UNORDERED_ACCESS`). Vulkan counts the waits on each frame slot and treats a copy
+  as retired once that slot has been waited on again: on a GPU-bound device the
+  fence is signaled only briefly before `BeginFrame` resets it, so polling the fence
+  alone missed the completion indefinitely (the Steam Deck and the Mali tablet left
+  every floating ball on a stale water level for minutes).
 - **Driver-side bind caching (W-15 P4/P5).** Vulkan caches each fully written
   compute descriptor set for the frame, keyed by the set layout, every bound
   resource identity and the constant bytes, and clears it with the descriptor pool.

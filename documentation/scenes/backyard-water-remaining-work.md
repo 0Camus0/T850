@@ -47,7 +47,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` + `ff66c039` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 (headless) and the frame probe landed in `ff66c039` |
 | W-26 The surface kernel compensates for trapped air | **Done** (removed with W-29, 2026-11-02) | this commit | Once the air rises out the term has nothing left to hide: with it off, gate 7 `covered min−ring` −2.4 mm (D3D12) / −1.8 mm (Vulkan) against −2.2 / −1.6 with it on. Removed, because it turned every leftover pocket into a frozen bump |
 | W-27 The wind tunable does nothing | **Done** (2026-11-01) | this commit | The diagnosis below was half right: at run time `SurfaceLevel` is the layout fill (0.788), so the band did reach the waterline. Wind was multiplied by `ForcingAmplitude`, which ships at 0. Wind is now surface stress on the top wet layer; 10 m/s along X moves the scripted ball 1.2 cm in 20 s, 0 m/s leaves it still |
-| W-28 OpenGL has no solver | **Planned, stage of its own** (owner request 2026-11-02) | — | GL is the last backend without the solver. Route decided 2026-11-02: twins generated offline with the Vulkan SDK's `spirv-cross.exe` (not in vcpkg), plus GL 3D volumes, inline buffers and a hand port of the mesh shaders' `FLUID_SURFACE` path. Not started; staged plan section 0, item A |
+| W-28 OpenGL has no solver | **Done** (2026-11-02, this commit) | this commit | GL 4.3 now runs the whole solver: 27 generated GLSL twins, `glTexStorage3D` volumes bound with `glBindImageTexture`, inline SSBOs, and the mesh shaders' `FLUID_SURFACE` path hand-ported. `--compute-selftest`, `--fluid-selftest`, all 11 `--backyard-selftest` gates and `--backyard-pick-test` PASS on `--api gl`; scenes 1 and 6 stay byte-identical; scene 7 frame 300 is within +0.16/255 mean of D3D12. GL is 3.5x slower in the solver than D3D12 (8.1 vs 2.3 ms of dispatch recording at 120 sweeps); the remaining lever is listed under W-28 | 
 | W-29 The mean surface creeps up over long runs | **Done** (2026-11-02) | this commit | Entrained air never left (no bubble buoyancy) and W-26 drew it as frozen bumps. `CS_FluidAirRise3D` lets it rise out: after 30 s bulk cells below 98 % 3614 → 24, interface 3.36 → 1.16 cells; 600 s on D3D12 ends flat to ±1 mm with mean 0.0 mm. Gate 11 guards it. Fixing it exposed two backend bugs (WebGPU headless memory, Vulkan stale readback) |
 | W-30 The wind does not push the balls | **Planned** (owner decision 2026-11-02) | — | Air drag on the exposed cap, horizontal, integrated implicitly together with the water drag; expected leeway ~2.8 % of the wind. Gate 12. Staged plan section 0, item K |
 | W-31 Devices run the water in slow motion | **Planned** (owner request 2026-11-02) | — | The 1/30 s frame clamp plus a fixed 1/120 s substep cost 4 substeps per frame regardless of the flow: Deck 0.53×, tablet 0.53×. Replace them with CFL substeps from a measured velocity bound and a per-frame substep budget. Gate 13. Staged plan section 0, item J |
@@ -2115,7 +2115,97 @@ D3D12; and a `telemetry.ps1` row. Then `--scene 1` and `--scene 6` on GL to prov
 **Risk.** Driver variance (Mesa vs NVIDIA/AMD) on image3D and layered binds; GL's lack of a
 `R32F` write-only image guarantee on older drivers; and the twin/generation decision above.
 
----
+#### W-28 resolution (2026-11-02)
+
+Shipped. `--api gl` runs the full solver and all 11 gates pass.
+
+**Twins, 27 of them, generated and committed.**
+
+- `scripts/shaders/generate_gl_compute_twins.ps1`: glslangValidator (`-D -S comp -e CS
+  --target-env vulkan1.0 -DT850_SPIRV=1 -DT850_VULKAN=1`) → `spirv-cross --version 430 --no-es
+  --combined-samplers-inherit-bindings`. Every output re-parses as OpenGL GLSL 4.30.
+- 27 = the 22 fluid kernels + `CS_FluidSeed3D.divergent` + the four `CS_Volume*Pattern*`
+  self-test kernels. `CS_SeparableBlur` is excluded on purpose: only the Dawn shader probe names
+  it, nothing dispatches it, so it needs no twin.
+- A non-base permutation is a **separate file** (`<stem>.<permutation>.glsl`) rather than an
+  `#ifdef` inside the base twin. `GLCompute::LoadComputeSource` prefers that name and falls back
+  to `<stem>.glsl`, which keeps the eight hand-written twins (whose permutations are `#ifdef`
+  blocks) working untouched — merging two generated bodies into one file by hand was the
+  alternative and is worse.
+- `scripts/validation/check_gl_twins.py` fails CI when a registered kernel has no twin, when a
+  generated twin's `hlsl-sha256` no longer matches its `.hlsl`, when line 1 is not `#version`, or
+  when the twin's `layout(binding = N)` set differs from `compute_kernels.json`. Negative-tested
+  by corrupting a hash.
+
+**Two corrections to the design above, both found while implementing.**
+
+1. **`layered` must be `GL_FALSE` for a volume.** The staged plan said `GL_TRUE`. The Khronos
+   reference for `glBindImageTexture` limits `layered` to *array* textures (1D/2D/cube arrays and
+   multisample 2D arrays): "if `layered` is `GL_TRUE`, the entire array is attached… otherwise
+   `layer` specifies the layer of the array". A `GL_TEXTURE_3D` is not an array texture, so the
+   image unit always carries the whole level and `ivec3` addresses x, y and z. `GL_FALSE` is the
+   defined path and is what shipped; `GL_TRUE` happens to behave the same on current drivers but
+   is not what the spec describes. Qwen was asked and claimed `GL_TRUE` is "invalid/undefined";
+   that part of its answer is unverified — the spec defines no error — but its conclusion
+   (`GL_FALSE`) matches the spec text, so `GL_FALSE` is used.
+2. **NVIDIA rejects a writable unsized array indexed by a loop variable.** `CS_FluidDiagnostics3D`
+   cleared its accumulator with `for (uint word = 0; word < 8; ++word) Result[word] = 0u;`, which
+   SPIRV-Cross renders as `Result_1._data[_318] = 0u;` inside a `for`. The GL program then failed
+   to link with `0(50) : error C5025: lvalue in array access too complex / error C1068: … possible
+   array index out of bounds`. A variable-index *write* into an unsized SSBO from a complex
+   expression is accepted everywhere else in the solver (`_data[gl_GlobalInvocationID.x + …]`),
+   so the trigger is specifically the loop induction variable. Fixed in the **HLSL** (eight
+   explicit stores, with a comment), not in generated output.
+
+**Backend.** `GLComputeTexture3D` (`glTexStorage3D`, nearest/clamp, `glDeleteTextures` in the
+destructor), `CreateComputeTexture3D`, `SupportsComputeTextures3D`, 3D sampled binds on unit
+`bindingIndex` restoring `GL_TEXTURE_BINDING_3D`, 3D image binds with the reflected storage format
+checked against the texture's internal format, and inline `ReadOnlyBuffer` uploads into one
+persistent grow-only SSBO that is orphaned per dispatch. `CPU seeding of a volume is rejected`,
+matching D3D11/D3D12/Vulkan (no backend supports it, so a GL-only path would be exercised by
+nothing).
+
+**Rendering.** `RenderMesh::CBuffer` gained `TimeParams` directly after `Light0Dir` and
+`CameraVP` + `WaterGpuParams` at the tail; `ApplyMeshInstanceCB`/`ApplyMeshFrameCB`/
+`ApplyMeshMaterialCB`, `MutableMesh`'s `CopyInstance`/`CopyFrame`/`CopyMaterial`, the skinned
+`ExtractMesh*CB` pair and the two stack-allocated skinned/wire CBuffers were updated. `VS_Mesh.glsl`
+declares `TimeParams` immediately after `Light0Direction` (unconditional, so the FS offsets do not
+move per permutation) and `FS_Mesh.glsl` declares `CameraVP` and the 24 `Water*` vectors after
+`LightRadius[32]`, in exactly the struct order: GL assigns uniform offsets by declaration order,
+with the VS parsed first.
+
+The `FLUID_SURFACE` block (about 500 HLSL lines) was hand-ported into both twins. Two GL-specific
+adjustments: `const int stepCount = int(WaterMisc0.x);` is not legal (`const` needs a constant
+expression) so it is a plain `int`, and the runtime-bounded `[loop] for` became
+`for (int i = 0; i < 128; ++i) { if (i >= stepCount) break; }`. `BackyardScene::
+EnsureWaterShaderPermutations` now reads the `.glsl` sources and passes the `.glsl` basenames when
+`driver->UsesGLSL()`, otherwise the precompile fed HLSL to the GL compiler.
+
+**Measured (`--api gl`, 2026-11-02, `SM-X920`-class desktop NVIDIA, GLSL 4.60).**
+
+| Check | Result |
+|---|---|
+| `--compute-selftest` | PASS, including 3D RGBA16F and R32F at 1x1x1, 9x5x3 and 33x17x7 |
+| `--fluid-selftest` | PASS, `meanSpeed=0.0564` — identical to D3D12/Vulkan |
+| `--backyard-selftest` | **PASS**, all 11 gates, every value inside the D3D12/Vulkan spread (still pool `maxAbs` 0.0001 m, isotropy mirror 0.00147/0.00059 m, air `24 of 76276`, interface 1.16 cells) |
+| `--backyard-pick-test --backyard-spawn 2` | PASS, 0 failures |
+| Scenes 1 and 6, frame 300 | **byte-identical** to the dump taken before any of this (18/18 and 12/12 targets) — the merged `CBuffer` shift is consistent between C++ and GLSL |
+| Scene 7 frame 300 vs D3D12 | backbuffer mean **+0.16/255**, HDR mean **−0.00/255** |
+| `FLUID_SURFACE` is live | a temporary unconditional magenta `return` inside the block painted the whole pool magenta, then was removed |
+| `telemetry.ps1`, 720p, 0 balls, same session | D3D12 **312.2** fps / update 2.33 ms, Vulkan **281.8** / 2.25 ms, GL **107.5** / 8.12 ms, 0 errors |
+
+**The remaining GL cost.** GL's CPU time recording the solver is ~3.5x D3D12's. Two easy levers
+were taken and measured: caching the five `glGet*` limit queries per dispatch (8.26 → 8.21 ms) and
+replacing the per-dispatch `glGenBuffers`/`glBufferData`/`glDeleteBuffers` constant block with a
+1 MiB bump-allocated ring reset in `CompleteFrame` (8.21 → 8.12 ms). So the cost is not allocation
+or limit queries; it is the per-dispatch state round trips that remain — `GL_CURRENT_PROGRAM`,
+`GL_ACTIVE_TEXTURE`, one `GL_TEXTURE_BINDING_2D`/`3D` per sampled texture, `GL_SAMPLER_BINDING` per
+sampler, and the `glGetError` drain, at roughly 4 µs per dispatch over ~2000 dispatches. Removing
+them means the compute path stops saving and restoring graphics state and instead invalidates the
+graphics `MutableGraphicsStateCache`; that is a real correctness risk for every draw after a
+dispatch, so it needs its own A/B and is left open. 108 fps in the heaviest scene is playable.
+
+--- 
 
 ### W-29 — The mean surface creeps up over long runs (P2, M) — found 2026-11-02
 

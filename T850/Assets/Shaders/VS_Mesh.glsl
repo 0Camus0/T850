@@ -150,6 +150,14 @@ uniform highp vec4 Intensities;
 uniform highp vec4 ParallaxSettings;
 uniform highp vec4 ParallaxShadowSettings;
 uniform highp vec4 Light0Direction;
+// Scene clock for vertex displacement. Declared unconditionally and directly after
+// Light0Direction because GL assigns uniform offsets in declaration order: the same
+// 16 bytes sit after Light0Dir in RenderMesh::CBuffer.
+uniform highp vec4 TimeParams;
+#ifdef FLUID_SURFACE
+// The solver's surface height field. Fetched with texelFetch, so no sampler state.
+uniform highp sampler2D FluidSurfaceTexture;
+#endif
 #ifdef USE_SKINNING_TEXTURE
 uniform highp sampler2D u_BoneTex;
 mat4 getBoneMatrix(int index) {
@@ -272,6 +280,41 @@ void main(){
 		Pos = WVP*skinnedPos;
 		gl_Position = Pos;
 #else
+#ifdef FLUID_SURFACE
+	// Displace the water surface by the solver's height field (metres).
+	{
+		highp ivec2 fluidSize = textureSize(FluidSurfaceTexture, 0);
+		highp vec2 fluidUV = clamp(UV, 0.0, 1.0);
+		// Bilinear reconstruction: the solver writes to a STORAGE texture, which cannot be
+		// hardware-filtered, so a plain texelFetch snaps every vertex onto a texel. This
+		// blend is what makes the mesh look continuous, and it must match the fragment
+		// shader's convention exactly or the two disagree about where the surface is.
+		highp vec2 gridPos = fluidUV * vec2(fluidSize) - 0.5;
+		highp ivec2 base = clamp(ivec2(floor(gridPos)), ivec2(0),
+		                         ivec2(max(fluidSize.x - 2, 0), max(fluidSize.y - 2, 0)));
+		highp vec2 frac = clamp(gridPos - vec2(base), 0.0, 1.0);
+		highp float h00 = texelFetch(FluidSurfaceTexture, base + ivec2(0, 0), 0).x;
+		highp float h10 = texelFetch(FluidSurfaceTexture, base + ivec2(1, 0), 0).x;
+		highp float h01 = texelFetch(FluidSurfaceTexture, base + ivec2(0, 1), 0).x;
+		highp float h11 = texelFetch(FluidSurfaceTexture, base + ivec2(1, 1), 0).x;
+		highp float fluidHeightValue = mix(mix(h00, h10, frac.x), mix(h01, h11, frac.x), frac.y);
+		skinnedPos.y += fluidHeightValue * TimeParams.z;
+
+		// Optional geometric ripple octaves: a shading-only normal leaves the silhouette
+		// flat, which is the giveaway at grazing angles. TimeParams.w gates them so the
+		// water can be driven purely by the solver.
+		if (TimeParams.w > 0.5) {
+			highp vec2 ripplePos = skinnedPos.xz;
+			highp float rippleTime = TimeParams.x;
+			highp float rippleScale = TimeParams.y;
+			highp float rippleHeight =
+				0.0160 * sin(dot(ripplePos, vec2( 0.86, 0.51)) * 10.134 + rippleTime * 5.573) +
+				0.0090 * sin(dot(ripplePos, vec2(-0.60, 0.80)) * 15.322 + rippleTime * 11.492) +
+				0.0060 * sin(dot(ripplePos, vec2( 0.31, -0.95)) * 23.271 + rippleTime * 24.434);
+			skinnedPos.y += rippleHeight * rippleScale;
+		}
+	}
+#endif
 		mat3 RotWorld = mat3(World);
 	#ifdef USE_NORMALS
 		hnormal	= vec4(normalize(RotWorld*skinnedNormal),1.0);

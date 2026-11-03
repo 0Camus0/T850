@@ -82,6 +82,11 @@ namespace t850 {
 	  XVECTOR3  ParallaxSettings;
 	  XVECTOR3  ParallaxShadowSettings;
 	  XVECTOR3  Light0Dir;
+    // Scene clock for vertex-side animation, matching `MeshInstanceCBuffer::TimeParams`
+    // (.x=time .y=ripple scale .z=displacement scale .w=ripple gate). The OpenGL twin
+    // (VS_Mesh.glsl) assigns uniform offsets in declaration order, so this must stay
+    // directly after Light0Dir there and here.
+    XVECTOR3  TimeParams;
     XVECTOR3  EmissiveColor;
     XVECTOR3  AlphaParams;     // .x=mode 0/1/2 .y=cutoff .z=doubleSided .w=transmission
     XVECTOR3  ForwardParams;   // .xy=screen size .z=scene depth bound .w=ior
@@ -124,6 +129,11 @@ namespace t850 {
     XVECTOR3  LightPositions[128];
     XVECTOR3  LightColors[128];
     XVECTOR3  LightRadius[32];
+    // Fragment-side extras the OpenGL merged constant buffer needs. HLSL splits them into
+    // MeshFrameCB/MeshMaterialCB; GL declares them after LightRadius in FS_Mesh.glsl, so
+    // they must be the last members here.
+    XMATRIX44 CameraVP;
+    WaterGpuParams WaterParams;
     };
 
     struct MeshInstanceCBuffer {

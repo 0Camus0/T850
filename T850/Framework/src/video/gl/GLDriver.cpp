@@ -371,6 +371,19 @@ namespace t850 {
     DestroyShaders();
     DestroyRTs();
     DestroyTextures();
+#if defined(USING_OPENGL)
+    if (m_inlineStorageBuffer) {
+      glDeleteBuffers(1, &m_inlineStorageBuffer);
+      m_inlineStorageBuffer = 0;
+      m_inlineStorageBytes = 0;
+    }
+    if (m_dispatchConstantsBuffer) {
+      glDeleteBuffers(1, &m_dispatchConstantsBuffer);
+      m_dispatchConstantsBuffer = 0;
+      m_dispatchConstantsCapacity = 0;
+      m_dispatchConstantsOffset = 0;
+    }
+#endif
     T8Device->release();
     T8DeviceContext->release();
 #if (defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)) && defined(OS_WINDOWS)
@@ -806,10 +819,16 @@ namespace t850 {
   void GLDriver::CompleteFrame(FrameCompletionMode mode) {
     T8_TELEMETRY_SCOPE("gpu.present");
     T8_LOG_TRACE("[GLDriver] SwapBuffers");
-    if (mode == FrameCompletionMode::SubmitNoPresent) {
-      glFlush();
-      return;
-    }
+  #if defined(USING_OPENGL)
+      // Every compute dispatch of the frame has been recorded, so the transient constant
+      // ring can be reused. GL guarantees a later glBufferSubData is not observed by
+      // commands already issued.
+      ResetDispatchConstants();
+  #endif
+      if (mode == FrameCompletionMode::SubmitNoPresent) {
+        glFlush();
+        return;
+      }
     if (IsOffscreenEnabled()) {
 #if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
       FenceOffscreenTarget(GetActiveOffscreenRT());

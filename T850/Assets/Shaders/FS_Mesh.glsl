@@ -34,6 +34,15 @@ uniform mediump sampler2D EmissiveTex;
 
 uniform highp sampler2D SceneColorTex;
 
+#ifdef FLUID_SURFACE
+// GL binds textures by uniform NAME (RenderMesh::Draw), so these must match the names
+// the scene uploads: the solver's surface, the static pool floor and the tiling water
+// normal map. All three are fetched with texelFetch/nearest where the HLSL says so.
+uniform highp sampler2D FluidSurfaceTexture;
+uniform highp sampler2D FluidFloorTexture;
+uniform mediump sampler2D FluidNormalTex;
+#endif
+
 uniform mediump samplerCube texEnv;
 uniform mediump samplerCube texIBLDiffuse;
 uniform mediump samplerCube texIBLSpecular;
@@ -132,6 +141,34 @@ uniform highp vec4 LightmapUVTransform1;
 uniform highp vec4 LightPositions[128];
 uniform highp vec4 LightColors[128];
 uniform highp vec4 LightRadius[32];
+// Fragment-side extras for the water composite. These are the tail of
+// RenderMesh::CBuffer and must keep that order: GL assigns uniform offsets by
+// declaration order (the vertex shader is parsed first).
+uniform highp mat4 CameraVP;
+uniform highp vec4 WaterOptics0;
+uniform highp vec4 WaterOptics1;
+uniform highp vec4 WaterOptics2;
+uniform highp vec4 WaterOptics3;
+uniform highp vec4 WaterOptics4;
+uniform highp vec4 WaterOptics5;
+uniform highp vec4 WaterWaves0;
+uniform highp vec4 WaterWaves1;
+uniform highp vec4 WaterWaves2;
+uniform highp vec4 WaterReflect0;
+uniform highp vec4 WaterReflect1;
+uniform highp vec4 WaterReflect2;
+uniform highp vec4 WaterFoam0;
+uniform highp vec4 WaterFoam1;
+uniform highp vec4 WaterFoam2;
+uniform highp vec4 WaterFoam3;
+uniform highp vec4 WaterRipple0;
+uniform highp vec4 WaterRipple1;
+uniform highp vec4 WaterRipple2;
+uniform highp vec4 WaterRipple3;
+uniform highp vec4 WaterRipple4;
+uniform highp vec4 WaterRipple5;
+uniform highp vec4 WaterMisc0;
+uniform highp vec4 WaterMisc1;
 
 highp vec2 SignNotZero(highp vec2 value)
 {
@@ -742,6 +779,180 @@ void BuildSurface(bool isFrontFace, out highp vec4 color, out highp vec3 normal,
 #endif
 }
 
+#ifdef FLUID_SURFACE
+// ── Pool water helpers ────────────────────────────────────────────────────────
+// Hand-ported from the HLSL FLUID_SURFACE blocks (FS_Mesh.hlsl). HLSL `input.WorldPos`
+// is the `WorldPos` varying, `Load(int3(p,0))` is `texelFetch`, `SampleLevel` is
+// `textureLod`, `SampleGrad` is `textureGrad`, `mul(M, v)` is `M * v`, `lerp` is
+// `mix` and `saturate(x)` is `clamp(x, 0.0, 1.0)`. Keep the two in step: the self-tests
+// compare their output on different backends.
+
+// True when opaque geometry at `sampleUV` sits NEARER to the camera than this water
+// fragment. Depth conventions differ per backend, so they are derived from the water's
+// own known position in front of the opaque basin floor.
+bool SceneIsNearerAt(highp vec2 sampleUV)
+{
+    const highp float epsilon = 0.0001;
+    highp ivec2 maxPixel = ivec2(int(ForwardParams.x) - 1, int(ForwardParams.y) - 1);
+    highp ivec2 px = clamp(ivec2(sampleUV * ForwardParams.xy), ivec2(0), maxPixel);
+    highp ivec2 selfPx = clamp(ivec2(gl_FragCoord.xy), ivec2(0), maxPixel);
+    highp float sampled = texelFetch(SceneDepthTex, px, 0).r;
+    highp float opaqueHere = texelFetch(SceneDepthTex, selfPx, 0).r;
+    if (sampled <= 0.0 || opaqueHere <= 0.0)
+        return false;
+    highp float selfZ = Pos.z / Pos.w;
+    highp float depthSign = (selfZ < opaqueHere) ? -1.0 : 1.0;
+    return (sampled - selfZ) * depthSign > epsilon;
+}
+
+// One directional sine octave. Called six times explicitly: dynamic indexing into a
+// local const array is not reliably unrolled and silently collapses every octave onto
+// element 0.
+highp vec2 WaterRippleOctave(highp vec2 p, highp float timeSeconds, highp vec2 dir,
+                             highp float waveLength, highp float amplitude, highp float speed,
+                             highp float fadeDistance, highp float viewDistance)
+{
+    highp float k = 6.28318530718 / waveLength;
+    highp float phase = dot(dir, p) * k + timeSeconds * WaterWaves0.y * speed * k;
+    highp float octaveFade = clamp(1.0 - viewDistance / fadeDistance, 0.0, 1.0);
+    return dir * (amplitude * WaterWaves0.x * k * cos(phase)) * octaveFade;
+}
+
+#define T8_RIPPLE_OCTAVES(FN, ACCUM, P, T, D)                                                          \
+    ACCUM = FN(P, T, vec2( 0.86,  0.51), WaterRipple0.y, WaterRipple0.x, WaterRipple0.z, WaterRipple0.w, D); \
+    ACCUM += FN(P, T, vec2(-0.60,  0.80), WaterRipple1.y, WaterRipple1.x, WaterRipple1.z, WaterRipple1.w, D); \
+    ACCUM += FN(P, T, vec2( 0.31, -0.95), WaterRipple2.y, WaterRipple2.x, WaterRipple2.z, WaterRipple2.w, D); \
+    ACCUM += FN(P, T, vec2( 0.98, -0.20), WaterRipple3.y, WaterRipple3.x, WaterRipple3.z, WaterRipple3.w, D); \
+    ACCUM += FN(P, T, vec2(-0.87, -0.49), WaterRipple4.y, WaterRipple4.x, WaterRipple4.z, WaterRipple4.w, D); \
+    ACCUM += FN(P, T, vec2( 0.42,  0.91), WaterRipple5.y, WaterRipple5.x, WaterRipple5.z, WaterRipple5.w, D)
+
+highp vec2 WaterRippleGradient(highp vec2 p, highp float timeSeconds, highp float viewDistance)
+{
+    highp vec2 gradient = vec2(0.0);
+    T8_RIPPLE_OCTAVES(WaterRippleOctave, gradient, p, timeSeconds, viewDistance);
+    return gradient;
+}
+
+// Gradient of only the three longest octaves: the fine capillary detail comes from the
+// tiling normal map, so including the finest octaves here would double-count it.
+highp vec2 WaterRippleGradientCoarse(highp vec2 p, highp float timeSeconds, highp float viewDistance)
+{
+    highp vec2 gradient = WaterRippleOctave(p, timeSeconds, vec2( 0.86,  0.51), WaterRipple0.y, WaterRipple0.x, WaterRipple0.z, WaterRipple0.w, viewDistance);
+    gradient += WaterRippleOctave(p, timeSeconds, vec2(-0.60,  0.80), WaterRipple1.y, WaterRipple1.x, WaterRipple1.z, WaterRipple1.w, viewDistance);
+    gradient += WaterRippleOctave(p, timeSeconds, vec2( 0.31, -0.95), WaterRipple2.y, WaterRipple2.x, WaterRipple2.z, WaterRipple2.w, viewDistance);
+    return gradient;
+}
+
+// Procedural breakup so foam reads as froth rather than a smooth gradient.
+highp float WaterFoamNoise(highp vec2 p, highp float timeSeconds, highp float viewDistance)
+{
+    highp float fade = clamp(1.0 - viewDistance / max(WaterFoam3.z, 0.001), 0.0, 1.0);
+    highp float n = sin(p.x * WaterFoam2.x + timeSeconds * 2.6) * sin(p.y * WaterFoam2.y - timeSeconds * 2.1);
+    n += 0.55 * sin(p.x * WaterFoam2.z - timeSeconds * 3.4) * sin(p.y * WaterFoam2.w + timeSeconds * 3.0) * fade;
+    n += 0.30 * sin(p.x * WaterFoam3.x + timeSeconds * 4.1) * sin(p.y * WaterFoam3.y - timeSeconds * 3.7) * fade * fade;
+    return clamp(0.5 + 0.42 * n, 0.0, 1.0);
+}
+
+// Slope of the tiling normal map, in m/m. Two layers at different tile scales and drift
+// rates so the pattern never visibly repeats; textureGrad lets the GPU pick the mip.
+highp vec2 WaterNormalMapGradient(highp vec2 uv, highp float timeSeconds)
+{
+    highp vec2 uvA = uv * WaterWaves1.xy + WaterWaves1.zw * timeSeconds;
+    highp vec2 uvB = uv * WaterWaves2.xy + WaterWaves2.zw * timeSeconds;
+    highp vec3 a = textureGrad(FluidNormalTex, uvA, dFdx(uvA), dFdy(uvA)).xyz;
+    highp vec3 b = textureGrad(FluidNormalTex, uvB, dFdx(uvB), dFdy(uvB)).xyz;
+    // An unbound texture reads as zeros, which decodes to a -1 normal and a wild slope.
+    a = (dot(a, a) < 0.01) ? vec3(0.0, 0.0, 1.0) : a * 2.0 - 1.0;
+    b = (dot(b, b) < 0.01) ? vec3(0.0, 0.0, 1.0) : b * 2.0 - 1.0;
+    // Match the green flip the engine applies to glTF normal maps.
+    a.y = -a.y;
+    b.y = -b.y;
+    highp vec2 slopeA = a.xy / max(a.z, 0.2);
+    highp vec2 slopeB = b.xy / max(b.z, 0.2);
+    return (slopeA + slopeB) * 0.5 * WaterWaves0.z;
+}
+
+// Screen-space reflection trace. Marches the reflected ray in world space and compares
+// NDC depths directly. Returns rgb and a confidence in .a.
+highp vec4 WaterTraceScreenSpace(highp vec3 origin, highp vec3 dir, highp vec3 fallback,
+                                 highp vec2 distortion, highp float ndcYSign, highp float depthSign)
+{
+    highp float travelled = 0.0;
+    highp float stepLen = WaterReflect2.y;
+    highp vec3 prevPos = origin;
+    highp vec2 prevUV = vec2(0.0);
+    highp float prevDiff = 0.0;
+    bool havePrev = false;
+    // Not `const`: GLSL requires constant expressions in const initializers, unlike HLSL.
+    int stepCount = int(WaterMisc0.x);
+
+    for (int i = 0; i < 128; ++i) {
+        if (i >= stepCount) break;
+        travelled += stepLen;
+        stepLen = min(stepLen * WaterReflect2.z, WaterReflect2.w);
+        highp vec3 pos = origin + dir * travelled;
+        highp vec4 clip = CameraVP * vec4(pos, 1.0);
+        if (clip.w <= 0.001)
+            return vec4(fallback, 0.0);
+        highp vec2 uv = (clip.xy / clip.w) * vec2(0.5, ndcYSign * 0.5) + 0.5;
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+            return vec4(fallback, 0.0);
+        highp ivec2 px = clamp(ivec2(uv * ForwardParams.xy), ivec2(0),
+                               ivec2(int(ForwardParams.x) - 1, int(ForwardParams.y) - 1));
+        highp float sceneZ = texelFetch(SceneDepthTex, px, 0).r;
+        highp float rayZ = clip.z / clip.w;
+        if (sceneZ <= 0.0001) {
+            prevPos = pos;
+            prevUV = uv;
+            havePrev = false;
+            continue;
+        }
+        highp float diff = (rayZ - sceneZ) * depthSign;
+        if (havePrev && prevDiff > 0.0 && diff <= 0.0) {
+            highp vec3 lo = prevPos;
+            highp vec3 hi = pos;
+            highp vec2 hitUV = uv;
+            highp float loDiff = prevDiff;
+            for (int k = 0; k < 5; ++k) {
+                highp vec3 mid = (lo + hi) * 0.5;
+                highp vec4 c2 = CameraVP * vec4(mid, 1.0);
+                highp vec2 muv = (c2.xy / c2.w) * vec2(0.5, ndcYSign * 0.5) + 0.5;
+                highp ivec2 mpx = clamp(ivec2(muv * ForwardParams.xy), ivec2(0),
+                                        ivec2(int(ForwardParams.x) - 1, int(ForwardParams.y) - 1));
+                highp float mScene = texelFetch(SceneDepthTex, mpx, 0).r;
+                hitUV = muv;
+                highp float mDiff = (c2.z / c2.w - mScene) * depthSign;
+                if (mDiff > 0.0)
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            highp vec2 travel = abs(hitUV - prevUV);
+            highp float stepGap = max(travel.x, travel.y);
+            highp float stepConfidence = clamp(1.0 - stepGap * 8.0, 0.0, 1.0);
+            highp vec2 edge = min(hitUV, 1.0 - hitUV);
+            highp float edgeConfidence = clamp(min(edge.x, edge.y) * 24.0, 0.0, 1.0);
+            highp float distanceConfidence = clamp(1.0 - travelled / max(WaterReflect2.x, 0.001), 0.0, 1.0);
+            highp float confidence = stepConfidence * edgeConfidence * distanceConfidence;
+            highp vec2 sampleUV = clamp(hitUV + distortion, 0.0, 1.0);
+            highp vec2 texelStep = 1.0 / max(ForwardParams.xy, vec2(1.0));
+            highp float blurRadius = WaterReflect1.z + WaterReflect1.w * (1.0 - distanceConfidence);
+            highp vec3 reflectedColor = SampleTexture2DLod(SceneColorTex, sampleUV, 0.0).rgb * 0.36;
+            reflectedColor += SampleTexture2DLod(SceneColorTex, clamp(sampleUV + vec2(texelStep.x, 0.0) * blurRadius, 0.0, 1.0), 0.0).rgb * 0.16;
+            reflectedColor += SampleTexture2DLod(SceneColorTex, clamp(sampleUV - vec2(texelStep.x, 0.0) * blurRadius, 0.0, 1.0), 0.0).rgb * 0.16;
+            reflectedColor += SampleTexture2DLod(SceneColorTex, clamp(sampleUV + vec2(0.0, texelStep.y) * blurRadius, 0.0, 1.0), 0.0).rgb * 0.16;
+            reflectedColor += SampleTexture2DLod(SceneColorTex, clamp(sampleUV - vec2(0.0, texelStep.y) * blurRadius, 0.0, 1.0), 0.0).rgb * 0.16;
+            return vec4(reflectedColor, confidence);
+        }
+        prevPos = pos;
+        prevUV = uv;
+        prevDiff = diff;
+        havePrev = true;
+    }
+    return vec4(fallback, 0.0);
+}
+#endif
+
 #ifdef SIMPLE_COLOR
 #ifdef ES_30
 layout(location = 0) out highp vec4 colorOut;
@@ -845,6 +1056,44 @@ void main()
     highp vec2 uv;
     BuildSurface(gl_FrontFacing, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     highp vec3 emissive = SampleEmissive(uv);
+
+#ifdef FLUID_SURFACE
+    // Solver surface: height (m), foam, slopeX, slopeZ. The slopes are height
+    // differences in metres across one cell, so dividing by the spacing recovers a
+    // dimensionless gradient.
+    bool fluidOpaque = false;
+    highp vec4 fluidSurface = vec4(0.0);
+    {
+        highp ivec2 fluidSize = textureSize(FluidSurfaceTexture, 0);
+        // Bilinear reconstruction with the SAME texel-centre convention as the vertex
+        // shader: a plain texelFetch snaps the shading normal to whole texels while the
+        // geometry is smooth, which reads as flickering blocks.
+        highp vec2 gridPos = clamp(uv, 0.0, 1.0) * vec2(fluidSize) - 0.5;
+        highp ivec2 base = clamp(ivec2(floor(gridPos)), ivec2(0),
+                                 ivec2(max(fluidSize.x - 2, 0), max(fluidSize.y - 2, 0)));
+        highp vec2 frac = clamp(gridPos - vec2(base), 0.0, 1.0);
+        highp vec4 c00 = texelFetch(FluidSurfaceTexture, base + ivec2(0, 0), 0);
+        highp vec4 c10 = texelFetch(FluidSurfaceTexture, base + ivec2(1, 0), 0);
+        highp vec4 c01 = texelFetch(FluidSurfaceTexture, base + ivec2(0, 1), 0);
+        highp vec4 c11 = texelFetch(FluidSurfaceTexture, base + ivec2(1, 1), 0);
+        fluidSurface = mix(mix(c00, c10, frac.x), mix(c01, c11, frac.x), frac.y);
+    }
+    {
+        highp float fluidViewDistance = length(CameraPosition.xyz - WorldPos.xyz);
+        highp float fluidCellSize = max(WaterMisc1.z, 0.001);
+        highp vec2 heightGradient = fluidSurface.zw * (2.0 / fluidCellSize);
+        if (WaterMisc0.w > 0.5) {
+            heightGradient += WaterRippleGradientCoarse(WorldPos.xz, MaterialParams3.w, fluidViewDistance);
+            if (WaterMisc0.y > 0.5)
+                heightGradient += WaterNormalMapGradient(uv, MaterialParams3.w);
+        }
+        heightGradient *= max(WaterMisc1.y, 0.0);
+        // A pool wave is never steeper than a few degrees; an unbounded gradient feeds a
+        // wildly wrong normal into specular and reflection, which flashes.
+        heightGradient = clamp(heightGradient, -4.0, 4.0);
+        normal = normalize(vec3(-heightGradient.x, 1.0, -heightGradient.y));
+    }
+#endif
 
 #ifdef FORWARD_PASS
     if (ForwardParams.z > 0.5 && ForwardParams.x > 0.0 && ForwardParams.y > 0.0) {
@@ -980,6 +1229,131 @@ void main()
         finalColor = mix(finalColor, sceneColor, transmission);
     }
 #endif
+#ifdef FLUID_SURFACE
+    // Crysis-style forward water: a dielectric sheet over a shallow body. Refraction,
+    // Beer-Lambert absorption, sky reflection and a sun glint are composited by hand,
+    // so the result is written fully opaque.
+    {
+        // Fresnel from the macro normal, not the rippled one: a rough surface's Fresnel is
+        // an average over its microfacets. Half-way toward the solver's slope so crests
+        // change reflectivity without a grazing facet spiking it.
+        highp float fluidCellSize = max(WaterMisc1.z, 0.001);
+        highp vec2 solverGradient = fluidSurface.zw * (2.0 / fluidCellSize) * max(WaterMisc1.y, 0.0);
+        solverGradient = clamp(solverGradient, -4.0, 4.0);
+        highp vec3 fresnelNormalSolver = normalize(vec3(-solverGradient.x, 1.0, -solverGradient.y));
+        highp vec3 fresnelNormal = normalize(mix(vec3(0.0, 1.0, 0.0), fresnelNormalSolver, 0.5));
+        highp float nDotEye = clamp(dot(fresnelNormal, eyeDir), 0.0, 1.0);
+        highp float fluidFresnel = clamp((0.02 + 0.98 * pow(1.0 - nDotEye, 5.0)) *
+                                         WaterOptics4.x + WaterOptics4.y, 0.0, 1.0);
+
+        // Optical path length from the SIMULATED column: an analytic camera-height formula
+        // made absorption camera-dependent and slid dark patches across the pool.
+        highp float fluidViewDistance = length(CameraPosition.xyz - WorldPos.xyz);
+        highp float rawHeight = fluidSurface.x;
+        highp float columnDepth;
+        if (WaterOptics5.w > 0.5) {
+            highp ivec2 floorSize = textureSize(FluidFloorTexture, 0);
+            // Nearest texel on purpose: the floor is DISCONTINUOUS at every step edge, so
+            // filtering invents a ramp that tints the step face as if it were deep water.
+            highp vec2 floorGrid = clamp(uv, 0.0, 1.0) * vec2(floorSize);
+            highp ivec2 floorCell = clamp(ivec2(floorGrid), ivec2(0),
+                                          ivec2(max(floorSize.x - 1, 0), max(floorSize.y - 1, 0)));
+            highp float floorY = texelFetch(FluidFloorTexture, floorCell, 0).x;
+            columnDepth = max(WaterOptics5.z + rawHeight - floorY, 0.02);
+        } else {
+            columnDepth = max(WaterOptics5.y + rawHeight, 0.02);
+        }
+        highp float cosTheta = max(abs(eyeDir.y), 0.25);
+        highp float thickness = clamp(columnDepth / cosTheta, 0.0, 8.0);
+
+        // Refraction, faded out towards the basin border so the deck and coping never
+        // smear into the water.
+        highp float fluidTime = MaterialParams3.w;
+        highp vec2 borderDistance = min(uv, 1.0 - uv);
+        highp float borderFade = clamp(min(borderDistance.x, borderDistance.y) /
+                                       max(WaterOptics2.w, 0.0001), 0.0, 1.0);
+        highp vec2 screenUV = gl_FragCoord.xy / ForwardParams.xy;
+        highp vec2 refractOffset = vec2(normal.x, -normal.z) * WaterOptics1.w * borderFade *
+                                   (0.6 + 0.4 * clamp(thickness / 3.0, 0.0, 1.0));
+        highp vec2 refractUV = clamp(screenUV + refractOffset, 0.0, 1.0);
+        // Depth-test the refracted lookup: without it the ball above the water and the
+        // coping smear their colour into the surface.
+        if (SceneIsNearerAt(refractUV))
+            refractUV = screenUV;
+        highp vec3 floorColor = SampleTexture2DLod(SceneColorTex, refractUV, 0.0).rgb;
+
+        // Caustics from the SIMULATED surface slope, not from procedural octaves: a flat
+        // patch focuses light, a curved one spreads it.
+        highp vec2 fluidSlope = fluidSurface.zw * (2.0 / max(WaterMisc1.z, 0.001));
+        highp float rippleSlope = length(fluidSlope);
+        highp float causticWeb = pow(clamp(1.0 - rippleSlope * WaterOptics3.z, 0.0, 1.0), WaterOptics3.y);
+        highp vec3 floorLit = floorColor * (WaterOptics3.w + WaterOptics3.x * causticWeb);
+
+        // Beer-Lambert absorption: red dies first and blue survives, which turns deep water
+        // cyan. The scattered body term fills in the loss.
+        highp vec3 transmittance = exp(-WaterOptics0.xyz * thickness);
+        highp vec3 bodyColor = mix(WaterOptics1.xyz, WaterOptics2.xyz,
+                                   clamp(thickness / max(WaterOptics0.w, 0.01), 0.0, 1.0));
+        highp vec3 waterColor = floorLit * transmittance + bodyColor * (1.0 - transmittance);
+
+        // Volumetric scattering: the sun's light that entered the water and left it again
+        // towards the eye. Without it dusk water looks like flat tinted glass.
+        highp vec3 fluidSunDir = normalize(Light0Direction.xyz);
+        highp float sunWrap = clamp(dot(eyeDir, -fluidSunDir) * 0.5 + 0.5, 0.0, 1.0);
+        highp vec3 sunTint = LightColors[0].xyz * LightColors[0].w;
+        highp vec3 scatterVolume = sunTint * (WaterOptics4.z * sunWrap +
+                                              WaterOptics4.w * pow(clamp(dot(normal, -fluidSunDir), 0.0, 1.0), 2.0));
+        waterColor += scatterVolume * (1.0 - exp(-thickness * WaterOptics5.x));
+
+        highp vec3 reflected = reflect(-eyeDir, normal);
+        highp vec3 reflectRay = normalize(vec3(reflected.x, max(reflected.y, 0.01), reflected.z));
+        reflected.x = -reflected.x;
+        reflected.z = -reflected.z;
+        highp float roughMip = clamp(0.04 * iblMaxMip, 0.0, iblMaxMip);
+        highp vec3 reflection = SampleCubeLod(texIBLSpecular, reflected, roughMip) *
+                                iblFactor * WaterReflect0.x;
+        reflection += directLight * WaterReflect0.y;
+        // Screen-space reflections pick up what a cubemap cannot: the deck, the house, and
+        // anything else within the reflected ray's reach. Where the trace fails the IBL
+        // sky stands in.
+        if (WaterMisc0.z > 0.5) {
+            highp vec2 distortion = vec2(normal.x, -normal.z) * WaterReflect1.y;
+            highp vec4 clipSelf = CameraVP * vec4(WorldPos.xyz, 1.0);
+            highp vec2 clipNdc = clipSelf.xy / clipSelf.w;
+            highp vec2 screenUVOwn = gl_FragCoord.xy / ForwardParams.xy;
+            // Take both candidate conversions of THIS fragment's clip position and keep the
+            // one that reproduces its actual screen position: exact and backend-independent.
+            highp vec2 uvMinus = clipNdc * vec2(0.5, -0.5) + 0.5;
+            highp vec2 uvPlus = clipNdc * vec2(0.5, 0.5) + 0.5;
+            highp float ndcYSign = (length(uvMinus - screenUVOwn) <= length(uvPlus - screenUVOwn))
+                                   ? -1.0 : 1.0;
+            highp ivec2 selfPx = clamp(ivec2(gl_FragCoord.xy), ivec2(0),
+                                       ivec2(int(ForwardParams.x) - 1, int(ForwardParams.y) - 1));
+            highp float selfSceneZ = texelFetch(SceneDepthTex, selfPx, 0).r;
+            highp float depthSign = (clipSelf.z / clipSelf.w > selfSceneZ) ? 1.0 : -1.0;
+            highp vec4 ssr = WaterTraceScreenSpace(WorldPos.xyz + normal * 0.002, reflectRay,
+                                                   reflection, distortion, ndcYSign, depthSign);
+            reflection = mix(reflection, ssr.rgb, ssr.a * WaterReflect1.x);
+        }
+        if (numLights > 0 && LightPositions[0].w < 0.5) {
+            highp vec3 sunDir = normalize(-LightPositions[0].xyz);
+            highp vec3 halfVec = normalize(eyeDir + sunDir);
+            highp float sunGlint = pow(clamp(dot(normal, halfVec), 0.0, 1.0), WaterReflect0.z) * LightColors[0].w;
+            reflection += LightColors[0].xyz * sunGlint * WaterReflect0.w;
+        }
+
+        finalColor = mix(waterColor, reflection, fluidFresnel);
+
+        // Foam only where the water meets the basin walls and steps: gating by the border
+        // distance rather than by depth keeps it off the open surface.
+        highp float shoreFoam = clamp(1.0 - borderFade * WaterFoam0.y, 0.0, 1.0);
+        highp float foam = clamp((clamp(fluidSurface.y, 0.0, 1.0) * WaterFoam0.x + shoreFoam) *
+                                 WaterFoamNoise(WorldPos.xz, fluidTime, fluidViewDistance) *
+                                 WaterFoam0.z, 0.0, 1.0);
+        finalColor = mix(finalColor, WaterFoam1.rgb, foam * WaterFoam0.w);
+        fluidOpaque = true;
+    }
+#endif
     finalColor += emissive;
 
     highp float alpha = color.a;
@@ -987,6 +1361,11 @@ void main()
         alpha = clamp(1.0 - transmission, 0.0, 1.0);
     if (AlphaParams.x < 1.5 && transmission <= 0.0)
         alpha = 1.0;
+#ifdef FLUID_SURFACE
+    // The water composite already contains the background, so it must replace rather
+    // than blend.
+    if (fluidOpaque) alpha = 1.0;
+#endif
 #ifdef ES_30
     colorOut = vec4(finalColor, alpha);
 #else

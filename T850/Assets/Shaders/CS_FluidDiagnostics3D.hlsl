@@ -47,6 +47,9 @@ RWStructuredBuffer<uint> Result : register(u0);
 // The buffer is persistent (no per-call allocation), and there is no buffer-write API, so the
 // kernel clears its own accumulator before each accumulation.
 #define T8_DIAGNOSTICS_RESET 0xFFFFFFFFu
+// Not a loop: NVIDIA's GLSL compiler rejects a writable unsized array indexed by a loop induction
+// variable ("error C5025: lvalue in array access too complex"), and the OpenGL twin for this
+// kernel is generated straight from the HLSL by scripts/shaders/generate_gl_compute_twins.ps1.
 #define T8_DIAGNOSTICS_WORDS 8u
 
 [numthreads(4, 4, 4)]
@@ -57,8 +60,14 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (Iteration == T8_DIAGNOSTICS_RESET) {
         // One thread per buffer: every thread in the grid would race otherwise.
         if (id.x == 0u && id.y == 0u && id.z == 0u) {
-            for (uint word = 0u; word < T8_DIAGNOSTICS_WORDS; ++word)
-                Result[word] = 0u;
+            Result[0] = 0u;
+            Result[1] = 0u;
+            Result[2] = 0u;
+            Result[3] = 0u;
+            Result[4] = 0u;
+            Result[5] = 0u;
+            Result[6] = 0u;
+            Result[7] = 0u;
         }
         return;
     }

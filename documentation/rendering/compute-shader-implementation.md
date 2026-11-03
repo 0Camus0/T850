@@ -361,6 +361,52 @@ post-process passes use their existing fullscreen raster fallback, and compute-o
 retain their existing clear behavior. The Windows 3.3 context fallback is explicitly
 raster-only and never compiles or dispatches a compute shader.
 
+### OpenGL volumes, inline buffers and the twin generator (W-28, 2026-11-02)
+
+- **3D storage volumes.** `SupportsComputeTextures3D()` is true with compute on desktop GL.
+  `CreateComputeTexture3D` allocates immutable storage with
+  `glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGBA16F | GL_R32F | GL_RGBA8, w, h, d)`, sets
+  `GL_NEAREST` filtering and `GL_CLAMP_TO_EDGE` on S/T/R, and rejects a CPU seed the same way
+  D3D11, D3D12 and Vulkan do. A volume bound as a storage image uses
+  `glBindImageTexture(unit, tex, 0, GL_FALSE, 0, GL_WRITE_ONLY, internalFormat)`; `layered` must
+  be `GL_FALSE` because it only applies to array textures, and a `GL_TEXTURE_3D` image unit always
+  carries the whole level. A volume bound as a sampled texture uses
+  `glBindTexture(GL_TEXTURE_3D, id)` on unit `bindingIndex`, and the restore list remembers the
+  *target* because the previous id may belong to `GL_TEXTURE_3D` rather than `GL_TEXTURE_2D`.
+  The image unit's format is the texture's internal format, and `DispatchCompute` rejects a
+  mismatch against the reflected `storageFormat` exactly as the other backends do.
+- **Inline buffers.** A `ReadOnlyBuffer` binding with no `ComputeBuffer` (`inlineData`/
+  `inlineBytes`/`inlineStride`, which the fluid solver uses for body lists and velocities) is
+  copied into one persistent, grow-only SSBO in the driver: orphan with
+  `glBufferData(size, nullptr, GL_STREAM_DRAW)`, `glBufferSubData`, then `glBindBufferBase` at the
+  binding index.
+- **Twins are generated, never hand-written.** `scripts/shaders/generate_gl_compute_twins.ps1`
+  runs `glslangValidator -D -S comp -e CS --target-env vulkan1.0 -DT850_SPIRV=1 -DT850_VULKAN=1`
+  and then `spirv-cross --version 430 --no-es --combined-samplers-inherit-bindings`, and writes
+  the result next to the HLSL with a `GENERATED … hlsl-sha256=<hash>` banner on line 2.
+  `-DT850_SPIRV` is what makes the HLSL `[[spv::format_r32f]]`/`[[spv::nonreadable]]` attributes
+  apply, so the twin declares `layout(binding = N, r32f) uniform writeonly image3D`; without a
+  format qualifier most GL drivers reject the storage image.
+  `--combined-samplers-inherit-bindings` keeps the dummy sampler that SPIRV-Cross invents for a
+  `Texture3D` read with `Load` on the texture's own binding, so the reflection still matches the
+  registry.
+  A non-base permutation is a separate `<stem>.<permutation>.glsl`; `LoadComputeSource` prefers
+  it and falls back to `<stem>.glsl`, which is how the hand-written twins keep their `#ifdef`
+  permutations. `scripts/validation/check_gl_twins.py` fails CI when a registered kernel has no
+  twin, when a generated twin's hash no longer matches its HLSL, or when its binding set differs
+  from `compute_kernels.json`.
+- **Two GLSL restrictions the HLSL source must respect.** A `const` initializer must be a constant
+  expression, and NVIDIA rejects a write into a writable unsized array indexed by a loop induction
+  variable (`error C5025: lvalue in array access too complex`), which is why
+  `CS_FluidDiagnostics3D` clears its accumulator with explicit stores instead of a loop.
+- **Constant blocks.** Transient `std140` uniform blocks are bump-allocated from one 1 MiB
+  `GL_STREAM_DRAW` buffer and bound with `glBindBufferRange` at
+  `GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT` offsets; the ring resets in `CompleteFrame`. Compute limits
+  (`GL_MAX_COMPUTE_WORK_GROUP_COUNT`, texture/image/storage-block units, the UBO alignment) are
+  queried once and cached, because the fluid solver dispatches about 2000 times per frame.
+- **Readback** stays synchronous: `glGetBufferSubData` after the storage barrier. The fluid's
+  correction pass runs on the GPU, so this is only used by the probes and the self-tests.
+
 Odd-width validation exposed an independent GL dump bug: `glReadPixels` used the default
 four-byte pack alignment with tightly allocated one-channel rows. Width 1023 overran the
 readback vector and triggered the Debug CRT heap check. `ReadFBOToPPM` now sets
@@ -744,6 +790,15 @@ Launch the DayScene command with `--api gl --postProcessMode compute`. On an Ope
 context, a correct capture contains compute dispatches for God Rays, both blur directions,
 Bright, and HDR Composition. The log reports `shaders=1 textures=1` and each enabled compute
 kernel. On older desktop GL or OpenGL ES, the correct result remains the raster fallback.
+
+For the fluid solver, `--api gl --scene 7` must log `[GL][Compute] Volume created
+(100x50x…, rgba16f)` before the solver reports ready, `[Backyard] Water surface bound to solver
+texture` and one `Volume created` per fluid volume, and `--compute-selftest` on GL must print
+`[ComputeVolume] PASS: API=gl odd-sized 3D storage textures, rgba16float and r32float`. A missing
+twin logs `[GL][Compute] GLSL source is missing for '<kernel>'` and the solver reports
+`Solver resources are incomplete on gl`. A GL twin generated from an HLSL that indexes a writable
+unsized SSBO with a loop variable fails at link with `error C5025: lvalue in array access too
+complex`, not at compile.
 
 ## Known limitations
 

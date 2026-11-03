@@ -8,14 +8,14 @@ The task catalogue is the source of truth for **what** each task is and how to p
 document is only about **order and session boundaries**, so each stage can be executed cold, in
 one context, without carrying the whole backlog.
 
-Stage 0 baseline: `01ccbd82`. Stages 0–4, 3c, 4a–4d and **5a** are done, plus the review fixes,
-the debug view, pick and drag, `--unattended`, and the W-15 performance pass (`c911381a`) logged in
-section 4. **Next: Stage 5b (W-03)**, starting from the tip of `backyard_scene`. Section 0 is the
-step-by-step brief.
+Stage 0 baseline: `01ccbd82`. Every solver stage that the PR needs is done and logged in section 4
+(the last ones: W-29 frozen waves and the device fixes, `199ddf85`). **Next: finish the PR plan** —
+section 0, "PR plan — status and remaining work", lists what is left in execution order, with the
+how for each item.
 
 ---
 
-## 0. Next steps for the local agents (2026-10-30, after Stage 5a)
+## 0. Next steps for the local agents (updated 2026-11-02, PR preparation)
 
 Start every session from the tip of `backyard_scene` and build:
 
@@ -37,6 +37,9 @@ move the cursor or send keystrokes (`SetCursorPos`, `mouse_event`, `SendInput`, 
 record 3.1). That commit fixes the water mesh's UV, which ran opposite to world Z and drew every
 ripple and ball footprint mirrored across the pool (details in section 4, "Water mirrored in Z"). A
 stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` at startup.
+
+**Current work: "PR plan — status and remaining work" further down this section.** The
+"Done since the previous brief" list and Steps 1–5 are finished and kept for reference only.
 
 ### Done since the previous brief
 
@@ -201,227 +204,391 @@ Scope, files and acceptance: section 3 (Stage 5a) and remaining-work W-02. Befor
 - After any Framework header change, delete the PCH before trusting the binary. In Stage 3c a stale
   binary silently kept the old behaviour.
 
-### Next: port, verify every platform, and prepare the PR (owner request, 2026-11-01)
+### PR plan — status and remaining work (updated 2026-11-02, reviewer)
 
-State at the start: the bugs from the 2026-11-01 review and W-06 (every body) and W-27 (wind) are
-fixed (section 4, "Fixes after the review"). The branch is 99+ commits ahead of `origin/master` and
-0 behind, never pushed. **Pushing and opening the PR need the owner's explicit go-ahead.**
+Branch `backyard_scene` at `931b9cf1`, about 105 commits ahead of `origin/master`, 0 behind, never
+pushed. **Pushing and opening the PR need the owner's explicit go-ahead.** The history of the items
+already done is in section 4: "Stage 8", "PR preparation notes (moved from section 0)", "Android and
+Steam Deck froze" and "Frozen waves".
 
-Execution order, one session each. Item 2 runs twice: a baseline first, so porting never hides an
-existing break, and a final pass after everything else.
+**How close.** The solver work is complete. It runs on D3D11, D3D12, Vulkan, WebGPU (native and
+browser), Android and the Steam Deck, and all 11 gates pass. Left: one large port (OpenGL), one Deck
+bug, re-verification after the last engine changes, small launcher and cleanup items, and the
+owner's decisions.
 
-**Progress (2026-11-01/02, local agent):** item 1st done — 6/6 Windows cells build, 78/78 gameplay
-tests per runnable cell; two breaks found and fixed (Win32 Vulkan handle cast, ARM64 Dawn metadata).
-Item 2nd done — the launcher's texture path is proven and guarded by a read-only script. Item 3rd
-partly done — CLI flags documented in `--help` and the runtime-configuration doc, W-14 answered (no
-include handler; layout guard shipped instead), W-16 sections 6/8 still open, scripts not yet moved.
-**Item 4th done — WebGPU runs the whole solver** (`00e28793`, water-parity fix `330fd3eb`). Item 4th
-of the *new* list (browser) is in progress: scene 7 is now in `web/scenes.json` and
-`BuildWeb.ps1`'s export list, and the export run reaches it.
+| Id | Item | State | Size |
+|---|---|---|---|
+| A | OpenGL port (W-28) | Not started; implementation below | L |
+| B | Steam Deck OLED not detected as a handheld | Bug found 2026-11-02 | S |
+| C | Browser re-verify after the air-rise kernel | The web export predates the kernel | S |
+| D | Android: CI-style build, 30-minute tablet run | APK with every fix installed, no long run yet | S–M |
+| E | Launcher gaps | Three small items | S |
+| F | Cleanup: script move, README, W-16 | Partly done | M |
+| G | Final matrix and validation (2b) | Last full run predates the Vulkan/WebGPU/Linux changes | M |
+| H | Owner decisions and PR text | To collect | S |
+| I | Simulated buoyancy in the headless gates (optional) | Unblocked by the gate 7 improvement | S |
+| — | W-07 solid fraction | Not needed for the PR | L |
 
-**Owner decisions on 2026-11-02:**
+**Order:** B, C, E and F first (small, independent), then A (its own sessions), then D, G and H.
+A changes Framework and shared shader code, so G must run after A. I is optional; if attempted, do
+it before G.
 
-- **OpenGL is in scope** and gets its own stage (W-28) — the simulation must run on every supported
-  backend, D3D11 included (it already does).
-- **Mobile and web run a lower sweep count**: 60 instead of 120. Measured on D3D12 and Vulkan with
-  `--backyard-iterations 60`, both PASS: still-pool loss 0.002 % → **0.013 %**, still-pool
-  `maxAbs` 0.1 → 0.3 mm, float `ring−far` −1.7 → −2.2 mm, `covered min−ring` −11.3 → −12.5 mm. All
-  inside the gate limits, so 60 ships as `WaterTunables::kMobilePressureIterations`, applied by
-  `EffectivePressureIterations()` on `__EMSCRIPTEN__`/`OS_ANDROID` only.
+**Verified on 2026-11-02; redo only if the code changes:**
 
-| Order | Item | Size |
-|---|---|---|
-| 1st | 2a. Baseline build of every platform (Windows) — **done** | S–M |
-| 2nd | 3. Launcher ball textures — **done** | S |
-| 3rd | 4. Clean-up — partly done (flags, W-14); W-16 and the script move open | M |
-| 4th | 1a. WebGPU port, native — **done** | L |
-| 5th | 1c. Browser (Emscripten) build + scene 7 in the catalogue — **done** | M |
-| 6th | 1d. Android build + run — **runs** (fullscreen, solver live, presents); fps open | M–L |
-| 7th | 1e. Steam Deck / Linux Vulkan run — **runs**, self-tests PASS; sweep count open | M |
-| 8th | **1f. OpenGL port (W-28)** | L |
-| 9th | 2b. Final matrix, regression sweep, PR text, owner sign-off | M |
+- Deck CI-equivalent build at `931b9cf1` links DayScene and T8ditor (98/98):
+  `BuildSteamRuntime.sh --configuration Release --with-editor`.
+- Deck compute, fluid and backyard self-tests PASS.
+- The 11 gates PASS on D3D12, Vulkan, D3D11 and WebGPU.
+- W-06 step 4 was re-measured after the sign fix, and 0.15 stays (see the W-06 table). Its status
+  row was corrected on 2026-11-02.
+- `m_surfaceCopyPipeline` is live: it is dispatched in `FluidSimulation.cpp` around L1742 and L1969.
+  The dead-code item is closed.
 
-**Browser progress (2026-11-02).** `BuildWeb.ps1` now produces a bundle: emsdk bootstrap, the shader
-export for `auto` and `spirv` (all scenes including 7), the Emscripten build (648 targets, the
-Backyard sources included) and `T850WebSelfTests` 1/1. `build/web/site/scenes.json` lists scene 7, and
-`node web/server.mjs` serves 2117 assets plus 1813 shader packages. **Headless Chrome loads scene 7 and
-renders the pool** (`web/test-firefox.mjs --browser chrome --headless`, passed, 882×492, σ 33.5).
+#### A. OpenGL port (W-28)
 
-Two things came out of that run and are fixed: `SetupDawn.ps1` crashed under Windows PowerShell 5.1
-when two VS hosts match (the array-vs-object `ConvertFrom-Json` trap), and `server.mjs` skipped
-junctioned asset directories (`Textures/sky`, `Textures/LUT`) so the sky cubemap 404'd.
+**Facts measured on 2026-11-02 (do not re-derive):**
 
-**WebGPU closed 2026-11-02** (second pass):
+- **GL version.** GL compute is desktop GL 4.3 only (`GLDriver.cpp` ~L216,
+  `m_computeShadersSupported = GLEW_VERSION_4_3`). GLES is out of scope: keep
+  `SupportsComputeTextures3D()` false there.
+- **How twins load.** `GLCompute.cpp` loads `<kernel>.glsl` next to the `.hlsl`
+  (`LoadComputeSource`, ~L38). It inserts `desc.defines` after the `#version` line, reflects the
+  GLSL through glslang into `ReflectComputeBindings`/`SetValidatedLayout`, and so matches by
+  binding number. A twin must declare exactly the registry's `binding_index` values.
+- **Missing twins (27).** All 22 `CS_Fluid*` kernels, plus `CS_VolumePatternRead/Write` and
+  `CS_VolumeFloatPatternRead/Write` (the 3D cases of `--compute-selftest`) and `CS_SeparableBlur`.
+- **No SPIRV-Cross at run time.**
+  - It is not in vcpkg: `Librerias/vcpkg/installed/*` has only glslang and spirv-reflect.
+  - The packaged Tint has no GLSL writer: `SetupDawn.ps1` L150 enables only `SPV_READER`,
+    `WGSL_READER` and `WGSL_WRITER`.
+  - The Vulkan SDK ships `%VULKAN_SDK%\Bin\spirv-cross.exe` and `glslangValidator.exe`
+    (`C:\VulkanSDK\1.4.341.1` here).
+  - **Decision: generate the twins offline and commit them.** This is route (b) of W-28 without a
+    new runtime dependency.
+- **Binding limits.** The numbers fit GL's minimums: storage images use binding ≤ 4
+  (`GL_MAX_IMAGE_UNITS` ≥ 8) and SSBOs ≤ 7 (`GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS` ≥ 8). GL keeps a
+  separate namespace per binding type, so the shared numbering is legal.
+- **HLSL features used.**
+  - No `SamplerState` or `SampleLevel` (only `Load`).
+  - `groupshared`: Surface3D, VolumeReduce3D.
+  - `InterlockedAdd`/`InterlockedMax` on flat `uint` buffers: Diagnostics3D, VolumeReduce3D.
+    Flattened for Tint already.
+  - `asuint`.
+  - `GetDimensions`: SurfaceCopy.
 
-- **In-browser compute self-test: PASS.** The 180 s timeout was a stale assertion, not the engine:
-  `test-firefox.mjs` waited for `[ComputeSelfTest] PASS: arithmetic and odd-sized image kernels`, but
-  the message grew a clause when the volumetric case landed ("…kernels **and volumetric storage
-  textures**"), and the old substring is not contained in the new sentence. The harness now matches
-  the stable `[ComputeSelfTest] PASS:` prefix and asserts `[ComputeSelfTest] FAIL` is absent. With
-  that, both RGBA16F and R32F 3D volumes pass in Chrome in ~0.5 s — on the hardware adapter **and**
-  with `--software-webgpu`, so no capability gate is needed (Dawn's software adapter does support 3D
-  storage images).
-- **Browser performance recorded** (headless Chrome, scene 7 with the solver, 60 sweeps, three 5 s
-  samples from `window.t850.frames`): **942×352 → 124 / 140 / 140 fps**, **1262×532 → 122 / 116 /
-  124 fps**.
-- **Release package verified** the way CI does it: `BuildWeb.ps1 -AssetMode Cloud` (CloudAssets
-  151 routes), `PackageWebRelease.ps1` under PowerShell 7 (it uses `Path.GetRelativePath`, which 5.1
-  does not have), `ValidateWebReleasePackage.ps1` **PASS: 2002 files, 151 cloud routes**. The zip
-  carries 1813 shader packages, `scenes.json` **with scene 7**, and `previews/7.png`.
-- **Launcher card verified**: `launcher.html` lists all 8 scenes with a 960×540 preview each; the
-  Backyard preview (`web/previews/7.png`, captured from the browser) was missing and is now committed.
-- **Native WebGPU parity measured properly.** With `--regressionFixedDt 1/60` (the earlier 24.8/255
-  came from comparing two real-time runs with different trajectories) the frame difference is mean
-  **−0.27/255** on the back buffer, −0.32 deferred, −0.24 HDR, and the water depth differs in 187
-  pixels by ≤4/255. The only cluster is the scripted ball: a 38×38 px box whose albedo differs by
-  +23.7/255 inside it — a per-mesh material sampling difference, cosmetic, recorded here for the
-  visual pass rather than fixed.
-- **Firefox not validated locally.** Firefox 159 + geckodriver 0.37.1 abort marionette on startup
-  ("Process unexpectedly closed with status 0"; a headless `--screenshot` run also hangs, and a
-  Firefox instance is already running on this machine). CI's `browser-webgpu` job drives Edge, so
-  this is a local-environment gap; re-check on a machine with a matching driver, or add Firefox to the
-  matrix once WebGPU is on by default there.
+  All of these exist in GLSL 4.30.
+- **Permutations.** Only `CS_FluidSeed3D` has a second one: `divergent`, define `SEED_DIVERGENT`.
+- **The water would render flat on GL even with a working solver.**
+  - `VS_Mesh.glsl` and `FS_Mesh.glsl` are hand-written and have no `FLUID_SURFACE` code (the HLSL
+    has 14 and 43 references). This is the WebGPU flat-water bug, except that GL has no HLSL
+    fallback.
+  - On GL, `RenderMesh` uploads one merged `RenderMesh::CBuffer` (`RenderMesh.cpp` ~L2384,
+    `driver->UsesGLSL()`). It has **no `TimeParams`**, so the displacement scale (`.z`) and the
+    ripple gate (`.w`) do not reach GL.
 
-#### 1. Porting the solver to the other APIs (including WebGPU)
+**A1. Generator.** New script `T850/scripts/shaders/generate_gl_compute_twins.ps1`. Per kernel and
+per permutation:
 
-Today the solver runs on D3D11, D3D12, Vulkan and **WebGPU** (since `00e28793`). On GL,
-`SupportsComputeTextures3D()` is false, the self-tests SKIP and scene 7 shows the static pool.
-Since 2026-11-01 a SKIP is only allowed where that capability is false; a backend that claims it
-and fails to initialize is a FAIL.
+```powershell
+$sdk = Join-Path $env:VULKAN_SDK 'Bin'
+& "$sdk\glslangValidator.exe" -D -S comp -e CS --target-env vulkan1.0 `
+    -DT850_SPIRV=1 -DT850_VULKAN=1 -o $spv $hlsl          # add -DSEED_DIVERGENT=1 for that permutation
+& "$sdk\spirv-cross.exe" $spv --version 430 --no-es --combined-samplers-inherit-bindings --output $glsl
+```
 
-**1a. WebGPU.** Compute kernels already go HLSL → SPIR-V → WGSL through Tint at run time, so most
-of the work is in the backend, not in 24 hand-written WGSL files.
-- 3D storage textures: `RGBA16F` and `R32F` write-only (`texture_storage_3d`), and 3D sampled reads.
-  WebGPU currently rejects `R32Float` storage (compute doc).
-- Inline `ReadOnlyBuffer` bindings, and `RequestComputeReadback` / `ConsumeComputeReadback` on
-  `MapAsync`.
-- Check that Tint accepts what the kernels use: `RWTexture3D<float>` with `spv::format_r32f`,
-  `StructuredBuffer<float4>`, `groupshared` with barriers (the surface kernel's tile), 2D `Load`
-  with `int3`.
-- Then report the capability and run every gate natively with `--api webgpu`.
-- Browser: scene 7 is not in `T850/web/scenes.json`. Add it only after native WebGPU passes, then
-  run `test-firefox.mjs` (Chrome and Firefox).
+- **Flags.**
+  - `-D` means HLSL input.
+  - Take `-e` from the registry's `entry` field (`CS` everywhere today).
+  - Define `T850_SPIRV` and `T850_VULKAN`. Only then do `[[vk::binding(N, 0)]]`,
+    `[[spv::format_r32f]]`/`format_rgba16f` and `[[spv::nonreadable]]` apply, which yields
+    `layout(binding = N, r32f) uniform writeonly image3D`. A storage image without a format
+    qualifier is rejected by most GL drivers.
+- **`--combined-samplers-inherit-bindings`.** SPIRV-Cross builds a `sampler3D` with a dummy sampler
+  for each `Texture3D` read with `Load`. Without this flag that sampler loses its `binding = N` and
+  the reflection no longer matches the registry.
+- **Header.** `#version 430` stays the **first** line (`LoadComputeSource` checks it). Line 2 is
+  `// GENERATED from CS_X.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit;
+  hlsl-sha256=<hash>`.
+- **`CS_FluidSeed3D`.** Generate base and `SEED_DIVERGENT`. If the bodies differ, write one file:
+  `#version` / header / `#ifdef SEED_DIVERGENT` / divergent body / `#else` / base body / `#endif`.
+  The runtime inserts `#define SEED_DIVERGENT` right after `#version`.
+- **Kernel list.** Take it from `compute_kernels.json`. Write only a twin that is missing or already
+  carries the GENERATED header. Never overwrite the eight hand-written twins (`CS_Arithmetic`,
+  `CS_Blur`, `CS_Bright`, `CS_GodRays`, `CS_HDRComposite`, `CS_ImagePattern*`,
+  `CS_TorchParticles`).
+- **cbuffer packing.** glslang emits HLSL packing offsets. SPIRV-Cross fails, or emits
+  `layout(offset=…)` (which needs `GL_ARB_enhanced_layouts`), when they are not std140-compatible.
+  `FluidConstants` should pass. If a kernel fails, fix its HLSL cbuffer; never hand-edit the output.
+- **Check one output by eye first** (`CS_FluidAirRise3D`, the smallest). Expect:
+  - `layout(local_size_x = 4, local_size_y = 4, local_size_z = 4)`
+  - `layout(binding = 0, std140) uniform` for the constants
+  - `layout(binding = 1) uniform sampler3D` for `AlphaIn`
+  - `layout(binding = 2, r32f) uniform writeonly image3D` for `AlphaOut`
+  - `layout(binding = 8, std430) readonly buffer` for `WallMask`
 
-**1b. OpenGL.** `GLCompute` loads a `.glsl` twin per kernel (`path.replace_extension(".glsl")`), and no
-fluid kernel has one.
-- Measure first: hand-write about 24 twins, or translate HLSL → SPIR-V → GLSL once at build time.
-  Check whether SPIRV-Cross is already a vcpkg dependency before adding one.
-- Backend: `glTexStorage3D` volumes, `glBindImageTexture(..., layered = GL_TRUE, ...)`, and image
-  formats `rgba16f` / `r32f`. Async readback can stay synchronous (the base default).
+**A2. Drift guard.** Extend `scripts/validation/check_fluid_constants.py`, or add
+`check_gl_twins.py` next to it. Fail when a generated twin's `hlsl-sha256` differs from its
+`.hlsl`, and when a registered kernel has no twin. This is the protection the stale `.wgsl` twins
+lacked.
 
-**Acceptance per API.** All of these, plus a same-session `telemetry.ps1` row:
-- `--compute-selftest`, including the 3D RGBA16F and R32F cases.
-- `--fluid-selftest`.
-- `--backyard-selftest`, with every gate inside the D3D12/Vulkan spread recorded in section 4.
-- `pick_test.ps1`.
-- Scene 7 with `--backyard-spawn 8 --backyard-spawn-seed 777`: a frame-300 dump compared with
-  `cmp_ppm.py` against D3D12.
+**A3. Backend** (`GLCompute.cpp`, `GLDriver.h`/`.cpp`).
 
-#### 2. PR preparation: every platform builds and passes
+1. **Texture class.** `GLComputeTexture3D : ComputeTexture3D` with `GLuint id` and
+   `GLenum internalFormat`; the destructor calls `glDeleteTextures`.
+2. **`CreateComputeTexture3D(desc, initialData)`:**
+   - `glTexStorage3D(GL_TEXTURE_3D, 1, ToGLStorageFormat(desc.format), w, h, d)`.
+   - Filters `GL_NEAREST` and wrap `GL_CLAMP_TO_EDGE` on S/T/R; the kernels only `texelFetch`.
+   - Upload `initialData` if set: `glTexSubImage3D` with `GL_RGBA`/`GL_HALF_FLOAT` or
+     `GL_RED`/`GL_FLOAT`.
+   - Restore `GL_TEXTURE_BINDING_3D` afterwards.
+   - Reject `Rgba8Unorm` and `Unspecified`, as the other backends do.
+3. **Capability.** `SupportsComputeTextures3D() override { return m_computeTexturesSupported; }`.
+4. **`DispatchCompute`.** Today it rejects anything that is not a 2D `GLTexture`
+   (`glTarget != GL_TEXTURE_2D`, ~L227), and it rejects inline buffers, because
+   `dynamic_cast<GLComputeBuffer*>(nullptr)` fails.
+   - **Validation loop.** Accept `binding.texture3D`; require `layout->dimension == Tex3D`.
+   - **`ReadOnlyTexture` 3D.** Bind with `glBindTexture(GL_TEXTURE_3D, id)` on unit
+     `layout->bindingIndex`. Save the **target** together with the previous id: the restore list
+     today always reads `GL_TEXTURE_BINDING_2D`.
+   - **`ReadWriteTexture` 3D.** Call `glBindImageTexture(unit, id, 0, GL_TRUE, 0, GL_WRITE_ONLY,
+     internalFormat)`. **`layered` must be `GL_TRUE`**: `GL_FALSE` binds one slice, and every z
+     writes slice 0. Check the format against the reflected `storageFormat`, as the 2D path does.
+   - **Inline `ReadOnlyBuffer`** (`buffer == nullptr`, `inlineData` set). The fluid uses these
+     for body lists and velocities (`FluidSimulation.cpp` ~L556, L1331, L1661, L1704; stride
+     16 B).
+     - Keep one persistent, grow-only SSBO in the driver.
+     - Per dispatch, orphan it (`glBufferData(…, nullptr, GL_STREAM_DRAW)`), then
+       `glBufferSubData`, then `glBindBufferBase(GL_SHADER_STORAGE_BUFFER, bindingIndex, ssbo)`.
+     - Validate `inlineBytes > 0 && inlineBytes % inlineStride == 0`.
+5. **Barriers.** Keep the existing `glMemoryBarrier` after every dispatch
+   (`SHADER_STORAGE | SHADER_IMAGE_ACCESS | TEXTURE_FETCH | BUFFER_UPDATE`). It already covers
+   image writes followed by `texelFetch` in the next kernel.
+6. **Per-dispatch cost**, only after correctness, with a same-session `telemetry.ps1` A/B. Each
+   dispatch currently does all of this, about 2000 times a frame at 120 sweeps:
+   - five `glGet*` limit queries
+   - `GL_CURRENT_PROGRAM` and `GL_ACTIVE_TEXTURE`
+   - a `glGenBuffers`/`glDeleteBuffers` UBO
+   - a `glGetError` drain
 
-CI (`.github/workflows/build.yml`) runs these jobs:
-- `validate-build-registration`
-- `build`: Win32, x64 and ARM64 × Debug and Release, plus the WebAssembly bundle
-- `browser-webgpu`, `android`, `steamdeck`, `release`
+   Cache the limits at init. Replace the per-dispatch UBO with a persistent ring and
+   `glBindBufferRange` at `GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT` offsets.
+7. **Readback.** `RequestComputeReadback` stays unsupported; the base default makes the fluid fall
+   back to the synchronous `ReadComputeBuffer`. That is acceptable for the PR; note the stall in
+   the compute doc.
+8. **Surface texture.** It is a 2D `CreateRT(RGBA16F)` (`EnsureSurfaceTarget`, ~L636), and
+   `GLRT.cpp` L225 sets `glInternalFormat`, so the existing 2D image path should accept it.
+   Verify: RT textures are mutable (`glTexImage2D`), and an image bind needs a complete texture
+   (no mip filter).
 
-Reproduce them locally before pushing:
-- `scripts\RunWindowsBuildMatrix.ps1`, from the source root: six Windows builds plus the Win32/x64
-  self-tests. The gameplay suite (`--game-selftest`) must report 78 PASS.
-- ARM64 builds only `Framework;DayScene`, with Community MSBuild.
-- Android: `SetupAndroidToolchain.bat`, then `Scripts\Bat\BuildAndroid.bat Release`.
-- Web: `scripts\BuildWeb.ps1`.
-- Steam Deck: through its remote update script.
-- `ValidateBuildRegistration.ps1` does **not** check Backyard files. Checked by hand on 2026-11-01:
-  `BackyardScene.cpp` and `BackyardWaterJson.cpp` are in MSBuild, DayScene CMake and Android;
-  `BackyardSelfTest.cpp` is in MSBuild and CMake (Android's entry point does not compile `App.cpp`);
-  `FluidSimulation.cpp` and `FluidDebugRenderer.cpp` are in every Framework list. Re-check after
-  porting adds files.
+**A4. Rendering on GL.** Without this the water stays flat.
 
-Engine-wide changes on this branch touch every scene:
-- PBR channel split
-- `ShadowAccum` RGBA8
-- D3D12 ring uploads
-- P4/P5 bind caches
-- the async readback API
+1. **`TimeParams`.**
+   - Append `XVECTOR3 TimeParams;` as the **last** member of `RenderMesh::CBuffer` (`RenderMesh.h`
+     L69), and copy it in `ApplyMeshInstanceCB` (`RenderMesh.cpp` ~L1818).
+   - `GLShader` assigns byte offsets in the order the uniforms are parsed (`GLShader.cpp`
+     ~L205–262, `uniformPos += size`). So `uniform highp vec4 TimeParams;` must sit where the
+     parsed order puts it at `offsetof(RenderMesh::CBuffer, TimeParams)`. Read how VS and FS
+     uniforms are merged before choosing the line.
+   - Prove it with a temporary log of both numbers, then remove the log.
+2. **Port the `#ifdef FLUID_SURFACE` blocks by hand** (about 500 lines):
+   - `VS_Mesh.hlsl` L38–41 and L224–263: bilinear height over texel centres, plus the fake ripples.
+   - `FS_Mesh.hlsl` L183–190: declarations.
+   - `FS_Mesh.hlsl` L323–539: ripple octaves, `WaterRippleGradient/Height/SlopeLow/GradientCoarse`,
+     `WaterFoamNoise`, `WaterNormalMapGradient`, `WaterTraceScreenSpace`.
+   - `FS_Mesh.hlsl` L1138–1193, L1326–1497 and L1505–1509.
 
-So also run, on the final binary:
-- Visual baselines: `CaptureVisualBaselines.ps1` against a master baseline. Expect lighting
-  differences from `c4c680dc` and explain each.
-- Scenes 0–7 on five APIs with 0 `[ERROR]` lines.
-- `--d3d12debug` and Vulkan validation on scenes 1, 6 and 7.
+   GL binds textures **by uniform name** (`RenderMesh.cpp` ~L2497–2506). Declare
+   `uniform highp sampler2D FluidSurfaceTexture;`, `FluidNormalTex` and `FluidFloorTexture` with
+   exactly those names. Translation table:
 
-#### 3. Launcher and release launcher download the ball textures
+   | HLSL | GLSL |
+   |---|---|
+   | `Load(int3(p, 0))` | `texelFetch(t, p, 0)` |
+   | `GetDimensions` | `textureSize(t, 0)` |
+   | `SampleGrad` | `textureGrad` |
+   | `lerp` | `mix` |
+   | `frac` | `fract` |
+   | `saturate(x)` | `clamp(x, 0.0, 1.0)` |
 
-Measured 2026-11-01:
-- `Launcher.ps1` and `Launcher_Release.ps1` both dot-source `scripts/ModelCloud.ps1` and call
-  `Ensure-T850CloudTextures`, the same function `DownloadTextures.ps1` uses.
-- It downloads everything in the R2 manifest with no folder filter. The live manifest has 138
-  texture entries, 96 of them under `Textures/Ball/`.
-- `Get-T850CloudTexturesStatus` reports 138/138 ready on this machine.
+   For `mul`, follow the row/column convention the GL twin already uses.
+3. **Preprocessor.** GL uses the engine's own (`GLSLParser.cpp` ~L170). It supports `#define`,
+   `#ifdef`, `#ifndef`, `#if <expr>`, `#else` and `#endif`. Use plain `#ifdef FLUID_SURFACE`.
+4. **Prove the path is live**, as for WebGPU in `330fd3eb`: a temporary unconditional magenta return
+   inside `#ifdef FLUID_SURFACE` in `FS_Mesh.glsl` must show on GL. Then remove it.
 
-So no new download code is expected; the item is to *prove* it and close the gaps:
-- From an **empty** asset root, the dev launcher's Download Assets fetches all 96 ball files. So
-  does the compiled `T850Launcher.exe` from `build_launcher_release.ps1`, run from the release
-  layout, where `ModelCloud.ps1` must be found next to it or under `scripts\`.
-- `ValidateReleasePackages.ps1` / the `release` job: decide whether packages carry textures or rely
-  on the first-run download, and document it in `documentation/development/cloud-assets.md`.
-- Gate 10's failure message says to run `scripts/DownloadTextures.ps1`; add the launcher's
-  Download Assets button to it.
-- Add a check to `TestLauncherWebGPU.ps1` (it runs in CI) that the texture status counts the
-  `Textures/Ball/` entries. It must be read-only and must not write to R2.
+**A5. Acceptance**, in this order, with `--api gl`:
 
-#### 4. Clean-up and preparation to merge
+1. `--compute-selftest`, including the 3D RGBA16F and R32F cases.
+2. `--fluid-selftest`.
+3. `--backyard-selftest`: all 11 gates, each inside the D3D12/Vulkan values in section 4. A SKIP is
+   a FAIL once the capability is true.
+4. `--backyard-pick-test --backyard-spawn 2`.
+5. Scene 7 with `--backyard-spawn 8 --backyard-spawn-seed 777 --regressionFixedDt 0.0333333`:
+   0 `[ERROR]`, and a frame-300 dump compared with `cmp_ppm.py` against D3D12. WebGPU's mean
+   difference was −0.27/255; anything large points at A4.
+6. A `telemetry.ps1` row for GL, same session as D3D12 and Vulkan.
+7. Scenes 1 and 6 on GL, plus scenes 1/6/7 on the other four APIs. The `CBuffer` and mesh-shader
+   changes are shared.
+8. Docs:
+   - the W-28 resolution in remaining-work
+   - GL in the implementation record's sections 4, 5 and 13
+   - `compute-shader-implementation.md`: GL 3D volumes, layered binds, inline buffers, sync
+     readback, the generator
 
-- **Documentation:**
-  - `--help` and `development/runtime-configuration.md` document none of the Backyard flags:
-    `--backyard-selftest`, `--backyard-spawn`, `--backyard-spawn-seed`, `--backyard-pick-test`,
-    `--backyard-ball-probe`, `--backyard-mass-audit`, `--fluid-selftest`.
-    **Done 2026-11-01:** a "Backyard water scene (7)" section in `PrintHelp()` and a matching
-    section in the runtime-configuration doc, with the probe's line format explained.
-  - The `documentation/README.md` Backyard rows still say "24 tasks … next W-24 roof"; index the
-    session records too.
-- **W-14:** one `FluidConstants` include for the 20 kernel copies. First confirm the compute
-  shader path resolves `#include` on all three backends. **Answered 2026-11-01: no** (DXC gets a
-  null include handler; glslang/Tint get one string). A layout guard script landed instead; see
-  Stage 8 in the log.
-- **W-16:** the implementation record's sections 6 and 8.
-- **Diagnostic scripts:** move the reusable ones from the untracked `D:\Code\QwenFlashT850\backyard-diag`
-  (`telemetry.ps1`, `pick_test.ps1`, `cmp_ppm.py`, `ppm2png.py`) into `T850/scripts/validation/`
-  with repo-relative paths, so CI and other machines can run them. `check_fluid_constants.py` and
-  `check_ball_textures.ps1` are already there (2026-11-01).
-- **Dead code:** after the P7 surface change, check `m_surfaceCopyPipeline` and the ping-pong pair
-  (still needed headless).
-- **Never commit** `T850/config.json`, generated dumps, or `Assets/Textures/Ball/`.
-- **Owner decisions to collect before merging:**
-  - `pressureIterations` 120 (26–30 % of the frame; re-measure 60/80/120).
-  - Whether wind should also push the balls (aerodynamic drag on the exposed cap; not implemented).
-  - Merge strategy: the documents cite commit hashes, so squashing breaks every reference.
-    Recommend a merge commit.
+#### B. Steam Deck OLED is not detected as a handheld
 
-Still open from the review, to do inside one of the sessions above:
-- **Re-measure W-06 step 4** (the heave table was taken with the sign bug). Then turn on simulated
-  buoyancy in the self-tests: the headless query uses the authored plane today, because enabling it
-  put Vulkan's gate 7 at −19.9 mm of 20 while the ball was still bobbing.
-- The **W-07 solid-fraction stage**. It is the last physics gap but is not needed for the PR.
+- **Linux.** `DetectSteamDeckReason()` (`LinuxFramework.cpp` L34) looks for "steam deck" or
+  "jupiter" in DMI. The owner's Deck is an OLED and reads `product_name=Galileo`,
+  `board_name=Galileo`, `sys_vendor=Valve` (read 2026-11-02), so the log says
+  `Handheld detection: no`.
+- **Windows.** `Win32Framework.cpp` L82 looks for "steam deck" only.
 
-Background:
+**Fix:** in both, also accept `sys_vendor` `Valve` with product or board `Jupiter` or `Galileo`
+(case-insensitive). Verify on the Deck: `Handheld detection: yes Steam Deck (Galileo Galileo Valve)`.
 
-- **W-07** (displace, don't delete): attempts 1 and 2 are measured/analysed and neither ships.
-  Attempt 2's conclusion is that the flicker is the *binary mask flip*, not the distribution, so the
-  body needs a **per-cell solid fraction** (sub-cell coverage) in the mask, the transport and the
-  seven kernels that test `IsSolid`. That is a stage of its own; the acceptance target is the table
-  in W-26 (remove the trapped-air term, `covered min−ring` back under 20 mm, band profile flat).
-- **W-16** still owes sections 6–8 of the implementation record; §7 and §8.1 were refreshed this
-  session, together with the kernel table and the readback contract.
+The Deck sweep count is the owner's choice (H). If it should be 60, make the cap a **runtime**
+input, not a new `#if`: `OS_LINUX` would also cap desktop Linux.
 
-Stage 5b (W-03), the conservative transport, is **done as far as measurement supports it**
-(attempt 3, section 3, "Stage 5b, attempts 2 and 3"). Attempt 1 was measured and rejected on
-2026-10-31: operator splitting with upwind fluxes is exactly conservative and bounded but three
-times more diffusive (interface 3.35 → 10.67 cells). What shipped instead is a **van Leer/minmod
-limited face value** inside the one unsplit kernel: bulk 0.9969 → 0.9987, cells below 0.98 down
-79 %, interface 3.35 → 2.66 cells, cost in the noise. Three acceptance lines remain marginal
-(bulk 0.9987 vs 0.999, 1.1 % vs 1 % below 0.98, interface 2.66 vs 1–2 cells) and are recorded as
-such rather than relaxed.
+- `EffectivePressureIterations()` takes a `handheld` flag.
+- `BackyardScene` passes `IManager.Gamepad.handheldDevice`.
+- `BackyardSelfTest` passes the same flag, so the gates validate what ships.
+
+#### C. Browser re-verify
+
+`build/web/WebShaders` was exported at 13:26 on 2026-11-02, and `CS_FluidAirRise3D` landed at
+20:10. `FluidSimulation` treats a missing pipeline as "solver unavailable", so the bundle can fall
+back to the static pool without failing. From `T850`:
+
+1. `pwsh -File scripts\BuildWeb.ps1`. Embedded mode runs the scene-7 shader export, L87–104.
+2. Serve `build\web\site` with `node web\server.mjs`.
+3. Run `node web\test-firefox.mjs --browser chrome --headless`.
+
+**Pass:** no `[ERROR]`, the `[Fluid]` init line instead of "Volume compute unsupported", and the
+in-browser `[ComputeSelfTest] PASS:`.
+
+Then repeat the release path from section 4: `-AssetMode Cloud`, `PackageWebRelease.ps1` under
+pwsh 7, then `ValidateWebReleasePackage.ps1`.
+
+#### D. Android
+
+1. **Build exactly as CI does**, without `--asset-profile` (`build.yml` L525):
+   `T850\scripts\android\BuildAndroid.bat Release --allow-unsigned-release --sdk
+   %LOCALAPPDATA%\Android\Sdk --abi arm64-v8a`. Then rebuild with `--asset-profile backyard` for
+   the tablet.
+2. **30-minute tablet run** (W-29 acceptance: mean surface within ±5 mm). The tablet dozes in
+   seconds, which voids the run.
+   - Before: `adb shell svc power stayon true`, then `adb shell input keyevent KEYCODE_WAKEUP`.
+   - Launch with `--ei com.t850.engine.extra.LOG_LEVEL 1` (info; never measure at debug).
+   - At the end, confirm `dumpsys power` shows `mWakefulness=Awake`, then run
+     `adb shell svc power stayon false`.
+   - Record at 5, 10, 20 and 30 min: the `[Backyard][surface]` mean, fps, and the count of
+     `readback still pending` lines (must be 0).
+
+#### E. Launcher
+
+1. **CI check in `scripts/TestLauncherWebGPU.ps1`** (runs in CI; it has no ball-texture check). Two
+   read-only parts, never writing to R2:
+   - **Static.** Parse `Launcher.ps1` and `Launcher_Release.ps1` with the AST, as the test already
+     does, and assert both dot-source `ModelCloud.ps1` and call `Ensure-T850CloudTextures` with no
+     folder filter.
+   - **Manifest.** Add a `-SkipDisk` switch to `scripts/validation/check_ball_textures.ps1` (CI has
+     no `Assets/Textures/Ball/`). It still asserts 32 sets × 3 maps in the live manifest. Warn
+     and skip if the manifest URL is unreachable.
+2. **Compiled launcher from an empty asset root.** Build with `build_launcher_release.ps1`, run
+   `T850Launcher.exe` from the release layout with `Assets\Textures\Ball` empty, and press Download
+   Assets. `check_ball_textures.ps1` must then PASS. Confirm `ModelCloud.ps1` is found next to the
+   exe or under `scripts\`.
+3. **Document the release decision** in `documentation/development/cloud-assets.md`. Recommended:
+   packages do not carry the ball textures and rely on the first-run download, like the sky
+   cubemaps. Gate 10 and the launcher already point at Download Assets. `ValidateReleasePackages.ps1`
+   must agree with the doc.
+
+#### F. Cleanup
+
+1. **Script move.** Move `telemetry.ps1`, `pick_test.ps1`, `perf.ps1`, `bisect_perf.ps1`,
+   `cmp_ppm.py`, `ppm2png.py` and `read_session.py` from the untracked
+   `D:\Code\QwenFlashT850\backyard-diag` into `T850/scripts/validation/`.
+   - Paths relative to `$PSScriptRoot`; the source root is
+     `Split-Path -Parent (Split-Path -Parent $PSScriptRoot)`.
+   - Default exe `bin\x64\Release\DayScene.exe`; logs under a gitignored `T850\build\diag\`.
+   - Every run passes `--unattended`.
+   - Update every doc that cites `backyard-diag\` (grep `documentation/`).
+2. **README.** The `documentation/README.md` Backyard rows still say "24 tasks … next W-24 roof".
+   List the three Backyard documents with their current status: W-01…W-29, solver on five APIs
+   and devices, OpenGL pending.
+3. **W-16.** Sections 6–8 of the implementation record were refreshed for the air-rise kernel. Run
+   the W-16 acceptance spot-check, then mark W-16 done:
+   - storage layout, pressure convention, surface dispatch, ball model, volume-correction band
+   - in section 7: W-08's open ceiling and W-19's inpainting
+4. **Stale rows in remaining-work section 0:** done on 2026-11-02 (W-06, W-17 and W-28). Keep the
+   rows in step with each item as it lands.
+
+#### G. Final matrix and validation (after A)
+
+1. **Windows matrix.** `scripts\RunWindowsBuildMatrix.ps1` from `T850`: Win32/x64/ARM64 ×
+   Debug/Release; ARM64 as `'/t:Framework;DayScene'` with Community MSBuild.
+   - Win32 and ARM64 have not been built since the Vulkan changes (`EnsureFrameSwapchainImage`,
+     slot waits, dispatch budget), the WebGPU submit bound, the Linux loop and A. Watch for 32-bit
+     handle casts.
+   - 78 gameplay PASS per runnable cell.
+2. **Device builds.** Android without `--asset-profile` (D.1). Deck `--with-editor` again:
+   `GLCompute.cpp` is compiled on Linux, so A invalidates the 2026-11-02 result.
+3. **Registration.** `& scripts\ValidateBuildRegistration.ps1`; call it with `&`, because `-File`
+   returns exit 1 on PASS. Then check any new C++ file by hand in the vcxproj, `CMakeLists.txt` and
+   `cmake/AndroidBuild.cmake`.
+4. **Scenes.** Scenes 0–7 × D3D11, D3D12, Vulkan, GL, WebGPU: 0 `[ERROR]`.
+5. **Debug layers on scenes 1, 6 and 7.**
+   - D3D12: `--d3d12debug`.
+   - Vulkan: set `$env:VK_INSTANCE_LAYERS = 'VK_LAYER_KHRONOS_validation'` (plus
+     `$env:VK_LAYER_PATH = "$env:VULKAN_SDK\Bin"` if the layer is not registered) and grep the log
+     for `Validation Error`. Clear both variables afterwards.
+6. **Visual baselines.** Run `CaptureVisualBaselines.ps1` on `origin/master` (a separate worktree)
+   and on HEAD, and explain each difference. Expected: the PBR split `c4c680dc` and `ShadowAccum`
+   RGBA8.
+7. **Final binary.** Backyard (11 gates), fluid, compute and pick self-tests on all five APIs, and
+   the Deck self-tests.
+
+#### H. Owner decisions and PR text
+
+**Decisions:**
+
+- Desktop `pressureIterations`: keep 120 (26–30 % of the frame), or 80?
+- Deck sweep count: 120 (~10 fps, water at 0.31× speed) or 60 (17 fps, 0.53×)? Needs B first.
+- Device slow motion: `maxDeltaTime` clamps the step at 1/30 s. Options: accept it, lower the device
+  render resolution, or fewer substeps. Profile before proposing.
+- Wind on the balls (not implemented).
+- Merge commit, not squash: the documents cite about 100 commit hashes.
+- Push approval.
+
+**PR text:**
+
+- **Summary:** the scene, the solver, the APIs and devices it runs on.
+- **Engine-wide changes that touch every scene:**
+  - PBR channel split
+  - `ShadowAccum` RGBA8
+  - D3D12 ring uploads
+  - P4/P5 bind caches
+  - async compute readback
+  - Vulkan lazy acquire, slot waits and dispatch budget
+  - WebGPU submit bound
+  - Linux main loop
+  - GL compute volumes, from A
+- **Evidence table:** gates per API, devices, the matrix.
+- **Known limitations:** W-07, the GL sync readback, device slow motion.
+- **Links** to the three Backyard documents.
+
+#### I. Simulated buoyancy in the headless gates (optional, not blocking)
+
+Today the gates float the ball on the authored plane.
+
+- **Why.** `FluidSimulation::QueryBodyWaterLevel` returns early when `m_surfaceOutput` is null, which
+  is every headless run (comment at ~L1270). That was kept because simulated buoyancy put Vulkan's
+  gate 7 at −19.9 mm of 20. Gate 7 is now −2.2 mm (the W-26 term is gone), so retry.
+- **Change.** When `m_surfaceOutput` is null, read `m_surfaceTexture[m_surfaceCurrent]`, the
+  headless ping-pong surface.
+- **Accept** only if gates 7, 8 and 11 pass on D3D12, Vulkan and WebGPU with margin, and the
+  float's settled `y` matches the scene probe (−0.07…−0.085 m).
+- **Otherwise** revert and record the numbers in W-06.
 
 ### Standing rules from the reviews
 
@@ -2682,3 +2849,108 @@ still to be repeated (the tablet slept during the attempt).
 `kMobilePressureIterations` applies to Android and web only; the Deck is `OS_LINUX` and runs 120.
 Next for 1d/1e: decide the Deck's cap, then profile the device frame (render resolution vs solver)
 before touching the solver.
+
+### PR preparation notes (2026-11-01/02, moved from section 0 on 2026-11-02)
+
+Section 0 now holds only the remaining work ("PR plan — status and remaining work"). These notes
+were the progress record there and are kept verbatim.
+
+**Progress (2026-11-01/02, local agent).**
+
+- **Baseline matrix done.** 6/6 Windows cells build, 78/78 gameplay tests per runnable cell. Two
+  breaks were found and fixed: the Win32 Vulkan handle cast and the ARM64 Dawn metadata.
+- **Launcher textures done.** The texture path is proven and guarded by a read-only script.
+- **Cleanup partly done.** CLI flags are documented in `--help` and the runtime-configuration doc.
+  W-14 is answered: no include handler, so a layout guard shipped instead.
+- **WebGPU runs the whole solver** (`00e28793`, water-parity fix `330fd3eb`).
+- **Browser in progress.** Scene 7 is in `web/scenes.json` and in `BuildWeb.ps1`'s export list, and
+  the export run reaches it.
+
+**Owner decisions on 2026-11-02:**
+
+- **OpenGL is in scope** and gets its own stage (W-28): the simulation must run on every supported
+  backend, D3D11 included (it already does).
+- **Mobile and web run a lower sweep count**: 60 instead of 120. Measured on D3D12 and Vulkan with
+  `--backyard-iterations 60`, both PASS:
+  - still-pool loss 0.002 % → **0.013 %**
+  - still-pool `maxAbs` 0.1 → 0.3 mm
+  - float `ring−far` −1.7 → −2.2 mm
+  - `covered min−ring` −11.3 → −12.5 mm
+
+  All inside the gate limits, so 60 ships as `WaterTunables::kMobilePressureIterations`, applied by
+  `EffectivePressureIterations()` on `__EMSCRIPTEN__`/`OS_ANDROID` only.
+
+**Browser progress (2026-11-02).** `BuildWeb.ps1` now produces a bundle:
+
+- the emsdk bootstrap
+- the shader export for `auto` and `spirv` (all scenes, 7 included)
+- the Emscripten build (648 targets, the Backyard sources included)
+- `T850WebSelfTests` 1/1
+
+`build/web/site/scenes.json` lists scene 7, and `node web/server.mjs` serves 2117 assets plus 1813
+shader packages. **Headless Chrome loads scene 7 and renders the pool**
+(`web/test-firefox.mjs --browser chrome --headless`, passed, 882×492, σ 33.5).
+
+Two problems came out of that run, both fixed:
+
+- `SetupDawn.ps1` crashed under Windows PowerShell 5.1 when two VS hosts match (the array-vs-object
+  `ConvertFrom-Json` trap).
+- `server.mjs` skipped junctioned asset directories (`Textures/sky`, `Textures/LUT`), so the sky
+  cubemap 404'd.
+
+**WebGPU closed 2026-11-02** (second pass):
+
+- **In-browser compute self-test: PASS.** The 180 s timeout was a stale assertion, not the engine.
+  - `test-firefox.mjs` waited for `[ComputeSelfTest] PASS: arithmetic and odd-sized image kernels`.
+    When the volumetric case landed, the message grew a clause ("…kernels **and volumetric storage
+    textures**"), so the old substring no longer appears.
+  - The harness now matches the stable `[ComputeSelfTest] PASS:` prefix and asserts that
+    `[ComputeSelfTest] FAIL` is absent.
+  - With that, both RGBA16F and R32F 3D volumes pass in Chrome in ~0.5 s, on the hardware adapter
+    **and** with `--software-webgpu`. Dawn's software adapter supports 3D storage images, so no
+    capability gate is needed.
+- **Browser performance recorded** (headless Chrome, scene 7 with the solver, 60 sweeps, three 5 s
+  samples from `window.t850.frames`):
+  - **942×352: 124 / 140 / 140 fps**
+  - **1262×532: 122 / 116 / 124 fps**
+- **Release package verified** the way CI does it:
+  - `BuildWeb.ps1 -AssetMode Cloud` (CloudAssets 151 routes)
+  - `PackageWebRelease.ps1` under PowerShell 7 (it uses `Path.GetRelativePath`, which 5.1 lacks)
+  - `ValidateWebReleasePackage.ps1` **PASS: 2002 files, 151 cloud routes**
+
+  The zip carries 1813 shader packages, `scenes.json` **with scene 7**, and `previews/7.png`.
+- **Launcher card verified.** `launcher.html` lists all 8 scenes with a 960×540 preview each. The
+  Backyard preview (`web/previews/7.png`, captured from the browser) was missing; it is now
+  committed.
+- **Native WebGPU parity measured properly**, with `--regressionFixedDt 1/60`. The earlier
+  24.8/255 came from comparing two real-time runs with different trajectories.
+  - Mean difference: **−0.27/255** on the back buffer, −0.32 deferred, −0.24 HDR.
+  - The water depth differs in 187 pixels, by ≤4/255.
+  - The only cluster is the scripted ball: a 38×38 px box whose albedo differs by +23.7/255. This
+    is a per-mesh material sampling difference, cosmetic, left for the visual pass.
+- **Firefox not validated locally.**
+  - Firefox 159 + geckodriver 0.37.1 abort marionette on startup ("Process unexpectedly closed
+    with status 0").
+  - A headless `--screenshot` run also hangs, and a Firefox instance is already running on this
+    machine.
+  - CI's `browser-webgpu` job drives Edge, so this is a local-environment gap. Re-check on a
+    machine with a matching driver, or add Firefox to the matrix once WebGPU is on by default
+    there.
+
+### PR status review (2026-11-02, reviewer)
+
+- **Deck build.** The CI-equivalent build at `931b9cf1`
+  (`BuildSteamRuntime.sh --configuration Release --with-editor`) links DayScene and T8ditor
+  (98/98). The Linux main-loop change in `T8ditor/main.cpp` is now compiled on Linux.
+- **New bug (section 0, item B).** The owner's Deck is an OLED (DMI `Galileo`/`Galileo`/`Valve`),
+  and handheld detection matches only "steam deck" and "jupiter".
+- **OpenGL facts measured** for W-28 (section 0, item A):
+  - no SPIRV-Cross in vcpkg; the Vulkan SDK ships `spirv-cross.exe`
+  - the packaged Tint has no GLSL writer
+  - 27 kernels have no GLSL twin
+  - `VS_Mesh.glsl`/`FS_Mesh.glsl` have no `FLUID_SURFACE` path, and GL's merged `CBuffer` has no
+    `TimeParams`
+  - GL `DispatchCompute` rejects 3D textures and inline buffers
+- **Browser export is stale.** It dates from 13:26; the air-rise kernel landed at 20:10.
+- **Resolved or closed:** W-06 step 4 was already re-measured (the status row is stale), and
+  `m_surfaceCopyPipeline` is live code.

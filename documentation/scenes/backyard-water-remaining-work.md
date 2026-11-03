@@ -2190,7 +2190,7 @@ EnsureWaterShaderPermutations` now reads the `.glsl` sources and passes the `.gl
 | `--backyard-selftest` | **PASS**, all 11 gates, every value inside the D3D12/Vulkan spread (still pool `maxAbs` 0.0001 m, isotropy mirror 0.00147/0.00059 m, air `24 of 76276`, interface 1.16 cells) |
 | `--backyard-pick-test --backyard-spawn 2` | PASS, 0 failures |
 | Scenes 1 and 6, frame 300 | **byte-identical** to the dump taken before any of this (18/18 and 12/12 targets) — the merged `CBuffer` shift is consistent between C++ and GLSL |
-| Scene 7 frame 300 vs D3D12 | backbuffer mean **+0.16/255**, HDR mean **−0.00/255** |
+| Scene 7 frame 300 vs D3D12 | backbuffer mean **+0.22/255**, HDR mean **+0.04/255** (+0.16 / −0.00 before the dispatch-path changes) |
 | `FLUID_SURFACE` is live | a temporary unconditional magenta `return` inside the block painted the whole pool magenta, then was removed |
 | `telemetry.ps1`, 720p, 0 balls, same session | D3D12 **312.2** fps / update 2.33 ms, Vulkan **281.8** / 2.25 ms, GL **107.5** / 8.12 ms, 0 errors |
 

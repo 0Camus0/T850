@@ -115,7 +115,8 @@ namespace t850 {
     bool ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) override;
 
     // Closes a compute-owned offscreen frame when its descriptor pool is nearly
-    // exhausted, waits for the GPU, and lets the next BeginFrame() start a clean
+    // exhausted or it holds too many dispatches for one submit, waits for the GPU, and
+    // lets the next BeginFrame() start a clean
     // pool generation. A headless dispatch loop never reaches CompleteFrame, so
     // BeginFrame() early-outs after the first dispatch and the pool is reset exactly
     // once - which exhausted it at step 109 of the 400-frame fluid self-test with
@@ -190,6 +191,8 @@ namespace t850 {
 
     // Ensure the backbuffer render pass is active (for ImGui overlay rendering)
     void EnsureBackbufferRenderPass();
+    // Acquires this frame's swap chain image if a compute dispatch opened the frame first.
+    bool EnsureFrameSwapchainImage();
     void SetPrePresentOverlayCallback(std::function<void()> callback) override {
       if (!callback) {
         m_prePresentOverlayCallback = nullptr;
@@ -398,6 +401,7 @@ namespace t850 {
     // ResetDescriptorPool. Used to detect a headless dispatch loop that never reaches
     // CompleteFrame.
     uint32_t               m_descriptorSetsThisGeneration = 0;
+    uint32_t               m_computeDispatchesThisFrame = 0;
     bool                   m_screenshotConsumedSemaphore = false;
     bool                   m_swapchainNeedsRecreate = false;
     // True when this frame actually acquired a swap chain image; only such a frame may
@@ -405,6 +409,9 @@ namespace t850 {
     bool                   m_frameAcquiredSwapchainImage = false;
     // Logs the "surface extent not available" deferral once per stalled stretch.
     bool                   m_swapchainSurfaceWaitLogged = false;
+    // Frames handed to vkQueuePresentKHR. A still screen with a rising simulation clock
+    // means this counter stopped moving, which separates a presenter stall from a calm scene.
+    uint64_t               m_presentedFrameCount = 0;
 
     // Last-bound state for redundancy elimination
     VkPipeline      m_lastPipeline = VK_NULL_HANDLE;

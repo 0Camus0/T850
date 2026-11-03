@@ -1563,6 +1563,7 @@ namespace t850 {
     // A fresh pool generation: restart the budget accounting, and note that this
     // frame belongs to whoever called BeginFrame (the renderer, if it got here first).
     m_descriptorSetsThisGeneration = 0;
+    m_computeDispatchesThisFrame = 0;
     m_frameOpenedByCompute = false;
     m_cbRingOffset = 0;
     m_cbDirty = false;
@@ -1597,6 +1598,36 @@ namespace t850 {
     // Reset topology to triangle list at the start of each frame
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_vertexStride = 0;
+  }
+
+  bool VulkanDriver::EnsureFrameSwapchainImage() {
+    if (m_frameAcquiredSwapchainImage) return true;
+    if (!m_frameStarted || IsOffscreenEnabled() || !m_swapChain || m_swapchainNeedsRecreate) return false;
+
+    // A scene that dispatches compute in OnUpdate (the fluid solver) opens the frame as
+    // Offscreen, so BeginFrame never acquired; without this the frame is never presented.
+    const VkResult res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
+                                               m_imageAvailableSemaphores[m_currentFrame],
+                                               VK_NULL_HANDLE, &m_imageIndex);
+    if (res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR) {
+      m_frameAcquiredSwapchainImage = true;
+      if (res == VK_SUBOPTIMAL_KHR) {
+        if (ShouldRecreateSwapchainAfterSuboptimal(m_physicalDevice, m_surface, m_swapChainExtent)) {
+          m_swapchainNeedsRecreate = true;
+        } else {
+          LogIgnoredStableSuboptimalSwapchainOnce();
+        }
+      }
+      return true;
+    }
+    // The command buffer is recording, so recreation waits for the next BeginFrame.
+    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_ERROR_SURFACE_LOST_KHR) {
+      T8_LOG_INFO("[Vulkan] Swap chain out of date at first backbuffer use (res=%d); recreating next frame", res);
+      m_swapchainNeedsRecreate = true;
+    } else {
+      T8_LOG_ERROR("[Vulkan] vkAcquireNextImageKHR failed res=%d", res);
+    }
+    return false;
   }
 
   void VulkanDriver::EndFrame() {}
@@ -1724,6 +1755,7 @@ namespace t850 {
 
     if (CurrentRT < 0) {
       VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+      EnsureFrameSwapchainImage();
 
       // End any active render pass before starting a new one
       EndRenderPassIfActive(cmd);
@@ -1822,6 +1854,7 @@ namespace t850 {
     if (!m_frameStarted) {
       BeginFrame(FrameTargetMode::Swapchain);
     }
+    EnsureFrameSwapchainImage();
 
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
     if (m_renderPassActive) {
@@ -1854,6 +1887,7 @@ namespace t850 {
   void VulkanDriver::EnsureBackbufferRenderPass() {
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
     if (!m_renderPassActive) {
+      EnsureFrameSwapchainImage();
       // Begin the backbuffer render pass with LOAD_OP_LOAD (preserve existing content)
       VkRenderPassBeginInfo rpInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
       rpInfo.renderPass  = m_backbufferRenderPassLoad;
@@ -2039,6 +2073,7 @@ namespace t850 {
     }
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
 
+    if (mode == FrameCompletionMode::Present && !IsOffscreenEnabled()) EnsureFrameSwapchainImage();
     // Presenting an image this frame never acquired (or a swap chain the surface already
     // rejected) leaves the window black on drivers that answer OUT_OF_DATE forever.
     const bool presentToSwapchain = mode == FrameCompletionMode::Present && !IsOffscreenEnabled() &&
@@ -2198,6 +2233,13 @@ namespace t850 {
       }
     } else if (presentRes != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] vkQueuePresentKHR failed res=%d", presentRes);
+    }
+
+    ++m_presentedFrameCount;
+    if ((m_presentedFrameCount % 300) == 0) {
+      T8_LOG_DEBUG("[Vulkan] Present: %llu frames, image %u, %ux%u",
+                   static_cast<unsigned long long>(m_presentedFrameCount), m_imageIndex,
+                   m_swapChainExtent.width, m_swapChainExtent.height);
     }
 
     m_currentFrame = (m_currentFrame + 1) % kBackBufferCount;
@@ -2907,8 +2949,9 @@ reopen:
   bool VulkanDriver::RecycleOverflowingComputeFrame() {
     // Only frames opened by the compute path may be recycled. A renderer-owned frame
     // already has descriptor sets recorded for its draws; resetting the pool under it
-    // would leave those bindings dangling.
-    if (!m_frameStarted || !m_frameOpenedByCompute)
+    // would leave those bindings dangling. A frame that acquired a swap chain image
+    // belongs to the renderer too: it must present that image.
+    if (!m_frameStarted || !m_frameOpenedByCompute || m_frameAcquiredSwapchainImage)
       return false;
 
     // The budget is a fraction of maxSets rather than a small batch size on purpose:
@@ -2916,11 +2959,15 @@ reopen:
     // and the renderer path is untouched. A headless loop keeps allocating until it
     // does reach it, which is exactly the case that used to run the pool dry.
     constexpr uint32_t kDescriptorSetBudget = 6144;   // 75% of the 8192 maxSets
-    if (m_descriptorSetsThisGeneration < kDescriptorSetBudget)
+    // Cached sets let a headless loop record thousands of dispatches into one submit.
+    // On the Steam Deck that exceeded amdgpu's 5 s job timeout and lost the device;
+    // an interactive Backyard frame records ~700.
+    constexpr uint32_t kDispatchBudget = 2048;
+    if (m_descriptorSetsThisGeneration < kDescriptorSetBudget && m_computeDispatchesThisFrame < kDispatchBudget)
       return false;
 
-    T8_LOG_DEBUG("[Vulkan][Compute] Recycling the compute-owned frame at %u descriptor sets",
-                 m_descriptorSetsThisGeneration);
+    T8_LOG_DEBUG("[Vulkan][Compute] Recycling the compute-owned frame at %u descriptor sets, %u dispatches",
+                 m_descriptorSetsThisGeneration, m_computeDispatchesThisFrame);
 
     // Finish the command buffer and wait: resetting a pool invalidates every set
     // allocated from it, so none may still be referenced by in-flight work.

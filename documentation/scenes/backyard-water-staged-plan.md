@@ -212,26 +212,45 @@ already done is in section 4: "Stage 8", "PR preparation notes (moved from secti
 Steam Deck froze" and "Frozen waves".
 
 **How close.** The solver work is complete. It runs on D3D11, D3D12, Vulkan, WebGPU (native and
-browser), Android and the Steam Deck, and all 11 gates pass. Left: one large port (OpenGL), one Deck
-bug, re-verification after the last engine changes, small launcher and cleanup items, and the
-owner's decisions.
+browser), Android and the Steam Deck, and all 11 gates pass. Left:
+
+- one large port (OpenGL)
+- the Deck changes (OLED detection and the 60-sweep cap)
+- two features the owner asked for on 2026-11-02: wind on the balls, and real time on slow devices
+- re-verification after the last engine changes
+- small launcher and cleanup items
+- the PR text
+
+**Owner decisions, 2026-11-02:**
+
+- Desktop keeps 120 sweeps; the Steam Deck runs 60, like Android and web (item B).
+- The wind pushes the balls (item K).
+- The device slow motion should go: "why are we capping?" (item J explains it and replaces the
+  clamp).
 
 | Id | Item | State | Size |
 |---|---|---|---|
-| A | OpenGL port (W-28) | Not started; implementation below | L |
-| B | Steam Deck OLED not detected as a handheld | Bug found 2026-11-02 | S |
-| C | Browser re-verify after the air-rise kernel | The web export predates the kernel | S |
+| A | OpenGL port (W-28) | Not started; generator verified on 7 kernels | L |
+| B | Steam Deck: detect the OLED, run 60 sweeps | Decided 2026-11-02; not implemented | S |
+| C | Browser re-verify after the kernel changes | The web export predates the air-rise kernel | S |
 | D | Android: CI-style build, 30-minute tablet run | APK with every fix installed, no long run yet | S–M |
 | E | Launcher gaps | Three small items | S |
 | F | Cleanup: script move, README, W-16 | Partly done | M |
 | G | Final matrix and validation (2b) | Last full run predates the Vulkan/WebGPU/Linux changes | M |
-| H | Owner decisions and PR text | To collect | S |
+| H | Remaining owner decisions and PR text | Merge strategy and push approval open | S |
 | I | Simulated buoyancy in the headless gates (optional) | Unblocked by the gate 7 improvement | S |
+| J | Real time on slow devices: adaptive substeps (W-31) | Designed below | M |
+| K | Wind pushes the balls (W-30) | Designed below | S–M |
 | — | W-07 solid fraction | Not needed for the PR | L |
 
-**Order:** B, C, E and F first (small, independent), then A (its own sessions), then D, G and H.
-A changes Framework and shared shader code, so G must run after A. I is optional; if attempted, do
-it before G.
+**Order:**
+
+1. B, then K, then J. All three change the solver or its settings, and J adds a kernel.
+2. A. The generator then covers the final kernel set.
+3. C, then D. Both re-measure after the kernels settle; D includes real time on the tablet.
+4. G, then H.
+
+E and F are independent and fit anywhere before G. I is optional; if attempted, do it before G.
 
 **Verified on 2026-11-02; redo only if the code changes:**
 
@@ -282,9 +301,17 @@ it before G.
   - `VS_Mesh.glsl` and `FS_Mesh.glsl` are hand-written and have no `FLUID_SURFACE` code (the HLSL
     has 14 and 43 references). This is the WebGPU flat-water bug, except that GL has no HLSL
     fallback.
-  - On GL, `RenderMesh` uploads one merged `RenderMesh::CBuffer` (`RenderMesh.cpp` ~L2384,
-    `driver->UsesGLSL()`). It has **no `TimeParams`**, so the displacement scale (`.z`) and the
-    ripple gate (`.w`) do not reach GL.
+  - On GL every mesh draw uploads one merged `RenderMesh::CBuffer`:
+    - `RenderMesh.cpp` ~L2384 (`driver->UsesGLSL()`)
+    - `MutableMesh.cpp` ~L410
+    - `RenderSkinnedMesh.cpp` ~L1517 and the wire constant buffer, ~L984
+  - That struct lacks three things the water shaders read:
+    - `TimeParams`: VS displacement scale `.z`, ripple gate `.w`, time `.x`, ripple scale `.y`
+    - `CameraVP`: the FS screen-space trace and reflections
+    - the 24 `WaterGpuParams` vectors (`WaterOptics0`…`WaterMisc1`, `WaterTunables.h` ~L274)
+
+    The HLSL path gets them from the split `MeshInstanceCB`/`MeshFrameCB`/`MeshMaterialCB`. The FS
+    time is `MaterialParams3.w`, which GL already has.
 
 **A1. Generator.** New script `T850/scripts/shaders/generate_gl_compute_twins.ps1`. Per kernel and
 per permutation:
@@ -319,12 +346,24 @@ $sdk = Join-Path $env:VULKAN_SDK 'Bin'
 - **cbuffer packing.** glslang emits HLSL packing offsets. SPIRV-Cross fails, or emits
   `layout(offset=…)` (which needs `GL_ARB_enhanced_layouts`), when they are not std140-compatible.
   `FluidConstants` should pass. If a kernel fails, fix its HLSL cbuffer; never hand-edit the output.
-- **Check one output by eye first** (`CS_FluidAirRise3D`, the smallest). Expect:
-  - `layout(local_size_x = 4, local_size_y = 4, local_size_z = 4)`
-  - `layout(binding = 0, std140) uniform` for the constants
-  - `layout(binding = 1) uniform sampler3D` for `AlphaIn`
-  - `layout(binding = 2, r32f) uniform writeonly image3D` for `AlphaOut`
-  - `layout(binding = 8, std430) readonly buffer` for `WallMask`
+- **Verified on 2026-11-02 (reviewer).** These commands were run into `%TEMP%`, on 7 kernels:
+  `CS_FluidAirRise3D`, `CS_FluidSurface3D` (groupshared tile), `CS_FluidDiagnostics3D` (atomics),
+  `CS_FluidStampBodies3D` (second UBO, three SSBOs), `CS_FluidSeed3D` (base and `SEED_DIVERGENT`;
+  the two bodies differ in 2 lines), `CS_FluidVolumeReduce3D` (`shared vec3[64]`) and
+  `CS_VolumePatternWrite`.
+  - Every output parses as OpenGL GLSL 4.30 (`glslangValidator -G -S comp`), which is what
+    `GLCompute` does at run time.
+  - The bindings equal the registry's `binding_index` values.
+
+  Air-rise output, for reference:
+  - `layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;`
+  - `layout(binding = 0, std140) uniform FluidConstants { uint Width; … float OpenCeilingPad2; }`
+  - `layout(binding = 1) uniform sampler3D SPIRV_Cross_CombinedAlphaInSPIRV_Cross_DummySampler;`
+  - `layout(binding = 2, r32f) uniform writeonly image3D AlphaOut;`
+  - `layout(binding = 3, std430) readonly buffer WallMask { uint _data[]; }`
+
+  SPIRV-Cross renames the sampled texture, which does not matter: GL binds by number. Its
+  `do { … break; } while(false)` blocks are how it expresses early returns; leave them.
 
 **A2. Drift guard.** Extend `scripts/validation/check_fluid_constants.py`, or add
 `check_gl_twins.py` next to it. Fail when a generated twin's `hlsl-sha256` differs from its
@@ -382,15 +421,58 @@ lacked.
 
 **A4. Rendering on GL.** Without this the water stays flat.
 
-1. **`TimeParams`.**
-   - Append `XVECTOR3 TimeParams;` as the **last** member of `RenderMesh::CBuffer` (`RenderMesh.h`
-     L69), and copy it in `ApplyMeshInstanceCB` (`RenderMesh.cpp` ~L1818).
-   - `GLShader` assigns byte offsets in the order the uniforms are parsed (`GLShader.cpp`
-     ~L205–262, `uniformPos += size`). So `uniform highp vec4 TimeParams;` must sit where the
-     parsed order puts it at `offsetof(RenderMesh::CBuffer, TimeParams)`. Read how VS and FS
-     uniforms are merged before choosing the line.
-   - Prove it with a temporary log of both numbers, then remove the log.
-2. **Port the `#ifdef FLUID_SURFACE` blocks by hand** (about 500 lines):
+1. **How GL maps constants (read this first).** GL has no constant buffers here.
+   - `GLShader` parses the VS, then the FS (`GLSLParser::ParseFromMemory`).
+   - It assigns each **new** uniform name the next byte offset in that order, with no padding:
+     `vec4` = 16, `mat4` = 64 (`GLShader.cpp` ~L205–262).
+   - `GLConstantBuffer::Set` then calls `glUniform*` from those offsets. A uniform past the struct
+     end is skipped, with an `[ERROR]`.
+
+   So the GLSL declaration order **is** the layout:
+   - `VS_Mesh.glsl` declares `WVP`, `World`, `WorldView`, then 12 `vec4` ending with
+     `Light0Direction`. That is bytes 0–383, matching `RenderMesh::CBuffer` up to `Light0Dir`.
+   - The FS-only uniforms follow from byte 384, in `FS_Mesh.glsl` order: `EmissiveColor` (L93)
+     … `LightRadius` (L134). This matches the struct after `Light0Dir`.
+   - `WorldView` at L817 is a repeat and takes no new offset.
+
+   Any uniform added to the VS takes byte 384 and shifts every FS uniform after it.
+2. **`TimeParams`** (needed by the VS only).
+   - Insert `XVECTOR3 TimeParams;` into `RenderMesh::CBuffer` **directly after `Light0Dir`**
+     (`RenderMesh.h` ~L84).
+   - Declare `uniform highp vec4 TimeParams;` in `VS_Mesh.glsl` **directly after
+     `Light0Direction`**, unconditionally. Inside `#ifdef FLUID_SURFACE` it would shift the FS
+     uniforms in some permutations and not in others.
+
+   This is safe because the C++ side and GLSL side shift by the same 16 bytes:
+   - On GL every user of `VS_Mesh.glsl` uploads `RenderMesh::CBuffer`: `FS_Mesh.glsl`,
+     `FS_WireMesh.glsl`, `MutableMesh`, and skinned meshes through the bone texture.
+   - `CBufferSkinned`/`CBufferSkinnedQT` in `RenderSkinnedMesh.h` are referenced by no `.cpp`.
+   - No HLSL or WGSL layout uses `RenderMesh::CBuffer`.
+
+   Fill it:
+   - `ApplyMeshInstanceCB` (`RenderMesh.cpp` ~L1818): `dst.TimeParams = src.TimeParams;`
+   - `CopyInstance` in `MutableMesh.cpp` ~L49: the same
+   - `RenderSkinnedMesh.cpp` ~L1287: zero it in `baseCB`
+3. **`CameraVP` and the water material** (FS only).
+   - **Append** `XMATRIX44 CameraVP; t850::WaterGpuParams WaterParams;` at the **end** of
+     `RenderMesh::CBuffer`, after `LightRadius[32]`.
+   - In `FS_Mesh.glsl`, after `LightRadius`, declare `uniform highp mat4 CameraVP;` and the 24
+     `uniform highp vec4 Water…;` in exactly the `WaterGpuParams` member order (`WaterOptics0`…5,
+     `WaterWaves0`…2, `WaterReflect0`…2, `WaterFoam0`…3, `WaterRipple0`…5, `WaterMisc0`…1).
+   - Because they come last, they may sit inside `#ifdef FLUID_SURFACE`. Nothing after them moves,
+     and inactive uniforms cost no `glUniform` calls.
+   - Fill them in `ApplyMeshFrameCB` (`dst.CameraVP = src.CameraVP;`) and `ApplyMeshMaterialCB`
+     (`dst.WaterParams = src.WaterParams;`), plus the `MutableMesh` copies.
+   - HLSL `mul(CameraVP, v)` is GLSL `CameraVP * v`, the same as `mul(WVP, pos)` →
+     `WVP*skinnedPos` in the existing twin.
+4. **Prove the layout before porting shader code.** Dump scenes 1 and 6 on GL
+   (`--regressionFixedDt 0.0333333`, frame 300) before and after steps 2 and 3. They must be
+   **byte-identical**: neither scene uses the new fields, so any shifted offset changes material
+   colours.
+   - Also grep the GL logs for `exceeds CB size`.
+   - Optionally log the reflected byte position of `TimeParams` against
+     `offsetof(RenderMesh::CBuffer, TimeParams)` (384) once, then remove the log.
+5. **Port the `#ifdef FLUID_SURFACE` blocks by hand** (about 500 lines):
    - `VS_Mesh.hlsl` L38–41 and L224–263: bilinear height over texel centres, plus the fake ripples.
    - `FS_Mesh.hlsl` L183–190: declarations.
    - `FS_Mesh.hlsl` L323–539: ripple octaves, `WaterRippleGradient/Height/SlopeLow/GradientCoarse`,
@@ -409,11 +491,10 @@ lacked.
    | `lerp` | `mix` |
    | `frac` | `fract` |
    | `saturate(x)` | `clamp(x, 0.0, 1.0)` |
-
-   For `mul`, follow the row/column convention the GL twin already uses.
-3. **Preprocessor.** GL uses the engine's own (`GLSLParser.cpp` ~L170). It supports `#define`,
+   | `mul(M, v)` | `M * v` |
+6. **Preprocessor.** GL uses the engine's own (`GLSLParser.cpp` ~L170). It supports `#define`,
    `#ifdef`, `#ifndef`, `#if <expr>`, `#else` and `#endif`. Use plain `#ifdef FLUID_SURFACE`.
-4. **Prove the path is live**, as for WebGPU in `330fd3eb`: a temporary unconditional magenta return
+7. **Prove the path is live**, as for WebGPU in `330fd3eb`: a temporary unconditional magenta return
    inside `#ifdef FLUID_SURFACE` in `FS_Mesh.glsl` must show on GL. Then remove it.
 
 **A5. Acceptance**, in this order, with `--api gl`:
@@ -435,23 +516,76 @@ lacked.
    - `compute-shader-implementation.md`: GL 3D volumes, layered binds, inline buffers, sync
      readback, the generator
 
-#### B. Steam Deck OLED is not detected as a handheld
+#### B. Steam Deck: detect the OLED and run 60 sweeps (owner decision 2026-11-02)
+
+The owner's decision: desktop keeps 120 sweeps, and the Deck runs 60 like Android and web. Measured:
+the Deck runs ~17 fps at 60 sweeps against ~10 at 120, and every gate passes at 60 on D3D12/Vulkan.
+
+**The detection bug:**
 
 - **Linux.** `DetectSteamDeckReason()` (`LinuxFramework.cpp` L34) looks for "steam deck" or
   "jupiter" in DMI. The owner's Deck is an OLED and reads `product_name=Galileo`,
   `board_name=Galileo`, `sys_vendor=Valve` (read 2026-11-02), so the log says
   `Handheld detection: no`.
-- **Windows.** `Win32Framework.cpp` L82 looks for "steam deck" only.
+- **Windows.** `DetectWindowsHandheldReason()` (`Win32Framework.cpp` ~L72) looks for "steam deck"
+  only.
+- **The cap.** `EffectivePressureIterations()` caps at compile time for `__EMSCRIPTEN__`/
+  `OS_ANDROID` only. The Deck is `OS_LINUX`, and adding `OS_LINUX` to the `#if` would cap desktop
+  Linux too, so it has to be a runtime check.
 
-**Fix:** in both, also accept `sys_vendor` `Valve` with product or board `Jupiter` or `Galileo`
-(case-insensitive). Verify on the Deck: `Handheld detection: yes Steam Deck (Galileo Galileo Valve)`.
+**Steps:**
 
-The Deck sweep count is the owner's choice (H). If it should be 60, make the cap a **runtime**
-input, not a new `#if`: `OS_LINUX` would also cap desktop Linux.
+1. **Shared detection.** New `Framework/include/utils/DeviceInfo.h` and
+   `Framework/src/utils/DeviceInfo.cpp`:
 
-- `EffectivePressureIterations()` takes a `handheld` flag.
-- `BackyardScene` passes `IManager.Gamepad.handheldDevice`.
-- `BackyardSelfTest` passes the same flag, so the gates validate what ships.
+   ```cpp
+   namespace t850 {
+     struct DeviceInfo {
+       bool steamDeck = false;
+       std::string handheldReason;   // empty when not a handheld
+     };
+     const DeviceInfo& GetDeviceInfo();   // probed once (function-local static)
+   }
+   ```
+
+   - **Linux:** move `ReadFirstLine` and the DMI probe out of `LinuxFramework.cpp`. Steam Deck
+     means `sys_vendor` is "Valve" (case-insensitive) and product or board is "Jupiter" (LCD) or
+     "Galileo" (OLED). Keep the "steam deck" substring as a fallback.
+   - **Windows:** move `ReadRegistryString` and `DetectWindowsHandheldReason` out of
+     `Win32Framework.cpp`. Steam Deck means `SystemManufacturer` "Valve" with product or board
+     Jupiter or Galileo, plus the substring. The other handhelds (ROG Ally, Legion Go, …) keep their
+     reason string but `steamDeck` stays false: the owner decided for the Deck only.
+   - **Android and Emscripten:** return the default; no probe.
+   - Both frameworks' `InitializeGamepads()` read `GetDeviceInfo().handheldReason` instead of their
+     own probes, so the `Handheld detection:` log line stays as it is.
+2. **The cap.** In `WaterTunables::EffectivePressureIterations()` (include `utils/DeviceInfo.h`):
+
+   ```cpp
+   #if defined(__EMSCRIPTEN__) || defined(OS_ANDROID)
+     return (std::min)(configured, kMobilePressureIterations);
+   #else
+     return GetDeviceInfo().steamDeck ? (std::min)(configured, kMobilePressureIterations) : configured;
+   #endif
+   ```
+
+   The scene (`BackyardScene.cpp` L379, L961) and the self-test (`BackyardSelfTest.cpp` L216)
+   already call it, so the gates validate what ships. `--backyard-iterations N` still overrides.
+3. **Registration.** Add `DeviceInfo.cpp` to the Framework vcxproj and filters,
+   `Framework/CMakeLists.txt` and `cmake/AndroidBuild.cmake`.
+4. **Visibility.** The scene already logs the count at L367 (`Fluid solver running on …, %d pressure
+   iterations`). Add the reason when it is capped: `(Steam Deck cap)` or `(mobile/web cap)`.
+5. **Verify on the Deck:**
+   - `Handheld detection: yes Steam Deck (Galileo Galileo Valve)`
+   - `60 pressure iterations (Steam Deck cap)`
+   - backyard, fluid and compute self-tests PASS
+   - about 17 fps in scene 7
+
+   Windows desktop must still report 120.
+6. **Docs.**
+   - the `WaterTunables.h` comment
+   - the implementation record's section 11
+   - `runtime-configuration.md` (sweep count per platform)
+   - any platform doc that quotes the handheld detection (grep `Handheld detection`)
 
 #### C. Browser re-verify
 
@@ -550,13 +684,15 @@ pwsh 7, then `ValidateWebReleasePackage.ps1`.
 
 #### H. Owner decisions and PR text
 
-**Decisions:**
+**Decided on 2026-11-02:**
 
-- Desktop `pressureIterations`: keep 120 (26–30 % of the frame), or 80?
-- Deck sweep count: 120 (~10 fps, water at 0.31× speed) or 60 (17 fps, 0.53×)? Needs B first.
-- Device slow motion: `maxDeltaTime` clamps the step at 1/30 s. Options: accept it, lower the device
-  render resolution, or fewer substeps. Profile before proposing.
-- Wind on the balls (not implemented).
+- Desktop `pressureIterations` stays 120.
+- The Steam Deck runs 60 (item B).
+- The wind pushes the balls (item K).
+- Real time instead of slow motion on devices (item J).
+
+**Still open:**
+
 - Merge commit, not squash: the documents cite about 100 commit hashes.
 - Push approval.
 
@@ -573,8 +709,10 @@ pwsh 7, then `ValidateWebReleasePackage.ps1`.
   - WebGPU submit bound
   - Linux main loop
   - GL compute volumes, from A
+  - Steam Deck detection, from B
+  - adaptive substeps, from J
 - **Evidence table:** gates per API, devices, the matrix.
-- **Known limitations:** W-07, the GL sync readback, device slow motion.
+- **Known limitations:** W-07, the GL sync readback, and any slow motion left after J.
 - **Links** to the three Backyard documents.
 
 #### I. Simulated buoyancy in the headless gates (optional, not blocking)
@@ -589,6 +727,228 @@ Today the gates float the ball on the authored plane.
 - **Accept** only if gates 7, 8 and 11 pass on D3D12, Vulkan and WebGPU with margin, and the
   float's settled `y` matches the scene probe (−0.07…−0.085 m).
 - **Otherwise** revert and record the numbers in W-06.
+
+#### J. Real time on slow devices: adaptive substeps (W-31, owner request 2026-11-02)
+
+The owner asked why the water is capped. **The scene already runs on real timestamps**:
+`BackyardScene.cpp` ~L1008 takes `deltaSeconds * timeScale` from the frame clock. It then clamps
+that to `maxDeltaTime` = 1/30 s, and the clamp is what turns a slow frame into slow motion.
+
+**How the step works today** (`FluidSimulation::Step`, ~L1745):
+
+- `substeps = max(bodySubsteps, ceil(frameDt / maxSubstepDt))`, at most 12.
+- `maxSubstepDt` = 1/120 s.
+- Every 1/30 s frame therefore costs 4 full substeps (all kernels plus `pressureIterations`
+  sweeps), whatever the water is doing.
+- On the Deck at 60 sweeps that is ~17 fps. Each frame simulates 1/30 s while 1/17 s passes:
+  0.53–0.57× real time. At 120 sweeps, ~10 fps and 0.31×.
+
+**Why the clamp exists, and which reasons still hold:**
+
+1. **Stale.** The comments (`WaterTunables.h` ~L46, `BackyardScene.cpp` ~L1003) cite the explicit
+   viscous bound h²/(6ν) = 0.0675 s. That held for ν = 0.02. The shipped ν is 1e-6 m²/s, a bound of
+   ~1350 s; even the GUI maximum (0.01) gives 0.135 s. Correct both comments.
+2. **Valid: hitches.** A stall (loading, window drag, a breakpoint, an Android resume) would hand the
+   solver seconds of dt. The 12-substep ceiling would then push each substep far over the CFL bound,
+   and the alpha transport would smear and lose mass.
+3. **Valid: the spiral of death.** On a device slower than real time, a bigger delta means more
+   substeps (at the fixed 1/120), a longer frame, and a bigger delta again. The clamp converts that
+   into slow motion.
+4. **The real cost driver.** `maxSubstepDt` = 1/120 is a fixed worst case. The alpha transport's
+   bound is (|u|+|v|+|w|)·dt/h ≤ 1 with h = 0.09 m, so 1/120 s is only needed above 10.8 m/s. The
+   measured pool maximum is ~1.4 m/s in a splash (tablet `[Backyard][fluid] maxSpeed=1.4280`) and
+   ~0.02 m/s when calm.
+
+   The other per-step terms are not limiting at 1/30 s:
+   - velocity advection is semi-Lagrangian (unconditionally stable)
+   - air rise is `c = 0.25·dt/h` = 0.09
+   - buoyancy is symplectic with ω·dt ≈ 0.27
+   - drag and heave damping are implicit
+
+**Design: substeps from the measured velocity, plus a per-frame budget.**
+
+1. **Measure the bound on the GPU.** New kernel `CS_FluidMaxVelocity3D`:
+   - Reads `VelocityIn` (`Texture3D<float4>`); one thread per cell computes `|u|+|v|+|w|` at the
+     cell centre, from the MAC faces as `CS_FluidDiagnostics3D` does.
+   - Reduces with a groupshared max (the `CS_FluidVolumeReduce3D` pattern), then one
+     `InterlockedMax` per group into a 1-`uint` buffer. `asuint` of a non-negative float orders
+     like the float.
+   - Do **not** reuse `CS_FluidDiagnostics3D`: it issues four atomics per voxel.
+   - Register it in `compute_kernels.json`, the Android `shader_permutations.json` compute list and
+     the constants guard; after A, it also needs a GL twin.
+2. **Read it without stalling.**
+   - Dispatch it once per frame, after the last substep.
+   - Read it with `RequestComputeReadback`/`ConsumeComputeReadback`, exactly like the W-06
+     body-level ticket: one request in flight, keep the last value, log if it stalls for 60 frames.
+   - Headless and fixed-step runs read it synchronously (`ReadComputeBuffer`), so the gates stay
+     deterministic.
+3. **Substep size** in `FluidSimulation::Step`:
+
+   ```cpp
+   const float uBound = (std::max)({1.25f * m_measuredVelocitySum,     // lagged 1-3 frames
+                                    1.7321f * fastestBodySpeed,       // a splash starts at the body
+                                    m_settings.minCflSpeed});         // 0.5 m/s floor
+   const float subDtCfl = std::clamp(m_settings.cflNumber * cell / uBound,
+                                     1.0f / 480.0f, m_settings.maxSubstepDt);
+   uint32_t substeps = (std::max)(bodySubsteps,
+                                  static_cast<uint32_t>(std::ceil(frameDt / subDtCfl)));
+   ```
+
+   - New tunables: `cflNumber` = 0.5, `minCflSpeed` = 0.5 m/s, `adaptiveSubsteps` = true.
+   - `maxSubstepDt` becomes the ceiling: try 1/30, after measuring (step 7).
+   - `adaptiveSubsteps` = false must reproduce today's fixed 1/120 behaviour exactly.
+   - The body term covers a splash that starts between readbacks: the impact velocity comes from the
+     body, which the CPU knows now.
+4. **Frame delta and budget** in `BackyardScene` (~L1008):
+   - `frameDt = min(realDt * timeScale, maxDeltaTime)`, with the `maxDeltaTime` default raised from
+     1/30 to 0.25 s. It becomes a hitch clamp only; keep the JSON key, change the comment.
+   - New tunable `maxSubstepsPerFrame` (default 4; the hard cap of 12 stays). `Step` needs
+     `ceil(frameDt / subDtCfl)` substeps; when that exceeds the budget, it simulates only
+     `maxSubstepsPerFrame * subDtCfl` this frame.
+   - Slow motion then happens only when the water truly needs more work than the budget, and the
+     cost per frame stays bounded, so there is no spiral.
+   - `SetDeltaTime` keeps receiving the requested delta; `Step` reports the simulated one, and
+     `SimulationTime()` advances by it.
+5. **Report it.** Extend the existing sim/wall line (~L1030) with substeps per frame and the share of
+   frames that were budget-limited:
+   `sim/wall 0.98, substeps 1.6/frame, budget-limited 3 %`.
+6. **Settings plumbing.** For each new tunable:
+   - `WaterTunables` field
+   - `FluidSettings` field and setter
+   - JSON key in the `glz::meta` of `BackyardWaterJson.cpp`; the `static_assert` count goes up by
+     one per key
+   - `Scenes/BackyardWater.json`
+   - a GUI slider, next to "max substep dt"
+7. **Measure in this order** (D3D12 and Vulkan, 120 and 60 sweeps; gates 1, 2, 3, 7, 8, 11):
+   - fixed 1/120 (today)
+   - fixed 1/60 and 1/30, with `adaptiveSubsteps` off
+   - adaptive, with the ceiling at 1/30
+
+   Record the table in W-31. This says whether the CFL estimate or the plain ceiling is what keeps
+   the gates green. Gate 1's 2 mm / 0.05 % limits do not move.
+
+**Estimate from the 2026-11-02 Deck numbers** (to verify; not a result):
+
+- 100 ms per frame at 120 sweeps against 59 ms at 60 is ~0.17 ms per sweep. A 60-sweep substep is
+  then ~12–13 ms, and render plus the fixed work ~8 ms.
+- **Calm water,** 1 substep: ~21 ms, about 45 fps, real time.
+- **A splash** at Σ|u| ≈ 2.5 m/s needs substeps of 0.018 s or less: 2 per ~33 ms frame, real time
+  or close.
+
+**Acceptance:**
+
+- **Gates.** 1–11 PASS with `adaptiveSubsteps` on, on D3D12, Vulkan, D3D11 and WebGPU, plus the
+  Deck self-tests.
+- **New gate 13, "cfl".** With adaptive substeps, run the default drop for 10 s and log the largest
+  `(Σ|u|)·subDt/h` seen; it must stay ≤ 1. Then gate 11's air limits and alpha within [0, 1].
+- **Devices.** `sim/wall` ≥ 0.95, averaged over 60 s after the drop, on the Deck (60 sweeps) and
+  the tablet, at info log level; fps reported.
+- **Hitch.** On the Deck, run `kill -STOP <pid>; sleep 2; kill -CONT <pid>`. Expect no `[ERROR]`,
+  `nonFinite=0`, and a simulation-time jump of at most 0.25 s.
+- **Desktop.** No fps regression (same-session `telemetry.ps1`). Fast machines already run 1
+  substep per frame.
+- **Docs.**
+  - W-31 resolution
+  - implementation record section 8.2 (substepping) and section 11
+  - `runtime-configuration.md`
+
+#### K. Wind pushes the balls (W-30, owner decision 2026-11-02)
+
+**Today.** The wind (`windX`/`windZ`, default 0.6 / −0.35 m/s) acts only on the water, as surface
+stress in `CS_FluidForces3D` (`AIR_DENSITY` 1.2, `WIND_DRAG_COEFFICIENT` 1.3e-3; W-27). The balls
+move with the water through the annulus current (`flowX`/`flowZ`, W-06 step 3) but feel no air.
+
+**Physics.** Quadratic air drag on the part of the ball above the water, from the wind relative to
+the ball, **horizontal only**.
+
+- **Relative velocity:** `v_rel = (windX − vx, windZ − vz)`. Vertical air drag is left out. It is
+  under 2 % of g for a falling ball, and it would shift the drop timing that gates 7 and 8 rely on
+  for no visible gain.
+- **Exposed frontal area.** This is the circular segment above the waterline. `AdvanceOneSphere`
+  already computes the submerged depth `h`, clamped to [0, 2r]. With `s = 2r − h` and `d = r − s`:
+
+  ```
+  A_exp = r²·acos(d/r) − d·sqrt(r² − d²)          (s = 0 → 0, s = 2r → πr²)
+  a_exp = A_exp / (π r²)
+  ```
+
+- **Drag rate,** in the integrator's own units (mass = ρ_w·V·`effectiveMass`, the same
+  `effectiveMass` the water drag uses):
+
+  ```
+  k_air = (ρ_air / ρ_w) · 3 · Cd_air · a_exp · |v_rel| / (8 · r · effectiveMass)
+  ```
+
+  - ρ_air = 1.2, the same constant as `CS_FluidForces3D`.
+  - ρ_w = `sphereWaterDensity`.
+  - It mirrors the existing water term `k_w = dragScale = 3·Cd·f·|v_rel_w| / (8·r·effectiveMass)`.
+- **Integration.** Replace the two horizontal lines (`s.vx = s.flowX + relVx / dragFactor;` and the
+  `vz` twin, `FluidSimulation.cpp` ~L1515) with one implicit update toward both media:
+
+  ```cpp
+  const float kw = dragScale, ka = airScale;   // both already divided by |v_rel|
+  s.vx = (s.vx + dt * (kw * s.flowX + ka * m_settings.windX)) / (1.0f + dt * (kw + ka));
+  s.vz = (s.vz + dt * (kw * s.flowZ + ka * m_settings.windZ)) / (1.0f + dt * (kw + ka));
+  ```
+
+  - With `ka = 0` this is exactly today's line.
+  - The steady state is a weighted mean of the current and the wind: the classic leeway.
+  - `vy` keeps `/= dragFactor` (water only).
+  - A `held` body is skipped, as now.
+- **Expected size,** to check the gate against. A ball of density 0.6 floats with f = 0.6, which
+  gives a_exp ≈ 0.415; both Cd are 0.47. Then v/(W − v) = sqrt(1.2/1000 · 0.415/0.6) ≈ 0.029.
+  - **The ball drifts at about 2.8 % of the wind**, relative to the water, whatever its radius.
+    Real buoys drift at 2–4 % of the wind, so this is the right order.
+  - The default wind (0.69 m/s) gives ~2 cm/s, which is subtle; 5 m/s gives ~14 cm/s.
+  - In the live scene the water's own wind drift adds on top, through `flowX`/`flowZ`.
+
+**Steps:**
+
+1. **Tunable.**
+   - `WaterTunables::sphereAirDragCoefficient = 0.47f`, next to `sphereDragCoefficient`; 0
+     disables.
+   - JSON key `"sphereAirDragCoefficient"` in the `glz::meta` of `BackyardWaterJson.cpp`;
+     `static_assert` 109 → 110 (plus J's keys if J lands first).
+   - `Scenes/BackyardWater.json`.
+   - A GUI slider "air drag (wind on balls)", 0–2, in the sphere section.
+2. **Body field.** `FluidSphere::airDragCoefficient = 0.47f`. Set it everywhere `dragCoefficient`
+   is set (`BackyardScene.cpp` L311, L926, L1775) and in the live-edit path that pushes
+   `dragCoefficient` to the existing bodies.
+3. **Integrator.**
+   - Add `static float ExposedFrontalFraction(float h, float r)` (declared in `FluidSimulation.h`,
+     because the gate uses it).
+   - In `AdvanceOneSphere`, compute `airScale = k_air` from `m_settings.windX/windZ`, which
+     `SetWind` already sets, and apply the update above.
+4. **Probe.** Add `vx` and `vz` to the `[Backyard][ball]` line (~L1116) if they are not there yet,
+   so the drift can be read from logs.
+5. **Gate 12, "wind"** (`BackyardSelfTest`). It is headless, so the body's `flow` is zero (the
+   body-level query is off there) and only the wind drives the ball, deterministically.
+   - **Setup.** Reset. Put body 0 at rest, floating: y at the waterline where f(h) =
+     `densityRatio` (bisection), 2r + one cell from the upwind wall, on the pool's longer axis
+     (`PoolExtent()`).
+   - **Run.** Wind 10 m/s along that axis, fixed dt 1/30, 20 s.
+   - **Expected terminal speed:** `v_t = W·q/(1 + q)` with
+     `q = sqrt((ρ_air/ρ_w)·Cd_air·a_exp / (Cd_w·f))`. About 0.28 m/s, with a time constant of
+     ~4 s near terminal, so 15–20 s is settled.
+   - **PASS:**
+     - the mean along-wind speed over t = 15–20 s is within ±10 % of `v_t`
+     - the cross-wind speed is under 0.05 `v_t`
+     - the ball is still inside the basin
+     - a second run with `sphereAirDragCoefficient = 0` moves under 1 mm/s
+   - If the ball reaches the far wall before 20 s, use 8 m/s and 15 s, and record why.
+   - Restore the wind and the tunable afterwards; the gates share one simulation.
+6. **Re-baseline gates 1–11** before and after. The default wind now nudges the ball by roughly 1–2
+   cm/s. If a ball-sensitive gate (7, 8, 10) moves past its limit for that reason alone, set
+   `airDragCoefficient = 0` for that gate only, and write the reason next to the gate constant.
+7. **Live check.** Scene 7 with wind 6 m/s along X (GUI or JSON), `--backyard-spawn 8
+   --backyard-spawn-seed 777`, 60 s.
+   - Every ball's x increases.
+   - The balls collect at the downwind wall without jitter.
+   - A held ball (Ctrl + drag) ignores the wind.
+8. **Docs.**
+   - the W-30 resolution, with the gate numbers
+   - implementation record section 8.1 (body forces) and section 11 (tunable)
+   - `runtime-configuration.md`, if a CLI flag is added
 
 ### Standing rules from the reviews
 

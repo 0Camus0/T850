@@ -49,6 +49,8 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-27 The wind tunable does nothing | **Done** (2026-11-01) | this commit | The diagnosis below was half right: at run time `SurfaceLevel` is the layout fill (0.788), so the band did reach the waterline. Wind was multiplied by `ForcingAmplitude`, which ships at 0. Wind is now surface stress on the top wet layer; 10 m/s along X moves the scripted ball 1.2 cm in 20 s, 0 m/s leaves it still |
 | W-28 OpenGL has no solver | **Planned, stage of its own** (owner request 2026-11-02) | — | GL is the last backend without the solver. Route decided 2026-11-02: twins generated offline with the Vulkan SDK's `spirv-cross.exe` (not in vcpkg), plus GL 3D volumes, inline buffers and a hand port of the mesh shaders' `FLUID_SURFACE` path. Not started; staged plan section 0, item A |
 | W-29 The mean surface creeps up over long runs | **Done** (2026-11-02) | this commit | Entrained air never left (no bubble buoyancy) and W-26 drew it as frozen bumps. `CS_FluidAirRise3D` lets it rise out: after 30 s bulk cells below 98 % 3614 → 24, interface 3.36 → 1.16 cells; 600 s on D3D12 ends flat to ±1 mm with mean 0.0 mm. Gate 11 guards it. Fixing it exposed two backend bugs (WebGPU headless memory, Vulkan stale readback) |
+| W-30 The wind does not push the balls | **Planned** (owner decision 2026-11-02) | — | Air drag on the exposed cap, horizontal, integrated implicitly together with the water drag; expected leeway ~2.8 % of the wind. Gate 12. Staged plan section 0, item K |
+| W-31 Devices run the water in slow motion | **Planned** (owner request 2026-11-02) | — | The 1/30 s frame clamp plus a fixed 1/120 s substep cost 4 substeps per frame regardless of the flow: Deck 0.53×, tablet 0.53×. Replace them with CFL substeps from a measured velocity bound and a per-frame substep budget. Gate 13. Staged plan section 0, item J |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -2208,6 +2210,65 @@ The long run exposed two backend bugs, both fixed in the same change:
   The slot now counts its waits; a later wait proves the copy finished. The Deck reproduced
   "readback still pending after 60 frames" in 2 of 2 runs before and 0 of 3 after. That message is
   now logged whenever a body-level answer stalls.
+
+---
+
+### W-30 — The wind does not push the balls (P1 for the PR, S–M) — owner decision 2026-11-02
+
+**Problem.** Since W-27 the wind drives the water as surface stress, and a ball drifts only with
+the current it sits in. The owner wants the wind to push the balls themselves.
+
+**Design.** Quadratic air drag on the circular segment above the waterline, from the horizontal
+wind relative to the ball. It is integrated implicitly together with the existing water drag, so
+the ball relaxes to a weighted mean of the current and the wind.
+
+- The air drag rate mirrors the water term, scaled by ρ_air/ρ_w and the exposed frontal fraction.
+- New tunable `sphereAirDragCoefficient` (0.47; 0 disables).
+- Expected drift ~2.8 % of the wind relative to the water for the default ball, independent of
+  radius: ~2 cm/s at the default 0.69 m/s, ~14 cm/s at 5 m/s.
+
+The formulas, the code steps and gate 12 are in the staged plan, section 0, item K.
+
+**Acceptance.**
+
+- Gate 12: the headless terminal drift at 10 m/s is within ±10 % of the closed form; cross-wind
+  under 5 %; no drift with the coefficient at 0.
+- Gates 1–11 re-baselined.
+- Live: 8 balls in a 6 m/s wind collect at the downwind wall.
+
+---
+
+### W-31 — Devices run the water in slow motion (P1 for the PR, M) — owner request 2026-11-02
+
+**Problem.** The scene steps by real elapsed time but clamps each frame to `maxDeltaTime` = 1/30 s,
+and `Step` splits that into `ceil(frameDt / maxSubstepDt)` substeps at a fixed 1/120 s. Every frame
+therefore costs 4 full substeps, whatever the flow. Devices that cannot render 30 fps fall behind
+the wall clock:
+
+- Deck: 0.53× at 60 sweeps, 0.31× at 120
+- tablet: 0.53× at 60 sweeps
+
+The clamp's comment cites an explicit-viscosity bound that applied to ν = 0.02; at the shipped ν =
+1e-6 m²/s it is ~1350 s. What the clamp still does, rightly, is stop hitches and the spiral of
+death. What costs the frame is the fixed CFL step: 1/120 s assumes 10.8 m/s, while the pool peaks
+near 1.4 m/s.
+
+**Design.**
+
+- A new reduction kernel measures max(|u|+|v|+|w|), read asynchronously like the W-06 ticket.
+- Substeps come from `cflNumber · h / bound`, with a body-speed term and a 0.5 m/s floor.
+- `maxDeltaTime` becomes a 0.25 s hitch clamp.
+- A per-frame substep budget decides when slow motion is unavoidable.
+
+The code steps, the measurement order and gate 13 are in the staged plan, section 0, item J.
+
+**Acceptance.**
+
+- Gates 1–11 pass with adaptive substeps on all four solver APIs and the Deck.
+- Gate 13: the measured CFL number stays ≤ 1.
+- `sim/wall` ≥ 0.95 on the Deck (60 sweeps) and the tablet.
+- A 2 s stall on the Deck causes no error and no NaN.
+- No desktop fps regression.
 
 ---
 

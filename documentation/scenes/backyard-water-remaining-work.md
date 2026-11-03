@@ -35,7 +35,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-02 R32F storage for α/pressure/divergence | **Done** | `14c705f4` + part 2 | α, pressure, divergence are R32F; still-pool loss 0.693 % → 0.001 %. The gate shift was an off-centre isotropy probe, an fp16-calibrated gate 5 floor and trapped air read as missing water. Tiled surface kernel: 720p D3D12 306.8 → 415.3 fps, Vulkan 353.4 → 402.3 |
 | W-03 Mass lost every substep | **Mostly done** (attempt 3) | `b5ae57fa`, van Leer flux | Transport loss is ~0 (deficit is the displaced body volume); van Leer/minmod face value lifts bulk 0.9969 → 0.9987 and cuts cells below 0.98 by 79 % for free. Splitting and SLIC measured and rejected. Three acceptance lines marginal — see W-03 |
 | W-04 GPU→CPU readbacks | **Done** | `c911381a`, `ad7e019e`, `4e93d9d5` | Correction no longer reads back (GPU reduce + GPU deficit); probes only at info logging. Step 5 added the async readback pair on D3D12/Vulkan (`Request/ConsumeComputeReadback`); step 3 made the diagnostics buffer persistent with a kernel-side clear. Review fixed the D3D12 copy from `UNORDERED_ACCESS` (debug-layer error) and ticket matching |
-| W-06 Ball does not feel the water | **Done; step 4 to re-measure** | `4e93d9d5`, `a9e3c683`, review, 2026-11-01 | Buoyancy floats on the simulated surface averaged over an annulus; step 3 added the annulus current. Review fixed the dropped negative values; every body (not just the scripted one) now gets the level and current. Heave table to re-run |
+| W-06 Ball does not feel the water | **Done** | `4e93d9d5`, `a9e3c683`, review, 2026-11-01 | Buoyancy floats on the simulated surface averaged over an annulus; step 3 added the annulus current. Review fixed the dropped negative values; every body (not just the scripted one) now gets the level and current. Step 4 heave table re-measured after the fix: 0.15 stays. Headless gates still use the authored plane (staged plan item I, optional) |
 | W-07 Water under the ball is deleted | **Attempts 1 and 2 measured, not shipped** | — | Attempt 1 failed gate 8 (0.034 m flicker). Attempt 2 established *why*: any pass that respects the binary wall mask moves a whole cell when the footprint flips, so the fix needs a per-cell solid fraction (sub-cell coverage) in the mask and the transport, not a smarter displacement pass. Design recorded in W-07 |
 | W-05 Moving body re-uploads the wall mask | Done differently (review) | `c911381a` | Mask restamped on the GPU in a persistent buffer; no upload after startup. The analytic-body design is no longer needed for cost |
 | W-09 Water optics: depth, refraction, Fresnel | Done | `517ae6bf` | Accepted. Floor texture logs depth 0.300…1.560 m; `MaxPrimitiveTextures` 24 → 28 is safe (bones/lightmap bind outside the array) |
@@ -47,7 +47,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-25 A different PBR material on every ball | **Done** (reviewer) | `10edb63d` + `e055efec` + `ff66c039` | 32 CC0 sets in R2; cube-sphere ball with UVs; per-instance maps without a new permutation; random shuffle bag. Gate 10 (headless) and the frame probe landed in `ff66c039` |
 | W-26 The surface kernel compensates for trapped air | **Done** (removed with W-29, 2026-11-02) | this commit | Once the air rises out the term has nothing left to hide: with it off, gate 7 `covered min−ring` −2.4 mm (D3D12) / −1.8 mm (Vulkan) against −2.2 / −1.6 with it on. Removed, because it turned every leftover pocket into a frozen bump |
 | W-27 The wind tunable does nothing | **Done** (2026-11-01) | this commit | The diagnosis below was half right: at run time `SurfaceLevel` is the layout fill (0.788), so the band did reach the waterline. Wind was multiplied by `ForcingAmplitude`, which ships at 0. Wind is now surface stress on the top wet layer; 10 m/s along X moves the scripted ball 1.2 cm in 20 s, 0 m/s leaves it still |
-| W-28 OpenGL has no solver | **Planned, stage of its own** (owner request 2026-11-02) | — | GL is the last backend without the solver; the design, the twin-vs-generate decision and the acceptance list are in W-28. Not started |
+| W-28 OpenGL has no solver | **Planned, stage of its own** (owner request 2026-11-02) | — | GL is the last backend without the solver. Route decided 2026-11-02: twins generated offline with the Vulkan SDK's `spirv-cross.exe` (not in vcpkg), plus GL 3D volumes, inline buffers and a hand port of the mesh shaders' `FLUID_SURFACE` path. Not started; staged plan section 0, item A |
 | W-29 The mean surface creeps up over long runs | **Done** (2026-11-02) | this commit | Entrained air never left (no bubble buoyancy) and W-26 drew it as frozen bumps. `CS_FluidAirRise3D` lets it rise out: after 30 s bulk cells below 98 % 3614 → 24, interface 3.36 → 1.16 cells; 600 s on D3D12 ends flat to ±1 mm with mean 0.0 mm. Gate 11 guards it. Fixing it exposed two backend bugs (WebGPU headless memory, Vulkan stale readback) |
 | All others | Open | — | — |
 
@@ -1283,6 +1283,9 @@ section 7 of the record.
   backyard self-tests. Both run the water in slow motion (sim/wall 0.47 tablet, 0.31 Deck at 120
   sweeps, 0.51 at 60); see the staged plan's 2026-11-02 Android/Deck entry.
 * ARM64 Windows: builds only Framework + DayScene; not run.
+* Steam Deck CI-equivalent build with the editor (`--with-editor`) links DayScene and T8ditor at
+  `931b9cf1` (2026-11-02). The Deck OLED is not detected as a handheld (DMI `Galileo`); staged plan
+  item B.
 * **WebGPU: done 2026-11-01** (`00e28793`). The solver runs on Dawn/D3D12: `--compute-selftest`
   (3D RGBA16F and R32F), `--fluid-selftest` (projection 0.596 → 0.211 at 50 iterations, mass drift
   0.00 %), `--backyard-selftest` (all ten gates, float `ring−far` −1.7 mm, `covered min−ring`
@@ -2078,6 +2081,24 @@ fallback is what renders on GL now, and it is the pre-branch behaviour.
 
 Recommendation: **(b)**, and if the SPIRV-Cross port is unacceptable, do (a) but add a guard that
 fails when a fluid `.hlsl` is newer than its `.glsl` twin.
+
+**Measured 2026-11-02 — the decision and two gaps the design above missed.**
+
+- **Decision: (b), offline.** SPIRV-Cross is not a vcpkg dependency, and the packaged Tint is
+  built without its GLSL writer. The Vulkan SDK ships `spirv-cross.exe` and `glslangValidator.exe`,
+  so the twins are generated by a script and committed, with a sha256 drift guard. No new runtime
+  dependency. The command lines and the flags that matter (`T850_SPIRV` for the format
+  attributes, `--combined-samplers-inherit-bindings`) are in the staged plan, section 0, item A.
+- **27 kernels** need twins, not ~21: the 22 fluid kernels, the four `CS_Volume*Pattern*` self-test
+  kernels and `CS_SeparableBlur`.
+- **Gap 1, the backend.** GL `DispatchCompute` rejects every non-2D texture and every inline
+  `ReadOnlyBuffer`. The fluid passes body lists and velocities inline.
+- **Gap 2, rendering.** `VS_Mesh.glsl`/`FS_Mesh.glsl` have no `FLUID_SURFACE` code (about 500 HLSL
+  lines to port by hand), and GL's merged `RenderMesh::CBuffer` has no `TimeParams`. Without both,
+  GL would draw the pool flat with the solver running, which is the WebGPU flat-water bug again.
+
+The step-by-step implementation and the acceptance order are in the staged plan, section 0,
+item A.
 
 **Binding conventions.** glslang's GL path must reproduce the engine's register mapping
 (textures 0…, samplers 32…, UBOs 64…, images/UAVs 96… as the SPIR-V path already shifts them); the

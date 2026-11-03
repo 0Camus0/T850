@@ -273,7 +273,7 @@ measured performance result; all of it is written up in
 `GLComputeTexture3D` and the 3D/inline dispatch paths, `TimeParams`/`CameraVP`/`WaterParams` in
 `RenderMesh::CBuffer`, the `FLUID_SURFACE` port in `VS_Mesh.glsl`/`FS_Mesh.glsl`, and
 `--api gl` PASS on `--compute-selftest`, `--fluid-selftest`, all 11 `--backyard-selftest` gates and
-`--backyard-pick-test`, with scenes 1/6 byte-identical and scene 7 within +0.16/255 of D3D12.
+`--backyard-pick-test`, with scenes 1/6 byte-identical and scene 7 within +0.22/255 mean of D3D12.
 
 **Two corrections to the steps below.**
 

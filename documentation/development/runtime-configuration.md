@@ -359,7 +359,7 @@ the Backyard ones. Every automated run also passes `--unattended`.
 --backyard-selftest-frames N       frames per gate run
 --backyard-no-ball                 run the gates without the scripted ball
 --backyard-cell-size METRES        override the grid's derived cell size (debug)
---backyard-iterations N            run the gates at another platform's sweep count (60 = mobile/web)
+--backyard-iterations N            run the gates at another platform's sweep count (60 = mobile/web/Deck)
 --backyard-air-rise M_PER_S        run the gates at another air-rise speed (0 = old trapped air)
 --backyard-spawn N                 spawn N extra balls once the solver is ready
 --backyard-spawn-seed N            fix the spawn and material RNG for a reproducible run
@@ -372,6 +372,20 @@ the Backyard ones. Every automated run also passes `--unattended`.
 --fluid-fixed-dt SECONDS           fixed solver step for a deterministic run
 --fluid-dump-volume FRAME          dump the alpha/velocity volume at a frame
 ```
+
+**How many pressure sweeps run by default.** `WaterTunables::EffectivePressureIterations()` decides,
+and it is the same call the headless gates use:
+
+| Platform | Sweeps | Mechanism |
+|---|---|---|
+| Desktop Windows | the JSON value (120 by default) | — |
+| Steam Deck | 60 | Run-time `utils::GetDeviceInfo().steamDeck` check (a Linux build, so a compile-time branch would also cap desktop Linux) |
+| Android, Emscripten | 60 | Compile-time `kMobilePressureIterations` |
+
+The Steam Deck OLED reports DMI `sys_vendor=Valve`, `product_name=Galileo`, `board_name=Galileo`; the
+LCD reports `Jupiter`. `utils/DeviceInfo` owns that probe, and the input layer uses the same call for
+its `Handheld detection:` line, so the two can no longer disagree. The scene logs the effective count
+and the reason, e.g. `60 pressure iterations (Steam Deck cap)`.
 
 `--backyard-ball-probe` is the only instrument that sees a *local* defect: the mass audit averages
 the whole pool, where a 2 cm moat around a 0.25 m ball is 7 cells out of 82 917. It prints two lines

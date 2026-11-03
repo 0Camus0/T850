@@ -895,6 +895,23 @@ that used to be a literal. Groups:
 
 `SceneProp.Water` holds it; `BuildWaterGpu()` packs it into `WaterGpuParams`.
 
+**How many pressure sweeps actually run.** `EffectivePressureIterations()` is the single source of
+truth, and both the scene and the headless gates call it, so the gates validate what ships:
+
+| Platform | Sweeps | Why |
+|---|---|---|
+| Desktop Windows (D3D11/D3D12/Vulkan/WebGPU/GL) | 120 (whatever the JSON says) | CPU and GPU headroom |
+| Steam Deck (Vulkan) | 60 | Owner decision 2026-11-02; detected at run time |
+| Android, Emscripten | 60 | Compile-time cap (`kMobilePressureIterations`) |
+
+The Deck is a Linux build, so its cap has to be a run-time check — a compile-time `OS_LINUX`
+branch would also cap a desktop Linux session. The probe lives in
+[utils/DeviceInfo](../../T850/Framework/include/utils/DeviceInfo.h) and is shared with the input
+layer; the Deck OLED identifies itself as `Valve` + `Galileo` (the LCD as `Valve` + `Jupiter`), and
+before the probe knew that it logged `Handheld detection: no` and ran the desktop sweep count. The
+scene logs the reason next to the number: `120 pressure iterations` on desktop,
+`60 pressure iterations (Steam Deck cap)` on the Deck, `(mobile/web cap)` on devices.
+
 Approximately 90 sliders in the ImGui dev GUI, grouped into sections: Solver, Optics, Surface
 detail, Reflection, Ripple octaves, Foam, Dropped sphere, Presentation. Values apply live.
 

@@ -230,10 +230,10 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 | Id | Item | State | Size |
 |---|---|---|---|
 | A | OpenGL port (W-28) | **Done 2026-11-02**; see W-28's resolution | L |
-| B | Steam Deck: detect the OLED, run 60 sweeps | Decided 2026-11-02; not implemented | S |
+| B | Steam Deck: detect the OLED, run 60 sweeps | **Done 2026-11-03** (`5b90125a`): shared `utils/DeviceInfo`, run-time cap, verified on the Deck | S |
 | C | Browser re-verify after the kernel changes | The web export predates the air-rise kernel | S |
 | D | Android: CI-style build, 30-minute tablet run | APK with every fix installed, no long run yet | S–M |
-| E | Launcher gaps | Three small items | S |
+| E | Launcher gaps | Four items: the three small ones plus **the Backyard meshes are missing from the cloud asset manifest** (found 2026-11-03, see item B's verification) | S |
 | F | Cleanup: script move, README, W-16 | Partly done | M |
 | G | Final matrix and validation (2b) | Last full run predates the Vulkan/WebGPU/Linux changes | M |
 | H | Remaining owner decisions and PR text | Merge strategy and push approval open | S |
@@ -538,6 +538,9 @@ lacked.
 
 #### B. Steam Deck: detect the OLED and run 60 sweeps (owner decision 2026-11-02)
 
+**Status: implemented (`5b90125a`), verified on the Deck — see the verification block at the end of
+this item.**
+
 The owner's decision: desktop keeps 120 sweeps, and the Deck runs 60 like Android and web. Measured:
 the Deck runs ~17 fps at 60 sweeps against ~10 at 120, and every gate passes at 60 on D3D12/Vulkan.
 
@@ -601,12 +604,40 @@ the Deck runs ~17 fps at 60 sweeps against ~10 at 120, and every gate passes at 
    - about 17 fps in scene 7
 
    Windows desktop must still report 120.
+
 6. **Docs.**
    - the `WaterTunables.h` comment
    - the implementation record's section 11
    - `runtime-configuration.md` (sweep count per platform)
    - any platform doc that quotes the handheld detection (grep `Handheld detection`)
 
+**Verification, 2026-11-03 (owner's Deck, OLED, RADV VANGOGH, branch `deck-w28` = `5b90125a`).**
+Built on the Deck with `steamdeck/BuildSteamRuntime.sh --configuration Release` inside the sniper SDK
+container (171/171 targets, `DeviceInfo.cpp` compiled clean), source delivered as an incremental git
+bundle. Backyard models and textures were missing from the cloud manifest, so they were copied and
+downloaded by hand for this run (see the asset gap below).
+
+| Check | Result |
+|---|---|
+| DMI, read from the machine | `sys_vendor=Valve`, `product_name=Galileo`, `board_name=Galileo`, `bios_version=F7G0114` |
+| `Handheld detection:` | **`yes Steam Deck (Galileo Galileo Valve)`** — was `no` |
+| Solver init | **`Fluid solver running on 100x22x50, 60 pressure iterations (Steam Deck cap)`** — was 120 with no cap |
+| `--compute-selftest` | PASS, incl. odd-sized 3D rgba16float/r32float |
+| `--fluid-selftest` | PASS, `meanSpeed=0.0562` |
+| `--backyard-selftest` | **PASS**, 11 gates, 2 m 25 s. Still pool `maxAbs` 0.0003 m; isotropy ±0.0427 m; mass drift +0.008 %; boundary 0.00018 m/s; boundedness 0; float flicker 0.0007 m; `air 24 of 76276` (identical to desktop); `ball materials 32/32/32` |
+| Scene 7 frame rate | 600 frames per 34.92 s of the `[Backyard][timing]` cadence ≈ **17.2 fps** at 60 sweeps, 0 `[ERROR]` |
+| `sim/wall` | **0.54** — still slow motion, which is stage J's job, unchanged by this stage |
+
+Windows desktop after the change: `Handheld detection: no`, `120 pressure iterations`, no cap note.
+
+**Found while verifying: the Backyard meshes are not in the cloud asset manifest.**
+`runtime_assets.json` has no `Backyard/*.glb` entry, so `DownloadModels.ps1`,
+`steamdeck/DownloadCloudAssets.py` and the launcher's "Download Assets" cannot install scene 7 on a
+machine that has no repository checkout — the scene then dies with
+`[SceneDescriptor] Cannot open 'Scenes/BackyardScene.json'` / `[glTF] cannot open
+'Models/Backyard/*.glb'`. This does not affect the Deck or Android packages (both stage the repo's
+`Assets/`), but it does affect the cloud-download flow and therefore the PR's install story. Pushing
+them needs R2 credentials; recorded under item E.
 #### C. Browser re-verify
 
 `build/web/WebShaders` was exported at 13:26 on 2026-11-02, and `CS_FluidAirRise3D` landed at

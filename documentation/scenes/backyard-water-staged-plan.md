@@ -236,8 +236,8 @@ of the *new* list (browser) is in progress: scene 7 is now in `web/scenes.json` 
 | 3rd | 4. Clean-up — partly done (flags, W-14); W-16 and the script move open | M |
 | 4th | 1a. WebGPU port, native — **done** | L |
 | 5th | 1c. Browser (Emscripten) build + scene 7 in the catalogue — **done** | M |
-| 6th | **1d. Android build + run** | M–L |
-| 7th | **1e. Steam Deck / Linux Vulkan run** | M |
+| 6th | 1d. Android build + run — **runs** (fullscreen, solver live, presents); fps open | M–L |
+| 7th | 1e. Steam Deck / Linux Vulkan run — **runs**, self-tests PASS; sweep count open | M |
 | 8th | **1f. OpenGL port (W-28)** | L |
 | 9th | 2b. Final matrix, regression sweep, PR text, owner sign-off | M |
 
@@ -2625,3 +2625,32 @@ HLSL first and falls back to the twin; the water shows waves, refraction and the
 surface, and the deferred difference is 4.19/255. That also exposed two samplers sharing `s0` in
 `FS_Mesh.hlsl`, which glslang mapped to binding 67 and WebGPU rejected; the fluid normal map now
 uses the material sampler and the constants guard rejects duplicate sampler registers.
+
+**Android and Steam Deck froze; three engine bugs (2026-11-02, reviewer).** The owner saw both
+devices stuck on one frame while the logs showed the solver running, which the local agent read as
+"the water settled". The screen really was frozen, and Windows Vulkan was frozen too:
+
+| Bug | Cause | Fix | Measured |
+|---|---|---|---|
+| No Vulkan frame was presented while the Backyard ran, on every platform | The solver dispatches in `OnUpdate`, so compute opens the frame as `Offscreen` and `BeginFrame` never acquires; the renderer's `Clear()` sees a started frame. Before `32d9b978` the driver presented the unacquired image anyway (NVIDIA tolerated it, Mali answered `OUT_OF_DATE`: the original black window); `32d9b978` gated present on a real acquire, so nothing presented at all | `EnsureFrameSwapchainImage()` acquires at the frame's first backbuffer use and in `CompleteFrame` | The other agent's probe at HEAD: `acquired=0 present=0` on every frame (Windows and tablet). After: 1200/1200 presents on Windows, 600 by 20 s on the tablet with the FPS label and moving water, 600 on the Deck. Khronos validation over 300 frames: no acquire/semaphore/present errors |
+| Every self-test flag on Linux ran the interactive scene | `LinuxFramework::OnCreateApplication` ran the loop and tore the app down before returning, so `main()` never reached `--compute/--fluid/--backyard-selftest` (inherited from master) | It returns after init, as `Win32Framework` does; T8ditor's Linux entry calls `UpdateApplication` and `OnDestroyApplication` | Deck: compute and fluid self-tests PASS |
+| The Deck lost the GPU mid-self-test | A compute-opened frame was flushed only at 6144 descriptor sets; cached sets let one submit hold thousands of dispatches, over amdgpu's 5 s job timeout (`ring gfx timeout`, `VK_ERROR_DEVICE_LOST`). Every later readback was garbage: float `far=+1.0000`, 68 multi-body mask errors | `RecycleOverflowingComputeFrame` also flushes at 2048 dispatches, and never recycles a frame that acquired an image | Deck `--backyard-selftest` **PASS**, 0 gfx timeouts; float `far` −0.0025 vs Windows −0.0026, multi-body worst 0.00024 on both |
+
+Windows regression after all three: backyard self-test PASS on Vulkan, D3D12 and D3D11; fluid and
+compute self-tests PASS on Vulkan and D3D12; pick test PASS on Vulkan; scenes 1, 6 and 7 present
+every frame on Vulkan with 0 errors.
+
+**Still open on the devices (owner decision).** Both run the water in slow motion because the frame
+time exceeds `maxDeltaTime` (1/30 s):
+
+| Device, 1278×721 or 2960×1848 | Sweeps | fps | sim/wall |
+|---|---|---|---|
+| Steam Deck (RADV VanGogh) | 120 (desktop default) | 11.3 | 0.31 |
+| Steam Deck | 60 | 19.9 | 0.51 |
+| Tablet SM-X920 (Mali), fullscreen | 60 (mobile cap) | 13.6 | 0.47 |
+
+The tablet kept presenting for 23 minutes (18,600 frames) after the fix.
+
+`kMobilePressureIterations` applies to Android and web only; the Deck is `OS_LINUX` and runs 120.
+Next for 1d/1e: decide the Deck's cap, then profile the device frame (render resolution vs solver)
+before touching the solver.

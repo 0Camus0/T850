@@ -1277,8 +1277,10 @@ section 7 of the record.
 
 ### W-17 — Untested platforms (P3, M, suggested: either)
 
-* Android (Vulkan) and Linux/Steam Deck: the solver uses 3D storage images and compute on every
-  substep; neither platform has run scene 7.
+* Android (Vulkan) and Linux/Steam Deck: **run since 2026-11-02.** Scene 7 presents on the SM-X920
+  tablet (fullscreen, 60 sweeps) and the Deck (RADV), and the Deck passes the compute, fluid and
+  backyard self-tests. Both run the water in slow motion (sim/wall 0.47 tablet, 0.31 Deck at 120
+  sweeps, 0.51 at 60); see the staged plan's 2026-11-02 Android/Deck entry.
 * ARM64 Windows: builds only Framework + DayScene; not run.
 * **WebGPU: done 2026-11-01** (`00e28793`). The solver runs on Dawn/D3D12: `--compute-selftest`
   (3D RGBA16F and R32F), `--fluid-selftest` (projection 0.596 → 0.211 at 50 iterations, mass drift

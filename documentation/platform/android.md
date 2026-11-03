@@ -137,11 +137,19 @@ Verified in PR CI: both `arm64-v8a` and `x86_64` Release APK jobs pass. Local de
 
 `ResizeSwapchain` must not trust `VkSurfaceCapabilitiesKHR::currentExtent` while the
 surface is still settling: DeX and some Android compositors report `0x0` during
-recreation, and a 0x0 swapchain answers `VK_ERROR_OUT_OF_DATE_KHR` forever, which
-presents as a black window with a recreation loop. `ResolveSwapchainExtent`
-clamps to the ANativeWindow size and refuses zero-area extents, recreation is
-deferred until the surface reports a real size, and `CompleteFrame` only presents
-when the frame actually acquired a swapchain image.
+recreation, and a 0x0 swapchain answers `VK_ERROR_OUT_OF_DATE_KHR` forever.
+`ResolveSwapchainExtent` clamps to the ANativeWindow size and refuses zero-area
+extents, and recreation is deferred until the surface reports a real size.
+
+A frame must acquire its swap chain image before it presents. A scene that dispatches
+compute in `OnUpdate` (the Backyard fluid solver) opens the frame as `Offscreen`, so
+`BeginFrame` does not acquire; `EnsureFrameSwapchainImage` acquires at the frame's first
+backbuffer use (`Clear`, `ClearBackbufferWithColor`, `EnsureBackbufferRenderPass`) or in
+`CompleteFrame`. Without it Mali answered `OUT_OF_DATE` to every present of the
+unacquired image (black window), and once present was gated on a real acquire the window
+froze on its first frame while the simulation kept running. Desktop NVIDIA tolerated the
+unacquired present, which hid the bug on Windows. A frame that never acquired does not
+present.
 
 
 ## Asset Profiles

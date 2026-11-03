@@ -32,6 +32,7 @@
 #include <utils/ThreadPool.h>
 #include <utils/Log.h>
 #include <utils/ConfigRuntime.h>
+#include <utils/DeviceInfo.h>
 #include <debug/Profiler.h>
 #include <debug/RuntimeTelemetry.h>
 #include <navigation/NavigationSystem.h>
@@ -42,52 +43,6 @@
 #include <string>
 
 namespace {
-  std::string ToLowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-      return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-  }
-
-  bool ContainsNoCase(const std::string& haystack, const char* needle) {
-    return ToLowerAscii(haystack).find(ToLowerAscii(needle ? std::string(needle) : std::string{})) != std::string::npos;
-  }
-
-  std::string ReadRegistryString(HKEY root, const char* subKey, const char* valueName) {
-    HKEY key = nullptr;
-    if (RegOpenKeyExA(root, subKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
-      return {};
-    }
-    char buffer[512] = {};
-    DWORD type = 0;
-    DWORD size = sizeof(buffer);
-    const LSTATUS status = RegQueryValueExA(key, valueName, nullptr, &type, reinterpret_cast<LPBYTE>(buffer), &size);
-    RegCloseKey(key);
-    if (status != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ)) {
-      return {};
-    }
-    return std::string(buffer);
-  }
-
-  std::string DetectWindowsHandheldReason() {
-    const std::string manufacturer = ReadRegistryString(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "SystemManufacturer");
-    const std::string product = ReadRegistryString(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "SystemProductName");
-    const std::string baseBoard = ReadRegistryString(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "BaseBoardProduct");
-    const std::string probe = manufacturer + " " + product + " " + baseBoard;
-
-    if (ContainsNoCase(probe, "rog ally") || ContainsNoCase(probe, "rc71") || ContainsNoCase(probe, "rc72")) {
-      return "ASUS ROG Ally/Ally X (" + product + " " + baseBoard + ")";
-    }
-    if (ContainsNoCase(probe, "legion go")) return "Lenovo Legion Go (" + product + ")";
-    if (ContainsNoCase(probe, "steam deck")) return "Steam Deck (" + product + ")";
-    if (ContainsNoCase(probe, "msi claw")) return "MSI Claw (" + product + ")";
-    if (ContainsNoCase(probe, "ayaneo")) return "AYANEO (" + product + ")";
-    if (ContainsNoCase(probe, "onexplayer")) return "ONEXPLAYER (" + product + ")";
-    if (ContainsNoCase(probe, "gpd win") || ContainsNoCase(probe, "gpd handheld")) return "GPD handheld (" + product + ")";
-    if (ContainsNoCase(probe, "aokzoe")) return "AOKZOE (" + product + ")";
-    return {};
-  }
-
   float NormalizeGamepadAxis(Sint16 value, Sint16 deadzone = 8000) {
     if (std::abs(value) <= deadzone) {
       return 0.0f;
@@ -141,7 +96,7 @@ namespace t850 {
   }
 
   void Win32Framework::InitializeGamepads() {
-    m_handheldReason = DetectWindowsHandheldReason();
+    m_handheldReason = GetDeviceInfo().handheldReason;
     m_handheldDetected = !m_handheldReason.empty();
     pBaseApp->IManager.Gamepad.handheldDevice = m_handheldDetected;
     pBaseApp->IManager.Gamepad.handheldReason = m_handheldReason;

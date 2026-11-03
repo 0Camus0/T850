@@ -364,9 +364,15 @@ bool BackyardScene::RebuildFluid() {
                 surface->x, surface->y);
   }
   EnsureWaterShaderPermutations(driver);
-  T8_LOG_INFO("[Backyard] Fluid solver running on %dx%dx%d, %d pressure iterations",
-              m_appliedGridWidth, m_appliedGridHeight, m_appliedGridDepth,
-              SceneProp.Water.EffectivePressureIterations());
+  {
+    const t850::WaterTunables& water = SceneProp.Water;
+    const char* cap = water.PressureIterationsCapReason();
+    std::string capNote;
+    if (cap && *cap) capNote = std::string(" (") + cap + ")";
+    T8_LOG_INFO("[Backyard] Fluid solver running on %dx%dx%d, %d pressure iterations%s",
+                m_appliedGridWidth, m_appliedGridHeight, m_appliedGridDepth,
+                water.EffectivePressureIterations(), capNote.c_str());
+  }
   return true;
 }
 

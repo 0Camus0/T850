@@ -106,6 +106,7 @@ src/simulation/FluidDebugRenderer.cpp
   src/utils/XDataBase.cpp
   src/utils/XMaths.cpp
   src/utils/ConfigRuntime.cpp
+  src/utils/DeviceInfo.cpp
   src/utils/RuntimeProfile.cpp
   src/utils/ComputeKernelRegistry.cpp
   src/utils/ShaderPermutationDump.cpp

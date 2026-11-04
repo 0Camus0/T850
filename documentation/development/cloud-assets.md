@@ -196,6 +196,12 @@ Invalid files are treated as missing. Downloads use `<target>.download`, validat
 
 Downloads use a runspace pool. `-MaxThreads` defaults to 7 and is clamped to at least 1 and no more than the number of pending files.
 
+**The web catalog is verified the same way, at serve time.** `web/cloud-assets.mjs` puts `size` and
+`sha256` on every route, and both `web/server.mjs` and `web/pages-worker.mjs` refuse to hand over an
+object whose byte length disagrees with the catalog (`502`, with both numbers in the message). The
+worker also compares the R2 object's own size before streaming. That catches a truncated upload or a
+stale edge copy at the point it would otherwise reach the engine as a corrupt mesh.
+
 ## Status Without Downloading
 
 Use the helper directly:
@@ -215,9 +221,45 @@ Important fields:
 
 ## Launcher Behavior
 
-The WPF launcher checks cloud status and scene dependencies before enabling Run/Install. `Download Assets` invokes the same model/texture logic and refreshes model/scene lists afterward.
+**Windows is manual by design** (owner decision 2026-11-04): the WPF launcher checks cloud status and
+scene dependencies before enabling Run/Install, and only downloads when **Download Assets** is
+pressed. Nothing is fetched on start-up.
 
-On Steam Deck, `steamdeck/T850.sh` runs `DownloadCloudAssets.py` unless `T850_SKIP_ASSET_DOWNLOAD=1`. It writes failures to `logs/steamdeck_asset_download.log` but continues so tracked/package assets can still run.
+**Deck, Android and the browser download automatically**, and since 2026-11-04 they implement one
+contract, so a log from any of them reads the same way:
+
+| | Deck (`steamdeck/DownloadCloudAssets.py`) | Android (`AssetDownloadActivity`) | Web (`web/cloud-assets.mjs` + worker/server) |
+|---|---|---|---|
+| Trigger | every launch from `steamdeck/T850.sh` | the LAUNCHER activity in the production manifest | per request, at run time |
+| Readiness | exists + `size` + `sha256` when published | same | the catalog is built from the manifests, so same fields |
+| Atomic install | temp file → verify → rename | `.download` file → verify → rename | n/a (nothing is installed) |
+| Failure | warning, launch continues | status text on the launcher screen | 502 with the actual byte count |
+| Status line | `Cloud assets ready=N missing=M total=T` | same (logcat) | catalog is validated at build/start |
+
+**One identity per asset.** An asset is *ready* when the file exists, matches the manifest's `size`,
+and matches the manifest's `sha256` when the manifest publishes one. Entries published before
+2026-11 carry no hash, so they fall back to the size check — that is why
+`PushCloudTextures.ps1`/`PushCloudModels.ps1` now write `sha256` for anything they touch.
+
+**The Deck verification stamp.** `Assets/.t850-cloud-assets.json` records the SHA-256 of both
+manifests, the full entry list and when the tree was last verified, so a launch does not have to hit
+the network every time:
+
+| Situation | What happens |
+|---|---|
+| verified less than `T850_CLOUD_FRESH_SECONDS` ago (default 300) | no network; 158 size checks, ~0.1 s |
+| stamp's manifests still current | sizes re-checked, contents not re-hashed |
+| a manifest moved | full verify including hashes |
+| a file deleted after verifying | caught by the size check and re-downloaded immediately |
+| manifests unreachable, tree complete | exit 0 with a warning |
+| manifests unreachable, nothing verified | exit 1 |
+
+The entry list in the stamp is what lets the fast path still notice a deletion; hashing 16.7 MB on
+every launch was the cost that made a Deck start wait.
+
+On Steam Deck, `steamdeck/T850.sh` runs `DownloadCloudAssets.py` unless
+`T850_SKIP_ASSET_DOWNLOAD=1`. It writes failures to `logs/steamdeck_asset_download.log` but continues
+so tracked/package assets can still run.
 
 ## Asset Locations and Caches
 

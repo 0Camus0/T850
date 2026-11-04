@@ -421,6 +421,10 @@ void BackyardScene::DestroyAssets() {
   m_fluidReady = false;
   m_fluidDebug.Destroy();
   m_fluidDebugMeshBound = false;
+  if (m_windArrowReady) {
+    m_windArrow.Destroy();
+    m_windArrowReady = false;
+  }
   if (m_waterSurfaceRT >= 0 && pFramework && pFramework->pVideoDriver)
     pFramework->pVideoDriver->DestroyRT(m_waterSurfaceRT);
   m_waterSurfaceRT = -1;
@@ -1413,16 +1417,55 @@ void BackyardScene::DrawFluidDebug() {
                     depth, driver->width, driver->height);
 }
 
+void BackyardScene::DrawWindGizmo() {
+  if (!m_showWind || !m_assetsCreated || !pFramework || !pFramework->pVideoDriver) return;
+  t850::BaseDriver* driver = pFramework->pVideoDriver;
+  // One ring plus one shaft reads as a single arrow; the shared primitive builds a circle at the
+  // tail and rays along its local -Y, and Draw() points that at the direction we hand it.
+  if (!m_windArrowReady) {
+    m_windArrow.Create(12, 1);
+    m_windArrowReady = true;
+  }
+  const t850::WaterTunables& w = SceneProp.Water;
+  const float speed = std::sqrt(w.windX * w.windX + w.windZ * w.windZ);
+  // Calm has no direction to draw, and a zero-length arrow would just be a ring sitting in the pool.
+  if (speed <= 1e-3f) return;
+
+  // Anchor above the middle of the basin, so the arrow is readable against the water and does not
+  // sit inside the solver's grid where the debug voxels draw.
+  float anchorX = 0.0f, anchorZ = -6.5f, planeY = w.waterPlaneY;
+  if (m_fluidReady) {
+    const t850::FluidSettings& fs = m_fluid.Settings();
+    anchorX = 0.5f * (fs.basinMinX + fs.basinMaxX);
+    anchorZ = 0.5f * (fs.basinMinZ + fs.basinMaxZ);
+    planeY = fs.waterPlaneY;
+  }
+  // Length is the velocity: metres of arrow per m/s, with a floor so a 0.7 m/s wind is still visible.
+  const float scale = (std::max)(m_windArrowScale, 0.01f);
+  const float length = (std::max)(speed * scale, 0.35f);
+
+  driver->SetDepthStencilState(t850::BaseDriver::NONE);
+  driver->SetBlendState(t850::BaseDriver::BLEND_DEFAULT);
+  // The ring stays 0.4 m across so the arrow reads as an arrow at any speed; only the shaft grows,
+  // by length / (2 * ringRadius) because the primitive's shaft is 2 units long. Cyan so it reads as
+  // an overlay against the sky, the water and the deck.
+  constexpr float kRingRadius = 0.20f;
+  m_windArrow.Draw(m_camera.VP, XVECTOR3(anchorX, planeY + 1.1f, anchorZ),
+                   XVECTOR3(w.windX, 0.0f, w.windZ), kRingRadius,
+                   XVECTOR3(0.15f, 1.0f, 1.0f, 1.0f), length / (2.0f * kRingRadius));
+}
+
 void BackyardScene::OnDraw() {
   if (!m_assetsCreated) return;
   if (t850::PrimitiveInst* water = m_renderContainer.GetMesh(m_waterHandle))
     water->SetVisible(!m_hideWater);
   m_renderContainer.Execute(pFramework->pVideoDriver, m_deltaSeconds);
 #ifdef OS_ANDROID
-  if (m_fluidDebugView.Any())
-    pFramework->pVideoDriver->SetPrePresentOverlayCallback([this]() { DrawFluidDebug(); });
+  if (m_fluidDebugView.Any() || m_showWind)
+    pFramework->pVideoDriver->SetPrePresentOverlayCallback([this]() { DrawFluidDebug(); DrawWindGizmo(); });
 #else
   DrawFluidDebug();
+  DrawWindGizmo();
 #endif
 
   // The probe's readbacks stall the GPU, so skip them when nothing would be logged.
@@ -1661,6 +1704,12 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     check("water_dbg_bounds", "solver grid bounds (green)", v.domainBounds);
     check("water_dbg_xray", "x-ray (ignore scene depth)", v.xray);
     check("water_dbg_hide", "hide shaded water", m_hideWater);
+    gui.Separator();
+    // W-30 follow-up: the wind is the only force with no geometry, so give it one.
+    check("water_dbg_wind", "show wind (arrow direction = wind, length = speed)", m_showWind);
+    if (m_showWind)
+      slider("water_dbg_wind_scale", "wind arrow length (m per m/s)", m_windArrowScale,
+             0.05f, 1.0f, 0.01f);
     if (m_fluidReady) {
       const t850::FluidSettings& fs = m_fluid.Settings();
       const t850::FluidDebugStats& st = m_fluidDebug.Stats();

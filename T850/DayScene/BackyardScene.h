@@ -5,6 +5,7 @@
 #include <debug/FrameDumper.h>
 #include <scene/RenderContainer.h>
 #include <scene/SceneSetup.h>
+#include <scene/WireframeArrow.h>
 #include <simulation/FluidDebugRenderer.h>
 #include <simulation/FluidSimulation.h>
 #include <utils/CameraProfiles.h>
@@ -81,6 +82,9 @@ private:
   uint32_t m_waterFloorDepth = 0;
   t850::FluidSettings MakeFluidSettings() const;
   void DrawFluidDebug();
+  // W-30 follow-up: an arrow over the pool whose direction is the wind and whose length is its
+  // speed. Uses the shared wireframe-arrow primitive, so it is the same geometry on every API.
+  void DrawWindGizmo();
 
   t850::RenderContainer m_renderContainer;
   t850::PrimitiveManager PrimitiveMgr;
@@ -159,6 +163,11 @@ private:
   float m_pickTestTo[2] = {0.0f, 0.0f};
   void RunPickTestStep();
   t850::FluidDebugRenderer m_fluidDebug;
+  t850::WireframeArrow m_windArrow;
+  bool m_windArrowReady = false;
+  bool m_showWind = false;
+  // Metres of arrow per m/s of wind. 2 local units per call, so Draw gets length/2.
+  float m_windArrowScale = 0.5f;
   t850::FluidDebugView m_fluidDebugView;
   bool m_fluidDebugMeshBound = false;
   bool m_hideWater = false;

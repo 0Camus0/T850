@@ -61,9 +61,14 @@ export async function loadCloudResources(buckets, fetchManifest = fetch, include
       const folded = resource.toLowerCase();
       if (names.has(folded)) throw new Error(`Duplicate cloud resource: ${resource}`);
       names.add(folded);
+      // sha256 travels with the route so every consumer can verify what it fetched, the same
+      // contract steamdeck/DownloadCloudAssets.py and the Android downloader implement.
+      const sha256 = typeof entry.sha256 === 'string' ? entry.sha256.toLowerCase() : undefined;
+      if (sha256 !== undefined && !/^[0-9a-f]{64}$/.test(sha256))
+        throw new Error(`Invalid sha256 for ${resource}`);
       cloud.set(resource, {
         binding: location.binding, key: decodeURIComponent(url.pathname.slice(1)), url: url.href,
-        contentType: entry.contentType ?? 'application/octet-stream', size: entry.size,
+        contentType: entry.contentType ?? 'application/octet-stream', size: entry.size, sha256,
       });
     }
   }

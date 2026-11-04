@@ -35,6 +35,12 @@ export function createAssetHandler(routes) {
         }
         const response = await globalThis.fetch(route.url, { method: request.method, headers, redirect: 'manual' });
         if (![200, 206, 304, 404, 416].includes(response.status)) throw new Error('Upstream failure');
+        // Same check as web/server.mjs: the catalog records the size, so serving a different number
+        // of bytes means a truncated or stale object, not a slow one.
+        if (response.status === 200 && route.size !== undefined && response.headers.has('Content-Length')) {
+          const served = Number(response.headers.get('Content-Length'));
+          if (served !== Number(route.size)) throw new Error(`served ${served} bytes, catalog says ${route.size}`);
+        }
         const safeHeaders = new Headers();
         for (const name of ['Content-Length', 'Content-Range', 'ETag', 'Accept-Ranges']) {
           if (response.headers.has(name)) safeHeaders.set(name, response.headers.get(name));
@@ -49,6 +55,8 @@ export function createAssetHandler(routes) {
         ? await bucket.head(route.key)
         : await bucket.get(route.key);
       if (!object) return finish(new Response('Asset not found', { status: 404 }));
+      if (route.size !== undefined && Number(route.size) !== object.size)
+        throw new Error(`R2 object is ${object.size} bytes, catalog says ${route.size}`);
       const headers = new Headers({
         'Content-Type': route.contentType ?? 'application/octet-stream',
         'Content-Length': String(object.size),

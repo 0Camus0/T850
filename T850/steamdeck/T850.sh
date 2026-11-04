@@ -97,10 +97,18 @@ mkdir -p "${T850_ROOT}/logs"
 RUNTIME_DIR="$(dirname -- "${EXECUTABLE}")"
 export LD_LIBRARY_PATH="${RUNTIME_DIR}:${LD_LIBRARY_PATH:-}"
 
+# Cloud assets: verify (and download what is missing) before launching. The downloader keeps a
+# verification stamp under Assets/, so an unchanged tree only costs a 158-file size check in about
+# 0.1 s; it touches the network when the manifests moved or after T850_CLOUD_FRESH_SECONDS.
+# A failure here is never fatal: the game runs with whatever is installed, and the warning names the
+# log. Set T850_SKIP_ASSET_DOWNLOAD=1 to skip the check entirely (offline debugging).
 ASSET_DOWNLOADER="${SCRIPT_DIR}/DownloadCloudAssets.py"
 if [[ "${T850_SKIP_ASSET_DOWNLOAD:-0}" != "1" && -f "${ASSET_DOWNLOADER}" ]]; then
-  if ! python3 "${ASSET_DOWNLOADER}" --root "${T850_ROOT}" --jobs "${T850_CLOUD_DOWNLOAD_THREADS:-7}" >> "${T850_ROOT}/logs/steamdeck_asset_download.log" 2>&1; then
-    echo "[T850] Warning: cloud asset download failed. See ${T850_ROOT}/logs/steamdeck_asset_download.log" >&2
+  if ! python3 "${ASSET_DOWNLOADER}" --root "${T850_ROOT}" \
+      --jobs "${T850_CLOUD_DOWNLOAD_THREADS:-7}" \
+      --fresh-seconds "${T850_CLOUD_FRESH_SECONDS:-300}" \
+      >> "${T850_ROOT}/logs/steamdeck_asset_download.log" 2>&1; then
+    echo "[T850] Warning: cloud assets are incomplete; see ${T850_ROOT}/logs/steamdeck_asset_download.log" >&2
   fi
 fi
 

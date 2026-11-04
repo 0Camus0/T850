@@ -233,6 +233,12 @@ void FluidSimulation::RemoveBodiesFrom(size_t first) {
 // Mirrors `cbuffer CorrectionConstants : register(b1)` in
 // CS_FluidVolumeCorrect3D.hlsl.
 namespace {
+  // W-30: the two densities the body drag terms need. AIR_DENSITY matches the shader constant in
+  // CS_FluidForces3D.hlsl so the wind's effect on the water and on the bodies agree; WATER_DENSITY
+  // matches the solver's reference density, which is what the integrator's mass units assume.
+  constexpr float kAirDensity = 1.2f;
+  constexpr float kWaterDensity = 1000.0f;
+
   struct CorrectionConstantsBlob {
     float referenceVolume;
     uint32_t sumSlot;
@@ -1464,6 +1470,22 @@ void FluidSimulation::ResolveBodyContacts() {
   }
 }
 
+float FluidSimulation::ExposedFrontalFraction(float submergedDepth, float radius) {
+  // Circular segment above the waterline over the full disc. `exposed` is the dry cap height,
+  // `offset` its centre distance from the sphere's centre, so the segment subtends
+  // 2·acos(offset/r) and its area is r²·acos(offset/r) − offset·sqrt(r² − offset²).
+  const float r = (std::max)(radius, 1e-6f);
+  const float h = (std::min)((std::max)(submergedDepth, 0.0f), 2.0f * r);
+  const float exposed = 2.0f * r - h;
+  if (exposed <= 0.0f) return 0.0f;
+  if (exposed >= 2.0f * r) return 1.0f;
+  const float offset = r - exposed;
+  const float ratio = (std::min)((std::max)(offset / r, -1.0f), 1.0f);
+  const float segment = r * r * std::acos(ratio) - offset * std::sqrt((std::max)(r * r - offset * offset, 0.0f));
+  const float fraction = segment / (3.14159265358979323846f * r * r);
+  return (std::min)((std::max)(fraction, 0.0f), 1.0f);
+}
+
 void FluidSimulation::AdvanceOneSphere(FluidSphere& s, float dt) {
   if (!s.enabled || dt <= 0.0f) return;
 
@@ -1500,6 +1522,28 @@ void FluidSimulation::AdvanceOneSphere(FluidSphere& s, float dt) {
     dragScale = dragAccel / speed;
   }
 
+  // W-30: wind on the exposed cap. Quadratic air drag, horizontal only: the vertical term is
+  // under 2 % of g for a falling ball and would shift the drop timing gates 7 and 8 rely on.
+  // The reference velocity is the wind relative to the body, and the density ratio converts the
+  // water-density mass the integrator uses into the air-density force. With `airDrag` at 0 (or a
+  // fully submerged body, where the exposed fraction is 0) this is exactly zero and the update
+  // below collapses to the pre-W-30 formula.
+  float airScale = 0.0f;
+  if (s.airDragCoefficient > 0.0f && s.submerged < 1.0f) {
+    const float exposed = ExposedFrontalFraction(h, radius);
+    if (exposed > 0.0f) {
+      const float windRelX = m_settings.windX - s.vx;
+      const float windRelZ = m_settings.windZ - s.vz;
+      const float windSpeed = std::sqrt(windRelX * windRelX + windRelZ * windRelZ);
+      if (windSpeed > 1e-5f) {
+        const float airAccel = (kAirDensity / kWaterDensity) *
+                               (3.0f * s.airDragCoefficient * exposed * windSpeed * windSpeed) /
+                               (8.0f * radius * effectiveMass);
+        airScale = airAccel / windSpeed;
+      }
+    }
+  }
+
   if (!s.held) {
     s.vy += accel * dt;
     // Wave-radiation damping of heave, as a damping ratio of the hydrostatic natural
@@ -1509,13 +1553,16 @@ void FluidSimulation::AdvanceOneSphere(FluidSphere& s, float dt) {
       const float omega = std::sqrt(m_settings.gravity * stiffness / effectiveMass);
       s.vy /= 1.0f + 2.0f * (std::max)(s.heaveDamping, 0.0f) * omega * dt;
     }
-    // Implicit drag integration: (v - flow) /= (1 + (a_drag/|v_rel|) * dt). Solving for the
-    // relative velocity and adding the flow back keeps the body asymptotically matching a
-    // steady current instead of being pulled to rest in the world frame.
+    // Implicit drag integration over BOTH media: (v - flow) /= (1 + (a_drag/|v_rel|) * dt) for
+    // the water, plus the same treatment toward the wind for the air. Solving the two together
+    // keeps the body asymptotically matching a steady current *and* drifting at the leeway the
+    // wind implies, instead of one pulling the other to rest. With airScale = 0 the x/z lines are
+    // algebraically identical to the previous single-medium version.
     const float dragFactor = 1.0f + dragScale * dt;
-    s.vx = s.flowX + relVx / dragFactor;
+    const float combined = 1.0f + (dragScale + airScale) * dt;
+    s.vx = (s.vx + dt * (dragScale * s.flowX + airScale * m_settings.windX)) / combined;
     s.vy /= dragFactor;
-    s.vz = s.flowZ + relVz / dragFactor;
+    s.vz = (s.vz + dt * (dragScale * s.flowZ + airScale * m_settings.windZ)) / combined;
   }
 
   s.x += s.vx * dt;

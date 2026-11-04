@@ -210,6 +210,10 @@ namespace t850 {
     float sphereDensityRatio = 0.6f;
     // Drag coefficient of a smooth sphere, and the bounce at the floor and walls.
     float sphereDragCoefficient = 0.47f;
+    // W-30: air drag on the cap above the waterline, so the wind pushes a floating body. 0
+    // disables it and restores the pre-W-30 behaviour exactly; the default gives the classic
+    // leeway of ~2.8 % of the wind speed for a body of density 0.6.
+    float sphereAirDragCoefficient = 0.47f;
     float sphereRestitution = 0.30f;
     // Heave damping ratio standing in for wave radiation (the solver is one-way coupled).
     float sphereHeaveDamping = 0.15f;

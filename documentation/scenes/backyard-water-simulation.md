@@ -986,6 +986,15 @@ scene logs the reason next to the number: `120 pressure iterations` on desktop,
 Approximately 90 sliders in the ImGui dev GUI, grouped into sections: Solver, Optics, Surface
 detail, Reflection, Ripple octaves, Foam, Dropped sphere, Presentation. Values apply live.
 
+**Wind is presented as speed and heading** (W-30 follow-up): `air speed (m/s)` 0–20 and
+`wind direction (deg; 0 = +X, 90 = +Z)` 0–360, with a readout line
+`wind +6.0 m/s toward 90 deg (+Z (south)) -> X +0.00 Z +6.00`. `windX`/`windZ` remain the stored
+state (JSON, `SetWind`, gate 12), so either view writes them and the other is derived from them.
+The heading is sticky, because at zero speed `atan2` has no direction and a heading snapping to 0
+would rotate the wind when the speed came back. The raw components stay under a collapsed
+`Wind components (exact)` sub-section; the old `wind Y` row is gone (surface stress and the ball
+drag are horizontal by design).
+
 **Derived values are written back into the tunables.** Two separate bugs came from *not* doing
 this:
 

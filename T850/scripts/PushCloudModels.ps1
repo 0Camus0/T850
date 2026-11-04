@@ -300,6 +300,53 @@ foreach ($file in $files) {
     if ($Force -or -not $isCurrent) { $toUpload.Add($file) } else { $unchanged++ }
 }
 
+# ---------------------------------------------------------------- backfill unscanned entries
+#
+# Entries outside the scanned prefixes are kept as they are, but an older copy of this script
+# published some as `key` + `url` only. The downloaders then fall back to "exists and is non-empty",
+# so a truncated or replaced file cannot be detected. Fill in what can be determined without
+# uploading: `sha256` from the local file when it is on disk, `size` from the local file or from a
+# HEAD of the public URL. An entry that cannot be resolved keeps its current shape.
+$backfill = @{}
+$backfilledHash = 0
+$backfilledSize = 0
+foreach ($entry in $entries) {
+    $key = [string]$entry.key
+    if (-not $key) { continue }
+    if ($files | Where-Object { $_.Key -eq $key }) { continue }        # scanned below, already exact
+    $hasSize = $entry.PSObject.Properties['size'] -and [int64]$entry.size -gt 0
+    $hasHash = $entry.PSObject.Properties['sha256'] -and [string]$entry.sha256
+    if ($hasSize -and $hasHash) { continue }
+
+    $size = if ($hasSize) { [int64]$entry.size } else { [int64]0 }
+    $hash = if ($hasHash) { ([string]$entry.sha256).ToLowerInvariant() } else { '' }
+    $localPath = Join-Path $modelsRoot ($key.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
+    if (Test-Path -LiteralPath $localPath -PathType Leaf) {
+        $item = Get-Item -LiteralPath $localPath
+        $size = [int64]$item.Length
+        if (-not $hash) { $hash = (Get-Sha256Hex $localPath).ToLowerInvariant(); $backfilledHash++ }
+    } elseif (-not $size) {
+        $url = if ($entry.PSObject.Properties['url'] -and $entry.url) { [string]$entry.url } else { "$publicBase/$(ConvertTo-R2UrlPath $key)" }
+        for ($attempt = 0; $attempt -lt 3 -and -not $size; $attempt++) {
+            try {
+                $head = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
+                $value = $head.Headers['Content-Length']
+                $text = if ($value -is [array]) { [string]($value | Select-Object -First 1) } else { [string]$value }
+                $parsed = [int64]0
+                if ([int64]::TryParse($text, [ref]$parsed) -and $parsed -gt 0) { $size = $parsed }
+            } catch { Start-Sleep -Seconds 1 }
+        }
+        if ($size -gt 0) { $backfilledSize++ }
+    }
+    if ($size -gt 0 -or $hash) {
+        $backfill[$key] = [pscustomobject]@{ Size = $size; Sha256 = $hash }
+    }
+}
+if ($backfill.Count -gt 0) {
+    Write-Step ("backfill: {0} unscanned entry(ies), {1} gained a size, {2} gained a sha256" -f `
+        $backfill.Count, $backfilledSize, $backfilledHash)
+}
+
 $seen = @{}
 foreach ($file in $files) { $seen[$file.Key] = $true }
 $stale = @($entries | Where-Object {
@@ -326,6 +373,16 @@ foreach ($entry in $entries) {
             url    = "$publicBase/$(ConvertTo-R2UrlPath $replacement.Key)"
             size   = $replacement.Size
             sha256 = $replacement.Sha256.ToLowerInvariant()
+        })
+    } elseif ($backfill.ContainsKey($key)) {
+        # Not scanned this run, but the size (and possibly the hash) could be determined without
+        # uploading. Rebuild the entry so it carries them, keeping every other field.
+        $facts = $backfill[$key]
+        $newEntries.Add([ordered]@{
+            key    = $key
+            url    = if ($entry.PSObject.Properties['url'] -and $entry.url) { [string]$entry.url } else { "$publicBase/$(ConvertTo-R2UrlPath $key)" }
+            size   = $facts.Size
+            sha256 = $facts.Sha256
         })
     } else {
         # Untouched entry: keep it exactly as it was, field order included.

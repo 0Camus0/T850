@@ -5,55 +5,81 @@
   "assets": [
     {
       "key": "rewind_cyborg.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/rewind_cyborg.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/rewind_cyborg.glb",
+      "size": 163226248,
+      "sha256": "8b94edb4acc90f01689bc722a906aac1e10d292059faa00f053cc888183def09"
     },
     {
       "key": "Q3/q3dm6.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Q3/q3dm6.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Q3/q3dm6.glb",
+      "size": 199088800,
+      "sha256": "930770f85a935ccb884f2598fd08b8409a91edba6ac75f5d2d6c7a54ea7a9c96"
     },
     {
       "key": "DamagedHelmet.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/DamagedHelmet.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/DamagedHelmet.glb",
+      "size": 3773916,
+      "sha256": "a1e3b04de97b11de564ce6e53b95f02954a297f0008183ac63a4f5974f6b32d8"
     },
     {
       "key": "doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+      "size": 332450060,
+      "sha256": "8b8084b8248e47087921770dc633a3a8095bf9b9ed160f46e6034d9aa3ffdc51"
     },
     {
       "key": "porsche_992_gt3_r__www.vecarz.com.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/porsche_992_gt3_r__www.vecarz.com.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/porsche_992_gt3_r__www.vecarz.com.glb",
+      "size": 56477204,
+      "sha256": "1d62c97fedd2ed2ad044a89c3df5a777ca85e3756ce9078f084ff2f893af16ee"
     },
     {
       "key": "mclaren_p1__www.vecarz.com.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/mclaren_p1__www.vecarz.com.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/mclaren_p1__www.vecarz.com.glb",
+      "size": 12189328,
+      "sha256": "e3db3bd23d3986f7432773db7873e911fecee78ca291470090670182b1bc0dbd"
     },
     {
       "key": "mercedes-amg_gt3__www.vecarz.com(1).glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/mercedes-amg_gt3__www.vecarz.com%281%29.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/mercedes-amg_gt3__www.vecarz.com%281%29.glb",
+      "size": 38856484,
+      "sha256": "c3c9acdc47612c9af32a46bb8d3bde27dfa1bdd36e83f18be515a902aee67db5"
     },
     {
       "key": "SkyBox.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/SkyBox.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/SkyBox.glb",
+      "size": 48756412,
+      "sha256": "3ed732ccd691827ce265d1cb2b31c7c90a02760150133a7544b240666839d3c1"
     },
     {
       "key": "SponzaEsc.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/SponzaEsc.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/SponzaEsc.glb",
+      "size": 117464268,
+      "sha256": "bdec71a555c3533de1541ad7a1e6daf2b25f5fed1a48f42b929e58623541efaf"
     },
     {
       "key": "Tyrant.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Tyrant.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Tyrant.glb",
+      "size": 95684480,
+      "sha256": "4ce8eb4981b8d168ec429f2826ca9eed9bb4728ef7ccfaaad5c6501e9722ffc1"
     },
     {
       "key": "Marauder.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Marauder.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Marauder.glb",
+      "size": 108314800,
+      "sha256": "6a02f29b7d4ce02f79b17a8dd9eff9146083f8a5b874b8d5e80e40e622a37972"
     },
     {
       "key": "jaguar_xj13_1959__www.vecarz.com.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/jaguar_xj13_1959__www.vecarz.com.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/jaguar_xj13_1959__www.vecarz.com.glb",
+      "size": 22569500,
+      "sha256": "b0bc9bb3d0fc8b3da50e0afe54ea834322dc6a4a505d3b3cfd9b452446c9665f"
     },
     {
       "key": "bmw_m4_widebody__www.vecarz.com.glb",
-      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/bmw_m4_widebody__www.vecarz.com.glb"
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/bmw_m4_widebody__www.vecarz.com.glb",
+      "size": 22523544,
+      "sha256": "de23788e5c22059dac7857e97df4cda7267d194308f9c2e3fe6237eee6f158e3"
     },
     {
       "key": "Backyard/Backyard_Ball.glb",

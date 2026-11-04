@@ -102,6 +102,10 @@ $ContentTypes = @{
     # PushCloudModels.ps1).
     '.glb'   = 'model/gltf-binary'
     '.gltf'  = 'model/gltf+json'
+    # Terrain and misc sources that live under Textures/.
+    '.bmp'   = 'image/bmp'
+    '.tga'   = 'image/x-tga'
+    '.exr'   = 'image/x-exr'
 }
 
 function Write-Step { param([string]$Message) Write-Host "[T850] $Message" }
@@ -409,8 +413,13 @@ foreach ($file in $files) {
         foreach ($property in $existing.PSObject.Properties) { $newEntry[$property.Name] = $property.Value }
         $newEntry['size'] = $file.Size
         $newEntry['sizeMB'] = (Format-SizeMB $file.Size)
-        if ($existingSha) { $newEntry['sha256'] = $file.Sha256.ToLowerInvariant() }
-        else { $sha256Backfilled++ }                    # stays size-only, as before
+        # Always publish the hash of the bytes that were scanned. Older copies of this script left a
+        # pre-existing size-only entry size-only forever, which is why 114 of 218 entries in the live
+        # manifest had no integrity check at all: the downloaders then fall back to "exists and is
+        # non-empty", so a same-size corruption could never be detected. Backfilling is a manifest
+        # change only - the object is untouched unless the bytes actually differ.
+        $newEntry['sha256'] = $file.Sha256.ToLowerInvariant()
+        if (-not $existingSha) { $sha256Backfilled++ }
         $newEntry = [pscustomobject]$newEntry
         $entryJsonBefore = $existing | ConvertTo-Json -Depth 10 -Compress
         $entryJsonAfter = $newEntry | ConvertTo-Json -Depth 10 -Compress
@@ -505,7 +514,7 @@ foreach ($entry in $staleEntries) {
     Write-Host ("  stale : {0}{1}" -f $entry.key, $(if ($Prune) { ' (will prune)' } else { '' }))
 }
 if ($sha256Backfilled -gt 0) {
-    Write-Step ("{0} existing entr(ies) stay size-only by design (sha256 is added only to new entries)" -f $sha256Backfilled)
+    Write-Step ("{0} existing entr(ies) gained a sha256 (previously size-only)" -f $sha256Backfilled)
 }
 
 $pendingChanges = $newEntries + $updatedEntries

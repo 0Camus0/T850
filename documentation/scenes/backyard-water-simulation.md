@@ -986,6 +986,17 @@ scene logs the reason next to the number: `120 pressure iterations` on desktop,
 Approximately 90 sliders in the ImGui dev GUI, grouped into sections: Solver, Optics, Surface
 detail, Reflection, Ripple octaves, Foam, Dropped sphere, Presentation. Values apply live.
 
+**Show wind** (Debug view section): a cyan arrow over the middle of the basin whose direction is
+the wind and whose shaft length is its speed, at 0.5 m per m/s with a 0.35 m floor so the default
+0.69 m/s wind is visible; calm draws nothing. It reuses `WireframeArrow`, so it is the same geometry
+on every API, and `lengthScale` (added for this) stretches only the shaft so the ring stays 0.4 m
+instead of the whole gizmo inflating. Two bugs in that primitive had to be fixed first, both
+pre-existing and only visible because it now runs on all five backends under test: its constant
+buffer was 16 bytes short of `FS_W`'s `WVP + LineColor` (WebGPU refused the draw, GL logged 200
+"exceeds CB size" errors per run), and its basis was written down the columns of a row-vector world
+matrix, which rotated every arrow 90 degrees (a +X wind drew a -Z arrow, caught by projecting the
+dumped `camVP`).
+
 **Wind is presented as speed and heading** (W-30 follow-up): `air speed (m/s)` 0–20 and
 `wind direction (deg; 0 = +X, 90 = +Z)` 0–360, with a readout line
 `wind +6.0 m/s toward 90 deg (+Z (south)) -> X +0.00 Z +6.00`. `windX`/`windZ` remain the stored

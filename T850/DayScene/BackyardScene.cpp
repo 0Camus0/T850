@@ -309,6 +309,7 @@ bool BackyardScene::RebuildFluid() {
     sphere.radius = SceneProp.Water.sphereRadius;
     sphere.densityRatio = SceneProp.Water.sphereDensityRatio;
     sphere.dragCoefficient = SceneProp.Water.sphereDragCoefficient;
+    sphere.airDragCoefficient = SceneProp.Water.sphereAirDragCoefficient;
     sphere.restitution = SceneProp.Water.sphereRestitution;
     sphere.heaveDamping = SceneProp.Water.sphereHeaveDamping;
     sphere.x = SceneProp.Water.sphereDropX;
@@ -937,6 +938,7 @@ void BackyardScene::ResetSimulation() {
   sphere.radius = w.sphereRadius;
   sphere.densityRatio = w.sphereDensityRatio;
   sphere.dragCoefficient = w.sphereDragCoefficient;
+  sphere.airDragCoefficient = w.sphereAirDragCoefficient;
   sphere.restitution = w.sphereRestitution;
   sphere.heaveDamping = w.sphereHeaveDamping;
   sphere.x = w.sphereDropX;
@@ -1771,6 +1773,8 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
         w.sphereDensityRatio = w.SphereDensityFromMass(massEdit);
     }
     slider("water_sphere_cd", "drag coefficient", w.sphereDragCoefficient, 0.05f, 1.5f, 0.01f);
+    slider("water_sphere_air_cd", "air drag (wind on balls, 0 = off)", w.sphereAirDragCoefficient,
+           0.0f, 2.0f, 0.01f);
     slider("water_sphere_restitution", "bounce (0 = dead stop)", w.sphereRestitution, 0.0f, 0.9f, 0.01f);
     slider("water_sphere_heave_damping", "heave damping ratio", w.sphereHeaveDamping, 0.0f, 1.0f, 0.01f);
 
@@ -1786,6 +1790,7 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
       sphere.radius = w.sphereRadius;
       sphere.densityRatio = w.sphereDensityRatio;
       sphere.dragCoefficient = w.sphereDragCoefficient;
+      sphere.airDragCoefficient = w.sphereAirDragCoefficient;
       sphere.restitution = w.sphereRestitution;
       sphere.heaveDamping = w.sphereHeaveDamping;
       sphere.x = w.sphereDropX;

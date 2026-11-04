@@ -92,6 +92,10 @@ namespace t850 {
     float densityRatio = 0.6f;
     // Drag coefficient of a smooth sphere, and the bounce at the floor and walls.
     float dragCoefficient = 0.47f;
+    // W-30: air drag on the part of the sphere above the waterline, so the wind pushes a
+    // floating body. Same 0.47 as the water coefficient (both media are treated as a smooth
+    // sphere); 0 disables the term and restores the pre-W-30 behaviour exactly.
+    float airDragCoefficient = 0.47f;
     float restitution = 0.30f;
     // Heave damping ratio standing in for the energy a bobbing body radiates as waves.
     float heaveDamping = 0.15f;
@@ -267,7 +271,11 @@ namespace t850 {
     void AdvanceOneSphere(FluidSphere& body, float dt);
     // Sphere-sphere separation and normal impulse, fixed i < j order.
     void ResolveBodyContacts();    // Writes solid-face boundary velocities (walls 0, body faces = body velocity).
-    // Must be called before the divergence/pressure step.
+    // W-30: fraction of a sphere's projected (πr²) area that sits above the waterline, for a
+    // submerged depth h and radius r. 0 when fully submerged, 1 when fully exposed. It is the
+    // circular-segment area over πr², and the gate uses the same function so the expected
+    // leeway and the integrator cannot disagree.
+    static float ExposedFrontalFraction(float submergedDepth, float radius);    // Writes solid-face boundary velocities (walls 0, body faces = body velocity).    // Must be called before the divergence/pressure step.
     bool StepObjectVelocity(BaseDriver* driver);
     // Stamps the moving body into the wall mask so it becomes a solid boundary for
     // every kernel (divergence, pressure, gradient, alpha advection).

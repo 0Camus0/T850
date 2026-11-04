@@ -1067,6 +1067,150 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
     fluid.SetMaxSubstepDt(options.fixedDt);
   }
 
+  // ── Gate 12: the wind pushes the balls (W-30) ───────────────────────────────
+  // Air drag on the exposed cap must carry a floating body downwind at the classic leeway.
+  // With the water at rest and the body-level query off (headless), the only horizontal force
+  // is the air, so the terminal speed is closed-form:
+  //   q = sqrt((rho_air/rho_w) * Cd_air * a_exp / (Cd_w * f)),  v_t = W * q / (1 + q)
+  // and a body of density 0.6 gives q ~ 0.029, i.e. about 2.8 % of the wind. The gate compares
+  // the measured speed against that, not against a hard-coded number, so a change to either
+  // coefficient or to the exposed-area formula is caught here instead of in a screenshot.
+  if (failures == 0 && !options.skipBall) {
+    if (!fluid.ResetToRest(driver)) { T8_LOG_ERROR("[BackyardSelfTest] wind: reset failed"); ++failures; }
+    else {
+      FluidSphere& ball = fluid.DroppedSphere();
+      const float previousWindX = fs.windX;
+      const float previousWindZ = fs.windZ;
+      ball.enabled = true;
+      ball.radius = 0.25f;
+      ball.densityRatio = 0.6f;
+      ball.dragCoefficient = 0.47f;
+      ball.airDragCoefficient = 0.47f;
+      ball.restitution = 0.30f;
+      ball.vx = ball.vy = ball.vz = 0.0f;
+      ball.flowX = ball.flowZ = 0.0f;
+      ball.hasSimulatedLevel = false;
+      ball.submerged = 0.0f;
+      // Floating at rest: find the centre height whose submerged fraction equals the density
+      // ratio, by bisection on the same cap formula the integrator uses (monotonic in y).
+      const float radius = ball.radius;
+      const float plane = fs.waterPlaneY;
+      float yLow = plane - radius;      // fully submerged → f = 1
+      float yHigh = plane + radius;     // fully dry → f = 0
+      for (int i = 0; i < 60; ++i) {
+        const float yMid = 0.5f * (yLow + yHigh);
+        const float hMid = (std::min)((std::max)(plane - (yMid - radius), 0.0f), 2.0f * radius);
+        const float fMid = (hMid * hMid * (3.0f * radius - hMid)) / (4.0f * radius * radius * radius);
+        if (fMid > ball.densityRatio) yLow = yMid;
+        else yHigh = yMid;
+      }
+      ball.y = 0.5f * (yLow + yHigh);
+      // Start one clearance from the upwind wall on the pool's LONGER axis, so 20 s of drift
+      // stays inside the basin. The pool is 9.0 m along X and 4.5 m along Z.
+      const float clearance = 2.0f * radius + fs.cellSize;
+      const bool alongX = (fs.basinMaxX - fs.basinMinX) >= (fs.basinMaxZ - fs.basinMinZ);
+      if (alongX) {
+        ball.x = fs.basinMinX + clearance;
+        ball.z = 0.5f * (fs.basinMinZ + fs.basinMaxZ);
+        fluid.SetWind(10.0f, 0.0f, 0.0f);
+      } else {
+        ball.x = 0.5f * (fs.basinMinX + fs.basinMaxX);
+        ball.z = fs.basinMinZ + clearance;
+        fluid.SetWind(0.0f, 0.0f, 10.0f);
+      }
+      const float windSpeed = 10.0f;
+      const float stepDt = 1.0f / 30.0f;
+      fluid.SetDeltaTime(stepDt);
+      fluid.SetMaxSubstepDt(stepDt);
+
+      const float submergedFraction = ball.densityRatio;
+      const float hEq = (std::min)((std::max)(plane - (ball.y - radius), 0.0f), 2.0f * radius);
+      const float exposedFraction = FluidSimulation::ExposedFrontalFraction(hEq, radius);
+      const float kAirDensity = 1.2f, kWaterDensity = 1000.0f;
+      const float q = std::sqrt((kAirDensity / kWaterDensity) * ball.airDragCoefficient *
+                                exposedFraction / (ball.dragCoefficient * submergedFraction));
+      const float expected = windSpeed * q / (1.0f + q);
+
+      auto runWind = [&](float airDrag, float seconds, double* meanAlong, double* meanCross,
+                         float* endX, float* endZ) -> bool {
+        ball.vx = ball.vy = ball.vz = 0.0f;
+        ball.airDragCoefficient = airDrag;
+        const uint32_t steps = static_cast<uint32_t>(std::ceil(seconds / stepDt));
+        const uint32_t windowStart = static_cast<uint32_t>(std::ceil(0.75 * steps));
+        double sumAlong = 0.0, sumCross = 0.0;
+        uint32_t samples = 0;
+        for (uint32_t i = 0; i < steps; ++i) {
+          if (!fluid.Step(driver)) return false;
+          if (i + 1 >= windowStart) {
+            sumAlong += alongX ? ball.vx : ball.vz;
+            sumCross += alongX ? ball.vz : ball.vx;
+            ++samples;
+          }
+        }
+        if (samples == 0) return false;
+        *meanAlong = sumAlong / samples;
+        *meanCross = sumCross / samples;
+        *endX = ball.x;
+        *endZ = ball.z;
+        return true;
+      };
+
+      double along = 0.0, cross = 0.0, stillAlong = 0.0, stillCross = 0.0;
+      float endX = 0.0f, endZ = 0.0f, stillX = 0.0f, stillZ = 0.0f;
+      const bool measured = runWind(ball.airDragCoefficient, 20.0f, &along, &cross, &endX, &endZ);
+      const bool measuredStill = runWind(0.0f, 20.0f, &stillAlong, &stillCross, &stillX, &stillZ);
+      ball.airDragCoefficient = 0.47f;
+      fluid.SetWind(previousWindX, 0.0f, previousWindZ);
+      fluid.SetDeltaTime(options.fixedDt);
+      fluid.SetMaxSubstepDt(options.fixedDt);
+
+      if (!measured || !measuredStill) {
+        T8_LOG_ERROR("[BackyardSelfTest] wind: step failed");
+        ++failures;
+      } else {
+        // Limits, with the reasoning next to them:
+        // * 10 % of v_t: the leeway is ~0.28 m/s at 10 m/s and the integrator reaches it in
+        //   ~4 s, so 15-20 s is settled; 10 % leaves room for the water's own motion.
+        // * 5 % of v_t cross-wind: anything more means the drag picked up a lateral component.
+        // * 1 mm/s with the term disabled: that is numerical rest, not drift.
+        constexpr float kAlongTolerance = 0.10f;
+        constexpr float kCrossTolerance = 0.05f;
+        constexpr double kStillLimit = 1e-3;
+        const bool inside = (endX > fs.basinMinX) && (endX < fs.basinMaxX) &&
+                            (endZ > fs.basinMinZ) && (endZ < fs.basinMaxZ);
+        const float alongError = static_cast<float>(std::fabs(along - expected)) / (std::max)(expected, 1e-6f);
+        T8_LOG_INFO("[BackyardSelfTest] wind  axis=%s a_exp=%.3f f=%.2f expected=%.4f m/s "
+                    "measured=%.4f m/s (err %.1f%%) cross=%.4f m/s end=(%+.2f %+.2f) inside=%d | "
+                    "airCd=0: %.5f m/s",
+                    alongX ? "X" : "Z", exposedFraction, submergedFraction, expected,
+                    static_cast<float>(along), 100.0f * alongError, static_cast<float>(cross),
+                    endX, endZ, inside ? 1 : 0, static_cast<float>(stillAlong));
+        if (alongError > kAlongTolerance) {
+          T8_LOG_ERROR("[BackyardSelfTest] wind: the body drifts at %.4f m/s, the leeway predicts "
+                       "%.4f m/s (limit %.0f%%)", static_cast<float>(along), expected,
+                       100.0f * kAlongTolerance);
+          ++failures;
+        }
+        if (std::fabs(cross) > kCrossTolerance * expected) {
+          T8_LOG_ERROR("[BackyardSelfTest] wind: %.4f m/s of cross-wind drift (limit %.4f m/s)",
+                       static_cast<float>(cross), kCrossTolerance * expected);
+          ++failures;
+        }
+        if (!inside) {
+          T8_LOG_ERROR("[BackyardSelfTest] wind: the body left the basin, end=(%.2f %.2f)", endX, endZ);
+          ++failures;
+        }
+        if (std::sqrt(stillAlong * stillAlong + stillCross * stillCross) > kStillLimit) {
+          T8_LOG_ERROR("[BackyardSelfTest] wind: with sphereAirDragCoefficient = 0 the body still "
+                       "drifts at %.5f m/s (limit %.4f m/s)",
+                       static_cast<float>(std::sqrt(stillAlong * stillAlong + stillCross * stillCross)),
+                       kStillLimit);
+          ++failures;
+        }
+      }
+    }
+  }
+
   // ── Gate 10: the per-ball material palette (W-25) ────────────────────────────
   // Three independent facts, all headless: the palette lists at least 32 materials,
   // every one of them resolves on disk and decodes on this API, and the real shuffle

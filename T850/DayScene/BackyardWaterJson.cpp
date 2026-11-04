@@ -82,6 +82,7 @@ struct glz::meta<t850::WaterTunables> {
       "fakeRipplesEnabled", &T::fakeRipplesEnabled, "forcingAmplitude", &T::forcingAmplitude,
       "sphereEnabled", &T::sphereEnabled, "sphereRadius", &T::sphereRadius,
       "sphereDensityRatio", &T::sphereDensityRatio, "sphereDragCoefficient", &T::sphereDragCoefficient,
+      "sphereAirDragCoefficient", &T::sphereAirDragCoefficient,
       "sphereRestitution", &T::sphereRestitution, "sphereHeaveDamping", &T::sphereHeaveDamping,
       "sphereWaterDensity", &T::sphereWaterDensity, "sphereMassOverride", &T::sphereMassOverride,
       "sphereDropHeight", &T::sphereDropHeight, "sphereDropX", &T::sphereDropX,
@@ -96,7 +97,7 @@ struct glz::meta<t850::WaterTunables> {
 
 // If a field is added to WaterTunables without a meta entry it would silently keep its
 // C++ default and a JSON key for it would be rejected. The count makes that loud.
-static_assert(glz::reflect<t850::WaterTunables>::size == 109,
+static_assert(glz::reflect<t850::WaterTunables>::size == 110,
               "WaterTunables gained or lost a field: update the glz::meta in BackyardWaterJson.cpp");
 
 // The tunables file groups its keys under "water", so one file stays one concept. The

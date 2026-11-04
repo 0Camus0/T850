@@ -724,6 +724,20 @@ pwsh 7, then `ValidateWebReleasePackage.ps1`.
    - 78 gameplay PASS per runnable cell.
 2. **Device builds.** Android without `--asset-profile` (D.1). Deck `--with-editor` again:
    `GLCompute.cpp` is compiled on Linux, so A invalidates the 2026-11-02 result.
+
+   **Faster option, in use since 2026-11-03:** the Linux box (`camus000@10.0.0.80`, 20 cores,
+   gcc 15.2) builds the same `T850_PLATFORM_STEAM_DECK` target natively, without the container.
+   `pwsh scripts/SyncRemoteBuild.ps1 -Build` syncs this branch there and builds DayScene: the
+   first configure+build was 208 s including the vcpkg bootstrap, an incremental rebuild is
+   **67 s**, against ~40 min for the Deck build. The remote worktree is a one-way consumer
+   (git bundle, it cannot push back); `-Check` reports what it has.
+
+   That build paid for itself immediately: it caught `ShadowDescriptor.h` declaring
+   `enum class … : uint8_t` without `<cstdint>`, which MSVC and the Steam runtime's libstdc++
+   accept and Ubuntu's gcc 15 headers reject (`found ':' in nested-name-specifier`). Fixed in
+   `d1809201`. The Linux build has no display, so it is a **compile/link** verifier: running needs
+   Xvfb or a Wayland session (`SDL_VIDEODRIVER=dummy` segfaults at WSI init), and the Deck stays
+   the runtime verifier.
 3. **Registration.** `& scripts\ValidateBuildRegistration.ps1`; call it with `&`, because `-File`
    returns exit 1 on PASS. Then check any new C++ file by hand in the vcxproj, `CMakeLists.txt` and
    `cmake/AndroidBuild.cmake`.

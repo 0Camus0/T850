@@ -231,16 +231,26 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 |---|---|---|---|
 | A | OpenGL port (W-28) | **Done 2026-11-02**; see W-28's resolution | L |
 | B | Steam Deck: detect the OLED, run 60 sweeps | **Done 2026-11-03** (`5b90125a`): shared `utils/DeviceInfo`, run-time cap, verified on the Deck | S |
-| C | Browser re-verify after the kernel changes | The web export predates the air-rise kernel | S |
+| C | Browser re-verify after the kernel changes | The web export predates the air-rise kernel **and** W-30 (no new kernel there, so only the ball behaviour changed) | S |
 | D | Android: CI-style build, 30-minute tablet run | APK with every fix installed, no long run yet | S–M |
-| E | Launcher gaps | The three small items. ~~The Backyard meshes are missing from the cloud asset manifest~~ — **done 2026-11-03**: `PushCloudModels.ps1`, 7 meshes in `t850-models`, `runtime_assets.json` 13 → 20, union manifest repaired and at 218 assets | S |
+| E | Launcher gaps | **Partly done.** ~~The Backyard meshes are missing from the cloud asset manifest~~ — done 2026-11-03 (`1760d846`): `PushCloudModels.ps1`, 7 meshes in `t850-models`, `runtime_assets.json` 13 → 20, union manifest repaired to 218 assets. Remaining: the CI check in `TestLauncherWebGPU.ps1`, the empty-asset-root launcher run, and the `cloud-assets.md` release decision | S |
 | F | Cleanup: script move, README, W-16 | Partly done | M |
 | G | Final matrix and validation (2b) | Last full run predates the Vulkan/WebGPU/Linux changes | M |
 | H | Remaining owner decisions and PR text | Merge strategy and push approval open | S |
 | I | Simulated buoyancy in the headless gates (optional) | Unblocked by the gate 7 improvement | S |
-| J | Real time on slow devices: adaptive substeps (W-31) | Designed below | M |
+| J | Real time on slow devices: adaptive substeps (W-31) | **Next up.** Designed below; nothing implemented | M |
 | K | Wind pushes the balls (W-30) | **Done 2026-11-03** (`4cf09a48`): gate 12 measured 0.2749 m/s against 0.2800 closed form; see W-30's resolution | S–M |
 | — | W-07 solid fraction | Not needed for the PR | L |
+
+**Unplanned work landed 2026-11-03/04** (owner requests while reviewing the wind, not part of the
+staged list): the wind panel now reads a speed and a heading instead of raw X/Y/Z components
+(`2d8ce280`), and the Debug view has a `show wind` arrow whose direction is the wind and whose shaft
+length is its speed (`482e39aa`). Getting the arrow to run on all five APIs also fixed two
+pre-existing `WireframeArrow` bugs — a constant buffer 16 bytes short of `FS_W`'s `WVP + LineColor`
+(WebGPU refused the draw, GL logged 200 "exceeds CB size" errors per run) and a basis written down
+the columns of a row-vector matrix, which rotated every arrow 90 degrees, including DayScene's light
+gizmo. Neither bug could have been found without the per-API verification, so the detour paid for
+itself; it changes no solver behaviour and no gate.
 
 **Order:**
 

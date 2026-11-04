@@ -125,6 +125,14 @@ const server = createServer(async (request, response) => {
         }
         const upstream = await fetch(cloud.url, { method: request.method, headers, redirect: 'error' });
         if (![200, 206, 304, 404, 416].includes(upstream.status)) throw new Error(`upstream status ${upstream.status}`);
+        // The catalog records each object's size, so a truncated body or a stale edge copy is caught
+        // here instead of surfacing as a corrupt mesh in the engine. Only checked for a whole-object
+        // GET/HEAD; a range response carries Content-Range instead of the full length.
+        if (upstream.status === 200 && cloud.size !== undefined && upstream.headers.has('content-length')) {
+          const served = Number(upstream.headers.get('content-length'));
+          if (served !== Number(cloud.size))
+            throw new Error(`${resource} served ${served} bytes, catalog says ${cloud.size}`);
+        }
         response.statusCode = upstream.status;
         response.setHeader('Content-Type', upstream.headers.get('content-type') ?? cloud.contentType);
         response.setHeader('Cache-Control', 'public, max-age=300');

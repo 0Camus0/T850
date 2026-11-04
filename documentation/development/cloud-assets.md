@@ -236,6 +236,17 @@ contract, so a log from any of them reads the same way:
 | Failure | warning, launch continues | status text on the launcher screen | 502 with the actual byte count |
 | Status line | `Cloud assets ready=N missing=M total=T` | same (logcat) | catalog is validated at build/start |
 
+**How the hashes get there.** A hash can only be written by something that can read the bytes, so
+there are three routes: `PushCloudTextures.ps1` / `PushCloudModels.ps1` hash every file they scan
+(2026-11-04: they used to leave a pre-existing size-only entry size-only forever, which left 114 of
+218 entries unverifiable), `PushCloudModels.ps1` backfills an entry whose local file exists but is
+outside the scanned prefixes, and `scripts/BackfillCloudHashes.ps1` reads an object back through the
+authenticated R2 API and hashes that — the only route for a cloud-only file such as a sky cubemap.
+`scripts/validation/check_cloud_manifests.py` is the guard: it fails when a *consumed* entry
+(`runtime_assets.json`, or any union texture) lacks `size` or a 64-hex `sha256`, when the two buckets
+publish different union copies, or when an entry's `url` points at the other bucket. The union's model
+entries are inventory only — nothing reads them — so a missing hash there is a note.
+
 **One identity per asset.** An asset is *ready* when the file exists, matches the manifest's `size`,
 and matches the manifest's `sha256` when the manifest publishes one. Entries published before
 2026-11 carry no hash, so they fall back to the size check — that is why

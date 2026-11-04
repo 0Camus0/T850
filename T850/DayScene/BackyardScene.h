@@ -173,6 +173,9 @@ private:
   float m_appliedCellSize = 0.0f;
   // Cell size being dragged in the GUI; committed (and the grid rebuilt) on release.
   float m_gridEditCell = -1.0f;
+  // Last wind heading the GUI showed, in degrees counter-clockwise from +X. Sticky so that
+  // dragging the air speed to 0 and back does not silently rotate the wind.
+  float m_windHeadingDeg = 0.0f;
   // Seconds to wait before releasing the dropped sphere.
   float m_sphereReleaseDelay = 1.0f;
   float m_elapsedSeconds = 0.0f;

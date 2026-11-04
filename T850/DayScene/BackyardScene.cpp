@@ -1581,9 +1581,51 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
                  w.fixedTimeStep);
     slider("water_viscosity", "viscosity (m^2/s)", w.viscosity, 0.0f, 0.01f, 0.000001f);
     slider("water_gravity", "gravity", w.gravity, 0.0f, 30.0f, 0.01f);
-    slider("water_wind_x", "wind X (m/s)", w.windX, -20.0f, 20.0f, 0.1f);
-    slider("water_wind_y", "wind Y (unused)", w.windY, -5.0f, 5.0f, 0.01f);
-    slider("water_wind_z", "wind Z (m/s)", w.windZ, -20.0f, 20.0f, 0.1f);
+    // W-30 made the wind act on the balls as well as the water, so the panel speaks the way a
+    // person thinks about wind: one speed and one heading. The raw components stay available in a
+    // collapsed sub-section because that is what JSON, the gates and SetWind use; editing either
+    // view writes windX/windZ, and the other view is derived from them, so they cannot disagree.
+    {
+      constexpr float kRadToDeg = 57.29577951308232f;
+      constexpr float kDegToRad = 0.017453292519943295f;
+      float speed = std::sqrt(w.windX * w.windX + w.windZ * w.windZ);
+      float heading = m_windHeadingDeg;
+      if (speed > 1e-4f) {
+        heading = std::atan2(w.windZ, w.windX) * kRadToDeg;
+        if (heading < 0.0f) heading += 360.0f;
+      }
+      bool changed = slider("water_wind_speed", "air speed (m/s)  [moves water + balls]", speed,
+                            0.0f, 20.0f, 0.1f);
+      changed = slider("water_wind_dir", "wind direction (deg; 0 = +X, 90 = +Z)", heading,
+                       0.0f, 360.0f, 1.0f) || changed;
+      if (changed) {
+        m_windHeadingDeg = heading;
+        w.windX = speed * std::cos(heading * kDegToRad);
+        w.windZ = speed * std::sin(heading * kDegToRad);
+        // Keep the components exact rather than leaving 1e-8 residue at 0 or 90 degrees.
+        if (std::fabs(w.windX) < 1e-6f) w.windX = 0.0f;
+        if (std::fabs(w.windZ) < 1e-6f) w.windZ = 0.0f;
+      }
+      // Derived heading is sticky at zero speed: atan2(0, 0) has no direction to report.
+      if (speed > 1e-4f) m_windHeadingDeg = heading;
+
+      char line[160];
+      const char* compass = heading < 22.5f || heading >= 337.5f ? "+X (east)"
+        : heading < 67.5f ? "+X+Z" : heading < 112.5f ? "+Z (south)"
+        : heading < 157.5f ? "-X+Z" : heading < 202.5f ? "-X (west)"
+        : heading < 247.5f ? "-X-Z" : heading < 292.5f ? "-Z (north)" : "+X-Z";
+      std::snprintf(line, sizeof(line), "wind %+.1f m/s toward %.0f deg (%s)  ->  X %+.2f  Z %+.2f",
+                    speed, heading, compass, w.windX, w.windZ);
+      gui.Text(line);
+      if (gui.BeginSection("Wind components (exact)", false)) {
+        slider("water_wind_x", "wind X (m/s)", w.windX, -20.0f, 20.0f, 0.1f);
+        slider("water_wind_z", "wind Z (m/s)", w.windZ, -20.0f, 20.0f, 0.1f);
+        gui.Text("wind Y is unused: surface stress and the air drag on the balls are horizontal");
+      }
+      if (w.sphereAirDragCoefficient <= 0.0f) {
+        gui.Text("(air drag on the balls is off: Dropped sphere -> air drag)");
+      }
+    }
     slider("water_damping", "damping", w.damping, 0.0f, 4.0f, 0.01f);
     slider("water_surface_level", "surface level", w.surfaceLevel, 0.05f, 0.99f, 0.001f);
     gui.Separator();

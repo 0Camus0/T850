@@ -125,7 +125,8 @@ void WireframeArrow::Create(int circleSegments, int numRays) {
   IB = (IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, bdesc, &indices[0]);
 }
 
-void WireframeArrow::Draw(const XMATRIX44& vp, const XVECTOR3& position, const XVECTOR3& direction, float size) {
+void WireframeArrow::Draw(const XMATRIX44& vp, const XVECTOR3& position, const XVECTOR3& direction,
+                          float size, const XVECTOR3& color, float lengthScale) {
   // Build orientation matrix: align local -Y axis to the light direction
   // direction = normalized light direction (where light points)
   float dx = direction.x, dy = direction.y, dz = direction.z;
@@ -163,12 +164,20 @@ void WireframeArrow::Draw(const XMATRIX44& vp, const XVECTOR3& position, const X
   // Build world = scale * rotation * translation
   // rotation columns: X=right, Y=up(-dir), Z=forward
   XMATRIX44 world;
-  world.m[0][0] = rx * size; world.m[0][1] = ux * size; world.m[0][2] = fx * size; world.m[0][3] = 0.0f;
-  world.m[1][0] = ry * size; world.m[1][1] = uy * size; world.m[1][2] = fy * size; world.m[1][3] = 0.0f;
-  world.m[2][0] = rz * size; world.m[2][1] = uz * size; world.m[2][2] = fz * size; world.m[2][3] = 0.0f;
+  // The engine transforms row-vector style (v * W * VP, translation in the last row), so each ROW of
+  // the upper 3x3 is the image of one local axis: row 0 = local X, row 1 = local Y, row 2 = local Z.
+  // The basis was previously written down the columns, which rotated the arrow 90 degrees: a +X wind
+  // drew a -Z arrow (measured against the dumped camVP: predicted -Z tip (475, 577) for the rendered
+  // (-55, +133) delta). Only row 1 carries the length scale, so the ring keeps its radius while the
+  // shaft stretches.
+  const float along = size * (lengthScale > 0.0f ? lengthScale : 1.0f);
+  world.m[0][0] = rx * size; world.m[0][1] = ry * size;  world.m[0][2] = rz * size;  world.m[0][3] = 0.0f;
+  world.m[1][0] = ux * along; world.m[1][1] = uy * along; world.m[1][2] = uz * along; world.m[1][3] = 0.0f;
+  world.m[2][0] = fx * size; world.m[2][1] = fy * size;  world.m[2][2] = fz * size;  world.m[2][3] = 0.0f;
   world.m[3][0] = position.x; world.m[3][1] = position.y; world.m[3][2] = position.z; world.m[3][3] = 1.0f;
 
   constantBuff.WVP = world * vp;
+  constantBuff.LineColor = color;
 
   MeshDrawStateTracker& tracker = MeshDrawStateTracker::Get();
   tracker.BindIndexedGeometry(*T8DeviceContext,

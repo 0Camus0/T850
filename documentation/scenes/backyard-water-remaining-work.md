@@ -49,7 +49,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-27 The wind tunable does nothing | **Done** (2026-11-01) | this commit | The diagnosis below was half right: at run time `SurfaceLevel` is the layout fill (0.788), so the band did reach the waterline. Wind was multiplied by `ForcingAmplitude`, which ships at 0. Wind is now surface stress on the top wet layer; 10 m/s along X moves the scripted ball 1.2 cm in 20 s, 0 m/s leaves it still |
 | W-28 OpenGL has no solver | **Done** (2026-11-02, this commit) | this commit | GL 4.3 now runs the whole solver: 27 generated GLSL twins, `glTexStorage3D` volumes bound with `glBindImageTexture`, inline SSBOs, and the mesh shaders' `FLUID_SURFACE` path hand-ported. `--compute-selftest`, `--fluid-selftest`, all 11 `--backyard-selftest` gates and `--backyard-pick-test` PASS on `--api gl`; scenes 1 and 6 stay byte-identical; scene 7 frame 300 is within +0.22/255 mean of D3D12. GL is **GPU-bound, not CPU-bound**, at 120 sweeps and vsync-locked at the display refresh; the measurements that falsified the CPU hypothesis are under W-28 | 
 | W-29 The mean surface creeps up over long runs | **Done** (2026-11-02) | this commit | Entrained air never left (no bubble buoyancy) and W-26 drew it as frozen bumps. `CS_FluidAirRise3D` lets it rise out: after 30 s bulk cells below 98 % 3614 → 24, interface 3.36 → 1.16 cells; 600 s on D3D12 ends flat to ±1 mm with mean 0.0 mm. Gate 11 guards it. Fixing it exposed two backend bugs (WebGPU headless memory, Vulkan stale readback) |
-| W-30 The wind does not push the balls | **Planned** (owner decision 2026-11-02) | — | Air drag on the exposed cap, horizontal, integrated implicitly together with the water drag; expected leeway ~2.8 % of the wind. Gate 12. Staged plan section 0, item K |
+| W-30 The wind does not push the balls | **Done** (2026-11-03) | `4cf09a48` | Air drag on the exposed cap, horizontal, integrated implicitly with the water drag. Gate 12: closed form 0.2800 m/s vs measured 0.2749 (1.8 %), cross-wind 0.0000, 0.00000 with the term off; identical on D3D12, Vulkan and GL. Gates 1–11 re-baselined, no constant touched |
 | W-31 Devices run the water in slow motion | **Planned** (owner request 2026-11-02) | — | The 1/30 s frame clamp plus a fixed 1/120 s substep cost 4 substeps per frame regardless of the flow: Deck 0.53×, tablet 0.53×. Replace them with CFL substeps from a measured velocity bound and a per-frame substep budget. Gate 13. Staged plan section 0, item J |
 | All others | Open | — | — |
 
@@ -2346,6 +2346,66 @@ the ball relaxes to a weighted mean of the current and the wind.
   radius: ~2 cm/s at the default 0.69 m/s, ~14 cm/s at 5 m/s.
 
 The formulas, the code steps and gate 12 are in the staged plan, section 0, item K.
+
+#### W-30 resolution (2026-11-03, `4cf09a48`)
+
+Shipped as designed. `FluidSimulation::ExposedFrontalFraction(h, r)` (static, so gate 12 computes
+exactly the number the integrator uses) returns the circular-segment area over πr²: 0 submerged,
+1 dry, 0.415 for the default ball at its equilibrium depth. Both drag terms are integrated together:
+
+```
+v = (v + dt·(k_water·flow + k_air·wind)) / (1 + dt·(k_water + k_air))
+```
+
+With `k_air = 0` that is **algebraically identical** to the previous single-medium line, so the term
+is opt-out without a branch, and the steady state is the classic leeway
+`v/(W−v) = sqrt((ρ_a/ρ_w)·Cd_a·a_exp/(Cd_w·f))`.
+
+**Measured**, D3D12 / Vulkan / GL identical to the digit:
+
+| | |
+|---|---|
+| `a_exp` (exposed frontal fraction at f = 0.60) | 0.415 |
+| Closed-form terminal at 10 m/s | 0.2800 m/s |
+| Measured mean over t = 15–20 s | **0.2749 m/s** (1.8 % low) |
+| Cross-wind drift | 0.0000 m/s |
+| Position after 20 s | inside the basin, x = +0.29 m from a start at x = −3.91 m |
+| `sphereAirDragCoefficient = 0` | 0.00000 m/s |
+
+**Re-baseline of gates 1–11** (D3D12, before → after). No gate constant was touched; every one still
+passes:
+
+| Gate | Before | After |
+|---|---|---|
+| 1 still pool `maxAbs` | 0.0001 m | 0.0001 m |
+| 2 isotropy quadrant deltas | 0.0422 m | 0.0413 m (limit 1.30 m mirror 0.0030) |
+| 3 drop timing | 0.39 s / 0.45 s | unchanged |
+| 4 mass drift | +0.008 % | +0.008 % |
+| 5 boundary | 0.00018 m/s | 0.00018 m/s |
+| 6 surface texture | 0.0031 / 0.0009 m | unchanged |
+| 7 float ring-far / covered min−ring | −1.7 mm / −2.4 mm | −1.6 mm / **−3.9 mm** (limits 15 / 20 mm) |
+| 8 float flicker | 0.0007 m | 0.0008 m |
+| 9 multi-body | 0.00024 m/s | 0.00024 m/s |
+| 10 ball materials | 32/32/32 | unchanged |
+| 11 air | 24 of 76 276 | **19** of 76 280 (limit 200) |
+
+Gate 7 and gate 8 move because the default 0.69 m/s wind now nudges the ball (~2 cm/s), which is the
+feature working; both stay an order of magnitude inside their limits, so no per-gate disable was
+needed.
+
+**Live check.** 8 balls, `--backyard-spawn 8 --backyard-spawn-seed 777`, wind 6 m/s along +X for that
+run only (`BackyardWater.json` restored afterwards): ball 0 moved x +0.012 → +0.264 m over 6.0 s with
+vx +0.005 → +0.076 m/s and vz flat at −0.000, 0 `[ERROR]`, no jitter. A held body ignores the wind by
+construction — the whole drag block sits under `if (!s.held)` — and `--backyard-pick-test` still PASSes.
+
+`--fluid-selftest` PASS (`meanSpeed=0.0569`), all gates PASS on D3D12, Vulkan **and** OpenGL, and the
+Linux SteamDeck target builds in 39 s (`SyncRemoteBuild.ps1 -Build`).
+
+**Files.** `FluidSimulation.h` (`airDragCoefficient`, `ExposedFrontalFraction`),
+`FluidSimulation.cpp` (integrator + the two density constants, matching `CS_FluidForces3D.hlsl`),
+`WaterTunables.h`, `BackyardWaterJson.cpp` (`static_assert` 109 → 110), `BackyardScene.cpp` (three
+body sites + GUI slider), `BackyardSelfTest.cpp` (gate 12). `Scenes/BackyardWater.json` is
+deliberately unchanged: it overrides no sphere key, so adding this one alone would be inconsistent.
 
 **Acceptance.**
 

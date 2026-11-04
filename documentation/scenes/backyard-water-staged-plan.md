@@ -239,7 +239,7 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 | H | Remaining owner decisions and PR text | Merge strategy and push approval open | S |
 | I | Simulated buoyancy in the headless gates (optional) | Unblocked by the gate 7 improvement | S |
 | J | Real time on slow devices: adaptive substeps (W-31) | Designed below | M |
-| K | Wind pushes the balls (W-30) | Designed below | S–M |
+| K | Wind pushes the balls (W-30) | **Done 2026-11-03** (`4cf09a48`): gate 12 measured 0.2749 m/s against 0.2800 closed form; see W-30's resolution | S–M |
 | — | W-07 solid fraction | Not needed for the PR | L |
 
 **Order:**
@@ -923,7 +923,13 @@ that to `maxDeltaTime` = 1/30 s, and the clamp is what turns a slow frame into s
   - implementation record section 8.2 (substepping) and section 11
   - `runtime-configuration.md`
 
-#### K. Wind pushes the balls (W-30, owner decision 2026-11-02)
+#### K. Wind pushes the balls (W-30, owner decision 2026-11-02) — **done 2026-11-03**
+
+**Outcome.** Implemented as specified below, with the numbers in `backyard-water-remaining-work.md`
+→ W-30 → resolution. Gate 12 reads 0.2749 m/s against a 0.2800 m/s closed form (1.8 %), 0.0000
+cross-wind, 0.00000 with the coefficient disabled, identical on D3D12, Vulkan and GL; gates 1–11 were
+re-baselined and no gate constant was touched.
+
 
 **Today.** The wind (`windX`/`windZ`, default 0.6 / −0.35 m/s) acts only on the water, as surface
 stress in `CS_FluidForces3D` (`AIR_DENSITY` 1.2, `WIND_DRAG_COEFFICIENT` 1.3e-3; W-27). The balls

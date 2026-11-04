@@ -684,8 +684,24 @@ cannot reverse velocity in one frame.
 
 Floor and wall clamps apply `restitution` (default 0.30) rather than a dead stop.
 
-**This replaced** a hardcoded `v *= 1/(1 + 6·|v|·dt)`, which was mass-independent and about 5×
-too strong at entry speed.
+**Wind on the body (W-30).** The same integrator carries a second drag term, on air, for the cap of
+the body above the waterline. Its reference velocity is the wind relative to the body, its area is the
+exposed circular segment, and the density ratio converts the water-mass units:
+
+$$a_\text{air} = \frac{\rho_a}{\rho_w}\cdot\frac{9\,C_{d,a}\,a_\text{exp}\,v_{\text{rel},w}^2}{16\,r\left(\rho_\text{rel} + \tfrac13\right)},
+\qquad a_\text{exp} = \frac{r^2\arccos(d/r) - d\sqrt{r^2-d^2}}{\pi r^2},\quad d = r - (2r - h)$$
+
+Both terms are solved **together**, so the body relaxes to a weighted mean of the current and the wind:
+
+$$v = \frac{v + \Delta t\left(k_w u + k_a W\right)}{1 + \Delta t\left(k_w + k_a\right)},
+\qquad k_a = \frac{a_\text{air}}{|W - v|}$$
+
+With $k_a = 0$ this is algebraically the single-medium update above, which is why the term is opt-out
+(`sphereAirDragCoefficient = 0`) without a branch. Vertical air drag is deliberately absent: it is
+under 2 % of $g$ for a falling ball and would shift the drop timing gates 3, 7 and 8 rely on.
+`FluidSimulation::ExposedFrontalFraction` is static so gate 12 computes exactly what the integrator
+does. Measured: $a_\text{exp} = 0.415$ at $f = 0.60$, terminal 0.2749 m/s against a 0.2800 m/s closed
+form at 10 m/s wind, cross-wind 0.0000, and 0.00000 with the coefficient at 0.
 
 ### 8.2 Substepping (`Step`)
 
@@ -944,8 +960,9 @@ that used to be a literal. Groups:
 - **Foam**: crest, border, noise, strength, RGB, three noise frequency pairs, distance fade
 - **Ripple octaves**: 6 × (amplitude, wavelength, speed, fade)
 - **Presentation**: `displacementScale`, `normalStrength`, `fakeRipplesEnabled`, `forcingAmplitude`
-- **Dropped sphere**: enabled, radius, density ratio, drag coefficient, restitution, water
-  density, mass override, drop height/X/Z, initial VX/VY/VZ, release delay
+- **Dropped sphere**: enabled, radius, density ratio, drag coefficient, **air drag coefficient
+  (W-30)**, restitution, water density, mass override, drop height/X/Z, initial VX/VY/VZ, release
+  delay
 
 `SceneProp.Water` holds it; `BuildWaterGpu()` packs it into `WaterGpuParams`.
 

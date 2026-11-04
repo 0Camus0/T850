@@ -138,9 +138,11 @@ if [ ! -d "$dir/.git" ]; then
 else
   cd "$dir"
 fi
-git fetch -q --force "$bundle" "refs/heads/backyard_scene:refs/heads/$branch"
-git checkout -q -f "$branch" 2>/dev/null || git checkout -q -f -B "$branch" "refs/heads/$branch"
-git reset -q --hard "refs/heads/$branch"
+# Fetch into FETCH_HEAD rather than straight into the checked-out branch: git refuses to update a
+# ref that is checked out in a non-bare repository.
+git fetch -q --force "$bundle" "refs/heads/backyard_scene"
+git checkout -q -f -B "$branch" FETCH_HEAD
+git reset -q --hard FETCH_HEAD
 echo "  remote HEAD: $(git log -1 --format='%h %s')"
 rm -f "$bundle"
 '@
@@ -152,7 +154,7 @@ $tmpScript = Join-Path $env:TEMP "t850-remote-init.sh"
 if ($LASTEXITCODE -ne 0) { throw "scp of the init script failed" }
 
 Write-Host '  syncing...'
-Invoke-Remote -Command 'bash /tmp/t850-remote-init.sh; rm -f /tmp/t850-remote-init.sh' | ForEach-Object { Write-Host "  $_" }
+Invoke-Remote -Command 'bash /tmp/t850-remote-init.sh; st=$?; rm -f /tmp/t850-remote-init.sh; exit $st' | ForEach-Object { Write-Host "  $_" }
 Remove-Item -LiteralPath $bundle, $tmpScript -Force -ErrorAction SilentlyContinue
 }   # if (-not $alreadyCurrent)
 
@@ -200,7 +202,7 @@ $tmpBuild = Join-Path $env:TEMP "t850-remote-build.sh"
 if ($LASTEXITCODE -ne 0) { throw "scp of the build script failed" }
 
 Write-Host "  building ($Configuration, $Parallel jobs)..."
-Invoke-Remote -Command 'bash /tmp/t850-remote-build.sh; rm -f /tmp/t850-remote-build.sh' | ForEach-Object { Write-Host "  $_" }
+Invoke-Remote -Command 'bash /tmp/t850-remote-build.sh; st=$?; rm -f /tmp/t850-remote-build.sh; exit $st' | ForEach-Object { Write-Host "  $_" }
 Remove-Item -LiteralPath $tmpBuild -Force -ErrorAction SilentlyContinue
 
 Write-Host ''

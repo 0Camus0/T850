@@ -1931,7 +1931,12 @@ bool FluidSimulation::Step(BaseDriver* driver) {
     // Lagged by one to three frames through the asynchronous readback, so add margin, and take the
     // body's own speed because a splash starts at the body before the field shows it. The floor keeps
     // a settling pool from asking for an absurd step every frame.
-    const float uBound = (std::max)({1.25f * m_measuredVelocitySum,
+    m_velocityEnvelope = (std::max)(m_measuredVelocitySum,
+                                    m_velocityEnvelope * std::exp(-frameDt / 0.5f));
+    // 1.5, not 1.25: gate 13 caught the field growing 1.5x inside a single 1/30 s frame of the
+    // default drop (1.08 -> 1.61 m/s at t=3.56 s, which sized one substep and read CFL 1.049). The
+    // envelope holds the recent peak but cannot see the frame it is about to be used in.
+    const float uBound = (std::max)({1.5f * m_velocityEnvelope,
                                      1.7321f * bodySpeed,
                                      (std::max)(m_settings.minCflSpeed, 0.05f)});
     const float cfl = (std::min)((std::max)(m_settings.cflNumber, 0.1f), 1.0f);
@@ -1956,9 +1961,10 @@ bool FluidSimulation::Step(BaseDriver* driver) {
   T8_LOG_DEBUG("[Fluid] substeps=%u requested=%u bodySubsteps=%u bodySpeed=%.2f m/s "
                "uBound=%.2f m/s subDt=%.5f cell=%.3f m budgetLimited=%d",
                simulatedSubsteps, requestedSubsteps, bodySubsteps, bodySpeed,
-               1.25f * m_measuredVelocitySum, subDtTarget, cell, m_lastFrameBudgetLimited ? 1 : 0);
+               1.5f * m_velocityEnvelope, subDtTarget, cell, m_lastFrameBudgetLimited ? 1 : 0);
 
   const float subDt = frameDt / static_cast<float>(requestedSubsteps);
+  m_lastSubstepDt = subDt;
   m_settings.deltaTime = subDt;
   bool ok = true;
   for (uint32_t substep = 0; substep < simulatedSubsteps && ok; ++substep)

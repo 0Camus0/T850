@@ -269,6 +269,10 @@ namespace t850 {
     float MeasuredVelocitySum() const { return m_measuredVelocitySum; }
     uint32_t LastFrameSubsteps() const { return m_lastFrameSubsteps; }
     bool LastFrameBudgetLimited() const { return m_lastFrameBudgetLimited; }
+    // The substep the last Step actually simulated with. When the budget bites this is frameDt
+    // divided by the REQUESTED count, which is what gate 13 needs: the size the CFL bound was
+    // checked against.
+    float LastSubstepDt() const { return m_lastSubstepDt; }
     void SetAlphaCompression(float compression) { m_settings.alphaCompression = compression; }
     void SetAirRiseSpeed(float metresPerSecond) { m_settings.airRiseSpeed = metresPerSecond; }
     void SetVolumeCheckInterval(uint32_t interval) { m_volumeCheckInterval = (std::max)(interval, 1u); }
@@ -454,6 +458,12 @@ namespace t850 {
     bool m_maxVelocityAsyncDisabled = false;
     float m_measuredVelocitySum = 0.0f;
     uint32_t m_lastFrameSubsteps = 1;
+    float m_lastSubstepDt = 0.0f;
+    // Decaying peak of the measured velocity. One readback per frame cannot see a crown collapse
+    // coming: the field went from ~1.8 to ~8.5 m/s inside one 1/30 s frame at t=1.32 s of the drop,
+    // and the substep that frame was sized for the calm surface before it. Holding the recent peak
+    // keeps the substep small through the violent part and lets it grow back in about half a second.
+    float m_velocityEnvelope = 0.0f;
     bool m_lastFrameBudgetLimited = false;
 
     int m_bodyLevelTicket = -1;

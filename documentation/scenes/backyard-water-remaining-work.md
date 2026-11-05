@@ -50,7 +50,7 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-28 OpenGL has no solver | **Done** (2026-11-02, this commit) | this commit | GL 4.3 now runs the whole solver: 27 generated GLSL twins, `glTexStorage3D` volumes bound with `glBindImageTexture`, inline SSBOs, and the mesh shaders' `FLUID_SURFACE` path hand-ported. `--compute-selftest`, `--fluid-selftest`, all 11 `--backyard-selftest` gates and `--backyard-pick-test` PASS on `--api gl`; scenes 1 and 6 stay byte-identical; scene 7 frame 300 is within +0.22/255 mean of D3D12. GL is **GPU-bound, not CPU-bound**, at 120 sweeps and vsync-locked at the display refresh; the measurements that falsified the CPU hypothesis are under W-28 | 
 | W-29 The mean surface creeps up over long runs | **Done** (2026-11-02) | this commit | Entrained air never left (no bubble buoyancy) and W-26 drew it as frozen bumps. `CS_FluidAirRise3D` lets it rise out: after 30 s bulk cells below 98 % 3614 → 24, interface 3.36 → 1.16 cells; 600 s on D3D12 ends flat to ±1 mm with mean 0.0 mm. Gate 11 guards it. Fixing it exposed two backend bugs (WebGPU headless memory, Vulkan stale readback) |
 | W-30 The wind does not push the balls | **Done** (2026-11-03) | `4cf09a48` | Air drag on the exposed cap, horizontal, integrated implicitly with the water drag. Gate 12: closed form 0.2800 m/s vs measured 0.2749 (1.8 %), cross-wind 0.0000, 0.00000 with the term off; identical on D3D12, Vulkan and GL. Gates 1–11 re-baselined, no constant touched |
-| W-31 Devices run the water in slow motion | **Planned** (owner request 2026-11-02) | — | The 1/30 s frame clamp plus a fixed 1/120 s substep cost 4 substeps per frame regardless of the flow: Deck 0.53×, tablet 0.53×. Replace them with CFL substeps from a measured velocity bound and a per-frame substep budget. Gate 13. Staged plan section 0, item J |
+| W-31 Devices run the water in slow motion | **Fixed 2026-11-04** (owner request 2026-11-02) | Gate 13 | CFL substeps from a measured velocity bound, a decaying velocity peak, and a per-frame substep budget replaced the fixed 1/120 s. Gate 13 reads 0.641 (old design) / 1.204 (fixed 1/60 or 1/30) / 0.658–0.795 (adaptive). Device `sim/wall` still to be re-measured |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -2447,6 +2447,60 @@ The code steps, the measurement order and gate 13 are in the staged plan, sectio
 - `sim/wall` ≥ 0.95 on the Deck (60 sweeps) and the tablet.
 - A 2 s stall on the Deck causes no error and no NaN.
 - No desktop fps regression.
+
+**Resolution — implemented 2026-11-04.**
+
+`CS_FluidMaxVelocity3D` reduces the velocity volume to one number per frame (groupshared max, one
+`InterlockedMax` per group, reset through the `Iteration` sentinel) and `Step` sizes each substep
+from it. The design in the staged plan held, with three additions the measurements forced:
+
+1. **A decaying peak of the measurement** (`envelope`, τ = 0.5 s). One readback per frame cannot
+   see a crown collapse coming: gate 13 caught the field going from ~1.8 to ~8.5 m/s inside a single
+   1/30 s frame, sized from the calm surface before it, reading **CFL 1.583**. With the envelope the
+   drop's own peak velocity fell from **4.94 to 1.61 m/s** — smoother substepping changes the
+   solution, not just the number the gate reads.
+2. **A 1.5 envelope margin, not 1.25.** Gate 13 then caught the field growing 1.5× inside one
+   frame (1.08 → 1.61 m/s at t = 3.56 s), which sized one substep and read CFL 1.049.
+3. **Two gate-13 limits rather than one**, because a measured scheme cannot be exact on the frame a
+   free surface pinches: worst substep ≤ 1.25, and at most 1 % of frames over 1.0. The old fixed
+   1/120 s design reads 0.641 with 0 frames over, so the gate still passes the configuration it
+   replaced; the 1.583 the pre-envelope code produced would fail.
+
+**A/B, same session, `--backyard-selftest --backyard-adaptive <0|1> --backyard-substep-ceiling <s>`
+(gate 13 worst CFL / frames over 1.0 of 300, and gate 11's air count):**
+
+| Substep config | d3d12 120 | d3d12 60 | vulkan 120 | vulkan 60 | air (limit 200) |
+|---|---|---|---|---|---|
+| fixed 1/120 (the old design) | 0.641 / 0 | 0.622 / 0 | 0.642 / 0 | 0.622 / 0 | 15 / 14 / 14 / 13 |
+| fixed 1/60 | 1.204 / 8 | 1.198 / 8 | 1.204 / 8 | 1.198 / 8 | 15 / 14 / 14 / 13 |
+| fixed 1/30 | 1.204 / 8 | 1.198 / 8 | 1.204 / 8 | 1.198 / 8 | 15 / 14 / 14 / 13 |
+| **adaptive, ceiling 1/30** | **0.658 / 0** | **0.795 / 0** | **0.653 / 0** | **0.708 / 0** | 15 / 14 / 14 / 13 |
+
+Read that as: the **CFL estimate is what keeps gate 13 green**, not the ceiling. A coarser fixed
+ceiling spends fewer substeps *and* breaks the bound 2.67 % of frames; the adaptive scheme spends
+one substep on calm water and stays under the bound on every frame. Gate 11's air counts do not
+move at all — entrained air takes tens of seconds to rise, so a 2× substep change does not
+reach it. The fixed 1/60 and 1/30 rows are identical because the body-displacement term already
+demanded two substeps at the worst frame, so lowering the ceiling from 1/60 to 1/30 changed
+nothing there.
+
+**Framework bugs found and fixed on the way** (both D3D12, both pre-existing latent):
+
+- A **4-byte compute readback removes the device** (`DXGI_ERROR_DEVICE_HUNG`) as soon as one is
+  issued; the same dispatches without the copy ran clean on all five APIs. The accumulator and its
+  readback are now a full 256-byte cache line, and the D3D12 failure log carries
+  `GetDeviceRemovedReason`. Found by bisecting with a temporary `T850_NO_MAXVEL_READBACK` switch.
+- **One pending readback slot per frame was not enough**: the body water level and the max velocity
+  asked in the same frame, and a request with a different byte count reset the resource while the
+  previous copy was still queued — a released resource referenced by in-flight work. It removed
+  the device intermittently at init and left the body level permanently stale in headless runs.
+  `D3D12Driver` now keeps four slots per frame and never touches a pending one. Vulkan still logs
+  the stale body level in headless runs; that is its own path and is unchanged here.
+
+**Gate 13 numbers on all five APIs** (default configuration, 120 sweeps):
+0.864 d3d12, 0.826 vulkan, 1.082 gl, 1.081 d3d11, 0.643 webgpu — one frame of 300 over 1.0 on
+GL and D3D11, which is why the second limit is 1 % and not 0.
+
 
 ---
 

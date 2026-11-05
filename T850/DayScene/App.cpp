@@ -111,6 +111,8 @@ int main(int arg,char ** args) try {
   float backyardCellSize = 0.0f;
   int backyardIterations = 0;
   float backyardAirRise = -1.0f;
+  float backyardSubstepCeiling = 0.0f;
+  int backyardAdaptiveSubsteps = -1;
   int backyardSpawnOnStart = 0;
   int backyardSelfTestFrames = 900;
   float fluidFixedDt = 1.0f / 300.0f;
@@ -180,6 +182,20 @@ int main(int arg,char ** args) try {
       const int value = std::stoi(args[++i]);
       if (value >= 1 && value <= 400) backyardIterations = value;
       else T8_LOG_ERROR("[App] --backyard-iterations %d is outside 1..400", value);
+    }
+    // W-31 A/B: force the substep ceiling and whether it follows the measured flow. Both keep the
+    // WaterTunables default when absent, so the gates still validate what ships.
+    if (std::string_view(args[i]) == "--backyard-substep-ceiling" && i + 1 < arg) {
+      backyardSelfTest = true;
+      const float value = std::stof(args[++i]);
+      if (value >= 1.0f / 1000.0f && value <= 0.5f) backyardSubstepCeiling = value;
+      else T8_LOG_ERROR("[App] --backyard-substep-ceiling %g is outside 0.001..0.5 s", value);
+    }
+    if (std::string_view(args[i]) == "--backyard-adaptive" && i + 1 < arg) {
+      backyardSelfTest = true;
+      const int value = std::stoi(args[++i]);
+      if (value == 0 || value == 1) backyardAdaptiveSubsteps = value;
+      else T8_LOG_ERROR("[App] --backyard-adaptive %d is not 0 or 1", value);
     }
     if (std::string_view(args[i]) == "--backyard-air-rise" && i + 1 < arg) {
       backyardSelfTest = true;
@@ -409,6 +425,8 @@ int main(int arg,char ** args) try {
     // to re-check the mobile/web cap.
     options.pressureIterations = backyardIterations > 0 ? static_cast<uint32_t>(backyardIterations) : 0u;
     options.airRiseSpeed = backyardAirRise;
+  options.substepCeiling = backyardSubstepCeiling;
+  options.adaptiveSubsteps = backyardAdaptiveSubsteps;
     result = t850::RunBackyardSelfTest(pFrameWork->pVideoDriver, options);
   } else if (fluidSelfTest) {
     t850::BaseDriver* driver = pFrameWork->pVideoDriver;

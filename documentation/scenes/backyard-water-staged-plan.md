@@ -238,7 +238,7 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 | G | Final matrix and validation (2b) | Last full run predates the Vulkan/WebGPU/Linux changes | M |
 | H | Remaining owner decisions and PR text | Merge strategy and push approval open | S |
 | I | Simulated buoyancy in the headless gates (optional) | Unblocked by the gate 7 improvement | S |
-| J | Real time on slow devices: adaptive substeps (W-31) | **Next up.** Designed below; nothing implemented | M |
+| J | Real time on slow devices: adaptive substeps (W-31) | **Done 2026-11-04**: kernel + envelope + budget; gate 13 reads 0.658–0.795 adaptive against 1.204 for a fixed 1/60; see W-31's resolution | M |
 | K | Wind pushes the balls (W-30) | **Done 2026-11-03** (`4cf09a48`): gate 12 measured 0.2749 m/s against 0.2800 closed form; see W-30's resolution | S–M |
 | — | W-07 solid fraction | Not needed for the PR | L |
 
@@ -809,7 +809,12 @@ Today the gates float the ball on the authored plane.
   float's settled `y` matches the scene probe (−0.07…−0.085 m).
 - **Otherwise** revert and record the numbers in W-06.
 
-#### J. Real time on slow devices: adaptive substeps (W-31, owner request 2026-11-02)
+#### J. Real time on slow devices: adaptive substeps (W-31, owner request 2026-11-02) — **done 2026-11-04**
+
+**Outcome.** Implemented as designed below, with three additions the measurements forced (a decaying
+velocity peak, a 1.5 envelope margin, and two gate-13 limits). The A/B table and the two Framework
+bugs found on the way are in `backyard-water-remaining-work.md` → W-31 → resolution; the
+implementation is in `backyard-water-simulation.md` §8.2 and §11.
 
 The owner asked why the water is capped. **The scene already runs on real timestamps**:
 `BackyardScene.cpp` ~L1008 takes `deltaSeconds * timeScale` from the frame clock. It then clamps

@@ -5007,6 +5007,14 @@
       "entryPoint": "CS",
       "permutation": "base",
       "defines": []
+    },
+    "CS_FluidMaxVelocity3D.hlsl:CS:base": {
+      "key": "CS_FluidMaxVelocity3D.hlsl:CS:base",
+      "kind": "compute",
+      "computeShader": "CS_FluidMaxVelocity3D.hlsl",
+      "entryPoint": "CS",
+      "permutation": "base",
+      "defines": []
     }
   }
 }

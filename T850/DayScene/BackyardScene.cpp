@@ -407,6 +407,10 @@ t850::FluidSettings BackyardScene::MakeFluidSettings() const {
   settings.openCeiling = w.openCeiling;
   // W-11: solver values that were literals before, now data-driven.
   settings.maxSubstepDt = (std::max)(w.maxSubstepDt, 1.0f / 1000.0f);
+  settings.adaptiveSubsteps = w.adaptiveSubsteps;
+  settings.cflNumber = (std::min)((std::max)(w.cflNumber, 0.1f), 1.0f);
+  settings.minCflSpeed = (std::max)(w.minCflSpeed, 0.05f);
+  settings.maxSubstepsPerFrame = static_cast<uint32_t>((std::max)(w.maxSubstepsPerFrame, 1));
   settings.alphaCompression = (std::min)((std::max)(w.alphaCompression, 0.0f), 1.0f);
   settings.airRiseSpeed = (std::max)(w.airRiseSpeed, 0.0f);
   return settings;
@@ -982,6 +986,10 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_fluid.SetSOROmega((std::min)((std::max)(w.sorOmega, 1.0f), 1.99f));
     // W-11: the three promoted solver values, pushed live like their neighbours.
     m_fluid.SetMaxSubstepDt((std::max)(w.maxSubstepDt, 1.0f / 1000.0f));
+    m_fluid.SetAdaptiveSubsteps(w.adaptiveSubsteps);
+    m_fluid.SetCflNumber((std::min)((std::max)(w.cflNumber, 0.1f), 1.0f));
+    m_fluid.SetMinCflSpeed((std::max)(w.minCflSpeed, 0.05f));
+    m_fluid.SetMaxSubstepsPerFrame(static_cast<uint32_t>((std::max)(w.maxSubstepsPerFrame, 1)));
     m_fluid.SetAlphaCompression((std::min)((std::max)(w.alphaCompression, 0.0f), 1.0f));
     m_fluid.SetAirRiseSpeed((std::max)(w.airRiseSpeed, 0.0f));
     m_fluid.SetVolumeCheckInterval(static_cast<uint32_t>((std::max)(w.volumeCheckInterval, 1)));
@@ -1019,11 +1027,14 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
       UpdateExtraBallTransforms();
     }
 
-    // Advance by REAL elapsed time. Stepping a fixed 1/60 s once per rendered
-    // frame tied the water's speed to the frame rate: at 721 fps the simulation
-    // ran 12x faster than real time, which is why it looked like fast-forward.
-    // The delta is clamped because the viscous term is integrated explicitly and
-    // its von Neumann bound here is h^2/(6*nu) = 0.0675 s.
+    // Advance by REAL elapsed time. Stepping a fixed 1/60 s once per rendered frame tied the water's
+    // speed to the frame rate: at 721 fps the simulation ran 12x faster than real time.
+    //
+    // W-31: maxDeltaTime is a HITCH clamp, not the stability mechanism. The substep count comes from
+    // the measured velocity (FluidSimulation::Step), so a slow frame no longer has to be squeezed
+    // into 1/30 s and the water can run in real time on a device. The old comment cited the von
+    // Neumann bound h^2/(6*nu) = 0.0675 s, which is the bound for nu = 0.02, not the 1e-6 this build
+    // ships (that bound is ~1350 s).
     float fluidDelta = w.fixedTimeStep ? w.deltaTime : deltaSeconds * w.timeScale;
     fluidDelta = (std::min)((std::max)(fluidDelta, 0.0f), (std::max)(w.maxDeltaTime, 1.0f / 1000.0f));
     if (m_dragBody >= 0) ApplyBallDrag(fluidDelta);
@@ -1042,25 +1053,43 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
       static float reportedSim = 0.0f;
       static int reportFrames = 0;
       static float initialVolume = -1.0f;
+      // W-31 accumulators: substeps actually simulated, and frames the budget cut short.
+      static int reportFramesCount = 0;
+      static float reportedSubsteps = 0.0f;
+      static int reportedLimited = 0;
       reportedWall += deltaSeconds;
       reportedSim += fluidDelta;
+      reportedSubsteps += static_cast<float>(m_fluid.LastFrameSubsteps());
+      if (m_fluid.LastFrameBudgetLimited()) ++reportedLimited;
+      ++reportFramesCount;
       if (++reportFrames == 600) {
+        // W-31: substeps per frame and how often the budget cut the simulation short. A non-zero
+        // budget-limited share with a sim/wall below 1 is the honest signal that this device cannot
+        // afford the flow at real time.
+        const float substepsPerFrame = reportedSubsteps / static_cast<float>(reportFramesCount);
+        const float budgetShare = 100.0f * reportedLimited / static_cast<float>(reportFramesCount);
         float volume = 0.0f;
         // The measurement is a full readback stall, so only pay it when the line is logged.
         if (t850::Log::GetMaxLevel() >= t850::Log::LVL_INFO &&
             m_fluid.MeasureVolumeFraction(pFramework->pVideoDriver, volume)) {
           if (initialVolume < 0.0f) initialVolume = volume;
-          T8_LOG_INFO("[Backyard][timing] sim/wall ratio = %.2f (%d frames); alpha volume = %.0f cells (%+.3f%% vs start)",
+          T8_LOG_INFO("[Backyard][timing] sim/wall = %.2f (%d frames), substeps %.1f/frame, "
+                      "budget-limited %.0f%%; alpha volume = %.0f cells (%+.3f%% vs start)",
                       reportedWall > 0.0f ? reportedSim / reportedWall : 0.0f,
-                      reportFrames, volume,
+                      reportFramesCount, substepsPerFrame, budgetShare, volume,
                       initialVolume > 0.0f ? 100.0f * (volume - initialVolume) / initialVolume : 0.0f);
         } else {
-          T8_LOG_INFO("[Backyard][timing] sim/wall ratio = %.2f (%d frames)",
-                      reportedWall > 0.0f ? reportedSim / reportedWall : 0.0f, reportFrames);
+          T8_LOG_INFO("[Backyard][timing] sim/wall = %.2f (%d frames), substeps %.1f/frame, "
+                      "budget-limited %.0f%%",
+                      reportedWall > 0.0f ? reportedSim / reportedWall : 0.0f, reportFramesCount,
+                      substepsPerFrame, budgetShare);
         }
         reportFrames = 0;
         reportedWall = 0.0f;
         reportedSim = 0.0f;
+        reportFramesCount = 0;
+        reportedSubsteps = 0.0f;
+        reportedLimited = 0;
       }
       // W-03 acceptance audit: mass, bulk dilution and surface width, on a cadence.
       // A full readback per sample, so it is opt-in (--backyard-mass-audit N).
@@ -1615,7 +1644,25 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     slider("water_sor_omega", "SOR omega (1 = Gauss-Seidel)", w.sorOmega, 1.0f, 1.99f, 0.001f);
     slider("water_alpha_compression", "alpha compression (0 = pure upwind)", w.alphaCompression, 0.0f, 1.0f, 0.01f);
     slider("water_air_rise", "air rise speed (m/s, 0 = air stays trapped)", w.airRiseSpeed, 0.0f, 1.0f, 0.01f);
-    slider("water_max_substep_dt", "max substep dt (s)", w.maxSubstepDt, 1.0f / 400.0f, 1.0f / 30.0f, 0.0005f);
+    slider("water_max_substep_dt", "max substep dt ceiling (s)", w.maxSubstepDt, 1.0f / 400.0f, 1.0f / 30.0f, 0.0005f);
+    {
+      auto check = [&gui](const char* name, const char* label, bool& value) {
+        return gui.Checkbox(t850::CheckboxDesc{ name, label, false, true }, value);
+      };
+      check("water_adaptive_substeps", "adaptive substeps (size each step from the measured flow)",
+            w.adaptiveSubsteps);
+      if (w.adaptiveSubsteps) {
+        slider("water_cfl_number", "CFL number (stability target)", w.cflNumber, 0.1f, 1.0f, 0.01f);
+        slider("water_min_cfl_speed", "CFL velocity floor (m/s)", w.minCflSpeed, 0.05f, 5.0f, 0.05f);
+        sliderInt("water_max_substeps", "max substeps per frame", w.maxSubstepsPerFrame, 1.0f, 12.0f, 1.0f);
+        char line[192];
+        std::snprintf(line, sizeof(line), "measured |u|+|v|+|w| = %.2f m/s, last frame %u substep(s)%s",
+                      m_fluidReady ? m_fluid.MeasuredVelocitySum() : 0.0f,
+                      m_fluidReady ? m_fluid.LastFrameSubsteps() : 0u,
+                      m_fluidReady && m_fluid.LastFrameBudgetLimited() ? " (budget-limited)" : "");
+        gui.Text(line);
+      }
+    }
     sliderInt("water_volume_check_interval", "volume check interval (substeps)", w.volumeCheckInterval, 1, 120, 1);
     slider("water_dt", "fixed step (s, only when fixed)", w.deltaTime, 1.0f / 240.0f, 1.0f / 15.0f, 0.0001f);
     slider("water_max_dt", "max delta (s)", w.maxDeltaTime, 1.0f / 240.0f, 1.0f / 10.0f, 0.0001f);

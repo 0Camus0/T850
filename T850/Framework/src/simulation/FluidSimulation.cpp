@@ -716,6 +716,7 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
   m_clearFloatPipeline = CreatePipeline(driver, "CS_FluidClearFloat3D.hlsl");
   m_surfaceToBufferPipeline = CreatePipeline(driver, "CS_FluidSurfaceToBuffer.hlsl");
   m_extrapolatePipeline = CreatePipeline(driver, "CS_FluidExtrapolate3D.hlsl");
+  m_maxVelocityPipeline = CreatePipeline(driver, "CS_FluidMaxVelocity3D.hlsl");
 
   bool complete = m_advect && m_forces && m_divergencePipeline && m_pressurePipeline &&
                   m_gradientPipeline && m_extrapolatePipeline && m_surfacePipeline && m_seedPipeline && m_diagnosticsPipeline &&
@@ -723,7 +724,7 @@ bool FluidSimulation::TryInitialize(BaseDriver* driver, const FluidSettings& set
                   m_alphaAdvectPipeline && m_airRisePipeline && m_bodyLevelPipeline && m_volumeCorrectPipeline && m_volumeReducePipeline &&
                   m_stampBodiesPipeline && m_baseMaskBuffer &&
                   m_objectVelocityPipeline && m_clearPipeline && m_clearFloatPipeline &&
-                  m_surfaceToBufferPipeline;
+                  m_surfaceToBufferPipeline && m_maxVelocityPipeline;
   for (size_t i = 0; i < kVelocityCount; ++i) complete = complete && m_velocity[i];
   for (size_t i = 0; i < kPressureCount; ++i) complete = complete && m_pressure[i];
   complete = complete && m_divergence;
@@ -793,6 +794,14 @@ void FluidSimulation::Shutdown(BaseDriver* driver) {
   m_bodyLevelTicket = -1;
   m_bodyLevelWaitFrames = 0;
   m_bodyLevelCapacity = 0;
+  m_maxVelocityPipeline.reset();
+  m_maxVelocityBuffer.reset();
+  m_maxVelocityTicket = -1;
+  m_maxVelocityWaitFrames = 0;
+  m_maxVelocityAsyncDisabled = false;
+  m_measuredVelocitySum = 0.0f;
+  m_lastFrameSubsteps = 1;
+  m_lastFrameBudgetLimited = false;
   m_bodyLevelCount = 0;
   m_volumeCorrectPipeline.reset();
   m_volumeReducePipeline.reset();
@@ -1361,6 +1370,96 @@ void FluidSimulation::QueryBodyWaterLevel(BaseDriver* driver) {
     ApplyBodyLevels(results, bodyCount);
 }
 
+void FluidSimulation::QueryMaxVelocity(BaseDriver* driver) {
+  if (!m_ready || !driver || !m_maxVelocityPipeline) return;
+
+  // The readback is a full 256-byte cache line even though only word 0 carries the answer. A 4-byte
+  // copy removed the D3D12 device (DXGI_ERROR_DEVICE_HUNG) on the first frame that issued one, while
+  // the same dispatches without the copy ran clean on all five APIs.
+  constexpr uint32_t kMaxVelocityBytes = 256;
+  constexpr size_t kMaxVelocityWords = kMaxVelocityBytes / sizeof(uint32_t);
+
+  // Consume the answer already in flight. One request at a time, exactly like the body-level query.
+  if (m_maxVelocityTicket > 0) {
+    std::array<uint32_t, kMaxVelocityWords> words{};
+    if (!driver->ConsumeComputeReadback(m_maxVelocityTicket, words.data(), kMaxVelocityBytes)) {
+      ++m_maxVelocityWaitFrames;
+      // A headless or fixed-step run never completes a frame, so the per-frame async slot can never
+      // deliver. Switch to the synchronous read once instead of erroring every frame.
+      if (m_maxVelocityWaitFrames >= 3 && !m_maxVelocityAsyncDisabled) {
+        m_maxVelocityAsyncDisabled = true;
+        T8_LOG_DEBUG("[Fluid] Max-velocity readback has not completed in %u frames on %s; using the "
+                     "synchronous path", m_maxVelocityWaitFrames, driver->ApiTag());
+      }
+      if (!m_maxVelocityAsyncDisabled) return;
+      m_maxVelocityTicket = -1;
+      m_maxVelocityWaitFrames = 0;
+    } else {
+      m_maxVelocityTicket = -1;
+      m_maxVelocityWaitFrames = 0;
+      float measured = 0.0f;
+      std::memcpy(&measured, &words[0], sizeof(measured));
+      // A zero means the kernel cleared the accumulator and nothing was written, which happens on a
+      // perfectly still start; keep the previous value rather than sizing substeps from nothing.
+      if (measured > 0.0f && std::isfinite(measured)) m_measuredVelocitySum = measured;
+    }
+  }
+
+  if (!m_maxVelocityBuffer) {
+    ComputeBufferDesc desc;
+    desc.byteWidth = kMaxVelocityBytes;
+    desc.structureStride = static_cast<uint32_t>(sizeof(uint32_t));
+    desc.access = ComputeBufferAccess::ReadWrite;
+    desc.debugName = "Fluid Max Velocity";
+    m_maxVelocityBuffer = driver->CreateComputeBuffer(desc);
+    if (!m_maxVelocityBuffer) return;
+  }
+
+  // Positional aggregate: type, register, buffer, constants, constantCount, texture, texture3D.
+  // A volume goes in the LAST field; one slot early lands in `inlineData` and the dispatch is
+  // rejected as "invalid pipeline or zero dispatch extent".
+  const ComputeBindingDesc volume = {ComputeBindingType::ReadOnlyTexture, 0, nullptr, nullptr, 0,
+                                     nullptr, m_velocity[m_current].get()};
+  const ComputeBindingDesc accumulator = {ComputeBindingType::ReadWriteBuffer, 0, m_maxVelocityBuffer.get(),
+                                          nullptr, 0};
+
+  // Clear the accumulator first: the kernel uses the Iteration slot as a reset sentinel, because the
+  // abstraction deliberately has no buffer-write API.
+  std::vector<uint32_t> clearConstants = BuildConstants();
+  if (clearConstants.size() > 3) clearConstants[3] = 0xFFFFFFFFu;
+  const std::vector<ComputeBindingDesc> clearBindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, clearConstants.data(),
+     static_cast<uint32_t>(clearConstants.size())},
+    volume, accumulator
+  };
+  if (!driver->DispatchCompute(*m_maxVelocityPipeline, clearBindings, 1, 1, 1)) return;
+
+  const std::vector<uint32_t> constants = BuildConstants();
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, constants.data(),
+     static_cast<uint32_t>(constants.size())},
+    volume, accumulator
+  };
+  const uint32_t gx = (m_settings.width + m_maxVelocityPipeline->threadGroupSize[0] - 1u) /
+                      m_maxVelocityPipeline->threadGroupSize[0];
+  const uint32_t gy = (m_settings.height + m_maxVelocityPipeline->threadGroupSize[1] - 1u) /
+                      m_maxVelocityPipeline->threadGroupSize[1];
+  const uint32_t gz = (m_settings.depth + m_maxVelocityPipeline->threadGroupSize[2] - 1u) /
+                      m_maxVelocityPipeline->threadGroupSize[2];
+  if (!driver->DispatchCompute(*m_maxVelocityPipeline, bindings, gx, gy, gz)) return;
+
+  if (!m_maxVelocityAsyncDisabled) {
+    m_maxVelocityTicket = driver->RequestComputeReadback(*m_maxVelocityBuffer, kMaxVelocityBytes);
+    if (m_maxVelocityTicket > 0) return;
+  }
+  std::array<uint32_t, kMaxVelocityWords> words{};
+  if (driver->ReadComputeBuffer(*m_maxVelocityBuffer, words.data(), kMaxVelocityBytes)) {
+    float measured = 0.0f;
+    std::memcpy(&measured, &words[0], sizeof(measured));
+    if (measured > 0.0f && std::isfinite(measured)) m_measuredVelocitySum = measured;
+  }
+}
+
 void FluidSimulation::AdvanceSphere(float dt) {
   if (dt <= 0.0f) return;
   for (FluidSphere& body : m_bodies) AdvanceOneSphere(body, dt);
@@ -1821,23 +1920,49 @@ bool FluidSimulation::Step(BaseDriver* driver) {
     bodySubsteps = (std::min)((std::max)(bodySubsteps, 1u), 12u);
   }
 
-  // CFL limit for the unsplit upwind alpha transport: (|u|+|v|+|w|)*dt/h <= 1.
-  // Real frame deltas reach maxDeltaTime = 1/30 s, far above what one step allows.
-  uint32_t substeps = bodySubsteps;
-  if (m_settings.maxSubstepDt > 0.0f) {
-    const uint32_t cflSubsteps =
-      static_cast<uint32_t>(std::ceil(frameDt / m_settings.maxSubstepDt));
-    substeps = (std::max)(substeps, cflSubsteps);
+  // W-31: the substep size follows the flow, not a fixed worst case.
+  //
+  // The transport's limit is (|u|+|v|+|w|) * dt / h <= 1, and the measured pool maximum is ~1.4 m/s
+  // in a splash against the ~10.8 m/s a fixed 1/120 s implies. Sizing each substep from the measured
+  // bound is what turns the device slow motion (4 substeps per 1/30 s frame whatever the water is
+  // doing) into real time on calm water while still subdividing a splash.
+  float subDtTarget = m_settings.maxSubstepDt > 0.0f ? m_settings.maxSubstepDt : frameDt;
+  if (m_settings.adaptiveSubsteps) {
+    // Lagged by one to three frames through the asynchronous readback, so add margin, and take the
+    // body's own speed because a splash starts at the body before the field shows it. The floor keeps
+    // a settling pool from asking for an absurd step every frame.
+    const float uBound = (std::max)({1.25f * m_measuredVelocitySum,
+                                     1.7321f * bodySpeed,
+                                     (std::max)(m_settings.minCflSpeed, 0.05f)});
+    const float cfl = (std::min)((std::max)(m_settings.cflNumber, 0.1f), 1.0f);
+    const float cflDt = cfl * cell / uBound;
+    const float ceiling = m_settings.maxSubstepDt > 0.0f ? m_settings.maxSubstepDt : frameDt;
+    subDtTarget = (std::min)((std::max)(cflDt, 1.0f / 480.0f), ceiling);
   }
-  substeps = (std::min)((std::max)(substeps, 1u), 12u);
-  T8_LOG_DEBUG("[Fluid] substeps=%u bodySubsteps=%u bodySpeed=%.2f m/s travel=%.3f m cell=%.3f m",
-               substeps, bodySubsteps, bodySpeed, bodySpeed * frameDt, cell);
 
-  const float subDt = frameDt / static_cast<float>(substeps);
+  uint32_t substeps = bodySubsteps;
+  if (subDtTarget > 0.0f)
+    substeps = (std::max)(substeps,
+                          static_cast<uint32_t>(std::ceil(frameDt / subDtTarget)));
+  // Clamp the REQUEST first, then size the substep from it: that is the step the flow needs. The
+  // budget below limits how much time a frame simulates, never the step size, because stretching the
+  // step back to frameDt would break the CFL bound this whole calculation exists to respect.
+  const uint32_t requestedSubsteps = (std::min)((std::max)(substeps, 1u), 12u);
+  const uint32_t budget = (std::max)(m_settings.maxSubstepsPerFrame, 1u);
+  const uint32_t simulatedSubsteps = (std::min)(requestedSubsteps, budget);
+  m_lastFrameBudgetLimited = requestedSubsteps > simulatedSubsteps;
+  m_lastFrameSubsteps = simulatedSubsteps;
+
+  T8_LOG_DEBUG("[Fluid] substeps=%u requested=%u bodySubsteps=%u bodySpeed=%.2f m/s "
+               "uBound=%.2f m/s subDt=%.5f cell=%.3f m budgetLimited=%d",
+               simulatedSubsteps, requestedSubsteps, bodySubsteps, bodySpeed,
+               1.25f * m_measuredVelocitySum, subDtTarget, cell, m_lastFrameBudgetLimited ? 1 : 0);
+
+  const float subDt = frameDt / static_cast<float>(requestedSubsteps);
   m_settings.deltaTime = subDt;
   bool ok = true;
-  for (uint32_t substep = 0; substep < substeps && ok; ++substep)
-    ok = StepInternal(driver, substep + 1 == substeps);
+  for (uint32_t substep = 0; substep < simulatedSubsteps && ok; ++substep)
+    ok = StepInternal(driver, substep + 1 == simulatedSubsteps);
   // Restore the frame delta so the caller and the GUI keep seeing the real value.
   m_settings.deltaTime = frameDt;
 
@@ -1851,6 +1976,10 @@ bool FluidSimulation::Step(BaseDriver* driver) {
       CorrectVolumeFraction(driver, appliedScale);
     }
   }
+
+  // W-31: measure the bound for the NEXT frame here, after the last substep. Querying before the
+  // substeps would size them from the previous frame's field.
+  if (m_settings.adaptiveSubsteps && ok) QueryMaxVelocity(driver);
   return ok;
 }
 

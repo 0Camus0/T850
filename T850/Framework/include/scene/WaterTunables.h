@@ -44,11 +44,13 @@ namespace t850 {
     // default) the solver advances by the real frame delta so the water runs in
     // real time instead of at (frame rate / 60) times real speed.
     float deltaTime = 1.0f / 60.0f;
-    // Longest real delta the solver will accept. Clamps pathological frames
-    // (window drag, breakpoint) so an explicit viscous step cannot blow up:
-    // the von Neumann bound here is h^2 / (6 nu) = 0.0675 s, so 1/30 sits at
-    // half of it.
-    float maxDeltaTime = 1.0f / 30.0f;
+    // Longest real delta the solver will accept. W-31 turned this into a HITCH clamp only: the
+    // substep count now comes from the measured flow (see adaptiveSubsteps below), so a slow frame
+    // no longer has to be squeezed into 1/30 s. The old comment claimed the von Neumann bound
+    // h^2/(6 nu) = 0.0675 s required it, but that bound is for the viscosity this build actually
+    // ships (1e-6 m^2/s) at ~1350 s; 0.25 s only stops a stall (window drag, breakpoint, Android
+    // resume) from handing the solver seconds of dt.
+    float maxDeltaTime = 0.25f;
     // Multiplies elapsed time. 1.0 is real time; smaller makes the water lazy.
     float timeScale = 1.0f;
     // Deterministic fixed-step mode (for reproducible frame dumps and tests).
@@ -68,9 +70,19 @@ namespace t850 {
     float damping = 0.05f;
     float surfaceLevel = 0.96f;
     // ── Solver values promoted to tunables in W-11 (previously literals) ──
-    // CFL cap on the unsplit upwind alpha transport: (|u|+|v|+|w|)*dt/h <= 1.
-    // This was a FluidSettings literal of 1/120 and not reachable from anywhere.
-    float maxSubstepDt = 1.0f / 120.0f;
+    // Ceiling on one substep. With adaptiveSubsteps on (the default since W-31) this is only the
+    // upper bound; 1/120 was the fixed cadence that made devices run the water at 0.53x real time.
+    float maxSubstepDt = 1.0f / 30.0f;
+    // Size each substep from the measured (|u|+|v|+|w|) instead of a fixed worst case. Off
+    // reproduces the pre-W-31 behaviour exactly.
+    bool adaptiveSubsteps = true;
+    // Stability target for the unsplit upwind alpha transport: cflNumber * h / uBound is the step.
+    float cflNumber = 0.5f;
+    // Floor on the velocity bound, m/s, so a settling pool does not ask for an enormous substep.
+    float minCflSpeed = 0.5f;
+    // Most substeps one frame may simulate. Past this the water runs slow rather than the frame
+    // running long, which bounds the frame cost so there is no spiral of death.
+    int maxSubstepsPerFrame = 4;
     // Interface sharpening for the flux-form alpha advection (0 = pure upwind,
     // which smears entrained air through the whole pool). Also a FluidSettings
     // literal before W-11.

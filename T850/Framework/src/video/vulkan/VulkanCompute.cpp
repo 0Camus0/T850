@@ -557,7 +557,20 @@ int VulkanDriver::RequestComputeReadback(ComputeBuffer& bufferBase, size_t byteC
   VkCommandBuffer cmd = GetCmdBuffer();
   if (cmd == VK_NULL_HANDLE) return -1;
 
-  PendingReadback& slot = m_pendingReadbacks[m_currentFrame];
+  PendingReadback* slotPtr = nullptr;
+  PendingReadback* freeSlot = nullptr;
+  for (uint32_t i = 0; i < kReadbackSlotsPerFrame; ++i) {
+    PendingReadback& candidate = m_pendingReadbacks[m_currentFrame][i];
+    if (candidate.pending) continue;
+    if (!freeSlot) freeSlot = &candidate;
+    if (candidate.buffer && candidate.byteCount == byteCount) {
+      slotPtr = &candidate;
+      break;
+    }
+  }
+  if (!slotPtr) slotPtr = freeSlot;
+  if (!slotPtr) return -1;
+  PendingReadback& slot = *slotPtr;
   if (!slot.buffer || slot.byteCount != byteCount) {
     if (slot.buffer) {
       vmaUnmapMemory(m_allocator, slot.allocation);
@@ -597,8 +610,9 @@ int VulkanDriver::RequestComputeReadback(ComputeBuffer& bufferBase, size_t byteC
 
 bool VulkanDriver::ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) {
   if (ticket <= 0 || !destination) return false;
-  for (uint32_t frame = 0; frame < kBackBufferCount; ++frame) {
-    PendingReadback& slot = m_pendingReadbacks[frame];
+  for (uint32_t frame = 0; frame < kBackBufferCount; ++frame)
+  for (uint32_t index = 0; index < kReadbackSlotsPerFrame; ++index) {
+    PendingReadback& slot = m_pendingReadbacks[frame][index];
     if (!slot.pending || slot.ticket != ticket || slot.byteCount < byteCount || !slot.mapped) continue;
     if (m_frameStarted && frame == m_currentFrame) return false;
     // On a GPU-bound device the fence is signaled only briefly before BeginFrame resets it

@@ -43,6 +43,26 @@ function Resolve-T850ModelManifestPath {
     return $null
 }
 
+# SHA-256 of a file without depending on Get-FileHash. The compiled launcher (ps2exe) runs in a host
+# where Microsoft.PowerShell.Utility reports itself as already imported while Get-FileHash never
+# becomes visible, which made every cloud asset check throw and the Download Assets button do
+# nothing. .NET is always there, so it is the reliable path; the cmdlet stays first because it is
+# faster on large files.
+function Get-T850FileSha256 {
+    param([string]$Path)
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try { $bytes = $sha.ComputeHash($stream) } finally { $stream.Dispose() }
+    } finally { $sha.Dispose() }
+    $builder = New-Object System.Text.StringBuilder
+    foreach ($byte in $bytes) { [void]$builder.Append($byte.ToString('x2')) }
+    return $builder.ToString()
+}
+
 function Test-T850CloudModelFile {
     param($Entry, [string]$TargetPath)
     if (-not (Test-Path $TargetPath)) { return $false }
@@ -53,7 +73,7 @@ function Test-T850CloudModelFile {
         return $false
     }
     if ($Entry.PSObject.Properties['sha256'] -and $Entry.sha256) {
-        $hash = (Get-FileHash -LiteralPath $TargetPath -Algorithm SHA256).Hash
+        $hash = Get-T850FileSha256 $TargetPath
         if ($hash -ine $Entry.sha256) { return $false }
     }
     return $true
@@ -393,7 +413,17 @@ function Invoke-T850ParallelDownloads {
                 if ($actual -ne [int64]$Task.Size) { throw "Downloaded size mismatch for $($Task.ResourcePath): expected $($Task.Size), got $actual" }
             }
             if ($Task.Sha256) {
-                $hash = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
+                # This block runs in its own runspace, so it cannot see Get-T850FileSha256 (or a
+                # module-autoloaded Get-FileHash inside the compiled launcher, where the utility
+                # module never exposes the cmdlet). Hash it with .NET here.
+                $sha = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $stream = [System.IO.File]::OpenRead($tmp)
+                    try { $bytes = $sha.ComputeHash($stream) } finally { $stream.Dispose() }
+                } finally { $sha.Dispose() }
+                $builder = New-Object System.Text.StringBuilder
+                foreach ($byte in $bytes) { [void]$builder.Append($byte.ToString('x2')) }
+                $hash = $builder.ToString()
                 if ($hash -ine $Task.Sha256) { throw "Downloaded hash mismatch for $($Task.ResourcePath)" }
             }
             Move-Item -LiteralPath $tmp -Destination $Task.TargetPath -Force

@@ -2313,8 +2313,14 @@ JSON key, a GUI slider and `--backyard-air-rise` for the gates).
 | Gate 7 `covered min−ring` (D3D12) | −11.3 mm (with the W-26 term) | −2.2 mm (term removed) |
 
 All gates pass on D3D12, Vulkan, D3D11 and WebGPU, on the Steam Deck, and the fluid/compute
-self-tests and pick test are unchanged. A 30-minute tablet run is still to be done (the device
-slept during the attempt).
+self-tests and pick test are unchanged.
+
+**30-minute tablet run done 2026-11-05** (SM-X920, `android-vulkan`, 60 sweeps, log level info,
+`svc power stayon true`, `mWakefulness=Awake` at the end). `[Backyard][surface]` mean vs the water
+plane: **0.0008 m at 5 min, 0.0010 at 10, 0.0006 at 20, 0.0007 at 30** — every sample inside
+±5 mm, rms 9–18 mm, min/max within −68 / +72 mm. 58 timing windows, **all** `sim/wall = 1.00`,
+2.2–2.4 substeps per frame, alpha volume +0.000 % → +0.007 %, **0 `[ERROR]` lines and 0 `readback
+still pending`** over the whole half hour.
 
 The long run exposed two backend bugs, both fixed in the same change:
 

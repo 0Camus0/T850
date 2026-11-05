@@ -233,7 +233,7 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 | B | Steam Deck: detect the OLED, run 60 sweeps | **Done 2026-11-03** (`5b90125a`): shared `utils/DeviceInfo`, run-time cap, verified on the Deck | S |
 | C | Browser re-verify after the kernel changes | **Done 2026-11-05**: embedded and cloud bundles both run scene 7 with the solver ready and 0 errors; release zip validated (2040 files, 167 cloud routes) | S |
 | D | Android: CI-style build, 30-minute tablet run | **Done 2026-11-05**: CI-exact build succeeds and downloads 112 assets from a clean install; 30-minute tablet run keeps the mean at 0.0006–0.0010 m with 0 errors | S–M |
-| E | Launcher gaps | **Partly done.** ~~The Backyard meshes are missing from the cloud asset manifest~~ — done 2026-11-03 (`1760d846`): `PushCloudModels.ps1`, 7 meshes in `t850-models`, `runtime_assets.json` 13 → 20, union manifest repaired to 218 assets. Remaining: the CI check in `TestLauncherWebGPU.ps1`, the empty-asset-root launcher run, and the `cloud-assets.md` release decision | S |
+| E | Launcher gaps | **Done 2026-11-05.** Meshes in the manifest (`1760d846`); CI contract checks in `TestLauncherWebGPU.ps1` plus `-SkipDisk` for CI; and the compiled launcher now downloads 96 ball textures from an empty asset root (four release bugs found and fixed) | S |
 | F | Cleanup: script move, README, W-16 | Partly done | M |
 | G | Final matrix and validation (2b) | Last full run predates the Vulkan/WebGPU/Linux changes | M |
 | H | Remaining owner decisions and PR text | Merge strategy and push approval open | S |
@@ -719,7 +719,36 @@ Findings worth keeping:
    - Record at 5, 10, 20 and 30 min: the `[Backyard][surface]` mean, fps, and the count of
      `readback still pending` lines (must be 0).
 
-#### E. Launcher
+#### E. Launcher — **done 2026-11-05**
+
+**Outcome.** Both CI checks exist and run in `TestLauncherWebGPU.ps1`, `check_ball_textures.ps1`
+takes `-SkipDisk`, and the compiled launcher was driven from an empty asset root end to end. That
+last test found **four release-only bugs**, none of which any script-mode test could see:
+
+1. **`$rootDir` came from the working directory.** Inside a ps2exe bundle both
+   `$MyInvocation.MyCommand.Path` and `$PSScriptRoot` are empty (measured with a probe exe), so the
+   launcher fell back to `(Get-Location).Path`: `Assets`, `config.json` and `scripts\ModelCloud.ps1`
+   were resolved against whatever folder the shortcut started in. It now uses the process image.
+2. **`ModelCloud.ps1` was never shipped** next to the compiled exe, and
+   `Invoke-LauncherModelDownload` returns `$true` when the helper is missing — so a real install's
+   Download Assets button silently did nothing. `build_launcher_release.ps1` now copies it into
+   `<exe dir>\scripts\`.
+3. **The ps2exe host never exposes `Get-FileHash`** (the utility module reports "already imported"
+   and the cmdlet stays invisible), so the cloud check threw and the button's tooltip read "Cloud
+   check failed". `ModelCloud.ps1` hashes with .NET when the cmdlet is unavailable.
+4. **The download runspace cannot see `ModelCloud.ps1`'s functions**, so the sha256 verification threw
+   for every file after the first fix. That path hashes inline with .NET now.
+
+A failed check also writes `launcher-diagnostics.log` next to the exe, because a compiled WPF
+launcher has no console and the generic status line hid the reason.
+
+**Verified.** `bin\x64\Release` (release layout, `Textures\Ball` emptied: 96 textures + 32 markers
+moved aside), compiled `T850Launcher.exe` started from `%TEMP%` on purpose, Download Assets invoked
+through UI Automation: 96 files downloaded and hash-verified, and
+`check_ball_textures.ps1 -RootDir bin\x64\Release` then PASSes (32 sets x 3 maps on disk, 96
+manifest entries). Both new contract checks were also proven to bite: a launcher copy with the
+`Ensure-T850CloudTextures` call removed, and one that passes `-Folder 'Ball'`, are both rejected.
+
 
 1. **CI check in `scripts/TestLauncherWebGPU.ps1`** (runs in CI; it has no ball-texture check). Two
    read-only parts, never writing to R2:

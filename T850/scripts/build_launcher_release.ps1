@@ -45,6 +45,14 @@ if (Test-Path $output) {
             $dest = Join-Path $targetDir "T850Launcher.exe"
             Copy-Item $output $dest -Force
             Write-Host "  Copied to $dest" -ForegroundColor DarkCyan
+            # The compiled launcher reads ModelCloud.ps1 from `<exe dir>\scripts\` (falling back to
+            # its own directory), and without it "Download Assets" silently does nothing: the guard
+            # in Launcher_Release.ps1 treats a missing helper as "nothing to download". Ship it next
+            # to the exe or the button is dead in a real install.
+            $scriptsTarget = Join-Path $targetDir "scripts"
+            [void][IO.Directory]::CreateDirectory($scriptsTarget)
+            Copy-Item (Join-Path $scriptDir "ModelCloud.ps1") (Join-Path $scriptsTarget "ModelCloud.ps1") -Force
+            Write-Host "  Copied ModelCloud.ps1 to $scriptsTarget" -ForegroundColor DarkCyan
         }
     }
 } else {

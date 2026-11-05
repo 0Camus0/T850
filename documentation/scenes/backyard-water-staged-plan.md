@@ -235,7 +235,7 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 | D | Android: CI-style build, 30-minute tablet run | **Done 2026-11-05**: CI-exact build succeeds and downloads 112 assets from a clean install; 30-minute tablet run keeps the mean at 0.0006–0.0010 m with 0 errors | S–M |
 | E | Launcher gaps | **Done 2026-11-05.** Meshes in the manifest (`1760d846`); CI contract checks in `TestLauncherWebGPU.ps1` plus `-SkipDisk` for CI; and the compiled launcher now downloads 96 ball textures from an empty asset root (four release bugs found and fixed) | S |
 | F | Cleanup: script move, README, W-16 | Partly done | M |
-| G | Final matrix and validation (2b) | Last full run predates the Vulkan/WebGPU/Linux changes | M |
+| G | Final matrix and validation (2b) | **In progress 2026-11-05**: six Windows cells build, 78 gameplay PASS per runnable cell, 40 scene x API cells run (scene 4 + WebGPU is a pre-existing W-32 failure), registration PASS; debug layers and visual baselines next | M |
 | H | Remaining owner decisions and PR text | Merge strategy and push approval open | S |
 | I | Simulated buoyancy in the headless gates (optional) | Unblocked by the gate 7 improvement | S |
 | J | Real time on slow devices: adaptive substeps (W-31) | **Done 2026-11-04**: kernel + envelope + budget; gate 13 reads 0.658–0.795 adaptive against 1.204 for a fixed 1/60; see W-31's resolution | M |

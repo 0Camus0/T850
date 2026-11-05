@@ -235,7 +235,7 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 | D | Android: CI-style build, 30-minute tablet run | **Done 2026-11-05**: CI-exact build succeeds and downloads 112 assets from a clean install; 30-minute tablet run keeps the mean at 0.0006–0.0010 m with 0 errors | S–M |
 | E | Launcher gaps | **Done 2026-11-05.** Meshes in the manifest (`1760d846`); CI contract checks in `TestLauncherWebGPU.ps1` plus `-SkipDisk` for CI; and the compiled launcher now downloads 96 ball textures from an empty asset root (four release bugs found and fixed) | S |
 | F | Cleanup: script move, README, W-16 | Partly done | M |
-| G | Final matrix and validation (2b) | **In progress 2026-11-05**: six Windows cells build, 78 gameplay PASS per runnable cell, 40 scene x API cells run (scene 4 + WebGPU is a pre-existing W-32 failure), registration PASS; debug layers and visual baselines next | M |
+| G | Final matrix and validation (2b) | **Done 2026-11-05.** 6/6 Windows cells, 78 gameplay PASS each, Deck `--with-editor` links and gates 1-13 PASS, registration PASS, 39/40 scene x API cells (W-32), 0 debug-layer errors, baselines deterministic with only the expected shading change, self-tests on all five APIs | M |
 | H | Remaining owner decisions and PR text | Merge strategy and push approval open | S |
 | I | Simulated buoyancy in the headless gates (optional) | Unblocked by the gate 7 improvement | S |
 | J | Real time on slow devices: adaptive substeps (W-31) | **Done 2026-11-04**: kernel + envelope + budget; gate 13 reads 0.658–0.795 adaptive against 1.204 for a fixed 1/60; see W-31's resolution | M |
@@ -787,7 +787,24 @@ manifest entries). Both new contract checks were also proven to bite: a launcher
 4. **Stale rows in remaining-work section 0:** done on 2026-11-02 (W-06, W-17 and W-28). Keep the
    rows in step with each item as it lands.
 
-#### G. Final matrix and validation (after A)
+#### G. Final matrix and validation (after A) — **done 2026-11-05**
+
+**Outcome, in the plan's own order.**
+
+| Step | Result |
+|---|---|
+| Windows matrix | **6/6 cells build.** Win32/x64 × Debug/Release on the first pass; both ARM64 cells first failed because `SetupDawn.ps1` refused a stale audit for `WebGPUShaderCompiler.h`, fixed by `SetupDawn.ps1 -Architecture ARM64` (then 01:11 Debug, 01:55 Release). **78 gameplay assertions PASS** in each of the four runnable cells; ARM64 builds Framework + DayScene only and is not run |
+| Device builds | Deck `--with-editor`: 0 build errors, `T8ditor` links, and the rebuilt `DayScene` passes gates 1–13 on the Deck (cfl 0.970, 0 errors) — this re-validates `GLCompute.cpp` on the SteamRT toolchain. Android's CI-exact build was item D |
+| Registration | `& scripts\ValidateBuildRegistration.ps1` exits 0 (44 Framework headers, every source registered) |
+| Scenes 0–7 × 5 APIs | **39 of 40 cells PASS with 0 `[ERROR]`** via the new `scripts/validation/run_scene_matrix.ps1`. The exception is scene 4 + WebGPU: a pre-existing wireframe-pipeline mismatch, recorded as **W-32** with the exact varying (fragment `@location(4) float4` vs vertex `float2`) and proof that master fails the same way |
+| Debug layers | D3D12 `--d3d12debug` on scenes 1/6/7: **0 errors**, only the benign `Ignoring InitialState COPY_DEST` state warning (53/380/150). Vulkan `VK_LAYER_KHRONOS_validation`: **0 validation messages** on the same scenes; the loader debug log confirms `VkLayer_khronos_validation.dll` was loaded and the engine installs a debug-utils messenger |
+| Visual baselines | Master (`a451f326`, existing worktree) vs this branch, 38 captured / 6 skipped on both sides. **Capture determinism proven**: the same build twice differs by 0.00 % and 0 channel delta on all four APIs. 7 cases identical, 35 differ, systematically across every backend (quake3 67.9/67.9/68.3/68.0 %, average channel delta ~4; sandbox ~84 % at 1.5) — the global shading change from the PBR split and `ShadowAccum` RGBA8, not a backend regression. Scene 7 is not in the baseline case list |
+| Final binary | Backyard gates **1–13 PASS** on d3d11, d3d12, vulkan, gl, webgpu; compute self-test PASS ×5 (its `[ERROR]` lines are the deliberate negative cases); fluid self-test PASS ×5 (`meanSpeed` 0.0609–0.0612); pick test PASS ×5 |
+
+**What this section found:** W-32 (pre-existing, documented), the stale Dawn ARM64 audit (fixed by
+re-running the setup), and a diagnostic improvement so the WebGPU stage-interface check names the
+failing location and both signatures.
+
 
 1. **Windows matrix.** `scripts\RunWindowsBuildMatrix.ps1` from `T850`: Win32/x64/ARM64 ×
    Debug/Release; ARM64 as `'/t:Framework;DayScene'` with Community MSBuild.

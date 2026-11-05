@@ -2494,8 +2494,24 @@ nothing there.
   asked in the same frame, and a request with a different byte count reset the resource while the
   previous copy was still queued — a released resource referenced by in-flight work. It removed
   the device intermittently at init and left the body level permanently stale in headless runs.
-  `D3D12Driver` now keeps four slots per frame and never touches a pending one. Vulkan still logs
-  the stale body level in headless runs; that is its own path and is unchanged here.
+  `D3D12Driver` now keeps four slots per frame and never touches a pending one.
+- **Vulkan had the same single-slot design, and it broke the moment the second query existed**: a
+  request with a different byte count destroyed the staging buffer and cleared the pending ticket,
+  so the *first* query never delivered. The Deck's interactive run logged
+  `Body water level readback still pending after 60 frames` because of it. `VulkanDriver` now keeps
+  four slots per frame as well; the Vulkan self-test goes from one logged error to none.
+
+**Devices.** Steam Deck OLED, Vulkan, 60 pressure sweeps, deck build from the sniper container:
+
+- `Handheld detection: yes Steam Deck (Galileo Galileo Valve)`,
+  `60 pressure iterations (Steam Deck cap)`.
+- Gates 1–13 **PASS**, 0 errors. Gate 13: **0.970**, worst frame 3 substeps, 0 of 300 frames
+  over 1.0. Gate 11 air: 14 of 76276 (limit 200).
+- Interactive run, scene 7, six 600-frame windows after the drop: `sim/wall = 1.00` in every one,
+  **1.5–1.8 substeps per frame** (was a flat 4.0), budget-limited 10 % in the window that holds the
+  splash and 0 % afterwards, alpha volume +0.000 %. Frame time 600 / 20.6 s ≈ **29 fps** (was 17.2).
+- Hitch test (`kill -STOP`, 2 s, `kill -CONT`): no error, `nonFinite=0`, the window reads
+  `sim/wall = 0.93` — the 2 s stall costs one 0.25 s clamped step out of ~20 s, exactly as designed.
 
 **Gate 13 numbers on all five APIs** (default configuration, 120 sweeps):
 0.864 d3d12, 0.826 vulkan, 1.082 gl, 1.081 d3d11, 0.643 webgpu — one frame of 300 over 1.0 on

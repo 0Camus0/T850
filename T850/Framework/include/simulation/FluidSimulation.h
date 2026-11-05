@@ -62,8 +62,21 @@ namespace t850 {
     // Speed in m/s at which entrained air rises back to the surface (W-29). The solver
     // has no bubble buoyancy, so at 0 a splash leaves air pockets in the water forever.
     float airRiseSpeed = 0.25f;
-    // CFL cap on the unsplit upwind alpha transport: (|u|+|v|+|w|)*dt/h <= 1.
-    float maxSubstepDt = 1.0f / 120.0f;
+    // Ceiling on one substep. With adaptive substeps on this is only the upper bound; the actual
+    // step comes from the measured flow (W-31).
+    float maxSubstepDt = 1.0f / 30.0f;
+    // W-31: size each substep from the measured velocity field instead of a fixed worst case.
+    // The transport is stable while cflNumber * h / (|u|+|v|+|w|) >= dt, so at 0.5 the largest
+    // cell-crossing per substep is half a cell. Off reproduces the fixed maxSubstepDt cadence.
+    bool adaptiveSubsteps = true;
+    float cflNumber = 0.5f;
+    // Floor on the velocity bound used to size a substep, in m/s. Without it a perfectly calm pool
+    // would ask for an enormous substep, which the ceiling above would clamp anyway but which also
+    // makes the count jump around as the water settles.
+    float minCflSpeed = 0.5f;
+    // W-31: how many substeps one frame may simulate. Exceeding it does not stall, it slows the
+    // water down, which is the honest behaviour when a frame cannot afford the work.
+    uint32_t maxSubstepsPerFrame = 4;
     // Treat the rows directly above the domain as AIR instead of a solid ceiling.
     // Off by default: a closed box is what the synthetic solver tests assume, and an
     // open top changes the velocity field at the top face (water can vent). The
@@ -230,6 +243,9 @@ namespace t850 {
     // whose bobbing period is far longer.
     void QueryBodyWaterLevel(BaseDriver* driver);
     void ApplyBodyLevels(const std::vector<float>& results, uint32_t count);
+    // W-31: dispatch CS_FluidMaxVelocity3D and consume the previous answer. Called once per frame
+    // after the last substep, so the substep decision never waits on a readback.
+    void QueryMaxVelocity(BaseDriver* driver);
     bool Reset(BaseDriver* driver);
 
     bool IsReady() const { return m_ready; }
@@ -244,6 +260,15 @@ namespace t850 {
     void SetSOROmega(float omega) { m_settings.sorOmega = omega; }
     void SetDeltaTime(float seconds) { m_settings.deltaTime = seconds; }
     void SetMaxSubstepDt(float seconds) { m_settings.maxSubstepDt = seconds; }
+    void SetAdaptiveSubsteps(bool enabled) { m_settings.adaptiveSubsteps = enabled; }
+    void SetCflNumber(float number) { m_settings.cflNumber = number; }
+    void SetMinCflSpeed(float speed) { m_settings.minCflSpeed = speed; }
+    void SetMaxSubstepsPerFrame(uint32_t count) { m_settings.maxSubstepsPerFrame = (std::max)(count, 1u); }
+    // W-31 report: the largest |u|+|v|+|w| the solver has measured (0 until the first readback), how
+    // many substeps the last frame simulated and whether the budget cut it short.
+    float MeasuredVelocitySum() const { return m_measuredVelocitySum; }
+    uint32_t LastFrameSubsteps() const { return m_lastFrameSubsteps; }
+    bool LastFrameBudgetLimited() const { return m_lastFrameBudgetLimited; }
     void SetAlphaCompression(float compression) { m_settings.alphaCompression = compression; }
     void SetAirRiseSpeed(float metresPerSecond) { m_settings.airRiseSpeed = metresPerSecond; }
     void SetVolumeCheckInterval(uint32_t interval) { m_volumeCheckInterval = (std::max)(interval, 1u); }
@@ -275,7 +300,8 @@ namespace t850 {
     // submerged depth h and radius r. 0 when fully submerged, 1 when fully exposed. It is the
     // circular-segment area over πr², and the gate uses the same function so the expected
     // leeway and the integrator cannot disagree.
-    static float ExposedFrontalFraction(float submergedDepth, float radius);    // Writes solid-face boundary velocities (walls 0, body faces = body velocity).    // Must be called before the divergence/pressure step.
+    static float ExposedFrontalFraction(float submergedDepth, float radius);
+    // Writes solid-face boundary velocities (walls 0, body faces = body velocity).    // Must be called before the divergence/pressure step.
     bool StepObjectVelocity(BaseDriver* driver);
     // Stamps the moving body into the wall mask so it becomes a solid boundary for
     // every kernel (divergence, pressure, gradient, alpha advection).
@@ -417,9 +443,23 @@ namespace t850 {
     std::unique_ptr<ComputeBuffer> m_bodyLevelBuffer;
     // W-04 step 3: one persistent diagnostics accumulator, cleared by the kernel itself.
     std::unique_ptr<ComputeBuffer> m_diagnosticsBuffer;
+    // W-31: the velocity-bound query, asynchronous so the substep decision uses a value one to
+    // three frames old instead of stalling the frame that needs it.
+    std::unique_ptr<ComputePipeline> m_maxVelocityPipeline;
+    std::unique_ptr<ComputeBuffer> m_maxVelocityBuffer;
+    int m_maxVelocityTicket = -1;
+    uint32_t m_maxVelocityWaitFrames = 0;
+    // Set once the asynchronous readback has failed to deliver (headless runs never complete a
+    // frame, so it cannot); the query then reads synchronously.
+    bool m_maxVelocityAsyncDisabled = false;
+    float m_measuredVelocitySum = 0.0f;
+    uint32_t m_lastFrameSubsteps = 1;
+    bool m_lastFrameBudgetLimited = false;
+
     int m_bodyLevelTicket = -1;
     // Queries since the pending answer was requested; a stuck ticket freezes every body's level.
     uint32_t m_bodyLevelWaitFrames = 0;
+    bool m_bodyLevelAsyncDisabled = false;
     uint32_t m_bodyLevelCapacity = 0;
     uint32_t m_bodyLevelCount = 0;
     uint32_t m_bodyLevelGeneration = 0;

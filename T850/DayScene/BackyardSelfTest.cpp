@@ -1035,7 +1035,10 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
     ball.y = fs.waterPlaneY + 1.0f;
     ball.vx = ball.vy = ball.vz = 0.0f;
     ball.submerged = 0.0f;
-    const float stepDt = (std::max)(w.maxDeltaTime, 1.0f / 240.0f);
+    // The gate's own fixed step, not maxDeltaTime: since W-31 maxDeltaTime is a 0.25 s hitch clamp,
+    // and using it here meant 120 steps of 0.25 s with only 4 substeps simulated per step, so the
+    // 30 s window was really 15 s and the air had no time to rise.
+    const float stepDt = (std::max)(options.fixedDt, 1.0f / 240.0f);
     fluid.SetDeltaTime(stepDt);
     fluid.SetMaxSubstepDt((std::max)(w.maxSubstepDt, 1.0f / 1000.0f));
     const uint32_t airSteps = static_cast<uint32_t>(std::ceil(30.0f / stepDt));

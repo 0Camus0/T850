@@ -1005,8 +1005,9 @@ namespace t850 {
       nullptr,
       IID_PPV_ARGS(&readback));
     if (FAILED(createHr)) {
-      T8_LOG_ERROR("[D3D12][Compute] Readback buffer creation failed (hr=0x%08X)",
-                   static_cast<unsigned>(createHr));
+      T8_LOG_ERROR("[D3D12][Compute] Readback buffer creation failed (hr=0x%08X) reason=0x%08X",
+                   static_cast<unsigned>(createHr),
+                   static_cast<unsigned>(device->GetDeviceRemovedReason()));
       return false;
     }
 

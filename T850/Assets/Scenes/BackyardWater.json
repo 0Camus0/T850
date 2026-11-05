@@ -4,7 +4,7 @@
     "cellSize": 0.09,
     "openCeiling": true,
     "deltaTime": 0.0166667,
-    "maxDeltaTime": 0.0333333,
+    "maxDeltaTime": 0.25,
     "timeScale": 1.0,
     "fixedTimeStep": false,
     "viscosity": 1e-06,
@@ -15,7 +15,7 @@
     "damping": 0.05,
     "surfaceLevel": 0.96,
     "sorOmega": 1.8,
-    "maxSubstepDt": 0.0083333,
+    "maxSubstepDt": 0.03333333333333333,
     "alphaCompression": 0.5,
     "volumeCheckInterval": 15,
     "refractionStrength": 0.025,
@@ -25,6 +25,10 @@
     "spawnDensityMin": 0.2,
     "spawnDensityMax": 1.6,
     "spawnHeightMin": 0.5,
-    "spawnHeightMax": 2.0
+    "spawnHeightMax": 2.0,
+    "adaptiveSubsteps": true,
+    "cflNumber": 0.5,
+    "minCflSpeed": 0.5,
+    "maxSubstepsPerFrame": 4
   }
 }

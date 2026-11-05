@@ -394,8 +394,9 @@ Cell size 0.09 m. Domain height is exactly `Height × cellSize` so the column in
 surface kernel converts to metres without a scale error.
 
 Water volume is represented as a **volume fraction α ∈ [0,1]** per voxel: 1 = water, 0 = air,
-fractional at the interface. Seed fill 78.8% → **72,970 alpha cells** of 94,923 fluid voxels
-(110,000 total, 15,077 solid from the geometry mask).
+fractional at the interface. Seed fill 78.8% → **82,971 alpha cells** of **106,304 fluid voxels**
+(110,000 total, **3,696 solid** from the geometry mask; measured on 2026-11-05, and the at-rest
+count the gates report is 82,917).
 
 Shallow-water wave speed √(g·h) ≈ 3.9 m/s ≈ 43 cells/s, i.e. ~0.9 cells/frame at 60 fps — the
 grid can carry a gravity wave.
@@ -404,9 +405,14 @@ grid can carry a gravity wave.
 
 ```
 Step(frameDt):
-  substeps = clamp(ceil(bodyTravel / (0.5 * cellSize)), 1, 12)     // §8.3
-  subDt    = frameDt / substeps
-  for each substep: StepInternal()
+  envelope = max(measured, envelope * exp(-frameDt / 0.5))         // §8.2, W-31
+  uBound   = max(1.5 * envelope, 1.7321 * bodySpeed, minCflSpeed)
+  subDt    = clamp(cflNumber * cellSize / uBound, 1/480, maxSubstepDt)
+  request  = clamp(max(bodySubsteps, ceil(frameDt / subDt)), 1, 12)
+  simulate = min(request, maxSubstepsPerFrame)                     // budget: less time, not a longer step
+  subDt    = frameDt / request
+  for each simulated substep: StepInternal()
+  QueryMaxVelocity()                                               // sizes the NEXT frame
 
 StepInternal():                    // m_settings.deltaTime == subDt
   m_time += dt
@@ -510,7 +516,9 @@ Consistent discrete projection:
 
 $$\nabla^2 p = \nabla\cdot u,\qquad u \leftarrow u - \nabla p$$
 
-with `pressureScale = h²`. The two conventions (`∇²p = div` with `u -= ∇p`, versus
+with `pressureScale = h² / dt` (`BuildConstants`, and the comment there says the same). Pressure
+stays in physical units, so the previous substep's field is still a valid warm start when `dt`
+changes. The two conventions (`∇²p = div` with `u -= ∇p`, versus
 `∇²p' = div/dt` with `u -= dt∇p'`) must not be mixed: mixing them over-corrects by `1/dt` and
 makes divergence *grow* with iteration count. This was one of the earliest bugs.
 
@@ -574,6 +582,14 @@ per half hour. `CS_FluidAirRise3D` now lets the air leave, and with the term rem
 `covered min−ring` −2.2 mm (it was −11.3 mm with the term and trapped air).
 
 A column with no water is a wall column and reports the water plane, contributing zero delta.
+
+**The rows above the pool are open air (W-08).** `openCeiling` (a `WaterTunables` bool, default
+true) reaches the kernels as `OpenCeiling` in `FluidConstants`. With it on, the pressure solve meets
+a Dirichlet `p = 0` face above the top row instead of a solid one, and the gradient clamps that face
+to zero, so a free surface can rise through the top of the grid instead of being crushed by a lid.
+Gate 8 is the check: the top-row peak α reaches 0.885, the surface rises +0.332 m and falls
+−1.490 m, 10 of 60 samples are wet at the top and the fastest top-face velocity is 0.185 m/s.
+Closing the box (`false`) is what the synthetic solver tests use.
 
 ### 7.1 Tent reconstruction
 
@@ -1114,7 +1130,10 @@ back-solves density, so editing either updates the other without them fighting e
   `InputManager` to `BackyardScene::ProcessSceneInput` (no OS input), logs
   `[BackyardPickTest] PASS|FAIL`, and dumps a frame with the ball held at a logged pixel. Run it
   with `--unattended --regressionFixedDt 0.0033 --backyard-spawn 6`.
-- `D:\Code\QwenFlashT850\backyard-diag` (local, untracked) holds the scripts the reviewer uses;
+- `T850\scripts\validation` holds the reviewer's scripts (`telemetry.ps1`, `perf.ps1`,
+  `bisect_perf.ps1`, `pick_test.ps1`, `cmp_ppm.py`, `ppm2png.py`); they write under
+  `T850\build\diag` and take `-ExeDir`/`-OutRoot` if another layout is needed. `backyard-diag`
+  (local, untracked) still holds the scratch notes and the session-log reader;
   every one passes `--unattended`:
   - `s3matrix.ps1`: self-tests plus scenes 7/1/6 on five APIs, error counts.
   - `telemetry.ps1`: per-frame CPU phases (`scene.update`, `frame.draw`, `gpu.gpu_wait`),

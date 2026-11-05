@@ -26,7 +26,10 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-01 Water invisible on GL/WebGPU | Done | `ea80665b` | Accepted. GL and WebGPU scene 7: 0 errors. WebGPU went from "static pool fallback" to the full solver on 2026-11-01 (`00e28793`) |
 | W-08 Domain ceiling is a lid | Done, **corrected in review** | `ea80665b` + review commit | Gradient/pressure ghost-pressure mismatch at the ceiling fixed; see W-08 |
 | W-13 Dead code | Done | `ea80665b` | Accepted |
-| W-19 Ball sits in a funnel | Done (review) | `fa5422ff`, `33baad50` | Surface under/around the floating ball flat and stable; gates 7 and 8 |
+| W-19 Ball sits in a funnel | Done (review) | `fa5422ff`, `33baad50` |
+| W-14 Duplicated constants across kernels | Guard test landed; one shared declaration still open (P3) | `check_fluid_constants.py` |
+| W-16 The implementation record is out of date | **Done** (2026-11-05, item F) | this commit |
+| W-17 Untested platforms | **Done for Android/Deck/WebGPU/GL**; ARM64 builds, not run (no machine) | item B, C, D, W-28 | Surface under/around the floating ball flat and stable; gates 7 and 8 |
 | W-20 Scene index ignored with `--api` | Resolved: by design, documented | — | `config.json` is only read with `--config`; always pass `--scene 7` |
 | Tooling: fluid debug view | Done (review) | `4d21e836`, `93dff3d9`, `5d640c2e` | Wireframe, voxel and whole-volume velocity overlays in the ImGui panel; D3D12 upload-ring crash fixed (per-layer caps); bulk-water α statistic; see 4.5 |
 | W-11 item 3: grid follows the cell size | Done (review) | `d6b65147` | Width, depth and height derive from one cubic cell size; GUI sliders linked |
@@ -262,7 +265,7 @@ the default 0.09 m grid: at other sizes the isotropy gate (fixed radius and time
 
 Frame dumps are PPM. Convert crops with a validating converter (each PNG row needs its leading
 filter byte; a PNG without it is rejected by image viewers and by the chat tooling). The one used for
-reviews is `D:\Code\QwenFlashT850\backyard-diag\ppm2png.py <in.ppm> <out.png> [x0 y0 x1 y1] [scale]`;
+reviews is `T850\scripts\validation\ppm2png.py <in.ppm> <out.png> [x0 y0 x1 y1] [scale]`;
 it refuses to write a malformed or oversized file.
 
 ### 4.3 Scene run with measurements
@@ -1136,7 +1139,7 @@ Vulkan 264.0 → 280.6 fps**; 30 balls 268.6 / 259.8. Per item:
 
 **`pressureIterations` 60 → 120 (2026-10-31).** Conservation is tied to projection convergence, so
 the shipped sweeps doubled (W-03's note has the sweep table). Same-session A/B at 720p with
-`backyard-diag\telemetry.ps1`, 0 balls: **D3D12 401.9 → 295.4 fps** (`scene.update` 1.526 → 2.445 ms),
+`scripts\validation\telemetry.ps1`, 0 balls: **D3D12 401.9 → 295.4 fps** (`scene.update` 1.526 → 2.445 ms),
 **Vulkan 391.6 → 274.2 fps** (`update` 1.287 → 2.338 ms). With 30 balls: D3D12 273.0, Vulkan 255.5,
 0 spikes. The cost is ~0.92 ms of solver recording per frame on D3D12 — the per-dispatch fill/drain
 of 60 extra pressure sweeps, which is exactly what P2 (in-place red-black on R32F) targets: halving
@@ -1144,7 +1147,7 @@ the dispatch count is what buys the sweeps back.
 
 **Measured** (review, 2026-10-28; RTX 4080 Laptop, x64 Release, scene 7, 1280×720,
 `--logLevel info`; median of four 600-frame windows after the drop, from the timestamps of the
-`[Backyard][timing]` lines; script `D:\Code\QwenFlashT850\backyard-diag\perf.ps1`):
+`[Backyard][timing]` lines; script `T850\scripts\validation\perf.ps1`):
 
 | Configuration | D3D12 | Vulkan |
 |---|---|---|
@@ -1218,7 +1221,7 @@ the 313 fps run. Re-measure after a reboot before trusting any Vulkan figure.
 HEAD (`97009aef`, 0 spawned balls), so the drop was the machine state, not the code.
 
 **Rule for every performance claim:** never compare against a number in this document. Measure the
-parent commit and the change in the same session (`backyard-diag\bisect_perf.ps1 -Commit <sha>
+parent commit and the change in the same session (`scripts\validation\bisect_perf.ps1 -Commit <sha>
 -Apis vulkan,d3d12 -Restore` builds the old tree, measures with `perf.ps1` and restores HEAD).
 
 **Acceptance (per item).** Before/after table from `perf.ps1` (median of the four windows) on
@@ -1226,7 +1229,7 @@ D3D12 and Vulkan; `--backyard-selftest` and `--fluid-selftest` PASS on both; the
 2.4 unchanged.
 
 **Profiling pass 2026-10-30 (reviewer, `c911381a`): three CPU–GPU stalls removed.** Measured with
-the engine's runtime telemetry, not FPS alone: `backyard-diag\telemetry.ps1` runs the scene
+the engine's runtime telemetry, not FPS alone: `scripts\validation\telemetry.ps1` runs the scene
 `--unattended` at log level `error` (the owner's setting; `perf.ps1`'s `info` level adds a
 60-frame readback probe) and reports per-frame medians of `scene.update` (solver recording),
 `frame.draw`, `gpu.gpu_wait` (CPU blocked on the GPU), plus mean fps, p99 and spike count. Median
@@ -1263,7 +1266,7 @@ CPU recording those dispatches (P4).
 
 ---
 
-### W-16 — The implementation record is out of date (P2, S, suggested: either)
+### W-16 — The implementation record is out of date (P2, S, suggested: either) — **done 2026-11-05**
 
 [backyard-water-simulation.md](backyard-water-simulation.md) still describes the collocated
 solver (sections 6–8), the old surface contract details, the old bug list (14) and measurements
@@ -1276,18 +1279,35 @@ pressure convention, surface dispatch, ball model, volume correction band). Also
 open-ceiling setting (W-08) and the covered-column inpainting in the surface kernel (W-19) in
 section 7 of the record.
 
+**Resolution (2026-11-05).** Spot-checked against the code and four statements were wrong, all now
+fixed:
+
+| Claim | Was | Code |
+|---|---|---|
+| §6.1 voxel counts | 94,923 fluid / 15,077 solid / 72,970 alpha | 106,304 fluid / 3,696 solid / 82,971 seed, 82,917 at rest |
+| §6.2 substep formula | body travel only | W-31's envelope `max(1.5*peak, 1.7321*v_body, minCfl)` with the substep budget and the end-of-frame query |
+| §6.4 pressure convention | `∇²p = div`, `pressureScale = h²` | `pressureScale = h²/dt`, i.e. the `div/dt` form |
+| §7 open ceiling (W-08) | not recorded | added: Dirichlet `p = 0` above the top row, gate 8's numbers |
+
+Storage layout (α/pressure/divergence R32F, velocity RGBA16F), the volume-correction band
+`[airThreshold, 0.999)` with `airThreshold = 0.5`, the surface dispatch (100 x 50 texels, R = delta
+from the plane, G foam, B/A per-texel slopes), the ball model (§8.1: annulus level, Archimedes,
+heave damping, W-29 air, W-30 air drag) and W-19's inpainting (§7.1) were already correct.
+
 ---
 
 ### W-17 — Untested platforms (P3, M, suggested: either)
 
-* Android (Vulkan) and Linux/Steam Deck: **run since 2026-11-02.** Scene 7 presents on the SM-X920
-  tablet (fullscreen, 60 sweeps) and the Deck (RADV), and the Deck passes the compute, fluid and
-  backyard self-tests. Both run the water in slow motion (sim/wall 0.47 tablet, 0.31 Deck at 120
-  sweeps, 0.51 at 60); see the staged plan's 2026-11-02 Android/Deck entry.
-* ARM64 Windows: builds only Framework + DayScene; not run.
+* Android (Vulkan) and Linux/Steam Deck: **run and in real time since 2026-11-04.** Scene 7 presents
+  on the SM-X920 tablet (fullscreen, 60 sweeps) and the Deck OLED (RADV). The slow motion recorded on
+  2026-11-02 (sim/wall 0.47 tablet, 0.31 Deck at 120 sweeps, 0.51 at 60) is fixed by W-31: both now
+  report `sim/wall = 1.00` in every window at 1.5-2.4 substeps per frame, ~29 fps on the Deck and
+  ~23 fps on the tablet, gates 1-13 PASS on both. The Deck OLED is detected as a handheld
+  (`Valve` + `Galileo`, staged plan item B) and runs 60 pressure sweeps.
+* ARM64 Windows: builds only Framework + DayScene; the matrix cell runs in item G, the result is not
+  a runtime test (no ARM64 machine).
 * Steam Deck CI-equivalent build with the editor (`--with-editor`) links DayScene and T8ditor at
-  `931b9cf1` (2026-11-02). The Deck OLED is not detected as a handheld (DMI `Galileo`); staged plan
-  item B.
+  `931b9cf1` (2026-11-02); it has not been repeated since the GL port and W-31 (item G).
 * **WebGPU: done 2026-11-01** (`00e28793`). The solver runs on Dawn/D3D12: `--compute-selftest`
   (3D RGBA16F and R32F), `--fluid-selftest` (projection 0.596 → 0.211 at 50 iterations, mass drift
   0.00 %), `--backyard-selftest` (all ten gates, float `ring−far` −1.7 mm, `covered min−ring`
@@ -1314,7 +1334,9 @@ section 7 of the record.
   (`-AssetMode Cloud` → `PackageWebRelease.ps1` → `ValidateWebReleasePackage.ps1`) is
   **PASS: 2002 files, 151 cloud routes** with 1813 shader packages. Firefox was not validated locally
   (geckodriver 0.37.1 + Firefox 159 abort marionette on startup).
-* The GL fallback still depends on W-01.
+* GL: **no longer a fallback.** W-28 landed 2026-11-02: the full solver runs on Desktop GL 4.3+, gates
+  1-13 PASS, and it is the slowest backend only because SDL holds the swap interval at the display
+  refresh (see W-28's resolution).
 
 **Fix/acceptance.** Run scene 7 and the fluid self-test on each available platform, record
 results in the implementation record, and file a task for each failure.

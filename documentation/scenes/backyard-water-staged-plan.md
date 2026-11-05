@@ -232,7 +232,7 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 | A | OpenGL port (W-28) | **Done 2026-11-02**; see W-28's resolution | L |
 | B | Steam Deck: detect the OLED, run 60 sweeps | **Done 2026-11-03** (`5b90125a`): shared `utils/DeviceInfo`, run-time cap, verified on the Deck | S |
 | C | Browser re-verify after the kernel changes | **Done 2026-11-05**: embedded and cloud bundles both run scene 7 with the solver ready and 0 errors; release zip validated (2040 files, 167 cloud routes) | S |
-| D | Android: CI-style build, 30-minute tablet run | APK with every fix installed, no long run yet | S–M |
+| D | Android: CI-style build, 30-minute tablet run | **Done 2026-11-05**: CI-exact build succeeds and downloads 112 assets from a clean install; 30-minute tablet run keeps the mean at 0.0006–0.0010 m with 0 errors | S–M |
 | E | Launcher gaps | **Partly done.** ~~The Backyard meshes are missing from the cloud asset manifest~~ — done 2026-11-03 (`1760d846`): `PushCloudModels.ps1`, 7 meshes in `t850-models`, `runtime_assets.json` 13 → 20, union manifest repaired to 218 assets. Remaining: the CI check in `TestLauncherWebGPU.ps1`, the empty-asset-root launcher run, and the `cloud-assets.md` release decision | S |
 | F | Cleanup: script move, README, W-16 | Partly done | M |
 | G | Final matrix and validation (2b) | Last full run predates the Vulkan/WebGPU/Linux changes | M |
@@ -685,7 +685,26 @@ in-browser `[ComputeSelfTest] PASS:`.
 Then repeat the release path from section 4: `-AssetMode Cloud`, `PackageWebRelease.ps1` under
 pwsh 7, then `ValidateWebReleasePackage.ps1`.
 
-#### D. Android
+#### D. Android — **done 2026-11-05**
+
+**Outcome.** The CI-exact build (`BuildAndroid.bat Release --allow-unsigned-release --sdk … --abi
+arm64-v8a`, no `--asset-profile`) succeeds, and its APK carries the four Backyard scene JSONs but
+no Backyard meshes or water textures, so the runtime has to fetch them. The **production** flavour
+is the one CI ships: from a clean install its exported entry point downloaded the cloud assets
+(`Cloud assets ready (112 downloaded, 55 already present)`, 167 total, sha256-verified) and then
+started the launcher. The tablet run itself used the development flavour rebuilt with
+`--asset-profile backyard`.
+
+Findings worth keeping:
+
+- **The development flavour never ran the download**: its manifest declared only `LauncherActivity`
+  as the entry point and did not declare `AssetDownloadActivity` at all, so a dev APK without
+  packaged assets started scene 7 with `cannot open 'Models/Backyard/Backyard_Ground.glb'` for
+  every mesh. The activity is now declared there too (startable on demand with
+  `adb shell am start -n com.t850.engine/.AssetDownloadActivity`); production still uses it as the
+  entry point, so a shipped install always has its assets first.
+- The production launcher is `exported="false"`, so `am start` cannot inject `AUTO_RUN` into it —
+  unattended runs need the development flavour (or the exported download activity).
 
 1. **Build exactly as CI does**, without `--asset-profile` (`build.yml` L525):
    `T850\scripts\android\BuildAndroid.bat Release --allow-unsigned-release --sdk

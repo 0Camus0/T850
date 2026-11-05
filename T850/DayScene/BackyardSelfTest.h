@@ -34,6 +34,12 @@ namespace t850 {
     float cellSize = 0.0f;
     // Air rise speed in m/s; negative keeps the WaterTunables default (W-29).
     float airRiseSpeed = -1.0f;
+    // Substeps. `substepCeiling` is the longest substep in seconds, 0 keeps
+    // WaterTunables::maxSubstepDt; `adaptiveSubsteps` is -1 for the WaterTunables default, 0 or 1
+    // forces it. Together these are how W-31 compared the old fixed ceiling against the measured
+    // one: gates 11 and 13 are the two that run at a production-sized frame step.
+    float substepCeiling = 0.0f;
+    int adaptiveSubsteps = -1;
   };
 
   // Runs the backyard water gates against a standalone solver on the real pool grid,

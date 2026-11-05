@@ -705,22 +705,50 @@ form at 10 m/s wind, cross-wind 0.0000, and 0.00000 with the coefficient at 0.
 
 ### 8.2 Substepping (`Step`)
 
-The body is only sampled at discrete instants — its voxels stamped and its velocity imposed
-once per (sub)step. Above `cellSize/dt` (**5.4 m/s** at 60 fps, 0.09 m cells) the body crosses
-more than a cell per frame and **jumps clean over the water in between**: the fluid never learns
-it was there.
+Two independent limits decide the substep size, and either one can be the binding one.
 
-`Step()` therefore subdivides the frame so the body's displacement stays under **half a cell**
-per substep (capped at 12):
+**The body must not cross more than half a cell per substep.** The body is only sampled at
+discrete instants — its voxels stamped and its velocity imposed once per (sub)step. Above
+`cellSize/(0.5 * dt)` (**2.7 m/s** at a 1/30 s frame, 0.09 m cells) it crosses more than half a
+cell per substep and **jumps clean over the water in between**: the fluid never learns it was
+there.
 
 ```
-substeps = clamp(ceil(|v| * frameDt / (0.5 * cellSize)), 1, 12)
+bodySubsteps = clamp(ceil(|v| * frameDt / (0.5 * cellSize)), 1, 12)
 ```
 
-Each substep runs the whole pipeline with `dt/substeps`. This keeps the stamp, coupling,
-divergence, pressure, gradient and advection mutually consistent, and also keeps the flux-form
-alpha advection inside its CFL limit. The frame delta is restored afterwards so the GUI sees
-real values. A `T8_LOG_DEBUG` line reports `substeps`, `bodySpeed` and `travel`.
+**The alpha transport must stay inside its CFL limit** (W-31). The flux-form upwind scheme is
+stable while `(|u|+|v|+|w|) * dt / h <= 1`. A fixed 1/120 s substep assumes 10.8 m/s in a 0.09 m
+cell, while the pool peaks near 1.6 m/s, so that ceiling spent four substeps per frame on calm
+water and still missed the frame a splash started in. `CS_FluidMaxVelocity3D` reduces the
+velocity volume to one number per frame — a groupshared max and one `InterlockedMax` per
+group — and the substep follows the measurement:
+
+```
+envelope = max(measured, envelope * exp(-frameDt / 0.5))
+uBound   = max(1.5 * envelope, 1.7321 * bodySpeed, minCflSpeed)
+subDt    = clamp(cflNumber * cellSize / uBound, 1/480, maxSubstepDt)
+```
+
+`envelope` is a decaying peak of the measurement. One readback per frame cannot see a crown
+collapse coming: the field went from ~1.8 to ~8.5 m/s inside a single 1/30 s frame, and the
+substep for that frame had been sized from the calm surface before it (CFL 1.583). Holding the
+recent peak for about half a second also lowered the drop's own peak velocity from 4.94 to
+1.61 m/s, because smaller substeps change the solution, not just the number. The 1.5 margin
+covers the largest one-frame growth gate 13 measured (1.08 → 1.61 m/s at t = 3.56 s).
+
+The request is `ceil(frameDt / subDt)` clamped to 12, and the substep is `frameDt / request`.
+`maxSubstepsPerFrame` (4) then limits how many of those are **simulated**: the budget decides how
+much simulated time a frame advances, never the step size, because stretching the step back to
+`frameDt` would break the CFL bound the calculation exists to respect. Both are reported by
+`LastFrameSubsteps()` and `LastFrameBudgetLimited()`, and the scene's `sim/wall` line prints them.
+
+Calm water measures ~0.02 m/s, so `uBound` hits the 0.5 m/s floor, `subDt` hits the 1/30 s
+ceiling and a frame costs **one** substep. A 4 m/s splash costs four to six. Each substep runs
+the whole pipeline with `dt/substeps`, which keeps the stamp, coupling, divergence, pressure,
+gradient and advection mutually consistent. The frame delta is restored afterwards so the GUI sees
+real values, and a `T8_LOG_DEBUG` line reports the substep count, the request, the body speed,
+`uBound` and whether the budget cut it short.
 
 ### 8.3 Wall mask stamping (`UpdateWallMaskForBody`)
 
@@ -950,6 +978,8 @@ that used to be a literal. Groups:
 - **Solver**: `gridWidth/Height/Depth`, `pressureIterations`, `cellSize`, `waterPlaneY`,
   `freeboard`, `deltaTime`, `maxDeltaTime`, `timeScale`, `fixedTimeStep`, `viscosity`, `gravity`,
   `windX/Y/Z`, `damping`, `surfaceLevel`, `sorOmega`
+- **Substeps (W-31)**: `maxSubstepDt` (1/30 s), `adaptiveSubsteps`, `cflNumber` (0.5),
+  `minCflSpeed` (0.5 m/s), `maxSubstepsPerFrame` (4)
 - **Optics**: absorption RGB, thickness scale, shallow/deep RGB, refraction strength + border
   fade, caustic gain/power/slope scale/floor base, Fresnel boost/bias, scatter wrap/normal/depth,
   water line/floor depth
@@ -982,6 +1012,21 @@ layer; the Deck OLED identifies itself as `Valve` + `Galileo` (the LCD as `Valve
 before the probe knew that it logged `Handheld detection: no` and ran the desktop sweep count. The
 scene logs the reason next to the number: `120 pressure iterations` on desktop,
 `60 pressure iterations (Steam Deck cap)` on the Deck, `(mobile/web cap)` on devices.
+
+**How a frame becomes substeps.** `maxDeltaTime` is a 0.25 s hitch clamp, not a stability
+bound: it used to be tied to `maxSubstepDt` at 1/30 s, and the comment next to it cited an
+explicit-viscosity bound that applied to ν = 0.02 m²/s (at the shipped 1e-6 the bound is
+~1350 s). What actually keeps the solver stable is the CFL substep, described in section 8.2, and
+the knobs are the four above: `adaptiveSubsteps` off falls back to a fixed ceiling;
+`cflNumber` is the fraction of the transport's limit each substep is allowed to use (0.5 leaves
+the same headroom the fixed 1/120 s had); `maxSubstepsPerFrame` is the budget, and when it bites
+the frame advances less simulated time instead of taking a longer step — that is the slow motion
+the `sim/wall` line and the "budget-limited" note in the Dropped sphere panel report.
+
+Measured with `--backyard-selftest --backyard-adaptive 0 --backyard-substep-ceiling <s>`, which is
+what those two options exist for: a fixed 1/120 s reads CFL 0.641 with 0 of 300 frames over the
+limit, fixed 1/60 and 1/30 read 1.204 with 8 of 300 over, and adaptive reads 0.658–0.864 with 0
+of 300 over — while asking for one substep on calm water instead of four.
 
 Approximately 90 sliders in the ImGui dev GUI, grouped into sections: Solver, Optics, Surface
 detail, Reflection, Ripple octaves, Foam, Dropped sphere, Presentation. Values apply live.

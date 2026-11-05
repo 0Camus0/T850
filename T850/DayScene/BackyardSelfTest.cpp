@@ -196,9 +196,11 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
 
   int failures = 0;
   const char* api = driver->ApiTag();
-  T8_LOG_INFO("[BackyardSelfTest] START api=%s dt=%.4f frames=%u iterations=%u skipBall=%d",
+  T8_LOG_INFO("[BackyardSelfTest] START api=%s dt=%.4f frames=%u iterations=%u skipBall=%d "
+              "adaptive=%d ceiling=%.5f",
               api, options.fixedDt, options.frames, options.pressureIterations,
-              options.skipBall ? 1 : 0);
+              options.skipBall ? 1 : 0, options.adaptiveSubsteps,
+              static_cast<double>(options.substepCeiling));
 
   FluidSimulation fluid;
   // Build the settings the same way the scene does, from WaterTunables. The gate must
@@ -207,7 +209,9 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
   // stir and a heavy velocity decay. Running on those defaults made a "still" pool
   // grow from 1.9 mm to 34.6 mm of surface noise in two seconds with no ball and no
   // user forcing at all - the gate was measuring the fake stir, not the solver.
-  const WaterTunables w{};
+  WaterTunables w{};
+  if (options.substepCeiling > 0.0f) w.maxSubstepDt = options.substepCeiling;
+  if (options.adaptiveSubsteps >= 0) w.adaptiveSubsteps = options.adaptiveSubsteps != 0;
   FluidSettings settings;
   settings.width = static_cast<uint32_t>((std::max)(w.gridWidth, 8));
   settings.depth = static_cast<uint32_t>((std::max)(w.gridDepth, 8));
@@ -1239,11 +1243,11 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
     // The frame the devices actually see, not the gate's 1/300 s: the substep count only exists
     // because real frames are long.
     const float frameDt = 1.0f / 30.0f;
-    fluid.SetAdaptiveSubsteps(true);
+    fluid.SetAdaptiveSubsteps(w.adaptiveSubsteps);
     fluid.SetCflNumber(w.cflNumber);
     fluid.SetMinCflSpeed(w.minCflSpeed);
     fluid.SetDeltaTime(frameDt);
-    fluid.SetMaxSubstepDt(frameDt);
+    fluid.SetMaxSubstepDt(w.maxSubstepDt > 0.0f ? w.maxSubstepDt : frameDt);
     const uint32_t cflFrames = static_cast<uint32_t>(std::ceil(10.0f / frameDt));
     float worst = 0.0f;
     float worstAt = 0.0f;

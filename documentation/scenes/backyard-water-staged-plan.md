@@ -61,7 +61,7 @@ stale `Backyard_Water.glb` now logs `[Backyard] Water mesh UV is mirrored in Z` 
 - **Performance pass (reviewer, section 4, "Performance pass and documentation audit")** —
   `c911381a` removed three CPU–GPU stalls: the D3D12 float-texture upload wait (engine-wide), the
   volume-correction readback (W-15 P1, most of W-04), and the wall-mask re-upload (W-15 P6, W-05).
-  Stage 6a shrank accordingly. Measure with `backyard-diag\telemetry.ps1`, not FPS alone.
+  Stage 6a shrank accordingly. Measure with `scripts\validation\telemetry.ps1`, not FPS alone.
 - **Documentation audit** — every engine document touched by these Framework changes now matches
   the code (list in section 4). Keep it that way: a Framework change ships with its doc update.
 - **Stage 5a (W-02) is done** (section 4, "Stage 5a — W-02"). Part 1 (`14c705f4`) added the format;
@@ -1113,7 +1113,7 @@ the ball, **horizontal only**.
 - **Self-tests:** `--fluid-selftest`, `--backyard-selftest` and every scene run with `--scene 7` (W-21
   is fixed; the scene-0 exception is gone).
 - **Performance claims are same-session A/B only.** Measure the parent commit and the change in one
-  session; `backyard-diag\bisect_perf.ps1 -Commit <sha> -Apis vulkan,d3d12 -Restore` builds the
+  session; `scripts\validation\bisect_perf.ps1 -Commit <sha> -Apis vulkan,d3d12 -Restore` builds the
   old tree, measures with `perf.ps1` and restores HEAD.
 - **Register every new source file in all three build lists:** the vcxproj, the CMakeLists and
   `cmake/AndroidBuild.cmake`. `ValidateBuildRegistration.ps1` does not check Backyard or fluid files,
@@ -2360,7 +2360,7 @@ committed the changes below directly, so **pull `backyard_scene` (at or after `5
 6. `3a371903` — W-15 measured: the solver is 58 % (D3D12) / 63 % (Vulkan) of the frame; D3D12 is
    GPU-bound in it, Vulkan CPU-bound. Fixed the per-substep surface work and two log-only GPU
    stalls: 720p D3D12 191 → 219 fps, Vulkan 298 → 313 fps, results unchanged. Findings P1–P9 with
-   expected gains are in W-15; frame-rate A/B script `backyard-diag\perf.ps1`.
+   expected gains are in W-15; frame-rate A/B script `scripts\validation\perf.ps1`.
 7. `93dff3d9` — the debug view's voxel layers crashed D3D12: dynamic vertex buffers stream through
    a 16 MB per-frame ring, and "partially filled cells" drew the whole diluted pool (≈ 81k boxes,
    15.6 MB). Layers are now capped (8000 boxes, evenly strided), partial cells are interface-only,
@@ -2874,7 +2874,7 @@ drag, and contacts treat it as infinitely heavy, so it shoves other balls.
 input is generated. Gates: a no-Ctrl click does not pick; Ctrl + click picks the ball under the
 cursor; capture is freed; the dragged ball follows the cursor ray (0.003 m off) and pushes another
 ball; release; re-grab; a final frame dump shows the ball held at a known pixel. Run it with
-`backyard-diag\pick_test.ps1` (`--unattended --regressionFixedDt 0.0033 --backyard-spawn 6
+`scripts\validation\pick_test.ps1` (`--unattended --regressionFixedDt 0.0033 --backyard-spawn 6
 --backyard-pick-test`). PASS on D3D12, Vulkan and D3D11; GL and WebGPU SKIP (no solver). The D3D12
 and Vulkan dumps show the held ball centred on the synthetic cursor.
 

@@ -2512,6 +2512,18 @@ nothing there.
   splash and 0 % afterwards, alpha volume +0.000 %. Frame time 600 / 20.6 s ≈ **29 fps** (was 17.2).
 - Hitch test (`kill -STOP`, 2 s, `kill -CONT`): no error, `nonFinite=0`, the window reads
   `sim/wall = 0.93` — the 2 s stall costs one 0.25 s clamped step out of ~20 s, exactly as designed.
+- Re-verified after the Vulkan readback fix (`e03995bf`, `9f839352`): gates 1–13 PASS, **0 logged
+  errors**, gate 13 still 0.970, `sim/wall = 1.00` in every window at 1.5–1.7 substeps per frame.
+
+Samsung Galaxy Tab S9 (SM-X920, `android-vulkan`, 60 sweeps, mobile/web cap):
+
+- `Fluid solver running on 100x22x50, 60 pressure iterations (mobile/web cap)`.
+- Four 600-frame windows after the drop: `sim/wall = 1.00` in all four, **2.0–2.3 substeps per
+  frame** (was a flat 4.0), budget-limited 10 % in the splash window and 0–2 % afterwards, alpha
+  volume −0.014 % over two minutes. Frame time 600 / 26 s ≈ **23 fps** (was 0.53× real time).
+- The Android build had not been run since `5b90125a`, and J was the first change to exercise it:
+  `DeviceInfo.cpp` failed with "use of undeclared identifier 'ContainsNoCase'". Fixed in
+  `9f839352`; the APK builds and installs clean.
 
 **Gate 13 numbers on all five APIs** (default configuration, 120 sweeps):
 0.864 d3d12, 0.826 vulkan, 1.082 gl, 1.081 d3d11, 0.643 webgpu — one frame of 300 over 1.0 on

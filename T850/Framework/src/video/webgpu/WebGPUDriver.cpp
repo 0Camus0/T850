@@ -32,6 +32,28 @@ namespace t850 {
 extern Device* T8Device;
 extern DeviceContext* T8DeviceContext;
 namespace {
+const char* ShaderComponentName(webgpu::ShaderComponentType type) {
+  switch (type) {
+    case webgpu::ShaderComponentType::Float: return "float";
+    case webgpu::ShaderComponentType::Unsigned: return "uint";
+    case webgpu::ShaderComponentType::Signed: return "int";
+    case webgpu::ShaderComponentType::Half: return "half";
+  }
+  return "?";
+}
+std::string DescribeShaderLocation(const webgpu::ShaderLocation& location) {
+  return "@location(" + std::to_string(location.location) + ") " + ShaderComponentName(location.type) +
+         std::to_string(location.components);
+}
+std::string DescribeShaderLocations(const std::vector<webgpu::ShaderLocation>& locations) {
+  std::string text;
+  for (const webgpu::ShaderLocation& location : locations) {
+    if (!text.empty()) text += ", ";
+    text += DescribeShaderLocation(location);
+  }
+  if (text.empty()) text = "none";
+  return text;
+}
 void Require(bool success, const std::string& message) {
   if (!success) {
     T8_LOG_ERROR("[WebGPU] %s", message.c_str());
@@ -606,8 +628,14 @@ public:
       Require(compilationError.empty(), compilationError);
 #endif
     }
-    for (const auto& input : fragment.inputs)
-      Require(std::find(vertex.outputs.begin(), vertex.outputs.end(), input) != vertex.outputs.end(), "Shader stage interfaces do not match");
+    // Name the offending varying: "interfaces do not match" alone cost a bisect when scene 4 first
+    // met it, because the failing pipeline is VS_Mesh + FS_WireMesh rather than the water or mesh one.
+    for (const auto& input : fragment.inputs) {
+      if (std::find(vertex.outputs.begin(), vertex.outputs.end(), input) == vertex.outputs.end()) {
+        Require(false, "Shader stage interfaces do not match: fragment input " + DescribeShaderLocation(input) +
+                       " is not a vertex output [" + DescribeShaderLocations(vertex.outputs) + "]");
+      }
+    }
     std::map<uint32_t, wgpu::BindGroupLayoutEntry> entries;
     for (const bool isVertex : {true, false}) {
       for (const auto& binding : (isVertex ? vertex : fragment).bindings) {

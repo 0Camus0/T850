@@ -53,7 +53,8 @@ task W-16 updates them. The order in which the tasks are executed is in
 | W-28 OpenGL has no solver | **Done** (2026-11-02, this commit) | this commit | GL 4.3 now runs the whole solver: 27 generated GLSL twins, `glTexStorage3D` volumes bound with `glBindImageTexture`, inline SSBOs, and the mesh shaders' `FLUID_SURFACE` path hand-ported. `--compute-selftest`, `--fluid-selftest`, all 11 `--backyard-selftest` gates and `--backyard-pick-test` PASS on `--api gl`; scenes 1 and 6 stay byte-identical; scene 7 frame 300 is within +0.22/255 mean of D3D12. GL is **GPU-bound, not CPU-bound**, at 120 sweeps and vsync-locked at the display refresh; the measurements that falsified the CPU hypothesis are under W-28 | 
 | W-29 The mean surface creeps up over long runs | **Done** (2026-11-02) | this commit | Entrained air never left (no bubble buoyancy) and W-26 drew it as frozen bumps. `CS_FluidAirRise3D` lets it rise out: after 30 s bulk cells below 98 % 3614 → 24, interface 3.36 → 1.16 cells; 600 s on D3D12 ends flat to ±1 mm with mean 0.0 mm. Gate 11 guards it. Fixing it exposed two backend bugs (WebGPU headless memory, Vulkan stale readback) |
 | W-30 The wind does not push the balls | **Done** (2026-11-03) | `4cf09a48` | Air drag on the exposed cap, horizontal, integrated implicitly with the water drag. Gate 12: closed form 0.2800 m/s vs measured 0.2749 (1.8 %), cross-wind 0.0000, 0.00000 with the term off; identical on D3D12, Vulkan and GL. Gates 1–11 re-baselined, no constant touched |
-| W-31 Devices run the water in slow motion | **Fixed 2026-11-04** (owner request 2026-11-02) | Gate 13 | CFL substeps from a measured velocity bound, a decaying velocity peak, and a per-frame substep budget replaced the fixed 1/120 s. Gate 13 reads 0.641 (old design) / 1.204 (fixed 1/60 or 1/30) / 0.658–0.795 (adaptive). Device `sim/wall` still to be re-measured |
+| W-31 Devices run the water in slow motion | **Fixed 2026-11-04** (owner request 2026-11-02) | Gate 13 |
+| W-32 Scene 4 rejects its wireframe pipeline on WebGPU | Open, pre-existing on master (found by the item G matrix) | — | CFL substeps from a measured velocity bound, a decaying velocity peak, and a per-frame substep budget replaced the fixed 1/120 s. Gate 13 reads 0.641 (old design) / 1.204 (fixed 1/60 or 1/30) / 0.658–0.795 (adaptive). Device `sim/wall` still to be re-measured |
 | All others | Open | — | — |
 
 Review of `9693f79d..ea80665b` (2026-10-28): x64 Release builds; `--fluid-selftest` and
@@ -2557,6 +2558,37 @@ Samsung Galaxy Tab S9 (SM-X920, `android-vulkan`, 60 sweeps, mobile/web cap):
 0.864 d3d12, 0.826 vulkan, 1.082 gl, 1.081 d3d11, 0.643 webgpu — one frame of 300 over 1.0 on
 GL and D3D11, which is why the second limit is 1 % and not 0.
 
+
+---
+
+### W-32 — Scene 4 rejects its wireframe pipeline on WebGPU (P3, S) — found 2026-11-05
+
+The item G scene matrix runs every scene on every backend. **Scene 4 (`SceneTemplate`) with
+`Scenes/Nexus.t8scene` fails at startup on WebGPU only:**
+
+```
+[WebGPU] Shader stage interfaces do not match: fragment input @location(4) float4 is not a vertex
+output [@location(0) float4, @location(1) float4, @location(2) float4, @location(3) float2,
+@location(4) float2, @location(5) float4, @location(6) float4]
+[App] Startup/runtime failure: [WebGPU] Shader stage interfaces do not match
+```
+
+The pipeline is `VS_Mesh` + `FS_WireMesh`. `FS_WireMesh` declares `Pos : TEXCOORD1` and
+`WorldPos : TEXCOORD2` (both float4) but its pixel shader only reads `hposition`; on the vertex side
+the same semantics are filled by a second UV set (`texture1 : TEXCOORD3`) and `Pos`/`WorldPos`, so
+the two signatures disagree on what location 4 carries. D3D, Vulkan and GL accept the pair; Dawn
+assigns locations by semantic and rejects the mismatch.
+
+**Pre-existing, not this branch:** `FS_WireMesh.hlsl` is untouched since master, `VS_Mesh.hlsl`'s
+`VS_OUTPUT` is unchanged against master, and the stage-interface check is verbatim in `origin/master`
+(`851277e9`), so master fails the same way. It matters for the PR only as a documented limitation:
+scene 4 is the editor template scene, not the Backyard.
+
+**Fix direction (not done).** `FS_WireMesh` never reads `hnormal`, `htangent`, `hbinormal`,
+`texture0`, `Pos` or `WorldPos`, so dropping them from its `VS_OUTPUT` leaves a signature of
+`SV_POSITION` only and satisfies every backend; the `.glsl` and `.wgsl` twins need the same edit.
+The improved diagnostic that names the location and lists both signatures is already in
+`WebGPUDriver.cpp`.
 
 ---
 

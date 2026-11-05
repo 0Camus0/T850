@@ -1778,6 +1778,10 @@ bool FluidSimulation::ResetToRest(BaseDriver* driver) {
   m_pressureCurrent = 0;
   m_time = 0.0f;
   m_framesSinceVolumeCheck = 0;
+  // A reset pool is a still pool: a velocity peak left over from the previous splash would keep
+  // asking for substeps the new water does not need for another half second.
+  m_velocityEnvelope = 0.0f;
+  m_measuredVelocitySum = 0.0f;
   // Force the next frame to re-stamp (or clear) the body footprint.
   m_maskBodyValid = false;
 

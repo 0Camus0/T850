@@ -324,7 +324,11 @@ namespace t850 {
     std::vector<VkSemaphore> m_imageRenderFinishedSemaphores;
     VkFence         m_inFlightFences[kBackBufferCount] = {};
 
-    // W-04 step 5: one host-visible staging slot per frame in flight.
+    // W-04 step 5: host-visible staging slots, one frame in flight each. W-31: FOUR per frame, not
+    // one - two queries asked in the same frame (the body water level and the max velocity) shared
+    // the single slot, and a request with a different byte count destroyed the staging buffer and
+    // dropped the pending ticket, so the first query never delivered and its consumer logged a
+    // readback stuck after 60 frames. A pending slot is now never touched.
     struct PendingReadback {
       VkBuffer buffer = VK_NULL_HANDLE;
       VmaAllocation allocation = nullptr;
@@ -337,7 +341,8 @@ namespace t850 {
       // proves the copy finished, even though BeginFrame has since reset the fence.
       uint64_t slotWaitsAtRequest = 0;
     };
-    PendingReadback m_pendingReadbacks[kBackBufferCount];
+    static constexpr uint32_t kReadbackSlotsPerFrame = 4;
+    PendingReadback m_pendingReadbacks[kBackBufferCount][kReadbackSlotsPerFrame];
     int m_readbackTicketCounter = 0;
     uint64_t        m_frameSlotWaits[kBackBufferCount] = {};
     uint32_t        m_currentFrame = 0;

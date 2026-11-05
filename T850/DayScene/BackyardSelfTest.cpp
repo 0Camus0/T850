@@ -1214,6 +1214,98 @@ int RunBackyardSelfTest(BaseDriver* driver, const BackyardSelfTestOptions& optio
     }
   }
 
+  // ── Gate 13: the substep respects the transport's CFL bound (W-31) ─────────────
+  // Adaptive substepping sizes each substep from a measured velocity so that
+  // (|u|+|v|+|w|) * dt / h <= 1. This gate does not trust that measurement: it drives the default
+  // drop at a scene-sized 1/30 s frame with the 1/30 s ceiling and, after every frame, compares the
+  // substep just simulated against the fastest voxel read straight afterwards. |u|+|v|+|w| is at
+  // most sqrt(3) * |v|, which is exactly the value an isotropic splash reaches, so the number below
+  // is an upper bound for the sum rather than a rough one.
+  if (failures == 0 && !options.skipBall) {
+    if (!fluid.ResetToRest(driver)) { T8_LOG_ERROR("[BackyardSelfTest] cfl: reset failed"); ++failures; }
+  }
+  if (failures == 0 && !options.skipBall) {
+    FluidSphere& ball = fluid.DroppedSphere();
+    ball.enabled = true;
+    ball.radius = 0.25f;
+    ball.densityRatio = 0.6f;
+    ball.dragCoefficient = 0.47f;
+    ball.restitution = 0.30f;
+    ball.x = 0.0f;
+    ball.z = fs.basinMinZ + 0.5f * (fs.basinMaxZ - fs.basinMinZ);
+    ball.y = fs.waterPlaneY + 1.0f;
+    ball.vx = ball.vy = ball.vz = 0.0f;
+    ball.submerged = 0.0f;
+    // The frame the devices actually see, not the gate's 1/300 s: the substep count only exists
+    // because real frames are long.
+    const float frameDt = 1.0f / 30.0f;
+    fluid.SetAdaptiveSubsteps(true);
+    fluid.SetCflNumber(w.cflNumber);
+    fluid.SetMinCflSpeed(w.minCflSpeed);
+    fluid.SetDeltaTime(frameDt);
+    fluid.SetMaxSubstepDt(frameDt);
+    const uint32_t cflFrames = static_cast<uint32_t>(std::ceil(10.0f / frameDt));
+    float worst = 0.0f;
+    float worstAt = 0.0f;
+    uint32_t worstSubsteps = 0;
+    uint32_t nonFiniteFrames = 0;
+    uint32_t overFrames = 0;
+    for (uint32_t i = 0; i < cflFrames && failures == 0; ++i) {
+      if (!fluid.Step(driver)) { T8_LOG_ERROR("[BackyardSelfTest] cfl: step failed"); ++failures; break; }
+      FluidSimulation::Diagnostics diagnostics;
+      if (!fluid.ReadDiagnostics(driver, diagnostics)) {
+        T8_LOG_ERROR("[BackyardSelfTest] cfl: diagnostics readback failed");
+        ++failures;
+        break;
+      }
+      if (diagnostics.nonFinite > 0) ++nonFiniteFrames;
+      const float bound = 1.7320508f * diagnostics.maxSpeed * fluid.LastSubstepDt() / fs.cellSize;
+      if (bound > 1.0f) ++overFrames;
+      if (bound > worst) {
+        worst = bound;
+        worstAt = fluid.SimulationTime();
+        worstSubsteps = fluid.LastFrameSubsteps();
+      }
+    }
+    fluid.SetAdaptiveSubsteps(w.adaptiveSubsteps);
+    fluid.SetCflNumber(w.cflNumber);
+    fluid.SetMinCflSpeed(w.minCflSpeed);
+    fluid.SetDeltaTime(options.fixedDt);
+    fluid.SetMaxSubstepDt(options.fixedDt);
+    if (failures == 0) {
+      // Two limits, because a measured scheme cannot be exact on the frame a free surface pinches:
+      // * 1.25 on the worst single substep. The sizing is one readback behind, so a transient
+      //   overshoot is expected; 1.25 is 15 % above the 1.082 the drop actually reaches on GL and
+      //   D3D11, and 1.583 - what the old fixed 1/120 s ceiling produced before the peak-hold
+      //   envelope and this margin existed - still fails.
+      // * 1 % of frames over 1.0, so a solver that sits on the edge all run fails even if no single
+      //   frame is catastrophic.
+      constexpr float kCflWorstLimit = 1.25f;
+      constexpr float kCflOverFractionLimit = 0.01f;
+      const float overFraction = cflFrames ? static_cast<float>(overFrames) / static_cast<float>(cflFrames) : 0.0f;
+      T8_LOG_INFO("[BackyardSelfTest] cfl  worst (|u|+|v|+|w|)*subDt/h=%.3f (limit %.2f) at t=%.2fs "
+                  "with %u substep(s) | over 1.0: %u of %u frames (%.2f%%, limit %.0f%%) | cell=%.3f m "
+                  "nonFinite frames=%u",
+                  worst, kCflWorstLimit, worstAt, worstSubsteps, overFrames, cflFrames,
+                  100.0f * overFraction, 100.0f * kCflOverFractionLimit, fs.cellSize, nonFiniteFrames);
+      if (worst > kCflWorstLimit) {
+        T8_LOG_ERROR("[BackyardSelfTest] cfl: a substep of %u reached %.3f against the transport's "
+                     "limit of %.2f", worstSubsteps, worst, kCflWorstLimit);
+        ++failures;
+      }
+      if (overFraction > kCflOverFractionLimit) {
+        T8_LOG_ERROR("[BackyardSelfTest] cfl: %.2f%% of frames ran over the transport's limit "
+                     "(limit %.0f%%)", 100.0f * overFraction, 100.0f * kCflOverFractionLimit);
+        ++failures;
+      }
+      if (nonFiniteFrames > 0) {
+        T8_LOG_ERROR("[BackyardSelfTest] cfl: %u frames held a non-finite velocity",
+                     nonFiniteFrames);
+        ++failures;
+      }
+    }
+  }
+
   // ── Gate 10: the per-ball material palette (W-25) ────────────────────────────
   // Three independent facts, all headless: the palette lists at least 32 materials,
   // every one of them resolves on disk and decodes on this API, and the real shuffle

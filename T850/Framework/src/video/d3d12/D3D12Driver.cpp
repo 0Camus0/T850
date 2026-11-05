@@ -978,9 +978,10 @@ namespace t850 {
     // anyone could read it.
     const uint64_t completingSerial = m_frameSerial++;
     auto stampReadbacks = [this, completingSerial](UINT64 value) {
-      for (PendingReadback& readback : m_pendingReadbacks)
-        if (readback.pending && readback.serial == completingSerial)
-          readback.fenceValue = value;
+      for (auto& frameSlots : m_pendingReadbacks)
+        for (PendingReadback& readback : frameSlots)
+          if (readback.pending && readback.serial == completingSerial)
+            readback.fenceValue = value;
     };
 #if T850_ENABLE_GPU_PROFILING
     if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->EndFrame();

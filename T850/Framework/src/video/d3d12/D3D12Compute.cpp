@@ -913,7 +913,25 @@ namespace t850 {
     if (!m_frameStarted || !GetCmdList()) return -1;
 
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
-    PendingReadback& slot = m_pendingReadbacks[m_currentBackBuffer];
+    // A pending slot belongs to a copy that is already queued: replacing its resource would release
+    // memory the GPU is about to read. Take a free slot whose size already matches, else any free one.
+    PendingReadback* slotPtr = nullptr;
+    PendingReadback* freeSlot = nullptr;
+    for (uint32_t i = 0; i < kReadbackSlotsPerFrame; ++i) {
+      PendingReadback& candidate = m_pendingReadbacks[m_currentBackBuffer][i];
+      if (candidate.pending) continue;
+      if (!freeSlot) freeSlot = &candidate;
+      if (candidate.resource && candidate.byteCount == byteCount) {
+        slotPtr = &candidate;
+        break;
+      }
+    }
+    if (!slotPtr) slotPtr = freeSlot;
+    if (!slotPtr) {
+      T8_LOG_DEBUG("[D3D12][Compute] No free readback slot for %zu bytes this frame", byteCount);
+      return -1;
+    }
+    PendingReadback& slot = *slotPtr;
     if (!slot.resource || slot.byteCount != byteCount) {
       D3D12_HEAP_PROPERTIES readbackHeap = {};
       readbackHeap.Type = D3D12_HEAP_TYPE_READBACK;
@@ -952,8 +970,9 @@ namespace t850 {
 
   bool D3D12Driver::ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) {
     if (ticket <= 0 || !destination) return false;
-    for (uint32_t frame = 0; frame < kBackBufferCount; ++frame) {
-      PendingReadback& slot = m_pendingReadbacks[frame];
+    for (uint32_t frame = 0; frame < kBackBufferCount; ++frame)
+    for (uint32_t index = 0; index < kReadbackSlotsPerFrame; ++index) {
+      PendingReadback& slot = m_pendingReadbacks[frame][index];
       if (!slot.pending || slot.ticket != ticket || slot.byteCount < byteCount) continue;
       // The copy was recorded into the frame that was open when it was requested; that frame
       // has completed once the serial has advanced past it, and its fence value then covers

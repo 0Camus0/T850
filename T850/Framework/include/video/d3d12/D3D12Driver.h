@@ -200,8 +200,12 @@ namespace t850 {
     ComPtr<ID3D12CommandAllocator>     m_commandAllocators[kBackBufferCount];
     ComPtr<ID3D12GraphicsCommandList>  m_commandLists[kBackBufferCount];
 
-    // W-04 step 5: one readback resource per frame in flight, with the fence value that
-    // guarantees the copy has completed.
+    // W-04 step 5: readback resources with the fence value that guarantees the copy has completed.
+    // W-31: FOUR slots per frame, not one. Two queries asked in the same frame (the body water level
+    // and the max velocity) shared the single slot; a request with a different byte count reset the
+    // resource while the previous copy was still queued, which is a released resource still
+    // referenced by in-flight work and removes the D3D12 device (DXGI_ERROR_DEVICE_HUNG). A pending
+    // slot is now never touched.
     struct PendingReadback {
       Microsoft::WRL::ComPtr<ID3D12Resource> resource;
       uint64_t fenceValue = 0;
@@ -211,7 +215,8 @@ namespace t850 {
       int ticket = 0;
       bool pending = false;
     };
-    PendingReadback m_pendingReadbacks[kBackBufferCount];
+    static constexpr uint32_t kReadbackSlotsPerFrame = 4;
+    PendingReadback m_pendingReadbacks[kBackBufferCount][kReadbackSlotsPerFrame];
     int m_readbackTicketCounter = 0;
     // Completed-frame counter: a readback is ready once the frame that recorded its copy has
     // been submitted. The back-buffer index cannot serve that role because offscreen compute

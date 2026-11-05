@@ -70,6 +70,7 @@ namespace t850 {
     }
 #endif
 
+#if defined(OS_LINUX) || defined(OS_WINDOWS)
     // A Steam Deck reports Valve as the vendor with a `Jupiter` (LCD) or `Galileo` (OLED)
     // product/board. Both fields are checked because the OLED sets product and board to the same
     // value while third-party skins and some BIOS revisions only populate one of them. The vendor
@@ -87,6 +88,7 @@ namespace t850 {
     }
 
     const char* kHandheldReasonSteamDeck = "Steam Deck";
+#endif
 
     DeviceInfo ProbeDeviceInfo() {
       DeviceInfo info;

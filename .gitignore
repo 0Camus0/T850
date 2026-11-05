@@ -5,6 +5,8 @@
 /examples/EditorExtension/obj/
 /examples/EditorExtension/build/
 /T850/build/
+# web\test-firefox.mjs writes its report, screenshots and driver log here.
+/build/
 /T850/bin/x86/
 /T850/bin/Win32/
 /T850/bin/x64/

@@ -231,7 +231,7 @@ browser), Android, the Steam Deck **and OpenGL**, and all 11 gates pass. Left:
 |---|---|---|---|
 | A | OpenGL port (W-28) | **Done 2026-11-02**; see W-28's resolution | L |
 | B | Steam Deck: detect the OLED, run 60 sweeps | **Done 2026-11-03** (`5b90125a`): shared `utils/DeviceInfo`, run-time cap, verified on the Deck | S |
-| C | Browser re-verify after the kernel changes | The web export predates the air-rise kernel **and** W-30 (no new kernel there, so only the ball behaviour changed) | S |
+| C | Browser re-verify after the kernel changes | **Done 2026-11-05**: embedded and cloud bundles both run scene 7 with the solver ready and 0 errors; release zip validated (2040 files, 167 cloud routes) | S |
 | D | Android: CI-style build, 30-minute tablet run | APK with every fix installed, no long run yet | S–M |
 | E | Launcher gaps | **Partly done.** ~~The Backyard meshes are missing from the cloud asset manifest~~ — done 2026-11-03 (`1760d846`): `PushCloudModels.ps1`, 7 meshes in `t850-models`, `runtime_assets.json` 13 → 20, union manifest repaired to 218 assets. Remaining: the CI check in `TestLauncherWebGPU.ps1`, the empty-asset-root launcher run, and the `cloud-assets.md` release decision | S |
 | F | Cleanup: script move, README, W-16 | Partly done | M |
@@ -654,7 +654,22 @@ catalog, and a full engine run of scene 7 with a cloud-only asset tree: all seve
 0 errors, water simulated). Two latent bugs in the publishing scripts were found and fixed on the
 way (duplicate model entries in the union manifest, and a PowerShell 7.6 header cast that reported
 successful uploads as failures); see the implementation record's 3.6.
-#### C. Browser re-verify
+#### C. Browser re-verify — **done 2026-11-05**
+
+**Outcome.** `BuildWeb.ps1` (embedded) rebuilt the export (`T850WebSelfTests` passed, 1821 shader
+artifacts) and headless Chrome on scene 7 logs
+
+```
+[Fluid] Solver ready on webgpu: grid=100x22x50 iterations=60
+[Backyard] Fluid solver running on 100x22x50, 60 pressure iterations (mobile/web cap)
+[ComputeSelfTest] PASS: arithmetic, odd-sized image kernels and volumetric storage textures
+```
+
+with **no `[ERROR]` at all**. "Solver ready" is the proof the new reduction pipeline exists: the
+solver's readiness list includes `CS_FluidMaxVelocity3D`, so a rejected pipeline would have left the
+scene on the static pool. The cloud path was rebuilt (`-AssetMode Cloud`, 167 routes), served and
+loaded in the same scene with 0 errors and the solver ready, then `PackageWebRelease.ps1` produced a
+21 MB zip and `ValidateWebReleasePackage.ps1 -Archive` PASSed it (2040 files, 167 cloud routes).
 
 `build/web/WebShaders` was exported at 13:26 on 2026-11-02, and `CS_FluidAirRise3D` landed at
 20:10. `FluidSimulation` treats a missing pipeline as "solver unavailable", so the bundle can fall

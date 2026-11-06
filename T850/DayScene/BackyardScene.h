@@ -247,6 +247,7 @@ private:
   bool m_padTestAim = false;
   XVECTOR3 m_padTestAimPoint;
   XVECTOR3 m_padTestEyeAtGrab;
+  float m_padTestEyeY = 0.0f;
   void RunPadTestStep();
 #ifdef OS_ANDROID
   // ── Android touch controls ──
@@ -286,6 +287,9 @@ private:
   // pad quick actions stand down while it is open. DrawDevGui only runs while it is visible.
   bool m_devGuiDrawnThisFrame = false;
   bool m_runtimeGuiOpen = false;
+  // The browser's touch overlay (web/shell.html) is active: its sticks and buttons own the
+  // bottom edge, so the quick bar moves to the top.
+  bool m_browserTouch = false;
   t850::FluidDebugRenderer m_fluidDebug;
   t850::WireframeArrow m_windArrow;
   bool m_windArrowReady = false;

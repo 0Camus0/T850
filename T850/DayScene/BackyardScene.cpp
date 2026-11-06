@@ -1188,6 +1188,14 @@ void BackyardScene::ResetSimulation() {
 
 void BackyardScene::OnUpdate(float deltaSeconds) {
   m_deltaSeconds = deltaSeconds;
+  // The authored camera is 16:9; a resized window or an upright phone would stretch the view, so
+  // the projection follows the render target (as in MinecraftScene).
+  if (pFramework && pFramework->pVideoDriver && pFramework->pVideoDriver->width > 0 &&
+      pFramework->pVideoDriver->height > 0) {
+    const float aspect = static_cast<float>(pFramework->pVideoDriver->width) /
+                         static_cast<float>(pFramework->pVideoDriver->height);
+    if (m_camera.AspectRatio != aspect) m_camera.SetRatio(aspect);
+  }
   if (!m_dumper.SkipCameraUpdates()) {
     m_cameraController.Update(deltaSeconds, t850::CameraUpdateContext{});
   }
@@ -1429,6 +1437,9 @@ void BackyardScene::OnInput(InputManager* input) {
 }
 
 void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse) {
+#ifdef __EMSCRIPTEN__
+  m_browserTouch = input->Gamepad.name == "Browser touch";
+#endif
   // Ctrl frees the cursor (AllowsMouseCapture) and turns a left click into a pick.
   const bool ctrlDown = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
   // The pad grabs with RT and picks down the camera's crosshair, so both paths end up in the
@@ -1526,6 +1537,10 @@ void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse)
     state.sprint = state.sprint || std::fabs(m_androidMoveAxis.y) > 0.85f;
   }
 #endif
+  // Free Fly climbs on moveUp/moveDown only; every input path sets jump (Space, pad A, touch Up)
+  // and crouch (pad B, touch Down), so they never moved the camera before. Q/E as in the other scenes.
+  state.moveUp = state.jump || input->PressedKey(T800K_q);
+  state.moveDown = state.crouch || input->PressedKey(T800K_e);
   m_cameraController.HandleInput(state);
 }
 
@@ -1726,7 +1741,9 @@ void BackyardScene::RunPadTestStep() {
   constexpr int kPanEnd = kGrab + 90;
   constexpr int kLiftEnd = kPanEnd + 60;
   constexpr int kRelease = kLiftEnd + 1;
-  constexpr int kWestAction = kRelease + 1;
+  constexpr int kClimbEnd = kRelease + 30;
+  constexpr int kSinkEnd = kClimbEnd + 30;
+  constexpr int kWestAction = kSinkEnd + 1;
   constexpr int kShoulderUp = kWestAction + 1;
   constexpr int kShoulderDown = kShoulderUp + 1;
   constexpr int kDpadRight = kShoulderDown + 1;
@@ -1866,6 +1883,40 @@ void BackyardScene::RunPadTestStep() {
     const t850::FluidSphere& body = m_fluid.Bodies()[static_cast<uint32_t>(m_padTestTarget)];
     check(m_dragBody < 0 && !m_gamepadGrab && !body.held, "releasing RT drops the ball");
     check(!m_gamepadAiming, "the crosshair hides when RT is released");
+    return;
+  }
+
+  // A climbs and B sinks. Free Fly reads only moveUp/moveDown, which nothing used to set, so
+  // Space, A and the browser's Fly up button never moved the camera.
+  if (frame > kRelease && frame < kClimbEnd) {
+    if (frame == kRelease + 1) m_padTestEyeY = m_camera.Eye.y;
+    in.Gamepad.buttonSouth = true;
+    step();
+    return;
+  }
+
+  if (frame == kClimbEnd) {
+    in.Gamepad.buttonSouth = false;
+    step();
+    const float rise = m_camera.Eye.y - m_padTestEyeY;
+    T8_LOG_INFO("[BackyardPadTest] A raised the camera %.3f m", rise);
+    check(rise > 0.1f, "A flies the camera up");
+    m_padTestEyeY = m_camera.Eye.y;
+    return;
+  }
+
+  if (frame > kClimbEnd && frame < kSinkEnd) {
+    in.Gamepad.buttonEast = true;
+    step();
+    return;
+  }
+
+  if (frame == kSinkEnd) {
+    in.Gamepad.buttonEast = false;
+    step();
+    const float drop = m_padTestEyeY - m_camera.Eye.y;
+    T8_LOG_INFO("[BackyardPadTest] B lowered the camera %.3f m", drop);
+    check(drop > 0.1f, "B flies the camera down");
     return;
   }
 
@@ -2440,9 +2491,12 @@ void BackyardScene::DrawQuickBar() {
 #ifdef OS_ANDROID
   bottomInset = BuildAndroidTouchLayout(viewport->WorkSize.x, viewport->WorkSize.y).stickRadius * 2.3f;
 #endif
-  ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
-                                 viewport->WorkPos.y + viewport->WorkSize.y - kMargin - bottomInset),
-                          ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+  // A phone held upright is too narrow for one row, so the wind controls wrap to a second.
+  const bool narrow = viewport->WorkSize.x < 720.0f;
+  const float anchorY = m_browserTouch ? viewport->WorkPos.y + kMargin
+                                       : viewport->WorkPos.y + viewport->WorkSize.y - kMargin - bottomInset;
+  ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, anchorY),
+                          ImGuiCond_Always, ImVec2(0.5f, m_browserTouch ? 0.0f : 1.0f));
   ImGui::SetNextWindowBgAlpha(0.72f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 8.0f));
@@ -2489,9 +2543,11 @@ void BackyardScene::DrawQuickBar() {
                                    : "Clear the spawned balls and restart the pool (two presses)");
     }
 
-    ImGui::SameLine();
-    ImGui::TextUnformatted("|");
-    ImGui::SameLine();
+    if (!narrow) {
+      ImGui::SameLine();
+      ImGui::TextUnformatted("|");
+      ImGui::SameLine();
+    }
 
     // Wind: speed and heading, the same two values the debug panel edits.
     if (ImGui::Button("-##windSpeed")) PerformQuickAction(QuickBarAction::WindSpeedDown);
@@ -2515,8 +2571,10 @@ void BackyardScene::DrawQuickBar() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the wind arrow: direction = heading, length = speed");
 
 #ifndef OS_ANDROID
-    ImGui::SameLine();
-    ImGui::TextDisabled("K +10  R reset  arrows wind  V arrow");
+    if (!m_browserTouch && !narrow) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("K +10  R reset  arrows wind  V arrow");
+    }
 #endif
     // The bar is clickable with a mouse only while the camera has released the cursor, and
     // that is not obvious, so it says so on hover.

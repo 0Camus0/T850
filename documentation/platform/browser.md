@@ -981,6 +981,9 @@ Configuration fields:
   branch to replace its production deployment, or another branch for a preview.
 - `minecraftOnly`: default `true`; `false` prepares the separate all-scenes
   package. Asset availability and pending uploads must be checked for that mode.
+- `site`: optional; `"water"` prepares only the Backyard water scene into
+  `build/pages-water` (see "Published Water Simulation" below). It implies
+  `minecraftOnly: false` and requires both R2 buckets.
 - `r2Buckets`: optional/unused for `minecraftOnly: true`. Multi-scene mode requires
   the `MODELS` and `TEXTURES` bindings, each with your `bucketName`
   and a public HTTPS `manifestUrl`. Each manifest has an `assets` array with
@@ -1017,6 +1020,63 @@ manifest URLs as a read-only mirror. Local preview
 does not authenticate to Cloudflare or write to real R2. It cannot serve pending
 unmanifested oversized assets without separately populating local R2 state.
 `npm run test:pages --prefix .\web` includes credential/configuration tests.
+
+### Published Water Simulation (v0.1.0)
+
+Live at <https://water-simulation-2026.pages.dev/> (Pages project `water-simulation-2026`,
+production branch `main`, first deployment `b652ebc3`, 2026-11-06). It publishes only the Backyard
+water scene (scene 7).
+
+- **Landing page:** `web/water-sim.html` and `web/water-sim.mjs`, copied as `index.html`. The
+  version label is `#demo-version`; bump the last number on each fix release. The page runs the
+  same WebGPU and isolation checks as the WSSI welcome, classifies the device as phone, tablet or
+  PC, shows that device's controls (`[data-help]`), defaults phones to 960 x 540, offers portrait
+  sizes on an upright phone, and launches `DayScene.html?demo=water&scene=7&width&height&logLevel`.
+  The background is `web/previews/water-sim.png`, a cropped browser frame (no HUD).
+- **Runtime:** `demo=water` in `shell.html` forces scene 7 and uses the WSSI letterboxing
+  (`.water-demo`). It hides the scene selector, ignores `model`/`sceneFile`, links home to
+  `water-sim.html`, and titles the page "Water Simulation 2026". The shell re-applies its title
+  when the runtime is ready, because SDL copies the engine window title ("T850 Project") into
+  `document.title` when it creates the window; this applies to every page mode.
+- **Device classes:** `touch-controls.js` and `water-sim.mjs` make the same call (pages.test.mjs
+  runs both against one fixture table). Windows and ChromeOS are PCs even with a touch screen;
+  Android, iPhone, iPad and touch Macs are touch-first; a touch-first device with a shortest
+  screen side of at least 600 CSS px is a tablet, otherwise a phone. Touch-first devices get the
+  overlay by default; the Touch checkbox still overrides. The overlay's Backyard set and its bits
+  are described in `documentation/input/camera-and-controls.md`.
+- **Package:** `"site": "water"` in the local config (for example
+  `web/cloudflare.water.local.json`, git-ignored) selects `web/backyard-assets.mjs`. That covers the
+  four `Scenes/Backyard*.json`, the layout and seven meshes, `Textures/Backyard/WaterNormal.png`,
+  the authored sky, every ball map the palette names (96), fonts, the runtime layout, IBL caches,
+  LUTs, lens textures and the shaders. Output is `build/pages-water` (1989 files, 48 MiB, largest
+  the 18.8 MiB Wasm). 139 resources stream from the existing R2 buckets through `_worker.js`, with
+  no pending uploads. The water site requires both R2 buckets and cannot be `minecraftOnly`.
+- **Junctions:** `prepare-pages.mjs` now follows directory links. `Assets/Textures/sky` and
+  `Textures/LUT` are junctions in worktrees, and `Dirent.isDirectory()` is false for them, so the
+  packager used to drop the sky and LUTs silently (`web/server.mjs` already followed them).
+
+Rebuild and redeploy from `T850`:
+
+```powershell
+pwsh -File scripts\BuildWeb.ps1 -ExportScenes 7   # -SkipShaderExport when shaders did not change
+node web\deploy-pages.mjs --config web\cloudflare.water.local.json --dev --port 8797   # local preview
+$env:CLOUDFLARE_API_TOKEN = '<token>'   # this process only
+node web\deploy-pages.mjs --config web\cloudflare.water.local.json
+Remove-Item Env:CLOUDFLARE_API_TOKEN
+```
+
+The project was created with the Pages REST API (`POST /accounts/{id}/pages/projects`,
+`production_branch: main`). Wrangler 4.133's `pages project create` hands new projects to Workers
+when it detects an AI agent; that hand-over failed and would not give a `pages.dev` advanced-mode
+site. `pages deploy` is unaffected: Wrangler skips the hand-over for an existing project or a
+`_worker.js` site.
+
+Verified 2026-11-06, live and in local preview, in headless Chrome. PC 1440 x 960, tablet
+emulation (Android, 1280 x 800, touch) and phone emulation (Android, 390 x 844, touch) all passed.
+Each run checked the device class and help, the launch URL, the solver ready at 100x22x50 with 60
+iterations, no `[WARN]`/`[ERROR]` lines, the touch set inside the viewport without overlaps, and
++10 (K or the touch button) reaching the engine exactly once. Headless throughput was about 85-90
+frames per second on the RTX 4080 Laptop. A real phone or tablet has not been tested.
 
 ### Embedded Browser Isolation
 

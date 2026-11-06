@@ -24,6 +24,19 @@
     if (/MacIntel|Macintosh/.test((navigator.platform ?? '') + ' ' + agent) && navigator.maxTouchPoints > 1) return true;
     return navigator.userAgentData?.mobile === true;
   };
+  // Phone, tablet or PC. Touch-first devices get the overlay by default; the shortest screen side
+  // splits phones from tablets (Android tablets start at 600 dp, the smallest iPad is 744 points).
+  // web/water-sim.mjs makes the same call for its help text, and pages.test.mjs keeps them in step.
+  const deviceClass = () => {
+    if (!mobileDevice()) return 'pc';
+    const screen = globalThis.screen;
+    return Math.min(screen?.width ?? 0, screen?.height ?? 0) >= 600 ? 'tablet' : 'phone';
+  };
+  const device = deviceClass();
+  document.body.dataset.device = device;
+  if (window.t850) window.t850.device = device;
+  // Scenes with a touch set in shell.html; the panel's data-scene picks the set.
+  const touchScene = () => ['Minecraft', 'Backyard'].includes(window.t850?.scene);
   function publish(pressed = 0) {
     if (!memory) return;
     let buttons = 0;
@@ -59,7 +72,7 @@
     onTopLabel.hidden = toggleLabel.hidden;
     onTop.disabled = !enabled || !ready;
     document.body.classList.toggle('touch-ontop', enabled && ready && onTop.checked);
-    cameraControls.hidden = !ready || enabled;
+    cameraControls.hidden = !ready || enabled || window.t850?.scene !== 'Minecraft';
     for (const command of commands) command.disabled = !ready || !memory;
     if (!enabled || !ready) reset();
     const nextLayout = enabled && ready ? (onTop.checked ? 'ontop' : 'touch') : '';
@@ -138,19 +151,20 @@
   onTop.addEventListener('change', () => { reset(); refresh(); });
   const detect = () => {
     toggleLabel.hidden = !supported() && userChoice === null;
-    enabled = userChoice ?? (supported() && mobileDevice());
+    enabled = userChoice ?? (supported() && device !== 'pc');
     refresh();
   };
   const onTouch = event => {
-    if (event.pointerType === 'touch' && !observedTouch && ready && window.t850?.scene === 'Minecraft') {
+    if (event.pointerType === 'touch' && !observedTouch && ready && touchScene()) {
       observedTouch = true;
       detect();
     }
   };
   window.addEventListener('pointerdown', onTouch, { capture: true, passive: true });
-  coarse.addEventListener('change', () => { if (window.t850?.scene === 'Minecraft') detect(); });
+  coarse.addEventListener('change', () => { if (touchScene()) detect(); });
   window.addEventListener('t850-runtime-ready', () => {
-    if (window.t850?.scene !== 'Minecraft') return;
+    if (!touchScene()) return;
+    panel.dataset.scene = window.t850.scene;
     ready = true;
     detect();
   });

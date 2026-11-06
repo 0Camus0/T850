@@ -7,11 +7,26 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { createAssetHandler } from './pages-worker.mjs';
 import { minecraftAssetSelection, minecraftWebScene } from './minecraft-assets.mjs';
+import { backyardAssetSelection } from './backyard-assets.mjs';
 import { mountAssetBundle, loadAssetBundle } from './asset-bundle.mjs';
 import { zipSync } from 'fflate';
-import { cloudflareWranglerConfig, loadCloudResources, validateCloudflareConfig } from './cloudflare-config.mjs';
+import { cloudflareWranglerConfig, loadCloudResources, pagesOutput, validateCloudflareConfig } from './cloudflare-config.mjs';
 import { createCloudAssetCatalog, parseCloudAssetCatalog, publicAssetManifests } from './cloud-assets.mjs';
 import { deployPages } from './deploy-pages.mjs';
+
+// [expected class, maxTouchPoints, navigator fields, screen in CSS px]. touch-controls.js and
+// water-sim.mjs each classify the device, and both must give these answers.
+const deviceFixtures = [
+  ['pc', 10, { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', platform: 'Win32' }, { width: 1920, height: 1080 }],
+  ['pc', 0, { userAgent: 'Mozilla/5.0 (X11; CrOS x86_64)', platform: 'Linux x86_64' }, { width: 1366, height: 768 }],
+  ['pc', 0, { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', platform: 'MacIntel' }, { width: 1440, height: 900 }],
+  ['pc', 0, { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', platform: 'Linux x86_64' }, { width: 2560, height: 1440 }],
+  ['phone', 5, { userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile', platform: 'Linux armv8l' }, { width: 412, height: 915 }],
+  ['phone', 5, { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone' }, { width: 390, height: 844 }],
+  ['tablet', 10, { userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-X710)', platform: 'Linux armv8l' }, { width: 1280, height: 800 }],
+  ['tablet', 5, { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', platform: 'MacIntel' }, { width: 820, height: 1180 }],
+  ['tablet', 5, { userAgent: 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)', platform: 'iPad' }, { width: 744, height: 1133 }],
+];
 
 test('Cloudflare deploy refuses absent credentials before any child process and dry-run does no deployment', async () => {
   const directory = await mkdtemp(join(tmpdir(), 't850-cloudflare-test-'));
@@ -28,6 +43,10 @@ test('Cloudflare deploy refuses absent credentials before any child process and 
     const preview = await deployPages(path, { dryRun: true, env: { CLOUDFLARE_API_TOKEN: 'unit-test-secret' }, run });
     assert.equal(preview.projectName, 'example-demo');
     assert.equal(JSON.stringify(preview).includes('unit-test-secret'), false);
+    await writeFile(path, JSON.stringify({ ...input, site: 'water' }));
+    const water = await deployPages(path, { dryRun: true, env: { CLOUDFLARE_API_TOKEN: 'unit-test-secret' }, run });
+    assert.match(water.output, /[\\/]build[\\/]pages-water$/);
+    assert.deepEqual(water.bindings, ['MODELS', 'TEXTURES']);
     await writeFile(path, '{"apiToken":"unit-test-secret", INVALID');
     await assert.rejects(deployPages(path, { env: {}, run }), error => error.message.includes('Invalid JSON') && !error.message.includes('unit-test-secret'));
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -58,6 +77,18 @@ test('Cloudflare deployment config requires explicit credentials and never seria
   }
   assert.throws(() => validateCloudflareConfig({ ...input, accountId: 'invalid' }, { env: {} }), /accountId/);
   assert.throws(() => validateCloudflareConfig({ ...input, r2Buckets: [input.r2Buckets[0], input.r2Buckets[0]] }, { env: {} }), /duplicate/);
+  assert.equal(config.site, 'minecraft');
+  assert.equal(validateCloudflareConfig({ ...input, minecraftOnly: false }, { env: {} }).site, 'scenes');
+  const water = validateCloudflareConfig({ ...input, site: 'water' }, { env: {} });
+  assert.equal(water.site, 'water');
+  assert.equal(water.minecraftOnly, false);
+  assert.equal(cloudflareWranglerConfig(water, '/build/pages-water').r2_buckets.length, 2);
+  assert.throws(() => validateCloudflareConfig({ ...input, site: 'water', minecraftOnly: true }, { env: {} }), /cannot be minecraftOnly/);
+  assert.throws(() => validateCloudflareConfig({ ...input, site: 'water', r2Buckets: undefined }, { env: {} }), /both MODELS and TEXTURES/);
+  assert.throws(() => validateCloudflareConfig({ ...input, site: 'lake' }, { env: {} }), /site must be/);
+  assert.deepEqual(pagesOutput('water'), { directory: 'build/pages-water', uploads: 'water-uploads.json' });
+  assert.deepEqual(pagesOutput('minecraft'), { directory: 'build/pages-minecraft', uploads: 'minecraft-uploads.json' });
+  assert.deepEqual(pagesOutput('scenes'), { directory: 'build/pages', uploads: 'uploads.json' });
 });
 
 test('cloud manifests reject duplicate resource paths before routes can be overwritten', async () => {
@@ -110,6 +141,24 @@ test('Minecraft package rejects unrelated scene assets and retains declared depe
     'Textures/LUT/lut_ggx.dds', 'Textures/GeneratedIBLCache/ggx_specular_cube_v1_old.t8ibl'])
     assert.equal(embedded.includes(path), false, path);
   assert.equal(embedded.required.has('Textures/sky/CubeMap_SkyWater_512.dds'), true);
+});
+
+test('Backyard package keeps the water scene dependencies and nothing unrelated', async () => {
+  const scene = JSON.parse(await readFile(new URL('../Assets/Scenes/BackyardScene.json', import.meta.url), 'utf8'));
+  const palette = JSON.parse(await readFile(new URL('../Assets/Scenes/BackyardBallMaterials.json', import.meta.url), 'utf8'));
+  const selection = backyardAssetSelection(scene, palette);
+  for (const path of selection.required) assert.equal(selection.includes(path), true, path);
+  for (const path of ['Textures/sky/CubeMap_SkyWater.dds', 'Models/Backyard/backyard_layout.json', 'Models/Backyard/Backyard_Water.glb',
+    'Scenes/BackyardWater.json', 'Textures/Backyard/WaterNormal.png', `Textures/Ball/${palette.materials[0].id}/ORM.png`])
+    assert.equal(selection.required.has(path), true, path);
+  assert.equal([...selection.required].filter(path => path.startsWith('Textures/Ball/')).length, palette.materials.length * 3);
+  for (const path of ['Textures/LUT/lut_ggx.dds', 'Textures/lens1.png', 'WebShaders/mesh.json', 'Shaders/FS_Mesh.hlsl'])
+    assert.equal(selection.includes(path), true, path);
+  for (const path of ['Models/DamagedHelmet.glb', 'Scenes/Minecraft.t8scene', 'Scenes/Q3/q3dm6_mod_3.t8scene', 'Scenes/q3dm6.t8q3clip',
+    'Textures/sky/Ennis.dds', 'Textures/terrain.png', 'Textures/Ball/Unlisted/Color.jpg', 'model-cloud-manifest.json'])
+    assert.equal(selection.includes(path), false, path);
+  assert.throws(() => backyardAssetSelection({ environment_map: '../private.dds' }, palette), /Unsafe Backyard dependency/);
+  assert.throws(() => backyardAssetSelection(scene, { ...palette, materials: [{ id: '..' }] }), /Unsafe Backyard dependency/);
 });
 
 test('bundled assets mount completely and reject missing, duplicate or unsafe files before writing', () => {
@@ -289,6 +338,77 @@ test('WSSI welcome validates enemies, starts only on Launch, and handles unavail
   assert.equal(denied.controls.launch.disabled, false);
 });
 
+test('water welcome shows the controls for the detected device and launches scene 7', async () => {
+  const html = await readFile(new URL('./water-sim.html', import.meta.url), 'utf8');
+  assert.match(html, /<span id="demo-version">v0\.1\.0<\/span>/);
+  for (const device of ['pc', 'tablet', 'phone']) assert.match(html, new RegExp(`<div data-help="${device}" hidden>`));
+  const source = await readFile(new URL('./water-sim.mjs', import.meta.url), 'utf8');
+  const capable = { requestAdapter: async () => ({ limits: { maxColorAttachments: 8, maxColorAttachmentBytesPerSample: 128 } }) };
+  const open = async ({ touchPoints = 0, agent = deviceFixtures[0][2], screen = deviceFixtures[0][3], gpu = capable,
+    search = '', portrait = false, isolated = true } = {}) => {
+    const options = ['960x540', '1280x720', '1920x1080'].map(value => ({ value, selected: value === '1280x720' }));
+    const media = { matches: portrait, addEventListener(name, callback) { this[name] = callback; } };
+    const helps = ['pc', 'tablet', 'phone'].map(help => ({ dataset: { help }, hidden: true }));
+    const controls = {
+      'launch-form': { addEventListener(name, callback) { this[name] = callback; } },
+      resolution: { options, get value() { return options.find(option => option.selected)?.value ?? ''; },
+        set value(value) { for (const option of options) option.selected = option.value === value; } },
+      'console-logs': { checked: false }, launch: { disabled: true }, status: { dataset: {} }, 'device-label': {},
+    };
+    const navigations = [];
+    const body = { dataset: {} };
+    const sandbox = { URL, URLSearchParams, crossOriginIsolated: isolated, screen,
+      navigator: { gpu, maxTouchPoints: touchPoints, ...agent },
+      document: { getElementById: id => controls[id], querySelectorAll: () => helps, body },
+      window: { addEventListener() {}, matchMedia: () => media },
+      location: { href: 'https://water-simulation-2026.pages.dev/', search, assign: url => navigations.push(url) } };
+    await runInNewContext(`(async () => { ${source} })()`, sandbox);
+    return { controls, helps, navigations, media, device: body.dataset.device,
+      submit: () => controls['launch-form'].submit({ preventDefault() {} }) };
+  };
+  for (const [expected, touchPoints, agent, screen] of deviceFixtures) {
+    const page = await open({ touchPoints, agent, screen });
+    assert.equal(page.device, expected, agent.userAgent);
+    assert.deepEqual(page.helps.filter(help => !help.hidden).map(help => help.dataset.help), [expected]);
+    assert.match(page.controls['device-label'].textContent, expected === 'pc' ? /keyboard/ : new RegExp(expected));
+    assert.equal(page.controls.resolution.value, expected === 'phone' ? '960x540' : '1280x720');
+  }
+  const desktop = await open();
+  assert.equal(desktop.controls.launch.disabled, false);
+  assert.equal(desktop.navigations.length, 0);
+  desktop.submit();
+  const target = new URL(desktop.navigations[0]);
+  assert.equal(target.pathname, '/DayScene.html');
+  assert.equal(target.searchParams.get('demo'), 'water');
+  assert.equal(target.searchParams.get('scene'), '7');
+  assert.equal(target.searchParams.get('width'), '1280');
+  assert.equal(target.searchParams.get('height'), '720');
+  assert.equal(target.searchParams.get('logLevel'), 'error');
+  desktop.submit();
+  assert.equal(desktop.navigations.length, 1);
+  const [, phoneTouch, phoneAgent, phoneScreen] = deviceFixtures.find(([expected]) => expected === 'phone');
+  const upright = await open({ touchPoints: phoneTouch, agent: phoneAgent, screen: phoneScreen, portrait: true,
+    search: '?resolution=1920x1080&logLevel=trace' });
+  assert.equal(upright.controls['console-logs'].checked, true);
+  assert.deepEqual(upright.controls.resolution.options.map(option => option.value), ['540x960', '720x1280', '1080x1920']);
+  assert.equal(upright.controls.resolution.value, '1080x1920');
+  upright.submit();
+  const uprightTarget = new URL(upright.navigations[0]).searchParams;
+  assert.equal(uprightTarget.get('width'), '1080');
+  assert.equal(uprightTarget.get('logLevel'), 'trace');
+  upright.media.matches = false;
+  upright.media.change();
+  assert.equal(upright.controls.resolution.value, '1920x1080');
+  const unavailable = await open({ gpu: null });
+  unavailable.submit();
+  assert.equal(unavailable.controls.launch.disabled, true);
+  assert.equal(unavailable.navigations.length, 0);
+  assert.match(unavailable.controls.status.textContent, /WebGPU is unavailable/);
+  const embedded = await open({ gpu: { requestAdapter() { assert.fail('Do not initialize GPU without isolation'); } }, isolated: false });
+  assert.equal(embedded.controls.status.dataset.error, 'true');
+  assert.match(embedded.controls.status.textContent, /standalone Safari, Chrome, Edge or Firefox/);
+});
+
 test('WSSI runtime forwards validated enemy counts and stays on Minecraft', async () => {
   const html = await readFile(new URL('./shell.html', import.meta.url), 'utf8');
   const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
@@ -299,18 +419,20 @@ test('WSSI runtime forwards validated enemy counts and stays on Minecraft', asyn
     const elements = { status: {}, 'runtime-error': { hidden: true }, 'runtime-error-title': {}, 'runtime-error-text': {},
       canvas: { style: { setProperty() {} }, clientWidth: 960, clientHeight: 540, addEventListener() {} },
       scene: { add() {}, addEventListener() {} } };
-    const window = { addEventListener() {} };
+    const events = {};
+    const window = { addEventListener(name, callback) { events[name] = callback; } };
     const sandbox = { URL, URLSearchParams, console: { log() {} }, window, navigator: { gpu: {} }, crossOriginIsolated: true,
       location: { search, href: `https://test.pages.dev/DayScene.html${search}` },
       document: { getElementById: id => elements[id], querySelector: () => home, body: { classList: { add() {} } } },
-      Option: function () {}, fetch: async () => ({ ok: true, json: async () => ({ arguments: ['--logLevel', 'info'], defaultScene: 0, scenes: [{ id: 0, name: 'Sandbox' }, { id: 1, name: 'DayScene' }, { id: 6, name: 'Minecraft' }] }) }) };
+      Option: function () {}, fetch: async () => ({ ok: true, json: async () => ({ arguments: ['--logLevel', 'info'], defaultScene: 0, scenes: [{ id: 0, name: 'Sandbox' }, { id: 1, name: 'DayScene' }, { id: 6, name: 'Minecraft' }, { id: 7, name: 'Backyard' }] }) }) };
     runInNewContext(source, sandbox);
     sandbox.Module.addRunDependency = () => {};
     sandbox.Module.removeRunDependency = completed;
     sandbox.Module.FS = { mkdirTree() {}, mount() {}, syncfs: (populate, done) => done(null) };
     sandbox.Module.preRun[0]();
     await ready;
-    return { args: Array.from(sandbox.Module.arguments), diagnostics: window.t850, home, elements, title: sandbox.document.title };
+    return { args: Array.from(sandbox.Module.arguments), diagnostics: window.t850, home, elements, title: sandbox.document.title,
+      events, document: sandbox.document };
   };
   for (const count of ['0', '8']) {
     const runtime = await execute(`?demo=wssi&scene=2&model=wrong.glb&sceneFile=wrong.t8scene&minecraftEnemyCount=${count}`);
@@ -331,6 +453,23 @@ test('WSSI runtime forwards validated enemy counts and stays on Minecraft', asyn
   const launcher = await execute('?entry=launcher&scene=0');
   assert.equal(launcher.home.href, 'launcher.html');
   assert.equal(launcher.elements.scene.hidden, false);
+  for (const level of ['error', 'trace']) {
+    const water = await execute(`?demo=water&scene=2&model=wrong.glb&sceneFile=wrong.t8scene&width=960&height=540&logLevel=${level}`);
+    assert.equal(water.args[water.args.indexOf('--scene') + 1], '7');
+    assert.equal(water.diagnostics.scene, 'Backyard');
+    for (const option of ['--model', '--sceneFile', '--postProcessMode', '--minecraftEnemyCount'])
+      assert.equal(water.args.includes(option), false, option);
+    assert.equal(water.args[water.args.lastIndexOf('--logLevel') + 1], level);
+    assert.equal(water.elements.scene.hidden, true);
+    assert.match(water.home.href, /^water-sim.html\?/);
+    const back = new URL(water.home.href, 'https://test.pages.dev/').searchParams;
+    assert.equal(back.get('resolution'), '960x540');
+    assert.equal(back.get('logLevel'), level);
+    assert.equal(water.title, 'Water Simulation 2026');
+    water.document.title = 'T850 Project';   // what SDL writes when it creates the window
+    water.events['t850-runtime-ready']();
+    assert.equal(water.document.title, 'Water Simulation 2026');
+  }
   for (const level of ['error', 'trace']) {
     const runtime = await execute(`?demo=wssi&logLevel=${level}`);
     assert.equal(runtime.args[runtime.args.lastIndexOf('--logLevel') + 1], level);
@@ -723,7 +862,7 @@ test('Pages refuses an object whose size disagrees with the catalog', async () =
 
 test('touch gamepad defaults to mobile devices, preserves manual choice and handles multitouch safely', async () => {
   const source = await readFile(new URL('./touch-controls.js', import.meta.url), 'utf8');
-  function load(touchPoints, device = { userAgent: 'Mozilla/5.0 (Linux; Android 14)', platform: 'Linux armv8l' }, coarsePointer = false) {
+  function load(touchPoints, device = { userAgent: 'Mozilla/5.0 (Linux; Android 14)', platform: 'Linux armv8l' }, coarsePointer = false, { scene = 'Minecraft', screen } = {}) {
     const makeElement = dataset => ({ dataset, handlers: {}, captured: new Set(), hidden: true, style: { setProperty() {} },
       classList: { values: new Set(), add(name) { this.values.add(name); }, remove(name) { this.values.delete(name); }, contains(name) { return this.values.has(name); } },
       addEventListener(name, handler) { this.handlers[name] = handler; },
@@ -736,7 +875,7 @@ test('touch gamepad defaults to mobile devices, preserves manual choice and hand
     const look = makeElement({ axis: '2' });
     const jump = makeElement({ button: '1' });
     const controls = [move, look, jump];
-    const panel = { hidden: true, querySelectorAll: selector => selector === '.touch-stick' ? [move, look] : controls };
+    const panel = { hidden: true, dataset: {}, querySelectorAll: selector => selector === '.touch-stick' ? [move, look] : controls };
     const toggle = makeElement({});
     const label = { hidden: true };
     const onTop = { ...makeElement({}), checked: false };
@@ -745,22 +884,44 @@ test('touch gamepad defaults to mobile devices, preserves manual choice and hand
     const commands = ['1', '2', '1', '2'].map(command => ({ ...makeElement({ command }), setAttribute(name, value) { this[name] = value; } }));
     const classes = new Set();
     const events = {};
-    const window = { t850: { scene: 'Minecraft' }, resizeEvents: 0,
+    const window = { t850: { scene }, resizeEvents: 0,
       addEventListener: (name, callback) => { events[name] = callback; },
       dispatchEvent(event) { if (event.type === 'resize') ++this.resizeEvents; events[event.type]?.(event); } };
-    const document = { hidden: false, body: { classList: { toggle(name, active) { if (active) classes.add(name); else classes.delete(name); } } }, addEventListener: (name, callback) => { events[name] = callback; },
+    const body = { dataset: {}, classList: { toggle(name, active) { if (active) classes.add(name); else classes.delete(name); } } };
+    const document = { hidden: false, body, addEventListener: (name, callback) => { events[name] = callback; },
       querySelectorAll: () => commands,
       getElementById: id => ({ 'touch-controls': panel, 'touch-enabled': toggle, 'touch-toggle': label,
         'touch-ontop': onTop, 'touch-ontop-toggle': onTopLabel, 'camera-controls': cameraControls })[id] };
     const media = { matches: coarsePointer, addEventListener(name, callback) { this[name] = callback; } };
     runInNewContext(source, { window, document, navigator: { maxTouchPoints: touchPoints, ...device }, Atomics, Event,
-      matchMedia: () => media });
+      matchMedia: () => media, screen });
     const memory = new Int32Array(new SharedArrayBuffer(32));
     window.t850Touch.attach(memory);
     events['t850-runtime-ready']();
     const send = (element, name, id, clientX = 60, clientY = 60) => element.handlers[name]({ pointerId: id, button: 0, clientX, clientY, preventDefault() {}, stopPropagation() {} });
-    return { move, look, jump, panel, toggle, label, onTop, onTopLabel, cameraControls, commands, classes, events, memory, window, send, media };
+    return { move, look, jump, panel, toggle, label, onTop, onTopLabel, cameraControls, commands, classes, events, memory, window, send, media,
+      device: body.dataset.device };
   }
+  for (const [expected, touchPoints, device, screen] of deviceFixtures) {
+    const page = load(touchPoints, device, false, { screen });
+    assert.equal(page.device, expected, device.userAgent);
+    assert.equal(page.window.t850.device, expected);
+    assert.equal(page.panel.hidden, expected === 'pc', device.userAgent);
+  }
+  const [, , androidTablet, tabletScreen] = deviceFixtures.find(([expected]) => expected === 'tablet');
+  const yard = load(10, androidTablet, false, { scene: 'Backyard', screen: tabletScreen });
+  assert.equal(yard.panel.dataset.scene, 'Backyard');
+  assert.equal(yard.panel.hidden, false);
+  assert.equal(yard.cameraControls.hidden, true);
+  yard.send(yard.jump, 'pointerdown', 1);
+  assert.equal(Atomics.exchange(yard.memory, 6, 0), 1);
+  const yardDesktop = load(0, deviceFixtures[0][2], false, { scene: 'Backyard' });
+  assert.equal(yardDesktop.panel.hidden, true);
+  assert.equal(yardDesktop.cameraControls.hidden, true);
+  const untouched = load(5, androidTablet, false, { scene: 'DayScene', screen: tabletScreen });
+  assert.equal(untouched.panel.hidden, true);
+  assert.equal(untouched.panel.dataset.scene, undefined);
+  assert.equal(untouched.memory[0], 0);
   for (const device of [
     { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', platform: 'Win32', userAgentData: { platform: 'Windows', mobile: false } },
     { userAgent: 'Mozilla/5.0 (Windows NT 10.0; ARM64)', platform: 'Win32' },

@@ -456,7 +456,13 @@ When changing camera profile behavior, update SceneTemplate first and audit thes
 `BackyardScene` uses the Free Fly profile with its own input mapping in
 `BackyardScene::ProcessSceneInput()`:
 
-- W/S/A/D move, Space rises, Shift sprints; Ctrl is **not** crouch here.
+- W/S/A/D move, Space or Q rises, E sinks, Shift sprints; Ctrl is **not** crouch here. Free Fly
+  reads only `moveUp`/`moveDown`, so the scene sets them from `jump` (Space, pad A, the touch Up
+  buttons) or Q and from `crouch` (pad B, the browser's Down button) or E. Before 2026-11-06
+  nothing set them and none of those inputs moved the camera vertically.
+- The projection follows the render target's aspect every frame (`OnUpdate`), as in
+  MinecraftScene; the authored camera is 16:9, which stretched a resized window or an upright
+  phone.
 - Holding a mouse button (left or right) looks around; the GUI and a held ball block the look.
 - **Ctrl frees the mouse**: while Ctrl is held the scene's `AllowsMouseCapture()` override
   returns false, so relative mode is released and the cursor is visible even with the GUI
@@ -470,7 +476,9 @@ When changing camera profile behavior, update SceneTemplate first and audit thes
 - A plain left click without Ctrl is a camera gesture on desktop. On Android and in the browser
   there is no Ctrl: a press that starts on a ball grabs it, any other press is the camera's.
 
-**Quick bar** (`DrawQuickBar`, drawn every frame through `DrawGameplayGui`, bottom centre): +10
+**Quick bar** (`DrawQuickBar`, drawn every frame through `DrawGameplayGui`, bottom centre; top
+centre while the browser touch overlay is active, because its sticks and buttons own the bottom
+edge; the wind controls wrap to a second row below 720 px wide): +10
 balls, Reset (two presses within 4 s, because it clears the spawned balls), wind speed −/+
 (0.5 m/s), heading << / >> (15°) and the wind-arrow toggle. There is no ball cap (owner decision,
 `97009aef`, re-confirmed 2026-11-06). The same actions exist without the bar:
@@ -503,9 +511,22 @@ visible.
   opens the GUI.
 - Opening the GUI releases a held ball (`ResetAndroidVirtualControls`).
 
+**Browser touch** (`web/shell.html`, `web/touch-controls.js`, `WebFramework::ReadTouchInput`):
+
+- The shell's Backyard set (`.touch-actions[data-scene="Backyard"]`) has Fly up (held bit 1 =
+  pad A), Fly down (held 64 = pad B), Fly faster (held 2 = left-stick click), +10 (edge 128 = X)
+  and Reset (edge 256 = Y), next to the shared move/look sticks. Minecraft keeps its own set; the
+  panel's `data-scene` picks one, and the Minecraft-only View/InvertY buttons stay hidden.
+- The page classifies the device as phone, tablet or PC (`document.body.dataset.device`): Windows
+  and ChromeOS are PCs even with a touch screen; a touch-first device is a tablet when its
+  shortest screen side is at least 600 CSS px. Phones and tablets get the overlay by default.
+- A touch on the canvas is a mouse press, so a press that starts on a ball grabs it. There is no
+  second-finger push/pull in the browser.
+
 `scripts/validation/input_test.ps1` runs `--backyard-pick-test` and `--backyard-pad-test`, which
 drive these paths with a synthetic `InputManager` (no OS input). The pad test also checks that the
-camera stays still while the stick steers a held ball. See
+camera stays still while the stick steers a held ball, and that A raises and B lowers it (0.945 m
+each on D3D12 and Vulkan; 0.000 m with the `moveUp`/`moveDown` lines removed). See
 `documentation/scenes/backyard-water-simulation.md`, section 12.
 
 ## Android virtual controls

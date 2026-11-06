@@ -775,7 +775,7 @@ try {
       report.touch.edits = await driver.executeScript(`return window.t850.logs.filter(line => line.includes('[Minecraft] Block edit'));`);
       if (report.touch.edits.length < 2) throw new Error('Touch block buttons did not produce actual voxel edits');
       const touchLayout = () => driver.executeScript(`
-        const controls = [...document.querySelectorAll('#touch-controls button')].map(element => element.getBoundingClientRect());
+        const controls = [...document.querySelectorAll('#touch-controls button')].filter(element => element.getClientRects().length).map(element => element.getBoundingClientRect());
         const canvas = document.getElementById('canvas').getBoundingClientRect();
         return { width: innerWidth, height: innerHeight, renderSize: window.t850.renderSize, canvasSize: [canvas.width, canvas.height],
           iconsReady: [...document.querySelectorAll('#touch-controls img')].every(image => image.complete && image.naturalWidth > 0),
@@ -796,7 +796,7 @@ try {
         const layout = await driver.executeScript(`
           const canvas = document.getElementById('canvas').getBoundingClientRect();
           const header = document.querySelector('header').getBoundingClientRect();
-          const controls = [...document.querySelectorAll('#touch-controls button')].map(element => element.getBoundingClientRect());
+          const controls = [...document.querySelectorAll('#touch-controls button')].filter(element => element.getClientRects().length).map(element => element.getBoundingClientRect());
           return { renderSize: window.t850.renderSize, viewport: [innerWidth, innerHeight],
             fillsViewport: Math.abs(canvas.left) < 1 && Math.abs(canvas.right - innerWidth) < 1 &&
               Math.abs(canvas.top - header.bottom) < 1 && Math.abs(canvas.bottom - innerHeight) < 1,

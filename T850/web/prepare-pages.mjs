@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, extname, join, resolve } from 'node:path';
@@ -6,18 +6,24 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { zipSync } from 'fflate';
 import { minecraftAssetSelection, minecraftWebScene } from './minecraft-assets.mjs';
-import { loadCloudflareConfig, loadCloudResources } from './cloudflare-config.mjs';
+import { backyardAssetSelection } from './backyard-assets.mjs';
+import { loadCloudflareConfig, loadCloudResources, pagesOutput } from './cloudflare-config.mjs';
 
 const { values } = parseArgs({ options: { config: { type: 'string' }, 'minecraft-only': { type: 'boolean' } } });
 const webRoot = dirname(fileURLToPath(import.meta.url));
 const config = await loadCloudflareConfig(resolve(values.config ?? join(webRoot, 'cloudflare.local.json')));
-const minecraftOnly = values['minecraft-only'] ?? config.minecraftOnly;
+const site = values['minecraft-only'] ? 'minecraft' : config.site;
+const minecraftOnly = site === 'minecraft';
+const water = site === 'water';
 const sourceRoot = resolve(webRoot, '..');
-const output = join(sourceRoot, minecraftOnly ? 'build/pages-minecraft' : 'build/pages');
+const output = join(sourceRoot, pagesOutput(site).directory);
 const payloads = join(sourceRoot, 'build/pages-r2');
 const limit = 25 * 1024 * 1024;
-const scene = minecraftOnly ? minecraftWebScene(JSON.parse(await readFile(join(sourceRoot, 'Assets/Scenes/Minecraft.t8scene'), 'utf8'))) : null;
-const selection = scene ? minecraftAssetSelection(scene, { embedded: true }) : null;
+const readAssetJson = async path => JSON.parse(await readFile(join(sourceRoot, 'Assets', path), 'utf8'));
+const scene = minecraftOnly ? minecraftWebScene(await readAssetJson('Scenes/Minecraft.t8scene')) : null;
+const selection = scene ? minecraftAssetSelection(scene, { embedded: true })
+  : water ? backyardAssetSelection(await readAssetJson('Scenes/BackyardScene.json'), await readAssetJson('Scenes/BackyardBallMaterials.json'))
+  : null;
 const cloud = minecraftOnly ? new Map() : await loadCloudResources(config.r2Buckets);
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
@@ -43,13 +49,19 @@ function bundleResource(resource, bytes) {
   bundled[resource] = bytes;
   register(resource, { bundled: true });
 }
-async function stageDirectory(directory, prefix = '') {
+async function stageDirectory(directory, prefix = '', visited = new Set()) {
+  const real = await realpath(directory);
+  if (visited.has(real)) return;
+  visited.add(real);
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (entry.name.startsWith('.')) continue;
     const file = join(directory, entry.name);
     const resource = prefix + entry.name;
-    if (entry.isDirectory()) { await stageDirectory(file, resource + '/'); continue; }
-    if (!entry.isFile()) continue;
+    // Assets links its large texture folders (Textures/sky, Textures/LUT) as directory junctions,
+    // and Dirent.isDirectory() is false for a junction: follow links, as web/server.mjs does.
+    const kind = entry.isSymbolicLink() ? await stat(file) : entry;
+    if (kind.isDirectory()) { await stageDirectory(file, resource + '/', visited); continue; }
+    if (!kind.isFile()) continue;
     if (selection && !selection.includes(resource)) continue;
     if (resource.startsWith('WebShaders/') && extname(file) === '.json') {
       const shader = JSON.parse(await readFile(file, 'utf8'));
@@ -86,11 +98,12 @@ async function stageDirectory(directory, prefix = '') {
 for (const file of ['DayScene.html', 'DayScene.js', 'DayScene.wasm', 'scenes.json', 'touch-controls.js'])
   await copyStatic(join(sourceRoot, 'build/web/site', file), join(output, file));
 await cp(join(webRoot, 'icons'), join(output, 'icons'), { recursive: true });
-if (minecraftOnly) {
+if (minecraftOnly || water) {
+  const id = water ? 7 : 6;
   const catalog = JSON.parse(await readFile(join(output, 'scenes.json'), 'utf8'));
-  catalog.scenes = catalog.scenes.filter(scene => scene.id === 6);
-  if (catalog.scenes.length !== 1) throw new Error('Minecraft scene is missing from the catalog');
-  catalog.defaultScene = 6;
+  catalog.scenes = catalog.scenes.filter(scene => scene.id === id);
+  if (catalog.scenes.length !== 1) throw new Error(`Scene ${id} is missing from the catalog`);
+  catalog.defaultScene = id;
   await writeFile(join(output, 'scenes.json'), JSON.stringify(catalog));
 }
 await stageDirectory(join(sourceRoot, 'Assets'));
@@ -109,7 +122,7 @@ if (minecraftOnly) {
 }
 if (selection) {
   for (const resource of selection.required) {
-    if (!Object.hasOwn(routes, resource)) throw new Error(`Missing Minecraft dependency: ${resource}`);
+    if (!Object.hasOwn(routes, resource)) throw new Error(`Missing ${water ? 'Backyard' : 'Minecraft'} dependency: ${resource}`);
   }
 }
 if (minecraftOnly) {
@@ -131,14 +144,15 @@ if (minecraftOnly) {
   await writeFile(join(output, 'assets/index.json'), JSON.stringify(Object.keys(routes).sort()));
   register('index.json', { static: true });
 }
-for (const [source, target] of [
-  ['minecraft-wssi.html', 'index.html'], ['minecraft-wssi.html', 'minecraft-wssi.html'],
-  ['minecraft-wssi.mjs', 'minecraft-wssi.mjs'],
-  ...(minecraftOnly ? [] : [['launcher.html', 'launcher.html'], ['launcher.mjs', 'launcher.mjs']]),
-])
+for (const [source, target] of water
+  ? [['water-sim.html', 'index.html'], ['water-sim.html', 'water-sim.html'], ['water-sim.mjs', 'water-sim.mjs']]
+  : [['minecraft-wssi.html', 'index.html'], ['minecraft-wssi.html', 'minecraft-wssi.html'],
+    ['minecraft-wssi.mjs', 'minecraft-wssi.mjs'],
+    ...(minecraftOnly ? [] : [['launcher.html', 'launcher.html'], ['launcher.mjs', 'launcher.mjs']])])
   await copyStatic(join(webRoot, source), join(output, target));
-if (minecraftOnly) {
-  await copyStatic(join(webRoot, 'previews/minecraft-wssi.png'), join(output, 'previews/minecraft-wssi.png'));
+if (minecraftOnly || water) {
+  const preview = water ? 'previews/water-sim.png' : 'previews/minecraft-wssi.png';
+  await copyStatic(join(webRoot, preview), join(output, preview));
 } else {
   try { await cp(join(webRoot, 'previews'), join(output, 'previews'), { recursive: true }); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -151,8 +165,8 @@ if (!minecraftOnly) {
   const handler = await readFile(join(webRoot, 'pages-worker.mjs'), 'utf8');
   await writeFile(join(output, '_worker.js'), handler + '\nexport default { fetch: createAssetHandler(' + JSON.stringify(routes) + ') };\n');
 }
-await writeFile(join(payloads, minecraftOnly ? 'minecraft-uploads.json' : 'uploads.json'), JSON.stringify(uploads, null, 2));
-console.log(JSON.stringify({ output, minecraftOnly, resources: Object.keys(routes).length - (minecraftOnly ? 0 : 1), assetBundle,
+await writeFile(join(payloads, pagesOutput(site).uploads), JSON.stringify(uploads, null, 2));
+console.log(JSON.stringify({ output, site, resources: Object.keys(routes).length - (minecraftOnly ? 0 : 1), assetBundle,
   obsoleteShaderPackagesExcluded: obsoleteShaderPackages,
   existingR2: Object.values(routes).filter(route => route.url).length,
   pendingR2Uploads: uploads, credentialsIncluded: false }, null, 2));

@@ -68,6 +68,7 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Opt-in D3D12/Vulkan/WebGPU GPU timestamp profiling | [rendering/gpu-timestamp-profiling.md](rendering/gpu-timestamp-profiling.md) | Whole-frame and pass-level implementation verified 2026-09-22 |
 | WebGPU/compute/browser remediation backlog | [rendering/webgpu-compute-remediation-plan.md](rendering/webgpu-compute-remediation-plan.md) | R18 complete; R19 implementation complete with hardware gate pending; revised 2026-09-26 |
 | JSON render graph | [rendering/render-graph.md](rendering/render-graph.md) | Attachment lifetime/initialization verified 2026-09-26 |
+| Device profiles: data-driven per-platform tuning | [rendering/device-profiles.md](rendering/device-profiles.md) | Planned 2026-11-06; Android profile design, no code yet |
 | Cascaded shadow maps | [rendering/cascaded-shadow-maps.md](rendering/cascaded-shadow-maps.md) | Five-runtime-API scope refreshed 2026-09-26 |
 | Mesh draw path/state tracking | [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md) | Skinned pre-pass ownership refreshed 2026-09-26 |
 | Textures/samplers/IBL/material slots | [rendering/textures-and-ibl.md](rendering/textures-and-ibl.md) | Verified 2026-08-30 |

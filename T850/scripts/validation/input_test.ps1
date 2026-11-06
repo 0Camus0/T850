@@ -3,7 +3,10 @@ param(
   [ValidateSet('pick', 'pad', 'both')][string]$Mode = 'both',
   [int]$Balls = 6,
   [string]$ExeDir,
-  [string]$OutRoot
+  [string]$OutRoot,
+  # SKIP is legitimate only on an API without 3D compute storage; on the five solver APIs the
+  # scene logs FAIL instead, so a SKIP there means the run did not test anything.
+  [switch]$AllowSkip
 )
 # Moved out of the untracked backyard-diag\ scratch folder (plan item F). Every path comes from
 # $PSScriptRoot, so this works from any checkout: the source root is two levels up (T850), the
@@ -37,12 +40,14 @@ foreach ($testMode in $modes) {
     $null = $p.Handle
     $timedOut = -not $p.WaitForExit(240000)
     if ($timedOut) { Stop-Process -Id $p.Id -Force }
-    $errors = @(Select-String -LiteralPath $log -Pattern '\[ERROR') 
+    $errors = @(Select-String -LiteralPath $log -Pattern '\[ERROR')
     $testErrors = @($errors | Where-Object { $_.Line -notmatch 'BackyardPickTest|BackyardPadTest' })
     $result = Select-String -LiteralPath $log -Pattern "$([regex]::Escape($tag)) (PASS|FAIL|SKIP)" |
       Select-Object -Last 1
     $verdict = if (-not $result) { 'NORESULT' } else { $result.Matches[0].Groups[1].Value }
-    if ($verdict -ne 'PASS' -and $verdict -ne 'SKIP') { $failureCount++ }
+    $passed = ($verdict -eq 'PASS' -or ($verdict -eq 'SKIP' -and $AllowSkip)) -and
+              -not $timedOut -and $p.ExitCode -eq 0 -and $testErrors.Count -eq 0
+    if (-not $passed) { $failureCount++ }
     '{0,-5} {1,-8} exit={2} timeout={3} errors={4} verdict={5}' -f $testMode, $api, $p.ExitCode, $timedOut, $testErrors.Count, $verdict
     Select-String -LiteralPath $log -Pattern ([regex]::Escape($tag)) | ForEach-Object {
       '    ' + $_.Line.Substring([Math]::Max(0, $_.Line.IndexOf($tag)))

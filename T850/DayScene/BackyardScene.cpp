@@ -99,7 +99,8 @@ namespace {
 
   // Emitted by scripts/blender/build_backyard.py. Each glTF node already
   // carries its authored world transform, so instances stay at the origin.
-  constexpr std::array<BackyardAsset, 7> kBackyardAssets = {{    {"Models/Backyard/Backyard_Ground.glb", "ground"},
+  constexpr std::array<BackyardAsset, 7> kBackyardAssets = {{
+    {"Models/Backyard/Backyard_Ground.glb", "ground"},
     {"Models/Backyard/Backyard_House.glb", "house"},
     {"Models/Backyard/Backyard_Pool.glb", "pool"},
     {"Models/Backyard/Backyard_Wall.glb", "wall"},
@@ -906,7 +907,6 @@ bool BackyardScene::SpawnBall() {
     T8_LOG_ERROR("[Backyard] Cannot spawn a ball: the fluid solver is not running on this API");
     return false;
   }
-  if (AtBallCap()) return false;
   const t850::WaterTunables& w = SceneProp.Water;
   const t850::FluidSettings& fs = m_fluid.Settings();
   if (m_ballPrimitive < 0) {
@@ -1010,15 +1010,11 @@ bool BackyardScene::SpawnBall() {
 int BackyardScene::SpawnBalls(int count) {
   int spawned = 0;
   for (int i = 0; i < count; ++i) {
-    if (AtBallCap() || !m_fluidReady || m_ballPrimitive < 0) break;
+    if (!m_fluidReady || m_ballPrimitive < 0) break;
     if (!SpawnBall()) break;
     ++spawned;
   }
   return spawned;
-}
-
-bool BackyardScene::AtBallCap() const {
-  return static_cast<int>(m_fluid.BodyCount()) >= kMaxBalls;
 }
 
 float BackyardScene::CurrentWindSpeed() const {
@@ -1442,16 +1438,20 @@ void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse)
 
   // Quick actions on the pad, mirroring the quick bar: X adds ten balls, Y resets (twice),
   // the shoulders step the air speed, left/right on the d-pad the heading, up the arrow.
-  if (input->ConsumeGamepadWestPress()) {
-    const int spawned = SpawnBalls(10);
-    T8_LOG_INFO("[Backyard] Pad +10 spawned %d ball(s); %u bodies", spawned, m_fluid.BodyCount());
+  // Skipped while the runtime GUI is open, without consuming the edges: there LB/RB switch
+  // panels and the d-pad moves the focus.
+  if (!m_runtimeGuiOpen) {
+    if (input->ConsumeGamepadWestPress()) {
+      const int spawned = SpawnBalls(10);
+      T8_LOG_INFO("[Backyard] Pad +10 spawned %d ball(s); %u bodies", spawned, m_fluid.BodyCount());
+    }
+    if (input->ConsumeGamepadNorthPress()) RequestReset();
+    if (input->ConsumeGamepadLeftShoulderPress()) AdjustWindSpeed(-0.5f);
+    if (input->ConsumeGamepadRightShoulderPress()) AdjustWindSpeed(0.5f);
+    if (input->ConsumeGamepadDpadLeftPress()) AdjustWindHeading(-15.0f);
+    if (input->ConsumeGamepadDpadRightPress()) AdjustWindHeading(15.0f);
+    if (input->ConsumeGamepadDpadUpPress()) m_showWind = !m_showWind;
   }
-  if (input->ConsumeGamepadNorthPress()) RequestReset();
-  if (input->ConsumeGamepadLeftShoulderPress()) AdjustWindSpeed(-0.5f);
-  if (input->ConsumeGamepadRightShoulderPress()) AdjustWindSpeed(0.5f);
-  if (input->ConsumeGamepadDpadLeftPress()) AdjustWindHeading(-15.0f);
-  if (input->ConsumeGamepadDpadRightPress()) AdjustWindHeading(15.0f);
-  if (input->ConsumeGamepadDpadUpPress()) m_showWind = !m_showWind;
 
   // Quick actions on the keyboard. The debug panel stays hidden by default, so these must
   // exist as plain keys: K drops ten balls, R resets (two presses), the arrow keys steer the
@@ -1489,7 +1489,18 @@ void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse)
   state.mouseDeltaX = (std::clamp)(static_cast<float>(input->xDelta), -200.0f, 200.0f);
   state.mouseDeltaY = (std::clamp)(static_cast<float>(input->yDelta), -200.0f, 200.0f);
   state.scrollDelta = (draggingBall || imguiWantsMouse) ? 0.0f : input->scrollDelta;
+  const t850::CameraInputState beforePad = state;
   t850::ApplyGamepadToCameraInput(state, *input, m_deltaSeconds, true);
+  if (m_gamepadGrab) {
+    // The left stick steers the held ball, so it must not fly the camera at the same time.
+    state.moveForwardAmount = beforePad.moveForwardAmount;
+    state.moveRightAmount = beforePad.moveRightAmount;
+    state.moveForward = beforePad.moveForward;
+    state.moveBackward = beforePad.moveBackward;
+    state.moveLeft = beforePad.moveLeft;
+    state.moveRight = beforePad.moveRight;
+    state.sprint = beforePad.sprint;
+  }
 #ifdef OS_ANDROID
   // Virtual sticks: left moves, right looks. The look deltas use the same pixel-per-second
   // scale as the pad so the feel matches between the tablet and the Deck.
@@ -1799,6 +1810,7 @@ void BackyardScene::RunPadTestStep() {
     check(m_gamepadAiming, "the crosshair is shown while RT is held");
     m_padTestStartWindSpeed = CurrentWindSpeed();
     m_padTestStartHeading = CurrentWindHeadingDeg();
+    m_padTestEyeAtGrab = XVECTOR3(m_camera.Eye.x, m_camera.Eye.y, m_camera.Eye.z);
     return;
   }
 
@@ -1823,6 +1835,11 @@ void BackyardScene::RunPadTestStep() {
     const float travelled = std::sqrt(dx * dx + dz * dz);
     T8_LOG_INFO("[BackyardPadTest] left stick moved the ball %.3f m horizontally", travelled);
     check(travelled > 0.15f, "the left stick pans the held ball over the ground");
+    const float eyeDx = m_camera.Eye.x - m_padTestEyeAtGrab.x;
+    const float eyeDz = m_camera.Eye.z - m_padTestEyeAtGrab.z;
+    const float eyeTravel = std::sqrt(eyeDx * eyeDx + eyeDz * eyeDz);
+    T8_LOG_INFO("[BackyardPadTest] the camera moved %.3f m while the stick steered the ball", eyeTravel);
+    check(eyeTravel < 0.02f, "the left stick does not fly the camera while a ball is held");
     m_padTestAimPoint = moved;   // the lift check starts from here
     return;
   }
@@ -2089,6 +2106,9 @@ void BackyardScene::OnDraw() {
 }
 
 void BackyardScene::DrawGameplayGui(t850::DevGuiContext&) {
+  // Called every frame just before DrawDevGui, which only runs while the runtime GUI is open.
+  m_runtimeGuiOpen = m_devGuiDrawnThisFrame;
+  m_devGuiDrawnThisFrame = false;
   DrawGrabCrosshair();
   DrawQuickBar();
 #ifdef OS_ANDROID
@@ -2156,7 +2176,7 @@ void BackyardScene::DrawAndroidTouchControls() {
 
 bool BackyardScene::AndroidVirtualControlsActive() const {
   return m_androidMovePointer >= 0 || m_androidLookPointer >= 0 || m_androidJumpPointer >= 0 ||
-         m_androidGrabPointer >= 0 || m_androidDepthPointer >= 0;
+         m_androidGrabPointer >= 0 || m_androidDepthPointer >= 0 || m_androidQuickBarPointer >= 0;
 }
 
 void BackyardScene::ResetAndroidVirtualControls() {
@@ -2166,6 +2186,12 @@ void BackyardScene::ResetAndroidVirtualControls() {
   m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
   m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
   m_androidJump = false;
+  // The App calls this while the GUI overlay owns the touches; the grab's release would never
+  // arrive, so the held ball has to be let go here.
+  if (m_touchGrab) EndBallDrag();
+  m_androidGrabPointer = -1;
+  m_androidDepthPointer = -1;
+  m_androidQuickBarPointer = -1;
 }
 
 bool BackyardScene::HandleAndroidVirtualControls(AInputEvent* event) {
@@ -2196,15 +2222,16 @@ bool BackyardScene::HandleAndroidVirtualControls(AInputEvent* event) {
 
   if (action == AMOTION_EVENT_ACTION_CANCEL) {
     ResetAndroidVirtualControls();
-    if (m_touchGrab) EndBallDrag();
-    m_androidGrabPointer = -1;
-    m_androidDepthPointer = -1;
     return true;
   }
 
   if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_POINTER_UP) {
     const int pointerId = AMotionEvent_getPointerId(event, actionIndex);
     bool consumed = false;
+    if (pointerId == m_androidQuickBarPointer) {
+      m_androidQuickBarPointer = -1;
+      consumed = true;
+    }
     if (pointerId == m_androidGrabPointer) {
       EndBallDrag();
       m_androidGrabPointer = -1;
@@ -2231,9 +2258,6 @@ bool BackyardScene::HandleAndroidVirtualControls(AInputEvent* event) {
     }
     if (action == AMOTION_EVENT_ACTION_UP) {
       ResetAndroidVirtualControls();
-      if (m_touchGrab) EndBallDrag();
-      m_androidGrabPointer = -1;
-      m_androidDepthPointer = -1;
       return true;
     }
     return consumed;
@@ -2250,6 +2274,7 @@ bool BackyardScene::HandleAndroidVirtualControls(AInputEvent* event) {
       const QuickBarHit& hit = m_quickBarHits[i];
       if (x >= hit.minX && x <= hit.maxX && y >= hit.minY && y <= hit.maxY) {
         PerformQuickAction(hit.action);
+        m_androidQuickBarPointer = pointerId;
         return true;
       }
     }
@@ -2303,7 +2328,7 @@ bool BackyardScene::HandleAndroidVirtualControls(AInputEvent* event) {
 
   if (action != AMOTION_EVENT_ACTION_MOVE) return true;
 
-  bool consumed = false;
+  bool consumed = FindPointerIndex(event, m_androidQuickBarPointer) >= 0;
   const int moveIndex = FindPointerIndex(event, m_androidMovePointer);
   if (moveIndex >= 0) {
     m_androidMoveAxis = StickAxisFromPoint(AMotionEvent_getX(event, moveIndex),
@@ -2356,7 +2381,8 @@ bool BackyardScene::HandleAndroidVirtualControls(AInputEvent* event) {
 }
 #endif
 
-void BackyardScene::DrawGrabCrosshair() {  if (!m_gamepadAiming || !ImGui::GetCurrentContext()) return;
+void BackyardScene::DrawGrabCrosshair() {
+  if (!m_gamepadAiming || !ImGui::GetCurrentContext()) return;
   ImDrawList* drawList = ImGui::GetForegroundDrawList();
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
   if (!drawList || !viewport) return;
@@ -2427,8 +2453,6 @@ void BackyardScene::DrawQuickBar() {
       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
       ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing;
   if (ImGui::Begin("##BackyardQuickBar", nullptr, flags)) {
-    const int bodies = static_cast<int>(m_fluid.BodyCount());
-    const int room = kMaxBalls - bodies;
     char label[64];
     auto record = [this](QuickBarAction action) {
       if (m_quickBarHitCount >= kQuickBarMaxHits) return;
@@ -2442,13 +2466,12 @@ void BackyardScene::DrawQuickBar() {
       hit.action = action;
     };
 
-    // +10 balls: greyed out at the ceiling, with the remaining room in the tooltip.
-    ImGui::BeginDisabled(!m_fluidReady || room <= 0);
+    ImGui::BeginDisabled(!m_fluidReady);
     if (ImGui::Button("+10 balls")) PerformQuickAction(QuickBarAction::SpawnTen);
     ImGui::EndDisabled();
     record(QuickBarAction::SpawnTen);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      std::snprintf(label, sizeof(label), "%d of %d ball slots free", (std::max)(room, 0), kMaxBalls);
+      std::snprintf(label, sizeof(label), "%u balls in the pool", m_fluid.BodyCount());
       ImGui::SetTooltip("%s", label);
     }
 
@@ -2510,6 +2533,7 @@ void BackyardScene::DrawQuickBar() {
 }
 
 void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
+  m_devGuiDrawnThisFrame = true;
   if (!gui.BeginPanel("Backyard Water")) {
     return;
   }
@@ -2841,8 +2865,12 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
         w.sphereDensityRatio = w.SphereDensityFromMass(massEdit);
     }
     slider("water_sphere_cd", "drag coefficient", w.sphereDragCoefficient, 0.05f, 1.5f, 0.01f);
-    slider("water_sphere_air_cd", "air drag (wind on balls, 0 = off)", w.sphereAirDragCoefficient,
-           0.0f, 2.0f, 0.01f);
+    if (slider("water_sphere_air_cd", "air drag (wind on balls, 0 = off)", w.sphereAirDragCoefficient,
+               0.0f, 2.0f, 0.01f)) {
+      // "0 = off" has to mean the balls already in the pool too, not only the next spawn.
+      for (uint32_t index = 0; index < m_fluid.BodyCount(); ++index)
+        if (t850::FluidSphere* body = m_fluid.Body(index)) body->airDragCoefficient = w.sphereAirDragCoefficient;
+    }
     slider("water_sphere_restitution", "bounce (0 = dead stop)", w.sphereRestitution, 0.0f, 0.9f, 0.01f);
     slider("water_sphere_heave_damping", "heave damping ratio", w.sphereHeaveDamping, 0.0f, 1.0f, 0.01f);
 

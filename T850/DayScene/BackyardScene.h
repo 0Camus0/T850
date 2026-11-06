@@ -122,15 +122,11 @@ private:
   // Deterministic LCG state for spawn placement: spawnSeed != 0 reproduces a run.
   uint32_t m_spawnRng = 1u;
   // Drops one ball at a random place inside the basin, at a random radius and density.
-  // Returns false at the cap or when no free spot was found.
+  // Returns false when the solver is not running or no free spot was found.
   bool SpawnBall();
-  // Drops up to `count` balls, stopping at kMaxBalls. Returns how many were added, so the
-  // HUD and the tests can report what actually happened.
+  // Drops up to `count` balls. Returns how many were added, so the HUD and the tests can
+  // report what actually happened. There is no ball cap (owner decision, 97009aef).
   int SpawnBalls(int count);
-  // Total bodies, including the scripted ball at index 0. The body-mask upload and the
-  // per-ball instance bookkeeping grow with it, so the quick bar stops at a ceiling.
-  static constexpr int kMaxBalls = 40;
-  bool AtBallCap() const;
   // ── Wind: one speed and one heading, the way the panel and the quick bar speak ──
   // Both views write windX/windZ, so JSON, the gates and FluidSimulation::SetWind agree.
   float CurrentWindSpeed() const;
@@ -250,6 +246,7 @@ private:
   // deterministic; production keeps using the camera axis.
   bool m_padTestAim = false;
   XVECTOR3 m_padTestAimPoint;
+  XVECTOR3 m_padTestEyeAtGrab;
   void RunPadTestStep();
 #ifdef OS_ANDROID
   // ── Android touch controls ──
@@ -275,6 +272,9 @@ private:
   // for the mouse wheel: the framework's pinch would cancel the drag).
   int m_androidGrabPointer = -1;
   int m_androidDepthPointer = -1;
+  // A finger that pressed a quick-bar button. Tracked so its move and release stay with the
+  // scene: otherwise three fast taps on a button also count as the triple-tap that opens the GUI.
+  int m_androidQuickBarPointer = -1;
   float m_androidGrabScreenX = 0.0f;
   float m_androidGrabScreenY = 0.0f;
   float m_androidDepthStartY = 0.0f;
@@ -282,6 +282,10 @@ private:
 #endif
   // Set while a touch owns the drag, so the mouse path does not end it on the next frame.
   bool m_touchGrab = false;
+  // The runtime GUI navigates with the pad (LB/RB switch panels, the d-pad moves focus), so the
+  // pad quick actions stand down while it is open. DrawDevGui only runs while it is visible.
+  bool m_devGuiDrawnThisFrame = false;
+  bool m_runtimeGuiOpen = false;
   t850::FluidDebugRenderer m_fluidDebug;
   t850::WireframeArrow m_windArrow;
   bool m_windArrowReady = false;

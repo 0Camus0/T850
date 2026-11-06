@@ -467,10 +467,46 @@ When changing camera profile behavior, update SceneTemplate first and audit thes
   its last velocity. A held `FluidSphere` has `held = true`: the scene steers its velocity
   toward the cursor (capped at 6 m/s), gravity, buoyancy and drag are skipped, and contacts
   treat it as infinitely heavy, so it shoves other balls.
-- A plain left click without Ctrl is always a camera gesture, never a pick.
+- A plain left click without Ctrl is a camera gesture on desktop. On Android and in the browser
+  there is no Ctrl: a press that starts on a ball grabs it, any other press is the camera's.
 
-`--backyard-pick-test` drives this exact path with a synthetic `InputManager` (no OS input):
-see `documentation/scenes/backyard-water-simulation.md`, section 12.
+**Quick bar** (`DrawQuickBar`, drawn every frame through `DrawGameplayGui`, bottom centre): +10
+balls, Reset (two presses within 4 s, because it clears the spawned balls), wind speed −/+
+(0.5 m/s), heading << / >> (15°) and the wind-arrow toggle. There is no ball cap (owner decision,
+`97009aef`, re-confirmed 2026-11-06). The same actions exist without the bar:
+
+| Action | Keyboard | Pad |
+|---|---|---|
+| +10 balls | K | X (west) |
+| Reset (twice) | R | Y (north) |
+| Wind speed −/+ | Down / Up | LB / RB |
+| Heading −/+ | Left / Right | d-pad left / right |
+| Wind arrow | V | d-pad up |
+
+The keys are ignored only while an ImGui text field has the keyboard (`WantTextInput`). The pad
+quick actions stand down while the runtime GUI is open, because LB/RB switch its panels there and
+the d-pad moves its focus; the scene notices through `DrawDevGui`, which only runs while that GUI is
+visible.
+
+**Pad grab:**
+
+- Hold RT to show a crosshair and pick the ball on the camera axis. While RT is held, the left stick
+  pans the ball over the ground (relative to the view), LT lifts it, and releasing RT throws it.
+- While a ball is held, the left stick does **not** move the camera; the right stick still looks.
+
+**Android touch** (`HandleAndroidVirtualControls`):
+
+- A move stick (left) and a look stick (right), a Jump button, and the quick bar, hit-tested by the
+  scene because ImGui gets no touches while the overlay is hidden.
+- A touch that starts on a ball grabs it; a second finger pushes or pulls it.
+- Quick-bar touches are tracked, so three fast taps on a button never count as the triple-tap that
+  opens the GUI.
+- Opening the GUI releases a held ball (`ResetAndroidVirtualControls`).
+
+`scripts/validation/input_test.ps1` runs `--backyard-pick-test` and `--backyard-pad-test`, which
+drive these paths with a synthetic `InputManager` (no OS input). The pad test also checks that the
+camera stays still while the stick steers a held ball. See
+`documentation/scenes/backyard-water-simulation.md`, section 12.
 
 ## Android virtual controls
 

@@ -367,6 +367,8 @@ the Backyard ones. Every automated run also passes `--unattended`.
 --backyard-spawn N                 spawn N extra balls once the solver is ready
 --backyard-spawn-seed N            fix the spawn and material RNG for a reproducible run
 --backyard-pick-test               drive the pick/drag input path in-process, then exit
+--backyard-pad-test                drive the gamepad grab (RT/LS/LT) and the pad quick actions
+                                   in-process with a synthetic pad, then exit; needs --backyard-spawn 2+
 --backyard-ball-probe N            log body 0 every N frames (see below)
 --backyard-mass-audit N            log the W-03 mass audit every N frames
 --fluid-selftest                   run the solver self-test, then exit

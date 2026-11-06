@@ -65,6 +65,13 @@ public:
   // Test hook (--backyard-pad-test): drives the gamepad grab and the pad quick actions with a
   // synthetic InputManager, so the Deck path is covered without hardware.
   static void SetPadTest(bool enabled) { s_padTest = enabled; }
+#ifdef OS_ANDROID
+  // Touch controls on a tablet: two sticks plus a jump button, fed straight from AInputEvent so
+  // the layout zones consume their touches and the rest of the screen stays a look/pick surface.
+  bool HandleAndroidVirtualControls(AInputEvent* event);
+  bool AndroidVirtualControlsActive() const;
+  void ResetAndroidVirtualControls();
+#endif
 
 private:
   struct AssetRequest {
@@ -133,6 +140,27 @@ private:
   void AdjustWindHeading(float deltaDeg);
   // ── Quick bar ──
   void DrawQuickBar();
+  // One entry per bar button, so the touch layer can hit-test the bar without ImGui input:
+  // on Android the runtime overlay is hidden by default and ImGui receives no touch events,
+  // even though the bar itself is still drawn.
+  enum class QuickBarAction : int {
+    SpawnTen = 0,
+    Reset,
+    WindSpeedDown,
+    WindSpeedUp,
+    HeadingDown,
+    HeadingUp,
+    ToggleArrow,
+    Count
+  };
+  struct QuickBarHit {
+    float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+    QuickBarAction action = QuickBarAction::SpawnTen;
+  };
+  static constexpr int kQuickBarMaxHits = 8;
+  QuickBarHit m_quickBarHits[kQuickBarMaxHits];
+  int m_quickBarHitCount = 0;
+  void PerformQuickAction(QuickBarAction action);
   // Reset clears the spawned balls, so it takes two presses: the first arms it for a few
   // seconds and the label changes, the second acts.
   bool ResetArmed() const;
@@ -175,6 +203,9 @@ private:
   // cursor. The two rays share everything below the screen-space step.
   t850::Ray CrosshairRay() const;
   bool ProjectToScreen(const XVECTOR3& world, float& x, float& y) const;
+  // Places the drag target on the ray at the current distance plus the grab offset. Shared by
+  // the mouse, the pad and the touch drag so all three steer a held ball the same way.
+  void UpdateDragTargetFromScreen(float screenX, float screenY);
   // Nearest enabled body under the ray; writes the distance along it. -1 when nothing is hit.
   int PickBallAlongRay(const t850::Ray& ray, float& along) const;
   // Starts a drag at a picked body. The mouse and the pad both come through here.
@@ -220,6 +251,37 @@ private:
   bool m_padTestAim = false;
   XVECTOR3 m_padTestAimPoint;
   void RunPadTestStep();
+#ifdef OS_ANDROID
+  // ── Android touch controls ──
+  // Centres and radii as plain floats: this header stays free of ImGui types, and the layout
+  // maths has to run in the input handler as well as in the drawing code.
+  struct AndroidTouchLayout {
+    float moveX = 0.0f, moveY = 0.0f;
+    float lookX = 0.0f, lookY = 0.0f;
+    float jumpX = 0.0f, jumpY = 0.0f;
+    float stickRadius = 0.0f;
+    float knobRadius = 0.0f;
+    float buttonRadius = 0.0f;
+  };
+  AndroidTouchLayout BuildAndroidTouchLayout(float width, float height) const;
+  void DrawAndroidTouchControls();
+  int m_androidMovePointer = -1;
+  int m_androidLookPointer = -1;
+  int m_androidJumpPointer = -1;
+  XVECTOR2 m_androidMoveAxis;
+  XVECTOR2 m_androidLookAxis;
+  bool m_androidJump = false;
+  // Grab pointer, and the second finger that pushes/pulls the held ball (the touch stand-in
+  // for the mouse wheel: the framework's pinch would cancel the drag).
+  int m_androidGrabPointer = -1;
+  int m_androidDepthPointer = -1;
+  float m_androidGrabScreenX = 0.0f;
+  float m_androidGrabScreenY = 0.0f;
+  float m_androidDepthStartY = 0.0f;
+  float m_androidDepthStartDistance = 0.0f;
+#endif
+  // Set while a touch owns the drag, so the mouse path does not end it on the next frame.
+  bool m_touchGrab = false;
   t850::FluidDebugRenderer m_fluidDebug;
   t850::WireframeArrow m_windArrow;
   bool m_windArrowReady = false;

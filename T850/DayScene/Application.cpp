@@ -1096,6 +1096,9 @@ void App::OnInput() {
     if (auto* ragdollEditor = dynamic_cast<RagdollEditor*>(m_actualScene)) {
       ragdollEditor->ResetAndroidVirtualControls();
     }
+    if (auto* backyard = dynamic_cast<BackyardScene*>(m_actualScene)) {
+      backyard->ResetAndroidVirtualControls();
+    }
   }
   if (m_imguiVisible && m_imgui.WantsMouse()) return;
   if (m_actualScene && !bPaused) m_actualScene->OnInput(&IManager);
@@ -1341,6 +1344,11 @@ bool App::HandleAndroidInputEvent(AInputEvent* event) {
     } else if (auto* ragdollEditor = dynamic_cast<RagdollEditor*>(m_actualScene)) {
       sceneControlsActiveBefore = ragdollEditor->AndroidVirtualControlsActive();
       sceneHandled = ragdollEditor->HandleAndroidVirtualControls(event);
+    } else if (auto* backyard = dynamic_cast<BackyardScene*>(m_actualScene)) {
+      // Backyard draws its own sticks, jump button and quick bar, and picks a ball up when a
+      // touch starts on one.
+      sceneControlsActiveBefore = backyard->AndroidVirtualControlsActive();
+      sceneHandled = backyard->HandleAndroidVirtualControls(event);
     }
   }
 

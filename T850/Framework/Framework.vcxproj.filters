@@ -599,6 +599,9 @@
     <ClInclude Include="include\utils\ConfigRuntime.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\utils\DeviceInfo.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
     <ClInclude Include="include\utils\RuntimeProfile.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
@@ -1039,6 +1042,12 @@
     <ClCompile Include="src\scene\RenderGraph.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
+    <ClCompile Include="src\simulation\FluidSimulation.cpp">
+      <Filter>Source Files\simulation</Filter>
+    </ClCompile>
+    <ClCompile Include="src\simulation\FluidDebugRenderer.cpp">
+      <Filter>Source Files\simulation</Filter>
+    </ClCompile>
     <ClCompile Include="src\scene\ShadowSystem.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
@@ -1130,6 +1139,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ConfigRuntime.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\DeviceInfo.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\RuntimeProfile.cpp">

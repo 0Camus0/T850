@@ -61,7 +61,12 @@ if ($Mode -ne 'Check') {
     if (!(Test-Path $vswhere)) { throw 'Visual Studio discovery tool is missing.' }
     $compilerComponent = if ($Architecture -eq 'ARM64') { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
     $versionRange = if ($Architecture -eq 'ARM64') { '[17.0,19.0)' } else { '[17.0,18.0)' }
-    $installations = @(& $vswhere -products '*' -version $versionRange -requires $compilerComponent -format json | ConvertFrom-Json)
+    # Windows PowerShell 5.1 hands back a JSON array as a single object, so `@(...)` wrapped it
+    # once and the Where-Object below saw one item whose `installationPath` was an array of both
+    # installs — the `[version]` cast on `installationVersion` then threw. `foreach` unrolls the
+    # array in both hosts; BuildWeb.ps1 calls this script through powershell.exe 5.1.
+    $parsedInstallations = & $vswhere -products '*' -version $versionRange -requires $compilerComponent -format json | ConvertFrom-Json
+    $installations = @(foreach ($item in $parsedInstallations) { $item })
     $visualStudioInstance = $installations | Where-Object {
         if (!(Test-Path (Join-Path $_.installationPath 'VC\Auxiliary\Build\vcvarsall.bat'))) { return $false }
         $compilers = @(Get-ChildItem (Join-Path $_.installationPath "VC\Tools\MSVC\*\bin\Host*\$Architecture\cl.exe") -ErrorAction SilentlyContinue |
@@ -72,6 +77,7 @@ if ($Mode -ne 'Check') {
         return $compilers.Count -gt 0
     } | Select-Object -First 1
     if (!$visualStudioInstance) { throw "A Visual Studio host with a usable v143 $Architecture compiler is required." }
+    if ($visualStudioInstance -is [array]) { throw "Visual Studio discovery returned more than one host; keep one v143 host per toolset." }
     $visualStudio = $visualStudioInstance.installationPath
     $visualStudioMajor = ([version]$visualStudioInstance.installationVersion).Major
     $generator = switch ($visualStudioMajor) {

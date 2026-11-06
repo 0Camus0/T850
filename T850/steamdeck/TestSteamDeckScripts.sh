@@ -67,4 +67,5 @@ editor_run="$(T850_SKIP_ASSET_DOWNLOAD=1 bash "${source_root}/steamdeck/T850.sh"
 runtime_run="$(T850_SKIP_ASSET_DOWNLOAD=1 bash "${source_root}/steamdeck/T850.sh" --game-mode)"
 [[ "${runtime_run}" == DayScene$'\n'* ]]
 [[ "${runtime_run}" == *'--fullscreen'* ]]
-echo 'PASS SteamRT targets, required editor packaging, and separate editor/runtime launch'
+grep -Fq '("Backyard", 7)' "${SCRIPT_DIR}/T850DeckLauncher.py"
+echo 'PASS SteamRT targets, required editor packaging, separate editor/runtime launch, launcher scene list'

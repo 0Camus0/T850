@@ -1,6 +1,7 @@
 #ifndef T800_SHADOW_DESCRIPTOR_H
 #define T800_SHADOW_DESCRIPTOR_H
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <optional>

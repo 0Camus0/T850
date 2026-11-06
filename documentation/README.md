@@ -90,6 +90,10 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | Editor/runtime architecture assessment | [editor/architecture-review.md](editor/architecture-review.md) | Review and first extraction, 2026-09-07 |
 | `.t8scene` and runtime loading | [scenes/scene-format-and-runtime.md](scenes/scene-format-and-runtime.md) | Strict owned-schema behavior verified 2026-09-26 |
 | SceneDescriptor/SceneSetup | [scenes/scene-setup-descriptors.md](scenes/scene-setup-descriptors.md) | Strict descriptor behavior verified 2026-09-26 |
+| Backyard scene and GPU pool water simulation | [scenes/backyard-water-simulation.md](scenes/backyard-water-simulation.md) | Full solver on D3D11, D3D12, Vulkan, **OpenGL 4.3** and WebGPU (native and browser); runs in real time on the Steam Deck OLED and the Galaxy Tab S9; 13 headless gates; verified 2026-11-05 |
+| Backyard water: remaining work and implementation directions | [scenes/backyard-water-remaining-work.md](scenes/backyard-water-remaining-work.md) | 31 tasks (W-01..W-31) with a status table in section 0; W-01..W-31 resolved except W-07 (solid fraction, not needed for the PR) and W-16 (documentation spot-check, item F) |
+| Backyard water: staged execution plan | [scenes/backyard-water-staged-plan.md](scenes/backyard-water-staged-plan.md) | Section 0 is the current brief and item table (A-K: GL port, Steam Deck, browser, Android, launcher, real-time substeps, wind); section 4 is the stage and review log |
+| Backyard water: session record 2026-10-31 | [scenes/backyard-water-session-2026-10-31b.md](scenes/backyard-water-session-2026-10-31b.md) | W-26, W-06 steps 3–4, W-07 analysis; read with the staged plan's 2026-11-01 review, which corrects its W-06 claims |
 
 ## Governance
 

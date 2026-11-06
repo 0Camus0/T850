@@ -92,6 +92,8 @@
     <ClInclude Include="include\terrain\TerrainPlacement.h" />
     <ClInclude Include="include\terrain\HeightmapMesh.h" />
     <ClInclude Include="include\scene\RenderGraph.h" />
+    <ClInclude Include="include\simulation\FluidSimulation.h" />
+    <ClInclude Include="include\simulation\FluidDebugRenderer.h" />
     <ClInclude Include="include\scene\RenderGraphDescriptor.h" />
     <ClInclude Include="include\scene\SceneDescriptor.h" />
     <ClInclude Include="include\scene\SceneSetup.h" />
@@ -137,6 +139,7 @@
     <ClInclude Include="include\utils\xDefs.h" />
     <ClInclude Include="include\utils\xMaths.h" />
     <ClInclude Include="include\utils\ConfigRuntime.h" />
+    <ClInclude Include="include\utils\DeviceInfo.h" />
     <ClInclude Include="include\utils\RuntimeProfile.h" />
     <ClInclude Include="include\utils\ComputeKernelRegistry.h" />
     <ClInclude Include="include\utils\ShaderPermutationDump.h" />
@@ -299,6 +302,8 @@
     <ClCompile Include="src\terrain\TerrainPlacement.cpp" />
     <ClCompile Include="src\terrain\HeightmapMesh.cpp" />
     <ClCompile Include="src\scene\RenderGraph.cpp" />
+    <ClCompile Include="src\simulation\FluidSimulation.cpp" />
+    <ClCompile Include="src\simulation\FluidDebugRenderer.cpp" />
     <ClCompile Include="src\scene\SceneDescriptor.cpp" />
     <ClCompile Include="src\scene\SceneSetup.cpp" />
     <ClCompile Include="src\scene\SceneProp.cpp" />
@@ -332,6 +337,7 @@
     <ClCompile Include="src\utils\XDataBase.cpp" />
     <ClCompile Include="src\utils\XMaths.cpp" />
     <ClCompile Include="src\utils\ConfigRuntime.cpp" />
+    <ClCompile Include="src\utils\DeviceInfo.cpp" />
     <ClCompile Include="src\utils\RuntimeProfile.cpp" />
     <ClCompile Include="src\utils\ComputeKernelRegistry.cpp" />
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp" />

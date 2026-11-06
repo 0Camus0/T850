@@ -15,6 +15,7 @@
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:exported="false"
             android:screenOrientation="landscape"
+            android:resizeableActivity="false"
             android:theme="@style/T850NativeTheme">
             <meta-data android:name="android.app.lib_name" android:value="T850Android" />
         </activity>

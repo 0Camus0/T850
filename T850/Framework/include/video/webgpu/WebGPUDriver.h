@@ -27,12 +27,15 @@ public:
   bool SupportsDeferredRendering() const override { return true; }
   bool SupportsComputeShaders() const override { return true; }
   bool SupportsComputeTextures() const override { return true; }
+  bool SupportsComputeTextures3D() const override;
   unsigned MaxRenderTargetColorAttachments() const override;
   int SurfaceColorFormat() const override;
   void InitDriver() override;
   std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
   std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
                                                       const void* initialData = nullptr) override;
+  std::unique_ptr<ComputeTexture3D> CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
+                                                            const void* initialData = nullptr) override;
   bool DispatchCompute(ComputePipeline& pipeline, const std::vector<ComputeBindingDesc>& bindings,
                        uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
   bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t bytes) override;

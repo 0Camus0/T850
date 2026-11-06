@@ -67,6 +67,28 @@ namespace t850 {
     D3D12_RESOURCE_STATES m_state = D3D12_RESOURCE_STATE_COMMON;
   };
 
+  class D3D12ComputeTexture3D final : public ComputeTexture3D {
+  public:
+    bool Create(ID3D12Device* device,
+                D3D12Driver* driver,
+                const ComputeTexture3DDesc& desc,
+                const void* initialData);
+
+    ID3D12Resource* GetResource() const { return m_resource.Get(); }
+    D3D12_GPU_DESCRIPTOR_HANDLE SrvGPU() const { return m_srvGPU; }
+    D3D12_GPU_DESCRIPTOR_HANDLE UavGPU() const { return m_uavGPU; }
+    D3D12_RESOURCE_STATES GetState() const { return m_state; }
+    void SetState(D3D12_RESOURCE_STATES state) { m_state = state; }
+
+  private:
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_resource;
+    D3D12_CPU_DESCRIPTOR_HANDLE m_srvCPU = {};
+    D3D12_GPU_DESCRIPTOR_HANDLE m_srvGPU = {};
+    D3D12_CPU_DESCRIPTOR_HANDLE m_uavCPU = {};
+    D3D12_GPU_DESCRIPTOR_HANDLE m_uavGPU = {};
+    D3D12_RESOURCE_STATES m_state = D3D12_RESOURCE_STATE_COMMON;
+  };
+
 } // namespace t850
 
 #endif // OS_WINDOWS

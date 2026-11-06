@@ -83,6 +83,9 @@ namespace t850 {
     const char* ApiTag() const override { return "gl"; }
         bool SupportsComputeShaders() const override { return m_computeShadersSupported; }
         bool SupportsComputeTextures() const override { return m_computeTexturesSupported; }
+        // GL 4.3 image units cover GL_TEXTURE_3D; a volume is not an array texture, so
+        // glBindImageTexture binds the whole level and `layered` does not apply.
+        bool SupportsComputeTextures3D() const override { return m_computeTexturesSupported; }
         bool UsesGLSL() const override { return true; }
         bool NeedsVFlip() const override { return true; }
         bool SupportsRenderTargetMipGeneration() const override { return true; }
@@ -109,10 +112,31 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
     std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
                                                        const void* initialData = nullptr) override;
+    std::unique_ptr<ComputeTexture3D> CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
+                                                             const void* initialData = nullptr) override;
     bool DispatchCompute(ComputePipeline& pipeline,
                          const std::vector<ComputeBindingDesc>& bindings,
                          uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
     bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
+    // One persistent, grow-only SSBO that carries the inline buffer bindings (body lists and
+    // velocities) the fluid solver passes without a ComputeBuffer object.
+    GLuint EnsureInlineStorageBuffer(uint32_t byteCount, const void* data);
+    // Transient `std140` uniform blocks are bump-allocated from one persistent buffer: a
+    // glGenBuffers/glBufferData/glDeleteBuffers per dispatch dominates the solver's frame
+    // time at ~2000 dispatches (W-28 step 6).
+    uint32_t AllocateDispatchConstants(const uint32_t* data, uint32_t byteCount);
+    void ResetDispatchConstants();
+    // GL limit queries force a round trip, and the fluid solver dispatches ~2000 times a
+    // frame, so they are read once and reused.
+    struct ComputeLimits {
+      uint32_t maxWorkGroups[3] = {65535u, 65535u, 65535u};
+      uint32_t maxTextureUnits = 16u;
+      uint32_t maxImageUnits = 8u;
+      uint32_t maxStorageBlocks = 8u;
+      uint32_t uniformBufferAlignment = 256u;
+      bool initialized = false;
+    };
+    const ComputeLimits& ComputeLimitsCached();
 #endif
 	void SetCullFace(FaceCulling state) override;
 #ifdef T850_RENDER_TRACE
@@ -153,6 +177,12 @@ namespace t850 {
 #endif
         bool m_computeShadersSupported = false;
         bool m_computeTexturesSupported = false;
+        GLuint m_inlineStorageBuffer = 0;
+        uint32_t m_inlineStorageBytes = 0;
+        ComputeLimits m_computeLimits;
+        GLuint m_dispatchConstantsBuffer = 0;
+        uint32_t m_dispatchConstantsCapacity = 0;
+        uint32_t m_dispatchConstantsOffset = 0;
   };
 }
 #endif

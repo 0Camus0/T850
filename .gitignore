@@ -5,6 +5,8 @@
 /examples/EditorExtension/obj/
 /examples/EditorExtension/build/
 /T850/build/
+# web\test-firefox.mjs writes its report, screenshots and driver log here.
+/build/
 /T850/bin/x86/
 /T850/bin/Win32/
 /T850/bin/x64/
@@ -69,6 +71,9 @@ T850/android/app/build/
 T850/android/build/
 T850/android/java_pid*.hprof
 
+# Generated release packages (CI uploads them as workflow artifacts)
+T850/artifacts/
+
 # Android signing material
 T850/android/signing.properties
 T850/android/app/signing.properties
@@ -101,4 +106,6 @@ T850/Assets/Models/**/*.bin
 !/T850/Assets/Textures/herobrine_green.png
 /T850/Assets/Textures/**/*.t8ibl
 /T850/Assets/Textures/**/*.download
+# Backyard ball PBR palette: fetched from the cloud texture manifest, never committed
+/T850/Assets/Textures/Ball/
 /T850/imgui_layout.ini

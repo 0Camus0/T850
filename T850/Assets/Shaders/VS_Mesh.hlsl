@@ -27,12 +27,20 @@ cbuffer MeshInstanceCB : register(b1) {
     float4x4 WVP;
 	float4x4 World;
 	float4x4 WorldView;
+	float4   TimeParams;
 }
 #endif
 
 #ifdef USE_SKINNING_TEXTURE
 Texture2D<float4> BoneTexture : register(t24);
+#endif
 
+#ifdef FLUID_SURFACE
+// Sampled with Load() so no sampler binding is required.
+Texture2D<float4> FluidSurfaceTexture : register(t23);
+#endif
+
+#ifdef USE_SKINNING_TEXTURE
 float4x4 getBoneMatrix(int index) {
 	uint texW, texH;
 	BoneTexture.GetDimensions(texW, texH);
@@ -213,6 +221,46 @@ VS_OUTPUT VS( VS_INPUT input ){
 	OUT.hposition = mul( WVP , input.position );
 	OUT.Pos		  = OUT.hposition;
 #else	
+#ifdef FLUID_SURFACE
+	// Displace the water surface by the solver's height field (metres).
+	{
+		uint fluidWidth = 1, fluidHeight = 1;
+		FluidSurfaceTexture.GetDimensions(fluidWidth, fluidHeight);
+		float2 fluidUV = saturate(input.texture0.xy);
+		// Bilinear reconstruction. The solver writes to a STORAGE texture, which
+		// cannot be sampled with hardware filtering, so a plain Load() snaps every
+		// vertex onto a texel and the water edge renders as 0.09 m blocks. Blending
+		// the four surrounding texels here is what makes the mesh look continuous,
+		// and it needs the mesh to be denser than the grid (288 x 144 vertices over
+		// a 100 x 50 grid) so the interpolation is actually sampled.
+		float2 gridPos = fluidUV * float2(fluidWidth, fluidHeight) - 0.5f;
+		int2 base = clamp(int2(floor(gridPos)), int2(0, 0),
+		                  int2(max(int(fluidWidth) - 2, 0), max(int(fluidHeight) - 2, 0)));
+		float2 frac = saturate(gridPos - float2(base));
+		float h00 = FluidSurfaceTexture.Load(int3(base + int2(0, 0), 0)).x;
+		float h10 = FluidSurfaceTexture.Load(int3(base + int2(1, 0), 0)).x;
+		float h01 = FluidSurfaceTexture.Load(int3(base + int2(0, 1), 0)).x;
+		float h11 = FluidSurfaceTexture.Load(int3(base + int2(1, 1), 0)).x;
+		float fluidHeightValue = lerp(lerp(h00, h10, frac.x), lerp(h01, h11, frac.x), frac.y);
+		input.position.y += fluidHeightValue * TimeParams.z;
+
+		// Optional geometric ripple octaves. A shading-only normal leaves the
+		// silhouette flat, which is the giveaway at grazing angles. The finer
+		// octaves stay shading-only because 0.094 m mesh quads cannot represent
+		// a 0.11 m wavelength without aliasing. TimeParams.w gates them so the
+		// water can be driven purely by the solver.
+		if (TimeParams.w > 0.5f) {
+			float2 ripplePos = input.position.xz;
+			float rippleTime = TimeParams.x;
+			float rippleScale = TimeParams.y;
+			float rippleHeight =
+				0.0160f * sin(dot(ripplePos, float2( 0.86f, 0.51f)) * 10.134f + rippleTime * 5.573f) +
+				0.0090f * sin(dot(ripplePos, float2(-0.60f, 0.80f)) * 15.322f + rippleTime * 11.492f) +
+				0.0060f * sin(dot(ripplePos, float2( 0.31f, -0.95f)) * 23.271f + rippleTime * 24.434f);
+			input.position.y += rippleHeight * rippleScale;
+		}
+	}
+#endif
     OUT.hposition = mul( WVP , input.position );
 	
 	float3x3 RotWorld = (float3x3)World;

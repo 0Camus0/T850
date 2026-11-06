@@ -9,7 +9,10 @@ add_executable(DayScene
 	RagdollEditor.cpp
 	SandboxScene.cpp
 	VoxelScene.cpp
-	MinecraftScene.cpp)
+	MinecraftScene.cpp
+	BackyardScene.cpp
+	BackyardWaterJson.cpp
+	BackyardSelfTest.cpp)
 
 t850_apply_app(DayScene)
 t850_apply_profiler_defines(DayScene)

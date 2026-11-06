@@ -17,10 +17,12 @@ import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -43,11 +45,16 @@ public final class AssetDownloadActivity extends Activity {
         final String resourcePath;
         final String url;
         final long size;
+        // Lower-case hex from the manifest, empty when the entry predates content hashing. The
+        // runtime contract (documentation/development/cloud-assets.md) treats a published hash as
+        // part of the asset's identity, so a same-size corruption must not count as ready.
+        final String sha256;
 
-        AssetEntry(String resourcePath, String url, long size) {
+        AssetEntry(String resourcePath, String url, long size, String sha256) {
             this.resourcePath = resourcePath;
             this.url = url;
             this.size = size;
+            this.sha256 = sha256 == null ? "" : sha256;
         }
     }
 
@@ -129,13 +136,23 @@ public final class AssetDownloadActivity extends Activity {
             AtomicInteger completed = new AtomicInteger(0);
             AtomicInteger failed = new AtomicInteger(0);
             int total = assets.size();
+            AtomicInteger needed = new AtomicInteger(0);
+            for (AssetEntry asset : assets) {
+                File target = new File(finalAssetRoot, asset.resourcePath.replace('/', File.separatorChar));
+                if (!isAssetReady(asset, target)) {
+                    needed.incrementAndGet();
+                }
+            }
+            // Same wording as steamdeck/DownloadCloudAssets.py, so a log from any platform reads the
+            // same way.
+            Log.i(TAG, "Cloud assets ready=" + (total - needed.get()) + " missing=" + needed.get() + " total=" + total);
             updateProgress(0, 0, total, "Checking 0/" + total + " assets...");
 
             for (AssetEntry asset : assets) {
                 executor.submit(() -> {
                     try {
                         File target = new File(finalAssetRoot, asset.resourcePath.replace('/', File.separatorChar));
-                        if (!isAssetReady(target, asset.size)) {
+                        if (!isAssetReady(asset, target)) {
                             downloadAsset(asset, target);
                         }
                     } catch (Exception ex) {
@@ -164,6 +181,7 @@ public final class AssetDownloadActivity extends Activity {
                 return;
             }
 
+            Log.i(TAG, "Cloud assets ready (" + needed.get() + " downloaded, " + (total - needed.get()) + " already present).");
             updateProgress(total, total, total, "Game data ready.");
             Thread.sleep(250);
             runOnUiThread(this::startLauncher);
@@ -204,7 +222,8 @@ public final class AssetDownloadActivity extends Activity {
             }
             String resourcePath = normalizeAssetPath(rawPath, defaultRoot);
             long size = item.has("size") ? item.optLong("size", 0L) : 0L;
-            entries.add(new AssetEntry(resourcePath, url, size));
+            String sha256 = item.optString("sha256", "").toLowerCase(Locale.ROOT);
+            entries.add(new AssetEntry(resourcePath, url, size, sha256));
         }
         return entries;
     }
@@ -231,15 +250,43 @@ public final class AssetDownloadActivity extends Activity {
         return path;
     }
 
-    private static boolean isAssetReady(File target, long expectedSize) {
+    private static boolean isAssetReady(AssetEntry asset, File target) {
         if (!target.isFile()) {
             return false;
         }
         long length = target.length();
-        if (expectedSize > 0L) {
-            return length == expectedSize;
+        if (asset.size > 0L) {
+            if (length != asset.size) {
+                return false;
+            }
+        } else if (length <= 0L) {
+            return false;
         }
-        return length > 0L;
+        if (!asset.sha256.isEmpty()) {
+            try {
+                return asset.sha256.equals(sha256Hex(target));
+            } catch (Exception ex) {
+                Log.w(TAG, "Could not hash " + target, ex);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String sha256Hex(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
+            byte[] buffer = new byte[256 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        StringBuilder hex = new StringBuilder(64);
+        for (byte value : digest.digest()) {
+            hex.append(String.format(Locale.ROOT, "%02x", value));
+        }
+        return hex.toString();
     }
 
     private static String readUrl(String urlText) throws Exception {
@@ -300,6 +347,10 @@ public final class AssetDownloadActivity extends Activity {
         if (asset.size > 0L && tmp.length() != asset.size) {
             tmp.delete();
             throw new IllegalStateException("Size mismatch for " + asset.resourcePath);
+        }
+        if (!asset.sha256.isEmpty() && !asset.sha256.equals(sha256Hex(tmp))) {
+            tmp.delete();
+            throw new IllegalStateException("sha256 mismatch for " + asset.resourcePath);
         }
         if (!tmp.renameTo(target)) {
             tmp.delete();

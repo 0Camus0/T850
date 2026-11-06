@@ -1819,6 +1819,7 @@ namespace t850 {
     dst.WVP = src.WVP;
     dst.World = src.World;
     dst.WorldView = src.WorldView;
+    dst.TimeParams = src.TimeParams;
   }
 
   static void ApplyMeshFrameCB(RenderMesh::CBuffer& dst, const RenderMesh::MeshFrameCBuffer& src) {
@@ -1836,6 +1837,7 @@ namespace t850 {
     for (int ri = 0; ri < 32; ri++) {
       dst.LightRadius[ri] = src.LightRadius[ri];
     }
+    dst.CameraVP = src.CameraVP;
   }
 
   static void ApplyMeshMaterialCB(RenderMesh::CBuffer& dst, const RenderMesh::MeshMaterialCBuffer& src) {
@@ -1883,6 +1885,7 @@ namespace t850 {
     dst.TransmissionUVTransform1 = src.TransmissionUVTransform1;
     dst.LightmapUVTransform0 = src.LightmapUVTransform0;
     dst.LightmapUVTransform1 = src.LightmapUVTransform1;
+    dst.WaterParams = src.WaterParams;
   }
 
   static void FillMaterialCBFromSubset(RenderMesh::MeshMaterialCBuffer& cb, const RenderMesh::SubSetInfo& subInfo) {
@@ -2107,6 +2110,10 @@ namespace t850 {
       instanceCB.WVP = WVP;
       instanceCB.World = transform;
       instanceCB.WorldView = WorldView;
+      instanceCB.TimeParams = XVECTOR3(pScProp ? pScProp->TimeSeconds : 0.0f,
+                                       pScProp ? pScProp->Water.vertexWaveScale : 1.0f,
+                                       pScProp ? pScProp->Water.displacementScale : 1.0f,
+                                       (pScProp && pScProp->Water.fakeRipplesEnabled) ? 1.0f : 0.0f);
 
       RenderMesh::MeshFrameCBuffer& frameCB = it_MeshInfo->FrameCB;
       frameCB.Light0Pos = pScProp->Lights[0].Position;
@@ -2164,6 +2171,7 @@ namespace t850 {
       T8_TELEMETRY_ADD("render.mesh.packedLights", static_cast<double>(packedLights));
       infoCam.w = static_cast<float>(packedLights);
       frameCB.CameraInfo = infoCam;
+      frameCB.CameraVP = pRenderCamera->VP;
       frameCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
       frameCB.ParallaxSettings.w = m_fParallaxEnabled;
       frameCB.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
@@ -2307,7 +2315,9 @@ namespace t850 {
         }
         materialCB.MaterialParams9.w *= lightmapMul;
         materialCB.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
-        materialCB.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel, 0.0f);
+        materialCB.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel,
+                                              pScProp ? pScProp->TimeSeconds : 0.0f);
+        materialCB.WaterParams = t850::BuildWaterGpu(pScProp ? pScProp->Water : t850::WaterTunables{});
         ApplyMeshMaterialCB(it_MeshInfo->CnstBuffer, materialCB);
 
         // Phase A.5 step 2: bind shared IB pool if available, otherwise
@@ -2340,7 +2350,9 @@ namespace t850 {
         ShaderKey finalKey(sub_info->key.bits);
         finalKey.setPass(gKey.getPass());
         constexpr uint64_t featureMask = (1ull << ShaderKey::PASS_SHIFT) - 1ull;
-        finalKey.bits |= (gKey.bits & featureMask);
+        // FLUID_SURFACE lives above the low feature band but must still be
+        // propagated from the scene's instance key.
+        finalKey.bits |= (gKey.bits & (featureMask | ShaderKey::FLUID_SURFACE));
         if (finalKey.has(ShaderKey::HEIGHT_MAP) && m_fParallaxEnabled > 0.5f) {
           uint8_t pass = finalKey.getPass();
           if (pass == PassType::GBUFFER || pass == PassType::FORWARD) {
@@ -2398,8 +2410,11 @@ namespace t850 {
         auto matTex = [&](MatTexSlot slot) -> Texture* {
           return mat ? mat->textures[(int)slot] : nullptr;
         };
+        auto instanceTex = [&](int slot) -> Texture* {
+          return m_instanceMaterialMaps ? Textures[slot] : nullptr;
+        };
         if (s->key.has(ShaderKey::DIFFUSE_MAP)) {
-          Texture* t = matTex(MatTexSlot::BaseColor); if (!t) t = sub_info->DiffuseTex;
+          Texture* t = instanceTex(0); if (!t) t = matTex(MatTexSlot::BaseColor); if (!t) t = sub_info->DiffuseTex;
           bindTextureOnce(t, 0, "DiffuseTex", MaterialSamplerSlot);
         }
         if (s->key.has(ShaderKey::SPECULAR_MAP)) {
@@ -2413,7 +2428,7 @@ namespace t850 {
         }
 
         if (s->key.has(ShaderKey::NORMAL_MAP)) {
-          Texture* t = matTex(MatTexSlot::Normal); if (!t) t = sub_info->NormalTex;
+          Texture* t = instanceTex(3); if (!t) t = matTex(MatTexSlot::Normal); if (!t) t = Textures[3]; if (!t) t = sub_info->NormalTex;
           bindTextureOnce(t, 3, "NormalTex", 3);
         }
         if (EnvMap) {
@@ -2431,7 +2446,7 @@ namespace t850 {
           bindTextureOnce(t, 5, "HeightTex", 5);
         }
         if (s->key.has(ShaderKey::METALLIC_MAP)) {
-          Texture* t = matTex(MatTexSlot::Metallic); if (!t) t = sub_info->MetallicTex;
+          Texture* t = instanceTex(6); if (!t) t = matTex(MatTexSlot::Metallic); if (!t) t = sub_info->MetallicTex;
           bindTextureOnce(t, 6, "MetallicTex", 6);
         }
         bindTextureOnce(Textures[7], 7, "SceneDepthTex", 7);
@@ -2481,6 +2496,17 @@ namespace t850 {
         if (s->key.has(ShaderKey::LIGHTMAP_MAP)) {
           Texture* t = matTex(MatTexSlot::Lightmap); if (!t) t = sub_info->LightmapTex;
           bindTextureOnce(t, MaterialTextureSlot::Lightmap, "LightmapTex", LightmapSamplerSlot);
+        }
+        if (s->key.has(ShaderKey::FLUID_SURFACE)) {
+          // Solver surface plus the fabricated tiling ripple normal map. Both
+          // are read with Load()/SampleGrad() straight from the instance's own
+          // slots, so no material plumbing is involved.
+          bindTextureOnce(Textures[23], 23, "FluidSurfaceTexture", 0);
+          bindTextureOnce(Textures[22], 22, "FluidNormalTex", 0);
+          // Per-column pool floor height, so absorption uses the real depth over the steps.
+          // Each extra slot needs its own branch here: a texture bound on the instance is
+          // invisible to the shader until this list names it (implementation record bug 18).
+          bindTextureOnce(Textures[24], 24, "FluidFloorTexture", 0);
         }
 
         // Phase A.5 step 2: when using shared pools the index/vertex

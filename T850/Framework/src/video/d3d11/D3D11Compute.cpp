@@ -31,6 +31,17 @@ namespace t850 {
       return reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     }
 
+    // One place maps a compute storage format to a DXGI format, so the texture and the
+    // UAV whose format the binding check compares can never disagree.
+    DXGI_FORMAT ToDxgiStorageFormat(ComputeStorageFormat format) {
+      switch (format) {
+        case ComputeStorageFormat::Rgba8Unorm:  return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case ComputeStorageFormat::Rgba16Float: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case ComputeStorageFormat::R32Float:    return DXGI_FORMAT_R32_FLOAT;
+        default:                                return DXGI_FORMAT_UNKNOWN;
+      }
+    }
+
     ID3D11DeviceContext* GetContext() {
       return reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     }
@@ -113,8 +124,13 @@ namespace t850 {
         case D3D_SIT_SAMPLER: resource.type = ComputeBindingType::Sampler; break;
         default: return false;
       }
-      if ((resource.type == ComputeBindingType::ReadOnlyTexture || resource.type == ComputeBindingType::ReadWriteTexture) &&
-          binding.Dimension != D3D_SRV_DIMENSION_TEXTURE2D) return false;
+      if ((resource.type == ComputeBindingType::ReadOnlyTexture || resource.type == ComputeBindingType::ReadWriteTexture)) {
+        if (binding.Dimension == D3D_SRV_DIMENSION_TEXTURE3D) {
+          resource.dimension = ComputeTextureDimension::Tex3D;
+        } else if (binding.Dimension != D3D_SRV_DIMENSION_TEXTURE2D) {
+          return false;
+        }
+      }
       reflected.push_back(resource);
     }
     if (!SetValidatedLayout(desc, reflected, false)) return false;
@@ -167,6 +183,58 @@ namespace t850 {
     return pipeline->Create(GetDevice(), desc) ? std::move(pipeline) : nullptr;
   }
 
+  bool D3D11ComputeTexture3D::Create(ID3D11Device* device, const ComputeTexture3DDesc& desc, const void* initialData) {
+    if (!device || desc.width == 0 || desc.height == 0 || desc.depth == 0) return false;
+    if (desc.format == ComputeStorageFormat::Unspecified) return false;
+    // Volume contents are produced on the GPU, so CPU seeding is not supported.
+    if (initialData) return false;
+    descriptor = desc;
+
+    const DXGI_FORMAT format = ToDxgiStorageFormat(desc.format);
+    if (format == DXGI_FORMAT_UNKNOWN) {
+      T8_LOG_ERROR("[D3D11][Compute] Volume '%s' has an unsupported storage format", desc.debugName.c_str());
+      return false;
+    }
+    D3D11_TEXTURE3D_DESC textureDesc = {};
+    textureDesc.Width = desc.width;
+    textureDesc.Height = desc.height;
+    textureDesc.Depth = desc.depth;
+    textureDesc.MipLevels = 1;
+    textureDesc.Format = format;
+    textureDesc.Usage = D3D11_USAGE_DEFAULT;
+    textureDesc.CPUAccessFlags = 0;
+    textureDesc.MiscFlags = 0;
+    textureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE |
+      (desc.access == ComputeBufferAccess::ReadWrite ? D3D11_BIND_UNORDERED_ACCESS : 0);
+    if (FAILED(device->CreateTexture3D(&textureDesc, nullptr, &texture))) return false;
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
+    srvDesc.Texture3D.MipLevels = 1;
+    srvDesc.Texture3D.MostDetailedMip = 0;
+    if (FAILED(device->CreateShaderResourceView(texture.Get(), &srvDesc, &srv))) return false;
+
+    if (desc.access == ComputeBufferAccess::ReadWrite) {
+      D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+      uavDesc.Format = format;
+      uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE3D;
+      uavDesc.Texture3D.MipSlice = 0;
+      uavDesc.Texture3D.FirstWSlice = 0;
+      uavDesc.Texture3D.WSize = desc.depth;
+      if (FAILED(device->CreateUnorderedAccessView(texture.Get(), &uavDesc, &uav))) return false;
+    }
+    if (!desc.debugName.empty())
+      texture->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(desc.debugName.size()), desc.debugName.data());
+    return true;
+  }
+
+  std::unique_ptr<ComputeTexture3D> D3DXDriver::CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
+                                                                       const void* initialData) {
+    auto volume = std::make_unique<D3D11ComputeTexture3D>();
+    return volume->Create(GetDevice(), desc, initialData) ? std::move(volume) : nullptr;
+  }
+
   std::unique_ptr<ComputeBuffer> D3DXDriver::CreateComputeBuffer(const ComputeBufferDesc& desc, const void* initialData) {
     auto buffer = std::make_unique<D3D11ComputeBuffer>();
     return buffer->Create(GetDevice(), desc, initialData) ? std::move(buffer) : nullptr;
@@ -185,27 +253,39 @@ namespace t850 {
       const ComputeBindingDesc* binding = nullptr;
       D3D11ComputeBuffer* buffer = nullptr;
       D3DXTexture* texture = nullptr;
+      D3D11ComputeTexture3D* texture3D = nullptr;
       Microsoft::WRL::ComPtr<ID3D11Buffer> constants;
+      Microsoft::WRL::ComPtr<ID3D11Buffer> inlineBuffer;
+      Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> inlineSrv;
     };
     std::unordered_set<uint32_t> constants, bufferSrvs, bufferUavs;
     std::unordered_set<uint32_t> textureSrvs, textureUavs, samplers;
     std::vector<ResolvedBinding> resolved;
     resolved.reserve(bindings.size());
     for (const ComputeBindingDesc& binding : bindings) {
+      const ComputeBindingLayoutDesc* layout = nullptr;
+      for (const auto& candidate : pipeline->bindingLayout)
+        if (candidate.type == binding.type && candidate.shaderRegister == binding.shaderRegister) layout = &candidate;
+      const bool volume = layout && layout->dimension == ComputeTextureDimension::Tex3D;
       if (binding.type == ComputeBindingType::ReadWriteTexture || binding.type == ComputeBindingType::ReadOnlyTexture) {
-        const auto* texture = dynamic_cast<D3DXTexture*>(binding.texture);
-        if (!texture || !texture->pSRVTex) return false;
-        D3D11_SHADER_RESOURCE_VIEW_DESC view{};
-        texture->pSRVTex->GetDesc(&view);
-        if (view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) return false;
-        if (binding.type == ComputeBindingType::ReadWriteTexture) {
-          if (!texture->pUAVTex) return false;
-          D3D11_UNORDERED_ACCESS_VIEW_DESC output{};
-          texture->pUAVTex->GetDesc(&output);
-          for (const auto& layout : pipeline->bindingLayout)
-            if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
-                output.Format != (layout.storageFormat == ComputeStorageFormat::Rgba16Float
-                  ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
+        if (volume) {
+          const auto* texture3D = dynamic_cast<D3D11ComputeTexture3D*>(binding.texture3D);
+          if (!texture3D || !texture3D->srv) return false;
+          if (binding.type == ComputeBindingType::ReadWriteTexture && !texture3D->uav) return false;
+        } else {
+          const auto* texture = dynamic_cast<D3DXTexture*>(binding.texture);
+          if (!texture || !texture->pSRVTex) return false;
+          D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+          texture->pSRVTex->GetDesc(&view);
+          if (view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) return false;
+          if (binding.type == ComputeBindingType::ReadWriteTexture) {
+            if (!texture->pUAVTex) return false;
+            D3D11_UNORDERED_ACCESS_VIEW_DESC output{};
+            texture->pUAVTex->GetDesc(&output);
+            for (const auto& candidate : pipeline->bindingLayout)
+              if (candidate.type == binding.type && candidate.shaderRegister == binding.shaderRegister &&
+                  output.Format != ToDxgiStorageFormat(candidate.storageFormat)) return false;
+          }
         }
       }
       ResolvedBinding item;
@@ -228,8 +308,28 @@ namespace t850 {
         }
         case ComputeBindingType::ReadOnlyBuffer: {
           item.buffer = dynamic_cast<D3D11ComputeBuffer*>(binding.buffer);
-          if (!item.buffer || !item.buffer->srv || !pipeline->bufferSrvs.count(binding.shaderRegister) ||
+          if (!pipeline->bufferSrvs.count(binding.shaderRegister) ||
               !bufferSrvs.insert(binding.shaderRegister).second) return false;
+          if (item.buffer) {
+            if (!item.buffer->srv) return false;
+            break;
+          }
+          if (!binding.inlineData || !binding.inlineBytes || !binding.inlineStride) return false;
+          D3D11_BUFFER_DESC desc = {};
+          desc.ByteWidth = binding.inlineBytes;
+          desc.Usage = D3D11_USAGE_IMMUTABLE;
+          desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+          desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+          desc.StructureByteStride = binding.inlineStride;
+          D3D11_SUBRESOURCE_DATA data = {};
+          data.pSysMem = binding.inlineData;
+          if (FAILED(device->CreateBuffer(&desc, &data, &item.inlineBuffer))) return false;
+          D3D11_SHADER_RESOURCE_VIEW_DESC view = {};
+          view.Format = DXGI_FORMAT_UNKNOWN;
+          view.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+          view.Buffer.FirstElement = 0;
+          view.Buffer.NumElements = binding.inlineBytes / binding.inlineStride;
+          if (FAILED(device->CreateShaderResourceView(item.inlineBuffer.Get(), &view, &item.inlineSrv))) return false;
           break;
         }
         case ComputeBindingType::ReadWriteBuffer: {
@@ -239,15 +339,27 @@ namespace t850 {
           break;
         }
         case ComputeBindingType::ReadOnlyTexture: {
-          item.texture = dynamic_cast<D3DXTexture*>(binding.texture);
-          if (!item.texture || !item.texture->pSRVTex || !pipeline->textureSrvs.count(binding.shaderRegister) ||
-              !textureSrvs.insert(binding.shaderRegister).second) return false;
+          if (volume) {
+            item.texture3D = dynamic_cast<D3D11ComputeTexture3D*>(binding.texture3D);
+            if (!item.texture3D || !item.texture3D->srv || !pipeline->textureSrvs.count(binding.shaderRegister) ||
+                !textureSrvs.insert(binding.shaderRegister).second) return false;
+          } else {
+            item.texture = dynamic_cast<D3DXTexture*>(binding.texture);
+            if (!item.texture || !item.texture->pSRVTex || !pipeline->textureSrvs.count(binding.shaderRegister) ||
+                !textureSrvs.insert(binding.shaderRegister).second) return false;
+          }
           break;
         }
         case ComputeBindingType::ReadWriteTexture: {
-          item.texture = dynamic_cast<D3DXTexture*>(binding.texture);
-          if (!item.texture || !item.texture->pUAVTex || !pipeline->textureUavs.count(binding.shaderRegister) ||
-              !textureUavs.insert(binding.shaderRegister).second) return false;
+          if (volume) {
+            item.texture3D = dynamic_cast<D3D11ComputeTexture3D*>(binding.texture3D);
+            if (!item.texture3D || !item.texture3D->uav || !pipeline->textureUavs.count(binding.shaderRegister) ||
+                !textureUavs.insert(binding.shaderRegister).second) return false;
+          } else {
+            item.texture = dynamic_cast<D3DXTexture*>(binding.texture);
+            if (!item.texture || !item.texture->pUAVTex || !pipeline->textureUavs.count(binding.shaderRegister) ||
+                !textureUavs.insert(binding.shaderRegister).second) return false;
+          }
           break;
         }
         case ComputeBindingType::Sampler: {
@@ -279,7 +391,7 @@ namespace t850 {
           break;
         }
         case ComputeBindingType::ReadOnlyBuffer: {
-          ID3D11ShaderResourceView* raw = item.buffer->srv.Get();
+          ID3D11ShaderResourceView* raw = item.buffer ? item.buffer->srv.Get() : item.inlineSrv.Get();
           context->CSSetShaderResources(binding.shaderRegister, 1, &raw);
           break;
         }
@@ -289,12 +401,12 @@ namespace t850 {
           break;
         }
         case ComputeBindingType::ReadOnlyTexture: {
-          ID3D11ShaderResourceView* raw = item.texture->pSRVTex.Get();
+          ID3D11ShaderResourceView* raw = item.texture3D ? item.texture3D->srv.Get() : item.texture->pSRVTex.Get();
           context->CSSetShaderResources(binding.shaderRegister, 1, &raw);
           break;
         }
         case ComputeBindingType::ReadWriteTexture: {
-          ID3D11UnorderedAccessView* raw = item.texture->pUAVTex.Get();
+          ID3D11UnorderedAccessView* raw = item.texture3D ? item.texture3D->uav.Get() : item.texture->pUAVTex.Get();
           context->CSSetUnorderedAccessViews(binding.shaderRegister, 1, &raw, nullptr);
           break;
         }

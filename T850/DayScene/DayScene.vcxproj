@@ -398,6 +398,9 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     <ClCompile Include="SandboxScene.cpp" />
     <ClCompile Include="VoxelScene.cpp" />
     <ClCompile Include="MinecraftScene.cpp" />
+    <ClCompile Include="BackyardScene.cpp" />
+    <ClCompile Include="BackyardWaterJson.cpp" />
+    <ClCompile Include="BackyardSelfTest.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Application.h" />
@@ -409,6 +412,9 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     <ClInclude Include="SandboxScene.h" />
     <ClInclude Include="VoxelScene.h" />
     <ClInclude Include="MinecraftScene.h" />
+    <ClInclude Include="BackyardScene.h" />
+    <ClInclude Include="BackyardWaterJson.h" />
+    <ClInclude Include="BackyardSelfTest.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="DayScene.rc" />

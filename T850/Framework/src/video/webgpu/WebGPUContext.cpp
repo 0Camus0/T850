@@ -572,8 +572,13 @@ wgpu::Buffer WebGPUContext::AcquireBuffer(const wgpu::BufferDescriptor& descript
   return device.CreateBuffer(&descriptor);
 }
 
-wgpu::Buffer WebGPUContext::UploadUniform(const void* data, uint64_t size, uint64_t& offset) {
-  T8_TELEMETRY_ADD("webgpu.uniform_snapshot.calls", 1);
+void WebGPUContext::RecycleComputeUniforms(bool force) {
+  if (!force && m_uniformUploads.size() < 8) return;
+  m_uniformUploads.clear();
+  ++m_uniformEpoch;
+}
+
+wgpu::Buffer WebGPUContext::UploadUniform(const void* data, uint64_t size, uint64_t& offset) {  T8_TELEMETRY_ADD("webgpu.uniform_snapshot.calls", 1);
   Require(commands && data && size, "Uniform snapshot requires active commands and data");
   const uint64_t alignedSize = (size + 255) & ~uint64_t(255);
   if (m_uniformUploads.empty() || m_uniformUploads.back().data.size() + alignedSize > m_uniformUploads.back().capacity) {
@@ -667,6 +672,9 @@ void WebGPUContext::SubmitCommands(const wgpu::CommandBuffer& command) {
   for (const auto& texture : m_retiredTextures) texture.Destroy();
   m_retiredBuffers.clear();
   m_retiredTextures.clear();
+  // A headless compute loop never reaches BeginFrame, which is what bounds the queue for
+  // frames; without this a 30 s solver run kept ~3000 retired 1 MB uniform buffers alive.
+  CollectCompletedBuffers(m_submissions.size() >= 8);
 }
 
 void WebGPUContext::Shutdown() {

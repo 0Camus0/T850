@@ -225,7 +225,12 @@ Write-Output 'Windows PowerShell hashing PASS'
         Assert-True ($env:PSModulePath -eq $incompatiblePath) 'Child launch changed the parent module search path'
         $captured.Clear()
         $exitCode = Invoke-LoggedProcess -FilePath $env:ComSpec -Arguments @('/d', '/c', 'set', 'PSModulePath') -WorkingDirectory $directory
-        Assert-True ($exitCode -eq 0 -and $captured.Contains('PSModulePath=' + $incompatiblePath)) 'Non-PowerShell child environment was changed'
+        # `set <name>` prints the name in the casing the environment block stored it with, which is
+        # `PSMODULEPATH` when PowerShell created the variable. Windows environment names are
+        # case-insensitive, so compare the value and let the name be any casing.
+        $childModulePaths = @($captured | Where-Object { $_ -match '(?i)^PSModulePath=' } |
+            ForEach-Object { $_.TrimEnd().Substring('PSModulePath='.Length) })
+        Assert-True ($exitCode -eq 0 -and ($childModulePaths -contains $incompatiblePath)) 'Non-PowerShell child environment was changed'
         Write-Output 'Launcher logged-process module isolation PASS'
     } finally {
         $env:PSModulePath = $parentModulePath
@@ -381,6 +386,68 @@ function Test-ShaderCompileQueue([string]$Name) {
 
 Test-ShaderCompileQueue 'Launcher.ps1'
 Test-ShaderCompileQueue 'Launcher_Release.ps1'
+
+function Test-CloudAssetContract([string]$Name) {
+    # Both launchers must load the cloud asset helpers and ask for the whole texture set before the
+    # engine starts. Without this a fresh install launches scene 7 with no ball textures (gate 10
+    # then fails at run time) or no Backyard meshes, which is exactly the gap item E closed. CI has
+    # no Assets\Textures\Ball, so only the manifest half can be proven there.
+    $parseErrors = $null
+    $tokens = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $Name), [ref]$tokens, [ref]$parseErrors)
+    Assert-True ($parseErrors.Count -eq 0) "$Name has syntax errors: $parseErrors"
+
+    # The launchers assign the helper path to a variable first and dot-source that variable, so the
+    # dot-source itself never mentions the file name. Follow the assignment.
+    $modelCloudVariables = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Extent.Text -match 'ModelCloud\.ps1'
+    }, $true) | ForEach-Object { $_.Left.Extent.Text })
+    Assert-True ($modelCloudVariables.Count -gt 0) "$Name never resolves ModelCloud.ps1"
+    $dotSourced = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.InvocationOperator -eq [Management.Automation.Language.TokenKind]::Dot -and
+        $node.CommandElements.Count -ge 1 -and
+        $modelCloudVariables -contains $node.CommandElements[0].Extent.Text
+    }, $true))
+    Assert-True ($dotSourced.Count -gt 0) "$Name never dot-sources ModelCloud.ps1; the cloud asset helpers would not exist"
+
+    $calls = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.GetCommandName() -eq 'Ensure-T850CloudTextures'
+    }, $true))
+    Assert-True ($calls.Count -gt 0) "$Name never calls Ensure-T850CloudTextures"
+    foreach ($call in $calls) {
+        $names = @($call.CommandElements |
+            Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] } |
+            ForEach-Object { [string]$_.ParameterName })
+        Assert-True ($names -contains 'RootDir') "$Name calls Ensure-T850CloudTextures without -RootDir"
+        foreach ($banned in @('Folder', 'Folders', 'Only', 'Filter', 'Include', 'SkipTextures')) {
+            Assert-True ($names -notcontains $banned) "$Name passes -$banned to Ensure-T850CloudTextures; the launcher must request the whole texture set"
+        }
+    }
+    Write-Output "$Name cloud asset contract PASS"
+}
+
+Test-CloudAssetContract 'Launcher.ps1'
+Test-CloudAssetContract 'Launcher_release.ps1'
+
+function Test-BallTextureManifest {
+    $script = Join-Path $PSScriptRoot 'validation\check_ball_textures.ps1'
+    Assert-True (Test-Path -LiteralPath $script) 'validation/check_ball_textures.ps1 is missing'
+    # Run it as a child process: `exit` inside a dot-sourced/piped script does not reliably reach
+    # $LASTEXITCODE in the caller, and this check lives or dies by that exit code.
+    $shell = (Get-Process -Id $PID).Path
+    $output = @(& $shell -NoProfile -File $script -SkipDisk 2>&1 | ForEach-Object { [string]$_ })
+    $exitCode = $LASTEXITCODE
+    Assert-True ($exitCode -eq 0) "check_ball_textures.ps1 -SkipDisk exited ${exitCode}`n$($output -join [Environment]::NewLine)"
+    Write-Output ($output | Select-Object -Last 1)
+}
+
+Test-BallTextureManifest
 
 function Test-LauncherUi([string]$Name) {
     $parseErrors = $null

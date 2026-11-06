@@ -88,6 +88,7 @@ namespace t850 {
         }
       }
       if (!match || match->constantCount != declared.constantCount) return false;
+      if (match->dimension != declared.dimension) return false;
       if (match->storageFormat != ComputeStorageFormat::Unspecified) {
         if (declared.storageFormat != ComputeStorageFormat::Unspecified && declared.storageFormat != match->storageFormat)
           return false;
@@ -111,6 +112,9 @@ namespace t850 {
       if (!layout || !consumed.insert(layout).second) return false;
       if (binding.type == ComputeBindingType::Constants32) {
         if (!binding.constants || !binding.constantCount || binding.constantCount != layout->constantCount) return false;
+      } else if (binding.type == ComputeBindingType::ReadOnlyBuffer && !binding.buffer) {
+        if (!binding.inlineData || !binding.inlineBytes || !binding.inlineStride ||
+            binding.inlineBytes % binding.inlineStride) return false;
       } else if (binding.type == ComputeBindingType::ReadOnlyBuffer || binding.type == ComputeBindingType::ReadWriteBuffer) {
         if (!binding.buffer || (binding.type == ComputeBindingType::ReadWriteBuffer &&
             binding.buffer->descriptor.access != ComputeBufferAccess::ReadWrite)) return false;
@@ -118,15 +122,19 @@ namespace t850 {
           if (!writes.insert(binding.buffer).second) return false;
         } else reads.insert(binding.buffer);
       } else {
-        if (!binding.texture) return false;
+        const bool volume = layout->dimension == ComputeTextureDimension::Tex3D;
+        const void* resource = volume
+          ? static_cast<const void*>(binding.texture3D)
+          : static_cast<const void*>(binding.texture);
+        if (!resource) return false;
         if (binding.type == ComputeBindingType::ReadWriteTexture) {
-          if (!writes.insert(binding.texture).second) return false;
-        } else if (binding.type == ComputeBindingType::ReadOnlyTexture) reads.insert(binding.texture);
+          if (!writes.insert(resource).second) return false;
+        } else if (binding.type == ComputeBindingType::ReadOnlyTexture) reads.insert(resource);
         else {
           bool paired = false;
           for (const auto& sampled : bindings)
             if (sampled.type == ComputeBindingType::ReadOnlyTexture && sampled.shaderRegister == binding.shaderRegister &&
-                sampled.texture == binding.texture) paired = true;
+                (volume ? sampled.texture3D == binding.texture3D : sampled.texture == binding.texture)) paired = true;
           if (!paired) return false;
         }
       }
@@ -672,6 +680,7 @@ namespace t850 {
       if (key.has(ShaderKey::NO_LIGHT))       Defines += "#define NO_LIGHT\n\n";
       if (key.has(ShaderKey::OMNI_SHADOWS))   Defines += "#define OMNIDIRECTIONAL_SH\n\n";
       if (key.has(ShaderKey::NO_ENVIRONMENT)) Defines += "#define NO_ENVIRONMENT\n\n";
+      if (key.has(ShaderKey::FLUID_SURFACE))  Defines += "#define FLUID_SURFACE\n\n";
 
       // Effect toggles
       if (key.has(ShaderKey::PARALLAX))       Defines += "#define ENABLE_PARALLAX\n\n";

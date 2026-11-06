@@ -3,11 +3,21 @@
         <activity android:name=".LauncherActivity"
                   android:alwaysRetainTaskState="true"
                   android:exported="true"
+                  android:resizeableActivity="false"
                   android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- The production flavour makes this the entry point, so a shipped install always has the
+             cloud assets before the engine starts. A development build keeps the launcher as its
+             entry point (assets are usually packaged or already downloaded during development), but
+             the activity is declared so it can be run on demand:
+             adb shell am start -n com.t850.engine/.AssetDownloadActivity -->
+        <activity android:name=".AssetDownloadActivity"
+                  android:exported="true"
+                  android:screenOrientation="landscape"
+                  android:theme="@style/T850DownloadTheme" />
     </application>
 </manifest>

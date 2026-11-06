@@ -1568,7 +1568,8 @@ permutation behavior, not an established missing-port defect.
 ### Evidence
 
 - `T850/Assets/Shaders/FS_Quad.wgsl` is 796 lines against 1,748 for
-  `FS_Quad.hlsl`; `FS_Mesh.wgsl` is 727 against 994.
+  `FS_Quad.hlsl`; `FS_Mesh.wgsl` is 727 against 994 (measured at the time of this item;
+  `FS_Mesh.wgsl` grew to carry the water path later).
 - **Correction, 2026-09-18.** An earlier revision of this item claimed six
   missing passes. That was a methodology error: the check matched only
   `#if defined(X)` and `#elif defined(X)`, while `FS_Quad.wgsl` uses 20 `#ifdef`

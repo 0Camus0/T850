@@ -103,6 +103,9 @@ Escape closes the application unless `AppBase::IsModalActive()` returns true.
 `Win32Framework` supports:
 
 - relative mouse mode when `AppBase::WantsRelativeMouseMode()` is true;
+- no capture at all while `AppBase::AllowsMouseCapture()` is false (scene policy, Backyard's
+  Ctrl modifier, or `--unattended`);
+- windows created without activation under `--unattended`;
 - cursor hide/show;
 - cursor confinement for modal UI;
 - mouse delta reset on window state changes.
@@ -166,7 +169,11 @@ Important behavior:
 - creates `VulkanDriver`;
 - refreshes `EngineContext`;
 - calls `AppBase::CreateAssets()`;
-- runs an update loop similar to Windows.
+- returns to `main()`, which runs `UpdateApplication()` (or a self-test such as
+  `--backyard-selftest`) and then `OnDestroyApplication()`, as on Windows.
+
+Until 2026-11-02 `OnCreateApplication` ran the whole loop and tore the app down before returning,
+so every `main()` self-test flag on Linux silently ran the interactive scene instead.
 
 ```mermaid
 flowchart TD
@@ -178,7 +185,8 @@ flowchart TD
   Window --> Driver["VulkanDriver"]
   Driver --> Context["RefreshEngineContextFromGlobals"]
   Context --> Assets["AppBase::CreateAssets"]
-  Assets --> Loop["UpdateApplication loop"]
+  Assets --> Main["main(): self-test or UpdateApplication loop"]
+  Main --> Destroy["OnDestroyApplication"]
 ```
 
 `LinuxFramework::ProcessInput()` uses SDL key/mouse/gamepad/window events and feeds `InputManager`.

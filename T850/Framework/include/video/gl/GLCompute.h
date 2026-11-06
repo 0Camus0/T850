@@ -27,6 +27,17 @@ namespace t850 {
     GLuint buffer = 0;
   };
 
+  // Volume (3D) storage texture for the fluid solver (W-28). The image unit binding uses
+  // `internalFormat`, so it must be the GL sized format the shader's layout() qualifier names.
+  class GLComputeTexture3D final : public ComputeTexture3D {
+  public:
+    ~GLComputeTexture3D() override;
+    bool Create(const ComputeTexture3DDesc& desc, const void* initialData);
+
+    GLuint texture = 0;
+    GLenum internalFormat = 0;
+  };
+
 } // namespace t850
 #endif
 #endif

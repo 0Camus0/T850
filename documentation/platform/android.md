@@ -135,6 +135,23 @@ Surface resume order is:
 
 Verified in PR CI: both `arm64-v8a` and `x86_64` Release APK jobs pass. Local development and production Debug APK builds also pass; install/launch and performance still require a connected device or emulator.
 
+`ResizeSwapchain` must not trust `VkSurfaceCapabilitiesKHR::currentExtent` while the
+surface is still settling: DeX and some Android compositors report `0x0` during
+recreation, and a 0x0 swapchain answers `VK_ERROR_OUT_OF_DATE_KHR` forever.
+`ResolveSwapchainExtent` clamps to the ANativeWindow size and refuses zero-area
+extents, and recreation is deferred until the surface reports a real size.
+
+A frame must acquire its swap chain image before it presents. A scene that dispatches
+compute in `OnUpdate` (the Backyard fluid solver) opens the frame as `Offscreen`, so
+`BeginFrame` does not acquire; `EnsureFrameSwapchainImage` acquires at the frame's first
+backbuffer use (`Clear`, `ClearBackbufferWithColor`, `EnsureBackbufferRenderPass`) or in
+`CompleteFrame`. Without it Mali answered `OUT_OF_DATE` to every present of the
+unacquired image (black window), and once present was gated on a real acquire the window
+froze on its first frame while the simulation kept running. Desktop NVIDIA tolerated the
+unacquired present, which hid the bug on Windows. A frame that never acquired does not
+present.
+
+
 ## Asset Profiles
 
 Development APKs filter `Assets/` to control package size:
@@ -145,11 +162,46 @@ Development APKs filter `Assets/` to control package size:
 | `doom-porsche` | Doomslayer/ragdoll metadata and Porsche showcase |
 | `q3-sandbox` | Q3 scene/render assets and selected characters/models |
 | `models-full` | Common runtime assets plus all supported model files and ragdoll metadata |
+| `backyard` | Backyard scene (index 7): `Models/Backyard/*`, fluid pool layout, `Shaders/spirv/*`, ball PBR palette. Skips the unrelated sky cubemaps; ~80 MB APK |
 | `full` | Entire source asset tree except generated caches/exclusions |
 
 Production flavor uses tracked runtime scene/shader/texture assets and metadata; cloud/download strategy supplies heavyweight payloads where applicable.
 
 Generated caches and build products are excluded from packaged assets.
+
+## Shader Permutation Precompilation
+
+Android has no runtime HLSL front end worth paying for at launch, so every
+shader the scene can ask for is compiled to SPIR-V while the APK is assembled.
+
+- `Assets/Shaders/shader_permutations.json` is the checked-in union of the
+  graphics keys (`<name>.<KEY16>.spv`) and compute kernels
+  (`<name>.<permutation>.spv`) used by the shipped scenes. Regenerate it with
+  `DayScene --scene <n> --dumpShaderPermutations --shaderPermutationOutput <path>`
+  and merge, never replace: dropping another scene's entries breaks that scene.
+- `android/app/build.gradle` walks the union and emits
+  `Assets/Shaders/spirv/*.spv` with `-DT850_VULKAN=1 -DT850_SPIRV=1`. The
+  Backyard profile currently carries 286 graphics + 31 compute outputs.
+- `VulkanShader` reads `<name>.<KEY16>.spv`, `VulkanCompute` reads
+  `<name>.<permutation>.spv`; both fall back to glslang at runtime if an entry
+  is missing, so a missing permutation costs startup time, not correctness.
+- Shaders created without a permutation key (the `TextRenderer` HUD pair
+  `VS_Text`/`FS_Text`) always compile from source and log at debug level.
+
+Verify the cache is actually used by building with `LOG_LEVEL 2` and looking for
+`[Vulkan][Compute] Precompiled SPIR-V hit` (one line per kernel) and zero
+`Missing precompiled SPIR-V` lines.
+
+## Fullscreen Behaviour
+
+Both activities are declared `android:resizeableActivity="false"` and
+`android:screenOrientation="landscape"`. On Samsung DeX a non-resizable activity
+cannot be windowed, so the game task becomes `mode=fullscreen` and the surface
+is the whole display (2960x1848 on the SM-X920 reference tablet) instead of a
+freeform window. If a DeX desktop task is already minimized, launch is enough;
+otherwise force the task out of the desktop with
+`adb shell cmd statusbar click-tile com.sec.android.app.launcher/com.honeyspace.dexservice.DesktopModeTile`.
+
 
 ## Output APKs
 
@@ -271,6 +323,22 @@ $adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
 ```
 
 Use `adb logcat` for native crashes and Vulkan validation output.
+
+### Reproducible auto-run
+
+`LauncherActivity` deduplicates auto-run intents by the intent URI (or an
+explicit `RUN_ID`) and remembers the consumed key in preferences. Repeating the
+same `am start` after force-stopping the app launches the launcher UI instead of
+the scene. Pass a fresh `RUN_ID` for every run:
+
+```powershell
+& $adb shell am start -n com.t850.engine/.LauncherActivity `
+    --ez com.t850.engine.extra.AUTO_RUN true `
+    --ei com.t850.engine.extra.SCENE 7 `
+    --ei com.t850.engine.extra.LOG_LEVEL 2 `
+    --es com.t850.engine.extra.RUN_ID "run-$(Get-Random)"
+```
+
 
 ## CI Behavior
 

@@ -1409,9 +1409,10 @@ directional orthographic mesh shadow shader unchanged.
 
 ## 23. Lighting integration and multiple shadowed lights
 
-The current `ShadowAccum` texture is one screen-space factor consumed by deferred lighting.
-It naturally supports one primary directional shadow. It cannot correctly represent several
-independently shadowed point lights because one scalar factor would shadow unrelated lights.
+The current `ShadowAccum` target carries two screen-space factors consumed by deferred lighting:
+**R = sun shadow** and **G = SSAO**. It naturally supports one primary directional shadow. It
+cannot correctly represent several independently shadowed point lights because one scalar
+shadow factor would shadow unrelated lights.
 
 ### 23.1 CSM milestone contract
 
@@ -1423,8 +1424,8 @@ independently shadowed point lights because one scalar factor would shadow unrel
 
 ### 23.1.1 Shadow accumulation and softness controls
 
-Minecraft uses `ShadowAccum`. `Shadow Accumulation` evaluates CSM PCF and SSAO into one R8
-screen-space factor, the vertical and horizontal passes blur that factor with Gaussian kernel
+Minecraft uses `ShadowAccum`. `Shadow Accumulation` evaluates CSM PCF into R and SSAO into G of
+an RGBA8 screen-space target, the vertical and horizontal passes blur it with Gaussian kernel
 0, and Deferred samples the resulting `ShadowAccum:COLOR0` from slot 5. The blur is not
 bypassed.
 
@@ -1444,10 +1445,17 @@ SSAO, select `Shadow`, then increase Radius and Sigma before increasing Taps. A 
 comparison from radius/sigma/taps `1/1/3` to `3/8/45` increased intermediate shadow-edge
 pixels from 3,737 to 190,886 at 640x360.
 
-Shadow and SSAO currently share the scalar as `shadow * occlusion`. Consequently Gaussian
-kernel 0 filters both together; the stronger visible response on SSAO comes from its
-high-frequency noise, while PCF shadows are already low-frequency. Independent filtering
-would require separate shadow and AO targets/channels and is outside this one-factor contract.
+Shadow and SSAO are separate channels (`c4c680dc`; before that they shared one R8 scalar as
+`shadow * occlusion`). Deferred lighting (`FS_Quad` HLSL, GLSL and WGSL alike) applies them
+differently:
+
+- **R, sun shadow:** multiplies directional light only. Point lights, including the tiled
+  light-volume pass, are never darkened by the sun's shadow map.
+- **G, SSAO:** multiplies indirect light only (IBL and ambient), never direct light.
+
+Gaussian kernel 0 still filters both channels together; the stronger visible response on SSAO
+comes from its high-frequency noise, while PCF shadows are already low-frequency. Independent
+filtering would need separate blur passes per channel.
 
 HLSL and GLSL must sample the same full tap range. Do not drop the first and last GLSL taps;
 doing so changes normalization and makes softness backend-dependent.

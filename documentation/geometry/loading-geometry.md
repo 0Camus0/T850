@@ -240,7 +240,7 @@ flowchart TD
 |---|---|---|
 | `POSITION` | `xMeshGeometry::Positions` | Required. Transformed by node world matrix for static meshes. |
 | `NORMAL` | `Normals` | Generated as flat normals if missing. |
-| `TANGENT` | `Tangents` and generated `Binormals` | If missing and normals/UV0 exist, MikkTSpace tangents are generated; naive tangents are fallback. |
+| `TANGENT` | `Tangents` and generated `Binormals` | If missing and normals/UV0 exist, MikkTSpace tangents are generated; naive tangents are fallback. Generated `w` follows glTF handedness: glTF V runs down the image, so the sign MikkTSpace returns for raw glTF UVs is negated (matching what Blender exports). |
 | `TEXCOORD_0..3` | `TexCoordinates[0..3]` | Up to four UV channels. |
 | `COLOR_0` | `VertexColors` | Read into geometry, but later render layout support should be verified before relying on it. |
 | `JOINTS_0` | `SkinIndices` | Stored as four floats in a vec4 slot. |

@@ -20,6 +20,9 @@ const { values } = parseArgs({ allowNegative: true, options: {
   launcher: { type: 'boolean', default: false },
   'minecraft-welcome': { type: 'boolean', default: false },
   'console-logs': { type: 'boolean', default: false },
+  // Browser console capture for diagnosis, independent of the launcher's Minecraft welcome flow:
+  // writes the browser log next to the run output and into the report.
+  'browser-logs': { type: 'boolean', default: false },
   'asset-bundle': { type: 'boolean', default: false },
   'bundle-cache': { type: 'boolean', default: false },
   soak: { type: 'string', default: '0' },
@@ -67,7 +70,7 @@ if (!Number.isInteger(digSeconds) || digSeconds < 0 || digSeconds > 300) throw n
 const output = resolve(values.output ?? `../build/web/${values.browser}`);
 await mkdir(output, { recursive: true });
 const builder = new Builder().forBrowser(values.browser === 'edge' ? 'MicrosoftEdge' : values.browser);
-if (values['console-logs'] && values.browser === 'chrome') builder.setCapability('goog:loggingPrefs', { browser: 'ALL' });
+if ((values['console-logs'] || values['browser-logs']) && values.browser === 'chrome') builder.setCapability('goog:loggingPrefs', { browser: 'ALL' });
 if (values['url-diagnostics']) builder.setCapability('webSocketUrl', true);
 const driverLog = openSync(resolve(output, values.browser === 'edge' ? 'msedgedriver.log' : values.browser === 'chrome' ? 'chromedriver.log' : 'geckodriver.log'), 'w');
 const chromiumSoftwareWebGpuArguments = [
@@ -450,7 +453,13 @@ try {
       const state = await driver.executeScript('return window.t850');
       const errors = unexpectedErrors(state?.errors);
       if (errors.length) throw new Error(errors.join('\n'));
-      return state?.logs?.some(line => line.includes('[ComputeSelfTest] PASS: arithmetic and odd-sized image kernels'));
+      const logs = state?.logs ?? [];
+      // Match the stable prefix, not the whole sentence: the message grew a clause when the
+      // volumetric storage case landed, and the old full-string match then timed out on a
+      // passing run. A failure is asserted explicitly so a SKIP cannot pass as a PASS.
+      const failed = logs.filter(line => line.includes('[ComputeSelfTest] FAIL'));
+      if (failed.length) throw new Error('Compute self-test reported FAIL:\n' + failed.join('\n'));
+      return logs.some(line => line.includes('[ComputeSelfTest] PASS:'));
     }, 180000, 'GPU compute correctness self-test did not complete');
     report.computeSelfTest = true;
   } else if (!values.probe && !values['device-loss-recovery']) {

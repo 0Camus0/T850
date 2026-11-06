@@ -38,7 +38,9 @@ export function parseCloudAssetCatalog(input) {
     if (size !== undefined && (!Number.isSafeInteger(size) || size < 0)) throw new Error('Invalid cloud asset size');
     const contentType = route.contentType ?? 'application/octet-stream';
     if (typeof contentType !== 'string' || !contentType || /[\r\n]/.test(contentType)) throw new Error('Invalid cloud asset content type');
-    routes.set(resource, { url: url.href, contentType, size });
+    const sha256 = route.sha256 === undefined ? undefined : String(route.sha256).toLowerCase();
+    if (sha256 !== undefined && !/^[0-9a-f]{64}$/.test(sha256)) throw new Error('Invalid cloud asset sha256');
+    routes.set(resource, { url: url.href, contentType, size, sha256 });
   }
   if (!routes.size) throw new Error('Cloud asset catalog is empty');
   return routes;
@@ -47,7 +49,9 @@ export function parseCloudAssetCatalog(input) {
 export async function createCloudAssetCatalog(fetchManifest = fetch) {
   const cloud = await loadCloudResources(publicAssetManifests, fetchManifest);
   const routes = Object.fromEntries([...cloud.entries()].sort(([left], [right]) => left.localeCompare(right))
-    .map(([resource, route]) => [resource, { url: route.url, contentType: route.contentType, size: route.size }]));
+    .map(([resource, route]) => [resource, {
+      url: route.url, contentType: route.contentType, size: route.size, sha256: route.sha256,
+    }]));
   const catalog = { version: 1, manifests: publicAssetManifests.map(entry => entry.manifestUrl), routes };
   parseCloudAssetCatalog(catalog);
   return catalog;

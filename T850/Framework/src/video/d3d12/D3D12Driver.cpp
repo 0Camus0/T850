@@ -15,6 +15,7 @@
 #include <debug/RuntimeTelemetry.h>
 #include <debug/GpuTimestampProfiler.h>
 #include <core/Config.h>
+#include <SDL3/SDL.h>
 #include <iostream>
 #include <string>
 #include <cassert>
@@ -394,7 +395,12 @@ namespace t850 {
   //  D3D12Driver — Core lifecycle
   // ══════════════════════════════════════════════════════
 
-  void D3D12Driver::SetWindow(void* window) { m_hwnd = GetActiveWindow(); }
+  void D3D12Driver::SetWindow(void* window) {
+    // The given window, not the active one: an unattended window is never activated.
+    m_hwnd = window ? static_cast<HWND>(SDL_GetPointerProperty(
+        SDL_GetWindowProperties(static_cast<SDL_Window*>(window)), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) : nullptr;
+    if (!m_hwnd) m_hwnd = GetActiveWindow();
+  }
 
   void D3D12Driver::SetWindowHandle(const WindowHandle& handle) {
     // Editor host path: honor an explicit HWND (e.g. an editor child window
@@ -966,6 +972,17 @@ namespace t850 {
     if (!m_frameStarted) {
       return;
     }
+    // Every path below submits this frame, so async readbacks recorded in it become ready.
+    // Stamp the fence value onto them here: the back-buffer index is pinned for offscreen
+    // compute frames, so m_frameFenceValues[] would be overwritten by the next frame before
+    // anyone could read it.
+    const uint64_t completingSerial = m_frameSerial++;
+    auto stampReadbacks = [this, completingSerial](UINT64 value) {
+      for (auto& frameSlots : m_pendingReadbacks)
+        for (PendingReadback& readback : frameSlots)
+          if (readback.pending && readback.serial == completingSerial)
+            readback.fenceValue = value;
+    };
 #if T850_ENABLE_GPU_PROFILING
     if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->EndFrame();
 #endif
@@ -982,6 +999,7 @@ namespace t850 {
       const UINT64 fenceVal = m_nextFenceValue++;
       m_commandQueue->Signal(m_fence.Get(), fenceVal);
       m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+      stampReadbacks(fenceVal);
     #if T850_ENABLE_GPU_PROFILING
       if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(fenceVal);
     #endif
@@ -1026,6 +1044,7 @@ namespace t850 {
     const UINT64 fenceVal = m_nextFenceValue++;
     m_commandQueue->Signal(m_fence.Get(), fenceVal);
     m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+    stampReadbacks(fenceVal);
   #if T850_ENABLE_GPU_PROFILING
     if (g_gpuTimestampProfiler) g_gpuTimestampProfiler->OnSubmitted(fenceVal);
   #endif
@@ -1273,6 +1292,7 @@ namespace t850 {
       m_heaps[D3D12Heap::SAMPLER].GetHeap()
     };
     m_commandLists[m_currentBackBuffer]->SetDescriptorHeaps(2, heaps);
+    InvalidatePipelineStateCache();
 
     // Rebind back buffer render targets, viewport, and scissor
     // (OM state is lost after command list reset)
@@ -1729,6 +1749,23 @@ namespace t850 {
     T8_TELEMETRY_SET("gpu.ring.capacity_bytes", kCBRingBufferSize);
     if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return gpuAddr;
+  }
+
+  bool D3D12Driver::AllocateRingUpload(UINT64 size, UINT64 alignment, ID3D12Resource*& resource,
+                                       UINT64& offset, void*& mapped) {
+    if (!m_frameStarted || size == 0 || alignment == 0) return false;
+    const UINT64 start = (static_cast<UINT64>(m_cbRingOffset) + alignment - 1) / alignment * alignment;
+    // Keep the ring's 256-byte granularity for the CB allocations that follow.
+    const UINT64 end = (start + size + 255) & ~static_cast<UINT64>(255);
+    if (end > kCBRingBufferSize) return false;
+    resource = m_cbRingBuffers[m_currentBackBuffer].Get();
+    offset = start;
+    mapped = static_cast<unsigned char*>(m_cbRingMapped[m_currentBackBuffer]) + start;
+    m_cbRingOffset = static_cast<UINT>(end);
+    RuntimeTelemetry::RecordActiveStaging(size);
+    T8_TELEMETRY_SET("gpu.ring.peak_bytes", m_cbRingOffset);
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
+    return true;
   }
 
   D3D12_GPU_DESCRIPTOR_HANDLE D3D12Driver::AllocateDynamicCBV(const void* data, UINT dataSize) {

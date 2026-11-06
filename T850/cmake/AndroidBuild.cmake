@@ -118,6 +118,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/XMaths.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Technique.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ConfigRuntime.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/DeviceInfo.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/RuntimeProfile.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ComputeKernelRegistry.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderDiskCache.cpp
@@ -184,6 +185,8 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/IBLResources.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/EditorSceneFile.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderGraph.cpp
+${T850_SOURCE_DIR}/Framework/src/simulation/FluidSimulation.cpp
+${T850_SOURCE_DIR}/Framework/src/simulation/FluidDebugRenderer.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/ShadowSystem.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneDescriptor.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneSetup.cpp
@@ -237,6 +240,8 @@ add_library(T850Android SHARED
   ${T850_SOURCE_DIR}/DayScene/SandboxScene.cpp
   ${T850_SOURCE_DIR}/DayScene/VoxelScene.cpp
   ${T850_SOURCE_DIR}/DayScene/MinecraftScene.cpp
+  ${T850_SOURCE_DIR}/DayScene/BackyardScene.cpp
+  ${T850_SOURCE_DIR}/DayScene/BackyardWaterJson.cpp
   ${T850_ANDROID_FRAMEWORK_SOURCES})
 
 target_compile_definitions(T850Android PRIVATE

@@ -38,14 +38,112 @@ flowchart LR
   the explicit cross-backend binding layout;
 - `ComputeBufferDesc`: byte size, structure stride, access, and debug name;
 - `ComputeBindingDesc`: constants, structured buffers, textures, and samplers by shader
-  register;
+  register. A `ReadOnlyBuffer` binding may instead carry per-dispatch data
+  (`inlineData`, `inlineBytes`, `inlineStride`) with no persistent buffer: D3D12 copies it
+  into the per-frame upload ring and binds a root SRV, Vulkan into the frame's uniform ring
+  (created with storage-buffer usage), and D3D11 into an immutable structured buffer plus SRV.
+  This is how a kernel receives a variable-length list (the fluid solver's per-body velocities
+  and body spheres) without growing root constants;
 - `ComputePipeline` and `ComputeBuffer`: backend-owned polymorphic resources;
-- `CreateComputePipeline`, `CreateComputeBuffer`, `DispatchCompute`, and
-  `ReadComputeBuffer` virtual methods;
+- `CreateComputePipeline`, `CreateComputeBuffer`, `DispatchCompute`,
+  `ReadComputeBuffer`, and the asynchronous pair `RequestComputeReadback` /
+  `ConsumeComputeReadback` virtual methods;
 - `SupportsComputeShaders`, `SupportsComputeTextures`, and `ApiTag` capabilities.
 
 The base implementations fail explicitly. This keeps unsupported backends safe and makes
 capability selection a render-graph concern instead of a scene-side API switch.
+
+### Volumetric storage textures
+
+3D compute workloads (fluid volumes) use `ComputeTexture3D`, created through
+`CreateComputeTexture3D(ComputeTexture3DDesc)` and reported by
+`SupportsComputeTextures3D()`. A binding declares
+`ComputeBindingLayoutDesc::dimension = ComputeTextureDimension::Tex3D`; dispatch then
+requires `ComputeBindingDesc::texture3D` instead of `texture`.
+
+Reflection rejects a declared 2D/3D mismatch, so a kernel declaring `Texture3D` cannot be
+fed a 2D texture and vice versa. Volumes accept RGBA16F, RGBA8 UNORM or R32F storage, are
+created empty, and are seeded by a dispatch; CPU initial data is rejected. Dispatch depth
+is the third workgroup dimension and is still limited to 65535 groups.
+
+Current implementation status:
+
+| Backend | 3D compute storage |
+|---|---|
+| D3D11 | supported (CS 5.0, `TEXTURE3D` SRV/UAV) |
+| D3D12 | supported (`TEXTURE3D` resource plus SRV/UAV descriptors) |
+| Vulkan | supported (storage images are write-only: `[[spv::nonreadable]]`, so fields ping-pong) |
+| WebGPU/Dawn | supported since 2026-11-01: `texture_storage_3d` write-only for RGBA16F and R32F, `texture_3d` for reads (see below) |
+| OpenGL | not yet; capability false, callers fall back |
+
+`--compute-selftest` runs deterministic 1x1x1, 9x5x3 and 33x17x7 volume write/readback
+cases whenever the backend reports the capability, and skips them otherwise.
+
+#### WebGPU specifics
+
+The volume path is one `wgpu::Texture` with `dimension = e3D` and usage
+`StorageBinding | TextureBinding | CopySrc | CopyDst`, plus a single e3D view used for both the
+storage and the sampled binding (WebGPU never allows both in one dispatch, which matches the
+solver's ping-pong). Initial data goes through `Queue::WriteTexture`.
+
+Three Tint limits shape the shaders, and all three abort the process rather than failing
+gracefully:
+
+1. **`InterlockedAdd` / `InterlockedMax` on a vector component** ICEs the SPIR-V reader
+   (`vector_element_pointer.cc`). Every atomic accumulator is therefore a flat `uint` array:
+   `CS_FluidDiagnostics3D` (8 words), `CS_FluidVolumeReduce3D` (`entry * 4 + word`) and the two
+   volume self-test readers.
+2. **`isfinite` / `isnan` / `isinf` on a float3** hits the same ICE. Test the exponent bits
+   instead — `(asuint(v.x) & 0x7F800000) != 0x7F800000` — which is exact and lowers cleanly.
+3. **A shader family name may not carry a `#permutation` suffix**: the WGSL-first attempt
+   resolves the file from the requested name and rejects any extension but `.hlsl`/`.wgsl`, so
+   `CS_FluidSeed3D.hlsl#divergent` failed to prepare. The driver strips everything from `#`
+   before resolving; the permutation still reaches the disk-cache key through the defines.
+
+Inline `ReadOnlyBuffer` bindings (the solver's per-dispatch body list) have no WebGPU
+equivalent, so the driver copies them into a transient `Storage` buffer per dispatch.
+
+**The WGSL twins are a fallback, not the default.** `Assets/Shaders/*.wgsl` are hand-maintained
+translations, and the native `auto` flow used to try them first. `FS_Mesh.wgsl` and `VS_Mesh.wgsl`
+predated the fluid surface, so scene 7 rendered the pool from a shader with no `FLUID_SURFACE` path
+while the permutation was compiled and bound correctly — the water looked flat and opaque and the
+submerged parts of the balls were hidden. `auto` now compiles the HLSL (`actual=spirv` in the log,
+cached on disk) and only falls back to the twin; `--shaderFlow wgsl` still selects the twins
+explicitly, and the browser build uses packaged WGSL generated from the HLSL. **Keep in mind:** a
+hand-written twin is another copy that can drift, exactly like the duplicated cbuffers in W-14.
+
+**The twins were brought back to parity (2026-11-05).** `VS_Mesh.wgsl` gained `TimeParams` and the
+`FLUID_SURFACE` displacement, and `FS_Mesh.wgsl` gained `CameraVP`, the `Water*` material block and
+the whole water composite (ripples, refraction, absorption, caustics, SSR, foam). The Dawn shader
+probe now reports 10/10, including `WgslVertexPermutations` and `WgslRecordedPermutations` over every
+recorded permutation, and scenes 3 and 6 render **pixel-identical** back buffers with
+`--shaderFlow auto` and `--shaderFlow wgsl`. Strict `wgsl` still cannot run scene 7 because the new
+fluid compute kernels are HLSL-only (no `.wgsl` twins), which fails loudly instead of rendering
+waterless.
+
+**Do not declare two samplers on one register.** `FS_Mesh.hlsl` had both `MaterialSS` and
+`FluidNormalSS` on `s0`. D3D resolves the two names to one slot, but glslang's auto-mapping gave the
+second binding 67, which the WebGPU backend rejects ("Unsupported sampler binding"); the fluid
+normal map now samples through the material sampler. `scripts/validation/check_fluid_constants.py`
+fails when one file declares two samplers on a register.
+
+A headless compute loop never reaches the frame end that clears the uniform ring, and one
+submission per dispatch ends in `std::bad_alloc` after roughly a hundred thousand dispatches.
+The compute path therefore owns one encoder and submits it every 64 dispatches, dropping the
+uniform ring with each submit; `ReadComputeBuffer`, `BeginFrame`, `WaitForGPU` and
+`FlushGPUResources` drain the encoder first. Every submit also waits for the oldest one once
+eight are in flight: a frame loop gets that bound from `BeginFrame`, but a headless loop with no
+readback kept every submission's retired 1 MB uniform buffer alive and hit `bad allocation`
+after a 30 s solver run (gate 11 of `--backyard-selftest`; peak now 643 MB).
+
+Vulkan has the same shape: a headless loop records into one frame that the compute path
+opened. `RecycleOverflowingComputeFrame` submits it and waits once it holds 6144 descriptor
+sets or 2048 dispatches. The dispatch cap exists because cached descriptor sets let a loop
+record thousands of dispatches into one submit; on the Steam Deck that exceeded amdgpu's 5 s
+job timeout and lost the device in the middle of `--backyard-selftest`. An interactive
+Backyard frame records about 700 dispatches. A frame that has acquired a swap chain image is
+never recycled, because it must present.
+
 
 ### Portable guarantees
 
@@ -65,6 +163,36 @@ capability selection a render-graph concern instead of a scene-side API switch.
   remain open; pending commands may be submitted and waited without presentation.
   Rebind graphics resources and topology before the next draw; raw backend
   command state is not preserved across recording resets.
+- **Prefer `RequestComputeReadback` / `ConsumeComputeReadback` when the answer is
+  not needed this frame.** `int RequestComputeReadback(ComputeBuffer&, size_t)`
+  queues the copy at the end of the current frame's command list and returns a
+  ticket, or `-1` when the backend has no asynchronous path — both base
+  implementations return `-1` / `false`, so D3D11, GL and WebGPU keep the
+  synchronous behaviour and the caller falls back. `bool
+  ConsumeComputeReadback(int, void*, size_t)` returns `false` until the frame
+  behind the copy has retired, then fills the caller's buffer once and
+  invalidates the ticket. D3D12 uses one READBACK-heap resource per frame slot and
+  Vulkan one host-visible VMA staging buffer per frame slot. Two rules: hold the
+  last value between arrivals (the first answer is two or three frames in), and
+  never derive frame identity from the back-buffer index — offscreen compute
+  frames pin it and overwrite the per-slot fence values, so D3D12 tracks a
+  monotonic frame serial and stamps the fence value at submit time. `Consume`
+  matches the ticket, and a slot is reused by the next request recorded in its
+  frame, so keep one request in flight per buffer. D3D12 transitions the source
+  to `COPY_SOURCE` before the copy (the debug layer rejects a copy from
+  `UNORDERED_ACCESS`). Vulkan counts the waits on each frame slot and treats a copy
+  as retired once that slot has been waited on again: on a GPU-bound device the
+  fence is signaled only briefly before `BeginFrame` resets it, so polling the fence
+  alone missed the completion indefinitely (the Steam Deck and the Mali tablet left
+  every floating ball on a stale water level for minutes).
+- **Driver-side bind caching (W-15 P4/P5).** Vulkan caches each fully written
+  compute descriptor set for the frame, keyed by the set layout, every bound
+  resource identity and the constant bytes, and clears it with the descriptor pool.
+  A dispatch that binds inline `ReadOnlyBuffer` data is never cached: the key cannot
+  see those bytes. D3D12 skips `SetDescriptorHeaps`, the root signature and the PSO
+  when they match the last ones bound. Code that binds any of these directly on the
+  command list (the ImGui backend, a mid-frame command-list reset) must call
+  `D3D12Driver::InvalidatePipelineStateCache()` afterwards.
 - Compute buffers/pipelines are CPU-owned, and their driver must outlive them.
   Vulkan retires native compute handles after frame completion; D3D12 retains
   referenced native objects per frame. Texture/view owners must synchronize
@@ -179,7 +307,9 @@ compute layout supports one bind group containing:
 - read-only and read-write storage buffers;
 - sampled float 2D textures;
 - non-comparison filtering samplers;
-- write-only `rgba8unorm` or `rgba16float` storage textures.
+- write-only `rgba8unorm` or `rgba16float` storage textures (and `r32float` on the native
+  compute backends: D3D11, D3D12 and Vulkan accept it for 2D and 3D storage; WebGPU has no
+  WGSL `r32float` storage path in this build and rejects it loudly).
 
 All eight maintained compute families have direct `.wgsl` siblings: Arithmetic,
 ImagePatternWrite, ImagePatternRead, Blur, Bright, GodRays, HDRComposite and
@@ -239,6 +369,52 @@ Desktop OpenGL contexts below 4.3 and OpenGL ES report no compute support. Optio
 post-process passes use their existing fullscreen raster fallback, and compute-only passes
 retain their existing clear behavior. The Windows 3.3 context fallback is explicitly
 raster-only and never compiles or dispatches a compute shader.
+
+### OpenGL volumes, inline buffers and the twin generator (W-28, 2026-11-02)
+
+- **3D storage volumes.** `SupportsComputeTextures3D()` is true with compute on desktop GL.
+  `CreateComputeTexture3D` allocates immutable storage with
+  `glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGBA16F | GL_R32F | GL_RGBA8, w, h, d)`, sets
+  `GL_NEAREST` filtering and `GL_CLAMP_TO_EDGE` on S/T/R, and rejects a CPU seed the same way
+  D3D11, D3D12 and Vulkan do. A volume bound as a storage image uses
+  `glBindImageTexture(unit, tex, 0, GL_FALSE, 0, GL_WRITE_ONLY, internalFormat)`; `layered` must
+  be `GL_FALSE` because it only applies to array textures, and a `GL_TEXTURE_3D` image unit always
+  carries the whole level. A volume bound as a sampled texture uses
+  `glBindTexture(GL_TEXTURE_3D, id)` on unit `bindingIndex`, and the restore list remembers the
+  *target* because the previous id may belong to `GL_TEXTURE_3D` rather than `GL_TEXTURE_2D`.
+  The image unit's format is the texture's internal format, and `DispatchCompute` rejects a
+  mismatch against the reflected `storageFormat` exactly as the other backends do.
+- **Inline buffers.** A `ReadOnlyBuffer` binding with no `ComputeBuffer` (`inlineData`/
+  `inlineBytes`/`inlineStride`, which the fluid solver uses for body lists and velocities) is
+  copied into one persistent, grow-only SSBO in the driver: orphan with
+  `glBufferData(size, nullptr, GL_STREAM_DRAW)`, `glBufferSubData`, then `glBindBufferBase` at the
+  binding index.
+- **Twins are generated, never hand-written.** `scripts/shaders/generate_gl_compute_twins.ps1`
+  runs `glslangValidator -D -S comp -e CS --target-env vulkan1.0 -DT850_SPIRV=1 -DT850_VULKAN=1`
+  and then `spirv-cross --version 430 --no-es --combined-samplers-inherit-bindings`, and writes
+  the result next to the HLSL with a `GENERATED … hlsl-sha256=<hash>` banner on line 2.
+  `-DT850_SPIRV` is what makes the HLSL `[[spv::format_r32f]]`/`[[spv::nonreadable]]` attributes
+  apply, so the twin declares `layout(binding = N, r32f) uniform writeonly image3D`; without a
+  format qualifier most GL drivers reject the storage image.
+  `--combined-samplers-inherit-bindings` keeps the dummy sampler that SPIRV-Cross invents for a
+  `Texture3D` read with `Load` on the texture's own binding, so the reflection still matches the
+  registry.
+  A non-base permutation is a separate `<stem>.<permutation>.glsl`; `LoadComputeSource` prefers
+  it and falls back to `<stem>.glsl`, which is how the hand-written twins keep their `#ifdef`
+  permutations. `scripts/validation/check_gl_twins.py` fails CI when a registered kernel has no
+  twin, when a generated twin's hash no longer matches its HLSL, or when its binding set differs
+  from `compute_kernels.json`.
+- **Two GLSL restrictions the HLSL source must respect.** A `const` initializer must be a constant
+  expression, and NVIDIA rejects a write into a writable unsized array indexed by a loop induction
+  variable (`error C5025: lvalue in array access too complex`), which is why
+  `CS_FluidDiagnostics3D` clears its accumulator with explicit stores instead of a loop.
+- **Constant blocks.** Transient `std140` uniform blocks are bump-allocated from one 1 MiB
+  `GL_STREAM_DRAW` buffer and bound with `glBindBufferRange` at
+  `GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT` offsets; the ring resets in `CompleteFrame`. Compute limits
+  (`GL_MAX_COMPUTE_WORK_GROUP_COUNT`, texture/image/storage-block units, the UBO alignment) are
+  queried once and cached, because the fluid solver dispatches about 2000 times per frame.
+- **Readback** stays synchronous: `glGetBufferSubData` after the storage barrier. The fluid's
+  correction pass runs on the GPU, so this is only used by the probes and the self-tests.
 
 Odd-width validation exposed an independent GL dump bug: `glReadPixels` used the default
 four-byte pack alignment with tightly allocated one-channel rows. Width 1023 overran the
@@ -413,22 +589,23 @@ DayScene and T8ditor share the parser; `auto` is rejected.
 
 `--compute-selftest` starts a minimal application and defaults to D3D12 on Windows or Vulkan
 on Linux unless an API is explicit. Linux runs the same minimal application through its
-Vulkan framework. The self-test validates arithmetic buffer compute, then writes and reads
+Vulkan framework; before 2026-11-02 `LinuxFramework::OnCreateApplication` ran the interactive
+loop itself, so every self-test flag on Linux silently ran the scene instead. The self-test validates arithmetic buffer compute, then writes and reads
 deterministic RGBA8 images at `1x1`, `7x5`, and `257x129`, checking every pixel after GPU
 readback.
 `--compute-selftest-wait N` adds capture windows before and after dispatch.
 
 Visual Studio projects, filters, desktop CMake, and Android CMake register all new Framework
 sources. Android's shader task validates that graphics permutation keys remain hexadecimal.
-Android Vulkan compute SPIR-V precompilation is not implemented in this change; Android keeps
-the HLSL source and uses runtime compilation.
+It also compiles the `compute_permutations` entries to `<shader>.<permutation>.spv`;
+`VulkanCompute` reads those on Android before falling back to runtime glslang.
 
 On Windows, `--compileShaders` validates/prewarms graphics and compute manifest sections.
 The compute section resolves layouts from `ComputeKernelRegistry`; it is not silently ignored.
 The original seven production entries passed this path on D3D11, D3D12, Vulkan, WebGPU, and
 desktop GL on 2026-09-16. On 2026-09-17, the expanded 290-entry manifest, including all nine
-compute identities, passed D3D12 precompile. Android's independent Gradle task remains
-graphics-only.
+compute identities, passed D3D12 precompile. Android's Gradle task was graphics-only until
+2026-11-02.
 
 The branch also contains earlier reviewed work that:
 
@@ -623,12 +800,19 @@ context, a correct capture contains compute dispatches for God Rays, both blur d
 Bright, and HDR Composition. The log reports `shaders=1 textures=1` and each enabled compute
 kernel. On older desktop GL or OpenGL ES, the correct result remains the raster fallback.
 
+For the fluid solver, `--api gl --scene 7` must log `[GL][Compute] Volume created
+(100x50x…, rgba16f)` before the solver reports ready, `[Backyard] Water surface bound to solver
+texture` and one `Volume created` per fluid volume, and `--compute-selftest` on GL must print
+`[ComputeVolume] PASS: API=gl odd-sized 3D storage textures, rgba16float and r32float`. A missing
+twin logs `[GL][Compute] GLSL source is missing for '<kernel>'` and the solver reports
+`Solver resources are incomplete on gl`. A GL twin generated from an HLSL that indexes a writable
+unsized SSBO with a loop variable fails at link with `error C5025: lvalue in array access too
+complex`, not at compile.
+
 ## Known limitations
 
 - Vulkan validation-layer proof still requires installing the Vulkan SDK and rerunning the
   Debug Vulkan cases.
-- Android Vulkan compute shaders compile at runtime; build-time compute SPIR-V generation is
-  deferred.
 - Torch particles intentionally have no PS implementation. Desktop OpenGL 4.3+ dispatches
   the compute kernel; unsupported GL contexts preserve the base torch and clear the particle
   contribution.

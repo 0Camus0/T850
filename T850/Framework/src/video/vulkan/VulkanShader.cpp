@@ -147,7 +147,7 @@ namespace t850 {
       T8_LOG_DEBUG("[Vulkan] Missing precompiled SPIR-V for %s key=0x%016llX; runtime compile will be attempted",
                    shaderName.c_str(), static_cast<unsigned long long>(key.bits));
     } else {
-      T8_LOG_ERROR("[Vulkan] Missing precompiled SPIR-V for %s", shaderName.c_str());
+      T8_LOG_DEBUG("[Vulkan] %s has no permutation key; compiling from source at runtime", shaderName.c_str());
     }
     return false;
   }

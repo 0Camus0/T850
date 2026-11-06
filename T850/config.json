@@ -1,41 +1,42 @@
 ﻿{
-    "telemetry":  {
-                      "frequencyFrames":  20,
-                      "outputPath":  "logs\\perf_telemetry.json",
-                      "enabled":  false
-                  },
+    "targetPlatform":  "windows",
+    "architecture":  "x64",
+    "postProcessMode":  "compute",
+    "cullingMode":  "full",
+    "debugFrames":  false,
+    "androidDeviceSerial":  "",
+    "configuration":  "Release",
+    "display":  {
+                    "scene":  7,
+                    "width":  2560,
+                    "model":  "Models/DamagedHelmet.glb",
+                    "height":  1440,
+                    "fullscreen":  false
+                },
+    "devTools":  {
+                     "logLevel":  "error",
+                     "logToFile":  false,
+                     "d3d12Debug":  false
+                 },
+    "webgpuShaderFlow":  "auto",
+    "benchmark":  false,
+    "api":  "vulkan",
     "dump":  {
                  "seconds":  -1,
                  "trigger":  "frame",
                  "frame":  -1,
                  "enabled":  false
              },
-    "configuration":  "Release",
-    "androidDeviceSerial":  "",
-    "debugFrames":  false,
-    "cullDisabled":  false,
-    "devTools":  {
-                     "logLevel":  "error",
-                     "logToFile":  false,
-                     "d3d12Debug":  false
-                 },
-    "display":  {
-                    "scene":  6,
-                    "width":  2560,
-                    "model":  "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
-                    "height":  1440,
-                    "fullscreen":  false
-                },
-    "cullingMode":  "full",
-    "api":  "vulkan",
-    "targetPlatform":  "windows",
-    "benchmark":  false,
-    "postProcessMode":  "compute",
-    "keepRunning":  false,
     "replaySnapshot":  {
                            "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json",
                            "enabled":  false
                        },
-    "architecture":  "x64",
-    "webgpuShaderFlow":  "auto"
+    "webBrowser":  "",
+    "cullDisabled":  false,
+    "keepRunning":  false,
+    "telemetry":  {
+                      "frequencyFrames":  20,
+                      "outputPath":  "logs\\perf_telemetry.json",
+                      "enabled":  false
+                  }
 }

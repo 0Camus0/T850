@@ -51,7 +51,12 @@ namespace t850 {
     Sampler
   };
 
-  enum class ComputeStorageFormat { Unspecified, Rgba8Unorm, Rgba16Float };
+  // Storage formats a compute binding can declare. R32Float exists because the fluid's
+  // alpha, pressure and divergence fields only use .x: a 4-byte texel halves their
+  // bandwidth and lets the pressure solve stay a plain float (W-02).
+  enum class ComputeStorageFormat { Unspecified, Rgba8Unorm, Rgba16Float, R32Float };
+
+  enum class ComputeTextureDimension { Tex2D, Tex3D };
 
   struct ComputeBindingLayoutDesc {
     ComputeBindingType type = ComputeBindingType::Constants32;
@@ -59,6 +64,7 @@ namespace t850 {
     uint32_t bindingIndex = 0;
     uint32_t constantCount = 0;
     ComputeStorageFormat storageFormat = ComputeStorageFormat::Unspecified;
+    ComputeTextureDimension dimension = ComputeTextureDimension::Tex2D;
     bool matchOutputExtent = false;
   };
 
@@ -79,6 +85,23 @@ namespace t850 {
   };
 
   struct ComputeBindingDesc;
+
+  // Volumetric storage texture used by 3D compute workloads (fluid volumes).
+  // Backends that cannot expose a 3D UAV report no capability and return null.
+  struct ComputeTexture3DDesc {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t depth = 0;
+    ComputeStorageFormat format = ComputeStorageFormat::Rgba16Float;
+    ComputeBufferAccess access = ComputeBufferAccess::ReadWrite;
+    std::string debugName;
+  };
+
+  class ComputeTexture3D {
+  public:
+    virtual ~ComputeTexture3D() = default;
+    ComputeTexture3DDesc descriptor;
+  };
 
   class ComputePipeline {
   public:
@@ -103,6 +126,12 @@ namespace t850 {
     const uint32_t* constants = nullptr;
     uint32_t constantCount = 0;
     Texture* texture = nullptr;
+    ComputeTexture3D* texture3D = nullptr;
+    // ReadOnlyBuffer with no `buffer`: the backend copies these bytes into per-frame
+    // transient memory and binds them as a structured buffer for this dispatch only.
+    const void* inlineData = nullptr;
+    uint32_t inlineBytes = 0;
+    uint32_t inlineStride = 0;
   };
 
   class DeviceContext {
@@ -393,6 +422,7 @@ namespace t850 {
     virtual bool SupportsDeferredRendering() const { return true; }
     virtual bool SupportsComputeShaders() const { return false; }
     virtual bool SupportsComputeTextures() const { return false; }
+    virtual bool SupportsComputeTextures3D() const { return false; }
     virtual const char* ApiTag() const { return "unknown"; }
     virtual const char* ProviderTag() const { return "native"; }
     virtual const char* UnderlyingBackendTag() const { return ApiTag(); }
@@ -468,6 +498,10 @@ namespace t850 {
                                                                 const void* initialData = nullptr) {
       (void)desc; (void)initialData; return {};
     }
+    virtual std::unique_ptr<ComputeTexture3D> CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
+                                                                     const void* initialData = nullptr) {
+      (void)desc; (void)initialData; return {};
+    }
     virtual bool DispatchCompute(ComputePipeline& pipeline,
                                  const std::vector<ComputeBindingDesc>& bindings,
                                  uint32_t groupCountX,
@@ -478,6 +512,17 @@ namespace t850 {
     }
     virtual bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) {
       (void)buffer; (void)destination; (void)byteCount; return false;
+    }
+
+    // Asynchronous compute readback (W-04 step 5). Request queues a copy of a compute
+    // buffer into a driver-owned staging slot and returns a ticket; Consume returns true
+    // once that copy has completed, filling `destination`. Both default to "unsupported",
+    // and the caller then falls back to ReadComputeBuffer, which stalls the frame.
+    virtual int RequestComputeReadback(ComputeBuffer& buffer, size_t byteCount) {
+      (void)buffer; (void)byteCount; return -1;
+    }
+    virtual bool ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) {
+      (void)ticket; (void)destination; (void)byteCount; return false;
     }
 
     // Resize the swapchain, back-buffer RTVs, and depth buffer to the new

@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "description": "CC0 PBR palette for the Backyard pool balls. One set per spawned ball, cycled by spawn order. Source ambientCG (CC0 1.0); files live in Assets/Textures/Ball/<id>/ and are fetched from the cloud texture manifest.",
+  "resolution": 512,
+  "maps": {
+    "color": "Color.jpg",
+    "normal": "Normal.png",
+    "orm": "ORM.png"
+  },
+  "materials": [
+    { "id": "Metal009",         "label": "Brushed silver",        "metal": 1.0 },
+    { "id": "Metal049A",        "label": "Smooth silver",         "metal": 1.0 },
+    { "id": "Metal048A",        "label": "Clean gold",            "metal": 1.0 },
+    { "id": "Metal043A",        "label": "Clean copper",          "metal": 1.0 },
+    { "id": "Metal043B",        "label": "Dirty copper",          "metal": 1.0 },
+    { "id": "Metal032",         "label": "Plain grey metal",      "metal": 1.0 },
+    { "id": "Metal027",         "label": "Powder-coated black",   "metal": 1.0 },
+    { "id": "Metal038",         "label": "Scratched steel",       "metal": 1.0 },
+    { "id": "Metal046A",        "label": "Clean dark metal",      "metal": 1.0 },
+    { "id": "Metal046B",        "label": "Dirty dark metal",      "metal": 1.0 },
+    { "id": "MetalPlates006",   "label": "Riveted steel plates",  "metal": 1.0 },
+    { "id": "DiamondPlate001",  "label": "Diamond tread plate",   "metal": 1.0 },
+    { "id": "Chainmail001",     "label": "Chain mail",            "metal": 1.0 },
+    { "id": "CorrugatedSteel005", "label": "Corrugated steel",    "metal": 1.0 },
+    { "id": "Marble001",        "label": "White marble",          "metal": 0.0 },
+    { "id": "Marble002",        "label": "Black marble",          "metal": 0.0 },
+    { "id": "Marble003",        "label": "Grey marble",           "metal": 0.0 },
+    { "id": "Marble012",        "label": "Veined white marble",   "metal": 0.0 },
+    { "id": "Marble016",        "label": "Black reflective marble", "metal": 0.0 },
+    { "id": "Onyx001",          "label": "Onyx",                  "metal": 0.0 },
+    { "id": "Travertine001",    "label": "Travertine",            "metal": 0.0 },
+    { "id": "Terrazzo001",      "label": "Terrazzo, fine",        "metal": 0.0 },
+    { "id": "Terrazzo005",      "label": "Terrazzo, coarse",      "metal": 0.0 },
+    { "id": "Tiles139",         "label": "Ceramic tiles",         "metal": 0.0 },
+    { "id": "Concrete047A",     "label": "Polished concrete",     "metal": 0.0 },
+    { "id": "Wood001",          "label": "Oak planks",            "metal": 0.0 },
+    { "id": "Wood021",          "label": "Weathered wood",        "metal": 0.0 },
+    { "id": "Wood035",          "label": "Dark wood",             "metal": 0.0 },
+    { "id": "WoodFloor043",     "label": "Floor planks",          "metal": 0.0 },
+    { "id": "Rock030",          "label": "Rough rock",            "metal": 0.0 },
+    { "id": "Leather008",       "label": "Leather",               "metal": 0.0 },
+    { "id": "Cork001",          "label": "Cork",                  "metal": 0.0 }
+  ],
+  "spareIds": [
+    "Metal030", "MetalPlates007", "CorrugatedSteel009", "Marble008", "Terrazzo003",
+    "Terrazzo007", "Tiles141", "Wood051", "Wood062", "Planks021", "Concrete034",
+    "PavingStones150", "Rock029", "Bricks075A", "Asphalt012", "Fabric019",
+    "Rubber001", "Plastic001", "Porcelain001"
+  ]
+}

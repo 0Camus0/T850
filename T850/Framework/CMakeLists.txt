@@ -68,6 +68,8 @@ set(FRAMEWORK_SOURCES
   src/scene/SceneConversions.cpp
   src/scene/SceneRegions.cpp
   src/scene/RenderGraph.cpp
+src/simulation/FluidSimulation.cpp
+src/simulation/FluidDebugRenderer.cpp
   src/scene/SceneDescriptor.cpp
   src/scene/SceneSetup.cpp
   src/scene/SceneProp.cpp
@@ -104,6 +106,7 @@ set(FRAMEWORK_SOURCES
   src/utils/XDataBase.cpp
   src/utils/XMaths.cpp
   src/utils/ConfigRuntime.cpp
+  src/utils/DeviceInfo.cpp
   src/utils/RuntimeProfile.cpp
   src/utils/ComputeKernelRegistry.cpp
   src/utils/ShaderPermutationDump.cpp

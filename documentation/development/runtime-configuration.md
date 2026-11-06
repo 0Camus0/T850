@@ -300,6 +300,7 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 --debugFrames
 --replaySnapshot PATH
 --keepRunning
+--unattended
 --dumpMatrices N
 --culling full|lazy|disabled
 --cullDisabled
@@ -316,6 +317,10 @@ Scene indices are 0 Sandbox, 1 Day, 2 Quake3Mock, 3 RagdollEditor, 4 SceneTempla
 `--debugFrames` enables manual dump requests. A normal dump exits unless `--keepRunning` is present.
 
 `--regressionFixedDt SECONDS` uses a fixed update delta with real-time pacing and suppresses live input/random startup variation for unattended deterministic captures. Use it for regression tooling, not ordinary gameplay.
+
+`--unattended` is for any automated run on a machine someone is using: the window is created without taking focus and the mouse is never captured (no relative mode, no cursor confinement). It changes nothing else, so timing and output are the same as a normal run.
+
+D3D11 and D3D12 take their swap-chain window from the SDL window they are given, not from `GetActiveWindow()`, which is null for a window that never received focus.
 
 ### Benchmark
 
@@ -343,6 +348,62 @@ ordinary gameplay pause.
 `--benchmarkNoPresent` forces the offscreen submit path and suppresses progress
 presentation entirely. The completion marker is emitted only after `WaitForGPU`,
 so its throughput includes the final queue drain and excludes DWM/swapchain pacing.
+
+### Backyard Water (scene 7) and the Fluid Solver
+
+These are parsed by DayScene, not by `ConfigRuntime`, and every one of them implies `--scene 7` for
+the Backyard ones. Every automated run also passes `--unattended`.
+
+```text
+--backyard-selftest                run the thirteen water gates, then exit
+--backyard-selftest-frames N       frames per gate run
+--backyard-no-ball                 run the gates without the scripted ball
+--backyard-cell-size METRES        override the grid's derived cell size (debug)
+--backyard-iterations N            run the gates at another platform's sweep count (60 = mobile/web/Deck)
+--backyard-air-rise M_PER_S        run the gates at another air-rise speed (0 = old trapped air)
+--backyard-substep-ceiling SECONDS longest substep for the gates (0.008333 = the old fixed 1/120 s)
+--backyard-adaptive 0|1            force the fixed ceiling (0) or the measured CFL substeps (1);
+                                   together with the ceiling this is how W-31's A/B was measured
+--backyard-spawn N                 spawn N extra balls once the solver is ready
+--backyard-spawn-seed N            fix the spawn and material RNG for a reproducible run
+--backyard-pick-test               drive the pick/drag input path in-process, then exit
+--backyard-ball-probe N            log body 0 every N frames (see below)
+--backyard-mass-audit N            log the W-03 mass audit every N frames
+--fluid-selftest                   run the solver self-test, then exit
+--fluid-selftest-frames N          frames for the solver self-test
+--fluid-iterations N               override pressure iterations for one run
+--fluid-fixed-dt SECONDS           fixed solver step for a deterministic run
+--fluid-dump-volume FRAME          dump the alpha/velocity volume at a frame
+```
+
+**How many pressure sweeps run by default.** `WaterTunables::EffectivePressureIterations()` decides,
+and it is the same call the headless gates use:
+
+| Platform | Sweeps | Mechanism |
+|---|---|---|
+| Desktop Windows | the JSON value (120 by default) | — |
+| Steam Deck | 60 | Run-time `utils::GetDeviceInfo().steamDeck` check (a Linux build, so a compile-time branch would also cap desktop Linux) |
+| Android, Emscripten | 60 | Compile-time `kMobilePressureIterations` |
+
+The Steam Deck OLED reports DMI `sys_vendor=Valve`, `product_name=Galileo`, `board_name=Galileo`; the
+LCD reports `Jupiter`. `utils/DeviceInfo` owns that probe, and the input layer uses the same call for
+its `Handheld detection:` line, so the two can no longer disagree. The scene logs the effective count
+and the reason, e.g. `60 pressure iterations (Steam Deck cap)`.
+
+`--backyard-ball-probe` is the only instrument that sees a *local* defect: the mass audit averages
+the whole pool, where a 2 cm moat around a 0.25 m ball is 7 cells out of 82 917. It prints two lines
+per sample, read from the same surface texture the renderer draws:
+
+```text
+[Backyard][ball] t=8.13 y=-0.059 vy=+0.096 level=-0.018 plane=-0.040 submerged=0.62 flow=(+0.054 +0.122) xz=(+0.098 -6.652) vxz=(+0.018 +0.018)
+[Backyard][ball] far=+0.0012 ring-far=-0.0167 covered min-ring=-0.0133 rimPeak=+0.0543 moatMin=-0.1464 bands(cm): -2.4 -2.3 -2.4 -1.6 -1.3 -1.2 -1.2 -1.0
+```
+
+`level` is the sampled water line and `plane` the authored one, so the coupling is visible directly;
+`ring-far` and `covered min-ring` are the float gate's two comparisons recomputed per sample;
+`rimPeak`/`moatMin` are running extremes so a transient crest or crater between samples is not
+lost; `bands` is the profile in eight 10 cm radial bands, which separates a *moat* (a dip in bands
+0–3) from the *crater* of an impact (dip in band 0, crest in bands 1–3).
 
 ### Logging, Profiling, and Telemetry
 

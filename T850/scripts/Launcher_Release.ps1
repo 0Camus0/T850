@@ -208,7 +208,9 @@ $xaml = @"
                     <ComboBoxItem Content="WebGPU (Dawn/D3D12)" Tag="webgpu"/>
                     <ComboBoxItem Content="WebGPU + Browser (Emscripten)" Tag="webgpu-browser"/>
                     <ComboBoxItem Content="Vulkan" IsSelected="True" Tag="vulkan"/>
-                    <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
+                    <ComboBoxItem Content="OpenGL (Desktop GL 4.3+)"
+                                  Tag="gl"
+                                  ToolTip="Needs a 4.3 or newer compatibility context for the pool solver and the compute-driven post-process passes. A 3.3 context still renders everything but runs raster-only, so the pool falls back to its static surface."/>
                 </ComboBox>
                 <StackPanel Margin="0,12,0,0">
                     <TextBlock Text="Post-process Mode" Style="{StaticResource LabelStyle}"/>
@@ -263,6 +265,7 @@ $xaml = @"
                             <ComboBoxItem Content="Scene Template" Tag="4"/>
                             <ComboBoxItem Content="Voxel Streaming" Tag="5"/>
                             <ComboBoxItem Content="Minecraft" Tag="6"/>
+                            <ComboBoxItem Content="Backyard" Tag="7"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
@@ -500,12 +503,20 @@ $btnDownloadAssets = $window.FindName("btnDownloadAssets")
 $btnBenchmarkMatrix = $window.FindName("btnBenchmarkMatrix")
 $btnEditor      = $window.FindName("btnEditor")
 
-# Resolve root directory: if running from ps2exe, use exe location; otherwise script location
+# Resolve the install root. The compiled launcher lives next to Assets/ and config.json, and inside
+# a ps2exe bundle BOTH $MyInvocation.MyCommand.Path and $PSScriptRoot come back empty, so the
+# process image is the only reliable source: without this a shortcut whose "Start in" is not the
+# install folder makes every relative path (Assets, config.json, scripts\ModelCloud.ps1) miss.
+$rootDir = $null
 if ($MyInvocation.MyCommand.Path) {
     $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 } else {
-    $rootDir = (Get-Location).Path
+    try {
+        $launcherImage = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        if ($launcherImage) { $rootDir = Split-Path -Parent $launcherImage }
+    } catch {}
 }
+if (-not $rootDir) { $rootDir = (Get-Location).Path }
 # If launched from scripts/, go up one level
 if ((Split-Path -Leaf $rootDir) -eq "scripts") {
     $rootDir = Split-Path -Parent $rootDir
@@ -520,6 +531,7 @@ $script:LauncherBusy = $false
 $script:AssetDownloadInProgress = $false
 $script:CloudAssetStatus = $null
 $modelCloudScript = Join-Path $rootDir "scripts\ModelCloud.ps1"
+if (-not (Test-Path $modelCloudScript)) { $modelCloudScript = Join-Path $rootDir "ModelCloud.ps1" }
 if (-not (Test-Path $modelCloudScript) -and $PSScriptRoot) { $modelCloudScript = Join-Path $PSScriptRoot "ModelCloud.ps1" }
 if (Test-Path $modelCloudScript) { . $modelCloudScript }
 
@@ -596,6 +608,14 @@ function Get-LauncherAssetRoot {
     return $rootDir
 }
 
+function Write-LauncherDiagnostic([string]$Message) {
+    try {
+        $path = Join-Path $rootDir 'launcher-diagnostics.log'
+        $line = '{0:o} {1}{2}' -f (Get-Date), $Message, [Environment]::NewLine
+        [IO.File]::AppendAllText($path, $line)
+    } catch { }
+}
+
 function Get-LauncherCloudAssetStatus {
     if (-not (Get-Command Get-T850CloudAssetsStatus -ErrorAction SilentlyContinue)) {
         return [pscustomobject]@{ Ok = $true; Configured = $false; Total = 0; Ready = 0; Missing = 0; MissingPaths = @(); Errors = @(); Message = "Cloud asset checks are not configured." }
@@ -603,6 +623,9 @@ function Get-LauncherCloudAssetStatus {
     try {
         return (Get-T850CloudAssetsStatus -RootDir $rootDir -AssetRoot (Get-LauncherAssetRoot))
     } catch {
+        # The compiled launcher has no console, so a failed check would otherwise only ever surface
+        # as "Cloud check unavailable" with no reason. Write it next to the launcher.
+        Write-LauncherDiagnostic "cloud check: $($_.Exception.Message) :: $($_.ScriptStackTrace)"
         return [pscustomobject]@{ Ok = $false; Configured = $true; Total = 0; Ready = 0; Missing = 0; MissingPaths = @(); Errors = @($_.Exception.Message); Message = ("Could not check cloud assets: " + $_.Exception.Message) }
     }
 }

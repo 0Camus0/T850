@@ -1,6 +1,6 @@
 # Cloud Asset Workflow
 
-Status: verified against `LaunchSolution.bat`, `DownloadModels.ps1`, `DownloadTextures.ps1`, and `ModelCloud.ps1` on 2026-08-19.
+Status: verified against `LaunchSolution.bat`, `DownloadModels.ps1`, `DownloadTextures.ps1`, and `ModelCloud.ps1` on 2026-08-19; publishing verified against `PushCloudTextures.ps1` on 2026-10-30.
 
 Heavy model and texture binaries are intentionally not all tracked by Git. Setup,
 the launcher and Steam Deck runtime use manifests to obtain them. Browser CI uses
@@ -51,6 +51,56 @@ GitHub CI uses mode B. Its `T850-Web-Release` artifact contains only `site/`,
 `WebShaders/` and the small route catalog. Native x64 and ARM64 Edge jobs consume
 the same architecture-neutral artifact. CI does not download or upload the 1.61 GiB
 runtime model/texture payload.
+
+## Publishing Assets to R2
+
+`scripts/PushCloudTextures.ps1` is the other half of the workflow: it uploads texture
+files to the `t850-textures` bucket and republishes the shared manifest. It is meant for
+the machine that authors assets, not for players.
+
+```powershell
+# review first: prints the uploads, the entry changes and any prune candidates
+.\scripts\PushCloudTextures.ps1 -Prefix Textures\Ball
+
+# publish
+.\scripts\PushCloudTextures.ps1 -Prefix Textures\Ball -Apply
+```
+
+The script needs an API token with R2 object read/write on the account. It reads
+`C:\Users\camus\Documents\cloud.txt` by default, or `$env:CLOUDFLARE_API_TOKEN` when that
+is set; the token is never written into the repository and never printed. Both public
+buckets live in account `66cd75c80eda50d1a2ae018f7f7136b6`.
+
+Rules the script enforces, and why:
+
+- **Objects before manifest, manifest before deletes.** A consumer must never read a
+  manifest that names an object which is not stored yet.
+- **The manifest is the source of truth and is only in the cloud.** There is no committed
+  local copy of the union manifest; the script downloads it from both buckets, aborts if
+  the two copies have drifted, and changes only the entries for the files it was pointed
+  at. Untouched entries keep their bytes (a PowerShell JSON round trip of the current
+  manifest is byte-identical, so publishing does not churn 114 entries).
+- **Both buckets hold the same manifest.** `t850-models` and `t850-textures` each serve a
+  copy because the Pages worker reads the manifest through its own bucket binding. The
+  script publishes to both and re-verifies both afterwards.
+- **Verify the object, not the status code.** Every upload is read back through the
+  authenticated API and its SHA-256 compared with the local file.
+- **New entries carry a `sha256`; older entries stay size-only.** The downloaders already
+  verify `sha256` when present (case-insensitively), so new files get integrity checks
+  without rewriting history.
+- **Idempotent.** A run with nothing to change reports "the manifest is already current"
+  and publishes nothing. `-Force` re-uploads everything under the prefix; `-Prune`
+  deletes objects (and their entries) that no longer exist locally, and is never implied.
+- **r2.dev propagates, it does not race.** A freshly stored key can take a minute or two
+  to appear on the public `r2.dev` hostname; the script reports that as a warning and
+  still exits successfully because the object itself was verified.
+- **Manifest caching.** `manifest.json` is stored with `public, max-age=300`, so a publish
+  is visible within five minutes even through the edge cache. Texture objects use
+  `immutable` caching because a key's content is expected to stay fixed.
+
+Adding a new asset family is a palette or a prefix, not a code change: point `-Prefix` at
+the new directory, run the dry run, then `-Apply`. `Assets/Textures/Ball/` (the Backyard
+ball PBR palette) is published this way and is not tracked by Git.
 
 ## Normal Workflow
 
@@ -146,6 +196,12 @@ Invalid files are treated as missing. Downloads use `<target>.download`, validat
 
 Downloads use a runspace pool. `-MaxThreads` defaults to 7 and is clamped to at least 1 and no more than the number of pending files.
 
+**The web catalog is verified the same way, at serve time.** `web/cloud-assets.mjs` puts `size` and
+`sha256` on every route, and both `web/server.mjs` and `web/pages-worker.mjs` refuse to hand over an
+object whose byte length disagrees with the catalog (`502`, with both numbers in the message). The
+worker also compares the R2 object's own size before streaming. That catches a truncated upload or a
+stale edge copy at the point it would otherwise reach the engine as a corrupt mesh.
+
 ## Status Without Downloading
 
 Use the helper directly:
@@ -165,9 +221,56 @@ Important fields:
 
 ## Launcher Behavior
 
-The WPF launcher checks cloud status and scene dependencies before enabling Run/Install. `Download Assets` invokes the same model/texture logic and refreshes model/scene lists afterward.
+**Windows is manual by design** (owner decision 2026-11-04): the WPF launcher checks cloud status and
+scene dependencies before enabling Run/Install, and only downloads when **Download Assets** is
+pressed. Nothing is fetched on start-up.
 
-On Steam Deck, `steamdeck/T850.sh` runs `DownloadCloudAssets.py` unless `T850_SKIP_ASSET_DOWNLOAD=1`. It writes failures to `logs/steamdeck_asset_download.log` but continues so tracked/package assets can still run.
+**Deck, Android and the browser download automatically**, and since 2026-11-04 they implement one
+contract, so a log from any of them reads the same way:
+
+| | Deck (`steamdeck/DownloadCloudAssets.py`) | Android (`AssetDownloadActivity`) | Web (`web/cloud-assets.mjs` + worker/server) |
+|---|---|---|---|
+| Trigger | every launch from `steamdeck/T850.sh` | the LAUNCHER activity in the production manifest | per request, at run time |
+| Readiness | exists + `size` + `sha256` when published | same | the catalog is built from the manifests, so same fields |
+| Atomic install | temp file → verify → rename | `.download` file → verify → rename | n/a (nothing is installed) |
+| Failure | warning, launch continues | status text on the launcher screen | 502 with the actual byte count |
+| Status line | `Cloud assets ready=N missing=M total=T` | same (logcat) | catalog is validated at build/start |
+
+**How the hashes get there.** A hash can only be written by something that can read the bytes, so
+there are three routes: `PushCloudTextures.ps1` / `PushCloudModels.ps1` hash every file they scan
+(2026-11-04: they used to leave a pre-existing size-only entry size-only forever, which left 114 of
+218 entries unverifiable), `PushCloudModels.ps1` backfills an entry whose local file exists but is
+outside the scanned prefixes, and `scripts/BackfillCloudHashes.ps1` reads an object back through the
+authenticated R2 API and hashes that — the only route for a cloud-only file such as a sky cubemap.
+`scripts/validation/check_cloud_manifests.py` is the guard: it fails when a *consumed* entry
+(`runtime_assets.json`, or any union texture) lacks `size` or a 64-hex `sha256`, when the two buckets
+publish different union copies, or when an entry's `url` points at the other bucket. The union's model
+entries are inventory only — nothing reads them — so a missing hash there is a note.
+
+**One identity per asset.** An asset is *ready* when the file exists, matches the manifest's `size`,
+and matches the manifest's `sha256` when the manifest publishes one. Entries published before
+2026-11 carry no hash, so they fall back to the size check — that is why
+`PushCloudTextures.ps1`/`PushCloudModels.ps1` now write `sha256` for anything they touch.
+
+**The Deck verification stamp.** `Assets/.t850-cloud-assets.json` records the SHA-256 of both
+manifests, the full entry list and when the tree was last verified, so a launch does not have to hit
+the network every time:
+
+| Situation | What happens |
+|---|---|
+| verified less than `T850_CLOUD_FRESH_SECONDS` ago (default 300) | no network; 158 size checks, ~0.1 s |
+| stamp's manifests still current | sizes re-checked, contents not re-hashed |
+| a manifest moved | full verify including hashes |
+| a file deleted after verifying | caught by the size check and re-downloaded immediately |
+| manifests unreachable, tree complete | exit 0 with a warning |
+| manifests unreachable, nothing verified | exit 1 |
+
+The entry list in the stamp is what lets the fast path still notice a deletion; hashing 16.7 MB on
+every launch was the cost that made a Deck start wait.
+
+On Steam Deck, `steamdeck/T850.sh` runs `DownloadCloudAssets.py` unless
+`T850_SKIP_ASSET_DOWNLOAD=1`. It writes failures to `logs/steamdeck_asset_download.log` but continues
+so tracked/package assets can still run.
 
 ## Asset Locations and Caches
 
@@ -177,6 +280,19 @@ Downloaded payloads belong under:
 Assets/Models/
 Assets/Textures/
 ```
+
+The Backyard ball palette is one of them:
+
+```text
+Assets/Textures/Ball/<MaterialId>/Color.jpg
+Assets/Textures/Ball/<MaterialId>/Normal.png
+Assets/Textures/Ball/<MaterialId>/ORM.png
+```
+
+It is produced by `scripts/textures/fetch_ball_materials.py` (authoring only: ambientCG
+CC0 archives, packed to 512 px and to the glTF metallic-roughness layout) and published by
+`scripts/PushCloudTextures.ps1`. The material list itself is tracked in
+`Assets/Scenes/BackyardBallMaterials.json`, so the palette is data, not code.
 
 Generated caches are different from source/downloaded assets and are ignored:
 

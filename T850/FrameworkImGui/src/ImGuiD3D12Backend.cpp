@@ -135,6 +135,7 @@ public:
     ID3D12DescriptorHeap* heaps[] = {m_srvHeap};
     commandList->SetDescriptorHeaps(1, heaps);
     ImGui_ImplDX12_RenderDrawData(drawData, commandList);
+    m_driver->InvalidatePipelineStateCache();
   }
 
   ImTextureID GetTextureID(Texture* texture, ImGuiTextureMode mode) override {

@@ -1,0 +1,102 @@
+{
+  "units": "meters",
+  "waterLine": 0.0,
+  "waterPlaneY": -0.04,
+  "pool": {
+    "minX": -4.5,
+    "minY": -9.0,
+    "maxX": 4.5,
+    "maxY": -4.5,
+    "width": 9.0,
+    "length": 4.5,
+    "depth": 1.6,
+    "freeboard": 0.42,
+    "wallThickness": 0.25,
+    "copingWidth": 0.4,
+    "copingHeight": 0.08,
+    "stepCount": 3,
+    "stepRise": 0.3,
+    "stepRun": 0.35,
+    "mesh": "Backyard_Pool.glb",
+    "steps": [
+      {
+        "name": "Pool_Step_1",
+        "minX": 4.15,
+        "maxX": 4.5,
+        "minY": -1.6,
+        "maxY": -0.3,
+        "minZ": -6.975,
+        "maxZ": -4.5
+      },
+      {
+        "name": "Pool_Step_2",
+        "minX": 3.8,
+        "maxX": 4.5,
+        "minY": -1.6,
+        "maxY": -0.6,
+        "minZ": -6.975,
+        "maxZ": -4.5
+      },
+      {
+        "name": "Pool_Step_3",
+        "minX": 3.45,
+        "maxX": 4.5,
+        "minY": -1.6,
+        "maxY": -0.9,
+        "minZ": -6.975,
+        "maxZ": -4.5
+      }
+    ],
+    "boundaryNodes": [
+      "Pool_Wall_XMin",
+      "Pool_Wall_XMax",
+      "Pool_Wall_YMin",
+      "Pool_Wall_YMax",
+      "Pool_Floor",
+      "Pool_Step_1",
+      "Pool_Step_2",
+      "Pool_Step_3"
+    ],
+    "surfaceNodes": [
+      "Pool_Coping_XMin",
+      "Pool_Coping_XMax",
+      "Pool_Coping_YMin",
+      "Pool_Coping_YMax"
+    ]
+  },
+  "house": {
+    "minX": -9.0,
+    "minY": 4.0,
+    "maxX": 9.0,
+    "maxY": 16.0,
+    "eaveHeight": 3.2,
+    "ridgeHeight": 5.1
+  },
+  "patio": {
+    "min_x": -10.0,
+    "max_x": 10.0,
+    "min_y": -4.5,
+    "max_y": 4.0,
+    "height": 0.12
+  },
+  "ground": {
+    "size": 44.0,
+    "centerX": 0.0,
+    "centerY": -4.0
+  },
+  "yardWall": {
+    "height": 2.1,
+    "thickness": 0.25,
+    "inset": 14.0,
+    "min_y": -16.0,
+    "max_y": 4.0
+  },
+  "assets": {
+    "pool": "Backyard_Pool.glb",
+    "house": "Backyard_House.glb",
+    "ground": "Backyard_Ground.glb",
+    "wall": "Backyard_Wall.glb",
+    "props": "Backyard_Props.glb",
+    "water": "Backyard_Water.glb"
+  }
+}

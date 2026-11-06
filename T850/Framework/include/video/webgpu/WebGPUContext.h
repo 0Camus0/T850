@@ -26,6 +26,10 @@ public:
   void SubmitCommands(const wgpu::CommandBuffer& command);
   wgpu::Buffer AcquireBuffer(const wgpu::BufferDescriptor& descriptor);
   wgpu::Buffer UploadUniform(const void* data, uint64_t size, uint64_t& offset);
+  // A headless compute loop never reaches the frame end that clears the uniform ring, so the
+  // fluid solver would grow it until the process runs out of memory. `force` clears it now;
+  // otherwise it clears itself once the ring is worth recycling.
+  void RecycleComputeUniforms(bool force = false);
   uint64_t UniformEpoch() const { return m_uniformEpoch; }
   void Retire(wgpu::Buffer buffer, uint64_t size, wgpu::BufferUsage usage);
   void Retire(wgpu::Texture texture);

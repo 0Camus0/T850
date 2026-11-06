@@ -56,6 +56,7 @@ namespace t850 {
     const char* ApiTag() const override { return "vulkan"; }
     bool SupportsComputeShaders() const override { return m_supportsComputeShaders; }
     bool SupportsComputeTextures() const override { return m_supportsComputeTextures; }
+    bool SupportsComputeTextures3D() const override { return m_supportsComputeTextures; }
     int SurfaceColorFormat() const override {
       if (m_swapChainFormat == VK_FORMAT_R8G8B8A8_UNORM) return BaseRT::RGBA8;
       if (m_swapChainFormat == VK_FORMAT_B8G8R8A8_UNORM) return BaseRT::BGRA8;
@@ -103,9 +104,24 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
     std::unique_ptr<ComputeBuffer> CreateComputeBuffer(const ComputeBufferDesc& desc,
                               const void* initialData = nullptr) override;
+    std::unique_ptr<ComputeTexture3D> CreateComputeTexture3D(const ComputeTexture3DDesc& desc,
+                              const void* initialData = nullptr) override;
     bool DispatchCompute(ComputePipeline& pipeline, const std::vector<ComputeBindingDesc>& bindings,
                uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
     bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t byteCount) override;
+    // W-04 step 5: copy into a host-visible staging slot recorded in the current frame and
+    // report readiness from that frame's in-flight fence.
+    int RequestComputeReadback(ComputeBuffer& buffer, size_t byteCount) override;
+    bool ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) override;
+
+    // Closes a compute-owned offscreen frame when its descriptor pool is nearly
+    // exhausted or it holds too many dispatches for one submit, waits for the GPU, and
+    // lets the next BeginFrame() start a clean
+    // pool generation. A headless dispatch loop never reaches CompleteFrame, so
+    // BeginFrame() early-outs after the first dispatch and the pool is reset exactly
+    // once - which exhausted it at step 109 of the 400-frame fluid self-test with
+    // VK_ERROR_OUT_OF_POOL_MEMORY. Returns true when a recycle happened.
+    bool RecycleOverflowingComputeFrame();
 
     // ── Accessors ──
     VkCommandBuffer    GetCmdBuffer() const { return m_commandBuffers[m_currentFrame]; }
@@ -148,6 +164,19 @@ namespace t850 {
     // Descriptor set allocation from the per-frame pool
     VkDescriptorSet AllocateDescriptorSet(VkDescriptorSetLayout layout);
 
+    // P4: per-frame cache of fully-written compute descriptor sets. The solver
+    // re-dispatches the same pipeline with the same resources many times per frame (the
+    // pressure solve alone 120 times), so recording the set once and rebinding it saves
+    // the allocation and the vkUpdateDescriptorSets each time. Cleared with the pool,
+    // because a reset invalidates every set allocated from it.
+    VkDescriptorSet FindCachedComputeDescriptorSet(uint64_t key) const {
+      const auto found = m_descriptorSetCache.find(key);
+      return found == m_descriptorSetCache.end() ? VK_NULL_HANDLE : found->second;
+    }
+    void CacheComputeDescriptorSet(uint64_t key, VkDescriptorSet set) {
+      m_descriptorSetCache[key] = set;
+    }
+
     // Write pending CB + textures into a descriptor set and bind it
     void BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader);
     void ClearPendingTextureBinding(int slot) override {
@@ -162,6 +191,8 @@ namespace t850 {
 
     // Ensure the backbuffer render pass is active (for ImGui overlay rendering)
     void EnsureBackbufferRenderPass();
+    // Acquires this frame's swap chain image if a compute dispatch opened the frame first.
+    bool EnsureFrameSwapchainImage();
     void SetPrePresentOverlayCallback(std::function<void()> callback) override {
       if (!callback) {
         m_prePresentOverlayCallback = nullptr;
@@ -292,6 +323,28 @@ namespace t850 {
     VkSemaphore     m_renderFinishedSemaphores[kBackBufferCount] = {};
     std::vector<VkSemaphore> m_imageRenderFinishedSemaphores;
     VkFence         m_inFlightFences[kBackBufferCount] = {};
+
+    // W-04 step 5: host-visible staging slots, one frame in flight each. W-31: FOUR per frame, not
+    // one - two queries asked in the same frame (the body water level and the max velocity) shared
+    // the single slot, and a request with a different byte count destroyed the staging buffer and
+    // dropped the pending ticket, so the first query never delivered and its consumer logged a
+    // readback stuck after 60 frames. A pending slot is now never touched.
+    struct PendingReadback {
+      VkBuffer buffer = VK_NULL_HANDLE;
+      VmaAllocation allocation = nullptr;
+      void* mapped = nullptr;
+      size_t byteCount = 0;
+      uint32_t frame = 0;
+      int ticket = 0;
+      bool pending = false;
+      // m_frameSlotWaits[frame] when the copy was recorded; any later wait on that slot
+      // proves the copy finished, even though BeginFrame has since reset the fence.
+      uint64_t slotWaitsAtRequest = 0;
+    };
+    static constexpr uint32_t kReadbackSlotsPerFrame = 4;
+    PendingReadback m_pendingReadbacks[kBackBufferCount][kReadbackSlotsPerFrame];
+    int m_readbackTicketCounter = 0;
+    uint64_t        m_frameSlotWaits[kBackBufferCount] = {};
     uint32_t        m_currentFrame = 0;
     uint64_t        m_gpuSubmissionSerial = 0;
     uint64_t        m_gpuCompletedSubmissionSerial = 0;
@@ -348,8 +401,26 @@ namespace t850 {
     FaceCulling           m_currentCull  = FRONT_FACES;
     bool                   m_frameStarted = false;
     bool                   m_frameUsesSwapchain = true;
+    // Set when the frame currently open was opened by DispatchCompute rather than by
+    // the renderer. Only such a frame may be recycled from the compute path (see
+    // RecycleOffscreenComputeFrame); recycling a renderer-owned frame would
+    // invalidate descriptor sets already recorded for its draws.
+    bool                   m_frameOpenedByCompute = false;
+    // Descriptor sets allocated from m_descriptorPools[m_currentFrame] since the last
+    // ResetDescriptorPool. Used to detect a headless dispatch loop that never reaches
+    // CompleteFrame.
+    uint32_t               m_descriptorSetsThisGeneration = 0;
+    uint32_t               m_computeDispatchesThisFrame = 0;
     bool                   m_screenshotConsumedSemaphore = false;
     bool                   m_swapchainNeedsRecreate = false;
+    // True when this frame actually acquired a swap chain image; only such a frame may
+    // present or wait on the image-available semaphore.
+    bool                   m_frameAcquiredSwapchainImage = false;
+    // Logs the "surface extent not available" deferral once per stalled stretch.
+    bool                   m_swapchainSurfaceWaitLogged = false;
+    // Frames handed to vkQueuePresentKHR. A still screen with a rising simulation clock
+    // means this counter stopped moving, which separates a presenter stall from a calm scene.
+    uint64_t               m_presentedFrameCount = 0;
 
     // Last-bound state for redundancy elimination
     VkPipeline      m_lastPipeline = VK_NULL_HANDLE;

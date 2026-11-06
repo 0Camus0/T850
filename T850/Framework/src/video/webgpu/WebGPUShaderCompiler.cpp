@@ -131,13 +131,25 @@ bool LoadShaderFiles(const ShaderFileRequest& request, ShaderArtifact& artifact,
       return succeeded;
     };
     bool succeeded = false;
-    if (request.flow != ShaderFlow::Spirv) succeeded = attempt(ShaderSourceLanguage::Wgsl);
-    if (!succeeded && request.flow != ShaderFlow::Wgsl) {
-      report.fallbackAttempted = request.flow == ShaderFlow::Auto;
+    // The HLSL is the source of truth and its translation is cached on disk, so `auto` tries it
+    // first. The checked-in `.wgsl` twins are maintained by hand and have drifted before: they
+    // predated the fluid surface once, and the water rendered with a shader that had no
+    // FLUID_SURFACE path while the permutation was being requested and compiled. `wgsl` still
+    // selects the twins explicitly; the browser build uses packaged WGSL generated from the HLSL
+    // and does not come through here.
+    if (request.flow == ShaderFlow::Wgsl) {
+      succeeded = attempt(ShaderSourceLanguage::Wgsl);
+    } else if (request.flow == ShaderFlow::Spirv) {
       succeeded = attempt(ShaderSourceLanguage::Hlsl);
+    } else {
+      succeeded = attempt(ShaderSourceLanguage::Hlsl);
+      if (!succeeded) {
+        report.fallbackAttempted = true;
+        succeeded = attempt(ShaderSourceLanguage::Wgsl);
+      }
     }
     if (report.fallbackAttempted)
-      diagnostic = succeeded ? "WGSL failed; using HLSL/SPIR-V fallback.\n" : "WGSL and HLSL/SPIR-V fallback both failed.\n";
+      diagnostic = succeeded ? "HLSL/SPIR-V failed; using the WGSL twin.\n" : "HLSL/SPIR-V and the WGSL twin both failed.\n";
     for (const auto& result : report.attempts) {
       if (!result.diagnostic.empty()) {
         if (!diagnostic.empty() && diagnostic.back() != '\n') diagnostic += '\n';
@@ -300,6 +312,7 @@ bool ReflectShader(const ShaderRequest& request, ShaderArtifact& artifact, std::
       binding.kind = ResourceKind::WriteOnlyStorageTexture;
       binding.storageRgba8Unorm = resource.image_format == Binding::TexelFormat::kRgba8Unorm;
       binding.storageRgba16Float = resource.image_format == Binding::TexelFormat::kRgba16Float;
+      binding.storageR32Float = resource.image_format == Binding::TexelFormat::kR32Float;
       break;
     default:
       diagnostic = Context(request, "Resource kind is not supported by the stage-two compiler");

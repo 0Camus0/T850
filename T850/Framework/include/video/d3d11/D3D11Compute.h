@@ -37,6 +37,15 @@ namespace t850 {
     Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
   };
 
+  class D3D11ComputeTexture3D final : public ComputeTexture3D {
+  public:
+    bool Create(ID3D11Device* device, const ComputeTexture3DDesc& desc, const void* initialData);
+
+    Microsoft::WRL::ComPtr<ID3D11Texture3D> texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
+  };
+
 } // namespace t850
 
 #endif

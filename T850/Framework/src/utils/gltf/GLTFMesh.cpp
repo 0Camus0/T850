@@ -285,7 +285,9 @@ bool GenerateMikkTSpaceTangents(const std::vector<float>& positions,
     tx -= dot*nx; ty -= dot*ny; tz -= dot*nz;
     float l = std::sqrt(tx*tx + ty*ty + tz*tz);
     if (l > 1e-8f) { tx/=l; ty/=l; tz/=l; }
-    float sign = (firstSign[i] == 0.0f) ? 1.0f : firstSign[i];
+    // glTF V runs down the image while its normal maps put +Y up, so MikkTSpace fed raw
+    // glTF UVs returns the opposite handedness. Blender's exported w is always -sign.
+    float sign = (firstSign[i] == 0.0f) ? -1.0f : -firstSign[i];
     outTangents[i*4+0] = tx;
     outTangents[i*4+1] = ty;
     outTangents[i*4+2] = tz;
@@ -297,12 +299,14 @@ bool GenerateMikkTSpaceTangents(const std::vector<float>& positions,
 // ── Naive per-triangle tangent generation. Used as a fallback when
 // MikkTSpace cannot run (degenerate input — e.g. no UV0 or no normals).
 void GenerateNaiveTangents(const std::vector<float>& positions,   // size N*3
+                           const std::vector<float>& normals,     // size N*3
                            const std::vector<float>& uvs,         // size N*2
                            const std::vector<uint32_t>& tris,
-                           std::vector<float>& outTangents) {     // size N*4 (xyz, w=1)
+                           std::vector<float>& outTangents) {     // size N*4 (xyz, w = glTF handedness)
   const std::size_t N = positions.size() / 3;
   outTangents.assign(N * 4, 0.0f);
   std::vector<float> accum(N * 3, 0.0f);
+  std::vector<float> accumB(N * 3, 0.0f);
   for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
     uint32_t i0 = tris[t + 0], i1 = tris[t + 1], i2 = tris[t + 2];
     if (i0 >= N || i1 >= N || i2 >= N) continue;
@@ -322,10 +326,16 @@ void GenerateNaiveTangents(const std::vector<float>& positions,   // size N*3
     float tx = (dx1*dv2 - dx2*dv1) * r;
     float ty = (dy1*dv2 - dy2*dv1) * r;
     float tz = (dz1*dv2 - dz2*dv1) * r;
+    float bx = (dx2*du1 - dx1*du2) * r;
+    float by = (dy2*du1 - dy1*du2) * r;
+    float bz = (dz2*du1 - dz1*du2) * r;
     for (uint32_t i : {i0, i1, i2}) {
       accum[i*3+0] += tx;
       accum[i*3+1] += ty;
       accum[i*3+2] += tz;
+      accumB[i*3+0] += bx;
+      accumB[i*3+1] += by;
+      accumB[i*3+2] += bz;
     }
   }
   for (std::size_t i = 0; i < N; ++i) {
@@ -335,7 +345,14 @@ void GenerateNaiveTangents(const std::vector<float>& positions,   // size N*3
     outTangents[i*4+0] = x;
     outTangents[i*4+1] = y;
     outTangents[i*4+2] = z;
-    outTangents[i*4+3] = 1.0f;
+    // Same glTF handedness as the MikkTSpace path: w = -sign(dot(cross(N, T), dP/dv)).
+    float handedness = 1.0f;
+    if (normals.size() == N * 3) {
+      const float nx = normals[i*3+0], ny = normals[i*3+1], nz = normals[i*3+2];
+      const float cx = ny*z - nz*y, cy = nz*x - nx*z, cz = nx*y - ny*x;
+      handedness = (cx*accumB[i*3+0] + cy*accumB[i*3+1] + cz*accumB[i*3+2]) < 0.0f ? -1.0f : 1.0f;
+    }
+    outTangents[i*4+3] = -handedness;
   }
 }
 
@@ -489,7 +506,7 @@ bool BuildGeometry(const Document& doc,
     if (GenerateMikkTSpaceTangents(pos, nrm, uv0, tris, tan)) {
       hasTangent = true;
     } else {
-      GenerateNaiveTangents(pos, uv0, tris, tan);
+      GenerateNaiveTangents(pos, nrm, uv0, tris, tan);
       hasTangent = (tan.size() == N * 4);
     }
   }

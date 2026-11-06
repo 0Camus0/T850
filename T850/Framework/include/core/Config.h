@@ -95,6 +95,8 @@ public:
   float benchmarkFixedDt = 0.0f;
   int benchmarkHoldFrame = 0;
   float regressionFixedDt = 0.0f;
+  // Automated runs on a machine someone is using: never capture the mouse, never take focus.
+  bool unattended = false;
   std::string modelPath = "Models/DamagedHelmet.glb";
   std::string sceneFilePath;
   std::string sceneProfile;

@@ -1328,6 +1328,9 @@ heave damping, W-29 air, W-30 air drag) and W-19's inpainting (§7.1) were alrea
   buffer, −0.32 deferred, −0.24 HDR, water depth within 4/255 on 187 pixels — the earlier 24.8/255 was
   two real-time runs with different trajectories. The only cluster is the scripted ball's 38×38 px
   albedo (+23.7/255 inside that box), a per-mesh material sampling difference for the visual pass.
+  **Twin drift closed (2026-11-05):** `FS_Mesh.wgsl`/`VS_Mesh.wgsl` now carry the `FLUID_SURFACE` path,
+  so the shader probe passes all recorded permutations and scenes 3 and 6 are pixel-identical between
+  `--shaderFlow auto` and `--shaderFlow wgsl`; `auto` still prefers the HLSL.
   **Browser (Emscripten): done 2026-11-02.** The bundle builds (`BuildWeb.ps1`), scene 7 is in
   `web/scenes.json` and exported, Chrome renders the pool at 124–140 fps (942×352) and 116–124 fps
   (1262×532) with the solver at 60 sweeps, the in-browser 3D volume self-test passes on hardware *and*

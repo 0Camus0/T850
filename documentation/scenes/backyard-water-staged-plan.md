@@ -3324,6 +3324,9 @@ HLSL first and falls back to the twin; the water shows waves, refraction and the
 surface, and the deferred difference is 4.19/255. That also exposed two samplers sharing `s0` in
 `FS_Mesh.hlsl`, which glslang mapped to binding 67 and WebGPU rejected; the fluid normal map now
 uses the material sampler and the constants guard rejects duplicate sampler registers.
+**Twins brought to parity (2026-11-05):** `FS_Mesh.wgsl`/`VS_Mesh.wgsl` now implement the
+`FLUID_SURFACE` path, the Dawn shader probe passes all 10 tests including the recorded-permutation
+parity cases, and scenes 3 and 6 are pixel-identical between `auto` and strict `wgsl`.
 
 **Android and Steam Deck froze; three engine bugs (2026-11-02, reviewer).** The owner saw both
 devices stuck on one frame while the logs showed the solver running, which the local agent read as

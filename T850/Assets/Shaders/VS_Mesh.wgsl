@@ -28,8 +28,14 @@ struct MeshInstanceCB {
     WVP: mat4x4<f32>,
     World: mat4x4<f32>,
     WorldView: mat4x4<f32>,
+    TimeParams: vec4<f32>,
 }
 @group(0) @binding(65) var<uniform> constants: MeshInstanceCB;
+#endif
+
+#ifdef FLUID_SURFACE
+// Sampled with Load() so no sampler binding is required.
+@group(0) @binding(23) var FluidSurfaceTexture: texture_2d<f32>;
 #endif
 
 #ifdef USE_SKINNING_TEXTURE
@@ -204,6 +210,37 @@ fn rotateQuaternion(quaternion: vec4<f32>, value: vec3<f32>) -> vec3<f32> {
 #endif
 #ifdef USE_TEXCOORD3
     result.texture3 = input.texture3;
+#endif
+#if defined(FLUID_SURFACE) && !defined(SHADOW_MAP_PASS)
+    // Displace the water surface by the solver's height field (metres).
+    {
+        let fluidSize = textureDimensions(FluidSurfaceTexture);
+        let fluidUV = clamp(input.texture0.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+        // Bilinear reconstruction. The solver writes to a STORAGE texture, which
+        // cannot be sampled with hardware filtering, so a plain Load() snaps every
+        // vertex onto a texel and the water edge renders as 0.09 m blocks.
+        let gridPos = fluidUV * vec2<f32>(fluidSize) - vec2<f32>(0.5);
+        let base = clamp(vec2<i32>(floor(gridPos)), vec2<i32>(0),
+                         vec2<i32>(max(i32(fluidSize.x) - 2, 0), max(i32(fluidSize.y) - 2, 0)));
+        let frac = clamp(gridPos - vec2<f32>(base), vec2<f32>(0.0), vec2<f32>(1.0));
+        let h00 = textureLoad(FluidSurfaceTexture, base + vec2<i32>(0, 0), 0).x;
+        let h10 = textureLoad(FluidSurfaceTexture, base + vec2<i32>(1, 0), 0).x;
+        let h01 = textureLoad(FluidSurfaceTexture, base + vec2<i32>(0, 1), 0).x;
+        let h11 = textureLoad(FluidSurfaceTexture, base + vec2<i32>(1, 1), 0).x;
+        let fluidHeightValue = mix(mix(h00, h10, frac.x), mix(h01, h11, frac.x), frac.y);
+        input.position.y += fluidHeightValue * constants.TimeParams.z;
+
+        // Optional geometric ripple octaves, gated by TimeParams.w.
+        if (constants.TimeParams.w > 0.5) {
+            let ripplePos = input.position.xz;
+            let rippleTime = constants.TimeParams.x;
+            let rippleHeight =
+                0.0160 * sin(dot(ripplePos, vec2<f32>( 0.86,  0.51)) * 10.134 + rippleTime * 5.573) +
+                0.0090 * sin(dot(ripplePos, vec2<f32>(-0.60,  0.80)) * 15.322 + rippleTime * 11.492) +
+                0.0060 * sin(dot(ripplePos, vec2<f32>( 0.31, -0.95)) * 23.271 + rippleTime * 24.434);
+            input.position.y += rippleHeight * constants.TimeParams.y;
+        }
+    }
 #endif
     result.hposition = constants.WVP * input.position;
     result.Pos = result.hposition;

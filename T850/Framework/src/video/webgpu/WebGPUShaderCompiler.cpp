@@ -132,11 +132,11 @@ bool LoadShaderFiles(const ShaderFileRequest& request, ShaderArtifact& artifact,
     };
     bool succeeded = false;
     // The HLSL is the source of truth and its translation is cached on disk, so `auto` tries it
-    // first. The checked-in `.wgsl` twins are maintained by hand and drift: FS_Mesh.wgsl and
-    // VS_Mesh.wgsl predate the fluid surface, so the water rendered with a shader that had no
-    // FLUID_SURFACE path at all while the permutation was being requested and compiled. `wgsl`
-    // still selects the twins explicitly; the browser build uses packaged WGSL generated from the
-    // HLSL and does not come through here.
+    // first. The checked-in `.wgsl` twins are maintained by hand and have drifted before: they
+    // predated the fluid surface once, and the water rendered with a shader that had no
+    // FLUID_SURFACE path while the permutation was being requested and compiled. `wgsl` still
+    // selects the twins explicitly; the browser build uses packaged WGSL generated from the HLSL
+    // and does not come through here.
     if (request.flow == ShaderFlow::Wgsl) {
       succeeded = attempt(ShaderSourceLanguage::Wgsl);
     } else if (request.flow == ShaderFlow::Spirv) {

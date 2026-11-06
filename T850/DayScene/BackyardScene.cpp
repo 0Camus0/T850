@@ -714,7 +714,7 @@ bool BackyardScene::HandleBallDrag(InputManager* input, bool imguiWantsMouse, bo
   // camera's, never a pick. A touch screen has no Ctrl: there, a press that starts on a ball
   // grabs it and a press anywhere else is the camera's, which is the same rule the pointer
   // devices follow once the modifier is out of the way.
-#ifdef OS_ANDROID
+#if defined(OS_ANDROID) || defined(__EMSCRIPTEN__)
   const bool pickAllowed = true;
 #else
   const bool pickAllowed = ctrlDown;

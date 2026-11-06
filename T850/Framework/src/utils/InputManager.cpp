@@ -108,3 +108,51 @@ bool InputManager::ConsumeGamepadEastPress() {
 	Gamepad.buttonEastPressed = false;
 	return ret;
 }
+
+bool InputManager::ConsumeGamepadWestPress() {
+	bool ret = Gamepad.buttonWestPressed;
+	Gamepad.buttonWestPressed = false;
+	return ret;
+}
+
+bool InputManager::ConsumeGamepadNorthPress() {
+	bool ret = Gamepad.buttonNorthPressed;
+	Gamepad.buttonNorthPressed = false;
+	return ret;
+}
+
+bool InputManager::ConsumeGamepadLeftShoulderPress() {
+	bool ret = Gamepad.leftShoulderPressed;
+	Gamepad.leftShoulderPressed = false;
+	return ret;
+}
+
+bool InputManager::ConsumeGamepadRightShoulderPress() {
+	bool ret = Gamepad.rightShoulderPressed;
+	Gamepad.rightShoulderPressed = false;
+	return ret;
+}
+
+bool InputManager::ConsumeGamepadDpadLeftPress() {
+	bool ret = Gamepad.dpadLeftPressed;
+	Gamepad.dpadLeftPressed = false;
+	return ret;
+}
+
+bool InputManager::ConsumeGamepadDpadRightPress() {
+	bool ret = Gamepad.dpadRightPressed;
+	Gamepad.dpadRightPressed = false;
+	return ret;
+}
+
+bool InputManager::ConsumeGamepadDpadUpPress() {
+	bool ret = Gamepad.dpadUpPressed;
+	Gamepad.dpadUpPressed = false;
+	return ret;
+}
+
+bool InputManager::ConsumeGamepadDpadDownPress() {
+	bool ret = Gamepad.dpadDownPressed;
+	Gamepad.dpadDownPressed = false;
+	return ret;
+}

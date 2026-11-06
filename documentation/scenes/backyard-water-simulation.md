@@ -1131,14 +1131,16 @@ back-solves density, so editing either updates the other without them fighting e
   `[BackyardPickTest] PASS|FAIL`, and dumps a frame with the ball held at a logged pixel. Run it
   with `--unattended --regressionFixedDt 0.0033 --backyard-spawn 6`.
 - `T850\scripts\validation` holds the reviewer's scripts (`telemetry.ps1`, `perf.ps1`,
-  `bisect_perf.ps1`, `pick_test.ps1`, `cmp_ppm.py`, `ppm2png.py`); they write under
+  `bisect_perf.ps1`, `input_test.ps1`, `cmp_ppm.py`, `ppm2png.py`); they write under
   `T850\build\diag` and take `-ExeDir`/`-OutRoot` if another layout is needed. `backyard-diag`
   (local, untracked) still holds the scratch notes and the session-log reader;
   every one passes `--unattended`:
   - `s3matrix.ps1`: self-tests plus scenes 7/1/6 on five APIs, error counts.
   - `telemetry.ps1`: per-frame CPU phases (`scene.update`, `frame.draw`, `gpu.gpu_wait`),
     mean fps, p99 and spike count.
-  - `pick_test.ps1`: the pick test above.
+  - `input_test.ps1`: the pick test above, and `-Mode pad` for the synthetic gamepad test
+  (`--backyard-pad-test`): RT grabs along the crosshair, the left stick pans, the left trigger
+  lifts, and X/Y/shoulders/d-pad drive the quick actions.
   - `many_balls.ps1`: N spawned balls on one API.
   - `perf.ps1`: the older info-level fps method.
 

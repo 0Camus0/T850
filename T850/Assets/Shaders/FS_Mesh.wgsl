@@ -21,6 +21,7 @@ struct MeshFrameCB {
     LightPositions: array<vec4<f32>, 128>,
     LightColors: array<vec4<f32>, 128>,
     LightRadius: array<vec4<f32>, 32>,
+    CameraVP: mat4x4<f32>,
 }
 @group(0) @binding(64) var<uniform> frame: MeshFrameCB;
 struct MeshMaterialCB {
@@ -78,6 +79,33 @@ struct MeshMaterialCB {
     LightPositions: array<vec4<f32>, 128>,
     LightColors: array<vec4<f32>, 128>,
     LightRadius: array<vec4<f32>, 32>,
+#else
+    // Live water parameters from SceneProps::Water. Must mirror the tail of
+    // MeshMaterialCBuffer in RenderMesh.h field for field.
+    WaterOptics0: vec4<f32>,
+    WaterOptics1: vec4<f32>,
+    WaterOptics2: vec4<f32>,
+    WaterOptics3: vec4<f32>,
+    WaterOptics4: vec4<f32>,
+    WaterOptics5: vec4<f32>,
+    WaterWaves0: vec4<f32>,
+    WaterWaves1: vec4<f32>,
+    WaterWaves2: vec4<f32>,
+    WaterReflect0: vec4<f32>,
+    WaterReflect1: vec4<f32>,
+    WaterReflect2: vec4<f32>,
+    WaterFoam0: vec4<f32>,
+    WaterFoam1: vec4<f32>,
+    WaterFoam2: vec4<f32>,
+    WaterFoam3: vec4<f32>,
+    WaterRipple0: vec4<f32>,
+    WaterRipple1: vec4<f32>,
+    WaterRipple2: vec4<f32>,
+    WaterRipple3: vec4<f32>,
+    WaterRipple4: vec4<f32>,
+    WaterRipple5: vec4<f32>,
+    WaterMisc0: vec4<f32>,
+    WaterMisc1: vec4<f32>,
 #endif
 }
 #if defined(USE_SKINNING) || defined(USE_SKINNING_QT)
@@ -110,6 +138,12 @@ struct MeshMaterialCB {
 @group(0) @binding(8) var EmissiveTex: texture_2d<f32>;
 #endif
 @group(0) @binding(9) var SceneColorTex: texture_2d<f32>;
+#ifdef FLUID_SURFACE
+// Sampled with Load() so no sampler binding is required.
+@group(0) @binding(23) var FluidSurfaceTexture: texture_2d<f32>;
+// Static per-column pool floor height (world Y) in .x, one per solver column.
+@group(0) @binding(24) var FluidFloorTexture: texture_2d<f32>;
+#endif
 @group(0) @binding(10) var texIBLDiffuse: texture_cube<f32>;
 @group(0) @binding(11) var texIBLSpecular: texture_cube<f32>;
 @group(0) @binding(12) var texIBLBRDF: texture_2d<f32>;
@@ -229,6 +263,192 @@ fn LoadForwardSceneDepth(input: FragmentInput) -> f32 {
     let pixel = clamp(vec2<i32>(input.hposition.xy), vec2<i32>(0), vec2<i32>(material.ForwardParams.xy) - vec2<i32>(1));
     return textureLoad(SceneDepthTex, pixel, 0).r;
 }
+
+// True when opaque geometry at `sampleUV` sits NEARER to the camera than this water
+// fragment, so a refracted lookup at that point would pull its colour into the water.
+// `hposition.z` is the rasterised depth in [0,1], the same units SceneDepthTex stores.
+fn SceneIsNearerAt(input: FragmentInput, sampleUV: vec2<f32>) -> bool {
+    let epsilon = 1e-4;
+    let maxPixel = vec2<i32>(i32(material.ForwardParams.x) - 1, i32(material.ForwardParams.y) - 1);
+    let px = clamp(vec2<i32>(sampleUV * material.ForwardParams.xy), vec2<i32>(0), maxPixel);
+    let selfPx = clamp(vec2<i32>(input.hposition.xy), vec2<i32>(0), maxPixel);
+    let sampled = textureLoad(SceneDepthTex, px, 0).r;
+    let opaqueHere = textureLoad(SceneDepthTex, selfPx, 0).r;
+    if (sampled <= 0.0 || opaqueHere <= 0.0) { return false; }
+    let selfZ = input.hposition.z;
+    // Water in front of the floor means smaller depth is nearer (the usual convention).
+    let depthSign = select(1.0, -1.0, selfZ < opaqueHere);
+    return (sampled - selfZ) * depthSign > epsilon;
+}
+
+#ifdef FLUID_SURFACE
+// Slope of the fabricated tiling normal map, in m/m, bound at slot 22 alongside
+// the solver surface at 23.
+@group(0) @binding(22) var FluidNormalTex: texture_2d<f32>;
+
+// One directional sine octave. Called six times explicitly: dynamic indexing into a
+// local const array is not reliably unrolled and collapses every octave onto element 0.
+fn WaterRippleOctave(p: vec2<f32>, timeSeconds: f32, dir: vec2<f32>, waveLength: f32,
+                     amplitude: f32, speed: f32, fadeDistance: f32, viewDistance: f32) -> vec2<f32> {
+    let k = 6.28318530718 / waveLength;
+    let phase = dot(dir, p) * k + timeSeconds * material.WaterWaves0.y * speed * k;
+    let octaveFade = clamp(1.0 - viewDistance / fadeDistance, 0.0, 1.0);
+    return dir * (amplitude * material.WaterWaves0.x * k * cos(phase)) * octaveFade;
+}
+
+fn WaterRippleHeightOctave(p: vec2<f32>, timeSeconds: f32, dir: vec2<f32>, waveLength: f32,
+                           amplitude: f32, speed: f32, fadeDistance: f32, viewDistance: f32) -> f32 {
+    let k = 6.28318530718 / waveLength;
+    let phase = dot(dir, p) * k + timeSeconds * material.WaterWaves0.y * speed * k;
+    let octaveFade = clamp(1.0 - viewDistance / fadeDistance, 0.0, 1.0);
+    return amplitude * material.WaterWaves0.x * sin(phase) * octaveFade;
+}
+
+// Horizontal gradient of the six-octave directional ripple field, in m/m.
+#define T8_RIPPLE_OCTAVES(FN, ACCUM, P, T, D)                                                                        \
+    ACCUM = FN(P, T, vec2<f32>( 0.86,  0.51), material.WaterRipple0.y, material.WaterRipple0.x, material.WaterRipple0.z, material.WaterRipple0.w, D); \
+    ACCUM += FN(P, T, vec2<f32>(-0.60,  0.80), material.WaterRipple1.y, material.WaterRipple1.x, material.WaterRipple1.z, material.WaterRipple1.w, D); \
+    ACCUM += FN(P, T, vec2<f32>( 0.31, -0.95), material.WaterRipple2.y, material.WaterRipple2.x, material.WaterRipple2.z, material.WaterRipple2.w, D); \
+    ACCUM += FN(P, T, vec2<f32>( 0.98, -0.20), material.WaterRipple3.y, material.WaterRipple3.x, material.WaterRipple3.z, material.WaterRipple3.w, D); \
+    ACCUM += FN(P, T, vec2<f32>(-0.87, -0.49), material.WaterRipple4.y, material.WaterRipple4.x, material.WaterRipple4.z, material.WaterRipple4.w, D); \
+    ACCUM += FN(P, T, vec2<f32>( 0.42,  0.91), material.WaterRipple5.y, material.WaterRipple5.x, material.WaterRipple5.z, material.WaterRipple5.w, D);
+
+fn WaterRippleGradient(p: vec2<f32>, timeSeconds: f32, viewDistance: f32) -> vec2<f32> {
+    var gradient = vec2<f32>(0.0);
+    T8_RIPPLE_OCTAVES(WaterRippleOctave, gradient, p, timeSeconds, viewDistance)
+    return gradient;
+}
+
+// The same field's height, in metres. Used to synthesise caustics on the basin floor.
+fn WaterRippleHeight(p: vec2<f32>, timeSeconds: f32, viewDistance: f32) -> f32 {
+    var height = 0.0;
+    T8_RIPPLE_OCTAVES(WaterRippleHeightOctave, height, p, timeSeconds, viewDistance)
+    return height;
+}
+
+// Slope magnitude of the four longest-wavelength octaves.
+fn WaterRippleSlopeLow(p: vec2<f32>, timeSeconds: f32, viewDistance: f32) -> f32 {
+    var slope = WaterRippleOctave(p, timeSeconds, vec2<f32>( 0.86,  0.51), material.WaterRipple0.y, material.WaterRipple0.x, material.WaterRipple0.z, material.WaterRipple0.w, viewDistance);
+    slope += WaterRippleOctave(p, timeSeconds, vec2<f32>(-0.60,  0.80), material.WaterRipple1.y, material.WaterRipple1.x, material.WaterRipple1.z, material.WaterRipple1.w, viewDistance);
+    slope += WaterRippleOctave(p, timeSeconds, vec2<f32>( 0.31, -0.95), material.WaterRipple2.y, material.WaterRipple2.x, material.WaterRipple2.z, material.WaterRipple2.w, viewDistance);
+    slope += WaterRippleOctave(p, timeSeconds, vec2<f32>( 0.98, -0.20), material.WaterRipple3.y, material.WaterRipple3.x, material.WaterRipple3.z, material.WaterRipple3.w, viewDistance);
+    return length(slope);
+}
+
+// Gradient of only the three longest octaves: the fabricated normal map supplies the
+// fine capillary detail with proper mip filtering.
+fn WaterRippleGradientCoarse(p: vec2<f32>, timeSeconds: f32, viewDistance: f32) -> vec2<f32> {
+    var gradient = WaterRippleOctave(p, timeSeconds, vec2<f32>( 0.86,  0.51), material.WaterRipple0.y, material.WaterRipple0.x, material.WaterRipple0.z, material.WaterRipple0.w, viewDistance);
+    gradient += WaterRippleOctave(p, timeSeconds, vec2<f32>(-0.60,  0.80), material.WaterRipple1.y, material.WaterRipple1.x, material.WaterRipple1.z, material.WaterRipple1.w, viewDistance);
+    gradient += WaterRippleOctave(p, timeSeconds, vec2<f32>( 0.31, -0.95), material.WaterRipple2.y, material.WaterRipple2.x, material.WaterRipple2.z, material.WaterRipple2.w, viewDistance);
+    return gradient;
+}
+
+// Procedural breakup so foam reads as froth rather than a smooth gradient.
+fn WaterFoamNoise(p: vec2<f32>, timeSeconds: f32, viewDistance: f32) -> f32 {
+    let fade = clamp(1.0 - viewDistance / max(material.WaterFoam3.z, 0.001), 0.0, 1.0);
+    var n = sin(p.x * material.WaterFoam2.x + timeSeconds * 2.6) * sin(p.y * material.WaterFoam2.y - timeSeconds * 2.1);
+    n += 0.55 * sin(p.x * material.WaterFoam2.z - timeSeconds * 3.4) * sin(p.y * material.WaterFoam2.w + timeSeconds * 3.0) * fade;
+    n += 0.30 * sin(p.x * material.WaterFoam3.x + timeSeconds * 4.1) * sin(p.y * material.WaterFoam3.y - timeSeconds * 3.7) * fade * fade;
+    return clamp(0.5 + 0.42 * n, 0.0, 1.0);
+}
+
+fn WaterNormalMapGradient(uv: vec2<f32>, timeSeconds: f32) -> vec2<f32> {
+    let uvA = uv * material.WaterWaves1.xy + material.WaterWaves1.zw * timeSeconds;
+    let uvB = uv * material.WaterWaves2.xy + material.WaterWaves2.zw * timeSeconds;
+    var a = textureSampleGrad(FluidNormalTex, MaterialSS, uvA, dpdx(uvA), dpdy(uvA)).xyz;
+    var b = textureSampleGrad(FluidNormalTex, MaterialSS, uvB, dpdx(uvB), dpdy(uvB)).xyz;
+    // Guard against a missing texture: an unbound SRV reads as all zeros.
+    a = select(a * 2.0 - vec3<f32>(1.0), vec3<f32>(0.0, 0.0, 1.0), dot(a, a) < 0.01);
+    b = select(b * 2.0 - vec3<f32>(1.0), vec3<f32>(0.0, 0.0, 1.0), dot(b, b) < 0.01);
+    // Match the green flip the engine applies to glTF normal maps.
+    a.y = -a.y;
+    b.y = -b.y;
+    let slopeA = a.xy / max(a.z, 0.2);
+    let slopeB = b.xy / max(b.z, 0.2);
+    return (slopeA + slopeB) * 0.5 * material.WaterWaves0.z;
+}
+
+// Screen-space reflection trace. Marches the reflected ray in world space and compares
+// NDC depths directly. Returns rgb and a confidence in .a.
+fn WaterTraceScreenSpace(origin: vec3<f32>, dir: vec3<f32>, fallback: vec3<f32>, distortion: vec2<f32>,
+                         ndcYSign: f32, depthSign: f32) -> vec4<f32> {
+    var travelled = 0.0;
+    var stepLen = material.WaterReflect2.y;
+    var prevPos = origin;
+    var prevUV = vec2<f32>(0.0);
+    var prevDiff = 0.0;
+    var havePrev = false;
+    let stepCount = i32(material.WaterMisc0.x);
+
+    for (var i = 0; i < stepCount; i++) {
+        travelled += stepLen;
+        stepLen = min(stepLen * material.WaterReflect2.z, material.WaterReflect2.w);
+        let pos = origin + dir * travelled;
+        let clip = FRAME.CameraVP * vec4<f32>(pos, 1.0);
+        if (clip.w <= 0.001) { return vec4<f32>(fallback, 0.0); }
+        let uv = (clip.xy / clip.w) * vec2<f32>(0.5, ndcYSign * 0.5) + vec2<f32>(0.5);
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { return vec4<f32>(fallback, 0.0); }
+        let px = clamp(vec2<i32>(uv * material.ForwardParams.xy), vec2<i32>(0),
+                       vec2<i32>(i32(material.ForwardParams.x) - 1, i32(material.ForwardParams.y) - 1));
+        let sceneZ = textureLoad(SceneDepthTex, px, 0).r;
+        let rayZ = clip.z / clip.w;
+        if (sceneZ <= 0.0001) {  // nothing recorded here
+            prevPos = pos;
+            prevUV = uv;
+            havePrev = false;
+            continue;
+        }
+        let diff = (rayZ - sceneZ) * depthSign;
+        if (havePrev && prevDiff > 0.0 && diff <= 0.0) {
+            // Bisect between prevPos and pos for the crossing point.
+            var lo = prevPos;
+            var hi = pos;
+            var hitUV = uv;
+            for (var k = 0; k < 5; k++) {
+                let mid = (lo + hi) * 0.5;
+                let c2 = FRAME.CameraVP * vec4<f32>(mid, 1.0);
+                let muv = (c2.xy / c2.w) * vec2<f32>(0.5, ndcYSign * 0.5) + vec2<f32>(0.5);
+                let mpx = clamp(vec2<i32>(muv * material.ForwardParams.xy), vec2<i32>(0),
+                                vec2<i32>(i32(material.ForwardParams.x) - 1, i32(material.ForwardParams.y) - 1));
+                let mScene = textureLoad(SceneDepthTex, mpx, 0).r;
+                hitUV = muv;
+                let mDiff = (c2.z / c2.w - mScene) * depthSign;
+                if (mDiff > 0.0) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            // Fade confidence across the last step: the crossing point is only accurate
+            // to the step length, so thin features would otherwise show hard edges.
+            let travel = abs(hitUV - prevUV);
+            let stepGap = max(travel.x, travel.y);
+            let stepConfidence = clamp(1.0 - stepGap * 8.0, 0.0, 1.0);
+            // Edge fade: samples near the screen border are one texel away from leaving it.
+            let edge = min(hitUV, vec2<f32>(1.0) - hitUV);
+            let edgeConfidence = clamp(min(edge.x, edge.y) * 24.0, 0.0, 1.0);
+            let distanceConfidence = clamp(1.0 - travelled / max(material.WaterReflect2.x, 0.001), 0.0, 1.0);
+            let confidence = stepConfidence * edgeConfidence * distanceConfidence;
+            let sampleUV = clamp(hitUV + distortion, vec2<f32>(0.0), vec2<f32>(1.0));
+            // Five-tap blur, widening with distance: water is not a mirror.
+            let texelStep = vec2<f32>(1.0) / max(material.ForwardParams.xy, vec2<f32>(1.0));
+            let blurRadius = material.WaterReflect1.z + material.WaterReflect1.w * (1.0 - distanceConfidence);
+            var reflectedColor = textureSampleLevel(SceneColorTex, SceneColorSS, sampleUV, 0.0).rgb * 0.36;
+            reflectedColor += textureSampleLevel(SceneColorTex, SceneColorSS, clamp(sampleUV + vec2<f32>(texelStep.x, 0.0) * blurRadius, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * 0.16;
+            reflectedColor += textureSampleLevel(SceneColorTex, SceneColorSS, clamp(sampleUV - vec2<f32>(texelStep.x, 0.0) * blurRadius, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * 0.16;
+            reflectedColor += textureSampleLevel(SceneColorTex, SceneColorSS, clamp(sampleUV + vec2<f32>(0.0, texelStep.y) * blurRadius, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * 0.16;
+            reflectedColor += textureSampleLevel(SceneColorTex, SceneColorSS, clamp(sampleUV - vec2<f32>(0.0, texelStep.y) * blurRadius, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * 0.16;
+            return vec4<f32>(reflectedColor, confidence);
+        }
+        prevPos = pos;
+        prevUV = uv;
+        prevDiff = diff;
+        havePrev = true;
+    }
+    return vec4<f32>(fallback, 0.0);
+}
+#endif
 fn SignNotZero(value: vec2<f32>) -> vec2<f32> { return select(vec2<f32>(-1.0), vec2<f32>(1.0), value >= vec2<f32>(0.0)); }
 fn EncodeOctahedralNormal(value: vec3<f32>) -> vec2<f32> {
     var normal = normalize(value);
@@ -634,6 +854,48 @@ struct FragmentOutput {
     var surface = BuildSurface(input, isFrontFace);
     let emissive = SampleEmissive(input, surface.uv);
     let lightmap = SampleLightmap(input);
+#ifdef FLUID_SURFACE
+    // Solver surface: height (m), foam, slopeX, slopeZ. The slopes are height
+    // differences in metres across one cell step, so dividing by the spacing
+    // recovers a dimensionless gradient.
+    var fluidOpaque = false;
+    var fluidSurface = vec4<f32>(0.0);
+    {
+        let fluidSize = textureDimensions(FluidSurfaceTexture);
+        // Bilinear reconstruction, using the SAME texel-centre convention as the
+        // vertex shader, or the geometry and the shading normal disagree about
+        // where the surface is.
+        let gridPos = clamp(surface.uv, vec2<f32>(0.0), vec2<f32>(1.0)) * vec2<f32>(fluidSize) - vec2<f32>(0.5);
+        let base = clamp(vec2<i32>(floor(gridPos)), vec2<i32>(0),
+                         vec2<i32>(max(i32(fluidSize.x) - 2, 0), max(i32(fluidSize.y) - 2, 0)));
+        let frac = clamp(gridPos - vec2<f32>(base), vec2<f32>(0.0), vec2<f32>(1.0));
+        let c00 = textureLoad(FluidSurfaceTexture, base + vec2<i32>(0, 0), 0);
+        let c10 = textureLoad(FluidSurfaceTexture, base + vec2<i32>(1, 0), 0);
+        let c01 = textureLoad(FluidSurfaceTexture, base + vec2<i32>(0, 1), 0);
+        let c11 = textureLoad(FluidSurfaceTexture, base + vec2<i32>(1, 1), 0);
+        fluidSurface = mix(mix(c00, c10, frac.x), mix(c01, c11, frac.x), frac.y);
+    }
+    let fluidViewDistance = length(FRAME.CameraPosition.xyz - input.WorldPos.xyz);
+    {
+        // Solver gradient (large-scale shape) plus the analytic ripple gradient
+        // (high-frequency sparkle). Height-field normal is (-dh/dx, 1, -dh/dz).
+        let fluidCellSize = max(material.WaterMisc1.z, 0.001);
+        var heightGradient = fluidSurface.zw * (2.0 / fluidCellSize);
+        // The procedural ripple octaves and the tiling normal map are presentation
+        // only. Gating them lets the water be driven purely by the simulation.
+        if (material.WaterMisc0.w > 0.5) {
+            heightGradient += WaterRippleGradientCoarse(input.WorldPos.xz, material.MaterialParams3.w, fluidViewDistance);
+            if (material.WaterMisc0.y > 0.5) {
+                heightGradient += WaterNormalMapGradient(surface.uv, material.MaterialParams3.w);
+            }
+        }
+        heightGradient *= max(material.WaterMisc1.y, 0.0);
+        // Clamp the slope: an unbounded gradient fed a wildly wrong normal into the
+        // specular and reflection terms, which showed up as bright flashes.
+        heightGradient = clamp(heightGradient, vec2<f32>(-4.0), vec2<f32>(4.0));
+        surface.normal = normalize(vec3<f32>(-heightGradient.x, 1.0, -heightGradient.y));
+    }
+#endif
 #ifdef FORWARD_PASS
     if (material.ForwardParams.z > 0.5 && material.ForwardParams.x > 0.0 && material.ForwardParams.y > 0.0) {
         let sceneDepth = LoadForwardSceneDepth(input);
@@ -718,10 +980,150 @@ struct FragmentOutput {
         finalColor = mix(finalColor, textureSampleLevel(SceneColorTex, SceneColorSS, refractUV, 0.0).rgb, transmission);
     }
 #endif
+#ifdef FLUID_SURFACE
+    // Crysis-style forward water: a dielectric sheet over a shallow body.
+    // Refraction, Beer-Lambert absorption, sky reflection and a sun glint are
+    // composited by hand, so the result is written fully opaque.
+    {
+        // Fresnel comes from the macro normal blended half-way toward the SOLVER's
+        // height-field normal: a crest tilts the Fresnel, but a grazing facet can
+        // still not spike it toward near-total reflection.
+        let fluidCellSize = max(material.WaterMisc1.z, 0.001);
+        var solverGradient = fluidSurface.zw * (2.0 / fluidCellSize) * max(material.WaterMisc1.y, 0.0);
+        solverGradient = clamp(solverGradient, vec2<f32>(-4.0), vec2<f32>(4.0));
+        let fresnelNormalSolver = normalize(vec3<f32>(-solverGradient.x, 1.0, -solverGradient.y));
+        let fresnelNormal = normalize(mix(vec3<f32>(0.0, 1.0, 0.0), fresnelNormalSolver, 0.5));
+        let nDotEye = clamp(dot(fresnelNormal, eyeDir), 0.0, 1.0);
+        let fluidFresnel = clamp((0.02 + 0.98 * pow(1.0 - nDotEye, 5.0)) *
+                                 material.WaterOptics4.x + material.WaterOptics4.y, 0.0, 1.0);
+
+        // Optical path length. The vertical water depth comes from the SIMULATED
+        // column, not from the camera height. R is the (scaled) elevation delta, so
+        // undo the presentation scale here to recover the physical height.
+        let rawHeight = fluidSurface.x;
+        // Real per-column water depth: surface - floor, both in world Y. WaterOptics5.z
+        // is the authored water plane; .y stays as the fallback for a scene without a
+        // floor texture.
+        var columnDepth = 0.0;
+        if (material.WaterOptics5.w > 0.5) {
+            let floorSize = textureDimensions(FluidFloorTexture);
+            // Nearest texel on purpose: the floor is DISCONTINUOUS at every step edge,
+            // so filtering a height field across it invents a ramp that never existed.
+            let floorGrid = clamp(surface.uv, vec2<f32>(0.0), vec2<f32>(1.0)) * vec2<f32>(floorSize);
+            let floorCell = clamp(vec2<i32>(floorGrid), vec2<i32>(0),
+                                  vec2<i32>(max(i32(floorSize.x) - 1, 0), max(i32(floorSize.y) - 1, 0)));
+            let floorY = textureLoad(FluidFloorTexture, floorCell, 0).x;
+            columnDepth = max(material.WaterOptics5.z + rawHeight - floorY, 0.02);
+        } else {
+            columnDepth = max(material.WaterOptics5.y + rawHeight, 0.02);
+        }
+        // Path length along the view ray: depth / cos(theta), with theta measured
+        // from vertical. eyeDir.y is that cosine.
+        let cosTheta = max(abs(eyeDir.y), 0.25);
+        let thickness = clamp(columnDepth / cosTheta, 0.0, 8.0);
+
+        // Refraction, faded out towards the basin border so the deck and coping
+        // never smear into the water.
+        let fluidTime = material.MaterialParams3.w;
+        let borderDistance = min(surface.uv, vec2<f32>(1.0) - surface.uv);
+        let borderFade = clamp(min(borderDistance.x, borderDistance.y) /
+                               max(material.WaterOptics2.w, 0.0001), 0.0, 1.0);
+        let screenUV = GetForwardScreenUV(input);
+        let refractOffset = vec2<f32>(surface.normal.x, -surface.normal.z) * material.WaterOptics1.w * borderFade *
+                            (0.6 + 0.4 * clamp(thickness / 3.0, 0.0, 1.0));
+        var refractUV = clamp(screenUV + refractOffset, vec2<f32>(0.0), vec2<f32>(1.0));
+        // Depth-test the refracted lookup: the ball above the water and the pool
+        // coping would otherwise smear their colour into the surface. A hard switch
+        // rather than a blend, because the occlusion boundary is a hard edge.
+        if (SceneIsNearerAt(input, refractUV)) { refractUV = screenUV; }
+        let floorColor = textureSampleLevel(SceneColorTex, SceneColorSS, refractUV, 0.0).rgb;
+
+        // Caustics from the SIMULATED surface slope: a flat patch of surface focuses
+        // sunlight onto a small spot, a curved patch spreads it out.
+        let fluidSlope = fluidSurface.zw * (2.0 / max(material.WaterMisc1.z, 0.001));
+        let rippleSlope = length(fluidSlope);
+        let causticWeb = pow(clamp(1.0 - rippleSlope * material.WaterOptics3.z, 0.0, 1.0), material.WaterOptics3.y);
+        let floorLit = floorColor * (material.WaterOptics3.w + material.WaterOptics3.x * causticWeb);
+
+        // Beer-Lambert absorption: red dies first and blue survives, which is what
+        // turns deep water cyan. The scattered body term fills in the loss.
+        let transmittance = exp(-material.WaterOptics0.xyz * thickness);
+        let shallowBody = material.WaterOptics1.xyz;
+        let deepBody = material.WaterOptics2.xyz;
+        let bodyColor = mix(shallowBody, deepBody, clamp(thickness / max(material.WaterOptics0.w, 0.01), 0.0, 1.0));
+        var waterColor = floorLit * transmittance + bodyColor * (vec3<f32>(1.0) - transmittance);
+
+        // Sky reflection from the prefiltered environment, plus the tight sun glint
+        // that actually sells the sense of motion.
+        let fluidSunDir = normalize(FRAME.Light0Direction.xyz);
+        let sunWrap = clamp(dot(eyeDir, -fluidSunDir) * 0.5 + 0.5, 0.0, 1.0);
+        let sunTint = FRAME.LightColors[0].xyz * FRAME.LightColors[0].w;
+        let scatterVolume = sunTint * (material.WaterOptics4.z * sunWrap +
+                                       material.WaterOptics4.w * pow(clamp(dot(surface.normal, -fluidSunDir), 0.0, 1.0), 2.0));
+        waterColor += scatterVolume * (1.0 - exp(-thickness * material.WaterOptics5.x));
+
+        let reflected = reflect(-eyeDir, surface.normal);
+        var reflectRay = normalize(vec3<f32>(reflected.x, max(reflected.y, 0.01), reflected.z));
+        var reflectedFlipped = reflected;
+        reflectedFlipped.x = -reflectedFlipped.x;
+        reflectedFlipped.z = -reflectedFlipped.z;
+        // Sharp reflection: the point of the ripple normals is to break the sky
+        // reflection into facets, so a prefiltered mip would turn it into flat grey.
+        var reflection = textureSampleLevel(texIBLSpecular, IBLSpecularSS, reflectedFlipped, 0.0).xyz *
+                         iblFactor * material.WaterReflect0.x;
+        reflection += directLight * material.WaterReflect0.y;
+        // Screen-space reflections pick up what a cubemap cannot: the pool deck, the
+        // house, and anything else within the reflected ray's reach.
+        if (material.WaterMisc0.z > 0.5) {
+            // Distortion makes the reflected image break up instead of staying razor sharp.
+            let distortion = vec2<f32>(surface.normal.x, -surface.normal.z) * material.WaterReflect1.y;
+            // Clip-space Y handedness differs between the backends. Take both candidate
+            // conversions of THIS fragment's own clip position and keep whichever
+            // reproduces its actual screen position; that is exact and backend-independent.
+            let clipSelf = FRAME.CameraVP * vec4<f32>(input.WorldPos.xyz, 1.0);
+            let clipNdc = clipSelf.xy / clipSelf.w;
+            let screenUVOwn = GetForwardScreenUV(input);
+            let uvMinus = clipNdc * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+            let uvPlus = clipNdc * vec2<f32>(0.5, 0.5) + vec2<f32>(0.5);
+            let ndcYSign = select(1.0, -1.0, length(uvMinus - screenUVOwn) <= length(uvPlus - screenUVOwn));
+            // The water is known to sit in front of the basin floor, so comparing the
+            // two depths determines whether a larger stored depth means nearer.
+            let selfPx = clamp(vec2<i32>(input.hposition.xy), vec2<i32>(0),
+                               vec2<i32>(i32(material.ForwardParams.x) - 1, i32(material.ForwardParams.y) - 1));
+            let selfSceneZ = textureLoad(SceneDepthTex, selfPx, 0).r;
+            let depthSign = select(-1.0, 1.0, clipSelf.z / clipSelf.w > selfSceneZ);
+            let ssr = WaterTraceScreenSpace(input.WorldPos.xyz + surface.normal * 0.002, reflectRay,
+                                            reflection, distortion, ndcYSign, depthSign);
+            reflection = mix(reflection, ssr.rgb, ssr.a * material.WaterReflect1.x);
+        }
+        if (i32(FRAME.CameraInfo.w) > 0 && FRAME.LightPositions[0].w < 0.5) {
+            let sunDir = normalize(-FRAME.LightPositions[0].xyz);
+            let halfVec = normalize(eyeDir + sunDir);
+            let sunGlint = pow(clamp(dot(surface.normal, halfVec), 0.0, 1.0), material.WaterReflect0.z) * FRAME.LightColors[0].w;
+            reflection += FRAME.LightColors[0].xyz * sunGlint * material.WaterReflect0.w;
+        }
+
+        finalColor = mix(waterColor, reflection, fluidFresnel);
+
+        // Foam only where the water meets the basin walls and steps. Gating it by the
+        // border distance rather than by the depth keeps it off the open surface.
+        let shoreFoam = clamp(1.0 - borderFade * material.WaterFoam0.y, 0.0, 1.0);
+        let foam = clamp((clamp(fluidSurface.y, 0.0, 1.0) * material.WaterFoam0.x + shoreFoam) *
+                         WaterFoamNoise(input.WorldPos.xz, fluidTime, fluidViewDistance) *
+                         material.WaterFoam0.z, 0.0, 1.0);
+        finalColor = mix(finalColor, material.WaterFoam1.rgb, foam * material.WaterFoam0.w);
+        fluidOpaque = true;
+    }
+#endif
     finalColor += emissive;
     var alpha = surface.color.a;
     if (transmission > 0.0 && alpha >= 0.999) { alpha = clamp(1.0 - transmission, 0.0, 1.0); }
     if (material.AlphaParams.x < 1.5 && transmission <= 0.0) { alpha = 1.0; }
+#ifdef FLUID_SURFACE
+    // The water composite already contains the background, so it must replace
+    // rather than blend.
+    if (fluidOpaque) { alpha = 1.0; }
+#endif
     return vec4<f32>(finalColor, alpha);
 }
 #endif

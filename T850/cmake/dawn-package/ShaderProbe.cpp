@@ -592,59 +592,62 @@ void CheckShaderFlows() {
   write(".wgsl", direct);
   write(".hlsl", hlsl);
   Require(request.flow == ShaderFlow::Auto, "Default shader flow is not auto");
-  load(true, 1, ShaderSourceLanguage::Wgsl);
-  const auto directWgsl = artifact.wgsl;
-  load(true, 1, ShaderSourceLanguage::Wgsl, true);
-  request.flow = ShaderFlow::Spirv;
+  // `auto` treats the HLSL as the source of truth and only falls back to the twin, so
+  // the water shaders cannot silently render without the code the engine actually
+  // ships. Strict `wgsl` keeps the twins selectable, and strict `spirv` forces HLSL.
   load(true, 1, ShaderSourceLanguage::Hlsl);
-  Require(artifact.wgsl != directWgsl, "Forced SPIR-V reused WGSL output");
   const auto translatedWgsl = artifact.wgsl;
   load(true, 1, ShaderSourceLanguage::Hlsl, true);
+  request.flow = ShaderFlow::Spirv;
+  load(true, 1, ShaderSourceLanguage::Hlsl, true);
+  Require(artifact.wgsl == translatedWgsl, "Forced SPIR-V did not reuse the HLSL translation");
+  request.flow = ShaderFlow::Wgsl;
+  load(true, 1, ShaderSourceLanguage::Wgsl);
+  const auto directWgsl = artifact.wgsl;
+  Require(directWgsl != translatedWgsl, "Strict WGSL flow reused the HLSL translation");
+  load(true, 1, ShaderSourceLanguage::Wgsl, true);
   write(".wgsl", "invalid WGSL\n");
   request.flow = ShaderFlow::Auto;
-  load(true, 2, ShaderSourceLanguage::Hlsl, true);
-  Require(artifact.wgsl == translatedWgsl && !report.attempts.front().diagnostic.empty()
-    && diagnostic.find("fallback") != std::string::npos, "Fallback failure reason missing");
+  load(true, 1, ShaderSourceLanguage::Hlsl, true);
+  Require(!report.fallbackAttempted && diagnostic.empty(), "Auto flow consulted the twin while the HLSL compiled");
   request.flow = ShaderFlow::Wgsl;
   load(false, 1, ShaderSourceLanguage::Wgsl);
-  write(".wgsl", "@vertex fn FS() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }\n");
-  request.flow = ShaderFlow::Auto;
-  load(true, 2, ShaderSourceLanguage::Hlsl, true);
-  write(".wgsl", "#error preprocessing failure\n");
-  load(true, 2, ShaderSourceLanguage::Hlsl, true);
-  write(".wgsl", "");
-  load(true, 2, ShaderSourceLanguage::Hlsl, true);
-  std::filesystem::remove(stem + ".wgsl");
-  load(true, 2, ShaderSourceLanguage::Hlsl, true);
-  write(".wgsl", direct);
-  load(true, 1, ShaderSourceLanguage::Wgsl, true);
-  Require(!report.fallbackAttempted && diagnostic.empty(), "Recovered WGSL retained fallback state");
   write(".hlsl", "invalid HLSL\n");
+  write(".wgsl", direct);
+  request.flow = ShaderFlow::Auto;
+  load(true, 2, ShaderSourceLanguage::Wgsl, true);
+  Require(report.attempts.front().sourceLanguage == ShaderSourceLanguage::Hlsl
+    && !report.attempts.front().diagnostic.empty() && diagnostic.find("WGSL twin") != std::string::npos,
+    "Fallback failure reason missing");
   request.flow = ShaderFlow::Spirv;
   load(false, 1, ShaderSourceLanguage::Hlsl);
-  request.flow = ShaderFlow::Auto;
-  load(true, 1, ShaderSourceLanguage::Wgsl, true);
   write(".wgsl", "invalid WGSL\n");
-  load(false, 2, ShaderSourceLanguage::Hlsl);
+  request.flow = ShaderFlow::Auto;
+  load(false, 2, ShaderSourceLanguage::Wgsl);
   Require(diagnostic.find(stem + ".wgsl") != std::string::npos && diagnostic.find(stem + ".hlsl") != std::string::npos,
     "Both failure diagnostics must be retained");
+  write(".wgsl", direct);
+  write(".hlsl", hlsl);
+  load(true, 1, ShaderSourceLanguage::Hlsl, true);
+  Require(!report.fallbackAttempted && diagnostic.empty(), "Recovered HLSL retained fallback state");
   std::filesystem::remove(stem + ".hlsl");
-  load(false, 2, ShaderSourceLanguage::Hlsl);
+  load(true, 2, ShaderSourceLanguage::Wgsl, true);
   request.flow = ShaderFlow::Spirv;
   load(false, 1, ShaderSourceLanguage::Hlsl);
-  write(".wgsl", direct);
+  write(".hlsl", hlsl);
   request.flow = ShaderFlow::Auto;
-  load(true, 1, ShaderSourceLanguage::Wgsl, true);
+  load(true, 1, ShaderSourceLanguage::Hlsl, true);
   std::filesystem::remove(stem + ".wgsl");
-  load(false, 2, ShaderSourceLanguage::Hlsl);
+  load(true, 1, ShaderSourceLanguage::Hlsl, true);
   write(".wgsl", direct);
   write(".hlsl", hlsl);
   request.name = stem + ".hlsl";
-  load(true, 1, ShaderSourceLanguage::Wgsl, true);
+  load(true, 1, ShaderSourceLanguage::Hlsl, true);
   request.flow = ShaderFlow::Spirv;
   request.name = stem + ".wgsl";
   load(true, 1, ShaderSourceLanguage::Hlsl, true);
   request.defines = "#define FLOW_VARIANT 1\n";
+  request.flow = ShaderFlow::Auto;
   load(true, 1, ShaderSourceLanguage::Hlsl);
   request.flow = ShaderFlow::Wgsl;
   load(true, 1, ShaderSourceLanguage::Wgsl);
@@ -659,7 +662,7 @@ void CheckShaderFlows() {
   }
   Require(!ParseShaderFlow("invalid", parsed) && parsed == ShaderFlow::Spirv, "Invalid option changed flow");
   std::filesystem::remove_all(fixtureRoot);
-  std::cout << "Shader flow PASS: WGSL default, strict overrides, fallback/recovery, diagnostics, cache isolation\n";
+  std::cout << "Shader flow PASS: HLSL source of truth, strict overrides, fallback/recovery, diagnostics, cache isolation\n";
 }
 
 void CheckBindings(const std::string& name, const ShaderArtifact& artifact) {

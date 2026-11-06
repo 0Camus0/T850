@@ -105,12 +105,21 @@ equivalent, so the driver copies them into a transient `Storage` buffer per disp
 
 **The WGSL twins are a fallback, not the default.** `Assets/Shaders/*.wgsl` are hand-maintained
 translations, and the native `auto` flow used to try them first. `FS_Mesh.wgsl` and `VS_Mesh.wgsl`
-predate the fluid surface, so scene 7 rendered the pool from a shader with no `FLUID_SURFACE` path
+predated the fluid surface, so scene 7 rendered the pool from a shader with no `FLUID_SURFACE` path
 while the permutation was compiled and bound correctly — the water looked flat and opaque and the
 submerged parts of the balls were hidden. `auto` now compiles the HLSL (`actual=spirv` in the log,
 cached on disk) and only falls back to the twin; `--shaderFlow wgsl` still selects the twins
 explicitly, and the browser build uses packaged WGSL generated from the HLSL. **Keep in mind:** a
 hand-written twin is another copy that can drift, exactly like the duplicated cbuffers in W-14.
+
+**The twins were brought back to parity (2026-11-05).** `VS_Mesh.wgsl` gained `TimeParams` and the
+`FLUID_SURFACE` displacement, and `FS_Mesh.wgsl` gained `CameraVP`, the `Water*` material block and
+the whole water composite (ripples, refraction, absorption, caustics, SSR, foam). The Dawn shader
+probe now reports 10/10, including `WgslVertexPermutations` and `WgslRecordedPermutations` over every
+recorded permutation, and scenes 3 and 6 render **pixel-identical** back buffers with
+`--shaderFlow auto` and `--shaderFlow wgsl`. Strict `wgsl` still cannot run scene 7 because the new
+fluid compute kernels are HLSL-only (no `.wgsl` twins), which fails loudly instead of rendering
+waterless.
 
 **Do not declare two samplers on one register.** `FS_Mesh.hlsl` had both `MaterialSS` and
 `FluidNormalSS` on `s0`. D3D resolves the two names to one slot, but glslang's auto-mapping gave the

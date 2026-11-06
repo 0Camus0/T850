@@ -33,6 +33,19 @@ namespace {
   constexpr float kMaxDragSpeed = 6.0f;          // m/s
   constexpr float kMaxDragHeightAboveWater = 2.5f; // m
 
+  // Compass name for a wind heading in degrees, measured from +X toward +Z. Shared by the
+  // debug panel and the quick bar so the two readouts cannot drift apart.
+  const char* WindCompassLabel(float headingDeg) {
+    if (headingDeg < 22.5f || headingDeg >= 337.5f) return "+X (east)";
+    if (headingDeg < 67.5f) return "+X+Z";
+    if (headingDeg < 112.5f) return "+Z (south)";
+    if (headingDeg < 157.5f) return "-X+Z";
+    if (headingDeg < 202.5f) return "-X (west)";
+    if (headingDeg < 247.5f) return "-X-Z";
+    if (headingDeg < 292.5f) return "-Z (north)";
+    return "+X-Z";
+  }
+
   struct BackyardAsset {
     const char* path;
     const char* label;
@@ -750,6 +763,7 @@ bool BackyardScene::SpawnBall() {
     T8_LOG_ERROR("[Backyard] Cannot spawn a ball: the fluid solver is not running on this API");
     return false;
   }
+  if (AtBallCap()) return false;
   const t850::WaterTunables& w = SceneProp.Water;
   const t850::FluidSettings& fs = m_fluid.Settings();
   if (m_ballPrimitive < 0) {
@@ -848,6 +862,74 @@ bool BackyardScene::SpawnBall() {
               material ? material : "GLB default",
               m_fluid.BodyCount());
   return true;
+}
+
+int BackyardScene::SpawnBalls(int count) {
+  int spawned = 0;
+  for (int i = 0; i < count; ++i) {
+    if (AtBallCap() || !m_fluidReady || m_ballPrimitive < 0) break;
+    if (!SpawnBall()) break;
+    ++spawned;
+  }
+  return spawned;
+}
+
+bool BackyardScene::AtBallCap() const {
+  return static_cast<int>(m_fluid.BodyCount()) >= kMaxBalls;
+}
+
+float BackyardScene::CurrentWindSpeed() const {
+  const t850::WaterTunables& w = SceneProp.Water;
+  return std::sqrt(w.windX * w.windX + w.windZ * w.windZ);
+}
+
+float BackyardScene::CurrentWindHeadingDeg() const {
+  const t850::WaterTunables& w = SceneProp.Water;
+  // Sticky at zero speed: atan2(0, 0) has no direction to report, and dragging the speed
+  // to 0 and back must not silently rotate the wind.
+  if (CurrentWindSpeed() <= 1e-4f) return m_windHeadingDeg;
+  constexpr float kRadToDeg = 57.29577951308232f;
+  float heading = std::atan2(w.windZ, w.windX) * kRadToDeg;
+  if (heading < 0.0f) heading += 360.0f;
+  return heading;
+}
+
+void BackyardScene::ApplyWind(float speed, float headingDeg) {
+  constexpr float kDegToRad = 0.017453292519943295f;
+  t850::WaterTunables& w = SceneProp.Water;
+  const float clampedSpeed = (std::min)((std::max)(speed, 0.0f), 20.0f);
+  float heading = std::fmod(headingDeg, 360.0f);
+  if (heading < 0.0f) heading += 360.0f;
+  m_windHeadingDeg = heading;
+  w.windX = clampedSpeed * std::cos(heading * kDegToRad);
+  w.windZ = clampedSpeed * std::sin(heading * kDegToRad);
+  // Keep the components exact rather than leaving 1e-8 residue at 0 or 90 degrees.
+  if (std::fabs(w.windX) < 1e-6f) w.windX = 0.0f;
+  if (std::fabs(w.windZ) < 1e-6f) w.windZ = 0.0f;
+}
+
+void BackyardScene::AdjustWindSpeed(float delta) {
+  ApplyWind(CurrentWindSpeed() + delta, CurrentWindHeadingDeg());
+}
+
+void BackyardScene::AdjustWindHeading(float deltaDeg) {
+  ApplyWind(CurrentWindSpeed(), CurrentWindHeadingDeg() + deltaDeg);
+}
+
+bool BackyardScene::ResetArmed() const {
+  return m_resetArmedUntil > 0.0f && m_elapsedSeconds <= m_resetArmedUntil;
+}
+
+void BackyardScene::RequestReset() {
+  // The arm timer rides on m_elapsedSeconds, which only advances while the solver runs, so
+  // arming on an API without the solver would leave the button stuck on "Reset?".
+  if (!m_fluidReady) return;
+  if (ResetArmed()) {
+    m_resetArmedUntil = 0.0f;
+    ResetSimulation();
+    return;
+  }
+  m_resetArmedUntil = m_elapsedSeconds + kResetArmSeconds;
 }
 
 bool BackyardScene::WaterUVMatchesSolver(t850::PrimitiveInst* water) const {
@@ -1210,6 +1292,26 @@ void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse)
   // Ctrl frees the cursor (AllowsMouseCapture) and turns a left click into a pick.
   const bool ctrlDown = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
   const bool draggingBall = HandleBallDrag(input, imguiWantsMouse, ctrlDown);
+
+  // Quick actions. The debug panel stays hidden by default, so these must exist as plain
+  // keys: K drops ten balls, R resets (two presses), the arrow keys steer the wind, V the
+  // wind arrow. Letters and arrows are used instead of [ ] , . because those punctuation
+  // keys move with the keyboard layout. Skipped only while a text field owns the keyboard:
+  // WantCaptureKeyboard is true for the always-on quick bar itself, which would eat them.
+  const bool typing = ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput;
+  if (!typing) {
+    if (input->PressedOnceKey(T800K_k)) {
+      const int spawned = SpawnBalls(10);
+      T8_LOG_INFO("[Backyard] K spawned %d ball(s); %u bodies", spawned, m_fluid.BodyCount());
+    }
+    if (input->PressedOnceKey(T800K_r)) RequestReset();
+    if (input->PressedOnceKey(T800K_UP)) AdjustWindSpeed(0.5f);
+    if (input->PressedOnceKey(T800K_DOWN)) AdjustWindSpeed(-0.5f);
+    if (input->PressedOnceKey(T800K_LEFT)) AdjustWindHeading(-15.0f);
+    if (input->PressedOnceKey(T800K_RIGHT)) AdjustWindHeading(15.0f);
+    if (input->PressedOnceKey(T800K_v)) m_showWind = !m_showWind;
+  }
+
   m_cursorFreed = ctrlDown || draggingBall;
   t850::CameraInputState state;
   state.moveForward = input->PressedKey(T800K_w);
@@ -1563,6 +1665,96 @@ void BackyardScene::OnDraw() {
   }
 }
 
+void BackyardScene::DrawGameplayGui(t850::DevGuiContext&) {
+  DrawQuickBar();
+}
+
+void BackyardScene::DrawQuickBar() {
+  if (!m_assetsCreated || !ImGui::GetCurrentContext()) return;
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  if (!viewport) return;
+
+  // Bottom-centre, one row. Always visible on every platform: the debug panel stays
+  // hidden, but these four actions must never need it.
+  constexpr float kMargin = 14.0f;
+  ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                 viewport->WorkPos.y + viewport->WorkSize.y - kMargin),
+                          ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+  ImGui::SetNextWindowBgAlpha(0.72f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 8.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+  const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing;
+  if (ImGui::Begin("##BackyardQuickBar", nullptr, flags)) {
+    const int bodies = static_cast<int>(m_fluid.BodyCount());
+    const int room = kMaxBalls - bodies;
+    char label[64];
+
+    // +10 balls: greyed out at the ceiling, with the remaining room in the tooltip.
+    ImGui::BeginDisabled(!m_fluidReady || room <= 0);
+    if (ImGui::Button("+10 balls")) {
+      const int spawned = SpawnBalls(10);
+      T8_LOG_INFO("[Backyard] Quick bar spawned %d ball(s); %u bodies", spawned, m_fluid.BodyCount());
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      std::snprintf(label, sizeof(label), "%d of %d ball slots free", (std::max)(room, 0), kMaxBalls);
+      ImGui::SetTooltip("%s", label);
+    }
+
+    ImGui::SameLine();
+    // Reset clears the spawned balls, so it takes two presses; the label says so.
+    const bool resetArmed = ResetArmed();
+    ImGui::BeginDisabled(!m_fluidReady);
+    if (resetArmed) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.20f, 0.16f, 0.90f));
+    if (ImGui::Button(resetArmed ? "Reset?" : "Reset")) RequestReset();
+    if (resetArmed) ImGui::PopStyleColor();
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip(resetArmed ? "Press again to clear the spawned balls and restart the pool"
+                                   : "Clear the spawned balls and restart the pool (two presses)");
+    }
+
+    ImGui::SameLine();
+    ImGui::TextUnformatted("|");
+    ImGui::SameLine();
+
+    // Wind: speed and heading, the same two values the debug panel edits.
+    if (ImGui::Button("-##windSpeed")) AdjustWindSpeed(-0.5f);
+    ImGui::SameLine();
+    std::snprintf(label, sizeof(label), "wind %.1f m/s @ %03.0f", CurrentWindSpeed(),
+                  CurrentWindHeadingDeg());
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine();
+    if (ImGui::Button("+##windSpeed")) AdjustWindSpeed(0.5f);
+    ImGui::SameLine();
+    if (ImGui::Button("<<##windHeading")) AdjustWindHeading(-15.0f);
+    ImGui::SameLine();
+    if (ImGui::Button(">>##windHeading")) AdjustWindHeading(15.0f);
+    ImGui::SameLine();
+    ImGui::Checkbox("arrow", &m_showWind);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the wind arrow: direction = heading, length = speed");
+
+#ifndef OS_ANDROID
+    ImGui::SameLine();
+    ImGui::TextDisabled("K +10  R reset  arrows wind  V arrow");
+#endif
+    // The bar is clickable with a mouse only while the camera has released the cursor, and
+    // that is not obvious, so it says so on hover.
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+        !ImGui::IsAnyItemHovered()) {
+      ImGui::SetTooltip("Hold Ctrl to free the mouse and click these buttons.\n"
+                        "K: +10 balls   R: reset (twice)   arrows: wind   V: wind arrow");
+    }
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(5);
+}
+
 void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
   if (!gui.BeginPanel("Backyard Water")) {
     return;
@@ -1676,36 +1868,20 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     // collapsed sub-section because that is what JSON, the gates and SetWind use; editing either
     // view writes windX/windZ, and the other view is derived from them, so they cannot disagree.
     {
-      constexpr float kRadToDeg = 57.29577951308232f;
-      constexpr float kDegToRad = 0.017453292519943295f;
-      float speed = std::sqrt(w.windX * w.windX + w.windZ * w.windZ);
-      float heading = m_windHeadingDeg;
-      if (speed > 1e-4f) {
-        heading = std::atan2(w.windZ, w.windX) * kRadToDeg;
-        if (heading < 0.0f) heading += 360.0f;
-      }
+      // One speed and one heading, shared with the quick bar through the same helpers, so
+      // the two views cannot disagree about what the wind is.
+      float speed = CurrentWindSpeed();
+      float heading = CurrentWindHeadingDeg();
       bool changed = slider("water_wind_speed", "air speed (m/s)  [moves water + balls]", speed,
                             0.0f, 20.0f, 0.1f);
       changed = slider("water_wind_dir", "wind direction (deg; 0 = +X, 90 = +Z)", heading,
                        0.0f, 360.0f, 1.0f) || changed;
-      if (changed) {
-        m_windHeadingDeg = heading;
-        w.windX = speed * std::cos(heading * kDegToRad);
-        w.windZ = speed * std::sin(heading * kDegToRad);
-        // Keep the components exact rather than leaving 1e-8 residue at 0 or 90 degrees.
-        if (std::fabs(w.windX) < 1e-6f) w.windX = 0.0f;
-        if (std::fabs(w.windZ) < 1e-6f) w.windZ = 0.0f;
-      }
-      // Derived heading is sticky at zero speed: atan2(0, 0) has no direction to report.
-      if (speed > 1e-4f) m_windHeadingDeg = heading;
+      if (changed) ApplyWind(speed, heading);
 
       char line[160];
-      const char* compass = heading < 22.5f || heading >= 337.5f ? "+X (east)"
-        : heading < 67.5f ? "+X+Z" : heading < 112.5f ? "+Z (south)"
-        : heading < 157.5f ? "-X+Z" : heading < 202.5f ? "-X (west)"
-        : heading < 247.5f ? "-X-Z" : heading < 292.5f ? "-Z (north)" : "+X-Z";
       std::snprintf(line, sizeof(line), "wind %+.1f m/s toward %.0f deg (%s)  ->  X %+.2f  Z %+.2f",
-                    speed, heading, compass, w.windX, w.windZ);
+                    CurrentWindSpeed(), CurrentWindHeadingDeg(),
+                    WindCompassLabel(CurrentWindHeadingDeg()), w.windX, w.windZ);
       gui.Text(line);
       if (gui.BeginSection("Wind components (exact)", false)) {
         slider("water_wind_x", "wind X (m/s)", w.windX, -20.0f, 20.0f, 0.1f);

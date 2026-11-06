@@ -62,6 +62,9 @@ public:
   // Test hook (--backyard-pick-test): drives the real pick/drag input path with a
   // synthetic InputManager, so no OS mouse or keyboard input is ever generated.
   static void SetPickTest(bool enabled) { s_pickTest = enabled; }
+  // Test hook (--backyard-pad-test): drives the gamepad grab and the pad quick actions with a
+  // synthetic InputManager, so the Deck path is covered without hardware.
+  static void SetPadTest(bool enabled) { s_padTest = enabled; }
 
 private:
   struct AssetRequest {
@@ -168,7 +171,21 @@ private:
   XVECTOR3 m_dragOffset;              // ball centre minus its projection on the ray
   XVECTOR3 m_dragTarget;              // where the cursor wants the centre this frame
   t850::Ray CursorRay(float mouseX, float mouseY) const;
+  // Same unprojection, aimed down the camera's own forward axis, so a pad can pick without a
+  // cursor. The two rays share everything below the screen-space step.
+  t850::Ray CrosshairRay() const;
   bool ProjectToScreen(const XVECTOR3& world, float& x, float& y) const;
+  // Nearest enabled body under the ray; writes the distance along it. -1 when nothing is hit.
+  int PickBallAlongRay(const t850::Ray& ray, float& along) const;
+  // Starts a drag at a picked body. The mouse and the pad both come through here.
+  void BeginBallDrag(int bodyIndex, const t850::Ray& ray, float along);
+  // ── Gamepad drag: RT holds the ball under the crosshair ──
+  // Left stick pans it over the ground relative to the camera, left trigger lifts it, and
+  // releasing RT drops it with the velocity the steering gave it.
+  bool HandleGamepadGrab(InputManager* input);
+  bool m_gamepadGrab = false;    // the pad owns the current drag
+  bool m_gamepadAiming = false;  // RT is held, so the crosshair is worth drawing
+  void DrawGrabCrosshair();
   // Camera and ball input; OnInput feeds the real InputManager, the pick test a fake one.
   void ProcessSceneInput(InputManager* input, bool imguiWantsMouse);
   // Returns true while a ball is held, so the camera ignores that mouse gesture.
@@ -189,6 +206,20 @@ private:
   float m_pickTestFrom[2] = {0.0f, 0.0f};
   float m_pickTestTo[2] = {0.0f, 0.0f};
   void RunPickTestStep();
+  // ── --backyard-pad-test state ──
+  static bool s_padTest;
+  InputManager m_padTestInput;
+  int m_padTestFrame = 0;
+  int m_padTestTarget = -1;
+  int m_padTestFailures = 0;
+  bool m_padTestDone = false;
+  float m_padTestStartWindSpeed = 0.0f;
+  float m_padTestStartHeading = 0.0f;
+  // While the pad test runs, the crosshair ray is aimed at the chosen ball so the grab is
+  // deterministic; production keeps using the camera axis.
+  bool m_padTestAim = false;
+  XVECTOR3 m_padTestAimPoint;
+  void RunPadTestStep();
   t850::FluidDebugRenderer m_fluidDebug;
   t850::WireframeArrow m_windArrow;
   bool m_windArrowReady = false;

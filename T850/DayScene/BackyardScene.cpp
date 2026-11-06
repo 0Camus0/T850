@@ -72,6 +72,7 @@ uint32_t BackyardScene::s_spawnSeed = 0;
 int BackyardScene::s_massAuditFrames = 0;
 int BackyardScene::s_ballProbeFrames = 0;
 bool BackyardScene::s_pickTest = false;
+bool BackyardScene::s_padTest = false;
 
 BackyardScene::BackyardScene() = default;
 
@@ -643,6 +644,7 @@ bool BackyardScene::ProjectToScreen(const XVECTOR3& world, float& x, float& y) c
 bool BackyardScene::HandleBallDrag(InputManager* input, bool imguiWantsMouse, bool ctrlDown) {
   const float mouseX = static_cast<float>(input->mouseX);
   const float mouseY = static_cast<float>(input->mouseY);
+  if (m_gamepadGrab) return false;   // the pad owns this drag
   if (m_dragBody >= 0) {
     if (!input->PressedMouseButton(0) || !m_fluidReady ||
         static_cast<uint32_t>(m_dragBody) >= m_fluid.BodyCount()) {
@@ -665,6 +667,29 @@ bool BackyardScene::HandleBallDrag(InputManager* input, bool imguiWantsMouse, bo
   if (!clicked || !ctrlDown || imguiWantsMouse || !m_fluidReady) return false;
 
   const t850::Ray ray = CursorRay(mouseX, mouseY);
+  float along = 0.0f;
+  const int best = PickBallAlongRay(ray, along);
+  if (best < 0) return false;
+  BeginBallDrag(best, ray, along);
+  return true;
+}
+
+t850::Ray BackyardScene::CrosshairRay() const {
+  t850::Ray ray;
+  ray.origin = XVECTOR3(m_camera.Eye.x, m_camera.Eye.y, m_camera.Eye.z);
+  XVECTOR3 direction = m_camera.Look;
+  if (s_padTest && m_padTestAim) {
+    // The pad test aims at a chosen ball instead of the camera axis, so the grab is
+    // deterministic and does not depend on the free-fly orientation.
+    direction = XVECTOR3(m_padTestAimPoint.x - ray.origin.x, m_padTestAimPoint.y - ray.origin.y,
+                         m_padTestAimPoint.z - ray.origin.z);
+  }
+  direction.Normalize();
+  ray.direction = direction;
+  return ray;
+}
+
+int BackyardScene::PickBallAlongRay(const t850::Ray& ray, float& along) const {
   int best = -1;
   float bestDistance = FLT_MAX;
   for (uint32_t index = 0; index < m_fluid.BodyCount(); ++index) {
@@ -679,22 +704,79 @@ bool BackyardScene::HandleBallDrag(InputManager* input, bool imguiWantsMouse, bo
       best = static_cast<int>(index);
     }
   }
-  t850::FluidSphere* body = best >= 0 ? m_fluid.Body(static_cast<uint32_t>(best)) : nullptr;
-  if (!body) return false;
+  along = bestDistance;
+  return best;
+}
 
-  const float along = (body->x - ray.origin.x) * ray.direction.x +
-                      (body->y - ray.origin.y) * ray.direction.y +
-                      (body->z - ray.origin.z) * ray.direction.z;
-  m_dragDistance = (std::max)(along, 0.5f);
-  m_dragOffset = XVECTOR3(body->x - (ray.origin.x + ray.direction.x * along),
-                          body->y - (ray.origin.y + ray.direction.y * along),
-                          body->z - (ray.origin.z + ray.direction.z * along));
+void BackyardScene::BeginBallDrag(int bodyIndex, const t850::Ray& ray, float along) {
+  t850::FluidSphere* body = m_fluid.Body(static_cast<uint32_t>(bodyIndex));
+  if (!body) return;
+  // Re-project the centre on the ray so the ball does not jump when it is grabbed.
+  const float alongBody = (body->x - ray.origin.x) * ray.direction.x +
+                          (body->y - ray.origin.y) * ray.direction.y +
+                          (body->z - ray.origin.z) * ray.direction.z;
+  m_dragDistance = (std::max)(alongBody > 0.0f ? alongBody : along, 0.5f);
+  m_dragOffset = XVECTOR3(body->x - (ray.origin.x + ray.direction.x * m_dragDistance),
+                          body->y - (ray.origin.y + ray.direction.y * m_dragDistance),
+                          body->z - (ray.origin.z + ray.direction.z * m_dragDistance));
   m_dragTarget = XVECTOR3(body->x, body->y, body->z);
   body->held = true;
   body->vx = body->vy = body->vz = 0.0f;
-  m_dragBody = best;
+  m_dragBody = bodyIndex;
   T8_LOG_INFO("[Backyard] Holding ball %d (radius %.2f m) at (%.2f, %.2f, %.2f)",
-              best, body->radius, body->x, body->y, body->z);
+              bodyIndex, body->radius, body->x, body->y, body->z);
+}
+
+bool BackyardScene::HandleGamepadGrab(InputManager* input) {
+  const GamepadInputState& pad = input->Gamepad;
+  const bool aiming = pad.connected && pad.enabled && pad.rightTrigger > 0.4f;
+  m_gamepadAiming = aiming;
+  if (!aiming) {
+    if (m_gamepadGrab) EndBallDrag();   // release RT = drop, keeping the steering velocity
+    return false;
+  }
+  if (!m_fluidReady) return false;
+  if (m_dragBody < 0) {
+    const t850::Ray ray = CrosshairRay();
+    float along = 0.0f;
+    const int index = PickBallAlongRay(ray, along);
+    if (index < 0) return false;
+    BeginBallDrag(index, ray, along);
+    m_gamepadGrab = true;
+    return true;
+  }
+  if (!m_gamepadGrab) return false;   // the mouse owns this drag; let it run
+
+  // Left stick pans over the ground, relative to where the camera looks; the left trigger
+  // lifts. ApplyBallDrag clamps the result to the basin, so the ball cannot be steered
+  // through a wall.
+  constexpr float kPanSpeed = 3.0f;   // m/s
+  constexpr float kLiftSpeed = 1.5f;  // m/s
+  // The left stick rests slightly off centre on a Deck, so ignore small deflections.
+  auto deadZone = [](float value) {
+    constexpr float kDeadZone = 0.15f;
+    return std::fabs(value) < kDeadZone ? 0.0f : value;
+  };
+  float lookX = m_camera.Look.x;
+  float lookZ = m_camera.Look.z;
+  const float groundLength = std::sqrt(lookX * lookX + lookZ * lookZ);
+  if (groundLength > 1e-4f) {
+    lookX /= groundLength;
+    lookZ /= groundLength;
+  } else {
+    lookX = 0.0f;
+    lookZ = 1.0f;
+  }
+  // Right on the ground plane is the look direction rotated -90 degrees about Y.
+  const float rightX = lookZ;
+  const float rightZ = -lookX;
+  const float dt = m_deltaSeconds;
+  const float panAlong = -deadZone(pad.leftY) * kPanSpeed * dt;
+  const float panSide = deadZone(pad.leftX) * kPanSpeed * dt;
+  const float lift = (std::max)(pad.leftTrigger, 0.0f) * kLiftSpeed * dt;
+  m_dragTarget = XVECTOR3(m_dragTarget.x + rightX * panSide + lookX * panAlong,
+                          m_dragTarget.y + lift,
+                          m_dragTarget.z + rightZ * panSide + lookZ * panAlong);
   return true;
 }
 
@@ -724,13 +806,17 @@ void BackyardScene::ApplyBallDrag(float dt) {
 }
 
 void BackyardScene::EndBallDrag() {
-  if (m_dragBody < 0) return;
+  if (m_dragBody < 0) {
+    m_gamepadGrab = false;
+    return;
+  }
   if (t850::FluidSphere* body = m_fluid.Body(static_cast<uint32_t>(m_dragBody))) {
     body->held = false;
     T8_LOG_INFO("[Backyard] Released ball %d at (%.2f, %.2f, %.2f), velocity (%.2f, %.2f, %.2f) m/s",
                 m_dragBody, body->x, body->y, body->z, body->vx, body->vy, body->vz);
   }
   m_dragBody = -1;
+  m_gamepadGrab = false;
 }
 
 void BackyardScene::UpdateExtraBallTransforms() {
@@ -1054,6 +1140,7 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
   }
   m_lightCamera.Update(0.0f);
   if (s_pickTest && !m_pickTestDone) RunPickTestStep();
+  if (s_padTest && !m_padTestDone) RunPadTestStep();
   // A grid change needs new 3D textures; everything else can be retuned in place.
   const t850::WaterTunables& w = SceneProp.Water;
   if (m_fluidReady &&
@@ -1280,7 +1367,7 @@ void BackyardScene::OnInput(InputManager* input) {
   // The in-process pick test (--backyard-pick-test) drives its own synthetic InputManager from
   // RunPickTestStep. Forwarding the real one as well ends every synthetic drag on the next frame,
   // because HandleBallDrag sees the physical button up, which is what made the hold checks fail.
-  if (s_pickTest) return;
+  if (s_pickTest || s_padTest) return;
   bool imguiWantsMouse = false;
 #ifndef OS_ANDROID
   imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
@@ -1291,13 +1378,30 @@ void BackyardScene::OnInput(InputManager* input) {
 void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse) {
   // Ctrl frees the cursor (AllowsMouseCapture) and turns a left click into a pick.
   const bool ctrlDown = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
-  const bool draggingBall = HandleBallDrag(input, imguiWantsMouse, ctrlDown);
+  // The pad grabs with RT and picks down the camera's crosshair, so both paths end up in the
+  // same drag code; the pad has to run first, or the mouse release test would end its drag.
+  const bool gamepadDragging = HandleGamepadGrab(input);
+  const bool draggingBall = gamepadDragging || HandleBallDrag(input, imguiWantsMouse, ctrlDown);
 
-  // Quick actions. The debug panel stays hidden by default, so these must exist as plain
-  // keys: K drops ten balls, R resets (two presses), the arrow keys steer the wind, V the
-  // wind arrow. Letters and arrows are used instead of [ ] , . because those punctuation
-  // keys move with the keyboard layout. Skipped only while a text field owns the keyboard:
-  // WantCaptureKeyboard is true for the always-on quick bar itself, which would eat them.
+  // Quick actions on the pad, mirroring the quick bar: X adds ten balls, Y resets (twice),
+  // the shoulders step the air speed, left/right on the d-pad the heading, up the arrow.
+  if (input->ConsumeGamepadWestPress()) {
+    const int spawned = SpawnBalls(10);
+    T8_LOG_INFO("[Backyard] Pad +10 spawned %d ball(s); %u bodies", spawned, m_fluid.BodyCount());
+  }
+  if (input->ConsumeGamepadNorthPress()) RequestReset();
+  if (input->ConsumeGamepadLeftShoulderPress()) AdjustWindSpeed(-0.5f);
+  if (input->ConsumeGamepadRightShoulderPress()) AdjustWindSpeed(0.5f);
+  if (input->ConsumeGamepadDpadLeftPress()) AdjustWindHeading(-15.0f);
+  if (input->ConsumeGamepadDpadRightPress()) AdjustWindHeading(15.0f);
+  if (input->ConsumeGamepadDpadUpPress()) m_showWind = !m_showWind;
+
+  // Quick actions on the keyboard. The debug panel stays hidden by default, so these must
+  // exist as plain keys: K drops ten balls, R resets (two presses), the arrow keys steer the
+  // wind, V the wind arrow. Letters and arrows are used instead of [ ] , . because those
+  // punctuation keys move with the keyboard layout. Skipped only while a text field owns the
+  // keyboard: WantCaptureKeyboard is true for the always-on quick bar itself, which would
+  // eat them.
   const bool typing = ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput;
   if (!typing) {
     if (input->PressedOnceKey(T800K_k)) {
@@ -1521,6 +1625,243 @@ void BackyardScene::RunPickTestStep() {
   }
 }
 
+void BackyardScene::RunPadTestStep() {
+  // Frame plan: settle, grab with RT, pan with the left stick, lift with LT, release, then one
+  // frame per quick action. Frame counts rather than seconds, because this runs on real time.
+  constexpr int kSettleFrames = 600;
+  constexpr int kGrab = kSettleFrames + 1;
+  constexpr int kPanEnd = kGrab + 90;
+  constexpr int kLiftEnd = kPanEnd + 60;
+  constexpr int kRelease = kLiftEnd + 1;
+  constexpr int kWestAction = kRelease + 1;
+  constexpr int kShoulderUp = kWestAction + 1;
+  constexpr int kShoulderDown = kShoulderUp + 1;
+  constexpr int kDpadRight = kShoulderDown + 1;
+  constexpr int kDpadLeft = kDpadRight + 1;
+  constexpr int kArrowToggle = kDpadLeft + 1;
+  constexpr int kResetOne = kArrowToggle + 1;
+  constexpr int kResetTwo = kResetOne + 1;
+  constexpr int kEnd = kResetTwo + 1;
+
+  const int frame = m_padTestFrame++;
+  InputManager& in = m_padTestInput;
+
+  auto check = [&](bool ok, const char* what) {
+    if (ok) {
+      T8_LOG_INFO("[BackyardPadTest] ok: %s", what);
+    } else {
+      ++m_padTestFailures;
+      T8_LOG_ERROR("[BackyardPadTest] FAIL: %s", what);
+    }
+    return ok;
+  };
+  auto finish = [&]() {
+    m_padTestDone = true;
+    T8_LOG_INFO("[BackyardPadTest] %s (%d failure(s))", m_padTestFailures ? "FAIL" : "PASS",
+                m_padTestFailures);
+    m_dumper.RequestDump();
+  };
+  auto bodyPosition = [&](int index) {
+    const t850::FluidSphere& body = m_fluid.Bodies()[static_cast<uint32_t>(index)];
+    return XVECTOR3(body.x, body.y, body.z);
+  };
+  auto step = [&]() { ProcessSceneInput(&in, false); };
+
+  in.Gamepad.connected = true;
+  in.Gamepad.enabled = true;
+  in.Gamepad.name = "Synthetic pad";
+
+  if (!m_fluidReady) {
+    if (pFramework && pFramework->pVideoDriver && pFramework->pVideoDriver->SupportsComputeTextures3D()) {
+      ++m_padTestFailures;
+      T8_LOG_ERROR("[BackyardPadTest] FAIL: the API supports 3D compute storage but the fluid solver is not ready");
+    } else {
+      T8_LOG_INFO("[BackyardPadTest] SKIP: no fluid solver (and so no balls) on this API");
+    }
+    m_padTestDone = true;
+    m_dumper.RequestDump();
+    return;
+  }
+
+  if (frame == kSettleFrames) {
+    // Aim at the nearest enabled ball in front of the eye, then let the next frame grab it.
+    const XVECTOR3 eye(m_camera.Eye.x, m_camera.Eye.y, m_camera.Eye.z);
+    float best = FLT_MAX;
+    for (uint32_t index = 0; index < m_fluid.BodyCount(); ++index) {
+      const t850::FluidSphere& body = m_fluid.Bodies()[index];
+      if (!body.enabled || (index == 0 && !SceneProp.Water.sphereEnabled)) continue;
+      const float d = (body.x - eye.x) * (body.x - eye.x) + (body.y - eye.y) * (body.y - eye.y) +
+                      (body.z - eye.z) * (body.z - eye.z);
+      if (d < best) { best = d; m_padTestTarget = static_cast<int>(index); }
+    }
+    if (!check(m_padTestTarget >= 0, "a ball is available to grab (run with --backyard-spawn 2 or more)")) {
+      finish();
+      return;
+    }
+    m_padTestAimPoint = bodyPosition(m_padTestTarget);
+    m_padTestAim = true;
+    T8_LOG_INFO("[BackyardPadTest] aiming at ball %d at (%.2f, %.2f, %.2f), radius %.2f m",
+                m_padTestTarget, m_padTestAimPoint.x, m_padTestAimPoint.y, m_padTestAimPoint.z,
+                m_fluid.Bodies()[static_cast<uint32_t>(m_padTestTarget)].radius);
+    return;
+  }
+
+  if (frame == kGrab) {
+    in.Gamepad.rightTrigger = 1.0f;
+    step();
+    if (!check(m_dragBody == m_padTestTarget && m_gamepadGrab,
+               "RT grabs the ball under the crosshair")) {
+      finish();
+      return;
+    }
+    check(m_gamepadAiming, "the crosshair is shown while RT is held");
+    m_padTestStartWindSpeed = CurrentWindSpeed();
+    m_padTestStartHeading = CurrentWindHeadingDeg();
+    return;
+  }
+
+  if (frame > kGrab && frame < kPanEnd) {
+    // Pan with the left stick; the target moves, ApplyBallDrag steers the body after it.
+    in.Gamepad.leftX = 1.0f;
+    step();
+    if (m_dragBody != m_padTestTarget) {
+      check(false, "the ball stays held while RT is down");
+      finish();
+      return;
+    }
+    return;
+  }
+
+  if (frame == kPanEnd) {
+    in.Gamepad.leftX = 0.0f;
+    step();
+    const XVECTOR3 moved = bodyPosition(m_padTestTarget);
+    const float dx = moved.x - m_padTestAimPoint.x;
+    const float dz = moved.z - m_padTestAimPoint.z;
+    const float travelled = std::sqrt(dx * dx + dz * dz);
+    T8_LOG_INFO("[BackyardPadTest] left stick moved the ball %.3f m horizontally", travelled);
+    check(travelled > 0.15f, "the left stick pans the held ball over the ground");
+    m_padTestAimPoint = moved;   // the lift check starts from here
+    return;
+  }
+
+  if (frame > kPanEnd && frame < kLiftEnd) {
+    in.Gamepad.leftTrigger = 1.0f;
+    step();
+    return;
+  }
+
+  if (frame == kLiftEnd) {
+    in.Gamepad.leftTrigger = 0.0f;
+    step();
+    const XVECTOR3 lifted = bodyPosition(m_padTestTarget);
+    const float dy = lifted.y - m_padTestAimPoint.y;
+    T8_LOG_INFO("[BackyardPadTest] left trigger lifted the ball %.3f m", dy);
+    check(dy > 0.05f, "the left trigger lifts the held ball");
+    return;
+  }
+
+  if (frame == kRelease) {
+    in.Gamepad.rightTrigger = 0.0f;
+    step();
+    const t850::FluidSphere& body = m_fluid.Bodies()[static_cast<uint32_t>(m_padTestTarget)];
+    check(m_dragBody < 0 && !m_gamepadGrab && !body.held, "releasing RT drops the ball");
+    check(!m_gamepadAiming, "the crosshair hides when RT is released");
+    return;
+  }
+
+  if (frame == kWestAction) {
+    const uint32_t before = m_fluid.BodyCount();
+    in.Gamepad.buttonWest = true;
+    in.Gamepad.buttonWestPressed = true;
+    step();
+    in.Gamepad.buttonWest = false;
+    const uint32_t after = m_fluid.BodyCount();
+    T8_LOG_INFO("[BackyardPadTest] X took the body count %u -> %u", before, after);
+    check(after > before, "X adds balls");
+    return;
+  }
+
+  if (frame == kShoulderUp) {
+    in.Gamepad.rightShoulder = true;
+    in.Gamepad.rightShoulderPressed = true;
+    step();
+    in.Gamepad.rightShoulder = false;
+    check(CurrentWindSpeed() > m_padTestStartWindSpeed + 0.25f, "RB raises the air speed");
+    m_padTestStartWindSpeed = CurrentWindSpeed();
+    return;
+  }
+
+  if (frame == kShoulderDown) {
+    in.Gamepad.leftShoulder = true;
+    in.Gamepad.leftShoulderPressed = true;
+    step();
+    in.Gamepad.leftShoulder = false;
+    check(CurrentWindSpeed() < m_padTestStartWindSpeed - 0.25f, "LB lowers the air speed");
+    m_padTestStartWindSpeed = CurrentWindSpeed();
+    m_padTestStartHeading = CurrentWindHeadingDeg();
+    return;
+  }
+
+  if (frame == kDpadRight) {
+    in.Gamepad.dpadRight = true;
+    in.Gamepad.dpadRightPressed = true;
+    step();
+    in.Gamepad.dpadRight = false;
+    const float heading = CurrentWindHeadingDeg();
+    const float turn = std::fmod(heading - m_padTestStartHeading + 360.0f, 360.0f);
+    T8_LOG_INFO("[BackyardPadTest] d-pad right turned the wind %.0f -> %.0f deg", m_padTestStartHeading, heading);
+    check(turn > 10.0f && turn < 20.0f, "d-pad right turns the wind by 15 degrees");
+    m_padTestStartHeading = heading;
+    return;
+  }
+
+  if (frame == kDpadLeft) {
+    in.Gamepad.dpadLeft = true;
+    in.Gamepad.dpadLeftPressed = true;
+    step();
+    in.Gamepad.dpadLeft = false;
+    const float heading = CurrentWindHeadingDeg();
+    const float turn = std::fmod(m_padTestStartHeading - heading + 360.0f, 360.0f);
+    check(turn > 10.0f && turn < 20.0f, "d-pad left turns the wind back by 15 degrees");
+    return;
+  }
+
+  if (frame == kArrowToggle) {
+    const bool before = m_showWind;
+    in.Gamepad.dpadUp = true;
+    in.Gamepad.dpadUpPressed = true;
+    step();
+    in.Gamepad.dpadUp = false;
+    check(m_showWind != before, "d-pad up toggles the wind arrow");
+    return;
+  }
+
+  if (frame == kResetOne) {
+    in.Gamepad.buttonNorth = true;
+    in.Gamepad.buttonNorthPressed = true;
+    step();
+    in.Gamepad.buttonNorth = false;
+    check(ResetArmed(), "Y arms the reset");
+    check(m_fluid.BodyCount() > 1, "arming the reset keeps the spawned balls");
+    return;
+  }
+
+  if (frame == kResetTwo) {
+    in.Gamepad.buttonNorthPressed = true;
+    step();
+    in.Gamepad.buttonNorth = false;
+    T8_LOG_INFO("[BackyardPadTest] after Y twice the body count is %u", m_fluid.BodyCount());
+    check(m_fluid.BodyCount() == 1, "a second Y clears the spawned balls");
+    check(!ResetArmed(), "the reset disarms itself");
+    return;
+  }
+
+  if (frame >= kEnd) {
+    finish();
+  }
+}
+
 void BackyardScene::DrawFluidDebug() {
   if (!m_fluidReady || !m_fluidDebugView.Any()) return;
   t850::BaseDriver* driver = pFramework->pVideoDriver;
@@ -1666,7 +2007,23 @@ void BackyardScene::OnDraw() {
 }
 
 void BackyardScene::DrawGameplayGui(t850::DevGuiContext&) {
+  DrawGrabCrosshair();
   DrawQuickBar();
+}
+
+void BackyardScene::DrawGrabCrosshair() {
+  if (!m_gamepadAiming || !ImGui::GetCurrentContext()) return;
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  if (!drawList || !viewport) return;
+  const ImVec2 center(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                      viewport->WorkPos.y + viewport->WorkSize.y * 0.5f);
+  // Bright while a ball is held, plain while the trigger is only being held down looking for
+  // one, so it is obvious whether the grab took.
+  const ImU32 color = m_gamepadGrab ? IM_COL32(120, 220, 255, 235) : IM_COL32(240, 240, 240, 190);
+  drawList->AddCircle(center, 11.0f, IM_COL32(10, 12, 14, 200), 28, 3.0f);
+  drawList->AddCircle(center, 11.0f, color, 28, 1.8f);
+  drawList->AddCircleFilled(center, m_gamepadGrab ? 4.0f : 2.0f, color, 16);
 }
 
 void BackyardScene::DrawQuickBar() {
@@ -1747,8 +2104,10 @@ void BackyardScene::DrawQuickBar() {
     // that is not obvious, so it says so on hover.
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
         !ImGui::IsAnyItemHovered()) {
-      ImGui::SetTooltip("Hold Ctrl to free the mouse and click these buttons.\n"
-                        "K: +10 balls   R: reset (twice)   arrows: wind   V: wind arrow");
+      ImGui::SetTooltip("Keyboard: K +10 balls, R reset (twice), arrows wind, V arrow.\n"
+                        "Pad: RT grab, LS move, LT lift, X +10, Y reset, LB/RB speed, "
+                        "d-pad left/right heading, d-pad up arrow.\n"
+                        "Mouse: hold Ctrl to free the cursor and click these buttons.");
     }
   }
   ImGui::End();

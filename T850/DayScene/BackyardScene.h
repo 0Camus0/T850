@@ -30,6 +30,10 @@ public:
   void OnDraw() override;
   void OnInput(InputManager* input) override;
   void DrawDevGui(t850::DevGuiContext& gui) override;
+  // Always-on quick bar: drop balls, reset the pool and steer the wind without opening the
+  // debug panel, on every platform. Drawn through the runtime GUI so ImGui owns the hit test
+  // (a tap on a button must not also turn the camera).
+  void DrawGameplayGui(t850::DevGuiContext& gui) override;
   // The GUI can change the solver grid, which means new 3D textures.
   bool RebuildFluid();
   // Clears the solver to a flat, motionless pool and re-arms the dropped body at the
@@ -110,6 +114,29 @@ private:
   // Drops one ball at a random place inside the basin, at a random radius and density.
   // Returns false at the cap or when no free spot was found.
   bool SpawnBall();
+  // Drops up to `count` balls, stopping at kMaxBalls. Returns how many were added, so the
+  // HUD and the tests can report what actually happened.
+  int SpawnBalls(int count);
+  // Total bodies, including the scripted ball at index 0. The body-mask upload and the
+  // per-ball instance bookkeeping grow with it, so the quick bar stops at a ceiling.
+  static constexpr int kMaxBalls = 40;
+  bool AtBallCap() const;
+  // ── Wind: one speed and one heading, the way the panel and the quick bar speak ──
+  // Both views write windX/windZ, so JSON, the gates and FluidSimulation::SetWind agree.
+  float CurrentWindSpeed() const;
+  float CurrentWindHeadingDeg() const;
+  void ApplyWind(float speed, float headingDeg);
+  void AdjustWindSpeed(float delta);
+  void AdjustWindHeading(float deltaDeg);
+  // ── Quick bar ──
+  void DrawQuickBar();
+  // Reset clears the spawned balls, so it takes two presses: the first arms it for a few
+  // seconds and the label changes, the second acts.
+  bool ResetArmed() const;
+  void RequestReset();
+  float m_resetArmedUntil = 0.0f;
+  // Seconds a reset stays armed after the first press.
+  static constexpr float kResetArmSeconds = 4.0f;
   void ClearSpawnedBalls();
   // Welds every spawned ball's instance to its simulated body.
   void UpdateExtraBallTransforms();

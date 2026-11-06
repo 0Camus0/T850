@@ -8,8 +8,13 @@ export function validateCloudflareConfig(input, { requireToken = false, env = pr
   const branch = input.branch ?? 'main';
   if (typeof branch !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/.test(branch)) fail('Invalid deployment branch');
   if (input.minecraftOnly !== undefined && typeof input.minecraftOnly !== 'boolean') fail('minecraftOnly must be a boolean');
+  // site "water" publishes only the Backyard water scene; it streams the meshes and ball textures
+  // from R2, so it cannot be the R2-free Minecraft package.
+  if (input.site !== undefined && input.site !== 'water') fail('site must be "water" when set');
+  if (input.site === 'water' && input.minecraftOnly === true) fail('The water site cannot be minecraftOnly');
+  const minecraftOnly = input.site === 'water' ? false : input.minecraftOnly ?? true;
   const configuredBuckets = input.r2Buckets ?? [];
-  if (!Array.isArray(configuredBuckets) || (configuredBuckets.length !== 2 && !(input.minecraftOnly !== false && configuredBuckets.length === 0)))
+  if (!Array.isArray(configuredBuckets) || (configuredBuckets.length !== 2 && !(minecraftOnly && configuredBuckets.length === 0)))
     fail('Configure both MODELS and TEXTURES R2 buckets for the multi-scene site');
   const bindings = new Set();
   const origins = new Set();
@@ -28,7 +33,15 @@ export function validateCloudflareConfig(input, { requireToken = false, env = pr
   if (typeof apiToken !== 'string' || /\s/.test(apiToken)) fail('Invalid Cloudflare API token format');
   if (requireToken && !apiToken) fail('Deployment requires CLOUDFLARE_API_TOKEN or apiToken in the ignored local config');
   return { projectName: input.projectName, accountId: input.accountId, branch,
-    minecraftOnly: input.minecraftOnly ?? true, r2Buckets, apiToken };
+    minecraftOnly, site: input.site === 'water' ? 'water' : minecraftOnly ? 'minecraft' : 'scenes', r2Buckets, apiToken };
+}
+
+// Where prepare-pages.mjs writes each site, relative to the source root, and the name of its
+// pending-upload list under build/pages-r2.
+export function pagesOutput(site) {
+  if (site === 'water') return { directory: 'build/pages-water', uploads: 'water-uploads.json' };
+  if (site === 'minecraft') return { directory: 'build/pages-minecraft', uploads: 'minecraft-uploads.json' };
+  return { directory: 'build/pages', uploads: 'uploads.json' };
 }
 
 export async function loadCloudflareConfig(path, options) {

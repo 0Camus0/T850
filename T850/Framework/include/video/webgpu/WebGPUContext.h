@@ -26,6 +26,10 @@ public:
   void SubmitCommands(const wgpu::CommandBuffer& command);
   wgpu::Buffer AcquireBuffer(const wgpu::BufferDescriptor& descriptor);
   wgpu::Buffer UploadUniform(const void* data, uint64_t size, uint64_t& offset);
+  // Per-dispatch storage data (the solver's body list), in shared pages bound with dynamic offsets.
+  wgpu::Buffer UploadStorage(const void* data, uint64_t size, uint64_t& offset);
+  // Bumped when a pooled buffer is destroyed; a cached bind group may reference it.
+  uint64_t ReleaseGeneration() const { return m_releaseGeneration; }
   // A headless compute loop never reaches the frame end that clears the uniform ring, so the
   // fluid solver would grow it until the process runs out of memory. `force` clears it now;
   // otherwise it clears itself once the ring is worth recycling.
@@ -62,14 +66,18 @@ private:
   bool m_directReadback = false;
   using BufferKey = std::pair<uint64_t, wgpu::BufferUsage>;
   struct RetiredBuffer { wgpu::Buffer buffer; BufferKey key; };
-  struct Submission { wgpu::Future completion; std::vector<RetiredBuffer> buffers; };
+  struct Submission { wgpu::Future completion; std::vector<RetiredBuffer> buffers; uint64_t frame = 0; };
   void CollectCompletedBuffers(bool waitForOldest = false);
   std::deque<Submission> m_submissions;
+  uint64_t m_frameSerial = 0;
   std::map<BufferKey, std::vector<wgpu::Buffer>> m_freeBuffers;
   static constexpr uint64_t maximumPoolBytes = 32 * 1024 * 1024;
   uint64_t m_freeBufferBytes = 0;
   struct UniformUpload { wgpu::Buffer buffer; std::vector<char> data; uint64_t capacity; };
+  wgpu::Buffer UploadPaged(std::vector<UniformUpload>& pages, wgpu::BufferUsage usage, const void* data, uint64_t size, uint64_t& offset);
   std::vector<UniformUpload> m_uniformUploads;
+  std::vector<UniformUpload> m_storageUploads;
+  uint64_t m_releaseGeneration = 0;
   uint64_t m_uniformEpoch = 1;
   wgpu::Texture m_captureTarget;
   wgpu::Texture m_presentTarget;

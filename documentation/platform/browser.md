@@ -1021,7 +1021,7 @@ does not authenticate to Cloudflare or write to real R2. It cannot serve pending
 unmanifested oversized assets without separately populating local R2 state.
 `npm run test:pages --prefix .\web` includes credential/configuration tests.
 
-### Published Water Simulation (v0.1.0)
+### Published Water Simulation (v0.1.1)
 
 Live at <https://water-simulation-2026.pages.dev/> (Pages project `water-simulation-2026`,
 production branch `main`, first deployment `b652ebc3`, 2026-11-06). It publishes only the Backyard
@@ -1077,6 +1077,47 @@ Each run checked the device class and help, the launch URL, the solver ready at 
 iterations, no `[WARN]`/`[ERROR]` lines, the touch set inside the viewport without overlaps, and
 +10 (K or the touch button) reaching the engine exactly once. Headless throughput was about 85-90
 frames per second on the RTX 4080 Laptop. A real phone or tablet has not been tested.
+
+#### v0.1.1: Firefox frame rate, +10 freeze and GPU memory
+
+The owner reported 3 fps in Firefox at 1280 x 720 and a "+10 crash" in Edge. There were three
+separate faults:
+
+- **3 fps in Firefox.** Firefox 159 reports `mapAsync` and `onSubmittedWorkDone` about 100 ms
+  late, even on an idle GPU. Every synchronous solver readback, and every submission-count wait
+  (eight in flight, and a solver frame submitted several times), therefore cost a whole callback.
+  WebGPU now implements `RequestComputeReadback`, bounds in-flight work by frames instead of
+  submissions (six in the browser), and batches 1024 dispatches per compute submission. The
+  details are in `rendering/compute-shader-implementation.md`.
+- **The +10 "crash" was a freeze of 6-9 s.** The first spawn loaded each ball's texture maps
+  through synchronous, sequential R2 downloads. A scene in `web/scenes.json` can now list path
+  prefixes in `prefetch` (Backyard lists `Textures/Ball/`). Once the runtime is ready, `shell.html`
+  downloads the matching files from `assets/index.json` with six parallel requests and writes
+  them into the Wasm file system, skipping files that are already present. It sets
+  `t850.prefetched` and logs `[Shell] Prefetched N ...` when done. It is skipped when the catalog
+  has an `assetBundle`. The 93 ball maps take about 4 s. The first spawn now costs one
+  frame of about 250 ms (decoding and upload).
+- **GPU out of memory in Firefox after 60-70 balls.** Firefox frees bind groups only on
+  JavaScript garbage collection, and the driver created about 550 per frame. Render and compute
+  bind groups are now cached; see the compute document. `UpdateFloatData` writes in place, and
+  the tiled-light textures upload only when the tile assignments change
+  (`rendering/textures-and-ibl.md`).
+
+Verified 2026-11-07 against the local preview on the RTX 4080 Laptop, with
+`%LOCALAPPDATA%\T850Profiles\water-site\buttons.mjs` and `spawn-hitch.mjs` (scratch, outside
+the repo):
+
+| Run | Result |
+|-----|--------|
+| Firefox, keys: every key, 12 x +10 (121 balls), 90 s soak | pass, 202 fps, no errors (out of memory at the 7th +10 before) |
+| Firefox, mouse | pass, 135 fps |
+| Edge, keys / touch / mouse (12 x +10, 60 s soak) | pass, 344 / 298 / 209 fps |
+| Chrome, `check-water.mjs` PC / tablet / phone | pass |
+| Firefox, 1500-frame profile with 3 x +10 | median 4.4 ms, p99 6.4 ms, worst 240 ms (first spawn) |
+
+In that profile the render path created no bind groups after warm-up. The compute path created
+about one every 20 frames by the end, and no buffers. At `logLevel=info` the diagnostic probes
+read back every 60 frames and add spikes; measure at `logLevel=error`.
 
 ### Embedded Browser Isolation
 

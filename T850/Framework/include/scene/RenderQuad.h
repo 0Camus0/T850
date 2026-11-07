@@ -114,6 +114,10 @@ namespace t850 {
     std::vector<float> m_tiledLightHeaderData;
     std::vector<float> m_tiledLightIndexData;
     std::vector<unsigned int> m_tiledLightCounts;
+    // (tile, light) pairs behind the textures' contents; an unchanged frame skips the 1.9 MB upload.
+    std::vector<unsigned int> m_tiledLightAssignments;
+    std::vector<unsigned int> m_tiledLightUploadedAssignments;
+    bool m_tiledLightUploaded = false;
     //ID3D11SamplerState*  pSampler;
     Quad m_quad;
     CBuffer			CnstBuffer;

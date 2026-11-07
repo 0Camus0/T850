@@ -340,7 +340,7 @@ test('WSSI welcome validates enemies, starts only on Launch, and handles unavail
 
 test('water welcome shows the controls for the detected device and launches scene 7', async () => {
   const html = await readFile(new URL('./water-sim.html', import.meta.url), 'utf8');
-  assert.match(html, /<span id="demo-version">v0\.1\.0<\/span>/);
+  assert.match(html, /<span id="demo-version">v0\.1\.1<\/span>/);
   for (const device of ['pc', 'tablet', 'phone']) assert.match(html, new RegExp(`<div data-help="${device}" hidden>`));
   const source = await readFile(new URL('./water-sim.mjs', import.meta.url), 'utf8');
   const capable = { requestAdapter: async () => ({ limits: { maxColorAttachments: 8, maxColorAttachmentBytesPerSample: 128 } }) };
@@ -407,6 +407,62 @@ test('water welcome shows the controls for the detected device and launches scen
   const embedded = await open({ gpu: { requestAdapter() { assert.fail('Do not initialize GPU without isolation'); } }, isolated: false });
   assert.equal(embedded.controls.status.dataset.error, 'true');
   assert.match(embedded.controls.status.textContent, /standalone Safari, Chrome, Edge or Firefox/);
+});
+
+test('runtime prefetches a scene\'s listed assets in the background once it is ready', async () => {
+  const html = await readFile(new URL('./shell.html', import.meta.url), 'utf8');
+  const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const catalogFor = prefetch => ({ arguments: [], defaultScene: 7, scenes: [{ id: 7, name: 'Backyard', ...(prefetch ? { prefetch } : {}) }] });
+  const run = async ({ prefetch = ['Textures/Ball/'], present = [], failing = null, bundle = false } = {}) => {
+    const files = new Map(present.map(path => ['/assets/' + path, new Uint8Array([9])]));
+    const requests = [];
+    const logs = [];
+    const index = ['Textures/Ball/A/Color.jpg', 'Textures/Ball/A/ORM.png', 'Textures/Ball/B/Color.jpg', 'Models/Backyard/Backyard_Pool.glb'];
+    const fetch = async url => {
+      requests.push(String(url));
+      if (url === 'scenes.json') return { ok: true, json: async () => ({ ...catalogFor(prefetch), ...(bundle ? { assetBundle: 'b.zip' } : {}) }) };
+      if (url === 'assets/index.json') return { ok: true, json: async () => index };
+      if (url === failing) return { ok: false, status: 503 };
+      return { ok: true, arrayBuffer: async () => new Uint8Array([url.length]).buffer };
+    };
+    let completed;
+    const started = new Promise(resolve => { completed = resolve; });
+    const events = {};
+    const elements = { status: {}, 'runtime-error': { hidden: true }, 'runtime-error-title': {}, 'runtime-error-text': {},
+      canvas: { style: { setProperty() {} }, clientWidth: 960, clientHeight: 540, addEventListener() {} },
+      scene: { add() {}, addEventListener() {} } };
+    const window = { addEventListener(name, callback) { events[name] = callback; } };
+    const sandbox = { URL, URLSearchParams, console: { log: text => logs.push(text) }, window, navigator: { gpu: {} }, crossOriginIsolated: true,
+      performance, Promise, Array, Uint8Array, location: { search: '?demo=water', href: 'https://test.pages.dev/DayScene.html?demo=water' },
+      document: { getElementById: id => elements[id], querySelector: () => ({ setAttribute() {}, querySelector: () => ({}) }), body: { classList: { add() {} } } },
+      Option: function () {}, fetch };
+    runInNewContext(source, sandbox);
+    sandbox.Module.addRunDependency = () => {};
+    sandbox.Module.removeRunDependency = completed;
+    sandbox.Module.FS = { mount() {}, syncfs: (populate, done) => done(null), mkdirTree() {},
+      analyzePath: path => ({ exists: files.has(path) }), writeFile: (path, bytes) => files.set(path, bytes) };
+    if (bundle) sandbox.Module.FS.writeFile = () => {};
+    sandbox.Module.preRun[0]();
+    await started;
+    const before = requests.length;
+    events['t850-runtime-ready']();
+    events['t850-runtime-ready']();
+    for (let i = 0; i < 50 && !logs.some(line => line.startsWith('[Shell]')); ++i) await new Promise(resolve => setTimeout(resolve, 0));
+    return { files, requests: requests.slice(before), logs, diagnostics: window.t850 };
+  };
+  const fresh = await run({ present: ['Textures/Ball/A/ORM.png'] });
+  assert.deepEqual(fresh.requests.sort(), ['assets/Textures/Ball/A/Color.jpg', 'assets/Textures/Ball/B/Color.jpg', 'assets/index.json']);
+  assert.equal(fresh.files.has('/assets/Textures/Ball/B/Color.jpg'), true);
+  assert.equal(fresh.files.get('/assets/Textures/Ball/A/ORM.png')[0], 9);
+  assert.equal(fresh.files.has('/assets/Models/Backyard/Backyard_Pool.glb'), false);
+  assert.equal(fresh.diagnostics.prefetched, 2);
+  assert.equal(fresh.diagnostics.state, 'running');
+  const failed = await run({ failing: 'assets/Textures/Ball/B/Color.jpg' });
+  assert.match(failed.logs.find(line => line.startsWith('[Shell]')), /prefetch stopped.*Textures\/Ball\/B\/Color\.jpg 503/);
+  assert.equal(failed.diagnostics.state, 'running');
+  assert.equal(failed.diagnostics.errors.length, 0);
+  assert.deepEqual((await run({ prefetch: null })).requests, []);
+  assert.deepEqual((await run({ bundle: true })).requests, []);
 });
 
 test('WSSI runtime forwards validated enemy counts and stays on Minecraft', async () => {

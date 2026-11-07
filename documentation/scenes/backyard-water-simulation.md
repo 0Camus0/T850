@@ -654,7 +654,8 @@ submerged = clamp((level - (y - radius)) / (2*radius), 0, 1)
 whose outer radius (2 r + h) stays inside the next body, skipping columns whose waterline cell is
 a wall or another body. The result comes back through the asynchronous readback (W-04 step 5) one
 to three frames late with one query in flight; each body keeps its last answer, and an answer is
-dropped if bodies were spawned or cleared since it was requested. A backend without an async path
+dropped if bodies were spawned or cleared since it was requested. On WebGPU the answer arrives
+when the map completes: a few frames in Chrome, about 100 ms in Firefox. A backend without an async path
 pays one small stall per frame instead of losing the coupling. The surface texture stores a delta
 from the authored plane, so the plane is added back; forgetting that puts the body on the pool
 floor. Headless runs (no bound surface output, i.e. the self-tests) keep the authored plane.

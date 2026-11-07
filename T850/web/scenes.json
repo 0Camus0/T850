@@ -9,6 +9,6 @@
     { "id": 3, "name": "Ragdoll Editor", "arguments": ["--model", "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb", "--sceneProfile", "pc/x64"] },
     { "id": 4, "name": "Scene Template", "sceneFile": "Scenes/Q3/q3dm6_mod_3_jolt.t8scene", "arguments": ["--sceneProfile", "pc/x64"] },
     { "id": 5, "name": "Voxel Streaming" },
-    { "id": 7, "name": "Backyard" }
+    { "id": 7, "name": "Backyard", "prefetch": ["Textures/Ball/"] }
   ]
 }

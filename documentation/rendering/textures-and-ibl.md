@@ -250,6 +250,16 @@ command list. Outside a frame it falls back to a one-off command list and a bloc
 wait. Before `c911381a` D3D12 always took the blocking path, which cost about 3 ms per frame
 in every scene with tiled point lights.
 
+WebGPU writes in place with `queue.WriteTexture` and requires the texture's own size, RGBA32F
+format and one mip; every caller already updates at the size it created. It used to re-create
+the texture and its sampler on every update. Twice a frame for the tiled lights, that outran
+Firefox's garbage-collected release and helped run its GPU out of memory.
+
+`RenderQuad` also records the (tile, light) pairs each frame and uploads the two tiled-light
+textures only when the pairs change or the textures were re-created. The index texture alone
+is about 1.9 MB per frame at 1280 x 720. Light colours and radii stay in the constant buffer,
+so a moving light that still covers the same tiles needs no texture upload.
+
 ### D3D12
 
 D3D12 textures use:

@@ -457,7 +457,16 @@ bool WebGPUContext::BeginFrame(bool swapchain) {
   CheckHealth();
   Require(!commands, "Frame is already active");
   instance.ProcessEvents();
-  CollectCompletedBuffers(m_submissions.size() >= 4);
+  // Frames, not submissions: a solver frame submits several times, and Firefox reports each
+  // completion about 100 ms late, so a submission count stalled every frame there.
+#ifdef __EMSCRIPTEN__
+  constexpr uint64_t kMaxFramesInFlight = 6;
+#else
+  constexpr uint64_t kMaxFramesInFlight = 3;
+#endif
+  CollectCompletedBuffers();
+  while (!m_submissions.empty() && m_frameSerial - m_submissions.front().frame >= kMaxFramesInFlight)
+    CollectCompletedBuffers(true);
   if (swapchain) {
     if (!m_configured) return false;
     if (m_captureTarget) {
@@ -526,6 +535,7 @@ void WebGPUContext::Submit(bool present) {
   }
   backbuffer = nullptr;
   m_presentTarget = nullptr;
+  ++m_frameSerial;
   instance.ProcessEvents();
   CheckHealth();
 }
@@ -557,6 +567,7 @@ wgpu::Buffer WebGPUContext::AcquireBuffer(const wgpu::BufferDescriptor& descript
     while (m_freeBufferBytes > maximumPoolBytes - descriptor.size) {
       auto unused = std::prev(m_freeBuffers.end());
       unused->second.back().Destroy();
+      ++m_releaseGeneration;
       unused->second.pop_back();
       m_freeBufferBytes -= unused->first.first;
       if (unused->second.empty()) m_freeBuffers.erase(unused);
@@ -575,20 +586,31 @@ wgpu::Buffer WebGPUContext::AcquireBuffer(const wgpu::BufferDescriptor& descript
 void WebGPUContext::RecycleComputeUniforms(bool force) {
   if (!force && m_uniformUploads.size() < 8) return;
   m_uniformUploads.clear();
+  m_storageUploads.clear();
   ++m_uniformEpoch;
 }
 
-wgpu::Buffer WebGPUContext::UploadUniform(const void* data, uint64_t size, uint64_t& offset) {  T8_TELEMETRY_ADD("webgpu.uniform_snapshot.calls", 1);
+wgpu::Buffer WebGPUContext::UploadUniform(const void* data, uint64_t size, uint64_t& offset) {
+  return UploadPaged(m_uniformUploads, wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst, data, size, offset);
+}
+
+wgpu::Buffer WebGPUContext::UploadStorage(const void* data, uint64_t size, uint64_t& offset) {
+  return UploadPaged(m_storageUploads, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst, data, size, offset);
+}
+
+wgpu::Buffer WebGPUContext::UploadPaged(std::vector<UniformUpload>& pages, wgpu::BufferUsage usage,
+                                        const void* data, uint64_t size, uint64_t& offset) {
+  T8_TELEMETRY_ADD("webgpu.uniform_snapshot.calls", 1);
   Require(commands && data && size, "Uniform snapshot requires active commands and data");
   const uint64_t alignedSize = (size + 255) & ~uint64_t(255);
-  if (m_uniformUploads.empty() || m_uniformUploads.back().data.size() + alignedSize > m_uniformUploads.back().capacity) {
+  if (pages.empty() || pages.back().data.size() + alignedSize > pages.back().capacity) {
     wgpu::BufferDescriptor descriptor{};
     descriptor.size = (std::max)(uint64_t(1024 * 1024), alignedSize);
-    descriptor.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
-    m_uniformUploads.push_back({AcquireBuffer(descriptor), {}, descriptor.size});
-    m_uniformUploads.back().data.reserve(descriptor.size);
+    descriptor.usage = usage;
+    pages.push_back({AcquireBuffer(descriptor), {}, descriptor.size});
+    pages.back().data.reserve(descriptor.size);
   }
-  auto& upload = m_uniformUploads.back();
+  auto& upload = pages.back();
   offset = upload.data.size();
   upload.data.resize(offset + alignedSize);
   std::memcpy(upload.data.data() + offset, data, size);
@@ -624,6 +646,7 @@ void WebGPUContext::CollectCompletedBuffers(bool waitForOldest) {
         m_freeBuffers[retired.key].push_back(std::move(retired.buffer));
       } else {
         retired.buffer.Destroy();
+        ++m_releaseGeneration;
         T8_TELEMETRY_ADD("gpu.pool.evictions", 1);
       }
     }
@@ -645,13 +668,17 @@ void WebGPUContext::SubmitCommands(const wgpu::CommandBuffer& command) {
   T8_TELEMETRY_ADD("gpu.pool.evictions", 0);
   {
     T8_TELEMETRY_ADD("webgpu.uniform_upload.calls", 1);
-    for (auto& upload : m_uniformUploads) {
-      queue.WriteBuffer(upload.buffer, 0, upload.data.data(), upload.data.size());
-      RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, upload.data.size());
-      Retire(std::move(upload.buffer), upload.capacity, wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst);
-      if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.uniform_upload_calls", 1);
+    for (auto* pages : {&m_uniformUploads, &m_storageUploads}) {
+      const auto usage = (pages == &m_uniformUploads ? wgpu::BufferUsage::Uniform : wgpu::BufferUsage::Storage) |
+                         wgpu::BufferUsage::CopyDst;
+      for (auto& upload : *pages) {
+        queue.WriteBuffer(upload.buffer, 0, upload.data.data(), upload.data.size());
+        RuntimeTelemetry::RecordStaging(RuntimeTelemetry::UploadResource::Uniform, upload.data.size());
+        Retire(std::move(upload.buffer), upload.capacity, usage);
+        if (RuntimeTelemetry::IsFrameActive()) T8_TELEMETRY_ADD("webgpu.uniform_upload_calls", 1);
+      }
+      pages->clear();
     }
-    m_uniformUploads.clear();
     ++m_uniformEpoch;
   }
   {
@@ -668,13 +695,14 @@ void WebGPUContext::SubmitCommands(const wgpu::CommandBuffer& command) {
     [health](wgpu::QueueWorkDoneStatus status, wgpu::StringView) {
       if (status != wgpu::QueueWorkDoneStatus::Success) health->Fail("Queue submission failed");
     });
-  m_submissions.push_back({completion, std::move(m_retiredBuffers)});
+  m_submissions.push_back({completion, std::move(m_retiredBuffers), m_frameSerial});
   for (const auto& texture : m_retiredTextures) texture.Destroy();
   m_retiredBuffers.clear();
   m_retiredTextures.clear();
   // A headless compute loop never reaches BeginFrame, which is what bounds the queue for
   // frames; without this a 30 s solver run kept ~3000 retired 1 MB uniform buffers alive.
-  CollectCompletedBuffers(m_submissions.size() >= 8);
+  // Set above what the frame bound allows, so it never stalls a rendered frame.
+  CollectCompletedBuffers(m_submissions.size() >= 64);
 }
 
 void WebGPUContext::Shutdown() {
@@ -687,10 +715,13 @@ void WebGPUContext::Shutdown() {
   backbuffer = nullptr;
   for (const auto& entry : m_freeBuffers) for (const auto& buffer : entry.second) buffer.Destroy();
   m_freeBuffers.clear();
+  ++m_releaseGeneration;
   m_freeBufferBytes = 0;
   m_submissions.clear();
   for (const auto& upload : m_uniformUploads) upload.buffer.Destroy();
+  for (const auto& upload : m_storageUploads) upload.buffer.Destroy();
   m_uniformUploads.clear();
+  m_storageUploads.clear();
   ++m_uniformEpoch;
   m_presentTarget = nullptr;
   m_captureTarget = nullptr;

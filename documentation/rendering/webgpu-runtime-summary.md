@@ -227,8 +227,10 @@ that gate and unavailable SteamRT verification. See the
   float values internally; PPM visualization is an RGB/clamped representation.
 - Filterable depth sampling uses a refreshed GPU float copy. Nearest/linear depth
   ramps and float texture updates are covered by the real-driver fixture.
-- `WebGPUTexture::UpdateFloatData()` now uploads a fresh RGBA32F snapshot instead
-  of inheriting a no-op, restoring tile light lists and point lighting.
+- `WebGPUTexture::UpdateFloatData()` now uploads RGBA32F data instead of
+  inheriting a no-op, restoring tile light lists and point lighting. Since
+  2026-11-07 it writes in place rather than re-creating the texture; see
+  `textures-and-ibl.md`.
 - The shared `NO_ENVIRONMENT` shader variant omits unused environment/IBL bindings
   when the scene has none. It fixes Voxel's binding-6 failure without dummy
   environment textures or scene-specific driver behavior.

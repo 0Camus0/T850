@@ -300,7 +300,40 @@
       // SDL's browser backend copies the engine window title into document.title when it creates
       // the window, after the launch code below has set the page title.
       if (diagnostics.pageTitle) document.title = diagnostics.pageTitle;
+      if (diagnostics.prefetch && !diagnostics.prefetchStarted) {
+        diagnostics.prefetchStarted = true;
+        prefetchAssets(diagnostics.prefetch);
+      }
       saveSessionCheckpoint();
+    }
+    // A scene's on-demand files (the Backyard balls' textures) are fetched in parallel once it runs.
+    // The engine reads /assets before downloading, and one blocking download per file in the frame
+    // froze the first presses of +10 for 6-9 s.
+    async function prefetchAssets(prefixes) {
+      const started = performance.now();
+      try {
+        const response = await fetch('assets/index.json');
+        if (!response.ok) throw new Error('asset index ' + response.status);
+        const pending = (await response.json()).filter(path => prefixes.some(prefix => path.startsWith(prefix)) &&
+          !Module.FS.analyzePath('/assets/' + path).exists);
+        let next = 0;
+        const download = async () => {
+          while (next < pending.length) {
+            const path = pending[next++];
+            const file = await fetch('assets/' + path.split('/').map(encodeURIComponent).join('/'));
+            if (!file.ok) throw new Error(path + ' ' + file.status);
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            if (Module.FS.analyzePath('/assets/' + path).exists) continue;
+            Module.FS.mkdirTree('/assets/' + path.slice(0, path.lastIndexOf('/')));
+            Module.FS.writeFile('/assets/' + path, bytes, { canOwn: true });
+          }
+        };
+        await Promise.all(Array.from({ length: 6 }, download));
+        diagnostics.prefetched = pending.length;
+        record(`[Shell] Prefetched ${pending.length} scene assets in ${Math.round(performance.now() - started)} ms`);
+      } catch (error) {
+        record('[Shell] Asset prefetch stopped, the engine downloads on demand: ' + error.message);
+      }
     }
     window.addEventListener('t850-runtime-ready', markReady);
     function record(text, error = false) {
@@ -427,6 +460,7 @@
             location.assign(url);
           });
           diagnostics.scene = selected.name;
+          if (Array.isArray(selected.prefetch) && !catalog.assetBundle) diagnostics.prefetch = selected.prefetch;
           document.title = diagnostics.pageTitle = minecraftDemo ? 'Hackathon 2026: WSSI Web GPU Minecraft Demo'
             : waterDemo ? 'Water Simulation 2026' : selected.name + ' | T850';
           argumentsList.push('--api', 'webgpu', '--scene', String(selected.id),

@@ -129,12 +129,22 @@ fails when one file declares two samplers on a register.
 
 A headless compute loop never reaches the frame end that clears the uniform ring, and one
 submission per dispatch ends in `std::bad_alloc` after roughly a hundred thousand dispatches.
-The compute path therefore owns one encoder and submits it every 64 dispatches, dropping the
-uniform ring with each submit; `ReadComputeBuffer`, `BeginFrame`, `WaitForGPU` and
-`FlushGPUResources` drain the encoder first. Every submit also waits for the oldest one once
-eight are in flight: a frame loop gets that bound from `BeginFrame`, but a headless loop with no
-readback kept every submission's retired 1 MB uniform buffer alive and hit `bad allocation`
-after a 30 s solver run (gate 11 of `--backyard-selftest`; peak now 643 MB).
+The compute path therefore owns one encoder and submits it every 1024 dispatches (64 before
+2026-11-07), dropping the uniform and storage upload pages with each submit;
+`ReadComputeBuffer`, `BeginFrame`, `WaitForGPU` and `FlushGPUResources` drain the encoder first.
+
+The in-flight bound counts frames, not submissions. `BeginFrame` waits while the oldest
+submission belongs to a frame three frames back natively (six in the browser).
+`SubmitCommands` waits only once 64 submissions are in flight, which a rendered frame never
+reaches; it remains the bound for a headless loop with no `BeginFrame`. That loop used to keep
+every submission's retired 1 MB uniform page alive and hit `bad allocation` after a 30 s solver
+run (gate 11 of `--backyard-selftest`).
+
+The old bound was eight submissions. A Backyard solver frame (about 130 dispatches) used to
+submit every 64 dispatches plus once per readback copy, and Firefox reports each completion
+about 100 ms late even when idle, so that bound stalled every frame there. Together with the
+synchronous readbacks, it held Firefox at 3 fps at 1280 x 720. With the async readback below
+and the frame bound, the same view runs at about 200 fps.
 
 Vulkan has the same shape: a headless loop records into one frame that the compute path
 opened. `RecycleOverflowingComputeFrame` submits it and waits once it holds 6144 descriptor
@@ -167,7 +177,7 @@ never recycled, because it must present.
   not needed this frame.** `int RequestComputeReadback(ComputeBuffer&, size_t)`
   queues the copy at the end of the current frame's command list and returns a
   ticket, or `-1` when the backend has no asynchronous path — both base
-  implementations return `-1` / `false`, so D3D11, GL and WebGPU keep the
+  implementations return `-1` / `false`, so D3D11 and GL keep the
   synchronous behaviour and the caller falls back. `bool
   ConsumeComputeReadback(int, void*, size_t)` returns `false` until the frame
   behind the copy has retired, then fills the caller's buffer once and
@@ -185,6 +195,15 @@ never recycled, because it must present.
   fence is signaled only briefly before `BeginFrame` resets it, so polling the fence
   alone missed the completion indefinitely (the Steam Deck and the Mali tablet left
   every floating ball on a stale water level for minutes).
+- **WebGPU readback has no frame slots.** Each request copies into its own
+  `CopyDst | MapRead` staging buffer and starts `MapAsync`; `Consume` polls the future
+  with a zero timeout and destroys the staging buffer once it has copied the data out.
+  At most 32 requests stay pending; the oldest is dropped when a caller abandons its
+  ticket. The map completes whenever the GPU is done, frame or not, so
+  `BaseDriver::ComputeReadbackWaitsForFrames()` returns `false` here, and callers
+  wait longer before falling back to the synchronous path:
+  `FluidSimulation::QueryMaxVelocity` waits 120 frames instead of 3. Chrome and Edge
+  answer within a few frames; Firefox (159) answers about 100 ms late.
 - **Driver-side bind caching (W-15 P4/P5).** Vulkan caches each fully written
   compute descriptor set for the frame, keyed by the set layout, every bound
   resource identity and the constant bytes, and clears it with the descriptor pool.
@@ -192,8 +211,19 @@ never recycled, because it must present.
   see those bytes. D3D12 skips `SetDescriptorHeaps`, the root signature and the PSO
   when they match the last ones bound. Code that binds any of these directly on the
   command list (the ImGui backend, a mid-frame command-list reset) must call
-  `D3D12Driver::InvalidatePipelineStateCache()` afterwards.
-- Compute buffers/pipelines are CPU-owned, and their driver must outlive them.
+  `D3D12Driver::InvalidatePipelineStateCache()` afterwards.- **WebGPU bind-group caches.** Firefox frees a bind group only when JavaScript
+  garbage-collects it. Creating about 550 a frame (470 compute and 80 render) caused
+  `GPUOutOfMemoryError` after 60-70 Backyard balls: around 60,000 render or 125,000
+  compute groups created in quick succession. Chrome and Edge were unaffected.
+  Each compute pipeline variant and each render resource layout now caches its bind
+  groups, keyed by bound resource identities (buffer, size, view, sampler). Compute
+  constants and inline `ReadOnlyBuffer` data go into 1 MiB upload pages at 256-byte
+  offsets, passed as dynamic offsets. Persistent read-only storage buffers also use
+  dynamic offsets (always 0). As a result, a group stays valid across dispatches whose
+  data changes. The caches are cleared when a texture is allocated or destroyed, when a
+  3D compute texture is destroyed, when the context destroys a pooled buffer, or at
+  4096 entries. Telemetry counter: `webgpu.compute_bind_group_creations`. A
+  121-ball Backyard frame creates about one group every 20 frames once warm.- Compute buffers/pipelines are CPU-owned, and their driver must outlive them.
   Vulkan retires native compute handles after frame completion; D3D12 retains
   referenced native objects per frame. Texture/view owners must synchronize
   before destruction. RenderGraph flushes before target/pipeline teardown or
@@ -335,15 +365,18 @@ usage so the same allocation can participate in dispatch and explicit test readb
 
 Before dispatch, the driver ends any active render pass and validates that every runtime
 binding belongs to the same WebGPU driver and appears exactly once with the expected type,
-register, size, texture dimension, and storage format. Constants use transient aligned
-uniform buffers, and the remaining resources form one bind group. Normal frame compute is
+register, size, texture dimension, and storage format. Constants and inline buffer data are
+written into shared upload pages and bound through dynamic offsets. All resources form one
+cached bind group (see "WebGPU bind-group caches" above). Normal frame compute is
 recorded into the active command encoder; standalone diagnostics create and submit a bounded
 encoder. WebGPU owns native resource transitions and usage-scope validation, so the engine
 does not emit backend barrier objects.
 
 Diagnostic buffer readback copies into a `CopyDst | MapRead` staging buffer, submits the
-copy, and waits for `MapAsync` only inside the explicit self-test/readback call. Ordinary
-render-graph execution never maps or waits. Device health is checked after pipeline creation,
+copy, and waits for `MapAsync` only inside the explicit self-test/readback call. The copy
+goes into the active frame encoder or the compute encoder when one is open, so it
+follows the dispatches that wrote the buffer. `RequestComputeReadback` uses the same copy
+and never waits. Ordinary render-graph execution never maps or waits. Device health is checked after pipeline creation,
 dispatch, and readback so validation or device-loss failures surface through the normal
 WebGPU diagnostics.
 

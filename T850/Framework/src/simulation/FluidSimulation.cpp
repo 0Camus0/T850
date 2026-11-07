@@ -1385,8 +1385,10 @@ void FluidSimulation::QueryMaxVelocity(BaseDriver* driver) {
     if (!driver->ConsumeComputeReadback(m_maxVelocityTicket, words.data(), kMaxVelocityBytes)) {
       ++m_maxVelocityWaitFrames;
       // A headless or fixed-step run never completes a frame, so the per-frame async slot can never
-      // deliver. Switch to the synchronous read once instead of erroring every frame.
-      if (m_maxVelocityWaitFrames >= 3 && !m_maxVelocityAsyncDisabled) {
+      // deliver. Switch to the synchronous read once instead of erroring every frame. A backend that
+      // completes without frames just takes longer (Firefox maps ~100 ms late), so it gets more time.
+      const uint32_t patience = driver->ComputeReadbackWaitsForFrames() ? 3u : 120u;
+      if (m_maxVelocityWaitFrames >= patience && !m_maxVelocityAsyncDisabled) {
         m_maxVelocityAsyncDisabled = true;
         T8_LOG_DEBUG("[Fluid] Max-velocity readback has not completed in %u frames on %s; using the "
                      "synchronous path", m_maxVelocityWaitFrames, driver->ApiTag());

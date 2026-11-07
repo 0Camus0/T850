@@ -524,6 +524,9 @@ namespace t850 {
     virtual bool ConsumeComputeReadback(int ticket, void* destination, size_t byteCount) {
       (void)ticket; (void)destination; (void)byteCount; return false;
     }
+    // True when a requested readback completes only at a frame boundary, so a run without frames
+    // never sees it; false when it only waits for the GPU (WebGPU maps whenever the copy is done).
+    virtual bool ComputeReadbackWaitsForFrames() const { return true; }
 
     // Resize the swapchain, back-buffer RTVs, and depth buffer to the new
     // pixel dimensions. Returns true on success. Implementations must flush

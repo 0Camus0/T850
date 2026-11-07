@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <utils/DeviceInfo.h>
+#include <core/Config.h>
 
 #include <algorithm>
 #include <cctype>
@@ -132,6 +133,10 @@ namespace t850 {
       } else if (ContainsNoCase(probe, "aokzoe")) {
         info.handheldReason = "AOKZOE (" + product + ")";
       }
+#endif
+#if defined(__EMSCRIPTEN__)
+      // The page classifies the device; the engine runs in a worker and cannot see the screen.
+      info.webDevice = g_config.webDevice;
 #endif
       // Android and Emscripten run on phones and browsers, neither of which is a Steam Deck, and
       // neither exposes a probe worth doing.

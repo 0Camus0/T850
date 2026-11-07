@@ -39,6 +39,9 @@ public:
   bool DispatchCompute(ComputePipeline& pipeline, const std::vector<ComputeBindingDesc>& bindings,
                        uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
   bool ReadComputeBuffer(ComputeBuffer& buffer, void* destination, size_t bytes) override;
+  int RequestComputeReadback(ComputeBuffer& buffer, size_t bytes) override;
+  bool ConsumeComputeReadback(int ticket, void* destination, size_t bytes) override;
+  bool ComputeReadbackWaitsForFrames() const override { return false; }
   void CreateSurfaces() override;
   void DestroySurfaces() override;
   void Update() override;

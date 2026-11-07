@@ -24,10 +24,12 @@ namespace t850 {
     // (397 -> 298 fps with nothing else running) and is the shipped setting; W-15 P2
     // (in-place red-black on R32F) is what makes 240 affordable later.
     int   pressureIterations = 120;
-    // Mobile and web builds cap the sweep count: a phone GPU or a browser device pays the same
-    // per-sweep cost as a desktop card for a much smaller frame budget. Measured on D3D12 at 60
-    // sweeps (see the staged plan, "Mobile and web defaults") the gates still pass, with the
-    // still-pool loss moving 0.002 % -> 0.013 %, which is why 60 is the cap rather than 30.
+    // Mobile builds and phone or tablet browsers cap the sweep count: they pay the same per-sweep
+    // cost as a desktop card for a much smaller frame budget. Measured on D3D12 at 60 sweeps (see
+    // the staged plan, "Mobile and web defaults") the gates still pass, with the still-pool loss
+    // moving 0.002 % -> 0.013 %, which is why 60 is the cap rather than 30. The surface is not
+    // the same, though: at 60 the waves keep about a third of their height and every ball sits in
+    // a dent, so a desktop browser keeps the desktop count.
     static constexpr int kMobilePressureIterations = 60;
     float cellSize = 0.09f;
     // Absolute world Y of the still-water surface (the plane the water mesh is
@@ -272,27 +274,35 @@ namespace t850 {
       return (std::min)((std::max)(density, 0.02f), 20.0f);
     }
 
-    // Sweeps the scene and the gates should actually run. Mobile and web builds cap the
-    // configured value, and so does the Steam Deck at run time: it is a Linux build, so a
+    // Sweeps the scene and the gates should actually run. Android caps the configured value; a
+    // browser caps it unless the page classified the device as a PC (an unknown device is
+    // capped); the Steam Deck is capped at run time, because it is a Linux build and a
     // compile-time `OS_LINUX` branch would also cap a desktop Linux session. One helper so the
     // headless gates validate the configuration that ships on every platform.
     int EffectivePressureIterations() const {
       const int configured = (std::max)(pressureIterations, 1);
-#if defined(__EMSCRIPTEN__) || defined(OS_ANDROID)
-      return (std::min)(configured, kMobilePressureIterations);
-#else
-      return GetDeviceInfo().steamDeck ? (std::min)(configured, kMobilePressureIterations) : configured;
-#endif
+      return CapsPressureIterations() ? (std::min)(configured, kMobilePressureIterations) : configured;
     }
 
     // Why that number is lower than the configured one, for the log line. Empty when it is not.
     const char* PressureIterationsCapReason() const {
-#if defined(__EMSCRIPTEN__) || defined(OS_ANDROID)
-      return (std::min)((std::max)(pressureIterations, 1), kMobilePressureIterations) <
-                 (std::max)(pressureIterations, 1) ? "mobile/web cap" : "";
+      if (!CapsPressureIterations() || (std::max)(pressureIterations, 1) <= kMobilePressureIterations) return "";
+#if defined(OS_ANDROID)
+      return "mobile cap";
+#elif defined(__EMSCRIPTEN__)
+      return GetDeviceInfo().webDevice.empty() ? "web cap, device unknown" : "phone/tablet browser cap";
 #else
-      return GetDeviceInfo().steamDeck &&
-                 (std::max)(pressureIterations, 1) > kMobilePressureIterations ? "Steam Deck cap" : "";
+      return "Steam Deck cap";
+#endif
+    }
+
+    static bool CapsPressureIterations() {
+#if defined(OS_ANDROID)
+      return true;
+#elif defined(__EMSCRIPTEN__)
+      return GetDeviceInfo().webDevice != "pc";
+#else
+      return GetDeviceInfo().steamDeck;
 #endif
     }
   };

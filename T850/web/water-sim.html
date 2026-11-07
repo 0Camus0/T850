@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f2230">
+  <title>Water Simulation 2026</title>
+  <style>
+    :root { --ink: #0f2230; --paper: #eef4f7; --muted: #4d6170; --line: #b5c7d2; --accent: #6fd3f2; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font-family: Bahnschrift, "Segoe UI", sans-serif; letter-spacing: 0; }
+    .welcome { position: relative; isolation: isolate; min-height: 440px; height: 70svh; max-height: 820px; display: flex; flex-direction: column; justify-content: space-between; padding: 32px max(28px, calc((100% - 1200px) / 2)); color: #fff; overflow: hidden; }
+    .landscape { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; object-fit: cover; object-position: center 70%; }
+    .welcome::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, rgba(6,20,30,.84), rgba(6,20,30,.3) 60%, transparent); }
+    .identity { display: flex; justify-content: space-between; gap: 20px; align-items: baseline; font: 14px Consolas, monospace; }
+    .identity strong { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; color: var(--accent); font: 600 24px Bahnschrift, "Segoe UI", sans-serif; }
+    #demo-version { color: #fff; font: 14px Consolas, monospace; white-space: nowrap; }
+    h1 { max-width: 700px; margin: 72px 0 28px; font-size: 58px; line-height: 1.08; font-weight: 600; text-wrap: balance; animation: reveal .5s ease-out; }
+    h1 .event { display: block; margin-bottom: 20px; color: #d3e6ee; font-size: 24px; font-weight: 400; }
+    .controls { max-width: 1200px; margin: auto; padding: 28px 0 36px; }
+    form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr); gap: 24px; align-items: end; max-width: 760px; }
+    label { display: grid; gap: 10px; font-size: 14px; font-weight: 500; }
+    select, button { width: 100%; min-width: 0; height: 52px; border: 1px solid var(--line); border-radius: 4px; padding: 0 16px; color: var(--ink); background: #fff; font: 18px Bahnschrift, "Segoe UI", sans-serif; }
+    .logging-option { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; min-height: 24px; cursor: pointer; }
+    .logging-option input { flex: 0 0 20px; width: 20px; height: 20px; margin: 0; padding: 0; accent-color: #1b7aa0; }
+    button { display: flex; align-items: center; justify-content: center; gap: 12px; background: var(--accent); border-color: var(--accent); font-weight: 600; cursor: pointer; }
+    button:hover:not(:disabled) { background: #9be3f8; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    :focus-visible { outline: 3px solid #1b7aa0; outline-offset: 4px; }
+    #status { min-height: 20px; margin: 18px 0 0; color: var(--muted); font: 13px Consolas, monospace; overflow-wrap: anywhere; }
+    #status[data-error="true"] { color: #a33322; }
+    .help { margin-top: 32px; border-top: 1px solid var(--line); padding-top: 20px; }
+    .help h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin: 0 0 16px; font-size: 22px; font-weight: 600; }
+    #device-label { color: var(--muted); font: 13px Consolas, monospace; }
+    .help dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 24px; margin: 0; }
+    .help dt { font-weight: 600; }
+    .help dd { margin: 0; color: #24394a; }
+    .help p { margin: 16px 0 0; color: var(--muted); font-size: 14px; }
+    kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; background: #fff; font: 13px Consolas, monospace; text-align: center; }
+    [data-help][hidden] { display: none; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 1256px) { .controls { margin: 0 28px; } }
+    @media (max-width: 700px) { .welcome { height: 56svh; min-height: 340px; padding: 24px; } h1 { font-size: 38px; margin: 48px 0 12px; } h1 .event { font-size: 20px; margin-bottom: 14px; } .controls { margin: 0 24px; padding-top: 24px; } form { grid-template-columns: minmax(0, 1fr); gap: 20px; } .identity { font-size: 12px; } .help dl { grid-template-columns: minmax(0, 1fr); gap: 4px; } .help dd { margin-bottom: 10px; } }
+    @media (prefers-reduced-motion: reduce) { h1 { animation: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="welcome" aria-labelledby="welcome-title">
+      <img class="landscape" src="previews/water-sim.png" alt="Backyard pool with floating balls in front of a house" width="1280" height="620" fetchpriority="high">
+      <div class="identity"><strong>T850 <span id="demo-version">v0.1.2</span></strong><span>WEBGPU / 2026</span></div>
+      <h1 id="welcome-title"><span class="event">Real-time fluid in the browser:</span> Water Simulation 2026</h1>
+    </section>
+    <section class="controls" aria-label="Simulation settings">
+      <form id="launch-form" action="DayScene.html" method="get">
+        <label for="resolution">Resolution<select id="resolution"><option value="960x540">960 x 540</option><option value="1280x720" selected>1280 x 720</option><option value="1920x1080">1920 x 1080</option></select></label>
+        <button id="launch" type="submit" disabled>Launch</button>
+        <label class="logging-option" for="console-logs" title="Show engine logs on the simulation page"><input id="console-logs" type="checkbox" autocomplete="off">Show engine logs</label>
+      </form>
+      <p id="status" role="status" aria-live="polite">Checking WebGPU...</p>
+      <section class="help" aria-labelledby="help-title">
+        <h2 id="help-title">Controls <span id="device-label"></span></h2>
+        <div data-help="pc" hidden>
+          <dl>
+            <dt>Fly</dt><dd><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>, <kbd>Space</kbd> or <kbd>Q</kbd> to rise, <kbd>E</kbd> to sink, <kbd>Shift</kbd> to go faster</dd>
+            <dt>Look</dt><dd>Hold the left or right mouse button and drag</dd>
+            <dt>Grab a ball</dt><dd>Hold <kbd>Ctrl</kbd>, click a ball and drag it; the wheel pushes it away or pulls it closer</dd>
+            <dt>Balls</dt><dd><kbd>K</kbd> drops ten more; <kbd>R</kbd> twice resets the pool</dd>
+            <dt>Wind</dt><dd><kbd>&uarr;</kbd> <kbd>&darr;</kbd> speed, <kbd>&larr;</kbd> <kbd>&rarr;</kbd> heading, <kbd>V</kbd> shows the wind arrow</dd>
+          </dl>
+          <p>The bar at the bottom of the view has the same buttons; hold <kbd>Ctrl</kbd> to click them. A touch screen can switch on the touch controls with the Touch box in the header.</p>
+        </div>
+        <div data-help="tablet" hidden>
+          <dl>
+            <dt>Move and look</dt><dd>Left stick flies, right stick turns; dragging the view away from the balls turns too</dd>
+            <dt>Up and down</dt><dd>The arrow buttons; the lightning button flies faster</dd>
+            <dt>Grab a ball</dt><dd>Touch a ball and drag it around the pool</dd>
+            <dt>Balls</dt><dd>+10 drops ten more; the circular arrow resets the pool (press it twice)</dd>
+            <dt>Wind</dt><dd>The bar at the top of the view: &minus; and + set the speed, &laquo; and &raquo; the heading</dd>
+          </dl>
+          <p>Touch in the header hides the controls; OnTop lays them over a full-screen view.</p>
+        </div>
+        <div data-help="phone" hidden>
+          <dl>
+            <dt>Move and look</dt><dd>Left stick flies, right stick turns</dd>
+            <dt>Up and down</dt><dd>The arrow buttons; the lightning button flies faster</dd>
+            <dt>Grab a ball</dt><dd>Touch a ball and drag it</dd>
+            <dt>Balls</dt><dd>+10 drops ten more; the circular arrow resets (press it twice)</dd>
+            <dt>Wind</dt><dd>The bar at the top of the view</dd>
+          </dl>
+          <p>Turn the phone sideways for a larger view. The water solver is heavy for a phone GPU, so 960 x 540 is the default.</p>
+        </div>
+      </section>
+      <noscript>JavaScript is required to launch this simulation.</noscript>
+    </section>
+  </main>
+  <script type="module" src="water-sim.mjs"></script>
+</body>
+</html>

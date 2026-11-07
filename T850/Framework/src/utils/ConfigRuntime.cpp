@@ -877,6 +877,13 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       value = StripQuotes(argv[++i]);
       if (value.empty()) throw std::invalid_argument(arg + " requires a nonempty path");
     }
+    else if (arg == "--webDevice") {
+      if (i + 1 >= argc) throw std::invalid_argument("--webDevice requires phone, tablet or pc");
+      const std::string device = StripQuotes(argv[++i]);
+      if (device != "phone" && device != "tablet" && device != "pc")
+        throw std::invalid_argument("--webDevice must be phone, tablet or pc");
+      cfg.webDevice = device;
+    }
     else if (arg == "--shaderPermutationInput" || arg == "--shaderCompileCancelFile") {
       if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--"))
         throw std::invalid_argument(arg + " requires a path");
@@ -960,17 +967,19 @@ void PrintHelp() {
     << "  --recordShaderPermutations         Record through runtime and flush at normal/snapshot exit\n"
     << "  --compileShaders                  Compile all recorded permutations, then exit\n"
     << "  --webShaderOutput <path>           Export prepared WebGPU shader packages while compiling/running\n"
+    << "  --webDevice phone|tablet|pc        Browser device class (the web shell passes it)\n"
     << "  --shaderPermutationInput <path>    Manifest to compile (default: Shaders/shader_permutations.json)\n"
     << "  --shaderCompileCancelFile <path>   Stop between permutations when this file exists\n"
     << "  --validateGltf <path>              Validate and summarize glTF/GLB, then exit\n\n"
     << "Backyard water scene (7) and the fluid solver:\n"
-    << "  --backyard-selftest                Run the ten Backyard water gates, then exit (needs --scene 7)\n"
+    << "  --backyard-selftest                Run the 13 Backyard water gates, then exit (needs --scene 7)\n"
     << "  --backyard-selftest-frames <N>     Frames per gate run\n"
     << "  --backyard-no-ball                 Run the gates without the scripted ball\n"
     << "  --backyard-cell-size <metres>      Override the derived cell size (debug)\n"
     << "  --backyard-spawn <N>               Spawn N extra balls as soon as the solver is ready\n"
     << "  --backyard-spawn-seed <N>          Fix the spawn/random-material RNG for a reproducible run\n"
     << "  --backyard-pick-test               Drive the real pick/drag path in-process, then exit\n"
+    << "  --backyard-pad-test                Drive the gamepad grab and pad quick actions in-process, then exit\n"
     << "  --backyard-ball-probe <N>          Log body 0's state plus the radial surface profile every N\n"
     << "                                      frames: level vs plane, current, ring-far, covered min-ring,\n"
     << "                                      10 cm bands. The only instrument that sees a local moat\n"

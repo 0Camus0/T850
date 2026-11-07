@@ -308,6 +308,11 @@ void WebFramework::ReadTouchInput() {
   gamepad.leftTrigger = (held & 8) ? 1.0f : 0.0f;
   gamepad.dpadLeftPressed = (pressed & 16) != 0;
   gamepad.dpadRightPressed = (pressed & 32) != 0;
+  // Backyard touch set (web/shell.html): descend is held; +10 balls and reset are edges, the
+  // same pad buttons the scene already maps (B crouch/down, X +10, Y reset).
+  gamepad.buttonEast = (held & 64) != 0;
+  gamepad.buttonWestPressed = (pressed & 128) != 0;
+  gamepad.buttonNorthPressed = (pressed & 256) != 0;
 }
 
 void WebFramework::OnInterruptApplication() { ClearInput(); pBaseApp->OnPause(); }

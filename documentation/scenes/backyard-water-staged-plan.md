@@ -769,7 +769,7 @@ manifest entries). Both new contract checks were also proven to bite: a launcher
 
 #### F. Cleanup
 
-1. **Script move.** Move `telemetry.ps1`, `pick_test.ps1`, `perf.ps1`, `bisect_perf.ps1`,
+1. **Script move.** Move `telemetry.ps1`, `input_test.ps1`, `perf.ps1`, `bisect_perf.ps1`,
    `cmp_ppm.py`, `ppm2png.py` and `read_session.py` from the untracked
    `D:\Code\QwenFlashT850\backyard-diag` into `T850/scripts/validation/`.
    - Paths relative to `$PSScriptRoot`; the source root is
@@ -2891,7 +2891,7 @@ drag, and contacts treat it as infinitely heavy, so it shoves other balls.
 input is generated. Gates: a no-Ctrl click does not pick; Ctrl + click picks the ball under the
 cursor; capture is freed; the dragged ball follows the cursor ray (0.003 m off) and pushes another
 ball; release; re-grab; a final frame dump shows the ball held at a known pixel. Run it with
-`scripts\validation\pick_test.ps1` (`--unattended --regressionFixedDt 0.0033 --backyard-spawn 6
+`scripts\validation\input_test.ps1` (`--unattended --regressionFixedDt 0.0033 --backyard-spawn 6
 --backyard-pick-test`). PASS on D3D12, Vulkan and D3D11; GL and WebGPU SKIP (no solver). The D3D12
 and Vulkan dumps show the held ball centred on the synthetic cursor.
 

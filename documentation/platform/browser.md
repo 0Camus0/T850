@@ -357,6 +357,8 @@ exports the recorded permutations plus all seven scene startup shaders, then bui
 the browser executable and runs the existing Framework tests as Wasm in Node.
 Use `-SkipShaderExport` only when the prepared shader package is current.
 `-ExportScenes` can restrict startup exports; its default is `6,0,1,2,3,4,5`.
+Each scene export also writes `build/web/shader-sets/scene-<id>-<flow>.json`, the
+packages that scene's start reads; `prepare-pages.mjs` bundles them per scene.
 Exports use the same per-scene model/document arguments as `web/scenes.json`
 and reject engine error logs, not just nonzero exit codes. Exports require native
 assets and do not themselves validate browser rendering. `-CMake` and
@@ -981,6 +983,9 @@ Configuration fields:
   branch to replace its production deployment, or another branch for a preview.
 - `minecraftOnly`: default `true`; `false` prepares the separate all-scenes
   package. Asset availability and pending uploads must be checked for that mode.
+- `site`: optional; `"water"` prepares only the Backyard water scene into
+  `build/pages-water` (see "Published Water Simulation" below). It implies
+  `minecraftOnly: false` and requires both R2 buckets.
 - `r2Buckets`: optional/unused for `minecraftOnly: true`. Multi-scene mode requires
   the `MODELS` and `TEXTURES` bindings, each with your `bucketName`
   and a public HTTPS `manifestUrl`. Each manifest has an `assets` array with
@@ -1017,6 +1022,141 @@ manifest URLs as a read-only mirror. Local preview
 does not authenticate to Cloudflare or write to real R2. It cannot serve pending
 unmanifested oversized assets without separately populating local R2 state.
 `npm run test:pages --prefix .\web` includes credential/configuration tests.
+
+### Published Water Simulation (v0.1.2)
+
+Live at <https://water-simulation-2026.pages.dev/> (Pages project `water-simulation-2026`,
+production branch `main`, first deployment `b652ebc3`, 2026-11-06). It publishes only the Backyard
+water scene (scene 7).
+
+- **Landing page:** `web/water-sim.html` and `web/water-sim.mjs`, copied as `index.html`. The
+  version label is `#demo-version`; bump the last number on each fix release. The page runs the
+  same WebGPU and isolation checks as the WSSI welcome, classifies the device as phone, tablet or
+  PC, shows that device's controls (`[data-help]`), defaults phones to 960 x 540, offers portrait
+  sizes on an upright phone, and launches `DayScene.html?demo=water&scene=7&width&height&logLevel`.
+  The background is `web/previews/water-sim.png`, a cropped browser frame (no HUD).
+- **Runtime:** `demo=water` in `shell.html` forces scene 7 and uses the WSSI letterboxing
+  (`.water-demo`). It hides the scene selector, ignores `model`/`sceneFile`, links home to
+  `water-sim.html`, and titles the page "Water Simulation 2026". The shell re-applies its title
+  when the runtime is ready, because SDL copies the engine window title ("T850 Project") into
+  `document.title` when it creates the window; this applies to every page mode.
+- **Device classes:** `touch-controls.js` and `water-sim.mjs` make the same call (pages.test.mjs
+  runs both against one fixture table). Windows and ChromeOS are PCs even with a touch screen;
+  Android, iPhone, iPad and touch Macs are touch-first; a touch-first device with a shortest
+  screen side of at least 600 CSS px is a tablet, otherwise a phone. Touch-first devices get the
+  overlay by default; the Touch checkbox still overrides. The overlay's Backyard set and its bits
+  are described in `documentation/input/camera-and-controls.md`.
+- **Package:** `"site": "water"` in the local config (for example
+  `web/cloudflare.water.local.json`, git-ignored) selects `web/backyard-assets.mjs`. That covers the
+  four `Scenes/Backyard*.json`, the layout and seven meshes, `Textures/Backyard/WaterNormal.png`,
+  the authored sky, every ball map the palette names (96), fonts, the runtime layout, IBL caches,
+  LUTs, lens textures and the shaders. Output is `build/pages-water` (1989 files, 48 MiB, largest
+  the 18.8 MiB Wasm). 139 resources stream from the existing R2 buckets through `_worker.js`, with
+  no pending uploads. The water site requires both R2 buckets and cannot be `minecraftOnly`.
+- **Junctions:** `prepare-pages.mjs` now follows directory links. `Assets/Textures/sky` and
+  `Textures/LUT` are junctions in worktrees, and `Dirent.isDirectory()` is false for them, so the
+  packager used to drop the sky and LUTs silently (`web/server.mjs` already followed them).
+
+Rebuild and redeploy from `T850`:
+
+```powershell
+pwsh -File scripts\BuildWeb.ps1 -ExportScenes 7   # -SkipShaderExport when shaders did not change
+node web\deploy-pages.mjs --config web\cloudflare.water.local.json --dev --port 8797   # local preview
+$env:CLOUDFLARE_API_TOKEN = '<token>'   # this process only
+node web\deploy-pages.mjs --config web\cloudflare.water.local.json
+Remove-Item Env:CLOUDFLARE_API_TOKEN
+```
+
+The project was created with the Pages REST API (`POST /accounts/{id}/pages/projects`,
+`production_branch: main`). Wrangler 4.133's `pages project create` hands new projects to Workers
+when it detects an AI agent; that hand-over failed and would not give a `pages.dev` advanced-mode
+site. `pages deploy` is unaffected: Wrangler skips the hand-over for an existing project or a
+`_worker.js` site.
+
+Verified 2026-11-06, live and in local preview, in headless Chrome. PC 1440 x 960, tablet
+emulation (Android, 1280 x 800, touch) and phone emulation (Android, 390 x 844, touch) all passed.
+Each run checked the device class and help, the launch URL, the solver ready at 100x22x50 with 60
+iterations, no `[WARN]`/`[ERROR]` lines, the touch set inside the viewport without overlaps, and
++10 (K or the touch button) reaching the engine exactly once. Headless throughput was about 85-90
+frames per second on the RTX 4080 Laptop. A real phone or tablet has not been tested.
+
+#### v0.1.1: Firefox frame rate, +10 freeze and GPU memory
+
+The owner reported 3 fps in Firefox at 1280 x 720 and a "+10 crash" in Edge. There were three
+separate faults:
+
+- **3 fps in Firefox.** Firefox 159 reports `mapAsync` and `onSubmittedWorkDone` about 100 ms
+  late, even on an idle GPU. Every synchronous solver readback, and every submission-count wait
+  (eight in flight, and a solver frame submitted several times), therefore cost a whole callback.
+  WebGPU now implements `RequestComputeReadback`, bounds in-flight work by frames instead of
+  submissions (six in the browser), and batches 1024 dispatches per compute submission. The
+  details are in `rendering/compute-shader-implementation.md`.
+- **The +10 "crash" was a freeze of 6-9 s.** The first spawn loaded each ball's texture maps
+  through synchronous, sequential R2 downloads. A scene in `web/scenes.json` can now list path
+  prefixes in `prefetch` (Backyard lists `Textures/Ball/`). Once the runtime is ready, `shell.html`
+  downloads the matching files from `assets/index.json` with six parallel requests and writes
+  them into the Wasm file system, skipping files that are already present. It sets
+  `t850.prefetched` and logs `[Shell] Prefetched N ...` when done. It is skipped when the catalog
+  has an `assetBundle`. The 93 ball maps take about 4 s. The first spawn now costs one
+  frame of about 250 ms (decoding and upload).
+- **GPU out of memory in Firefox after 60-70 balls.** Firefox frees bind groups only on
+  JavaScript garbage collection, and the driver created about 550 per frame. Render and compute
+  bind groups are now cached; see the compute document. `UpdateFloatData` writes in place, and
+  the tiled-light textures upload only when the tile assignments change
+  (`rendering/textures-and-ibl.md`).
+
+Verified 2026-11-07 against the local preview on the RTX 4080 Laptop, with
+`%LOCALAPPDATA%\T850Profiles\water-site\buttons.mjs` and `spawn-hitch.mjs` (scratch, outside
+the repo):
+
+| Run | Result |
+|-----|--------|
+| Firefox, keys: every key, 12 x +10 (121 balls), 90 s soak | pass, 202 fps, no errors (out of memory at the 7th +10 before) |
+| Firefox, mouse | pass, 135 fps |
+| Edge, keys / touch / mouse (12 x +10, 60 s soak) | pass, 344 / 298 / 209 fps |
+| Chrome, `check-water.mjs` PC / tablet / phone | pass |
+| Firefox, 1500-frame profile with 3 x +10 | median 4.4 ms, p99 6.4 ms, worst 240 ms (first spawn) |
+
+In that profile the render path created no bind groups after warm-up. The compute path created
+about one every 20 frames by the end, and no buffers. At `logLevel=info` the diagnostic probes
+read back every 60 frames and add spikes; measure at `logLevel=error`.
+
+#### v0.1.2: shader download time and "fabric" water
+
+- **Slow start was shader downloads, not compilation.** The engine reads one prepared shader
+  package per stage just before it compiles it, each through a blocking same-origin download.
+  Backyard needs 146 of them (2.3 MB). Measured in the page, creating all of those shader modules
+  takes 0.16-0.29 s. Fetching the packages one after another takes 6-25 s cold, and about 4.5 s
+  even when cached, because `no-cache` revalidates each one. `BuildWeb.ps1` now records which
+  packages each scene export writes (`build/web/shader-sets/scene-<id>-<flow>.json`).
+  `prepare-pages.mjs` turns every set into one file named by its SHA-256
+  (`shaders-<id>-<flow>.<sha256>.json`, 2.0 MB for Backyard), lists it in the scene's
+  `shaderBundles` in `scenes.json`, and serves `/shaders-*` as `immutable`. Before the engine
+  starts, `shell.html` downloads the bundle for the requested flow and checks its digest and every
+  entry name. It then writes the packages into the Wasm file system, so the engine finds them
+  locally. A failed or missing bundle only logs `[Shell] Shader bundle not used ...`; the engine
+  then downloads each package as before. The payload hashes inside each package still protect
+  its contents.
+- **"Fabric" water was the web sweep cap.** Every browser ran the pressure solve at 60 sweeps
+  (`kMobilePressureIterations`, added 11-02 for phones), and at 60 the surface flattens and dents
+  around every ball. Native D3D12 and WebGPU reproduce it exactly with 60 sweeps; WebGPU itself
+  was not the cause. The shell now passes `--webDevice phone|tablet|pc` (the class
+  `touch-controls.js` already computed), and only phones, tablets and unclassified pages keep 60.
+  Details and measurements: `scenes/backyard-water-simulation.md`, "How many pressure sweeps
+  actually run".
+
+Verified 2026-11-07 against the local preview on the RTX 4080 Laptop:
+
+| Run | Before | After |
+|-----|--------|-------|
+| Chrome start to running, cold / warm | 17.3 / 8.4 s | 9.6 / 2.5 s |
+| Firefox start to running, cold / warm | 16.6 / 9.7 s | 10.2 / 5.0 s |
+| Shader packages fetched one by one | 146 | 0 (bundle loads in 20-65 ms) |
+| Firefox, keys, 12 x +10, 60 s soak | 202 fps at 60 sweeps | pass, 172 fps at 120 sweeps |
+| Edge, keys, 12 x +10, 60 s soak | 344 fps at 60 sweeps | pass, 270 fps at 120 sweeps |
+
+The remaining cold start is asset downloads and solver setup. A real phone or tablet has still
+not been tested; they keep the 60-sweep cap.
 
 ### Embedded Browser Isolation
 
@@ -1337,6 +1477,9 @@ Cloudflare references checked for this candidate:
   include source, defines, key, stage and entry point; payload hashes protect
   the package contents. Missing/stale/corrupt packages fail explicitly. Re-export
   after shader changes. Runtime HLSL/SPIR-V compilation is not shipped in Wasm.
+  A Pages package also bundles each scene's startup packages into one immutable
+  file that the shell writes into the file system before the engine starts (see
+  "v0.1.2" under the water site).
 - Native compilation remains responsible for shader translation/reflection.
   The maintained WGSL quad shader now concretizes a constant `mix` operand to
   `f32`, accepted by both Tint and Firefox's WGSL implementation.

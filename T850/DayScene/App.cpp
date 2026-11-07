@@ -219,6 +219,9 @@ int main(int arg,char ** args) try {
     if (std::string_view(args[i]) == "--backyard-pick-test") {
       BackyardScene::SetPickTest(true);
     }
+    if (std::string_view(args[i]) == "--backyard-pad-test") {
+      BackyardScene::SetPadTest(true);
+    }
     if (std::string_view(args[i]) == "--webgpu-recovery-selftest") {
       webgpuRecoverySelfTest = true;
     }

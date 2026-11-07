@@ -23,7 +23,7 @@ the current implementation.
 
 - D3D11, D3D12, OpenGL, Vulkan, and native Dawn/WebGPU peer DayScene backends on supported Windows targets; T8ditor intentionally remains on the first four.
 - Vulkan runtime on Android and Steam Deck/Linux.
-- Architecture-neutral Emscripten/WebGPU runtime with a lightweight seven-scene browser launcher, prepared shaders, loopback COOP/COEP server, and allowlisted cloud asset routes.
+- Architecture-neutral Emscripten/WebGPU runtime with a lightweight eight-scene browser launcher, prepared shaders, loopback COOP/COEP server, and allowlisted cloud asset routes.
 - JSON-driven render graph with deferred shading and post processing.
 - PBR metallic/roughness materials, IBL, shadows, SSAO, HDR/tone mapping, bloom, depth of field, God Rays, parallax/self-shadowing, lens flare, and vignette.
 - Cross-backend compute on D3D11, D3D12, Vulkan, Dawn/WebGPU, and desktop OpenGL 4.3+, including structured-buffer and storage-image kernels plus compute/raster render-graph alternatives.
@@ -48,6 +48,20 @@ the current implementation.
 - Scene-owned fixed-tick gameplay system with stable IDs, components, controllers, movement intents, queued events, state machines, physics/navigation facades, path following, groups/formations/flocking, and RTS/FPS examples.
 - Mutable voxel terrain with streamed chunks, atlas-aware meshing, collision, persistence and block edits; Minecraft adds an authored world, voxel A* navigation, enemies, health/HUD and browser controls.
 - 78 CLI self-tests for schema, validation, lifecycle, events, tick semantics, state machines, physics, render-graph lifetimes, mutable meshes, voxel terrain, navigation cancellation, and fallback behavior.
+
+### Fluid Simulation
+
+The Backyard host (scene 7) runs a real 3D free-surface water simulation on the GPU, entirely in compute shaders:
+
+- Navier–Stokes on a staggered (MAC) grid, 100 x 22 x 50 cells of 9 cm by default: advection, gravity and wind forcing, and a red-black Gauss–Seidel/SOR pressure projection with a ghost-fluid free surface and an open ceiling.
+- Conservative volume-of-fluid transport (R32F, van Leer face values, interface compression) with GPU volume correction and rising entrained air, so the pool keeps its mass over long runs without CPU readbacks.
+- Adaptive substeps sized from the measured flow (CFL, through asynchronous GPU readbacks) instead of a fixed worst-case step, with a per-frame budget so slower devices do not fall into a spiral.
+- Any number of rigid balls that float or sink by density: buoyancy from the simulated surface, water current and wind drag, wall-mask stamping on the GPU, and two-way splashes. Balls can be dropped and grabbed with mouse, touch or gamepad.
+- The solved surface becomes a height texture that displaces and shades the pool mesh: absorption, refraction, caustics, Fresnel, screen-space reflections and foam.
+- Same solver on D3D11, D3D12, Vulkan, OpenGL 4.3 and WebGPU (native Dawn and browser), plus Android and Steam Deck. Desktop runs 120 pressure sweeps; Android, the Steam Deck and phone/tablet browsers run 60.
+- 3D compute storage textures on every backend, JSON tunables (`Scenes/BackyardWater.json`) with a live dev GUI, an on-screen quick bar (drop balls, wind, reset), and a 13-gate `--backyard-selftest`.
+
+Design record: [Backyard water simulation](documentation/scenes/backyard-water-simulation.md).
 
 ### T8ditor
 
@@ -117,7 +131,7 @@ is required. Replaceable Play sessions and full-world transactions remain follow
 
 ## Runtime Hosts
 
-`DayScene.exe` contains seven selectable hosts:
+`DayScene.exe` contains eight selectable hosts:
 
 | Index | Host | Typical use |
 |---:|---|---|
@@ -128,12 +142,13 @@ is required. Replaceable Play sessions and full-world transactions remain follow
 | 4 | SceneTemplate | authored `.t8scene`, gameplay, physics, navigation |
 | 5 | VoxelScene | generated mutable chunks, grounded FPS, streaming and block edits |
 | 6 | MinecraftScene | authored atlas-backed block world, enemies, voxel navigation/collision and browser demo |
+| 7 | BackyardScene | GPU fluid-simulated pool with floating balls, wind, touch/gamepad controls and browser water demo |
 
 Use `DayScene.exe --help` for the current CLI. See [Runtime hosts](documentation/runtime/runtime-hosts.md) and [Runtime configuration](documentation/development/runtime-configuration.md).
 
 ### Scene Gallery
 
-Deterministic D3D12 captures from the seven current runtime hosts at 1280x720:
+Deterministic D3D12 captures from the eight current runtime hosts at 1280x720:
 
 <table>
   <tr>
@@ -150,9 +165,11 @@ Deterministic D3D12 captures from the seven current runtime hosts at 1280x720:
   </tr>
   <tr>
     <td width="50%"><img src="T850/Resources/Screens/Scenes/MinecraftScene.png" alt="MinecraftScene authored block world"><br><b>6 · MinecraftScene</b> — authored atlas-backed world, enemies and browser controls.</td>
-    <td width="50%">The same host catalog is available from the native launcher and the packaged browser launcher. SceneTemplate remains the primary authored `.t8scene` runtime.</td>
+    <td width="50%"><img src="T850/Resources/Screens/Scenes/Backyard.png" alt="BackyardScene GPU fluid pool with floating balls"><br><b>7 · BackyardScene</b> — GPU free-surface water with floating balls, wind and splashes.</td>
   </tr>
 </table>
+
+The same host catalog is available from the native launcher and the packaged browser launcher. SceneTemplate remains the primary authored `.t8scene` runtime.
 
 ## Build Matrix
 
@@ -244,6 +261,8 @@ The local server binds only to `127.0.0.1`, supplies the isolation headers requi
 
 Tagged releases include a standalone `T850-Web-Release.zip` with `Start-T850-Web.cmd` and `Start-T850-Web.sh`. The same validated `web/` tree is embedded in every Windows ZIP, so **WebGPU + Browser (Emscripten)** works directly from `T850Launcher.exe`. Node.js 20+ and a WebGPU-capable browser are required.
 
+The Backyard water scene is also published as a standalone browser demo at <https://water-simulation-2026.pages.dev/>, with phone, tablet and PC controls.
+
 See [Browser runtime and packaging](documentation/platform/browser.md).
 
 ## Steam Deck
@@ -302,7 +321,8 @@ cloud routes, rejects bundled heavyweight web payloads, and rejects unsigned tag
 - Browser packages require HTTP serving, Node.js 20+, WebGPU, and internet access for cloud-hosted heavyweight assets.
 - Android and Steam Deck builds/package checks run in CI; hardware install, graphics and performance acceptance still require equipped devices.
 - Fast in-memory Play, gameplay hot reload, visual state-machine graph authoring, and cross-scene persistent gameplay entities are not implemented.
-- Minecraft water currently uses a static atlas frame; fluid simulation, transparent sorting and voxel lighting propagation remain future work.
+- Minecraft water currently uses a static atlas frame; transparent sorting and voxel lighting propagation remain future work. Fluid simulation exists in the Backyard host only.
+- Backyard water resolves 9 cm cells, so splashes are coarse next to small balls; surface tension and sub-cell solid coverage are not implemented.
 - Heavy Q3 Vulkan captures can exceed a 2 GiB audit GPU; hardware-limit skips are not counted as passes.
 
 ## Repository Layout

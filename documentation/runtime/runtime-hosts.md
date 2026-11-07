@@ -2,13 +2,13 @@
 
 Status: verified against DayScene and T8ditor entry points on 2026-09-26.
 
-The executable is named `DayScene.exe`, but it hosts seven runtime scene classes. Choose the host before changing code or selecting a regression case.
+The executable is named `DayScene.exe`, but it hosts eight runtime scene classes. Choose the host before changing code or selecting a regression case.
 
 ## Executables
 
 | Executable | Purpose |
 |---|---|
-| `DayScene.exe` | Runtime shell containing Sandbox, DayScene, Quake3Mock, RagdollEditor, SceneTemplate, VoxelScene, and MinecraftScene |
+| `DayScene.exe` | Runtime shell containing Sandbox, DayScene, Quake3Mock, RagdollEditor, SceneTemplate, VoxelScene, MinecraftScene, and BackyardScene |
 | `T8ditor.exe` | Authored scene editor and hosted Play/Mesh/Ragdoll tools |
 
 Framework libraries are not standalone applications.
@@ -24,6 +24,7 @@ Framework libraries are not standalone applications.
 | 4 | `SceneTemplate` | authored `--sceneFile` | long-term `.t8scene` runtime, gameplay, physics, navigation, profiles |
 | 5 | `VoxelScene` | generated chunks + persisted deltas | mutable block terrain, FPS traversal, streaming, place/remove reference |
 | 6 | `MinecraftScene` | authored `Scenes/Minecraft.t8scene` block world | production atlas, streamed chunks, voxel navigation/collision, enemies, HUD and browser demo |
+| 7 | `BackyardScene` | `Scenes/BackyardScene.json`, `Scenes/BackyardWater.json` and the pool layout | GPU free-surface fluid solver, floating balls, wind, quick bar and the browser water demo |
 
 ## Which Host to Change
 
@@ -36,6 +37,7 @@ Framework libraries are not standalone applications.
 - Authoring UI, undo, validation, overlays, or Play Scene: T8ditor.
 - Mutable/procedural block worlds: Framework terrain module plus `VoxelScene` reference integration.
 - Authored Minecraft behavior: `MinecraftScene`, `Minecraft.t8scene`, voxel systems and shared gameplay services.
+- Pool water, the fluid solver and floating bodies: `BackyardScene` and `Framework/simulation/FluidSimulation`; see [Backyard water simulation](../scenes/backyard-water-simulation.md).
 
 Do not add new general runtime behavior to all legacy scene copies when `SceneTemplate` is the owning path. Audit duplicates only when a shared input/camera/rendering change requires parity.
 

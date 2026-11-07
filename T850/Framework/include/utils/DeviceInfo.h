@@ -15,6 +15,8 @@ namespace t850 {
     // True only for a Steam Deck. The other handhelds report a reason but stay false, because
     // the pressure-iteration cap below is an owner decision for the Deck specifically.
     bool steamDeck = false;
+    // Browser only: "phone", "tablet" or "pc" from --webDevice; empty natively or when unknown.
+    std::string webDevice;
     // Human-readable reason for the handheld log line; empty when the machine is not a handheld.
     std::string handheldReason;
     // Raw identity strings, kept for the log line and for support reports.

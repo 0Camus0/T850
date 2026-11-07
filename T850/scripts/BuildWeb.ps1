@@ -80,6 +80,8 @@ if (-not $SkipShaderExport) {
     Push-Location (Join-Path $sourceRoot 'bin\x64\Release')
     try {
         $shaderOutput = Join-Path $buildRoot 'WebShaders'
+        $shaderSets = Join-Path $buildRoot 'shader-sets'
+        New-Item -ItemType Directory -Path $shaderSets -Force | Out-Null
         foreach ($flow in $Flows) {
             $flowArguments = @('--shaderFlow', $flow)
             Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments (@('--compileShaders', '--api', 'webgpu', '--webShaderOutput', $shaderOutput) + $flowArguments) -LogPath (Join-Path $buildRoot "shader-$flow-export.log") -Operation "Recorded shader export ($flow)"
@@ -92,6 +94,7 @@ if (-not $SkipShaderExport) {
                 if ($launch.sceneFile) { $sceneArguments += @('--sceneFile', $launch.sceneFile) }
                 $arguments = @('--api', 'webgpu', '--scene', [string]$scene, '--width', '640', '--height', '360',
                     '--regressionFixedDt', '0.0166666667', '--dumpSnapshot-seconds', '1', '--webShaderOutput', $shaderOutput) + $sceneArguments + $flowArguments
+                $exportStarted = [DateTime]::UtcNow
                 Invoke-LoggedNativeCommand -FilePath '.\DayScene.exe' -Arguments ($arguments + @('--postProcessMode', 'raster')) -LogPath (Join-Path $buildRoot "scene-$scene-$flow-export.log") -Operation "Scene $scene shader export ($flow)"
                 if (Select-String -LiteralPath (Join-Path $buildRoot "scene-$scene-$flow-export.log") -Pattern '\[ERROR\s*\]' -Quiet) {
                     throw "Scene $scene reported an engine error during shader export ($flow)"
@@ -101,6 +104,13 @@ if (-not $SkipShaderExport) {
                 if (Select-String -LiteralPath $computeLog -Pattern '\[ERROR\s*\]' -Quiet) {
                     throw "Scene $scene reported an engine error during compute shader export ($flow)"
                 }
+                # The exporter rewrites every package a run uses, so the packages written since the scene's first run
+                # are the ones its browser start reads; web/prepare-pages.mjs bundles them into one download.
+                $sceneShaders = @(Get-ChildItem -LiteralPath $shaderOutput -File |
+                    Where-Object { $_.Name -match '^[a-f0-9]{40}\.json$' -and $_.LastWriteTimeUtc -ge $exportStarted } |
+                    ForEach-Object { 'WebShaders/' + $_.Name } | Sort-Object)
+                if ($sceneShaders.Count -eq 0) { throw "Scene $scene wrote no shader packages ($flow)" }
+                [IO.File]::WriteAllText((Join-Path $shaderSets "scene-$scene-$flow.json"), (ConvertTo-Json -InputObject $sceneShaders -Compress))
             }
         }
         if ($AssetMode -eq 'Cloud') {

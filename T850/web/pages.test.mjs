@@ -340,7 +340,7 @@ test('WSSI welcome validates enemies, starts only on Launch, and handles unavail
 
 test('water welcome shows the controls for the detected device and launches scene 7', async () => {
   const html = await readFile(new URL('./water-sim.html', import.meta.url), 'utf8');
-  assert.match(html, /<span id="demo-version">v0\.1\.1<\/span>/);
+  assert.match(html, /<span id="demo-version">v0\.1\.2<\/span>/);
   for (const device of ['pc', 'tablet', 'phone']) assert.match(html, new RegExp(`<div data-help="${device}" hidden>`));
   const source = await readFile(new URL('./water-sim.mjs', import.meta.url), 'utf8');
   const capable = { requestAdapter: async () => ({ limits: { maxColorAttachments: 8, maxColorAttachmentBytesPerSample: 128 } }) };
@@ -465,10 +465,72 @@ test('runtime prefetches a scene\'s listed assets in the background once it is r
   assert.deepEqual((await run({ bundle: true })).requests, []);
 });
 
+test('runtime writes the scene\'s verified shader bundle before the engine starts and falls back without it', async () => {
+  const html = await readFile(new URL('./shell.html', import.meta.url), 'utf8');
+  const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const packages = { ['WebShaders/' + 'a'.repeat(40) + '.json']: '{"version":3}', ['WebShaders/' + 'b'.repeat(40) + '.json']: '{"version":3,"x":1}' };
+  const encode = value => Buffer.from(JSON.stringify(value));
+  const nameFor = (flow, bytes) => `shaders-7-${flow}.${createHash('sha256').update(bytes).digest('hex')}.json`;
+  const good = encode(packages);
+  const run = async ({ query = '?demo=water', bundles, body = () => good } = {}) => {
+    const files = new Map();
+    const requests = [];
+    const logs = [];
+    let writesAtStart;
+    const fetch = async url => {
+      requests.push(String(url));
+      if (url === 'scenes.json') return { ok: true, json: async () => ({ arguments: [], defaultScene: 7, scenes: [{ id: 7, name: 'Backyard', ...(bundles ? { shaderBundles: bundles } : {}) }] }) };
+      const bytes = body(url);
+      return bytes ? { ok: true, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) } : { ok: false, status: 404 };
+    };
+    let completed;
+    const started = new Promise(resolve => { completed = resolve; });
+    const elements = { status: {}, 'runtime-error': { hidden: true }, 'runtime-error-title': {}, 'runtime-error-text': {},
+      canvas: { style: { setProperty() {} }, clientWidth: 960, clientHeight: 540, addEventListener() {} },
+      scene: { add() {}, addEventListener() {} } };
+    const window = { addEventListener() {} };
+    const sandbox = { URL, URLSearchParams, console: { log: text => logs.push(text) }, window, navigator: { gpu: {} }, crossOriginIsolated: true,
+      performance, Promise, Array, Uint8Array, TextDecoder, crypto: globalThis.crypto,
+      location: { search: query, href: 'https://test.pages.dev/DayScene.html' + query },
+      document: { getElementById: id => elements[id], querySelector: () => ({ setAttribute() {}, querySelector: () => ({}) }), body: { classList: { add() {} } } },
+      Option: function () {}, fetch };
+    runInNewContext(source, sandbox);
+    sandbox.Module.addRunDependency = () => {};
+    sandbox.Module.removeRunDependency = () => { writesAtStart = files.size; completed(); };
+    sandbox.Module.FS = { mount() {}, syncfs: (populate, done) => done(null), mkdirTree() {},
+      writeFile: (path, data) => files.set(path, data) };
+    sandbox.Module.preRun[0]();
+    await started;
+    return { files, writesAtStart, requests, logs, diagnostics: window.t850 };
+  };
+  const auto = nameFor('auto', good);
+  const loaded = await run({ bundles: { auto, spirv: nameFor('spirv', good) } });
+  assert.deepEqual(loaded.requests, ['scenes.json', auto]);
+  assert.equal(loaded.writesAtStart, 2);
+  assert.equal(loaded.files.get('/assets/WebShaders/' + 'b'.repeat(40) + '.json'), '{"version":3,"x":1}');
+  assert.equal(loaded.diagnostics.shaderBundle, 2);
+  assert.equal(loaded.diagnostics.errors.length, 0);
+  assert.deepEqual((await run({ query: '?demo=water&shaderFlow=spirv', bundles: { auto, spirv: nameFor('spirv', good) } })).requests.slice(1),
+    [nameFor('spirv', good)]);
+  assert.deepEqual((await run({ query: '?demo=water&shaderFlow=wgsl', bundles: { auto } })).requests, ['scenes.json']);
+  const rejected = async (bundles, body, reason) => {
+    const result = await run({ bundles, body });
+    assert.equal(result.files.size, 0);
+    assert.equal(result.writesAtStart, 0);
+    assert.match(result.logs.find(line => line.startsWith('[Shell] Shader bundle')), reason);
+    assert.equal(result.diagnostics.errors.length, 0);
+  };
+  await rejected({ auto }, () => encode({ ...packages, extra: 1 }), /integrity/);
+  const unsafe = encode({ 'WebShaders/../index.json': '{}' });
+  await rejected({ auto: nameFor('auto', unsafe) }, () => unsafe, /unexpected entry/);
+  await rejected({ auto }, () => null, /404/);
+  await rejected({ auto: '../' + auto }, () => good, /invalid name/);
+});
+
 test('WSSI runtime forwards validated enemy counts and stays on Minecraft', async () => {
   const html = await readFile(new URL('./shell.html', import.meta.url), 'utf8');
   const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  const execute = async search => {
+  const execute = async (search, device) => {
     let completed;
     const ready = new Promise(resolve => { completed = resolve; });
     const home = { setAttribute(name, value) { this[name] = value; }, querySelector: () => ({}) };
@@ -482,6 +544,7 @@ test('WSSI runtime forwards validated enemy counts and stays on Minecraft', asyn
       document: { getElementById: id => elements[id], querySelector: () => home, body: { classList: { add() {} } } },
       Option: function () {}, fetch: async () => ({ ok: true, json: async () => ({ arguments: ['--logLevel', 'info'], defaultScene: 0, scenes: [{ id: 0, name: 'Sandbox' }, { id: 1, name: 'DayScene' }, { id: 6, name: 'Minecraft' }, { id: 7, name: 'Backyard' }] }) }) };
     runInNewContext(source, sandbox);
+    if (device !== undefined) window.t850.device = device;   // what touch-controls.js sets
     sandbox.Module.addRunDependency = () => {};
     sandbox.Module.removeRunDependency = completed;
     sandbox.Module.FS = { mkdirTree() {}, mount() {}, syncfs: (populate, done) => done(null) };
@@ -552,6 +615,12 @@ test('WSSI runtime forwards validated enemy counts and stays on Minecraft', asyn
   assert.equal((await execute('?scene=6&benchmarkNoPresent')).diagnostics.state, 'failed');
   for (const query of ['?scene=1&benchmarkNoPresent&benchmarkFrames=29', '?scene=1&benchmarkNoPresent&benchmarkHoldFrame=0'])
     assert.equal((await execute(query)).diagnostics.state, 'failed');
+  // The engine caps the water's pressure sweeps unless it is told the browser runs on a PC.
+  for (const device of ['phone', 'tablet', 'pc']) {
+    const runtime = await execute('?demo=water', device);
+    assert.equal(runtime.args[runtime.args.indexOf('--webDevice') + 1], device);
+  }
+  for (const device of [undefined, 'desktop', '']) assert.equal((await execute('?demo=water', device)).args.includes('--webDevice'), false);
 });
 
 test('runtime errors show and retain the first failure across reloads without hiding current status', async () => {

@@ -108,6 +108,32 @@ if (minecraftOnly || water) {
 }
 await stageDirectory(join(sourceRoot, 'Assets'));
 await stageDirectory(join(sourceRoot, 'build/web/WebShaders'), 'WebShaders/');
+// The runtime reads one shader package per stage, each a blocking download (about 6 s for Backyard,
+// revalidated on every visit); BuildWeb's per-scene sets become one immutable file per scene and flow.
+const shaderBundles = [];
+if (!minecraftOnly) {
+  const catalog = JSON.parse(await readFile(join(output, 'scenes.json'), 'utf8'));
+  for (const entry of catalog.scenes) {
+    for (const flow of ['auto', 'wgsl', 'spirv']) {
+      let listed;
+      try { listed = JSON.parse(await readFile(join(sourceRoot, `build/web/shader-sets/scene-${entry.id}-${flow}.json`), 'utf8')); }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      const bundle = Object.create(null);
+      for (const resource of [...new Set(listed)].sort()) {
+        if (!/^WebShaders\/[a-f0-9]{40}\.json$/.test(resource) || routes[resource]?.static !== true)
+          throw new Error(`Scene ${entry.id} shader set lists a shader that is not packaged: ${resource}`);
+        bundle[resource] = await readFile(join(output, 'assets', resource), 'utf8');
+      }
+      const bytes = Buffer.from(JSON.stringify(bundle));
+      if (bytes.length > limit) throw new Error(`Scene ${entry.id} shader bundle exceeds the Pages 25 MiB file limit`);
+      const name = `shaders-${entry.id}-${flow}.${createHash('sha256').update(bytes).digest('hex')}.json`;
+      await writeFile(join(output, name), bytes);
+      (entry.shaderBundles ??= {})[flow] = name;
+      shaderBundles.push({ name, packages: Object.keys(bundle).length, bytes: bytes.length });
+    }
+  }
+  await writeFile(join(output, 'scenes.json'), JSON.stringify(catalog));
+}
 if (minecraftOnly) {
   bundleResource('Textures/sky/CubeMap_SkyWater_512.dds', await readFile(join(webRoot, 'minecraft-resources/CubeMap_SkyWater_512.dds')));
   const lighting = join(webRoot, 'minecraft-resources/GeneratedIBLCache');
@@ -159,7 +185,8 @@ if (minecraftOnly || water) {
 }
 await writeFile(join(output, '404.html'), '<!doctype html><title>Not found</title><a href="/">T850 scenes</a>');
 await writeFile(join(output, '_headers'), '/*\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n  Cross-Origin-Resource-Policy: same-origin\n  X-Content-Type-Options: nosniff\n' +
-  (assetBundle ? `/${assetBundle.name}\n  Cache-Control: public, max-age=31536000, immutable\n` : '  Cache-Control: no-cache\n'));
+  (assetBundle ? `/${assetBundle.name}\n  Cache-Control: public, max-age=31536000, immutable\n` : '  Cache-Control: no-cache\n') +
+  (shaderBundles.length ? '/shaders-*\n  ! Cache-Control\n  Cache-Control: public, max-age=31536000, immutable\n' : ''));
 if (!minecraftOnly) {
   await writeFile(join(output, '_routes.json'), JSON.stringify({ version: 1, include: ['/assets/*'], exclude: [] }));
   const handler = await readFile(join(webRoot, 'pages-worker.mjs'), 'utf8');
@@ -167,6 +194,6 @@ if (!minecraftOnly) {
 }
 await writeFile(join(payloads, pagesOutput(site).uploads), JSON.stringify(uploads, null, 2));
 console.log(JSON.stringify({ output, site, resources: Object.keys(routes).length - (minecraftOnly ? 0 : 1), assetBundle,
-  obsoleteShaderPackagesExcluded: obsoleteShaderPackages,
+  shaderBundles, obsoleteShaderPackagesExcluded: obsoleteShaderPackages,
   existingR2: Object.values(routes).filter(route => route.url).length,
   pendingR2Uploads: uploads, credentialsIncluded: false }, null, 2));

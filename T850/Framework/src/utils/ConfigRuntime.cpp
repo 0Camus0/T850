@@ -877,6 +877,13 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       value = StripQuotes(argv[++i]);
       if (value.empty()) throw std::invalid_argument(arg + " requires a nonempty path");
     }
+    else if (arg == "--webDevice") {
+      if (i + 1 >= argc) throw std::invalid_argument("--webDevice requires phone, tablet or pc");
+      const std::string device = StripQuotes(argv[++i]);
+      if (device != "phone" && device != "tablet" && device != "pc")
+        throw std::invalid_argument("--webDevice must be phone, tablet or pc");
+      cfg.webDevice = device;
+    }
     else if (arg == "--shaderPermutationInput" || arg == "--shaderCompileCancelFile") {
       if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--"))
         throw std::invalid_argument(arg + " requires a path");
@@ -960,6 +967,7 @@ void PrintHelp() {
     << "  --recordShaderPermutations         Record through runtime and flush at normal/snapshot exit\n"
     << "  --compileShaders                  Compile all recorded permutations, then exit\n"
     << "  --webShaderOutput <path>           Export prepared WebGPU shader packages while compiling/running\n"
+    << "  --webDevice phone|tablet|pc        Browser device class (the web shell passes it)\n"
     << "  --shaderPermutationInput <path>    Manifest to compile (default: Shaders/shader_permutations.json)\n"
     << "  --shaderCompileCancelFile <path>   Stop between permutations when this file exists\n"
     << "  --validateGltf <path>              Validate and summarize glTF/GLB, then exit\n\n"

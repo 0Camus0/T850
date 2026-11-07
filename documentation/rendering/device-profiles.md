@@ -48,7 +48,7 @@ numbers belong in data, not in compiled constants.
 | Location | Constant | Effect |
 |---|---|---|
 | `Framework/src/scene/RenderGraph.cpp` (`kAndroidScreenRenderScale`) | `0.5f` | every screen-sized render target on Android |
-| `Framework/include/scene/WaterTunables.h` (`kMobilePressureIterations`) | `60` | iteration cap on Android and web (compile time) and Steam Deck (run time, `DeviceInfo`) |
+| `Framework/include/scene/WaterTunables.h` (`kMobilePressureIterations`) | `60` | iteration cap on Android (compile time), phone/tablet/unclassified browsers (`--webDevice`, run time) and Steam Deck (run time, `DeviceInfo`) |
 | `Framework/src/utils/RuntimeProfile.cpp` (`RecommendedProfile`) | `"android/mali-g700"`, `"pc/x64"`, … | **scene sandbox profile** names matched by `DayScene.json`/`MinecraftScene.json` `profiles[]`; not a device-quality profile |
 | `Framework/src/utils/RuntimeProfile.cpp` (`DetectPlatform`) | `android`/`windows`/`linux`, else `unknown` | **the web build reports `unknown`**: there is no `OS_WEB` branch |
 | `Assets/Scenes/BackyardScene.json` `quality.light_volume_steps` | `256` | 5.45 ms pass |

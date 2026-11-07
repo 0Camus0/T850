@@ -654,7 +654,8 @@ submerged = clamp((level - (y - radius)) / (2*radius), 0, 1)
 whose outer radius (2 r + h) stays inside the next body, skipping columns whose waterline cell is
 a wall or another body. The result comes back through the asynchronous readback (W-04 step 5) one
 to three frames late with one query in flight; each body keeps its last answer, and an answer is
-dropped if bodies were spawned or cleared since it was requested. A backend without an async path
+dropped if bodies were spawned or cleared since it was requested. On WebGPU the answer arrives
+when the map completes: a few frames in Chrome, about 100 ms in Firefox. A backend without an async path
 pays one small stall per frame instead of losing the coupling. The surface texture stores a delta
 from the authored plane, so the plane is added back; forgetting that puts the body on the pool
 floor. Headless runs (no bound surface output, i.e. the self-tests) keep the authored plane.
@@ -1018,8 +1019,10 @@ truth, and both the scene and the headless gates call it, so the gates validate 
 | Platform | Sweeps | Why |
 |---|---|---|
 | Desktop Windows (D3D11/D3D12/Vulkan/WebGPU/GL) | 120 (whatever the JSON says) | CPU and GPU headroom |
+| Browser on a PC (`--webDevice pc`) | 120 | Same headroom; 60 left the desktop page with "fabric" water (below) |
 | Steam Deck (Vulkan) | 60 | Owner decision 2026-11-02; detected at run time |
-| Android, Emscripten | 60 | Compile-time cap (`kMobilePressureIterations`) |
+| Android | 60 | Compile-time cap (`kMobilePressureIterations`) |
+| Browser on a phone or tablet, or unclassified | 60 | `kMobilePressureIterations` unless the page says `pc` |
 
 The Deck is a Linux build, so its cap has to be a run-time check — a compile-time `OS_LINUX`
 branch would also cap a desktop Linux session. The probe lives in
@@ -1027,7 +1030,18 @@ branch would also cap a desktop Linux session. The probe lives in
 layer; the Deck OLED identifies itself as `Valve` + `Galileo` (the LCD as `Valve` + `Jupiter`), and
 before the probe knew that it logged `Handheld detection: no` and ran the desktop sweep count. The
 scene logs the reason next to the number: `120 pressure iterations` on desktop,
-`60 pressure iterations (Steam Deck cap)` on the Deck, `(mobile/web cap)` on devices.
+`60 pressure iterations (Steam Deck cap)` on the Deck, `(mobile cap)` on Android, and
+`(phone/tablet browser cap)` or `(web cap, device unknown)` in a browser.
+
+**60 sweeps flatten the surface and dent it around every ball.** Measured on native D3D12 and
+WebGPU with ten spawned balls (seed 7), about 13 s in: at 120 sweeps the surface rms is 2-3.5 cm
+with symmetric crests and troughs of about 10 cm. At 60 it is 0.8-0.9 cm with troughs of 5-8 cm
+and crests of only 2-6 cm. The under-converged pressure solve lets the water near a body compress
+instead of displacing, so each ball sits in a smooth dent on a calm sheet: the owner's "bowling ball
+on fabric". The gates still pass at 60 (they check mass and the waterline cell, not the wave
+field), which is how the web cap shipped on 11-02 (`5d11cd43`) with this side effect. The desktop
+browser has the headroom for 120: with 121 balls, Firefox runs at 172 fps and Edge at 270 fps at
+1280 x 720 on the RTX 4080 Laptop (202 and 344 at 60).
 
 **How a frame becomes substeps.** `maxDeltaTime` is a 0.25 s hitch clamp, not a stability
 bound: it used to be tied to `maxSubstepDt` at 1/30 s, and the comment next to it cited an
@@ -1131,14 +1145,16 @@ back-solves density, so editing either updates the other without them fighting e
   `[BackyardPickTest] PASS|FAIL`, and dumps a frame with the ball held at a logged pixel. Run it
   with `--unattended --regressionFixedDt 0.0033 --backyard-spawn 6`.
 - `T850\scripts\validation` holds the reviewer's scripts (`telemetry.ps1`, `perf.ps1`,
-  `bisect_perf.ps1`, `pick_test.ps1`, `cmp_ppm.py`, `ppm2png.py`); they write under
+  `bisect_perf.ps1`, `input_test.ps1`, `cmp_ppm.py`, `ppm2png.py`); they write under
   `T850\build\diag` and take `-ExeDir`/`-OutRoot` if another layout is needed. `backyard-diag`
   (local, untracked) still holds the scratch notes and the session-log reader;
   every one passes `--unattended`:
   - `s3matrix.ps1`: self-tests plus scenes 7/1/6 on five APIs, error counts.
   - `telemetry.ps1`: per-frame CPU phases (`scene.update`, `frame.draw`, `gpu.gpu_wait`),
     mean fps, p99 and spike count.
-  - `pick_test.ps1`: the pick test above.
+  - `input_test.ps1`: the pick test above, and `-Mode pad` for the synthetic gamepad test
+  (`--backyard-pad-test`): RT grabs along the crosshair, the left stick pans, the left trigger
+  lifts, and X/Y/shoulders/d-pad drive the quick actions.
   - `many_balls.ps1`: N spawned balls on one API.
   - `perf.ps1`: the older info-level fps method.
 

@@ -36,6 +36,10 @@
     .touch-stick img { filter: invert(1); pointer-events: none; }
     .touch-options { position: absolute; bottom: max(88px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
     .touch-options .camera-command { width: 64px; height: 44px; flex-direction: column; gap: 2px; font-size: 10px; padding: 2px; }
+    .touch-actions .label { font: 600 15px Consolas, monospace; pointer-events: none; }
+    #touch-controls:not([data-scene="Backyard"]) .touch-actions[data-scene="Backyard"],
+    #touch-controls[data-scene="Backyard"] .touch-actions:not([data-scene="Backyard"]),
+    #touch-controls[data-scene="Backyard"] .touch-options { display: none; }
     @media (max-width: 740px) { .touch-actions { bottom: 164px; gap: 6px; } .touch-actions button { width: 44px; height: 44px; } }
     @media (max-width: 740px) and (min-height: 481px) { .touch-options { flex-direction: column; gap: 6px; bottom: max(24px, env(safe-area-inset-bottom)); } }
     @media (max-height: 480px) { .touch-stick { width: 100px; height: 100px; bottom: 12px; } .touch-actions { bottom: 18px; } .touch-actions button { width: 40px; height: 40px; padding: 6px; } }
@@ -58,10 +62,10 @@
     #console-previous-error pre { max-height: 120px; overflow: auto; margin: 0; padding: 8px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 Consolas, monospace; }
     body.console-visible:has(#runtime-console[open]) #runtime-error { max-height: max(32px, calc(68dvh - 168px - env(safe-area-inset-bottom))); }
     #canvas { display: block; width: 100%; height: 100%; min-height: 0; outline: none; }
-    .wssi-demo #canvas { place-self: center; width: min(100%, var(--demo-long-side), calc((100dvh - 36px - var(--touch-footer, 0px)) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; }
+    .wssi-demo #canvas, .water-demo #canvas { place-self: center; width: min(100%, var(--demo-long-side), calc((100dvh - 36px - var(--touch-footer, 0px)) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; }
     @media (max-width: 700px) and (orientation: portrait) {
       body.touch-mode { --touch-footer: calc(216px + env(safe-area-inset-bottom)); }
-      .wssi-demo #canvas { width: min(100%, calc(var(--demo-long-side) * 9 / 16), calc((100dvh - 36px - var(--touch-footer, 0px)) * 9 / 16)); aspect-ratio: 9 / 16; }
+      .wssi-demo #canvas, .water-demo #canvas { width: min(100%, calc(var(--demo-long-side) * 9 / 16), calc((100dvh - 36px - var(--touch-footer, 0px)) * 9 / 16)); aspect-ratio: 9 / 16; }
     }
     body.touch-ontop { --touch-footer: 0px; }
     body.touch-ontop #canvas { width: 100%; height: 100%; max-width: none !important; max-height: none !important; aspect-ratio: auto; }
@@ -94,13 +98,20 @@
       <button class="camera-command" id="touch-view" data-command="1" aria-label="Free spectator" aria-pressed="false" title="Switch to free spectator" disabled><img src="icons/camera.svg" alt="">View</button>
       <button class="camera-command" id="touch-invert-y" data-command="2" aria-label="InvertY" aria-pressed="false" title="Invert vertical look" disabled><img src="icons/flip-vertical-2.svg" alt="">InvertY</button>
     </div>
-    <div class="touch-actions">
+    <div class="touch-actions" data-scene="Minecraft">
       <button data-button="16" aria-label="Previous block" title="Previous block"><img src="icons/chevron-left.svg" alt=""></button>
       <button data-button="4" aria-label="Break block" title="Break block"><img src="icons/pickaxe.svg" alt=""></button>
       <button data-button="1" aria-label="Jump" title="Jump"><img src="icons/arrow-up.svg" alt=""></button>
       <button data-button="2" aria-label="Sprint" title="Sprint"><img src="icons/zap.svg" alt=""></button>
       <button data-button="8" aria-label="Place block" title="Place block"><img src="icons/plus.svg" alt=""></button>
       <button data-button="32" aria-label="Next block" title="Next block"><img src="icons/chevron-right.svg" alt=""></button>
+    </div>
+    <div class="touch-actions" data-scene="Backyard">
+      <button data-button="1" aria-label="Fly up" title="Fly up"><img src="icons/arrow-up.svg" alt=""></button>
+      <button data-button="64" aria-label="Fly down" title="Fly down"><img src="icons/arrow-down.svg" alt=""></button>
+      <button data-button="2" aria-label="Fly faster" title="Fly faster"><img src="icons/zap.svg" alt=""></button>
+      <button data-button="128" aria-label="Add ten balls" title="Add ten balls"><span class="label">+10</span></button>
+      <button data-button="256" aria-label="Reset the pool, press twice" title="Reset the pool (press twice)"><img src="icons/rotate-ccw.svg" alt=""></button>
     </div>
   </div>
   <details id="runtime-error" hidden open>
@@ -286,9 +297,67 @@
       wasmInitialized = true;
       diagnostics.state = 'running';
       statusElement.textContent = 'Running';
+      // SDL's browser backend copies the engine window title into document.title when it creates
+      // the window, after the launch code below has set the page title.
+      if (diagnostics.pageTitle) document.title = diagnostics.pageTitle;
+      if (diagnostics.prefetch && !diagnostics.prefetchStarted) {
+        diagnostics.prefetchStarted = true;
+        prefetchAssets(diagnostics.prefetch);
+      }
       saveSessionCheckpoint();
     }
+    // A scene's on-demand files (the Backyard balls' textures) are fetched in parallel once it runs.
+    // The engine reads /assets before downloading, and one blocking download per file in the frame
+    // froze the first presses of +10 for 6-9 s.
+    async function prefetchAssets(prefixes) {
+      const started = performance.now();
+      try {
+        const response = await fetch('assets/index.json');
+        if (!response.ok) throw new Error('asset index ' + response.status);
+        const pending = (await response.json()).filter(path => prefixes.some(prefix => path.startsWith(prefix)) &&
+          !Module.FS.analyzePath('/assets/' + path).exists);
+        let next = 0;
+        const download = async () => {
+          while (next < pending.length) {
+            const path = pending[next++];
+            const file = await fetch('assets/' + path.split('/').map(encodeURIComponent).join('/'));
+            if (!file.ok) throw new Error(path + ' ' + file.status);
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            if (Module.FS.analyzePath('/assets/' + path).exists) continue;
+            Module.FS.mkdirTree('/assets/' + path.slice(0, path.lastIndexOf('/')));
+            Module.FS.writeFile('/assets/' + path, bytes, { canOwn: true });
+          }
+        };
+        await Promise.all(Array.from({ length: 6 }, download));
+        diagnostics.prefetched = pending.length;
+        record(`[Shell] Prefetched ${pending.length} scene assets in ${Math.round(performance.now() - started)} ms`);
+      } catch (error) {
+        record('[Shell] Asset prefetch stopped, the engine downloads on demand: ' + error.message);
+      }
+    }
     window.addEventListener('t850-runtime-ready', markReady);
+    // The engine reads each shader package just before compiling it, one blocking download at a time
+    // (6-7 s of a cold Backyard start, revalidated on every visit). One immutable file replaces them.
+    async function loadShaderBundle(name) {
+      const started = performance.now();
+      try {
+        if (typeof name !== 'string' || !/^shaders-\d+-(auto|wgsl|spirv)\.[a-f0-9]{64}\.json$/.test(name)) throw new Error('invalid name');
+        const response = await fetch(name);
+        if (!response.ok) throw new Error('status ' + response.status);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), value => value.toString(16).padStart(2, '0')).join('');
+        if (!name.includes('.' + digest + '.')) throw new Error('integrity check failed');
+        const packages = Object.entries(JSON.parse(new TextDecoder().decode(bytes)));
+        if (packages.some(([path, text]) => !/^WebShaders\/[a-f0-9]{40}\.json$/.test(path) || typeof text !== 'string'))
+          throw new Error('unexpected entry');
+        Module.FS.mkdirTree('/assets/WebShaders');
+        for (const [path, text] of packages) Module.FS.writeFile('/assets/' + path, text);
+        diagnostics.shaderBundle = packages.length;
+        record(`[Shell] Loaded ${packages.length} shader packages in ${Math.round(performance.now() - started)} ms`);
+      } catch (error) {
+        record('[Shell] Shader bundle not used, the engine downloads each shader: ' + error.message);
+      }
+    }
     function record(text, error = false) {
       text = String(text).replace(/\x1b\[[0-9;]*m/g, '');
       diagnostics.logs.push(text);
@@ -353,6 +422,8 @@
           const catalog = await response.json();
           const parameters = new URLSearchParams(location.search);
           const minecraftDemo = parameters.get('demo') === 'wssi';
+          const waterDemo = parameters.get('demo') === 'water';
+          const fixedDemo = minecraftDemo || waterDemo;
           let enemyCount;
           if (parameters.has('minecraftEnemyCount')) {
             const rawCount = parameters.get('minecraftEnemyCount');
@@ -364,16 +435,16 @@
             if (!parameters.has(dimension)) continue;
             const size = Number(parameters.get(dimension));
             if (!Number.isInteger(size) || size < 64 || size > 8192) throw new Error('Invalid canvas ' + dimension);
-            if (!minecraftDemo) {
+            if (!fixedDemo) {
               canvas.style[dimension === 'width' ? 'maxWidth' : 'maxHeight'] = size + 'px';
               canvas.style.placeSelf = 'center';
             }
           }
-          if (minecraftDemo) {
-            document.body.classList.add('wssi-demo');
+          if (fixedDemo) {
+            document.body.classList.add(minecraftDemo ? 'wssi-demo' : 'water-demo');
             canvas.style.setProperty('--demo-long-side', Math.max(Number(parameters.get('width') ?? 1280), Number(parameters.get('height') ?? 720)) + 'px');
           }
-          const requested = minecraftDemo ? 6 : Number(parameters.get('scene') ?? catalog.defaultScene);
+          const requested = minecraftDemo ? 6 : waterDemo ? 7 : Number(parameters.get('scene') ?? catalog.defaultScene);
           const selected = catalog.scenes.find(scene => scene.id === requested);
           if (!selected) throw new Error('Unknown scene');
           if (catalog.assetBundle) {
@@ -381,8 +452,11 @@
             const { loadAssetBundle } = await import('./asset-bundle.mjs');
             diagnostics.assetBundle = await loadAssetBundle(Module.FS, catalog.assetBundle);
           }
+          const shaderFlow = parameters.get('shaderFlow') ?? 'auto';
+          const shaderBundleLoaded = !catalog.assetBundle && selected.shaderBundles && Object.hasOwn(selected.shaderBundles, shaderFlow)
+            ? loadShaderBundle(selected.shaderBundles[shaderFlow]) : null;
           const selector = document.getElementById('scene');
-          selector.hidden = minecraftDemo;
+          selector.hidden = fixedDemo;
           const home = document.querySelector('header a');
           if (minecraftDemo) {
             home.href = 'minecraft-wssi.html?' + new URLSearchParams({
@@ -392,6 +466,13 @@
             });
             home.setAttribute('aria-label', 'Back to WSSI welcome');
             home.querySelector('strong').textContent = 'WSSI / Minecraft';
+          } else if (waterDemo) {
+            home.href = 'water-sim.html?' + new URLSearchParams({
+              resolution: `${parameters.get('width') ?? 1280}x${parameters.get('height') ?? 720}`,
+              logLevel: parameters.get('logLevel') ?? 'error',
+            });
+            home.setAttribute('aria-label', 'Back to the water simulation welcome');
+            home.querySelector('strong').textContent = 'Water Simulation';
           } else if (parameters.get('entry') === 'launcher') {
             home.href = 'launcher.html';
           }
@@ -404,19 +485,22 @@
             location.assign(url);
           });
           diagnostics.scene = selected.name;
-          document.title = minecraftDemo ? 'Hackathon 2026: WSSI Web GPU Minecraft Demo' : selected.name + ' | T850';
+          if (Array.isArray(selected.prefetch) && !catalog.assetBundle) diagnostics.prefetch = selected.prefetch;
+          document.title = diagnostics.pageTitle = minecraftDemo ? 'Hackathon 2026: WSSI Web GPU Minecraft Demo'
+            : waterDemo ? 'Water Simulation 2026' : selected.name + ' | T850';
           argumentsList.push('--api', 'webgpu', '--scene', String(selected.id),
-            '--width', minecraftDemo ? String(canvas.clientWidth) : parameters.get('width') ?? String(canvas.clientWidth),
-            '--height', minecraftDemo ? String(canvas.clientHeight) : parameters.get('height') ?? String(canvas.clientHeight),
+            '--width', fixedDemo ? String(canvas.clientWidth) : parameters.get('width') ?? String(canvas.clientWidth),
+            '--height', fixedDemo ? String(canvas.clientHeight) : parameters.get('height') ?? String(canvas.clientHeight),
             '--webAssetBaseUrl', catalog.assetBundle ? 'embedded' : new URL('assets', location.href).href);
           argumentsList.push(...catalog.arguments);
           argumentsList.push(...(selected.arguments ?? []));
+          if (['phone', 'tablet', 'pc'].includes(diagnostics.device)) argumentsList.push('--webDevice', diagnostics.device);
           if (selected.id === 6 && (minecraftDemo || enemyCount !== undefined))
             argumentsList.push('--minecraftEnemyCount', String(enemyCount ?? 1));
-          const sceneFile = minecraftDemo ? undefined : parameters.get('sceneFile') ?? selected.sceneFile;
+          const sceneFile = fixedDemo ? undefined : parameters.get('sceneFile') ?? selected.sceneFile;
           if (sceneFile) argumentsList.push('--sceneFile', sceneFile);
           for (const option of ['model', 'culling', 'logLevel']) {
-            if (minecraftDemo && option === 'model') continue;
+            if (fixedDemo && option === 'model') continue;
             if (parameters.has(option)) argumentsList.push('--' + option, parameters.get(option));
           }
           const requestedPostProcessMode = parameters.get('postProcessMode') ?? (minecraftDemo ? 'compute' : null);
@@ -480,6 +564,7 @@
               '--benchmarkFrames', String(frames + 60),
               '--benchmarkFixedDt', '0.0166666667');
           }
+          await shaderBundleLoaded;
           Module.FS.mkdirTree('/persistent');
           Module.FS.mount(Module.IDBFS, { autoPersist: true }, '/persistent');
           await new Promise((resolve, reject) => Module.FS.syncfs(true, error => error ? reject(error) : resolve()));

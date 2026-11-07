@@ -30,6 +30,10 @@ public:
   void OnDraw() override;
   void OnInput(InputManager* input) override;
   void DrawDevGui(t850::DevGuiContext& gui) override;
+  // Always-on quick bar: drop balls, reset the pool and steer the wind without opening the
+  // debug panel, on every platform. Drawn through the runtime GUI so ImGui owns the hit test
+  // (a tap on a button must not also turn the camera).
+  void DrawGameplayGui(t850::DevGuiContext& gui) override;
   // The GUI can change the solver grid, which means new 3D textures.
   bool RebuildFluid();
   // Clears the solver to a flat, motionless pool and re-arms the dropped body at the
@@ -58,6 +62,16 @@ public:
   // Test hook (--backyard-pick-test): drives the real pick/drag input path with a
   // synthetic InputManager, so no OS mouse or keyboard input is ever generated.
   static void SetPickTest(bool enabled) { s_pickTest = enabled; }
+  // Test hook (--backyard-pad-test): drives the gamepad grab and the pad quick actions with a
+  // synthetic InputManager, so the Deck path is covered without hardware.
+  static void SetPadTest(bool enabled) { s_padTest = enabled; }
+#ifdef OS_ANDROID
+  // Touch controls on a tablet: two sticks plus a jump button, fed straight from AInputEvent so
+  // the layout zones consume their touches and the rest of the screen stays a look/pick surface.
+  bool HandleAndroidVirtualControls(AInputEvent* event);
+  bool AndroidVirtualControlsActive() const;
+  void ResetAndroidVirtualControls();
+#endif
 
 private:
   struct AssetRequest {
@@ -108,8 +122,48 @@ private:
   // Deterministic LCG state for spawn placement: spawnSeed != 0 reproduces a run.
   uint32_t m_spawnRng = 1u;
   // Drops one ball at a random place inside the basin, at a random radius and density.
-  // Returns false at the cap or when no free spot was found.
+  // Returns false when the solver is not running or no free spot was found.
   bool SpawnBall();
+  // Drops up to `count` balls. Returns how many were added, so the HUD and the tests can
+  // report what actually happened. There is no ball cap (owner decision, 97009aef).
+  int SpawnBalls(int count);
+  // ── Wind: one speed and one heading, the way the panel and the quick bar speak ──
+  // Both views write windX/windZ, so JSON, the gates and FluidSimulation::SetWind agree.
+  float CurrentWindSpeed() const;
+  float CurrentWindHeadingDeg() const;
+  void ApplyWind(float speed, float headingDeg);
+  void AdjustWindSpeed(float delta);
+  void AdjustWindHeading(float deltaDeg);
+  // ── Quick bar ──
+  void DrawQuickBar();
+  // One entry per bar button, so the touch layer can hit-test the bar without ImGui input:
+  // on Android the runtime overlay is hidden by default and ImGui receives no touch events,
+  // even though the bar itself is still drawn.
+  enum class QuickBarAction : int {
+    SpawnTen = 0,
+    Reset,
+    WindSpeedDown,
+    WindSpeedUp,
+    HeadingDown,
+    HeadingUp,
+    ToggleArrow,
+    Count
+  };
+  struct QuickBarHit {
+    float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+    QuickBarAction action = QuickBarAction::SpawnTen;
+  };
+  static constexpr int kQuickBarMaxHits = 8;
+  QuickBarHit m_quickBarHits[kQuickBarMaxHits];
+  int m_quickBarHitCount = 0;
+  void PerformQuickAction(QuickBarAction action);
+  // Reset clears the spawned balls, so it takes two presses: the first arms it for a few
+  // seconds and the label changes, the second acts.
+  bool ResetArmed() const;
+  void RequestReset();
+  float m_resetArmedUntil = 0.0f;
+  // Seconds a reset stays armed after the first press.
+  static constexpr float kResetArmSeconds = 4.0f;
   void ClearSpawnedBalls();
   // Welds every spawned ball's instance to its simulated body.
   void UpdateExtraBallTransforms();
@@ -141,7 +195,24 @@ private:
   XVECTOR3 m_dragOffset;              // ball centre minus its projection on the ray
   XVECTOR3 m_dragTarget;              // where the cursor wants the centre this frame
   t850::Ray CursorRay(float mouseX, float mouseY) const;
+  // Same unprojection, aimed down the camera's own forward axis, so a pad can pick without a
+  // cursor. The two rays share everything below the screen-space step.
+  t850::Ray CrosshairRay() const;
   bool ProjectToScreen(const XVECTOR3& world, float& x, float& y) const;
+  // Places the drag target on the ray at the current distance plus the grab offset. Shared by
+  // the mouse, the pad and the touch drag so all three steer a held ball the same way.
+  void UpdateDragTargetFromScreen(float screenX, float screenY);
+  // Nearest enabled body under the ray; writes the distance along it. -1 when nothing is hit.
+  int PickBallAlongRay(const t850::Ray& ray, float& along) const;
+  // Starts a drag at a picked body. The mouse and the pad both come through here.
+  void BeginBallDrag(int bodyIndex, const t850::Ray& ray, float along);
+  // ── Gamepad drag: RT holds the ball under the crosshair ──
+  // Left stick pans it over the ground relative to the camera, left trigger lifts it, and
+  // releasing RT drops it with the velocity the steering gave it.
+  bool HandleGamepadGrab(InputManager* input);
+  bool m_gamepadGrab = false;    // the pad owns the current drag
+  bool m_gamepadAiming = false;  // RT is held, so the crosshair is worth drawing
+  void DrawGrabCrosshair();
   // Camera and ball input; OnInput feeds the real InputManager, the pick test a fake one.
   void ProcessSceneInput(InputManager* input, bool imguiWantsMouse);
   // Returns true while a ball is held, so the camera ignores that mouse gesture.
@@ -162,6 +233,63 @@ private:
   float m_pickTestFrom[2] = {0.0f, 0.0f};
   float m_pickTestTo[2] = {0.0f, 0.0f};
   void RunPickTestStep();
+  // ── --backyard-pad-test state ──
+  static bool s_padTest;
+  InputManager m_padTestInput;
+  int m_padTestFrame = 0;
+  int m_padTestTarget = -1;
+  int m_padTestFailures = 0;
+  bool m_padTestDone = false;
+  float m_padTestStartWindSpeed = 0.0f;
+  float m_padTestStartHeading = 0.0f;
+  // While the pad test runs, the crosshair ray is aimed at the chosen ball so the grab is
+  // deterministic; production keeps using the camera axis.
+  bool m_padTestAim = false;
+  XVECTOR3 m_padTestAimPoint;
+  XVECTOR3 m_padTestEyeAtGrab;
+  float m_padTestEyeY = 0.0f;
+  void RunPadTestStep();
+#ifdef OS_ANDROID
+  // ── Android touch controls ──
+  // Centres and radii as plain floats: this header stays free of ImGui types, and the layout
+  // maths has to run in the input handler as well as in the drawing code.
+  struct AndroidTouchLayout {
+    float moveX = 0.0f, moveY = 0.0f;
+    float lookX = 0.0f, lookY = 0.0f;
+    float jumpX = 0.0f, jumpY = 0.0f;
+    float stickRadius = 0.0f;
+    float knobRadius = 0.0f;
+    float buttonRadius = 0.0f;
+  };
+  AndroidTouchLayout BuildAndroidTouchLayout(float width, float height) const;
+  void DrawAndroidTouchControls();
+  int m_androidMovePointer = -1;
+  int m_androidLookPointer = -1;
+  int m_androidJumpPointer = -1;
+  XVECTOR2 m_androidMoveAxis;
+  XVECTOR2 m_androidLookAxis;
+  bool m_androidJump = false;
+  // Grab pointer, and the second finger that pushes/pulls the held ball (the touch stand-in
+  // for the mouse wheel: the framework's pinch would cancel the drag).
+  int m_androidGrabPointer = -1;
+  int m_androidDepthPointer = -1;
+  // A finger that pressed a quick-bar button. Tracked so its move and release stay with the
+  // scene: otherwise three fast taps on a button also count as the triple-tap that opens the GUI.
+  int m_androidQuickBarPointer = -1;
+  float m_androidGrabScreenX = 0.0f;
+  float m_androidGrabScreenY = 0.0f;
+  float m_androidDepthStartY = 0.0f;
+  float m_androidDepthStartDistance = 0.0f;
+#endif
+  // Set while a touch owns the drag, so the mouse path does not end it on the next frame.
+  bool m_touchGrab = false;
+  // The runtime GUI navigates with the pad (LB/RB switch panels, the d-pad moves focus), so the
+  // pad quick actions stand down while it is open. DrawDevGui only runs while it is visible.
+  bool m_devGuiDrawnThisFrame = false;
+  bool m_runtimeGuiOpen = false;
+  // The browser's touch overlay (web/shell.html) is active: its sticks and buttons own the
+  // bottom edge, so the quick bar moves to the top.
+  bool m_browserTouch = false;
   t850::FluidDebugRenderer m_fluidDebug;
   t850::WireframeArrow m_windArrow;
   bool m_windArrowReady = false;

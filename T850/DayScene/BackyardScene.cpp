@@ -20,6 +20,10 @@
 #include <utility>
 #include <vector>
 
+#ifdef OS_ANDROID
+#include <android/input.h>
+#endif
+
 namespace {
   constexpr const char* kSceneDescriptorPath = "Scenes/BackyardScene.json";
   constexpr const char* kRenderGraphPath = "Scenes/BackyardScene_RenderGraph.json";
@@ -32,6 +36,61 @@ namespace {
   // substep count; the ceiling keeps a held ball within sight of the pool.
   constexpr float kMaxDragSpeed = 6.0f;          // m/s
   constexpr float kMaxDragHeightAboveWater = 2.5f; // m
+
+  // Compass name for a wind heading in degrees, measured from +X toward +Z. Shared by the
+  // debug panel and the quick bar so the two readouts cannot drift apart.
+  const char* WindCompassLabel(float headingDeg) {
+    if (headingDeg < 22.5f || headingDeg >= 337.5f) return "+X (east)";
+    if (headingDeg < 67.5f) return "+X+Z";
+    if (headingDeg < 112.5f) return "+Z (south)";
+    if (headingDeg < 157.5f) return "-X+Z";
+    if (headingDeg < 202.5f) return "-X (west)";
+    if (headingDeg < 247.5f) return "-X-Z";
+    if (headingDeg < 292.5f) return "-Z (north)";
+    return "+X-Z";
+  }
+
+#ifdef OS_ANDROID
+  // Touch layout helpers. Local to this translation unit: DayScene keeps its own copy for its
+  // virtual controls, and six lines of circle maths are not worth a shared header.
+  bool PointInsideCircle(float x, float y, const ImVec2& center, float radius) {
+    const float dx = x - center.x;
+    const float dy = y - center.y;
+    return (dx * dx + dy * dy) <= radius * radius;
+  }
+
+  XVECTOR2 StickAxisFromPoint(float x, float y, const ImVec2& center, float radius) {
+    constexpr float kDeadZone = 0.12f;
+    const float dx = x - center.x;
+    const float dy = y - center.y;
+    const float length = std::sqrt(dx * dx + dy * dy);
+    if (length <= radius * kDeadZone) return XVECTOR2(0.0f, 0.0f);
+    const float scale = 1.0f / (std::max)(radius, 1.0f);
+    XVECTOR2 axis(dx * scale, dy * scale);
+    const float axisLength = axis.Length();
+    if (axisLength > 1.0f) axis /= axisLength;
+    return axis;
+  }
+
+  int FindPointerIndex(AInputEvent* event, int pointerId) {
+    if (pointerId < 0 || !event) return -1;
+    const size_t count = AMotionEvent_getPointerCount(event);
+    for (size_t index = 0; index < count; ++index) {
+      if (AMotionEvent_getPointerId(event, index) == pointerId) return static_cast<int>(index);
+    }
+    return -1;
+  }
+
+  void DrawTouchCircle(ImDrawList* drawList, const ImVec2& center, float radius, const char* label) {
+    drawList->AddCircleFilled(center, radius, IM_COL32(12, 16, 20, 96), 32);
+    drawList->AddCircle(center, radius, IM_COL32(232, 238, 244, 150), 32, 2.0f);
+    if (label) {
+      const ImVec2 size = ImGui::CalcTextSize(label);
+      drawList->AddText(ImVec2(center.x - size.x * 0.5f, center.y - size.y * 0.5f),
+                        IM_COL32(240, 244, 248, 220), label);
+    }
+  }
+#endif
 
   struct BackyardAsset {
     const char* path;
@@ -59,6 +118,7 @@ uint32_t BackyardScene::s_spawnSeed = 0;
 int BackyardScene::s_massAuditFrames = 0;
 int BackyardScene::s_ballProbeFrames = 0;
 bool BackyardScene::s_pickTest = false;
+bool BackyardScene::s_padTest = false;
 
 BackyardScene::BackyardScene() = default;
 
@@ -627,9 +687,17 @@ bool BackyardScene::ProjectToScreen(const XVECTOR3& world, float& x, float& y) c
   return x >= 0.0f && y >= 0.0f && x < width && y < height;
 }
 
+void BackyardScene::UpdateDragTargetFromScreen(float screenX, float screenY) {
+  const t850::Ray ray = CursorRay(screenX, screenY);
+  m_dragTarget = XVECTOR3(ray.origin.x + ray.direction.x * m_dragDistance + m_dragOffset.x,
+                          ray.origin.y + ray.direction.y * m_dragDistance + m_dragOffset.y,
+                          ray.origin.z + ray.direction.z * m_dragDistance + m_dragOffset.z);
+}
+
 bool BackyardScene::HandleBallDrag(InputManager* input, bool imguiWantsMouse, bool ctrlDown) {
   const float mouseX = static_cast<float>(input->mouseX);
   const float mouseY = static_cast<float>(input->mouseY);
+  if (m_gamepadGrab || m_touchGrab) return false;   // another input owns this drag
   if (m_dragBody >= 0) {
     if (!input->PressedMouseButton(0) || !m_fluidReady ||
         static_cast<uint32_t>(m_dragBody) >= m_fluid.BodyCount()) {
@@ -638,20 +706,47 @@ bool BackyardScene::HandleBallDrag(InputManager* input, bool imguiWantsMouse, bo
     }
     if (input->scrollDelta != 0.0f)
       m_dragDistance = (std::max)(m_dragDistance * (1.0f + 0.1f * input->scrollDelta), 0.5f);
-    const t850::Ray ray = CursorRay(mouseX, mouseY);
-    m_dragTarget = XVECTOR3(ray.origin.x + ray.direction.x * m_dragDistance + m_dragOffset.x,
-                            ray.origin.y + ray.direction.y * m_dragDistance + m_dragOffset.y,
-                            ray.origin.z + ray.direction.z * m_dragDistance + m_dragOffset.z);
+    UpdateDragTargetFromScreen(mouseX, mouseY);
     return true;
   }
 
   // Consume the click even over the GUI, so a press that starts on a panel never turns
   // into a grab when the cursor later crosses a ball. Without Ctrl the click is the
-  // camera's, never a pick.
+  // camera's, never a pick. A touch screen has no Ctrl: there, a press that starts on a ball
+  // grabs it and a press anywhere else is the camera's, which is the same rule the pointer
+  // devices follow once the modifier is out of the way.
+#if defined(OS_ANDROID) || defined(__EMSCRIPTEN__)
+  const bool pickAllowed = true;
+#else
+  const bool pickAllowed = ctrlDown;
+#endif
   const bool clicked = input->PressedOnceMouseButton(0);
-  if (!clicked || !ctrlDown || imguiWantsMouse || !m_fluidReady) return false;
+  if (!clicked || !pickAllowed || imguiWantsMouse || !m_fluidReady) return false;
 
   const t850::Ray ray = CursorRay(mouseX, mouseY);
+  float along = 0.0f;
+  const int best = PickBallAlongRay(ray, along);
+  if (best < 0) return false;
+  BeginBallDrag(best, ray, along);
+  return true;
+}
+
+t850::Ray BackyardScene::CrosshairRay() const {
+  t850::Ray ray;
+  ray.origin = XVECTOR3(m_camera.Eye.x, m_camera.Eye.y, m_camera.Eye.z);
+  XVECTOR3 direction = m_camera.Look;
+  if (s_padTest && m_padTestAim) {
+    // The pad test aims at a chosen ball instead of the camera axis, so the grab is
+    // deterministic and does not depend on the free-fly orientation.
+    direction = XVECTOR3(m_padTestAimPoint.x - ray.origin.x, m_padTestAimPoint.y - ray.origin.y,
+                         m_padTestAimPoint.z - ray.origin.z);
+  }
+  direction.Normalize();
+  ray.direction = direction;
+  return ray;
+}
+
+int BackyardScene::PickBallAlongRay(const t850::Ray& ray, float& along) const {
   int best = -1;
   float bestDistance = FLT_MAX;
   for (uint32_t index = 0; index < m_fluid.BodyCount(); ++index) {
@@ -666,22 +761,79 @@ bool BackyardScene::HandleBallDrag(InputManager* input, bool imguiWantsMouse, bo
       best = static_cast<int>(index);
     }
   }
-  t850::FluidSphere* body = best >= 0 ? m_fluid.Body(static_cast<uint32_t>(best)) : nullptr;
-  if (!body) return false;
+  along = bestDistance;
+  return best;
+}
 
-  const float along = (body->x - ray.origin.x) * ray.direction.x +
-                      (body->y - ray.origin.y) * ray.direction.y +
-                      (body->z - ray.origin.z) * ray.direction.z;
-  m_dragDistance = (std::max)(along, 0.5f);
-  m_dragOffset = XVECTOR3(body->x - (ray.origin.x + ray.direction.x * along),
-                          body->y - (ray.origin.y + ray.direction.y * along),
-                          body->z - (ray.origin.z + ray.direction.z * along));
+void BackyardScene::BeginBallDrag(int bodyIndex, const t850::Ray& ray, float along) {
+  t850::FluidSphere* body = m_fluid.Body(static_cast<uint32_t>(bodyIndex));
+  if (!body) return;
+  // Re-project the centre on the ray so the ball does not jump when it is grabbed.
+  const float alongBody = (body->x - ray.origin.x) * ray.direction.x +
+                          (body->y - ray.origin.y) * ray.direction.y +
+                          (body->z - ray.origin.z) * ray.direction.z;
+  m_dragDistance = (std::max)(alongBody > 0.0f ? alongBody : along, 0.5f);
+  m_dragOffset = XVECTOR3(body->x - (ray.origin.x + ray.direction.x * m_dragDistance),
+                          body->y - (ray.origin.y + ray.direction.y * m_dragDistance),
+                          body->z - (ray.origin.z + ray.direction.z * m_dragDistance));
   m_dragTarget = XVECTOR3(body->x, body->y, body->z);
   body->held = true;
   body->vx = body->vy = body->vz = 0.0f;
-  m_dragBody = best;
+  m_dragBody = bodyIndex;
   T8_LOG_INFO("[Backyard] Holding ball %d (radius %.2f m) at (%.2f, %.2f, %.2f)",
-              best, body->radius, body->x, body->y, body->z);
+              bodyIndex, body->radius, body->x, body->y, body->z);
+}
+
+bool BackyardScene::HandleGamepadGrab(InputManager* input) {
+  const GamepadInputState& pad = input->Gamepad;
+  const bool aiming = pad.connected && pad.enabled && pad.rightTrigger > 0.4f;
+  m_gamepadAiming = aiming;
+  if (!aiming) {
+    if (m_gamepadGrab) EndBallDrag();   // release RT = drop, keeping the steering velocity
+    return false;
+  }
+  if (!m_fluidReady) return false;
+  if (m_dragBody < 0) {
+    const t850::Ray ray = CrosshairRay();
+    float along = 0.0f;
+    const int index = PickBallAlongRay(ray, along);
+    if (index < 0) return false;
+    BeginBallDrag(index, ray, along);
+    m_gamepadGrab = true;
+    return true;
+  }
+  if (!m_gamepadGrab) return false;   // the mouse owns this drag; let it run
+
+  // Left stick pans over the ground, relative to where the camera looks; the left trigger
+  // lifts. ApplyBallDrag clamps the result to the basin, so the ball cannot be steered
+  // through a wall.
+  constexpr float kPanSpeed = 3.0f;   // m/s
+  constexpr float kLiftSpeed = 1.5f;  // m/s
+  // The left stick rests slightly off centre on a Deck, so ignore small deflections.
+  auto deadZone = [](float value) {
+    constexpr float kDeadZone = 0.15f;
+    return std::fabs(value) < kDeadZone ? 0.0f : value;
+  };
+  float lookX = m_camera.Look.x;
+  float lookZ = m_camera.Look.z;
+  const float groundLength = std::sqrt(lookX * lookX + lookZ * lookZ);
+  if (groundLength > 1e-4f) {
+    lookX /= groundLength;
+    lookZ /= groundLength;
+  } else {
+    lookX = 0.0f;
+    lookZ = 1.0f;
+  }
+  // Right on the ground plane is the look direction rotated -90 degrees about Y.
+  const float rightX = lookZ;
+  const float rightZ = -lookX;
+  const float dt = m_deltaSeconds;
+  const float panAlong = -deadZone(pad.leftY) * kPanSpeed * dt;
+  const float panSide = deadZone(pad.leftX) * kPanSpeed * dt;
+  const float lift = (std::max)(pad.leftTrigger, 0.0f) * kLiftSpeed * dt;
+  m_dragTarget = XVECTOR3(m_dragTarget.x + rightX * panSide + lookX * panAlong,
+                          m_dragTarget.y + lift,
+                          m_dragTarget.z + rightZ * panSide + lookZ * panAlong);
   return true;
 }
 
@@ -711,13 +863,18 @@ void BackyardScene::ApplyBallDrag(float dt) {
 }
 
 void BackyardScene::EndBallDrag() {
-  if (m_dragBody < 0) return;
+  if (m_dragBody < 0) {
+    m_gamepadGrab = false;
+    return;
+  }
   if (t850::FluidSphere* body = m_fluid.Body(static_cast<uint32_t>(m_dragBody))) {
     body->held = false;
     T8_LOG_INFO("[Backyard] Released ball %d at (%.2f, %.2f, %.2f), velocity (%.2f, %.2f, %.2f) m/s",
                 m_dragBody, body->x, body->y, body->z, body->vx, body->vy, body->vz);
   }
   m_dragBody = -1;
+  m_gamepadGrab = false;
+  m_touchGrab = false;
 }
 
 void BackyardScene::UpdateExtraBallTransforms() {
@@ -850,6 +1007,70 @@ bool BackyardScene::SpawnBall() {
   return true;
 }
 
+int BackyardScene::SpawnBalls(int count) {
+  int spawned = 0;
+  for (int i = 0; i < count; ++i) {
+    if (!m_fluidReady || m_ballPrimitive < 0) break;
+    if (!SpawnBall()) break;
+    ++spawned;
+  }
+  return spawned;
+}
+
+float BackyardScene::CurrentWindSpeed() const {
+  const t850::WaterTunables& w = SceneProp.Water;
+  return std::sqrt(w.windX * w.windX + w.windZ * w.windZ);
+}
+
+float BackyardScene::CurrentWindHeadingDeg() const {
+  const t850::WaterTunables& w = SceneProp.Water;
+  // Sticky at zero speed: atan2(0, 0) has no direction to report, and dragging the speed
+  // to 0 and back must not silently rotate the wind.
+  if (CurrentWindSpeed() <= 1e-4f) return m_windHeadingDeg;
+  constexpr float kRadToDeg = 57.29577951308232f;
+  float heading = std::atan2(w.windZ, w.windX) * kRadToDeg;
+  if (heading < 0.0f) heading += 360.0f;
+  return heading;
+}
+
+void BackyardScene::ApplyWind(float speed, float headingDeg) {
+  constexpr float kDegToRad = 0.017453292519943295f;
+  t850::WaterTunables& w = SceneProp.Water;
+  const float clampedSpeed = (std::min)((std::max)(speed, 0.0f), 20.0f);
+  float heading = std::fmod(headingDeg, 360.0f);
+  if (heading < 0.0f) heading += 360.0f;
+  m_windHeadingDeg = heading;
+  w.windX = clampedSpeed * std::cos(heading * kDegToRad);
+  w.windZ = clampedSpeed * std::sin(heading * kDegToRad);
+  // Keep the components exact rather than leaving 1e-8 residue at 0 or 90 degrees.
+  if (std::fabs(w.windX) < 1e-6f) w.windX = 0.0f;
+  if (std::fabs(w.windZ) < 1e-6f) w.windZ = 0.0f;
+}
+
+void BackyardScene::AdjustWindSpeed(float delta) {
+  ApplyWind(CurrentWindSpeed() + delta, CurrentWindHeadingDeg());
+}
+
+void BackyardScene::AdjustWindHeading(float deltaDeg) {
+  ApplyWind(CurrentWindSpeed(), CurrentWindHeadingDeg() + deltaDeg);
+}
+
+bool BackyardScene::ResetArmed() const {
+  return m_resetArmedUntil > 0.0f && m_elapsedSeconds <= m_resetArmedUntil;
+}
+
+void BackyardScene::RequestReset() {
+  // The arm timer rides on m_elapsedSeconds, which only advances while the solver runs, so
+  // arming on an API without the solver would leave the button stuck on "Reset?".
+  if (!m_fluidReady) return;
+  if (ResetArmed()) {
+    m_resetArmedUntil = 0.0f;
+    ResetSimulation();
+    return;
+  }
+  m_resetArmedUntil = m_elapsedSeconds + kResetArmSeconds;
+}
+
 bool BackyardScene::WaterUVMatchesSolver(t850::PrimitiveInst* water) const {
   auto* mesh = water ? dynamic_cast<t850::RenderMesh*>(water->pBase) : nullptr;
   if (!mesh || !mesh->xFile || mesh->xFile->XMeshDataBase.empty() || !mesh->xFile->XMeshDataBase[0])
@@ -967,11 +1188,20 @@ void BackyardScene::ResetSimulation() {
 
 void BackyardScene::OnUpdate(float deltaSeconds) {
   m_deltaSeconds = deltaSeconds;
+  // The authored camera is 16:9; a resized window or an upright phone would stretch the view, so
+  // the projection follows the render target (as in MinecraftScene).
+  if (pFramework && pFramework->pVideoDriver && pFramework->pVideoDriver->width > 0 &&
+      pFramework->pVideoDriver->height > 0) {
+    const float aspect = static_cast<float>(pFramework->pVideoDriver->width) /
+                         static_cast<float>(pFramework->pVideoDriver->height);
+    if (m_camera.AspectRatio != aspect) m_camera.SetRatio(aspect);
+  }
   if (!m_dumper.SkipCameraUpdates()) {
     m_cameraController.Update(deltaSeconds, t850::CameraUpdateContext{});
   }
   m_lightCamera.Update(0.0f);
   if (s_pickTest && !m_pickTestDone) RunPickTestStep();
+  if (s_padTest && !m_padTestDone) RunPadTestStep();
   // A grid change needs new 3D textures; everything else can be retuned in place.
   const t850::WaterTunables& w = SceneProp.Water;
   if (m_fluidReady &&
@@ -1198,7 +1428,7 @@ void BackyardScene::OnInput(InputManager* input) {
   // The in-process pick test (--backyard-pick-test) drives its own synthetic InputManager from
   // RunPickTestStep. Forwarding the real one as well ends every synthetic drag on the next frame,
   // because HandleBallDrag sees the physical button up, which is what made the hold checks fail.
-  if (s_pickTest) return;
+  if (s_pickTest || s_padTest) return;
   bool imguiWantsMouse = false;
 #ifndef OS_ANDROID
   imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
@@ -1207,9 +1437,53 @@ void BackyardScene::OnInput(InputManager* input) {
 }
 
 void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse) {
+#ifdef __EMSCRIPTEN__
+  m_browserTouch = input->Gamepad.name == "Browser touch";
+#endif
   // Ctrl frees the cursor (AllowsMouseCapture) and turns a left click into a pick.
   const bool ctrlDown = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
-  const bool draggingBall = HandleBallDrag(input, imguiWantsMouse, ctrlDown);
+  // The pad grabs with RT and picks down the camera's crosshair, so both paths end up in the
+  // same drag code; the pad has to run first, or the mouse release test would end its drag.
+  const bool gamepadDragging = HandleGamepadGrab(input);
+  const bool draggingBall = gamepadDragging || HandleBallDrag(input, imguiWantsMouse, ctrlDown);
+
+  // Quick actions on the pad, mirroring the quick bar: X adds ten balls, Y resets (twice),
+  // the shoulders step the air speed, left/right on the d-pad the heading, up the arrow.
+  // Skipped while the runtime GUI is open, without consuming the edges: there LB/RB switch
+  // panels and the d-pad moves the focus.
+  if (!m_runtimeGuiOpen) {
+    if (input->ConsumeGamepadWestPress()) {
+      const int spawned = SpawnBalls(10);
+      T8_LOG_INFO("[Backyard] Pad +10 spawned %d ball(s); %u bodies", spawned, m_fluid.BodyCount());
+    }
+    if (input->ConsumeGamepadNorthPress()) RequestReset();
+    if (input->ConsumeGamepadLeftShoulderPress()) AdjustWindSpeed(-0.5f);
+    if (input->ConsumeGamepadRightShoulderPress()) AdjustWindSpeed(0.5f);
+    if (input->ConsumeGamepadDpadLeftPress()) AdjustWindHeading(-15.0f);
+    if (input->ConsumeGamepadDpadRightPress()) AdjustWindHeading(15.0f);
+    if (input->ConsumeGamepadDpadUpPress()) m_showWind = !m_showWind;
+  }
+
+  // Quick actions on the keyboard. The debug panel stays hidden by default, so these must
+  // exist as plain keys: K drops ten balls, R resets (two presses), the arrow keys steer the
+  // wind, V the wind arrow. Letters and arrows are used instead of [ ] , . because those
+  // punctuation keys move with the keyboard layout. Skipped only while a text field owns the
+  // keyboard: WantCaptureKeyboard is true for the always-on quick bar itself, which would
+  // eat them.
+  const bool typing = ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput;
+  if (!typing) {
+    if (input->PressedOnceKey(T800K_k)) {
+      const int spawned = SpawnBalls(10);
+      T8_LOG_INFO("[Backyard] K spawned %d ball(s); %u bodies", spawned, m_fluid.BodyCount());
+    }
+    if (input->PressedOnceKey(T800K_r)) RequestReset();
+    if (input->PressedOnceKey(T800K_UP)) AdjustWindSpeed(0.5f);
+    if (input->PressedOnceKey(T800K_DOWN)) AdjustWindSpeed(-0.5f);
+    if (input->PressedOnceKey(T800K_LEFT)) AdjustWindHeading(-15.0f);
+    if (input->PressedOnceKey(T800K_RIGHT)) AdjustWindHeading(15.0f);
+    if (input->PressedOnceKey(T800K_v)) m_showWind = !m_showWind;
+  }
+
   m_cursorFreed = ctrlDown || draggingBall;
   t850::CameraInputState state;
   state.moveForward = input->PressedKey(T800K_w);
@@ -1226,7 +1500,47 @@ void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse)
   state.mouseDeltaX = (std::clamp)(static_cast<float>(input->xDelta), -200.0f, 200.0f);
   state.mouseDeltaY = (std::clamp)(static_cast<float>(input->yDelta), -200.0f, 200.0f);
   state.scrollDelta = (draggingBall || imguiWantsMouse) ? 0.0f : input->scrollDelta;
+  const t850::CameraInputState beforePad = state;
   t850::ApplyGamepadToCameraInput(state, *input, m_deltaSeconds, true);
+  if (m_gamepadGrab) {
+    // The left stick steers the held ball, so it must not fly the camera at the same time.
+    state.moveForwardAmount = beforePad.moveForwardAmount;
+    state.moveRightAmount = beforePad.moveRightAmount;
+    state.moveForward = beforePad.moveForward;
+    state.moveBackward = beforePad.moveBackward;
+    state.moveLeft = beforePad.moveLeft;
+    state.moveRight = beforePad.moveRight;
+    state.sprint = beforePad.sprint;
+  }
+#ifdef OS_ANDROID
+  // Virtual sticks: left moves, right looks. The look deltas use the same pixel-per-second
+  // scale as the pad so the feel matches between the tablet and the Deck.
+  {
+    constexpr float kLookYawPerSecond = 520.0f;
+    constexpr float kLookPitchPerSecond = 440.0f;
+    constexpr float kAxisThreshold = 0.02f;
+    if (std::fabs(m_androidMoveAxis.y) > kAxisThreshold)
+      state.moveForwardAmount = (std::max)(-1.0f, (std::min)(1.0f,
+          state.moveForwardAmount - m_androidMoveAxis.y));
+    if (std::fabs(m_androidMoveAxis.x) > kAxisThreshold)
+      state.moveRightAmount = (std::max)(-1.0f, (std::min)(1.0f,
+          state.moveRightAmount + m_androidMoveAxis.x));
+    if (std::fabs(m_androidLookAxis.x) > kAxisThreshold ||
+        std::fabs(m_androidLookAxis.y) > kAxisThreshold) {
+      state.mouseLook = true;
+      state.mouseDeltaX += m_androidLookAxis.x * kLookYawPerSecond * m_deltaSeconds;
+      state.mouseDeltaY += m_androidLookAxis.y * kLookPitchPerSecond * m_deltaSeconds;
+    }
+    state.jump = state.jump || m_androidJump;
+    // Full deflection on the move stick is the tablet's sprint, the same way the pad uses the
+    // stick click.
+    state.sprint = state.sprint || std::fabs(m_androidMoveAxis.y) > 0.85f;
+  }
+#endif
+  // Free Fly climbs on moveUp/moveDown only; every input path sets jump (Space, pad A, touch Up)
+  // and crouch (pad B, touch Down), so they never moved the camera before. Q/E as in the other scenes.
+  state.moveUp = state.jump || input->PressedKey(T800K_q);
+  state.moveDown = state.crouch || input->PressedKey(T800K_e);
   m_cameraController.HandleInput(state);
 }
 
@@ -1419,6 +1733,285 @@ void BackyardScene::RunPickTestStep() {
   }
 }
 
+void BackyardScene::RunPadTestStep() {
+  // Frame plan: settle, grab with RT, pan with the left stick, lift with LT, release, then one
+  // frame per quick action. Frame counts rather than seconds, because this runs on real time.
+  constexpr int kSettleFrames = 600;
+  constexpr int kGrab = kSettleFrames + 1;
+  constexpr int kPanEnd = kGrab + 90;
+  constexpr int kLiftEnd = kPanEnd + 60;
+  constexpr int kRelease = kLiftEnd + 1;
+  constexpr int kClimbEnd = kRelease + 30;
+  constexpr int kSinkEnd = kClimbEnd + 30;
+  constexpr int kWestAction = kSinkEnd + 1;
+  constexpr int kShoulderUp = kWestAction + 1;
+  constexpr int kShoulderDown = kShoulderUp + 1;
+  constexpr int kDpadRight = kShoulderDown + 1;
+  constexpr int kDpadLeft = kDpadRight + 1;
+  constexpr int kArrowToggle = kDpadLeft + 1;
+  constexpr int kResetOne = kArrowToggle + 1;
+  constexpr int kResetTwo = kResetOne + 1;
+  constexpr int kEnd = kResetTwo + 1;
+
+  const int frame = m_padTestFrame++;
+  InputManager& in = m_padTestInput;
+
+  auto check = [&](bool ok, const char* what) {
+    if (ok) {
+      T8_LOG_INFO("[BackyardPadTest] ok: %s", what);
+    } else {
+      ++m_padTestFailures;
+      T8_LOG_ERROR("[BackyardPadTest] FAIL: %s", what);
+    }
+    return ok;
+  };
+  auto finish = [&]() {
+    m_padTestDone = true;
+    T8_LOG_INFO("[BackyardPadTest] %s (%d failure(s))", m_padTestFailures ? "FAIL" : "PASS",
+                m_padTestFailures);
+    m_dumper.RequestDump();
+  };
+  auto bodyPosition = [&](int index) {
+    const t850::FluidSphere& body = m_fluid.Bodies()[static_cast<uint32_t>(index)];
+    return XVECTOR3(body.x, body.y, body.z);
+  };
+  auto step = [&]() { ProcessSceneInput(&in, false); };
+
+  in.Gamepad.connected = true;
+  in.Gamepad.enabled = true;
+  in.Gamepad.name = "Synthetic pad";
+
+  if (!m_fluidReady) {
+    if (pFramework && pFramework->pVideoDriver && pFramework->pVideoDriver->SupportsComputeTextures3D()) {
+      ++m_padTestFailures;
+      T8_LOG_ERROR("[BackyardPadTest] FAIL: the API supports 3D compute storage but the fluid solver is not ready");
+    } else {
+      T8_LOG_INFO("[BackyardPadTest] SKIP: no fluid solver (and so no balls) on this API");
+    }
+    m_padTestDone = true;
+    m_dumper.RequestDump();
+    return;
+  }
+
+  if (frame == kSettleFrames) {
+    // Aim at the nearest enabled ball in front of the eye, then let the next frame grab it.
+    const XVECTOR3 eye(m_camera.Eye.x, m_camera.Eye.y, m_camera.Eye.z);
+    float best = FLT_MAX;
+    for (uint32_t index = 0; index < m_fluid.BodyCount(); ++index) {
+      const t850::FluidSphere& body = m_fluid.Bodies()[index];
+      if (!body.enabled || (index == 0 && !SceneProp.Water.sphereEnabled)) continue;
+      const float d = (body.x - eye.x) * (body.x - eye.x) + (body.y - eye.y) * (body.y - eye.y) +
+                      (body.z - eye.z) * (body.z - eye.z);
+      if (d < best) { best = d; m_padTestTarget = static_cast<int>(index); }
+    }
+    if (!check(m_padTestTarget >= 0, "a ball is available to grab (run with --backyard-spawn 2 or more)")) {
+      finish();
+      return;
+    }
+    m_padTestAimPoint = bodyPosition(m_padTestTarget);
+    m_padTestAim = true;
+    T8_LOG_INFO("[BackyardPadTest] aiming at ball %d at (%.2f, %.2f, %.2f), radius %.2f m",
+                m_padTestTarget, m_padTestAimPoint.x, m_padTestAimPoint.y, m_padTestAimPoint.z,
+                m_fluid.Bodies()[static_cast<uint32_t>(m_padTestTarget)].radius);
+    return;
+  }
+
+  if (frame == kGrab) {
+    in.Gamepad.rightTrigger = 1.0f;
+    step();
+    if (!check(m_dragBody == m_padTestTarget && m_gamepadGrab,
+               "RT grabs the ball under the crosshair")) {
+      finish();
+      return;
+    }
+    check(m_gamepadAiming, "the crosshair is shown while RT is held");
+    m_padTestStartWindSpeed = CurrentWindSpeed();
+    m_padTestStartHeading = CurrentWindHeadingDeg();
+    m_padTestEyeAtGrab = XVECTOR3(m_camera.Eye.x, m_camera.Eye.y, m_camera.Eye.z);
+    return;
+  }
+
+  if (frame > kGrab && frame < kPanEnd) {
+    // Pan with the left stick; the target moves, ApplyBallDrag steers the body after it.
+    in.Gamepad.leftX = 1.0f;
+    step();
+    if (m_dragBody != m_padTestTarget) {
+      check(false, "the ball stays held while RT is down");
+      finish();
+      return;
+    }
+    return;
+  }
+
+  if (frame == kPanEnd) {
+    in.Gamepad.leftX = 0.0f;
+    step();
+    const XVECTOR3 moved = bodyPosition(m_padTestTarget);
+    const float dx = moved.x - m_padTestAimPoint.x;
+    const float dz = moved.z - m_padTestAimPoint.z;
+    const float travelled = std::sqrt(dx * dx + dz * dz);
+    T8_LOG_INFO("[BackyardPadTest] left stick moved the ball %.3f m horizontally", travelled);
+    check(travelled > 0.15f, "the left stick pans the held ball over the ground");
+    const float eyeDx = m_camera.Eye.x - m_padTestEyeAtGrab.x;
+    const float eyeDz = m_camera.Eye.z - m_padTestEyeAtGrab.z;
+    const float eyeTravel = std::sqrt(eyeDx * eyeDx + eyeDz * eyeDz);
+    T8_LOG_INFO("[BackyardPadTest] the camera moved %.3f m while the stick steered the ball", eyeTravel);
+    check(eyeTravel < 0.02f, "the left stick does not fly the camera while a ball is held");
+    m_padTestAimPoint = moved;   // the lift check starts from here
+    return;
+  }
+
+  if (frame > kPanEnd && frame < kLiftEnd) {
+    in.Gamepad.leftTrigger = 1.0f;
+    step();
+    return;
+  }
+
+  if (frame == kLiftEnd) {
+    in.Gamepad.leftTrigger = 0.0f;
+    step();
+    const XVECTOR3 lifted = bodyPosition(m_padTestTarget);
+    const float dy = lifted.y - m_padTestAimPoint.y;
+    T8_LOG_INFO("[BackyardPadTest] left trigger lifted the ball %.3f m", dy);
+    check(dy > 0.05f, "the left trigger lifts the held ball");
+    return;
+  }
+
+  if (frame == kRelease) {
+    in.Gamepad.rightTrigger = 0.0f;
+    step();
+    const t850::FluidSphere& body = m_fluid.Bodies()[static_cast<uint32_t>(m_padTestTarget)];
+    check(m_dragBody < 0 && !m_gamepadGrab && !body.held, "releasing RT drops the ball");
+    check(!m_gamepadAiming, "the crosshair hides when RT is released");
+    return;
+  }
+
+  // A climbs and B sinks. Free Fly reads only moveUp/moveDown, which nothing used to set, so
+  // Space, A and the browser's Fly up button never moved the camera.
+  if (frame > kRelease && frame < kClimbEnd) {
+    if (frame == kRelease + 1) m_padTestEyeY = m_camera.Eye.y;
+    in.Gamepad.buttonSouth = true;
+    step();
+    return;
+  }
+
+  if (frame == kClimbEnd) {
+    in.Gamepad.buttonSouth = false;
+    step();
+    const float rise = m_camera.Eye.y - m_padTestEyeY;
+    T8_LOG_INFO("[BackyardPadTest] A raised the camera %.3f m", rise);
+    check(rise > 0.1f, "A flies the camera up");
+    m_padTestEyeY = m_camera.Eye.y;
+    return;
+  }
+
+  if (frame > kClimbEnd && frame < kSinkEnd) {
+    in.Gamepad.buttonEast = true;
+    step();
+    return;
+  }
+
+  if (frame == kSinkEnd) {
+    in.Gamepad.buttonEast = false;
+    step();
+    const float drop = m_padTestEyeY - m_camera.Eye.y;
+    T8_LOG_INFO("[BackyardPadTest] B lowered the camera %.3f m", drop);
+    check(drop > 0.1f, "B flies the camera down");
+    return;
+  }
+
+  if (frame == kWestAction) {
+    const uint32_t before = m_fluid.BodyCount();
+    in.Gamepad.buttonWest = true;
+    in.Gamepad.buttonWestPressed = true;
+    step();
+    in.Gamepad.buttonWest = false;
+    const uint32_t after = m_fluid.BodyCount();
+    T8_LOG_INFO("[BackyardPadTest] X took the body count %u -> %u", before, after);
+    check(after > before, "X adds balls");
+    return;
+  }
+
+  if (frame == kShoulderUp) {
+    in.Gamepad.rightShoulder = true;
+    in.Gamepad.rightShoulderPressed = true;
+    step();
+    in.Gamepad.rightShoulder = false;
+    check(CurrentWindSpeed() > m_padTestStartWindSpeed + 0.25f, "RB raises the air speed");
+    m_padTestStartWindSpeed = CurrentWindSpeed();
+    return;
+  }
+
+  if (frame == kShoulderDown) {
+    in.Gamepad.leftShoulder = true;
+    in.Gamepad.leftShoulderPressed = true;
+    step();
+    in.Gamepad.leftShoulder = false;
+    check(CurrentWindSpeed() < m_padTestStartWindSpeed - 0.25f, "LB lowers the air speed");
+    m_padTestStartWindSpeed = CurrentWindSpeed();
+    m_padTestStartHeading = CurrentWindHeadingDeg();
+    return;
+  }
+
+  if (frame == kDpadRight) {
+    in.Gamepad.dpadRight = true;
+    in.Gamepad.dpadRightPressed = true;
+    step();
+    in.Gamepad.dpadRight = false;
+    const float heading = CurrentWindHeadingDeg();
+    const float turn = std::fmod(heading - m_padTestStartHeading + 360.0f, 360.0f);
+    T8_LOG_INFO("[BackyardPadTest] d-pad right turned the wind %.0f -> %.0f deg", m_padTestStartHeading, heading);
+    check(turn > 10.0f && turn < 20.0f, "d-pad right turns the wind by 15 degrees");
+    m_padTestStartHeading = heading;
+    return;
+  }
+
+  if (frame == kDpadLeft) {
+    in.Gamepad.dpadLeft = true;
+    in.Gamepad.dpadLeftPressed = true;
+    step();
+    in.Gamepad.dpadLeft = false;
+    const float heading = CurrentWindHeadingDeg();
+    const float turn = std::fmod(m_padTestStartHeading - heading + 360.0f, 360.0f);
+    check(turn > 10.0f && turn < 20.0f, "d-pad left turns the wind back by 15 degrees");
+    return;
+  }
+
+  if (frame == kArrowToggle) {
+    const bool before = m_showWind;
+    in.Gamepad.dpadUp = true;
+    in.Gamepad.dpadUpPressed = true;
+    step();
+    in.Gamepad.dpadUp = false;
+    check(m_showWind != before, "d-pad up toggles the wind arrow");
+    return;
+  }
+
+  if (frame == kResetOne) {
+    in.Gamepad.buttonNorth = true;
+    in.Gamepad.buttonNorthPressed = true;
+    step();
+    in.Gamepad.buttonNorth = false;
+    check(ResetArmed(), "Y arms the reset");
+    check(m_fluid.BodyCount() > 1, "arming the reset keeps the spawned balls");
+    return;
+  }
+
+  if (frame == kResetTwo) {
+    in.Gamepad.buttonNorthPressed = true;
+    step();
+    in.Gamepad.buttonNorth = false;
+    T8_LOG_INFO("[BackyardPadTest] after Y twice the body count is %u", m_fluid.BodyCount());
+    check(m_fluid.BodyCount() == 1, "a second Y clears the spawned balls");
+    check(!ResetArmed(), "the reset disarms itself");
+    return;
+  }
+
+  if (frame >= kEnd) {
+    finish();
+  }
+}
+
 void BackyardScene::DrawFluidDebug() {
   if (!m_fluidReady || !m_fluidDebugView.Any()) return;
   t850::BaseDriver* driver = pFramework->pVideoDriver;
@@ -1563,7 +2156,442 @@ void BackyardScene::OnDraw() {
   }
 }
 
+void BackyardScene::DrawGameplayGui(t850::DevGuiContext&) {
+  // Called every frame just before DrawDevGui, which only runs while the runtime GUI is open.
+  m_runtimeGuiOpen = m_devGuiDrawnThisFrame;
+  m_devGuiDrawnThisFrame = false;
+  DrawGrabCrosshair();
+  DrawQuickBar();
+#ifdef OS_ANDROID
+  DrawAndroidTouchControls();
+#endif
+}
+
+#ifdef OS_ANDROID
+BackyardScene::AndroidTouchLayout BackyardScene::BuildAndroidTouchLayout(float width, float height) const {
+  AndroidTouchLayout layout;
+  width = (std::max)(width, 1.0f);
+  height = (std::max)(height, 1.0f);
+  const float shortest = (std::max)(1.0f, (std::min)(width, height));
+  layout.stickRadius = (std::min)((std::max)(shortest * 0.12f, 64.0f), shortest * 0.18f);
+  layout.knobRadius = layout.stickRadius * 0.38f;
+  layout.buttonRadius = layout.stickRadius * 0.46f;
+  const float margin = layout.stickRadius * 1.35f;
+  const float centerY = height - margin;
+  layout.moveX = margin;
+  layout.moveY = centerY;
+  layout.lookX = width - margin;
+  layout.lookY = centerY;
+  layout.jumpX = layout.lookX;
+  layout.jumpY = centerY - layout.stickRadius * 1.75f;
+  return layout;
+}
+
+void BackyardScene::DrawAndroidTouchControls() {
+  if (!m_assetsCreated || !ImGui::GetCurrentContext()) return;
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
+  if (!drawList) return;
+  ImGuiIO& io = ImGui::GetIO();
+  float width = io.DisplaySize.x;
+  float height = io.DisplaySize.y;
+  if (pFramework && pFramework->pVideoDriver) {
+    if (pFramework->pVideoDriver->width > 0) width = static_cast<float>(pFramework->pVideoDriver->width);
+    if (pFramework->pVideoDriver->height > 0) height = static_cast<float>(pFramework->pVideoDriver->height);
+  }
+  if (width <= 1.0f || height <= 1.0f) return;
+  const AndroidTouchLayout layout = BuildAndroidTouchLayout(width, height);
+  const ImVec2 moveCenter(layout.moveX, layout.moveY);
+  const ImVec2 lookCenter(layout.lookX, layout.lookY);
+  const ImVec2 jumpCenter(layout.jumpX, layout.jumpY);
+  const ImU32 knobColor = IM_COL32(120, 220, 255, 190);
+  auto knob = [&](const ImVec2& center, const XVECTOR2& axis) {
+    const ImVec2 offset(axis.x * layout.stickRadius * 0.55f, axis.y * layout.stickRadius * 0.55f);
+    drawList->AddCircleFilled(ImVec2(center.x + offset.x, center.y + offset.y), layout.knobRadius,
+                              knobColor, 24);
+  };
+  DrawTouchCircle(drawList, moveCenter, layout.stickRadius, nullptr);
+  knob(moveCenter, m_androidMoveAxis);
+  DrawTouchCircle(drawList, lookCenter, layout.stickRadius, nullptr);
+  knob(lookCenter, m_androidLookAxis);
+  DrawTouchCircle(drawList, jumpCenter, layout.buttonRadius, "Jump");
+  const ImU32 hintColor = IM_COL32(230, 236, 242, 190);
+  drawList->AddText(ImVec2(moveCenter.x - 18.0f, moveCenter.y + layout.stickRadius + 6.0f),
+                    hintColor, "move");
+  drawList->AddText(ImVec2(lookCenter.x - 14.0f, lookCenter.y + layout.stickRadius + 6.0f),
+                    hintColor, "look");
+  // Grab hint: any press that starts on a ball picks it up, everywhere outside these controls.
+  drawList->AddText(ImVec2(width * 0.5f - 150.0f, height * 0.16f), hintColor,
+                    m_touchGrab ? "holding a ball: drag to steer, second finger to push/pull"
+                                : "touch a ball to grab it");
+}
+
+bool BackyardScene::AndroidVirtualControlsActive() const {
+  return m_androidMovePointer >= 0 || m_androidLookPointer >= 0 || m_androidJumpPointer >= 0 ||
+         m_androidGrabPointer >= 0 || m_androidDepthPointer >= 0 || m_androidQuickBarPointer >= 0;
+}
+
+void BackyardScene::ResetAndroidVirtualControls() {
+  m_androidMovePointer = -1;
+  m_androidLookPointer = -1;
+  m_androidJumpPointer = -1;
+  m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
+  m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
+  m_androidJump = false;
+  // The App calls this while the GUI overlay owns the touches; the grab's release would never
+  // arrive, so the held ball has to be let go here.
+  if (m_touchGrab) EndBallDrag();
+  m_androidGrabPointer = -1;
+  m_androidDepthPointer = -1;
+  m_androidQuickBarPointer = -1;
+}
+
+bool BackyardScene::HandleAndroidVirtualControls(AInputEvent* event) {
+  if (!event || AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) return false;
+  ImGuiIO& io = ImGui::GetIO();
+  float width = io.DisplaySize.x;
+  float height = io.DisplaySize.y;
+  if (pFramework && pFramework->pVideoDriver) {
+    if (pFramework->pVideoDriver->width > 0) width = static_cast<float>(pFramework->pVideoDriver->width);
+    if (pFramework->pVideoDriver->height > 0) height = static_cast<float>(pFramework->pVideoDriver->height);
+  }
+  if (width <= 1.0f || height <= 1.0f) return false;
+  const AndroidTouchLayout layout = BuildAndroidTouchLayout(width, height);
+  const ImVec2 moveCenter(layout.moveX, layout.moveY);
+  const ImVec2 lookCenter(layout.lookX, layout.lookY);
+  const ImVec2 jumpCenter(layout.jumpX, layout.jumpY);
+
+  const int32_t rawAction = AMotionEvent_getAction(event);
+  const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
+  int32_t actionIndex = (rawAction & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+                        AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+  const size_t pointerCount = AMotionEvent_getPointerCount(event);
+  if (pointerCount == 0) {
+    ResetAndroidVirtualControls();
+    return false;
+  }
+  if (actionIndex < 0 || actionIndex >= static_cast<int32_t>(pointerCount)) actionIndex = 0;
+
+  if (action == AMOTION_EVENT_ACTION_CANCEL) {
+    ResetAndroidVirtualControls();
+    return true;
+  }
+
+  if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_POINTER_UP) {
+    const int pointerId = AMotionEvent_getPointerId(event, actionIndex);
+    bool consumed = false;
+    if (pointerId == m_androidQuickBarPointer) {
+      m_androidQuickBarPointer = -1;
+      consumed = true;
+    }
+    if (pointerId == m_androidGrabPointer) {
+      EndBallDrag();
+      m_androidGrabPointer = -1;
+      consumed = true;
+    }
+    if (pointerId == m_androidDepthPointer) {
+      m_androidDepthPointer = -1;
+      consumed = true;
+    }
+    if (pointerId == m_androidMovePointer) {
+      m_androidMovePointer = -1;
+      m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
+      consumed = true;
+    }
+    if (pointerId == m_androidLookPointer) {
+      m_androidLookPointer = -1;
+      m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
+      consumed = true;
+    }
+    if (pointerId == m_androidJumpPointer) {
+      m_androidJumpPointer = -1;
+      m_androidJump = false;
+      consumed = true;
+    }
+    if (action == AMOTION_EVENT_ACTION_UP) {
+      ResetAndroidVirtualControls();
+      return true;
+    }
+    return consumed;
+  }
+
+  if (action == AMOTION_EVENT_ACTION_DOWN || action == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+    const int pointerId = AMotionEvent_getPointerId(event, actionIndex);
+    const float x = AMotionEvent_getX(event, actionIndex);
+    const float y = AMotionEvent_getY(event, actionIndex);
+
+    // 1) The quick bar. It is drawn by ImGui but the runtime overlay is hidden on Android, so
+    // ImGui never sees these touches; the bar records its button rects while it draws instead.
+    for (int i = 0; i < m_quickBarHitCount; ++i) {
+      const QuickBarHit& hit = m_quickBarHits[i];
+      if (x >= hit.minX && x <= hit.maxX && y >= hit.minY && y <= hit.maxY) {
+        PerformQuickAction(hit.action);
+        m_androidQuickBarPointer = pointerId;
+        return true;
+      }
+    }
+
+    // 2) The sticks and the jump button own their zones.
+    if (m_androidJumpPointer < 0 &&
+        PointInsideCircle(x, y, jumpCenter, layout.buttonRadius * 1.25f)) {
+      m_androidJumpPointer = pointerId;
+      m_androidJump = true;
+      return true;
+    }
+    if (m_androidMovePointer < 0 &&
+        PointInsideCircle(x, y, moveCenter, layout.stickRadius * 1.45f)) {
+      m_androidMovePointer = pointerId;
+      m_androidMoveAxis = StickAxisFromPoint(x, y, moveCenter, layout.stickRadius);
+      return true;
+    }
+    if (m_androidLookPointer < 0 &&
+        PointInsideCircle(x, y, lookCenter, layout.stickRadius * 1.45f)) {
+      m_androidLookPointer = pointerId;
+      m_androidLookAxis = StickAxisFromPoint(x, y, lookCenter, layout.stickRadius);
+      return true;
+    }
+
+    // 3) A second finger while a ball is held pushes or pulls it. The framework's own pinch
+    // would cancel the drag, which is why the depth axis lives here.
+    if (m_touchGrab) {
+      m_androidDepthPointer = pointerId;
+      m_androidDepthStartY = y;
+      m_androidDepthStartDistance = m_dragDistance;
+      return true;
+    }
+
+    // 4) A press that starts on a ball grabs it; anything else falls through to the framework's
+    // look drag, which is the "press elsewhere looks" half of the same rule.
+    if (m_fluidReady) {
+      const t850::Ray ray = CursorRay(x, y);
+      float along = 0.0f;
+      const int index = PickBallAlongRay(ray, along);
+      if (index >= 0) {
+        BeginBallDrag(index, ray, along);
+        m_touchGrab = true;
+        m_androidGrabPointer = pointerId;
+        m_androidGrabScreenX = x;
+        m_androidGrabScreenY = y;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (action != AMOTION_EVENT_ACTION_MOVE) return true;
+
+  bool consumed = FindPointerIndex(event, m_androidQuickBarPointer) >= 0;
+  const int moveIndex = FindPointerIndex(event, m_androidMovePointer);
+  if (moveIndex >= 0) {
+    m_androidMoveAxis = StickAxisFromPoint(AMotionEvent_getX(event, moveIndex),
+                                           AMotionEvent_getY(event, moveIndex),
+                                           moveCenter, layout.stickRadius);
+    consumed = true;
+  } else if (m_androidMovePointer >= 0) {
+    m_androidMovePointer = -1;
+    m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
+  }
+
+  const int lookIndex = FindPointerIndex(event, m_androidLookPointer);
+  if (lookIndex >= 0) {
+    m_androidLookAxis = StickAxisFromPoint(AMotionEvent_getX(event, lookIndex),
+                                           AMotionEvent_getY(event, lookIndex),
+                                           lookCenter, layout.stickRadius);
+    consumed = true;
+  } else if (m_androidLookPointer >= 0) {
+    m_androidLookPointer = -1;
+    m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
+  }
+
+  const int jumpIndex = FindPointerIndex(event, m_androidJumpPointer);
+  if (jumpIndex >= 0) {
+    m_androidJump = PointInsideCircle(AMotionEvent_getX(event, jumpIndex),
+                                      AMotionEvent_getY(event, jumpIndex),
+                                      jumpCenter, layout.buttonRadius * 1.25f);
+    if (!m_androidJump) m_androidJumpPointer = -1;
+    consumed = true;
+  }
+
+  const int grabIndex = FindPointerIndex(event, m_androidGrabPointer);
+  if (grabIndex >= 0) {
+    m_androidGrabScreenX = AMotionEvent_getX(event, grabIndex);
+    m_androidGrabScreenY = AMotionEvent_getY(event, grabIndex);
+    UpdateDragTargetFromScreen(m_androidGrabScreenX, m_androidGrabScreenY);
+    consumed = true;
+  }
+
+  const int depthIndex = FindPointerIndex(event, m_androidDepthPointer);
+  if (depthIndex >= 0) {
+    // Half a screen of vertical travel doubles or halves the distance.
+    const float travel = (AMotionEvent_getY(event, depthIndex) - m_androidDepthStartY) / (height * 0.5f);
+    m_dragDistance = (std::min)((std::max)(m_androidDepthStartDistance * (1.0f + travel), 0.5f), 20.0f);
+    UpdateDragTargetFromScreen(m_androidGrabScreenX, m_androidGrabScreenY);
+    consumed = true;
+  }
+
+  return consumed;
+}
+#endif
+
+void BackyardScene::DrawGrabCrosshair() {
+  if (!m_gamepadAiming || !ImGui::GetCurrentContext()) return;
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  if (!drawList || !viewport) return;
+  const ImVec2 center(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                      viewport->WorkPos.y + viewport->WorkSize.y * 0.5f);
+  // Bright while a ball is held, plain while the trigger is only being held down looking for
+  // one, so it is obvious whether the grab took.
+  const ImU32 color = m_gamepadGrab ? IM_COL32(120, 220, 255, 235) : IM_COL32(240, 240, 240, 190);
+  drawList->AddCircle(center, 11.0f, IM_COL32(10, 12, 14, 200), 28, 3.0f);
+  drawList->AddCircle(center, 11.0f, color, 28, 1.8f);
+  drawList->AddCircleFilled(center, m_gamepadGrab ? 4.0f : 2.0f, color, 16);
+}
+
+void BackyardScene::PerformQuickAction(QuickBarAction action) {
+  switch (action) {
+    case QuickBarAction::SpawnTen: {
+      const int spawned = SpawnBalls(10);
+      T8_LOG_INFO("[Backyard] Quick bar spawned %d ball(s); %u bodies", spawned, m_fluid.BodyCount());
+      break;
+    }
+    case QuickBarAction::Reset:
+      RequestReset();
+      break;
+    case QuickBarAction::WindSpeedDown:
+      AdjustWindSpeed(-0.5f);
+      break;
+    case QuickBarAction::WindSpeedUp:
+      AdjustWindSpeed(0.5f);
+      break;
+    case QuickBarAction::HeadingDown:
+      AdjustWindHeading(-15.0f);
+      break;
+    case QuickBarAction::HeadingUp:
+      AdjustWindHeading(15.0f);
+      break;
+    case QuickBarAction::ToggleArrow:
+      m_showWind = !m_showWind;
+      break;
+    case QuickBarAction::Count:
+      break;
+  }
+}
+
+void BackyardScene::DrawQuickBar() {
+  if (!m_assetsCreated || !ImGui::GetCurrentContext()) return;
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  if (!viewport) return;
+  m_quickBarHitCount = 0;
+
+  // Bottom-centre, one row. Always visible on every platform: the debug panel stays
+  // hidden, but these four actions must never need it. On Android the touch sticks own the
+  // bottom corners, so the bar sits above them.
+  constexpr float kMargin = 14.0f;
+  float bottomInset = 0.0f;
+#ifdef OS_ANDROID
+  bottomInset = BuildAndroidTouchLayout(viewport->WorkSize.x, viewport->WorkSize.y).stickRadius * 2.3f;
+#endif
+  // A phone held upright is too narrow for one row, so the wind controls wrap to a second.
+  const bool narrow = viewport->WorkSize.x < 720.0f;
+  const float anchorY = m_browserTouch ? viewport->WorkPos.y + kMargin
+                                       : viewport->WorkPos.y + viewport->WorkSize.y - kMargin - bottomInset;
+  ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, anchorY),
+                          ImGuiCond_Always, ImVec2(0.5f, m_browserTouch ? 0.0f : 1.0f));
+  ImGui::SetNextWindowBgAlpha(0.72f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 8.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+  const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing;
+  if (ImGui::Begin("##BackyardQuickBar", nullptr, flags)) {
+    char label[64];
+    auto record = [this](QuickBarAction action) {
+      if (m_quickBarHitCount >= kQuickBarMaxHits) return;
+      const ImVec2 min = ImGui::GetItemRectMin();
+      const ImVec2 max = ImGui::GetItemRectMax();
+      QuickBarHit& hit = m_quickBarHits[m_quickBarHitCount++];
+      hit.minX = min.x;
+      hit.minY = min.y;
+      hit.maxX = max.x;
+      hit.maxY = max.y;
+      hit.action = action;
+    };
+
+    ImGui::BeginDisabled(!m_fluidReady);
+    if (ImGui::Button("+10 balls")) PerformQuickAction(QuickBarAction::SpawnTen);
+    ImGui::EndDisabled();
+    record(QuickBarAction::SpawnTen);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      std::snprintf(label, sizeof(label), "%u balls in the pool", m_fluid.BodyCount());
+      ImGui::SetTooltip("%s", label);
+    }
+
+    ImGui::SameLine();
+    // Reset clears the spawned balls, so it takes two presses; the label says so.
+    const bool resetArmed = ResetArmed();
+    ImGui::BeginDisabled(!m_fluidReady);
+    if (resetArmed) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.20f, 0.16f, 0.90f));
+    if (ImGui::Button(resetArmed ? "Reset?" : "Reset")) PerformQuickAction(QuickBarAction::Reset);
+    if (resetArmed) ImGui::PopStyleColor();
+    ImGui::EndDisabled();
+    record(QuickBarAction::Reset);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip(resetArmed ? "Press again to clear the spawned balls and restart the pool"
+                                   : "Clear the spawned balls and restart the pool (two presses)");
+    }
+
+    if (!narrow) {
+      ImGui::SameLine();
+      ImGui::TextUnformatted("|");
+      ImGui::SameLine();
+    }
+
+    // Wind: speed and heading, the same two values the debug panel edits.
+    if (ImGui::Button("-##windSpeed")) PerformQuickAction(QuickBarAction::WindSpeedDown);
+    record(QuickBarAction::WindSpeedDown);
+    ImGui::SameLine();
+    std::snprintf(label, sizeof(label), "wind %.1f m/s @ %03.0f", CurrentWindSpeed(),
+                  CurrentWindHeadingDeg());
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine();
+    if (ImGui::Button("+##windSpeed")) PerformQuickAction(QuickBarAction::WindSpeedUp);
+    record(QuickBarAction::WindSpeedUp);
+    ImGui::SameLine();
+    if (ImGui::Button("<<##windHeading")) PerformQuickAction(QuickBarAction::HeadingDown);
+    record(QuickBarAction::HeadingDown);
+    ImGui::SameLine();
+    if (ImGui::Button(">>##windHeading")) PerformQuickAction(QuickBarAction::HeadingUp);
+    record(QuickBarAction::HeadingUp);
+    ImGui::SameLine();
+    ImGui::Checkbox("arrow", &m_showWind);
+    record(QuickBarAction::ToggleArrow);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the wind arrow: direction = heading, length = speed");
+
+#ifndef OS_ANDROID
+    if (!m_browserTouch && !narrow) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("K +10  R reset  arrows wind  V arrow");
+    }
+#endif
+    // The bar is clickable with a mouse only while the camera has released the cursor, and
+    // that is not obvious, so it says so on hover.
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+        !ImGui::IsAnyItemHovered()) {
+      ImGui::SetTooltip("Keyboard: K +10 balls, R reset (twice), arrows wind, V arrow.\n"
+                        "Pad: RT grab, LS move, LT lift, X +10, Y reset, LB/RB speed, "
+                        "d-pad left/right heading, d-pad up arrow.\n"
+                        "Mouse: hold Ctrl to free the cursor and click these buttons.");
+    }
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(5);
+}
+
 void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
+  m_devGuiDrawnThisFrame = true;
   if (!gui.BeginPanel("Backyard Water")) {
     return;
   }
@@ -1676,36 +2704,20 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
     // collapsed sub-section because that is what JSON, the gates and SetWind use; editing either
     // view writes windX/windZ, and the other view is derived from them, so they cannot disagree.
     {
-      constexpr float kRadToDeg = 57.29577951308232f;
-      constexpr float kDegToRad = 0.017453292519943295f;
-      float speed = std::sqrt(w.windX * w.windX + w.windZ * w.windZ);
-      float heading = m_windHeadingDeg;
-      if (speed > 1e-4f) {
-        heading = std::atan2(w.windZ, w.windX) * kRadToDeg;
-        if (heading < 0.0f) heading += 360.0f;
-      }
+      // One speed and one heading, shared with the quick bar through the same helpers, so
+      // the two views cannot disagree about what the wind is.
+      float speed = CurrentWindSpeed();
+      float heading = CurrentWindHeadingDeg();
       bool changed = slider("water_wind_speed", "air speed (m/s)  [moves water + balls]", speed,
                             0.0f, 20.0f, 0.1f);
       changed = slider("water_wind_dir", "wind direction (deg; 0 = +X, 90 = +Z)", heading,
                        0.0f, 360.0f, 1.0f) || changed;
-      if (changed) {
-        m_windHeadingDeg = heading;
-        w.windX = speed * std::cos(heading * kDegToRad);
-        w.windZ = speed * std::sin(heading * kDegToRad);
-        // Keep the components exact rather than leaving 1e-8 residue at 0 or 90 degrees.
-        if (std::fabs(w.windX) < 1e-6f) w.windX = 0.0f;
-        if (std::fabs(w.windZ) < 1e-6f) w.windZ = 0.0f;
-      }
-      // Derived heading is sticky at zero speed: atan2(0, 0) has no direction to report.
-      if (speed > 1e-4f) m_windHeadingDeg = heading;
+      if (changed) ApplyWind(speed, heading);
 
       char line[160];
-      const char* compass = heading < 22.5f || heading >= 337.5f ? "+X (east)"
-        : heading < 67.5f ? "+X+Z" : heading < 112.5f ? "+Z (south)"
-        : heading < 157.5f ? "-X+Z" : heading < 202.5f ? "-X (west)"
-        : heading < 247.5f ? "-X-Z" : heading < 292.5f ? "-Z (north)" : "+X-Z";
       std::snprintf(line, sizeof(line), "wind %+.1f m/s toward %.0f deg (%s)  ->  X %+.2f  Z %+.2f",
-                    speed, heading, compass, w.windX, w.windZ);
+                    CurrentWindSpeed(), CurrentWindHeadingDeg(),
+                    WindCompassLabel(CurrentWindHeadingDeg()), w.windX, w.windZ);
       gui.Text(line);
       if (gui.BeginSection("Wind components (exact)", false)) {
         slider("water_wind_x", "wind X (m/s)", w.windX, -20.0f, 20.0f, 0.1f);
@@ -1911,8 +2923,12 @@ void BackyardScene::DrawDevGui(t850::DevGuiContext& gui) {
         w.sphereDensityRatio = w.SphereDensityFromMass(massEdit);
     }
     slider("water_sphere_cd", "drag coefficient", w.sphereDragCoefficient, 0.05f, 1.5f, 0.01f);
-    slider("water_sphere_air_cd", "air drag (wind on balls, 0 = off)", w.sphereAirDragCoefficient,
-           0.0f, 2.0f, 0.01f);
+    if (slider("water_sphere_air_cd", "air drag (wind on balls, 0 = off)", w.sphereAirDragCoefficient,
+               0.0f, 2.0f, 0.01f)) {
+      // "0 = off" has to mean the balls already in the pool too, not only the next spawn.
+      for (uint32_t index = 0; index < m_fluid.BodyCount(); ++index)
+        if (t850::FluidSphere* body = m_fluid.Body(index)) body->airDragCoefficient = w.sphereAirDragCoefficient;
+    }
     slider("water_sphere_restitution", "bounce (0 = dead stop)", w.sphereRestitution, 0.0f, 0.9f, 0.01f);
     slider("water_sphere_heave_damping", "heave damping ratio", w.sphereHeaveDamping, 0.0f, 1.0f, 0.01f);
 

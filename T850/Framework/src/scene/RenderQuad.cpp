@@ -360,6 +360,7 @@ namespace t850 {
 
         m_tiledLightTilesX = tilesX;
         m_tiledLightTilesY = tilesY;
+        m_tiledLightUploaded = false;
         m_tiledLightHeaderData.assign(static_cast<size_t>(tileCount) * 4u, 0.0f);
         m_tiledLightIndexData.assign(static_cast<size_t>(tileCount) * kMaxTiledLightsPerTile * 4u, 0.0f);
         m_tiledLightHeaderTex = g_pBaseDriver->CreateFloatTexture(tilesX, tilesY, m_tiledLightHeaderData.data());
@@ -443,6 +444,7 @@ namespace t850 {
         std::fill(m_tiledLightHeaderData.begin(), m_tiledLightHeaderData.end(), 0.0f);
         std::fill(m_tiledLightIndexData.begin(), m_tiledLightIndexData.end(), 0.0f);
         std::fill(m_tiledLightCounts.begin(), m_tiledLightCounts.end(), 0u);
+        m_tiledLightAssignments.clear();
 
         XVECTOR3 frustumPlanes[6];
         RenderMesh::ExtractFrustumPlanes(pActualCamera->VP, frustumPlanes);
@@ -500,6 +502,8 @@ namespace t850 {
                   continue;
                 const size_t texel = (static_cast<size_t>(tileIndex) * kMaxTiledLightsPerTile + count) * 4u;
                 m_tiledLightIndexData[texel] = static_cast<float>(lightIndex);
+                m_tiledLightAssignments.push_back(static_cast<unsigned int>(tileIndex));
+                m_tiledLightAssignments.push_back(lightIndex);
                 ++count;
               }
             }
@@ -519,8 +523,12 @@ namespace t850 {
             Texture* headerTex = g_pBaseDriver->GetTexture(m_tiledLightHeaderTex);
             Texture* indexTex = g_pBaseDriver->GetTexture(m_tiledLightIndexTex);
             if (headerTex && indexTex) {
-              headerTex->UpdateFloatData(*T8DeviceContext, tilesX, tilesY, m_tiledLightHeaderData.data());
-              indexTex->UpdateFloatData(*T8DeviceContext, static_cast<int>(kMaxTiledLightsPerTile), tileCount, m_tiledLightIndexData.data());
+              if (!m_tiledLightUploaded || m_tiledLightAssignments != m_tiledLightUploadedAssignments) {
+                headerTex->UpdateFloatData(*T8DeviceContext, tilesX, tilesY, m_tiledLightHeaderData.data());
+                indexTex->UpdateFloatData(*T8DeviceContext, static_cast<int>(kMaxTiledLightsPerTile), tileCount, m_tiledLightIndexData.data());
+                m_tiledLightUploadedAssignments = m_tiledLightAssignments;
+                m_tiledLightUploaded = true;
+              }
               SetTexture(headerTex, kTiledLightHeaderSlot);
               SetTexture(indexTex, kTiledLightIndexSlot);
               useTiledLightPass = true;

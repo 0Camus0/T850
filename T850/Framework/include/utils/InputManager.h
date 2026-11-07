@@ -321,6 +321,16 @@ public:
 	bool	HasGamepadInput() const;
 	bool	ConsumeGamepadStartPress();
 	bool	ConsumeGamepadEastPress();
+	// Edge-consuming helpers for the scene-level actions. Each one clears the edge it reports,
+	// so two consumers can never both act on one press.
+	bool	ConsumeGamepadWestPress();
+	bool	ConsumeGamepadNorthPress();
+	bool	ConsumeGamepadLeftShoulderPress();
+	bool	ConsumeGamepadRightShoulderPress();
+	bool	ConsumeGamepadDpadLeftPress();
+	bool	ConsumeGamepadDpadRightPress();
+	bool	ConsumeGamepadDpadUpPress();
+	bool	ConsumeGamepadDpadDownPress();
 
 	bool	KeyStates[2][MAXKEYS];
 	bool	MouseButtonStates[2][MAXMOUSEBUTTONS];

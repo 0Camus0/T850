@@ -385,12 +385,21 @@ and it is the same call the headless gates use:
 |---|---|---|
 | Desktop Windows | the JSON value (120 by default) | — |
 | Steam Deck | 60 | Run-time `utils::GetDeviceInfo().steamDeck` check (a Linux build, so a compile-time branch would also cap desktop Linux) |
-| Android, Emscripten | 60 | Compile-time `kMobilePressureIterations` |
+| Android | 60 | Compile-time `kMobilePressureIterations` |
+| Browser on a PC | the JSON value (120 by default) | `--webDevice pc` from the web shell |
+| Browser on a phone or tablet, or with no `--webDevice` | 60 | `kMobilePressureIterations`, applied unless `GetDeviceInfo().webDevice` is `pc` |
+
+The web shell passes `--webDevice phone|tablet|pc`, the class `web/touch-controls.js` computes for
+the touch overlay (Windows and ChromeOS are PCs; Android, iPhone, iPad and touch Macs are phones,
+or tablets when the shortest screen side is at least 600 CSS px). Any other value is a startup
+error. Before 2026-11-07 every browser ran 60 sweeps; on a desktop that left the waves at about a
+third of their height and every ball sitting in a dent ("fabric").
 
 The Steam Deck OLED reports DMI `sys_vendor=Valve`, `product_name=Galileo`, `board_name=Galileo`; the
 LCD reports `Jupiter`. `utils/DeviceInfo` owns that probe, and the input layer uses the same call for
 its `Handheld detection:` line, so the two can no longer disagree. The scene logs the effective count
-and the reason, e.g. `60 pressure iterations (Steam Deck cap)`.
+and the reason, e.g. `60 pressure iterations (Steam Deck cap)`, `(mobile cap)` on Android,
+`(phone/tablet browser cap)`, or `(web cap, device unknown)`.
 
 `--backyard-ball-probe` is the only instrument that sees a *local* defect: the mass audit averages
 the whole pool, where a 2 cm moat around a 0.25 m ball is 7 cells out of 82 917. It prints two lines

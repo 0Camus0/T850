@@ -105,6 +105,8 @@ public:
   std::string shaderCompileCancelFile;
   std::string webShaderOutput;
   std::string webAssetBaseUrl;
+  // Browser only: "phone", "tablet" or "pc", as web/touch-controls.js classified the device.
+  std::string webDevice;
   int runtimeTelemetryFrequencyFrames = 60;
   std::string runtimeTelemetryOutputPath = "logs/perf_telemetry.json";
   bool orbitYawOverride = false;

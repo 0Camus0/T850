@@ -357,6 +357,8 @@ exports the recorded permutations plus all seven scene startup shaders, then bui
 the browser executable and runs the existing Framework tests as Wasm in Node.
 Use `-SkipShaderExport` only when the prepared shader package is current.
 `-ExportScenes` can restrict startup exports; its default is `6,0,1,2,3,4,5`.
+Each scene export also writes `build/web/shader-sets/scene-<id>-<flow>.json`, the
+packages that scene's start reads; `prepare-pages.mjs` bundles them per scene.
 Exports use the same per-scene model/document arguments as `web/scenes.json`
 and reject engine error logs, not just nonzero exit codes. Exports require native
 assets and do not themselves validate browser rendering. `-CMake` and
@@ -1021,7 +1023,7 @@ does not authenticate to Cloudflare or write to real R2. It cannot serve pending
 unmanifested oversized assets without separately populating local R2 state.
 `npm run test:pages --prefix .\web` includes credential/configuration tests.
 
-### Published Water Simulation (v0.1.1)
+### Published Water Simulation (v0.1.2)
 
 Live at <https://water-simulation-2026.pages.dev/> (Pages project `water-simulation-2026`,
 production branch `main`, first deployment `b652ebc3`, 2026-11-06). It publishes only the Backyard
@@ -1118,6 +1120,43 @@ the repo):
 In that profile the render path created no bind groups after warm-up. The compute path created
 about one every 20 frames by the end, and no buffers. At `logLevel=info` the diagnostic probes
 read back every 60 frames and add spikes; measure at `logLevel=error`.
+
+#### v0.1.2: shader download time and "fabric" water
+
+- **Slow start was shader downloads, not compilation.** The engine reads one prepared shader
+  package per stage just before it compiles it, each through a blocking same-origin download.
+  Backyard needs 146 of them (2.3 MB). Measured in the page, creating all of those shader modules
+  takes 0.16-0.29 s. Fetching the packages one after another takes 6-25 s cold, and about 4.5 s
+  even when cached, because `no-cache` revalidates each one. `BuildWeb.ps1` now records which
+  packages each scene export writes (`build/web/shader-sets/scene-<id>-<flow>.json`).
+  `prepare-pages.mjs` turns every set into one file named by its SHA-256
+  (`shaders-<id>-<flow>.<sha256>.json`, 2.0 MB for Backyard), lists it in the scene's
+  `shaderBundles` in `scenes.json`, and serves `/shaders-*` as `immutable`. Before the engine
+  starts, `shell.html` downloads the bundle for the requested flow and checks its digest and every
+  entry name. It then writes the packages into the Wasm file system, so the engine finds them
+  locally. A failed or missing bundle only logs `[Shell] Shader bundle not used ...`; the engine
+  then downloads each package as before. The payload hashes inside each package still protect
+  its contents.
+- **"Fabric" water was the web sweep cap.** Every browser ran the pressure solve at 60 sweeps
+  (`kMobilePressureIterations`, added 11-02 for phones), and at 60 the surface flattens and dents
+  around every ball. Native D3D12 and WebGPU reproduce it exactly with 60 sweeps; WebGPU itself
+  was not the cause. The shell now passes `--webDevice phone|tablet|pc` (the class
+  `touch-controls.js` already computed), and only phones, tablets and unclassified pages keep 60.
+  Details and measurements: `scenes/backyard-water-simulation.md`, "How many pressure sweeps
+  actually run".
+
+Verified 2026-11-07 against the local preview on the RTX 4080 Laptop:
+
+| Run | Before | After |
+|-----|--------|-------|
+| Chrome start to running, cold / warm | 17.3 / 8.4 s | 9.6 / 2.5 s |
+| Firefox start to running, cold / warm | 16.6 / 9.7 s | 10.2 / 5.0 s |
+| Shader packages fetched one by one | 146 | 0 (bundle loads in 20-65 ms) |
+| Firefox, keys, 12 x +10, 60 s soak | 202 fps at 60 sweeps | pass, 172 fps at 120 sweeps |
+| Edge, keys, 12 x +10, 60 s soak | 344 fps at 60 sweeps | pass, 270 fps at 120 sweeps |
+
+The remaining cold start is asset downloads and solver setup. A real phone or tablet has still
+not been tested; they keep the 60-sweep cap.
 
 ### Embedded Browser Isolation
 
@@ -1438,6 +1477,9 @@ Cloudflare references checked for this candidate:
   include source, defines, key, stage and entry point; payload hashes protect
   the package contents. Missing/stale/corrupt packages fail explicitly. Re-export
   after shader changes. Runtime HLSL/SPIR-V compilation is not shipped in Wasm.
+  A Pages package also bundles each scene's startup packages into one immutable
+  file that the shell writes into the file system before the engine starts (see
+  "v0.1.2" under the water site).
 - Native compilation remains responsible for shader translation/reflection.
   The maintained WGSL quad shader now concretizes a constant `mix` operand to
   `f32`, accepted by both Tint and Firefox's WGSL implementation.

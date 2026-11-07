@@ -336,6 +336,28 @@
       }
     }
     window.addEventListener('t850-runtime-ready', markReady);
+    // The engine reads each shader package just before compiling it, one blocking download at a time
+    // (6-7 s of a cold Backyard start, revalidated on every visit). One immutable file replaces them.
+    async function loadShaderBundle(name) {
+      const started = performance.now();
+      try {
+        if (typeof name !== 'string' || !/^shaders-\d+-(auto|wgsl|spirv)\.[a-f0-9]{64}\.json$/.test(name)) throw new Error('invalid name');
+        const response = await fetch(name);
+        if (!response.ok) throw new Error('status ' + response.status);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), value => value.toString(16).padStart(2, '0')).join('');
+        if (!name.includes('.' + digest + '.')) throw new Error('integrity check failed');
+        const packages = Object.entries(JSON.parse(new TextDecoder().decode(bytes)));
+        if (packages.some(([path, text]) => !/^WebShaders\/[a-f0-9]{40}\.json$/.test(path) || typeof text !== 'string'))
+          throw new Error('unexpected entry');
+        Module.FS.mkdirTree('/assets/WebShaders');
+        for (const [path, text] of packages) Module.FS.writeFile('/assets/' + path, text);
+        diagnostics.shaderBundle = packages.length;
+        record(`[Shell] Loaded ${packages.length} shader packages in ${Math.round(performance.now() - started)} ms`);
+      } catch (error) {
+        record('[Shell] Shader bundle not used, the engine downloads each shader: ' + error.message);
+      }
+    }
     function record(text, error = false) {
       text = String(text).replace(/\x1b\[[0-9;]*m/g, '');
       diagnostics.logs.push(text);
@@ -430,6 +452,9 @@
             const { loadAssetBundle } = await import('./asset-bundle.mjs');
             diagnostics.assetBundle = await loadAssetBundle(Module.FS, catalog.assetBundle);
           }
+          const shaderFlow = parameters.get('shaderFlow') ?? 'auto';
+          const shaderBundleLoaded = !catalog.assetBundle && selected.shaderBundles && Object.hasOwn(selected.shaderBundles, shaderFlow)
+            ? loadShaderBundle(selected.shaderBundles[shaderFlow]) : null;
           const selector = document.getElementById('scene');
           selector.hidden = fixedDemo;
           const home = document.querySelector('header a');
@@ -469,6 +494,7 @@
             '--webAssetBaseUrl', catalog.assetBundle ? 'embedded' : new URL('assets', location.href).href);
           argumentsList.push(...catalog.arguments);
           argumentsList.push(...(selected.arguments ?? []));
+          if (['phone', 'tablet', 'pc'].includes(diagnostics.device)) argumentsList.push('--webDevice', diagnostics.device);
           if (selected.id === 6 && (minecraftDemo || enemyCount !== undefined))
             argumentsList.push('--minecraftEnemyCount', String(enemyCount ?? 1));
           const sceneFile = fixedDemo ? undefined : parameters.get('sceneFile') ?? selected.sceneFile;
@@ -538,6 +564,7 @@
               '--benchmarkFrames', String(frames + 60),
               '--benchmarkFixedDt', '0.0166666667');
           }
+          await shaderBundleLoaded;
           Module.FS.mkdirTree('/persistent');
           Module.FS.mount(Module.IDBFS, { autoPersist: true }, '/persistent');
           await new Promise((resolve, reject) => Module.FS.syncfs(true, error => error ? reject(error) : resolve()));

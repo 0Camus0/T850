@@ -32,6 +32,7 @@ Repository root contains `documentation/` and `LaunchSolution.bat`. Source root 
 | PresentMon, FPS/frame time, CPU/GPU bottlenecks, Deck performance loop | `t850-deck-performance` skill |
 | profiler scopes, telemetry counters, upload/streaming instrumentation, choosing built-in versus external tooling | `t850-profiling` skill |
 | runtime ImGui controls, scene/profile precedence, startup-vs-live settings | `t850-scene-runtime-controls` skill |
+| new compute kernel, `compute_kernels.json`, compute pass, `compute_buffers`, binding registers, constants builder, compute falling back to graphics | `t850-compute-kernel` skill |
 | GPU uploads, staging, fences, retirement, resource lifetime, memory | `t850-gpu-resource-lifetime` skill |
 | current implementation status | `documentation/current-status-and-roadmap.md` |
 | subsystem owner/dependencies | `documentation/dependency-map.md` then one owning document |
@@ -85,6 +86,7 @@ Use only the indexed documentation tree; superseded documents belong in Git hist
 - Use `ResourceLocator` for portable runtime resources.
 - Render-pass order belongs in render-graph JSON.
 - Compute graph X/Y extent comes from `compute_extent_from`; authored `compute_depth` is a positive logical Z extent and defaults to 1.
+- A compute pass may also bind `StructuredBuffer`s declared in the graph's top-level `compute_buffers[]` via `access: buffer_read|buffer_write`; naming a buffer in `compute_extent_from` gives a 1D dispatch over its `element_count`. For any new kernel or compute pass use `t850-compute-kernel`.
 - Treat D3D11, D3D12, OpenGL, Vulkan, and WebGPU as peer backends. A capability one backend lacks is resolved by a shared capability query and render-graph validation, never by one backend throwing where the others silently skip.
 - Profiling scopes mark phases, not calls. Never add a scope to a per-draw, per-query or per-upload path; see the `t850-profiling` skill.
 - Keep Framework independent of T8ditor/editor-only UI.

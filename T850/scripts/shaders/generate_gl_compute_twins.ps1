@@ -53,7 +53,7 @@ foreach ($tool in @($glslang, $spirvCross)) {
 }
 
 $bannerTag = 'GENERATED from'
-$commonDefines = @('T850_SPIRV=1', 'T850_VULKAN=1')
+$commonDefines = @('T850_SPIRV=1', 'T850_VULKAN=1', 'T850_GL=1')
 
 # Kernels the GL backend can dispatch that are NOT in compute_kernels.json. The volume-pattern
 # pairs are the 3D case of `--compute-selftest` (`ComputeSelfTest.cpp` names the .hlsl directly);
@@ -71,6 +71,10 @@ $unregistered = @(
 # and never reach the generator.
 $permutationDefines = @{
     'fluid_seed' = @{ 'divergent' = @('SEED_DIVERGENT') }
+    # particle_splat's stamp/resolve are runtime branches selected by the `Iteration` constant,
+    # not preprocessor permutations. Declare them with no extra defines so the generator emits
+    # the twin instead of treating the missing entry as an error.
+    'particle_splat' = @{ 'stamp' = @(); 'resolve' = @() }
 }
 
 $registry = Get-Content -LiteralPath (Join-Path $shaderDir 'compute_kernels.json') -Raw | ConvertFrom-Json
@@ -80,7 +84,13 @@ foreach ($k in $registry.kernels) {
     foreach ($name in @($k.permutations)) {
         if ($name -eq 'base') { continue }
         $table = $permutationDefines[$k.id]
-        $permutations[$name] = if ($table -and $table.ContainsKey($name)) { $table[$name] } else { $null }
+        if (-not $table -or -not $table.ContainsKey($name)) {
+            $permutations[$name] = $null
+        } else {
+            # Assign directly. An empty @() returned from an if-expression unrolls to $null,
+            # which made a declared no-define permutation look undeclared.
+            $permutations[$name] = @($table[$name])
+        }
     }
     $work.Add(@{ source = $k.source; entry = $k.entry; permutations = $permutations })
 }
@@ -181,7 +191,11 @@ foreach ($job in $work) {
         }
         $banner = "// $bannerTag $($job.source) by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=$hash; defines=$($defines -join ',')"
         $lines = @($body[0], $banner) + @($body | Select-Object -Skip 1)
-        Set-Content -LiteralPath $targetPath -Value $lines -Encoding UTF8
+        # Write UTF-8 without a BOM. The GL compute loader requires line 1 to be `#version`;
+        # PowerShell 5's `Set-Content -Encoding UTF8` prepends EF BB BF, which makes the engine
+        # reject an otherwise valid twin.
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllLines($targetPath, [string[]]$lines, $utf8NoBom)
         $written++
         Write-Host "  write $targetName" -ForegroundColor Green
     }

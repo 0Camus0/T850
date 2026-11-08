@@ -138,8 +138,11 @@ namespace t850 {
     if (!desc.debugName.empty())
       shader->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(desc.debugName.size()), desc.debugName.data());
     ShaderPermutationDump::RecordCompute(desc.debugName, desc.entryPoint, desc.permutationName, desc.defines);
-    T8_LOG_INFO("[D3D11][Compute] Pipeline '%s' created (threads=%ux%ux%u constants=%zu bufferSRVs=%zu bufferUAVs=%zu)",
-                desc.debugName.c_str(), tx, ty, tz, constantWordCounts.size(), bufferSrvs.size(), bufferUavs.size());
+    std::string uavList;
+    for (UINT slot : textureUavs) { uavList += std::to_string(slot); uavList += ','; }
+    T8_LOG_INFO("[D3D11][Compute] Pipeline '%s' created (threads=%ux%ux%u constants=%zu bufferSRVs=%zu bufferUAVs=%zu textureSRVs=%zu textureUAVs=%zu[%s] samplers=%zu)",
+                desc.debugName.c_str(), tx, ty, tz, constantWordCounts.size(), bufferSrvs.size(), bufferUavs.size(),
+                textureSrvs.size(), textureUavs.size(), uavList.c_str(), samplers.size());
     return true;
   }
 

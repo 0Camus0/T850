@@ -1800,6 +1800,23 @@ void main(){
 		gl_FragColor = vec4(clamp(tex.rgb, 0.0, 1.0) * alpha, clamp(brightness.x, 0.0, 1.0));
 	#endif
 }
+#elif defined(PARTICLE_COMPOSITE)
+uniform mediump sampler2D tex0;
+uniform mediump sampler2D tex1;
+void main() {
+  lowp vec2 uv = vecUVCoords.xy;
+  uv.y = 1.0 - uv.y;
+
+  highp vec4 scene = texture(tex1, uv.xy);
+  highp vec4 particles = texture(tex0, uv.xy);
+  highp float a = clamp(particles.a, 0.0, 1.0);
+  highp vec3 rgb = particles.rgb * a + scene.rgb * (1.0 - a);
+    #ifdef ES_30
+	colorOut = vec4(rgb, max(scene.a, a));
+#else
+	gl_FragColor = vec4(rgb, max(scene.a, a));
+#endif
+}
 #elif defined(FSQUAD_1_TEX)
 uniform mediump sampler2D tex0;
 void main(){

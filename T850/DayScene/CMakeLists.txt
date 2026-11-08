@@ -11,6 +11,8 @@ add_executable(DayScene
 	VoxelScene.cpp
 	MinecraftScene.cpp
 	BackyardScene.cpp
+	Backyard8Scene.cpp
+	Backyard8FluidJson.cpp
 	BackyardWaterJson.cpp
 	BackyardSelfTest.cpp)
 

@@ -361,6 +361,7 @@ namespace {
 #include <VoxelScene.h>
 #include <MinecraftScene.h>
 #include <BackyardScene.h>
+#include <Backyard8Scene.h>
 
 #ifdef OS_ANDROID
 namespace {
@@ -388,7 +389,8 @@ void App::InitVars() {
   m_scenes.emplace_back(std::make_unique<SceneTemplate>());
   m_scenes.emplace_back(std::make_unique<VoxelScene>());
   m_scenes.emplace_back(std::make_unique<MinecraftScene>());
-  m_scenes.emplace_back(std::make_unique<BackyardScene>());
+  m_scenes.emplace_back(std::make_unique<BackyardScene>());   // 7: VOF water
+  m_scenes.emplace_back(std::make_unique<Backyard8Scene>());  // 8: particle water (PBF)
   t850::EngineContext& engineContext = t850::GetEngineContext();
   engineContext.physics = &m_physics;
   if (!m_physics.Initialize() && m_physics.IsAvailable()) {

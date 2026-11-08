@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "solver": {
+    "particleRadius": 0.13,
+    "smoothingRadiusScale": 2.0,
+    "restDensityScale": 1.0,
+    "stiffnessEps": 0.05,
+    "artPressureK": 0.0,
+    "artPressureN": 4.0,
+    "viscosityC": 0.15,
+    "gravity": 9.81,
+    "windSpeed": 8.0,
+    "windHeadingDeg": 0.0,
+    "maxVelocity": 12.0,
+    "solverIterations": 3,
+    "substeps": 2,
+    "deltaTime": 0.0166667,
+    "sphereRadius": 2.0,
+    "sphereHeight": 3.08,
+    "cullBelowY": 0.0,
+    "cullMargin": 0.35,
+    "surfaceWidth": 100,
+    "surfaceDepth": 50,
+    "maxParticles": 40000
+  },
+  "scene": {
+    "startMode": 1,
+    "fixedStep": 0.0166667,
+    "maxStepsPerFrame": 3
+  },
+  "particles": {
+    "name": "BackyardWater",
+    "radius": 0.13,
+    "opacity": 0.82,
+    "intensity": 1.0,
+    "softness": 0.45,
+    "depthBias": 0.13,
+    "shape": 0,
+    "blend": 1,
+    "style": 0,
+    "renderMode": 1,
+    "sizeScaleMin": 1.0,
+    "sizeScaleMax": 1.0,
+    "buffer": "BackyardWaterPositions",
+    "velocityBuffer": "BackyardWaterVelocities",
+    "count": 0,
+    "colors": [
+      [0.30, 0.62, 0.85],
+      [0.42, 0.72, 0.90],
+      [0.62, 0.84, 0.95],
+      [0.88, 0.95, 1.00]
+    ]
+  },
+  "screenSpace": {
+    "smoothingIterations": 4,
+    "smoothingStrength": 0.85,
+    "smoothingRadius": 10.0,
+    "depthTolerance": 0.35,
+    "thicknessScale": 1.0,
+    "absorption": [3.0, 1.0, 0.5],
+    "reflection": [0.45, 0.62, 0.85],
+    "refraction": 0.02,
+    "specular": 1.0,
+    "fresnelPower": 5.0,
+    "normalScale": 0.7,
+    "normalStep": 4.0,
+    "foam": 0.0,
+    "debugView": 0
+  }
+}

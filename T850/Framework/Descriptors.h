@@ -43,6 +43,9 @@ namespace PassType {
     LENS_FLARE_SUN,
     LENS_FLARE_GHOST,
     CASCADE_DEBUG,
+    // Straight-alpha "over" for translucent particle layers. LIGHT_ADD adds light with no
+    // alpha, which blows a soft fluid body out to a white disc.
+    PARTICLE_COMPOSITE,
     COUNT
   };
 }

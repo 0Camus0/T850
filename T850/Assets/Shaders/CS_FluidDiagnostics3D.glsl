@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_FluidDiagnostics3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=a438401accee18b63b5ab3a656a606bc804dc16afc3434e36badcbfcef71048d; defines=T850_SPIRV=1,T850_VULKAN=1
+// GENERATED from CS_FluidDiagnostics3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=eb34d6f87f1dd7f30e366a5cef217a9b529f61bcb3242f5084929101f0edf6dc; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 layout(binding = 0, std140) uniform FluidConstants

@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_FluidGradient3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=c7f1b2701595d99e53ad93db4df98ec1399920f6fde955f5913522bc6f443687; defines=T850_SPIRV=1,T850_VULKAN=1
+// GENERATED from CS_FluidGradient3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=c7f1b2701595d99e53ad93db4df98ec1399920f6fde955f5913522bc6f443687; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 layout(binding = 0, std140) uniform FluidConstants

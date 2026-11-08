@@ -33,9 +33,30 @@ namespace t850 {
   };
 
   struct ComputeResourceDesc {
-    std::string resource;          // RT:attachment or @kernel_constants
-    std::string access;            // constants, sampled, sampler, storage_write
+    std::string resource;          // RT:attachment, @kernel_constants, or a compute_buffers[] name
+    std::string access;            // constants, sampled, sampler, storage_write,
+                                   // buffer_read, buffer_write
     int shader_register = 0;       // HLSL b/t/s/u register in the shared layout
+  };
+
+  // ---- Named compute buffer ----
+  //
+  // A StructuredBuffer the graph owns, so a compute pass can read or write particle-style
+  // data that is not a render target. Buffers are referenced from a compute pass by name:
+  //
+  //   compute_resources: [ { "resource": "FluidParticlePositions", "access": "buffer_read",
+  //                          "shader_register": 0 } ]
+  //
+  // The graph creates them with the render target lifetime (render-thread only) and binds
+  // them as ReadOnlyBuffer / ReadWriteBuffer. They are never sampled by a graphics pass:
+  // a texture view would be a separate feature.
+  struct ComputeBufferDescJson {
+    std::string name;              // graph-unique name, referenced from compute_resources
+    int structure_stride = 0;      // bytes per element (multiple of 4)
+    int element_count = 0;         // element count; byteWidth = stride * count
+    std::string access = "read_write";  // "read_only" or "read_write" (creation-time)
+    bool clear = false;            // zero the buffer when the graph is created
+    std::string size_ref;          // optional: "$window" scales element_count by viewport pixels
   };
 
   // ---- State overrides ----
@@ -74,6 +95,17 @@ namespace t850 {
     std::string compute_extent_from;
     int compute_depth = 1;
     std::vector<ComputeResourceDesc> compute_resources;
+    // "particles": draw a registered ParticleSystem into this pass's storage target.
+    // The compute fields are then filled from the system, so authors name the system and
+    // nothing else. See documentation/rendering/render-graph.md.
+    std::string particle_system;
+    // A particle system whose descriptor supplies the compute constants, WITHOUT expanding
+    // this pass into a splat. The explicit screen-space passes use this: they need the
+    // system's camera/radius/colour/tuning, but they are their own kernels.
+    std::string particle_context;
+    // Numeric stage handed to a constants builder. Particle screen-space uses it to pick a
+    // smoothing pass index; every other kernel ignores it.
+    int compute_stage = 0;
     bool clear = false;
     std::array<float, 4> clear_color = {0, 0, 0, 0};  // RGBA clear color (used when clear=true)
     float clear_depth = 1.0f;                           // Depth clear value
@@ -126,6 +158,9 @@ namespace t850 {
   struct RenderGraphDesc {
     std::vector<ShadowProjectionDesc> shadow_projections;
     std::vector<RTDesc> render_targets;
+    // Named StructuredBuffers for compute passes. Backward compatible: graphs without this
+    // key load exactly as before (an absent optional vector stays empty).
+    std::vector<ComputeBufferDescJson> compute_buffers;
     std::vector<RenderPassDesc> passes;
   };
 

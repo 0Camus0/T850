@@ -1697,6 +1697,24 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
   //col -= lerp(float4(0,0,0,0), float4(1,1,1,1) - vol, raysIntensity);
 	return float4(col.rgb, 1.0f);
 }
+#elif defined(PARTICLE_COMPOSITE)
+// Translucent particle composites.
+//
+// The particle splat writes (average colour, coverage) rather than light. LIGHT_ADD does a
+// bare `col += vol * 1.6` with no alpha, which turned a soft fluid body into a blown-out
+// white disc. This is a plain straight-alpha "over": tex0 is the particle layer, tex1 the
+// scene it lands on.
+Texture2D tex0 : register(t0);
+Texture2D tex1 : register(t1);
+float4 FS(VS_OUTPUT input) : SV_TARGET{
+  float4 scene = tex1.Sample(SS1, input.texture0.xy);
+  float4 particles = tex0.Sample(SS, input.texture0.xy);
+  // The particle layer is accumulated in linear space; the scene here is already the
+  // post-deferred HDR target, so no extra gamma conversion is applied to either side.
+  float a = saturate(particles.a);
+  float3 rgb = particles.rgb * a + scene.rgb * (1.0f - a);
+  return float4(rgb, max(scene.a, a));
+}
 #elif defined(FSQUAD_1_TEX)
 Texture2D tex0 : register(t0);
 float4 FS( VS_OUTPUT input ) : SV_TARGET {	

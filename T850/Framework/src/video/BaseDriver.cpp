@@ -87,7 +87,17 @@ namespace t850 {
           match = &resource;
         }
       }
-      if (!match || match->constantCount != declared.constantCount) return false;
+      if (!match) {
+        T8_LOG_ERROR("[Compute] '%s' no reflected binding for type=%d reg=%u idx=%u",
+                     desc.debugName.c_str(), (int)declared.type, declared.shaderRegister, declared.bindingIndex);
+        return false;
+      }
+      if (match->constantCount != declared.constantCount) {
+        T8_LOG_ERROR("[Compute] '%s' type=%d reg=%u constantCount declared=%u reflected=%u",
+                     desc.debugName.c_str(), (int)declared.type, declared.shaderRegister,
+                     declared.constantCount, match->constantCount);
+        return false;
+      }
       if (match->dimension != declared.dimension) return false;
       if (match->storageFormat != ComputeStorageFormat::Unspecified) {
         if (declared.storageFormat != ComputeStorageFormat::Unspecified && declared.storageFormat != match->storageFormat)
@@ -717,6 +727,7 @@ namespace t850 {
       case PassType::RADIAL_DEPTH:       Defines += "#define RADIAL_DEPTH_PASS\n\n"; break;
       case PassType::LIGHT_RAY_MARCHING: Defines += "#define LIGHT_RAY_MARCHING\n\n"; break;
       case PassType::LIGHT_ADD:          Defines += "#define LIGHT_ADD\n\n"; break;
+      case PassType::PARTICLE_COMPOSITE: Defines += "#define PARTICLE_COMPOSITE\n\n"; break;
       case PassType::FADE:               Defines += "#define FADE\n\n"; break;
       case PassType::LENS_FLARE_SUN:     Defines += "#define LENS_FLARE_SUN\n\n"; break;
       case PassType::LENS_FLARE_GHOST:   Defines += "#define LENS_FLARE_GHOST\n\n"; break;

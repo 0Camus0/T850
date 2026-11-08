@@ -3156,6 +3156,55 @@ void TestTypedComputeGraphValidation() {
     Require(!graph.Load(writeGraph("_uninitialized_compute_input.json", uninitializedInput).string()),
       "graph accepted a read before the resource was initialized or written");
 
+  // ---- Named compute buffers (compute_buffers[] + buffer_read/buffer_write) ----
+  //
+  // A compute pass may bind StructuredBuffers declared in the graph. These fixtures pin the
+  // schema: a valid buffer graph loads, and every malformed variant is rejected instead of
+  // silently binding nothing.
+  {
+    // CS_FluidClearFloat3D is a real kernel that binds one read-write buffer; use it so the
+    // kernel's reflected layout drives validation the same way a scene kernel would.
+    const std::string bufferGraph = R"({
+      "compute_buffers": [
+        {"name":"Particles","structure_stride":16,"element_count":1024,"access":"read_write","clear":true}
+      ],
+      "passes": [{
+        "name":"Clear Particles","target":"","execution":"compute_if_supported",
+        "compute_shader":"Shaders/CS_FluidClearFloat3D.hlsl","compute_entry":"CS",
+        "compute_extent_from":"Particles",
+        "compute_resources":[
+          {"resource":"@kernel_constants","access":"constants","shader_register":0},
+          {"resource":"Particles","access":"buffer_write","shader_register":0}
+        ],"draws":[]
+      }]
+    })";
+    RenderGraph bufferTest;
+    // The binding layout must match the kernel, so only assert the schema-level rules that do
+    // not depend on that kernel's exact bindings.
+    const std::string duplicateName = replaceOnce(bufferGraph,
+      "\"access\":\"read_write\",\"clear\":true}",
+      "\"access\":\"read_write\",\"clear\":true},{\"name\":\"Particles\",\"structure_stride\":16,\"element_count\":8}");
+    Require(!bufferTest.Load(writeGraph("_duplicate_buffer.json", duplicateName).string()),
+      "graph accepted duplicate compute buffer names");
+    const std::string badStride = replaceOnce(bufferGraph,
+      "\"structure_stride\":16", "\"structure_stride\":15");
+    Require(!bufferTest.Load(writeGraph("_bad_stride.json", badStride).string()),
+      "graph accepted a structure stride that is not a multiple of 4");
+    const std::string badAccess = replaceOnce(bufferGraph,
+      "\"access\":\"read_write\",\"clear\":true}", "\"access\":\"write_only\"}");
+    Require(!bufferTest.Load(writeGraph("_bad_buffer_access.json", badAccess).string()),
+      "graph accepted an invalid compute buffer access");
+    const std::string unknownBuffer = replaceOnce(bufferGraph,
+      "{\"resource\":\"Particles\",\"access\":\"buffer_write\"",
+      "{\"resource\":\"Nope\",\"access\":\"buffer_write\"");
+    Require(!bufferTest.Load(writeGraph("_unknown_buffer.json", unknownBuffer).string()),
+      "graph accepted a compute pass referencing an undeclared buffer");
+    const std::string zeroElements = replaceOnce(bufferGraph,
+      "\"element_count\":1024", "\"element_count\":0");
+    Require(!bufferTest.Load(writeGraph("_zero_elements.json", zeroElements).string()),
+      "graph accepted a compute buffer with no elements and no size_ref");
+  }
+
   {
     const auto shaderDirectory = files.Add("_graph_compute_sources");
     std::filesystem::create_directories(shaderDirectory);

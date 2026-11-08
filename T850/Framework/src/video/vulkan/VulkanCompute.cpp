@@ -192,8 +192,18 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
   if (!CompileCompute(desc, spirv, threadGroupSize)) return false;
 #endif
   std::vector<ComputeBindingLayoutDesc> reflected;
-  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize) ||
-      !SetValidatedLayout(desc, reflected, true)) return false;
+  // Split the two legs: both are silent internally, so a combined condition makes every
+  // cause surface as the caller's generic "failed to create compute pipeline".
+  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize)) {
+    T8_LOG_ERROR("[Vulkan][Compute] Reflection failed for '%s'", desc.debugName.c_str());
+    return false;
+  }
+  if (!SetValidatedLayout(desc, reflected, true)) {
+    T8_LOG_ERROR("[Vulkan][Compute] Declared bindings do not match reflection for '%s' "
+                 "(declared %zu, reflected %zu)",
+                 desc.debugName.c_str(), desc.bindings.size(), reflected.size());
+    return false;
+  }
   VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
   moduleInfo.codeSize = spirv.size() * sizeof(uint32_t);
   moduleInfo.pCode = spirv.data();
@@ -229,7 +239,11 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
   pipelineInfo.layout = pipelineLayout;
   const VkResult result = T8_TELEMETRY_CALL("pipeline.create.compute", vkCreateComputePipelines(driver->GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
   vkDestroyShaderModule(driver->GetDevice(), module, nullptr);
-  if (result != VK_SUCCESS) return false;
+  if (result != VK_SUCCESS) {
+    T8_LOG_ERROR("[Vulkan][Compute] vkCreateComputePipelines failed for '%s' (result=%d, entry=%s)",
+                 desc.debugName.c_str(), static_cast<int>(result), desc.entryPoint.c_str());
+    return false;
+  }
   ShaderPermutationDump::RecordCompute(desc.debugName, desc.entryPoint, desc.permutationName, desc.defines);
   T8_LOG_INFO("[Vulkan][Compute] Pipeline '%s' created (bindings=%zu)", desc.debugName.c_str(), bindings.size());
   return true;

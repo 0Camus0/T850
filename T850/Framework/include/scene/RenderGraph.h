@@ -16,6 +16,7 @@ class Camera;
 namespace t850 {
 
   class BaseDriver;
+  class ComputeBuffer;
   class Texture;
   class PrimitiveInst;
   class ComputePipeline;
@@ -114,6 +115,8 @@ namespace t850 {
     // Call after Load(), before Execute().
     bool CreateRenderTargets(BaseDriver* driver, const SceneProps& props);
     bool CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride);
+    // Creates the graph's named compute_buffers[]. Share the RT lifetime (render thread).
+    bool CreateComputeBuffers(BaseDriver* driver, int widthOverride, int heightOverride);
     void DestroyRenderTargets(BaseDriver* driver);
 
     // Execute all passes in order.
@@ -179,8 +182,17 @@ namespace t850 {
     std::vector<GraphNode> m_nodes;
     std::vector<GraphEdge> m_edges;
     std::unordered_map<std::string, int> m_rtHandles;  // RT name -> driver RT handle
+    // Named compute buffers: name -> (handle index into m_computeBuffers, creation desc).
+    std::unordered_map<std::string, int> m_computeBufferHandles;
+    std::vector<std::unique_ptr<ComputeBuffer>> m_computeBuffers;
+    std::vector<ComputeBufferDescJson> m_computeBufferDescs;
     std::unordered_map<int, std::unique_ptr<ComputePipeline>> m_computePipelines;
     std::unordered_set<int> m_loggedComputeDispatches;
+    // Targets whose compute-only pass could not get a pipeline (no compute support or a
+    // pipeline-creation failure). Passes that sample them are skipped rather than composited
+    // as an undefined/empty target.
+    std::unordered_set<std::string> m_failedComputeTargets;
+    uint32_t m_frameIndex = 0;   // monotonic, incremented once per Execute; 1-based
     bool m_initializedTargetsPending = true;
 
     // Build the DAG (nodes + edges) from the descriptor.

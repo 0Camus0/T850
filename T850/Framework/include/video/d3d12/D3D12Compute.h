@@ -15,6 +15,7 @@
 #include <wrl/client.h>
 
 #include <unordered_map>
+#include <unordered_set>
 
 namespace t850 {
 
@@ -36,6 +37,10 @@ namespace t850 {
     int GetTextureUavRootIndex(uint32_t shaderRegister) const;
     int GetSamplerRootIndex(uint32_t shaderRegister) const;
     uint32_t GetConstantWordCount(uint32_t shaderRegister) const;
+    // True when this cbuffer is bound as a root CBV instead of root constants. The
+    // D3D12 root signature is limited to 64 DWORDs; large constant blocks (e.g. the
+    // particle splat's 60-word block) would otherwise exceed it and fail serialization.
+    bool ConstantUsesCbv(uint32_t shaderRegister) const;
 
   private:
     friend class D3D12Driver;
@@ -49,6 +54,7 @@ namespace t850 {
     std::unordered_map<uint32_t, int> m_textureUavRootIndices;
     std::unordered_map<uint32_t, int> m_samplerRootIndices;
     std::unordered_map<uint32_t, uint32_t> m_constantWordCounts;
+    std::unordered_set<uint32_t> m_constantCbvRegisters;
   };
 
   class D3D12ComputeBuffer final : public ComputeBuffer {

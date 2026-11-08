@@ -27,6 +27,7 @@ SCENES = [
     ("Scene Template", 4),
     ("Minecraft", 6),
     ("Backyard", 7),
+    ("Backyard 8 (PBF)", 8),
 ]
 SCENE_LABEL_BY_ID = {value: label for label, value in SCENES}
 SCENE_ID_BY_LABEL = {label: value for label, value in SCENES}
@@ -760,7 +761,8 @@ class Launcher(Gtk.Window):
     def launch_process(self, executable, args):
         ensure_runtime_links()
         env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = f"{RUNTIME_DIR}:{env.get('LD_LIBRARY_PATH', '')}"
+        # System Vulkan loader dir must come first so SDL3 can create a Wayland/XCB surface.
+        env["LD_LIBRARY_PATH"] = f"{RUNTIME_DIR}:/usr/lib/x86_64-linux-gnu:{env.get('LD_LIBRARY_PATH', '')}"
         env["SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS"] = "0"
         env["SDL_GAMECONTROLLER_USE_BUTTON_LABELS"] = "1"
         subprocess.Popen([str(executable)] + args, cwd=str(T850_ROOT), env=env, start_new_session=True)

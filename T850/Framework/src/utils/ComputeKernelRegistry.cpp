@@ -1,6 +1,7 @@
 #include <pch.h>
 
 #include <utils/ComputeKernelRegistry.h>
+#include <scene/ParticleSystem.h>
 #include <scene/SceneProp.h>
 #include <utils/Camera.h>
 #include <utils/Log.h>
@@ -99,12 +100,97 @@ struct ParticleComputeConstants {
 };
 static_assert(sizeof(ParticleComputeConstants) == 240);
 
-template <typename T>
-void CopyWords(const T& value, std::vector<uint32_t>& words) {
-  static_assert(sizeof(T) % sizeof(uint32_t) == 0);
-  words.resize(sizeof(T) / sizeof(uint32_t));
-  std::memcpy(words.data(), &value, sizeof(T));
-}
+// Mirrors `cbuffer ParticleConstants` in CS_PbfParticles.hlsl: 16 DWORDs.
+struct FluidParticleComputeConstants {
+  uint32_t particleCount;
+  uint32_t outputWidth;
+  uint32_t outputHeight;
+  uint32_t iteration;
+  float particleRadius;
+  float depthBias;
+  float opacity;
+  float pad0;
+  float cameraPosition[3];
+  float pad1;
+  float fluidColor[3];
+  float tileCountX;
+};
+static_assert(sizeof(FluidParticleComputeConstants) == 64);
+
+// Mirrors `cbuffer ParticleConstants` in CS_ParticleSplat.hlsl.
+// 4 + 12 + 4 + 12 + 8 floats/units = 160 bytes (40 DWORDs).
+struct ParticleSplatConstants {
+  uint32_t particleCount;
+  uint32_t outputWidth;
+  uint32_t outputHeight;
+  uint32_t iteration;
+  float radius;
+  float opacity;
+  float intensity;
+  float softness;
+  float depthBias;
+  float lifetime;
+  float spread;
+  float rise;
+  float timeSeconds;
+  float sizeScaleMin;
+  float sizeScaleMax;
+  uint32_t shape;
+  uint32_t blend;
+  uint32_t source;
+  float speedTint;            // reused as the screen-space flag (shader field ScreenSpace)
+  float tileCountX;
+  float tileCountY;
+  uint32_t frameIndex;
+  float projScaleY;
+  float pad2;                 // 24 * 4 = 96 bytes
+  float color[4][4];          // four 16-byte slots: rgb + pad
+  float emitterPosition[4];   // xyz + pad
+  float viewProjection[16];   // row-major, 4 x float4
+};
+static_assert(sizeof(ParticleSplatConstants) == 240);
+
+// Mirrors `cbuffer ParticleSmoothConstants` in CS_ParticleSmooth.hlsl.
+struct ParticleSmoothConstants {
+  uint32_t outputWidth;
+  uint32_t outputHeight;
+  uint32_t stage;
+  uint32_t pad0;
+  float strength;
+  float tolerance;
+  float radiusPx;
+  float pad1;
+};
+static_assert(sizeof(ParticleSmoothConstants) == 32);
+
+// Mirrors `cbuffer ParticleShadeConstants` in CS_ParticleShade.hlsl.
+struct ParticleShadeConstants {
+  uint32_t outputWidth;
+  uint32_t outputHeight;
+  uint32_t mode;          // 0 splat, 1 screen space
+  uint32_t debugView;     // 0 shaded, 1 normals, 2 depth, 3 thickness, 4 coverage
+  float projScaleY;
+  float opacity;
+  float depthBias;
+  float pad0;
+  float thicknessScale;
+  float refraction;
+  float specular;
+  float fresnelPower;
+  float normalScale;
+  float foam;
+  float timeSeconds;
+  float pad1;                 // normal stencil in pixels (shader field NormalStep)
+  float fluidTint[4];
+  float sunDirection[4];  // view space, toward the light
+  float sunColor[4];      // rgb * intensity
+  float viewProjection[16];
+  float cameraRight[4];
+  float cameraUp[4];
+  float cameraForward[4];
+  float reflectionColor[4];
+};
+static_assert(sizeof(ParticleShadeConstants) == 240);
 
 uint32_t ConstantWordCount(const ComputeKernelDefinition& kernel) {
   for (size_t index = 0; index < kernel.bindings.size(); ++index) {
@@ -119,12 +205,19 @@ void ConfigureArithmeticPipeline(ComputePipelineDesc& pipeline, std::string_view
     pipeline.bindings.push_back({ComputeBindingType::ReadOnlyBuffer, 0, 2, 0});
 }
 
+template <typename T>
+void CopyWords(const T& value, std::vector<uint32_t>& words) {
+  static_assert(sizeof(T) % sizeof(uint32_t) == 0);
+  words.resize(sizeof(T) / sizeof(uint32_t));
+  std::memcpy(words.data(), &value, sizeof(T));
+}
+
 bool BuildGodRaysConstants(const ComputeKernelConstantsContext& context,
                            std::vector<uint32_t>& constants, std::string& error) {
   SceneProps& props = *context.sceneProps;
   Camera* camera = props.GetPrimaryCamera();
   if (!camera) {
-    error = "God Rays constants require a primary camera";
+    error = "God rays constants require a primary camera";
     return false;
   }
   GodRaysComputeConstants value = {};
@@ -266,6 +359,212 @@ ComputePipelineConfigurator ResolvePipelineConfigurator(std::string_view value) 
   return value == "arithmetic" ? ConfigureArithmeticPipeline : nullptr;
 }
 
+bool BuildFluidParticleConstants(const ComputeKernelConstantsContext& context,
+                                 std::vector<uint32_t>& constants, std::string& error) {
+  SceneProps& props = *context.sceneProps;
+  Camera* camera = props.GetPrimaryCamera();
+  if (!camera) {
+    error = "Fluid particle constants require a primary camera";
+    return false;
+  }
+  FluidParticleComputeConstants value = {};
+  // Particle count and radius come from the scene's fluid particle settings.
+  value.particleCount = static_cast<uint32_t>((std::max)(0, props.FluidParticleCount));
+  value.outputWidth = context.outputWidth;
+  value.outputHeight = context.outputHeight;
+  value.iteration = 0;
+  value.particleRadius = props.FluidParticleRadius;
+  value.depthBias = props.FluidParticleDepthBias;
+  value.opacity = props.FluidParticleOpacity;
+  value.cameraPosition[0] = camera->Eye.x;
+  value.cameraPosition[1] = camera->Eye.y;
+  value.cameraPosition[2] = camera->Eye.z;
+  value.fluidColor[0] = props.FluidParticleColor.x;
+  value.fluidColor[1] = props.FluidParticleColor.y;
+  value.fluidColor[2] = props.FluidParticleColor.z;
+  // 8x8 pixel tiles, matching [numthreads(8,8,1)] in the stamp pass.
+  value.tileCountX = static_cast<float>((context.outputWidth + 7u) / 8u);
+  CopyWords(value, constants);
+  return true;
+}
+
+bool BuildParticleSplatConstants(const ComputeKernelConstantsContext& context,
+                                 std::vector<uint32_t>& constants, std::string& error) {
+  SceneProps& props = *context.sceneProps;
+  Camera* camera = props.GetPrimaryCamera();
+  if (!camera) {
+    error = "particle splat constants require a primary camera";
+    return false;
+  }
+  // Everything about the system comes from the ParticleSystem descriptor, so one kernel
+  // renders fire, smoke, sparks or fluid. The scene no longer needs loose particle globals.
+  const ParticleSystemDesc* system = context.particleSystem.empty()
+    ? nullptr : ParticleSystemRegistry::Instance().Find(std::string(context.particleSystem));
+  if (!system) {
+    error = "particle splat constants require a named particle system";
+    return false;
+  }
+  ParticleSplatConstants value = {};
+  value.outputWidth  = context.outputWidth;
+  value.outputHeight = context.outputHeight;
+  value.particleCount = static_cast<uint32_t>((std::max)(0, system->source == ParticleSourceKind::Buffer
+      ? (system->buffer_count > 0 ? system->buffer_count : 0)
+      : system->count));
+  // The splat is two passes in one kernel: stamp projects each particle and marks its
+  // 8x8 tile; resolve walks the marked tiles and writes colour. A compute dispatch has no
+  // grid-wide barrier, so they cannot be one dispatch -- the graph runs the pass twice with
+  // these two permutations.
+  value.iteration    = context.permutation == "resolve" ? 1u : 0u;
+  value.radius       = system->radius;
+  value.opacity      = system->opacity;
+  value.intensity    = system->intensity;
+  value.softness     = system->softness;
+  value.depthBias    = system->depth_bias;
+  value.lifetime     = system->lifetime;
+  value.spread       = system->spread;
+  value.rise         = system->rise;
+  value.timeSeconds  = ParticleSystemRegistry::Instance().Time();
+  value.sizeScaleMin = system->size_scale_min;
+  value.sizeScaleMax = system->size_scale_max;
+  value.shape  = static_cast<uint32_t>(system->shape);
+  value.blend  = static_cast<uint32_t>(system->blend);
+  value.source = static_cast<uint32_t>(system->source);
+  // Pad2 carries the particle look style (0 shaded, 1 wireframe, 2 flat). Keeping it in
+  // the existing padding slot preserves the 60-DWORD splat cbuffer.
+  value.pad2 = static_cast<float>(system->style);
+  // SpeedTint is unused by the splat: reuse it as the screen-space flag so the splat
+  // resolve and the depth pass can stand down when the other renderer is active.
+  value.speedTint = system->render_mode == ParticleRenderMode::ScreenSpace ? 1.0f : 0.0f;
+  for (int c = 0; c < 4; ++c) {
+    value.color[c][0] = system->ramp.stops[c][0];
+    value.color[c][1] = system->ramp.stops[c][1];
+    value.color[c][2] = system->ramp.stops[c][2];
+  }
+  value.tileCountX = static_cast<float>((context.outputWidth + 7u) / 8u);
+  value.tileCountY = static_cast<float>((context.outputHeight + 7u) / 8u);
+  value.frameIndex = context.frameIndex;
+  // P11 = cot(fov/2). Needed for the pixel radius: R * P11 * (H/2) / w.
+  value.projScaleY = camera->Projection.m[1][1];
+  value.emitterPosition[0] = props.ParticleEmitterPosition.x;
+  value.emitterPosition[1] = props.ParticleEmitterPosition.y;
+  value.emitterPosition[2] = props.ParticleEmitterPosition.z;
+  // Row-major view-projection; the kernel multiplies rows against float4(p, 1).
+  std::memcpy(value.viewProjection, &camera->VP, sizeof(value.viewProjection));
+  CopyWords(value, constants);
+  return true;
+}
+
+bool BuildParticleSmoothConstants(const ComputeKernelConstantsContext& context,
+                                  std::vector<uint32_t>& constants, std::string& error) {
+  const ParticleSystemDesc* system = context.particleSystem.empty()
+    ? nullptr : ParticleSystemRegistry::Instance().Find(std::string(context.particleSystem));
+  if (!system) {
+    error = "particle smooth constants require a named particle system";
+    return false;
+  }
+  ParticleSmoothConstants value = {};
+  value.outputWidth = context.outputWidth;
+  value.outputHeight = context.outputHeight;
+  value.stage = static_cast<uint32_t>((std::max)(context.passStage, 0));
+  const int iterations = (std::min)((std::max)(system->screen_space.smoothing_iterations, 0), 4);
+  // Passes beyond the configured iteration count copy the field unchanged. The graph
+  // always contains four ping-pong passes, so the final depth is always in the same target
+  // regardless of the runtime iteration count.
+  value.strength = (context.passStage >= 1 && context.passStage <= iterations &&
+                    system->render_mode == ParticleRenderMode::ScreenSpace)
+    ? system->screen_space.smoothing_strength : 0.0f;
+  value.tolerance = system->screen_space.depth_tolerance;
+  value.radiusPx = system->screen_space.smoothing_radius;
+  CopyWords(value, constants);
+  return true;
+}
+
+bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
+                                 std::vector<uint32_t>& constants, std::string& error) {
+  SceneProps& props = *context.sceneProps;
+  Camera* camera = props.GetPrimaryCamera();
+  if (!camera) {
+    error = "particle shade constants require a primary camera";
+    return false;
+  }
+  const ParticleSystemDesc* system = context.particleSystem.empty()
+    ? nullptr : ParticleSystemRegistry::Instance().Find(std::string(context.particleSystem));
+  if (!system) {
+    error = "particle shade constants require a named particle system";
+    return false;
+  }
+  ParticleShadeConstants value = {};
+  value.outputWidth = context.outputWidth;
+  value.outputHeight = context.outputHeight;
+  value.mode = system->render_mode == ParticleRenderMode::ScreenSpace ? 1u : 0u;
+  value.debugView = static_cast<uint32_t>((std::max)(system->screen_space.debug_view, 0));
+  value.projScaleY = camera->Projection.m[1][1];
+  value.opacity = system->opacity;
+  value.depthBias = system->depth_bias;
+  value.thicknessScale = system->screen_space.thickness_scale;
+  value.refraction = system->screen_space.refraction;
+  value.specular = system->screen_space.specular;
+  value.fresnelPower = system->screen_space.fresnel_power;
+  value.normalScale = system->screen_space.normal_scale;
+  value.pad1 = system->screen_space.normal_step;
+  value.foam = system->screen_space.foam;
+  value.timeSeconds = ParticleSystemRegistry::Instance().Time();
+  for (int c = 0; c < 3; ++c) {
+    value.fluidTint[c] = system->screen_space.absorption[c];
+    value.reflectionColor[c] = system->screen_space.reflection[c];
+  }
+
+  // The sun is the first enabled directional light. The shader works in view space, so
+  // transform the world direction once here (row-vector convention: v' = v * View).
+  XVECTOR3 sunWorld(0.35f, -0.55f, 0.78f);
+  XVECTOR3 sunColor(1.0f, 1.0f, 1.0f);
+  bool found = false;
+  for (const Light& light : props.Lights) {
+    if (!light.Enabled || light.Type != LIGHT_DIRECTIONAL) continue;
+    sunWorld = light.Direction;
+    sunColor = light.Color * light.Intensity;
+    found = true;
+    break;
+  }
+  if (!found) {
+    // Fall back to the shadow/light camera, exactly as the god-rays builder does.
+    const bool hasLightCamera = props.ActiveLightCamera >= 0 &&
+      props.ActiveLightCamera < static_cast<int>(props.pLightCameras.size()) &&
+      props.pLightCameras[props.ActiveLightCamera];
+    if (hasLightCamera) {
+      const XVECTOR3 look = props.pLightCameras[props.ActiveLightCamera]->Look;
+      sunWorld = XVECTOR3(-look.x, -look.y, -look.z);
+    }
+  }
+  const XMATRIX44& view = camera->View;
+  const float sx = sunWorld.x * view.m[0][0] + sunWorld.y * view.m[1][0] + sunWorld.z * view.m[2][0];
+  const float sy = sunWorld.x * view.m[0][1] + sunWorld.y * view.m[1][1] + sunWorld.z * view.m[2][1];
+  const float sz = sunWorld.x * view.m[0][2] + sunWorld.y * view.m[1][2] + sunWorld.z * view.m[2][2];
+  const float sl = std::sqrt(sx * sx + sy * sy + sz * sz);
+  const float inv = sl > 1e-6f ? 1.0f / sl : 1.0f;
+  // Toward the light is -travelDirection.
+  value.sunDirection[0] = -sx * inv;
+  value.sunDirection[1] = -sy * inv;
+  value.sunDirection[2] = -sz * inv;
+  value.sunColor[0] = sunColor.x;
+  value.sunColor[1] = sunColor.y;
+  value.sunColor[2] = sunColor.z;
+  std::memcpy(value.viewProjection, &camera->VP, sizeof(value.viewProjection));
+  // Camera basis in world space: the shader reconstructs world-space normals and the
+  // reflected direction from the view-space normal it derives from the depth field.
+  value.cameraRight[0] = camera->Right.x;
+  value.cameraRight[1] = camera->Right.y;
+  value.cameraRight[2] = camera->Right.z;
+  value.cameraUp[0] = camera->Up.x;
+  value.cameraUp[1] = camera->Up.y;
+  value.cameraUp[2] = camera->Up.z;
+  value.cameraForward[0] = camera->Look.x;
+  value.cameraForward[1] = camera->Look.y;
+  value.cameraForward[2] = camera->Look.z;
+  CopyWords(value, constants);
+  return true;
+}
+
 ComputeConstantsBuilder ResolveConstantsBuilder(std::string_view value) {
   if (value.empty()) return nullptr;
   if (value == "god_rays") return BuildGodRaysConstants;
@@ -273,6 +572,10 @@ ComputeConstantsBuilder ResolveConstantsBuilder(std::string_view value) {
   if (value == "bright") return BuildBrightConstants;
   if (value == "hdr_composite") return BuildHDRCompositeConstants;
   if (value == "torch_particles") return BuildTorchParticleConstants;
+  if (value == "fluid_particles") return BuildFluidParticleConstants;
+  if (value == "particle_splat") return BuildParticleSplatConstants;
+  if (value == "particle_smooth") return BuildParticleSmoothConstants;
+  if (value == "particle_shade") return BuildParticleShadeConstants;
   return nullptr;
 }
 
@@ -339,6 +642,23 @@ const std::vector<ComputeKernelDefinition>& Kernels() {
           return std::vector<ComputeKernelDefinition>{};
         }
         kernel.bindings.push_back(layout);
+      }
+      // D3D12 root-signature budget, visible on every backend so a 4K-only or D3D-only
+      // failure is not discovered on device. Root constants cost 1 DWORD per value, root
+      // SRV/UAV descriptors 2, descriptor tables 1. The D3D12 backend moves the cbuffer
+      // to a root CBV when this exceeds 64.
+      uint32_t d3d12RootCost = 0;
+      for (const ComputeBindingLayoutDesc& layout : kernel.bindings) {
+        switch (layout.type) {
+          case ComputeBindingType::Constants32:   d3d12RootCost += layout.constantCount; break;
+          case ComputeBindingType::ReadOnlyBuffer:
+          case ComputeBindingType::ReadWriteBuffer: d3d12RootCost += 2u; break;
+          default:                                 d3d12RootCost += 1u; break;
+        }
+      }
+      if (d3d12RootCost > 64u) {
+        T8_LOG_INFO("[ComputeKernelRegistry] Kernel '%s' needs %u D3D12 root DWORDs (>64); "
+                    "its cbuffer is bound as a root CBV", kernel.sourceName.c_str(), d3d12RootCost);
       }
       result.push_back(std::move(kernel));
     }

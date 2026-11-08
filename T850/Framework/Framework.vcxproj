@@ -93,6 +93,9 @@
     <ClInclude Include="include\terrain\HeightmapMesh.h" />
     <ClInclude Include="include\scene\RenderGraph.h" />
     <ClInclude Include="include\simulation\FluidSimulation.h" />
+    <ClInclude Include="include\simulation\PbfFluid.h" />
+    <ClInclude Include="include\simulation\PoolLayoutJson.h" />
+    <ClInclude Include="include\scene\ParticleSystem.h" />
     <ClInclude Include="include\simulation\FluidDebugRenderer.h" />
     <ClInclude Include="include\scene\RenderGraphDescriptor.h" />
     <ClInclude Include="include\scene\SceneDescriptor.h" />
@@ -303,6 +306,8 @@
     <ClCompile Include="src\terrain\HeightmapMesh.cpp" />
     <ClCompile Include="src\scene\RenderGraph.cpp" />
     <ClCompile Include="src\simulation\FluidSimulation.cpp" />
+    <ClCompile Include="src\simulation\PbfFluid.cpp" />
+    <ClCompile Include="src\scene\ParticleSystem.cpp" />
     <ClCompile Include="src\simulation\FluidDebugRenderer.cpp" />
     <ClCompile Include="src\scene\SceneDescriptor.cpp" />
     <ClCompile Include="src\scene\SceneSetup.cpp" />

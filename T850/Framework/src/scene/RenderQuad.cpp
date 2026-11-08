@@ -214,7 +214,9 @@ namespace t850 {
       PassType::DOF, PassType::DOF_2, PassType::BACKBUFFER,
       PassType::GOD_RAY_CALCULATION, PassType::GOD_RAY_BLEND,
       PassType::SSAO, PassType::RAY_MARCH, PassType::LIGHT_ADD, PassType::FADE,
-      PassType::LENS_FLARE_SUN, PassType::LENS_FLARE_GHOST, PassType::CASCADE_DEBUG
+      PassType::LENS_FLARE_SUN, PassType::LENS_FLARE_GHOST, PassType::CASCADE_DEBUG,
+      // Translucent particle layers: sampled slot0 (particles) + slot1 (scene), straight-over.
+      PassType::PARTICLE_COMPOSITE
     };
     for (uint8_t p : simplePasses) {
       ShaderKey k(sigBase.bits);

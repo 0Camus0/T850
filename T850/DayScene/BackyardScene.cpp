@@ -25,13 +25,14 @@
 #endif
 
 namespace {
-  constexpr const char* kSceneDescriptorPath = "Scenes/BackyardScene.json";
-  constexpr const char* kRenderGraphPath = "Scenes/BackyardScene_RenderGraph.json";
+  // The descriptor and render-graph paths are members (m_descriptorPath /
+  // m_renderGraphPath) so Backyard8Scene can inherit every loader and point them at its
+  // own copies of the JSON. See BackyardScene::BackyardScene().
   // W-11: the water tunables file. Separate from the scene descriptor because glaze
   // cannot be included in SceneDescriptor.h without breaking DayScene.cpp (see
   // BackyardWaterJson.h).
-  constexpr const char* kWaterTunablesPath = "Scenes/BackyardWater.json";
-  constexpr const char* kBallPalettePath = "Scenes/BackyardBallMaterials.json";
+  // Water tunables and ball palette paths are members too (m_waterTunablesPath /
+  // m_ballPalettePath).
   // Mouse drag limits: the steering speed bounds the solver's boundary velocity and its
   // substep count; the ceiling keeps a held ball within sight of the pool.
   constexpr float kMaxDragSpeed = 6.0f;          // m/s
@@ -114,13 +115,23 @@ namespace {
 }
 
 int BackyardScene::s_spawnOnStart = 0;
+bool BackyardScene::s_hudHidden = false;
 uint32_t BackyardScene::s_spawnSeed = 0;
 int BackyardScene::s_massAuditFrames = 0;
 int BackyardScene::s_ballProbeFrames = 0;
 bool BackyardScene::s_pickTest = false;
 bool BackyardScene::s_padTest = false;
 
-BackyardScene::BackyardScene() = default;
+BackyardScene::BackyardScene()
+    : BackyardScene("Scenes/BackyardScene.json", "Scenes/BackyardScene_RenderGraph.json",
+                    "Scenes/BackyardWater.json", "Scenes/BackyardBallMaterials.json") {}
+
+BackyardScene::BackyardScene(const char* descriptorPath, const char* renderGraphPath,
+                             const char* waterTunablesPath, const char* ballPalettePath)
+    : m_descriptorPath(descriptorPath ? descriptorPath : ""),
+      m_renderGraphPath(renderGraphPath ? renderGraphPath : ""),
+      m_waterTunablesPath(waterTunablesPath ? waterTunablesPath : ""),
+      m_ballPalettePath(ballPalettePath ? ballPalettePath : "") {}
 
 void BackyardScene::InitVars() {
   m_deltaSeconds = 0.0f;
@@ -137,15 +148,15 @@ void BackyardScene::InitVars() {
   m_sheenELUTTexture = -1;
 
   SceneProp = SceneProps{};
-  if (!m_sceneSetup.Load(kSceneDescriptorPath)) {
-    throw std::runtime_error(std::string("Backyard scene requires a valid descriptor: ") + kSceneDescriptorPath);
+  if (!m_sceneSetup.Load(m_descriptorPath.c_str())) {
+    throw std::runtime_error(std::string("Backyard scene requires a valid descriptor: ") + m_descriptorPath);
   }
   // W-11: the water tunables come from Scenes/BackyardWater.json (see BackyardWaterJson.h
   // for why they are not inline in the scene descriptor). A bad key is fatal so a typo
   // never silently falls back to a default.
-  if (!t850::LoadBackyardWaterTunables(kWaterTunablesPath, SceneProp.Water)) {
+  if (!t850::LoadBackyardWaterTunables(m_waterTunablesPath.c_str(), SceneProp.Water)) {
     throw std::runtime_error(std::string("Backyard scene has an invalid water tunables file: ") +
-                             kWaterTunablesPath);
+                             m_waterTunablesPath);
   }
   // W-22: a non-zero spawnSeed reproduces a spawn sequence; 0 draws a fresh seed so
   // each run differs. --backyard-spawn-seed overrides the JSON value for tests.
@@ -193,7 +204,7 @@ void BackyardScene::InitVars() {
   m_dumper.Init(dumpConfig);
 
   T8_LOG_INFO("[Backyard] Descriptor '%s' ready: %zu camera(s), %zu light camera(s), %d light(s)",
-              kSceneDescriptorPath,
+              m_descriptorPath.c_str(),
               m_sceneSetup.cameras.size(),
               m_sceneSetup.lightCameras.size(),
               SceneProp.ActiveLights);
@@ -213,12 +224,12 @@ void BackyardScene::CreateAssets() {
 
   t850::RenderContainerDesc descriptor;
   descriptor.name = m_sceneSetup.name.empty() ? "Backyard" : m_sceneSetup.name;
-  descriptor.renderGraphPath = kRenderGraphPath;
+  descriptor.renderGraphPath = m_renderGraphPath;
   descriptor.width = driver->width;
   descriptor.height = driver->height;
   descriptor.sceneProps = &SceneProp;
   if (!m_renderContainer.Initialize(driver, pEngineContext, descriptor)) {
-    T8_LOG_ERROR("[Backyard] Render container initialization failed for '%s'", kRenderGraphPath);
+    T8_LOG_ERROR("[Backyard] Render container initialization failed for '%s'", m_renderGraphPath.c_str());
     return;
   }
   m_renderContainer.SetMainCamera(&m_camera);
@@ -309,6 +320,9 @@ void BackyardScene::CreateAssets() {
 }
 
 bool BackyardScene::RebuildFluid() {
+  // Backyard8 inherits everything but the fluid: it must never build the VOF solver
+  // (that would allocate the 3D volumes and overwrite the particle surface binding).
+  if (!UsesVofFluid()) return false;
   if (!pFramework || !pFramework->pVideoDriver) return false;
   t850::BaseDriver* driver = pFramework->pVideoDriver;
   EndBallDrag();
@@ -586,7 +600,7 @@ float BackyardScene::NextSpawnRandom() {
 
 void BackyardScene::LoadBallPalette() {
   DestroyBallMaterials();
-  if (!t850::LoadBackyardBallPalette(kBallPalettePath, m_ballPalette)) {
+  if (!t850::LoadBackyardBallPalette(m_ballPalettePath.c_str(), m_ballPalette)) {
     m_ballPalette = t850::BackyardBallPalette{};
     return;
   }
@@ -605,7 +619,7 @@ void BackyardScene::LoadBallPalette() {
     T8_LOG_INFO("[Backyard] Ball palette: only %zu of %zu materials are on disk; run "
                 "scripts/DownloadTextures.ps1 to fetch the rest", m_ballPalette.materials.size(), listed);
   } else {
-    T8_LOG_INFO("[Backyard] Ball palette: %zu materials from '%s'", listed, kBallPalettePath);
+    T8_LOG_INFO("[Backyard] Ball palette: %zu materials from '%s'", listed, m_ballPalettePath.c_str());
   }
 }
 
@@ -1204,13 +1218,13 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
   if (s_padTest && !m_padTestDone) RunPadTestStep();
   // A grid change needs new 3D textures; everything else can be retuned in place.
   const t850::WaterTunables& w = SceneProp.Water;
-  if (m_fluidReady &&
+  if (m_fluidReady && UsesVofFluid() &&
       (std::fabs(w.cellSize - m_appliedCellSize) > 1e-6f ||
        w.gridWidth != m_appliedGridWidth || w.gridHeight != m_appliedGridHeight ||
        w.gridDepth != m_appliedGridDepth)) {
     RebuildFluid();
   }
-  if (m_fluidReady && pFramework && pFramework->pVideoDriver) {
+  if (m_fluidReady && UsesVofFluid() && pFramework && pFramework->pVideoDriver) {
     m_fluid.SetPressureIterations(static_cast<uint32_t>(w.EffectivePressureIterations()));
     m_fluid.SetSurfaceLevel((std::min)((std::max)(w.surfaceLevel, 0.02f), 0.99f));
     m_fluid.SetSOROmega((std::min)((std::max)(w.sorOmega, 1.0f), 1.99f));
@@ -1233,7 +1247,8 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
     m_elapsedSeconds += deltaSeconds;
     {
       t850::FluidSphere& sphere = m_fluid.DroppedSphere();
-      if (!sphere.enabled && w.sphereEnabled && m_elapsedSeconds >= m_sphereReleaseDelay) {
+      if (!sphere.enabled && w.sphereEnabled && StartModeUsesBall() &&
+          m_elapsedSeconds >= m_sphereReleaseDelay) {
         sphere.enabled = true;
         T8_LOG_INFO("[Backyard] Sphere released at y=%.2f radius=%.2f density=%.2f mass=%.2f kg (impact speed %.2f m/s)",
                     sphere.y, sphere.radius, sphere.densityRatio, w.SphereMassKg(),
@@ -1243,7 +1258,7 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
       // physics responds but there is nothing on screen to see doing it.
       if (m_ballHandle.IsValid()) {
         if (t850::PrimitiveInst* ball = m_renderContainer.GetMesh(m_ballHandle)) {
-          if (w.sphereEnabled) {
+          if (w.sphereEnabled && StartModeUsesBall()) {
             ball->SetVisible(true);
             ball->TranslateAbsolute(sphere.x, sphere.y, sphere.z);
             ball->ScaleAbsolute(sphere.radius, sphere.radius, sphere.radius);
@@ -2145,6 +2160,9 @@ void BackyardScene::OnDraw() {
         {m_renderContainer.Graph().GetRTHandle("GBuffer"), t850::BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
         {m_renderContainer.Graph().GetRTHandle("Deferred"), t850::BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
         {m_renderContainer.Graph().GetRTHandle("ExtraHelper"), t850::BaseDriver::COLOR0_ATTACHMENT, "HDR_Final"},
+        // Scene 8 draws the fluid through the particle pass; dumping its target is the only
+        // way to tell "the splat wrote nothing" from "the composite dropped it".
+        {m_renderContainer.Graph().GetRTHandle("FluidParticles"), t850::BaseDriver::COLOR0_ATTACHMENT, "FluidParticles"},
         // W-10: the forward pass draws the water into Deferred's own depth buffer, so
         // this holds exactly the visible water surface (opaque depth is GBuffer:DEPTH).
         // CoC takes the nearer of the two. With DOF on, the DOF pass re-pushes Deferred
@@ -2160,6 +2178,8 @@ void BackyardScene::DrawGameplayGui(t850::DevGuiContext&) {
   // Called every frame just before DrawDevGui, which only runs while the runtime GUI is open.
   m_runtimeGuiOpen = m_devGuiDrawnThisFrame;
   m_devGuiDrawnThisFrame = false;
+  // Hidden on request (--backyard-no-hud) so the water fills the frame unobstructed.
+  if (s_hudHidden) return;
   DrawGrabCrosshair();
   DrawQuickBar();
 #ifdef OS_ANDROID

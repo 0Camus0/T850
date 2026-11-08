@@ -161,12 +161,36 @@ bool GLComputePipeline::Create(const ComputePipelineDesc& desc) {
   }
   glslang::TProgram reflectionProgram;
   reflectionProgram.addShader(&reflectionShader);
-  if (!reflectionProgram.link(messages)) return false;
+  if (!reflectionProgram.link(messages)) {
+    T8_LOG_ERROR("[GL][Compute] Reflection link failed for '%s': %s", desc.debugName.c_str(),
+                 reflectionProgram.getInfoLog());
+    return false;
+  }
   std::vector<uint32_t> spirv;
   glslang::GlslangToSpv(*reflectionProgram.getIntermediate(EShLangCompute), spirv);
   std::vector<ComputeBindingLayoutDesc> reflected;
-  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize, true) ||
-      !SetValidatedLayout(desc, reflected, true) || !CompileComputeProgram(desc, source, program)) return false;
+  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize, true)) {
+    T8_LOG_ERROR("[GL][Compute] ReflectComputeBindings failed for '%s'", desc.debugName.c_str());
+    return false;
+  }
+  if (!SetValidatedLayout(desc, reflected, true)) {
+    for (const ComputeBindingLayoutDesc& b : reflected) {
+      T8_LOG_ERROR("[GL][Compute] reflected '%s': type=%d reg=%u idx=%u count=%u dim=%d fmt=%d",
+                   desc.debugName.c_str(), static_cast<int>(b.type), b.shaderRegister, b.bindingIndex,
+                   b.constantCount, static_cast<int>(b.dimension), static_cast<int>(b.storageFormat));
+    }
+    for (const ComputeBindingLayoutDesc& b : desc.bindings) {
+      T8_LOG_ERROR("[GL][Compute] declared  '%s': type=%d reg=%u idx=%u count=%u dim=%d fmt=%d",
+                   desc.debugName.c_str(), static_cast<int>(b.type), b.shaderRegister, b.bindingIndex,
+                   b.constantCount, static_cast<int>(b.dimension), static_cast<int>(b.storageFormat));
+    }
+    T8_LOG_ERROR("[GL][Compute] SetValidatedLayout failed for '%s'", desc.debugName.c_str());
+    return false;
+  }
+  if (!CompileComputeProgram(desc, source, program)) {
+    T8_LOG_ERROR("[GL][Compute] CompileComputeProgram failed for '%s'", desc.debugName.c_str());
+    return false;
+  }
   GLint reflectedGroupSize[3] = {};
   glGetProgramiv(program, GL_COMPUTE_WORK_GROUP_SIZE, reflectedGroupSize);
   if (reflectedGroupSize[0] <= 0 || reflectedGroupSize[1] <= 0 || reflectedGroupSize[2] <= 0) {

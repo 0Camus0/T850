@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <scene/RenderGraph.h>
+#include <scene/ParticleSystem.h>
 #include <debug/GpuTimestampProfiler.h>
 #include <scene/RenderGraphDescriptor.h>
 #include <scene/SceneProp.h>
@@ -31,6 +32,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
@@ -87,6 +89,10 @@ std::optional<ComputeBindingType> ResolveComputeAccess(std::string_view access) 
   if (access == "sampled") return ComputeBindingType::ReadOnlyTexture;
   if (access == "storage_write") return ComputeBindingType::ReadWriteTexture;
   if (access == "sampler") return ComputeBindingType::Sampler;
+  // StructuredBuffer bindings, resolved from the graph's compute_buffers[] registry.
+  // "buffer_read" is a StructuredBuffer (tN), "buffer_write" is an RWStructuredBuffer (uN).
+  if (access == "buffer_read") return ComputeBindingType::ReadOnlyBuffer;
+  if (access == "buffer_write") return ComputeBindingType::ReadWriteBuffer;
   return std::nullopt;
 }
 
@@ -155,6 +161,7 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
   {"RADIAL_DEPTH_PASS",     PassType::RADIAL_DEPTH},
   {"LIGHT_RAY_MARCHING",    PassType::LIGHT_RAY_MARCHING},
   {"LIGHT_ADD",             PassType::LIGHT_ADD},
+  {"PARTICLE_COMPOSITE",    PassType::PARTICLE_COMPOSITE},
   {"FADE_PASS",             PassType::FADE},
   {"GOD_RAY_CALCULATION_PASS", PassType::GOD_RAY_CALCULATION},
   {"GOD_RAY_BLEND_PASS",    PassType::GOD_RAY_BLEND},
@@ -295,6 +302,142 @@ bool RenderGraph::Load(const std::string& path) {
   if (!LoadRenderGraphDescriptor(path, m_sourceDesc))
     return false;
 
+  // Expand "particles" passes: a pass that names a ParticleSystem gets the splat kernel and
+  // its bindings filled in from the system descriptor, so authors never hand-write the
+  // splat ABI. Everything downstream then sees an ordinary compute pass.
+  std::vector<ComputeBufferDescJson> particleBuffers;
+  std::vector<RenderPassDesc> expandedPasses;
+  expandedPasses.reserve(m_sourceDesc.passes.size() * 2);
+  for (RenderPassDesc& pass : m_sourceDesc.passes) {
+    if (pass.particle_system.empty()) {
+      expandedPasses.push_back(pass);
+      continue;
+    }
+    if (pass.execution == "graphics")
+      pass.execution = "compute_if_supported";
+    const ParticleSystemDesc* system = ParticleSystemRegistry::Instance().Find(pass.particle_system);
+    if (!system) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' references unknown particle system '%s'",
+                   pass.name.c_str(), pass.particle_system.c_str());
+      return false;
+    }
+    pass.compute_shader = "Shaders/CS_ParticleSplat.hlsl";
+    pass.compute_entry = "CS";
+    pass.compute_permutation = "base";
+    pass.compute_extent_from = pass.target;
+    if (!system->enabled || (system->source == ParticleSourceKind::Procedural && system->count <= 0)) {
+      pass.execution = "graphics";   // disabled system: nothing to dispatch
+      continue;
+    }
+    if (pass.compute_resources.empty()) {
+      // Buffers the splat kernel needs. A buffer-source system supplies its own positions;
+      // the graph always creates the projected/tile scratch and the camera matrix, sized
+      // from the dispatch extent.
+      const std::string positions = system->source == ParticleSourceKind::Buffer
+        ? system->buffer : ("__particle_positions_" + system->name);
+      const std::string velocities = system->source == ParticleSourceKind::Buffer
+        ? (system->velocity_buffer.empty() ? positions : system->velocity_buffer)
+        : ("__particle_positions_" + system->name);
+      const std::string projected = "__particle_projected_" + system->name;
+      const std::string tiles = "__particle_tiles_" + system->name;
+
+      auto addBuffer = [&](const std::string& name, int stride, int count, const char* accessVal) {
+        for (const ComputeBufferDescJson& existing : m_sourceDesc.compute_buffers)
+          if (existing.name == name) return;
+        for (const ComputeBufferDescJson& existing : particleBuffers)
+          if (existing.name == name) return;
+        ComputeBufferDescJson b;
+        b.name = name;
+        b.structure_stride = stride;
+        b.element_count = count;
+        b.access = accessVal;
+        b.clear = true;
+        particleBuffers.push_back(b);
+      };
+      const int count = system->buffer_count > 0 ? system->buffer_count
+                       : (system->count > 0 ? system->count : 4096);
+      if (system->source == ParticleSourceKind::Buffer && positions.rfind("__", 0) == 0)
+        addBuffer(positions, 16, count, "read_only");
+      if (velocities.rfind("__", 0) == 0) addBuffer(velocities, 16, count, "read_only");
+      addBuffer(projected, 16, count, "read_write");
+      // The tile buffer is indexed by TileCountX * TileCountY, which comes from the render
+      // target, NOT from the particle count. Sizing it from `count` under-allocated at
+      // 1080p (32,400 tiles needed vs 30,464) and would write out of bounds. "$window"
+      // sizes it from the viewport at creation; the per-tile word count is 1.
+      addBuffer(tiles, 4, 0, "read_write");
+      for (ComputeBufferDescJson& b : particleBuffers)
+        if (b.name == tiles) { b.size_ref = "$window_tiles"; b.element_count = 0; }
+
+      pass.compute_resources = {
+        {std::string("@kernel_constants"), "constants", 0},
+        {positions, "buffer_read", 0},
+        {projected, "buffer_write", 0},
+        {tiles, "buffer_write", 1},
+        // Soft-particle occlusion. The splat samples the opaque scene depth and fades
+        // splats behind it; without this binding the water draws over the pool coping,
+        // the deck and the house. `sampled` also records a graph edge from the GBuffer,
+        // so the pass cannot run before the depth it reads is written.
+        {"GBuffer:DEPTH", "sampled", 2},
+        {pass.target + ":COLOR0", "storage_write", 3},
+      };
+    }
+
+    // Two dispatches: stamp then resolve. A single compute dispatch has no grid-wide
+    // barrier, so the resolve pass could read tile bits that the stamp has not written yet,
+    // and with Iteration fixed at 0 the resolve never ran at all -- the target stayed empty.
+    RenderPassDesc stamp = pass;
+    stamp.name = pass.name + " (stamp)";
+    stamp.compute_permutation = "stamp";
+    expandedPasses.push_back(stamp);
+
+    RenderPassDesc resolve = pass;
+    resolve.name = pass.name + " (resolve)";
+    resolve.compute_permutation = "resolve";
+    expandedPasses.push_back(resolve);
+    continue;
+  }
+  // Any particle pass that was disabled above kept execution == graphics; keep it as-is.
+  if (!expandedPasses.empty()) {
+    size_t written = 0;
+    for (const RenderPassDesc& original : m_sourceDesc.passes) {
+      if (!original.particle_system.empty() && original.execution == "graphics") {
+        RenderPassDesc disabled = original;
+        expandedPasses.insert(expandedPasses.begin() + (std::min)(written, expandedPasses.size()), disabled);
+      }
+      ++written;
+    }
+  }
+  m_sourceDesc.passes = std::move(expandedPasses);
+  for (const ComputeBufferDescJson& b : particleBuffers)
+    m_sourceDesc.compute_buffers.push_back(b);
+
+  // Named compute buffers: names must be unique and non-empty, and every buffer needs a
+  // positive element count and a 4-byte-multiple stride (the driver rejects anything else).
+  std::unordered_set<std::string> computeBufferNames;
+  for (const ComputeBufferDescJson& buffer : m_sourceDesc.compute_buffers) {
+    if (buffer.name.empty() || !computeBufferNames.insert(buffer.name).second) {
+      T8_LOG_ERROR("[RenderGraph] Compute buffer names must be nonempty and unique: '%s'",
+                   buffer.name.c_str());
+      return false;
+    }
+    if (buffer.structure_stride <= 0 || buffer.structure_stride % 4 != 0) {
+      T8_LOG_ERROR("[RenderGraph] Compute buffer '%s' has invalid structure_stride %d (must be a positive multiple of 4)",
+                   buffer.name.c_str(), buffer.structure_stride);
+      return false;
+    }
+    // A size_ref'd buffer is sized at creation; otherwise element_count must be positive.
+    if (buffer.size_ref.empty() && buffer.element_count <= 0) {
+      T8_LOG_ERROR("[RenderGraph] Compute buffer '%s' needs element_count > 0 or a size_ref",
+                   buffer.name.c_str());
+      return false;
+    }
+    if (buffer.access != "read_only" && buffer.access != "read_write") {
+      T8_LOG_ERROR("[RenderGraph] Compute buffer '%s' has invalid access '%s' (read_only|read_write)",
+                   buffer.name.c_str(), buffer.access.c_str());
+      return false;
+    }
+  }
+
   std::unordered_map<std::string, const RTDesc*> renderTargets;
   for (const RTDesc& renderTarget : m_sourceDesc.render_targets) {
     if (renderTarget.name.empty() ||
@@ -385,9 +528,23 @@ bool RenderGraph::Load(const std::string& path) {
         std::unordered_map<int, std::string> sampledRegisters, samplerRegisters;
         std::string extentName;
         int extentIndex = 0;
-        if (!ParseRenderTargetReference(pass.compute_extent_from, extentName, extentIndex) ||
-          !renderTargets.count(extentName)) return false;
-        const RTDesc& extent = *renderTargets.at(extentName);
+        // The dispatch extent may come from a render target OR from a named compute buffer.
+        // A buffer gives a 1D dispatch of element_count threads along X, which is what every
+        // particle kernel in this engine wants.
+        bool extentIsBuffer = false;
+        const ComputeBufferDescJson* extentBuffer = nullptr;
+        for (const ComputeBufferDescJson& candidate : m_sourceDesc.compute_buffers)
+          if (candidate.name == pass.compute_extent_from) extentBuffer = &candidate;
+        if (extentBuffer) {
+          extentIsBuffer = true;
+        } else if (!ParseRenderTargetReference(pass.compute_extent_from, extentName, extentIndex) ||
+                   !renderTargets.count(extentName)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' compute_extent_from '%s' is neither a render target nor a compute buffer",
+                       pass.name.c_str(), pass.compute_extent_from.c_str());
+          return false;
+        }
+        const RTDesc* extentPtr = extentIsBuffer ? nullptr : renderTargets.at(extentName);
+        const RTDesc& extent = extentIsBuffer ? RTDesc{} : *extentPtr;
       for (const ComputeResourceDesc& resource : pass.compute_resources) {
         const std::optional<ComputeBindingType> type = ResolveComputeAccess(resource.access);
         if (!type || resource.shader_register < 0) {
@@ -408,6 +565,56 @@ bool RenderGraph::Load(const std::string& path) {
             T8_LOG_ERROR("[RenderGraph] Pass '%s' constants must use @kernel_constants",
                          pass.name.c_str());
             return false;
+          }
+          continue;
+        }
+
+        // A StructuredBuffer resource references compute_buffers[] by name. Names are
+        // distinguished from RT references by prefix-free lookup: if the string names a
+        // declared buffer, it is a buffer, otherwise it must parse as RT:ATTACHMENT.
+        if (*type == ComputeBindingType::ReadOnlyBuffer || *type == ComputeBindingType::ReadWriteBuffer) {
+          const auto bufferIt = m_sourceDesc.compute_buffers.end();
+          const ComputeBufferDescJson* declared = nullptr;
+          for (const ComputeBufferDescJson& candidate : m_sourceDesc.compute_buffers)
+            if (candidate.name == resource.resource) declared = &candidate;
+          (void)bufferIt;
+          // A buffer published by a subsystem (ParticleBufferRegistry) is valid even though
+          // the graph does not create it: the owner manages its lifetime.
+          // A buffer a ParticleSystem declares is owned by that system's subsystem and may
+          // be published after the graph loads (e.g. once a solver has seeded). Accept it by
+          // declaration; the dispatch path resolves the live pointer and fails loudly there
+          // if it is still missing.
+          bool declaredBySystem = false;
+          for (const ParticleSystemDesc& sys : ParticleSystemRegistry::Instance().Systems()) {
+            if (sys.buffer == resource.resource || sys.velocity_buffer == resource.resource) {
+              declaredBySystem = true;
+              break;
+            }
+          }
+          const bool externalBuffer = declaredBySystem ||
+            ParticleBufferRegistry::Instance().Find(resource.resource) != nullptr;
+          if (!declared && externalBuffer) continue;
+          if (!declared) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' references unknown compute buffer '%s' (declare it in compute_buffers[])",
+                         pass.name.c_str(), resource.resource.c_str());
+            return false;
+          }
+          // A read_write-created buffer may be bound read-only, but a read_only buffer may
+          // never be bound for writing: the driver validates the descriptor access too.
+          if (*type == ComputeBindingType::ReadWriteBuffer && declared->access != "read_write") {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' writes compute buffer '%s' declared read_only",
+                         pass.name.c_str(), resource.resource.c_str());
+            return false;
+          }
+          const std::string identity = "buffer:" + resource.resource;
+          if (*type == ComputeBindingType::ReadOnlyBuffer) {
+            sampledResources.insert(identity);
+          } else {
+            // A kernel may bind the SAME buffer twice for writing through different
+            // registers (e.g. ping-pong partners aliasing one allocation). Multiple writes
+            // to one buffer are legal for StructuredBuffers: each thread addresses its own
+            // element, unlike a storage texture which has a single dispatch-sized extent.
+            writtenResources.insert(identity);
           }
           continue;
         }
@@ -440,7 +647,8 @@ bool RenderGraph::Load(const std::string& path) {
             layout = &kernel->bindings[index];
         if (!layout) return false;
         if (attachment == BaseDriver::DEPTH_ATTACHMENT && renderTarget.depth_format == "CUBE_F32") return false;
-        if ((layout->matchOutputExtent || *type == ComputeBindingType::ReadWriteTexture) &&
+        if (!extentIsBuffer &&
+            (layout->matchOutputExtent || *type == ComputeBindingType::ReadWriteTexture) &&
             (renderTarget.size != extent.size || renderTarget.size_ref != extent.size_ref)) {
           T8_LOG_ERROR("[RenderGraph] Pass '%s' resource '%s' must match its dispatch extent", pass.name.c_str(), resource.resource.c_str());
           return false;
@@ -494,9 +702,15 @@ bool RenderGraph::Load(const std::string& path) {
       }
       std::string extentTarget;
       int extentAttachment = BaseDriver::COLOR0_ATTACHMENT;
-      if (!ParseRenderTargetReference(pass.compute_extent_from,
-                                      extentTarget, extentAttachment) ||
-          !writtenResources.count(ResourceIdentity(extentTarget, extentAttachment))) {
+      if (extentIsBuffer) {
+        if (!writtenResources.count("buffer:" + pass.compute_extent_from)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' compute_extent_from buffer '%s' is not written by this pass",
+                       pass.name.c_str(), pass.compute_extent_from.c_str());
+          return false;
+        }
+      } else if (!ParseRenderTargetReference(pass.compute_extent_from,
+                                             extentTarget, extentAttachment) ||
+                 !writtenResources.count(ResourceIdentity(extentTarget, extentAttachment))) {
         T8_LOG_ERROR("[RenderGraph] Pass '%s' compute_extent_from must name a storage output",
                      pass.name.c_str());
         return false;
@@ -696,6 +910,59 @@ bool RenderGraph::Configure(
   return true;
 }
 
+// Creates the graph's named compute buffers. Called with the render targets, on the render
+// thread, so the buffers share their lifetime with the RTs.
+bool RenderGraph::CreateComputeBuffers(BaseDriver* driver, int widthOverride, int heightOverride) {
+  m_computeBuffers.clear();
+  m_computeBufferHandles.clear();
+  m_computeBufferDescs = m_sourceDesc.compute_buffers;
+  if (!driver) return true;
+
+  for (const ComputeBufferDescJson& spec : m_computeBufferDescs) {
+    ComputeBufferDesc desc;
+    desc.structureStride = static_cast<uint32_t>(spec.structure_stride);
+    int elements = spec.element_count;
+    if (!spec.size_ref.empty()) {
+      // "$window" scales the element count by the current viewport pixel count, which is how
+      // a per-pixel particle buffer follows resolution changes without re-authoring the JSON.
+      const int w = widthOverride > 0 ? widthOverride : driver->width;
+      const int h = heightOverride > 0 ? heightOverride : driver->height;
+      if (spec.size_ref == "$window") {
+        elements = (std::max)(w * h, 1);
+      } else if (spec.size_ref == "$window_tiles") {
+        // One word per 8x8 pixel tile of the viewport, plus one tile row/col of slack so
+        // rounding at the edge cannot index past the end.
+        const int tx = (std::max)(w, 1) / 8 + 1;
+        const int ty = (std::max)(h, 1) / 8 + 1;
+        elements = tx * ty;
+      }
+    }
+    if (elements <= 0) elements = 1;
+    desc.byteWidth = static_cast<uint32_t>(elements) * desc.structureStride;
+    desc.access = spec.access == "read_only" ? ComputeBufferAccess::ReadOnly : ComputeBufferAccess::ReadWrite;
+    desc.debugName = "GraphBuffer:" + spec.name;
+
+    std::vector<uint32_t> zero;
+    const void* initial = nullptr;
+    if (spec.clear) {
+      zero.assign(static_cast<size_t>(desc.byteWidth) / sizeof(uint32_t), 0u);
+      initial = zero.data();
+    }
+    std::unique_ptr<ComputeBuffer> buffer = driver->CreateComputeBuffer(desc, initial);
+    if (!buffer) {
+      T8_LOG_ERROR("[RenderGraph] Cannot create compute buffer '%s' (%d x %u bytes)",
+                   spec.name.c_str(), elements, desc.structureStride);
+      return false;
+    }
+    m_computeBufferHandles.emplace(spec.name, static_cast<int>(m_computeBuffers.size()));
+    m_computeBuffers.push_back(std::move(buffer));
+    T8_LOG_INFO("[RenderGraph] Compute buffer '%s': %d elements x %u bytes (%s)",
+                spec.name.c_str(), elements, desc.structureStride,
+                spec.access == "read_only" ? "read_only" : "read_write");
+  }
+  return true;
+}
+
 bool RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props) {
   return CreateRenderTargets(driver, props, 0, 0);
 }
@@ -832,6 +1099,12 @@ bool RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
                 rt.color_format.c_str(), rt.depth_format.c_str());
   }
 
+  // Named compute buffers share the RT lifetime and the resolved viewport dimensions.
+  if (!CreateComputeBuffers(driver, widthOverride, heightOverride)) {
+    DestroyRenderTargets(driver);
+    return false;
+  }
+
   // Now that RT handles are resolved, build the DAG
   m_initializedTargetsPending = true;
   BuildGraph();
@@ -841,6 +1114,9 @@ bool RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
 
 void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
   m_initializedTargetsPending = true;
+  // Compute buffers share the RT lifetime.
+  m_computeBuffers.clear();
+  m_computeBufferHandles.clear();
   const bool hasResources = !m_rtHandles.empty() || !m_computePipelines.empty();
   m_computePipelines.clear();
   if (driver && hasResources) driver->FlushGPUResources();
@@ -871,6 +1147,7 @@ void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
 void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
   m_computePipelines.clear();
   m_loggedComputeDispatches.clear();
+  m_failedComputeTargets.clear();
   if (!driver)
     return;
 
@@ -881,20 +1158,36 @@ void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
     const ComputeKernelDefinition* kernel = FindComputeKernel(pass.compute_shader);
     if (!kernel)
       continue;
-    if (g_config.postProcessMode != Config::PostProcessMode::Compute) {
+    // A particle pass is compute-only: the splat has no raster implementation, and its
+    // `draws` list is empty. Gating it on postProcessMode meant the default (Raster) config
+    // created no pipeline and drew nothing at all, logged only at INFO. postProcessMode
+    // selects between CS and PS versions of *optional* effects; it cannot make a particle
+    // pass renderable, so it must not disable it.
+    // An explicit screen-space particle pass declares `particle_context` instead of
+    // `particle_system`; it is just as compute-only.
+    const bool computeOnly = !pass.particle_system.empty() || !pass.particle_context.empty();
+    if (!computeOnly && g_config.postProcessMode != Config::PostProcessMode::Compute) {
       T8_LOG_INFO("[RenderGraph] Pass '%s' using graphics implementation by post-process mode on API=%s",
                   pass.name.c_str(), driver->ApiTag());
       continue;
     }
     if (!driver->SupportsComputeTextures()) {
-      T8_LOG_INFO("[RenderGraph] Pass '%s' using raster fallback on API=%s",
-                  pass.name.c_str(), driver->ApiTag());
+      if (computeOnly) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' is compute-only but API=%s cannot bind compute "
+                     "textures; the pass will draw nothing",
+                     pass.name.c_str(), driver->ApiTag());
+        m_failedComputeTargets.insert(pass.target);
+      } else {
+        T8_LOG_INFO("[RenderGraph] Pass '%s' using raster fallback on API=%s",
+                    pass.name.c_str(), driver->ApiTag());
+      }
       continue;
     }
     std::string source;
     if (!ResourceLocator::Instance().ReadText(pass.compute_shader, source)) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot load compute shader '%s'",
                    pass.name.c_str(), pass.compute_shader.c_str());
+      if (computeOnly) m_failedComputeTargets.insert(pass.target);
       continue;
     }
 
@@ -907,12 +1200,14 @@ void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
     std::unique_ptr<ComputePipeline> pipeline = driver->CreateComputePipeline(pipelineDesc);
     if (!pipeline) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' failed to create compute pipeline", pass.name.c_str());
+      if (computeOnly) m_failedComputeTargets.insert(pass.target);
       continue;
     }
     if (!pipeline->threadGroupSize[0] || !pipeline->threadGroupSize[1] ||
         !pipeline->threadGroupSize[2]) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' created a pipeline without reflected workgroup dimensions",
                    pass.name.c_str());
+      if (computeOnly) m_failedComputeTargets.insert(pass.target);
       continue;
     }
     m_computePipelines[node.index] = std::move(pipeline);
@@ -933,19 +1228,38 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     return false;
   }
 
-  const ResolvedTexture extentResource = ResolveTextureInput(pass.compute_extent_from);
-  if (extentResource.is_builtin || extentResource.rt_handle < 0 ||
-      extentResource.rt_handle >= static_cast<int>(driver->RTs.size()) ||
-      !driver->RTs[extentResource.rt_handle]) {
-    T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute extent resource",
-                 pass.name.c_str());
-    return false;
-  }
-  BaseRT* outputRT = driver->RTs[extentResource.rt_handle];
-  if (outputRT->w <= 0 || outputRT->h <= 0) {
-    T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute output dimensions %dx%d",
-                 pass.name.c_str(), outputRT->w, outputRT->h);
-    return false;
+  // Dispatch extent: a render target gives a 2D (x,y) grid, a named compute buffer gives a
+  // 1D grid of element_count threads. `extentW`/`extentH` are what the dispatch uses.
+  BaseRT* outputRT = nullptr;
+  uint32_t extentW = 0, extentH = 0;
+  const auto bufferExtentIt = m_computeBufferHandles.find(pass.compute_extent_from);
+  if (bufferExtentIt != m_computeBufferHandles.end()) {
+    const int index = bufferExtentIt->second;
+    if (index < 0 || index >= static_cast<int>(m_computeBuffers.size()) || !m_computeBuffers[index]) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute extent buffer '%s'",
+                   pass.name.c_str(), pass.compute_extent_from.c_str());
+      return false;
+    }
+    const ComputeBufferDesc& desc = m_computeBuffers[index]->descriptor;
+    extentW = desc.structureStride > 0 ? desc.byteWidth / desc.structureStride : 1u;
+    extentH = 1u;
+  } else {
+    const ResolvedTexture extentResource = ResolveTextureInput(pass.compute_extent_from);
+    if (extentResource.is_builtin || extentResource.rt_handle < 0 ||
+        extentResource.rt_handle >= static_cast<int>(driver->RTs.size()) ||
+        !driver->RTs[extentResource.rt_handle]) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute extent resource",
+                   pass.name.c_str());
+      return false;
+    }
+    outputRT = driver->RTs[extentResource.rt_handle];
+    if (outputRT->w <= 0 || outputRT->h <= 0) {
+      T8_LOG_ERROR("[RenderGraph] Pass '%s' has invalid compute output dimensions %dx%d",
+                   pass.name.c_str(), outputRT->w, outputRT->h);
+      return false;
+    }
+    extentW = static_cast<uint32_t>(outputRT->w);
+    extentH = static_cast<uint32_t>(outputRT->h);
   }
 
   std::vector<ComputeBindingDesc> bindings;
@@ -961,9 +1275,16 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     if (*type == ComputeBindingType::Constants32) {
       ComputeKernelConstantsContext constantsContext;
       constantsContext.sceneProps = &props;
-      constantsContext.outputWidth = static_cast<uint32_t>(outputRT->w);
-      constantsContext.outputHeight = static_cast<uint32_t>(outputRT->h);
+      constantsContext.outputWidth = extentW;
+      constantsContext.outputHeight = extentH;
+      constantsContext.frameIndex = m_frameIndex;
       constantsContext.permutation = pass.compute_permutation;
+      // Particle passes need the system name so their constants come from that descriptor
+      // rather than from loose SceneProps globals. A screen-space pass names the system in
+      // `particle_context`; the splat pass names it in `particle_system`.
+      constantsContext.particleSystem = !pass.particle_system.empty()
+          ? std::string_view(pass.particle_system) : std::string_view(pass.particle_context);
+      constantsContext.passStage = pass.compute_stage;
       std::string error;
       if (!BuildComputeConstants(*kernel, constantsContext, constantWords, error)) {
         T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot build constants: %s",
@@ -972,6 +1293,20 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
       }
       binding.constants = constantWords.data();
       binding.constantCount = static_cast<uint32_t>(constantWords.size());
+    } else if (*type == ComputeBindingType::ReadOnlyBuffer || *type == ComputeBindingType::ReadWriteBuffer) {
+      const auto bufferIt = m_computeBufferHandles.find(resource.resource);
+      if (bufferIt != m_computeBufferHandles.end() && bufferIt->second >= 0 &&
+          bufferIt->second < static_cast<int>(m_computeBuffers.size()) &&
+          m_computeBuffers[bufferIt->second]) {
+        binding.buffer = m_computeBuffers[bufferIt->second].get();
+      } else if (ComputeBuffer* external = ParticleBufferRegistry::Instance().Find(resource.resource)) {
+        // A buffer owned by a subsystem (a solver, a simulation) and published by name.
+        binding.buffer = external;
+      } else {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot resolve compute buffer '%s'",
+                     pass.name.c_str(), resource.resource.c_str());
+        return false;
+      }
     } else {
       const ResolvedTexture resolved = ResolveTextureInput(resource.resource);
       if (resolved.is_builtin || resolved.rt_handle < 0 ||
@@ -988,7 +1323,7 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
         if (layout.type == binding.type && layout.shaderRegister == binding.shaderRegister &&
             (layout.matchOutputExtent || layout.type == ComputeBindingType::ReadWriteTexture)) {
           const auto* target = driver->RTs[resolved.rt_handle];
-          if (!target || target->w != outputRT->w || target->h != outputRT->h) return false;
+          if (!outputRT || !target || target->w != outputRT->w || target->h != outputRT->h) return false;
         }
       }
     }
@@ -996,15 +1331,76 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
   }
 
   const std::array<uint32_t, 3>& threads = pipelineIt->second->threadGroupSize;
-  const uint32_t groupsX = (static_cast<uint32_t>(outputRT->w) + threads[0] - 1u) / threads[0];
-  const uint32_t groupsY = (static_cast<uint32_t>(outputRT->h) + threads[1] - 1u) / threads[1];
+  // A normal 2D dispatch for every compute pass, particles included. Particle kernels used to
+  // be forced into a 1D grid over W*H threads, which exceeds the 65535-groups-per-dimension
+  // limit above 4.2 MP (3440x1440, 3840x2160) and silently drew nothing there. The splat
+  // kernel derives its flat index from id.xy instead.
+  uint32_t groupsX = (extentW + threads[0] - 1u) / threads[0];
+  uint32_t groupsY = (extentH + threads[1] - 1u) / threads[1];
+  // Every backend caps a dispatch at 65535 groups per dimension (D3D11/D3D12 hard limit,
+  // Vulkan min guarantee). A large 1D buffer dispatch must fail loudly here rather than
+  // silently dispatch a truncated grid.
+  constexpr uint32_t kMaxDispatchGroups = 65535u;
+  if (groupsX > kMaxDispatchGroups || groupsY > kMaxDispatchGroups) {
+    T8_LOG_ERROR("[RenderGraph][DispatchTooLarge] pass='%s' extent=%ux%u groups=%ux%u backend=%s "
+                 "(max %u per dimension; enlarge the kernel's group size or split the work)",
+                 pass.name.c_str(), extentW, extentH, groupsX, groupsY, driver->ApiTag(),
+                 kMaxDispatchGroups);
+    return false;
+  }
   const uint32_t groupsZ = (static_cast<uint32_t>(pass.compute_depth) + threads[2] - 1u) / threads[2];
   const bool dispatched = driver->DispatchCompute(
     *pipelineIt->second, bindings, groupsX, groupsY, groupsZ);
+  // Backend-agnostic particle probe. Set T850_PARTICLE_DEBUG=1 to read the stamp's
+  // scratch buffers back after every stamp dispatch and log what it actually wrote.
+  // This is how a backend-specific binding/stride problem is separated from the shader.
+  if (dispatched && std::getenv("T850_PARTICLE_DEBUG") &&
+      pass.name.find("(stamp)") != std::string::npos) {
+    for (const auto& entry : m_computeBufferHandles) {
+      const std::string& bufferName = entry.first;
+      const bool projected = bufferName.rfind("__particle_projected_", 0) == 0;
+      const bool tiles = bufferName.rfind("__particle_tiles_", 0) == 0;
+      if (!projected && !tiles) continue;
+      const int handle = entry.second;
+      if (handle < 0 || handle >= static_cast<int>(m_computeBuffers.size()) ||
+          !m_computeBuffers[handle]) continue;
+      const ComputeBufferDesc& desc = m_computeBuffers[handle]->descriptor;
+      const uint32_t elements = desc.structureStride ? desc.byteWidth / desc.structureStride : 0;
+      std::vector<uint8_t> raw(desc.byteWidth);
+      if (!driver->ReadComputeBuffer(*m_computeBuffers[handle], raw.data(), raw.size())) {
+        T8_LOG_INFO("[ParticleProbe] '%s' readback failed (%u bytes)", bufferName.c_str(), desc.byteWidth);
+        continue;
+      }
+      if (projected && desc.structureStride == 16) {
+        const float* p = reinterpret_cast<const float*>(raw.data());
+        uint32_t live = 0;
+        float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f, minZ = 1e9f, maxZ = -1e9f;
+        for (uint32_t i = 0; i < elements; ++i) {
+          const float u = p[i * 4 + 0], v = p[i * 4 + 1], z = p[i * 4 + 2];
+          if (z <= 0.0f) continue;
+          ++live;
+          minU = (std::min)(minU, u); maxU = (std::max)(maxU, u);
+          minV = (std::min)(minV, v); maxV = (std::max)(maxV, v);
+          minZ = (std::min)(minZ, z); maxZ = (std::max)(maxZ, z);
+        }
+        T8_LOG_INFO("[ParticleProbe] projected: live=%u/%u uv=[%.3f..%.3f, %.3f..%.3f] z=[%.2f..%.2f]",
+                    live, elements, minU, maxU, minV, maxV, minZ, maxZ);
+      } else if (tiles && desc.structureStride == 4) {
+        const uint32_t* w = reinterpret_cast<const uint32_t*>(raw.data());
+        uint32_t current = 0, nonzero = 0;
+        for (uint32_t i = 0; i < elements; ++i) {
+          if (w[i] == m_frameIndex) ++current;
+          if (w[i] != 0u) ++nonzero;
+        }
+        T8_LOG_INFO("[ParticleProbe] tiles: frame=%u current=%u nonzero=%u total=%u",
+                    m_frameIndex, current, nonzero, elements);
+      }
+    }
+  }
   if (dispatched && m_loggedComputeDispatches.insert(node.index).second) {
     T8_LOG_INFO("[RenderGraph] Pass '%s' dispatched compute %u x %u x %u for %dx%dx%d output",
           pass.name.c_str(), groupsX, groupsY, groupsZ,
-          outputRT->w, outputRT->h, pass.compute_depth);
+          static_cast<int>(extentW), static_cast<int>(extentH), pass.compute_depth);
   }
   return dispatched;
 }
@@ -1231,6 +1627,11 @@ void RenderGraph::Execute(
     m_initializedTargetsPending = false;
   }
 
+  // One monotonic counter per Execute. Particle kernels stamp it into their per-tile buffer so
+  // tiles touched in earlier frames stop being treated as live (no per-frame clear needed).
+  // Start at 1 so a freshly created, zeroed buffer never matches.
+  if (++m_frameIndex == 0) m_frameIndex = 1;
+
   for (int meshIndex = 0; meshes && meshIndex < meshCount; ++meshIndex) {
     if (!meshes[meshIndex].Visible) continue;
     RenderSkinnedMesh* skinned = meshes[meshIndex].GetSkinnedMesh();
@@ -1288,6 +1689,20 @@ void RenderGraph::ExecutePass(
   T8_LOG_TRACE("[RenderGraph] Begin pass='%s' target=%d finalOutput=%d push=%d pop=%d execution=%s currentRT=%d",
                pass.name.c_str(), node.rt_handle, finalOutputRT, pass.push ? 1 : 0,
                pass.pop ? 1 : 0, pass.execution.c_str(), driver ? driver->CurrentRT : -1);
+  // If a compute-only pass could not get a pipeline, its target holds no data. Skip any pass
+  // that samples it rather than compositing an empty or undefined texture.
+  if (!m_failedComputeTargets.empty()) {
+    for (const TextureInput& input : pass.inputs) {
+      const size_t colon = input.source.find(':');
+      const std::string target = colon == std::string::npos
+          ? input.source : input.source.substr(0, colon);
+      if (m_failedComputeTargets.count(target)) {
+        T8_LOG_INFO("[RenderGraph] Skipping pass '%s': input '%s' has no compute output",
+                    pass.name.c_str(), input.source.c_str());
+        return;
+      }
+    }
+  }
   ScopedPrimaryCameraOverride cameraScope(props);
 #if T850_ENABLE_PROFILING
   ProfileScopeGuard profilePass(t850::g_profiler, node.profileScope);

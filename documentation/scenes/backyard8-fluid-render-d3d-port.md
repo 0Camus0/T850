@@ -1,8 +1,9 @@
 # Backyard Scene 8: Fluid Rendering Fixes and the D3D11/D3D12 Port
 
-Status: **Vulkan on Linux** (RTX PRO 6000) and, since 2026-11-09, **D3D12 and D3D11 natively on
-Windows** (RTX 4080 Laptop) are verified. OpenGL has **not** been run. Sections 5 and 6 were
-executed; their results are in section 10.
+Status: **Vulkan on Linux** (RTX PRO 6000) and, since 2026-11-09, **D3D12, D3D11 and GL
+natively on Windows** (RTX 4080 Laptop) are verified. **Linux GL is not supported by the current
+Linux build** (Vulkan-only), although the OS driver is present. Sections 5 and 6 were executed;
+their results are in section 10.
 
 Update (same day): the particle renderer's default style is now **water** (particles blended
 into water through their thickness, section 2.2); the lit spheres became the **spheres** debug
@@ -244,8 +245,16 @@ The six GL twins were regenerated on Linux with the documented pipeline
 -DT850_GL=1`, then `spirv-cross --version 430 --no-es --combined-samplers-inherit-bindings`,
 banner with the HLSL SHA-256, CRLF). If any HLSL changes during the port, regenerate with
 `scripts/shaders/generate_gl_compute_twins.ps1 -Kernel <stem> -Force` and run
-`python scripts/validation/check_gl_twins.py --shaders Assets/Shaders`. GL itself has not been
-run with these changes; run the section 7 captures with `--api gl` when convenient.
+`python scripts/validation/check_gl_twins.py --shaders Assets/Shaders`.
+
+Windows GL has been run with these changes (native OpenGL 4.6, NVIDIA 576.52): all nine
+captures, 4K and the selftest pass. **Linux GL is not supported by the current Linux build**:
+`Framework/CMakeLists.txt` compiles `src/video/gl/*` only under `WIN32`, and
+`LinuxFramework.cpp` always creates `VulkanDriver`, so `--api gl` falls back to Vulkan. The
+Linux OS driver itself is present (EGL probe: NVIDIA RTX PRO 6000, OpenGL 4.6, driver
+615.71.09). Enabling Linux GL needs a desktop GLX/EGL context plus GL driver selection in
+`LinuxFramework`; the existing `GLDriver.cpp` `OS_LINUX` path is GBM/EGL GLES3 surfaceless,
+not the GL 4.3 path the GLSL-430 twins require. That is a separate port, not a build flag.
 
 ## 7. Verification protocol
 
@@ -314,8 +323,9 @@ Pass criteria per backend:
 - **Frames 90 and 300**: the solver is not bit-deterministic after impact (GPU atomics order;
   two Vulkan runs differ by about 6 levels mean absolute per pixel), so compare statistics only:
   pixel count within 2%, mean within 5 levels. The **frame-90 splash bbox is not a stable
-  statistic**: three Vulkan runs gave y_min 81, 115 and 115 (a 34 px spread), and the Windows
-  runs gave 112-113. Accept a frame-90 bbox difference up to ~40 px and confirm the look;
+  statistic**: three Vulkan runs gave y_min 81, 115 and 115 (a 34 px spread), the Windows D3D
+  runs gave 112-113, and GL gave 90-101. Accept a frame-90 bbox difference up to ~40 px and
+  confirm the look;
   frame 300 bbox is stable (0-1 px).
 - **Normal signs** (screen space, frame 24, `screenSpace.debugView: 1` in a copy of the config,
   passed with `--fluid-config <abs path>`): run the quadrant test from
@@ -354,6 +364,7 @@ Also capture one frame at 3840x2160 per backend: `Fluid Clear` must log `dispatc
 | Spheres mode empty | Key buffer read as zeros or sentinel | `Fluid Clear` → `Fluid Splat` → `Fluid Sphere Shade` order; UAV-to-SRV transition of `__fluid_depth_bits_*` |
 | `[DispatchTooLarge] pass='Fluid Clear'` at 4K | 1D dispatch over the per-pixel buffer | Graph dispatches `"$window"` buffers as width x height; clear kernel is `[numthreads(8, 8, 1)]` |
 | Config rejected at 1:1 `expected_brace` | UTF-8 BOM in the `--fluid-config` JSON | Save UTF-8 without BOM; glaze rejects the BOM |
+| Linux `--api gl` renders with Vulkan | Linux build has no GL backend | Expected; see 6.3. Do not count it as a GL pass. |
 | Spheres in the wrong order or flickering | Key packing differs | 17 index bits and the log2 depth constants identical in `CS_FluidSplat` and `CS_FluidSphereShade` |
 | Water style invisible or a uniform flat tint | Thickness not summed or not bound | `CS_FluidSplat` adds thickness in both modes; `__fluid_thickness_bits_*` at `t2`; UAV-to-SRV transition |
 | Water style: radial spikes or stripes inside the falling sphere | Normal kernel aliasing | Normal from the dense 9x9 `ThicknessGradient9`, not the sparse 5x5 field |
@@ -408,7 +419,11 @@ Also capture one frame at 3840x2160 per backend: `Fluid Clear` must log `dispatc
 | D3D11 4K, frame 90 | `Fluid Clear` 480 x 270, no `DispatchTooLarge`, no errors |
 | D3D11 selftest | 78 PASS, 0 FAIL |
 | D3D11 FXC pipelines | 10/10 PBF pipelines created; no compile failure, no graphics fallback |
-| OpenGL | **not run** |
+| Windows GL (native OpenGL 4.6, NVIDIA 576.52), 9 captures | PASS: frame 24 within 0.04% px, exact bbox, 1.9 levels; frames 90/300 within 0.72%, 2.6 levels; frame-90 bbox within Vulkan's spread |
+| Windows GL compute pipelines | all PBF/fluid GLSL twins loaded and dispatched; no shader compile failure |
+| Windows GL 4K, frame 90 | `Fluid Clear` 480 x 270, no `DispatchTooLarge` |
+| Windows GL selftest | 78 PASS / 0 FAIL |
+| Linux GL | OS driver present (NVIDIA OpenGL 4.6, 615.71.09); engine Linux build has no GL backend, `--api gl` falls back to Vulkan |
 
 Windows frame-24 fluid layer at 960x540 (Vulkan reference in parentheses):
 
@@ -416,5 +431,6 @@ Windows frame-24 fluid layer at 960x540 (Vulkan reference in parentheses):
 |---|---|---|---|
 | D3D12 | 219,018 (219,014) | 219,020 (219,007) | 219,022 (219,011) |
 | D3D11 | 219,017 (219,014) | 219,022 (219,007) | 219,018 (219,011) |
+| GL | 219,102 (219,014) | 219,095 (219,007) | 219,099 (219,011) |
 
 All frame-24 bounding boxes are identical to Vulkan; mean-channel deltas are 0.04-1.24 levels.

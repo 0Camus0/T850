@@ -1,8 +1,8 @@
 # Backyard Scene 8 (PBF water): Work Summary and Next Steps
 
 Date: 2026-11-09. Platform verified: **Vulkan on Linux** (Ubuntu, RTX PRO 6000, driver 615);
-**D3D12 and D3D11 natively on Windows** (RTX 4080 Laptop) were added later the same day.
-OpenGL has not been run.
+**D3D12, D3D11 and GL natively on Windows** (RTX 4080 Laptop) were added later. **Linux GL is
+not supported by the current Linux build** (Vulkan-only), although the OS driver is present.
 
 This is the record of one working session on the particle-fluid scene. The commit that adds this
 file also contains the diagnosis-3 implementation that other agents had left uncommitted on top
@@ -107,7 +107,7 @@ The diagnosis-3 implementation rendered lumpy "cellophane" water. Fixed:
   [diagnosis-3-implementation.md](diagnosis-3-implementation.md) (superseded note),
   [../README.md](../README.md), `T850/BUILD-UBUNTU.md`.
 
-## 2. Verification (Vulkan, Linux)
+## 2. Verification (Vulkan/Linux; D3D12/D3D11/GL Windows)
 
 | Check | Result |
 |---|---|
@@ -125,6 +125,9 @@ The diagnosis-3 implementation rendered lumpy "cellophane" water. Fixed:
 | D3D12/D3D11 4K | `Fluid Clear` 480 x 270, no `DispatchTooLarge` |
 | D3D12/D3D11 selftest | 78 PASS / 0 FAIL |
 | D3D11 FXC | 10/10 PBF pipelines, no compile failure or graphics fallback |
+| GL native Windows, 9 captures | PASS on pixels/mean; frame-90 bbox within Vulkan's spread (port guide §10) |
+| GL 4K / selftest | 480 x 270 clear; 78 PASS / 0 FAIL |
+| Linux GL | OS driver present (NVIDIA OpenGL 4.6, 615.71.09); engine Linux build has no GL backend, `--api gl` falls back to Vulkan |
 
 ## 2.1 Phase 1 results (2026-11-09)
 
@@ -264,10 +267,12 @@ Conventions for every step below:
 
 ### 3.1 Run D3D12, D3D11 and OpenGL
 
-> **D3D12 and D3D11 done (2026-11-09, native Windows):** Release x64 build succeeded; all nine
-> captures per API pass; 4K clears 480 x 270; selftest 78 PASS / 0 FAIL; FXC compiled all ten PBF
-> pipelines with no fallback. The Windows checkout was source-synced from this tree, not pushed.
-> OpenGL remains: the Linux build has no OpenGL path, so it must be run on Windows.
+> **D3D12, D3D11 and GL done (native Windows):** Release x64 build succeeded; all nine captures
+> per API pass; 4K clears 480 x 270; selftest 78 PASS / 0 FAIL; FXC compiled all ten PBF
+> pipelines, and GL runs native OpenGL 4.6 (NVIDIA 576.52) with all GLSL twins. The Windows
+> checkout was source-synced from this tree, not pushed. **Linux GL remains a port, not a run:**
+> the OS driver exists (NVIDIA OpenGL 4.6), but the Linux build compiles GL sources only on
+> Windows and `LinuxFramework` always creates Vulkan. See port guide §6.3.
 
 1. Sync the tree to the Windows build checkout. Pushing is not required; a source tarball of
    `T850` plus `Assets/Shaders`, `Assets/Scenes` and the Backyard assets is sufficient.

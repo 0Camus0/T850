@@ -1,7 +1,8 @@
 # Backyard Scene 8 (PBF water): Work Summary and Next Steps
 
-Date: 2026-11-09. Platform verified: **Vulkan on Linux only** (Ubuntu, RTX PRO 6000, driver
-615). D3D12, D3D11 and OpenGL have **not** been run with any of this work.
+Date: 2026-11-09. Platform verified: **Vulkan on Linux** (Ubuntu, RTX PRO 6000, driver 615);
+**D3D12 and D3D11 natively on Windows** (RTX 4080 Laptop) were added later the same day.
+OpenGL has not been run.
 
 This is the record of one working session on the particle-fluid scene. The commit that adds this
 file also contains the diagnosis-3 implementation that other agents had left uncommitted on top
@@ -119,6 +120,11 @@ The diagnosis-3 implementation rendered lumpy "cellophane" water. Fixed:
 | Settled water level, both starts | -0.035 to -0.045 m (scene 7: -0.040 m) |
 | Frame time, 1920x1080, unpaced | resting pool 2.7 ms, drop 3.2 ms (was 2.3 ms with 15k particles) |
 | Real-time GUI controls | **code review only**; no slider was dragged in a test |
+| D3D12 native Windows, 9 captures | PASS on pixels/mean; frame-90 bbox within Vulkan's own spread (port guide §10) |
+| D3D11 native Windows, 9 captures | PASS on pixels/mean; frame-90 bbox within Vulkan's own spread (port guide §10) |
+| D3D12/D3D11 4K | `Fluid Clear` 480 x 270, no `DispatchTooLarge` |
+| D3D12/D3D11 selftest | 78 PASS / 0 FAIL |
+| D3D11 FXC | 10/10 PBF pipelines, no compile failure or graphics fallback |
 
 ## 2.1 Phase 1 results (2026-11-09)
 
@@ -258,10 +264,13 @@ Conventions for every step below:
 
 ### 3.1 Run D3D12, D3D11 and OpenGL
 
-Nothing in this work ran on Windows, and the Linux build has no OpenGL path.
+> **D3D12 and D3D11 done (2026-11-09, native Windows):** Release x64 build succeeded; all nine
+> captures per API pass; 4K clears 480 x 270; selftest 78 PASS / 0 FAIL; FXC compiled all ten PBF
+> pipelines with no fallback. The Windows checkout was source-synced from this tree, not pushed.
+> OpenGL remains: the Linux build has no OpenGL path, so it must be run on Windows.
 
-1. Push `master` from this machine (`git push origin master`; it is 2+ commits ahead of
-   `origin/master`) or open a pull request, then pull it on the Windows machine.
+1. Sync the tree to the Windows build checkout. Pushing is not required; a source tarball of
+   `T850` plus `Assets/Shaders`, `Assets/Scenes` and the Backyard assets is sufficient.
 2. From `T850\`: `.\scripts\build.ps1 -Config Release -Platform x64 -Action Build`. Expect
    `BUILD SUCCEEDED`.
 3. From `T850\bin\x64\Release`, run the capture loop of the port guide, section 7, with

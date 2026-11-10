@@ -1,9 +1,8 @@
 # Backyard Scene 8: Fluid Rendering Fixes and the D3D11/D3D12 Port
 
-Status: fixed and verified on **Vulkan only** (Linux, RTX PRO 6000, 2026-11-09), on top of the
-uncommitted [diagnosis-3](diagnosis-3.md) implementation. D3D12, D3D11 and OpenGL have **not**
-been run with these changes. This document is the work order for porting and verifying them:
-follow sections 5 to 8 in order and report every result as pass, fail or not run.
+Status: **Vulkan on Linux** (RTX PRO 6000) and, since 2026-11-09, **D3D12 and D3D11 natively on
+Windows** (RTX 4080 Laptop) are verified. OpenGL has **not** been run. Sections 5 and 6 were
+executed; their results are in section 10.
 
 Update (same day): the particle renderer's default style is now **water** (particles blended
 into water through their thickness, section 2.2); the lit spheres became the **spheres** debug
@@ -181,6 +180,9 @@ Refraction, Specular` (8); `FresnelPower, ThicknessScale, InvPackingFactor, Pad0
 
 ## 5. Port to D3D12 (do this first)
 
+> **Done 2026-11-09 (native Windows):** Release x64 build succeeded; all nine captures pass;
+> 4K clears 480 x 270; selftest 78 PASS. See section 10.
+
 D3D12 matched Vulkan before this change (diagnosis-3 E2), and nothing here is
 D3D12-specific, so this should be a build-and-verify step.
 
@@ -200,6 +202,10 @@ root CBV, logged at INFO) and that the new `t3` (shade) and `t1`..`t4` (sphere) 
 sphere's `s3` sampler get descriptor-table or root-descriptor slots like the other kernels.
 
 ## 6. Port to D3D11
+
+> **Done 2026-11-09 (native Windows):** FXC `cs_5_0` compiled all ten PBF pipelines, including
+> the new `SolidBoxes` bindings on the density and update-velocity kernels. No X3511, compile
+> failure or graphics fallback; captures pass. See section 10.
 
 ### 6.1 Compiler rules (FXC, `cs_5_0`)
 
@@ -307,7 +313,10 @@ Pass criteria per backend:
   need deterministic ordering inside each grid cell.
 - **Frames 90 and 300**: the solver is not bit-deterministic after impact (GPU atomics order;
   two Vulkan runs differ by about 6 levels mean absolute per pixel), so compare statistics only:
-  pixel count within 2%, bounding box within 5 px, mean within 5 levels.
+  pixel count within 2%, mean within 5 levels. The **frame-90 splash bbox is not a stable
+  statistic**: three Vulkan runs gave y_min 81, 115 and 115 (a 34 px spread), and the Windows
+  runs gave 112-113. Accept a frame-90 bbox difference up to ~40 px and confirm the look;
+  frame 300 bbox is stable (0-1 px).
 - **Normal signs** (screen space, frame 24, `screenSpace.debugView: 1` in a copy of the config,
   passed with `--fluid-config <abs path>`): run the quadrant test from
   [diagnosis-3 section 9](diagnosis-3.md#9-verification-helpers). Vulkan: left -0.51 / 99%,
@@ -344,6 +353,7 @@ Also capture one frame at 3840x2160 per backend: `Fluid Clear` must log `dispatc
 | No reflections, uniform tint | Reflection march never hits | `reflectionDistance > 0`; scene depth readable at `t3` |
 | Spheres mode empty | Key buffer read as zeros or sentinel | `Fluid Clear` → `Fluid Splat` → `Fluid Sphere Shade` order; UAV-to-SRV transition of `__fluid_depth_bits_*` |
 | `[DispatchTooLarge] pass='Fluid Clear'` at 4K | 1D dispatch over the per-pixel buffer | Graph dispatches `"$window"` buffers as width x height; clear kernel is `[numthreads(8, 8, 1)]` |
+| Config rejected at 1:1 `expected_brace` | UTF-8 BOM in the `--fluid-config` JSON | Save UTF-8 without BOM; glaze rejects the BOM |
 | Spheres in the wrong order or flickering | Key packing differs | 17 index bits and the log2 depth constants identical in `CS_FluidSplat` and `CS_FluidSphereShade` |
 | Water style invisible or a uniform flat tint | Thickness not summed or not bound | `CS_FluidSplat` adds thickness in both modes; `__fluid_thickness_bits_*` at `t2`; UAV-to-SRV transition |
 | Water style: radial spikes or stripes inside the falling sphere | Normal kernel aliasing | Normal from the dense 9x9 `ThicknessGradient9`, not the sparse 5x5 field |
@@ -371,7 +381,7 @@ Also capture one frame at 3840x2160 per backend: `Fluid Clear` must log `dispatc
 - The legacy splat resolve (wireframe/flat debug styles, additive) still loops over every
   particle per covered pixel.
 
-## 10. Verification done on Vulkan (2026-11-09)
+## 10. Verification done on Vulkan and Windows (2026-11-09)
 
 | Check | Result |
 |---|---|
@@ -390,4 +400,21 @@ Also capture one frame at 3840x2160 per backend: `Fluid Clear` must log `dispatc
 | Phase 1: water level, 1800 frames | −0.0406 m (settle-before-drop, `prefillLevel -0.27`) |
 | Phase 1: water frame 6 | settled pool, no lattice rows |
 | Phase 1: two frame-24 runs | not identical (4,915 px, max 171); grid atomic order |
-| D3D12, D3D11, OpenGL | **not run** |
+| Windows Release x64 build (native) | BUILD SUCCEEDED (02:55); Dawn metadata refreshed |
+| D3D12 screen space / water / spheres, frames 24/90/300 | PASS: frame 24 within 0.01% px, 0 px bbox, 1.0 level; frames 90/300 within 0.5% px, 1.0 level; frame-90 bbox within Vulkan's own 34 px spread |
+| D3D12 4K, frame 90 | `Fluid Clear` 480 x 270, no `DispatchTooLarge`, no errors |
+| D3D12 selftest | 78 PASS, 0 FAIL |
+| D3D11 screen space / water / spheres, frames 24/90/300 | PASS: frame 24 within 0.01% px, 0 px bbox, 1.3 levels; frames 90/300 within 0.9% px, 1.3 levels; frame-90 bbox within Vulkan's spread |
+| D3D11 4K, frame 90 | `Fluid Clear` 480 x 270, no `DispatchTooLarge`, no errors |
+| D3D11 selftest | 78 PASS, 0 FAIL |
+| D3D11 FXC pipelines | 10/10 PBF pipelines created; no compile failure, no graphics fallback |
+| OpenGL | **not run** |
+
+Windows frame-24 fluid layer at 960x540 (Vulkan reference in parentheses):
+
+| API | Screen space | Water | Spheres |
+|---|---|---|---|
+| D3D12 | 219,018 (219,014) | 219,020 (219,007) | 219,022 (219,011) |
+| D3D11 | 219,017 (219,014) | 219,022 (219,007) | 219,018 (219,011) |
+
+All frame-24 bounding boxes are identical to Vulkan; mean-channel deltas are 0.04-1.24 levels.

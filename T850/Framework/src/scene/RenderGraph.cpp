@@ -1397,6 +1397,15 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
           !m_computeBuffers[handle]) continue;
       const ComputeBufferDesc& desc = m_computeBuffers[handle]->descriptor;
       const uint32_t elements = desc.structureStride ? desc.byteWidth / desc.structureStride : 0;
+      // The projected table is sized to buffer_capacity (131072), not the live particle count.
+      // Probe only the live prefix, otherwise every stamp readback scans 131k entries.
+      uint32_t probeElements = elements;
+      if (projected) {
+        const std::string prefix = "__particle_projected_";
+        const std::string systemName = bufferName.substr(prefix.size());
+        if (const ParticleSystemDesc* system = ParticleSystemRegistry::Instance().Find(systemName))
+          probeElements = (std::min)(elements, static_cast<uint32_t>((std::max)(system->buffer_count, 0)));
+      }
       std::vector<uint8_t> raw(desc.byteWidth);
       if (!driver->ReadComputeBuffer(*m_computeBuffers[handle], raw.data(), raw.size())) {
         T8_LOG_INFO("[ParticleProbe] '%s' readback failed (%u bytes)", bufferName.c_str(), desc.byteWidth);
@@ -1406,7 +1415,7 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
         const float* p = reinterpret_cast<const float*>(raw.data());
         uint32_t live = 0;
         float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f, minZ = 1e9f, maxZ = -1e9f;
-        for (uint32_t i = 0; i < elements; ++i) {
+        for (uint32_t i = 0; i < probeElements; ++i) {
           const float u = p[i * 4 + 0], v = p[i * 4 + 1], z = p[i * 4 + 2];
           if (z <= 0.0f) continue;
           ++live;
@@ -1414,8 +1423,8 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
           minV = (std::min)(minV, v); maxV = (std::max)(maxV, v);
           minZ = (std::min)(minZ, z); maxZ = (std::max)(maxZ, z);
         }
-        T8_LOG_INFO("[ParticleProbe] projected: live=%u/%u uv=[%.3f..%.3f, %.3f..%.3f] z=[%.2f..%.2f]",
-                    live, elements, minU, maxU, minV, maxV, minZ, maxZ);
+        T8_LOG_INFO("[ParticleProbe] projected: live=%u/%u (capacity %u) uv=[%.3f..%.3f, %.3f..%.3f] z=[%.2f..%.2f]",
+                    live, probeElements, elements, minU, maxU, minV, maxV, minZ, maxZ);
       } else if (tiles && desc.structureStride == 4) {
         const uint32_t* w = reinterpret_cast<const uint32_t*>(raw.data());
         uint32_t current = 0, nonzero = 0;

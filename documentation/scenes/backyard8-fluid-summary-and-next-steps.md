@@ -1,6 +1,6 @@
 # Backyard Scene 8 (PBF water): Work Summary and Next Steps
 
-Date: 2026-11-09. Platform verified: **Vulkan on Linux** (Ubuntu, RTX PRO 6000, driver 615);
+Date: 2026-11-09, updated 2026-11-10. Platform verified: **Vulkan on Linux** (Ubuntu, RTX PRO 6000, driver 615);
 **D3D12, D3D11 and GL natively on Windows** (RTX 4080 Laptop) were added later. **Linux GL is
 not supported by the current Linux build** (Vulkan-only), although the OS driver is present.
 
@@ -249,6 +249,37 @@ performance trade-off; regression must use tolerances for now.
 - **3.1** D3D12/D3D11/GL still need the session-1 Windows run (the host has a console session;
   see the plan).
 
+## 2.2 Final 2026-11-10 pass: 2×6, automation, small items
+
+This section supersedes the earlier 2×3 numbers where they differ.
+
+- **Solver is now 2 substeps × 6 iterations** (was 3). `solverIterations: 6`, lake
+  `restingLevel: -0.02`, water `prefillLevel: -0.27`. Measured: mean density error **1.27%**
+  (was 2.50%), lake level **−0.0438 m**, water level **−0.0398 m**, selftest 78/0. Cost is
+  roughly +0.5 ms lake / +0.8 ms water at 1080p. The 2×12 option reached 0.66% but costs
+  ~+1.4 ms and needs the GUI iteration limit raised; 4×3/6×3 were rejected because the water
+  start needs a visibly low pre-drop pool.
+- **Vulkan references re-frozen** at 960x540 for screen space / water / spheres at frames
+  24/90/300. The port guide section 7 and `scripts/validation/backyard8_references.json` are
+  the canonical tables.
+- **D3D12, D3D11 and GL re-run** on native Windows against the new references: all 27 captures
+  pass; max pixel delta 1.25%, max mean delta 2.92 levels, frame-24 bbox exact. Frame-90 bbox
+  is chaotic on every backend (Vulkan/GL y_min 73–119), so the gate is 55 px there.
+- **4K** `Fluid Clear` 480 x 270, no `DispatchTooLarge`, on all three Windows APIs; selftest
+  78/0 each.
+- **Automation added:** `scripts/validation/backyard8_regression.py` runs the nine captures and
+  the two 1800-frame level checks; `pbf_water_level.py` is the standalone level checker;
+  `backyard8_references.json` holds the references and tolerances. Vulkan run: PASS.
+- **3.7** seeding sliders now re-seed 0.2 s after the drag stops instead of every frame.
+- **3.10** unused `LatticeGradSq` variable removed; `[ParticleProbe]` scans only the live
+  particle prefix; wireframe/flat (styles 1/2) moved to the nearest-particle sphere-shade path,
+  leaving the legacy resolve only for additive blending.
+
+Remaining: 3.2 needs a human at the GUI; 3.5 recycling is optional (10.7k culled, level
+correct); 3.8 bit-exactness needs deterministic cell ordering; 3.9 needs Steam Deck hardware
+(desktop 1080p is ~2.2–2.7 ms); 4.1–4.4 are features; Linux GL is a backend port (driver exists,
+engine build is Vulkan-only).
+
 ## 3. Next fixes (in priority order)
 
 Conventions for every step below:
@@ -434,6 +465,9 @@ The wind drag in `T850/Assets/Shaders/CS_PbfIntegrate.hlsl` (wind block, around 
 
 ### 3.7 Cheaper re-seeding while dragging
 
+> **Done 2026-11-10:** 0.2 s debounce, immediate Restart/start-mode. The drag itself still
+> needs a GUI hand test.
+
 Seeding sliders re-seed every frame of a drag (30 ms, or 250 ms with the settle).
 
 1. Add `float m_reseedDelay = -1.0f;` to `T850/DayScene/Backyard8Scene.h`.
@@ -474,6 +508,9 @@ near 0.9, and float summation order decides which way.
 
 ### 3.9 Low-end performance (Steam Deck)
 
+> **Not run:** no Steam Deck hardware in this session. Desktop 1080p with 2×6 is ~2.2 ms lake /
+> ~2.7 ms water (whole frame, splat); a Deck measurement and packaging still need the device.
+
 1. Build and package for the Deck with `T850/steamdeck/BuildSteamRuntime.sh` and
    `T850/steamdeck/PackageSteamDeckRelease.sh`, and run there at 1280x800.
 2. Measure the frame time (section 5.4) for lake and water, with the screen-space and the
@@ -488,6 +525,11 @@ near 0.9, and float summation order decides which way.
 4. Verify: under budget and the captures still look right.
 
 ### 3.10 Small items
+
+> **Done 2026-11-10:** unused `LatticeGradSq` variable removed, `[ParticleProbe]` bounded to the
+> live count, wireframe/flat moved to `CS_FluidSphereShade` (styles 1/2). The new debug styles
+> show rings/flat discs on the nearest-particle path; the old per-particle resolve remains only
+> for additive blending.
 
 - `T850/Framework/src/simulation/PbfFluid.cpp`, `LatticeGradSq()`: delete the unused
   `const double k = ...` (compiler warning `-Wunused-variable`).
@@ -554,6 +596,9 @@ From [diagnosis-3.md](diagnosis-3.md), phases 4 and 6:
 
 ### 4.5 Automated Vulkan regression
 
+> **Done 2026-11-10:** references in `scripts/validation/backyard8_references.json`; runner in
+> `scripts/validation/backyard8_regression.py`; Vulkan run PASS (9 captures + 2 levels).
+
 1. Store the port guide's section-7 table as `T850/scripts/validation/backyard8_references.json`.
 2. Add `T850/scripts/validation/backyard8_regression.py`: run the nine captures (three
    renderers x frames 24, 90, 300, with `--backyard-start water`), compute the statistics, and
@@ -562,6 +607,9 @@ From [diagnosis-3.md](diagnosis-3.md), phases 4 and 6:
 3. Run it in CI on a Vulkan-capable runner, or before every commit that touches scene 8.
 
 ### 4.6 Water-level check
+
+> **Done 2026-11-10:** `scripts/validation/pbf_water_level.py <csv>` enforces
+> −0.040 ± 0.015 m; the regression runner calls it for lake and water.
 
 Turn the snippet in section 5.2 into `T850/scripts/validation/pbf_water_level.py <csv>` that
 fails outside -0.040 +/- 0.015 m, and run it at frame 1800 for `lake` and `water`.

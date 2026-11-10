@@ -315,7 +315,6 @@ namespace {
   // neighbourhood, in the same normalised units as the density kernel.
   double LatticeGradSq(double h, double spacing, double restScale) {
     if (h <= 0.0 || spacing <= 0.0) return 1.0;
-    const double k = 315.0 / (64.0 * 3.141592653589793 * std::pow(h, 9.0));
     const double gk2 = 45.0 / (3.141592653589793 * std::pow(h, 6.0)) / (restScale > 0.0 ? restScale : 1.0);
     const int n = static_cast<int>(std::ceil(h / spacing));
     double total = 0.0;

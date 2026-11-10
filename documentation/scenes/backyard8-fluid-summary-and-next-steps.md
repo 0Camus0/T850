@@ -120,6 +120,114 @@ The diagnosis-3 implementation rendered lumpy "cellophane" water. Fixed:
 | Frame time, 1920x1080, unpaced | resting pool 2.7 ms, drop 3.2 ms (was 2.3 ms with 15k particles) |
 | Real-time GUI controls | **code review only**; no slider was dragged in a test |
 
+## 2.1 Phase 1 results (2026-11-09)
+
+Baseline tagged `backyard8-phase0-baseline` (commit `1544474`) before any Phase 1 edit. All
+numbers below are Vulkan on the RTX PRO 6000, fixed 1/60 s.
+
+### 3.4 Free-surface compaction — done with `restDensityScale 0.907`
+
+With `restingLevel: 0` and `startMode: lake`, the settled level against the rest-density target
+(1800 frames, measured from the particle dump):
+
+| `restDensityScale` | Settled level |
+|---|---|
+| 1.000 | −0.191 m |
+| 0.980 | −0.162 m |
+| 0.960 | −0.129 m |
+| 0.940 | −0.093 m |
+| 0.920 | −0.055 m |
+| 0.912 | −0.041 m |
+| 0.911 | −0.039 m |
+| 0.907 + wall no-slip 8 | **−0.043 m** |
+
+The suggested 0.98–0.94 range is not enough; the target is ~0.91. The shipped value is
+**0.907**, which also covers the small level drop from the wall no-slip term. `restingLevel` is
+now **0.0** in the JSON and the C++ defaults. Stability held across the sweep: `rhoMean` tracks
+the target and `maxSpeed` stayed below 0.9 m/s. Experiment B (relaxed-block kernel
+normalisation) was not needed because the splash at 0.907 matches the 1.0 reference at frames
+24/90/300.
+
+### 3.6 Pool never still — wind fixed, but wind was not the whole cause
+
+`CS_PbfIntegrate` now uses physical air drag
+(`WindStrength * 1.56e-6 * |rel.xz| / ParticleRadius`), `windStrength` is a config key and a
+GUI slider (0–50). Wind by itself did **not** make the pool still: `windStrength` 1 and 20 gave
+the same mean speed. The dump showed a persistent **wall-driven circulation** — ~0.335 m/s
+downward in the one-particle wall layer, ~0.13 m/s at the surface — present at both rest
+densities. The analytic boundary was free-slip: it kept particles out of the wall but let the
+wall layer slide down it.
+
+Added the missing no-slip half of the boundary model in `CS_PbfUpdateVelocity.hlsl`: the solid
+is a neighbour with zero velocity and the same missing weight `D(d)` as the density pass, so
+`v_i += c * D(d) * (0 - v_i)`. The strength is `solver.wallFriction` (1 = the fluid's XSPH
+coefficient; 8 shipped). Measured on the settled lake (1800 frames):
+
+| `wallFriction` | Surface \|v\| | Wall layer \|v\| | Lake level |
+|---|---|---|---|
+| 0 (free slip) | 0.130 | 0.335 | — |
+| 1 | 0.066 | 0.181 | −0.0445 m |
+| 2 | 0.047 | 0.125 | −0.0472 m |
+| 4 | 0.034 | 0.079 | −0.0481 m |
+| 6 | 0.029 | 0.055 | −0.0499 m |
+| 8 | **0.023** | **0.040** | −0.0506 m |
+| 8 + `restDensityScale` 0.907 | **0.024** | **0.040** | **−0.0430 m** |
+
+The last row is shipped: overall mean \|v\| 0.019 m/s, surface 0.024 m/s (target <0.03), lake
+level −0.043 m. Wind at 1 is invisible; ripples return around 20.
+
+### 3.3 Settle the pool before the drop — done
+
+`PbfFluid::SeedParticles` now uploads the pool only and keeps the relaxed sphere in
+`m_pendingSphere`; `Backyard8Scene::OnUpdate` settles for 3 s and calls
+`AppendPendingSphere`, then re-publishes and re-registers the particle system. The water start
+logs:
+
+```
+[PBF] Seeded 22124 pool particles up to y=-0.31; 15234 relaxed sphere particles pending ...
+[PBF] Appended 15234 relaxed sphere particles after settling: 37358 total
+[Backyard8] Pool settled (3 s simulated) in 253 ms
+```
+
+`prefillLevel` is **−0.27 m** (the retained part of the drop brings the pool back to the
+plane). Measured at 1800 frames: **level −0.0406 m**, 27,018 alive, 10,340 culled. Frame 6
+shows a flat settled pool with the sphere still in the air, no lattice rows. The start-mode
+combo also goes through `ReinitializePbf`, so it sets `m_settlePending` and works the same way.
+
+### 3.8 Frame-24 determinism — gate fixed, bit-exactness not achieved
+
+The wind gate now uses the integer neighbour count (`Lambda[i].w > 0.5 && < 27`), measured
+from the settled lake (surface median 24, p90 26; interior median 31; the document's suggested
+22 would reject most of the surface). Two frame-24 runs are **still not identical**: the new
+config differs on 4,915 of 518,400 pixels (max 171 levels), and the original 1.0/prefill-0.13
+config differs on 9,255 (max 218). The remaining source is the neighbour grid's atomic
+insertion order: the density sum is over the same set in a different order, and float addition
+is not associative. Wind gating was not the only cause. Bit-exactness needs a deterministic
+order inside each grid cell (sort the cell's indices before summing), which is a separate
+performance trade-off; regression must use tolerances for now.
+
+### Verification after Phase 1
+
+| Check | Result |
+|---|---|
+| `cmake --build build/linux --target DayScene` | pass |
+| `--game-selftest` | 78 PASS, 0 FAIL |
+| `check_gl_twins.py` | PASS, 53 kernels / 48 twins |
+| `check_fluid_constants.py` | PASS, 35 counts |
+| Vulkan references, screen space / water / spheres, frames 24/90/300 | re-measured; table in the port guide, section 7 |
+| Lake level, 1800 frames | −0.043 m |
+| Water level, 1800 frames | −0.0406 m |
+| Frame 6, water start | settled pool, no lattice rows |
+
+### Still open from this phase
+
+- **3.5** was measured but not reduced: the water start still culls 10,340 particles (down
+  from 14,663 because the lower prefill retains more of the drop); the level is correct. The
+  sphere-height/radius sweep and recycling remain.
+- **3.7** re-seed debounce, **3.9** Deck budget, **3.10** small items remain.
+- **3.1** D3D12/D3D11/GL still need the session-1 Windows run (the host has a console session;
+  see the plan).
+
 ## 3. Next fixes (in priority order)
 
 Conventions for every step below:
@@ -173,8 +281,9 @@ The real-time controls were only checked by reading the code.
    `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` to the command. The loader enables it
    without a rebuild; watch stdout for `VUID`.
 3. "Backyard 8 - Fluid Simulation", start mode: pick balls, water, lake in turn. Each must log
-   `[Backyard8] Re-seeded: <N> particles` and `[PBF] Seeded ...` (29,880 for lake/balls, 44,573
-   for water); lake and balls also log `Resting pool settled (3 s simulated) in ~200 ms`.
+   `[Backyard8] Re-seeded: <N> particles` and `[PBF] Seeded ...` (26,993 pool particles for
+   lake/balls; 22,124 pool + 15,234 sphere for water, then `Appended 15234 ... 37358 total`).
+   All starts log `Pool settled (3 s simulated) in ~250 ms`.
 4. Section "Particle seeding & count": drag each slider over its whole range: spacing
    (0.05 to 0.30), smoothing ratio, both pool levels, sphere radius and height, max particles
    (1,000 to 131,072), heightfield width and depth. The water must re-seed during the drag with
@@ -189,6 +298,9 @@ The real-time controls were only checked by reading the code.
    Note any control that stalls for more than a second (see 3.7).
 
 ### 3.3 Settle the pool before the drop
+
+> **Done in Phase 1:** pool-only upload, settle, then append the relaxed sphere; shipped
+> `prefillLevel: -0.27`, measured level −0.0406 m, no lattice rows at frame 6. See section 2.1.
 
 The water start cannot settle its pool (the sphere would fall), so for the first half second
 the pool shows lattice rows along the near wall. Settle the pool alone, then add the sphere.
@@ -220,6 +332,9 @@ Files: `T850/Framework/src/simulation/PbfFluid.cpp`, `T850/Framework/include/sim
 
 ### 3.4 Free-surface compaction (why the levels need +0.13 to +0.16 m)
 
+> **Done in Phase 1:** shipped `restDensityScale: 0.907`, `restingLevel: 0.0`; measured level
+> −0.043 m. See section 2.1. The text below is the original experiment plan.
+
 The seeded grid loses about one particle layer (~16 cm) as it settles: the free-surface
 particles lack neighbours above them, read under-dense, get no pressure from the one-sided
 constraint, and sink into the layer below. Experiment before changing code.
@@ -246,6 +361,8 @@ constraint, and sink into the layer below. Experiment before changing code.
 
 ### 3.5 Water lost over the rim (water start)
 
+> **Measured in Phase 1, not reduced:** 10,340 culled, level −0.0406 m. See section 2.1.
+
 The water start culls 14,663 of 44,573 particles. Retirement is in
 `T850/Assets/Shaders/CS_PbfCull.hlsl`: below the floor, more than 0.6 m outside the footprint,
 or outside the footprint and below the wall top (`strandedOnSolid`).
@@ -266,6 +383,9 @@ or outside the footprint and below the wall top (`strandedOnSolid`).
    pops where particles reappear.
 
 ### 3.6 Pool never still (wind)
+
+> **Done in Phase 1:** physical drag plus a no-slip boundary term; shipped `windStrength: 1`,
+> `wallFriction: 8`. See section 2.1. The wind alone did not fix the motion.
 
 The wind drag in `T850/Assets/Shaders/CS_PbfIntegrate.hlsl` (wind block, around line 188) is
 `drag = WindStrength * windSpeed * 1.0e-3f`: about 80 times a real air drag at 8 m/s.
@@ -304,6 +424,10 @@ Seeding sliders re-seed every frame of a drag (30 ms, or 250 ms with the settle)
    `[Backyard8] Re-seeded` about 0.2 s after the drag stops.
 
 ### 3.8 Frame-24 determinism
+
+> **Partially done in Phase 1:** integer neighbour gate shipped; frame 24 still differs
+> (4,915 px, max 171) because the grid's atomic insertion order changes the density sum. See
+> section 2.1.
 
 Two runs differ by up to 4 levels on under 1% of the pixels. The wind gate in
 `CS_PbfIntegrate.hlsl` (around line 197),

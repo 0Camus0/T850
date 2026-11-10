@@ -58,7 +58,8 @@ namespace {
     float windX;
     float windZ;
     float windStrength;
-    float pad7;
+    // No-slip boundary coefficient; reuses the old Pad7 slot, so the ABI size is unchanged.
+    float wallFriction;
   };
   static_assert(sizeof(PbfConstants) == 144, "PbfConstants must be 32 DWORDs (multiple of 4)");
 
@@ -234,6 +235,7 @@ std::vector<uint32_t> PbfFluid::BuildConstants(uint32_t iteration) const {
   c.windX = m_settings.windX;
   c.windZ = m_settings.windZ;
   c.windStrength = m_settings.windStrength;
+  c.wallFriction = m_settings.wallFriction;
   std::vector<uint32_t> words(sizeof(PbfConstants) / 4);
   std::memcpy(words.data(), &c, sizeof(PbfConstants));
   return words;
@@ -461,7 +463,46 @@ namespace {
   }
 }
 
+bool PbfFluid::CreateParticleBuffers(BaseDriver* driver, const std::vector<float>& positions,
+                                      const std::vector<float>& velocities) {
+  if (!driver) return false;
+  const uint32_t count = static_cast<uint32_t>(positions.size() / kWordsPerParticle);
+  if (count == 0) return false;
+  std::vector<float> zero(static_cast<size_t>(count) * kWordsPerParticle, 0.0f);
+  const std::vector<float>& vel =
+      velocities.size() == positions.size() ? velocities : zero;
+
+  // There is no ComputeBuffer write-back API, so the seed is an initialData upload at
+  // creation time: the particle buffers are rebuilt whenever the seed changes.
+  ComputeBufferDesc desc;
+  desc.structureStride = kWordsPerParticle * sizeof(float);
+  desc.byteWidth = count * desc.structureStride;
+  desc.access = ComputeBufferAccess::ReadWrite;
+  desc.debugName = "PBF Positions";
+  m_positions = driver->CreateComputeBuffer(desc, positions.data());
+  desc.debugName = "PBF Predicted";
+  m_predicted = driver->CreateComputeBuffer(desc, positions.data());
+  desc.debugName = "PBF Predicted Next";
+  m_predictedNext = driver->CreateComputeBuffer(desc, positions.data());
+  desc.debugName = "PBF Velocities";
+  m_velocities = driver->CreateComputeBuffer(desc, vel.data());
+  desc.debugName = "PBF Velocities Next";
+  m_velocitiesNext = driver->CreateComputeBuffer(desc, zero.data());
+  desc.debugName = "PBF Lambda";
+  // Zero-filled, not uninitialised: CS_PbfIntegrate reads Lambda.w as the free-surface
+  // neighbour count, and garbage there would enable wind on the first frame. A count of 0
+  // means "not measured yet" and skips the wind.
+  m_lambda = driver->CreateComputeBuffer(desc, zero.data());
+  if (!m_positions || !m_predicted || !m_predictedNext || !m_velocities || !m_velocitiesNext || !m_lambda) {
+    T8_LOG_ERROR("[PBF] Cannot create the particle buffers for %u particles", count);
+    return false;
+  }
+  m_particleCount = count;
+  return true;
+}
+
 bool PbfFluid::SeedParticles(BaseDriver* driver) {
+  m_pendingSphere.clear();
   // ---------------------------------------------------------------------------
   // Initial condition: a resting pool filled to `prefillLevel`, and (when `dropSphere`) a
   // SPHERE of water hanging above it, which then falls and splashes in.
@@ -540,12 +581,13 @@ bool PbfFluid::SeedParticles(BaseDriver* driver) {
     }
   }
   const uint32_t sphereCount = static_cast<uint32_t>(sphere.size() / kWordsPerParticle);
-  const uint32_t count = poolCount + sphereCount;
+  const uint32_t count = poolCount;
   if (count == 0) {
-    T8_LOG_ERROR("[PBF] The seed produced no particles (pool level %.2f m, sphere %.2f m, spacing %.3f m)",
-                 poolTop, m_settings.dropSphere ? r : 0.0f, spacing);
+    T8_LOG_ERROR("[PBF] The seed produced no pool particles (level %.2f m, spacing %.3f m)",
+                 poolTop, spacing);
     return false;
   }
+  // The water start settles the pool FIRST, then appends the relaxed sphere (3.3).
 
   // Kernel normalisation: divide the kernels by the lattice density so a full lattice
   // measures rho = 1 and the constraint C = rho/rho0 - 1 vanishes at rest.
@@ -558,37 +600,10 @@ bool PbfFluid::SeedParticles(BaseDriver* driver) {
     relax = RelaxSeed(sphere, sphereCount, spacing, m_settings.smoothingRadius, static_cast<float>(rhoLattice),
                       m_settings.restDensity, static_cast<float>(denomReference), m_settings.stiffnessEps);
   const double relaxMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - relaxStart).count();
-  positions.insert(positions.end(), sphere.begin(), sphere.end());
-
-  std::vector<float> rest(static_cast<size_t>(count) * kWordsPerParticle, 0.0f);
-
-  // There is no ComputeBuffer write-back API, so the seed is an initialData upload at
-  // creation time: the particle buffers are rebuilt whenever the seed changes.
-  ComputeBufferDesc desc;
-  desc.structureStride = kWordsPerParticle * sizeof(float);
-  desc.byteWidth = count * desc.structureStride;
-  desc.access = ComputeBufferAccess::ReadWrite;
-  desc.debugName = "PBF Positions";
-  m_positions = driver->CreateComputeBuffer(desc, positions.data());
-  desc.debugName = "PBF Predicted";
-  m_predicted = driver->CreateComputeBuffer(desc, positions.data());
-  desc.debugName = "PBF Predicted Next";
-  m_predictedNext = driver->CreateComputeBuffer(desc, positions.data());
-  desc.debugName = "PBF Velocities";
-  m_velocities = driver->CreateComputeBuffer(desc, rest.data());
-  desc.debugName = "PBF Velocities Next";
-  m_velocitiesNext = driver->CreateComputeBuffer(desc, rest.data());
-  desc.debugName = "PBF Lambda";
-  // Zero-filled, not uninitialised: CS_PbfIntegrate reads Lambda.y as the free-surface
-  // density test, and garbage there would enable wind on the first frame. A density of 0
-  // means "not measured yet" and skips the wind.
-  m_lambda = driver->CreateComputeBuffer(desc, rest.data());
-  if (!m_positions || !m_predicted || !m_predictedNext || !m_velocities || !m_velocitiesNext || !m_lambda) {
-    T8_LOG_ERROR("[PBF] Cannot create the particle buffers for %u particles", count);
-    return false;
-  }
-
-  m_particleCount = count;
+  // Keep the relaxed sphere out of the initial upload; AppendPendingSphere() adds it after
+  // the pool has settled. `positions` therefore holds the pool only.
+  if (!truncated && sphereCount > 0) m_pendingSphere = std::move(sphere);
+  if (!CreateParticleBuffers(driver, positions, {})) return false;
   m_time = 0.0f;
 
   m_restScale = static_cast<float>(rhoLattice);
@@ -597,9 +612,14 @@ bool PbfFluid::SeedParticles(BaseDriver* driver) {
               rhoLattice, m_restScale, m_settings.restDensity);
   T8_LOG_INFO("[PBF] Seed relaxed in %d iteration(s), %.1f ms: max compression %.4f -> %.4f",
               relax.iterations, relaxMs, relax.initialMaxConstraint, relax.maxConstraint);
-  T8_LOG_INFO("[PBF] Seeded %u particles: resting pool %u up to y=%.2f, sphere %u (r %.2f m at y=%.2f, %.2f m above the rim %.2f), spacing %.3f m%s",
-              m_particleCount, poolCount, poolTop, sphereCount, r, cy, cy - m_settings.copingTopY,
-              m_settings.copingTopY, spacing, truncated ? ", TRUNCATED at maxParticles" : "");
+  if (sphereCount > 0)
+    T8_LOG_INFO("[PBF] Seeded %u pool particles up to y=%.2f; %u relaxed sphere particles pending "
+                "(r %.2f m at y=%.2f, %.2f m above the rim %.2f), spacing %.3f m%s",
+                m_particleCount, poolTop, sphereCount, r, cy, cy - m_settings.copingTopY,
+                m_settings.copingTopY, spacing, truncated ? ", TRUNCATED at maxParticles" : "");
+  else
+    T8_LOG_INFO("[PBF] Seeded %u pool particles up to y=%.2f, spacing %.3f m%s",
+                m_particleCount, poolTop, spacing, truncated ? ", TRUNCATED at maxParticles" : "");
   if (truncated)
     T8_LOG_ERROR("[PBF] The seed exceeded maxParticles=%u; the pool or the sphere is incomplete",
                  m_settings.maxParticles);
@@ -630,6 +650,26 @@ bool PbfFluid::ResetToRest(BaseDriver* driver) {
   if (!m_ready || !driver) return false;
   m_culledTotal = 0;
   return SeedParticles(driver);
+}
+
+bool PbfFluid::AppendPendingSphere(BaseDriver* driver) {
+  if (!m_ready || !driver || m_pendingSphere.empty()) return false;
+  std::vector<float> pos, vel;
+  if (!ReadParticleFields(driver, &pos, &vel, nullptr)) return false;
+  const uint32_t poolCount = static_cast<uint32_t>(pos.size() / kWordsPerParticle);
+  const uint32_t add = static_cast<uint32_t>(m_pendingSphere.size() / kWordsPerParticle);
+  if (poolCount + add > m_settings.maxParticles) {
+    T8_LOG_ERROR("[PBF] Appending the sphere would exceed maxParticles=%u (%u + %u)",
+                 m_settings.maxParticles, poolCount, add);
+    return false;
+  }
+  pos.insert(pos.end(), m_pendingSphere.begin(), m_pendingSphere.end());
+  // The sphere starts at rest; the settled pool keeps the velocities read back above.
+  vel.resize(pos.size(), 0.0f);
+  if (!CreateParticleBuffers(driver, pos, vel)) return false;
+  m_pendingSphere.clear();
+  T8_LOG_INFO("[PBF] Appended %u relaxed sphere particles after settling: %u total", add, m_particleCount);
+  return true;
 }
 
 bool PbfFluid::Settle(BaseDriver* driver, float seconds, float maxSpeed) {
@@ -723,6 +763,8 @@ bool PbfFluid::Step(BaseDriver* driver) {
         {ComputeBindingType::ReadOnlyBuffer, 3, m_velocities.get()},
         {ComputeBindingType::ReadWriteBuffer, 4, m_velocitiesNext.get()},
         {ComputeBindingType::ReadOnlyBuffer, 1, m_grid.get()},
+        // Step boxes for the no-slip boundary term (t2, see CS_PbfUpdateVelocity.hlsl).
+        {ComputeBindingType::ReadOnlyBuffer, 2, m_solidBoxBuffer.get()},
       };
       if (!Dispatch(driver, *m_updateVelocity, "updateVelocity", bindings, particleGroups, 1, 1)) return false;
       // m_velocities is published to the particle renderer, so its address must never change:

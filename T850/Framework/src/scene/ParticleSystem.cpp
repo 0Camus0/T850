@@ -35,12 +35,18 @@ namespace {
     if (ss.absorption_scale < 0.0f) return false;
     if (ss.thickness_scale < 0.0f) return false;
     if (ss.refraction < 0.0f || ss.refraction > 2.0f) return false;
+    if (ss.refraction_strength < 0.0f || ss.refraction_strength > 1.0f) return false;
     if (ss.reflection_distance < 0.0f) return false;
     if (ss.specular < 0.0f) return false;
+    if (ss.glint_exponent < 1.0f) return false;
     if (ss.fresnel_power < 0.0f) return false;
     if (ss.normal_scale < 0.0f) return false;
     if (ss.foam < 0.0f || ss.foam > 1.0f) return false;
-    if (ss.debug_view < 0 || ss.debug_view > 4) return false;
+    if (ss.ripple_slope < 0.0f || ss.ripple_wavelength <= 0.0f || ss.ripple_speed < 0.0f ||
+        ss.ripple_distance <= 0.0f) return false;
+    if (ss.caustics < 0.0f || ss.caustic_scale <= 0.0f || ss.caustic_speed < 0.0f ||
+        ss.caustic_depth <= 0.0f) return false;
+    if (ss.debug_view < 0 || ss.debug_view > 6) return false;
     return true;
   }
 }  // namespace

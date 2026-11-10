@@ -7,10 +7,16 @@
 // powers of two: rounded in-between spacings aliased the creases between particle caps into
 // rings.
 //
-// The range test keeps separate fluid layers apart: a neighbour more than `Tolerance` metres
-// nearer or farther belongs to another surface and is ignored. A plain Gaussian averaged the
-// falling sphere into the pool behind it, and separable (horizontal then vertical) passes turned
-// every layer edge the first axis cut into a vertical streak on the second.
+// The range test keeps separate fluid layers apart, but it is measured against the local PLANE,
+// not against the centre depth: at a grazing angle a flat pool changes depth by several
+// centimetres per pixel, and a centre-depth test rejected the far taps of a perfectly smooth
+// surface. A neighbour that deviates from the plane by more than `Tolerance` metres belongs to
+// another surface and is ignored.
+//
+// Taps are taken in symmetric pairs (o, -o) and a pair is used only when both ends are valid.
+// A one-sided average of a sloped surface is biased toward the side that has samples, which bent
+// every pixel next to an occluder (the near coping, the pool walls) and drew bright lines along
+// the water's edge. With both ends of every pair the plane terms cancel and edges stay unbiased.
 //
 // Empty pixels (depth <= 0) are never written and never contribute, so the silhouette stays where
 // the particles are. Spacing 0 copies (passes beyond the configured count).
@@ -80,23 +86,45 @@ void CS(uint3 id : SV_DispatchThreadID)
     }
     const int spacing = int(Spacing + 0.5f);
     const float range = max(Tolerance, 1.0e-4f);
-    const float rangeFalloff = -2.0f / (range * range);
+    const float rangeFalloff = -1.0f / (range * range);
 
-    float sum = 0.0f;
-    float weightSum = 0.0f;
+    // Local depth gradient at this spacing (per pixel). Central difference when both sides lie
+    // on this surface, one-sided next to an edge, zero when isolated.
+    const float zl = LoadDepth(base - int2(spacing, 0));
+    const float zr = LoadDepth(base + int2(spacing, 0));
+    const float zu = LoadDepth(base - int2(0, spacing));
+    const float zd = LoadDepth(base + int2(0, spacing));
+    const float edge = 2.0f * range;
+    const bool l = zl > 0.0f && abs(zl - z) < edge;
+    const bool r = zr > 0.0f && abs(zr - z) < edge;
+    const bool u = zu > 0.0f && abs(zu - z) < edge;
+    const bool d = zd > 0.0f && abs(zd - z) < edge;
+    const float s = float(spacing);
+    const float gx = (l && r) ? (zr - zl) / (2.0f * s) : (r ? (zr - z) / s : (l ? (z - zl) / s : 0.0f));
+    const float gy = (u && d) ? (zd - zu) / (2.0f * s) : (d ? (zd - z) / s : (u ? (z - zu) / s : 0.0f));
+
+    // 5x5 B3-spline in symmetric pairs: the centre plus the 12 taps of one half, each mirrored.
+    const float centreWeight = 0.375f * 0.375f;
+    float sum = z * centreWeight;
+    float weightSum = centreWeight;
     [unroll]
-    for (int j = -2; j <= 2; ++j) {
+    for (int k = 0; k < 12; ++k) {
+        // Half of the 5x5 neighbourhood: rows j = 1, 2 entirely, and i = 1, 2 on row 0.
+        const int i = k < 2 ? k + 1 : ((k - 2) % 5) - 2;
+        const int j = k < 2 ? 0 : (k < 7 ? 1 : 2);
+        const float wx = i == 0 ? 0.375f : (abs(i) == 1 ? 0.25f : 0.0625f);
         const float wy = j == 0 ? 0.375f : (abs(j) == 1 ? 0.25f : 0.0625f);
-        [unroll]
-        for (int i = -2; i <= 2; ++i) {
-            const float wx = i == 0 ? 0.375f : (abs(i) == 1 ? 0.25f : 0.0625f);
-            const float neighbour = LoadDepth(base + int2(i, j) * spacing);
-            const float dz = neighbour - z;
-            if (neighbour <= 0.0f || abs(dz) > range) continue;   // empty or another layer
-            const float w = wx * wy * exp(dz * dz * rangeFalloff);
-            sum += neighbour * w;
-            weightSum += w;
-        }
+        const int2 offset = int2(i, j) * spacing;
+        const float a = LoadDepth(base + offset);
+        const float b = LoadDepth(base - offset);
+        if (a <= 0.0f || b <= 0.0f) continue;
+        const float slope = gx * float(offset.x) + gy * float(offset.y);
+        const float da = a - (z + slope);
+        const float db = b - (z - slope);
+        if (abs(da) > range || abs(db) > range) continue;   // another layer
+        const float w = wx * wy * exp((da * da + db * db) * rangeFalloff);
+        sum += (a + b) * w;
+        weightSum += 2.0f * w;
     }
 
     Destination[imagePixel] = lerp(z, sum / max(weightSum, 1.0e-6f), saturate(Strength));

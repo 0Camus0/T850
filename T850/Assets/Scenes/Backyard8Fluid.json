@@ -19,7 +19,7 @@
     "deltaTime": 0.0166667,
     "sphereRadius": 2.0,
     "sphereHeight": 3.08,
-    "prefillLevel": -0.27,
+    "prefillLevel": -0.04,
     "restingLevel": -0.02,
     "cullBelowY": 0.0,
     "cullMargin": 0.35,
@@ -47,6 +47,7 @@
     "sizeScaleMax": 1.0,
     "buffer": "BackyardWaterPositions",
     "velocityBuffer": "BackyardWaterVelocities",
+    "anisotropyBuffer": "BackyardWaterAnisotropy",
     "count": 0,
     "colors": [
       [
@@ -96,14 +97,37 @@
       0.62,
       0.85
     ],
+    "skyHorizon": [
+      0.85,
+      0.8,
+      0.74
+    ],
     "refraction": 0.5,
+    "refractionStrength": 1.0,
     "reflectionDistance": 40.0,
     "specular": 1.0,
+    "glintExponent": 900.0,
     "fresnelPower": 5.0,
     "normalScale": 1.0,
     "normalStep": 1.0,
     "foam": 0.6,
+    "rippleSlope": 0.05,
+    "rippleWavelength": 0.9,
+    "rippleSpeed": 0.6,
+    "rippleDistance": 30.0,
+    "caustics": 0.6,
+    "causticScale": 0.9,
+    "causticSpeed": 1.0,
+    "causticDepth": 1.6,
     "splatFallback": false,
+    "anisotropy": true,
+    "anisotropySmoothing": 0.5,
+    "anisotropyMaxRatio": 4.0,
+    "anisotropyRadius": 1.0,
+    "anisotropySprayRadius": 0.5,
+    "anisotropyNeighbours": 14.0,
+    "anisotropySprayNeighbours": 5.0,
+    "anisotropyMaxStretch": 1.6,
     "debugView": 0
   }
 }

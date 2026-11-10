@@ -63,6 +63,29 @@ namespace {
   };
   static_assert(sizeof(PbfConstants) == 144, "PbfConstants must be 32 DWORDs (multiple of 4)");
 
+  // Keep byte-for-byte in sync with `cbuffer PbfAnisotropyConstants` in CS_PbfAnisotropy.hlsl.
+  struct PbfAnisotropyConstants {
+    uint32_t particleCount;
+    uint32_t gridX;
+    uint32_t gridY;
+    uint32_t gridZ;
+    float gridOriginX;
+    float gridOriginY;
+    float gridOriginZ;
+    float cellSize;
+    float spacing;
+    float smoothing;
+    float maxRatio;
+    float radiusScale;
+    float sparseScale;
+    float fullNeighbours;
+    float sparseNeighbours;
+    float maxStretch;
+  };
+  static_assert(sizeof(PbfAnisotropyConstants) == 64, "PbfAnisotropyConstants must be 16 DWORDs");
+  // Three float4 per particle: centre + bound, quadric row 0, quadric rest + flags.
+  constexpr uint32_t kAnisotropyFloat4PerParticle = 3;
+
   // Must equal PBFCellCapacity in the kernels.
   constexpr uint32_t kCellCapacity = 64;
   constexpr uint32_t kWordsPerParticle = 4;
@@ -117,9 +140,11 @@ bool PbfFluid::LoadPoolLayout(const char* path) {
   m_settings.basinMinY = static_cast<float>(floorY);
   m_settings.waterPlaneY = static_cast<float>(layout.waterPlaneY);
   m_settings.copingTopY = static_cast<float>(layout.waterPlaneY + std::max(layout.pool.copingHeight, 0.0));
-  // The wall is solid up to the authored freeboard, not just up to the coping stone's
-  // thickness. `freeboard` is the height of the pool wall above the water line.
-  m_settings.wallTopY = static_cast<float>(layout.waterPlaneY + std::max(layout.pool.freeboard, 0.0));
+  // The solid rim is the wall (top at the authored water line) plus the coping stone on it:
+  // Backyard_Pool.glb has the walls at y 0.00 and the coping top at y 0.08. `freeboard` is the
+  // VOF domain's air headroom, NOT a wall height: using it put an invisible wall 0.30 m above
+  // the coping, water climbed it in every slosh and rendered as blobs floating over the rim.
+  m_settings.wallTopY = static_cast<float>(layout.waterLine + std::max(layout.pool.copingHeight, 0.0));
 
   // Steps are authored as {minX,maxX,minY,maxY,minZ,maxZ}: X, world Y, world Z.
   for (const LayoutStepJson& step : layout.pool.steps) {
@@ -150,6 +175,10 @@ bool PbfFluid::CreatePipelines(BaseDriver* driver) {
   m_clearHeights = CreatePipeline(driver, "CS_PbfClearHeights.hlsl");
   m_cull = CreatePipeline(driver, "CS_PbfCull.hlsl");
   m_copyFields = CreatePipeline(driver, "CS_PbfCopyFields.hlsl");
+  // Optional: without it the renderer falls back to spheres, the solver is unaffected.
+  m_anisotropyPipeline = CreatePipeline(driver, "CS_PbfAnisotropy.hlsl");
+  if (!m_anisotropyPipeline)
+    T8_LOG_ERROR("[PBF] Anisotropy pipeline unavailable; the fluid renders as spheres");
   if (!m_integrate || !m_clearGrid || !m_buildGrid || !m_density || !m_solve || !m_updateVelocity ||
       !m_surface || !m_clearHeights || !m_cull || !m_copyFields) {
     T8_LOG_ERROR("[PBF] Solver pipelines are incomplete (integrate=%d clearGrid=%d buildGrid=%d density=%d "
@@ -496,6 +525,19 @@ bool PbfFluid::CreateParticleBuffers(BaseDriver* driver, const std::vector<float
     T8_LOG_ERROR("[PBF] Cannot create the particle buffers for %u particles", count);
     return false;
   }
+  // Same 16-byte element as the particle fields (D3D11 views use the creation stride), three
+  // per particle. Zero-filled: a zero bound draws nothing until ComputeAnisotropy runs.
+  {
+    ComputeBufferDesc anisotropyDesc = desc;
+    anisotropyDesc.byteWidth = count * kAnisotropyFloat4PerParticle * desc.structureStride;
+    anisotropyDesc.debugName = "PBF Anisotropy";
+    std::vector<float> anisotropyZero(static_cast<size_t>(count) * kAnisotropyFloat4PerParticle * 4u, 0.0f);
+    m_anisotropy = driver->CreateComputeBuffer(anisotropyDesc, anisotropyZero.data());
+    if (!m_anisotropy) {
+      T8_LOG_ERROR("[PBF] Cannot create the anisotropy buffer for %u particles", count);
+      return false;
+    }
+  }
   m_particleCount = count;
   return true;
 }
@@ -637,12 +679,73 @@ namespace {
   }
 }
 
-void PbfFluid::PublishParticleBuffers(const std::string& positionName, const std::string& velocityName) {
+void PbfFluid::PublishParticleBuffers(const std::string& positionName, const std::string& velocityName,
+                                      const std::string& anisotropyName) {
   m_publishedPositionName = positionName;
   m_publishedVelocityName = velocityName;
+  if (!anisotropyName.empty()) m_publishedAnisotropyName = anisotropyName;
   auto& registry = ParticleBufferRegistry::Instance();
   registry.Set(positionName, m_positions.get(), static_cast<int>(m_particleCount));
   registry.Set(velocityName, m_velocities.get(), static_cast<int>(m_particleCount));
+  if (!m_publishedAnisotropyName.empty() && m_anisotropy)
+    registry.Set(m_publishedAnisotropyName, m_anisotropy.get(),
+                 static_cast<int>(m_particleCount * kAnisotropyFloat4PerParticle));
+}
+
+bool PbfFluid::ComputeAnisotropy(BaseDriver* driver) {
+  if (!m_ready || !driver || m_particleCount == 0 || !m_anisotropyPipeline || !m_anisotropy)
+    return false;
+  const uint32_t particleGroups = DivUp(m_particleCount, kThreads);
+  const uint32_t cells = m_gridX * m_gridY * m_gridZ;
+  const uint32_t clearGroups = DivUp(DivUp(cells * kCellCapacity * 2u, 4u), kThreads);
+  const std::vector<uint32_t> solverConstants = BuildConstants(0);
+  // The grid in memory was built from the predicted positions of the last substep, before
+  // the projection moved them. Rebuild it from the committed positions so every neighbour
+  // within the radius is found; the cull has already flagged retired particles (w = 0), which
+  // the build skips.
+  {
+    const std::vector<ComputeBindingDesc> bindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, solverConstants.data(), static_cast<uint32_t>(solverConstants.size())},
+      {ComputeBindingType::ReadWriteBuffer, 0, m_grid.get()},
+    };
+    if (!Dispatch(driver, *m_clearGrid, "anisotropy-clearGrid", bindings, clearGroups, 1, 1)) return false;
+  }
+  {
+    const std::vector<ComputeBindingDesc> bindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, solverConstants.data(), static_cast<uint32_t>(solverConstants.size())},
+      {ComputeBindingType::ReadOnlyBuffer, 0, m_positions.get()},
+      {ComputeBindingType::ReadWriteBuffer, 0, m_grid.get()},
+    };
+    if (!Dispatch(driver, *m_buildGrid, "anisotropy-buildGrid", bindings, particleGroups, 1, 1)) return false;
+  }
+  const PbfAnisotropySettings& a = m_anisotropySettings;
+  PbfAnisotropyConstants c{};
+  c.particleCount = m_particleCount;
+  c.gridX = m_gridX;
+  c.gridY = m_gridY;
+  c.gridZ = m_gridZ;
+  c.gridOriginX = m_gridOriginX;
+  c.gridOriginY = m_gridOriginY;
+  c.gridOriginZ = m_gridOriginZ;
+  c.cellSize = m_settings.smoothingRadius;
+  c.spacing = m_settings.particleRadius;
+  c.smoothing = (std::min)((std::max)(a.smoothing, 0.0f), 1.0f);
+  c.maxRatio = (std::max)(a.maxRatio, 1.0f);
+  c.radiusScale = (std::max)(a.radiusScale, 0.05f);
+  c.sparseScale = (std::max)(a.sparseScale, 0.05f);
+  c.fullNeighbours = (std::max)(a.fullNeighbours, a.sparseNeighbours + 1.0f);
+  c.sparseNeighbours = (std::max)(a.sparseNeighbours, 0.0f);
+  c.maxStretch = (std::max)(a.maxStretch, 1.0f);
+  std::vector<uint32_t> words(sizeof(PbfAnisotropyConstants) / 4);
+  std::memcpy(words.data(), &c, sizeof(PbfAnisotropyConstants));
+  const std::vector<ComputeBindingDesc> bindings = {
+    {ComputeBindingType::Constants32, 0, nullptr, words.data(), static_cast<uint32_t>(words.size())},
+    {ComputeBindingType::ReadOnlyBuffer, 0, m_positions.get()},
+    {ComputeBindingType::ReadOnlyBuffer, 1, m_grid.get()},
+    {ComputeBindingType::ReadWriteBuffer, 0, m_anisotropy.get()},
+    {ComputeBindingType::ReadOnlyBuffer, 2, m_velocities.get()},
+  };
+  return Dispatch(driver, *m_anisotropyPipeline, "anisotropy", bindings, particleGroups, 1, 1);
 }
 
 bool PbfFluid::ResetToRest(BaseDriver* driver) {
@@ -865,6 +968,8 @@ void PbfFluid::Shutdown(BaseDriver* driver) {
   m_velocities.reset();
   m_velocitiesNext.reset();
   m_lambda.reset();
+  m_anisotropy.reset();
+  m_anisotropyPipeline.reset();
   m_grid.reset();
   m_solidBoxBuffer.reset();
   m_columnHeights.reset();

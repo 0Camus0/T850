@@ -546,6 +546,11 @@
           "resource": "__fluid_thickness_bits_BackyardWater",
           "access": "buffer_write",
           "shader_register": 1
+        },
+        {
+          "resource": "BackyardWaterAnisotropy",
+          "access": "buffer_read",
+          "shader_register": 2
         }
       ],
       "draws": []

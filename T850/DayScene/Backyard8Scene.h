@@ -100,4 +100,5 @@ private:
   bool m_settlePending = false;   // a resting pool was seeded: settle it before the next frame
   // Seeding sliders re-seed on release, not every frame of a drag (-1 = no pending re-seed).
   float m_reseedDelay = -1.0f;
+  bool m_anisotropyErrorLogged = false;
 };

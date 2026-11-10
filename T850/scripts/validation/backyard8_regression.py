@@ -232,10 +232,11 @@ def main():
                     failures.append(f"{mode} f{frame}")
 
     if not args.skip_level:
-        target = refs["water_level"]["target_m"]
-        tolerance = refs["water_level"]["tolerance_m"]
-        print(f"Water level: target {target:+.3f} +/- {tolerance:.3f} m")
+        # Per start: the lake settles at the resting level; the sphere drop throws water over
+        # the real rim (the coping top, 0.08 m above the water line), so it settles lower.
         for start in ("lake", "water"):
+            target = refs["water_level"][start]["target_m"]
+            tolerance = refs["water_level"][start]["tolerance_m"]
             level, error = run_level(exe, args.api, start, args.timeout)
             if error:
                 print(f"FAIL level {start}: {error}")
@@ -243,7 +244,7 @@ def main():
                 continue
             ok = abs(level - target) <= tolerance
             print(("PASS " if ok else "FAIL ")
-                  + f"level {start:5s}: {level:+.4f} m")
+                  + f"level {start:5s}: {level:+.4f} m  (target {target:+.3f} +/- {tolerance:.3f})")
             if not ok:
                 failures.append(f"level {start}")
 

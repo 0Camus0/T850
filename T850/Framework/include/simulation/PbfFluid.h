@@ -41,11 +41,10 @@ namespace t850 {
     float basinMaxZ = -4.5f;
     float waterPlaneY = -0.04f;
     float copingTopY = 0.04f;
-    // Top of the solid pool wall (the rim the water can splash over). Below this the walls are
-    // solid; above it the container is open. LoadPoolLayout derives it from the authored
-    // freeboard. Walls used to stop at waterPlaneY, which left a 0.4 m hole through which a
-    // splash could pass straight through the wall and be snapped onto the deck.
-    float wallTopY = 0.38f;
+    // Top of the solid pool rim (wall + coping stone) the water can splash over. Below this the
+    // walls are solid; above it the container is open. LoadPoolLayout derives it from the
+    // layout's water line and coping height (0.08 m on Backyard_Pool.glb).
+    float wallTopY = 0.08f;
 
     // Particle fluid parameters.
     float particleRadius = 0.13f;    // lattice SPACING (the collision margin is 0.5 * this)
@@ -101,6 +100,18 @@ namespace t850 {
     uint32_t maxParticles = 40000;
   };
 
+  // Anisotropic particle shapes for the screen-space renderer (Yu and Turk 2013). Computed by
+  // the solver because it owns the neighbour grid; the renderer only reads the result.
+  struct PbfAnisotropySettings {
+    float smoothing = 0.5f;          // 0..1, centre moves toward the weighted neighbour mean
+    float maxRatio = 4.0f;           // longest / shortest axis limit
+    float radiusScale = 1.0f;        // interior particle radius, in spacings
+    float sparseScale = 0.5f;        // isolated particle radius, in spacings
+    float fullNeighbours = 14.0f;    // neighbour count for the full anisotropic shape
+    float sparseNeighbours = 5.0f;   // neighbour count at or below which a particle is spray
+    float maxStretch = 1.6f;         // longest axis cap, relative to the interior radius
+  };
+
   class PbfFluid {
   public:
     PbfFluid();
@@ -116,7 +127,15 @@ namespace t850 {
     bool ResetToRest(BaseDriver* driver);
     // Publishes the live particle buffers into ParticleBufferRegistry under these names so
     // the generic particle renderer can draw them. Call after seeding and after any reset.
-    void PublishParticleBuffers(const std::string& positionName, const std::string& velocityName);
+    void PublishParticleBuffers(const std::string& positionName, const std::string& velocityName,
+                                const std::string& anisotropyName = std::string());
+    // Rebuilds the neighbour grid from the current positions and writes the anisotropic
+    // particle shapes (three float4 per particle, see CS_PbfAnisotropy.hlsl). Call once per
+    // rendered frame, after the last Step; the buffer keeps its address while the particle
+    // buffers do.
+    bool ComputeAnisotropy(BaseDriver* driver);
+    void SetAnisotropy(const PbfAnisotropySettings& settings) { m_anisotropySettings = settings; }
+    const PbfAnisotropySettings& Anisotropy() const { return m_anisotropySettings; }
     // Number of particles removed by the deck/handle culling, cumulative.
     uint32_t CulledParticles() const { return m_culledTotal; }
     bool Step(BaseDriver* driver);
@@ -198,6 +217,8 @@ namespace t850 {
     uint32_t m_culledTotal = 0;
     std::string m_publishedPositionName;
     std::string m_publishedVelocityName;
+    std::string m_publishedAnisotropyName;
+    PbfAnisotropySettings m_anisotropySettings;
 
     // rho_lattice * spacing^3: the kernel mass normalisation passed to the shaders.
     float m_restScale = 1.0f;
@@ -220,6 +241,8 @@ namespace t850 {
     // XSPH ping-pong partner: the update reads one and writes the other.
     std::unique_ptr<ComputeBuffer> m_velocitiesNext;
     std::unique_ptr<ComputeBuffer> m_lambda;
+    // Renderer-facing particle shapes, three float4 per particle (CS_PbfAnisotropy.hlsl).
+    std::unique_ptr<ComputeBuffer> m_anisotropy;
 
     // Fixed by the domain; created once.
     std::unique_ptr<ComputeBuffer> m_grid;
@@ -236,6 +259,7 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_clearHeights;
     std::unique_ptr<ComputePipeline> m_cull;
     std::unique_ptr<ComputePipeline> m_copyFields;
+    std::unique_ptr<ComputePipeline> m_anisotropyPipeline;
     // Compaction scratch + bookkeeping for particle culling.
 
     Texture* m_surfaceOutput = nullptr;

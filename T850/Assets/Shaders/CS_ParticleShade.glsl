@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_ParticleShade.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=50692541a4e0d153b2f455dca2487678a135a37f121cc068c5486e8a444ab451; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_ParticleShade.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=38e8473e3404f0d7ee84d9d7e1d680dc2f9e6c68915d1070dcc30c9c5d9da3e5; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 #if defined(GL_EXT_control_flow_attributes)
 #extension GL_EXT_control_flow_attributes : require
 #define SPIRV_CROSS_FLATTEN [[flatten]]
@@ -14,7 +14,7 @@
 #endif
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-float _3374;
+float _5842;
 
 layout(binding = 0, std140) uniform ParticleShadeConstants
 {
@@ -43,7 +43,10 @@ layout(binding = 0, std140) uniform ParticleShadeConstants
     vec4 ReflectionColor;
     vec4 ShadeParams;
     vec4 FluidColor;
-} _78;
+    vec4 SkyHorizon;
+    vec4 RippleParams;
+    vec4 CausticParams;
+} _104;
 
 layout(binding = 5, rgba16f) uniform writeonly image2D OutputTexture;
 layout(binding = 1) uniform sampler2D SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler;
@@ -55,347 +58,483 @@ void main()
 {
     do
     {
-        if (_78.Mode == 0u)
+        if (_104.Mode == 0u)
         {
             break;
         }
-        if ((gl_GlobalInvocationID.x >= _78.OutputWidth) || (gl_GlobalInvocationID.y >= _78.OutputHeight))
+        if ((gl_GlobalInvocationID.x >= _104.OutputWidth) || (gl_GlobalInvocationID.y >= _104.OutputHeight))
         {
             break;
         }
-        uvec2 _1405 = uvec2(gl_GlobalInvocationID.x, (_78.OutputHeight - 1u) - gl_GlobalInvocationID.y);
-        ivec2 _1848 = clamp(ivec2(gl_GlobalInvocationID.xy), ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-        vec4 _1874 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_1848.x, int((_78.OutputHeight - 1u) - uint(_1848.y)), 0).xy, 0);
-        float _1875 = _1874.x;
-        ivec2 _1889 = clamp(ivec2(gl_GlobalInvocationID.xy), ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-        vec4 _1915 = texelFetch(SPIRV_Cross_CombinedFluidThicknessSPIRV_Cross_DummySampler, ivec3(_1889.x, int((_78.OutputHeight - 1u) - uint(_1889.y)), 0).xy, 0);
-        if ((_1875 <= 0.0) || (_1915.w <= 0.001000000047497451305389404296875))
+        uvec2 _2127 = uvec2(gl_GlobalInvocationID.x, (_104.OutputHeight - 1u) - gl_GlobalInvocationID.y);
+        ivec2 _2788 = clamp(ivec2(gl_GlobalInvocationID.xy), ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+        vec4 _2814 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_2788.x, int((_104.OutputHeight - 1u) - uint(_2788.y)), 0).xy, 0);
+        float _2815 = _2814.x;
+        ivec2 _2829 = clamp(ivec2(gl_GlobalInvocationID.xy), ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+        vec4 _2855 = texelFetch(SPIRV_Cross_CombinedFluidThicknessSPIRV_Cross_DummySampler, ivec3(_2829.x, int((_104.OutputHeight - 1u) - uint(_2829.y)), 0).xy, 0);
+        if ((_2815 <= 0.0) || (_2855.w <= 0.001000000047497451305389404296875))
         {
-            if (_78.ShadeParams.x > 0.5)
+            if (_104.ShadeParams.x > 0.5)
             {
-                imageStore(OutputTexture, ivec2(_1405), vec4(0.0));
+                imageStore(OutputTexture, ivec2(_2127), vec4(0.0));
             }
             break;
         }
-        float _1436 = max(_1915.x, 0.0) * max(_78.ThicknessScale, 0.0);
-        vec2 _1443 = vec2(float(_78.OutputWidth), float(_78.OutputHeight));
-        vec2 _1448 = vec2(gl_GlobalInvocationID.xy) + vec2(0.5);
-        ivec2 _1451 = ivec2(gl_GlobalInvocationID.xy);
-        int _1456 = clamp(int(_78.NormalStep + 0.5), 1, 8);
-        float _1958 = (0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05);
-        vec3 _1948 = vec3((((float(_1451.x) + 0.5) - (0.5 * float(_78.OutputWidth))) * _1875) / _1958, ((-((float(_1451.y) + 0.5) - (0.5 * float(_78.OutputHeight)))) * _1875) / _1958, _1875);
-        float _1466 = max(2.0 * _78.ShadeParams.y, 0.001000000047497451305389404296875) * float(_1456);
-        ivec2 _1468 = ivec2(_1456, 0);
-        vec3 _3335;
+        vec2 _2158 = vec2(float(_104.OutputWidth), float(_104.OutputHeight));
+        vec2 _2163 = vec2(gl_GlobalInvocationID.xy) + vec2(0.5);
+        ivec2 _2166 = ivec2(gl_GlobalInvocationID.xy);
+        float _2169 = max(_104.ShadeParams.y, 0.001000000047497451305389404296875);
+        int _2176 = clamp(int(_104.NormalStep + 0.5), 1, 8);
+        float _2894 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+        float _2870 = ((_2163.x - (0.5 * float(_104.OutputWidth))) * _2815) / _2894;
+        float _2882 = ((-(_2163.y - (0.5 * float(_104.OutputHeight)))) * _2815) / _2894;
+        vec3 _2884 = vec3(_2870, _2882, _2815);
+        float _2184 = (2.0 * _2169) * float(_2176);
+        ivec2 _2186 = ivec2(_2176, 0);
+        vec3 _5785;
         do
         {
-            ivec2 _2051 = clamp(_1451 + _1468, ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-            vec4 _2077 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_2051.x, int((_78.OutputHeight - 1u) - uint(_2051.y)), 0).xy, 0);
-            float _2078 = _2077.x;
-            ivec2 _2092 = clamp(_1451 - _1468, ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-            vec4 _2118 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_2092.x, int((_78.OutputHeight - 1u) - uint(_2092.y)), 0).xy, 0);
-            float _2119 = _2118.x;
-            bool _1992 = (_2078 > 0.0) && (abs(_2078 - _1875) < _1466);
-            bool _2001 = (_2119 > 0.0) && (abs(_1875 - _2119) < _1466);
-            ivec2 _2005 = _1451 + _1468;
-            float _2162 = (0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05);
-            vec3 _2009 = vec3((((float(_2005.x) + 0.5) - (0.5 * float(_78.OutputWidth))) * _2078) / _2162, ((-((float(_2005.y) + 0.5) - (0.5 * float(_78.OutputHeight)))) * _2078) / _2162, _2078) - _1948;
-            bvec3 _2010 = bvec3(_1992);
-            vec3 _2011 = vec3(_2010.x ? _2009.x : vec3(0.0).x, _2010.y ? _2009.y : vec3(0.0).y, _2010.z ? _2009.z : vec3(0.0).z);
-            ivec2 _2016 = _1451 - _1468;
-            float _2205 = (0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05);
-            vec3 _2019 = _1948 - vec3((((float(_2016.x) + 0.5) - (0.5 * float(_78.OutputWidth))) * _2119) / _2205, ((-((float(_2016.y) + 0.5) - (0.5 * float(_78.OutputHeight)))) * _2119) / _2205, _2119);
-            bvec3 _2020 = bvec3(_2001);
-            vec3 _2021 = vec3(_2020.x ? _2019.x : vec3(0.0).x, _2020.y ? _2019.y : vec3(0.0).y, _2020.z ? _2019.z : vec3(0.0).z);
-            if (_1992 && _2001)
+            ivec2 _2993 = clamp(_2166 + _2186, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+            vec4 _3019 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_2993.x, int((_104.OutputHeight - 1u) - uint(_2993.y)), 0).xy, 0);
+            float _3020 = _3019.x;
+            ivec2 _3034 = clamp(_2166 - _2186, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+            vec4 _3060 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_3034.x, int((_104.OutputHeight - 1u) - uint(_3034.y)), 0).xy, 0);
+            float _3061 = _3060.x;
+            bool _2928 = (_3020 > 0.0) && (abs(_3020 - _2815) < _2184);
+            bool _2937 = (_3061 > 0.0) && (abs(_2815 - _3061) < _2184);
+            vec2 _2944 = vec2(_2166 + _2186) + vec2(0.5);
+            float _3100 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+            vec3 _2948 = vec3(((_2944.x - (0.5 * float(_104.OutputWidth))) * _3020) / _3100, ((-(_2944.y - (0.5 * float(_104.OutputHeight)))) * _3020) / _3100, _3020) - _2884;
+            bvec3 _2949 = bvec3(_2928);
+            vec3 _2950 = vec3(_2949.x ? _2948.x : vec3(0.0).x, _2949.y ? _2948.y : vec3(0.0).y, _2949.z ? _2948.z : vec3(0.0).z);
+            vec2 _2958 = vec2(_2166 - _2186) + vec2(0.5);
+            float _3139 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+            vec3 _2961 = _2884 - vec3(((_2958.x - (0.5 * float(_104.OutputWidth))) * _3061) / _3139, ((-(_2958.y - (0.5 * float(_104.OutputHeight)))) * _3061) / _3139, _3061);
+            bvec3 _2962 = bvec3(_2937);
+            vec3 _2963 = vec3(_2962.x ? _2961.x : vec3(0.0).x, _2962.y ? _2961.y : vec3(0.0).y, _2962.z ? _2961.z : vec3(0.0).z);
+            if (_2928 && _2937)
             {
-                _3335 = (_2011 + _2021) * 0.5;
+                _5785 = (_2950 + _2963) * 0.5;
                 break;
             }
-            bvec3 _2034 = bvec3(_1992);
-            _3335 = vec3(_2034.x ? _2011.x : _2021.x, _2034.y ? _2011.y : _2021.y, _2034.z ? _2011.z : _2021.z);
+            bvec3 _2976 = bvec3(_2928);
+            _5785 = vec3(_2976.x ? _2950.x : _2963.x, _2976.y ? _2950.y : _2963.y, _2976.z ? _2950.z : _2963.z);
             break;
         } while(false);
-        ivec2 _1475 = ivec2(0, _1456);
-        vec3 _3336;
+        ivec2 _2193 = ivec2(0, _2176);
+        vec3 _5786;
         do
         {
-            ivec2 _2298 = clamp(_1451 + _1475, ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-            vec4 _2324 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_2298.x, int((_78.OutputHeight - 1u) - uint(_2298.y)), 0).xy, 0);
-            float _2325 = _2324.x;
-            ivec2 _2339 = clamp(_1451 - _1475, ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-            vec4 _2365 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_2339.x, int((_78.OutputHeight - 1u) - uint(_2339.y)), 0).xy, 0);
-            float _2366 = _2365.x;
-            bool _2239 = (_2325 > 0.0) && (abs(_2325 - _1875) < _1466);
-            bool _2248 = (_2366 > 0.0) && (abs(_1875 - _2366) < _1466);
-            ivec2 _2252 = _1451 + _1475;
-            float _2409 = (0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05);
-            vec3 _2256 = vec3((((float(_2252.x) + 0.5) - (0.5 * float(_78.OutputWidth))) * _2325) / _2409, ((-((float(_2252.y) + 0.5) - (0.5 * float(_78.OutputHeight)))) * _2325) / _2409, _2325) - _1948;
-            bvec3 _2257 = bvec3(_2239);
-            vec3 _2258 = vec3(_2257.x ? _2256.x : vec3(0.0).x, _2257.y ? _2256.y : vec3(0.0).y, _2257.z ? _2256.z : vec3(0.0).z);
-            ivec2 _2263 = _1451 - _1475;
-            float _2452 = (0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05);
-            vec3 _2266 = _1948 - vec3((((float(_2263.x) + 0.5) - (0.5 * float(_78.OutputWidth))) * _2366) / _2452, ((-((float(_2263.y) + 0.5) - (0.5 * float(_78.OutputHeight)))) * _2366) / _2452, _2366);
-            bvec3 _2267 = bvec3(_2248);
-            vec3 _2268 = vec3(_2267.x ? _2266.x : vec3(0.0).x, _2267.y ? _2266.y : vec3(0.0).y, _2267.z ? _2266.z : vec3(0.0).z);
-            if (_2239 && _2248)
+            ivec2 _3238 = clamp(_2166 + _2193, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+            vec4 _3264 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_3238.x, int((_104.OutputHeight - 1u) - uint(_3238.y)), 0).xy, 0);
+            float _3265 = _3264.x;
+            ivec2 _3279 = clamp(_2166 - _2193, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+            vec4 _3305 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_3279.x, int((_104.OutputHeight - 1u) - uint(_3279.y)), 0).xy, 0);
+            float _3306 = _3305.x;
+            bool _3173 = (_3265 > 0.0) && (abs(_3265 - _2815) < _2184);
+            bool _3182 = (_3306 > 0.0) && (abs(_2815 - _3306) < _2184);
+            vec2 _3189 = vec2(_2166 + _2193) + vec2(0.5);
+            float _3345 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+            vec3 _3193 = vec3(((_3189.x - (0.5 * float(_104.OutputWidth))) * _3265) / _3345, ((-(_3189.y - (0.5 * float(_104.OutputHeight)))) * _3265) / _3345, _3265) - _2884;
+            bvec3 _3194 = bvec3(_3173);
+            vec3 _3195 = vec3(_3194.x ? _3193.x : vec3(0.0).x, _3194.y ? _3193.y : vec3(0.0).y, _3194.z ? _3193.z : vec3(0.0).z);
+            vec2 _3203 = vec2(_2166 - _2193) + vec2(0.5);
+            float _3384 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+            vec3 _3206 = _2884 - vec3(((_3203.x - (0.5 * float(_104.OutputWidth))) * _3306) / _3384, ((-(_3203.y - (0.5 * float(_104.OutputHeight)))) * _3306) / _3384, _3306);
+            bvec3 _3207 = bvec3(_3182);
+            vec3 _3208 = vec3(_3207.x ? _3206.x : vec3(0.0).x, _3207.y ? _3206.y : vec3(0.0).y, _3207.z ? _3206.z : vec3(0.0).z);
+            if (_3173 && _3182)
             {
-                _3336 = (_2258 + _2268) * 0.5;
+                _5786 = (_3195 + _3208) * 0.5;
                 break;
             }
-            bvec3 _2281 = bvec3(_2239);
-            _3336 = vec3(_2281.x ? _2258.x : _2268.x, _2281.y ? _2258.y : _2268.y, _2281.z ? _2258.z : _2268.z);
+            bvec3 _3221 = bvec3(_3173);
+            _5786 = vec3(_3221.x ? _3195.x : _3208.x, _3221.y ? _3195.y : _3208.y, _3221.z ? _3195.z : _3208.z);
             break;
         } while(false);
-        vec2 _1486 = _3335.xy * max(_78.NormalScale, 0.0);
-        vec3 _3266 = _3335;
-        _3266.x = _1486.x;
-        _3266.y = _1486.y;
-        vec2 _1496 = _3336.xy * max(_78.NormalScale, 0.0);
-        vec3 _3270 = _3336;
-        _3270.x = _1496.x;
-        _3270.y = _1496.y;
-        bvec3 _3416 = bvec3(length(_3266) < 9.9999999747524270787835121154785e-07);
-        bvec3 _3418 = bvec3(length(_3270) < 9.9999999747524270787835121154785e-07);
-        vec3 _1514 = normalize(cross(vec3(_3416.x ? vec3(1.0, 0.0, 0.0).x : _3266.x, _3416.y ? vec3(1.0, 0.0, 0.0).y : _3266.y, _3416.z ? vec3(1.0, 0.0, 0.0).z : _3266.z), vec3(_3418.x ? vec3(0.0, -1.0, 0.0).x : _3270.x, _3418.y ? vec3(0.0, -1.0, 0.0).y : _3270.y, _3418.z ? vec3(0.0, -1.0, 0.0).z : _3270.z)));
-        vec3 _1516 = normalize(_1948);
-        vec3 _1518 = -_1516;
-        vec3 _3342;
-        if (dot(_1514, _1518) < 0.0)
+        vec2 _2204 = _5785.xy * max(_104.NormalScale, 0.0);
+        vec3 _5612 = _5785;
+        _5612.x = _2204.x;
+        _5612.y = _2204.y;
+        vec2 _2214 = _5786.xy * max(_104.NormalScale, 0.0);
+        vec3 _5616 = _5786;
+        _5616.x = _2214.x;
+        _5616.y = _2214.y;
+        bvec3 _5871 = bvec3(length(_5612) < 9.9999999747524270787835121154785e-07);
+        bvec3 _5873 = bvec3(length(_5616) < 9.9999999747524270787835121154785e-07);
+        vec3 _2230 = normalize(_2884);
+        vec3 _2232 = -_2230;
+        vec3 _2236 = normalize(cross(vec3(_5871.x ? vec3(1.0, 0.0, 0.0).x : _5612.x, _5871.y ? vec3(1.0, 0.0, 0.0).y : _5612.y, _5871.z ? vec3(1.0, 0.0, 0.0).z : _5612.z), vec3(_5873.x ? vec3(0.0, -1.0, 0.0).x : _5616.x, _5873.y ? vec3(0.0, -1.0, 0.0).y : _5616.y, _5873.z ? vec3(0.0, -1.0, 0.0).z : _5616.z)));
+        vec3 _5792;
+        if (dot(_2236, _2232) < 0.0)
         {
-            _3342 = -_1514;
+            _5792 = -_2236;
         }
         else
         {
-            _3342 = _1514;
+            _5792 = _2236;
         }
-        if (_78.DebugView == 1u)
+        vec3 _2248 = vec3(_104.CameraRight.w, _104.CameraUp.w, _104.CameraForward.w) + (((_104.CameraRight.xyz * _2870) + (_104.CameraUp.xyz * _2882)) + (_104.CameraForward.xyz * _2815));
+        vec3 _3437 = ((_104.CameraRight.xyz * _5792.x) + (_104.CameraUp.xyz * _5792.y)) + (_104.CameraForward.xyz * _5792.z);
+        float _2259 = (_2815 / ((0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05))) / max(abs(dot(_5792, _2232)), 0.07999999821186065673828125);
+        float _2271 = smoothstep(0.75, 0.949999988079071044921875, _3437.y) * clamp(1.0 - (length(_2884) / max(_104.RippleParams.w, 0.00999999977648258209228515625)), 0.0, 1.0);
+        vec3 _5796;
+        if ((_2271 > 0.0) && (_104.RippleParams.x > 0.0))
         {
-            imageStore(OutputTexture, ivec2(_1405), vec4((_3342 * 0.5) + vec3(0.5), 1.0));
-            break;
-        }
-        if (_78.DebugView == 2u)
-        {
-            float _1549 = clamp(_1875 * 0.083333335816860198974609375, 0.0, 1.0);
-            imageStore(OutputTexture, ivec2(_1405), vec4(_1549, _1549, _1549, 1.0));
-            break;
-        }
-        if (_78.DebugView == 3u)
-        {
-            float _1564 = clamp(_1436, 0.0, 1.0);
-            imageStore(OutputTexture, ivec2(_1405), vec4(_1564, _1564, _1564, 1.0));
-            break;
-        }
-        if (_78.DebugView == 4u)
-        {
-            imageStore(OutputTexture, ivec2(_1405), vec4(_1915.www, 1.0));
-            break;
-        }
-        vec3 _1591 = refract(_1516, _3342, 0.75187969207763671875);
-        bvec3 _3420 = bvec3(dot(_1591, _1591) < 9.9999999747524270787835121154785e-07);
-        vec3 _1612 = _1948 + (vec3(_3420.x ? _1516.x : _1591.x, _3420.y ? _1516.y : _1591.y, _3420.z ? _1516.z : _1591.z) * min(_1436 * max(_78.Refraction, 0.0), max(_78.MaxTravel, 0.0)));
-        float _2492 = (0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05);
-        vec2 _2482 = vec2(((_1612.x * _2492) / _1612.z) + (0.5 * float(_78.OutputWidth)), (((-_1612.y) * _2492) / _1612.z) + (0.5 * float(_78.OutputHeight)));
-        bvec2 _1619 = bvec2(_1612.z > 0.0500000007450580596923828125);
-        vec2 _1625 = clamp(vec2(_1619.x ? _2482.x : _1448.x, _1619.y ? _2482.y : _1448.y), vec2(0.5), _1443 - vec2(0.5));
-        ivec2 _2507 = clamp(ivec2(_1625), ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-        vec4 _2533 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_2507.x, int((_78.OutputHeight - 1u) - uint(_2507.y)), 0).xy, 0);
-        float _2534 = _2533.x;
-        bvec2 _3422 = bvec2((((_2534 > 0.0) && (abs(_2534 - _78.ProjA) > 9.999999717180685365747194737196e-10)) ? (_78.ProjB / (_2534 - _78.ProjA)) : 1000000000.0) < _1875);
-        vec2 _3423 = vec2(_3422.x ? _1448.x : _1625.x, _3422.y ? _1448.y : _1625.y);
-        vec3 _1656 = exp(max(_78.FluidTint.xyz, vec3(0.0)) * (-_1436));
-        vec3 _1670 = reflect(_1516, _3342);
-        float _3364;
-        vec3 _3376;
-        vec3 _3381;
-        float _3388;
-        do
-        {
-            if (_78.ReflectionDistance <= 0.0)
+            vec2 _2281 = _2248.xz;
+            float _3467 = max(_104.RippleParams.y, 0.00999999977648258209228515625);
+            vec2 _5794;
+            _5794 = vec2(0.0);
+            SPIRV_CROSS_UNROLL
+            for (int _5793 = 0; _5793 < 5; )
             {
-                _3388 = 0.0;
-                _3381 = vec3(0.0);
-                _3376 = vec3(0.0);
-                _3364 = 0.0;
+                float _3476 = float(_5793);
+                float _3480 = _3467 * pow(0.62000000476837158203125, _3476);
+                float _3490 = 0.89999997615814208984375 + (_3476 * 2.399960041046142578125);
+                vec2 _3495 = vec2(cos(_3490), sin(_3490));
+                _5794 += (_3495 * (((_104.RippleParams.x * pow(0.800000011920928955078125, _3476)) * clamp((_3480 / max(_2259 * 6.0, 9.9999997473787516355514526367188e-06)) - 1.0, 0.0, 1.0)) * cos(((dot(_3495, _2281) * (6.283185482025146484375 / _3480)) + ((sqrt(61.63805389404296875 / _3480) * _104.RippleParams.z) * _104.ShadeParams.z)) + (_3476 * 1.7000000476837158203125))));
+                _5793++;
+                continue;
+            }
+            vec2 _2286 = _5794 * _2271;
+            vec3 _2296 = normalize(_3437 + vec3(-_2286.x, 0.0, -_2286.y));
+            vec3 _2298 = normalize(vec3(dot(_2296, _104.CameraRight.xyz), dot(_2296, _104.CameraUp.xyz), dot(_2296, _104.CameraForward.xyz)));
+            bvec3 _5875 = bvec3(dot(_2298, _2232) < 0.0199999995529651641845703125);
+            _5796 = vec3(_5875.x ? _5792.x : _2298.x, _5875.y ? _5792.y : _2298.y, _5875.z ? _5792.z : _2298.z);
+        }
+        else
+        {
+            _5796 = _5792;
+        }
+        if (_104.DebugView == 1u)
+        {
+            imageStore(OutputTexture, ivec2(_2127), vec4((_5796 * 0.5) + vec3(0.5), 1.0));
+            break;
+        }
+        if (_104.DebugView == 2u)
+        {
+            float _2329 = clamp(_2815 * 0.083333335816860198974609375, 0.0, 1.0);
+            imageStore(OutputTexture, ivec2(_2127), vec4(_2329, _2329, _2329, 1.0));
+            break;
+        }
+        ivec2 _3565 = clamp(_2166, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+        vec4 _3591 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_3565.x, int((_104.OutputHeight - 1u) - uint(_3565.y)), 0).xy, 0);
+        float _3592 = _3591.x;
+        float _3609 = ((_3592 > 0.0) && (abs(_3592 - _104.ProjA) > 9.999999717180685365747194737196e-10)) ? (_104.ProjB / (_3592 - _104.ProjA)) : 1000000000.0;
+        float _2351 = (_3609 < 100000000.0) ? (max(_3609 - _2815, 0.0) / max(_2230.z, 0.0500000007450580596923828125)) : 10000.0;
+        float _2358 = max(_2855.x, 0.0) * max(_104.ThicknessScale, 0.0);
+        float _2372 = mix(_2358, min(_2351, (_2358 * 1.5) + _2169), smoothstep(0.449999988079071044921875, 0.800000011920928955078125, _2358 / max(_2351, 0.001000000047497451305389404296875)));
+        vec3 _2375 = refract(_2230, _5796, 0.75187969207763671875);
+        bvec3 _5877 = bvec3(dot(_2375, _2375) < 9.9999999747524270787835121154785e-07);
+        vec3 _2402 = _2884 + (normalize(mix(_2230, vec3(_5877.x ? _2230.x : _2375.x, _5877.y ? _2230.y : _2375.y, _5877.z ? _2230.z : _2375.z), vec3(clamp(_104.Refraction, 0.0, 1.0)))) * min(min(_2372, _2351), max(_104.MaxTravel, 0.0)));
+        float _3649 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+        vec2 _3639 = vec2(((_2402.x * _3649) / _2402.z) + (0.5 * float(_104.OutputWidth)), (((-_2402.y) * _3649) / _2402.z) + (0.5 * float(_104.OutputHeight)));
+        bvec2 _2409 = bvec2(_2402.z > 0.0500000007450580596923828125);
+        vec2 _5800;
+        _5800 = vec2(_2409.x ? _3639.x : _2163.x, _2409.y ? _3639.y : _2163.y) - _2163;
+        vec2 _2445;
+        vec2 _5801;
+        float _5803;
+        int _5799 = 0;
+        SPIRV_CROSS_LOOP
+        for (;;)
+        {
+            if (_5799 < 4)
+            {
+                vec2 _2426 = clamp(_2163 + _5800, vec2(0.5), _2158 - vec2(0.5));
+                ivec2 _2430 = ivec2(_2426 - vec2(0.5));
+                ivec2 _3684 = clamp(_2430, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+                vec4 _3710 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_3684.x, int((_104.OutputHeight - 1u) - uint(_3684.y)), 0).xy, 0);
+                float _3711 = _3710.x;
+                ivec2 _3725 = clamp(_2430, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+                ivec2 _3766 = clamp(_2430, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+                vec4 _3792 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_3766.x, int((_104.OutputHeight - 1u) - uint(_3766.y)), 0).xy, 0);
+                float _3793 = _3792.x;
+                ivec2 _2435 = ivec2(_2426 + vec2(0.5));
+                ivec2 _3845 = clamp(_2435, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+                vec4 _3871 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_3845.x, int((_104.OutputHeight - 1u) - uint(_3845.y)), 0).xy, 0);
+                float _3872 = _3871.x;
+                ivec2 _3886 = clamp(_2435, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+                ivec2 _3927 = clamp(_2435, ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+                vec4 _3953 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_3927.x, int((_104.OutputHeight - 1u) - uint(_3927.y)), 0).xy, 0);
+                float _3954 = _3953.x;
+                if ((((_3711 > 0.0) && (texelFetch(SPIRV_Cross_CombinedFluidThicknessSPIRV_Cross_DummySampler, ivec3(_3725.x, int((_104.OutputHeight - 1u) - uint(_3725.y)), 0).xy, 0).w > 0.5)) && ((((_3793 > 0.0) && (abs(_3793 - _104.ProjA) > 9.999999717180685365747194737196e-10)) ? (_104.ProjB / (_3793 - _104.ProjA)) : 1000000000.0) >= (_3711 + 0.0500000007450580596923828125))) && (((_3872 > 0.0) && (texelFetch(SPIRV_Cross_CombinedFluidThicknessSPIRV_Cross_DummySampler, ivec3(_3886.x, int((_104.OutputHeight - 1u) - uint(_3886.y)), 0).xy, 0).w > 0.5)) && ((((_3954 > 0.0) && (abs(_3954 - _104.ProjA) > 9.999999717180685365747194737196e-10)) ? (_104.ProjB / (_3954 - _104.ProjA)) : 1000000000.0) >= (_3872 + 0.0500000007450580596923828125))))
+                {
+                    ivec2 _3986 = clamp(ivec2(_2426), ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+                    vec4 _4012 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_3986.x, int((_104.OutputHeight - 1u) - uint(_3986.y)), 0).xy, 0);
+                    float _4013 = _4012.x;
+                    _5803 = ((_4013 > 0.0) && (abs(_4013 - _104.ProjA) > 9.999999717180685365747194737196e-10)) ? (_104.ProjB / (_4013 - _104.ProjA)) : 1000000000.0;
+                    _5801 = _2426;
+                    break;
+                }
+                _2445 = _5800 * 0.5;
+                _5800 = _2445;
+                _5799++;
+                continue;
+            }
+            else
+            {
+                _5803 = _3609;
+                _5801 = _2163;
                 break;
             }
-            float _2588 = max(0.004999999888241291046142578125 * _1875, 0.00999999977648258209228515625);
-            float _2591 = _2588 * fract(52.98291778564453125 * fract(dot(_1448, vec2(0.067110560834407806396484375, 0.005837149918079376220703125))));
-            vec2 _3360;
-            _3360 = vec2(-1.0);
-            float _2600;
-            float _2711;
-            vec2 _3427;
-            bool _3356;
-            float _3365;
-            vec3 _3377;
-            int _3347 = 0;
-            float _3348 = _2591;
-            float _3349 = _2588;
+        }
+        vec3 _2464 = textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2((_5801 / _2158).x, 1.0 - (_5801 / _2158).y), 0.0).xyz;
+        vec3 _5805;
+        if ((_104.CausticParams.x > 0.0) && (_5803 < 100000000.0))
+        {
+            float _4078 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+            vec3 _2477 = vec3(_104.CameraRight.w, _104.CameraUp.w, _104.CameraForward.w) + (((_104.CameraRight.xyz * (((_5801.x - (0.5 * float(_104.OutputWidth))) * _5803) / _4078)) + (_104.CameraUp.xyz * (((-(_5801.y - (0.5 * float(_104.OutputHeight)))) * _5803) / _4078))) + (_104.CameraForward.xyz * _5803));
+            float _2482 = _2248.y - _2477.y;
+            vec3 _5806;
+            if (_2482 > 0.0199999995529651641845703125)
+            {
+                vec3 _2489 = normalize(_104.SunDirection.xyz);
+                vec3 _4122 = ((_104.CameraRight.xyz * _2489.x) + (_104.CameraUp.xyz * _2489.y)) + (_104.CameraForward.xyz * _2489.z);
+                vec2 _2501 = (_4122.xz / vec2(_4122.y)) * _2482;
+                bvec2 _2502 = bvec2(_4122.y > 0.100000001490116119384765625);
+                vec2 _4139 = (_2477.xz + vec2(_2502.x ? _2501.x : vec2(0.0).x, _2502.y ? _2501.y : vec2(0.0).y)) * (6.283185482025146484375 / max(_104.CausticParams.y, 0.0500000007450580596923828125));
+                vec2 _4162 = _4139 + (vec2(sin((_4139.y * 0.730000019073486328125) + ((_104.ShadeParams.z * 0.89999997615814208984375) * _104.CausticParams.z)), sin((_4139.x * 0.61000001430511474609375) - ((_104.ShadeParams.z * 1.10000002384185791015625) * _104.CausticParams.z))) * 0.89999997615814208984375);
+                _5806 = _2464 * (1.0 + (((_104.CausticParams.x * (exp((-_2482) / max(_104.CausticParams.w, 0.0500000007450580596923828125)) * smoothstep(0.0199999995529651641845703125, 0.1500000059604644775390625, _2482))) * clamp(dot(_104.SunColor.xyz, vec3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)) * 0.5, 0.0, 1.0)) * ((pow(clamp((1.0 - abs(sin(_4162.x + ((_104.ShadeParams.z * 0.60000002384185791015625) * _104.CausticParams.z)) * sin((_4162.y * 1.12999999523162841796875) - ((_104.ShadeParams.z * 0.4000000059604644775390625) * _104.CausticParams.z)))) * (1.0 - abs(sin(((_4162.x + _4162.y) * 0.709999978542327880859375) - ((_104.ShadeParams.z * 0.5) * _104.CausticParams.z)) * sin(((_4162.x - _4162.y) * 0.829999983310699462890625) + ((_104.ShadeParams.z * 0.699999988079071044921875) * _104.CausticParams.z)))), 0.0, 1.0), 6.0) * 2.2000000476837158203125) - 0.25)));
+            }
+            else
+            {
+                _5806 = _2464;
+            }
+            _5805 = _5806;
+        }
+        else
+        {
+            _5805 = _2464;
+        }
+        vec3 _2548 = exp(max(_104.FluidTint.xyz, vec3(0.0)) * (-_2372));
+        vec3 _2559 = (_5805 * _2548) + ((vec3(1.0) - _2548) * _104.FluidColor.xyz);
+        if (_104.DebugView == 3u)
+        {
+            float _2566 = clamp(_2372 * 0.25, 0.0, 1.0);
+            imageStore(OutputTexture, ivec2(_2127), vec4(_2566, _2566, _2566, 1.0));
+            break;
+        }
+        if (_104.DebugView == 4u)
+        {
+            imageStore(OutputTexture, ivec2(_2127), vec4(_2855.www, 1.0));
+            break;
+        }
+        if (_104.DebugView == 6u)
+        {
+            imageStore(OutputTexture, ivec2(_2127), vec4(_2559, 1.0));
+            break;
+        }
+        vec3 _2606 = reflect(_2230, _5796);
+        vec3 _4236 = ((_104.CameraRight.xyz * _2606.x) + (_104.CameraUp.xyz * _2606.y)) + (_104.CameraForward.xyz * _2606.z);
+        float _5829;
+        vec3 _5846;
+        do
+        {
+            if (_104.ReflectionDistance <= 0.0)
+            {
+                _5846 = vec3(0.0);
+                _5829 = 0.0;
+                break;
+            }
+            float _4282 = smoothstep(-0.0199999995529651641845703125, 0.119999997317790985107421875, _2606.z);
+            if (_4282 <= 0.0)
+            {
+                _5846 = vec3(0.0);
+                _5829 = 0.0;
+                break;
+            }
+            float _4288 = 0.014999999664723873138427734375 * ((0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05));
+            float _4292 = max(0.0040000001899898052215576171875 * _2815, 0.00999999977648258209228515625);
+            float _4294 = 0.5 * _4292;
+            float _4303;
+            float _4398;
+            bool _5819;
+            bool _5821;
+            float _5825;
+            float _5830;
+            vec3 _5847;
+            int _5812 = 0;
+            float _5813 = _4294;
+            float _5814 = _4292;
+            float _5826 = -1.0;
             SPIRV_CROSS_LOOP
             for (;;)
             {
-                if (_3347 < 64)
+                if (_5812 < 80)
                 {
-                    _2600 = _3348 + _3349;
-                    if (_2600 > _78.ReflectionDistance)
+                    _4303 = _5813 + _5814;
+                    if (_4303 > _104.ReflectionDistance)
                     {
-                        _3377 = vec3(0.0);
-                        _3365 = _3374;
-                        _3356 = false;
+                        _5847 = vec3(0.0);
+                        _5830 = 0.0;
+                        _5825 = _5826;
+                        _5821 = false;
+                        _5819 = true;
                         break;
                     }
-                    vec3 _2611 = _1948 + (_1670 * _2600);
-                    if (_2611.z <= 0.0500000007450580596923828125)
+                    vec3 _4314 = _2884 + (_2606 * _4303);
+                    if (_4314.z <= 0.0500000007450580596923828125)
                     {
-                        _3377 = vec3(0.0);
-                        _3365 = _3374;
-                        _3356 = false;
+                        _5847 = vec3(0.0);
+                        _5830 = 0.0;
+                        _5825 = _5826;
+                        _5821 = false;
+                        _5819 = true;
                         break;
                     }
-                    float _2766 = (0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05);
-                    float _2742 = ((_2611.x * _2766) / _2611.z) + (0.5 * float(_78.OutputWidth));
-                    float _2755 = (((-_2611.y) * _2766) / _2611.z) + (0.5 * float(_78.OutputHeight));
-                    vec2 _2756 = vec2(_2742, _2755);
-                    if (!((((_2742 >= 0.0) && (_2755 >= 0.0)) && (_2742 < float(_78.OutputWidth))) && (_2755 < float(_78.OutputHeight))))
+                    float _4506 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+                    float _4482 = ((_4314.x * _4506) / _4314.z) + (0.5 * float(_104.OutputWidth));
+                    float _4495 = (((-_4314.y) * _4506) / _4314.z) + (0.5 * float(_104.OutputHeight));
+                    if (!((((_4482 >= 0.0) && (_4495 >= 0.0)) && (_4482 < float(_104.OutputWidth))) && (_4495 < float(_104.OutputHeight))))
                     {
-                        _3377 = vec3(0.0);
-                        _3365 = _3374;
-                        _3356 = false;
+                        _5847 = vec3(0.0);
+                        _5830 = _5842;
+                        _5825 = _5826;
+                        _5821 = true;
+                        _5819 = false;
                         break;
                     }
-                    ivec2 _2804 = clamp(ivec2(_2756), ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-                    vec4 _2830 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_2804.x, int((_78.OutputHeight - 1u) - uint(_2804.y)), 0).xy, 0);
-                    float _2831 = _2830.x;
-                    float _2848 = ((_2831 > 0.0) && (abs(_2831 - _78.ProjA) > 9.999999717180685365747194737196e-10)) ? (_78.ProjB / (_2831 - _78.ProjA)) : 1000000000.0;
-                    bool _2628 = _2848 > 100000000.0;
-                    if (_2628)
+                    ivec2 _4544 = clamp(ivec2(vec2(_4482, _4495)), ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+                    vec4 _4570 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_4544.x, int((_104.OutputHeight - 1u) - uint(_4544.y)), 0).xy, 0);
+                    float _4571 = _4570.x;
+                    float _4588 = ((_4571 > 0.0) && (abs(_4571 - _104.ProjA) > 9.999999717180685365747194737196e-10)) ? (_104.ProjB / (_4571 - _104.ProjA)) : 1000000000.0;
+                    if (((_4588 < 100000000.0) && (_4314.z > _4588)) && ((_4314.z - _4588) < max(2.0 * _5814, 0.25)))
                     {
-                    }
-                    else
-                    {
-                        if ((_2611.z > _2848) && ((_2611.z - _2848) < max(2.0 * _3349, 0.25)))
+                        float _5816;
+                        _5816 = _4303;
+                        float _5879;
+                        float _5880;
+                        int _5815 = 0;
+                        float _5817 = _5813;
+                        SPIRV_CROSS_UNROLL
+                        for (; _5815 < 6; _5817 = _5879, _5816 = _5880, _5815++)
                         {
-                            float _3351;
-                            _3351 = _2600;
-                            float _3424;
-                            float _3425;
-                            int _3350 = 0;
-                            float _3352 = _3348;
-                            SPIRV_CROSS_UNROLL
-                            for (; _3350 < 5; _3352 = _3424, _3351 = _3425, _3350++)
-                            {
-                                float _2656 = 0.5 * (_3352 + _3351);
-                                vec3 _2661 = _1948 + (_1670 * _2656);
-                                float _2888 = (0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05);
-                                ivec2 _2903 = clamp(ivec2(vec2(((_2661.x * _2888) / _2661.z) + (0.5 * float(_78.OutputWidth)), (((-_2661.y) * _2888) / _2661.z) + (0.5 * float(_78.OutputHeight)))), ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-                                vec4 _2929 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_2903.x, int((_78.OutputHeight - 1u) - uint(_2903.y)), 0).xy, 0);
-                                float _2930 = _2929.x;
-                                bool _2668 = _2661.z > (((_2930 > 0.0) && (abs(_2930 - _78.ProjA) > 9.999999717180685365747194737196e-10)) ? (_78.ProjB / (_2930 - _78.ProjA)) : 1000000000.0);
-                                _3424 = _2668 ? _3352 : _2656;
-                                _3425 = _2668 ? _2656 : _3351;
-                            }
-                            vec3 _2682 = _1948 + (_1670 * _3351);
-                            float _2987 = (0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05);
-                            vec2 _2977 = vec2(((_2682.x * _2987) / _2682.z) + (0.5 * float(_78.OutputWidth)), (((-_2682.y) * _2987) / _2682.z) + (0.5 * float(_78.OutputHeight)));
-                            vec2 _2694 = min(_2977, vec2(float(_78.OutputWidth), float(_78.OutputHeight)) - _2977);
-                            vec2 _3002 = clamp(_2977 / vec2(float(_78.OutputWidth), float(_78.OutputHeight)), vec2(0.0), vec2(1.0));
-                            _3377 = textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_3002.x, 1.0 - _3002.y), 0.0).xyz;
-                            _3365 = clamp(min(_2694.x, _2694.y) / (0.0599999986588954925537109375 * float(_78.OutputHeight)), 0.0, 1.0);
-                            _3356 = true;
-                            break;
+                            float _4358 = 0.5 * (_5817 + _5816);
+                            vec3 _4363 = _2884 + (_2606 * _4358);
+                            float _4628 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+                            ivec2 _4643 = clamp(ivec2(vec2(((_4363.x * _4628) / _4363.z) + (0.5 * float(_104.OutputWidth)), (((-_4363.y) * _4628) / _4363.z) + (0.5 * float(_104.OutputHeight)))), ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+                            vec4 _4669 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_4643.x, int((_104.OutputHeight - 1u) - uint(_4643.y)), 0).xy, 0);
+                            float _4670 = _4669.x;
+                            bool _4370 = _4363.z > (((_4670 > 0.0) && (abs(_4670 - _104.ProjA) > 9.999999717180685365747194737196e-10)) ? (_104.ProjB / (_4670 - _104.ProjA)) : 1000000000.0);
+                            _5879 = _4370 ? _5817 : _4358;
+                            _5880 = _4370 ? _4358 : _5816;
                         }
+                        vec3 _4384 = _2884 + (_2606 * _5816);
+                        float _4727 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+                        vec2 _4717 = vec2(((_4384.x * _4727) / _4384.z) + (0.5 * float(_104.OutputWidth)), (((-_4384.y) * _4727) / _4384.z) + (0.5 * float(_104.OutputHeight)));
+                        float _4743 = clamp((_4288 * _5816) / max(_4384.z, 0.0500000007450580596923828125), 0.0, 10.0);
+                        float _4745 = 0.5 * _4743;
+                        vec2 _4830 = clamp(_4717 / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+                        vec2 _4856 = clamp((_4717 + vec2(_4745)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+                        vec2 _4882 = clamp((_4717 + vec2(_4743 * (-0.5), _4745)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+                        vec2 _4908 = clamp((_4717 + vec2(_4745, _4743 * (-0.5))) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+                        vec2 _4934 = clamp((_4717 + vec2(_4743 * (-0.5), _4743 * (-0.5))) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+                        vec2 _4960 = clamp((_4717 + vec2(_4743, 0.0)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+                        vec2 _4986 = clamp((_4717 + vec2(-_4743, 0.0)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+                        vec2 _5012 = clamp((_4717 + vec2(0.0, _4743)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+                        vec2 _5038 = clamp((_4717 + vec2(0.0, -_4743)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+                        vec3 _4815 = (((((((((textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_4830.x, 1.0 - _4830.y), 0.0).xyz * 2.0) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_4856.x, 1.0 - _4856.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_4882.x, 1.0 - _4882.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_4908.x, 1.0 - _4908.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_4934.x, 1.0 - _4934.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_4960.x, 1.0 - _4960.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_4986.x, 1.0 - _4986.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5012.x, 1.0 - _5012.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5038.x, 1.0 - _5038.y), 0.0).xyz) * 0.100000001490116119384765625;
+                        _5847 = _4815;
+                        _5830 = _4282;
+                        _5825 = _4303;
+                        _5821 = false;
+                        _5819 = true;
+                        break;
                     }
-                    bvec2 _3426 = bvec2(_2628);
-                    _3427 = vec2(_3426.x ? _2756.x : _3360.x, _3426.y ? _2756.y : _3360.y);
-                    _2711 = _3349 * 1.08000004291534423828125;
-                    _3349 = _2711;
-                    _3348 = _2600;
-                    _3347++;
-                    _3360 = _3427;
+                    _4398 = _5814 * 1.07000005245208740234375;
+                    _5814 = _4398;
+                    _5813 = _4303;
+                    _5812++;
+                    _5826 = _4303;
                     continue;
                 }
                 else
                 {
-                    _3377 = vec3(0.0);
-                    _3365 = _3374;
-                    _3356 = false;
+                    _5847 = vec3(0.0);
+                    _5830 = _5842;
+                    _5825 = _5826;
+                    _5821 = false;
+                    _5819 = false;
                     break;
                 }
             }
-            if (_3356)
+            if (_5819)
             {
-                _3388 = 0.0;
-                _3381 = vec3(0.0);
-                _3376 = _3377;
-                _3364 = _3365;
+                _5846 = _5847;
+                _5829 = _5830;
                 break;
             }
-            bool _2720 = _3360.x >= 0.0;
-            vec3 _3387;
-            if (_2720)
+            if ((!_5821) || (_5825 < 0.0))
             {
-                vec2 _3028 = clamp(_3360 / vec2(float(_78.OutputWidth), float(_78.OutputHeight)), vec2(0.0), vec2(1.0));
-                _3387 = textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_3028.x, 1.0 - _3028.y), 0.0).xyz;
+                _5846 = _5847;
+                _5829 = 0.0;
+                break;
             }
-            else
+            vec3 _4416 = _2884 + (_2606 * _5825);
+            float _5089 = (0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05);
+            vec2 _5079 = vec2(((_4416.x * _5089) / _4416.z) + (0.5 * float(_104.OutputWidth)), (((-_4416.y) * _5089) / _4416.z) + (0.5 * float(_104.OutputHeight)));
+            ivec2 _5104 = clamp(ivec2(_5079), ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+            vec4 _5130 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_5104.x, int((_104.OutputHeight - 1u) - uint(_5104.y)), 0).xy, 0);
+            float _5131 = _5130.x;
+            float _5148 = ((_5131 > 0.0) && (abs(_5131 - _104.ProjA) > 9.999999717180685365747194737196e-10)) ? (_104.ProjB / (_5131 - _104.ProjA)) : 1000000000.0;
+            float _5164 = clamp((_4288 * _5825) / max(_4416.z, 0.0500000007450580596923828125), 0.0, 10.0);
+            float _5166 = 0.5 * _5164;
+            vec2 _5251 = clamp(_5079 / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+            vec2 _5277 = clamp((_5079 + vec2(_5166)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+            vec2 _5303 = clamp((_5079 + vec2(_5164 * (-0.5), _5166)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+            vec2 _5329 = clamp((_5079 + vec2(_5166, _5164 * (-0.5))) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+            vec2 _5355 = clamp((_5079 + vec2(_5164 * (-0.5), _5164 * (-0.5))) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+            vec2 _5381 = clamp((_5079 + vec2(_5164, 0.0)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+            vec2 _5407 = clamp((_5079 + vec2(-_5164, 0.0)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+            vec2 _5433 = clamp((_5079 + vec2(0.0, _5164)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+            vec2 _5459 = clamp((_5079 + vec2(0.0, -_5164)) / vec2(float(_104.OutputWidth), float(_104.OutputHeight)), vec2(0.0), vec2(1.0));
+            vec3 _5236 = (((((((((textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5251.x, 1.0 - _5251.y), 0.0).xyz * 2.0) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5277.x, 1.0 - _5277.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5303.x, 1.0 - _5303.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5329.x, 1.0 - _5329.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5355.x, 1.0 - _5355.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5381.x, 1.0 - _5381.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5407.x, 1.0 - _5407.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5433.x, 1.0 - _5433.y), 0.0).xyz) + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_5459.x, 1.0 - _5459.y), 0.0).xyz) * 0.100000001490116119384765625;
+            if (_5148 > 100000000.0)
             {
-                _3387 = vec3(0.0);
+                _5846 = _5236;
+                _5829 = _4282;
+                break;
             }
-            _3388 = float(_2720);
-            _3381 = _3387;
-            _3376 = _3377;
-            _3364 = 0.0;
+            float _4439 = _5148 - _4416.z;
+            if (_4439 <= 0.0)
+            {
+                _5846 = _5236;
+                _5829 = _4282;
+                break;
+            }
+            _5846 = _5236;
+            _5829 = _4282 * exp((_4439 / max(_2606.z, 0.001000000047497451305389404296875)) * (-0.3333333432674407958984375));
             break;
         } while(false);
-        float _3396;
-        vec3 _3397;
-        _3397 = vec3(0.0);
-        _3396 = 0.0;
-        float _3413;
-        vec3 _3414;
-        SPIRV_CROSS_UNROLL
-        for (int _3395 = 1; _3395 <= 3; _3397 = _3414, _3396 = _3413, _3395++)
+        float _5476 = _4236.y;
+        vec3 _2618 = mix(mix(_104.SkyHorizon.xyz * 0.3499999940395355224609375, mix(_104.SkyHorizon.xyz, _104.ReflectionColor.xyz, vec3(smoothstep(0.0, 0.64999997615814208984375, _5476))), vec3(smoothstep(-0.119999997317790985107421875, 0.0199999995529651641845703125, _5476))), _5846, vec3(_5829));
+        if (_104.DebugView == 5u)
         {
-            ivec2 _3059 = ivec2((int(_78.OutputWidth) * _3395) / 4, 1);
-            ivec2 _3103 = clamp(_3059, ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-            vec4 _3129 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_3103.x, int((_78.OutputHeight - 1u) - uint(_3103.y)), 0).xy, 0);
-            float _3130 = _3129.x;
-            if ((((_3130 > 0.0) && (abs(_3130 - _78.ProjA) > 9.999999717180685365747194737196e-10)) ? (_78.ProjB / (_3130 - _78.ProjA)) : 1000000000.0) > 100000000.0)
-            {
-                vec2 _3162 = clamp((vec2(_3059) + vec2(0.5)) / vec2(float(_78.OutputWidth), float(_78.OutputHeight)), vec2(0.0), vec2(1.0));
-                _3414 = _3397 + textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2(_3162.x, 1.0 - _3162.y), 0.0).xyz;
-                _3413 = _3396 + 1.0;
-            }
-            else
-            {
-                _3414 = _3397;
-                _3413 = _3396;
-            }
+            imageStore(OutputTexture, ivec2(_2127), vec4(_2618, 1.0));
+            break;
         }
-        vec3 _3083 = _3397 / vec3(_3396);
-        bvec3 _3087 = bvec3(_3396 > 0.0);
-        vec3 _3088 = vec3(_3087.x ? _3083.x : _78.ReflectionColor.xyz.x, _3087.y ? _3083.y : _78.ReflectionColor.xyz.y, _3087.z ? _3083.z : _78.ReflectionColor.xyz.z);
-        bvec3 _1697 = bvec3(_3388 > 0.5);
-        vec3 _1698 = vec3(_1697.x ? _3381.x : _3088.x, _1697.y ? _3381.y : _3088.y, _1697.z ? _3381.z : _3088.z);
-        float _1759 = clamp(2.5 * ((_78.ShadeParams.y * ((0.5 * float(_78.OutputHeight)) * max(_78.ProjScaleY, 9.9999997473787516355514526367188e-05))) / _1875), 2.0, 48.0);
-        float _1762 = 4.0 * _78.ShadeParams.y;
-        float _3407;
-        _3407 = 0.0;
+        float _2647 = 0.0199999995529651641845703125 + (0.980000019073486328125 * pow(1.0 - clamp(dot(normalize(_5792 + _5796), _2232), 0.0, 1.0), max(_104.FresnelPower, 1.0)));
+        vec3 _2657 = normalize(_104.SunDirection.xyz);
+        float _2664 = max(_104.ShadeParams.w, 8.0);
+        float _2700 = clamp(2.5 * ((_2169 * ((0.5 * float(_104.OutputHeight)) * max(_104.ProjScaleY, 9.9999997473787516355514526367188e-05))) / _2815), 2.0, 48.0);
+        float _2702 = 4.0 * _2169;
+        float _5867;
+        _5867 = 0.0;
         SPIRV_CROSS_UNROLL
-        for (int _3406 = 0; _3406 < 8; )
+        for (int _5866 = 0; _5866 < 8; )
         {
-            float _1770 = float(_3406) * 0.785398185253143310546875;
-            ivec2 _3197 = clamp(_1451 + ivec2(roundEven(vec2(cos(_1770), sin(_1770)) * _1759)), ivec2(0), ivec2(int(_78.OutputWidth) - 1, int(_78.OutputHeight) - 1));
-            vec4 _3223 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_3197.x, int((_78.OutputHeight - 1u) - uint(_3197.y)), 0).xy, 0);
-            float _3224 = _3223.x;
-            _3407 += float((_3224 <= 0.0) || (_3224 > (_1875 + _1762)));
-            _3406++;
+            float _2710 = float(_5866) * 0.785398185253143310546875;
+            ivec2 _5519 = clamp(_2166 + ivec2(roundEven(vec2(cos(_2710), sin(_2710)) * _2700)), ivec2(0), ivec2(int(_104.OutputWidth) - 1, int(_104.OutputHeight) - 1));
+            vec4 _5545 = texelFetch(SPIRV_Cross_CombinedSurfaceDepthSPIRV_Cross_DummySampler, ivec3(_5519.x, int((_104.OutputHeight - 1u) - uint(_5519.y)), 0).xy, 0);
+            float _5546 = _5545.x;
+            _5867 += float((_5546 <= 0.0) || (_5546 > (_2815 + _2702)));
+            _5866++;
             continue;
         }
-        float _1806 = clamp((_3407 - 5.0) * 0.5, 0.0, 1.0) * clamp(_78.Foam, 0.0, 1.0);
-        vec3 _1818 = mix(mix((textureLod(SPIRV_Cross_CombinedSceneColorLinearSampler, vec2((_3423 / _1443).x, 1.0 - (_3423 / _1443).y), 0.0).xyz * _1656) + ((vec3(1.0) - _1656) * _78.FluidColor.xyz), mix(mix(_1698 * 0.25, _1698, vec3(smoothstep(-0.100000001490116119384765625, 0.20000000298023223876953125, dot(_1670, vec3(_78.CameraRight.y, _78.CameraUp.y, _78.CameraForward.y))))), _3376, vec3(_3364)), vec3(clamp(0.0199999995529651641845703125 + (0.980000019073486328125 * pow(1.0 - clamp(dot(_3342, _1518), 0.0, 1.0), max(_78.FresnelPower, 1.0))), 0.0, 1.0))) + (_78.SunColor.xyz * (pow(clamp(dot(_3342, normalize(normalize(_78.SunDirection.xyz) - _1516)), 0.0, 1.0), 96.0) * _78.Specular)), (_1698 + (_78.SunColor.xyz * 0.1500000059604644775390625)) * 0.85000002384185791015625, vec3(_1806));
-        imageStore(OutputTexture, ivec2(_1405), vec4(_1818, clamp(_1915.w, 0.0, 1.0) * (1.0 - (0.3499999940395355224609375 * _1806))));
+        float _2746 = clamp((_5867 - 5.0) * 0.5, 0.0, 1.0) * clamp(_104.Foam, 0.0, 1.0);
+        vec3 _2758 = mix(mix(_2559, _2618, vec3(clamp(_2647, 0.0, 1.0))) + ((((_104.SunColor.xyz * ((pow(clamp(dot(_5796, normalize(_2657 - _2230)), 0.0, 1.0), _2664) * (_2664 + 8.0)) * 0.0397888012230396270751953125)) * _104.Specular) * _2647) * clamp(dot(_5796, _2657) * 4.0, 0.0, 1.0)), (mix(_104.SkyHorizon.xyz * 0.3499999940395355224609375, mix(_104.SkyHorizon.xyz, _104.ReflectionColor.xyz, vec3(smoothstep(0.0, 0.64999997615814208984375, 0.5))), vec3(smoothstep(-0.119999997317790985107421875, 0.0199999995529651641845703125, 0.5))) + (_104.SunColor.xyz * 0.1500000059604644775390625)) * 0.85000002384185791015625, vec3(_2746));
+        imageStore(OutputTexture, ivec2(_2127), vec4(_2758, clamp(_2855.w, 0.0, 1.0) * (1.0 - (0.3499999940395355224609375 * _2746))));
         break;
     } while(false);
 }

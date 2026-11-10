@@ -587,7 +587,8 @@ bool RenderGraph::Load(const std::string& path) {
           // if it is still missing.
           bool declaredBySystem = false;
           for (const ParticleSystemDesc& sys : ParticleSystemRegistry::Instance().Systems()) {
-            if (sys.buffer == resource.resource || sys.velocity_buffer == resource.resource) {
+            if (sys.buffer == resource.resource || sys.velocity_buffer == resource.resource ||
+                (!sys.anisotropy_buffer.empty() && sys.anisotropy_buffer == resource.resource)) {
               declaredBySystem = true;
               break;
             }

@@ -172,13 +172,13 @@ struct ParticleShadeConstants {
   uint32_t outputWidth;
   uint32_t outputHeight;
   uint32_t mode;          // 0 splat, 1 screen space
-  uint32_t debugView;     // 0 shaded, 1 normals, 2 depth, 3 thickness, 4 coverage
+  uint32_t debugView;     // 0 shaded, 1 normals, 2 depth, 3 water path, 4 coverage, 5 reflection, 6 refraction
   float projScaleY;
   float projA;            // Projection.m[2][2]
   float projB;            // Projection.m[3][2]
   float maxTravel;        // longest refracted path, metres
   float thicknessScale;
-  float refraction;
+  float refraction;       // 0..1 refraction strength (1 = Snell)
   float specular;
   float fresnelPower;
   float normalScale;
@@ -188,14 +188,17 @@ struct ParticleShadeConstants {
   float fluidTint[4];
   float sunDirection[4];  // view space, toward the light
   float sunColor[4];      // rgb * intensity
-  float cameraRight[4];
-  float cameraUp[4];
-  float cameraForward[4];
-  float reflectionColor[4];
-  float shadeParams[4];       // x = write empty pixels, y = particle radius (m)
+  float cameraRight[4];   // w = camera position x
+  float cameraUp[4];      // w = camera position y
+  float cameraForward[4]; // w = camera position z
+  float reflectionColor[4];   // zenith sky
+  float shadeParams[4];       // x = write empty pixels, y = particle radius (m), z = time, w = glint exponent
   float fluidColor[4];        // scattered fluid colour
+  float skyHorizon[4];        // horizon sky
+  float rippleParams[4];      // slope, longest wavelength (m), speed, fade distance (m)
+  float causticParams[4];     // strength, scale (m), speed, depth fade (m)
 };
-static_assert(sizeof(ParticleShadeConstants) == 208);
+static_assert(sizeof(ParticleShadeConstants) == 256);
 
 // Mirrors `cbuffer ParticleSphereConstants` in CS_FluidSphereShade.hlsl.
 struct ParticleSphereConstants {
@@ -488,6 +491,11 @@ bool BuildParticleSplatConstants(const ComputeKernelConstantsContext& context,
   value.emitterPosition[0] = props.ParticleEmitterPosition.x;
   value.emitterPosition[1] = props.ParticleEmitterPosition.y;
   value.emitterPosition[2] = props.ParticleEmitterPosition.z;
+  // Padding slots read by CS_FluidSplat: P00 (ProjScaleX) after Color0, and the anisotropy
+  // flag after EmitterPosition. The other particle kernels keep them as padding.
+  value.color[0][3] = camera->Projection.m[0][0];
+  value.emitterPosition[3] =
+      system->screen_space.anisotropy && !system->anisotropy_buffer.empty() ? 1.0f : 0.0f;
   // Row-major view-projection; the kernel multiplies rows against float4(p, 1).
   std::memcpy(value.viewProjection, &camera->VP, sizeof(value.viewProjection));
   CopyWords(value, constants);
@@ -592,9 +600,9 @@ bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
   value.projB = camera->Projection.m[3][2];
   // Longest refracted path: beyond this the single-offset lookup stops resembling the
   // refracted image.
-  value.maxTravel = 2.0f;
+  value.maxTravel = 3.0f;
   value.thicknessScale = system->screen_space.thickness_scale;
-  value.refraction = system->screen_space.refraction;
+  value.refraction = system->screen_space.refraction_strength;
   value.specular = system->screen_space.specular;
   value.fresnelPower = system->screen_space.fresnel_power;
   value.normalScale = system->screen_space.normal_scale;
@@ -606,24 +614,38 @@ bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
                          (std::max)(system->screen_space.absorption_scale, 0.0f);
     value.reflectionColor[c] = system->screen_space.reflection[c];
     value.fluidColor[c] = system->screen_space.fluid_color[c];
+    value.skyHorizon[c] = system->screen_space.sky_horizon[c];
   }
   // If the splat resolve is disabled the shade must write every pixel so the composite never
   // samples an unwritten target. With the fallback on, empty pixels are left untouched.
   value.shadeParams[0] = system->screen_space.splat_fallback ? 0.0f : 1.0f;
   value.shadeParams[1] = system->radius;
+  value.shadeParams[2] = ParticleSystemRegistry::Instance().Time();
+  value.shadeParams[3] = system->screen_space.glint_exponent;
+  value.rippleParams[0] = system->screen_space.ripple_slope;
+  value.rippleParams[1] = system->screen_space.ripple_wavelength;
+  value.rippleParams[2] = system->screen_space.ripple_speed;
+  value.rippleParams[3] = system->screen_space.ripple_distance;
+  value.causticParams[0] = system->screen_space.caustics;
+  value.causticParams[1] = system->screen_space.caustic_scale;
+  value.causticParams[2] = system->screen_space.caustic_speed;
+  value.causticParams[3] = system->screen_space.caustic_depth;
 
   SunInView(props, *camera, value.sunDirection, value.sunColor);
-  // Camera basis in world space; the shader takes world up from it for the reflection's
-  // sky/ground split.
+  // Camera basis in world space (view axes) plus the eye in w: the shader goes between view
+  // and world space for the sky gradient, the ripples and the caustics.
   value.cameraRight[0] = camera->Right.x;
   value.cameraRight[1] = camera->Right.y;
   value.cameraRight[2] = camera->Right.z;
+  value.cameraRight[3] = camera->Eye.x;
   value.cameraUp[0] = camera->Up.x;
   value.cameraUp[1] = camera->Up.y;
   value.cameraUp[2] = camera->Up.z;
+  value.cameraUp[3] = camera->Eye.y;
   value.cameraForward[0] = camera->Look.x;
   value.cameraForward[1] = camera->Look.y;
   value.cameraForward[2] = camera->Look.z;
+  value.cameraForward[3] = camera->Eye.z;
   CopyWords(value, constants);
   return true;
 }

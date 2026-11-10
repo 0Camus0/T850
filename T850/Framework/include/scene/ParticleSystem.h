@@ -102,15 +102,34 @@ namespace t850 {
     float absorption_scale = 4.0f;
     // Colour scattered by the fluid; replaces the old hard-coded teal.
     std::array<float, 3> fluid_color = {{0.10f, 0.30f, 0.42f}};
-    // Sky colour for reflected rays when no sky is visible on screen, and the particle
-    // renderer's ambient.
+    // Sky colour for reflected rays when no sky is visible on screen (the zenith), and the
+    // particle renderer's ambient.
     std::array<float, 3> reflection = {{0.45f, 0.62f, 0.85f}};
-    // Refracted path length per metre of thickness (the ray is bent by Snell's law).
+    // Horizon end of the off-screen sky gradient for reflected rays.
+    std::array<float, 3> sky_horizon = {{0.85f, 0.80f, 0.74f}};
+    // Particle renderer: refracted path length per metre of thickness.
     float refraction = 0.5f;
+    // Screen-space renderer: refraction strength, 0..1 (1 bends the transmitted ray by Snell's
+    // law for water, n = 1.33, over the water column under the surface).
+    float refraction_strength = 1.0f;
     // Screen-space reflection range in metres; 0 reflects only the sky.
     float reflection_distance = 40.0f;
     // Sun specular strength.
     float specular = 1.0f;
+    // Exponent of the normalised sun glint (larger = smaller, brighter sparkles).
+    float glint_exponent = 900.0f;
+    // Wind ripples on near-horizontal water: slope amplitude, longest wavelength (m), speed
+    // multiplier on deep-water dispersion, and the distance (m) over which they fade out.
+    float ripple_slope = 0.05f;
+    float ripple_wavelength = 0.9f;
+    float ripple_speed = 0.6f;
+    float ripple_distance = 30.0f;
+    // Caustics on the submerged floor and walls: strength (0 = off), pattern scale (m),
+    // animation speed, and the depth (m) over which they fade.
+    float caustics = 0.6f;
+    float caustic_scale = 0.9f;
+    float caustic_speed = 1.0f;
+    float caustic_depth = 1.6f;
     // Fresnel exponent.
     float fresnel_power = 5.0f;
     // Multiplier on the view-space derivatives used to build the normal (1 = geometric).
@@ -123,7 +142,11 @@ namespace t850 {
     // backend, but it also re-blends the background at the silhouette and costs a second
     // all-particle pass. Off is the correct setting on Vulkan/GL/D3D12.
     bool splat_fallback = false;
-    // 0 = shaded, 1 = normals, 2 = depth, 3 = thickness, 4 = coverage.
+    // Draw each particle as the ellipsoid in `anisotropy_buffer` (when the system has one)
+    // instead of a sphere: flat free surfaces and continuous sheets instead of domes.
+    bool anisotropy = true;
+    // 0 = shaded, 1 = normals, 2 = depth, 3 = water path, 4 = coverage, 5 = reflection,
+    // 6 = refraction.
     int debug_view = 0;
   };
 
@@ -173,6 +196,10 @@ namespace t850 {
     std::string buffer;
     // Optional: a compute_buffers[] entry of float4 velocities, for streaks and speed tint.
     std::string velocity_buffer;
+    // Optional: an externally published buffer of anisotropic particle shapes (three float4
+    // per particle, see CS_PbfAnisotropy.hlsl). The screen-space depth splat ray-casts these
+    // ellipsoids instead of spheres when it is set.
+    std::string anisotropy_buffer;
     // Optional: a compute_buffers[] entry of float4 view-projection. When empty the graph
     // creates the camera matrix buffer for this system automatically.
     std::string view_projection_buffer;

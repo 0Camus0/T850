@@ -164,7 +164,8 @@ void Backyard8Scene::CreateAssets() {
   }
   // Publish AFTER the asset path: creating assets rebuilds the render container, and a
   // buffer published earlier could point at a freed allocation.
-  m_pbf.PublishParticleBuffers(m_config.particles.buffer, m_config.particles.velocityBuffer);
+  m_pbf.PublishParticleBuffers(m_config.particles.buffer, m_config.particles.velocityBuffer,
+                               m_config.particles.anisotropyBuffer);
   ApplyRenderModeToGraph();
 }
 
@@ -218,6 +219,7 @@ void Backyard8Scene::BuildParticleDesc() {
   d.size_scale_max = (std::max)(c.sizeScaleMax, d.size_scale_min);
   d.buffer = c.buffer;
   d.velocity_buffer = c.velocityBuffer;
+  d.anisotropy_buffer = c.anisotropyBuffer;
   d.ramp.stops = c.colors;
   const int solverCount = m_pbf.IsReady() ? static_cast<int>(m_pbf.ParticleCount()) : 0;
   d.buffer_count = c.count > 0 ? (std::min)(c.count, solverCount) : solverCount;
@@ -239,15 +241,27 @@ void Backyard8Scene::BuildParticleDesc() {
   d.screen_space.absorption_scale = (std::max)(ss.absorptionScale, 0.0f);
   d.screen_space.fluid_color = ss.fluidColor;
   d.screen_space.reflection = ss.reflection;
+  d.screen_space.sky_horizon = ss.skyHorizon;
   d.screen_space.refraction = (std::min)((std::max)(ss.refraction, 0.0f), 2.0f);
+  d.screen_space.refraction_strength = (std::min)((std::max)(ss.refractionStrength, 0.0f), 1.0f);
   d.screen_space.reflection_distance = (std::max)(ss.reflectionDistance, 0.0f);
   d.screen_space.specular = (std::max)(ss.specular, 0.0f);
+  d.screen_space.glint_exponent = (std::max)(ss.glintExponent, 1.0f);
   d.screen_space.fresnel_power = (std::max)(ss.fresnelPower, 0.0f);
   d.screen_space.normal_scale = (std::max)(ss.normalScale, 0.0f);
   d.screen_space.normal_step = (std::min)((std::max)(ss.normalStep, 1.0f), 8.0f);
   d.screen_space.foam = (std::min)((std::max)(ss.foam, 0.0f), 1.0f);
+  d.screen_space.ripple_slope = (std::max)(ss.rippleSlope, 0.0f);
+  d.screen_space.ripple_wavelength = (std::max)(ss.rippleWavelength, 0.01f);
+  d.screen_space.ripple_speed = (std::max)(ss.rippleSpeed, 0.0f);
+  d.screen_space.ripple_distance = (std::max)(ss.rippleDistance, 0.1f);
+  d.screen_space.caustics = (std::max)(ss.caustics, 0.0f);
+  d.screen_space.caustic_scale = (std::max)(ss.causticScale, 0.01f);
+  d.screen_space.caustic_speed = (std::max)(ss.causticSpeed, 0.0f);
+  d.screen_space.caustic_depth = (std::max)(ss.causticDepth, 0.01f);
   d.screen_space.splat_fallback = ss.splatFallback;
-  d.screen_space.debug_view = (std::min)((std::max)(ss.debugView, 0), 4);
+  d.screen_space.anisotropy = ss.anisotropy;
+  d.screen_space.debug_view = (std::min)((std::max)(ss.debugView, 0), 6);
   m_particleDesc = d;
 }
 
@@ -349,7 +363,8 @@ bool Backyard8Scene::ReinitializePbf() {
       water->Update();
     }
   }
-  m_pbf.PublishParticleBuffers(m_config.particles.buffer, m_config.particles.velocityBuffer);
+  m_pbf.PublishParticleBuffers(m_config.particles.buffer, m_config.particles.velocityBuffer,
+                               m_config.particles.anisotropyBuffer);
   RegisterParticleSystem();
   m_pbfAccumulator = 0.0f;
   m_settlePending = true;
@@ -388,7 +403,8 @@ void Backyard8Scene::OnUpdate(float deltaSeconds) {
     if (!m_pbf.Settle(pFramework->pVideoDriver, 3.0f, 0.3f)) T8_LOG_ERROR("[Backyard8] Settle failed");
     if (m_pbf.HasPendingSphere()) {
       if (m_pbf.AppendPendingSphere(pFramework->pVideoDriver)) {
-        m_pbf.PublishParticleBuffers(m_config.particles.buffer, m_config.particles.velocityBuffer);
+        m_pbf.PublishParticleBuffers(m_config.particles.buffer, m_config.particles.velocityBuffer,
+                                     m_config.particles.anisotropyBuffer);
         RegisterParticleSystem();
         T8_LOG_INFO("[Backyard8] Sphere appended after settling: %u particles", m_pbf.ParticleCount());
       } else {
@@ -417,6 +433,25 @@ void Backyard8Scene::OnUpdate(float deltaSeconds) {
     }
     m_pbfAccumulator -= kStep;
     ++steps;
+  }
+
+  // Anisotropic particle shapes for the screen-space depth splat, from the committed positions
+  // of this frame. Only the screen-space renderer reads them.
+  if (m_config.particles.renderMode == 1 && m_config.screenSpace.anisotropy) {
+    const t850::Backyard8ScreenSpaceConfig& ss = m_config.screenSpace;
+    t850::PbfAnisotropySettings anisotropy;
+    anisotropy.smoothing = ss.anisotropySmoothing;
+    anisotropy.maxRatio = ss.anisotropyMaxRatio;
+    anisotropy.radiusScale = ss.anisotropyRadius;
+    anisotropy.sparseScale = ss.anisotropySprayRadius;
+    anisotropy.fullNeighbours = ss.anisotropyNeighbours;
+    anisotropy.sparseNeighbours = ss.anisotropySprayNeighbours;
+    anisotropy.maxStretch = ss.anisotropyMaxStretch;
+    m_pbf.SetAnisotropy(anisotropy);
+    if (!m_pbf.ComputeAnisotropy(pFramework->pVideoDriver) && !m_anisotropyErrorLogged) {
+      T8_LOG_ERROR("[Backyard8] Anisotropy pass failed; the surface falls back to spheres");
+      m_anisotropyErrorLogged = true;
+    }
   }
 
   // The particle registry clock drives procedural particle systems. The water is a buffer
@@ -810,18 +845,29 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
       lookChanged = true;
     if (controls.slider("pbf8_ss_scatter_b", "scatter B", ss.fluidColor[2], 0.0f, 1.0f, 0.005f))
       lookChanged = true;
-    if (controls.slider("pbf8_ss_reflect_r", "reflection R", ss.reflection[0], 0.0f, 1.0f, 0.005f))
+    if (controls.slider("pbf8_ss_reflect_r", "zenith sky R", ss.reflection[0], 0.0f, 1.0f, 0.005f))
       lookChanged = true;
-    if (controls.slider("pbf8_ss_reflect_g", "reflection G", ss.reflection[1], 0.0f, 1.0f, 0.005f))
+    if (controls.slider("pbf8_ss_reflect_g", "zenith sky G", ss.reflection[1], 0.0f, 1.0f, 0.005f))
       lookChanged = true;
-    if (controls.slider("pbf8_ss_reflect_b", "reflection B", ss.reflection[2], 0.0f, 1.0f, 0.005f))
+    if (controls.slider("pbf8_ss_reflect_b", "zenith sky B", ss.reflection[2], 0.0f, 1.0f, 0.005f))
       lookChanged = true;
-    if (controls.slider("pbf8_ss_refract", "refraction (path per m)", ss.refraction, 0.0f, 2.0f, 0.01f))
+    if (controls.slider("pbf8_ss_horizon_r", "horizon sky R", ss.skyHorizon[0], 0.0f, 1.0f, 0.005f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_horizon_g", "horizon sky G", ss.skyHorizon[1], 0.0f, 1.0f, 0.005f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_horizon_b", "horizon sky B", ss.skyHorizon[2], 0.0f, 1.0f, 0.005f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_refract_strength", "refraction strength", ss.refractionStrength,
+                        0.0f, 1.0f, 0.01f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_refract", "splat refraction (path per m)", ss.refraction, 0.0f, 2.0f, 0.01f))
       lookChanged = true;
     if (controls.slider("pbf8_ss_reflect_dist", "reflection range (m)", ss.reflectionDistance,
                         0.0f, 80.0f, 0.5f))
       lookChanged = true;
     if (controls.slider("pbf8_ss_spec", "sun specular", ss.specular, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_glint", "sun glint exponent", ss.glintExponent, 16.0f, 4000.0f, 1.0f))
       lookChanged = true;
     if (controls.slider("pbf8_ss_fresnel", "Fresnel exponent", ss.fresnelPower, 1.0f, 16.0f, 0.1f))
       lookChanged = true;
@@ -833,11 +879,34 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
       lookChanged = true;
   }
 
+  if (gui.BeginSection("Surface detail", true)) {
+    if (controls.slider("pbf8_ss_ripple_slope", "ripple slope", ss.rippleSlope, 0.0f, 0.2f, 0.001f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_ripple_wave", "ripple wavelength (m)", ss.rippleWavelength,
+                        0.05f, 4.0f, 0.01f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_ripple_speed", "ripple speed", ss.rippleSpeed, 0.0f, 3.0f, 0.01f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_ripple_dist", "ripple fade distance (m)", ss.rippleDistance,
+                        1.0f, 100.0f, 0.5f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_caustics", "caustics", ss.caustics, 0.0f, 3.0f, 0.01f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_caustic_scale", "caustic scale (m)", ss.causticScale, 0.1f, 4.0f, 0.01f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_caustic_speed", "caustic speed", ss.causticSpeed, 0.0f, 4.0f, 0.01f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ss_caustic_depth", "caustic depth fade (m)", ss.causticDepth,
+                        0.1f, 6.0f, 0.05f))
+      lookChanged = true;
+  }
+
   if (gui.BeginSection("Debug (screen space)", false)) {
     gui.Text("These views are produced by the screen-space shade pass:");
-    gui.Text("  normals / surface depth / thickness / coverage");
+    gui.Text("  normals / surface depth / water path / coverage / reflection / refraction");
     if (controls.combo("pbf8_ss_debug", "debug view",
-                       {"shaded", "normals", "surface depth", "thickness", "coverage"}, ss.debugView))
+                       {"shaded", "normals", "surface depth", "water path", "coverage",
+                        "reflection", "refraction"}, ss.debugView))
       lookChanged = true;
     if (controls.check("pbf8_ss_fallback", "keep splat underneath (debug fallback)", ss.splatFallback))
       lookChanged = true;

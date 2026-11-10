@@ -1,5 +1,11 @@
 # Backyard Scene 8 — Session Record (2026-11-10)
 
+> **Superseded in part (2026-11-10, later):** the solver's wall top came from the layout's
+> `freeboard` (an invisible wall 0.30 m above the real coping), which is why the water start
+> needed `prefillLevel −0.27` to settle at −0.04. With the wall at the real coping the water
+> start uses `prefillLevel −0.04` and settles at −0.170 m; the gate now has per-start targets.
+> See [backyard8-ssfr-realism.md](backyard8-ssfr-realism.md).
+
 This is the record of the work done **after** the frontier-model handoff document
 [backyard8-fluid-summary-and-next-steps.md](backyard8-fluid-summary-and-next-steps.md).
 The handoff started at commit `1544474`; the pre-work state is tagged

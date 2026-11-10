@@ -103,7 +103,12 @@ void CS(uint3 id : SV_DispatchThreadID)
     // whole run: invisible inside the coping stone, still consuming slots and neighbours.
     const bool outsideFootprint = p.x < BasinMinX || p.x > BasinMaxX ||
                                   p.z < BasinMinZ || p.z > BasinMaxZ;
-    const bool strandedOnSolid = outsideFootprint && p.y < WallTopY;
+    // Outside the footprint the deck clamp (CS_PbfIntegrate/CS_PbfSolve Collide) holds water at
+    // deckY + radius/2. Anything that has come down to the deck or coping is stranded: retire it
+    // rather than leave a puddle of particles that renders as blobs on the rim. Particles still
+    // in the air above that band keep flying until they land.
+    const float deckY = WaterPlaneY + 0.16f;
+    const bool strandedOnSolid = outsideFootprint && p.y < max(WallTopY, deckY + 2.0f * margin);
     if (!belowFloor && !outsideXZ && !strandedOnSolid)
         return;
 

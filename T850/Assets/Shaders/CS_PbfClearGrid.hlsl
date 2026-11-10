@@ -49,7 +49,7 @@ cbuffer PbfConstants : register(b0)
     // Diagnostics/reference values; named per use in CS_PbfDensity.
     float RestDenomReference;   // sum |gradW|^2 for a full lattice
     float MinNeighbours;        // below this the density estimate is not trusted
-    float Pad6;
+    float WallTopY;   // solid walls end here (the pool rim); open above
     // Surface wind stress (m/s), applied to the free-surface layer in CS_PbfIntegrate.
     float WindX;
     float WindZ;

@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_PbfSurface.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=1df1cdbd532e23b17238b721d676dd8fbe00332661c2c5dde51bbe0336072645; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_PbfSurface.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=230e67dfed8e265e0ad42e38988fb566129897c28d618e0a73a70bb76f96400e; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 #if defined(GL_EXT_control_flow_attributes)
 #extension GL_EXT_control_flow_attributes : require
 #define SPIRV_CROSS_FLATTEN [[flatten]]
@@ -47,7 +47,7 @@ layout(binding = 0, std140) uniform PbfConstants
     float RestScale;
     float RestDenomReference;
     float MinNeighbours;
-    float Pad6;
+    float WallTopY;
     float WindX;
     float WindZ;
     float WindStrength;

@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_PbfIntegrate.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=32510e019c6f4af5fa83fb5ef6a95332adb6b2da4056fcd23219328bd3ff34b0; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_PbfIntegrate.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=81afc5eaec5788606bdd8585fab9e560a02704385ff04d5355b56f71265fc704; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 #if defined(GL_EXT_control_flow_attributes)
 #extension GL_EXT_control_flow_attributes : require
 #define SPIRV_CROSS_FLATTEN [[flatten]]
@@ -63,7 +63,7 @@ layout(binding = 0, std140) uniform PbfConstants
     float RestScale;
     float RestDenomReference;
     float MinNeighbours;
-    float Pad6;
+    float WallTopY;
     float WindX;
     float WindZ;
     float WindStrength;
@@ -99,209 +99,209 @@ void main()
             Predicted_1._data[gl_GlobalInvocationID.x] = vec4(Positions_1._data[gl_GlobalInvocationID.x].xyz, 0.0);
             break;
         }
-        vec3 _670 = Velocities_1._data[gl_GlobalInvocationID.x].xyz;
-        _670.y = Velocities_1._data[gl_GlobalInvocationID.x].y - (_59.Gravity * _59.DeltaTime);
-        float _689 = length(vec2(_59.WindX, _59.WindZ));
-        vec3 _1243;
-        if (((_689 > 0.0) && ((Lambda_1._data[gl_GlobalInvocationID.x].y > 9.9999997473787516355514526367188e-05) && (Lambda_1._data[gl_GlobalInvocationID.x].y < (0.89999997615814208984375 * _59.RestDensity)))) && (Positions_1._data[gl_GlobalInvocationID.x].y > (_59.WaterPlaneY - _59.ParticleRadius)))
-        {
-            vec3 _733 = (vec3(_59.WindX / _689, 0.0, _59.WindZ / _689) * _689) - _670;
-            _1243 = _670 + (vec3(_733.x, 0.0, _733.z) * min(((_59.WindStrength * _689) * 0.001000000047497451305389404296875) * _59.DeltaTime, 0.5));
-        }
-        else
-        {
-            _1243 = _670;
-        }
-        float _749 = length(_1243);
+        vec3 _671 = Velocities_1._data[gl_GlobalInvocationID.x].xyz;
+        _671.y = Velocities_1._data[gl_GlobalInvocationID.x].y - (_59.Gravity * _59.DeltaTime);
+        float _690 = length(vec2(_59.WindX, _59.WindZ));
         vec3 _1244;
-        if (_749 > _59.MaxVelocity)
+        if (((_690 > 0.0) && ((Lambda_1._data[gl_GlobalInvocationID.x].y > 9.9999997473787516355514526367188e-05) && (Lambda_1._data[gl_GlobalInvocationID.x].y < (0.89999997615814208984375 * _59.RestDensity)))) && (Positions_1._data[gl_GlobalInvocationID.x].y > (_59.WaterPlaneY - _59.ParticleRadius)))
         {
-            _1244 = _1243 * (_59.MaxVelocity / _749);
+            vec3 _734 = (vec3(_59.WindX / _690, 0.0, _59.WindZ / _690) * _690) - _671;
+            _1244 = _671 + (vec3(_734.x, 0.0, _734.z) * min(((_59.WindStrength * _690) * 0.001000000047497451305389404296875) * _59.DeltaTime, 0.5));
         }
         else
         {
-            _1244 = _1243;
+            _1244 = _671;
         }
-        Velocities_1._data[gl_GlobalInvocationID.x] = vec4(_1244, 0.0);
-        vec3 _775 = Positions_1._data[gl_GlobalInvocationID.x].xyz + (_1244 * _59.DeltaTime);
-        float _830 = _59.ParticleRadius * 0.5;
-        vec3 _1247;
-        if ((((_775.x > (_59.BasinMinX - _830)) && (_775.x < (_59.BasinMaxX + _830))) && (_775.z > (_59.BasinMinZ - _830))) && (_775.z < (_59.BasinMaxZ + _830)))
+        float _750 = length(_1244);
+        vec3 _1245;
+        if (_750 > _59.MaxVelocity)
         {
-            float _870 = max(_775.y, _59.BasinMinY + _830);
-            vec3 _1175 = _775;
-            _1175.y = _870;
-            vec3 _1248;
-            if (_870 < _59.WaterPlaneY)
+            _1245 = _1244 * (_59.MaxVelocity / _750);
+        }
+        else
+        {
+            _1245 = _1244;
+        }
+        Velocities_1._data[gl_GlobalInvocationID.x] = vec4(_1245, 0.0);
+        vec3 _776 = Positions_1._data[gl_GlobalInvocationID.x].xyz + (_1245 * _59.DeltaTime);
+        float _831 = _59.ParticleRadius * 0.5;
+        vec3 _1248;
+        if ((((_776.x > (_59.BasinMinX - _831)) && (_776.x < (_59.BasinMaxX + _831))) && (_776.z > (_59.BasinMinZ - _831))) && (_776.z < (_59.BasinMaxZ + _831)))
+        {
+            float _871 = max(_776.y, _59.BasinMinY + _831);
+            vec3 _1176 = _776;
+            _1176.y = _871;
+            vec3 _1249;
+            if (_871 < _59.WallTopY)
             {
-                _1248 = vec3(clamp(_775.x, _59.BasinMinX + _830, _59.BasinMaxX - _830), _870, clamp(_775.z, _59.BasinMinZ + _830, _59.BasinMaxZ - _830));
+                _1249 = vec3(clamp(_776.x, _59.BasinMinX + _831, _59.BasinMaxX - _831), _871, clamp(_776.z, _59.BasinMinZ + _831, _59.BasinMaxZ - _831));
             }
             else
             {
-                _1248 = _1175;
+                _1249 = _1176;
             }
-            _1247 = _1248;
+            _1248 = _1249;
         }
         else
         {
-            vec3 _1185 = _775;
-            _1185.y = max(_775.y, (_59.WaterPlaneY + 0.1599999964237213134765625) + _830);
-            _1247 = _1185;
+            vec3 _1186 = _776;
+            _1186.y = max(_776.y, (_59.WaterPlaneY + 0.1599999964237213134765625) + _831);
+            _1248 = _1186;
         }
-        vec3 _1246;
-        _1246 = _1247;
-        vec3 _1312;
+        vec3 _1247;
+        _1247 = _1248;
+        vec3 _1313;
         SPIRV_CROSS_LOOP
-        for (uint _1245 = 0u; _1245 < _59.BoxCount; _1246 = _1312, _1245++)
+        for (uint _1246 = 0u; _1246 < _59.BoxCount; _1247 = _1313, _1246++)
         {
-            if ((((((_1246.x <= SolidBoxes_1._data[_1245].lo.x) || (_1246.x >= SolidBoxes_1._data[_1245].hi.x)) || (_1246.y <= SolidBoxes_1._data[_1245].lo.y)) || (_1246.y >= SolidBoxes_1._data[_1245].hi.y)) || (_1246.z <= SolidBoxes_1._data[_1245].lo.z)) || (_1246.z >= SolidBoxes_1._data[_1245].hi.z))
+            if ((((((_1247.x <= SolidBoxes_1._data[_1246].lo.x) || (_1247.x >= SolidBoxes_1._data[_1246].hi.x)) || (_1247.y <= SolidBoxes_1._data[_1246].lo.y)) || (_1247.y >= SolidBoxes_1._data[_1246].hi.y)) || (_1247.z <= SolidBoxes_1._data[_1246].lo.z)) || (_1247.z >= SolidBoxes_1._data[_1246].hi.z))
             {
-                _1312 = _1246;
+                _1313 = _1247;
                 continue;
             }
-            int _1249;
-            float _1267;
-            float _1280;
-            if (Positions_1._data[gl_GlobalInvocationID.x].x <= SolidBoxes_1._data[_1245].lo.x)
+            int _1250;
+            float _1268;
+            float _1281;
+            if (Positions_1._data[gl_GlobalInvocationID.x].x <= SolidBoxes_1._data[_1246].lo.x)
             {
-                _1280 = -1.0;
-                _1267 = _1246.x - SolidBoxes_1._data[_1245].lo.x;
-                _1249 = 0;
+                _1281 = -1.0;
+                _1268 = _1247.x - SolidBoxes_1._data[_1246].lo.x;
+                _1250 = 0;
             }
             else
             {
-                int _1250;
-                float _1268;
-                float _1281;
-                if (Positions_1._data[gl_GlobalInvocationID.x].x >= SolidBoxes_1._data[_1245].hi.x)
+                int _1251;
+                float _1269;
+                float _1282;
+                if (Positions_1._data[gl_GlobalInvocationID.x].x >= SolidBoxes_1._data[_1246].hi.x)
                 {
-                    _1281 = 1.0;
-                    _1268 = SolidBoxes_1._data[_1245].hi.x - _1246.x;
-                    _1250 = 0;
+                    _1282 = 1.0;
+                    _1269 = SolidBoxes_1._data[_1246].hi.x - _1247.x;
+                    _1251 = 0;
                 }
                 else
                 {
-                    int _1251;
-                    float _1269;
-                    float _1282;
-                    if (Positions_1._data[gl_GlobalInvocationID.x].y <= SolidBoxes_1._data[_1245].lo.y)
+                    int _1252;
+                    float _1270;
+                    float _1283;
+                    if (Positions_1._data[gl_GlobalInvocationID.x].y <= SolidBoxes_1._data[_1246].lo.y)
                     {
-                        _1282 = -1.0;
-                        _1269 = _1246.y - SolidBoxes_1._data[_1245].lo.y;
-                        _1251 = 1;
+                        _1283 = -1.0;
+                        _1270 = _1247.y - SolidBoxes_1._data[_1246].lo.y;
+                        _1252 = 1;
                     }
                     else
                     {
-                        int _1252;
-                        float _1270;
-                        float _1283;
-                        if (Positions_1._data[gl_GlobalInvocationID.x].y >= SolidBoxes_1._data[_1245].hi.y)
+                        int _1253;
+                        float _1271;
+                        float _1284;
+                        if (Positions_1._data[gl_GlobalInvocationID.x].y >= SolidBoxes_1._data[_1246].hi.y)
                         {
-                            _1283 = 1.0;
-                            _1270 = SolidBoxes_1._data[_1245].hi.y - _1246.y;
-                            _1252 = 1;
+                            _1284 = 1.0;
+                            _1271 = SolidBoxes_1._data[_1246].hi.y - _1247.y;
+                            _1253 = 1;
                         }
                         else
                         {
-                            int _1253;
-                            float _1271;
-                            float _1284;
-                            if (Positions_1._data[gl_GlobalInvocationID.x].z <= SolidBoxes_1._data[_1245].lo.z)
+                            int _1254;
+                            float _1272;
+                            float _1285;
+                            if (Positions_1._data[gl_GlobalInvocationID.x].z <= SolidBoxes_1._data[_1246].lo.z)
                             {
-                                _1284 = -1.0;
-                                _1271 = _1246.z - SolidBoxes_1._data[_1245].lo.z;
-                                _1253 = 2;
+                                _1285 = -1.0;
+                                _1272 = _1247.z - SolidBoxes_1._data[_1246].lo.z;
+                                _1254 = 2;
                             }
                             else
                             {
-                                bool _1031 = Positions_1._data[gl_GlobalInvocationID.x].z >= SolidBoxes_1._data[_1245].hi.z;
-                                float _1272;
-                                if (_1031)
+                                bool _1032 = Positions_1._data[gl_GlobalInvocationID.x].z >= SolidBoxes_1._data[_1246].hi.z;
+                                float _1273;
+                                if (_1032)
                                 {
-                                    _1272 = SolidBoxes_1._data[_1245].hi.z - _1246.z;
+                                    _1273 = SolidBoxes_1._data[_1246].hi.z - _1247.z;
                                 }
                                 else
                                 {
-                                    _1272 = 0.0;
+                                    _1273 = 0.0;
                                 }
-                                _1284 = float(_1031);
-                                _1271 = _1272;
-                                _1253 = _1031 ? 2 : (-1);
+                                _1285 = float(_1032);
+                                _1272 = _1273;
+                                _1254 = _1032 ? 2 : (-1);
                             }
-                            _1283 = _1284;
-                            _1270 = _1271;
-                            _1252 = _1253;
+                            _1284 = _1285;
+                            _1271 = _1272;
+                            _1253 = _1254;
                         }
-                        _1282 = _1283;
-                        _1269 = _1270;
-                        _1251 = _1252;
+                        _1283 = _1284;
+                        _1270 = _1271;
+                        _1252 = _1253;
                     }
-                    _1281 = _1282;
-                    _1268 = _1269;
-                    _1250 = _1251;
+                    _1282 = _1283;
+                    _1269 = _1270;
+                    _1251 = _1252;
                 }
+                _1281 = _1282;
+                _1268 = _1269;
+                _1250 = _1251;
+            }
+            float _1267;
+            int _1274;
+            float _1280;
+            if (_1250 < 0)
+            {
+                float _1052 = _1247.x - SolidBoxes_1._data[_1246].lo.x;
+                float _1057 = SolidBoxes_1._data[_1246].hi.x - _1247.x;
+                float _1062 = _1247.y - SolidBoxes_1._data[_1246].lo.y;
+                float _1067 = SolidBoxes_1._data[_1246].hi.y - _1247.y;
+                float _1072 = _1247.z - SolidBoxes_1._data[_1246].lo.z;
+                float _1077 = SolidBoxes_1._data[_1246].hi.z - _1247.z;
+                bool _1081 = _1057 < _1052;
+                float _1319 = _1081 ? _1057 : _1052;
+                bool _1087 = _1062 < _1319;
+                float _1322 = _1087 ? _1062 : _1319;
+                bool _1093 = _1067 < _1322;
+                float _1325 = _1093 ? _1067 : _1322;
+                bool _1099 = _1072 < _1325;
+                float _1328 = _1099 ? _1072 : _1325;
+                bool _1105 = _1077 < _1328;
+                _1280 = _1105 ? 1.0 : (_1099 ? (-1.0) : (_1093 ? 1.0 : (_1087 ? (-1.0) : (_1081 ? 1.0 : (-1.0)))));
+                _1274 = _1105 ? 2 : (_1099 ? 2 : (_1093 ? 1 : int(_1087)));
+                _1267 = _1105 ? _1077 : _1328;
+            }
+            else
+            {
                 _1280 = _1281;
+                _1274 = _1250;
                 _1267 = _1268;
-                _1249 = _1250;
             }
-            float _1266;
-            int _1273;
-            float _1279;
-            if (_1249 < 0)
+            float _1117 = min(_1267 + _831, _59.ParticleRadius * 0.0500000007450580596923828125);
+            vec3 _1314;
+            if (_1274 == 0)
             {
-                float _1051 = _1246.x - SolidBoxes_1._data[_1245].lo.x;
-                float _1056 = SolidBoxes_1._data[_1245].hi.x - _1246.x;
-                float _1061 = _1246.y - SolidBoxes_1._data[_1245].lo.y;
-                float _1066 = SolidBoxes_1._data[_1245].hi.y - _1246.y;
-                float _1071 = _1246.z - SolidBoxes_1._data[_1245].lo.z;
-                float _1076 = SolidBoxes_1._data[_1245].hi.z - _1246.z;
-                bool _1080 = _1056 < _1051;
-                float _1318 = _1080 ? _1056 : _1051;
-                bool _1086 = _1061 < _1318;
-                float _1321 = _1086 ? _1061 : _1318;
-                bool _1092 = _1066 < _1321;
-                float _1324 = _1092 ? _1066 : _1321;
-                bool _1098 = _1071 < _1324;
-                float _1327 = _1098 ? _1071 : _1324;
-                bool _1104 = _1076 < _1327;
-                _1279 = _1104 ? 1.0 : (_1098 ? (-1.0) : (_1092 ? 1.0 : (_1086 ? (-1.0) : (_1080 ? 1.0 : (-1.0)))));
-                _1273 = _1104 ? 2 : (_1098 ? 2 : (_1092 ? 1 : int(_1086)));
-                _1266 = _1104 ? _1076 : _1327;
+                vec3 _1237 = _1247;
+                _1237.x = _1247.x + (_1280 * _1117);
+                _1314 = _1237;
             }
             else
             {
-                _1279 = _1280;
-                _1273 = _1249;
-                _1266 = _1267;
-            }
-            float _1116 = min(_1266 + _830, _59.ParticleRadius * 0.0500000007450580596923828125);
-            vec3 _1313;
-            if (_1273 == 0)
-            {
-                vec3 _1236 = _1246;
-                _1236.x = _1246.x + (_1279 * _1116);
-                _1313 = _1236;
-            }
-            else
-            {
-                vec3 _1314;
-                if (_1273 == 1)
+                vec3 _1315;
+                if (_1274 == 1)
                 {
-                    vec3 _1239 = _1246;
-                    _1239.y = _1246.y + (_1279 * _1116);
-                    _1314 = _1239;
+                    vec3 _1240 = _1247;
+                    _1240.y = _1247.y + (_1280 * _1117);
+                    _1315 = _1240;
                 }
                 else
                 {
-                    vec3 _1242 = _1246;
-                    _1242.z = _1246.z + (_1279 * _1116);
-                    _1314 = _1242;
+                    vec3 _1243 = _1247;
+                    _1243.z = _1247.z + (_1280 * _1117);
+                    _1315 = _1243;
                 }
-                _1313 = _1314;
+                _1314 = _1315;
             }
-            _1312 = _1313;
+            _1313 = _1314;
         }
-        Predicted_1._data[gl_GlobalInvocationID.x] = vec4(_1246, 1.0);
+        Predicted_1._data[gl_GlobalInvocationID.x] = vec4(_1247, 1.0);
         break;
     } while(false);
 }

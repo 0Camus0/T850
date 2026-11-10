@@ -45,7 +45,7 @@ cbuffer PbfConstants : register(b0)
     // Diagnostics/reference values; named per use in CS_PbfDensity.
     float RestDenomReference;   // sum |gradW|^2 for a full lattice
     float MinNeighbours;        // below this the density estimate is not trusted
-    float Pad6;
+    float WallTopY;   // solid walls end here (the pool rim); open above
     // Surface wind stress (m/s), applied to the free-surface layer in CS_PbfIntegrate.
     float WindX;
     float WindZ;
@@ -139,6 +139,68 @@ float3 SpikyGrad(float3 d)
     return d * (s / KernelScaleValue());
 }
 
+
+// ---------------------------------------------------------------------------
+// Analytic solid boundary (Akinci et al. 2012, continuous form). DENSITY-SIDE DERIVATION IS
+// IN CS_PbfDensity.hlsl; this is the pressure-side half. The boundary takes part in the
+// constraint with the fluid's own pressure (lambda_b = lambda_i), so a face contributes
+// 2*lambda_i*gradD(d) to eq 14 exactly like a fluid neighbour with the same lambda.
+// ---------------------------------------------------------------------------
+float BoundarySlope(float u)
+{
+    const float w = 1.0f - u * u;
+    const float w2 = w * w;
+    return -(315.0f / (256.0f * SmoothingRadius)) * w2 * w2;
+}
+
+// n points from the solid into the fluid; the result points toward the solid (i -> neighbour).
+float3 BoundaryGradient(float d, float3 n)
+{
+    if (d <= 0.0f || d >= SmoothingRadius) return float3(0.0f, 0.0f, 0.0f);
+    return BoundarySlope(d / SmoothingRadius) * n;
+}
+
+float3 BoundaryGradientBasin(float3 p)
+{
+    float3 g = float3(0.0f, 0.0f, 0.0f);
+    if (p.x > BasinMinX && p.x < BasinMaxX && p.z > BasinMinZ && p.z < BasinMaxZ)
+        g += BoundaryGradient(p.y - BasinMinY, float3(0.0f, 1.0f, 0.0f));
+    if (p.y < WallTopY && p.z > BasinMinZ && p.z < BasinMaxZ) {
+        g += BoundaryGradient(p.x - BasinMinX, float3( 1.0f, 0.0f, 0.0f));
+        g += BoundaryGradient(BasinMaxX - p.x, float3(-1.0f, 0.0f, 0.0f));
+    }
+    if (p.y < WallTopY && p.x > BasinMinX && p.x < BasinMaxX) {
+        g += BoundaryGradient(p.z - BasinMinZ, float3(0.0f, 0.0f,  1.0f));
+        g += BoundaryGradient(BasinMaxZ - p.z, float3(0.0f, 0.0f, -1.0f));
+    }
+    return g;
+}
+
+float3 BoundaryGradientBox(float3 p, float3 lo, float3 hi)
+{
+    const float3 dv = p - clamp(p, lo, hi);
+    const float d = length(dv);
+    if (d <= 1e-5f || d >= SmoothingRadius) return float3(0.0f, 0.0f, 0.0f);
+    return BoundaryGradient(d, dv / d);
+}
+
+// Coincident particles: at r = 0 the Spiky gradient is undefined and returning zero makes the
+// pair permanently unable to separate (measured: 192 groups of up to 4 particles stuck at the
+// pool corners for the whole run). Give the singularity a deterministic direction from the
+// pair id and evaluate at a small radius, so the impulse is large but finite.
+float3 PairOffset(float3 d, uint i, uint j)
+{
+    if (dot(d, d) > 1e-8f) return d;
+    uint h = (i * 73856093u) ^ (j * 19349663u);
+    h ^= h >> 13;
+    h *= 16777619u;
+    h ^= h >> 15;
+    const float3 raw = float3((float)(h & 255u) - 127.5f,
+                              (float)((h >> 8) & 255u) - 127.5f,
+                              (float)((h >> 16) & 255u) - 127.5f);
+    return raw * (1.0e-4f / max(length(raw), 1e-3f));
+}
+
 float3 Collide(float3 p, float3 prev)
 {
     // ---------------------------------------------------------------------------
@@ -157,7 +219,9 @@ float3 Collide(float3 p, float3 prev)
         // Inside the pool: floor and walls hold the water. Walls only act BELOW the rim,
         // so a splash that rises above the coping can leave.
         p.y = max(p.y, BasinMinY + m);
-        if (p.y < WaterPlaneY) {
+        // Solid up to the rim. `p.y < WaterPlaneY` here left a 0.42 m hole in the wall
+        // through which a splash passed straight through the wall to the deck clamp.
+        if (p.y < WallTopY) {
             p.x = clamp(p.x, BasinMinX + m, BasinMaxX - m);
             p.z = clamp(p.z, BasinMinZ + m, BasinMaxZ - m);
         }
@@ -260,7 +324,7 @@ void CS(uint3 id : SV_DispatchThreadID)
             const uint j = GridBuffer[cells * PBFCellCapacity + cell * PBFCellCapacity + k];
             if (j >= ParticleCount || j == i) continue;
             const float3 pj = Predicted[j].xyz;
-            const float3 d = pi - pj;
+            const float3 d = PairOffset(pi - pj, i, j);
             const float r2 = dot(d, d);
             if (r2 >= h2) continue;
             const float3 g = SpikyGrad(d);
@@ -281,6 +345,15 @@ void CS(uint3 id : SV_DispatchThreadID)
             dp += (lambdaI + lambdaJ + scorr) * g;
         }
     }
+
+    // Solid boundary pressure: the face is a neighbour with the fluid's own lambda, so it
+    // enters eq 14 as 2*lambda_i*gradD. Without this term the clamp is a ratchet: an
+    // incompressible wall layer has lambda ~ 0, the interior's pressure pushes it into the
+    // face, the clamp cancels that, and the residual comes out upward along the wall.
+    dp += (2.0f * lambdaI) * BoundaryGradientBasin(pi);
+    [loop]
+    for (uint b = 0u; b < BoxCount; ++b)
+        dp += (2.0f * lambdaI) * BoundaryGradientBox(pi, SolidBoxes[b].lo.xyz, SolidBoxes[b].hi.xyz);
 
     // eq 14 exactly: dp = (1/rho0) * sum_j (lambda_i + lambda_j + s_corr) * gradW.
     //

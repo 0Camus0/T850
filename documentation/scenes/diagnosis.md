@@ -2,6 +2,9 @@
 
 > Follow-up (2026-11-08): [diagnosis-2.md](diagnosis-2.md) records the screen-space renderer,
 > the GL image-origin fix, and the issues that remain after this plan's phases.
+> [diagnosis-3.md](diagnosis-3.md) and
+> [diagnosis-3-implementation.md](diagnosis-3-implementation.md) are the current SSFR review,
+> plan and implementation status (F32 scatter depth, corrected normals, compositing).
 
 Status: diagnosed 2026-11-07 against the uncommitted scene-8 working tree on `master` (base
 commit `f5b8a11`). Vulkan findings were reproduced on Linux with the existing

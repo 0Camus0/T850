@@ -53,6 +53,13 @@ LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./DayScene --unattended --api vulkan \
 `VK_KHR_wayland_surface`/xcb/xlib and SDL window creation fails at
 `LinuxFramework.cpp:275`.
 
+Window placement: every window is created centred on the **primary display** (on this host
+the 4K centre monitor), not at the desktop origin. Native Wayland ignores the position (GNOME
+opens the window on the monitor under the pointer); only X11/XWayland honours it. Automated
+captures that must land on the centre monitor set `SDL_VIDEO_DRIVER=x11`. Do not use that for
+viewing: at 1.25 scaling GNOME shows XWayland windows at 0.625 of their pixel size, so the
+window and ImGui look about half as large as native Wayland. Frame dumps are unaffected.
+
 ## Launcher (GUI)
 
 The WPF `scripts/Launcher.ps1` / `T850Launcher.exe` are Windows-only. On Linux the launcher
@@ -86,7 +93,11 @@ LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./DayScene --unattended --api vulkan \
 - Other scene-8 knobs: `--pbf-iterations N`, `--pbf-substeps N`, `--pbf-radius m`,
   `--pbf-k <artificial pressure>`, `--pbf-visc <XSPH>`, `--pbf-gravity <g>`,
   `--pbf-maxvel <m/s>`, `--pbf-diagnostics <frames>`, `--pbf-overflow <m>`.
-- `--backyard-start balls|water|lake` picks the initial condition.
+- `--backyard-start balls|water|lake` picks the initial condition: `lake` (default) and `balls`
+  start with the pool at rest at scene 7's water level (29,880 particles); `water` drops a 2 m
+  sphere into a pool that settles at the same level after the splash (44,573 particles).
+- Every control in the three "Backyard 8" Dev GUI panels applies immediately; the seeding
+  controls (spacing, levels, sphere, max particles, heightfield) re-seed the water at once.
 
 ## Observed results (2026-11-06, this host)
 

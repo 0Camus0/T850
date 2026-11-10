@@ -67,8 +67,15 @@ private:
   void BuildSettings(t850::PbfSettings& out) const;
   void BuildParticleDesc();
   void RegisterParticleSystem();
+  void ApplyRenderModeToGraph();
   void ApplyStartMode();
-  void DrawFluidPanel(t850::DevGuiContext& gui);
+  void DrawSolverPanel(t850::DevGuiContext& gui);
+  void DrawParticlePanel(t850::DevGuiContext& gui);
+  void DrawScreenSpacePanel(t850::DevGuiContext& gui);
+  // Debug instrument: T850_PBF_DUMP="60,300,1200" writes particle fields to T850_PBF_DUMP_DIR
+  // (default: the working directory) and logs a Y histogram. Used to validate boundary
+  // behaviour; it costs nothing when the variable is unset.
+  void DumpParticleFieldsIfRequested();
 
   static int s_startMode;
   static int s_solverIterations;
@@ -90,4 +97,5 @@ private:
   // Fixed-timestep accumulator. A variable dt from a hitch is larger than the position
   // projection can absorb; clamp and step from the config.
   float m_pbfAccumulator = 0.0f;
+  bool m_settlePending = false;   // a resting pool was seeded: settle it before the next frame
 };

@@ -49,6 +49,10 @@ cbuffer ParticleConstants : register(b0)
     uint  FrameIndex;           // stamped into TileMasks so stale tiles from earlier frames are ignored
     float ProjScaleY;           // Projection.m[1][1] = cot(fov/2); converts metres to pixels
     float Style;                // 0 shaded, 1 wireframe, 2 flat
+    float DepthRadiusScale;     // depth sphere radius / particle spacing
+    float InvPackingFactor;     // 1 / lattice packing factor
+    float ProjA;                // Projection.m[2][2]
+    float ProjB;                // Projection.m[3][2]
 
     // Each float3 is padded to a 16-byte slot so the HLSL layout is unambiguous.
     float3 Color0;
@@ -283,10 +287,11 @@ void CS(uint3 id : SV_DispatchThreadID)
     // Linear view depth of the opaque scene at this pixel. GBuffer:DEPTH is F32 and the
     // projection is reversed-Z: d = a + b/z, so z = b/(d - a). Background (d == 0) gives z
     // == far; clamp below to keep the fade finite.
-    const float projA = ViewProjection[2].z;
-    const float projB = ViewProjection[3].z;
+    // Projection terms, not the view-projection rows: VP[2].z includes the view matrix's
+    // z row, which made scene depth 2.7% too near and cut fluid off before walls.
     const float rawDepth = SceneDepth.Load(int3(int(pixelX), int(T850_IMAGE_Y(pixelY, OutputHeight)), 0));
-    const float sceneZ = abs(rawDepth - projA) > 1e-9f ? projB / (rawDepth - projA) : 1.0e9f;
+    const float sceneZ = rawDepth > 0.0f && abs(rawDepth - ProjA) > 1e-9f
+        ? ProjB / (rawDepth - ProjA) : 1.0e9f;
 
     const float2 tileMin = float2(float(tileX * TILE), float(tileY * TILE));
     const float2 tileMax = tileMin + float2(float(TILE), float(TILE));

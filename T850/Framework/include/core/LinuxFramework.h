@@ -44,6 +44,9 @@ public:
 
 	static LinuxFramework* thiz;
 private:
+  void UpdateMouseMode();
+  void ReleaseMouseMode();
+  void ResetMouseDeltaBaseline();
   void ResetInputAfterWindowStateChange();
   void InitializeGamepads();
   void ShutdownGamepads();
@@ -51,6 +54,12 @@ private:
   void CloseGamepad(int instanceId);
   void RefreshGamepadState();
 
+  bool m_relativeMouseMode = false;
+  // Sub-pixel remainder. Mouse events can arrive with fractional xrel at high polling
+  // rates; truncating every event to int drops a fraction each time and makes the camera
+  // sensitivity depend on the event rate. Accumulate in float and round once per frame.
+  float m_pendingMouseX = 0.0f;
+  float m_pendingMouseY = 0.0f;
   void* m_gamepad = nullptr;
   int m_gamepadInstanceId = 0;
   bool m_handheldDetected = false;

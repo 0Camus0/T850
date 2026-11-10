@@ -41,6 +41,11 @@ namespace t850 {
     float basinMaxZ = -4.5f;
     float waterPlaneY = -0.04f;
     float copingTopY = 0.04f;
+    // Top of the solid pool wall (the rim the water can splash over). Below this the walls are
+    // solid; above it the container is open. LoadPoolLayout derives it from the authored
+    // freeboard. Walls used to stop at waterPlaneY, which left a 0.4 m hole through which a
+    // splash could pass straight through the wall and be snapped onto the deck.
+    float wallTopY = 0.38f;
 
     // Particle fluid parameters.
     float particleRadius = 0.13f;    // lattice SPACING (the collision margin is 0.5 * this)
@@ -74,6 +79,10 @@ namespace t850 {
     // values the sphere hangs ~1 m above the pool rim and ~1 m above that again.
     float sphereRadius = 2.4f;
     float sphereHeight = 3.48f;
+    bool dropSphere = true;
+    // Resting water seeded under the drop: its surface in metres relative to the water plane
+    // (0 = full to the plane). At or below the basin floor the pool starts empty.
+    float prefillLevel = -10.0f;
     // Particles that fall below this Y are removed (they missed the pool and hit the deck).
     // 0 disables culling.
     float cullBelowY = 0.0f;
@@ -105,6 +114,9 @@ namespace t850 {
     // Number of particles removed by the deck/handle culling, cumulative.
     uint32_t CulledParticles() const { return m_culledTotal; }
     bool Step(BaseDriver* driver);
+    // Runs `seconds` of simulation with speeds capped at `maxSpeed` and no wind, then restores the
+    // settings and the clock: a seeded resting pool compacts before it is shown.
+    bool Settle(BaseDriver* driver, float seconds, float maxSpeed);
 
     bool IsReady() const { return m_ready; }
     uint32_t ParticleCount() const { return m_particleCount; }
@@ -129,6 +141,11 @@ namespace t850 {
     };
     bool ReadDiagnostics(BaseDriver* driver, Diagnostics& out);
     bool ReadParticles(BaseDriver* driver, std::vector<float>& outXyz);
+    // Full field readback for validation: positions (xyzw, w = alive), velocities (xyzw) and
+    // lambda (x = lambda, y = density, z = |sum gradW|^2, w = neighbour count), all
+    // particleCount * 4 floats. Any of the outputs may be null to skip that buffer.
+    bool ReadParticleFields(BaseDriver* driver, std::vector<float>* positions,
+                            std::vector<float>* velocities, std::vector<float>* lambda);
     bool ReadColumnHeights(BaseDriver* driver, std::vector<float>& outElevation);
 
     // Live tuning, mirroring the setters the Backyard GUI already drives.

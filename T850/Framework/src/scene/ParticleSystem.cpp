@@ -25,15 +25,21 @@ namespace {
       if (d.lifetime <= 0.0f) return false;
     }
     const ParticleScreenSpaceDesc& ss = d.screen_space;
-    if (ss.smoothing_iterations < 0 || ss.smoothing_iterations > 4) return false;
+    if (ss.smoothing_iterations < 0 || ss.smoothing_iterations > 8) return false;
     if (ss.smoothing_strength < 0.0f || ss.smoothing_strength > 1.0f) return false;
+    if (ss.smoothing_radius < 1.0f || ss.smoothing_radius > 128.0f) return false;
+    if (ss.smoothing_world_radius < 0.0f) return false;
     if (ss.depth_tolerance < 0.0f) return false;
+    if (ss.depth_radius_scale <= 0.0f || ss.depth_radius_scale > 1.5f) return false;
+    if (ss.packing_factor < 1.0f) return false;
+    if (ss.absorption_scale < 0.0f) return false;
     if (ss.thickness_scale < 0.0f) return false;
-    if (ss.refraction < 0.0f || ss.refraction > 0.25f) return false;
+    if (ss.refraction < 0.0f || ss.refraction > 2.0f) return false;
+    if (ss.reflection_distance < 0.0f) return false;
     if (ss.specular < 0.0f) return false;
     if (ss.fresnel_power < 0.0f) return false;
     if (ss.normal_scale < 0.0f) return false;
-    if (ss.foam < 0.0f || ss.foam > 4.0f) return false;
+    if (ss.foam < 0.0f || ss.foam > 1.0f) return false;
     if (ss.debug_view < 0 || ss.debug_view > 4) return false;
     return true;
   }

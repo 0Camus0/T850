@@ -49,7 +49,7 @@ cbuffer PbfConstants : register(b0)
     float RestScale;
     float RestDenomReference;
     float MinNeighbours;
-    float Pad6;
+    float WallTopY;   // solid walls end here (the pool rim); open above
     float WindX;
     float WindZ;
     float WindStrength;
@@ -96,7 +96,15 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float slack = 0.6f;
     const bool outsideXZ = p.x < BasinMinX - slack || p.x > BasinMaxX + slack ||
                            p.z < BasinMinZ - slack || p.z > BasinMaxZ + slack;
-    if (!belowFloor && !outsideXZ)
+    // Water that crossed the wall and is now BELOW the rim is inside the wall solid or
+    // standing on the deck/coping: it can never return to the pool. The old test only retired
+    // particles 0.6 m outside the footprint, so everything parked between the inner face and
+    // the coping outer edge (242 particles on this scene) sat at the deck clamp height for the
+    // whole run: invisible inside the coping stone, still consuming slots and neighbours.
+    const bool outsideFootprint = p.x < BasinMinX || p.x > BasinMaxX ||
+                                  p.z < BasinMinZ || p.z > BasinMaxZ;
+    const bool strandedOnSolid = outsideFootprint && p.y < WallTopY;
+    if (!belowFloor && !outsideXZ && !strandedOnSolid)
         return;
 
     Positions[i] = float4(0.0f, PARKED_Y, 0.0f, 0.0f);   // dead: skipped by every later kernel

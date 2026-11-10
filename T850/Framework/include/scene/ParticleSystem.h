@@ -57,9 +57,10 @@ namespace t850 {
   // How the splat itself is drawn. This is a look/debug knob, independent of Shape
   // (which selects the falloff kernel) and Blend.
   enum class ParticleStyle {
-    Shaded,       // soft analytic splat (the fluid look)
+    Shaded,       // soft analytic splat; a scene can draw it as blended water instead
     Wireframe,    // ring at the splat edge: shows particle placement and coverage
-    Flat          // hard-edged filled disc
+    Flat,         // hard-edged filled disc
+    Spheres       // opaque lit sphere per particle, depth sorted (debug)
   };
 
   // Surface reconstruction for a Buffer-source fluid.
@@ -75,35 +76,53 @@ namespace t850 {
   // Screen-space fluid tuning. All of these are data: a scene configures them in JSON and
   // the Dev GUI edits the live values.
   struct ParticleScreenSpaceDesc {
-    // Curvature-flow passes. The render graph contains a fixed maximum of four
-    // ping-pong passes; iterations above that are clamped by the graph.
-    int smoothing_iterations = 4;
-    // Per-pass smoothing step in [0,1]. 0 disables smoothing for that pass.
-    float smoothing_strength = 0.85f;
-    // Weighted-smoothing radius in pixels. A particle splat is ~10-20 pixels across, so a
-    // 3x3 stencil is not enough to remove the lattice.
-    float smoothing_radius = 10.0f;
-    // Depth discontinuity guard, in metres. Neighbours whose view depth differs by more
-    // than this are not blended (silhouettes must not merge).
-    float depth_tolerance = 0.35f;
+    // Edge-aware a-trous smoothing passes; the tap spacing doubles every pass. The graph
+    // contains eight ping-pong passes; counts below eight make the remaining passes copy.
+    int smoothing_iterations = 6;
+    // Blend toward the filtered value in [0,1].
+    float smoothing_strength = 1.0f;
+    // Upper bound, in pixels, for the projected filter radius.
+    float smoothing_radius = 64.0f;
+    // Filter radius in metres; projected per pixel, so near and far water smooth alike.
+    float smoothing_world_radius = 0.3f;
+    // Narrow-range threshold in metres: neighbours further behind belong to another layer and
+    // are ignored, neighbours further in front are clamped to it.
+    float depth_tolerance = 0.3f;
+    // Depth sphere radius as a fraction of the particle spacing. Smaller than the thickness
+    // kernel so the surface sits on the fluid, not half a radius outside it.
+    float depth_radius_scale = 0.70f;
+    // Sphere packing factor used to convert a chord sum into metres of water. 4.19 is
+    // (4/3)*pi for a cubic lattice with radius == spacing.
+    float packing_factor = 4.19f;
     // Multiplier on the accumulated per-pixel thickness (metres of fluid along the ray).
     float thickness_scale = 1.0f;
-    // Per-metre absorption coefficients (Beer-Lambert), RGB.
-    std::array<float, 3> absorption = {{3.0f, 1.0f, 0.5f}};
-    // Sky/ambient colour used for reflected rays that leave the screen upward.
+    // Per-metre absorption coefficients (Beer-Lambert), RGB. Clear water is approximately
+    // (0.45, 0.06, 0.02); `absorption_scale` is the artistic control.
+    std::array<float, 3> absorption = {{0.45f, 0.06f, 0.02f}};
+    float absorption_scale = 4.0f;
+    // Colour scattered by the fluid; replaces the old hard-coded teal.
+    std::array<float, 3> fluid_color = {{0.10f, 0.30f, 0.42f}};
+    // Sky colour for reflected rays when no sky is visible on screen, and the particle
+    // renderer's ambient.
     std::array<float, 3> reflection = {{0.45f, 0.62f, 0.85f}};
-    // Screen-space refraction offset, in UV units, scaled by the normal.
-    float refraction = 0.02f;
+    // Refracted path length per metre of thickness (the ray is bent by Snell's law).
+    float refraction = 0.5f;
+    // Screen-space reflection range in metres; 0 reflects only the sky.
+    float reflection_distance = 40.0f;
     // Sun specular strength.
     float specular = 1.0f;
     // Fresnel exponent.
     float fresnel_power = 5.0f;
-    // Amplifies the reconstructed depth gradient before computing normals.
-    float normal_scale = 0.7f;
+    // Multiplier on the view-space derivatives used to build the normal (1 = geometric).
+    float normal_scale = 1.0f;
     // Pixel distance between the depth samples used for the normal stencil (1..8).
-    float normal_step = 4.0f;
-    // Grey/white foam added where the fluid is thin (0 disables).
+    float normal_step = 1.0f;
+    // Whitewater strength for isolated droplets (spray), 0..1. 0 draws them as clear water.
     float foam = 0.0f;
+    // Keep the splat resolve under the screen-space layer. This masks a broken screen-space
+    // backend, but it also re-blends the background at the silhouette and costs a second
+    // all-particle pass. Off is the correct setting on Vulkan/GL/D3D12.
+    bool splat_fallback = false;
     // 0 = shaded, 1 = normals, 2 = depth, 3 = thickness, 4 = coverage.
     int debug_view = 0;
   };
@@ -159,6 +178,9 @@ namespace t850 {
     std::string view_projection_buffer;
     // Element count override; 0 = use the buffer's own element_count.
     int buffer_count = 0;
+    // Size of the graph's per-particle scratch (projected table); 0 = buffer_count. Set it to
+    // the largest count the system can reach when buffer_count changes after the graph loads.
+    int buffer_capacity = 0;
 
     bool enabled = true;
   };

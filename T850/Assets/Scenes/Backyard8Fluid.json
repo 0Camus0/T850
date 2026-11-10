@@ -17,21 +17,23 @@
     "deltaTime": 0.0166667,
     "sphereRadius": 2.0,
     "sphereHeight": 3.08,
+    "prefillLevel": 0.13,
+    "restingLevel": 0.16,
     "cullBelowY": 0.0,
     "cullMargin": 0.35,
     "surfaceWidth": 100,
     "surfaceDepth": 50,
-    "maxParticles": 40000
+    "maxParticles": 50000
   },
   "scene": {
-    "startMode": 1,
+    "startMode": 2,
     "fixedStep": 0.0166667,
     "maxStepsPerFrame": 3
   },
   "particles": {
     "name": "BackyardWater",
     "radius": 0.13,
-    "opacity": 0.82,
+    "opacity": 1.0,
     "intensity": 1.0,
     "softness": 0.45,
     "depthBias": 0.13,
@@ -45,26 +47,61 @@
     "velocityBuffer": "BackyardWaterVelocities",
     "count": 0,
     "colors": [
-      [0.30, 0.62, 0.85],
-      [0.42, 0.72, 0.90],
-      [0.62, 0.84, 0.95],
-      [0.88, 0.95, 1.00]
+      [
+        0.3,
+        0.62,
+        0.85
+      ],
+      [
+        0.42,
+        0.72,
+        0.9
+      ],
+      [
+        0.62,
+        0.84,
+        0.95
+      ],
+      [
+        0.88,
+        0.95,
+        1.0
+      ]
     ]
   },
   "screenSpace": {
-    "smoothingIterations": 4,
-    "smoothingStrength": 0.85,
-    "smoothingRadius": 10.0,
-    "depthTolerance": 0.35,
+    "smoothingIterations": 6,
+    "smoothingStrength": 1.0,
+    "smoothingRadius": 64.0,
+    "smoothingWorldRadius": 0.3,
+    "depthTolerance": 0.3,
+    "depthRadiusScale": 1.0,
+    "packingFactor": 4.19,
     "thicknessScale": 1.0,
-    "absorption": [3.0, 1.0, 0.5],
-    "reflection": [0.45, 0.62, 0.85],
-    "refraction": 0.02,
+    "absorption": [
+      0.45,
+      0.06,
+      0.02
+    ],
+    "absorptionScale": 2.0,
+    "fluidColor": [
+      0.1,
+      0.3,
+      0.42
+    ],
+    "reflection": [
+      0.45,
+      0.62,
+      0.85
+    ],
+    "refraction": 0.5,
+    "reflectionDistance": 40.0,
     "specular": 1.0,
     "fresnelPower": 5.0,
-    "normalScale": 0.7,
-    "normalStep": 4.0,
-    "foam": 0.0,
+    "normalScale": 1.0,
+    "normalStep": 1.0,
+    "foam": 0.6,
+    "splatFallback": false,
     "debugView": 0
   }
 }

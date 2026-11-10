@@ -1278,6 +1278,11 @@
           "type": "read_only_buffer",
           "shader_register": 1,
           "binding_index": 5
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 2,
+          "binding_index": 6
         }
       ]
     },

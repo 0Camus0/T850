@@ -51,7 +51,7 @@ cbuffer PbfConstants : register(b0)
     float WindX;
     float WindZ;
     float WindStrength;
-    float Pad7;
+    float WallFriction;   // no-slip boundary viscosity multiplier
 };
 
 #define PBFCellCapacity 64u
@@ -84,6 +84,14 @@ RWStructuredBuffer<float4> VelocitiesNext : register(u4);
 #endif
 StructuredBuffer<uint> GridBuffer : register(t1);
 
+// Solid intrusions (pool steps): min xyz, max xyz per box. The basin itself is analytic.
+struct SolidBox { float4 lo; float4 hi; };
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(6, 0)]]
+#endif
+StructuredBuffer<SolidBox> SolidBoxes : register(t2);
+
 // The XSPH sum reads the previous field (Velocities, read-only) and writes VelocitiesNext.
 // The host copies VelocitiesNext back into the published Velocities buffer afterwards, so
 // the address the renderer holds never changes.
@@ -96,6 +104,46 @@ float Poly6(float r2)
     if (r2 >= h * h) return 0.0f;
     const float d = h * h - r2;
     return (315.0f / (64.0f * 3.14159265f * pow(h, 9.0f))) * d * d * d;
+}
+
+// Missing fraction of a Poly6 neighbourhood at distance d from a solid face. This is the
+// same D(d) the density pass adds to the density sum (see CS_PbfDensity.hlsl), so the
+// boundary carries the same weight in the velocity average as it does in the constraint.
+float BoundaryDensity(float d)
+{
+    const float u = clamp(d / SmoothingRadius, 0.0f, 1.0f);
+    const float u2 = u * u;
+    const float u3 = u2 * u;
+    const float u5 = u3 * u2;
+    const float u7 = u5 * u2;
+    const float u9 = u7 * u2;
+    const float p = (1.0f - u)
+                  - (4.0f / 3.0f) * (1.0f - u3)
+                  + (6.0f / 5.0f) * (1.0f - u5)
+                  - (4.0f / 7.0f) * (1.0f - u7)
+                  + (1.0f / 9.0f) * (1.0f - u9);
+    return 0.5f * p * (315.0f / 128.0f);
+}
+
+float BoundaryBasinFraction(float3 p)
+{
+    float f = 0.0f;
+    if (p.x > BasinMinX && p.x < BasinMaxX && p.z > BasinMinZ && p.z < BasinMaxZ)
+        f += BoundaryDensity(p.y - BasinMinY);
+    if (p.y < WallTopY && p.z > BasinMinZ && p.z < BasinMaxZ) {
+        f += BoundaryDensity(p.x - BasinMinX);
+        f += BoundaryDensity(BasinMaxX - p.x);
+    }
+    if (p.y < WallTopY && p.x > BasinMinX && p.x < BasinMaxX) {
+        f += BoundaryDensity(p.z - BasinMinZ);
+        f += BoundaryDensity(BasinMaxZ - p.z);
+    }
+    return f;
+}
+
+float BoundaryBoxFraction(float3 p, float3 lo, float3 hi)
+{
+    return BoundaryDensity(length(p - clamp(p, lo, hi)));
 }
 
 [numthreads(64, 1, 1)]
@@ -162,6 +210,21 @@ void CS(uint3 id : SV_DispatchThreadID)
     }
     if (weightSum > 1e-12f)
         vi += ViscosityC * (accum / weightSum);
+
+    // No-slip boundary viscosity. The solid is a neighbour with zero velocity and the
+    // missing weight D(d), so the same XSPH coefficient damps the boundary layer:
+    //   v_i <- v_i + c * D(d) * (0 - v_i)
+    // Without it the analytic boundary is free-slip: the wall shell is held out of the
+    // wall but is free to slide down it, and that drove a persistent circulation cell
+    // (measured: ~0.3 m/s downward in the one-particle wall layer, ~0.13 m/s at the
+    // surface) long after the pool should have settled. The bulk is unaffected because
+    // D(d) is zero beyond one smoothing radius.
+    float boundary = BoundaryBasinFraction(xp);
+    [loop]
+    for (uint b = 0u; b < BoxCount; ++b)
+        boundary += BoundaryBoxFraction(xp, SolidBoxes[b].lo.xyz, SolidBoxes[b].hi.xyz);
+    if (boundary > 0.0f)
+        vi *= max(0.0f, 1.0f - WallFriction * ViscosityC * boundary);
 
     // Inelastic contact. A hard clamp resolves penetration by MOVING the particle, and
     // v = (x* - x)/dt turns that displacement into a kick. At the floor and walls that

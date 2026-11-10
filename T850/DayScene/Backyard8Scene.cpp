@@ -116,7 +116,8 @@ void Backyard8Scene::BuildSettings(t850::PbfSettings& out) const {
   constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
   out.windX = static_cast<float>(c.windSpeed * std::cos(c.windHeadingDeg * kDegToRad));
   out.windZ = static_cast<float>(c.windSpeed * std::sin(c.windHeadingDeg * kDegToRad));
-  out.windStrength = 1.0f;
+  out.windStrength = (std::max)(c.windStrength, 0.0f);
+  out.wallFriction = (std::max)(c.wallFriction, 0.0f);
 
   // Command-line overrides. A negative sentinel means "not supplied", so the file wins.
   if (s_solverIterations > 0) out.solverIterations = static_cast<uint32_t>(s_solverIterations);
@@ -310,7 +311,9 @@ bool Backyard8Scene::InitPbf() {
   T8_LOG_INFO("[Backyard8] Particle fluid bound: %u particles, surface %ux%u, renderer %s",
               m_pbf.ParticleCount(), applied.surfaceWidth, applied.surfaceDepth,
               m_config.particles.renderMode == 1 ? "screen-space" : "splat");
-  m_settlePending = !applied.dropSphere;
+  // The pool always settles before the first frame. For the water start the relaxed sphere
+  // is appended afterwards, so the surface the drop lands on is already at rest.
+  m_settlePending = true;
   return true;
 }
 
@@ -349,7 +352,7 @@ bool Backyard8Scene::ReinitializePbf() {
   m_pbf.PublishParticleBuffers(m_config.particles.buffer, m_config.particles.velocityBuffer);
   RegisterParticleSystem();
   m_pbfAccumulator = 0.0f;
-  m_settlePending = !applied.dropSphere;
+  m_settlePending = true;
   T8_LOG_INFO("[Backyard8] Re-seeded: %u particles, spacing %.3f m, sphere %.2f m at %.2f, "
               "surface %ux%u",
               m_pbf.ParticleCount(), applied.particleRadius, applied.sphereRadius,
@@ -369,12 +372,22 @@ void Backyard8Scene::OnUpdate(float deltaSeconds) {
   if (!m_pbf.IsReady() || !pFramework || !pFramework->pVideoDriver) return;
 
   if (m_settlePending) {
-    // A seeded lattice compacts by about one particle layer (the water drops ~16 cm); a resting
-    // start does that before the first frame.
+    // A seeded lattice compacts by about one particle layer (the water drops ~16 cm). The pool
+    // settles before the first frame; the water start then appends the relaxed sphere, so the
+    // fall lands on a settled surface instead of showing lattice rows.
     m_settlePending = false;
     const auto start = std::chrono::steady_clock::now();
     if (!m_pbf.Settle(pFramework->pVideoDriver, 3.0f, 0.3f)) T8_LOG_ERROR("[Backyard8] Settle failed");
-    T8_LOG_INFO("[Backyard8] Resting pool settled (3 s simulated) in %.0f ms",
+    if (m_pbf.HasPendingSphere()) {
+      if (m_pbf.AppendPendingSphere(pFramework->pVideoDriver)) {
+        m_pbf.PublishParticleBuffers(m_config.particles.buffer, m_config.particles.velocityBuffer);
+        RegisterParticleSystem();
+        T8_LOG_INFO("[Backyard8] Sphere appended after settling: %u particles", m_pbf.ParticleCount());
+      } else {
+        T8_LOG_ERROR("[Backyard8] Cannot append the relaxed sphere");
+      }
+    }
+    T8_LOG_INFO("[Backyard8] Pool settled (3 s simulated) in %.0f ms",
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
     m_pbfAccumulator = 0.0f;
   }
@@ -596,6 +609,13 @@ void Backyard8Scene::DrawSolverPanel(t850::DevGuiContext& gui) {
       m_pbf.SetWind(static_cast<float>(s.windSpeed * std::cos(s.windHeadingDeg * kDegToRad)),
                     static_cast<float>(s.windSpeed * std::sin(s.windHeadingDeg * kDegToRad)));
     }
+    // 1 is physical air drag (pool essentially still); ~20 brings the old ripples back.
+    if (controls.slider("pbf8_wind_strength", "wind strength (x air drag)", s.windStrength,
+                        0.0f, 50.0f, 0.5f))
+      m_pbf.SetWindStrength(s.windStrength);
+    if (controls.slider("pbf8_wall_friction", "wall no-slip (x viscosity)", s.wallFriction,
+                        0.0f, 20.0f, 0.5f))
+      m_pbf.SetWallFriction(s.wallFriction);
     if (controls.slider("pbf8_fixed_step", "fixed step (s)", sc.fixedStep, 1.0f / 240.0f, 1.0f / 20.0f,
                         0.0001f))
       m_pbf.SetDeltaTime(sc.fixedStep);

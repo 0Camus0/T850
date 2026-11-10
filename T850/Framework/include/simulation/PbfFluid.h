@@ -66,7 +66,13 @@ namespace t850 {
     // without pushing the bulk around.
     float windX = 1.0f;
     float windZ = 0.0f;
-    float windStrength = 8.0f;
+    // Multiplier on the physical air-drag term in CS_PbfIntegrate. 1 is real air drag and
+    // leaves the pool essentially still; raise it for visible ripples.
+    float windStrength = 1.0f;
+    // Multiplier on the no-slip boundary viscosity in CS_PbfUpdateVelocity. 1 uses the
+    // fluid's XSPH coefficient against a stationary wall; higher values damp the wall
+    // layer faster.
+    float wallFriction = 8.0f;
     float maxVelocity = 12.0f;
 
     uint32_t solverIterations = 3;
@@ -117,6 +123,10 @@ namespace t850 {
     // Runs `seconds` of simulation with speeds capped at `maxSpeed` and no wind, then restores the
     // settings and the clock: a seeded resting pool compacts before it is shown.
     bool Settle(BaseDriver* driver, float seconds, float maxSpeed);
+    // The water start keeps the relaxed sphere pending while the pool settles; call this
+    // after Settle() to append it (positions + zero velocities) and rebuild the buffers.
+    bool HasPendingSphere() const { return !m_pendingSphere.empty(); }
+    bool AppendPendingSphere(BaseDriver* driver);
 
     bool IsReady() const { return m_ready; }
     uint32_t ParticleCount() const { return m_particleCount; }
@@ -160,6 +170,8 @@ namespace t850 {
     void SetGravity(float g) { m_settings.gravity = g; }
     void SetDeltaTime(float dt) { m_settings.deltaTime = (std::max)(dt, 1e-4f); }
     void SetWind(float x, float z) { m_settings.windX = x; m_settings.windZ = z; }
+    void SetWindStrength(float s) { m_settings.windStrength = s; }
+    void SetWallFriction(float f) { m_settings.wallFriction = (std::max)(f, 0.0f); }
     void SetMaxVelocity(float v) { m_settings.maxVelocity = (std::max)(v, 0.0f); }
     void SetSphere(float radius, float height) {
       m_settings.sphereRadius = (std::max)(radius, 0.1f);
@@ -169,6 +181,10 @@ namespace t850 {
   private:
     bool CreatePipelines(BaseDriver* driver);
     bool CreateFieldBuffers(BaseDriver* driver);
+    // Creates the six particle buffers. An empty (or wrong-sized) velocity vector seeds
+    // zero velocities; otherwise the pool's settled velocities are preserved.
+    bool CreateParticleBuffers(BaseDriver* driver, const std::vector<float>& positions,
+                               const std::vector<float>& velocities);
     bool SeedParticles(BaseDriver* driver);
     std::vector<uint32_t> BuildConstants(uint32_t iteration) const;
     bool LoadPoolLayout(const char* path);
@@ -192,6 +208,8 @@ namespace t850 {
 
     // Pool step intrusions, 8 floats per box: min xyz then max xyz.
     std::vector<float> m_solidBoxes;
+    // Relaxed sphere held back until the resting pool has settled (water start).
+    std::vector<float> m_pendingSphere;
 
     // Sized to the live particle count, so they are rebuilt whenever the seed changes.
     std::unique_ptr<ComputeBuffer> m_positions;

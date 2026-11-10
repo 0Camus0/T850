@@ -19,7 +19,10 @@ namespace t850 {
   struct Backyard8SolverConfig {
     float particleRadius = 0.13f;
     float smoothingRadiusScale = 2.0f;
-    float restDensityScale = 1.0f;
+    // Rest target as a fraction of the cubic-lattice density. 0.907 is the relaxed packing
+    // of the seeded fluid: a pool seeded at the water plane then settles on it, instead of
+    // one particle layer low (measured -0.19 m at 1.0; see the Phase 1 notes).
+    float restDensityScale = 0.907f;
     float stiffnessEps = 0.05f;
     float artPressureK = 0.0f;
     float artPressureN = 4.0f;
@@ -27,17 +30,25 @@ namespace t850 {
     float gravity = 9.81f;
     float windSpeed = 8.0f;
     float windHeadingDeg = 0.0f;
+    // Multiplier on physical air drag (1 = real air, near-still pool; ~20 for ripples).
+    float windStrength = 1.0f;
+    // No-slip boundary viscosity multiplier (1 = the fluid's XSPH coefficient). 8 damps
+    // the wall layer enough to stop the persistent wall-driven circulation; measured
+    // surface |v| 0.024 m/s and lake level -0.043 m.
+    float wallFriction = 8.0f;
     float maxVelocity = 12.0f;
     int solverIterations = 3;
     int substeps = 2;
     float deltaTime = 1.0f / 60.0f;
     float sphereRadius = 2.0f;
     float sphereHeight = 3.08f;
-    // Seeded pool surface, m relative to the water plane, under the dropped sphere (water start)
-    // and for the resting starts (balls, lake). Both sit above the plane to settle on it: the
-    // seeded grid compacts by about one particle layer, and the drop throws water over the rim.
-    float prefillLevel = 0.13f;
-    float restingLevel = 0.16f;
+    // Seeded pool surface, m relative to the water plane. The resting starts seed at the
+    // plane (the 0.907 rest density settles the lattice there, so no compaction offset).
+    // The water start seeds 0.27 m low: the pool settles first, then the 2 m sphere is
+    // appended, and the part that stays in the pool brings it back to the plane (about
+    // 10k of 15k sphere particles are thrown over the rim).
+    float prefillLevel = -0.27f;
+    float restingLevel = 0.0f;
     float cullBelowY = 0.0f;
     float cullMargin = 0.35f;
     int surfaceWidth = 100;

@@ -187,19 +187,23 @@ void CS(uint3 id : SV_DispatchThreadID)
 
     // Wind: a tangential drag on the free-surface layer only. Height above the resting
     // plane alone is not a surface test -- on this scene it matched the whole airborne
-    // sphere. The previous density pass (Lambda.y) is the honest proxy: interior particles
-    // sit at ~RestDensity, the free surface below ~0.9, and particles that have never been
-    // measured read 0 and are skipped.
+    // sphere. The neighbour count from the previous density pass (Lambda.w) is the honest
+    // surface test and, unlike a density threshold, it is an integer: the grid insertion
+    // order cannot flip it, so frame 24 is deterministic. Measured on the settled lake:
+    // the top 0.13 m has median 24 neighbours (p90 26), the interior median 31.
     {
         const float3 p0 = Positions[i].xyz;
         const float windSpeed = length(float2(WindX, WindZ));
-        const float density = Lambda[i].y;
-        const bool freeSurface = density > 1e-4f && density < 0.9f * RestDensity;
+        const float neighbours = Lambda[i].w;
+        const bool freeSurface = neighbours > 0.5f && neighbours < 27.0f;
         if (windSpeed > 0.0f && freeSurface && p0.y > WaterPlaneY - ParticleRadius) {
             const float3 windDir = float3(WindX / windSpeed, 0.0f, WindZ / windSpeed);
-            // Air drag is ~1e-3 of water; multiply so the effect is visible at this scale.
-            const float drag = WindStrength * windSpeed * 1.0e-3f;
             const float3 rel = windDir * windSpeed - v;
+            // Physical air drag on one particle layer: 0.5 * rho_air * Cd / rho_water,
+            // acting on the particle's cross-section, divided by its size. 1 is real air
+            // (the pool stays still); WindStrength is the tunable multiplier.
+            const float drag = WindStrength * 1.56e-6f * length(rel.xz) /
+                               max(ParticleRadius, 1.0e-4f);
             v += float3(rel.x, 0.0f, rel.z) * min(drag * DeltaTime, 0.5f);
         }
     }

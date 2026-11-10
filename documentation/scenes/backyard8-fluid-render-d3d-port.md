@@ -279,15 +279,19 @@ Vulkan references (960x540, shipped config, `--backyard-start water`):
 
 | Mode | Frame | Pixels | Bounding box | Mean RGB |
 |---|---|---|---|---|
-| screen space | 24 | 228,390 | x[0,959] y[0,438] | (66.7, 138.1, 150.2) |
-| screen space | 90 | 220,298 | x[0,959] y[100,440] | (69.4, 125.8, 139.7) |
-| screen space | 300 | 120,867 | x[0,959] y[285,438] | (65.1, 135.3, 155.2) |
-| water | 24 | 228,390 | x[0,959] y[0,438] | (60.3, 132.7, 146.9) |
-| water | 90 | 220,294 | x[0,959] y[100,440] | (62.6, 118.8, 132.7) |
-| water | 300 | 121,214 | x[0,959] y[286,439] | (55.0, 129.7, 148.9) |
-| spheres | 24 | 228,390 | x[0,959] y[0,438] | (215.6, 236.7, 238.7) |
-| spheres | 90 | 220,164 | x[0,959] y[100,440] | (225.6, 243.9, 245.9) |
-| spheres | 300 | 121,091 | x[0,959] y[285,438] | (239.2, 253.7, 254.4) |
+| screen space | 24 | 219,014 | x[0,959] y[0,436] | (71.2, 140.6, 150.2) |
+| screen space | 90 | 223,509 | x[0,959] y[97,443] | (72.9, 126.2, 138.7) |
+| screen space | 300 | 126,790 | x[0,959] y[278,440] | (69.8, 136.3, 155.4) |
+| water | 24 | 219,007 | x[0,959] y[0,436] | (63.4, 132.6, 144.1) |
+| water | 90 | 223,708 | x[0,959] y[81,440] | (71.9, 121.5, 133.5) |
+| water | 300 | 127,214 | x[0,959] y[279,440] | (57.8, 130.5, 149.0) |
+| spheres | 24 | 219,011 | x[0,959] y[0,436] | (213.8, 235.7, 237.8) |
+| spheres | 90 | 224,870 | x[0,959] y[99,440] | (224.7, 243.0, 244.9) |
+| spheres | 300 | 126,457 | x[0,959] y[278,439] | (239.6, 253.9, 254.5) |
+
+Re-measured after the Phase 1 solver changes (`restDensityScale 0.907`, `wallFriction 8`,
+settle-before-drop, `prefillLevel -0.27`). The previous table (228,390 px at frame 24) is
+obsolete.
 
 The sphere means are high because the layer is HDR and the dump clamps it.
 
@@ -295,10 +299,12 @@ Pass criteria per backend:
 
 - **Frame 24** (free fall): pixel count within 0.5%, bounding box within 2 px, each mean
   channel within 3 levels. Better: `python scripts/compare_dumps.py <vulkan dump dir>
-  <candidate dump dir> --tolerance 8` with under 1% of fluid pixels over tolerance. Two Vulkan
-  runs differ by at most 4 levels on under 1% of the fluid pixels: some interior particles of
-  the relaxed seed sit near the solver's 0.9 free-surface density test that gates wind, and
-  float summation order decides them.
+  <candidate dump dir> --tolerance 8` with under 1% of fluid pixels over tolerance.
+  **Vulkan frame 24 is not bit-deterministic.** Measured after Phase 1: 4,915 of 518,400 fluid
+  pixels differ between two runs (max 171 levels); the pre-Phase-1 config differed on 9,255
+  (max 218). The wind gate is now integer, but the neighbour grid's atomic insertion order
+  changes the density summation. Compare statistics, not pixel identity; bit-exactness would
+  need deterministic ordering inside each grid cell.
 - **Frames 90 and 300**: the solver is not bit-deterministic after impact (GPU atomics order;
   two Vulkan runs differ by about 6 levels mean absolute per pixel), so compare statistics only:
   pixel count within 2%, bounding box within 5 px, mean within 5 levels.
@@ -380,4 +386,8 @@ Also capture one frame at 3840x2160 per backend: `Fluid Clear` must log `dispatc
 | Test windows on Linux (`SDL_VIDEO_DRIVER=x11`) | centred on the primary (4K) display |
 | 3840x2160, screen space and water, frame 90 | `Fluid Clear` 480 x 270 groups, no errors (was `DispatchTooLarge`) |
 | Wireframe and flat debug styles | still route through the legacy resolve |
+| Phase 1: lake level, 1800 frames | −0.043 m (target −0.040 ± 0.010) |
+| Phase 1: water level, 1800 frames | −0.0406 m (settle-before-drop, `prefillLevel -0.27`) |
+| Phase 1: water frame 6 | settled pool, no lattice rows |
+| Phase 1: two frame-24 runs | not identical (4,915 px, max 171); grid atomic order |
 | D3D12, D3D11, OpenGL | **not run** |

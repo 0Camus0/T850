@@ -10,6 +10,9 @@ of `90f0550`, because the two are interleaved in the same files.
 
 Detailed references:
 
+- [backyard8-session-2026-11-10.md](backyard8-session-2026-11-10.md): everything done after this
+  handoff — Phase 1 solver, Windows D3D12/D3D11/GL verification, 2×6 adoption, regression
+  automation, and the remaining blockers.
 - [backyard8-fluid-render-d3d-port.md](backyard8-fluid-render-d3d-port.md): what changed in the
   renderer, the kernel ABI, the pass gating, the D3D11/D3D12 port steps and the Vulkan reference
   numbers. **Start here for the port.**

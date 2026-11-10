@@ -221,9 +221,21 @@ performance trade-off; regression must use tolerances for now.
 
 ### Still open from this phase
 
-- **3.5** was measured but not reduced: the water start still culls 10,340 particles (down
-  from 14,663 because the lower prefill retains more of the drop); the level is correct. The
-  sphere-height/radius sweep and recycling remain.
+- **3.5** was measured but not reduced. At the shipped `prefillLevel -0.27`, 1800 frames:
+
+  | Sphere | Culled | Alive | Level |
+  |---|---|---|---|
+  | h 3.08, r 2.00 (shipped) | 10,340 | 27,018 | −0.0406 m |
+  | h 2.00, r 2.00 | 8,698 | 28,660 | +0.0527 m |
+  | h 1.50, r 2.00 | 7,688 | 29,670 | +0.1096 m |
+  | h 3.08, r 1.80 | 7,403 | 25,846 | −0.1070 m |
+  | h 3.08, r 1.60 | 4,647 | 25,276 | −0.1397 m |
+
+  A lower sphere culls less but retains more water, so the level rises and `prefillLevel` has
+  to drop further; a smaller sphere has less water and settles lower. None of the config-only
+  combinations removes the loss without recycling, and the 3.08 m / 2 m drop is the intended
+  visual (the 10k culled particles are water that went over the rim, which is the effect the
+  scene is showing). Recycling remains optional.
 - **3.7** re-seed debounce, **3.9** Deck budget, **3.10** small items remain.
 - **3.1** D3D12/D3D11/GL still need the session-1 Windows run (the host has a console session;
   see the plan).

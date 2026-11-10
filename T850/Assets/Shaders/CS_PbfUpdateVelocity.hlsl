@@ -46,7 +46,7 @@ cbuffer PbfConstants : register(b0)
     // Diagnostics/reference values; named per use in CS_PbfDensity.
     float RestDenomReference;   // sum |gradW|^2 for a full lattice
     float MinNeighbours;        // below this the density estimate is not trusted
-    float Pad6;
+    float WallTopY;   // solid walls end here (the pool rim); open above
     // Surface wind stress (m/s), applied to the free-surface layer in CS_PbfIntegrate.
     float WindX;
     float WindZ;
@@ -171,7 +171,7 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float cm = ParticleRadius * 0.5f;
     if (xp.y <= BasinMinY + cm + 1e-4f)
         vi.y = 0.0f;
-    if (xp.y < WaterPlaneY) {
+    if (xp.y < WallTopY) {
         if (xp.x <= BasinMinX + cm + 1e-4f) vi.x = 0.0f;
         else if (xp.x >= BasinMaxX - cm - 1e-4f) vi.x = 0.0f;
         if (xp.z <= BasinMinZ + cm + 1e-4f) vi.z = 0.0f;

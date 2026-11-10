@@ -354,8 +354,9 @@ bool RenderGraph::Load(const std::string& path) {
         b.clear = true;
         particleBuffers.push_back(b);
       };
-      const int count = system->buffer_count > 0 ? system->buffer_count
-                       : (system->count > 0 ? system->count : 4096);
+      const int count = (std::max)(system->buffer_capacity,
+                                   system->buffer_count > 0 ? system->buffer_count
+                                   : (system->count > 0 ? system->count : 4096));
       if (system->source == ParticleSourceKind::Buffer && positions.rfind("__", 0) == 0)
         addBuffer(positions, 16, count, "read_only");
       if (velocities.rfind("__", 0) == 0) addBuffer(velocities, 16, count, "read_only");
@@ -667,8 +668,10 @@ bool RenderGraph::Load(const std::string& path) {
           if (!renderTarget.color_formats.empty() && attachment >= static_cast<int>(renderTarget.color_formats.size())) return false;
           const std::string& format = renderTarget.color_formats.empty()
             ? renderTarget.color_format : renderTarget.color_formats[attachment];
+          // F32 is the engine's single-channel 32-bit float colour format; every backend
+          // maps it to the R32Float storage format. There is no separate "R32F" name.
           const char* required = layout->storageFormat == ComputeStorageFormat::Rgba16Float ? "RGBA16F"
-            : layout->storageFormat == ComputeStorageFormat::R32Float ? "R32F" : "RGBA8";
+            : layout->storageFormat == ComputeStorageFormat::R32Float ? "F32" : "RGBA8";
           if (layout->storageFormat == ComputeStorageFormat::Unspecified || format != required) {
             T8_LOG_ERROR("[RenderGraph] Pass '%s' storage format '%s' does not match kernel '%s'",
               pass.name.c_str(), format.c_str(), required);
@@ -703,8 +706,11 @@ bool RenderGraph::Load(const std::string& path) {
       std::string extentTarget;
       int extentAttachment = BaseDriver::COLOR0_ATTACHMENT;
       if (extentIsBuffer) {
-        if (!writtenResources.count("buffer:" + pass.compute_extent_from)) {
-          T8_LOG_ERROR("[RenderGraph] Pass '%s' compute_extent_from buffer '%s' is not written by this pass",
+        // A buffer extent defines a 1D dispatch size; it may be read (a scatter over the
+        // projected particle table) as well as written, so accept either binding.
+        const std::string extentIdentity = "buffer:" + pass.compute_extent_from;
+        if (!writtenResources.count(extentIdentity) && !sampledResources.count(extentIdentity)) {
+          T8_LOG_ERROR("[RenderGraph] Pass '%s' compute_extent_from buffer '%s' is not bound by this pass",
                        pass.name.c_str(), pass.compute_extent_from.c_str());
           return false;
         }
@@ -915,6 +921,7 @@ bool RenderGraph::Configure(
 bool RenderGraph::CreateComputeBuffers(BaseDriver* driver, int widthOverride, int heightOverride) {
   m_computeBuffers.clear();
   m_computeBufferHandles.clear();
+  m_computeBufferWindowSizes.clear();
   m_computeBufferDescs = m_sourceDesc.compute_buffers;
   if (!driver) return true;
 
@@ -929,6 +936,8 @@ bool RenderGraph::CreateComputeBuffers(BaseDriver* driver, int widthOverride, in
       const int h = heightOverride > 0 ? heightOverride : driver->height;
       if (spec.size_ref == "$window") {
         elements = (std::max)(w * h, 1);
+        m_computeBufferWindowSizes[spec.name] = {static_cast<uint32_t>((std::max)(w, 1)),
+                                                 static_cast<uint32_t>((std::max)(h, 1))};
       } else if (spec.size_ref == "$window_tiles") {
         // One word per 8x8 pixel tile of the viewport, plus one tile row/col of slack so
         // rounding at the edge cannot index past the end.
@@ -1233,7 +1242,8 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
   BaseRT* outputRT = nullptr;
   uint32_t extentW = 0, extentH = 0;
   const auto bufferExtentIt = m_computeBufferHandles.find(pass.compute_extent_from);
-  if (bufferExtentIt != m_computeBufferHandles.end()) {
+  const bool extentIsBuffer = bufferExtentIt != m_computeBufferHandles.end();
+  if (extentIsBuffer) {
     const int index = bufferExtentIt->second;
     if (index < 0 || index >= static_cast<int>(m_computeBuffers.size()) || !m_computeBuffers[index]) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute extent buffer '%s'",
@@ -1243,6 +1253,13 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     const ComputeBufferDesc& desc = m_computeBuffers[index]->descriptor;
     extentW = desc.structureStride > 0 ? desc.byteWidth / desc.structureStride : 1u;
     extentH = 1u;
+    // A "$window" buffer is one element per pixel, row-major: dispatch it as width x height
+    // (kernels index id.x + id.y * OutputWidth). A 1D grid exceeds 65535 groups at 4K.
+    const auto windowIt = m_computeBufferWindowSizes.find(pass.compute_extent_from);
+    if (windowIt != m_computeBufferWindowSizes.end()) {
+      extentW = windowIt->second.first;
+      extentH = windowIt->second.second;
+    }
   } else {
     const ResolvedTexture extentResource = ResolveTextureInput(pass.compute_extent_from);
     if (extentResource.is_builtin || extentResource.rt_handle < 0 ||
@@ -1262,6 +1279,20 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     extentH = static_cast<uint32_t>(outputRT->h);
   }
 
+  // A particle-extent dispatch is 1D over a buffer, but its kernels still need the SCREEN
+  // size for projection and pixel-index math. When the pass names a render target, that
+  // target's dimensions are the screen size; the buffer only defines the thread count.
+  uint32_t constantsW = extentW;
+  uint32_t constantsH = extentH;
+  if (extentIsBuffer && !pass.target.empty()) {
+    const auto targetIt = m_rtHandles.find(pass.target);
+    if (targetIt != m_rtHandles.end() && targetIt->second >= 0 &&
+        targetIt->second < static_cast<int>(driver->RTs.size()) && driver->RTs[targetIt->second]) {
+      constantsW = static_cast<uint32_t>(driver->RTs[targetIt->second]->w);
+      constantsH = static_cast<uint32_t>(driver->RTs[targetIt->second]->h);
+    }
+  }
+
   std::vector<ComputeBindingDesc> bindings;
   bindings.reserve(pass.compute_resources.size());
   std::vector<uint32_t> constantWords;
@@ -1275,8 +1306,8 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
     if (*type == ComputeBindingType::Constants32) {
       ComputeKernelConstantsContext constantsContext;
       constantsContext.sceneProps = &props;
-      constantsContext.outputWidth = extentW;
-      constantsContext.outputHeight = extentH;
+      constantsContext.outputWidth = constantsW;
+      constantsContext.outputHeight = constantsH;
       constantsContext.frameIndex = m_frameIndex;
       constantsContext.permutation = pass.compute_permutation;
       // Particle passes need the system name so their constants come from that descriptor

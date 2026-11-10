@@ -1,9 +1,20 @@
 # Particle Fluid — Diagnosis 2: Screen-Space Rendering, Cross-Backend Work and Remaining Difficulty
 
+> **Superseded (2026-11-08):** [diagnosis-3](diagnosis-3.md) corrects several claims here
+> (D3D12 works; the depth pass stores a minimum, not an average; the normal formula is not 400x
+> too small; the D3D11 failures are the compiler profile, not stripped bindings). The current
+> implementation is recorded in [diagnosis-3-implementation.md](diagnosis-3-implementation.md).
+
 Status: written 2026-11-08 after the screen-space fluid implementation, the config/Dev-GUI
 rework, and the OpenGL image-origin fix. Vulkan and OpenGL are verified. D3D11/D3D12 create
 and dispatch the new chain but their screen-space result is not reproduced yet; they keep the
 splat resolve underneath so the fluid stays visible.
+
+> **Partly superseded (2026-11-08):** [diagnosis-3](diagnosis-3.md) re-tests this state. D3D12
+> works; D3D11 fails natively because `CS_ParticleShade.hlsl` uses `Sample` in a `cs_5_0`
+> kernel, and under Proton because Wine's HLSL compiler is not FXC. It also corrects §2.2–§2.5
+> (the depth pass stores the minimum, the normal has two sign errors, the paper's `Cx` was
+> misread, half-precision depth) and gives the SSFR implementation plan.
 
 This is the sequel to [diagnosis.md](diagnosis.md). That document fixed the projection,
 falloff, dispatch, solver and D3D root-signature defects. This one records what happened when

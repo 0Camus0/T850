@@ -46,7 +46,7 @@ cbuffer PbfConstants : register(b0)
     float RestScale;
     float RestDenomReference;
     float MinNeighbours;
-    float Pad6;
+    float WallTopY;   // solid walls end here (the pool rim); open above
     float WindX;
     float WindZ;
     float WindStrength;

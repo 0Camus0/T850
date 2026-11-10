@@ -42,26 +42,42 @@ import re
 import sys
 from pathlib import Path
 
-# Flat cbuffer members only: every fluid cbuffer is scalars, so packing is "sum, round up to 16".
+# Scalar sizes in bytes. Vectors (float3, uint4, ...) and arrays follow HLSL cbuffer packing: a
+# vector never straddles a 16-byte register and every array element starts a new register.
 SIZES = {"bool": 4, "int": 4, "uint": 4, "float": 4, "dword": 4}
+VECTOR_RE = re.compile(r"^(bool|int|uint|float|dword)([1-4])$")
 CBUFFER_RE = re.compile(r"cbuffer\s+(\w+)\s*(?::\s*register\(\s*b(\d+)\s*\))?\s*\{(.*?)\}\s*;", re.S)
-MEMBER_RE = re.compile(r"^\s*(\w+)\s+(\w+)\s*(\[[^\]]*\])?\s*;")
+MEMBER_RE = re.compile(r"^\s*(\w+)\s+(\w+)\s*(?:\[\s*(\d+)\s*\])?\s*;")
 COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 
 
-def cbuffer_layout(body: str) -> tuple[int, list[tuple[str, str]], list[str]]:
-    """(DWORD size, [(type, name)] per member, members this check cannot size)."""
+def member_bytes(type_name: str) -> int | None:
+    if type_name in SIZES:
+        return SIZES[type_name]
+    vector = VECTOR_RE.match(type_name)
+    return SIZES[vector.group(1)] * int(vector.group(2)) if vector else None
+
+
+def cbuffer_layout(body: str) -> tuple[int, list[tuple[str, str, int, int]], list[str]]:
+    """(DWORD size, [(type, name, offset, bytes)] per member, members this check cannot size)."""
     members, unknown = [], []
+    offset = 0
     for line in COMMENT_RE.sub("", body).splitlines():
         match = MEMBER_RE.match(line)
         if not match:
             continue
         type_name, name = match.group(1).lower(), match.group(2)
-        members.append((type_name, name))
-        if type_name not in SIZES:
+        count = int(match.group(3)) if match.group(3) else 1
+        size = member_bytes(type_name)
+        if size is None:
             unknown.append(f"{type_name} {name}")
-    size_bytes = sum(SIZES.get(t, 0) for t, _ in members)
-    words = ((size_bytes + 15) // 16) * 4 if size_bytes else 0
+            continue
+        if count > 1 or offset // 16 != (offset + size - 1) // 16:
+            offset = (offset + 15) // 16 * 16
+        total = 16 * (count - 1) + size
+        members.append((type_name, name, offset, total))
+        offset += total
+    words = ((offset + 15) // 16) * 4 if offset else 0
     return words, members, unknown
 
 
@@ -89,7 +105,7 @@ def main() -> int:
     canonical: dict[str, tuple[str, tuple, list[str]]] = {}
     aliases: list[str] = []
     checked_counts = 0
-    files = sorted(shader_dir.glob("CS_Fluid*.hlsl"))
+    files = sorted(list(shader_dir.glob("CS_Fluid*.hlsl")) + list(shader_dir.glob("CS_Particle*.hlsl")))
 
     for path in files:
         text = COMMENT_RE.sub("", path.read_text(encoding="utf-8", errors="replace"))
@@ -101,8 +117,8 @@ def main() -> int:
                 failures.append(f"{path.name}: cbuffer {name} has members this check cannot size: "
                                 f"{', '.join(unknown)}")
                 continue
-            layout = tuple(SIZES[type_name] for type_name, _ in members)
-            names = [n for _, n in members]
+            layout = tuple((offset, size) for _, _, offset, size in members)
+            names = [n for _, n, _, _ in members]
             first = canonical.get(name)
             if first is None:
                 canonical[name] = (path.name, layout, names)

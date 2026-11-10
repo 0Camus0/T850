@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_PbfUpdateVelocity.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=46bb225b44e4180b8c7e91852b7e4eebacb7437fed662333b10353f9f794c6c7; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_PbfUpdateVelocity.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=f22a705d779c370e3db6fe63ed6d0bf6d683e1c37b8e1078b234af294a21363a; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 #if defined(GL_EXT_control_flow_attributes)
 #extension GL_EXT_control_flow_attributes : require
 #define SPIRV_CROSS_FLATTEN [[flatten]]
@@ -47,7 +47,7 @@ layout(binding = 0, std140) uniform PbfConstants
     float RestScale;
     float RestDenomReference;
     float MinNeighbours;
-    float Pad6;
+    float WallTopY;
     float WindX;
     float WindZ;
     float WindStrength;
@@ -205,7 +205,7 @@ void main()
             _996 = _995;
         }
         vec3 _999;
-        if (_616.y < _22.WaterPlaneY)
+        if (_616.y < _22.WallTopY)
         {
             vec3 _997;
             if (_616.x <= ((_22.BasinMinX + _842) + 9.9999997473787516355514526367188e-05))

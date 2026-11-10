@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_PbfCopyFields.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=e3672777517c9d2f9b7ff22b38877afb00c0ed0fbced362514cc5f4c7e0f7e45; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_PbfCopyFields.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=7fa49586d155fb4e224afca547add2ede9a4e720721bd9a7d252440462307424; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 0, std140) uniform PbfConstants
@@ -35,7 +35,7 @@ layout(binding = 0, std140) uniform PbfConstants
     float RestScale;
     float RestDenomReference;
     float MinNeighbours;
-    float Pad6;
+    float WallTopY;
     float WindX;
     float WindZ;
     float WindStrength;

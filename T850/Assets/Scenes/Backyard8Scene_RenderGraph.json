@@ -15,6 +15,24 @@
       "blend_fraction": 0.0
     }
   ],
+  "compute_buffers": [
+    {
+      "name": "__fluid_depth_bits_BackyardWater",
+      "structure_stride": 4,
+      "element_count": 0,
+      "size_ref": "$window",
+      "access": "read_write",
+      "clear": false
+    },
+    {
+      "name": "__fluid_thickness_bits_BackyardWater",
+      "structure_stride": 4,
+      "element_count": 0,
+      "size_ref": "$window",
+      "access": "read_write",
+      "clear": false
+    }
+  ],
   "render_targets": [
     {
       "name": "GBuffer",
@@ -185,19 +203,31 @@
       "storage": true
     },
     {
-      "name": "FluidParticlesDepthA",
+      "name": "FluidDepthA",
       "color_count": 1,
-      "color_format": "RGBA16F",
+      "color_format": "F32",
       "depth_format": "NONE",
       "size": [
         0,
         0
       ],
-      "linear_filter": true,
+      "linear_filter": false,
       "storage": true
     },
     {
-      "name": "FluidParticlesDepthB",
+      "name": "FluidDepthB",
+      "color_count": 1,
+      "color_format": "F32",
+      "depth_format": "NONE",
+      "size": [
+        0,
+        0
+      ],
+      "linear_filter": false,
+      "storage": true
+    },
+    {
+      "name": "FluidThickness",
       "color_count": 1,
       "color_format": "RGBA16F",
       "depth_format": "NONE",
@@ -205,7 +235,7 @@
         0,
         0
       ],
-      "linear_filter": true,
+      "linear_filter": false,
       "storage": true
     }
   ],
@@ -455,14 +485,42 @@
     },
 
     {
-      "name": "Fluid Surface Depth",
-      "target": "FluidParticlesDepthA",
+      "name": "Fluid Clear",
+      "target": "FluidDepthA",
       "execution": "compute_if_supported",
       "particle_context": "BackyardWater",
-      "compute_shader": "Shaders/CS_ParticleDepth.hlsl",
+      "compute_shader": "Shaders/CS_FluidClear.hlsl",
       "compute_entry": "CS",
       "compute_permutation": "base",
-      "compute_extent_from": "FluidParticlesDepthA:COLOR0",
+      "compute_extent_from": "__fluid_depth_bits_BackyardWater",
+      "compute_resources": [
+        {
+          "resource": "@kernel_constants",
+          "access": "constants",
+          "shader_register": 0
+        },
+        {
+          "resource": "__fluid_depth_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 0
+        },
+        {
+          "resource": "__fluid_thickness_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 1
+        }
+      ],
+      "draws": []
+    },
+    {
+      "name": "Fluid Splat",
+      "target": "FluidDepthA",
+      "execution": "compute_if_supported",
+      "particle_context": "BackyardWater",
+      "compute_shader": "Shaders/CS_FluidSplat.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "__particle_projected_BackyardWater",
       "compute_resources": [
         {
           "resource": "@kernel_constants",
@@ -475,33 +533,32 @@
           "shader_register": 0
         },
         {
-          "resource": "__particle_tiles_BackyardWater",
-          "access": "buffer_read",
+          "resource": "GBuffer:DEPTH",
+          "access": "sampled",
           "shader_register": 1
         },
         {
-          "resource": "GBuffer:DEPTH",
-          "access": "sampled",
-          "shader_register": 2
+          "resource": "__fluid_depth_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthA:COLOR0",
-          "access": "storage_write",
-          "shader_register": 0
+          "resource": "__fluid_thickness_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 1
         }
       ],
       "draws": []
     },
     {
-      "name": "Fluid Smooth 1",
-      "target": "FluidParticlesDepthB",
+      "name": "Fluid Sphere Shade",
+      "target": "FluidParticles",
       "execution": "compute_if_supported",
       "particle_context": "BackyardWater",
-      "compute_stage": 1,
-      "compute_shader": "Shaders/CS_ParticleSmooth.hlsl",
+      "compute_shader": "Shaders/CS_FluidSphereShade.hlsl",
       "compute_entry": "CS",
       "compute_permutation": "base",
-      "compute_extent_from": "FluidParticlesDepthB:COLOR0",
+      "compute_extent_from": "FluidParticles:COLOR0",
       "compute_resources": [
         {
           "resource": "@kernel_constants",
@@ -509,12 +566,104 @@
           "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthA:COLOR0",
+          "resource": "__particle_projected_BackyardWater",
+          "access": "buffer_read",
+          "shader_register": 0
+        },
+        {
+          "resource": "__fluid_depth_bits_BackyardWater",
+          "access": "buffer_read",
+          "shader_register": 1
+        },
+        {
+          "resource": "FluidParticles:COLOR0",
+          "access": "storage_write",
+          "shader_register": 0
+        },
+        {
+          "resource": "__fluid_thickness_bits_BackyardWater",
+          "access": "buffer_read",
+          "shader_register": 2
+        },
+        {
+          "resource": "Deferred:COLOR0",
+          "access": "sampled",
+          "shader_register": 3
+        },
+        {
+          "resource": "Deferred:COLOR0",
+          "access": "sampler",
+          "shader_register": 3
+        },
+        {
+          "resource": "GBuffer:DEPTH",
+          "access": "sampled",
+          "shader_register": 4
+        }
+      ],
+      "draws": []
+    },
+    {
+      "name": "Fluid Resolve",
+      "target": "FluidDepthA",
+      "execution": "compute_if_supported",
+      "particle_context": "BackyardWater",
+      "compute_shader": "Shaders/CS_FluidResolve.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "FluidDepthA:COLOR0",
+      "compute_resources": [
+        {
+          "resource": "@kernel_constants",
+          "access": "constants",
+          "shader_register": 0
+        },
+        {
+          "resource": "__fluid_depth_bits_BackyardWater",
+          "access": "buffer_read",
+          "shader_register": 0
+        },
+        {
+          "resource": "__fluid_thickness_bits_BackyardWater",
+          "access": "buffer_read",
+          "shader_register": 1
+        },
+        {
+          "resource": "FluidDepthA:COLOR0",
+          "access": "storage_write",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidThickness:COLOR0",
+          "access": "storage_write",
+          "shader_register": 1
+        }
+      ],
+      "draws": []
+    },
+    {
+      "name": "Fluid Smooth 1",
+      "target": "FluidDepthB",
+      "execution": "compute_if_supported",
+      "particle_context": "BackyardWater",
+      "compute_stage": 1,
+      "compute_shader": "Shaders/CS_ParticleSmooth.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "FluidDepthB:COLOR0",
+      "compute_resources": [
+        {
+          "resource": "@kernel_constants",
+          "access": "constants",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidDepthA:COLOR0",
           "access": "sampled",
           "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthB:COLOR0",
+          "resource": "FluidDepthB:COLOR0",
           "access": "storage_write",
           "shader_register": 0
         }
@@ -523,14 +672,14 @@
     },
     {
       "name": "Fluid Smooth 2",
-      "target": "FluidParticlesDepthA",
+      "target": "FluidDepthA",
       "execution": "compute_if_supported",
       "particle_context": "BackyardWater",
       "compute_stage": 2,
       "compute_shader": "Shaders/CS_ParticleSmooth.hlsl",
       "compute_entry": "CS",
       "compute_permutation": "base",
-      "compute_extent_from": "FluidParticlesDepthA:COLOR0",
+      "compute_extent_from": "FluidDepthA:COLOR0",
       "compute_resources": [
         {
           "resource": "@kernel_constants",
@@ -538,12 +687,12 @@
           "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthB:COLOR0",
+          "resource": "FluidDepthB:COLOR0",
           "access": "sampled",
           "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthA:COLOR0",
+          "resource": "FluidDepthA:COLOR0",
           "access": "storage_write",
           "shader_register": 0
         }
@@ -552,14 +701,14 @@
     },
     {
       "name": "Fluid Smooth 3",
-      "target": "FluidParticlesDepthB",
+      "target": "FluidDepthB",
       "execution": "compute_if_supported",
       "particle_context": "BackyardWater",
       "compute_stage": 3,
       "compute_shader": "Shaders/CS_ParticleSmooth.hlsl",
       "compute_entry": "CS",
       "compute_permutation": "base",
-      "compute_extent_from": "FluidParticlesDepthB:COLOR0",
+      "compute_extent_from": "FluidDepthB:COLOR0",
       "compute_resources": [
         {
           "resource": "@kernel_constants",
@@ -567,12 +716,12 @@
           "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthA:COLOR0",
+          "resource": "FluidDepthA:COLOR0",
           "access": "sampled",
           "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthB:COLOR0",
+          "resource": "FluidDepthB:COLOR0",
           "access": "storage_write",
           "shader_register": 0
         }
@@ -581,14 +730,14 @@
     },
     {
       "name": "Fluid Smooth 4",
-      "target": "FluidParticlesDepthA",
+      "target": "FluidDepthA",
       "execution": "compute_if_supported",
       "particle_context": "BackyardWater",
       "compute_stage": 4,
       "compute_shader": "Shaders/CS_ParticleSmooth.hlsl",
       "compute_entry": "CS",
       "compute_permutation": "base",
-      "compute_extent_from": "FluidParticlesDepthA:COLOR0",
+      "compute_extent_from": "FluidDepthA:COLOR0",
       "compute_resources": [
         {
           "resource": "@kernel_constants",
@@ -596,19 +745,134 @@
           "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthB:COLOR0",
+          "resource": "FluidDepthB:COLOR0",
           "access": "sampled",
           "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthA:COLOR0",
+          "resource": "FluidDepthA:COLOR0",
           "access": "storage_write",
           "shader_register": 0
         }
       ],
       "draws": []
     },
-
+    {
+      "name": "Fluid Smooth 5",
+      "target": "FluidDepthB",
+      "execution": "compute_if_supported",
+      "particle_context": "BackyardWater",
+      "compute_stage": 5,
+      "compute_shader": "Shaders/CS_ParticleSmooth.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "FluidDepthB:COLOR0",
+      "compute_resources": [
+        {
+          "resource": "@kernel_constants",
+          "access": "constants",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidDepthA:COLOR0",
+          "access": "sampled",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidDepthB:COLOR0",
+          "access": "storage_write",
+          "shader_register": 0
+        }
+      ],
+      "draws": []
+    },
+    {
+      "name": "Fluid Smooth 6",
+      "target": "FluidDepthA",
+      "execution": "compute_if_supported",
+      "particle_context": "BackyardWater",
+      "compute_stage": 6,
+      "compute_shader": "Shaders/CS_ParticleSmooth.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "FluidDepthA:COLOR0",
+      "compute_resources": [
+        {
+          "resource": "@kernel_constants",
+          "access": "constants",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidDepthB:COLOR0",
+          "access": "sampled",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidDepthA:COLOR0",
+          "access": "storage_write",
+          "shader_register": 0
+        }
+      ],
+      "draws": []
+    },
+    {
+      "name": "Fluid Smooth 7",
+      "target": "FluidDepthB",
+      "execution": "compute_if_supported",
+      "particle_context": "BackyardWater",
+      "compute_stage": 7,
+      "compute_shader": "Shaders/CS_ParticleSmooth.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "FluidDepthB:COLOR0",
+      "compute_resources": [
+        {
+          "resource": "@kernel_constants",
+          "access": "constants",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidDepthA:COLOR0",
+          "access": "sampled",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidDepthB:COLOR0",
+          "access": "storage_write",
+          "shader_register": 0
+        }
+      ],
+      "draws": []
+    },
+    {
+      "name": "Fluid Smooth 8",
+      "target": "FluidDepthA",
+      "execution": "compute_if_supported",
+      "particle_context": "BackyardWater",
+      "compute_stage": 8,
+      "compute_shader": "Shaders/CS_ParticleSmooth.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_extent_from": "FluidDepthA:COLOR0",
+      "compute_resources": [
+        {
+          "resource": "@kernel_constants",
+          "access": "constants",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidDepthB:COLOR0",
+          "access": "sampled",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidDepthA:COLOR0",
+          "access": "storage_write",
+          "shader_register": 0
+        }
+      ],
+      "draws": []
+    },
     {
       "name": "Fluid Surface Shade",
       "target": "FluidParticles",
@@ -625,24 +889,34 @@
           "shader_register": 0
         },
         {
-          "resource": "FluidParticlesDepthA:COLOR0",
+          "resource": "FluidDepthA:COLOR0",
           "access": "sampled",
           "shader_register": 0
         },
         {
-          "resource": "Deferred:COLOR0",
+          "resource": "FluidThickness:COLOR0",
           "access": "sampled",
           "shader_register": 1
         },
         {
           "resource": "Deferred:COLOR0",
+          "access": "sampled",
+          "shader_register": 2
+        },
+        {
+          "resource": "Deferred:COLOR0",
           "access": "sampler",
-          "shader_register": 1
+          "shader_register": 2
         },
         {
           "resource": "FluidParticles:COLOR0",
           "access": "storage_write",
           "shader_register": 0
+        },
+        {
+          "resource": "GBuffer:DEPTH",
+          "access": "sampled",
+          "shader_register": 3
         }
       ],
       "draws": []

@@ -1210,9 +1210,10 @@ void BackyardScene::OnUpdate(float deltaSeconds) {
                          static_cast<float>(pFramework->pVideoDriver->height);
     if (m_camera.AspectRatio != aspect) m_camera.SetRatio(aspect);
   }
-  if (!m_dumper.SkipCameraUpdates()) {
-    m_cameraController.Update(deltaSeconds, t850::CameraUpdateContext{});
-  }
+  // The camera update itself happens at the end of ProcessSceneInput: ApplyMouseLook
+  // consumes the current frame's deltas, and updating here first would apply the PREVIOUS
+  // frame's input. That one-frame mismatch made mouse look feel inconsistent, especially
+  // when a motion burst and its camera update landed in different frames.
   m_lightCamera.Update(0.0f);
   if (s_pickTest && !m_pickTestDone) RunPickTestStep();
   if (s_padTest && !m_padTestDone) RunPadTestStep();
@@ -1446,7 +1447,12 @@ void BackyardScene::OnInput(InputManager* input) {
   if (s_pickTest || s_padTest) return;
   bool imguiWantsMouse = false;
 #ifndef OS_ANDROID
-  imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+  // Only let ImGui own the mouse while the runtime GUI is actually open. WantCaptureMouse
+  // can remain true for a frame (or longer, if NewFrame has not run) after the GUI closes;
+  // with relative mode active that silently disabled camera look while the cursor was
+  // hidden, which felt like the camera randomly stopping.
+  imguiWantsMouse = m_runtimeGuiOpen && ImGui::GetCurrentContext() &&
+                    ImGui::GetIO().WantCaptureMouse;
 #endif
   ProcessSceneInput(input, imguiWantsMouse);
 }
@@ -1512,8 +1518,11 @@ void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse)
   // inverted. Ctrl, a held ball and the GUI own the mouse, so none turns the camera.
   state.mouseLook = !ctrlDown && !draggingBall && !imguiWantsMouse &&
       (input->PressedMouseButton(0) || input->PressedMouseButton(2));
-  state.mouseDeltaX = (std::clamp)(static_cast<float>(input->xDelta), -200.0f, 200.0f);
-  state.mouseDeltaY = (std::clamp)(static_cast<float>(input->yDelta), -200.0f, 200.0f);
+  // Relative mode discards the compositor warp and focus changes reset the baseline, so
+  // this is only a sanity bound. 200 px/frame silently ate fast flicks and the first frames
+  // after a hitch; 4096 keeps the clamp without making the sensitivity frame-rate dependent.
+  state.mouseDeltaX = (std::clamp)(static_cast<float>(input->xDelta), -4096.0f, 4096.0f);
+  state.mouseDeltaY = (std::clamp)(static_cast<float>(input->yDelta), -4096.0f, 4096.0f);
   state.scrollDelta = (draggingBall || imguiWantsMouse) ? 0.0f : input->scrollDelta;
   const t850::CameraInputState beforePad = state;
   t850::ApplyGamepadToCameraInput(state, *input, m_deltaSeconds, true);
@@ -1557,6 +1566,12 @@ void BackyardScene::ProcessSceneInput(InputManager* input, bool imguiWantsMouse)
   state.moveUp = state.jump || input->PressedKey(T800K_q);
   state.moveDown = state.crouch || input->PressedKey(T800K_e);
   m_cameraController.HandleInput(state);
+  // Apply the input we just built in this same frame. This is intentionally here rather
+  // than at the start of OnUpdate: the App calls OnUpdate before OnInput, so an update
+  // there consumed the previous frame's deltas and made look feel one frame behind.
+  if (!m_dumper.SkipCameraUpdates()) {
+    m_cameraController.Update(m_deltaSeconds, t850::CameraUpdateContext{});
+  }
 }
 
 void BackyardScene::RunPickTestStep() {

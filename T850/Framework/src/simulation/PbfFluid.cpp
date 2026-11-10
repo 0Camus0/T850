@@ -5,12 +5,14 @@
 
 #include <utils/ComputeKernelRegistry.h>
 #include <utils/Log.h>
+#include <utils/ThreadPool.h>
 #include <scene/ParticleSystem.h>
 #include <utils/ResourceLocator.h>
 
 #include <glaze/glaze.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -52,7 +54,7 @@ namespace {
     float restScale;            // rho_lattice: kernel normalisation
     float restDenomReference;   // sum |gradW|^2 for a full lattice (CFM scale)
     float minNeighbours;        // density estimates below this are ignored
-    float pad6;
+    float wallTopY;             // solid walls end here (the pool rim); open above
     float windX;
     float windZ;
     float windStrength;
@@ -114,6 +116,9 @@ bool PbfFluid::LoadPoolLayout(const char* path) {
   m_settings.basinMinY = static_cast<float>(floorY);
   m_settings.waterPlaneY = static_cast<float>(layout.waterPlaneY);
   m_settings.copingTopY = static_cast<float>(layout.waterPlaneY + std::max(layout.pool.copingHeight, 0.0));
+  // The wall is solid up to the authored freeboard, not just up to the coping stone's
+  // thickness. `freeboard` is the height of the pool wall above the water line.
+  m_settings.wallTopY = static_cast<float>(layout.waterPlaneY + std::max(layout.pool.freeboard, 0.0));
 
   // Steps are authored as {minX,maxX,minY,maxY,minZ,maxZ}: X, world Y, world Z.
   for (const LayoutStepJson& step : layout.pool.steps) {
@@ -125,10 +130,11 @@ bool PbfFluid::LoadPoolLayout(const char* path) {
     const float maxZ = static_cast<float>(std::max(step.minZ, step.maxZ));
     m_solidBoxes.insert(m_solidBoxes.end(), {minX, minY, minZ, maxX, maxY, maxZ, 0.0f, 0.0f});
   }
-  T8_LOG_INFO("[PBF] Pool basin X %.2f..%.2f  Y %.2f..%.2f  Z %.2f..%.2f m, plane %.3f, coping %.3f, %zu step box(es)",
+  T8_LOG_INFO("[PBF] Pool basin X %.2f..%.2f  Y %.2f..%.2f  Z %.2f..%.2f m, plane %.3f, coping %.3f, "
+              "wall top %.3f, %zu step box(es)",
               m_settings.basinMinX, m_settings.basinMaxX, m_settings.basinMinY, m_settings.basinMaxY,
               m_settings.basinMinZ, m_settings.basinMaxZ, m_settings.waterPlaneY, m_settings.copingTopY,
-              m_solidBoxes.size() / 8);
+              m_settings.wallTopY, m_solidBoxes.size() / 8);
   return true;
 }
 
@@ -224,6 +230,7 @@ std::vector<uint32_t> PbfFluid::BuildConstants(uint32_t iteration) const {
   c.restScale = m_restScale;
   c.restDenomReference = m_restDenomReference;
   c.minNeighbours = m_minNeighbours;
+  c.wallTopY = m_settings.wallTopY;
   c.windX = m_settings.windX;
   c.windZ = m_settings.windZ;
   c.windStrength = m_settings.windStrength;
@@ -326,18 +333,142 @@ namespace {
         }
     return total > 0.0 ? total : 1.0;
   }
+
+  struct SeedRelaxResult {
+    int iterations = 0;
+    float initialMaxConstraint = 0.0f;
+    float maxConstraint = 0.0f;
+  };
+
+  // A cubic seed is a crystal: until the first impact its rows and planes line up with the
+  // camera, and both renderers show them (terraces, serrated silhouettes, moire). Jitter each
+  // particle inside its cell, then run the solver's own unilateral projection (eq 11 and 14 on
+  // the normalised kernels, no gravity) to 0.5% below rest density, so the GPU constraint stays
+  // zero in free fall. (Two-sided relaxation clumps and does not converge.) Deterministic: the
+  // jitter is a hash of the particle index.
+  SeedRelaxResult RelaxSeed(std::vector<float>& positions, uint32_t count, float spacing, float h,
+                            float restScale, float restDensity, float denomRef, float stiffnessEps) {
+    constexpr int kMaxIterations = 100;
+    constexpr float kTolerance = 0.002f;
+    const float targetDensity = 0.995f * restDensity;
+    const float jitter = 0.8f * spacing;
+    const auto hash = [](uint32_t x) {
+      x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+      return x;
+    };
+    for (uint32_t i = 0; i < count; ++i)
+      for (uint32_t a = 0; a < 3; ++a) {
+        const float u = static_cast<float>(hash(i * 3u + a + 1u) >> 8) * (1.0f / 16777216.0f);
+        positions[static_cast<size_t>(i) * kWordsPerParticle + a] += jitter * (u - 0.5f);
+      }
+
+    const auto parallelFor = [](uint32_t n, const auto& body) {
+      if (g_threadPool) g_threadPool->ParallelFor(0, static_cast<int>(n), body);
+      else for (int i = 0; i < static_cast<int>(n); ++i) body(i);
+    };
+    const float h2 = h * h;
+    const float poly6 = static_cast<float>(315.0 / (64.0 * 3.141592653589793 * std::pow(h, 9.0))) / restScale;
+    const float spiky = static_cast<float>(-45.0 / (3.141592653589793 * std::pow(h, 6.0))) / restScale;
+    const float maxStep = 0.1f * spacing;   // the solver's per-iteration cap
+
+    std::vector<float> next(positions.begin(), positions.begin() + static_cast<size_t>(count) * kWordsPerParticle);
+    std::vector<float> lambda(count, 0.0f), constraint(count, 0.0f);
+    std::vector<uint32_t> cellOf(count), order(count), cellStart;
+    SeedRelaxResult result;
+    for (int it = 0; it <= kMaxIterations; ++it) {
+      float lo[3] = {positions[0], positions[1], positions[2]};
+      float hi[3] = {lo[0], lo[1], lo[2]};
+      for (uint32_t i = 1; i < count; ++i)
+        for (int a = 0; a < 3; ++a) {
+          lo[a] = (std::min)(lo[a], positions[static_cast<size_t>(i) * kWordsPerParticle + a]);
+          hi[a] = (std::max)(hi[a], positions[static_cast<size_t>(i) * kWordsPerParticle + a]);
+        }
+      int dim[3];
+      for (int a = 0; a < 3; ++a) dim[a] = static_cast<int>((hi[a] - lo[a]) / h) + 1;
+      const auto cellCoord = [&](uint32_t i, int a) {
+        return (std::min)(static_cast<int>((positions[static_cast<size_t>(i) * kWordsPerParticle + a] - lo[a]) / h),
+                          dim[a] - 1);
+      };
+      cellStart.assign(static_cast<size_t>(dim[0]) * dim[1] * dim[2] + 1, 0u);
+      for (uint32_t i = 0; i < count; ++i) {
+        cellOf[i] = static_cast<uint32_t>(cellCoord(i, 0) + dim[0] * (cellCoord(i, 1) + dim[1] * cellCoord(i, 2)));
+        ++cellStart[cellOf[i] + 1];
+      }
+      for (size_t c = 1; c < cellStart.size(); ++c) cellStart[c] += cellStart[c - 1];
+      std::vector<uint32_t> cursor(cellStart.begin(), cellStart.end() - 1);
+      for (uint32_t i = 0; i < count; ++i) order[cursor[cellOf[i]]++] = i;
+
+      const auto forNeighbours = [&](uint32_t i, const auto& visit) {
+        const float* pi = &positions[static_cast<size_t>(i) * kWordsPerParticle];
+        const int cx = cellCoord(i, 0), cy = cellCoord(i, 1), cz = cellCoord(i, 2);
+        for (int z = (std::max)(cz - 1, 0); z <= (std::min)(cz + 1, dim[2] - 1); ++z)
+          for (int y = (std::max)(cy - 1, 0); y <= (std::min)(cy + 1, dim[1] - 1); ++y)
+            for (int x = (std::max)(cx - 1, 0); x <= (std::min)(cx + 1, dim[0] - 1); ++x) {
+              const size_t cell = static_cast<size_t>(x) + dim[0] * (static_cast<size_t>(y) + dim[1] * static_cast<size_t>(z));
+              for (uint32_t k = cellStart[cell]; k < cellStart[cell + 1]; ++k) {
+                const uint32_t j = order[k];
+                const float* pj = &positions[static_cast<size_t>(j) * kWordsPerParticle];
+                const float d[3] = {pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]};
+                const float r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                if (r2 < h2) visit(j, d, r2);
+              }
+            }
+      };
+
+      parallelFor(count, [&](int index) {
+        const uint32_t i = static_cast<uint32_t>(index);
+        float density = 0.0f, gradSqSum = 0.0f;
+        float gradSum[3] = {0.0f, 0.0f, 0.0f};
+        forNeighbours(i, [&](uint32_t, const float* d, float r2) {
+          const float w = h2 - r2;
+          density += poly6 * w * w * w;
+          const float r = std::sqrt(r2);
+          if (r <= 1e-6f) return;
+          const float s = spiky * (h - r) * (h - r) / r;
+          for (int a = 0; a < 3; ++a) gradSum[a] += s * d[a];
+          gradSqSum += s * s * r2;
+        });
+        const float c = (std::max)(density / targetDensity - 1.0f, 0.0f);
+        const float denom = gradSum[0] * gradSum[0] + gradSum[1] * gradSum[1] + gradSum[2] * gradSum[2] +
+                            gradSqSum + stiffnessEps * denomRef;
+        constraint[i] = c;
+        lambda[i] = denom > 0.0f ? -c / denom : 0.0f;
+      });
+      const float maxConstraint = *std::max_element(constraint.begin(), constraint.end());
+      if (it == 0) result.initialMaxConstraint = maxConstraint;
+      result.maxConstraint = maxConstraint;
+      if (maxConstraint < kTolerance || it == kMaxIterations) break;
+
+      parallelFor(count, [&](int index) {
+        const uint32_t i = static_cast<uint32_t>(index);
+        float dp[3] = {0.0f, 0.0f, 0.0f};
+        forNeighbours(i, [&](uint32_t j, const float* d, float r2) {
+          const float r = std::sqrt(r2);
+          if (r <= 1e-6f) return;
+          const float s = (lambda[i] + lambda[j]) * spiky * (h - r) * (h - r) / r / targetDensity;
+          for (int a = 0; a < 3; ++a) dp[a] += s * d[a];
+        });
+        const float len = std::sqrt(dp[0] * dp[0] + dp[1] * dp[1] + dp[2] * dp[2]);
+        const float scale = len > maxStep ? maxStep / len : 1.0f;
+        for (int a = 0; a < 3; ++a)
+          next[static_cast<size_t>(i) * kWordsPerParticle + a] =
+              positions[static_cast<size_t>(i) * kWordsPerParticle + a] + dp[a] * scale;
+      });
+      std::copy(next.begin(), next.end(), positions.begin());
+      result.iterations = it + 1;
+    }
+    return result;
+  }
 }
 
 bool PbfFluid::SeedParticles(BaseDriver* driver) {
   // ---------------------------------------------------------------------------
-  // Initial condition: a SPHERE of water hanging above the pool, which then falls,
-  // splashes into the basin and fills it.
+  // Initial condition: a resting pool filled to `prefillLevel`, and (when `dropSphere`) a
+  // SPHERE of water hanging above it, which then falls and splashes in.
   //
-  // The previous version seeded a lattice that filled the pool and stood above the rim,
-  // inside a closed box. That box was the problem: a hard clamp at the top and sides made
-  // the water bounce off invisible walls, and a full column is already a supported body so
-  // it never really fell. A sphere in free air has no support at all, so it falls under
-  // gravity like real water; the only solids it feels are the pool's own surfaces.
+  // The sphere alone cannot fill the pool: the 4.5 m wide basin only takes a 2.25 m sphere
+  // (33.5 m3 at r = 2), while the water plane needs about 60 m3, and anything wider lands
+  // on the coping and is culled. The resting water below it makes up the difference.
   // ---------------------------------------------------------------------------
   const float spacing = m_settings.particleRadius;
   const float r = m_settings.sphereRadius;
@@ -356,29 +487,78 @@ bool PbfFluid::SeedParticles(BaseDriver* driver) {
 
   std::vector<float> positions;
   positions.reserve(static_cast<size_t>(m_settings.maxParticles) * kWordsPerParticle);
-  uint32_t count = 0;
   bool truncated = false;
-  const float r2 = r * r;
-  for (float y = cy - r; y <= cy + r && !truncated; y += spacing) {
-    for (float z = cz - r; z <= cz + r && !truncated; z += spacing) {
-      for (float x = cx - r; x <= cx + r; x += spacing) {
-        const float dx = x - cx, dy = y - cy, dz = z - cz;
-        if (dx * dx + dy * dy + dz * dz > r2) continue;
-        if (insideStep(x, y, z)) continue;
-        if (count >= m_settings.maxParticles) {
-          truncated = true;
-          break;
+  const auto room = [&] { return positions.size() / kWordsPerParticle < m_settings.maxParticles; };
+
+  // Resting pool: a cell-centred lattice, half a spacing off every face. The top layer is
+  // filled partially (evenly spread sites) so the volume follows the level, not 0.13 m steps.
+  const float poolTop = m_settings.waterPlaneY + m_settings.prefillLevel;
+  const float layers = (poolTop - m_settings.basinMinY) / spacing;
+  uint32_t poolCount = 0;
+  if (layers > 0.0f) {
+    const int nx = (std::max)(static_cast<int>((m_settings.basinMaxX - m_settings.basinMinX) / spacing), 1);
+    const int nz = (std::max)(static_cast<int>((m_settings.basinMaxZ - m_settings.basinMinZ) / spacing), 1);
+    const float x0 = 0.5f * (m_settings.basinMinX + m_settings.basinMaxX) - 0.5f * spacing * (nx - 1);
+    const float z0 = 0.5f * (m_settings.basinMinZ + m_settings.basinMaxZ) - 0.5f * spacing * (nz - 1);
+    const int fullLayers = static_cast<int>(layers);
+    const float partial = layers - static_cast<float>(fullLayers);
+    for (int l = 0; l <= fullLayers && !truncated; ++l) {
+      const float fraction = l < fullLayers ? 1.0f : partial;
+      if (fraction <= 0.0f) break;
+      const float y = m_settings.basinMinY + (static_cast<float>(l) + 0.5f) * spacing;
+      uint32_t site = 0;
+      for (int k = 0; k < nz && !truncated; ++k)
+        for (int i = 0; i < nx; ++i) {
+          const float x = x0 + static_cast<float>(i) * spacing;
+          const float z = z0 + static_cast<float>(k) * spacing;
+          if (insideStep(x, y, z)) continue;
+          const uint32_t s = site++;
+          if (static_cast<uint32_t>((s + 1) * fraction) == static_cast<uint32_t>(s * fraction)) continue;
+          if (!room()) { truncated = true; break; }
+          positions.insert(positions.end(), {x, y, z, 1.0f});   // w = alive
+          ++poolCount;
         }
-        positions.insert(positions.end(), {x, y, z, 1.0f});   // w = alive
-        ++count;
+    }
+  }
+
+  std::vector<float> sphere;
+  if (m_settings.dropSphere && !truncated) {
+    const float r2 = r * r;
+    for (float y = cy - r; y <= cy + r && !truncated; y += spacing) {
+      for (float z = cz - r; z <= cz + r && !truncated; z += spacing) {
+        for (float x = cx - r; x <= cx + r; x += spacing) {
+          const float dx = x - cx, dy = y - cy, dz = z - cz;
+          if (dx * dx + dy * dy + dz * dz > r2) continue;
+          if (insideStep(x, y, z)) continue;
+          if (positions.size() + sphere.size() >= static_cast<size_t>(m_settings.maxParticles) * kWordsPerParticle) {
+            truncated = true;
+            break;
+          }
+          sphere.insert(sphere.end(), {x, y, z, 1.0f});
+        }
       }
     }
   }
+  const uint32_t sphereCount = static_cast<uint32_t>(sphere.size() / kWordsPerParticle);
+  const uint32_t count = poolCount + sphereCount;
   if (count == 0) {
-    T8_LOG_ERROR("[PBF] The water sphere produced no particles (radius %.2f m, spacing %.3f m)",
-                 r, spacing);
+    T8_LOG_ERROR("[PBF] The seed produced no particles (pool level %.2f m, sphere %.2f m, spacing %.3f m)",
+                 poolTop, m_settings.dropSphere ? r : 0.0f, spacing);
     return false;
   }
+
+  // Kernel normalisation: divide the kernels by the lattice density so a full lattice
+  // measures rho = 1 and the constraint C = rho/rho0 - 1 vanishes at rest.
+  const double rhoLattice = LatticeRestDensity(m_settings.smoothingRadius, m_settings.particleRadius);
+  const double denomReference = LatticeGradSq(m_settings.smoothingRadius, m_settings.particleRadius, rhoLattice);
+  m_settings.restDensity = m_settings.restDensityScale;
+  const auto relaxStart = std::chrono::steady_clock::now();
+  SeedRelaxResult relax;
+  if (sphereCount > 0)
+    relax = RelaxSeed(sphere, sphereCount, spacing, m_settings.smoothingRadius, static_cast<float>(rhoLattice),
+                      m_settings.restDensity, static_cast<float>(denomReference), m_settings.stiffnessEps);
+  const double relaxMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - relaxStart).count();
+  positions.insert(positions.end(), sphere.begin(), sphere.end());
 
   std::vector<float> rest(static_cast<size_t>(count) * kWordsPerParticle, 0.0f);
 
@@ -411,20 +591,17 @@ bool PbfFluid::SeedParticles(BaseDriver* driver) {
   m_particleCount = count;
   m_time = 0.0f;
 
-  // Kernel normalisation: divide the kernels by the lattice density so a full lattice
-  // measures rho = 1 and the constraint C = rho/rho0 - 1 vanishes at rest.
-  const double rhoLattice = LatticeRestDensity(m_settings.smoothingRadius, m_settings.particleRadius);
   m_restScale = static_cast<float>(rhoLattice);
-  m_restDenomReference = static_cast<float>(
-      LatticeGradSq(m_settings.smoothingRadius, m_settings.particleRadius, rhoLattice));
-  m_settings.restDensity = m_settings.restDensityScale;
+  m_restDenomReference = static_cast<float>(denomReference);
   T8_LOG_INFO("[PBF] Kernel normalisation: rho_lattice=%.3f -> restScale=%.3f, rho0=%.3f (lattice density reads 1.0)",
               rhoLattice, m_restScale, m_settings.restDensity);
-  T8_LOG_INFO("[PBF] Seeded %u particles in a %.2f m water sphere centred at y=%.2f (%.2f m above the pool rim %.2f), spacing %.3f m%s",
-              m_particleCount, r, cy, cy - m_settings.copingTopY, m_settings.copingTopY, spacing,
-              truncated ? ", TRUNCATED at maxParticles" : "");
+  T8_LOG_INFO("[PBF] Seed relaxed in %d iteration(s), %.1f ms: max compression %.4f -> %.4f",
+              relax.iterations, relaxMs, relax.initialMaxConstraint, relax.maxConstraint);
+  T8_LOG_INFO("[PBF] Seeded %u particles: resting pool %u up to y=%.2f, sphere %u (r %.2f m at y=%.2f, %.2f m above the rim %.2f), spacing %.3f m%s",
+              m_particleCount, poolCount, poolTop, sphereCount, r, cy, cy - m_settings.copingTopY,
+              m_settings.copingTopY, spacing, truncated ? ", TRUNCATED at maxParticles" : "");
   if (truncated)
-    T8_LOG_ERROR("[PBF] Sphere exceeded maxParticles=%u; the sphere is not a sphere",
+    T8_LOG_ERROR("[PBF] The seed exceeded maxParticles=%u; the pool or the sphere is incomplete",
                  m_settings.maxParticles);
   return true;
 }
@@ -453,6 +630,21 @@ bool PbfFluid::ResetToRest(BaseDriver* driver) {
   if (!m_ready || !driver) return false;
   m_culledTotal = 0;
   return SeedParticles(driver);
+}
+
+bool PbfFluid::Settle(BaseDriver* driver, float seconds, float maxSpeed) {
+  if (!m_ready || !driver) return false;
+  const PbfSettings saved = m_settings;
+  m_settings.maxVelocity = (std::max)(maxSpeed, 0.0f);
+  m_settings.windX = 0.0f;
+  m_settings.windZ = 0.0f;
+  const int steps = static_cast<int>(seconds / (std::max)(m_settings.deltaTime, 1.0e-4f) + 0.5f);
+  bool ok = true;
+  for (int i = 0; i < steps && ok; ++i) ok = Step(driver);
+  m_settings = saved;
+  m_time = 0.0f;
+  m_culledTotal = 0;
+  return ok;
 }
 
 bool PbfFluid::Step(BaseDriver* driver) {
@@ -496,6 +688,8 @@ bool PbfFluid::Step(BaseDriver* driver) {
         {ComputeBindingType::ReadOnlyBuffer, 0, m_predicted.get()},
         {ComputeBindingType::ReadOnlyBuffer, 1, m_grid.get()},
         {ComputeBindingType::ReadWriteBuffer, 0, m_lambda.get()},
+        // Solid intrusions feed the analytic boundary term (t2, see CS_PbfDensity.hlsl).
+        {ComputeBindingType::ReadOnlyBuffer, 2, m_solidBoxBuffer.get()},
       };
       if (!Dispatch(driver, *m_density, "density", densityBindings, particleGroups, 1, 1)) return false;
       // Jacobi: read Predicted, write PredictedNext, then swap so the next density pass
@@ -644,6 +838,28 @@ bool PbfFluid::ReadParticles(BaseDriver* driver, std::vector<float>& outXyz) {
   if (!m_ready || !driver) return false;
   outXyz.assign(static_cast<size_t>(m_particleCount) * kWordsPerParticle, 0.0f);
   return driver->ReadComputeBuffer(*m_positions, outXyz.data(), outXyz.size() * sizeof(float));
+}
+
+bool PbfFluid::ReadParticleFields(BaseDriver* driver, std::vector<float>* positions,
+                                  std::vector<float>* velocities, std::vector<float>* lambda) {
+  if (!m_ready || !driver) return false;
+  const size_t floats = static_cast<size_t>(m_particleCount) * kWordsPerParticle;
+  if (positions) {
+    positions->assign(floats, 0.0f);
+    if (!driver->ReadComputeBuffer(*m_positions, positions->data(), floats * sizeof(float)))
+      return false;
+  }
+  if (velocities && m_velocities) {
+    velocities->assign(floats, 0.0f);
+    if (!driver->ReadComputeBuffer(*m_velocities, velocities->data(), floats * sizeof(float)))
+      return false;
+  }
+  if (lambda && m_lambda) {
+    lambda->assign(floats, 0.0f);
+    if (!driver->ReadComputeBuffer(*m_lambda, lambda->data(), floats * sizeof(float)))
+      return false;
+  }
+  return true;
 }
 
 bool PbfFluid::ReadColumnHeights(BaseDriver* driver, std::vector<float>& outElevation) {

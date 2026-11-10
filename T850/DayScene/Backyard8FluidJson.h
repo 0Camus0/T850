@@ -33,15 +33,20 @@ namespace t850 {
     float deltaTime = 1.0f / 60.0f;
     float sphereRadius = 2.0f;
     float sphereHeight = 3.08f;
+    // Seeded pool surface, m relative to the water plane, under the dropped sphere (water start)
+    // and for the resting starts (balls, lake). Both sit above the plane to settle on it: the
+    // seeded grid compacts by about one particle layer, and the drop throws water over the rim.
+    float prefillLevel = 0.13f;
+    float restingLevel = 0.16f;
     float cullBelowY = 0.0f;
     float cullMargin = 0.35f;
     int surfaceWidth = 100;
     int surfaceDepth = 50;
-    int maxParticles = 40000;
+    int maxParticles = 50000;
   };
 
   struct Backyard8SceneConfig {
-    int startMode = 1;               // 0 balls, 1 water, 2 lake (the seed is always the sphere)
+    int startMode = 2;               // 0 balls / 2 lake: resting pool at the plane; 1 water: pool + dropped sphere
     float fixedStep = 1.0f / 60.0f;  // simulation step
     int maxStepsPerFrame = 3;
   };
@@ -55,7 +60,7 @@ namespace t850 {
     float depthBias = 0.13f;
     int shape = 0;        // 0 soft sphere, 1 sprite, 2 streak
     int blend = 1;        // 0 additive, 1 alpha
-    int style = 0;        // 0 shaded, 1 wireframe, 2 flat
+    int style = 0;        // 0 water (blended), 1 wireframe, 2 flat, 3 lit spheres
     int renderMode = 1;   // 0 splat, 1 screen space
     float sizeScaleMin = 1.0f;
     float sizeScaleMax = 1.0f;
@@ -69,19 +74,26 @@ namespace t850 {
   };
 
   struct Backyard8ScreenSpaceConfig {
-    int smoothingIterations = 4;      // 0..4 (the graph has four ping-pong passes)
-    float smoothingStrength = 0.85f;  // per-pass smoothing step
-    float smoothingRadius = 10.0f;     // pixels; covers the particle-splat scale
-    float depthTolerance = 0.35f;     // metres; silhouette guard
+    int smoothingIterations = 6;      // 0..8 a-trous passes, tap spacing doubling each pass
+    float smoothingStrength = 1.0f;   // blend toward the filtered depth
+    float smoothingRadius = 64.0f;    // projected filter radius cap, pixels
+    float smoothingWorldRadius = 0.3f;  // filter radius, metres
+    float depthTolerance = 0.30f;     // metres; narrow-range layer threshold
+    float depthRadiusScale = 1.0f;    // depth sphere radius / particle spacing
+    float packingFactor = 4.19f;      // cubic-lattice sphere packing factor
     float thicknessScale = 1.0f;
-    std::array<float, 3> absorption = {{3.0f, 1.0f, 0.5f}};
+    std::array<float, 3> absorption = {{0.45f, 0.06f, 0.02f}};
+    float absorptionScale = 2.0f;
+    std::array<float, 3> fluidColor = {{0.10f, 0.30f, 0.42f}};
     std::array<float, 3> reflection = {{0.45f, 0.62f, 0.85f}};
-    float refraction = 0.02f;
+    float refraction = 0.5f;          // refracted path per metre of thickness
+    float reflectionDistance = 40.0f; // screen-space reflection range, metres (0 = sky only)
     float specular = 1.0f;
     float fresnelPower = 5.0f;
-    float normalScale = 0.7f;
-    float normalStep = 4.0f;
-    float foam = 0.0f;
+    float normalScale = 1.0f;
+    float normalStep = 1.0f;
+    float foam = 0.6f;                // spray whitewater, 0..1
+    bool splatFallback = false;       // keep the splat resolve under the SSFR layer
     int debugView = 0;                // 0 shaded, 1 normals, 2 depth, 3 thickness, 4 coverage
   };
 

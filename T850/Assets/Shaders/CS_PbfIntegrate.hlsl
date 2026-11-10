@@ -44,7 +44,7 @@ cbuffer PbfConstants : register(b0)
     // Diagnostics/reference values; named per use in CS_PbfDensity.
     float RestDenomReference;   // sum |gradW|^2 for a full lattice
     float MinNeighbours;        // below this the density estimate is not trusted
-    float Pad6;
+    float WallTopY;   // solid walls end here (the pool rim); open above
     // Surface wind stress (m/s), applied to the free-surface layer in CS_PbfIntegrate.
     float WindX;
     float WindZ;
@@ -108,7 +108,9 @@ float3 Collide(float3 p, float3 prev)
         // Inside the pool: floor and walls hold the water. Walls only act BELOW the rim,
         // so a splash that rises above the coping can leave.
         p.y = max(p.y, BasinMinY + m);
-        if (p.y < WaterPlaneY) {
+        // Solid up to the rim (the authored freeboard). Stopping at the water plane left a
+        // hole through which a splash crossed the wall and was snapped onto the deck.
+        if (p.y < WallTopY) {
             p.x = clamp(p.x, BasinMinX + m, BasinMaxX - m);
             p.z = clamp(p.z, BasinMinZ + m, BasinMaxZ - m);
         }

@@ -186,6 +186,8 @@ namespace t850 {
     std::unordered_map<std::string, int> m_computeBufferHandles;
     std::vector<std::unique_ptr<ComputeBuffer>> m_computeBuffers;
     std::vector<ComputeBufferDescJson> m_computeBufferDescs;
+    // "$window" buffers: name -> (width, height) they were created for.
+    std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> m_computeBufferWindowSizes;
     std::unordered_map<int, std::unique_ptr<ComputePipeline>> m_computePipelines;
     std::unordered_set<int> m_loggedComputeDispatches;
     // Targets whose compute-only pass could not get a pipeline (no compute support or a

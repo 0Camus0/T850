@@ -1,18 +1,11 @@
 # Screen-Space Fluid Rendering in Backyard Scene 8
 
-Status: implemented and running on Vulkan (native) and OpenGL (Windows build under Wine).
-D3D11/D3D12 create and dispatch the same kernels but the screen-space result does not land;
-they fall back to the splat resolve underneath, so the fluid is visible (a follow-up). Last
-updated 2026-11-08.
-
-**Backend status**
-
-| Backend | Screen-space | Evidence |
-|---|---|---|
-| Vulkan (native) | working | frame 45 particle RT 46,824 px, bbox `x[186,454] y[85,290]` at 640x360; normals/depth/thickness debug views |
-| OpenGL (Windows build under Wine) | working | frame 45 RT 105,507 px at 960x540 -> scaled bbox `x[186,454] y[85,291]`, matching Vulkan; frame 300 matches the Vulkan settled pool |
-| D3D11 (Proton) | falls back to splat | all pipelines create and dispatch; the shade output does not reach the target, so the splat resolve underneath is visible. Not a black pool. |
-| D3D12 (Proton) | falls back to splat | same as D3D11 |
+Status: 2026-11-09 rendering fixes (edge-aware a-trous smoothing, Snell refraction with occlusion
+rejection, screen-space reflection, coverage-only alpha, spray, and a particle renderer that
+blends the particles into water, with lit spheres as a debug style) are verified on **Vulkan
+only**. D3D12, D3D11 and OpenGL must be re-verified
+with [backyard8-fluid-render-d3d-port.md](backyard8-fluid-render-d3d-port.md), which also lists
+what was wrong and every changed file. The 2026-11-08 cross-backend results below predate the fixes.
 
 This note scopes the gap between the particle renderer and
 
@@ -20,101 +13,93 @@ This note scopes the gap between the particle renderer and
 > **Screen Space Fluid Rendering with Curvature Flow.** NVIDIA / Rijksuniversiteit
 > Groningen, 2009. `Screen_space_fluid_rendering_with_curvature_flow.pdf`.
 
-## What the paper does
+The implementation record is
+[diagnosis-3-implementation.md](diagnosis-3-implementation.md); the plan is
+[diagnosis-3.md](diagnosis-3.md).
 
-1. **Surface depth (§3.1).** Rasterise each particle as a screen-aligned sphere and keep the
-   nearest depth (`z` in view space). A density threshold can remove stray/spray particles.
-2. **Curvature-flow smoothing (§3.2).** Evolve the depth field `∂z/∂t = H` (mean curvature),
-   with the spatial derivatives forced to zero across silhouettes and screen edges. This
-   removes the blobby/jelly look of individual splats without a bilateral filter.
-3. **Thickness (§3.3).** Additively accumulate the amount of fluid along each view ray. It
-   drives the transparency and the colour attenuation.
-4. **Noise / foam (§3.4).** Add a Perlin-noise layer that is advected with the particles, and
-   boost it where the velocity changed sharply.
-5. **Shading (§3.5).** Reconstruct view-space normals from the depth field, shade with the
-   Fresnel equation, refract the background by `β = T·γ·n`, attenuate by `e^{-T}`, add a
-   Phong specular highlight and environment reflection. Optional half-resolution processing
-   and interpolation close the quality/performance gap.
+## Current pipeline
 
-## What scene 8 now implements
+```
+PBF positions ─► CS_ParticleSplat (stamp) ─► __particle_projected_BackyardWater
+                                                   │
+                       CS_FluidClear ──────────────┤ (depth bits / thickness bits)
+                       CS_FluidSplat (scatter) ────┤  one thread per particle:
+                                                   │  InterlockedMin(front depth)
+                                                   │  InterlockedAdd(thickness chord)
+                       CS_FluidResolve ────────────┴─► FluidDepthA (F32)
+                                                        FluidThickness (RGBA16F)
+                       CS_ParticleSmooth x6 (edge-aware a-trous, F32 ping-pong)
+                                                   │
+                       CS_ParticleShade (compute) ─┴─► FluidParticles (RGBA16F)
+                                                   │
+                       PARTICLE_COMPOSITE ─────────┴─► over Deferred
+```
 
-| Paper step | Implementation | File |
+The particle renderer (render mode splat, style water or spheres) reuses the stamp, clear and
+scatter: `CS_FluidSplat` with `ScreenSpace = 0` keeps the nearest sphere per pixel as a packed
+(depth, index) key and still sums the thickness. `CS_FluidSphereShade` then draws either
+**water** (style 0, default): the summed thickness, smoothed, read as a height field for the
+normal, with the same refraction, absorption, Fresnel sky reflection and sun highlight as the
+screen-space shade, and edges that fade with thickness; or **spheres** (style 3, debug): the
+nearest particle lit as an opaque sphere. The water style has no front-surface
+reconstruction, so it reflects only the sky and its normals are softer; screen space remains
+the final look.
+
+Key properties:
+
+| Concern | Implementation |
+|---|---|
+| Surface depth | `CS_FluidSplat` scatters the minimum sphere front with `InterlockedMin` on the float bits. One thread per particle, so cost is particles × disc area, not screen coverage × particle count. |
+| Depth precision | `FluidDepthA/B` are F32 (R32F). RGBA16F had 10 mantissa bits, which terraced normals at 4–16 m. |
+| Thickness | Chord sum, unweighted, divided by the lattice packing factor (4.19), stored as 1/1024 m fixed point, blurred 5x5 in the resolve. `a` is a silhouette anti-alias coverage, not opacity. |
+| Smoothing | Edge-aware a-trous: 5x5 B3 taps at spacing 1, 2, 4, 8, 16, then 1. Each pixel stops once the spacing exceeds half its projected `smoothingWorldRadius` (0.3 m), so the filter has a fixed world size; neighbours more than `depthTolerance` (0.3 m) nearer or farther are another layer. A depth-blind Gaussian merged layers (dark seams) and separable passes left vertical streaks. |
+| Normals | View-space positions from the smoothed depth; central differences inside the surface, one-sided across a jump of more than two particle radii; cross product. |
+| Shading | Paper Eq. 13: Snell refraction (path `refraction` × thickness, ≤ 2 m) with samples of geometry in front of the water rejected, Beer–Lambert absorption, screen-space reflection traced against `GBuffer:DEPTH` with the on-screen sky as the miss colour, Schlick Fresnel, sun specular, spray whitewater for isolated droplets. |
+| Composite | Alpha = coverage (lowered only for spray). The splat resolve is disabled in screen-space mode, so the background is not blended in twice. |
+| Runtime switch | `ParticleSystemDesc::render_mode`; `--fluid-render splat\|screen-space`; the Dev GUI renderer combo. The scene enables/disables the graph passes without rebuilding pipelines or the graph. |
+
+## Verified results (frame 24, 960×540, 2026-11-08, before the 2026-11-09 fixes)
+
+| Backend | Particle target | Mean RGB |
 |---|---|---|
-| Surface depth | `CS_ParticleDepth` reuses the splat stamp's projected table and 8x8 tile mask, evaluates the front sphere intersection per pixel, and writes **surface depth**, **thickness**, **kernel weight** and **coverage** to `FluidParticlesDepthA` | `Assets/Shaders/CS_ParticleDepth.hlsl` |
-| Thickness | Sum of the per-particle sphere chords along the ray, weighted by the splat kernel and the scene-depth occlusion band | same |
-| Curvature-flow smoothing | `CS_ParticleSmooth` runs four ping-pong passes (`A→B→A→B→A`). Each pass is a tolerance-guarded, radially weighted low-pass of the depth field. `smoothingIterations` (0–4) selects how many passes do work; the others copy. | `Assets/Shaders/CS_ParticleSmooth.hlsl` |
-| Normals | Finite differences of the smoothed depth with the paper's "smallest absolute difference" silhouette rule, and a configurable pixel stencil (`normalStep`). Normal = `normalize(-Fx·dz/dx, -Fy·dz/dy, -z)` in view space. | `Assets/Shaders/CS_ParticleShade.hlsl` |
-| Fresnel / refraction / absorption | Fresnel over the view vector, screen-space refraction offset of the scene colour, Beer-Lambert `exp(-T·σ)` with a per-channel absorption tint, screen-space reflection blended with a sky colour for rays leaving the screen, Blinn-Phong sun highlight | `Assets/Shaders/CS_ParticleShade.hlsl` |
-| Noise / foam | A `foam` term brightens thin fluid; no advected Perlin layer yet (see gaps) | same |
-| Runtime switch | `ParticleSystemDesc::render_mode` is read by the shade constants builder every frame. The shade pass early-outs in Splat mode, leaving the splat target intact. The Dev GUI combo switches live; `--fluid-render splat|screen-space` sets the startup mode. | `ParticleSystem.h`, `ComputeKernelRegistry.cpp`, render graph |
+| Vulkan (native) | 122,702 px, bbox `x[264,695] y[0,342]` | (11.1, 29.7, 32.8) |
+| D3D12 (Proton, DXC/vkd3d) | 122,702 px, same bbox | (11.1, 29.7, 32.8) |
+| OpenGL (Wine) | 122,702 px, same bbox | (11.1, 29.6, 32.6) |
+| D3D11 (Proton, Wine compiler) | 122,702 px, same bbox | (59.6, 60.4, 60.4) — geometry correct, shading wrong (F2) |
 
-Render-graph chain (all in `Assets/Scenes/Backyard8Scene_RenderGraph.json`):
+The normal quadrant test at frame 24 gives left `n.x = −0.54` / 100%, right `+0.53` / 100%,
+bottom `n.y = −0.70` / 100% correct sign. Vulkan and OpenGL frame 300 both show a continuous
+blue pool with a specular waterline; the old dark band and octagonal terraces are gone. (GL
+frame 300: 85,115 px, bbox `x[0,959] y[269,479]`, mean (12.1, 22.8, 25.5).)
 
-```
-Fluid Particles (stamp, resolve)     -> FluidParticles (colour, coverage)
-Fluid Surface Depth                  -> FluidParticlesDepthA (depth, thickness, coverage)
-Fluid Smooth 1..4                    -> A/B ping-pong, final in A
-Fluid Surface Shade                  -> FluidParticles (screen-space replaces splat)
-Fluid Particle Composite             -> over the deferred scene
-```
+## What the paper still asks for
 
-The graph always contains the full chain. `render_mode` is a runtime constant, so switching
-does not rebuild pipelines or reload the graph. In Splat mode the depth pass writes an empty
-surface, the smoothing passes copy it and the shade pass takes its `Mode == 0` early-out; the
-splat resolve is always active so a backend whose screen-space chain produces no depth still
-shows the fluid. The shade pass deliberately does not write zero on empty coverage, which is
-what makes that fallback work. Skipping the depth/smoothing dispatches entirely in Splat mode
-is a future graph-stage optimisation.
-
-## Deliberate deviations from the paper
-
-- **Smoothing kernel.** The implementation uses a tolerance-guarded radial box filter rather
-  than an explicit integration of `∂z/∂t = H`. It is a stable, separable-cost approximation of
-  the same low-pass flow and has the same silhouette boundary condition. The exact PDE is
-  listed as the next quality step.
-- **Surface depth.** The depth pass writes the **kernel-weighted average** of the particle
-  sphere fronts, not the strict minimum. The minimum is the particle-lattice envelope and is
-  too bumpy for a one-pixel normal stencil; the weighted average is the same surface
-  low-pass-filtered by the splat kernel. The minimum is still used for the scene-depth
-  occlusion test.
-- **Reflection.** Screen-space reflection is a scene-colour lookup blended with a configurable
-  sky colour; there is no cubemap/SSR ray march.
-- **Thickness** is a kernel-weighted chord sum, not an exact volume integral.
-- **Noise/foam** is a grey brightening term, not the paper's advected Perlin octaves.
-- No half-resolution processing or spray separation yet.
-
-## How far from the paper (gap list, in priority order)
-
-1. **Exact curvature flow.** Replace the box filter with the paper's finite-difference
-   mean-curvature step (Eqs. 1–8), including the `Cx/Cy` focal-length scaling. The current
-   filter already removes the lattice; the PDE would preserve sharper silhouette curvature.
-2. **Half-resolution depth/smoothing.** Run depth + smoothing at half resolution and upsample
-   the depth/normal for shading. Roughly 4x cheaper at 1440p/4K.
-3. **Advected Perlin foam.** Add a per-particle noise octave and velocity-change marking
-   (Eqs. 10–12), then perturb normals and add a grey foam term.
-4. **Environment reflection.** Sample the scene's cubemap along the reflected view vector
-   instead of a flat sky colour.
-5. **Spray separation.** Threshold low-density particles and render them in the splat path
-   while the coherent body uses screen-space.
-6. **Exact thickness.** Integrate density along the view ray (the paper's Eq. 9) or use a
-   separable thickness pass.
+1. **Exact curvature flow.** The exact mean-curvature update was implemented and tested; at 8
+   and 40 full-resolution iterations it reduced but did not remove the cubic-lattice facets.
+   The shipped filter is the edge-aware a-trous pass chain. Exact flow needs the paper's 40–100
+   iterations, ideally at half resolution.
+2. **Half-resolution depth/smoothing** with bilateral upsample. This is the main performance
+   lever and the prerequisite for the paper's iteration counts. The graph currently has no
+   `$window_half` size reference.
+3. **Full-screen graphics shade with environment reflection.** The compute shade cannot bind
+   the IBL cubemap; reflection is a screen-space trace with the on-screen sky as the miss
+   colour. Moving to `FS_Quad` with `bind_environment_map` would add off-screen reflections.
+4. **Perlin noise/foam** (Eqs. 10–12) and **spray classification** by density. Spray is
+   currently detected in screen space (an isolated droplet's surroundings are empty) and drawn
+   as whitewater; the solver density buffer is not published to the renderer yet.
+5. **Exact thickness** (Eq. 9) and optional density-based spray separation.
 
 ## Tuning
 
-Everything is in `Assets/Scenes/Backyard8Fluid.json` under `particles` and `screenSpace`:
+Everything is in `Assets/Scenes/Backyard8Fluid.json`: `particles` (render mode, style, radius,
+opacity, colours, draw count) and `screenSpace` (passes, strength, world filter radius and its
+pixel cap, layer threshold, depth radius, packing factor, thickness, absorption, fluid colour,
+sky/reflection colour, refraction path, reflection range, specular, Fresnel, normal
+scale/stencil, spray whitewater (`foam`), splat fallback, debug view). The Dev GUI exposes the
+same values and writes them back into the in-memory config.
 
-```json
-"particles": { "renderMode": 1, "style": 0, "radius": 0.13, "opacity": 0.82, ... },
-"screenSpace": {
-  "smoothingIterations": 4, "smoothingStrength": 0.85, "smoothingRadius": 10.0,
-  "depthTolerance": 0.35, "thicknessScale": 1.0,
-  "absorption": [3.0, 1.0, 0.5], "reflection": [0.45, 0.62, 0.85],
-  "refraction": 0.02, "specular": 1.0, "fresnelPower": 5.0,
-  "normalScale": 0.7, "normalStep": 4.0, "foam": 0.0, "debugView": 0
-}
-```
+`debugView`: 1 normals, 2 surface depth, 3 thickness, 4 coverage.
 
-`debugView` renders the intermediate fields: 1 normals, 2 surface depth, 3 thickness,
-4 coverage. The Dev GUI exposes the same values, plus the splat look/style and solver knobs,
-and writes them back into the scene config object so `Apply & re-seed` uses exactly what is
-on screen.
+`particles.splatFallback` (Dev GUI “keep splat underneath”) restores the old splat resolve as a
+debug fallback. It is off by default; turn it on for Proton D3D11 or while investigating a
+backend whose screen-space result is missing.

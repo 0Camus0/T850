@@ -1,5 +1,10 @@
 # Particle Fluid in Backyard Scene 8 — Implementation and Investigation Record
 
+> **Current implementation (2026-11-08):** the screen-space renderer has moved to a
+> clear/scatter/resolve chain with F32 depth, a Gaussian smoothing baseline, corrected normals
+> and compositing; see [diagnosis-3-implementation.md](diagnosis-3-implementation.md). The
+> 42/45-twin counts and the `CS_ParticleDepth` references below are historical.
+
 Status: written 2026-11-07 from a completed Linux (Vulkan) bring-up plus a Windows
 D3D11/D3D12 build check. Vulkan execution is verified end-to-end; D3D11/D3D12
 execution through Proton is **not yet re-verified** after the final `Interlocked*`

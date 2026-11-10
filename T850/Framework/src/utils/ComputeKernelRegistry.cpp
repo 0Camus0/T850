@@ -143,23 +143,27 @@ struct ParticleSplatConstants {
   float tileCountY;
   uint32_t frameIndex;
   float projScaleY;
-  float pad2;                 // 24 * 4 = 96 bytes
+  float pad2;                 // style (shader field Style)
+  float depthRadiusScale;     // depth sphere radius / spacing
+  float invPackingFactor;     // 1 / packing factor
+  float projA;                // Projection.m[2][2]
+  float projB;                // Projection.m[3][2]
   float color[4][4];          // four 16-byte slots: rgb + pad
   float emitterPosition[4];   // xyz + pad
   float viewProjection[16];   // row-major, 4 x float4
 };
-static_assert(sizeof(ParticleSplatConstants) == 240);
+static_assert(sizeof(ParticleSplatConstants) == 256);
 
 // Mirrors `cbuffer ParticleSmoothConstants` in CS_ParticleSmooth.hlsl.
 struct ParticleSmoothConstants {
   uint32_t outputWidth;
   uint32_t outputHeight;
-  uint32_t stage;
-  uint32_t pad0;
+  float spacing;              // a-trous tap spacing in pixels, 0 = copy
+  float worldRadius;          // filter radius in metres
   float strength;
-  float tolerance;
-  float radiusPx;
-  float pad1;
+  float tolerance;            // layer threshold in metres
+  float radiusPx;             // projected radius cap
+  float projScaleY;
 };
 static_assert(sizeof(ParticleSmoothConstants) == 32);
 
@@ -170,27 +174,56 @@ struct ParticleShadeConstants {
   uint32_t mode;          // 0 splat, 1 screen space
   uint32_t debugView;     // 0 shaded, 1 normals, 2 depth, 3 thickness, 4 coverage
   float projScaleY;
-  float opacity;
-  float depthBias;
-  float pad0;
+  float projA;            // Projection.m[2][2]
+  float projB;            // Projection.m[3][2]
+  float maxTravel;        // longest refracted path, metres
   float thicknessScale;
   float refraction;
   float specular;
   float fresnelPower;
   float normalScale;
   float foam;
-  float timeSeconds;
-  float pad1;                 // normal stencil in pixels (shader field NormalStep)
+  float reflectionDistance;   // screen-space reflection range, metres (0 = off)
+  float normalStep;
   float fluidTint[4];
   float sunDirection[4];  // view space, toward the light
   float sunColor[4];      // rgb * intensity
-  float viewProjection[16];
   float cameraRight[4];
   float cameraUp[4];
   float cameraForward[4];
   float reflectionColor[4];
+  float shadeParams[4];       // x = write empty pixels, y = particle radius (m)
+  float fluidColor[4];        // scattered fluid colour
 };
-static_assert(sizeof(ParticleShadeConstants) == 240);
+static_assert(sizeof(ParticleShadeConstants) == 208);
+
+// Mirrors `cbuffer ParticleSphereConstants` in CS_FluidSphereShade.hlsl.
+struct ParticleSphereConstants {
+  uint32_t outputWidth;
+  uint32_t outputHeight;
+  uint32_t particleCount;
+  uint32_t style;         // 0 water, 3 lit spheres
+  float radius;
+  float opacity;
+  float projScaleY;
+  float ambient;
+  float projA;            // Projection.m[2][2]
+  float projB;            // Projection.m[3][2]
+  float refraction;
+  float specular;
+  float fresnelPower;
+  float thicknessScale;
+  float invPackingFactor;
+  float pad0;
+  float sunDirection[4];  // view space, toward the light
+  float sunColor[4];
+  float skyColor[4];
+  float worldUp[4];       // world +Y in view space
+  float fluidTint[4];     // absorption per metre * scale
+  float fluidColor[4];
+  float color[4][4];      // ramp stops
+};
+static_assert(sizeof(ParticleSphereConstants) == 224);
 
 uint32_t ConstantWordCount(const ComputeKernelDefinition& kernel) {
   for (size_t index = 0; index < kernel.bindings.size(); ++index) {
@@ -435,6 +468,8 @@ bool BuildParticleSplatConstants(const ComputeKernelConstantsContext& context,
   // SpeedTint is unused by the splat: reuse it as the screen-space flag so the splat
   // resolve and the depth pass can stand down when the other renderer is active.
   value.speedTint = system->render_mode == ParticleRenderMode::ScreenSpace ? 1.0f : 0.0f;
+  value.depthRadiusScale = system->screen_space.depth_radius_scale;
+  value.invPackingFactor = 1.0f / (std::max)(system->screen_space.packing_factor, 1.0f);
   for (int c = 0; c < 4; ++c) {
     value.color[c][0] = system->ramp.stops[c][0];
     value.color[c][1] = system->ramp.stops[c][1];
@@ -445,6 +480,11 @@ bool BuildParticleSplatConstants(const ComputeKernelConstantsContext& context,
   value.frameIndex = context.frameIndex;
   // P11 = cot(fov/2). Needed for the pixel radius: R * P11 * (H/2) / w.
   value.projScaleY = camera->Projection.m[1][1];
+  // Scene depth must be linearised with the PROJECTION terms, not the view-projection
+  // rows: VP[2].z includes the view matrix's z row, which introduced a 2.7% depth error
+  // that grew with the camera's distance from the world origin.
+  value.projA = camera->Projection.m[2][2];
+  value.projB = camera->Projection.m[3][2];
   value.emitterPosition[0] = props.ParticleEmitterPosition.x;
   value.emitterPosition[1] = props.ParticleEmitterPosition.y;
   value.emitterPosition[2] = props.ParticleEmitterPosition.z;
@@ -462,21 +502,70 @@ bool BuildParticleSmoothConstants(const ComputeKernelConstantsContext& context,
     error = "particle smooth constants require a named particle system";
     return false;
   }
+  SceneProps& props = *context.sceneProps;
+  Camera* camera = props.GetPrimaryCamera();
+  if (!camera) {
+    error = "particle smooth constants require a primary camera";
+    return false;
+  }
   ParticleSmoothConstants value = {};
   value.outputWidth = context.outputWidth;
   value.outputHeight = context.outputHeight;
-  value.stage = static_cast<uint32_t>((std::max)(context.passStage, 0));
-  const int iterations = (std::min)((std::max)(system->screen_space.smoothing_iterations, 0), 4);
+  const int iterations = (std::min)((std::max)(system->screen_space.smoothing_iterations, 0), 8);
   // Passes beyond the configured iteration count copy the field unchanged. The graph
-  // always contains four ping-pong passes, so the final depth is always in the same target
+  // always contains eight ping-pong passes, so the final depth is always in the same target
   // regardless of the runtime iteration count.
-  value.strength = (context.passStage >= 1 && context.passStage <= iterations &&
-                    system->render_mode == ParticleRenderMode::ScreenSpace)
-    ? system->screen_space.smoothing_strength : 0.0f;
+  const bool active = context.passStage >= 1 && context.passStage <= iterations &&
+                      system->render_mode == ParticleRenderMode::ScreenSpace;
+  // Dyadic a-trous spacing: 1, 2, 4, ... pixels; the shader stops each pixel at its radius. The
+  // last pass goes back to spacing 1 to remove the grid texture the wide passes leave behind.
+  const bool cleanup = context.passStage == iterations && iterations > 1;
+  value.spacing = active ? (cleanup ? 1.0f : static_cast<float>(1u << (context.passStage - 1))) : 0.0f;
+  value.strength = active ? system->screen_space.smoothing_strength : 0.0f;
+  value.worldRadius = system->screen_space.smoothing_world_radius;
   value.tolerance = system->screen_space.depth_tolerance;
   value.radiusPx = system->screen_space.smoothing_radius;
+  value.projScaleY = camera->Projection.m[1][1];
   CopyWords(value, constants);
   return true;
+}
+
+// The sun as the fluid shaders see it: the first enabled directional light (or the shadow
+// camera), transformed to view space and pointing TOWARD the light.
+void SunInView(const SceneProps& props, const Camera& camera, float direction[3], float color[3]) {
+  XVECTOR3 sunWorld(0.35f, -0.55f, 0.78f);
+  XVECTOR3 sunColor(1.0f, 1.0f, 1.0f);
+  bool found = false;
+  for (const Light& light : props.Lights) {
+    if (!light.Enabled || light.Type != LIGHT_DIRECTIONAL) continue;
+    sunWorld = light.Direction;
+    sunColor = light.Color * light.Intensity;
+    found = true;
+    break;
+  }
+  if (!found) {
+    // Fall back to the shadow/light camera, exactly as the god-rays builder does.
+    const bool hasLightCamera = props.ActiveLightCamera >= 0 &&
+      props.ActiveLightCamera < static_cast<int>(props.pLightCameras.size()) &&
+      props.pLightCameras[props.ActiveLightCamera];
+    if (hasLightCamera) {
+      const XVECTOR3 look = props.pLightCameras[props.ActiveLightCamera]->Look;
+      sunWorld = XVECTOR3(-look.x, -look.y, -look.z);
+    }
+  }
+  // Row-vector convention: v' = v * View.
+  const XMATRIX44& view = camera.View;
+  const float sx = sunWorld.x * view.m[0][0] + sunWorld.y * view.m[1][0] + sunWorld.z * view.m[2][0];
+  const float sy = sunWorld.x * view.m[0][1] + sunWorld.y * view.m[1][1] + sunWorld.z * view.m[2][1];
+  const float sz = sunWorld.x * view.m[0][2] + sunWorld.y * view.m[1][2] + sunWorld.z * view.m[2][2];
+  const float sl = std::sqrt(sx * sx + sy * sy + sz * sz);
+  const float inv = sl > 1e-6f ? 1.0f / sl : 1.0f;
+  direction[0] = -sx * inv;
+  direction[1] = -sy * inv;
+  direction[2] = -sz * inv;
+  color[0] = sunColor.x;
+  color[1] = sunColor.y;
+  color[2] = sunColor.z;
 }
 
 bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
@@ -499,59 +588,33 @@ bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
   value.mode = system->render_mode == ParticleRenderMode::ScreenSpace ? 1u : 0u;
   value.debugView = static_cast<uint32_t>((std::max)(system->screen_space.debug_view, 0));
   value.projScaleY = camera->Projection.m[1][1];
-  value.opacity = system->opacity;
-  value.depthBias = system->depth_bias;
+  value.projA = camera->Projection.m[2][2];
+  value.projB = camera->Projection.m[3][2];
+  // Longest refracted path: beyond this the single-offset lookup stops resembling the
+  // refracted image.
+  value.maxTravel = 2.0f;
   value.thicknessScale = system->screen_space.thickness_scale;
   value.refraction = system->screen_space.refraction;
   value.specular = system->screen_space.specular;
   value.fresnelPower = system->screen_space.fresnel_power;
   value.normalScale = system->screen_space.normal_scale;
-  value.pad1 = system->screen_space.normal_step;
+  value.normalStep = system->screen_space.normal_step;
   value.foam = system->screen_space.foam;
-  value.timeSeconds = ParticleSystemRegistry::Instance().Time();
+  value.reflectionDistance = system->screen_space.reflection_distance;
   for (int c = 0; c < 3; ++c) {
-    value.fluidTint[c] = system->screen_space.absorption[c];
+    value.fluidTint[c] = system->screen_space.absorption[c] *
+                         (std::max)(system->screen_space.absorption_scale, 0.0f);
     value.reflectionColor[c] = system->screen_space.reflection[c];
+    value.fluidColor[c] = system->screen_space.fluid_color[c];
   }
+  // If the splat resolve is disabled the shade must write every pixel so the composite never
+  // samples an unwritten target. With the fallback on, empty pixels are left untouched.
+  value.shadeParams[0] = system->screen_space.splat_fallback ? 0.0f : 1.0f;
+  value.shadeParams[1] = system->radius;
 
-  // The sun is the first enabled directional light. The shader works in view space, so
-  // transform the world direction once here (row-vector convention: v' = v * View).
-  XVECTOR3 sunWorld(0.35f, -0.55f, 0.78f);
-  XVECTOR3 sunColor(1.0f, 1.0f, 1.0f);
-  bool found = false;
-  for (const Light& light : props.Lights) {
-    if (!light.Enabled || light.Type != LIGHT_DIRECTIONAL) continue;
-    sunWorld = light.Direction;
-    sunColor = light.Color * light.Intensity;
-    found = true;
-    break;
-  }
-  if (!found) {
-    // Fall back to the shadow/light camera, exactly as the god-rays builder does.
-    const bool hasLightCamera = props.ActiveLightCamera >= 0 &&
-      props.ActiveLightCamera < static_cast<int>(props.pLightCameras.size()) &&
-      props.pLightCameras[props.ActiveLightCamera];
-    if (hasLightCamera) {
-      const XVECTOR3 look = props.pLightCameras[props.ActiveLightCamera]->Look;
-      sunWorld = XVECTOR3(-look.x, -look.y, -look.z);
-    }
-  }
-  const XMATRIX44& view = camera->View;
-  const float sx = sunWorld.x * view.m[0][0] + sunWorld.y * view.m[1][0] + sunWorld.z * view.m[2][0];
-  const float sy = sunWorld.x * view.m[0][1] + sunWorld.y * view.m[1][1] + sunWorld.z * view.m[2][1];
-  const float sz = sunWorld.x * view.m[0][2] + sunWorld.y * view.m[1][2] + sunWorld.z * view.m[2][2];
-  const float sl = std::sqrt(sx * sx + sy * sy + sz * sz);
-  const float inv = sl > 1e-6f ? 1.0f / sl : 1.0f;
-  // Toward the light is -travelDirection.
-  value.sunDirection[0] = -sx * inv;
-  value.sunDirection[1] = -sy * inv;
-  value.sunDirection[2] = -sz * inv;
-  value.sunColor[0] = sunColor.x;
-  value.sunColor[1] = sunColor.y;
-  value.sunColor[2] = sunColor.z;
-  std::memcpy(value.viewProjection, &camera->VP, sizeof(value.viewProjection));
-  // Camera basis in world space: the shader reconstructs world-space normals and the
-  // reflected direction from the view-space normal it derives from the depth field.
+  SunInView(props, *camera, value.sunDirection, value.sunColor);
+  // Camera basis in world space; the shader takes world up from it for the reflection's
+  // sky/ground split.
   value.cameraRight[0] = camera->Right.x;
   value.cameraRight[1] = camera->Right.y;
   value.cameraRight[2] = camera->Right.z;
@@ -561,6 +624,55 @@ bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
   value.cameraForward[0] = camera->Look.x;
   value.cameraForward[1] = camera->Look.y;
   value.cameraForward[2] = camera->Look.z;
+  CopyWords(value, constants);
+  return true;
+}
+
+bool BuildParticleSphereConstants(const ComputeKernelConstantsContext& context,
+                                  std::vector<uint32_t>& constants, std::string& error) {
+  SceneProps& props = *context.sceneProps;
+  Camera* camera = props.GetPrimaryCamera();
+  if (!camera) {
+    error = "particle sphere constants require a primary camera";
+    return false;
+  }
+  const ParticleSystemDesc* system = context.particleSystem.empty()
+    ? nullptr : ParticleSystemRegistry::Instance().Find(std::string(context.particleSystem));
+  if (!system) {
+    error = "particle sphere constants require a named particle system";
+    return false;
+  }
+  ParticleSphereConstants value = {};
+  value.outputWidth = context.outputWidth;
+  value.outputHeight = context.outputHeight;
+  value.particleCount = static_cast<uint32_t>((std::max)(0, system->source == ParticleSourceKind::Buffer
+      ? system->buffer_count : system->count));
+  value.radius = system->radius;
+  value.opacity = system->opacity;
+  value.projScaleY = camera->Projection.m[1][1];
+  value.ambient = 0.6f;
+  value.style = system->style == ParticleStyle::Spheres ? 3u : 0u;
+  // The water style shares the screen-space renderer's optics: both draw the same water.
+  const ParticleScreenSpaceDesc& optics = system->screen_space;
+  value.projA = camera->Projection.m[2][2];
+  value.projB = camera->Projection.m[3][2];
+  value.refraction = optics.refraction;
+  value.specular = optics.specular;
+  value.fresnelPower = optics.fresnel_power;
+  value.thicknessScale = optics.thickness_scale;
+  value.invPackingFactor = 1.0f / (std::max)(optics.packing_factor, 1.0f);
+  for (int c = 0; c < 3; ++c) {
+    value.fluidTint[c] = optics.absorption[c] * (std::max)(optics.absorption_scale, 0.0f);
+    value.fluidColor[c] = optics.fluid_color[c];
+  }
+  SunInView(props, *camera, value.sunDirection, value.sunColor);
+  for (int c = 0; c < 3; ++c) value.skyColor[c] = system->screen_space.reflection[c];
+  value.worldUp[0] = camera->Right.y;
+  value.worldUp[1] = camera->Up.y;
+  value.worldUp[2] = camera->Look.y;
+  for (int stop = 0; stop < 4; ++stop) {
+    for (int c = 0; c < 3; ++c) value.color[stop][c] = system->ramp.stops[stop][c];
+  }
   CopyWords(value, constants);
   return true;
 }
@@ -576,6 +688,7 @@ ComputeConstantsBuilder ResolveConstantsBuilder(std::string_view value) {
   if (value == "particle_splat") return BuildParticleSplatConstants;
   if (value == "particle_smooth") return BuildParticleSmoothConstants;
   if (value == "particle_shade") return BuildParticleShadeConstants;
+  if (value == "particle_sphere") return BuildParticleSphereConstants;
   return nullptr;
 }
 

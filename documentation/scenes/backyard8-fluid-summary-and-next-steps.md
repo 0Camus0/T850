@@ -100,6 +100,8 @@ The diagnosis-3 implementation rendered lumpy "cellophane" water. Fixed:
 ### 1.6 Documentation
 
 - New: [backyard8-fluid-render-d3d-port.md](backyard8-fluid-render-d3d-port.md) and this file.
+- New: `T850/scripts/shaders/generate_gl_compute_twins.py`, the Linux generator of the GL twins
+  used for this work (same output and banner as the Windows `.ps1`; section 5.3).
 - Updated: [backyard8-screen-space-fluid.md](backyard8-screen-space-fluid.md),
   [diagnosis-3-implementation.md](diagnosis-3-implementation.md) (superseded note),
   [../README.md](../README.md), `T850/BUILD-UBUNTU.md`.
@@ -120,51 +122,299 @@ The diagnosis-3 implementation rendered lumpy "cellophane" water. Fixed:
 
 ## 3. Next fixes (in priority order)
 
-1. **Run D3D12, D3D11 and OpenGL** with the port guide (sections 5 to 8). Nothing here was run
-   on Windows. The Linux build has no OpenGL path.
-2. **Try the Dev GUI by hand.** Drag every seeding slider in each start mode and watch for
-   stalls, validation errors or missing water.
-3. **Settle the pool before the drop.** The water start does not settle its pool (the sphere
-   would fall), so for the first half second the pool shows rows of particles along the near
-   wall. Fix: settle the pool, read it back, append the relaxed sphere, re-upload.
-4. **Free-surface compaction.** The seeded grid loses about one particle layer of height as it
-   settles. That is why both levels need +0.13 to +0.16 m offsets. The likely root cause: the
-   kernel is normalised against a cubic lattice, and free-surface particles lack neighbours
-   under a one-sided constraint. Options: normalise against a relaxed glass, add a cohesion or
-   surface-tension term, or correct surface density. With that fixed, the level offsets can go
-   back towards 0.
-5. **Water lost over the rim.** The water start culls a third of its particles. Options: recycle
-   culled particles into the pool at rest, keep particles on the coping instead of culling them
-   at 0.35 m, or reduce the drop height or sphere size.
-6. **Pool never quite still.** The 8 m/s wind drag is strongly exaggerated (`WindStrength`), so
-   the pool keeps ripples and a slow slosh of a few cm, and sloshing decays slowly. Options:
-   realistic drag, a lower default wind, an optional velocity damping.
-7. **Cheaper re-seeding while dragging.** Re-seed on slider release, or throttle, instead of
-   every frame; seeding on the GPU would also help.
-8. **Frame-24 determinism.** Two runs differ by up to 4 levels on under 1% of the pixels: the
-   wind gate (density < 0.9) flips for interior particles near the threshold, decided by float
-   summation order. Use a smoothed density or add hysteresis.
-9. **Low-end performance.** Measure on a Steam Deck: the water style's normal reads 81 thickness
-   values per fluid pixel, and the defaults now run 30k to 45k particles. If it is too slow, a
-   group-shared separable blur is the next step.
-10. **Small items.** An unused variable warning in `LatticeGradSq` (pre-existing). The
-    `[ParticleProbe]` readback counts stale entries past the live count now that the table is
-    oversized (debug output only). The legacy splat resolve (wireframe/flat styles) still loops
-    over every particle per covered pixel.
+Conventions for every step below:
+
+- Paths are relative to the repository root (`testBitso/`); engine commands run from
+  `T850/bin/SteamDeck/Release` on Linux, prefixed with
+  `SDL_VIDEO_DRIVER=x11 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu` (section 5).
+- After **any** HLSL change: regenerate its GL twin (section 5.3), then run
+  `python3 T850/scripts/validation/check_gl_twins.py --shaders T850/Assets/Shaders` and
+  `python3 T850/scripts/validation/check_fluid_constants.py`. Both must print PASS.
+- After any C++ change: `cd T850 && cmake --build build/linux --target DayScene --parallel 24`,
+  and confirm the output contains `Linking CXX executable` (a build started right after an edit
+  can miss it).
+- Before committing: the selftest (`./DayScene --unattended --api vulkan --game-selftest`) must
+  report 78 PASS. If captures change, update the reference table in the port guide, section 7.
+
+### 3.1 Run D3D12, D3D11 and OpenGL
+
+Nothing in this work ran on Windows, and the Linux build has no OpenGL path.
+
+1. Push `master` from this machine (`git push origin master`; it is 2+ commits ahead of
+   `origin/master`) or open a pull request, then pull it on the Windows machine.
+2. From `T850\`: `.\scripts\build.ps1 -Config Release -Platform x64 -Action Build`. Expect
+   `BUILD SUCCEEDED`.
+3. From `T850\bin\x64\Release`, run the capture loop of the port guide, section 7, with
+   `$api = 'd3d12'`. It already passes `--backyard-start water`.
+4. In every `logs\d3d12-*.log`, check each fluid pass logs `enabled compute kernel` and
+   `dispatched compute`, and that none of these appear: `Shader compile failed`,
+   `using graphics implementation`, `compute dispatch failed`, `DispatchTooLarge`,
+   `cannot build constants`, `does not declare the kernel's complete binding layout`.
+5. Run the statistics snippet of the port guide, section 7, on each
+   `dumps_d3d12_f<frame>_*\RT_Dump_FluidParticles.ppm` and compare with its Vulkan table. Frame
+   24 must be within 0.5% pixels, 2 px bounding box, 3 levels per channel; frames 90 and 300
+   within 2%, 5 px, 5 levels.
+6. Capture once at `--width 3840 --height 2160`: `Fluid Clear` must log
+   `dispatched compute 480 x 270 x 1`.
+7. `.\DayScene.exe --unattended --api d3d12 --game-selftest`: 78 PASS, exit 0.
+8. Repeat steps 3 to 7 with `d3d11` (if FXC reports X3511, change that loop's `[unroll]` to
+   `[loop]`; see the port guide, section 6.1) and with `gl`.
+9. Record pass/fail per API and frame in the port guide, section 10.
+
+### 3.2 Try the Dev GUI by hand
+
+The real-time controls were only checked by reading the code.
+
+1. Start interactively (native Wayland, no `--unattended`):
+   `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./DayScene --api vulkan --scene 8 --gui
+   --width 1920 --height 1080 --logLevel info --logFile /tmp/b8-gui.log`. `G` toggles the
+   panels.
+2. Optional, to catch GPU hazards: `sudo apt install vulkan-validationlayers` and add
+   `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` to the command. The loader enables it
+   without a rebuild; watch stdout for `VUID`.
+3. "Backyard 8 - Fluid Simulation", start mode: pick balls, water, lake in turn. Each must log
+   `[Backyard8] Re-seeded: <N> particles` and `[PBF] Seeded ...` (29,880 for lake/balls, 44,573
+   for water); lake and balls also log `Resting pool settled (3 s simulated) in ~200 ms`.
+4. Section "Particle seeding & count": drag each slider over its whole range: spacing
+   (0.05 to 0.30), smoothing ratio, both pool levels, sphere radius and height, max particles
+   (1,000 to 131,072), heightfield width and depth. The water must re-seed during the drag with
+   no crash and no `[ERROR]`. `TRUNCATED at maxParticles` is expected only when the cap is below
+   the seed's count.
+5. Section "Simulation": gravity 0 (water floats), wind speed 20 (stronger ripples), iterations,
+   substeps, viscosity: each must change the motion at once.
+6. "Backyard 8 - Particles (Splat)" with renderer = splat: cycle the four styles and move the
+   sliders. "Backyard 8 - Screen Space Fluid": cycle the debug views (normals, surface depth,
+   thickness, coverage).
+7. Done when every control visibly applies and `grep -E "ERROR|VUID" /tmp/b8-gui.log` is empty.
+   Note any control that stalls for more than a second (see 3.7).
+
+### 3.3 Settle the pool before the drop
+
+The water start cannot settle its pool (the sphere would fall), so for the first half second
+the pool shows lattice rows along the near wall. Settle the pool alone, then add the sphere.
+
+Files: `T850/Framework/src/simulation/PbfFluid.cpp`, `T850/Framework/include/simulation/PbfFluid.h`,
+`T850/DayScene/Backyard8Scene.cpp`.
+
+1. In `PbfFluid::SeedParticles`, move the six `driver->CreateComputeBuffer` calls
+   (`m_positions`, `m_predicted`, `m_predictedNext`, `m_velocities`, `m_velocitiesNext`,
+   `m_lambda`) into a new `bool CreateParticleBuffers(BaseDriver*, const std::vector<float>&
+   positions, const std::vector<float>& velocities)`. Positions also seed both predicted buffers;
+   lambda stays zero-filled (CS_PbfIntegrate reads it as "not measured yet").
+2. Still in `SeedParticles`: when `dropSphere`, upload only the pool and keep the relaxed sphere
+   in a new member `std::vector<float> m_pendingSphere`. Add `bool HasPendingSphere() const`.
+3. Add `bool PbfFluid::AppendPendingSphere(BaseDriver*)`: `ReadParticleFields(driver, &pos,
+   &vel, nullptr)`, append `m_pendingSphere` to `pos` and zeros to `vel`, call
+   `CreateParticleBuffers`, set `m_particleCount`, clear `m_pendingSphere`.
+4. In `Backyard8Scene::InitPbf` and `ReinitializePbf`, set `m_settlePending = true` for every
+   start. In the settle block of `Backyard8Scene::OnUpdate`, after `Settle`:
+   `if (m_pbf.HasPendingSphere() && m_pbf.AppendPendingSphere(driver)) {
+   m_pbf.PublishParticleBuffers(m_config.particles.buffer, m_config.particles.velocityBuffer);
+   RegisterParticleSystem(); }`.
+5. Re-tune `solver.prefillLevel` in `T850/Assets/Scenes/Backyard8Fluid.json` (and the default in
+   `T850/DayScene/Backyard8FluidJson.h`): measure the level at 1800 frames with
+   `--backyard-start water` (section 5.2), and move `prefillLevel` by about
+   (-0.040 - measured) / 0.43 per step (each +0.01 raised the final level by ~0.0043 m).
+6. Verify: `--backyard-start water --dump-frame 6` shows no rows; the level at 1800 frames is
+   -0.040 +/- 0.010 m; re-measure the port guide's reference table (section 7).
+
+### 3.4 Free-surface compaction (why the levels need +0.13 to +0.16 m)
+
+The seeded grid loses about one particle layer (~16 cm) as it settles: the free-surface
+particles lack neighbours above them, read under-dense, get no pressure from the one-sided
+constraint, and sink into the layer below. Experiment before changing code.
+
+1. Baseline: a copy of `Backyard8Fluid.json` with `"startMode": 2` and `"restingLevel": 0.0`,
+   run with `--fluid-config <abs path>` for 1800 frames, measure (section 5.2). Expected about
+   -0.20 m.
+2. Confirm the cause: in the same dump, histogram particle counts per 0.13 m layer down from the
+   top (section 5.2 shows the snippet). The deficit should sit in the top two layers.
+3. Experiment A, config only: `solver.restDensityScale` 0.98, 0.96, 0.94 (wired to the solver's
+   rest density) with `restingLevel` 0. Measure the level, and check stability with
+   `--pbf-diagnostics 300` (`rhoMean`, `maxSpeed` must stay steady). Lower rest density keeps the
+   water less dense, so the level rises. The relaxed sphere already targets 0.995 x rest
+   density, so it follows. A value that lands at -0.040 +/- 0.010 m with `restingLevel` 0
+   replaces the offsets.
+4. If A distorts the splash or the references: normalise the kernel against a relaxed glass
+   instead of the cubic lattice. In `PbfFluid.cpp`, `LatticeRestDensity()` returns the cubic
+   lattice's kernel sum (459.616 at h = 0.26 m); compute it instead as the mean Poly6 sum of a
+   relaxed periodic block (reuse `RelaxSeed` on a 10x10x10 block with wrap-around neighbours),
+   and recompute `LatticeGradSq` with the same block.
+5. Last resort: cohesion and surface tension (Akinci et al. 2013) in `CS_PbfSolve.hlsl`.
+6. Done when `restingLevel` and `prefillLevel` can be close to 0 and both starts settle at
+   -0.040 +/- 0.010 m.
+
+### 3.5 Water lost over the rim (water start)
+
+The water start culls 14,663 of 44,573 particles. Retirement is in
+`T850/Assets/Shaders/CS_PbfCull.hlsl`: below the floor, more than 0.6 m outside the footprint,
+or outside the footprint and below the wall top (`strandedOnSolid`).
+
+1. Measure the loss: `--backyard-start water --pbf-diagnostics 1800 --dump-frame 1800`, read
+   `dead=` in the log.
+2. Cheapest: sweep `solver.sphereHeight` (3.08, 2.0, 1.5) and `solver.sphereRadius` (2.0, 1.8,
+   1.6) with config copies. Record `dead=` and the 1800-frame level; for the chosen pair, re-tune
+   `prefillLevel` (3.3, step 5) so the level stays -0.040 m.
+3. If the drop must stay as is, recycle instead of discarding: in `CS_PbfCull.hlsl`, for
+   `outsideXZ || strandedOnSolid`, move the particle to a hashed point inside the pool 0.3 m
+   below `WaterPlaneY` (x in [BasinMinX + 0.2, BasinMaxX - 0.2], z likewise) with zero velocity,
+   instead of parking it. The hash needs a frame counter: add `uint FrameIndex` to the
+   `PbfConstants` struct in `PbfFluid.cpp` and to the cbuffer of every `CS_Pbf*.hlsl` (keep the
+   16-byte rows and the `static_assert` size consistent; `check_fluid_constants.py` checks the
+   layouts), and increment it in `PbfFluid::Step`. Then lower `prefillLevel`.
+4. Verify: `dead=` near zero (or the target), the level, and frames 90 and 300 show no visible
+   pops where particles reappear.
+
+### 3.6 Pool never still (wind)
+
+The wind drag in `T850/Assets/Shaders/CS_PbfIntegrate.hlsl` (wind block, around line 188) is
+`drag = WindStrength * windSpeed * 1.0e-3f`: about 80 times a real air drag at 8 m/s.
+`WindStrength` is hard-coded to 1 in `Backyard8Scene::BuildSettings`.
+
+1. Physical drag: compute `rel` first, then
+   `const float drag = WindStrength * 1.56e-6f * length(rel.xz) / ParticleRadius;`
+   (air density 1.2 x drag coefficient 1.3e-3 / water density 1000, acting on one particle
+   layer). Keep `v += float3(rel.x, 0.0f, rel.z) * min(drag * DeltaTime, 0.5f);`.
+2. Make the strength tunable: add `float windStrength = 1.0f;` to `Backyard8SolverConfig`
+   (`Backyard8FluidJson.h`) and `"windStrength": 1.0` to `Backyard8Fluid.json`; in
+   `BuildSettings` use `out.windStrength = c.windStrength;`; add
+   `void SetWindStrength(float s)` to `PbfFluid.h` and a GUI slider (0 to 50) next to wind speed.
+3. Optional damping: add `float Damping` (1/s) to `PbfConstants` (same rules as 3.5 step 3) and
+   apply `v *= exp(-Damping * DeltaTime);` at the end of `CS_PbfUpdateVelocity.hlsl`; default 0,
+   GUI slider 0 to 2.
+4. Regenerate the GL twins of every changed kernel (section 5.3).
+5. Verify on the lake start at 1800 frames (section 5.2): surface spread across X under 0.02 m
+   and mean |v| under 0.03 m/s with `windStrength` 1; visible ripples come back around 20.
+
+### 3.7 Cheaper re-seeding while dragging
+
+Seeding sliders re-seed every frame of a drag (30 ms, or 250 ms with the settle).
+
+1. Add `float m_reseedDelay = -1.0f;` to `T850/DayScene/Backyard8Scene.h`.
+2. In `Backyard8Scene::DrawSolverPanel`, replace
+   `if (seedChanged && !ReinitializePbf()) ...` with `if (seedChanged) m_reseedDelay = 0.2f;`.
+   Leave the start-mode combo and the Restart button immediate.
+3. At the top of `Backyard8Scene::OnUpdate`:
+   `if (m_reseedDelay >= 0.0f && (m_reseedDelay -= deltaSeconds) < 0.0f && !ReinitializePbf())
+   T8_LOG_ERROR("[Backyard8] Re-seed failed");`.
+4. Alternative (re-seed on release): add `bool LastItemReleased() const` returning
+   `ImGui::IsItemDeactivatedAfterEdit()` to `T850/FrameworkImGui/include/imgui/DevGuiContext.h`
+   and `.cpp`, and call it right after each seeding slider.
+5. Verify: dragging the spacing slider stays smooth, and the log shows one
+   `[Backyard8] Re-seeded` about 0.2 s after the drag stops.
+
+### 3.8 Frame-24 determinism
+
+Two runs differ by up to 4 levels on under 1% of the pixels. The wind gate in
+`CS_PbfIntegrate.hlsl` (around line 197),
+`freeSurface = density > 1e-4f && density < 0.9f * RestDensity`, flips for interior particles
+near 0.9, and float summation order decides which way.
+
+1. Gate on the neighbour count instead, which is an integer (`Lambda[i].w`, written by
+   `CS_PbfDensity.hlsl`), so summation order cannot change it:
+   `const float neighbours = Lambda[i].w;`
+   `const bool freeSurface = neighbours > 0.5f && neighbours < 22.0f;`
+2. Check the threshold on data: dump a settled lake (`T850_PBF_DUMP=1800`) and compare the
+   `neighbours` column of the top 0.13 m with the interior. A full lattice neighbourhood is 27
+   including the particle itself; put the threshold between the two peaks.
+3. Regenerate the GL twin; run both validators.
+4. Verify: run `--backyard-start water --dump-frame 24` twice. `RT_Dump_FluidParticles` must be
+   identical (`numpy` max abs diff 0). Then restore "deterministic" for frame 24 in the port
+   guide, section 7.
+
+### 3.9 Low-end performance (Steam Deck)
+
+1. Build and package for the Deck with `T850/steamdeck/BuildSteamRuntime.sh` and
+   `T850/steamdeck/PackageSteamDeckRelease.sh`, and run there at 1280x800.
+2. Measure the frame time (section 5.4) for lake and water, with the screen-space and the
+   splat (water style) renderers. The budget is 16.6 ms for the whole frame.
+3. If over budget, in this order:
+   - Spacing 0.15 m: about 0.65 x the particles for the same volume (lake about 19,500). The
+     compaction offset is one layer, so re-measure `restingLevel` and `prefillLevel`.
+   - Screen space: `smoothingIterations` 6 to 4 (Screen Space panel).
+   - Water style: replace `ThicknessGradient9` (81 loads per fluid pixel) in
+     `CS_FluidSphereShade.hlsl` with a 7x7 version (binomial 1 6 15 20 15 6 1; derivative
+     taps -1 -4 -5 0 5 4 1 normalised the same way) and check the drop's frame 24 for moire.
+4. Verify: under budget and the captures still look right.
+
+### 3.10 Small items
+
+- `T850/Framework/src/simulation/PbfFluid.cpp`, `LatticeGradSq()`: delete the unused
+  `const double k = ...` (compiler warning `-Wunused-variable`).
+- `T850/Framework/src/scene/RenderGraph.cpp`, `[ParticleProbe]` block (around line 1404):
+  limit the loop to the live count. Look up the system by the buffer name after
+  `__particle_projected_` with `ParticleSystemRegistry::Instance().Find(...)` and use
+  `min(elements, buffer_count)`.
+- Legacy splat resolve (wireframe and flat styles loop over every particle per pixel): add
+  `Style == 1` (ring where `rho2 > (1 - 2/r)^2`, transparent inside) and `Style == 2` (flat ramp
+  colour, alpha = `Opacity`) to `CS_FluidSphereShade.hlsl`; in
+  `Backyard8Scene::ApplyRenderModeToGraph` set `spheres = !screenSpace && blend == 1` for all
+  styles, so the resolve runs only for additive blending. Regenerate the twin and compare styles
+  1 and 2 with their old look.
 
 ## 4. Potential next steps
 
-- **Save the GUI state.** Real-time changes are lost on restart; add a "save to
-  Backyard8Fluid.json" button.
-- **Couple the balls to PBF.** The `balls` start is only a resting pool; the balls keep their
-  analytic model and their mesh is hidden.
-- **Screen-space features still missing** (diagnosis-3 phases 4 and 6): half-resolution path,
-  IBL cubemap reflections (off-screen reflections are sky only), exact curvature flow.
-- **Secondary particles** for spray and foam, instead of whitewater discs.
-- **Automated Vulkan regression:** run the section-7 captures and `scripts/compare_dumps.py`
-  with the port guide's tolerances in CI.
-- **Water-level check in the repo:** turn the measurement below into
-  `scripts/validation/pbf_water_level.py` with a pass band around the water plane.
+### 4.1 Save the GUI state
+
+Real-time changes are lost on restart.
+
+1. In `T850/DayScene/Backyard8FluidJson.cpp`, add `bool SaveBackyard8FluidConfig(const char*
+   path, const Backyard8FluidConfig&, std::string& error)` using
+   `glz::write<glz::opts{.prettify = true}>(config, text)`; keep `"version": 1`. Declare it in
+   `Backyard8FluidJson.h` (glaze stays in the .cpp).
+2. Add a "Save settings to Backyard8Fluid.json" button to `DrawSolverPanel` that writes
+   `m_config` to `Scenes/Backyard8Fluid.json`. On Linux `bin/SteamDeck/Release/Scenes` is a
+   symlink to `T850/Assets/Scenes`, so this updates the source file; on Windows check whether the
+   assets are copied, and write to the source path if so.
+3. Verify: change a slider, save, restart, the value persists; `LoadBackyard8FluidConfig` still
+   accepts the file (it rejects unknown keys).
+
+### 4.2 Couple the balls to the water
+
+The `balls` start is only a resting pool: the balls keep their analytic model, and their mesh is
+hidden in `Backyard8Scene::CreateAssets`.
+
+1. Add moving sphere colliders to the solver, next to the step boxes: a `SolidSpheres` buffer
+   (centre, radius) uploaded each step from the ball bodies in `BackyardScene`.
+2. In `CS_PbfDensity.hlsl` and `CS_PbfSolve.hlsl`, add `BoundaryAccumulateSphere` and
+   `BoundaryGradientSphere` modelled on the box versions.
+3. Accumulate the reaction impulse per sphere (fixed-point `InterlockedAdd` into a small
+   buffer), read it back one frame late, and apply it to the ball bodies instead of the analytic
+   buoyancy. Show the ball mesh again.
+4. Verify: a dropped ball floats at about half its radius and makes a splash.
+
+### 4.3 Missing screen-space features
+
+From [diagnosis-3.md](diagnosis-3.md), phases 4 and 6:
+
+- **Half resolution:** create `FluidDepthA/B` and `FluidThickness` at half size in
+  `Backyard8Scene_RenderGraph.json` and upsample in `CS_ParticleShade.hlsl` with a depth-aware
+  bilateral filter. Measure the gain at 4K.
+- **Reflections off screen:** bind the sky cubemap to `CS_ParticleShade` and use it instead of
+  `SkyEstimate()` when the reflection march misses.
+- **Curvature flow:** replace the a-trous passes with the paper's iterative curvature flow,
+  using the corrected sign from diagnosis-3, and compare against the current look.
+
+### 4.4 Spray and foam particles
+
+1. Add a second particle system (for example `BackyardSpray`) with its own buffer and lifetime.
+2. Add an emission kernel that reads the PBF velocities and densities and emits spray where fast
+   particles leave the surface (Ihmsen et al. 2012, "Unified spray, foam and bubbles").
+3. Draw it with additive blending (the legacy splat path), and reduce `screenSpace.foam`.
+
+### 4.5 Automated Vulkan regression
+
+1. Store the port guide's section-7 table as `T850/scripts/validation/backyard8_references.json`.
+2. Add `T850/scripts/validation/backyard8_regression.py`: run the nine captures (three
+   renderers x frames 24, 90, 300, with `--backyard-start water`), compute the statistics, and
+   compare with the tolerances of section 7. Add the water-level check (4.6) and exit non-zero
+   on failure.
+3. Run it in CI on a Vulkan-capable runner, or before every commit that touches scene 8.
+
+### 4.6 Water-level check
+
+Turn the snippet in section 5.2 into `T850/scripts/validation/pbf_water_level.py <csv>` that
+fails outside -0.040 +/- 0.015 m, and run it at frame 1800 for `lake` and `water`.
 
 ## 5. How to reproduce the measurements (Linux)
 
@@ -172,16 +422,61 @@ From `T850/bin/SteamDeck/Release`, prefix every run with
 `SDL_VIDEO_DRIVER=x11 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu` (centred window, system Vulkan
 loader).
 
-- **Captures:** `./DayScene --unattended --api vulkan --scene 8 --backyard-no-hud
-  --backyard-start water --width 960 --height 540 --regressionFixedDt 0.0166667
-  --postProcessMode compute --fluid-render screen-space --dump-frame 90`. The dumps go to
-  `dumps_vulkan_f90_*`.
-- **Water level:** add `T850_PBF_DUMP=900,1800 T850_PBF_DUMP_DIR=<dir>` to write
-  `pbf_f<N>.csv` (positions, velocities, density). The level is the median, over 0.26 m cells of
-  the pool footprint (steps excluded), of the highest particle centre plus half a spacing.
-  `--pbf-diagnostics <frames>` logs counts, culled particles and density.
-- **Frame time:** run with `--benchmarkFixedDt 0.0166667` (unpaced) to `--dump-frame 100` and
-  `--dump-frame 700`. The time difference divided by 600 is the frame time.
-  `--regressionFixedDt` paces at 60 Hz and does not measure cost.
-- **4K:** the capture command at `--width 3840 --height 2160`. `Fluid Clear` must log
-  `dispatched compute 480 x 270 x 1`.
+### 5.1 Captures
+
+`./DayScene --unattended --api vulkan --scene 8 --backyard-no-hud --backyard-start water
+--width 960 --height 540 --regressionFixedDt 0.0166667 --postProcessMode compute
+--fluid-render screen-space --dump-frame 90 --logLevel info --logFile /tmp/b8.log`
+
+The dumps go to `dumps_vulkan_f90_*`. Use `--fluid-render splat` for the water style, and
+`--fluid-config <abs path>` with `"style": 3, "renderMode": 0` for the spheres style.
+
+### 5.2 Water level
+
+Add `T850_PBF_DUMP=1800 T850_PBF_DUMP_DIR=/tmp/b8` to the capture command (with
+`--dump-frame 1800`) to write `/tmp/b8/pbf_f1800.csv` (positions, velocities, density,
+neighbours). `--pbf-diagnostics <frames>` also logs counts, culled particles and density.
+
+```python
+import csv, statistics, sys
+S = 0.13                                    # particle spacing
+rows = [r for r in csv.DictReader(open(sys.argv[1])) if float(r["alive"]) > 0.5]
+tops = {}
+for r in rows:
+    x, y, z = float(r["x"]), float(r["y"]), float(r["z"])
+    if not (-4.5 <= x <= 4.5 and -9.0 <= z <= -4.5) or (x > 3.3 and z > -7.1):
+        continue                            # outside the pool, or over the steps
+    key = (int((x + 4.5) // (2 * S)), int((z + 9.0) // (2 * S)))
+    tops[key] = max(tops.get(key, -9.0), y)
+print(f"level {statistics.median(tops.values()) + S / 2:+.3f} m (scene 7: -0.040 m)")
+# Per-layer profile for 3.4: counts in 0.13 m bins from the floor up.
+for b in range(16):
+    lo = -1.6 + b * S
+    print(f"{lo:+.2f}: {sum(1 for r in rows if lo <= float(r['y']) < lo + S)}")
+```
+
+### 5.3 GL twins on Linux
+
+`python3 T850/scripts/shaders/generate_gl_compute_twins.py CS_Name.hlsl [...]` regenerates the
+twins with the same banner as the Windows generator (`--check` only compiles). It needs
+`glslangValidator` (package `glslang-tools`) and a recent `spirv-cross`. Ubuntu's package is
+from 2021; the committed twins were made with SPIRV-Cross `57e4efc` (2026-10-28):
+
+```bash
+git clone https://github.com/KhronosGroup/SPIRV-Cross ~/src/SPIRV-Cross
+cmake -S ~/src/SPIRV-Cross -B ~/src/SPIRV-Cross/build -DCMAKE_BUILD_TYPE=Release
+cmake --build ~/src/SPIRV-Cross/build -j
+export SPIRV_CROSS=~/src/SPIRV-Cross/build/spirv-cross
+```
+
+### 5.4 Frame time
+
+Run the capture command at `--width 1920 --height 1080` with `--benchmarkFixedDt 0.0166667`
+(unpaced) instead of `--regressionFixedDt`, once to `--dump-frame 100` and once to
+`--dump-frame 700`. The wall-time difference divided by 600 is the frame time.
+`--regressionFixedDt` paces at 60 Hz and does not measure cost.
+
+### 5.5 4K
+
+The capture command at `--width 3840 --height 2160`. `Fluid Clear` must log
+`dispatched compute 480 x 270 x 1`.

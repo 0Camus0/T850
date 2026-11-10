@@ -26,7 +26,7 @@ cbuffer ParticleSphereConstants : register(b0)
     uint  OutputWidth;
     uint  OutputHeight;
     uint  ParticleCount;
-    uint  Style;            // 0 water, 3 lit spheres
+    uint  Style;            // 0 water, 1 wireframe, 2 flat, 3 lit spheres
 
     float Radius;
     float Opacity;
@@ -318,6 +318,24 @@ void CS(uint3 id : SV_DispatchThreadID)
         return;
     }
     const float bulge = sqrt(1.0f - rho2);
+
+    // Wireframe: an anti-aliased ring at the splat edge, transparent inside. This moves the
+    // debug style off the legacy per-pixel-per-particle resolve and onto the nearest-particle
+    // key path, like the lit spheres.
+    if (Style == 1u) {
+        const float inner = max(1.0f - 2.0f / max(r, 2.0f), 0.0f);
+        const float edge = 1.0f / max(r, 1.0f);
+        const float ring = smoothstep(inner - edge, inner + edge, sqrt(rho2));
+        const float3 tint = RampColor(Hash(index * 2654435761u) * 0.35f);
+        OutputTexture[imagePixel] = float4(tint, saturate(Opacity) * ring);
+        return;
+    }
+    // Flat: one hard-filled, unlit disc per particle, alpha = opacity.
+    if (Style == 2u) {
+        const float3 tint = RampColor(Hash(index * 2654435761u) * 0.35f);
+        OutputTexture[imagePixel] = float4(tint, saturate(Opacity));
+        return;
+    }
 
     if (Style == 3u) {
         // View space: x right, y up, z away from the camera. Pixel y grows down.

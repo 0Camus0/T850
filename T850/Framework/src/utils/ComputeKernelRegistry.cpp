@@ -651,7 +651,8 @@ bool BuildParticleSphereConstants(const ComputeKernelConstantsContext& context,
   value.opacity = system->opacity;
   value.projScaleY = camera->Projection.m[1][1];
   value.ambient = 0.6f;
-  value.style = system->style == ParticleStyle::Spheres ? 3u : 0u;
+  // 0 water, 1 wireframe, 2 flat, 3 spheres: all four are handled by CS_FluidSphereShade.
+  value.style = static_cast<uint32_t>(system->style);
   // The water style shares the screen-space renderer's optics: both draw the same water.
   const ParticleScreenSpaceDesc& optics = system->screen_space;
   value.projA = camera->Projection.m[2][2];

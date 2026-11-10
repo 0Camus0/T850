@@ -37,7 +37,7 @@ namespace t850 {
     // surface |v| 0.024 m/s and lake level -0.043 m.
     float wallFriction = 8.0f;
     float maxVelocity = 12.0f;
-    int solverIterations = 3;
+    int solverIterations = 6;   // 2 substeps x 6 = 12 projections/frame; 1.27% mean density error
     int substeps = 2;
     float deltaTime = 1.0f / 60.0f;
     float sphereRadius = 2.0f;
@@ -48,7 +48,8 @@ namespace t850 {
     // appended, and the part that stays in the pool brings it back to the plane (about
     // 10k of 15k sphere particles are thrown over the rim).
     float prefillLevel = -0.27f;
-    float restingLevel = 0.0f;
+    // With 2x6 the lake settles at -0.044 m with this seed (the old 2x3 needed 0.0).
+    float restingLevel = -0.02f;
     float cullBelowY = 0.0f;
     float cullMargin = 0.35f;
     int surfaceWidth = 100;

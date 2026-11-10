@@ -173,11 +173,9 @@ void Backyard8Scene::ApplyRenderModeToGraph() {
   t850::RenderGraph& graph = m_renderContainer.Graph();
   const bool screenSpace = m_config.particles.renderMode == 1;
   const bool fallback = screenSpace && m_config.screenSpace.splatFallback;
-  // The particle renderer (blended water, or the lit-spheres debug style) goes through the same
-  // scatter as the screen-space path. The wireframe/flat debug styles and additive blending keep
-  // the legacy splat.
-  const int style = m_config.particles.style;
-  const bool spheres = !screenSpace && (style == 0 || style == 3) && m_config.particles.blend == 1;
+  // Every alpha-blended particle style (water, wireframe, flat, spheres) now goes through the
+  // key + sphere-shade path. Only additive blending keeps the legacy per-particle resolve.
+  const bool spheres = !screenSpace && m_config.particles.blend == 1;
   // The stamp always runs: it produces the projected particle table the scatter reads.
   graph.SetPassEnabled("Fluid Particles (resolve)", (!screenSpace && !spheres) || fallback);
   graph.SetPassEnabled("Fluid Clear", screenSpace || spheres);
@@ -318,6 +316,8 @@ bool Backyard8Scene::InitPbf() {
 }
 
 bool Backyard8Scene::ReinitializePbf() {
+  // Any immediate re-seed (Restart, start-mode change, load) cancels a pending debounce.
+  m_reseedDelay = -1.0f;
   if (!pFramework || !pFramework->pVideoDriver) return false;
   t850::BaseDriver* driver = pFramework->pVideoDriver;
   if (!m_configLoaded) LoadFluidConfig();
@@ -370,6 +370,14 @@ void Backyard8Scene::OnUpdate(float deltaSeconds) {
   // VOF solver in the parent, so with PBF the balls keep their analytic model).
   BackyardScene::OnUpdate(deltaSeconds);
   if (!m_pbf.IsReady() || !pFramework || !pFramework->pVideoDriver) return;
+
+  if (m_reseedDelay >= 0.0f) {
+    m_reseedDelay -= deltaSeconds;
+    if (m_reseedDelay < 0.0f) {
+      m_reseedDelay = -1.0f;
+      if (!ReinitializePbf()) T8_LOG_ERROR("[Backyard8] Re-seed failed");
+    }
+  }
 
   if (m_settlePending) {
     // A seeded lattice compacts by about one particle layer (the water drops ~16 cm). The pool
@@ -679,7 +687,9 @@ void Backyard8Scene::DrawSolverPanel(t850::DevGuiContext& gui) {
     }
   }
 
-  if (seedChanged && !ReinitializePbf()) T8_LOG_ERROR("[Backyard8] Re-seed failed");
+  // Re-seed after the drag stops: rebuilding the solver every drag frame costs
+  // 30-250 ms and makes the sliders unusable.
+  if (seedChanged) m_reseedDelay = 0.2f;
   if (lookChanged) RegisterParticleSystem();
   gui.EndPanel();
 }

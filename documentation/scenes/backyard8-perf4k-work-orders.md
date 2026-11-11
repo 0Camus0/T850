@@ -367,7 +367,7 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 | P1 | qwen-local | in progress | | dispatched 2026-11-11 |
 | P2 | | blocked by P1 | | |
 | P3 | | blocked by P1 | | |
-| P4 | qwen-5090 | code done, blocked on build | | RenderQuad.cpp/.h edited in tree; build fails on P1's in-progress `ComputeKernelRegistry.cpp` static_asserts (256→260, 400→404), so no commit yet |
+| P4 | qwen-5090 | in progress (follow-up) | 4389a36, +follow-up | 4389a36 reviewed by Claude: not done. Needs resize fix, 4K CPU + upload-bytes numbers, and corrected Deferred description (point lights restored). Sent back to qwen-5090 |
 | P5 | | blocked by P0-P4 and Claude's final numbers | | |
 
 ## Notes from Claude

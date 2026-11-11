@@ -860,6 +860,7 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
   FluidPanelControls controls{gui};
   bool lookChanged = false;
   t850::Backyard8ParticleConfig& p = m_config.particles;
+  t850::Backyard8ScreenSpaceConfig& ss = m_config.screenSpace;
 
   const bool rendererActive = p.renderMode == 0;
   // The particle renderer and the water style only coexist in one combination: alpha blend +
@@ -876,20 +877,24 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
     gui.Text("Nothing below is drawn: the screen-space renderer is drawing the pool.");
   }
 
+  // render radius and the size scales also drive the water: the stamp turns them into the
+  // projected particle radius (Projected.z), which sizes CS_FluidSplat's thickness/whitewater
+  // discs and the chord (worldThick), and CS_ParticleShade's normal stencil and gather radius
+  // use Radius (ShadeParams.y) too. They live with the other shared splat controls.
   if (gui.BeginSection("Splat look", true)) {
     if (controls.combo("pbf8_shape", "falloff shape", {"soft sphere", "sprite", "streak"}, p.shape))
       lookChanged = true;
     if (controls.combo("pbf8_blend", "blend", {"additive", "alpha"}, p.blend))
       lookChanged = true;
-    lookChanged |= controls.slider("pbf8_radius", "render radius (m)", p.radius, 0.01f, 0.4f, 0.001f);
     lookChanged |= controls.slider("pbf8_opacity", "splat opacity", p.opacity, 0.0f, 1.0f, 0.01f);
     lookChanged |= controls.slider("pbf8_intensity", "additive intensity", p.intensity, 0.0f, 8.0f, 0.05f);
+    // The stamp's falloff is Style >= 0.5 (ring) or >= 1.5 (hard disc); at style 0 (water) it
+    // is a smoothstep over [Radius, Radius * (1 - Softness)], so the water does read softness.
     lookChanged |= controls.slider("pbf8_softness", "edge softness", p.softness, 0.0f, 1.0f, 0.01f);
     lookChanged |= controls.slider("pbf8_depth_bias", "soft depth bias (m)", p.depthBias, 0.0f, 0.5f, 0.005f);
-    lookChanged |= controls.slider("pbf8_size_min", "size scale at age 0", p.sizeScaleMin, 0.1f, 4.0f, 0.05f);
-    lookChanged |= controls.slider("pbf8_size_max", "size scale at age 1", p.sizeScaleMax, 0.1f, 4.0f, 0.05f);
-    gui.Text("The water style (surfel splatting) reads none of these: it sizes its splat from");
-    gui.Text("particle spacing and 'Water Shading' -> Splat, not from the splat look.");
+    gui.Text("Blend selects the water: alpha + the water style draws it, additive keeps the");
+    gui.Text("additive particle look. The water reads edge softness (its stamp falloff) but");
+    gui.Text("no falloff shape, opacity, intensity or depth bias; splat sizes are in 'Water Shading'.");
   }
 
   if (gui.BeginSection("Surfels", true)) {
@@ -904,6 +909,7 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
 
   if (gui.BeginSection("Colour ramp", false)) {
     gui.Text("Four stops over particle age; a buffer fluid adds a per-particle jitter.");
+    gui.Text("The water style ignores all four stops: its particles are not tinted by the ramp.");
     static const char* const kNames[4] = {"stop 0", "stop 1", "stop 2", "stop 3"};
     for (int i = 0; i < 4; ++i) {
       char id[32];
@@ -935,6 +941,11 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
     if (controls.sliderInt("pbf8_draw_count", "draw only N particles (0 = all)", p.count,
                            0.0f, static_cast<float>((std::max)(static_cast<int>(m_pbf.ParticleCount()), 1)),
                            1.0f))
+      lookChanged = true;
+    // Only CS_FluidSphereShade reads this (the spheres style's own refraction); the water
+    // shade uses 'refraction strength' in 'Water Shading' -> Optics.
+    if (controls.slider("pbf8_ss_refract", "spheres style: refraction (path per m)", ss.refraction,
+                        0.0f, 2.0f, 0.01f))
       lookChanged = true;
     gui.Separator();
     gui.Text("Screen-space normals/depth/thickness/coverage are a different debug path:");
@@ -1004,6 +1015,7 @@ void Backyard8Scene::DrawWaterShadingPanel(t850::DevGuiContext& gui) {
   if (UsesWaterShade()) {
     gui.Text(UsesSurfels() ? "IN USE by the particle renderer (surfel splatting)"
                            : "IN USE by the screen-space renderer");
+    gui.Text("The one water shade of both renderers: splat, optics, lighting, whitewater, debug.");
   } else {
     gui.Text("NOT IN USE: the particle renderer's current style does not use the water shade");
     const char* style = m_config.particles.blend == 0 ? "additive blend"
@@ -1013,10 +1025,31 @@ void Backyard8Scene::DrawWaterShadingPanel(t850::DevGuiContext& gui) {
     char line[192];
     std::snprintf(line, sizeof(line), "  (drawing: %s)", style);
     gui.Text(line);
+    // A debug style shades in its own kernel, but the spheres style still takes its optics
+    // from these values (BuildParticleSphereConstants). The wireframe and flat styles read
+    // none of them: CS_FluidSphereShade tints them from the colour ramp only.
+    if (m_config.particles.blend == 1 && m_config.particles.style == 3) {
+      gui.Text("The spheres style still reads these: sun specular, Fresnel exponent, thickness");
+      gui.Text("scale, packing factor, absorption R/G/B, absorption multiplier, scatter R/G/B,");
+      gui.Text("zenith sky R/G/B (the horizon colours are not read by it).");
+    } else {
+      gui.Text("This style reads nothing from this panel.");
+    }
+    gui.Text("The one water shade of both renderers: splat, optics, lighting, whitewater, debug.");
   }
-  gui.Text("The one water shade of both renderers: splat, optics, lighting, whitewater, debug.");
 
   if (gui.BeginSection("Splat (depth and thickness)", true)) {
+    // The stamp's projected radius (Projected.z = Radius * sizeScale * ...) sizes the splat
+    // discs, the chord and the shade's normal stencil, so these three are water controls.
+    lookChanged |= controls.slider("pbf8_radius", "render radius (m)", m_config.particles.radius,
+                                   0.01f, 0.4f, 0.001f);
+    // A buffer-source particle (the PBF fluid) is stamped at age 1, so only the age-1 scale
+    // reaches it; the age-0 scale is inert for this fluid.
+    lookChanged |= controls.slider("pbf8_size_min", "size scale at age 0 (unused: buffer age is 1)",
+                                   m_config.particles.sizeScaleMin, 0.1f, 4.0f, 0.05f);
+    lookChanged |= controls.slider("pbf8_size_max", "size scale at age 1", m_config.particles.sizeScaleMax,
+                                   0.1f, 4.0f, 0.05f);
+    gui.Text("Render radius and the age-1 size scale set every splat disc and the chord length.");
     if (controls.slider("pbf8_ss_depth_radius", "depth radius / spacing", ss.depthRadiusScale,
                         0.2f, 1.2f, 0.01f))
       lookChanged = true;
@@ -1061,8 +1094,6 @@ void Backyard8Scene::DrawWaterShadingPanel(t850::DevGuiContext& gui) {
       lookChanged = true;
     if (controls.slider("pbf8_ss_refract_strength", "refraction strength", ss.refractionStrength,
                         0.0f, 1.0f, 0.01f))
-      lookChanged = true;
-    if (controls.slider("pbf8_ss_refract", "splat refraction (path per m)", ss.refraction, 0.0f, 2.0f, 0.01f))
       lookChanged = true;
     if (controls.slider("pbf8_ss_reflect_dist", "reflection range (m)", ss.reflectionDistance,
                         0.0f, 80.0f, 0.5f))

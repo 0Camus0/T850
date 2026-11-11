@@ -287,7 +287,25 @@ void Backyard8Scene::BuildParticleDesc() {
   d.screen_space.caustic_depth = (std::max)(ss.causticDepth, 0.01f);
   d.screen_space.splat_fallback = ss.splatFallback;
   d.screen_space.anisotropy = ss.anisotropy;
-  d.screen_space.debug_view = (std::min)((std::max)(ss.debugView, 0), 6);
+  // Scene lighting (the 2026-11 realism pass): clamps mirror ParticleSystem.cpp's validation.
+  d.screen_space.env_intensity = (std::max)(ss.envIntensity, 0.0f);
+  d.screen_space.sun_attenuation = (std::min)((std::max)(ss.sunAttenuation, 0.0f), 1.0f);
+  d.screen_space.caustic_focus = (std::max)(ss.causticFocus, 0.0f);
+  d.screen_space.contact_line = (std::max)(ss.contactLine, 0.0f);
+  d.screen_space.backlight = (std::max)(ss.backlight, 0.0f);
+  d.screen_space.scatter_sun = (std::max)(ss.scatterSun, 0.0f);
+  d.screen_space.scatter_sky = (std::max)(ss.scatterSky, 0.0f);
+  d.screen_space.scatter_anisotropy = (std::min)((std::max)(ss.scatterAnisotropy, 0.0f), 0.95f);
+  d.screen_space.ripple_calm = (std::max)(ss.rippleCalm, 0.0f);
+  d.screen_space.ripple_agitation = (std::max)(ss.rippleAgitation, 0.0f);
+  // Whitewater (Ihmsen et al. 2012): foam, aeration, secondary particles and the wet deck.
+  d.screen_space.foam_strength = (std::max)(ss.foamStrength, 0.0f);
+  d.screen_space.foam_texture_scale = (std::max)(ss.foamTextureScale, 0.01f);
+  d.screen_space.aeration = (std::max)(ss.aeration, 0.0f);
+  d.screen_space.bubble_strength = (std::max)(ss.bubbleStrength, 0.0f);
+  d.screen_space.spray_strength = (std::max)(ss.sprayStrength, 0.0f);
+  d.screen_space.wetness = (std::max)(ss.wetness, 0.0f);
+  d.screen_space.debug_view = (std::min)((std::max)(ss.debugView, 0), 9);
   m_particleDesc = d;
 }
 
@@ -309,10 +327,42 @@ void Backyard8Scene::RegisterParticleSystem() {
               m_particleDesc.blend == t850::ParticleBlend::Additive ? "additive" : "alpha");
 }
 
+// Builds the solver's whitewater settings from the config. The solver clamps maxDiffuse to
+// 64..1<<20, wetResolution to 16..2048 and wetTexel to >= 0.01 (CreateWhitewaterBuffers);
+// clamp identically here so the values the solver applies are the ones the Dev GUI shows.
+t850::PbfWhitewaterSettings Backyard8Scene::WhitewaterSettings() const {
+  const t850::Backyard8WhitewaterConfig& w = m_config.whitewater;
+  t850::PbfWhitewaterSettings s;
+  s.enabled = w.enabled;
+  s.trappedAirMin = w.trappedAirMin;
+  s.trappedAirMax = w.trappedAirMax;
+  s.crestMin = w.crestMin;
+  s.crestMax = w.crestMax;
+  s.energyMin = w.energyMin;
+  s.energyMax = w.energyMax;
+  s.surfaceNeighbours = w.surfaceNeighbours;
+  s.foamGain = w.foamGain;
+  s.foamLifetime = w.foamLifetime;
+  s.aerationGain = w.aerationGain;
+  s.aerationLifetime = w.aerationLifetime;
+  s.maxDiffuse = static_cast<uint32_t>((std::min)((std::max)(w.maxDiffuse, 64u), 1u << 20));
+  s.sprayRate = w.sprayRate;
+  s.crestRate = w.crestRate;
+  s.diffuseLifetime = w.diffuseLifetime;
+  s.bubbleBuoyancy = w.bubbleBuoyancy;
+  s.bubbleDrag = w.bubbleDrag;
+  s.sprayDrag = w.sprayDrag;
+  s.dryingTime = w.dryingTime;
+  s.wetTexel = (std::max)(w.wetTexel, 0.01f);
+  s.wetResolution = static_cast<uint32_t>((std::min)((std::max)(w.wetResolution, 16u), 2048u));
+  s.causticGain = w.causticGain;
+  return s;
+}
+
 void Backyard8Scene::ConfigureWhitewater() {
   const t850::Backyard8ParticleConfig& p = m_config.particles;
   m_pbf.SetWhitewaterBufferNames(p.whitewaterBuffer, p.diffuseBuffer, p.causticBuffer, p.wetnessBuffer);
-  m_pbf.SetWhitewater(t850::PbfWhitewaterSettings{});
+  m_pbf.SetWhitewater(WhitewaterSettings());
 }
 
 bool Backyard8Scene::InitPbf() {
@@ -944,12 +994,103 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
       lookChanged = true;
   }
 
+  if (gui.BeginSection("Scene lighting", true)) {
+    gui.Text("Lighting the screen-space shade pass takes from the scene:");
+    if (controls.slider("pbf8_wwo_env", "environment intensity", ss.envIntensity, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_wwo_sun_atten", "sun attenuation (under water)", ss.sunAttenuation,
+                        0.0f, 1.0f, 0.01f))
+      lookChanged = true;
+    if (controls.slider("pbf8_wwo_caustic_focus", "caustic focus", ss.causticFocus, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_wwo_contact", "contact line", ss.contactLine, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_wwo_backlight", "backlight", ss.backlight, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_wwo_scatter_sun", "in-scatter sun", ss.scatterSun, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_wwo_scatter_sky", "in-scatter sky", ss.scatterSky, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_wwo_scatter_aniso", "in-scatter anisotropy (g)", ss.scatterAnisotropy,
+                        0.0f, 0.95f, 0.01f))
+      lookChanged = true;
+    if (controls.slider("pbf8_wwo_ripple_calm", "ripple calm", ss.rippleCalm, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_wwo_ripple_agg", "ripple agitation", ss.rippleAgitation, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+  }
+
+  if (gui.BeginSection("Whitewater", true)) {
+    t850::Backyard8WhitewaterConfig& ww = m_config.whitewater;
+    gui.Text("Screen-space whitewater look (the solver fields below refresh the pool):");
+    if (controls.slider("pbf8_ww_foam", "foam strength", ss.foamStrength, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ww_foam_cell", "foam cell size (m)", ss.foamTextureScale,
+                        0.05f, 2.0f, 0.01f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ww_aeration", "aeration", ss.aeration, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ww_bubbles", "bubbles", ss.bubbleStrength, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ww_spray", "spray", ss.sprayStrength, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    if (controls.slider("pbf8_ww_wetness", "wetness", ss.wetness, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    gui.Separator();
+    gui.Text("Solver emission rates, lifetimes and drying time:");
+    bool solverChanged = false;
+    if (controls.slider("pbf8_ww_spray_rate", "spray rate", ww.sprayRate, 0.0f, 60.0f, 0.5f))
+      solverChanged = true;
+    if (controls.slider("pbf8_ww_crest_rate", "crest rate", ww.crestRate, 0.0f, 60.0f, 0.5f))
+      solverChanged = true;
+    if (controls.slider("pbf8_ww_diffuse_life", "diffuse lifetime (s)", ww.diffuseLifetime,
+                        0.1f, 10.0f, 0.1f))
+      solverChanged = true;
+    if (controls.slider("pbf8_ww_foam_gain", "foam gain", ww.foamGain, 0.0f, 10.0f, 0.1f))
+      solverChanged = true;
+    if (controls.slider("pbf8_ww_foam_life", "foam lifetime (s)", ww.foamLifetime, 0.1f, 10.0f, 0.1f))
+      solverChanged = true;
+    if (controls.slider("pbf8_ww_aer_gain", "aeration gain", ww.aerationGain, 0.0f, 10.0f, 0.1f))
+      solverChanged = true;
+    if (controls.slider("pbf8_ww_aer_life", "aeration lifetime (s)", ww.aerationLifetime,
+                        0.1f, 10.0f, 0.1f))
+      solverChanged = true;
+    if (controls.slider("pbf8_ww_drying", "drying time (s)", ww.dryingTime, 1.0f, 300.0f, 1.0f))
+      solverChanged = true;
+    // The solver clamps maxDiffuse to 64..1<<20 and wetResolution to 16..2048; the sliders
+    // stay inside those ranges so the GUI can never push a value the solver would clamp.
+    int maxDiffuse = static_cast<int>(ww.maxDiffuse);
+    if (controls.sliderInt("pbf8_ww_max_diffuse", "max secondary particles", maxDiffuse,
+                           64.0f, 1048576.0f, 64.0f)) {
+      ww.maxDiffuse = static_cast<uint32_t>(maxDiffuse);
+      solverChanged = true;
+    }
+    int wetResolution = static_cast<int>(ww.wetResolution);
+    if (controls.sliderInt("pbf8_ww_wet_res", "wetness map resolution", wetResolution,
+                           16.0f, 2048.0f, 1.0f)) {
+      ww.wetResolution = static_cast<uint32_t>(wetResolution);
+      solverChanged = true;
+    }
+    if (controls.slider("pbf8_ww_wet_texel", "wetness texel (m)", ww.wetTexel, 0.01f, 0.5f,
+                        0.005f))
+      solverChanged = true;
+    // The solver fields above recreate the solver's buffers when maxDiffuse, wetResolution
+    // or wetTexel change; refresh the descriptor's pool capacity and wetness map size from
+    // the new layout so the render graph keeps matching the solver.
+    if (solverChanged) {
+      m_pbf.SetWhitewater(WhitewaterSettings());
+      RegisterParticleSystem();
+    }
+  }
+
   if (gui.BeginSection("Debug (screen space)", false)) {
     gui.Text("These views are produced by the screen-space shade pass:");
-    gui.Text("  normals / surface depth / water path / coverage / reflection / refraction");
+    gui.Text("  shaded / normals / surface depth / water path / coverage / reflection /");
+    gui.Text("  refraction / whitewater / light under water / wetness");
     if (controls.combo("pbf8_ss_debug", "debug view",
                        {"shaded", "normals", "surface depth", "water path", "coverage",
-                        "reflection", "refraction"}, ss.debugView))
+                        "reflection", "refraction", "whitewater", "light under water",
+                        "wetness"}, ss.debugView))
       lookChanged = true;
     if (controls.check("pbf8_ss_fallback", "keep splat underneath (debug fallback)", ss.splatFallback))
       lookChanged = true;

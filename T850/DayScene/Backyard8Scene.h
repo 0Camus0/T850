@@ -104,4 +104,7 @@ private:
   bool m_whitewaterErrorLogged = false;
   // Names and settings of the solver's whitewater; call before PbfFluid::TryInitialize.
   void ConfigureWhitewater();
+  // The solver's whitewater settings built from the config, with the solver's own clamps
+  // (maxDiffuse 64..1<<20, wetResolution 16..2048, wetTexel >= 0.01) applied up front.
+  t850::PbfWhitewaterSettings WhitewaterSettings() const;
 };

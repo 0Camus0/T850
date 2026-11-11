@@ -24,9 +24,12 @@
 // divides by the thickness.
 //
 // Resolution: the output may be smaller than the scene (the screen-space renderer splats at
-// half resolution). Projected radii come from the full-resolution stamp and are scaled, and
-// the opaque depth of an output pixel is the FARTHEST full-resolution depth inside it, so the
-// water reaches every pixel it might cover; CS_ParticleShade re-tests at full resolution.
+// half resolution); projected radii come from the full-resolution stamp and are scaled. The
+// screen-space mode does not test the opaque depth at all: CS_ParticleShade re-tests every
+// pixel against the full-resolution depth, and water hidden under the coping continues the
+// visible surface, which is what the smoothing should see. (Testing the farthest of the 2x2
+// full-resolution texels per pixel cost as much as the 4x fewer pixels saved.) The particle
+// renderer (ScreenSpace = 0) keeps its per-pixel test.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -264,7 +267,6 @@ void CS(uint3 id : SV_DispatchThreadID)
                 const float d2 = dot(delta, delta);
                 if (d2 > r2) continue;
                 const float h = sqrt(max(1.0f - d2 / r2, 0.0f));
-                if (p.w - h * worldThick >= SceneLinearDepth(x, y, sceneSize)) continue;
                 const uint pix = uint(x) + uint(y) * OutputWidth;
                 const float chord = 2.0f * h * worldThick * InvPackingFactor;
                 InterlockedAdd(ThicknessBits[pix], uint(chord * 1024.0f));
@@ -340,7 +342,7 @@ void CS(uint3 id : SV_DispatchThreadID)
                 const float disc = b * b - a * cc;
                 if (disc < 0.0f || a <= 1.0e-12f) continue;
                 const float zFront = c.z + (-b - sqrt(disc)) / a;
-                if (zFront <= 0.05f || zFront >= SceneLinearDepth(x, y, sceneSize)) continue;
+                if (zFront <= 0.05f) continue;
                 const uint pix = uint(x) + uint(y) * OutputWidth;
                 // Depths only decrease, so a plain read that is already nearer skips the
                 // atomic: most interior particles lie behind the surface layer.
@@ -363,7 +365,6 @@ void CS(uint3 id : SV_DispatchThreadID)
             const float d2 = dot(delta, delta);
             if (d2 > depthR2) continue;
             const float zFront = p.w - sqrt(max(1.0f - d2 / depthR2, 0.0f)) * worldDepth;
-            if (zFront >= SceneLinearDepth(x, y, sceneSize)) continue;
             InterlockedMin(DepthBits[uint(x) + uint(y) * OutputWidth], asuint(zFront));
         }
     }

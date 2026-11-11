@@ -117,24 +117,26 @@ namespace t850 {
   // caustic focus field of the simulated surface, and a drying wetness map of the deck.
   struct PbfWhitewaterSettings {
     bool enabled = true;
-    // Potentials are clamped to [min, max] and mapped to 0..1.
-    float trappedAirMin = 2.0f;
-    float trappedAirMax = 12.0f;
+    // Potentials are clamped to [min, max] and mapped to 0..1. Calibrated on particle dumps of
+    // the water start: a calm pool stays below trapped air 0.9 and energy 0.05, the sloshing
+    // wave (frame 150) below 2.8 and 1.0, the impact (frame 45) reaches 13 and 23 (p99).
+    float trappedAirMin = 3.0f;
+    float trappedAirMax = 15.0f;
     float crestMin = 0.3f;
-    float crestMax = 2.5f;
-    float energyMin = 0.3f;
-    float energyMax = 6.0f;
+    float crestMax = 2.0f;
+    float energyMin = 0.5f;
+    float energyMax = 10.0f;
     float surfaceNeighbours = 24.0f;   // at or above: a submerged particle
     // Whitewater carried by the fluid.
     float foamGain = 3.0f;             // per second at full potential
-    float foamLifetime = 3.0f;         // e-folding seconds
+    float foamLifetime = 1.5f;         // e-folding seconds (fresh water: foam collapses fast)
     float aerationGain = 2.5f;
-    float aerationLifetime = 1.8f;
+    float aerationLifetime = 1.2f;
     // Secondary particles.
     uint32_t maxDiffuse = 65536;
-    float sprayRate = 30.0f;           // per second per fluid particle at full trapped air
-    float crestRate = 15.0f;           // per second per fluid particle at full crest potential
-    float diffuseLifetime = 3.0f;      // seconds (randomised 0.5..1.5x)
+    float sprayRate = 12.0f;           // per second per fluid particle at full trapped air
+    float crestRate = 8.0f;            // per second per fluid particle at full crest potential
+    float diffuseLifetime = 2.0f;      // seconds (randomised 0.5..1.5x)
     float bubbleBuoyancy = 3.0f;       // times gravity
     float bubbleDrag = 0.5f;           // fraction of the velocity difference removed per update
     float sprayDrag = 0.4f;            // per second

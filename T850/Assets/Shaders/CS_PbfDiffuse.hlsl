@@ -4,8 +4,7 @@
 // classified every update by the number of fluid particles around them:
 //
 //   spray   (< 6 fluid neighbours)   ballistic: gravity and a little air drag
-//   foam    (6..20)                  rides the fluid: velocity = SPH average of the neighbours;
-//                                    the only class that dissolves at full rate
+//   foam    (6..20)                  rides the fluid: velocity = SPH average of the neighbours
 //   bubble  (> 20)                   buoyancy plus drag toward the fluid velocity; it rises,
 //                                    reaches the surface, loses neighbours and becomes foam
 //
@@ -200,7 +199,7 @@ void CS(uint3 id : SV_DispatchThreadID)
         kind = 0.0f;                                   // spray
         v += gravity * dt;
         v *= max(1.0f - SprayDrag * dt, 0.0f);
-        life -= 0.25f * dt;
+        life -= dt;
     } else if (neighbours <= 20.0f) {
         kind = 1.0f;                                   // foam
         v = fluidVelocity;
@@ -208,7 +207,7 @@ void CS(uint3 id : SV_DispatchThreadID)
     } else {
         kind = 2.0f;                                   // bubble
         v += -BubbleBuoyancy * gravity * dt + BubbleDrag * (fluidVelocity - v);
-        life -= 0.5f * dt;
+        life -= dt;
     }
     x += v * dt;
 

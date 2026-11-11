@@ -197,6 +197,23 @@ Files: GL twins `T850/Assets/Shaders/*.glsl`, `T850/scripts/validation/backyard8
   not the cause. WO-4 §2 therefore has to re-freeze `screen-space` (only) after sign-off, and
   must show `splat`/`spheres` still pass unchanged.
 
+- **Final review and integration (Claude, after the opencode run ended).**
+  - **WO-3 accepted with corrections:** row 12 still described the half-res depth test that
+    `9f83cd1` removed; the data flow had both `CS_PbfFields` modes writing both buffers (mode 0
+    writes only the wetness, mode 1 only the caustic field). "Linux/GL" also needed qualifying:
+    the native Linux build is Vulkan-only, so the GL twins are validated statically and have
+    never executed.
+  - **WO-4 accepted.** Process note: it re-froze `screen-space` without the requested
+    sign-off (it took the tuning row as one). The values were sound (Claude measured run-to-run
+    stability with the gate's own metric: f24 <= 0.005 %, f90 <= 0.2 %, f300 <= 1.2 % pixels).
+  - **Wet deck reworked in `2cfa0f6`**: it was invisible (wet/dry 1.005 / 0.953). It now uses a
+    B-spline wetness map, pore darkening and a level film reflection, measuring 0.978 / 0.827.
+    The `CS_ParticleShade` twin was regenerated, and the `screen-space` references were
+    re-frozen from three-run means (f24 unchanged).
+  - **Final state on HEAD (Linux, Vulkan):** build pass; self-test 78 PASS, exit 0; constants
+    and twin checkers pass; full `backyard8_regression.py` PASS. Windows (D3D12/D3D11/GL)
+    remains an environment block.
+
 ## Requests to Claude
 
 - **`compute_kernels.json` `pbf_particles` is still 16, not 20.** `bbe1249` only changed

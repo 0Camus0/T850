@@ -1,13 +1,17 @@
 # Backyard 8: whitewater, environment reflections and G-buffer water lighting (2026-11-10)
 
 Status: **implemented and verified on Vulkan (native Linux)**. D3D12, D3D11 and OpenGL were
-**not run** on this tree (no Windows host); their gate is §5.3 and is an open item, not a pass.
+**not run** on this tree (no Windows host, and the native Linux build is Vulkan-only:
+`LinuxFramework::ChangeAPI` runs Vulkan even for `--api gl`); their gate is §5.3 and is an open
+item, not a pass.
 
 The implementation is checkpointed in `3ad6d1a` ("WIP Backyard 8: whitewater, env reflections,
 G-buffer lighting, half-res SSFR") and tuned in `9f83cd1` ("Backyard 8: tune whitewater and
 half-resolution splat"); the config keys and Dev GUI landed in WO-1 (`b060602`); the GL twins and
-the screen-space references landed in WO-4 (`2105406`). Cost and verification numbers below are
-WO-4's measurements, re-run independently by the orchestrator (§4, §5). Preceding record:
+a first screen-space re-freeze landed in WO-4 (`2105406`); the wet-deck rework and the final
+screen-space re-freeze landed in `2cfa0f6`. Cost and verification numbers below are WO-4's
+measurements, re-run independently by the orchestrator, and re-run by Claude after `2cfa0f6`
+(§4, §5). Preceding record:
 [backyard8-ssfr-realism.md](backyard8-ssfr-realism.md). Pipeline reference:
 [backyard8-screen-space-fluid.md](backyard8-screen-space-fluid.md).
 
@@ -30,10 +34,10 @@ commit. All files are relative to `T850/`.
 | 9 | Sun glitter | Slope variance of ripples too fine for the pixel widens the glint and reflection cone (Toksvig, `RippleGradient` + main kernel). | Sub-particle ripples were invisible, so the surface read as a perfect mirror (R5). | `Assets/Shaders/CS_ParticleShade.hlsl` |
 | 10 | Flow ripples | Ripple slope follows per-particle agitation (smoothed speed); hashed, irregular wave set (`CS_PbfWhitewater` z-channel, `RippleGradient`). | Wind ripples were uniform; real pool water ripples where the flow is fast. | `Assets/Shaders/CS_PbfWhitewater.hlsl`, `Assets/Shaders/CS_ParticleShade.hlsl` |
 | 11 | Backlit crests, meniscus | Thin water toward the sun glows (`backlight`); brighter contact line at walls (`contactLine`). | Free surfaces and wall contact are the most characteristic features of pool water. | `Assets/Shaders/CS_ParticleShade.hlsl` |
-| 12 | Half resolution | Depth/thickness splat and smoothing at half resolution (`$window_half` targets `FluidDepthA/B`, `FluidThickness`), depth-aware upsample in the shade; the splat tests the farthest full-resolution depth of each half pixel. | The close-camera splat cost was the one-thread-per-particle scatter at full resolution (realism record §4); halving the target is the paper's main performance lever. | `Assets/Scenes/Backyard8Scene_RenderGraph.json`, `Assets/Shaders/CS_FluidSplat.hlsl`, `Assets/Shaders/CS_ParticleShade.hlsl`, `Framework/src/scene/RenderGraph.cpp` (`$window_half`) |
+| 12 | Half resolution | Depth/thickness splat and smoothing at half resolution (`$window_half` targets `FluidDepthA/B`, `FluidThickness`), depth-aware upsample in the shade. The surface-mode splat does not test opaque depth (testing the farthest of the 2x2 full-resolution depths cost as much as halving saved); the shade re-tests at full resolution (`9f83cd1`). | The close-camera splat cost was the one-thread-per-particle scatter at full resolution (realism record §4); halving the target is the paper's main performance lever. | `Assets/Scenes/Backyard8Scene_RenderGraph.json`, `Assets/Shaders/CS_FluidSplat.hlsl`, `Assets/Shaders/CS_ParticleShade.hlsl`, `Framework/src/scene/RenderGraph.cpp` (`$window_half`) |
 | 13 | Foam on the water | Ihmsen 2012 potentials (trapped air, crest, energy) in `CS_PbfWhitewater`; per-particle foam and entrained air that decay; foam lace texture; milky aeration. | The water start's breaking crests had no foam. | `Assets/Shaders/CS_PbfWhitewater.hlsl`, `Assets/Shaders/CS_FluidSplat.hlsl` (aux 0..2), `Assets/Shaders/CS_ParticleShade.hlsl` |
 | 14 | Spray, foam, bubbles | Secondary particles in a ring buffer, classified by fluid neighbours (spray < 6, foam 6..20, bubble > 20), splatted into per-pixel channels by `CS_FluidWhitewater`; bubbles dimmed by the water above. | Isolated droplets drawn as chrome balls read as speckle; a density field of soft blobs reads as mist, lace and milky water. | `Assets/Shaders/CS_PbfWhitewater.hlsl`, `Assets/Shaders/CS_PbfDiffuse.hlsl`, `Assets/Shaders/CS_FluidWhitewater.hlsl` |
-| 15 | Wet deck | Water landing on the deck/coping stamps a world-space wetness map that dries (45 s e-folding); wet surfaces are darker with a sky-reflecting film. | A splash that leaves no trace on the deck breaks the illusion. | `Assets/Shaders/CS_PbfWhitewater.hlsl`, `Assets/Shaders/CS_PbfDiffuse.hlsl`, `Assets/Shaders/CS_PbfFields.hlsl` (mode 0), `Assets/Shaders/CS_ParticleShade.hlsl` |
+| 15 | Wet deck | Water landing on the deck/coping stamps a world-space wetness map that dries (45 s e-folding). The shade reconstructs it with a cubic B-spline over 4x4 texels (bilinear filtering showed the 6 cm texels as squares), darkens the surface to 50 % as the pores fill (wetness 0..0.5), and from 0.45 lays a level water film that reflects sharply by Fresnel: the screen where the SSR trace hits, the sky cube elsewhere (`WetSurface`). Wetness under 1 % is left untouched. | A splash that leaves no trace on the deck breaks the illusion. The first version (darkening to 55 % plus a fully rough sky sheen about the normal-mapped normal) cancelled itself: wet/dry brightness 1.005 on the pale stone and 0.953 on the asphalt (1080p, frame 240 of the water start), invisible. The rework measures 0.978 and 0.827, and soaked patches mirror the lit windows. The film reflects about the level normal: the normal map tipped grazing rays into the deck and shattered the image. | `Assets/Shaders/CS_PbfWhitewater.hlsl`, `Assets/Shaders/CS_PbfDiffuse.hlsl`, `Assets/Shaders/CS_PbfFields.hlsl` (mode 0), `Assets/Shaders/CS_ParticleShade.hlsl` |
 | 16 | Claude's tuning pass (`9f83cd1`) | Potentials calibrated on particle dumps of the water start (trapped air 3..15, energy 0.5..10, crest 0.3..2; a calm pool never emits); shorter freshwater lifetimes (foam 1.5 s, aeration 1.2 s, secondary particles 2 s at full decay); secondary particles drawn as soft density blobs instead of pixel dots; foam lace modulates opacity; isolated splash particles shaded as whitewater; caustics capped at 2.5×; the half-res splat no longer tests opaque depth (the shade re-tests at full resolution). | The checkpoint's look was untuned: "foam covers too much of the surface after the drop". | `Assets/Shaders/CS_PbfWhitewater.hlsl`, `CS_PbfDiffuse.hlsl`, `CS_FluidWhitewater.hlsl`, `CS_FluidSplat.hlsl`, `CS_ParticleShade.hlsl` (per the commit message) |
 
 ## 2. Data flow
@@ -48,8 +52,8 @@ the render graph binds them by the names in `T850/DayScene/Backyard8FluidJson.h`
    │  positions, velocities, grid, column heights, anisotropy (spray flag)
    ▼
  CS_PbfFields mode 0 (dispatch "whitewater-dry")            [ComputeWhitewater step 1]
-   │  reads:  column heights
-   │  writes: BackyardWaterWetness (drying, 45 s e-folding), caustic field
+   │  one thread per wetness texel (both modes bind the same buffers; the mode picks one)
+   │  writes: BackyardWaterWetness only (drying, 45 s e-folding)
    │  runs FIRST, so this frame's water lands on an already-dried deck
    ▼
  CS_PbfWhitewater (dispatch "whitewater")                   [step 2]
@@ -65,9 +69,9 @@ the render graph binds them by the names in `T850/DayScene/Backyard8FluidJson.h`
    │  reads/writes: BackyardWaterWetness (landing)
    ▼
  CS_PbfFields mode 1 (dispatch "whitewater-caustics")       [step 4]
-   │  reads:  column heights
-   │  writes: BackyardWaterWetness, caustic field
-   │  publishes BackyardWaterCaustics (focusing 1/(1 + c·d·∇²h) of the smoothed surface)
+   │  one thread per surface column; reads: column heights
+   │  writes: caustic field only, published as BackyardWaterCaustics
+   │          (focusing 1/(1 + c·d·∇²h) of the smoothed surface, clamped 0.35..2.5)
    ▼
  publish: BackyardWaterWhitewater / BackyardWaterDiffuse /
           BackyardWaterCaustics / BackyardWaterWetness
@@ -176,7 +180,9 @@ GPU timestamps from `DayScene --unattended --api vulkan --scene 8 --width 960 --
 (`GPU_N=397`). WO-4 measured these; the orchestrator reproduced them on three consecutive runs
 (water: Fluid Splat 0.159-0.162 ms, Whitewater Splat 0.084-0.088 ms, shade 0.074 ms; lake:
 0.119 / 0.005 / 0.044 ms). A cold first run reads about 1.5x higher (Fluid Splat 0.25 ms) because
-the pool settle is slower; take a warm run.
+the pool settle is slower; take a warm run. Re-measured by Claude after the wet-deck rework
+(`2cfa0f6`, warm runs): water 0.164 / 0.073 / 0.069 ms, lake 0.130 / 0.004 / 0.043 ms (Fluid
+Splat / Whitewater Splat / shade), unchanged within run-to-run noise.
 
 | Pass | GPU time, water start | GPU time, lake start |
 |---|---|---|
@@ -203,20 +209,22 @@ not comparable to this 960x540 average.
 
 ### 5.1 Linux (Vulkan, native)
 
-Numbers below were produced by WO-4 (`2105406`) and re-run independently by the orchestrator on
-the same tree.
+WO-4 (`2105406`) produced these checks and the orchestrator re-ran them on the same tree; Claude
+re-ran the build, the self-test, the checkers and the full gate on the HEAD build after `2cfa0f6`;
+the table shows that final run.
 
 | Check | Result |
 |---|---|
 | Linux build (`cmake --build build/linux --target DayScene`) | **pass** (exit 0; binary `T850/bin/SteamDeck/Release/DayScene`) |
 | `DayScene --unattended --game-selftest` | **pass**: 78 PASS, 0 FAIL, exit 0 |
-| `scripts/validation/check_fluid_constants.py` | **pass** (exit 0): 15 cbuffer names, 46 kernels, 51 `constant_count`s, 3 struct/kernel cross-checks |
-| `scripts/validation/check_gl_twins.py` | **pass** (exit 0): 58 kernels, 53 twins match their HLSL and the registered bindings |
-| GL twin reproducibility | **pass**: regenerating the seven twins with the pinned SPIRV-Cross reproduces them byte-for-byte (`git diff` empty) |
-| `backyard8_regression.py` — `splat` captures | **pass**: f24 0.003 %, f90 0.039 %, f300 0.047 % pixels, dbox 0 |
-| `backyard8_regression.py` — `spheres` captures | **pass**: f24 0.001 %, f90 0.151 %, f300 0.129 % pixels, dbox <= 1 |
-| `backyard8_regression.py` — `screen-space` captures | **pass after re-freeze**: f24 0.002 %, f90 0.792 %, f300 0.530 % pixels, dbox <= 4 |
-| Water levels (lake, water start) | **pass**: lake -0.0433 m (target -0.040 +/- 0.015), water -0.1697 m (target -0.170 +/- 0.020) |
+| `scripts/validation/check_fluid_constants.py` | **pass** (exit 0): 15 cbuffer names, 46 kernels, 51 `constant_count`s, 3 struct/kernel cross-checks; independent mutations (manifest count, swapped C++ members, HLSL packing) all fail it with exit 1 |
+| `scripts/validation/check_gl_twins.py` | **pass** (exit 0): every twin matches its HLSL and the registered bindings |
+| GL twin reproducibility | **pass**: regenerating the twins with the pinned SPIRV-Cross reproduces them byte-for-byte (`git diff` empty) |
+| GL twins at runtime | **not run**: the native Linux build is Vulkan-only, so the twins are validated statically only (§5.3) |
+| `backyard8_regression.py` — `screen-space` captures | **pass**: f24 0.000 %, f90 0.096 %, f300 0.362 % pixels, dbox <= 2 |
+| `backyard8_regression.py` — `splat` captures | **pass** (references from `ec0ee11`, not re-frozen): f24 0.002 %, f90 0.120 %, f300 0.047 % pixels, dbox <= 1 |
+| `backyard8_regression.py` — `spheres` captures | **pass** (not re-frozen): f24 0.000 %, f90 0.355 %, f300 0.169 % pixels, dbox <= 2 |
+| Water levels (lake, water start) | **pass**: lake -0.0439 m (target -0.040 +/- 0.015), water -0.1701 m (target -0.170 +/- 0.020) |
 | Full gate | `RESULT: PASS`, exit 0 |
 
 ### 5.2 The screen-space reference re-freeze
@@ -225,10 +233,22 @@ The `screen-space` references in `scripts/validation/backyard8_references.json` 
 at `ec0ee11`, before `3ad6d1a` rewrote `CS_ParticleShade.hlsl` and `9f83cd1` retuned it, so they
 were stale by construction and the gate failed them (f90 50.6 %, f300 113.9 % pixels) while
 `splat` and `spheres` passed at <= 0.31 %. The orchestrator showed this is not a config problem:
-running with a JSON that omits the new WO-1 keys gives the same f90 statistics. Only the three
-`screen-space` entries were re-frozen (WO-4 §2), after Claude's visual sign-off; `splat`,
-`spheres`, `tolerances` and `water_level` are untouched, which is why they still pass without
-re-freezing.
+running with a JSON that omits the new WO-1 keys gives the same f90 statistics. WO-4 re-froze the
+three `screen-space` entries from one run (`2105406`). The wet-deck rework (`2cfa0f6`) changed
+them again: f24 is identical (nothing has landed yet), while at f90/f300 the deck is darker and
+the reconstructed wet region covers 1-2 % more pixels. Claude re-froze the entries as the mean of
+three runs, with the median bbox. `splat`, `spheres`, `tolerances` and `water_level` were never
+re-frozen, which is why they still pass against `ec0ee11`.
+
+The gate compares statistics (covered pixels, bounding box, mean colour) with tolerances, not
+bytes. The renderer is not bit-exact run to run: atomic ordering in the solver grid and the
+secondary-particle ring make two runs with an identical binary differ in individual bytes.
+Measured spread of the statistics with the gate's own arguments: covered pixels f24 <= 0.005 %,
+f90 <= 0.2 %, f300 <= 1.2 % (tolerances 0.5 / 2 / 2 %). The tightest margin is the f300 bounding
+box: since the wet deck joined the covered region, its top edge is the farthest wet patch on the
+far deck, set by chaotic droplet landings. Over 8 runs it fell at 226..232 px against the frozen
+229 and a 5 px tolerance. If that check ever flakes, raise the f300 `bbox_px` tolerance with this
+explanation rather than re-freezing on a single run.
 
 ### 5.3 Windows (native x64 Release, not Proton) — **not run**
 
@@ -254,13 +274,14 @@ SRV of a DDS cube, GL `samplerCube`), half-resolution targets, and the 100-DWORD
 
 - **Windows backends unrun**: D3D12, D3D11 and GL have not been verified on this tree; the
   cube-map-in-compute binding and the 100-DWORD constant block are the expected risks (§5.3).
-  Run the gate on a native Windows host before calling those backends done.
+  The GL twins have never executed at all (the native Linux build is Vulkan-only). Run the gate
+  on a native Windows host before calling those backends done.
 - **Solver GPU time is unmeasured**: the four `CS_Pbf*` whitewater kernels are dispatched from
   `PbfFluid.cpp` with no `ProfileScopeGuard`, so `--profile` cannot report them (§4). Adding
   scopes around the four dispatches in `ComputeWhitewater()` (plus the main `Step` passes) would
   make the whitewater cost attributable.
 - **`screen-space` references are Vulkan-only**: they were re-frozen on Vulkan at
-  `2105406` (§5.2). Expect small per-backend differences on Windows; re-freeze per backend only
+  `2cfa0f6` (§5.2). Expect small per-backend differences on Windows; re-freeze per backend only
   once the difference is understood.
 - **Exact curvature flow** (the paper's 40-100 iterations) is still not implemented; the shipped
   filter is the edge-aware a-trous chain at half resolution (item 1 of

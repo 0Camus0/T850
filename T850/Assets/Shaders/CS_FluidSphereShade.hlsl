@@ -11,10 +11,8 @@
 // The water style (style 0) no longer reaches this kernel: the water of the particle renderer
 // is now surfel splatting, which runs the screen-space pipeline (CS_FluidSplat Iteration 2,
 // CS_FluidResolve stage 2, CS_ParticleShade Mode 2) and draws the whole screen-space shade.
-// Neither path loops over particles. The thickness buffer, the scene colour and the scene
-// depth stay declared AND kept live (KeepWaterBindings): the manifest, the render graph and
-// check_fluid_constants.py declare the bindings, and check_gl_twins.py requires the twin to
-// carry the same binding set - a declaration that is never read is dropped from the SPIR-V.
+// The scene colour / scene depth / thickness resources the water style used are gone with it.
+// Neither path loops over particles.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -73,32 +71,10 @@ StructuredBuffer<uint> Keys : register(t1);
 #endif
 RWTexture2D<float4> OutputTexture : register(u0);
 
-#if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(4, 0)]]
-#endif
-StructuredBuffer<uint> ThicknessBits : register(t2);
-
-#if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(5, 0)]]
-#endif
-Texture2D<float4> SceneColor : register(t3);
-
-#if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(6, 0)]]
-#endif
-SamplerState LinearSampler : register(s3);
-
-#if defined(T850_VULKAN) || defined(T850_SPIRV)
-[[vk::binding(7, 0)]]
-#endif
-Texture2D<float> SceneDepth : register(t4);
-
 #if defined(T850_GL)
   #define T850_IMAGE_Y(y, h) ((uint)(h) - 1u - (uint)(y))
-  #define T850_UV(uv) float2((uv).x, 1.0f - (uv).y)
 #else
   #define T850_IMAGE_Y(y, h) (uint)(y)
-  #define T850_UV(uv) (uv)
 #endif
 
 // Must match CS_FluidSplat: index bits of the key and the disc radius cap.
@@ -137,56 +113,6 @@ float3 ViewPosition(float2 pixel, float z)
                   -(pixel.y - 0.5f * float(OutputHeight)) * z / f, z);
 }
 
-float2 ProjectToPixel(float3 q)
-{
-    const float f = Focal();
-    return float2(q.x * f / q.z + 0.5f * float(OutputWidth),
-                  -q.y * f / q.z + 0.5f * float(OutputHeight));
-}
-
-float LinearSceneDepth(int2 coordinate)
-{
-    const int2 clamped = clamp(coordinate, int2(0, 0),
-                               int2(int(OutputWidth) - 1, int(OutputHeight) - 1));
-    const float raw = SceneDepth.Load(int3(clamped.x, int(T850_IMAGE_Y(clamped.y, OutputHeight)), 0));
-    return raw > 0.0f && abs(raw - ProjA) > 1e-9f ? ProjB / (raw - ProjA) : 1.0e9f;
-}
-
-float3 SampleScene(float2 pixel)
-{
-    const float2 uv = saturate(pixel / float2(float(OutputWidth), float(OutputHeight)));
-    return SceneColor.SampleLevel(LinearSampler, T850_UV(uv), 0.0f).rgb;
-}
-
-float LoadThickness(int2 coordinate)
-{
-    if (coordinate.x < 0 || coordinate.y < 0 ||
-        coordinate.x >= int(OutputWidth) || coordinate.y >= int(OutputHeight))
-        return 0.0f;
-    return float(ThicknessBits[uint(coordinate.x) + uint(coordinate.y) * OutputWidth]) *
-           (1.0f / 1024.0f);
-}
-
-// Style 0 (water) moved to CS_ParticleShade with surfel splatting. These three resources are
-// kept bound and live: the manifest, the render graph and check_fluid_constants.py declare the
-// bindings, and check_gl_twins.py requires the twin to carry the same binding set - a
-// declaration that is never read is dropped from the SPIR-V. Each read happens on every thread
-// (no Style guard, so no resource can be elided). glslang constant-folds `* 0.0f` before
-// pruning, so a plain zero product would kill the references; instead each read is folded to
-// exactly 0 through a comparison the optimiser cannot prove (every quantity here is finite and
-// bounded far below 1e30, so each select is always 0 and the result is exactly 0, but the reads
-// stay live in the SPIR-V).
-float KeepWaterBindings(int2 coordinate)
-{
-    const float sceneDepth = LinearSceneDepth(coordinate);
-    const float thickness = LoadThickness(coordinate);
-    const float3 scene = SampleScene(float2(coordinate) + 0.5f);
-    const float a = sceneDepth > 1.0e30f ? 1.0f : 0.0f;
-    const float b = thickness > 1.0e30f ? 1.0f : 0.0f;
-    const float c = dot(scene, scene) > 1.0e30f ? 1.0f : 0.0f;
-    return a + b + c;
-}
-
 float4 ShadeSphere(uint index, float3 normal, float3 toCamera)
 {
     const float3 albedo = RampColor(Hash(index * 2654435761u) * 0.35f);
@@ -208,15 +134,10 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= OutputWidth || id.y >= OutputHeight) return;
 
     const uint2 imagePixel = uint2(id.x, T850_IMAGE_Y(id.y, OutputHeight));
-    // The water style's three scene resources, read on every thread (no Style guard) and added
-    // to the alpha. KeepWaterBindings folds each read to exactly 0 through a comparison the
-    // optimiser cannot prove (bounded quantities vs 1e30), so x == 0 and styles 1, 2 and 3
-    // render exactly as before while the reads stay live in the SPIR-V.
-    const float x = KeepWaterBindings(int2(id.xy));
     const uint key = Keys[id.x + id.y * OutputWidth];
     const uint index = key & KEY_INDEX_MASK;
     if (key == 0xFFFFFFFFu || index >= ParticleCount) {
-        OutputTexture[imagePixel] = float4(0.0f, 0.0f, 0.0f, x);
+        OutputTexture[imagePixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
     const float4 proj = Projected[index];
@@ -226,7 +147,7 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float2 offset = (pixelCentre - proj.xy * size) / max(r, 1.0e-3f);
     const float rho2 = dot(offset, offset);
     if (proj.z <= 0.0f || rho2 > 1.0f) {
-        OutputTexture[imagePixel] = float4(0.0f, 0.0f, 0.0f, x);
+        OutputTexture[imagePixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
     const float bulge = sqrt(1.0f - rho2);
@@ -239,13 +160,13 @@ void CS(uint3 id : SV_DispatchThreadID)
         const float edge = 1.0f / max(r, 1.0f);
         const float ring = smoothstep(inner - edge, inner + edge, sqrt(rho2));
         const float3 tint = RampColor(Hash(index * 2654435761u) * 0.35f);
-        OutputTexture[imagePixel] = float4(tint, saturate(Opacity) * ring + x);
+        OutputTexture[imagePixel] = float4(tint, saturate(Opacity) * ring);
         return;
     }
     // Flat: one hard-filled, unlit disc per particle, alpha = opacity.
     if (Style == 2u) {
         const float3 tint = RampColor(Hash(index * 2654435761u) * 0.35f);
-        OutputTexture[imagePixel] = float4(tint, saturate(Opacity) + x);
+        OutputTexture[imagePixel] = float4(tint, saturate(Opacity));
         return;
     }
 
@@ -253,11 +174,10 @@ void CS(uint3 id : SV_DispatchThreadID)
         // View space: x right, y up, z away from the camera. Pixel y grows down.
         const float3 normal = normalize(float3(offset.x, -offset.y, -bulge));
         const float3 toCamera = -normalize(ViewPosition(pixelCentre, 1.0f));
-        const float4 sphere = ShadeSphere(index, normal, toCamera);
-        OutputTexture[imagePixel] = float4(sphere.rgb, sphere.a + x);
+        OutputTexture[imagePixel] = ShadeSphere(index, normal, toCamera);
         return;
     }
     // Style 0 (water) no longer reaches this kernel: the particle renderer's water is surfel
     // splatting on the screen-space pipeline (CS_ParticleShade Mode 2).
-    OutputTexture[imagePixel] = float4(0.0f, 0.0f, 0.0f, x);
+    OutputTexture[imagePixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
 }

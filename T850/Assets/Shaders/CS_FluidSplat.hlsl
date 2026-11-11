@@ -388,31 +388,30 @@ void CS(uint3 id : SV_DispatchThreadID)
         const int2 lo = max(max(int2(floor(cPx - bPx)), int2(floor(tightLo))), int2(0, 0));
         const int2 hi = min(min(int2(ceil(cPx + bPx)), int2(ceil(tightHi))), screenMax);
         if (lo.x > hi.x || lo.y > hi.y) return;
-        // Surfel early out: if the particle's nearest view depth lies more than SurfelBand
-        // behind the NEAREST real front surface this pixel rectangle can see, no pixel of the
-        // rectangle can contribute, so skip the whole loop. Taps: the centre pixel (always
-        // inside the tight rectangle) and its four corners. A tap on an empty pixel reads as
-        // infinitely far and is ignored; the bound is the NEAREST of the valid taps, so the
-        // test can never return on a pixel that AccumulateSurfel would accept: a front surface
-        // within the band of this ellipsoid's front hit is the nearest of the five, and it
-        // fails the test.
+        // Surfel early out: tap the front depth at the centre pixel and the four corners of
+        // [lo, hi]. If even the FARTHEST front surface of these taps is more than SurfelBand
+        // behind this ellipsoid's nearest point (c.z - bound), then no pixel of the rectangle
+        // has a front surface within the band of any of this ellipsoid's hits, so skip the whole
+        // loop. An empty tap (bits >= 0x7F800000u) disables the test: part of the rectangle saw
+        // nothing before this particle, so the front-surface bound cannot be trusted and the
+        // particle must be scattered (its front layer there is exactly what the surfel pass
+        // exists to build).
         if (surfelPass) {
             const int2 cp = max(min(int2(floor(cPx)), screenMax), int2(0, 0));
-            const float2 cornerOffset = float2(hi - lo) / max(float2(hi - lo), float2(1, 1));
             const uint2 taps[5] = { cp,
-                                    uint2(lo.x,                 lo.y),
-                                    uint2(hi.x,                 lo.y),
-                                    uint2(lo.x,                 hi.y),
-                                    uint2(hi.x - cornerOffset.x, hi.y - cornerOffset.y) };
-            // [unroll] cannot be combined with a non-constant array bound in this compiler;
-            // the five taps are fixed.
-            float nearest = 1.0e30f;
+                                    uint2(lo.x, lo.y),
+                                    uint2(hi.x, lo.y),
+                                    uint2(lo.x, hi.y),
+                                    uint2(hi.x, hi.y) };
+            bool trusted = true;
+            float farthest = 0.0f;
             [unroll]
             for (int k = 0; k < 5; ++k) {
                 const uint bits = DepthBits[taps[k].x + taps[k].y * OutputWidth];
-                if (bits < 0x7F800000u) nearest = min(nearest, asfloat(bits));
+                if (bits >= 0x7F800000u) { trusted = false; break; }
+                farthest = max(farthest, asfloat(bits));
             }
-            if (nearest < 1.0e30f && c.z - bound > nearest + SurfelBand) return;
+            if (trusted && c.z - bound > farthest + SurfelBand) return;
         }
         for (int y = lo.y; y <= hi.y; ++y) {
             for (int x = lo.x; x <= hi.x; ++x) {

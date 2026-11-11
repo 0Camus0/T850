@@ -393,24 +393,6 @@ void CS(uint3 id : SV_DispatchThreadID)
         const int2 lo = max(max(int2(floor(cPx - bPx)), int2(floor(tightLo))), int2(0, 0));
         const int2 hi = min(min(int2(ceil(cPx + bPx)), int2(ceil(tightHi))), screenMax);
         if (lo.x > hi.x || lo.y > hi.y) return;
-        // Disc axis for the surfel normal: six power-iteration steps of the view-space quadric
-        // from world up. It converges to the largest eigenvalue's eigenvector, the shortest
-        // quadric axis, which is the disc normal of a surface particle; a level surface
-        // converges at once. Computed only after the early out, so skipped particles pay for
-        // nothing.
-        float3 surfelNormal = float3(0.0f, 0.0f, -1.0f);
-        float surfelFlatness = 0.0f;
-        if (surfelPass) {
-            float3 v = ViewFromClip(ViewProjection[1]);
-            [unroll]
-            for (int it = 0; it < 6; ++it) v = mul(viewM, v / max(length(v), 1.0e-20f));
-            const float len = length(v);
-            if (len > 1.0e-20f) surfelNormal = v / len;
-            if (dot(surfelNormal, c) > 0.0f) surfelNormal = -surfelNormal;   // face the camera
-            // CS_PbfAnisotropy's spray flag: an isolated droplet is a sphere (its own dome
-            // normal); every other particle is a disc in the surface (the axis normal).
-            surfelFlatness = 1.0f - saturate(shape2.w);
-        }
         // Surfel early out: tap the front depth at the centre pixel and the four corners of
         // [lo, hi]. If even the FARTHEST front surface of these taps is more than SurfelBand
         // behind this ellipsoid's nearest point (c.z - bound), then no pixel of the rectangle
@@ -435,6 +417,23 @@ void CS(uint3 id : SV_DispatchThreadID)
                 farthest = max(farthest, asfloat(bits));
             }
             if (trusted && c.z - bound > farthest + SurfelBand) return;
+        }
+        // Disc axis for the surfel normal: six power-iteration steps of the view-space quadric
+        // from world up. It converges to the largest eigenvalue's eigenvector, the shortest
+        // quadric axis, which is the disc normal of a surface particle; a level surface
+        // converges at once. Computed after the early out, so skipped particles pay nothing.
+        float3 surfelNormal = float3(0.0f, 0.0f, -1.0f);
+        float surfelFlatness = 0.0f;
+        if (surfelPass) {
+            float3 v = ViewFromClip(ViewProjection[1]);
+            [unroll]
+            for (int it = 0; it < 6; ++it) v = mul(viewM, v / max(length(v), 1.0e-20f));
+            const float len = length(v);
+            if (len > 1.0e-20f) surfelNormal = v / len;
+            if (dot(surfelNormal, c) > 0.0f) surfelNormal = -surfelNormal;   // face the camera
+            // CS_PbfAnisotropy's spray flag: an isolated droplet is a sphere (its own dome
+            // normal); every other particle is a disc in the surface (the axis normal).
+            surfelFlatness = 1.0f - saturate(shape2.w);
         }
         for (int y = lo.y; y <= hi.y; ++y) {
             for (int x = lo.x; x <= hi.x; ++x) {

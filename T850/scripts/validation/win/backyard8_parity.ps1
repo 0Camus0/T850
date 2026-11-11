@@ -19,16 +19,20 @@ $ErrorActionPreference = 'Continue'
 $exeDir = Split-Path -Parent $Exe
 $project = Split-Path -Parent (Split-Path -Parent $exeDir)     # <project>\bin\x64\Release
 $assets = Join-Path $project 'Assets\Scenes\Backyard8Fluid.json'
-$gate = Join-Path $project 'scripts\validation\backyard8_regression.py'
-$ppm2png = Join-Path $project 'scripts\validation\ppm2png.py'
+# Absolute: the gate runs from a child PowerShell whose working directory is
+# bin\x64\Release, which is what broke the first matrix run.
+$gate = (Resolve-Path (Join-Path $project 'scripts\validation\backyard8_regression.py')).Path
+$ppm2png = (Resolve-Path (Join-Path $project 'scripts\validation\ppm2png.py')).Path
 $progress = Join-Path $Out 'progress.txt'
 
 New-Item -ItemType Directory -Force $Out | Out-Null
-"=== parity start $(Get-Date -Format o) exe=$Exe" | Set-Content $progress
+# UTF-8, not PowerShell 5.1's default UTF-16: the progress file is read on Linux.
+"=== parity start $(Get-Date -Format o) exe=$Exe" | Set-Content $progress -Encoding utf8
 "session=$((Get-Process -Id $PID).SessionId) exe_time=$((Get-Item $Exe).LastWriteTime)"
 
 function Note([string]$line) {
-    $line | Tee-Object -FilePath $progress -Append | Write-Host
+    Add-Content -LiteralPath $progress -Value $line -Encoding utf8
+    Write-Host $line
 }
 
 # The spheres style: same scene config, renderMode 0 and style 3.
@@ -140,11 +144,13 @@ function Run-Gate([string]$api) {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     Push-Location $exeDir
     try {
-        $text = & python $gate --api $api --day-scene $Exe 2>&1 | Out-String
+        # The gate imports pbf_water_level from its own folder and needs cwd = exe dir only
+        # for the dumps_* folders it creates there.
+        $text = & python $gate --api $api --day-scene $Exe --references (Join-Path $project 'scripts\validation\backyard8_references.json') 2>&1 | Out-String
     } finally { Pop-Location }
     $sw.Stop()
     $code = $LASTEXITCODE
-    $text | Set-Content $log
+    $text | Set-Content $log -Encoding utf8
     Note "GATE $api exit=$code $([int]$sw.Elapsed.TotalSeconds)s"
     $text.Trim().Split("`n") | Where-Object { $_ -match '^(PASS|FAIL|RESULT)' } | ForEach-Object { Note "  $($_.Trim())" }
     Scan-Log "$api/gate" $log

@@ -67,6 +67,11 @@ private:
   void BuildSettings(t850::PbfSettings& out) const;
   void BuildParticleDesc();
   void RegisterParticleSystem();
+  // renderMode 1, or the particle renderer's water style (renderMode 0, alpha blend, style 0):
+  // the water shade of the screen-space pipeline.
+  bool UsesWaterShade() const;
+  // The particle renderer's water style: the screen-space pipeline with surfel splatting.
+  bool UsesSurfels() const;
   void ApplyRenderModeToGraph();
   void ApplyStartMode();
   void DrawSolverPanel(t850::DevGuiContext& gui);

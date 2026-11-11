@@ -75,6 +75,10 @@ namespace t850 {
     int blend = 1;        // 0 additive, 1 alpha
     int style = 0;        // 0 water (blended), 1 wireframe, 2 flat, 3 lit spheres
     int renderMode = 1;   // 0 splat, 1 screen space
+    // Surfel splatting (the particle renderer's water style): the front layer of anisotropic
+    // particles blended into depth and normal in one pass.
+    float surfelBand = 1.0f;        // surfel band, in particle radii (see ParticleSystem.h)
+    float surfelSharpness = 2.0f;   // exponent on the ellipsoid's centre weight
     float sizeScaleMin = 1.0f;
     float sizeScaleMax = 1.0f;
     std::string buffer = "BackyardWaterPositions";

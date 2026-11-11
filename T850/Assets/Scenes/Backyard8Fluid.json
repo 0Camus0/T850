@@ -43,6 +43,8 @@
     "blend": 1,
     "style": 0,
     "renderMode": 1,
+    "surfelBand": 1.0,
+    "surfelSharpness": 2.0,
     "sizeScaleMin": 1.0,
     "sizeScaleMax": 1.0,
     "buffer": "BackyardWaterPositions",

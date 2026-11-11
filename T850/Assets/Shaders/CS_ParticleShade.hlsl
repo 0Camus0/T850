@@ -192,6 +192,18 @@ RWStructuredBuffer<uint> WhitewaterBits : register(u1);
 
 #define PI 3.14159265f
 
+// WO-P3: Fresnel gating of the screen-space reflection. The reflection is only traced where
+// the Fresnel term carries it into the pixel; below F0 it is skipped and the environment
+// stands in. F1 is chosen so the 4K default and close views change by < 0.5 level mean abs
+// difference. Overridable at compile time for the (F0, F1) sweep; the committed values are
+// the chosen pair.
+#ifndef FresnelGatingF0
+  #define FresnelGatingF0 0.0f
+#endif
+#ifndef FresnelGatingF1
+  #define FresnelGatingF1 0.10f
+#endif
+
 // Set once per thread at the top of CS().
 static uint2 FluidSize;
 static float EnvMaxMip;
@@ -454,6 +466,19 @@ float3 SkyIrradiance()
     sum += EnvRadiance(normalize(float3(0.0f, 0.7f, 0.7f)), mip);
     sum += EnvRadiance(normalize(float3(0.0f, 0.7f, -0.7f)), mip);
     return sum / 6.0f;
+}
+
+// WO-P3: SkyIrradiance() is the same for every pixel (the scene's sky cube does not vary
+// across the screen), so compute it once per 8x8 group: thread 0 samples it into shared
+// memory, the whole group synchronises, and every thread reads the cached value. The barrier
+// must be reached by every thread in the group, so the caller passes the flag that tells this
+// thread whether to compute (the group's first thread), then reads `result` after it.
+groupshared float3 g_skyIrradiance;
+void ComputeSkyIrradiance(bool compute, out float3 result)
+{
+    if (compute) g_skyIrradiance = SkyIrradiance();
+    GroupMemoryBarrierWithGroupSync();
+    result = g_skyIrradiance;
 }
 
 // Henyey-Greenstein phase relative to isotropic scattering (1 = isotropic).
@@ -1069,8 +1094,26 @@ float3 PoolSurfaceBehind(float3 pointWorld, float3 directionWorld, float3 sunWor
 [numthreads(8, 8, 1)]
 void CS(uint3 id : SV_DispatchThreadID)
 {
+    // WO-P3: the sky term is a per-frame constant, so compute it once per 8x8 group. Every
+    // thread must reach the group barrier, including the ones that early-out afterwards:
+    // in splat mode (Mode 0) no thread computes and all just pass the barrier; in shade mode
+    // each 8x8 group's first thread (the top-left pixel when the window is a multiple of 8,
+    // otherwise the first in-range pixel) computes and the rest read the shared value.
+    const bool shade = Mode != 0u;
+    const bool inRange = id.x < OutputWidth && id.y < OutputHeight;
+    // `xFirst` is the group's top-left thread (id.x is the group's column 0; id.y is the
+    // group's first row). It is always present in a real group.
+    const bool xFirst = (id.x & 7u) == 0u;
+    // If the group's top row is out of range its top-left thread early-outs below, so the
+    // first in-range thread of that column computes instead. Every group therefore has
+    // exactly one computing thread, and every thread reads the same shared value.
+    const bool computeSky = shade && inRange &&
+        (xFirst ? (id.y & 7u) == 0u : ((id.x + 1u) & 7u) == 0u);
+    float3 skyAmbient;
+    ComputeSkyIrradiance(computeSky, skyAmbient);
+
+    if (!inRange) return;
     if (Mode == 0u) return;   // Splat mode: leave the splat target untouched.
-    if (id.x >= OutputWidth || id.y >= OutputHeight) return;
 
     SurfaceDepth.GetDimensions(FluidSize.x, FluidSize.y);
     uint envWidth, envHeight, envLevels;
@@ -1097,7 +1140,6 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float3 sunWorld = normalize(ToWorld(normalize(SunDirection.xyz)));
     float3 sunDown = refract(-sunWorld, float3(0.0f, 1.0f, 0.0f), 1.0f / 1.33f);
     if (dot(sunDown, sunDown) < 1.0e-6f || sunWorld.y <= 0.0f) sunDown = float3(0.0f, -1.0f, 0.0f);
-    const float3 skyAmbient = SkyIrradiance();
     const float sprayAlpha = saturate(1.0f - exp(-2.5f * sprayCover)) * saturate(FoamParams.w);
 
     float z;
@@ -1250,17 +1292,27 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float coneTan = 0.015f + 2.0f * sqrt(lostVariance);
     const float3 reflectedView = reflect(view, normal);
     const float3 reflectedWorld = ToWorld(reflectedView);
-    float3 hitColor;
-    const float hitWeight = TraceReflection(p, reflectedView, coneTan, hitColor);
-    const float envMip = clamp(log2(max(coneTan * 256.0f, 1.0f)), 0.0f, EnvMaxMip);
-    const float3 reflected = lerp(EnvRadiance(reflectedWorld, envMip), hitColor, hitWeight);
-    if (DebugView == 5u) { OutputTexture[imagePixel] = float4(reflected, 1.0f); return; }
 
     // Fresnel from a normal half-way between the surface and the ripples: a ripple facet must
     // not flip a grazing pixel to total reflection.
     const float3 fresnelNormal = normalize(macroNormal + normal);
     const float cosine = saturate(dot(fresnelNormal, toCamera));
     const float fresnel = 0.02f + 0.98f * pow(1.0f - cosine, max(FresnelPower, 1.0f));
+
+    // WO-P3: the Fresnel term does not depend on the trace, so it is computed first. Where it
+    // is below the F0..F1 band the reflection is imperceptible (water is ~2 % reflective at
+    // normal incidence), so the screen-space trace is skipped and the environment alone stands
+    // in for it. hitWeight * ssrWeight keeps the reflection's *intensity* unchanged where it
+    // does matter: a faint trace that Fresnel dims to a few percent is invisible anyway, while
+    // grazing pixels (fresnel ~ 1, ssrWeight 1) keep the full trace.
+    const float ssrWeight = smoothstep(FresnelGatingF0, FresnelGatingF1, fresnel);
+    float3 hitColor = float3(0.0f, 0.0f, 0.0f);
+    float hitWeight = 0.0f;
+    if (ssrWeight > 0.0f) hitWeight = TraceReflection(p, reflectedView, coneTan, hitColor);
+    const float envMip = clamp(log2(max(coneTan * 256.0f, 1.0f)), 0.0f, EnvMaxMip);
+    const float3 reflected = lerp(EnvRadiance(reflectedWorld, envMip), hitColor, hitWeight * ssrWeight);
+    if (DebugView == 5u) { OutputTexture[imagePixel] = float4(reflected, 1.0f); return; }
+
     float3 color = lerp(refracted, reflected, saturate(fresnel));
 
     // Sun glint: normalised Blinn-Phong whose lobe widens by the unresolved slope variance, so

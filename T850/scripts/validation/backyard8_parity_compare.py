@@ -186,7 +186,7 @@ def main():
         sheet.paste(tile_for(linux_imgs[cell].astype(np.uint8), cell), (PAD, y0))
         # API tiles.
         for j, api in enumerate(apis):
-            x = PAD * (j + 2) + j * TILE_W
+            x = PAD * (j + 2) + (j + 1) * TILE_W
             entry = results[api][cell]
             p = os.path.join(win_cell_dir(args.win, api, cell), "RT_Dump_HDR_Final.ppm")
             if entry["verdict"] == "missing" or not os.path.exists(p):

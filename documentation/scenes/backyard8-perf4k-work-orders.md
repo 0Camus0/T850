@@ -365,7 +365,7 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 |---|---|---|---|---|
 | P0 | qwen-5090 | done | dd412a8 | reviewed: owned files only; tooling works; 4K numbers UNGUARDED (GPU at 100% from qwen-local) |
 | P1 | qwen-local | in progress | | dispatched 2026-11-11 |
-| P2 | qwen-5090 | P2a in progress | | P2a (CS_PbfAnisotropy only) dispatched; P2b (splat) blocked by P1 |
+| P2 | qwen-5090 (me) | P2a commit ready to apply | 84357ee (on qwen-5090's worktree base, NOT in main tree) | P2a: buried = n>=24 and |mean|<=0.1R, stored as -n in Anisotropy[i*3+2].z; buried 75-78%; gate PASS 11/11, 78 PASS, validators 0; lake HDR not byte-identical (before/before also differs: 0.04-0.11 levels). Cherry-pick blocked by P1's uncommitted CS_PbfAnisotropy edits; reverted my edits in main tree to HEAD |
 | P3 | | blocked by P1 | | |
 | P4 | qwen-5090 | done | 4389a36, 6961c93 | Claude accepted 6961c93 (code); Claude measures the CPU numbers. 4389a36's body misdescribes the Deferred diff (point lights restored in static views) |
 | P5 | | blocked by P0-P4 and Claude's final numbers | | |

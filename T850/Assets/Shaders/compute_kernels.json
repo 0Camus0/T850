@@ -1536,7 +1536,7 @@
           "type": "constants",
           "shader_register": 0,
           "binding_index": 0,
-          "constant_count": 16
+          "constant_count": 20
         },
         {
           "type": "read_only_buffer",

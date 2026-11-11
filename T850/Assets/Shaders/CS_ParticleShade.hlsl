@@ -87,7 +87,7 @@ cbuffer ParticleShadeConstants : register(b0)
     float4 CausticParams;     // x = strength, y = pattern scale (m), z = speed, w = depth fade (m)
 
     float4 EnvParams;         // x = environmental intensity, y = surfel normal smoothing in
-                              // particle radii (0 = flat)
+                              // particle radii (0 = no gather: the nearest surfel normal)
     float4 PoolMin;           // basin interior min (y = floor), w = water plane y
     float4 PoolMax;           // basin interior max (y = coping top), w = deck y
     float4 LightParams;       // x = sun attenuation, y = caustic focus, z = contact line, w = backlight

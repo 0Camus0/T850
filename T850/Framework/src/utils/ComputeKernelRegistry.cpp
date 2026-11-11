@@ -202,7 +202,7 @@ struct ParticleShadeConstants {
   float skyHorizon[4];        // horizon sky
   float rippleParams[4];      // slope, longest wavelength (m), speed, fade distance (m)
   float causticParams[4];     // strength, scale (m), speed, depth fade (m)
-  float envParams[4];         // x = environment intensity (0 = analytic sky gradient), y = surfel normal smoothing (particle radii, 0 = flat)
+  float envParams[4];         // x = environment intensity (0 = analytic sky gradient), y = surfel normal gather radius (particle radii, 0 = no gather)
   float poolMin[4];           // basin interior min (y = floor), w = water plane y
   float poolMax[4];           // basin interior max (y = coping top), w = deck y
   float lightParams[4];       // sun attenuation, caustic focus, contact line, backlight

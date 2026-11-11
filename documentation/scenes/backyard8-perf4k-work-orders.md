@@ -486,6 +486,26 @@ To fix in a follow-up commit (`WO-P4: ...`):
 WO-P2a (`84357ee`, landed as `2ff6ea2`) accepted: measured thresholds, buried fraction 75-78 %,
 gate PASS, differences within noise.
 
+### WO-P1 reviewed (`c960808`): accepted (visual); Claude measures the 4K timing
+
+- Layout: `ThicknessShift` is appended at byte 256 (splat) and byte 400 (shade), so no
+  existing member moves. The checker now cross-checks `ParticleSplatConstants` against its C++
+  mirror. Both validators exit 0. The build is current. `CS_ParticleSplat` had to change for
+  the shared cbuffer, which is acceptable outside the file list.
+- 4K HDR_Final, `thicknessDownsample` 2 against 1 (same build), compared with the noise of two
+  identical runs set to 1. Values are mean levels per channel, then p99.
+
+| Cell | Noise (1 vs 1) | Downsample 2 vs 1 |
+|---|---|---|
+| Default, lake f300 | 0.23-0.32, p99 9 | 0.24-0.31, p99 9 |
+| Close, lake f300 | 0.60-0.75, p99 11 | 0.57-0.72, p99 10 |
+| Close, water f150 | 1.9-4.3, p99 34 | 2.0-4.3, p99 32 |
+
+- Difference maps of the two pairs look alike (ripple and caustic decorrelation). Claude viewed
+  crops of the far pool edge: no blockiness, offset or silhouette change.
+- The commit body has no 4K timing. Claude measures it with the GPU idle, together with WO-P2b
+  and WO-P3.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

@@ -43,6 +43,9 @@ Required conventions:
 - One constant buffer per kernel, at `b0`, matching the host struct **field for field**.
 - `RWStructuredBuffer` only — scalar atomics only. `InterlockedAdd` on a vector component
   crashes Tint's SPIR-V reader (WebGPU) and has no fallback.
+- Never use `isfinite`/`isnan`/`isinf`, scalar or vector: they lower to `OpIsNan`/`OpIsInf`
+  and WebGPU's Tint reader aborts the process. Test the exponent bits —
+  `(asuint(v) & 0x7F800000u) != 0x7F800000u` — which is false exactly for NaN and ±Inf.
 - A `RWTexture2D` storage output needs **both** qualifiers, in this order, or
   `ComputeReflection` rejects it:
 
@@ -94,6 +97,8 @@ Rules that bite:
   gives the second a fresh binding, which WebGPU rejects at bind time;
   `check_fluid_constants.py` fails it for you.
 - `storage_format` is required for `storage_texture` and drives RT format validation.
+- Read-only cube textures are portable: declare `"dimension": "cube"` on a `sampled_texture`
+  and every backend binds the texture's own cube view. There is no writable cube form.
 - Only `type` values `constants | read_only_buffer | read_write_buffer | sampled_texture |
   storage_texture | sampler` are valid.
 

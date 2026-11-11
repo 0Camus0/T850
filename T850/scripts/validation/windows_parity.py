@@ -39,6 +39,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -324,6 +325,14 @@ $copied = 0; $added = 0; $same = 0
 # Changed and new files get the host's current time, so MSBuild's timestamp comparison sees
 # them as newer than the objects built from the previous revision. Unchanged files are left
 # alone entirely. (A fixed timestamp would hide changes from the incremental build.)
+function Get-LfHash([string]$path) {
+    # SHA1 of the bytes with CR removed, so CRLF and LF copies of the same text compare equal.
+    $bytes = [IO.File]::ReadAllBytes($path)
+    $out = New-Object 'System.Collections.Generic.List[byte]' ($bytes.Length)
+    foreach ($b in $bytes) { if ($b -ne 13) { $out.Add($b) } }
+    $sha = [Security.Cryptography.SHA1]::Create()
+    return [BitConverter]::ToString($sha.ComputeHash($out.ToArray())).Replace('-', '')
+}
 $now = (Get-Date).ToUniversalTime()
 foreach ($entry in $manifest.files) {
     $name = $entry[0] -as [string]
@@ -336,6 +345,13 @@ foreach ($entry in $manifest.files) {
         $b = (Get-FileHash $dst -Algorithm SHA1).Hash
         if ($b -eq $hash.ToUpper()) {
             # Untouched: leave the time alone, or MSBuild would think it changed.
+            $same++
+            continue
+        }
+        if ((Get-LfHash $dst) -eq (Get-LfHash $src)) {
+            # Same text, different line endings. Keep the host's bytes: git and SetupDawn's
+            # recipe hashes were taken over them, and a rewrite would also make the checkout
+            # dirty. Not a content change, so the timestamp stays too.
             $same++
             continue
         }
@@ -508,6 +524,14 @@ def remote_task_running(host):
         return True
 
 
+def declared_parameters(text):
+    """Parameter names of a PowerShell script, e.g. ['Exe', 'Out']."""
+    match = re.search(r"(?is)^\s*param\s*\((.*?)\)\s*\n", text, re.MULTILINE)
+    if not match:
+        return []
+    return re.findall(r"\[[^\]]*\]\s*\$(\w+)", match.group(1))
+
+
 def cmd_run(args):
     host = Host(args.host, args.root)
     script = Path(args.script).resolve()
@@ -528,16 +552,16 @@ def cmd_run(args):
     # Scripts that declare -Exe/-Out get the project's DayScene and <root>\__parity\<tag>\out; no
     # host path is stored in the repository itself.
     text = script.read_text(encoding="utf-8", errors="replace")
-    extra = ""
-    if "$Exe" in text:
-        exe = host.win("T850\\T850\\bin\\x64\\Release\\DayScene.exe")
-        extra += f"$Exe = '{exe}'\n"
-    if "$Out" in text:
-        extra += f"$Out = '{remote_dir}\\out'\n"
+    names = declared_parameters(text)
+    exe = host.win("T850\\T850\\bin\\x64\\Release\\DayScene.exe")
+    out_dir = remote_dir + "\\out"
+    values = {"Exe": exe, "Out": out_dir, "Root": args.root}
+    args_ps = "@(" + ", ".join(
+        f"'-{n}', '{values[n]}'" for n in names if n in values) + ")"
     launch = Path(SCRATCH) / f"launch_{tag}.ps1"
     launch.write_text(
         f"$Dir = '{remote_dir}'\n$ScriptPath = '{remote_dir}\\{script.name}'\n"
-        + extra + WRAPPER_SCRIPT, encoding="utf-8")
+        f"$scriptArgs = {args_ps}\n" + WRAPPER_SCRIPT, encoding="utf-8")
     launch_remote = host.win(f"__parity\\launch_{tag}.ps1")
     host.copy_to(launch, launch_remote)
     launcher = host.win("start_task.ps1")
@@ -589,7 +613,7 @@ $done = Join-Path $Dir 'DONE.txt'
 $errorFile = Join-Path $Dir 'ERROR.txt'
 Remove-Item -LiteralPath $done, $errorFile -ErrorAction SilentlyContinue
 try {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath *>&1 | Tee-Object -FilePath $log
+    & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath @scriptArgs *>&1 | Tee-Object -FilePath $log
     $code = $LASTEXITCODE
     if ($null -eq $code) { $code = 0 }
 } catch {

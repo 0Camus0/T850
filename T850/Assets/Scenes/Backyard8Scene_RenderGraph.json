@@ -793,26 +793,6 @@
           "resource": "FluidParticles:COLOR0",
           "access": "storage_write",
           "shader_register": 0
-        },
-        {
-          "resource": "__fluid_thickness_bits_BackyardWater",
-          "access": "buffer_read",
-          "shader_register": 2
-        },
-        {
-          "resource": "Deferred:COLOR0",
-          "access": "sampled",
-          "shader_register": 3
-        },
-        {
-          "resource": "Deferred:COLOR0",
-          "access": "sampler",
-          "shader_register": 3
-        },
-        {
-          "resource": "GBuffer:DEPTH",
-          "access": "sampled",
-          "shader_register": 4
         }
       ],
       "draws": []

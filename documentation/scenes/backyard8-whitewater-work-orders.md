@@ -140,11 +140,18 @@ Files: GL twins `T850/Assets/Shaders/*.glsl`, `T850/scripts/validation/backyard8
 
 | WO | Owner | State | Commit | Results |
 |---|---|---|---|---|
-| Claude: tuning and visual sign-off | Claude | in progress | | |
+| Claude: tuning and visual sign-off | Claude | done (Vulkan) | see `git log` "Backyard 8: tune whitewater" | Potentials calibrated on particle dumps (trapped air 3..15, energy 0.5..10, crest 0.3..2; calm pool never emits); shorter freshwater lifetimes; secondary particles drawn as soft density blobs (no pixel dots); foam lace modulates opacity; splash droplets shaded as whitewater; caustics capped at 2.5x; half-res splat no longer tests opaque depth (the shade re-tests at full res). Cost (GPU, 1080p, Vulkan): Fluid Splat 0.83 ms default camera / 2.4 ms close-up camera (was 1.85 / 7.0 in ec0ee11); shade 0.13-0.23 ms; Whitewater Splat 0.17 ms during the splash. |
 | WO-1 config + GUI | | | | |
 | WO-2 constants checker | | | | |
 | WO-3 docs | | | | |
-| WO-4 validation + backends | | blocked (wait for READY FOR WO-4) | | |
+| WO-4 validation + backends | | READY FOR WO-4 as soon as WO-1 is committed | | |
+
+## Notes from Claude
+
+- Debug views 7-9 only work after WO-1 raises the `debugView` clamp in `BuildParticleDesc`
+  (it is still 0..6, so 7-9 silently show view 6). Check all three in WO-1's acceptance run.
+- WO-3: add the tuning row above to the design summary; WO-4 replaces the cost numbers with its
+  own measurements.
 
 ## Requests to Claude
 

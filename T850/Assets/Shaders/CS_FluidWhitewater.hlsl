@@ -9,10 +9,13 @@
 //   [2] bubbles  under the surface, dimmed by the water above them   (coverage x 4096)
 //   [3] sparkle  brightest single bubble on the pixel                (max, x 65535)
 //
-// A particle is a soft disc of its class radius, at least about a pixel wide; a sub-pixel
-// droplet contributes its fractional coverage instead of vanishing. Opaque geometry in front
-// of it hides it (full-resolution scene depth); the water surface decides its class's
-// visibility (the screen-space depth, possibly at a lower resolution).
+// No class is drawn as a dot (thousands of pixel dots read as speckle noise): each particle is
+// a soft blob larger than itself (2.5x for spray, 3x for foam and bubbles, at least 1.5 px)
+// that carries only its own area, so a lone particle is a faint smudge and a cluster builds a
+// continuous density field: a spray mist, foam the shade turns into lace, milky bubbly water.
+// Opaque geometry in front hides a particle (full-resolution scene depth); the water surface
+// decides its class's visibility. Bubbles fade with their depth under the surface (the
+// aerated, scattering water above them hides them faster than clear water would).
 //
 // One thread per pool slot; free slots (life <= 0) return at once.
 
@@ -103,8 +106,8 @@ void CS(uint3 id : SV_DispatchThreadID)
                           0.5f * float2(float(OutputWidth), float(OutputHeight));
     const float radius = kind < 0.5f ? SprayRadius : (kind < 1.5f ? FoamRadius : BubbleRadius);
     const float radiusPx = radius * focalY / c.z;
-    const float drawPx = clamp(radiusPx, 0.75f, 6.0f);
-    // Sub-pixel particles keep their area: a disc drawn larger than it is carries less weight.
+    const float drawPx = clamp((kind < 0.5f ? 2.5f : 3.0f) * radiusPx, 1.5f, 12.0f);
+    // A footprint drawn larger than the particle carries its area, not more.
     const float coverage = saturate((radiusPx * radiusPx) / (drawPx * drawPx)) * saturate(state.w / 0.4f);
     if (coverage <= 1.0e-3f) return;
 
@@ -130,7 +133,7 @@ void CS(uint3 id : SV_DispatchThreadID)
                 if (water <= 0.0f || abs(c.z - water) < 0.4f)
                     InterlockedAdd(WhitewaterBits[base + 1u], uint(weight * 4096.0f));
             } else if (water > 0.0f && c.z > water) {
-                const float seen = weight * exp(-(c.z - water) * WaterAbsorption);
+                const float seen = weight * exp(-(c.z - water) * (WaterAbsorption + 1.5f));
                 InterlockedAdd(WhitewaterBits[base + 2u], uint(seen * 4096.0f));
                 InterlockedMax(WhitewaterBits[base + 3u], uint(saturate(seen) * 65535.0f));
             }

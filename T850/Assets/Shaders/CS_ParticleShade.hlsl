@@ -322,15 +322,30 @@ float LoadDepth(int2 p)
     return z;
 }
 
-// The whitewater channels of the fluid texel under a pixel.
-float4 LoadAux(float2 pixel)
+float4 LoadAuxTexel(int2 t)
 {
-    const int2 t = FluidTexelOf(pixel);
-    const uint base = (uint(t.x) + uint(t.y) * FluidSize.x) * 4u;
+    const int2 c = clamp(t, int2(0, 0), int2(FluidSize) - 1);
+    const uint base = (uint(c.x) + uint(c.y) * FluidSize.x) * 4u;
     return float4(float(AuxBits[base + 0u]) / 65535.0f,
                   float(AuxBits[base + 1u]) / 1024.0f,
                   float(AuxBits[base + 2u]) / 1024.0f,
                   float(AuxBits[base + 3u]) / 1024.0f);
+}
+
+// The whitewater channels under a pixel. Foam (x) is a per-particle maximum with the hard edge
+// of the particle disc; a 3x3 tent over the fluid texels softens it into patches.
+float4 LoadAux(float2 pixel)
+{
+    const int2 t = FluidTexelOf(pixel);
+    const float4 centre = LoadAuxTexel(t);
+    float foam = centre.x * 4.0f;
+    [unroll]
+    for (int k = 0; k < 4; ++k) {
+        const int2 axis = k < 2 ? int2(k * 2 - 1, 0) : int2(0, (k - 2) * 2 - 1);
+        const int2 diagonal = int2(k & 1 ? 1 : -1, k & 2 ? 1 : -1);
+        foam += LoadAuxTexel(t + axis).x * 2.0f + LoadAuxTexel(t + diagonal).x;
+    }
+    return float4(foam / 16.0f, centre.yzw);
 }
 
 // True where the opaque scene seen at `pixel` lies under the water: inside the silhouette (not
@@ -591,10 +606,13 @@ float FoamCells(float2 p, float time)
     return 1.0f - smoothstep(0.0f, 0.2f, d2 - d1);
 }
 
-float FoamLace(float2 xz, float time)
+// `cellPixels`: projected cell size; cells smaller than a few pixels average out to the lace's
+// mean instead of aliasing into speckle.
+float FoamLace(float2 xz, float time, float cellPixels)
 {
     const float2 p = xz / max(FoamParams.y, 0.02f);
-    return max(FoamCells(p, time), 0.7f * FoamCells(p * 2.3f + 7.1f, time * 1.3f));
+    const float lace = max(FoamCells(p, time), 0.7f * FoamCells(p * 2.3f + 7.1f, time * 1.3f));
+    return lerp(0.4f, lace, saturate((cellPixels - 2.0f) / 4.0f));
 }
 
 // ---- Refraction ---------------------------------------------------------------------------
@@ -706,7 +724,8 @@ float3 SubmergedRadiance(RefractionHit hit, float surfaceY, float3 sunWorld, flo
         const float2 entry = floorWorld.xz - sunDown.xz / cosine * depth;
         const float fade = exp(-depth / max(CausticParams.w, 0.05f)) * smoothstep(0.02f, 0.15f, depth);
         const float web = max(1.0f + CausticParams.x * fade * (CausticPattern(entry, time) * 2.4f - 0.3f), 0.0f);
-        caustic = web * pow(max(CausticFocus(entry), 0.05f), LightParams.y);
+        // Capped: during a splash the simulated focus field is chaotic and would print specks.
+        caustic = min(web * pow(max(CausticFocus(entry), 0.05f), LightParams.y), 2.5f);
     }
     lightInfo = float3(directFraction, Luminance(sunTransmit), 0.5f * caustic);
     return colour * ((1.0f - directFraction) * ambientTransmit + directFraction * sunTransmit * caustic);
@@ -738,10 +757,12 @@ float3 InScatter(float3 viewWorld, float3 sunWorld, float3 sunDown, float sunVis
 }
 
 // Diffuse white (foam, spray, aerated water) lit like the deferred pass lights an up-facing
-// surface of albedo 0.85.
+// surface of albedo 0.85. Foam scatters many times inside its films, which washes out the tint
+// of the light: half of the colour is replaced by its luminance.
 float3 WhitewaterLight(float3 sunWorld, float sunVisibility, float3 skyAmbient)
 {
-    return 0.85f * (SunColor.rgb * (saturate(sunWorld.y) * sunVisibility / PI) + skyAmbient);
+    const float3 light = 0.85f * (SunColor.rgb * (saturate(sunWorld.y) * sunVisibility / PI) + skyAmbient);
+    return lerp(Luminance(light).xxx, light, 0.5f);
 }
 
 // A wet porous surface: darker, with a thin glossy film reflecting the sky.
@@ -977,18 +998,23 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float contact = (1.0f - smoothstep(0.004f, 0.035f, gap)) * filled * LightParams.z;
     color = lerp(color, color * 1.25f + skyAmbient * 0.08f, saturate(contact));
 
-    // Surface foam: the solver's carried foam plus secondary foam particles, drawn as lace.
-    const float foamCoverage = saturate(foamFluid * 1.2f + foamCover * 0.6f);
-    if (foamCoverage > 0.01f && FoamParams.x > 0.0f) {
-        const float lace = FoamLace(surfaceWorld.xz, time);
-        const float foamMask = saturate((foamCoverage - (1.0f - lace)) * 2.5f + foamCoverage * foamCoverage) *
+    // Surface foam: the solver's carried foam plus the secondary foam density, drawn as lace
+    // that thickens into a solid layer as the coverage grows; thin foam is only faint lace.
+    const float foamCoverage = saturate(1.0f - exp(-(foamFluid * 1.2f + foamCover * 1.5f)));
+    if (foamCoverage > 0.02f && FoamParams.x > 0.0f) {
+        const float cellPixels = FoamParams.y * Focal() / max(z, 0.1f);
+        const float lace = FoamLace(surfaceWorld.xz, time, cellPixels);
+        // The lace modulates the opacity: thin foam is a faint lacy veil, dense foam a white
+        // layer with dark cells (a threshold instead broke thin foam into confetti).
+        const float foamMask = saturate(foamCoverage * (0.55f + 0.9f * (lace - 0.4f))) *
                                saturate(FoamParams.x);
-        color = lerp(color, whitewaterLight * lerp(0.8f, 1.0f, lace), foamMask);
+        color = lerp(color, whitewaterLight * lerp(0.85f, 1.0f, lace), foamMask);
     }
 
-    // Spray: isolated fluid particles (classified by the solver) and secondary droplets.
-    const float spray = saturate(sprayFluid * saturate(Foam));
-    color = lerp(color, whitewaterLight, spray * 0.85f);
+    // Spray: isolated fluid particles (classified by the solver) are splash water torn into
+    // drops and full of air: white, not clear balls reflecting like chrome.
+    const float spray = smoothstep(0.15f, 0.6f, sprayFluid) * saturate(Foam * 1.6f);
+    color = lerp(color, whitewaterLight, spray * 0.9f);
     color = lerp(color, whitewaterLight, sprayAlpha);
 
     const float alpha = saturate(thicknessData.a) * (1.0f - 0.35f * spray);

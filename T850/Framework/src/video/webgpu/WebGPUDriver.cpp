@@ -1567,8 +1567,26 @@ bool WebGPUDriver::DispatchCompute(ComputePipeline& pipelineBase,
     }
     if (binding.texture) {
       const auto* texture = dynamic_cast<WebGPUTexture*>(binding.texture);
-      if (!texture || &texture->state != m_state.get() || !texture->gpu ||
-          texture->gpu.GetDimension() != wgpu::TextureDimension::e2D || texture->gpu.GetDepthOrArrayLayers() != 1) return false;
+      if (!texture || &texture->state != m_state.get() || !texture->gpu) return false;
+      const ComputeBindingLayoutDesc* layout = nullptr;
+      for (const auto& candidate : pipeline->bindingLayout)
+        if (candidate.type == binding.type && candidate.shaderRegister == binding.shaderRegister) layout = &candidate;
+      if (layout && layout->dimension == ComputeTextureDimension::Cube) {
+        // The environment cube: six square layers behind one Cube view, read-only. SampleView()
+        // already returns that Cube view, so only the texture shape is checked here.
+        if (binding.type != ComputeBindingType::ReadOnlyTexture ||
+            texture->gpu.GetDimension() != wgpu::TextureDimension::e2D ||
+            texture->gpu.GetDepthOrArrayLayers() != 6 ||
+            texture->gpu.GetWidth() != texture->gpu.GetHeight()) {
+          T8_LOG_ERROR("[WebGPU][Compute] Cube t%u does not match: type=%d dim=%d layers=%u %ux%u",
+                       binding.shaderRegister, static_cast<int>(binding.type),
+                       static_cast<int>(texture->gpu.GetDimension()),
+                       texture->gpu.GetDepthOrArrayLayers(),
+                       texture->gpu.GetWidth(), texture->gpu.GetHeight());
+          return false;
+        }
+      } else if (texture->gpu.GetDimension() != wgpu::TextureDimension::e2D ||
+                 texture->gpu.GetDepthOrArrayLayers() != 1) return false;
       if (binding.type == ComputeBindingType::Sampler && !texture->sampler) return false;
       if (binding.type == ComputeBindingType::ReadWriteTexture) {
         if (!(texture->gpu.GetUsage() & wgpu::TextureUsage::StorageBinding)) return false;

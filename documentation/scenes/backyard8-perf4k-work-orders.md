@@ -363,13 +363,12 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 
 | WO | Owner | State | Commits | Notes |
 |---|---|---|---|---|
-| P0 | qwen-5090 | done | dd412a8 | reviewed: owned files only; tooling works; 4K numbers UNGUARDED (GPU at 100% from qwen-local) |
-| P1 | qwen-local | in progress | | dispatched 2026-11-11 |
-| P1 | qwen-local | done | c960808 | Claude accepted on visuals; Claude measures the 4K timing |
-| P2 | qwen-5090 (me) | follow-up committed, needs review | 2ff6ea2, d1bc742, f8efec4 | f8efec4: cap-aware skip (bPxRaw < 48). close/water f45 skip vs no-skip mean 0.259/p99 2 at noise (0.288/3); default lake f300 0.792/p99 10 above noise 0.288/2. Splat close/water 2.43, default/water 0.93 (UNGUARDED) |
-| P3 | qwen-local | done (Claude accepted) | 55ea7ed, be39443 | F0 0.03 / F1 0.06; gate active; skip fraction 0.35 default / 0.13 close; gate's own timing below the ~0.15 ms floor; sky hoist is the gain |
-| P4 | qwen-5090 | done | 4389a36, 6961c93 | Claude accepted 6961c93 (code); Claude measures the CPU numbers. 4389a36's body misdescribes the Deferred diff (point lights restored in static views) |
-| P5 | | blocked by P0-P4 and Claude's final numbers | | |
+| P0 | qwen-5090 | done | dd412a8 | tooling; reviewed |
+| P1 | qwen-local | done | c960808 | Claude accepted visuals + timing |
+| P2 | qwen-5090 (me) | done | 2ff6ea2, d1bc742, f8efec4 | Claude accepted f8efec4 |
+| P3 | qwen-local | done | 55ea7ed, be39443 | Claude accepted be39443 |
+| P4 | qwen-5090 | done | 4389a36, 6961c93 | Claude accepted 6961c93 |
+| P5 | qwen-5090 | in progress | | dispatched 2026-11-11 |
 
 ## Notes from Claude
 

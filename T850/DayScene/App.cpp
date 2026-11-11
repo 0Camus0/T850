@@ -211,6 +211,25 @@ int main(int arg,char ** args) try {
     if (std::string_view(args[i]) == "--backyard-no-hud") {
       BackyardScene::SetHudHidden(true);
     }
+    if (std::string_view(args[i]) == "--backyard-camera" && i + 5 < arg) {
+      // Five floats: x y z pitch yaw. Malformed values log an error and leave the flag ignored.
+      try {
+        const float x = std::stof(args[i + 1]);
+        const float y = std::stof(args[i + 2]);
+        const float z = std::stof(args[i + 3]);
+        const float pitch = std::stof(args[i + 4]);
+        const float yaw = std::stof(args[i + 5]);
+        if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z) &&
+            std::isfinite(pitch) && std::isfinite(yaw)) {
+          BackyardScene::SetCameraOverride(x, y, z, pitch, yaw);
+        } else {
+          T8_LOG_ERROR("[App] --backyard-camera has a non-finite value; ignoring the flag");
+        }
+        i += 5;
+      } catch (const std::exception&) {
+        T8_LOG_ERROR("[App] --backyard-camera expects five floats <x> <y> <z> <pitch> <yaw>; ignoring the flag");
+      }
+    }
     if (std::string_view(args[i]) == "--backyard-start" && i + 1 < arg) {
       const std::string_view mode(args[++i]);
       if (mode == "balls") Backyard8Scene::SetStartMode(0);

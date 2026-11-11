@@ -121,6 +121,8 @@ int BackyardScene::s_massAuditFrames = 0;
 int BackyardScene::s_ballProbeFrames = 0;
 bool BackyardScene::s_pickTest = false;
 bool BackyardScene::s_padTest = false;
+BackyardScene::CameraOverride BackyardScene::s_cameraOverride;
+bool BackyardScene::s_cameraOverrideEnabled = false;
 
 BackyardScene::BackyardScene()
     : BackyardScene("Scenes/BackyardScene.json", "Scenes/BackyardScene_RenderGraph.json",
@@ -181,6 +183,17 @@ void BackyardScene::InitVars() {
   m_sceneSetup.Apply(SceneProp);
   m_sceneSetup.ApplyInputSettings(SceneProp);
   m_camera = *m_sceneSetup.GetCamera();
+  // --backyard-camera: override the authored camera before AttachCamera activates the
+  // FreeFly profile, which would otherwise overwrite the authored transform.
+  if (s_cameraOverrideEnabled) {
+    const CameraOverride& c = s_cameraOverride;
+    m_camera.Eye = XVECTOR3(c.x, c.y, c.z);
+    m_camera.Pitch = c.pitch;
+    m_camera.Yaw = c.yaw;
+    m_camera.Update(0.0f);
+    T8_LOG_INFO("[Backyard] Camera override applied: eye=(%.3f, %.3f, %.3f) pitch=%.3f yaw=%.3f",
+                c.x, c.y, c.z, c.pitch, c.yaw);
+  }
   m_lightCamera = *m_sceneSetup.GetLightCamera();
   SceneProp.pCameras = {&m_camera};
   SceneProp.pLightCameras = {&m_lightCamera};

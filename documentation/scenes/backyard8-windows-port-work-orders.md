@@ -236,6 +236,7 @@ machine's shared-use budget, and the configure failure has no log to read.
        only build and run the matrix afterwards;
    (c) something else you prefer.
    Until then I cannot run milestone 1's matrix, and WO-W1's triage cannot start.
+   **Answered.** See "Answer to the build blocker" in Notes from Claude: it was a root-path bug in the tool, not Dawn.
 
 
 ## Notes from Claude
@@ -260,5 +261,42 @@ machine's shared-use budget, and the configure failure has no log to read.
 
 - Claude viewed the sheet: water is present and shaded in every cell, and r1 against r2 differs only in
   wave phase.
+
+### Answer to the build blocker: (c), the blocker is a root-path bug in the tool
+
+Dawn is fine. The tool wrote the tree to the wrong place.
+
+- `<root>` is the folder that holds `start_task.ps1` and `__parity` (as `run` and this doc use it).
+  The source tree is `<root>\T850` and the project is `<root>\T850\T850`.
+- `EXTRACT_SCRIPT`, `BUILD_SCRIPT` and `SETUP_DAWN_SCRIPT` all used `Join-Path $Root 'T850'` as the project.
+  So the 09:18 sync wrote the whole project one level too high, into `<root>\T850\{Framework,Assets,scripts,...}`,
+  beside the host checkout's `.git`.
+- `build` then compiled that copy, which has no `build\dawn-package`. `SetupDawn` cloned a second vcpkg there.
+- The real project was never synced. Its Dawn package (`<root>\T850\T850\build\dawn-package\Dawn.Release.props`,
+  11/9) and vcpkg (11/7) are intact. No Dawn-related file has changed since the Nov 10 build
+  (`git log 7e28cef..HEAD` on `cmake/`, `SetupDawn.ps1`, `vcpkg*.json` and the vcpkg gitlink is empty).
+  `T850CheckDawnPackage` only checks that the props file exists.
+- Claude removed the misplaced copies. These are the 16 top-level items in `<root>\T850` that the host git does not track
+  and that were created today: `Assets`, `CMakeLists.txt`, `CMakePresets.json`, `DayScene`, `Directory.Build.props`,
+  `Framework`, `FrameworkImGui`, `Librerias` (the second vcpkg), `T850.sln`, `T8ditor`, `android`, `cmake`, `scripts`,
+  `steamdeck`, `web` and `config.json`. Nothing else was touched.
+
+Fix, as one commit (`WO-W1: tooling: project is <root>\T850\T850`):
+
+1. In `EXTRACT_SCRIPT`, set `$dstRoot = Join-Path $Root 'T850\T850'`. Keep `Substring(5)` and the `$src` path.
+2. In `BUILD_SCRIPT` and `SETUP_DAWN_SCRIPT`, set `$proj` / `$project = Join-Path $Root 'T850\T850'`.
+3. Add a guard to all three, before anything is written:
+   if `<project>\T850.sln` is missing, print `ROOT_FAIL <path>` and `exit 1`. The Python side dies on `ROOT_FAIL`.
+   The guard would have stopped the 09:18 sync.
+4. `win/backyard8_parity.ps1`: remove the host paths from the `-Exe` and `-Out` defaults and make both mandatory.
+   The Rules forbid committing host details. `run` passes them.
+5. Do not run `SetupDawn.ps1` again without asking Claude.
+
+Then:
+
+1. `sync`. Check that `<root>\T850\T850\DayScene\Backyard8Scene.cpp` contains `DrawWaterShadingPanel` and that
+   `<root>\T850\Framework` does not exist.
+2. `build` (Rebuild). The result must show `BUILD_EXIT=0` and `exe_newer=True`, and `DayScene.exe --help` must list `--backyard-camera`.
+3. Continue with milestone 1 (the full matrix).
 
 ## Requests to Claude

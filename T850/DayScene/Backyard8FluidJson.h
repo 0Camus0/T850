@@ -12,6 +12,7 @@
 // translation unit fails with C3878.
 
 #include <array>
+#include <cstdint>
 #include <string>
 
 namespace t850 {
@@ -139,7 +140,68 @@ namespace t850 {
     float anisotropyNeighbours = 14.0f;     // neighbours for the full anisotropic shape
     float anisotropySprayNeighbours = 5.0f; // at or below: an isolated droplet
     float anisotropyMaxStretch = 1.6f;      // longest axis cap, in interior radii
-    int debugView = 0;  // 0 shaded, 1 normals, 2 depth, 3 water path, 4 coverage, 5 reflection, 6 refraction
+    // ---- Scene lighting (2026-11 realism pass) ----
+    // Multiplier on the environment cube for reflected rays the screen trace cannot resolve.
+    float envIntensity = 1.0f;
+    // Sunlight absorbed on its way down to submerged surfaces (0 = lit as if in air).
+    float sunAttenuation = 1.0f;
+    // Caustic focusing by the simulated surface (0 = procedural pattern only).
+    float causticFocus = 1.0f;
+    // Brightening of the meniscus where the water meets a wall.
+    float contactLine = 0.5f;
+    // Thin crests and sheets glowing when seen toward the sun.
+    float backlight = 1.0f;
+    // In-scattering: sun and sky light scattered toward the eye inside the water.
+    float scatterSun = 0.6f;
+    float scatterSky = 0.8f;
+    float scatterAnisotropy = 0.45f;   // Henyey-Greenstein g, 0 = isotropic
+    // Ripple slope multipliers: still water, and the extra slope at full local agitation.
+    float rippleCalm = 0.6f;
+    float rippleAgitation = 1.5f;
+    // ---- Whitewater (Ihmsen et al. 2012) ----
+    float foamStrength = 1.0f;         // surface foam
+    float foamTextureScale = 0.35f;    // foam lace cell size, metres
+    float aeration = 1.0f;             // milky entrained air under the surface
+    float bubbleStrength = 1.0f;       // bubble sparkles
+    float sprayStrength = 1.0f;       // secondary spray droplets
+    float wetness = 1.0f;              // darkening and sheen of wet deck/coping
+    // 0 shaded, 1 normals, 2 depth, 3 water path, 4 coverage, 5 reflection, 6 refraction,
+    // 7 whitewater (r foam, g aeration, b spray), 8 sun light under water, 9 wetness.
+    int debugView = 0;
+  };
+
+  // Whitewater solver settings (Ihmsen et al. 2012): per-particle foam and entrained air,
+  // a pool of secondary spray/foam/bubble particles, the caustic focus field and the
+  // drying wetness map of the deck. Mirrors t850::PbfWhitewaterSettings field for field.
+  struct Backyard8WhitewaterConfig {
+    bool enabled = true;
+    // Potentials are clamped to [min, max] and mapped to 0..1.
+    float trappedAirMin = 3.0f;
+    float trappedAirMax = 15.0f;
+    float crestMin = 0.3f;
+    float crestMax = 2.0f;
+    float energyMin = 0.5f;
+    float energyMax = 10.0f;
+    float surfaceNeighbours = 24.0f;   // at or above: a submerged particle
+    // Whitewater carried by the fluid.
+    float foamGain = 3.0f;             // per second at full potential
+    float foamLifetime = 1.5f;         // e-folding seconds
+    float aerationGain = 2.5f;
+    float aerationLifetime = 1.2f;
+    // Secondary particles.
+    uint32_t maxDiffuse = 65536;
+    float sprayRate = 12.0f;           // per second per fluid particle at full trapped air
+    float crestRate = 8.0f;            // per second per fluid particle at full crest potential
+    float diffuseLifetime = 2.0f;      // seconds (randomised 0.5..1.5x)
+    float bubbleBuoyancy = 3.0f;       // times gravity
+    float bubbleDrag = 0.5f;           // fraction of the velocity difference removed per update
+    float sprayDrag = 0.4f;            // per second
+    // Wet deck.
+    float dryingTime = 45.0f;          // e-folding seconds
+    float wetTexel = 0.06f;           // metres
+    uint32_t wetResolution = 320;     // texels per side, centred on the basin
+    // Caustic focusing gain on the simulated surface curvature, (n - 1) / n for water.
+    float causticGain = 0.25f;
   };
 
   struct Backyard8FluidConfig {
@@ -148,6 +210,7 @@ namespace t850 {
     Backyard8SceneConfig scene;
     Backyard8ParticleConfig particles;
     Backyard8ScreenSpaceConfig screenSpace;
+    Backyard8WhitewaterConfig whitewater;
   };
 
   // Returns false only when the file exists and is malformed. A missing file leaves the

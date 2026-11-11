@@ -584,6 +584,22 @@ WO-P3 and WO-P2b included). 4K, default camera, lake f300, `--regressionFixedDt`
 - For variants, build a private runtime directory: link the `DayScene` binary, point `Shaders`
   at your copy and the rest at `Assets/`, and run from there.
 
+### WO-P3 follow-up (`be39443`) reviewed: accepted
+
+- The gate is now active (F0 = 0.03, F1 = 0.06).
+- Claude's same-build A/B: the original shade (`c960808`, no gate, no hoist) against HEAD's,
+  with the splat pinned to the committed version. 4K, lake f300, levels 0-255:
+
+| View | Original shade against HEAD | Noise (HEAD against HEAD) |
+|---|---|---|
+| Default | mean 0.27-0.34, p99 9 | 0.29-0.38, p99 9 |
+| Close | mean 0.60-0.68, p99 11 | 0.58-0.71, p99 10 |
+
+- The look is unchanged within noise.
+- The commit's "no-gate" baseline (F0 = 0.03, F1 = 1.0) still skips and dims reflections, which
+  explains its calm-view differences.
+- Timing goes into Claude's final guarded measurement.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

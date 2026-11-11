@@ -7,8 +7,8 @@ ripples, glossy SSR with off-frame continuation) are verified on **Vulkan only**
 and the Windows verification commands. The 2026-11-10 whitewater pass (Ihmsen 2012 foam and
 aeration, secondary spray/foam/bubble pool, wet deck, environment-cube reflections, G-buffer
 sun and caustics under water, half-resolution splat) is recorded in
-[backyard8-ssfr-whitewater.md](backyard8-ssfr-whitewater.md) (draft, cost and regression
-numbers TBD pending WO-4). The 2026-11-09 fixes are recorded in
+[backyard8-ssfr-whitewater.md](backyard8-ssfr-whitewater.md) (verified on Vulkan, with cost and
+regression numbers; D3D12/D3D11/GL not yet run). The 2026-11-09 fixes are recorded in
 [backyard8-fluid-render-d3d-port.md](backyard8-fluid-render-d3d-port.md). The 2026-11-08
 cross-backend results below predate all of these.
 

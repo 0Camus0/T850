@@ -1,14 +1,14 @@
 # Backyard 8: whitewater, environment reflections and G-buffer water lighting (2026-11-10)
 
-Status: **draft for WO-3.** The implementation is checkpointed in `3ad6d1a` ("WIP Backyard 8:
-whitewater, env reflections, G-buffer lighting, half-res SSFR") and tuned in `9f83cd1`
-("Backyard 8: tune whitewater and half-resolution splat"); the config keys and Dev GUI landed in
-WO-1 (`b060602`). Everything below is smoke-tested on **Vulkan (native Linux)** only. D3D12,
-D3D11 and OpenGL have not been run on this tree. **Every measured number in this document
-(cost, coverage, regression results) is `TBD` and will be filled by WO-4**; the tuning commit's
-GPU times are quoted in §1 only as the checkpoint's own measurements, not as this work's
-verification. The GL twins for the new kernels are being regenerated concurrently by WO-4.
-Preceding record: [backyard8-ssfr-realism.md](backyard8-ssfr-realism.md). Pipeline reference:
+Status: **implemented and verified on Vulkan (native Linux)**. D3D12, D3D11 and OpenGL were
+**not run** on this tree (no Windows host); their gate is §5.3 and is an open item, not a pass.
+
+The implementation is checkpointed in `3ad6d1a` ("WIP Backyard 8: whitewater, env reflections,
+G-buffer lighting, half-res SSFR") and tuned in `9f83cd1` ("Backyard 8: tune whitewater and
+half-resolution splat"); the config keys and Dev GUI landed in WO-1 (`b060602`); the GL twins and
+the screen-space references landed in WO-4 (`2105406`). Cost and verification numbers below are
+WO-4's measurements, re-run independently by the orchestrator (§4, §5). Preceding record:
+[backyard8-ssfr-realism.md](backyard8-ssfr-realism.md). Pipeline reference:
 [backyard8-screen-space-fluid.md](backyard8-screen-space-fluid.md).
 
 ## 1. What changed and why
@@ -47,24 +47,30 @@ the render graph binds them by the names in `T850/DayScene/Backyard8FluidJson.h`
  PBF solver step (CS_PbfIntegrate / CS_PbfSolve / ... / CS_PbfCull, CS_PbfAnisotropy)
    │  positions, velocities, grid, column heights, anisotropy (spray flag)
    ▼
- CS_PbfWhitewater (dispatch "whitewater")
+ CS_PbfFields mode 0 (dispatch "whitewater-dry")            [ComputeWhitewater step 1]
+   │  reads:  column heights
+   │  writes: BackyardWaterWetness (drying, 45 s e-folding), caustic field
+   │  runs FIRST, so this frame's water lands on an already-dried deck
+   ▼
+ CS_PbfWhitewater (dispatch "whitewater")                   [step 2]
    │  reads:  positions, velocities, grid
    │  writes: BackyardWaterWhitewater (per-particle foam, aeration, agitation, trapped air)
    │          BackyardWaterDiffuse (secondary pool: emit spray/foam/bubbles)
    │          BackyardWaterWetness (stamp where water lands on the deck)
    ▼
- CS_PbfDiffuse (dispatch "whitewater-diffuse")
-   │  reads:  positions, velocities, grid, BackyardWaterDiffuse
-   │  writes: BackyardWaterDiffuse (classify by fluid neighbours: spray < 6, foam 6..20,
-   │          bubble > 20; move, land, age out), BackyardWaterWetness (landing)
+ CS_PbfDiffuse (dispatch "whitewater-diffuse")              [step 3]
+   │  reads:  positions, velocities, grid
+   │  reads/writes: BackyardWaterDiffuse (classify by fluid neighbours: spray < 6, foam 6..20,
+   │          bubble > 20; move, land, age out — the buffer is a single read-write binding)
+   │  reads/writes: BackyardWaterWetness (landing)
    ▼
- CS_PbfFields mode 0 (dispatch "whitewater-dry")
-   │  reads:  column heights, BackyardWaterWetness
-   │  writes: BackyardWaterWetness (drying, 45 s e-folding), caustic field
+ CS_PbfFields mode 1 (dispatch "whitewater-caustics")       [step 4]
+   │  reads:  column heights
+   │  writes: BackyardWaterWetness, caustic field
+   │  publishes BackyardWaterCaustics (focusing 1/(1 + c·d·∇²h) of the smoothed surface)
    ▼
- CS_PbfFields mode 1 (dispatch "whitewater-caustics")
-   │  reads:  column heights, BackyardWaterWetness
-   │  writes: BackyardWaterCaustics (focusing 1/(1 + c·d·∇²h) of the smoothed surface)
+ publish: BackyardWaterWhitewater / BackyardWaterDiffuse /
+          BackyardWaterCaustics / BackyardWaterWetness
    ▼
  render graph (Assets/Scenes/Backyard8Scene_RenderGraph.json), screen-space mode:
    Fluid Clear        CS_FluidClear      → __fluid_depth_bits / __fluid_thickness_bits /
@@ -165,42 +171,69 @@ geometry (pool capacity, wetness map size) is refreshed from `WhitewaterLayout()
 
 ## 4. Cost
 
-All rows `TBD`, to be filled by WO-4 from `--profile --profileFrames 400` at the default camera,
-screen-space mode, water and lake start (per the work order; the tuning commit's numbers are
-quoted in §1 row 16 only as the checkpoint's own measurements).
+GPU timestamps from `DayScene --unattended --api vulkan --scene 8 --width 960 --height 540
+--profile --profileFrames 400`, screen-space mode, default camera, averaged over 400 frames
+(`GPU_N=397`). WO-4 measured these; the orchestrator reproduced them on three consecutive runs
+(water: Fluid Splat 0.159-0.162 ms, Whitewater Splat 0.084-0.088 ms, shade 0.074 ms; lake:
+0.119 / 0.005 / 0.044 ms). A cold first run reads about 1.5x higher (Fluid Splat 0.25 ms) because
+the pool settle is slower; take a warm run.
 
-| Pass | GPU time |
-|---|---|
-| Fluid Splat (half res) | TBD |
-| Fluid Smooth (each of 6) | TBD |
-| Fluid Surface Shade | TBD |
-| Whitewater Splat | TBD |
-| CS_PbfWhitewater (solver) | TBD |
-| CS_PbfDiffuse (solver) | TBD |
-| CS_PbfFields mode 0 (whitewater-dry) | TBD |
-| CS_PbfFields mode 1 (whitewater-caustics) | TBD |
+| Pass | GPU time, water start | GPU time, lake start |
+|---|---|---|
+| Fluid Particles (stamp) | 0.013 ms | 0.008 ms |
+| Fluid Clear | 0.006 ms | 0.006 ms |
+| Fluid Splat (half res) | 0.160 ms | 0.119 ms |
+| Fluid Resolve | 0.004 ms | 0.004 ms |
+| Fluid Smooth 1-6 (each) | 0.004-0.012 ms | 0.004-0.006 ms |
+| Whitewater Splat | 0.086 ms | 0.005 ms |
+| Fluid Surface Shade | 0.074 ms | 0.044 ms |
+| CS_PbfWhitewater (solver) | not in the capture | not in the capture |
+| CS_PbfDiffuse (solver) | not in the capture | not in the capture |
+| CS_PbfFields mode 0 (whitewater-dry) | not in the capture | not in the capture |
+| CS_PbfFields mode 1 (whitewater-caustics) | not in the capture | not in the capture |
+
+The four solver kernels are dispatched from `PbfFluid.cpp`, not from the render graph, and no
+`ProfileScopeGuard` exists around them, so `--profile` (render-graph scopes only) cannot see
+them. They are reported as absent rather than as 0; measuring them needs instrumentation in
+`PbfFluid.cpp` (see §6). The `Whitewater Splat` figure is a 400-frame average, so the splash
+frames are a fraction of it; the checkpoint's 1080p figure of 0.17 ms during the splash (§1) is
+not comparable to this 960x540 average.
 
 ## 5. Verification
 
-All results `TBD`; WO-4 runs them (GL twins and `backyard8_references.json` are being
-regenerated concurrently by WO-4 and are not claimed here).
+### 5.1 Linux (Vulkan, native)
+
+Numbers below were produced by WO-4 (`2105406`) and re-run independently by the orchestrator on
+the same tree.
 
 | Check | Result |
 |---|---|
-| Linux build (`cmake --build build/linux --target DayScene`) | TBD |
-| `DayScene --unattended --game-selftest` | TBD (expect 78 PASS, exit 0) |
-| `scripts/validation/check_fluid_constants.py` | TBD |
-| `scripts/validation/check_gl_twins.py` | TBD |
-| `scripts/validation/backyard8_regression.py` — `splat` captures | TBD |
-| `scripts/validation/backyard8_regression.py` — `spheres` captures | TBD |
-| `scripts/validation/backyard8_regression.py` — `screen-space` captures, per frame | TBD |
-| Water levels (lake, water start) | TBD |
-| GL twins for `CS_FluidClear`, `CS_FluidSplat`, `CS_FluidWhitewater`, `CS_ParticleShade`, `CS_PbfWhitewater`, `CS_PbfDiffuse`, `CS_PbfFields` | TBD |
-| Windows D3D12 | TBD |
-| Windows D3D11 | TBD |
-| Windows GL | TBD |
+| Linux build (`cmake --build build/linux --target DayScene`) | **pass** (exit 0; binary `T850/bin/SteamDeck/Release/DayScene`) |
+| `DayScene --unattended --game-selftest` | **pass**: 78 PASS, 0 FAIL, exit 0 |
+| `scripts/validation/check_fluid_constants.py` | **pass** (exit 0): 15 cbuffer names, 46 kernels, 51 `constant_count`s, 3 struct/kernel cross-checks |
+| `scripts/validation/check_gl_twins.py` | **pass** (exit 0): 58 kernels, 53 twins match their HLSL and the registered bindings |
+| GL twin reproducibility | **pass**: regenerating the seven twins with the pinned SPIRV-Cross reproduces them byte-for-byte (`git diff` empty) |
+| `backyard8_regression.py` — `splat` captures | **pass**: f24 0.003 %, f90 0.039 %, f300 0.047 % pixels, dbox 0 |
+| `backyard8_regression.py` — `spheres` captures | **pass**: f24 0.001 %, f90 0.151 %, f300 0.129 % pixels, dbox <= 1 |
+| `backyard8_regression.py` — `screen-space` captures | **pass after re-freeze**: f24 0.002 %, f90 0.792 %, f300 0.530 % pixels, dbox <= 4 |
+| Water levels (lake, water start) | **pass**: lake -0.0433 m (target -0.040 +/- 0.015), water -0.1697 m (target -0.170 +/- 0.020) |
+| Full gate | `RESULT: PASS`, exit 0 |
 
-Windows commands (from [backyard8-ssfr-realism.md](backyard8-ssfr-realism.md) §5, run from
+### 5.2 The screen-space reference re-freeze
+
+The `screen-space` references in `scripts/validation/backyard8_references.json` were last written
+at `ec0ee11`, before `3ad6d1a` rewrote `CS_ParticleShade.hlsl` and `9f83cd1` retuned it, so they
+were stale by construction and the gate failed them (f90 50.6 %, f300 113.9 % pixels) while
+`splat` and `spheres` passed at <= 0.31 %. The orchestrator showed this is not a config problem:
+running with a JSON that omits the new WO-1 keys gives the same f90 statistics. Only the three
+`screen-space` entries were re-frozen (WO-4 §2), after Claude's visual sign-off; `splat`,
+`spheres`, `tolerances` and `water_level` are untouched, which is why they still pass without
+re-freezing.
+
+### 5.3 Windows (native x64 Release, not Proton) — **not run**
+
+D3D12, D3D11 and GL were **not** executed: no Windows host is reachable from the verification
+machine. This is an open item, not a pass. Commands (from [backyard8-ssfr-realism.md](backyard8-ssfr-realism.md) §5, run from
 `T850/`):
 
 ```powershell
@@ -209,6 +242,10 @@ python scripts\validation\backyard8_regression.py --api d3d11 --day-scene bin\x6
 python scripts\validation\backyard8_regression.py --api gl    --day-scene bin\x64\Release\DayScene.exe
 ```
 
+Attach one back buffer per API at frame 300 of the water start (`--backyard-start water
+--dump-frame 300`) alongside each gate result. A D3D11 run under Proton is not evidence (Wine's
+compiler).
+
 Expected risks called out by the work order: the cube map bound to a compute kernel (D3D11/D3D12
 SRV of a DDS cube, GL `samplerCube`), half-resolution targets, and the 100-DWORD constant block
 (D3D12 root CBV path).
@@ -216,13 +253,15 @@ SRV of a DDS cube, GL `samplerCube`), half-resolution targets, and the 100-DWORD
 ## 6. Remaining work
 
 - **Windows backends unrun**: D3D12, D3D11 and GL have not been verified on this tree; the
-  cube-map-in-compute binding and the 100-DWORD constant block are the expected risks (§5).
-- **WO-4 fills every `TBD`**: cost table (§4), all verification results (§5), and the
-  `screen-space` capture references, which were last frozen at `ec0ee11` while the shade was
-  rewritten in `3ad6d1a` and retuned in `9f83cd1` — they may be re-frozen only after Claude
-  signs off the look.
-- **GL twins** for the seven kernels above are being regenerated concurrently; `check_gl_twins.py`
-  must pass before the GL backend can be called done.
+  cube-map-in-compute binding and the 100-DWORD constant block are the expected risks (§5.3).
+  Run the gate on a native Windows host before calling those backends done.
+- **Solver GPU time is unmeasured**: the four `CS_Pbf*` whitewater kernels are dispatched from
+  `PbfFluid.cpp` with no `ProfileScopeGuard`, so `--profile` cannot report them (§4). Adding
+  scopes around the four dispatches in `ComputeWhitewater()` (plus the main `Step` passes) would
+  make the whitewater cost attributable.
+- **`screen-space` references are Vulkan-only**: they were re-frozen on Vulkan at
+  `2105406` (§5.2). Expect small per-backend differences on Windows; re-freeze per backend only
+  once the difference is understood.
 - **Exact curvature flow** (the paper's 40-100 iterations) is still not implemented; the shipped
   filter is the edge-aware a-trous chain at half resolution (item 1 of
   [backyard8-screen-space-fluid.md](backyard8-screen-space-fluid.md) "What the paper still asks

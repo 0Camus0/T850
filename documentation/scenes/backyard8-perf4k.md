@@ -207,10 +207,15 @@ Linux and runs DayScene from its own directory.
 
 WO-P4's upload fix restored the point lights in static views. Until now, static views
 (every dump, gate run and capture) rendered without the five point lights, which appeared
-only once the camera moved: the per-frame index upload wiped them. A static-view dump now
-shows the patio point lights. This is why pre-P4 captures differ: HDR_Final got brighter,
-no pixel darker (4,219 pixels, 0 darker, centred on the patio around the point light at
-(0, 1.6, 4.6)).
+only once the camera moved.
+
+The cause: when the tiled-light textures were created, the frame's freshly built light lists
+were zeroed before the upload, and the assignments were then recorded as uploaded. With a
+static camera the assignments never changed, so nothing re-uploaded them.
+
+A static-view dump now shows the patio point lights, which is why pre-P4 captures differ. In
+the Deferred target, 4,219 pixels got brighter by more than 4 levels and none got darker,
+centred on the patio around the point light at (0, 1.6, 4.6).
 
 ## What is left
 

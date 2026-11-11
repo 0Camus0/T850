@@ -365,9 +365,9 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 |---|---|---|---|---|
 | P0 | qwen-5090 | done | dd412a8 | reviewed: owned files only; tooling works; 4K numbers UNGUARDED (GPU at 100% from qwen-local) |
 | P1 | qwen-local | in progress | | dispatched 2026-11-11 |
-| P2 | | blocked by P1 | | |
+| P2 | qwen-5090 | P2a in progress | | P2a (CS_PbfAnisotropy only) dispatched; P2b (splat) blocked by P1 |
 | P3 | | blocked by P1 | | |
-| P4 | qwen-5090 | in progress (follow-up) | 4389a36, 6961c93 | 6961c93 reviewed by me: resize + stale buffer fixed, but (a) "Backyard 8 Deferred byte-identical" contradicts Claude's 4,219-pixel result, (b) Texture/PerFrame upload 0 B both builds — the 16.7 MB path was not exercised, (c) 4K CPU before 0.26 vs 0.22 ms is within the contention band. Sent back |
+| P4 | qwen-5090 | done | 4389a36, 6961c93 | Claude accepted 6961c93 (code); Claude measures the CPU numbers. 4389a36's body misdescribes the Deferred diff (point lights restored in static views) |
 | P5 | | blocked by P0-P4 and Claude's final numbers | | |
 
 ## Notes from Claude

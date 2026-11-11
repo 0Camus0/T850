@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_ParticleShade.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=847c7cd72f901adc51a3c18c08f6b339e753173da2714915a0b8a3a0f1eba33b; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_ParticleShade.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=bab6bec8fe37458fbc9dbcb75b8e54ec597c2f09129528ac206557966b6ccb94; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 #if defined(GL_EXT_control_flow_attributes)
 #extension GL_EXT_control_flow_attributes : require
 #define SPIRV_CROSS_FLATTEN [[flatten]]
@@ -2923,7 +2923,7 @@ void main()
         vec3 _23940 = ((_289.CameraRight.xyz * _6459.x) + (_289.CameraUp.xyz * _6459.y)) + (_289.CameraForward.xyz * _6459.z);
         float _6476 = 0.980000019073486328125 * pow(1.0 - clamp(dot(normalize(_27298 + _27343), _5910), 0.0, 1.0), max(_289.FresnelPower, 1.0));
         float _6477 = 0.0199999995529651641845703125 + _6476;
-        float _6479 = smoothstep(0.0, 0.100000001490116119384765625, _6477);
+        float _6479 = smoothstep(0.02999999932944774627685546875, 0.0599999986588954925537109375, _6477);
         vec3 _29603;
         float _29605;
         if (_6479 > 0.0)

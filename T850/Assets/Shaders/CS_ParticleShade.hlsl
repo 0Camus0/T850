@@ -194,14 +194,16 @@ RWStructuredBuffer<uint> WhitewaterBits : register(u1);
 
 // WO-P3: Fresnel gating of the screen-space reflection. The reflection is only traced where
 // the Fresnel term carries it into the pixel; below F0 it is skipped and the environment
-// stands in. F1 is chosen so the 4K default and close views change by < 0.5 level mean abs
-// difference. Overridable at compile time for the (F0, F1) sweep; the committed values are
-// the chosen pair.
+// stands in. F0 must sit ABOVE the fresnel floor (0.02 + 0.98*pow(1-cos, 5) never drops below
+// 0.02 at normal incidence), otherwise smoothstep(F0, F1, fresnel) is never 0 and the gate is
+// inert. With power 5, fresnel 0.03 is ~53 degrees of incidence and 0.06 ~62, so the gate
+// skips the near-normal water (the bulk of the pool) and keeps the trace for grazing pixels.
+// Overridable at compile time for the A/B; the committed values are the chosen pair.
 #ifndef FresnelGatingF0
-  #define FresnelGatingF0 0.0f
+  #define FresnelGatingF0 0.03f
 #endif
 #ifndef FresnelGatingF1
-  #define FresnelGatingF1 0.10f
+  #define FresnelGatingF1 0.06f
 #endif
 
 // Set once per thread at the top of CS().

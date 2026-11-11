@@ -574,6 +574,16 @@ WO-P3 and WO-P2b included). 4K, default camera, lake f300, `--regressionFixedDt`
   the f45 holes.
 - The only open visual defect is the near-camera blocks (cap-aware fix above).
 
+### The main runtime's links are off limits
+
+- `T850/bin/SteamDeck/Release/{Shaders,Scenes,Layouts,Fonts,Models,Textures}` are shared by
+  every worker and by the user.
+- At 06:40 a sweep re-pointed `Shaders` at `/tmp/p3fix/shaders`, so other runs loaded the
+  wrong kernels.
+- A guard now restores these links every 2 s and logs it.
+- For variants, build a private runtime directory: link the `DayScene` binary, point `Shaders`
+  at your copy and the rest at `Assets/`, and run from there.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

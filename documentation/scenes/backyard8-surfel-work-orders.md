@@ -41,13 +41,18 @@ Design:
 
 ## Rules (every work order)
 
+- **Never `git stash`, `git checkout -- <path>`, `git restore` or `git reset` in this working
+  tree.** Other agents and Claude have uncommitted edits in it, and a stash lost Claude's
+  review notes once. To compare with an older commit, use
+  `git worktree add /tmp/<name> <commit>` and remove it afterwards.
 - Touch only the files your work order owns. Commit only them, with a pathspec:
   `git commit -m "WO-n: ..." -- <paths>`. Do not stage or commit anybody else's files, do not
   amend or rebase, never push.
 - Commit subject starts with `WO-n:`; the body lists what you ran and the exact results.
 - Build: `cd T850 && cmake --build build/linux --target DayScene -j$(nproc)`. Shaders compile at
   runtime (no rebuild for `.hlsl` edits).
-- Run: from `T850/bin/SteamDeck/Release`, always `--unattended`, with
+- Run: from `T850/bin/SteamDeck/Release`, always `--unattended --scene 8` (without `--scene 8`
+  the app starts its default scene, which tests nothing here), with
   `SDL_VIDEO_DRIVER=x11 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu`. `--fluid-render splat`
   selects the particle renderer, `--backyard-start water` the splash start. Delete the
   `dumps_*` folders you create.
@@ -251,7 +256,15 @@ Style 0 no longer reaches this kernel. Delete:
   and `SkyEstimate` if nothing else uses it;
 - its branch in `CS`.
 
-Keep the cbuffer and the bindings exactly as they are. Update the header comment.
+Keep the cbuffer as it is. **Amended after review:** also delete the declarations the water
+style alone used: `ThicknessBits` (t2), `SceneColor` (t3), `LinearSampler` (s3), `SceneDepth`
+(t4), plus helpers only they used. Otherwise the compiler strips them, and
+`ComputePipeline::SetValidatedLayout` rejects the pipeline, because the declared and reflected
+binding counts must match. Do **not** keep them alive with dummy reads. Whether such reads
+survive depends on the compiler version, and `x * 0.0f` is NaN when x is inf. WO-1's owner
+removes the same four bindings (binding indices 4, 5, 6 and 7) from `particle_sphere_shade`
+in `compute_kernels.json` and from the `Fluid Sphere Shade` pass in the graph. Update the
+header comment.
 
 ### Twins and checks
 
@@ -347,6 +360,9 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
 
 ## Status
 
+**Before WO-4: apply Claude's reviews in "Notes from Claude". They change WO-1 and WO-2
+files.**
+
 | WO | Owner | State | Commit | Results |
 |---|---|---|---|---|
 | WO-1 engine plumbing | qwen-5090 | ready | | |
@@ -359,6 +375,49 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
 ## Notes from Claude
 
 (Claude appends reviews and tuning instructions here.)
+
+- **Every DayScene run needs `--scene 8`.** At 21:26 and 21:30 the WO-1 worker ran
+  `./DayScene --unattended --benchmarkFrames 5`. At 21:34 it ran `--scene 7`. Neither tests
+  Backyard 8, and both put the wrong scene on the user's desktop; the 21:30 run never exited.
+  A guard now stops agent-launched DayScene runs without `--scene 8`. Use `--dump-frame N`,
+  which exits after frame N.
+- **Review of WO-2 (`5477235`): not accepted yet. Two fixes; the rest matches the spec.**
+  1. **`CS_FluidSplat` early out tests the wrong tap.** It must use the **farthest** of the
+     five front depths, and any empty tap must disable the early out. The committed code
+     returns when `c.z - bound > nearest + SurfelBand`, and that skips particles that do
+     contribute. Example: a particle on the pool surface 8 m away, next to a splash sheet's
+     silhouette. Its centre tap sees the sheet at 3 m and its corner taps see the pool at 8 m.
+     It is skipped, so the pool pixels beside the sheet lose their surfel normals. Also drop
+     `cornerOffset` and tap `(hi.x, hi.y)` directly.
+  2. **`CS_FluidSphereShade` unused bindings.** See the amended last step of WO-2.
+  3. Correction to the WO-2 commit body: the twin check does **not** fail on the base tree.
+     `77a0e3f` passes (58 kernels, 53 twins).
+- **Review of WO-1 (`b9e89ad`): accepted, with one follow-up.** Correct as specified:
+  - the scope;
+  - the descriptor and validation;
+  - the builder (stage to `Iteration`, band in metres, sharpness, shade `Mode` 2);
+  - the manifest bindings;
+  - `FluidNormal`, the zeroed surfel buffer, and both new passes, in the right order with
+    complete bindings.
+
+  Follow-up for its owner: drop bindings 4-7 from `particle_sphere_shade` and from the
+  `Fluid Sphere Shade` pass (see the WO-2 review). Note that its commit body is stale: on HEAD
+  the only twin failure is `CS_FluidSphereShade.glsl`. Both other checks pass:
+  `check_fluid_constants.py` exits 0 and the WO-2 twins match.
+
+- **Review of `a3129ba` (`KeepWaterBindings`): rejected; revert it.** Fake reads multiplied by
+  zero are compiler-dependent: the worker showed that the glslang on PATH removes them, so the
+  twin check still fails. They cost three reads per pixel, and `dot(inf, 0)` is NaN in the
+  alpha.
+  - **WO-2 owner:** revert `KeepWaterBindings` and the `+ x` terms. Delete the four
+    declarations and their now-unused helpers. Regenerate the twin.
+  - **WO-1 owner:** delete binding indices 4-7 from `particle_sphere_shade`. Delete
+    `__fluid_thickness_bits` (register 2), both `Deferred:COLOR0` entries (register 3) and
+    `GBuffer:DEPTH` (register 4) from the `Fluid Sphere Shade` pass.
+  - **Acceptance:**
+    - `check_gl_twins.py` exits 0 with the glslang on PATH;
+    - `--scene 8 --fluid-render splat` with `particles.style` 3 runs with zero `[ERROR]`;
+    - the `spheres` regression captures pass.
 
 ## Requests to Claude
 

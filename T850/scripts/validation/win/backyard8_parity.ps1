@@ -1,6 +1,6 @@
 param(
-    [string]$Exe   = 'D:\sandbox\T850\T850\bin\x64\Release\DayScene.exe',
-    [string]$Out   = 'D:\sandbox\__parity\parity',
+    [Parameter(Mandatory = $true)][string]$Exe,
+    [Parameter(Mandatory = $true)][string]$Out,
     [string]$Apis  = 'vulkan,d3d12,d3d11,gl',
     [int]$VulkanRepeats = 2,
     [switch]$SkipGate,
@@ -13,9 +13,11 @@ param(
 # For each API: the gate, the 8 parity cells, the game self-test, one 3840x2160 run, and a log
 # scan. Every capture is copied under $Out\<api>\ with its log. A progress file
 # $Out\progress.txt gets one line per finished step so a partial run can be read while it runs.
+# -Exe is <project>\bin\x64\Release\DayScene.exe and -Out a scratch folder; both are mandatory
+# because no host path belongs in the repository. `windows_parity.py run` passes them.
 $ErrorActionPreference = 'Continue'
-$project = Split-Path -Parent (Split-Path -Parent $Exe)          # T850\T850
 $exeDir = Split-Path -Parent $Exe
+$project = Split-Path -Parent (Split-Path -Parent $exeDir)     # <project>\bin\x64\Release
 $assets = Join-Path $project 'Assets\Scenes\Backyard8Fluid.json'
 $gate = Join-Path $project 'scripts\validation\backyard8_regression.py'
 $ppm2png = Join-Path $project 'scripts\validation\ppm2png.py'

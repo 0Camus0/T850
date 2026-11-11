@@ -252,6 +252,8 @@ def cmd_sync(args):
     out = host.ssh(f'powershell -NoProfile -ExecutionPolicy Bypass -File '
                    f'"{remote_dir}\\sync_extract.ps1" -Root "{args.root}" -Source "{remote_dir}"'
                    f' -Ident "{ident}"' + (" -Prune" if args.prune else ""))
+    if "ROOT_FAIL" in out.stdout:
+        die(out.stdout.strip())
     if "SYNC_OK" not in out.stdout:
         die("extract did not report SYNC_OK")
     host.ssh(f'cmd /c del /q "{remote_dir}\\t850_sync.tar.gz"', check=False)
@@ -279,13 +281,20 @@ def tree_files(tree):
 
 EXTRACT_SCRIPT = r'''param([string]$Root, [string]$Source, [string]$Ident, [switch]$Prune)
 $ErrorActionPreference = 'Stop'
+# <root> holds start_task.ps1 and __parity; the checkout is <root>\T850 and the project the
+# solution and the build scripts use is <root>\T850\T850. Writing into <root>\T850 instead
+# lands beside the checkout's .git and builds a copy that has no build\dawn-package.
+$dstRoot = Join-Path $Root 'T850\T850'
+if (!(Test-Path -LiteralPath (Join-Path $dstRoot 'T850.sln'))) {
+    "ROOT_FAIL $dstRoot (no T850.sln; -Root must be the folder that holds T850\T850)"
+    exit 1
+}
 $work = Join-Path $Root '__parity\sync\work'
 if (Test-Path $work) { Remove-Item -Recurse -Force $work }
 New-Item -ItemType Directory -Force $work | Out-Null
 & tar -xzf (Join-Path $Source 't850_sync.tar.gz') -C $work
 if ($LASTEXITCODE -ne 0) { "SYNC_FAIL tar exit $LASTEXITCODE"; exit 1 }
 $manifest = Get-Content (Join-Path $work 'manifest.json') -Raw | ConvertFrom-Json
-$dstRoot = Join-Path $Root 'T850'
 $copied = 0; $added = 0; $same = 0
 # Changed and new files get the host's current time, so MSBuild's timestamp comparison sees
 # them as newer than the objects built from the previous revision. Unchanged files are left
@@ -335,7 +344,11 @@ Remove-Item -Recurse -Force $work
 
 BUILD_SCRIPT = r'''param([string]$Root, [string]$Action = 'Rebuild')
 $ErrorActionPreference = 'Continue'
-$proj = Join-Path $Root 'T850'
+$proj = Join-Path $Root 'T850\T850'
+if (!(Test-Path -LiteralPath (Join-Path $proj 'T850.sln'))) {
+    "ROOT_FAIL $proj (no T850.sln; -Root must be the folder that holds T850\T850)"
+    exit 1
+}
 $log = Join-Path $Root '__parity\build\build.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
 $exe = Join-Path $proj 'bin\x64\Release\DayScene.exe'
@@ -366,7 +379,11 @@ SETUP_DAWN_SCRIPT = r'''param([string]$Root, [string]$Done)
 # SetupDawn.ps1 exits the whole script on its own exit calls, so the completion file is
 # written by a child process and the exit code comes from it.
 $ErrorActionPreference = 'Continue'
-$project = Join-Path $Root 'T850'
+$project = Join-Path $Root 'T850\T850'
+if (!(Test-Path -LiteralPath (Join-Path $project 'T850.sln'))) {
+    "ROOT_FAIL $project (no T850.sln; -Root must be the folder that holds T850\T850)"
+    exit 1
+}
 $log = Join-Path $Root '__parity\build\setup_dawn.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
 Remove-Item -LiteralPath $Done -ErrorAction SilentlyContinue
@@ -406,14 +423,18 @@ def cmd_build(args):
     out = host.ssh(BUILD_COMMAND.format(remote=remote_dir, root=args.root, action=action),
                    timeout=BUILD_TIMEOUT)
     text = out.stdout
+    if "ROOT_FAIL" in text:
+        die(text.strip())
     code = None
     for line in text.splitlines():
         if line.startswith("BUILD_EXIT="):
             code = int(line.split()[0].split("=")[1])
     retried = False
-    if code != 0 and ("Dawn package" in text or "Dawn" in text or args.setup_dawn):
-        print("build failed: Dawn package metadata. Running SetupDawn.ps1 -Architecture x64 "
-              "once and retrying")
+    # SetupDawn is never automatic: it clones a pinned vcpkg and builds Dawn, and Claude asked
+    # to be asked first. Only --setup-dawn runs it.
+    if code != 0 and args.setup_dawn:
+        print("build failed and --setup-dawn was given. Running SetupDawn.ps1 "
+              "-Architecture x64 once and retrying")
         setup = Path(SCRATCH) / "setup_dawn.ps1"
         setup.write_text(SETUP_DAWN_SCRIPT, encoding="utf-8")
         host.copy_to(setup, remote_dir + "\\parity_setup_dawn.ps1")
@@ -430,6 +451,9 @@ def cmd_build(args):
                        local_setup / "setup_dawn.log")
         out = host.ssh(BUILD_COMMAND.format(remote=remote_dir, root=args.root,
                                             action=action), timeout=BUILD_TIMEOUT)
+        if "ROOT_FAIL" in out.stdout:
+            die(out.stdout.strip())
+        text = out.stdout
         for line in out.stdout.splitlines():
             if line.startswith("BUILD_EXIT="):
                 code = int(line.split()[0].split("=")[1])
@@ -476,10 +500,19 @@ def cmd_run(args):
     host.copy_to(script, remote_dir + "\\" + script.name)
     # start_task.ps1 passes -File only, so an argument-carrying launcher runs the real script in
     # place: the script stays <root>\__parity\<tag>\<name>.ps1 and the launcher holds the args.
+    # Scripts that declare -Exe/-Out get the project's DayScene and <root>\__parity\<tag>\out; no
+    # host path is stored in the repository itself.
+    text = script.read_text(encoding="utf-8", errors="replace")
+    extra = ""
+    if "$Exe" in text:
+        exe = host.win("T850\\T850\\bin\\x64\\Release\\DayScene.exe")
+        extra += f"$Exe = '{exe}'\n"
+    if "$Out" in text:
+        extra += f"$Out = '{remote_dir}\\out'\n"
     launch = Path(SCRATCH) / f"launch_{tag}.ps1"
     launch.write_text(
         f"$Dir = '{remote_dir}'\n$ScriptPath = '{remote_dir}\\{script.name}'\n"
-        + WRAPPER_SCRIPT, encoding="utf-8")
+        + extra + WRAPPER_SCRIPT, encoding="utf-8")
     launch_remote = host.win(f"__parity\\launch_{tag}.ps1")
     host.copy_to(launch, launch_remote)
     launcher = host.win("start_task.ps1")

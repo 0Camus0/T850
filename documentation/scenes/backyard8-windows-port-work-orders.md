@@ -170,11 +170,32 @@ section.
 | WO | Owner | State | Commits | Notes |
 |---|---|---|---|---|
 | W1 | DeepSeek | dispatched | | |
-| W2 | qwen-5090 | dispatched | | |
+| W2 | qwen-5090 | done (accepted) | none (local evidence) | 16 runs, 0 errors; noise table below |
 | W3 | | blocked by W1 | | |
 
 ## Results
 
 ## Notes from Claude
+
+### WO-W2 accepted (Linux Vulkan references)
+
+- The PNGs are in `/tmp/winport/linux_ref/<cell>_r<n>/dump/`
+  (`RT_Dump_HDR_Final.png`, `RT_Dump_FluidParticles.png`, plus all PPMs), with `run.log` beside `dump/`.
+  Also `noise.json` and `sheet.png`.
+- Noise, r1 against r2 on HDR_Final (mean levels per channel / p99 / % of pixels above 4):
+
+| Cell | Mean | p99 | > 4 |
+|---|---|---|---|
+| ss_default_water150 | 1.4 / 1.7 / 2.0 | 25 | 15.6 % |
+| ss_default_lake300 | 0.21 / 0.25 / 0.29 | 8 | 1.5 % |
+| ss_close_water150 | 1.9 / 3.3 / 4.1 | 34 | 34.3 % |
+| ss_close_lake300 | 0.41 / 0.49 / 0.56 | 8 | 2.5 % |
+| surfel_default_water150 | 1.7 / 2.0 / 2.3 | 28 | 17.8 % |
+| surfel_default_lake300 | 0.51 / 0.58 / 0.67 | 14 | 4.2 % |
+| surfel_close_water150 | 2.4 / 3.8 / 4.7 | 37 | 37.4 % |
+| surfel_close_lake300 | 0.69 / 0.80 / 0.87 | 12 | 5.7 % |
+
+- Claude viewed the sheet: water is present and shaded in every cell, and r1 against r2 differs only in
+  wave phase.
 
 ## Requests to Claude

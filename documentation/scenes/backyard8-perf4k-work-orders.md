@@ -425,6 +425,42 @@ A worktree's `T850/bin/SteamDeck/Release` links:
 Shaders compile at runtime from the linked directory. A worktree that links the main tree's
 Shaders runs another work order's uncommitted kernels.
 
+### WO-P4 reviewed (`4389a36`): needs a follow-up commit
+
+What is right:
+
+- `ensureTiledLightTextures` no longer wipes the frame's data, and any recreation forces an
+  upload.
+- The index entries are written after `ensure`, with the texture's width as the stride.
+- Byte-identical scene 1 HDR_Final; self-test 78 PASS; validators exit 0.
+
+The commit body misreads the Backyard 8 Deferred difference. It is not noise:
+
+- Two runs of the before build give byte-identical Deferred output, and HDR_Final too for the
+  lake start.
+- Before against after, every pixel that changes by more than 4 levels gets **brighter**
+  (4,219 pixels, 0 darker), centred on the patio around the point light at (0, 1.6, 4.6).
+- This is the pre-existing upload-wipe bug being fixed. Until now, static views (every dump,
+  gate run and capture) rendered without the five point lights, which appeared only once the
+  camera moved.
+- The gate still passes. Claude re-freezes the references later, after visual sign-off.
+
+To fix in a follow-up commit (`WO-P4: ...`):
+
+1. **Resize.** When `tilesX` or `tilesY` change, the header is recreated but the index texture
+   keeps its old height (`tileCount` rows), while uploads use the new tile count. A larger
+   window then copies past the texture's last row. Recreate the index texture whenever the
+   tile count changes, as well as when its width must grow. Test a resize: two runs at
+   different `--width/--height`, and if possible a resize mid-run; report any validation
+   errors.
+2. **Missing acceptance numbers**, both at 3840x2160:
+   - CPU `render.pass.Deferred Light Volumes` before and after (`backyard8_perf.py --realtime`;
+     `--no-guard` is fine for a CPU number);
+   - texture upload bytes per frame while the camera moves (scene 1's spline camera, telemetry
+     `uploads`).
+3. Correct the description of the Deferred change in the follow-up commit body: point lights
+   restored in static views, after brighter only.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

@@ -381,7 +381,6 @@ void CS(uint3 id : SV_DispatchThreadID)
         // the world-to-view rotation whose columns are the view images of the world axes.
         const float4 shape1 = Anisotropy[i * 3u + 1u];
         const float4 shape2 = Anisotropy[i * 3u + 2u];
-        if (buriedMarker < 0.0f) return;   // WO-P2: buried: depth and surfel scatter skip it
         const float3x3 worldM = float3x3(shape1.x, shape1.y, shape1.z,
                                          shape1.y, shape1.w, shape2.x,
                                          shape1.z, shape2.x, shape2.y);
@@ -396,8 +395,12 @@ void CS(uint3 id : SV_DispatchThreadID)
         const float bound = shape0.w;
         if (c.z - bound <= 0.05f) return;   // crosses the near plane: not worth splatting
         const float2 cPx = float2(c.x * focalX / c.z, -c.y * focalY / c.z) + halfSize;
-        const float bPx = min(bound * focalY / (c.z - bound), 64.0f);
+        const float bPxRaw = bound * focalY / (c.z - bound);
+        const float bPx = min(bPxRaw, 64.0f);
         if (bPx < 0.5f) return;
+        // Buried skip only where the 64-px cap does not cut this ellipsoid: near the camera the
+        // capped surface ellipsoids leave gaps that only the interior particles fill.
+        if (buriedMarker < 0.0f && bPxRaw < 48.0f) return;
         // Tight screen rectangle from the dual quadric (Sigg et al. 2006). A plane x = s z
         // through the eye is tangent to the ellipsoid when pi^T Q* pi = 0, with
         // Q* = [S - c c^T, -c; -c^T, -1] and S = M^-1; the same for y. A flattened surface disc

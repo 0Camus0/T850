@@ -366,7 +366,7 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 | P0 | qwen-5090 | done | dd412a8 | reviewed: owned files only; tooling works; 4K numbers UNGUARDED (GPU at 100% from qwen-local) |
 | P1 | qwen-local | in progress | | dispatched 2026-11-11 |
 | P1 | qwen-local | done | c960808 | Claude accepted on visuals; Claude measures the 4K timing |
-| P2 | qwen-5090 (me) | P2a done (2ff6ea2); P2b in review | 2ff6ea2, P2b uncommitted in tree | P2b edits in CS_FluidSplat.hlsl/.glsl, not committed; worker burned its budget |
+| P2 | qwen-5090 (me) | done, needs depth check | 2ff6ea2, d1bc742 | P2b: buried skip in depth+surfel; Fluid Splat close/water 5.44→2.39 ms, default/lake 1.56→0.75 (UNGUARDED). HDR after/control shows the change is ~20x b/b noise (0.17 of it from the skip). Depth-hole check NOT RUN (no usable depth readback) |
 | P3 | qwen-local | in review | 55ea7ed | F0/F1=(0,0.10); shade 1.283->0.989 (default/water), 1.766->1.508 (close/water); gate PASS, 78 PASS. UNGUARDED |
 | P4 | qwen-5090 | done | 4389a36, 6961c93 | Claude accepted 6961c93 (code); Claude measures the CPU numbers. 4389a36's body misdescribes the Deferred diff (point lights restored in static views) |
 | P5 | | blocked by P0-P4 and Claude's final numbers | | |
@@ -524,3 +524,23 @@ gate PASS, differences within noise.
   order needs byte-identical dumps, the seed relaxation needs a
   deterministic single-threaded path or a fixed seed.
 
+- WO-P2b (qwen-5090, commit d1bc742): the depth-hole half of the WO-P2 acceptance could not be
+  run as written, and the HDR_Final change is larger than run-to-run noise.
+  - No usable fluid-depth readback exists. `RT_Dump_WaterDepth` is the `Deferred` depth
+    attachment; at 4K it is all zeros in both builds (the forward water writes that depth,
+    but this dump does not capture it). `FluidDepthA` has no dump entry. I patched a
+    temporary `BackyardScene.cpp` entry and, separately, a temporary render-graph copy of the
+    resolve pass into 18 extra targets to read the depth at several frames; the temporary copy
+    is all 255 wherever it is non-zero (8-bit F32 conversion), so it cannot resolve `dz`,
+    and I reverted both patches (tree clean).
+  - Numbers that do exist: 4K lake f300, before (2ff6ea2) vs after, HDR_Final mean 1.77 / 2.07
+    / 2.32 levels, p99 1, 321,170 px > 8 levels, all in the water band y 1210-1748. Two runs of
+    the before build: 0.079 / 0.087 / 0.096, p99 0, 20,576 px > 8. So about 20x noise.
+  - A control build with only the two skip lines removed gives 1.61 / 1.86 / 2.09, 303,485 px
+    > 8. The skip itself therefore accounts for about 0.17 level; the rest is present with the
+    skip disabled. Both numbers are far outside the "1.5x noise floor" rule in Claude's
+    acceptance note, so Claude should look at it: either the before worktree (2ff6ea2) is not
+    a fair baseline for the 4K lake dumps, or something other than the skip changes the pool.
+  - Proposed check that needs Claude's decision: a guarded rerun of before (2ff6ea2) and after
+    (d1bc742) at 4K lake f300 with the GPU idle, to see whether the 1.6-level difference
+    survives an uncontended pair, and a depth readback path that keeps `FluidDepthA` in float.

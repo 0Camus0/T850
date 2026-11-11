@@ -169,11 +169,67 @@ section.
 
 | WO | Owner | State | Commits | Notes |
 |---|---|---|---|---|
-| W1 | DeepSeek | dispatched | | |
+| W1 | DeepSeek | tooling committed, build blocked | 4ec41c5 | milestone 1 tooling done; matrix waiting on a Release x64 build |
 | W2 | qwen-5090 | done (accepted) | none (local evidence) | 16 runs, 0 errors; noise table below |
 | W3 | | blocked by W1 | | |
 
 ## Results
+
+## Tooling (commit 4ec41c5)
+
+`T850/scripts/validation/windows_parity.py` (`sync`, `build`, `run`), the Windows matrix
+`T850/scripts/validation/win/backyard8_parity.ps1` and the end-to-end probe
+`T850/scripts/validation/win/smoke_frame.ps1`. Proven: `sync` on HEAD c1815d7 (1339 files,
+17.3 MB, second sync unchanged=1339), `run` of the probe script (host reported in-process
+session 1, exit 0, dump `dumps_d3d12_f10_20261111_101509`, results fetched to
+`/tmp/winport/smoke`).
+
+`sync` cannot use a plain `tar -x` of `Framework`, `DayScene`, ... into `<root>\T850`,
+because the host's tree is also the path of its own `.git` (`<root>\T850\.git`): extracting
+the archive would delete it and the vcpkg checkout. Instead it copies each listed file
+over its existing copy (hash compared first, fixed timestamp so unchanged files do not
+rebuild), adds new files, and `--prune` removes tracked files the revision dropped.
+`Librerias/vcpkg` is a gitlink and is never touched.
+
+## Blocker: Release x64 build on the host
+
+`build` fails before compiling T850:
+`cmake\DawnPackage.targets(24,5): error : Required Dawn package metadata is missing` for
+Framework and FrameworkImGui, because `<root>\T850\build\dawn-package\Dawn.Release.props`
+does not exist.
+
+`build` therefore ran `SetupDawn.ps1 -Architecture x64` once (as the work order says),
+and that fails too:
+
+- SetupDawn found `Librerias\vcpkg` in a state that was not a usable checkout and re-cloned
+  it (`Cloning into '<root>\T850\Librerias\vcpkg'... HEAD is now at 77df67cfff`), then
+  `vcpkg install dawn[core,d3d12]:x64-windows-static ...` began a full dawn build.
+- The dawn build aborted after 1.5 min in the configure step:
+  `scripts/cmake/vcpkg_execute_required_process.cmake:127 (message): Command failed:
+  <vcpkg>\downloads\tools\ninja-1.13.2-windows\ninja.exe -v`, exit 1, working directory
+  `buildtrees\dawn\x64-windows-static-rel\vcpkg-parallel-configure`. That directory has
+  `build.ninja` but no generated `build-<config>.ninja` and no `config-<config>-CMakeCache.txt.log`,
+  so a configure process in the parallel dbg/rel driver failed without leaving a log.
+- The install state before this was already broken: `installed\x64-windows-static` had only
+  abseil and directx-dxc, no dawn/glslang/imgui, and `SetupDawn` reports that with the
+  message above.
+
+The host's `Librerias\vcpkg` was re-created by my one SetupDawn run at 09:22, i.e. this
+changed host state that existed before me. The full dawn build is heavy (tint alone is
+hundreds of files) and it is not clear it can finish from SSH session 0 within the
+machine's shared-use budget, and the configure failure has no log to read.
+
+## Requests to Claude
+
+1. Decide how to get a Release x64 build on the host:
+   (a) I keep the machine and run `SetupDawn.ps1 -Architecture x64` again after I diagnose
+       the ninja configure failure (I would add `-v` logging and rerun vcpkg by hand), then
+       a full build (likely 20-60 min, one long lock);
+   (b) you (or someone with a console session) provision Dawn once outside my lock, and I
+       only build and run the matrix afterwards;
+   (c) something else you prefer.
+   Until then I cannot run milestone 1's matrix, and WO-W1's triage cannot start.
+
 
 ## Notes from Claude
 

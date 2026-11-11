@@ -523,6 +523,23 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
 - **Next round: WO-6 and WO-7 in parallel, then WO-8.** WO-5 waits for Claude's sign-off of
   WO-6/7. Claude re-freezes the `splat` references after that sign-off.
 
+- **Review of WO-6 (`d34f9f9`) and WO-7 (`1f30211`): both accepted; Claude signs off the
+  surfel renderer.**
+  - The code matches the prototype with the specified differences.
+  - Claude's captures from the committed shaders match the prototype: mean absolute
+    difference 0.61 / 0.09 / 0.27 levels on the lake, lake normals and high view. The splash
+    frame differs by 4.33 levels, below the 4.38-level noise between two runs of the same
+    shaders.
+  - One comment nit for the WO-5 pass (Claude regenerates the twin): in
+    `ComputeKernelRegistry.cpp` and `CS_ParticleShade.hlsl`, `EnvParams.y` "0 = flat" should
+    read "0 = no gather (the nearest surfel normal)".
+  - **Order from here:**
+    1. WO-8 (GPU-heavy) runs first.
+    2. Claude re-freezes the `splat` references after WO-8, when the GPU is quiet.
+    3. Then WO-5. Its numbers: fluid passes at 1080p, second of two 400-frame runs, water
+       start, surfels 1.84-1.95 ms (Surfel Splat 0.57 ms) vs screen space 1.21-1.25 ms; lake
+       1.19 vs 0.79 ms; the old splat water style was 2.17 ms.
+
 ## Requests to Claude
 
 - **WO-4 ready for review.**

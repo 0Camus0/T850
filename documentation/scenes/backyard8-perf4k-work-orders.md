@@ -557,6 +557,23 @@ if (buriedMarker < 0.0f && bPxRaw < 48.0f) return;
   - report the shade time with and without the gate from one build, and the HDR_Final
     difference against noise, at 4K default and close.
 
+### Answer to WO-P2b's request (the 1.6-level difference at 4K lake f300)
+
+Claude rebuilt the pre-WO-P1 code (`a960d75`) and compared it with HEAD (`d1bc742`: WO-P1,
+WO-P3 and WO-P2b included). 4K, default camera, lake f300, `--regressionFixedDt`.
+
+| Pair | Mean per channel | p99 | Pixels > 4 levels |
+|---|---|---|---|
+| Pre-P1 against pre-P1 (noise) | 0.26 / 0.29 / 0.33 | 9 | 1.98 % |
+| Pre-P1 against HEAD | 0.27 / 0.29 / 0.33 | 9 | 2.01 % |
+| HEAD against HEAD (noise) | 0.25 / 0.29 / 0.34 | 9 | 2.06 % |
+
+- The chain is visually neutral at this view. The 1.6-2.3 level difference in the request came
+  from that before setup, not from the code.
+- No float depth readback is needed. HDR_Final against noise, viewed by Claude, is what found
+  the f45 holes.
+- The only open visual defect is the near-camera blocks (cap-aware fix above).
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

@@ -176,7 +176,7 @@ static_assert(sizeof(ParticleSmoothConstants) == 32);
 struct ParticleShadeConstants {
   uint32_t outputWidth;
   uint32_t outputHeight;
-  uint32_t mode;          // 0 splat, 1 screen space
+  uint32_t mode;          // 0 splat, 1 screen space, 2 screen space with surfel normals
   uint32_t debugView;     // 0 shaded, 1 normals, 2 depth, 3 water path, 4 coverage, 5 reflection, 6 refraction
   float projScaleY;
   float projA;            // Projection.m[2][2]
@@ -482,8 +482,10 @@ bool BuildParticleSplatConstants(const ComputeKernelConstantsContext& context,
   // The splat is two passes in one kernel: stamp projects each particle and marks its
   // 8x8 tile; resolve walks the marked tiles and writes colour. A compute dispatch has no
   // grid-wide barrier, so they cannot be one dispatch -- the graph runs the pass twice with
-  // these two permutations.
-  value.iteration    = context.permutation == "resolve" ? 1u : 0u;
+  // these two permutations. CS_ParticleSplat uses the permutation; CS_FluidSplat/
+  // CS_FluidResolve use the pass stage instead (stage 2 = the surfel pass).
+  value.iteration    = context.permutation == "resolve" ? 1u :
+      static_cast<uint32_t>((std::max)(context.passStage, 0));
   value.radius       = system->radius;
   value.opacity      = system->opacity;
   value.intensity    = system->intensity;
@@ -532,6 +534,13 @@ bool BuildParticleSplatConstants(const ComputeKernelConstantsContext& context,
   // AuxEnabled (after Color1): accumulate the solver's whitewater for the screen-space shade.
   value.color[1][3] = system->render_mode == ParticleRenderMode::ScreenSpace &&
                       !system->whitewater_buffer.empty() ? 1.0f : 0.0f;
+  // SurfelBand (after Color2): the front-layer depth in metres; 0 = the surfel pass is off.
+  // Padding in every kernel that does not run the surfel splat.
+  value.color[2][3] = system->screen_space.surfels ?
+      system->screen_space.surfel_band * system->radius : 0.0f;
+  // SurfelSharpness (after Color3): exponent on the ellipsoid's centre weight. Padding in
+  // every kernel that does not run the surfel splat.
+  value.color[3][3] = system->screen_space.surfel_sharpness;
   // Row-major view-projection; the kernel multiplies rows against float4(p, 1).
   std::memcpy(value.viewProjection, &camera->VP, sizeof(value.viewProjection));
   CopyWords(value, constants);
@@ -629,7 +638,8 @@ bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
   ParticleShadeConstants value = {};
   value.outputWidth = context.outputWidth;
   value.outputHeight = context.outputHeight;
-  value.mode = system->render_mode == ParticleRenderMode::ScreenSpace ? 1u : 0u;
+  value.mode = system->render_mode == ParticleRenderMode::ScreenSpace
+      ? (system->screen_space.surfels ? 2u : 1u) : 0u;
   value.debugView = static_cast<uint32_t>((std::max)(system->screen_space.debug_view, 0));
   value.projScaleY = camera->Projection.m[1][1];
   value.projA = camera->Projection.m[2][2];

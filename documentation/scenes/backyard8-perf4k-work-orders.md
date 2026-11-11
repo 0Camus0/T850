@@ -387,6 +387,22 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 - Never run DayScene or timing in the background while editing. Shaders compile at runtime,
   so a run that starts mid-edit compiles a half-edited kernel.
 
+### WO-P0 reviewed (`dd412a8`): accepted
+
+- The camera override is proven by the byte-identical camera-dependent targets (GBuffer,
+  Deferred, WaterDepth).
+- The HDR_Final and FluidParticles differences between two identical runs are the known solver
+  nondeterminism. That is why the gate compares statistics, not bytes. It is pre-existing; no
+  action in this work.
+- The UNGUARDED 4K numbers show contention (39 fps real time). Claude re-measures guarded when
+  the workers are idle.
+- **For WO-P4:**
+  - expect byte-identical HDR_Final for DayScene scene 1 (no fluid);
+  - for Backyard 8, compare only the non-fluid targets (GBuffer_*, Deferred) byte for byte,
+    and HDR_Final with the gate.
+- `T850/Assets/Scenes/scratch/` (WO-P1's scratch configs) must be deleted before WO-P1
+  finishes. Never commit it.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

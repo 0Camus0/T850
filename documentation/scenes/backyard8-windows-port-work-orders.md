@@ -543,3 +543,10 @@ Self-test is 78 PASS and the gate exits 0 on every API.
    sit above noise on p99 in `ss_default_lake300` (11 against 6-8), all of it in the coping
    band above. If you want it gone it needs a GL texture-orientation investigation in the
    static coping material — a separate, pre-existing issue, so I did not open it.
+
+4. **Host paths in an older doc (pre-existing, for your call).** My WO-W1 files carry none
+   (`git grep` for the host, root and user over `T850/scripts/validation` and this doc finds
+   nothing), but `documentation/scenes/backyard8-particle-fluid-investigation.md:626`
+   contains "MSVC v143 build on `camus@10.0.0.232` (`D:\sandbox\T850`) succeeded". It
+   arrived with `6e41c94` on 2026-11-09, outside WO-W1. I left it alone; say the word and I
+   will redact it and scan the remaining docs.

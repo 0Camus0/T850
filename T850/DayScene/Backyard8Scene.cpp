@@ -744,8 +744,10 @@ void Backyard8Scene::DrawSolverPanel(t850::DevGuiContext& gui) {
     }
     gui.Text(p.renderMode == 0 ? "ACTIVE: particle renderer (surfel splatting)"
                                : "ACTIVE: screen-space fluid (smoothed depth)");
-    gui.Text("Splat settings + wireframe/flat debug: 'Backyard 8 - Particles (Splat)'.");
-    gui.Text("SSFR settings + normal/depth/thickness/coverage debug: 'Backyard 8 - Screen Space Fluid'.");
+    gui.Text(p.renderMode == 0
+                 ? "Renderer settings: 'Backyard 8 - Particles (Splat)' (INACTIVE until selected here)."
+                 : "Renderer settings: 'Backyard 8 - Screen Space Fluid' (INACTIVE until selected here).");
+    gui.Text("Both renderers draw with one water shade: 'Backyard 8 - Water Shading' holds its settings.");
   }
 
   if (gui.BeginSection("Simulation", true)) {
@@ -859,11 +861,20 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
   bool lookChanged = false;
   t850::Backyard8ParticleConfig& p = m_config.particles;
 
-  gui.Text(p.renderMode == 0 ? "ACTIVE: this renderer is drawing the pool"
-                              : "INACTIVE: select 'particles' in Backyard 8 - Fluid Simulation");
-  gui.Text("Water look uses the Optics of 'Backyard 8 - Screen Space Fluid' (absorption, refraction).");
-  gui.Text("The water style uses all shading settings of the Screen Space panel (Optics, Scene");
-  gui.Text("lighting, Whitewater, Debug) and none of its smoothing settings.");
+  const bool rendererActive = p.renderMode == 0;
+  // The particle renderer and the water style only coexist in one combination: alpha blend +
+  // the water style (UsesSurfels / UsesWaterShade). Anything else is a debug style.
+  const bool waterStyle = UsesSurfels();
+  gui.Text(rendererActive ? "ACTIVE: this renderer is drawing the pool"
+                          : "INACTIVE: select 'particles (surfel splatting)' in Backyard 8 - Fluid Simulation");
+  if (rendererActive) {
+    gui.Text(waterStyle ? "Drawing with: the water style (surfel splatting), shaded by the water shade."
+                        : "Drawing with: the debug style below, not the water.");
+    gui.Text(waterStyle ? "Its shading lives in 'Backyard 8 - Water Shading'."
+                        : "That style shades itself: 'Backyard 8 - Water Shading' is not in use.");
+  } else {
+    gui.Text("Nothing below is drawn: the screen-space renderer is drawing the pool.");
+  }
 
   if (gui.BeginSection("Splat look", true)) {
     if (controls.combo("pbf8_shape", "falloff shape", {"soft sphere", "sprite", "streak"}, p.shape))
@@ -877,6 +888,8 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
     lookChanged |= controls.slider("pbf8_depth_bias", "soft depth bias (m)", p.depthBias, 0.0f, 0.5f, 0.005f);
     lookChanged |= controls.slider("pbf8_size_min", "size scale at age 0", p.sizeScaleMin, 0.1f, 4.0f, 0.05f);
     lookChanged |= controls.slider("pbf8_size_max", "size scale at age 1", p.sizeScaleMax, 0.1f, 4.0f, 0.05f);
+    gui.Text("The water style (surfel splatting) reads none of these: it sizes its splat from");
+    gui.Text("particle spacing and 'Water Shading' -> Splat, not from the splat look.");
   }
 
   if (gui.BeginSection("Surfels", true)) {
@@ -912,6 +925,9 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
     gui.Text("  wireframe = particle lattice / per-particle rings");
     gui.Text("  flat = filled coverage discs");
     gui.Text("  spheres = one lit sphere per particle, depth sorted");
+    // Alpha blend is required as well: additive blend keeps the legacy per-particle resolve.
+    gui.Text(waterStyle ? "  water style selected: alpha blend, so the water is drawn."
+                        : "  the water needs the water style AND alpha blend; otherwise this style draws.");
     if (controls.combo("pbf8_style", "style / splat debug",
                        {"water (surfel splatting)", "wireframe (particle lattice)",
                         "flat (coverage discs)", "spheres (lit particles)"}, p.style))
@@ -922,7 +938,7 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
       lookChanged = true;
     gui.Separator();
     gui.Text("Screen-space normals/depth/thickness/coverage are a different debug path:");
-    gui.Text("see 'Backyard 8 - Screen Space Fluid' -> Debug (screen space).");
+    gui.Text("see 'Backyard 8 - Water Shading' -> Debug (water shade).");
   }
 
   if (lookChanged) RegisterParticleSystem();
@@ -933,19 +949,19 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
   if (!gui.BeginPanel("Backyard 8 - Screen Space Fluid")) { gui.EndPanel(); return; }
   FluidPanelControls controls{gui};
   bool lookChanged = false;
-  t850::Backyard8ParticleConfig& p = m_config.particles;
   t850::Backyard8ScreenSpaceConfig& ss = m_config.screenSpace;
 
-  if (UsesWaterShade()) {
-    gui.Text(UsesSurfels() ? "ACTIVE: the particle renderer's water style is reconstructing the pool"
-                           : "ACTIVE: the screen-space renderer is reconstructing the pool");
-    gui.Text(UsesSurfels() ? "Surface reconstruction: surfel splatting (front layer blended into depth + normal)"
-                           : "Surface reconstruction: smoothed depth (a-trous smoothing passes)");
+  // The two renderer panels are exclusive: the renderer combo is the only switch between them.
+  const bool rendererActive = m_config.particles.renderMode == 1;
+  gui.Text(rendererActive ? "ACTIVE: the screen-space renderer is reconstructing the pool"
+                          : "INACTIVE: select 'screen-space fluid (smoothed depth)' in Backyard 8 - Fluid Simulation");
+  if (rendererActive) {
+    gui.Text("Surface reconstruction: smoothed depth (a-trous smoothing passes)");
+    gui.Text("Its shading lives in 'Backyard 8 - Water Shading'.");
   } else {
-    gui.Text("INACTIVE: select a water renderer in Backyard 8 - Fluid Simulation");
+    gui.Text("Nothing below is drawn: the particle renderer is drawing the pool.");
   }
-  gui.Text("These controls affect the water shade of both renderers. The smoothing settings");
-  gui.Text("below are ignored by the particle renderer (surfel splatting instead).");
+  gui.Text("Only this renderer uses these: the smoothing controls below, and the splat fallback.");
 
   if (gui.BeginSection("Surface reconstruction", true)) {
     if (controls.sliderInt("pbf8_ss_iters", "smoothing passes (0-8)", ss.smoothingIterations,
@@ -963,6 +979,44 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
     if (controls.slider("pbf8_ss_tol", "layer threshold (m)", ss.depthTolerance,
                         0.0f, 1.0f, 0.005f))
       lookChanged = true;
+    gui.Text("These five tune the smoothing passes, which only this renderer runs.");
+  }
+
+  if (gui.BeginSection("Debug", false)) {
+    if (controls.check("pbf8_ss_fallback", "keep splat underneath (debug fallback)", ss.splatFallback))
+      lookChanged = true;
+    gui.Text("Only effective in screen-space mode: the particle renderer never runs the splat resolve.");
+  }
+
+  if (lookChanged) RegisterParticleSystem();
+  gui.EndPanel();
+}
+
+void Backyard8Scene::DrawWaterShadingPanel(t850::DevGuiContext& gui) {
+  if (!gui.BeginPanel("Backyard 8 - Water Shading")) { gui.EndPanel(); return; }
+  FluidPanelControls controls{gui};
+  bool lookChanged = false;
+  t850::Backyard8ScreenSpaceConfig& ss = m_config.screenSpace;
+
+  // Both renderers end in the same water shade (CS_ParticleShade): the screen-space renderer as
+  // Mode 1 over the smoothed depth, the particle renderer's water style as Mode 2 over the
+  // surfel surface. Everything below is read by that shade in both modes.
+  if (UsesWaterShade()) {
+    gui.Text(UsesSurfels() ? "IN USE by the particle renderer (surfel splatting)"
+                           : "IN USE by the screen-space renderer");
+  } else {
+    gui.Text("NOT IN USE: the particle renderer's current style does not use the water shade");
+    const char* style = m_config.particles.blend == 0 ? "additive blend"
+        : (m_config.particles.style == 1 ? "wireframe"
+        : (m_config.particles.style == 2 ? "flat"
+        : (m_config.particles.style == 3 ? "spheres" : "the water style without alpha blend")));
+    char line[192];
+    std::snprintf(line, sizeof(line), "  (drawing: %s)", style);
+    gui.Text(line);
+  }
+  gui.Text("The one water shade of both renderers: splat, optics, lighting, whitewater, debug.");
+
+  if (gui.BeginSection("Splat (depth and thickness)", true)) {
     if (controls.slider("pbf8_ss_depth_radius", "depth radius / spacing", ss.depthRadiusScale,
                         0.2f, 1.2f, 0.01f))
       lookChanged = true;
@@ -1050,7 +1104,7 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
   }
 
   if (gui.BeginSection("Scene lighting", true)) {
-    gui.Text("Lighting the screen-space shade pass takes from the scene:");
+    gui.Text("Lighting the water shade takes from the scene:");
     if (controls.slider("pbf8_wwo_env", "environment intensity", ss.envIntensity, 0.0f, 4.0f, 0.05f))
       lookChanged = true;
     if (controls.slider("pbf8_wwo_sun_atten", "sun attenuation (under water)", ss.sunAttenuation,
@@ -1077,7 +1131,7 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
 
   if (gui.BeginSection("Whitewater", true)) {
     t850::Backyard8WhitewaterConfig& ww = m_config.whitewater;
-    gui.Text("Screen-space whitewater look (the solver fields below refresh the pool):");
+    gui.Text("Whitewater look (the solver fields below refresh the pool):");
     if (controls.slider("pbf8_ww_foam", "foam strength", ss.foamStrength, 0.0f, 4.0f, 0.05f))
       lookChanged = true;
     if (controls.slider("pbf8_ww_foam_cell", "foam cell size (m)", ss.foamTextureScale,
@@ -1138,8 +1192,8 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
     }
   }
 
-  if (gui.BeginSection("Debug (screen space)", false)) {
-    gui.Text("These views are produced by the screen-space shade pass:");
+  if (gui.BeginSection("Debug (water shade)", false)) {
+    gui.Text("The water shade's debug views (both renderers):");
     gui.Text("  shaded / normals / surface depth / water path / coverage / reflection /");
     gui.Text("  refraction / whitewater / light under water / wetness");
     if (controls.combo("pbf8_ss_debug", "debug view",
@@ -1147,10 +1201,8 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
                         "reflection", "refraction", "whitewater", "light under water",
                         "wetness"}, ss.debugView))
       lookChanged = true;
-    if (controls.check("pbf8_ss_fallback", "keep splat underneath (debug fallback)", ss.splatFallback))
-      lookChanged = true;
     gui.Separator();
-    gui.Text("The splat wireframe/flat debug is a different path:");
+    gui.Text("The particle renderer's wireframe/flat/sphere debug is a different path:");
     gui.Text("see 'Backyard 8 - Particles (Splat)' -> Splat debug.");
   }
 
@@ -1160,9 +1212,11 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
 
 void Backyard8Scene::DrawDevGui(t850::DevGuiContext& gui) {
   m_devGuiDrawnThisFrame = true;
-  // Three panels, not one: the solver switch belongs with the solver, while the splat and
-  // SSFR settings/debug helpers are deliberately separate because they render differently.
+  // Four panels, not one: the solver switch belongs with the solver; the two renderer panels
+  // are exclusive (each says ACTIVE only when the combo selects it) because they render
+  // differently; the water shade both renderers draw with has its own panel.
   DrawSolverPanel(gui);
   DrawParticlePanel(gui);
   DrawScreenSpacePanel(gui);
+  DrawWaterShadingPanel(gui);
 }

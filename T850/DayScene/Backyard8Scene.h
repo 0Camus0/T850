@@ -74,9 +74,13 @@ private:
   bool UsesSurfels() const;
   void ApplyRenderModeToGraph();
   void ApplyStartMode();
+  // Four panels: the solver (with the renderer combo), one per renderer (the two are
+  // exclusive: only the selected renderer says ACTIVE), and the water shade, whose settings
+  // both renderers' water paths draw with.
   void DrawSolverPanel(t850::DevGuiContext& gui);
   void DrawParticlePanel(t850::DevGuiContext& gui);
   void DrawScreenSpacePanel(t850::DevGuiContext& gui);
+  void DrawWaterShadingPanel(t850::DevGuiContext& gui);
   // Debug instrument: T850_PBF_DUMP="60,300,1200" writes particle fields to T850_PBF_DUMP_DIR
   // (default: the working directory) and logs a Y histogram. Used to validate boundary
   // behaviour; it costs nothing when the variable is unset.

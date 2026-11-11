@@ -367,7 +367,7 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 | P1 | qwen-local | in progress | | dispatched 2026-11-11 |
 | P2 | | blocked by P1 | | |
 | P3 | | blocked by P1 | | |
-| P4 | qwen-5090 | in progress (follow-up) | 4389a36, +follow-up | 4389a36 reviewed by Claude: not done. Needs resize fix, 4K CPU + upload-bytes numbers, and corrected Deferred description (point lights restored). Sent back to qwen-5090 |
+| P4 | qwen-5090 | in progress (follow-up) | 4389a36, 6961c93 | 6961c93 reviewed by me: resize + stale buffer fixed, but (a) "Backyard 8 Deferred byte-identical" contradicts Claude's 4,219-pixel result, (b) Texture/PerFrame upload 0 B both builds — the 16.7 MB path was not exercised, (c) 4K CPU before 0.26 vs 0.22 ms is within the contention band. Sent back |
 | P5 | | blocked by P0-P4 and Claude's final numbers | | |
 
 ## Notes from Claude

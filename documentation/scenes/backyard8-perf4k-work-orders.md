@@ -461,6 +461,17 @@ To fix in a follow-up commit (`WO-P4: ...`):
 3. Correct the description of the Deferred change in the follow-up commit body: point lights
    restored in static views, after brighter only.
 
+### WO-P4 follow-up reviewed (`6961c93`): code accepted
+
+- `ensure` runs before the header and index data are written.
+- Tile-count changes recreate the index texture.
+- The texture's width is the stride, and any recreation forces an upload.
+- The shader uses `LightCameraInfo.w` only as a per-tile clamp, so a variable width is safe.
+- The CPU "before 0.26 ms" was measured on `4389a36`, which had already dropped the 16.7 MB
+  fill, so it is not the original code.
+- Scene 1's spline run uploaded 0 bytes in both builds, so it does not exercise this path.
+- Claude measures the true before (`dd412a8`) against the after when the GPU is idle.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

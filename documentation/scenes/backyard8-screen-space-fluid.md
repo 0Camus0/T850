@@ -140,8 +140,10 @@ Fresnel, normal scale/stencil, spray whitewater (`foam`), ripples (`rippleSlope`
 `rippleWavelength`, `rippleSpeed`, `rippleDistance`), caustics (`caustics`, `causticScale`,
 `causticSpeed`, `causticDepth`), anisotropy (`anisotropy`, `anisotropySmoothing`,
 `anisotropyMaxRatio`, `anisotropyRadius`, `anisotropySprayRadius`, `anisotropyNeighbours`,
-`anisotropySprayNeighbours`, `anisotropyMaxStretch`), splat fallback, debug view). The Dev GUI
-exposes the same values and writes them back into the in-memory config.
+`anisotropySprayNeighbours`, `anisotropyMaxStretch`, `thicknessDownsample` (0 auto = half
+grid at window height >= 1440, 1 = depth grid, 2 = half grid; JSON default 0), splat
+fallback, debug view). The Dev GUI exposes the same values and writes them back into the
+in-memory config.
 
 The 2026-11-10 whitewater pass added 16 more `screenSpace` keys (scene lighting:
 `envIntensity`, `sunAttenuation`, `causticFocus`, `contactLine`, `backlight`, `scatterSun`,
@@ -158,3 +160,25 @@ values equal the C++ defaults. Full key-by-key list and the Dev GUI sections ("S
 `particles.splatFallback` (Dev GUI “keep splat underneath”) restores the old splat resolve as a
 debug fallback. It is off by default; turn it on for Proton D3D11 or while investigating a
 backend whose screen-space result is missing.
+
+## Cost at 4K
+
+The 960x540 figures in
+[backyard8-ssfr-whitewater.md](backyard8-ssfr-whitewater.md) §4 predate the 4K performance
+work. At 3840x2160 (RTX PRO 6000 Blackwell, Linux, Vulkan, screen-space renderer), the
+4K performance work orders (WO-P0 through WO-P4, see
+[backyard8-perf4k.md](backyard8-perf4k.md)) measured the per-pass GPU time before
+(`a960d75`) and after (`f8efec4` plus status commits), in milliseconds:
+
+| View, start | Fluid Splat | Fluid Surface Shade | Render graph total |
+|---|---|---|---|
+| Default, water | 2.40 → 0.92 | 0.97 → 0.94 | 6.12 → 4.65 (-24 %) |
+| Default, lake | 1.61 → 0.76 | 0.70 → 0.69 | 4.83 → 3.99 (-17 %) |
+| Close, water | 5.60 → 2.44 | 1.60 → 1.35 | 10.09 → 6.78 (-33 %) |
+| Close, lake | 4.25 → 2.29 | 1.26 → 1.22 | 8.20 → 6.26 (-24 %) |
+
+Real time (HUD on, no fixed dt): default/water 140 → 174 fps, default/lake 172 → 205 fps,
+close/water 88 → 124 fps, close/lake 103 → 134 fps. The new `screenSpace.thicknessDownsample`
+setting (0 = auto, 1 = depth grid, 2 = half grid) is what moved the splat; the remaining
+costs and the later candidates are listed in
+[backyard8-perf4k.md](backyard8-perf4k.md) §"What is left" and §"Later candidates".

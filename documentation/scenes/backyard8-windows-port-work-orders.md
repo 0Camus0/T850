@@ -207,21 +207,51 @@ This work is Linux-only, with the same rules as WO-W2b. Test data: `/tmp/winport
   (the water shade is broken there), and `missing` for webgpu. Look at the sheet and one diff image, and describe them.
 - Commit only that file: `WO-W2c: compare against Windows Vulkan, add webgpu`.
 
-## WO-W3: documentation (later)
+## WO-W3 (DeepSeek): documentation
 
-Starts after Claude signs off WO-W1. Record the port: method, per-API results, fixes and the remaining
-variance. Update [backyard8-session-2026-11-10.md](backyard8-session-2026-11-10.md) §4 or link it from a new
-section.
+WO-W1 is signed off (see "WO-W1 sign-off" in Notes from Claude). This work is docs only: no code, no host details.
+Make one commit per file group, with subjects starting `WO-W3: docs -`.
+
+1. `documentation/rendering/compute-shader-implementation.md`:
+   - **WebGPU specifics, Tint limit 2**: make it say *any* `isfinite`/`isnan`/`isinf`, scalar or vector.
+     They lower to `OpIsNan`/`OpIsInf`, and Dawn's Tint SPIR-V reader does not implement them:
+     `TINT_UNIMPLEMENTED unhandled SPIR-V instruction: OpIsNan`, then the process aborts with `0xC0000409`.
+     Cite `CS_PbfCull.hlsl` / `CS_PbfDiffuse.hlsl` (`0e2a332`) beside `CS_FluidDiagnostics3D.hlsl`.
+   - **Read-only cube textures in compute** (contract or "Portable guarantees"). A kernel may declare a read-only
+     `"dimension": "cube"` texture in `compute_kernels.json`.
+     - Supported on D3D11 (the texture's `TEXTURECUBE` SRV), D3D12 (`DepthOrArraySize == 6`, the texture's cube SRV),
+       Vulkan, GL (`GL_TEXTURE_CUBE_MAP`, `samplerCube`) and WebGPU (a Cube view).
+     - Not supported as storage (read-write).
+     - Commits: `a7f40b2`, `abaddb8`, `29ed39f`, `5e04cac`.
+   - **OpenGL behavior**: SPIRV-Cross emits one combined sampler per (texture, sampler) pair.
+     - A texture that is both sampled and queried with `GetDimensions` gets a second
+       `..._SPIRV_Cross_DummySampler` alias on the same binding.
+     - `GLComputePipeline::Create` drops exactly duplicated reflected entries before `SetValidatedLayout`.
+     - Cube bindings save and restore `GL_TEXTURE_BINDING_CUBE_MAP`.
+   - **WebGPU/Dawn implementation**: the device requests the adapter's `maxStorageBufferBindingSize` and
+     `maxBufferSize`. The WebGPU defaults (128 MiB and 256 MiB) reject full-screen per-pixel buffers at 4K:
+     20 B/pixel at 3840x2160 is 165,888,000 B (`6d601b2`).
+2. `.github/skills/t850-compute-kernel/SKILL.md`: add two short rules where they fit the existing structure.
+   - Read-only cube textures are portable (declare `"dimension": "cube"`).
+   - Never use `isfinite`/`isnan`/`isinf` in a compute kernel (WebGPU aborts); use the exponent-bits test.
+   Keep the skill concise: two bullets, no history.
+3. `documentation/scenes/backyard8-session-2026-11-10.md` §4: add a short "Windows port, 2026-11-11" subsection.
+   - Five APIs, and the method in two lines (the noise yardstick and the compare tool).
+   - The per-API result in one table (cells at noise and remaining variance).
+   - The fix commits.
+   - The GL coping band as a pre-existing scene difference.
+   - A link to this doc's Results for the full numbers.
+4. Set W3 to done in Status. Reply with the commit hashes.
 
 ## Status
 
 | WO | Owner | State | Commits | Notes |
 |---|---|---|---|---|
-| W1 | DeepSeek | done, awaiting Claude sign-off | 4ec41c5 f1a7a72 78e7e7f d6cad86 c64d51a cf12b20 770407a 3b16a11 b2a62a9 a7f40b2 abaddb8 29ed39f 0e2a332 5e04cac 6d601b2 8df0aef | all 5 APIs: gate 0, 78 PASS, 0 log findings, water cells at noise; lake300 DIFF accepted as solver variance; GL coping band is pre-existing |
+| W1 | DeepSeek | done (signed off by Claude) | 4ec41c5 f1a7a72 78e7e7f d6cad86 c64d51a cf12b20 770407a 3b16a11 b2a62a9 a7f40b2 abaddb8 29ed39f 0e2a332 5e04cac 6d601b2 8df0aef | all 5 APIs: gate 0, 78 PASS, 0 log findings, water cells at noise; lake300 DIFF accepted as solver variance; GL coping band is pre-existing |
 | W2 | qwen-5090 | done (accepted) | none (local evidence) | 16 runs, 0 errors; noise table below |
 | W2b | qwen-5090 | done (accepted) | a144b0c, 0ae4cfc | compare tool and contact sheets (Linux-only) |
 | W2c | qwen-5090 | done (accepted) | 196d5ee | `--ref win` (Windows Vulkan yardstick) and a webgpu column |
-| W3 | | blocked by W1 | | |
+| W3 | DeepSeek | dispatched | | docs: compute-shader doc, compute-kernel skill, session doc §4 |
 
 ## Results (final)
 
@@ -510,6 +540,25 @@ Self-test is 78 PASS and the gate exits 0 on every API.
     scene issue outside this port: report it, do not fix it here.
 - **WebGPU**: `Fluid Surface Shade` dispatch failed every frame. `5e04cac` fixes the cube validation; `matrix3` checks it.
   The 4K WebGPU run exited 1 after 2 s (22 errors). Read that log in `matrix3`.
+
+### WO-W1 sign-off (Claude)
+
+**Signed off** on `8df0aef` / `matrix4`. Claude checked it independently, without relying on the Results text:
+
+- **Logs**: 0 `[ERROR]` and 0 `[WARN ]` in all 53 runs (17 Vulkan, 9 each for d3d12, d3d11, gl and webgpu,
+  including every 4K run).
+- **Parity**: both compares were re-run (`--ref win` and `--ref linux`) and the tables match Results.
+- **Images**: Claude viewed the close-view rows of the sheet. The wave crest, foam, refraction and colour are the same on
+  all six columns, for both renderers.
+- **GL coping band**: Claude confirmed it from `/tmp/winport/gbuf/out`.
+  - `RT_Dump_GBuffer_Albedo` already differs at rows 582-586 (mean about 53).
+  - `WaterDepth` and `FluidParticles` are identical there, so it is pre-existing scene albedo, outside the port.
+- Answers to the requests:
+  1. Signed off.
+  2. The GL band is left for the user to decide on; it is a separate, pre-existing scene issue.
+  3. The host path in an older doc is left as is; it is the user's content, and Claude reports it to the user.
+
+WO-W3 is dispatched to DeepSeek.
 
 ## Requests to Claude
 

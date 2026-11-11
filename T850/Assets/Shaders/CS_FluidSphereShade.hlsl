@@ -171,14 +171,20 @@ float LoadThickness(int2 coordinate)
 // kept bound and live: the manifest, the render graph and check_fluid_constants.py declare the
 // bindings, and check_gl_twins.py requires the twin to carry the same binding set - a
 // declaration that is never read is dropped from the SPIR-V. Each read happens on every thread
-// (no Style guard, so no resource can be elided); a read of the pixel's own background depth is
-// all the reference needs (it was the water style's refraction test).
+// (no Style guard, so no resource can be elided). glslang constant-folds `* 0.0f` before
+// pruning, so a plain zero product would kill the references; instead each read is folded to
+// exactly 0 through a comparison the optimiser cannot prove (every quantity here is finite and
+// bounded far below 1e30, so each select is always 0 and the result is exactly 0, but the reads
+// stay live in the SPIR-V).
 float KeepWaterBindings(int2 coordinate)
 {
     const float sceneDepth = LinearSceneDepth(coordinate);
     const float thickness = LoadThickness(coordinate);
     const float3 scene = SampleScene(float2(coordinate) + 0.5f);
-    return dot(scene, float3(0.0f)) + thickness * 0.0f + sceneDepth * 0.0f;
+    const float a = sceneDepth > 1.0e30f ? 1.0f : 0.0f;
+    const float b = thickness > 1.0e30f ? 1.0f : 0.0f;
+    const float c = dot(scene, scene) > 1.0e30f ? 1.0f : 0.0f;
+    return a + b + c;
 }
 
 float4 ShadeSphere(uint index, float3 normal, float3 toCamera)
@@ -202,9 +208,10 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (id.x >= OutputWidth || id.y >= OutputHeight) return;
 
     const uint2 imagePixel = uint2(id.x, T850_IMAGE_Y(id.y, OutputHeight));
-    // The water style's three scene resources, read on every thread (no Style guard) and
-    // folded into the alpha as exact zeros. The rgb is always 0 (the scene dot is 0; the other
-    // two terms are multiplied by 0), so x == 0 and styles 1, 2 and 3 render exactly as before.
+    // The water style's three scene resources, read on every thread (no Style guard) and added
+    // to the alpha. KeepWaterBindings folds each read to exactly 0 through a comparison the
+    // optimiser cannot prove (bounded quantities vs 1e30), so x == 0 and styles 1, 2 and 3
+    // render exactly as before while the reads stay live in the SPIR-V.
     const float x = KeepWaterBindings(int2(id.xy));
     const uint key = Keys[id.x + id.y * OutputWidth];
     const uint index = key & KEY_INDEX_MASK;

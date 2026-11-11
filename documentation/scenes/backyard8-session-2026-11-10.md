@@ -193,8 +193,9 @@ Regression therefore uses tolerances, not pixel identity.
 
 ### 4.1 Windows host/session setup
 
-The Windows host has an RTX 4080 Laptop GPU and the console session `1` is active. The SSH
-process runs in session `0`, where DXGI cannot create a swapchain
+The Windows host has an RTX 4080 Laptop GPU and the console session `1` is active
+(2026-11-10; in the 2026-11-11 port of 6.3 session 1 was disconnected and rendering still
+worked). The SSH process runs in session `0`, where DXGI cannot create a swapchain
 (`CreateSwapChain failed hr=0x887A0022`). All GPU captures were therefore run in session 1
 through a scheduled task with an interactive principal:
 
@@ -396,6 +397,50 @@ Also verified:
 - No shader compile failures, graphics fallbacks, dispatch failures, constant-build
   failures, or incomplete binding layouts.
 - D3D11 FXC compiled all ten PBF pipelines, including the new `SolidBoxes` bindings.
+
+### 6.3 Windows port, 2026-11-11 (five APIs)
+
+The 83 commits after `7e28cef` had never run on Windows: whitewater, environment-cube
+reflections sampled in a compute kernel, G-buffer lighting in the shade, caustics, the
+surfel `FluidNormal` target and the coarse thickness grid. All five APIs were checked on the
+RTX 4080 Laptop GPU at 1920x1080, `--regressionFixedDt 0.0166667 --postProcessMode compute`.
+
+Method: eight cells (`ss|surfel` × `default|close` × `water150|lake300`) per API, and a cell
+is judged against the **run-to-run noise of Windows Vulkan on the same machine** (r1 against
+r2: mean absolute difference per channel, p99, % of pixels above 4), never against zero.
+`scripts/validation/backyard8_parity_compare.py --ref win` produces the verdicts, the contact
+sheet and per-cell diff images.
+
+| API | Gate | Self-test | Water cells | Lake cells | Log findings |
+|---|---|---|---|---|---|
+| Vulkan | PASS | 78 PASS | reference | reference | 0 |
+| D3D12 | PASS | 78 PASS | at noise | 0.45-0.64 above noise (same as Vulkan vs Linux) | 0 |
+| D3D11 | PASS | 78 PASS | at noise | 0.50-0.72 above noise | 0 |
+| GL | PASS | 78 PASS | at noise | 0.65-1.05 above noise; p99 11 (band below) | 0 |
+| WebGPU | PASS | 78 PASS | at noise | 0.44-0.67 above noise | 0 |
+
+The lake cells' residual is a cross-compiler solver offset that every API carries equally,
+accepted as variance; all 16 water cells are at noise and the contact sheets for both
+renderers look identical.
+
+Fixes, one per root cause:
+
+| Commit | Change |
+|---|---|
+| `a7f40b2` | D3D12: cube textures (`DepthOrArraySize == 6`) pass dispatch validation |
+| `abaddb8` | D3D11: a `TEXTURECUBE` SRV is accepted for a cube layout |
+| `29ed39f` | GL: drop duplicate combined-sampler aliases, accept and restore cubes |
+| `0e2a332` | WebGPU: bit-pattern finiteness, because Tint aborts on `OpIsNan` |
+| `5e04cac` | WebGPU: accept the 6-layer cube in dispatch validation |
+| `6d601b2` | WebGPU: request the adapter's storage-buffer limits (4K is 165,888,000 B) |
+
+The GL-only band at rows 582-584 is the coping's striped front face, shifted by about two
+rows: it is already present in `RT_Dump_GBuffer_Albedo` with `FluidParticles` empty, so it is
+a pre-existing GL scene difference, not the port.
+
+Full numbers, the per-cell table and the evidence paths are in
+[backyard8-windows-port-work-orders.md](backyard8-windows-port-work-orders.md) under
+"Results (final)".
 
 ---
 

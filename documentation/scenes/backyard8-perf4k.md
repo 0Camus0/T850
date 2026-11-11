@@ -113,7 +113,7 @@ cap does not bite. Measured effect: about 0.24 ms default, 0.06 ms close.
 - `SkyIrradiance()` gives the same value for every pixel. Thread 0 of each 8x8 group
   computes it into `groupshared float3`, followed by `GroupMemoryBarrierWithGroupSync()`;
   every thread reaches the barrier (the `Mode == 0` and bounds returns are moved below it).
-  Measured worth: 0.17 ms at 4K close-up.
+  Measured worth (Claude's ablation): about 0.17 ms.
 - Trace SSR only where it can be seen: the Fresnel term is computed before
   `TraceReflection`; `ssrWeight = smoothstep(F0, F1, fresnel)`; when `ssrWeight == 0` the
   trace is skipped and the environment is used. The first commit's gate was inert:

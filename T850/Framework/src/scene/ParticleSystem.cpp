@@ -46,7 +46,15 @@ namespace {
         ss.ripple_distance <= 0.0f) return false;
     if (ss.caustics < 0.0f || ss.caustic_scale <= 0.0f || ss.caustic_speed < 0.0f ||
         ss.caustic_depth <= 0.0f) return false;
-    if (ss.debug_view < 0 || ss.debug_view > 6) return false;
+    if (ss.env_intensity < 0.0f || ss.sun_attenuation < 0.0f || ss.sun_attenuation > 1.0f ||
+        ss.caustic_focus < 0.0f || ss.contact_line < 0.0f || ss.backlight < 0.0f ||
+        ss.scatter_sun < 0.0f || ss.scatter_sky < 0.0f || ss.scatter_anisotropy < 0.0f ||
+        ss.scatter_anisotropy > 0.95f || ss.ripple_calm < 0.0f || ss.ripple_agitation < 0.0f)
+      return false;
+    if (ss.foam_strength < 0.0f || ss.foam_texture_scale <= 0.0f || ss.aeration < 0.0f ||
+        ss.bubble_strength < 0.0f || ss.spray_strength < 0.0f || ss.wetness < 0.0f)
+      return false;
+    if (ss.debug_view < 0 || ss.debug_view > 9) return false;
     return true;
   }
 }  // namespace

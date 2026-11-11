@@ -86,6 +86,62 @@ namespace {
   // Three float4 per particle: centre + bound, quadric row 0, quadric rest + flags.
   constexpr uint32_t kAnisotropyFloat4PerParticle = 3;
 
+  // Keep byte-for-byte in sync with `cbuffer PbfWhitewaterConstants` in CS_PbfWhitewater.hlsl,
+  // CS_PbfDiffuse.hlsl and CS_PbfFields.hlsl (one layout for the three kernels).
+  struct PbfWhitewaterConstants {
+    uint32_t particleCount;
+    uint32_t diffuseCapacity;
+    uint32_t gridX;
+    uint32_t gridY;
+    uint32_t gridZ;
+    uint32_t frameSeed;
+    uint32_t surfaceWidth;
+    uint32_t surfaceDepth;
+    float gridOriginX;
+    float gridOriginY;
+    float gridOriginZ;
+    float cellSize;
+    float deltaTime;
+    float spacing;
+    float gravity;
+    float surfaceNeighbours;
+    float basinMinX;
+    float basinMinY;
+    float basinMinZ;
+    float basinMaxX;
+    float basinMaxY;
+    float basinMaxZ;
+    float waterPlaneY;
+    float deckY;
+    float trappedAirMin;
+    float trappedAirMax;
+    float crestMin;
+    float crestMax;
+    float energyMin;
+    float energyMax;
+    float foamGain;
+    float foamDecay;
+    float aerationGain;
+    float aerationDecay;
+    float sprayRate;
+    float crestRate;
+    float diffuseLifetime;
+    float bubbleBuoyancy;
+    float bubbleDrag;
+    float sprayDrag;
+    float wetOriginX;
+    float wetOriginZ;
+    float wetTexelSize;
+    float wetDecay;
+    uint32_t wetWidth;
+    uint32_t wetHeight;
+    uint32_t mode;
+    float causticGain;
+  };
+  static_assert(sizeof(PbfWhitewaterConstants) == 192, "PbfWhitewaterConstants must be 48 DWORDs");
+  // Two float4 per secondary particle: position + life, velocity + class.
+  constexpr uint32_t kDiffuseFloat4PerParticle = 2;
+
   // Must equal PBFCellCapacity in the kernels.
   constexpr uint32_t kCellCapacity = 64;
   constexpr uint32_t kWordsPerParticle = 4;
@@ -179,6 +235,14 @@ bool PbfFluid::CreatePipelines(BaseDriver* driver) {
   m_anisotropyPipeline = CreatePipeline(driver, "CS_PbfAnisotropy.hlsl");
   if (!m_anisotropyPipeline)
     T8_LOG_ERROR("[PBF] Anisotropy pipeline unavailable; the fluid renders as spheres");
+  // Optional as well: without them the water has no foam, spray particles or wet deck.
+  m_whitewaterPipeline = CreatePipeline(driver, "CS_PbfWhitewater.hlsl");
+  m_diffusePipeline = CreatePipeline(driver, "CS_PbfDiffuse.hlsl");
+  m_fieldsPipeline = CreatePipeline(driver, "CS_PbfFields.hlsl");
+  if (!m_whitewaterPipeline || !m_diffusePipeline || !m_fieldsPipeline)
+    T8_LOG_ERROR("[PBF] Whitewater pipelines unavailable (whitewater=%d diffuse=%d fields=%d); "
+                 "the water renders without foam, spray or wet deck",
+                 m_whitewaterPipeline ? 1 : 0, m_diffusePipeline ? 1 : 0, m_fieldsPipeline ? 1 : 0);
   if (!m_integrate || !m_clearGrid || !m_buildGrid || !m_density || !m_solve || !m_updateVelocity ||
       !m_surface || !m_clearHeights || !m_cull || !m_copyFields) {
     T8_LOG_ERROR("[PBF] Solver pipelines are incomplete (integrate=%d clearGrid=%d buildGrid=%d density=%d "
@@ -307,7 +371,8 @@ bool PbfFluid::TryInitialize(BaseDriver* driver, const PbfSettings& settings, co
     return false;
   }
 
-  if (!CreatePipelines(driver) || !CreateFieldBuffers(driver)) return false;
+  if (!CreatePipelines(driver) || !CreateFieldBuffers(driver) || !CreateWhitewaterBuffers(driver))
+    return false;
   if (!SeedParticles(driver)) return false;
   m_ready = true;
   T8_LOG_INFO("[PBF] Solver ready on %s: %u particles, %u iteration(s), %u substep(s), h=%.3f m",
@@ -538,6 +603,16 @@ bool PbfFluid::CreateParticleBuffers(BaseDriver* driver, const std::vector<float
       return false;
     }
   }
+  // Whitewater carried by each particle: zero (no foam) for a new seed.
+  {
+    ComputeBufferDesc whitewaterDesc = desc;
+    whitewaterDesc.debugName = "PBF Whitewater";
+    m_whitewater = driver->CreateComputeBuffer(whitewaterDesc, zero.data());
+    if (!m_whitewater) {
+      T8_LOG_ERROR("[PBF] Cannot create the whitewater buffer for %u particles", count);
+      return false;
+    }
+  }
   m_particleCount = count;
   return true;
 }
@@ -690,11 +765,225 @@ void PbfFluid::PublishParticleBuffers(const std::string& positionName, const std
   if (!m_publishedAnisotropyName.empty() && m_anisotropy)
     registry.Set(m_publishedAnisotropyName, m_anisotropy.get(),
                  static_cast<int>(m_particleCount * kAnisotropyFloat4PerParticle));
+  PublishWhitewaterBuffers();
 }
 
-bool PbfFluid::ComputeAnisotropy(BaseDriver* driver) {
-  if (!m_ready || !driver || m_particleCount == 0 || !m_anisotropyPipeline || !m_anisotropy)
+void PbfFluid::SetWhitewaterBufferNames(const std::string& whitewater, const std::string& diffuse,
+                                        const std::string& caustics, const std::string& wetness) {
+  m_publishedWhitewaterName = whitewater;
+  m_publishedDiffuseName = diffuse;
+  m_publishedCausticName = caustics;
+  m_publishedWetnessName = wetness;
+}
+
+void PbfFluid::PublishWhitewaterBuffers() {
+  auto& registry = ParticleBufferRegistry::Instance();
+  // Counts are element counts for the consumer: particles, pool slots (the dispatch extent of
+  // the renderer's splat), surface columns, wetness texels.
+  if (!m_publishedWhitewaterName.empty() && m_whitewater)
+    registry.Set(m_publishedWhitewaterName, m_whitewater.get(), static_cast<int>(m_particleCount));
+  if (!m_publishedDiffuseName.empty() && m_diffuse)
+    registry.Set(m_publishedDiffuseName, m_diffuse.get(), static_cast<int>(m_diffuseCapacity));
+  if (!m_publishedCausticName.empty() && m_causticField)
+    registry.Set(m_publishedCausticName, m_causticField.get(),
+                 static_cast<int>(m_settings.surfaceWidth * m_settings.surfaceDepth));
+  if (!m_publishedWetnessName.empty() && m_wetness)
+    registry.Set(m_publishedWetnessName, m_wetness.get(), static_cast<int>(m_wetWidth * m_wetHeight));
+}
+
+bool PbfFluid::CreateWhitewaterBuffers(BaseDriver* driver) {
+  if (!driver) return false;
+  const PbfWhitewaterSettings& ws = m_whitewaterSettings;
+  m_diffuseCapacity = (std::min)((std::max)(ws.maxDiffuse, 64u), 1u << 20);
+  m_wetWidth = m_wetHeight = (std::min)((std::max)(ws.wetResolution, 16u), 2048u);
+  m_wetTexel = (std::max)(ws.wetTexel, 0.01f);
+  // The wetness map is centred on the basin.
+  m_wetOriginX = 0.5f * (m_settings.basinMinX + m_settings.basinMaxX) - 0.5f * m_wetTexel * m_wetWidth;
+  m_wetOriginZ = 0.5f * (m_settings.basinMinZ + m_settings.basinMaxZ) - 0.5f * m_wetTexel * m_wetHeight;
+
+  ComputeBufferDesc desc;
+  desc.access = ComputeBufferAccess::ReadWrite;
+  desc.structureStride = 4u * sizeof(float);
+  desc.byteWidth = m_diffuseCapacity * kDiffuseFloat4PerParticle * desc.structureStride;
+  desc.debugName = "PBF Diffuse Particles";
+  std::vector<float> zero(static_cast<size_t>(m_diffuseCapacity) * kDiffuseFloat4PerParticle * 4u, 0.0f);
+  m_diffuse = driver->CreateComputeBuffer(desc, zero.data());
+
+  desc.structureStride = sizeof(uint32_t);
+  desc.byteWidth = 4u * sizeof(uint32_t);
+  desc.debugName = "PBF Diffuse Counter";
+  const uint32_t counterZero[4] = {0u, 0u, 0u, 0u};
+  m_diffuseCounter = driver->CreateComputeBuffer(desc, counterZero);
+
+  const uint32_t columns = (std::max)(m_settings.surfaceWidth * m_settings.surfaceDepth, 1u);
+  desc.structureStride = sizeof(float);
+  desc.byteWidth = columns * sizeof(float);
+  desc.debugName = "PBF Caustic Field";
+  const std::vector<float> neutral(columns, 1.0f);
+  m_causticField = driver->CreateComputeBuffer(desc, neutral.data());
+
+  desc.structureStride = sizeof(uint32_t);
+  desc.byteWidth = m_wetWidth * m_wetHeight * sizeof(uint32_t);
+  desc.debugName = "PBF Wetness";
+  const std::vector<uint32_t> dry(static_cast<size_t>(m_wetWidth) * m_wetHeight, 0u);
+  m_wetness = driver->CreateComputeBuffer(desc, dry.data());
+
+  if (!m_diffuse || !m_diffuseCounter || !m_causticField || !m_wetness) {
+    T8_LOG_ERROR("[PBF] Cannot create the whitewater buffers (%u secondary particles, %ux%u wetness)",
+                 m_diffuseCapacity, m_wetWidth, m_wetHeight);
     return false;
+  }
+  return true;
+}
+
+void PbfFluid::SetWhitewater(const PbfWhitewaterSettings& settings) {
+  const bool resize = settings.maxDiffuse != m_whitewaterSettings.maxDiffuse ||
+                      settings.wetResolution != m_whitewaterSettings.wetResolution ||
+                      settings.wetTexel != m_whitewaterSettings.wetTexel;
+  m_whitewaterSettings = settings;
+  // Pool and map sizes are creation-time: rebuild them (empty) and re-publish.
+  if (resize && m_ready && m_driver && CreateWhitewaterBuffers(m_driver))
+    PublishWhitewaterBuffers();
+}
+
+PbfWhitewaterLayout PbfFluid::WhitewaterLayout() const {
+  PbfWhitewaterLayout layout;
+  layout.wetOriginX = m_wetOriginX;
+  layout.wetOriginZ = m_wetOriginZ;
+  layout.wetTexel = m_wetTexel;
+  layout.wetWidth = m_wetWidth;
+  layout.wetHeight = m_wetHeight;
+  layout.surfaceWidth = m_settings.surfaceWidth;
+  layout.surfaceDepth = m_settings.surfaceDepth;
+  layout.diffuseCapacity = m_diffuseCapacity;
+  return layout;
+}
+
+bool PbfFluid::ComputeWhitewater(BaseDriver* driver, float frameSeconds) {
+  if (!m_ready || !driver || m_particleCount == 0 || !m_whitewaterSettings.enabled) return false;
+  if (!m_whitewaterPipeline || !m_diffusePipeline || !m_fieldsPipeline || !m_whitewater ||
+      !m_diffuse || !m_diffuseCounter || !m_causticField || !m_wetness)
+    return false;
+  if (frameSeconds <= 0.0f) return true;   // a held frame: nothing moves, nothing dries
+  // The whitewater kernels need the grid of the committed positions (ComputeAnisotropy built
+  // it this frame unless the anisotropy is off).
+  if (!m_gridFromPositions && !RebuildGridFromPositions(driver)) return false;
+
+  const PbfWhitewaterSettings& ws = m_whitewaterSettings;
+  PbfWhitewaterConstants c{};
+  c.particleCount = m_particleCount;
+  c.diffuseCapacity = m_diffuseCapacity;
+  c.gridX = m_gridX;
+  c.gridY = m_gridY;
+  c.gridZ = m_gridZ;
+  c.frameSeed = ++m_whitewaterFrame;
+  c.surfaceWidth = m_settings.surfaceWidth;
+  c.surfaceDepth = m_settings.surfaceDepth;
+  c.gridOriginX = m_gridOriginX;
+  c.gridOriginY = m_gridOriginY;
+  c.gridOriginZ = m_gridOriginZ;
+  c.cellSize = m_settings.smoothingRadius;
+  c.deltaTime = frameSeconds;
+  c.spacing = m_settings.particleRadius;
+  c.gravity = m_settings.gravity;
+  c.surfaceNeighbours = (std::max)(ws.surfaceNeighbours, 1.0f);
+  c.basinMinX = m_settings.basinMinX;
+  c.basinMinY = m_settings.basinMinY;
+  c.basinMinZ = m_settings.basinMinZ;
+  c.basinMaxX = m_settings.basinMaxX;
+  c.basinMaxY = m_settings.wallTopY;           // the real coping top
+  c.basinMaxZ = m_settings.basinMaxZ;
+  c.waterPlaneY = m_settings.waterPlaneY;
+  c.deckY = m_settings.waterPlaneY + 0.16f;    // CS_PbfCull's deck height
+  c.trappedAirMin = ws.trappedAirMin;
+  c.trappedAirMax = (std::max)(ws.trappedAirMax, ws.trappedAirMin + 1.0e-3f);
+  c.crestMin = ws.crestMin;
+  c.crestMax = (std::max)(ws.crestMax, ws.crestMin + 1.0e-3f);
+  c.energyMin = ws.energyMin;
+  c.energyMax = (std::max)(ws.energyMax, ws.energyMin + 1.0e-3f);
+  c.foamGain = (std::max)(ws.foamGain, 0.0f);
+  c.foamDecay = std::exp(-frameSeconds / (std::max)(ws.foamLifetime, 0.05f));
+  c.aerationGain = (std::max)(ws.aerationGain, 0.0f);
+  c.aerationDecay = std::exp(-frameSeconds / (std::max)(ws.aerationLifetime, 0.05f));
+  c.sprayRate = (std::max)(ws.sprayRate, 0.0f);
+  c.crestRate = (std::max)(ws.crestRate, 0.0f);
+  c.diffuseLifetime = (std::max)(ws.diffuseLifetime, 0.05f);
+  c.bubbleBuoyancy = (std::max)(ws.bubbleBuoyancy, 0.0f);
+  c.bubbleDrag = (std::min)((std::max)(ws.bubbleDrag, 0.0f), 1.0f);
+  c.sprayDrag = (std::max)(ws.sprayDrag, 0.0f);
+  c.wetOriginX = m_wetOriginX;
+  c.wetOriginZ = m_wetOriginZ;
+  c.wetTexelSize = m_wetTexel;
+  c.wetDecay = std::exp(-frameSeconds / (std::max)(ws.dryingTime, 0.1f));
+  c.wetWidth = m_wetWidth;
+  c.wetHeight = m_wetHeight;
+  c.mode = 0;
+  c.causticGain = (std::max)(ws.causticGain, 0.0f);
+
+  std::vector<uint32_t> words(sizeof(PbfWhitewaterConstants) / 4);
+  auto upload = [&](uint32_t mode) {
+    c.mode = mode;
+    std::memcpy(words.data(), &c, sizeof(PbfWhitewaterConstants));
+  };
+  const uint32_t wordCount = static_cast<uint32_t>(words.size());
+
+  // 1. The deck dries before this frame's water lands on it.
+  upload(0);
+  {
+    const std::vector<ComputeBindingDesc> bindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, words.data(), wordCount},
+      {ComputeBindingType::ReadOnlyBuffer, 0, m_columnHeights.get()},
+      {ComputeBindingType::ReadWriteBuffer, 0, m_wetness.get()},
+      {ComputeBindingType::ReadWriteBuffer, 1, m_causticField.get()},
+    };
+    if (!Dispatch(driver, *m_fieldsPipeline, "whitewater-dry", bindings,
+                  DivUp(m_wetWidth * m_wetHeight, kThreads), 1, 1)) return false;
+  }
+  // 2. Potentials, carried foam/air, emission, deck wetting.
+  {
+    const std::vector<ComputeBindingDesc> bindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, words.data(), wordCount},
+      {ComputeBindingType::ReadOnlyBuffer, 0, m_positions.get()},
+      {ComputeBindingType::ReadOnlyBuffer, 1, m_velocities.get()},
+      {ComputeBindingType::ReadOnlyBuffer, 2, m_grid.get()},
+      {ComputeBindingType::ReadWriteBuffer, 0, m_whitewater.get()},
+      {ComputeBindingType::ReadWriteBuffer, 1, m_diffuse.get()},
+      {ComputeBindingType::ReadWriteBuffer, 2, m_diffuseCounter.get()},
+      {ComputeBindingType::ReadWriteBuffer, 3, m_wetness.get()},
+    };
+    if (!Dispatch(driver, *m_whitewaterPipeline, "whitewater", bindings,
+                  DivUp(m_particleCount, kThreads), 1, 1)) return false;
+  }
+  // 3. Secondary particles: classify, move, land.
+  {
+    const std::vector<ComputeBindingDesc> bindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, words.data(), wordCount},
+      {ComputeBindingType::ReadOnlyBuffer, 0, m_positions.get()},
+      {ComputeBindingType::ReadOnlyBuffer, 1, m_velocities.get()},
+      {ComputeBindingType::ReadOnlyBuffer, 2, m_grid.get()},
+      {ComputeBindingType::ReadWriteBuffer, 0, m_diffuse.get()},
+      {ComputeBindingType::ReadWriteBuffer, 1, m_wetness.get()},
+    };
+    if (!Dispatch(driver, *m_diffusePipeline, "whitewater-diffuse", bindings,
+                  DivUp(m_diffuseCapacity, kThreads), 1, 1)) return false;
+  }
+  // 4. Caustic focus field of the simulated surface (column heights from the last Step).
+  upload(1);
+  {
+    const std::vector<ComputeBindingDesc> bindings = {
+      {ComputeBindingType::Constants32, 0, nullptr, words.data(), wordCount},
+      {ComputeBindingType::ReadOnlyBuffer, 0, m_columnHeights.get()},
+      {ComputeBindingType::ReadWriteBuffer, 0, m_wetness.get()},
+      {ComputeBindingType::ReadWriteBuffer, 1, m_causticField.get()},
+    };
+    if (!Dispatch(driver, *m_fieldsPipeline, "whitewater-caustics", bindings,
+                  DivUp((std::max)(m_settings.surfaceWidth * m_settings.surfaceDepth, 1u), kThreads), 1, 1))
+      return false;
+  }
+  return true;
+}
+
+bool PbfFluid::RebuildGridFromPositions(BaseDriver* driver) {
   const uint32_t particleGroups = DivUp(m_particleCount, kThreads);
   const uint32_t cells = m_gridX * m_gridY * m_gridZ;
   const uint32_t clearGroups = DivUp(DivUp(cells * kCellCapacity * 2u, 4u), kThreads);
@@ -718,6 +1007,15 @@ bool PbfFluid::ComputeAnisotropy(BaseDriver* driver) {
     };
     if (!Dispatch(driver, *m_buildGrid, "anisotropy-buildGrid", bindings, particleGroups, 1, 1)) return false;
   }
+  m_gridFromPositions = true;
+  return true;
+}
+
+bool PbfFluid::ComputeAnisotropy(BaseDriver* driver) {
+  if (!m_ready || !driver || m_particleCount == 0 || !m_anisotropyPipeline || !m_anisotropy)
+    return false;
+  const uint32_t particleGroups = DivUp(m_particleCount, kThreads);
+  if (!RebuildGridFromPositions(driver)) return false;
   const PbfAnisotropySettings& a = m_anisotropySettings;
   PbfAnisotropyConstants c{};
   c.particleCount = m_particleCount;
@@ -751,6 +1049,8 @@ bool PbfFluid::ComputeAnisotropy(BaseDriver* driver) {
 bool PbfFluid::ResetToRest(BaseDriver* driver) {
   if (!m_ready || !driver) return false;
   m_culledTotal = 0;
+  // A re-seed starts without spray in the air or a wet deck. The caller re-publishes.
+  if (!CreateWhitewaterBuffers(driver)) return false;
   return SeedParticles(driver);
 }
 
@@ -791,6 +1091,7 @@ bool PbfFluid::Settle(BaseDriver* driver, float seconds, float maxSpeed) {
 
 bool PbfFluid::Step(BaseDriver* driver) {
   if (!m_ready || !driver || m_particleCount == 0) return false;
+  m_gridFromPositions = false;   // the step rebuilds the grid from predicted positions
   const uint32_t particleGroups = DivUp(m_particleCount, kThreads);
   const uint32_t cells = m_gridX * m_gridY * m_gridZ;
   const uint32_t clearGroups = DivUp(DivUp(cells * kCellCapacity * 2u, 4u), kThreads);
@@ -970,6 +1271,15 @@ void PbfFluid::Shutdown(BaseDriver* driver) {
   m_lambda.reset();
   m_anisotropy.reset();
   m_anisotropyPipeline.reset();
+  m_whitewater.reset();
+  m_diffuse.reset();
+  m_diffuseCounter.reset();
+  m_causticField.reset();
+  m_wetness.reset();
+  m_whitewaterPipeline.reset();
+  m_diffusePipeline.reset();
+  m_fieldsPipeline.reset();
+  m_diffuseCapacity = 0;
   m_grid.reset();
   m_solidBoxBuffer.reset();
   m_columnHeights.reset();

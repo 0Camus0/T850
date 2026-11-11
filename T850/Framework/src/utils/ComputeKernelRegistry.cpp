@@ -197,8 +197,35 @@ struct ParticleShadeConstants {
   float skyHorizon[4];        // horizon sky
   float rippleParams[4];      // slope, longest wavelength (m), speed, fade distance (m)
   float causticParams[4];     // strength, scale (m), speed, depth fade (m)
+  float envParams[4];         // x = environment intensity (0 = analytic sky gradient)
+  float poolMin[4];           // basin interior min (y = floor), w = water plane y
+  float poolMax[4];           // basin interior max (y = coping top), w = deck y
+  float lightParams[4];       // sun attenuation, caustic focus, contact line, backlight
+  float scatterParams[4];     // sun in-scatter, sky in-scatter, HG g, aeration
+  float foamParams[4];        // foam, foam cell (m), bubbles, secondary spray
+  float wetParams[4];         // wetness origin x, z, texel (m), strength
+  uint32_t gridParams[4];     // wetness texels x, y; surface columns x, z
+  float rippleFlow[4];        // agitation gain, calm multiplier, Toksvig (0/1)
 };
-static_assert(sizeof(ParticleShadeConstants) == 256);
+static_assert(sizeof(ParticleShadeConstants) == 400);
+
+// Mirrors `cbuffer WhitewaterSplatConstants` in CS_FluidWhitewater.hlsl.
+struct WhitewaterSplatConstants {
+  uint32_t outputWidth;
+  uint32_t outputHeight;
+  uint32_t diffuseCapacity;
+  uint32_t enabled;
+  float projScaleX;
+  float projScaleY;
+  float projA;
+  float projB;
+  float sprayRadius;
+  float foamRadius;
+  float bubbleRadius;
+  float waterAbsorption;
+  float viewProjection[16];
+};
+static_assert(sizeof(WhitewaterSplatConstants) == 112);
 
 // Mirrors `cbuffer ParticleSphereConstants` in CS_FluidSphereShade.hlsl.
 struct ParticleSphereConstants {
@@ -496,6 +523,9 @@ bool BuildParticleSplatConstants(const ComputeKernelConstantsContext& context,
   value.color[0][3] = camera->Projection.m[0][0];
   value.emitterPosition[3] =
       system->screen_space.anisotropy && !system->anisotropy_buffer.empty() ? 1.0f : 0.0f;
+  // AuxEnabled (after Color1): accumulate the solver's whitewater for the screen-space shade.
+  value.color[1][3] = system->render_mode == ParticleRenderMode::ScreenSpace &&
+                      !system->whitewater_buffer.empty() ? 1.0f : 0.0f;
   // Row-major view-projection; the kernel multiplies rows against float4(p, 1).
   std::memcpy(value.viewProjection, &camera->VP, sizeof(value.viewProjection));
   CopyWords(value, constants);
@@ -646,6 +676,73 @@ bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
   value.cameraForward[1] = camera->Look.y;
   value.cameraForward[2] = camera->Look.z;
   value.cameraForward[3] = camera->Eye.z;
+
+  const ParticleScreenSpaceDesc& ss = system->screen_space;
+  const ParticleFluidGeometry& geometry = system->geometry;
+  value.envParams[0] = ss.env_intensity * props.IBLFactor;
+  for (int c = 0; c < 3; ++c) {
+    value.poolMin[c] = geometry.pool_min[c];
+    value.poolMax[c] = geometry.pool_max[c];
+  }
+  value.poolMin[3] = geometry.water_plane_y;
+  value.poolMax[3] = geometry.deck_y;
+  value.lightParams[0] = (std::min)((std::max)(ss.sun_attenuation, 0.0f), 1.0f);
+  value.lightParams[1] = ss.caustic_focus;
+  value.lightParams[2] = ss.contact_line;
+  value.lightParams[3] = ss.backlight;
+  value.scatterParams[0] = ss.scatter_sun;
+  value.scatterParams[1] = ss.scatter_sky;
+  value.scatterParams[2] = ss.scatter_anisotropy;
+  value.scatterParams[3] = ss.aeration;
+  value.foamParams[0] = ss.foam_strength;
+  value.foamParams[1] = ss.foam_texture_scale;
+  value.foamParams[2] = ss.bubble_strength;
+  value.foamParams[3] = ss.spray_strength;
+  value.wetParams[0] = geometry.wet_origin_x;
+  value.wetParams[1] = geometry.wet_origin_z;
+  value.wetParams[2] = geometry.wet_texel;
+  value.wetParams[3] = ss.wetness;
+  value.gridParams[0] = static_cast<uint32_t>((std::max)(geometry.wet_width, 0));
+  value.gridParams[1] = static_cast<uint32_t>((std::max)(geometry.wet_height, 0));
+  value.gridParams[2] = static_cast<uint32_t>((std::max)(geometry.surface_width, 0));
+  value.gridParams[3] = static_cast<uint32_t>((std::max)(geometry.surface_depth, 0));
+  value.rippleFlow[0] = ss.ripple_agitation;
+  value.rippleFlow[1] = ss.ripple_calm;
+  value.rippleFlow[2] = 1.0f;
+  CopyWords(value, constants);
+  return true;
+}
+
+bool BuildWhitewaterSplatConstants(const ComputeKernelConstantsContext& context,
+                                   std::vector<uint32_t>& constants, std::string& error) {
+  SceneProps& props = *context.sceneProps;
+  Camera* camera = props.GetPrimaryCamera();
+  if (!camera) {
+    error = "whitewater splat constants require a primary camera";
+    return false;
+  }
+  const ParticleSystemDesc* system = context.particleSystem.empty()
+    ? nullptr : ParticleSystemRegistry::Instance().Find(std::string(context.particleSystem));
+  if (!system) {
+    error = "whitewater splat constants require a named particle system";
+    return false;
+  }
+  const ParticleScreenSpaceDesc& ss = system->screen_space;
+  WhitewaterSplatConstants value = {};
+  value.outputWidth = context.outputWidth;
+  value.outputHeight = context.outputHeight;
+  value.diffuseCapacity = static_cast<uint32_t>((std::max)(system->geometry.diffuse_capacity, 0));
+  value.enabled = system->render_mode == ParticleRenderMode::ScreenSpace && !system->diffuse_buffer.empty() &&
+                  (ss.spray_strength > 0.0f || ss.foam_strength > 0.0f || ss.bubble_strength > 0.0f) ? 1u : 0u;
+  value.projScaleX = camera->Projection.m[0][0];
+  value.projScaleY = camera->Projection.m[1][1];
+  value.projA = camera->Projection.m[2][2];
+  value.projB = camera->Projection.m[3][2];
+  value.sprayRadius = system->geometry.spray_radius;
+  value.foamRadius = system->geometry.foam_radius;
+  value.bubbleRadius = system->geometry.bubble_radius;
+  value.waterAbsorption = ss.absorption[1] * (std::max)(ss.absorption_scale, 0.0f);
+  std::memcpy(value.viewProjection, &camera->VP, sizeof(value.viewProjection));
   CopyWords(value, constants);
   return true;
 }
@@ -711,6 +808,7 @@ ComputeConstantsBuilder ResolveConstantsBuilder(std::string_view value) {
   if (value == "particle_splat") return BuildParticleSplatConstants;
   if (value == "particle_smooth") return BuildParticleSmoothConstants;
   if (value == "particle_shade") return BuildParticleShadeConstants;
+  if (value == "particle_whitewater") return BuildWhitewaterSplatConstants;
   if (value == "particle_sphere") return BuildParticleSphereConstants;
   return nullptr;
 }
@@ -763,6 +861,8 @@ const std::vector<ComputeKernelDefinition>& Kernels() {
           return std::vector<ComputeKernelDefinition>{};
         }
         if (binding.dimension == "3d") layout.dimension = ComputeTextureDimension::Tex3D;
+        else if (binding.dimension == "cube" && layout.type == ComputeBindingType::ReadOnlyTexture)
+          layout.dimension = ComputeTextureDimension::Cube;
         else if (binding.dimension != "2d") {
           T8_LOG_ERROR("[ComputeKernelRegistry] Kernel '%s' has an invalid binding dimension",
                        entry.source.c_str());

@@ -80,6 +80,13 @@ namespace t850 {
     std::string velocityBuffer = "BackyardWaterVelocities";
     // Anisotropic particle shapes published by the solver for the screen-space depth splat.
     std::string anisotropyBuffer = "BackyardWaterAnisotropy";
+    // Whitewater buffers the solver publishes for the screen-space renderer (the render graph
+    // binds them by these names): per-particle foam/air, the secondary spray/foam/bubble pool,
+    // the caustic focus field and the deck wetness map.
+    std::string whitewaterBuffer = "BackyardWaterWhitewater";
+    std::string diffuseBuffer = "BackyardWaterDiffuse";
+    std::string causticBuffer = "BackyardWaterCaustics";
+    std::string wetnessBuffer = "BackyardWaterWetness";
     int count = 0;        // 0 = all solver particles; lower values draw a prefix
     std::array<std::array<float, 3>, 4> colors = {{
       {{0.30f, 0.62f, 0.85f}}, {{0.42f, 0.72f, 0.90f}},

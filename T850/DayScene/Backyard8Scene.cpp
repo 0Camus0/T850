@@ -179,8 +179,13 @@ void Backyard8Scene::ApplyRenderModeToGraph() {
   const bool spheres = !screenSpace && m_config.particles.blend == 1;
   // The stamp always runs: it produces the projected particle table the scatter reads.
   graph.SetPassEnabled("Fluid Particles (resolve)", (!screenSpace && !spheres) || fallback);
-  graph.SetPassEnabled("Fluid Clear", screenSpace || spheres);
-  graph.SetPassEnabled("Fluid Splat", screenSpace || spheres);
+  // The screen-space renderer scatters at the fluid targets' (half) resolution; the particle
+  // renderer's sphere shade reads the same buffers at full resolution, so it has its own copy.
+  graph.SetPassEnabled("Fluid Clear", screenSpace);
+  graph.SetPassEnabled("Fluid Splat", screenSpace);
+  graph.SetPassEnabled("Fluid Clear (splat mode)", spheres);
+  graph.SetPassEnabled("Fluid Splat (splat mode)", spheres);
+  graph.SetPassEnabled("Whitewater Splat", screenSpace);
   graph.SetPassEnabled("Fluid Sphere Shade", spheres);
   graph.SetPassEnabled("Fluid Resolve", screenSpace);
   // The shade always reads FluidDepthA. With an odd iteration count the extra pass copies
@@ -220,6 +225,27 @@ void Backyard8Scene::BuildParticleDesc() {
   d.buffer = c.buffer;
   d.velocity_buffer = c.velocityBuffer;
   d.anisotropy_buffer = c.anisotropyBuffer;
+  // Whitewater: per-particle foam/air and the secondary pool are read by passes; all four
+  // solver buffers are declared so the graph accepts them before the solver publishes.
+  d.whitewater_buffer = c.whitewaterBuffer;
+  d.diffuse_buffer = c.diffuseBuffer;
+  d.extra_buffers = {c.whitewaterBuffer, c.diffuseBuffer, c.causticBuffer, c.wetnessBuffer};
+  {
+    const t850::PbfSettings& s = m_pbf.Settings();
+    const t850::PbfWhitewaterLayout layout = m_pbf.WhitewaterLayout();
+    d.geometry.pool_min = {{s.basinMinX, s.basinMinY, s.basinMinZ}};
+    d.geometry.pool_max = {{s.basinMaxX, s.wallTopY, s.basinMaxZ}};
+    d.geometry.water_plane_y = s.waterPlaneY;
+    d.geometry.deck_y = s.waterPlaneY + 0.16f;   // CS_PbfCull's deck height
+    d.geometry.wet_origin_x = layout.wetOriginX;
+    d.geometry.wet_origin_z = layout.wetOriginZ;
+    d.geometry.wet_texel = layout.wetTexel;
+    d.geometry.wet_width = static_cast<int>(layout.wetWidth);
+    d.geometry.wet_height = static_cast<int>(layout.wetHeight);
+    d.geometry.surface_width = static_cast<int>(layout.surfaceWidth);
+    d.geometry.surface_depth = static_cast<int>(layout.surfaceDepth);
+    d.geometry.diffuse_capacity = static_cast<int>(layout.diffuseCapacity);
+  }
   d.ramp.stops = c.colors;
   const int solverCount = m_pbf.IsReady() ? static_cast<int>(m_pbf.ParticleCount()) : 0;
   d.buffer_count = c.count > 0 ? (std::min)(c.count, solverCount) : solverCount;
@@ -283,6 +309,12 @@ void Backyard8Scene::RegisterParticleSystem() {
               m_particleDesc.blend == t850::ParticleBlend::Additive ? "additive" : "alpha");
 }
 
+void Backyard8Scene::ConfigureWhitewater() {
+  const t850::Backyard8ParticleConfig& p = m_config.particles;
+  m_pbf.SetWhitewaterBufferNames(p.whitewaterBuffer, p.diffuseBuffer, p.causticBuffer, p.wetnessBuffer);
+  m_pbf.SetWhitewater(t850::PbfWhitewaterSettings{});
+}
+
 bool Backyard8Scene::InitPbf() {
   if (m_pbf.IsReady()) return true;
   if (!m_configLoaded) LoadFluidConfig();
@@ -291,6 +323,7 @@ bool Backyard8Scene::InitPbf() {
 
   t850::PbfSettings settings;
   BuildSettings(settings);
+  ConfigureWhitewater();
 
   if (!m_pbf.TryInitialize(driver, settings, "Models/Backyard/backyard_layout.json")) {
     T8_LOG_ERROR("[Backyard8] PbfFluid::TryInitialize failed");
@@ -338,6 +371,7 @@ bool Backyard8Scene::ReinitializePbf() {
 
   t850::PbfSettings settings;
   BuildSettings(settings);
+  ConfigureWhitewater();
   if (!m_pbf.TryInitialize(driver, settings, "Models/Backyard/backyard_layout.json")) {
     T8_LOG_ERROR("[Backyard8] Re-seed failed: PbfFluid::TryInitialize");
     return false;
@@ -451,6 +485,15 @@ void Backyard8Scene::OnUpdate(float deltaSeconds) {
     if (!m_pbf.ComputeAnisotropy(pFramework->pVideoDriver) && !m_anisotropyErrorLogged) {
       T8_LOG_ERROR("[Backyard8] Anisotropy pass failed; the surface falls back to spheres");
       m_anisotropyErrorLogged = true;
+    }
+  }
+  // Foam, entrained air, spray/foam/bubble particles, caustic field and deck wetness, over the
+  // time simulated this frame (after the anisotropy: they reuse its neighbour grid).
+  if (m_config.particles.renderMode == 1 && m_pbf.Whitewater().enabled) {
+    if (!m_pbf.ComputeWhitewater(pFramework->pVideoDriver, static_cast<float>(steps) * kStep) &&
+        !m_whitewaterErrorLogged) {
+      T8_LOG_ERROR("[Backyard8] Whitewater pass failed; the water renders without foam, spray or wet deck");
+      m_whitewaterErrorLogged = true;
     }
   }
 

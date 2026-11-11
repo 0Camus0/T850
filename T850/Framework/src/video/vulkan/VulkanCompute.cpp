@@ -349,8 +349,12 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     }
     if (binding.texture) {
       const auto* texture = dynamic_cast<VulkanTexture*>(binding.texture);
+      // A cube map is valid only where the kernel declares a sampled cube (an environment map).
+      const ComputeBindingLayoutDesc* textureLayout = pipeline->Find(binding.type, binding.shaderRegister);
+      const bool cubeAllowed = textureLayout && binding.type == ComputeBindingType::ReadOnlyTexture &&
+                               textureLayout->dimension == ComputeTextureDimension::Cube;
         if (!texture || !texture->m_imageView || !texture->m_image ||
-          (texture->cil_props & CIL_CUBE_MAP)) return false;
+          ((texture->cil_props & CIL_CUBE_MAP) && !cubeAllowed)) return false;
       if (binding.type == ComputeBindingType::Sampler && !texture->m_sampler) return false;
       if (binding.type == ComputeBindingType::ReadWriteTexture) {
         if (!texture->m_storageUsage) return false;
@@ -498,6 +502,11 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     VkDescriptorImageInfo imageInfo{};
     if (binding.type == ComputeBindingType::ReadOnlyTexture) {
       if (texture->GetLayout() != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        // TransitionImageLayout covers one layer and one mip: a cube must already be sampled.
+        if (texture->cil_props & CIL_CUBE_MAP) {
+          T8_LOG_ERROR("[Vulkan][Compute] Cube texture t%u is not in shader-read layout", binding.shaderRegister);
+          return false;
+        }
         TransitionImageLayout(cmd, texture->m_image, texture->GetLayout(),
                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, TextureAspect(*texture));
         texture->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);

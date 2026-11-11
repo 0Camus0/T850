@@ -112,6 +112,52 @@ namespace t850 {
     float maxStretch = 1.6f;         // longest axis cap, relative to the interior radius
   };
 
+  // Whitewater for the screen-space renderer (Ihmsen et al. 2012): per-particle foam and
+  // entrained air carried by the fluid, a pool of secondary spray/foam/bubble particles, the
+  // caustic focus field of the simulated surface, and a drying wetness map of the deck.
+  struct PbfWhitewaterSettings {
+    bool enabled = true;
+    // Potentials are clamped to [min, max] and mapped to 0..1.
+    float trappedAirMin = 2.0f;
+    float trappedAirMax = 12.0f;
+    float crestMin = 0.3f;
+    float crestMax = 2.5f;
+    float energyMin = 0.3f;
+    float energyMax = 6.0f;
+    float surfaceNeighbours = 24.0f;   // at or above: a submerged particle
+    // Whitewater carried by the fluid.
+    float foamGain = 3.0f;             // per second at full potential
+    float foamLifetime = 3.0f;         // e-folding seconds
+    float aerationGain = 2.5f;
+    float aerationLifetime = 1.8f;
+    // Secondary particles.
+    uint32_t maxDiffuse = 65536;
+    float sprayRate = 30.0f;           // per second per fluid particle at full trapped air
+    float crestRate = 15.0f;           // per second per fluid particle at full crest potential
+    float diffuseLifetime = 3.0f;      // seconds (randomised 0.5..1.5x)
+    float bubbleBuoyancy = 3.0f;       // times gravity
+    float bubbleDrag = 0.5f;           // fraction of the velocity difference removed per update
+    float sprayDrag = 0.4f;            // per second
+    // Wet deck.
+    float dryingTime = 45.0f;          // e-folding seconds
+    float wetTexel = 0.06f;            // metres
+    uint32_t wetResolution = 320;      // texels per side, centred on the basin
+    // Caustic focusing gain on the simulated surface curvature, (n - 1) / n for water.
+    float causticGain = 0.25f;
+  };
+
+  // Geometry the renderer needs to read the whitewater fields.
+  struct PbfWhitewaterLayout {
+    float wetOriginX = 0.0f;
+    float wetOriginZ = 0.0f;
+    float wetTexel = 0.06f;
+    uint32_t wetWidth = 0;
+    uint32_t wetHeight = 0;
+    uint32_t surfaceWidth = 0;
+    uint32_t surfaceDepth = 0;
+    uint32_t diffuseCapacity = 0;
+  };
+
   class PbfFluid {
   public:
     PbfFluid();
@@ -136,6 +182,17 @@ namespace t850 {
     bool ComputeAnisotropy(BaseDriver* driver);
     void SetAnisotropy(const PbfAnisotropySettings& settings) { m_anisotropySettings = settings; }
     const PbfAnisotropySettings& Anisotropy() const { return m_anisotropySettings; }
+    // Names under which the whitewater buffers are published (with the particle buffers):
+    // per-particle whitewater, the secondary particle pool, the caustic field, the wetness map.
+    void SetWhitewaterBufferNames(const std::string& whitewater, const std::string& diffuse,
+                                  const std::string& caustics, const std::string& wetness);
+    // Updates foam/aeration, emits and moves secondary particles, dries and wets the deck and
+    // rebuilds the caustic field. Call once per rendered frame after ComputeAnisotropy (it
+    // reuses the grid built from the committed positions), with the simulated time of the frame.
+    bool ComputeWhitewater(BaseDriver* driver, float frameSeconds);
+    void SetWhitewater(const PbfWhitewaterSettings& settings);
+    const PbfWhitewaterSettings& Whitewater() const { return m_whitewaterSettings; }
+    PbfWhitewaterLayout WhitewaterLayout() const;
     // Number of particles removed by the deck/handle culling, cumulative.
     uint32_t CulledParticles() const { return m_culledTotal; }
     bool Step(BaseDriver* driver);
@@ -200,6 +257,9 @@ namespace t850 {
   private:
     bool CreatePipelines(BaseDriver* driver);
     bool CreateFieldBuffers(BaseDriver* driver);
+    bool CreateWhitewaterBuffers(BaseDriver* driver);
+    bool RebuildGridFromPositions(BaseDriver* driver);
+    void PublishWhitewaterBuffers();
     // Creates the six particle buffers. An empty (or wrong-sized) velocity vector seeds
     // zero velocities; otherwise the pool's settled velocities are preserved.
     bool CreateParticleBuffers(BaseDriver* driver, const std::vector<float>& positions,
@@ -219,6 +279,13 @@ namespace t850 {
     std::string m_publishedVelocityName;
     std::string m_publishedAnisotropyName;
     PbfAnisotropySettings m_anisotropySettings;
+    std::string m_publishedWhitewaterName;
+    std::string m_publishedDiffuseName;
+    std::string m_publishedCausticName;
+    std::string m_publishedWetnessName;
+    PbfWhitewaterSettings m_whitewaterSettings;
+    uint32_t m_whitewaterFrame = 0;
+    bool m_gridFromPositions = false;   // ComputeAnisotropy rebuilt the grid this frame
 
     // rho_lattice * spacing^3: the kernel mass normalisation passed to the shaders.
     float m_restScale = 1.0f;
@@ -243,6 +310,17 @@ namespace t850 {
     std::unique_ptr<ComputeBuffer> m_lambda;
     // Renderer-facing particle shapes, three float4 per particle (CS_PbfAnisotropy.hlsl).
     std::unique_ptr<ComputeBuffer> m_anisotropy;
+    // Whitewater: per particle (foam, aeration, agitation, trapped air), the secondary pool
+    // (two float4 per slot) and its ring cursor, the caustic focus field (one float per surface
+    // column) and the wetness map (one uint per texel).
+    std::unique_ptr<ComputeBuffer> m_whitewater;
+    std::unique_ptr<ComputeBuffer> m_diffuse;
+    std::unique_ptr<ComputeBuffer> m_diffuseCounter;
+    std::unique_ptr<ComputeBuffer> m_causticField;
+    std::unique_ptr<ComputeBuffer> m_wetness;
+    uint32_t m_diffuseCapacity = 0;
+    uint32_t m_wetWidth = 0, m_wetHeight = 0;
+    float m_wetOriginX = 0.0f, m_wetOriginZ = 0.0f, m_wetTexel = 0.06f;
 
     // Fixed by the domain; created once.
     std::unique_ptr<ComputeBuffer> m_grid;
@@ -260,6 +338,9 @@ namespace t850 {
     std::unique_ptr<ComputePipeline> m_cull;
     std::unique_ptr<ComputePipeline> m_copyFields;
     std::unique_ptr<ComputePipeline> m_anisotropyPipeline;
+    std::unique_ptr<ComputePipeline> m_whitewaterPipeline;
+    std::unique_ptr<ComputePipeline> m_diffusePipeline;
+    std::unique_ptr<ComputePipeline> m_fieldsPipeline;
     // Compaction scratch + bookkeeping for particle culling.
 
     Texture* m_surfaceOutput = nullptr;

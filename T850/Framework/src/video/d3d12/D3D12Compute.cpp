@@ -406,6 +406,10 @@ namespace t850 {
       if ((resource.type == ComputeBindingType::ReadOnlyTexture || resource.type == ComputeBindingType::ReadWriteTexture)) {
         if (binding.Dimension == D3D_SRV_DIMENSION_TEXTURE3D) {
           resource.dimension = ComputeTextureDimension::Tex3D;
+        } else if (binding.Dimension == D3D_SRV_DIMENSION_TEXTURECUBE &&
+                   resource.type == ComputeBindingType::ReadOnlyTexture) {
+          // An environment cube binds through the texture's own SRV, like a 2D texture.
+          resource.dimension = ComputeTextureDimension::Cube;
         } else if (binding.Dimension != D3D_SRV_DIMENSION_TEXTURE2D) {
           return false;
         }

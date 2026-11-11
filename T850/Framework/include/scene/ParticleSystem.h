@@ -145,9 +145,59 @@ namespace t850 {
     // Draw each particle as the ellipsoid in `anisotropy_buffer` (when the system has one)
     // instead of a sphere: flat free surfaces and continuous sheets instead of domes.
     bool anisotropy = true;
+    // ---- Lighting from the scene (2026-11 realism pass) ----
+    // Multiplier on the environment cube for reflected rays the screen-space trace cannot
+    // resolve; 0 falls back to the analytic zenith/horizon gradient.
+    float env_intensity = 1.0f;
+    // Sunlight absorbed on its way DOWN to submerged surfaces (0 = lit as if in air, 1 = full
+    // Beer-Lambert over the refracted sun path).
+    float sun_attenuation = 1.0f;
+    // Caustic focusing by the simulated surface (0 = procedural pattern only).
+    float caustic_focus = 1.0f;
+    // Brightening of the meniscus where the water meets a wall.
+    float contact_line = 0.5f;
+    // Thin crests and sheets glowing when seen toward the sun.
+    float backlight = 1.0f;
+    // In-scattering: sun and sky light scattered toward the eye inside the water.
+    float scatter_sun = 0.6f;
+    float scatter_sky = 0.8f;
+    float scatter_anisotropy = 0.45f;   // Henyey-Greenstein g, 0 = isotropic
+    // Ripple slope multipliers: still water, and the extra slope at full local agitation.
+    float ripple_calm = 0.6f;
+    float ripple_agitation = 1.5f;
+    // ---- Whitewater (Ihmsen et al. 2012) ----
+    float foam_strength = 1.0f;         // surface foam
+    float foam_texture_scale = 0.35f;   // foam lace cell size, metres
+    float aeration = 1.0f;              // milky entrained air under the surface
+    float bubble_strength = 1.0f;       // bubble sparkles
+    float spray_strength = 1.0f;        // secondary spray droplets
+    float wetness = 1.0f;               // darkening and sheen of wet deck/coping
     // 0 = shaded, 1 = normals, 2 = depth, 3 = water path, 4 = coverage, 5 = reflection,
-    // 6 = refraction.
+    // 6 = refraction, 7 = whitewater (r foam, g aeration, b spray), 8 = sun light under
+    // water (r direct fraction, g transmittance, b caustics), 9 = wetness.
     int debug_view = 0;
+  };
+
+  // Scene geometry a fluid renderer needs from its simulation (set by the owning scene).
+  struct ParticleFluidGeometry {
+    std::array<float, 3> pool_min = {{0.0f, 0.0f, 0.0f}};   // basin interior; y = floor
+    std::array<float, 3> pool_max = {{0.0f, 0.0f, 0.0f}};   // y = coping top
+    float water_plane_y = 0.0f;
+    float deck_y = 0.0f;
+    // World-space wetness map (texel (0,0) at origin, square texels).
+    float wet_origin_x = 0.0f;
+    float wet_origin_z = 0.0f;
+    float wet_texel = 0.1f;
+    int wet_width = 0;
+    int wet_height = 0;
+    // Caustic focus field over the basin footprint (one value per surface column).
+    int surface_width = 0;
+    int surface_depth = 0;
+    // Secondary (diffuse) particle pool.
+    int diffuse_capacity = 0;
+    float spray_radius = 0.015f;
+    float foam_radius = 0.03f;
+    float bubble_radius = 0.01f;
   };
 
   struct ParticleColorRamp {
@@ -200,6 +250,16 @@ namespace t850 {
     // per particle, see CS_PbfAnisotropy.hlsl). The screen-space depth splat ray-casts these
     // ellipsoids instead of spheres when it is set.
     std::string anisotropy_buffer;
+    // Optional: further externally published buffers the system's passes bind (whitewater,
+    // secondary particles, caustic field, wetness map). Declaring them lets the graph accept
+    // the names before the solver publishes them.
+    std::vector<std::string> extra_buffers;
+    // Optional: per-particle float4 whitewater (foam, aeration, agitation, -) from the solver.
+    std::string whitewater_buffer;
+    // Optional: secondary particle pool, two float4 per particle (position + life, velocity +
+    // class). Its published count is the pool capacity.
+    std::string diffuse_buffer;
+    ParticleFluidGeometry geometry;
     // Optional: a compute_buffers[] entry of float4 view-projection. When empty the graph
     // creates the camera matrix buffer for this system automatically.
     std::string view_projection_buffer;

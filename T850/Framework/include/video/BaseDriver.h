@@ -56,7 +56,8 @@ namespace t850 {
   // bandwidth and lets the pressure solve stay a plain float (W-02).
   enum class ComputeStorageFormat { Unspecified, Rgba8Unorm, Rgba16Float, R32Float };
 
-  enum class ComputeTextureDimension { Tex2D, Tex3D };
+  // Cube is read-only (a sampled environment map); it binds through the texture's own view.
+  enum class ComputeTextureDimension { Tex2D, Tex3D, Cube };
 
   struct ComputeBindingLayoutDesc {
     ComputeBindingType type = ComputeBindingType::Constants32;

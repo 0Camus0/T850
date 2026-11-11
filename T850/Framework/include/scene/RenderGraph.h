@@ -201,7 +201,10 @@ namespace t850 {
     bool ValidateResourceLifetimes(const RenderGraphDesc& desc) const;
     void BuildGraph();
     void CreateComputePipelines(BaseDriver* driver);
-    bool ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props);
+    // `envMaps` resolves the "@environment_map" built-in (the scene's sky cube) for compute
+    // kernels that sample it.
+    bool ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props,
+                            const EnvironmentMapSet* envMaps = nullptr);
 
     // Resolve a "Source:ATTACHMENT" string into (rt_handle, attachment_enum).
     struct ResolvedTexture {

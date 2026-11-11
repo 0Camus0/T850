@@ -101,4 +101,7 @@ private:
   // Seeding sliders re-seed on release, not every frame of a drag (-1 = no pending re-seed).
   float m_reseedDelay = -1.0f;
   bool m_anisotropyErrorLogged = false;
+  bool m_whitewaterErrorLogged = false;
+  // Names and settings of the solver's whitewater; call before PbfFluid::TryInitialize.
+  void ConfigureWhitewater();
 };

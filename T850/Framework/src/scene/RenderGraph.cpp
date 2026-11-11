@@ -536,7 +536,15 @@ bool RenderGraph::Load(const std::string& path) {
         const ComputeBufferDescJson* extentBuffer = nullptr;
         for (const ComputeBufferDescJson& candidate : m_sourceDesc.compute_buffers)
           if (candidate.name == pass.compute_extent_from) extentBuffer = &candidate;
-        if (extentBuffer) {
+        bool extentIsExternal = false;
+        for (const ParticleSystemDesc& sys : ParticleSystemRegistry::Instance().Systems())
+          if (std::find(sys.extra_buffers.begin(), sys.extra_buffers.end(), pass.compute_extent_from) !=
+              sys.extra_buffers.end()) extentIsExternal = true;
+        if (ParticleBufferRegistry::Instance().Find(pass.compute_extent_from) != nullptr)
+          extentIsExternal = true;
+        if (extentBuffer || extentIsExternal) {
+          // An externally owned buffer (a solver's particle pool) gives a 1D extent of its
+          // published element count at dispatch time.
           extentIsBuffer = true;
         } else if (!ParseRenderTargetReference(pass.compute_extent_from, extentName, extentIndex) ||
                    !renderTargets.count(extentName)) {
@@ -588,14 +596,22 @@ bool RenderGraph::Load(const std::string& path) {
           bool declaredBySystem = false;
           for (const ParticleSystemDesc& sys : ParticleSystemRegistry::Instance().Systems()) {
             if (sys.buffer == resource.resource || sys.velocity_buffer == resource.resource ||
-                (!sys.anisotropy_buffer.empty() && sys.anisotropy_buffer == resource.resource)) {
+                (!sys.anisotropy_buffer.empty() && sys.anisotropy_buffer == resource.resource) ||
+                std::find(sys.extra_buffers.begin(), sys.extra_buffers.end(), resource.resource) !=
+                    sys.extra_buffers.end()) {
               declaredBySystem = true;
               break;
             }
           }
           const bool externalBuffer = declaredBySystem ||
             ParticleBufferRegistry::Instance().Find(resource.resource) != nullptr;
-          if (!declared && externalBuffer) continue;
+          if (!declared && externalBuffer) {
+            // Owned by a subsystem: record the binding (an external pool may be the pass's
+            // dispatch extent) but there is no graph-side declaration to check.
+            (*type == ComputeBindingType::ReadOnlyBuffer ? sampledResources : writtenResources)
+                .insert("buffer:" + resource.resource);
+            continue;
+          }
           if (!declared) {
             T8_LOG_ERROR("[RenderGraph] Pass '%s' references unknown compute buffer '%s' (declare it in compute_buffers[])",
                          pass.name.c_str(), resource.resource.c_str());
@@ -617,6 +633,17 @@ bool RenderGraph::Load(const std::string& path) {
             // to one buffer are legal for StructuredBuffers: each thread addresses its own
             // element, unlike a storage texture which has a single dispatch-sized extent.
             writtenResources.insert(identity);
+          }
+          continue;
+        }
+
+        // Built-in environment cube (the scene's sky map), resolved at dispatch time. Only a
+        // sampled texture may name it; the kernel must declare the binding with dimension cube.
+        if (resource.resource == "@environment_map") {
+          if (*type != ComputeBindingType::ReadOnlyTexture) {
+            T8_LOG_ERROR("[RenderGraph] Pass '%s' binds @environment_map with access '%s'; only sampled is valid",
+                         pass.name.c_str(), resource.access.c_str());
+            return false;
           }
           continue;
         }
@@ -936,7 +963,9 @@ bool RenderGraph::CreateComputeBuffers(BaseDriver* driver, int widthOverride, in
       const int w = widthOverride > 0 ? widthOverride : driver->width;
       const int h = heightOverride > 0 ? heightOverride : driver->height;
       if (spec.size_ref == "$window") {
-        elements = (std::max)(w * h, 1);
+        // element_count, when set, is the number of elements per pixel (multi-channel
+        // per-pixel accumulators); 0 means one.
+        elements = (std::max)(w * h, 1) * (std::max)(spec.element_count, 1);
         m_computeBufferWindowSizes[spec.name] = {static_cast<uint32_t>((std::max)(w, 1)),
                                                  static_cast<uint32_t>((std::max)(h, 1))};
       } else if (spec.size_ref == "$window_tiles") {
@@ -1018,7 +1047,13 @@ bool RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
     }
 
     if (rt.shadow_projection.empty() && !rt.size_ref.empty()) {
-      if (rt.size_ref == "$shadow_resolution") {
+      if (rt.size_ref == "$window_half") {
+        // Half the viewport (rounded up), e.g. the screen-space fluid depth and thickness.
+        const int baseW = widthOverride > 0 ? widthOverride : driver->width;
+        const int baseH = heightOverride > 0 ? heightOverride : driver->height;
+        w = (std::max)(1, (baseW + 1) / 2);
+        h = (std::max)(1, (baseH + 1) / 2);
+      } else if (rt.size_ref == "$shadow_resolution") {
         w = h = static_cast<int>(props.ShadowMapResolution);
       } else if (rt.size_ref == "$god_rays_resolution") {
         w = h = static_cast<int>(props.GoodRaysResolution);
@@ -1226,7 +1261,8 @@ void RenderGraph::CreateComputePipelines(BaseDriver* driver) {
   }
 }
 
-bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props) {
+bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, SceneProps& props,
+                                     const EnvironmentMapSet* envMaps) {
   const auto pipelineIt = m_computePipelines.find(node.index);
   if (!driver || pipelineIt == m_computePipelines.end() || !pipelineIt->second)
     return false;
@@ -1243,8 +1279,17 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
   BaseRT* outputRT = nullptr;
   uint32_t extentW = 0, extentH = 0;
   const auto bufferExtentIt = m_computeBufferHandles.find(pass.compute_extent_from);
-  const bool extentIsBuffer = bufferExtentIt != m_computeBufferHandles.end();
-  if (extentIsBuffer) {
+  const bool extentIsGraphBuffer = bufferExtentIt != m_computeBufferHandles.end();
+  int externalCount = 0;
+  const bool extentIsExternal = !extentIsGraphBuffer &&
+      ParticleBufferRegistry::Instance().Find(pass.compute_extent_from, &externalCount) != nullptr;
+  const bool extentIsBuffer = extentIsGraphBuffer || extentIsExternal;
+  if (extentIsExternal) {
+    // A solver-owned pool: one thread per published element.
+    extentW = static_cast<uint32_t>((std::max)(externalCount, 0));
+    extentH = 1u;
+    if (extentW == 0u) return true;   // nothing published yet: nothing to do
+  } else if (extentIsGraphBuffer) {
     const int index = bufferExtentIt->second;
     if (index < 0 || index >= static_cast<int>(m_computeBuffers.size()) || !m_computeBuffers[index]) {
       T8_LOG_ERROR("[RenderGraph] Pass '%s' has an invalid compute extent buffer '%s'",
@@ -1337,6 +1382,14 @@ bool RenderGraph::ExecuteComputePass(const GraphNode& node, BaseDriver* driver, 
       } else {
         T8_LOG_ERROR("[RenderGraph] Pass '%s' cannot resolve compute buffer '%s'",
                      pass.name.c_str(), resource.resource.c_str());
+        return false;
+      }
+    } else if (resource.resource == "@environment_map") {
+      const int index = envMaps ? (envMaps->Sky >= 0 ? envMaps->Sky : envMaps->SpecularIBL) : -1;
+      binding.texture = index >= 0 ? driver->GetTexture(index) : nullptr;
+      if (!binding.texture) {
+        T8_LOG_ERROR("[RenderGraph] Pass '%s' samples @environment_map but the scene has no environment cube",
+                     pass.name.c_str());
         return false;
       }
     } else {
@@ -1832,7 +1885,7 @@ void RenderGraph::ExecutePass(
 
   if (pass.execution == "compute_if_supported" &&
       m_computePipelines.find(node.index) != m_computePipelines.end()) {
-    if (ExecuteComputePass(node, driver, props)) {
+    if (ExecuteComputePass(node, driver, props, &envMaps)) {
       applyPostState();
       return;
     }

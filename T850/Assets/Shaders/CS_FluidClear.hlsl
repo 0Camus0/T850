@@ -67,6 +67,13 @@ RWStructuredBuffer<uint> DepthBits : register(u0);
 #endif
 RWStructuredBuffer<uint> ThicknessBits : register(u1);
 
+// Four per pixel: foam (max), aeration, agitation and spray (chord-weighted sums), written by
+// CS_FluidSplat from the solver's per-particle whitewater and read by CS_ParticleShade.
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(3, 0)]]
+#endif
+RWStructuredBuffer<uint> AuxBits : register(u2);
+
 [numthreads(8, 8, 1)]
 void CS(uint3 id : SV_DispatchThreadID)
 {
@@ -76,4 +83,8 @@ void CS(uint3 id : SV_DispatchThreadID)
     // sentinel serves both the screen-space depth and the particle-impostor key.
     DepthBits[pixel] = 0xFFFFFFFFu;
     ThicknessBits[pixel] = 0u;
+    AuxBits[pixel * 4u + 0u] = 0u;
+    AuxBits[pixel * 4u + 1u] = 0u;
+    AuxBits[pixel * 4u + 2u] = 0u;
+    AuxBits[pixel * 4u + 3u] = 0u;
 }

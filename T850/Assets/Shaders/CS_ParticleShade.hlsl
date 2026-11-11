@@ -1,33 +1,39 @@
 // T850 screen-space fluid shading.
 //
-// Inputs:
+// Inputs (the fluid targets may be at a lower resolution than the output; they are upsampled
+// here with a depth-aware bilinear filter and re-tested against the full-resolution scene):
 //   FluidDepthA     F32      view-space front surface, smoothed (0 = empty)
-//   FluidThickness  RGBA16F  r = metres of water along the ray (chord sum), a = silhouette coverage
-//   SceneColor      the opaque scene the water refracts and reflects
-//   SceneDepth      GBuffer depth: refraction occlusion, the water column under the surface, and
-//                   the reflection trace
+//   FluidThickness  RGBA16F  r = metres of water along the ray (chord sum), a = coverage
+//   AuxBits         per fluid pixel: foam (max), aeration, agitation, spray (chord-weighted)
+//   WhitewaterBits  per output pixel: secondary spray, foam, bubbles, sparkle; read AND
+//                   cleared here (CS_FluidWhitewater accumulates them each frame)
+//   SceneColor / SceneDepth / G-buffer albedo, normal / ShadowAccum: the opaque scene
+//   EnvironmentMap  the scene's sky cube, for reflected rays the screen cannot resolve
+//   CausticField    focusing of the simulated surface per basin column (CS_PbfFields)
+//   Wetness         world-space wetness of the deck and coping (CS_PbfWhitewater/Diffuse)
 //
-// Optics, per pixel (van der Laan et al. 2009, Eq. 13, with physically scaled terms):
+// Optics per water pixel (van der Laan et al. 2009, Eq. 13, with physically scaled terms):
+//   normal       from the smoothed depth, plus world-space wind ripples on up-facing water whose
+//                slope follows the local flow; the slope variance of ripples too fine for the
+//                pixel widens the sun glint and the reflection (Toksvig), instead of vanishing.
+//   refraction   Snell (1/1.33). The refracted ray is MARCHED through the depth buffer to the
+//                floor, wall or step it meets. When that surface is hidden (under the coping lip)
+//                the analytic pool box gives the path and the last visible sample the colour.
+//                Water in the air (a sheet over the pool) sees the pool surface behind it,
+//                which is shaded here as a second interface.
+//   light below  the G-buffer rebuilds the direct sun on the submerged surface (albedo, N.L,
+//                ShadowAccum); that part is absorbed along the refracted sun path and carries
+//                the caustics (procedural web x simulated-surface focusing). Ambient is
+//                absorbed too. Shadowed or sun-averted surfaces get no caustics.
+//   in-scatter   sun (Henyey-Greenstein phase, surface shadow) and sky light scattered toward
+//                the eye, filling what Beer-Lambert absorbs; entrained air turns it milky.
+//   reflection   screen-space trace (hits on surfaces facing away from the ray are rejected),
+//                continued from the exit pixel, else the environment cube.
+//   Fresnel, normalised Blinn-Phong glint, backlit crests, meniscus at walls, foam lace,
+//   spray and bubbles.
+// Opaque pixels: wet deck/coping (darker, glossy) and secondary spray in the air.
 //
-//   normal      cross product of view-space position differences on the smoothed depth (the
-//               paper's silhouette rule), plus small world-space ripples on near-horizontal
-//               water so the surface is not a perfect mirror.
-//   refraction  Snell (eta 1/1.33). The refracted ray travels through the water column to the
-//               opaque scene behind it, so a shallow step barely shifts while the deep end bends;
-//               a lookup that lands on anything not under the water there (the coping, the
-//               deck) is pulled back toward the pixel.
-//   absorption  Beer-Lambert over the metres of water on the ray. Under the pool surface that is
-//               the geometric gap to the floor or wall (smooth, exact); for water in the air it is
-//               the particle chord sum. The water's in-scattered colour fills what is absorbed.
-//   caustics    the sun focused by the moving surface, projected onto the submerged floor and
-//               walls the refracted ray lands on.
-//   reflection  screen-space trace against the opaque depth over a ~1 degree glossy cone; a ray
-//               that leaves the frame continues the object at its exit pixel (weighted by how
-//               far it still has to go), else a horizon-to-zenith sky gradient.
-//   Fresnel     Schlick, F0 = 0.02.
-//   sun glint   normalised Blinn-Phong on the rippled normal.
-//
-// The shaded colour already contains the background, so alpha is only the silhouette coverage.
+// The shaded colour already contains the background, so alpha is only coverage.
 // `Mode == 0` leaves the splat target untouched. `ShadeParams.x == 1` writes zero on empty pixels.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -38,8 +44,7 @@ cbuffer ParticleShadeConstants : register(b0)
     uint  OutputWidth;
     uint  OutputHeight;
     uint  Mode;               // 0 splat, 1 screen space
-    uint  DebugView;          // 0 shaded, 1 normals, 2 depth, 3 water path, 4 coverage,
-                              // 5 reflection, 6 refraction
+    uint  DebugView;          // see ParticleScreenSpaceDesc::debug_view
 
     float ProjScaleY;         // Projection.m[1][1]
     float ProjA;              // Projection.m[2][2], scene depth linearisation
@@ -52,7 +57,7 @@ cbuffer ParticleShadeConstants : register(b0)
     float FresnelPower;
 
     float NormalScale;
-    float Foam;               // whitewater strength for isolated droplets (spray)
+    float Foam;               // whitewater strength for isolated fluid particles (spray)
     float ReflectionDistance; // screen-space reflection range in metres, 0 = off
     float NormalStep;
 
@@ -63,14 +68,24 @@ cbuffer ParticleShadeConstants : register(b0)
     float4 CameraRight;       // camera basis in world space; w = camera position x
     float4 CameraUp;          // w = camera position y
     float4 CameraForward;     // w = camera position z
-    float4 ReflectionColor;   // zenith sky colour for reflected rays that leave the screen
+    float4 ReflectionColor;   // zenith of the fallback sky gradient
 
     float4 ShadeParams;       // x = write empty pixels, y = particle radius (m), z = time (s),
                               // w = sun glint exponent
-    float4 FluidColor;        // in-scattered water colour
-    float4 SkyHorizon;        // horizon sky colour for reflected rays that leave the screen
+    float4 FluidColor;        // single-scattering colour of the water
+    float4 SkyHorizon;        // horizon of the fallback sky gradient
     float4 RippleParams;      // x = slope, y = longest wavelength (m), z = speed, w = fade distance (m)
     float4 CausticParams;     // x = strength, y = pattern scale (m), z = speed, w = depth fade (m)
+
+    float4 EnvParams;         // x = environment intensity (0 = gradient)
+    float4 PoolMin;           // basin interior min (y = floor), w = water plane y
+    float4 PoolMax;           // basin interior max (y = coping top), w = deck y
+    float4 LightParams;       // x = sun attenuation, y = caustic focus, z = contact line, w = backlight
+    float4 ScatterParams;     // x = sun in-scatter, y = sky in-scatter, z = HG g, w = aeration
+    float4 FoamParams;        // x = foam, y = foam cell (m), z = bubbles, w = secondary spray
+    float4 WetParams;         // x, y = wetness origin (world x, z), z = texel (m), w = strength
+    uint4  GridParams;        // x, y = wetness texels, z, w = surface columns
+    float4 RippleFlow;        // x = agitation gain, y = calm multiplier, z = Toksvig (0/1)
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -107,6 +122,46 @@ RWTexture2D<float4> OutputTexture : register(u0);
 #endif
 Texture2D<float> SceneDepth : register(t3);
 
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(7, 0)]]
+#endif
+TextureCube<float4> EnvironmentMap : register(t4);
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(8, 0)]]
+#endif
+Texture2D<float4> SceneAlbedo : register(t5);    // G-buffer COLOR0: albedo, specular weight
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(9, 0)]]
+#endif
+Texture2D<float4> SceneNormal : register(t6);    // G-buffer COLOR1: world normal * 0.5 + 0.5
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(10, 0)]]
+#endif
+Texture2D<float4> SceneShadow : register(t7);    // ShadowAccum: r = sun visibility
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(11, 0)]]
+#endif
+StructuredBuffer<uint> AuxBits : register(t8);
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(12, 0)]]
+#endif
+StructuredBuffer<float> CausticField : register(t9);
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(13, 0)]]
+#endif
+StructuredBuffer<uint> Wetness : register(t10);
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(14, 0)]]
+#endif
+RWStructuredBuffer<uint> WhitewaterBits : register(u1);
+
 #if defined(T850_GL)
   #define T850_IMAGE_Y(y, h) ((uint)(h) - 1u - (uint)(y))
   #define T850_UV(uv) float2((uv).x, 1.0f - (uv).y)
@@ -115,36 +170,20 @@ Texture2D<float> SceneDepth : register(t3);
   #define T850_UV(uv) (uv)
 #endif
 
+#define PI 3.14159265f
+
+// Set once per thread at the top of CS().
+static uint2 FluidSize;
+static float EnvMaxMip;
+
+// ---- Projection and scene access ----------------------------------------------------------
+
 // Pixels per metre at view depth 1. Square pixels, so the same focal length serves x and y.
 float Focal()
 {
     return 0.5f * float(OutputHeight) * max(ProjScaleY, 1e-4f);
 }
 
-float LoadDepth(int2 coordinate)
-{
-    const int2 clamped = clamp(coordinate, int2(0, 0),
-                               int2(int(OutputWidth) - 1, int(OutputHeight) - 1));
-    return SurfaceDepth.Load(int3(clamped.x, int(T850_IMAGE_Y(clamped.y, OutputHeight)), 0));
-}
-
-float4 LoadThickness(int2 coordinate)
-{
-    const int2 clamped = clamp(coordinate, int2(0, 0),
-                               int2(int(OutputWidth) - 1, int(OutputHeight) - 1));
-    return FluidThickness.Load(int3(clamped.x, int(T850_IMAGE_Y(clamped.y, OutputHeight)), 0));
-}
-
-// Linear view depth of the opaque scene; the sky (cleared depth) reads as very far.
-float LinearSceneDepth(int2 coordinate)
-{
-    const int2 clamped = clamp(coordinate, int2(0, 0),
-                               int2(int(OutputWidth) - 1, int(OutputHeight) - 1));
-    const float raw = SceneDepth.Load(int3(clamped.x, int(T850_IMAGE_Y(clamped.y, OutputHeight)), 0));
-    return raw > 0.0f && abs(raw - ProjA) > 1e-9f ? ProjB / (raw - ProjA) : 1.0e9f;
-}
-
-// View-space position of a pixel at view depth z. Pixel y grows down, view y grows up.
 float3 ViewPosition(float2 pixel, float z)
 {
     const float f = Focal();
@@ -153,7 +192,6 @@ float3 ViewPosition(float2 pixel, float z)
                   z);
 }
 
-// Inverse of ViewPosition: continuous pixel coordinates of a view-space point.
 float2 ProjectToPixel(float3 q)
 {
     const float f = Focal();
@@ -167,13 +205,38 @@ bool OnScreen(float2 pixel)
            pixel.x < float(OutputWidth) && pixel.y < float(OutputHeight);
 }
 
+int2 ClampPixel(int2 p)
+{
+    return clamp(p, int2(0, 0), int2(int(OutputWidth) - 1, int(OutputHeight) - 1));
+}
+
+// Full-resolution scene texel (G-buffer, shadow, depth).
+int3 SceneTexel(int2 p)
+{
+    const int2 c = ClampPixel(p);
+    return int3(c.x, int(T850_IMAGE_Y(c.y, OutputHeight)), 0);
+}
+
+// Linear view depth of the opaque scene; the sky (cleared depth) reads as very far.
+float LinearSceneDepth(int2 p)
+{
+    const float raw = SceneDepth.Load(SceneTexel(p));
+    return raw > 0.0f && abs(raw - ProjA) > 1e-9f ? ProjB / (raw - ProjA) : 1.0e9f;
+}
+
 float3 SampleScene(float2 pixel)
 {
     const float2 uv = saturate(pixel / float2(float(OutputWidth), float(OutputHeight)));
     return SceneColor.SampleLevel(LinearSampler, T850_UV(uv), 0.0f).rgb;
 }
 
-// View-space vector to world space and back (CameraRight/Up/Forward are the view axes in world).
+float3 SceneNormalWorld(int2 p)
+{
+    const float3 n = SceneNormal.Load(SceneTexel(p)).xyz * 2.0f - 1.0f;
+    const float len = length(n);
+    return len > 1.0e-3f ? n / len : float3(0.0f, 1.0f, 0.0f);
+}
+
 float3 ToWorld(float3 v)
 {
     return CameraRight.xyz * v.x + CameraUp.xyz * v.y + CameraForward.xyz * v.z;
@@ -189,9 +252,139 @@ float3 CameraPosition()
     return float3(CameraRight.w, CameraUp.w, CameraForward.w);
 }
 
-// Surface tangent along `offset`: the central difference inside the surface, the one-sided
-// difference next to a depth jump larger than `edge` (the paper's silhouette rule), zero when
-// both neighbours are off the surface.
+float Luminance(float3 c)
+{
+    return dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+}
+
+// ---- Fluid targets (possibly lower resolution) --------------------------------------------
+
+int2 FluidTexelOf(float2 pixel)
+{
+    const float2 scaled = pixel * float2(FluidSize) / float2(float(OutputWidth), float(OutputHeight));
+    return clamp(int2(floor(scaled)), int2(0, 0), int2(FluidSize) - 1);
+}
+
+float LoadFluidDepthTexel(int2 t)
+{
+    const int2 c = clamp(t, int2(0, 0), int2(FluidSize) - 1);
+    return SurfaceDepth.Load(int3(c.x, int(T850_IMAGE_Y(c.y, FluidSize.y)), 0));
+}
+
+float4 LoadFluidThicknessTexel(int2 t)
+{
+    const int2 c = clamp(t, int2(0, 0), int2(FluidSize) - 1);
+    return FluidThickness.Load(int3(c.x, int(T850_IMAGE_Y(c.y, FluidSize.y)), 0));
+}
+
+// Depth-aware bilinear upsample at a full-resolution pixel position. Texels of the nearest
+// layer (within 0.25 m of the front-most) are blended; the coverage is the plain bilinear
+// blend so silhouettes stay anti-aliased. At full resolution this is the texel itself.
+void SampleFluid(float2 pixel, out float z, out float4 thickness)
+{
+    const float2 f = pixel * float2(FluidSize) / float2(float(OutputWidth), float(OutputHeight)) - 0.5f;
+    const int2 t0 = int2(floor(f));
+    const float2 w = f - float2(t0);
+    const float d00 = LoadFluidDepthTexel(t0);
+    const float d10 = LoadFluidDepthTexel(t0 + int2(1, 0));
+    const float d01 = LoadFluidDepthTexel(t0 + int2(0, 1));
+    const float d11 = LoadFluidDepthTexel(t0 + int2(1, 1));
+    const float4 bw = float4((1.0f - w.x) * (1.0f - w.y), w.x * (1.0f - w.y), (1.0f - w.x) * w.y, w.x * w.y);
+    const float4 d = float4(d00, d10, d01, d11);
+    float front = 1.0e9f;
+    [unroll]
+    for (int k = 0; k < 4; ++k)
+        if (d[k] > 0.0f) front = min(front, d[k]);
+    float4 valid = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    [unroll]
+    for (int j = 0; j < 4; ++j)
+        valid[j] = (d[j] > 0.0f && d[j] < front + max(0.25f, 0.03f * front)) ? bw[j] : 0.0f;
+    const float sum = valid.x + valid.y + valid.z + valid.w;
+    if (sum <= 1.0e-4f) {
+        z = 0.0f;
+        thickness = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return;
+    }
+    z = dot(valid, d) / sum;
+    const float4 t00 = LoadFluidThicknessTexel(t0);
+    const float4 t10 = LoadFluidThicknessTexel(t0 + int2(1, 0));
+    const float4 t01 = LoadFluidThicknessTexel(t0 + int2(0, 1));
+    const float4 t11 = LoadFluidThicknessTexel(t0 + int2(1, 1));
+    thickness.rgb = (t00.rgb * valid.x + t10.rgb * valid.y + t01.rgb * valid.z + t11.rgb * valid.w) / sum;
+    thickness.a = dot(bw, float4(t00.a, t10.a, t01.a, t11.a));
+}
+
+float LoadDepth(int2 p)
+{
+    float z;
+    float4 unused;
+    SampleFluid(float2(ClampPixel(p)) + 0.5f, z, unused);
+    return z;
+}
+
+// The whitewater channels of the fluid texel under a pixel.
+float4 LoadAux(float2 pixel)
+{
+    const int2 t = FluidTexelOf(pixel);
+    const uint base = (uint(t.x) + uint(t.y) * FluidSize.x) * 4u;
+    return float4(float(AuxBits[base + 0u]) / 65535.0f,
+                  float(AuxBits[base + 1u]) / 1024.0f,
+                  float(AuxBits[base + 2u]) / 1024.0f,
+                  float(AuxBits[base + 3u]) / 1024.0f);
+}
+
+// True where the opaque scene seen at `pixel` lies under the water: inside the silhouette (not
+// its anti-aliased rim) and clearly below that pixel's surface.
+bool UnderWater(int2 pixel)
+{
+    const int2 t = FluidTexelOf(float2(pixel) + 0.5f);
+    const float water = LoadFluidDepthTexel(t);
+    return water > 0.0f && LoadFluidThicknessTexel(t).a > 0.5f && LinearSceneDepth(pixel) >= water + 0.05f;
+}
+
+// ---- Sky and environment ------------------------------------------------------------------
+
+// Fallback sky for a world-space direction: horizon to zenith, dimmed below the horizon.
+float3 SkyGradient(float3 directionWorld)
+{
+    const float elevation = directionWorld.y;
+    const float3 sky = lerp(SkyHorizon.rgb, ReflectionColor.rgb, smoothstep(0.0f, 0.65f, elevation));
+    return lerp(SkyHorizon.rgb * 0.35f, sky, smoothstep(-0.12f, 0.02f, elevation));
+}
+
+// Radiance of the scene's sky cube along a world direction (the cube is stored with x and z
+// mirrored, as FS_Mesh and the deferred pass sample it).
+float3 EnvRadiance(float3 directionWorld, float mip)
+{
+    if (EnvParams.x <= 0.0f) return SkyGradient(directionWorld);
+    const float3 d = float3(-directionWorld.x, directionWorld.y, -directionWorld.z);
+    return EnvironmentMap.SampleLevel(LinearSampler, d, clamp(mip, 0.0f, EnvMaxMip)).rgb * EnvParams.x;
+}
+
+// Sky light falling on an up-facing surface: a blurred cosine-weighted average.
+float3 SkyIrradiance()
+{
+    const float mip = max(EnvMaxMip - 1.0f, 0.0f);
+    float3 sum = EnvRadiance(float3(0.0f, 1.0f, 0.0f), mip) * 2.0f;
+    sum += EnvRadiance(normalize(float3(0.7f, 0.7f, 0.0f)), mip);
+    sum += EnvRadiance(normalize(float3(-0.7f, 0.7f, 0.0f)), mip);
+    sum += EnvRadiance(normalize(float3(0.0f, 0.7f, 0.7f)), mip);
+    sum += EnvRadiance(normalize(float3(0.0f, 0.7f, -0.7f)), mip);
+    return sum / 6.0f;
+}
+
+// Henyey-Greenstein phase relative to isotropic scattering (1 = isotropic).
+float PhaseRelative(float cosine, float g)
+{
+    const float g2 = g * g;
+    return (1.0f - g2) / pow(max(1.0f + g2 - 2.0f * g * cosine, 1.0e-4f), 1.5f);
+}
+
+// ---- Surface geometry ---------------------------------------------------------------------
+
+// Surface tangent along `offset` (full-resolution pixels): the central difference inside the
+// surface, the one-sided difference next to a depth jump larger than `edge` (the paper's
+// silhouette rule), zero when both neighbours are off the surface.
 float3 Tangent(int2 base, float3 p, float z, int2 offset, float edge)
 {
     const float zf = LoadDepth(base + offset);
@@ -204,29 +397,13 @@ float3 Tangent(int2 base, float3 p, float z, int2 offset, float edge)
     return front ? df : db;
 }
 
-// Sky for a world-space direction that left the screen: horizon to zenith, dimmed below the
-// horizon (the reflected ray then meets the deck, the wall or the ground).
-float3 SkyGradient(float3 directionWorld)
-{
-    const float elevation = directionWorld.y;
-    const float3 sky = lerp(SkyHorizon.rgb, ReflectionColor.rgb, smoothstep(0.0f, 0.65f, elevation));
-    return lerp(SkyHorizon.rgb * 0.35f, sky, smoothstep(-0.12f, 0.02f, elevation));
-}
+// ---- Reflection ---------------------------------------------------------------------------
 
-// True where the opaque scene seen at `pixel` lies under the water: inside the silhouette (not
-// its anti-aliased rim) and clearly below that pixel's surface.
-bool UnderWater(int2 pixel)
-{
-    const float water = LoadDepth(pixel);
-    return water > 0.0f && LoadThickness(pixel).a > 0.5f && LinearSceneDepth(pixel) >= water + 0.05f;
-}
-
-// The reflected image averaged over a narrow cone (about 1 degree): sub-pixel ripples make
-// water a slightly glossy mirror, and an exact mirror copies every texel of a busy wall
-// texture into the water as speckle.
+// The reflected image averaged over a narrow cone: sub-pixel ripples make water a slightly
+// glossy mirror, and an exact mirror copies every texel of a busy wall texture as speckle.
 float3 SampleSceneGlossy(float2 pixel, float radiusPx)
 {
-    const float r = clamp(radiusPx, 0.0f, 10.0f);
+    const float r = clamp(radiusPx, 0.0f, 12.0f);
     const float h = 0.5f * r;
     float3 c = 2.0f * SampleScene(pixel);
     c += SampleScene(pixel + float2(h, h));
@@ -240,26 +417,20 @@ float3 SampleSceneGlossy(float2 pixel, float radiusPx)
     return c * 0.1f;
 }
 
-// Screen-space reflection: march the reflected ray against the opaque depth buffer with a
-// geometric step, then bisect the crossing. Returns the weight of `hitColor` over the sky
-// gradient.
-//
-// A ray that leaves the frame before hitting anything goes on into geometry the camera does
-// not see. The object at the exit pixel stands in for it, trusted less the further the ray
-// still has to travel to reach that object's depth: a house wall that continues above the
-// frame keeps reflecting, open sky above a low wall does not. Without this every ripple that
-// tips a ray across the top edge flips it from wall to sky, a hard-edged patchwork.
-float TraceReflection(float3 origin, float3 direction, out float3 hitColor)
+// Screen-space reflection: march the reflected ray against the opaque depth with a geometric
+// step, bisect the crossing, and accept it only if the surface there faces the ray (a crossing
+// behind a pillar or under the coping is the ray passing behind the object, not hitting it).
+// Returns the weight of `hitColor` over the environment. A ray that leaves the frame continues
+// the object at its exit pixel, trusted less the further it still has to travel; a ray coming
+// back toward the camera reflects what is behind it, which the screen does not have.
+float TraceReflection(float3 origin, float3 direction, float coneTan, out float3 hitColor)
 {
     hitColor = float3(0.0f, 0.0f, 0.0f);
     if (ReflectionDistance <= 0.0f) return 0.0f;
-    // A ray coming back toward the camera (a wave face tilted at the viewer) reflects what is
-    // behind the camera; the depth buffer only has the front faces of what lies along it, so
-    // it would "hit" the top of the near coping from below. It takes the sky instead.
     const float facing = smoothstep(-0.02f, 0.12f, direction.z);
     if (facing <= 0.0f) return 0.0f;
 
-    const float gloss = 0.015f * Focal();   // cone radius in pixels per metre travelled at depth 1
+    const float focal = Focal();
     float stepLength = max(0.004f * origin.z, 0.01f);
     float t = 0.5f * stepLength;
     float lastT = -1.0f;
@@ -268,6 +439,7 @@ float TraceReflection(float3 origin, float3 direction, out float3 hitColor)
     for (int k = 0; k < 80; ++k) {
         const float previous = t;
         t += stepLength;
+        stepLength *= 1.07f;
         if (t > ReflectionDistance) return 0.0f;
         const float3 q = origin + direction * t;
         if (q.z <= 0.05f) return 0.0f;
@@ -286,51 +458,69 @@ float TraceReflection(float3 origin, float3 direction, out float3 hitColor)
                 else lo = mid;
             }
             const float3 h = origin + direction * hi;
-            hitColor = SampleSceneGlossy(ProjectToPixel(h), gloss * hi / max(h.z, 0.05f));
+            const float2 hitPixel = ProjectToPixel(h);
+            if (dot(ToView(SceneNormalWorld(int2(hitPixel))), direction) > 0.1f) continue;
+            hitColor = SampleSceneGlossy(hitPixel, coneTan * hi * focal / max(h.z, 0.05f));
             return facing;
         }
-        stepLength *= 1.07f;
     }
     if (!exited || lastT < 0.0f) return 0.0f;
 
     const float3 q = origin + direction * lastT;
     const float2 exitPixel = ProjectToPixel(q);
     const float exitZ = LinearSceneDepth(int2(exitPixel));
-    hitColor = SampleSceneGlossy(exitPixel, gloss * lastT / max(q.z, 0.05f));
-    if (exitZ > 1.0e8f) return facing;              // on-screen sky along the ray
+    hitColor = SampleSceneGlossy(exitPixel, coneTan * lastT * focal / max(q.z, 0.05f));
+    if (exitZ > 1.0e8f) return facing;               // on-screen sky along the ray
     const float ahead = exitZ - q.z;                 // view depth still to cover
     if (ahead <= 0.0f) return facing;                // already level with the object
     return facing * exp(-(ahead / max(direction.z, 1.0e-3f)) / 3.0f);
 }
 
-// Small wind ripples: a few directional waves of decreasing wavelength. Returns the height
-// gradient (dh/dx, dh/dz) in world units; octaves shorter than a few pixels fade out so the
-// pattern never aliases at a grazing angle.
-float2 RippleGradient(float2 xz, float time, float metresPerPixel)
+// ---- Ripples ------------------------------------------------------------------------------
+
+uint Pcg(uint v)
+{
+    const uint state = v * 747796405u + 2891336453u;
+    const uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float Hash01(uint v)
+{
+    return float(Pcg(v) >> 8u) * (1.0f / 16777216.0f);
+}
+
+// Wind ripples: six directional waves with hashed directions and phases and irregularly
+// spaced wavelengths (no visible lattice when the camera is still). Returns the height
+// gradient (dh/dx, dh/dz). Waves shorter than about six pixels fade out; their slope variance
+// is returned in `lostVariance` so the glint and the reflection widen instead.
+float2 RippleGradient(float2 xz, float time, float metresPerPixel, float slope, out float lostVariance)
 {
     float2 gradient = float2(0.0f, 0.0f);
-    const float slope = RippleParams.x;
+    lostVariance = 0.0f;
     const float longest = max(RippleParams.y, 0.01f);
     const float speed = RippleParams.z;
+    const float ratios[6] = { 1.0f, 0.613f, 0.377f, 0.239f, 0.149f, 0.093f };
     [unroll]
-    for (int k = 0; k < 5; ++k) {
-        const float fk = float(k);
-        const float wavelength = longest * pow(0.62f, fk);
-        // Octaves need about six pixels per wavelength; below that they only add glitter.
+    for (int k = 0; k < 6; ++k) {
+        const float wavelength = longest * ratios[k];
+        const float amplitude = slope * pow(0.78f, float(k));
         const float resolve = saturate(wavelength / max(metresPerPixel * 6.0f, 1.0e-5f) - 1.0f);
-        const float angle = 0.9f + fk * 2.39996f;   // golden-angle spread of directions
+        const float angle = 0.6f + 6.2831853f * Hash01(uint(k) * 7919u + 17u);
         const float2 direction = float2(cos(angle), sin(angle));
         const float waveNumber = 6.2831853f / wavelength;
-        // Deep-water dispersion: phase speed sqrt(g / k).
-        const float omega = sqrt(9.81f * waveNumber) * speed;
-        const float phase = dot(direction, xz) * waveNumber + omega * time + fk * 1.7f;
-        gradient += direction * (slope * pow(0.8f, fk) * resolve * cos(phase));
+        const float omega = sqrt(9.81f * waveNumber) * speed;   // deep-water dispersion
+        const float phase = dot(direction, xz) * waveNumber + omega * time + 6.2831853f * Hash01(uint(k) * 104729u + 3u);
+        gradient += direction * (amplitude * resolve * cos(phase));
+        lostVariance += 0.5f * amplitude * amplitude * (1.0f - resolve * resolve);
     }
     return gradient;
 }
 
-// Caustic web on the submerged floor: two drifting layers of ridged sine interference whose
-// product leaves thin bright filaments where the ridges cross.
+// ---- Caustics, wetness, foam --------------------------------------------------------------
+
+// Caustic web: two drifting layers of ridged sine interference whose product leaves thin
+// bright filaments where the ridges cross.
 float CausticPattern(float2 xz, float time)
 {
     const float scale = 6.2831853f / max(CausticParams.y, 0.05f);
@@ -345,162 +535,462 @@ float CausticPattern(float2 xz, float time)
     return pow(saturate(a * b), 6.0f);
 }
 
+// Focusing of the simulated surface over the basin (CS_PbfFields), bilinear; 1 = neutral.
+float CausticFocus(float2 xz)
+{
+    const uint sw = GridParams.z;
+    const uint sd = GridParams.w;
+    if (sw < 2u || sd < 2u) return 1.0f;
+    const float2 g = (xz - PoolMin.xz) / max(PoolMax.xz - PoolMin.xz, float2(1.0e-3f, 1.0e-3f)) *
+                     float2(float(sw - 1u), float(sd - 1u));
+    const float2 c = clamp(g, float2(0.0f, 0.0f), float2(float(sw - 1u), float(sd - 1u)) - 1.0e-3f);
+    const uint2 t = uint2(c);
+    const float2 f = c - float2(t);
+    const uint i = t.x + t.y * sw;
+    const float a = lerp(CausticField[i], CausticField[i + 1u], f.x);
+    const float b = lerp(CausticField[i + sw], CausticField[i + sw + 1u], f.x);
+    return lerp(a, b, f.y);
+}
+
+// Wetness of the deck and coping at a world position (0 dry .. 1 soaked), bilinear.
+float WetnessAt(float2 xz)
+{
+    const uint ww = GridParams.x;
+    const uint wh = GridParams.y;
+    if (ww < 2u || wh < 2u || WetParams.z <= 0.0f) return 0.0f;
+    const float2 g = (xz - WetParams.xy) / WetParams.z - 0.5f;
+    if (any(g < 0.0f) || g.x >= float(ww - 1u) || g.y >= float(wh - 1u)) return 0.0f;
+    const uint2 t = uint2(g);
+    const float2 f = g - float2(t);
+    const uint i = t.x + t.y * ww;
+    const float a = lerp(float(Wetness[i]), float(Wetness[i + 1u]), f.x);
+    const float b = lerp(float(Wetness[i + ww]), float(Wetness[i + ww + 1u]), f.x);
+    return lerp(a, b, f.y) / 65535.0f;
+}
+
+// Foam lace: the films between the bubbles of a slowly churning cellular pattern.
+float FoamCells(float2 p, float time)
+{
+    const float2 cell = floor(p);
+    const float2 f = p - cell;
+    float d1 = 8.0f;
+    float d2 = 8.0f;
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    [unroll]
+    for (int x = -1; x <= 1; ++x) {
+        const float2 o = float2(float(x), float(y));
+        const int2 c = int2(cell + o);
+        const uint h = Pcg(uint(c.x + 4096) * 1973u + uint(c.y + 4096) * 9277u + 1u);
+        const float2 r = float2(float(h & 0xFFFFu), float(h >> 16u)) / 65535.0f;
+        const float2 jitter = 0.5f + 0.42f * sin(time * 0.5f + 6.2831853f * r);
+        const float d = length(o + jitter - f);
+        if (d < d1) { d2 = d1; d1 = d; }
+        else if (d < d2) { d2 = d; }
+    }
+    return 1.0f - smoothstep(0.0f, 0.2f, d2 - d1);
+}
+
+float FoamLace(float2 xz, float time)
+{
+    const float2 p = xz / max(FoamParams.y, 0.02f);
+    return max(FoamCells(p, time), 0.7f * FoamCells(p * 2.3f + 7.1f, time * 1.3f));
+}
+
+// ---- Refraction ---------------------------------------------------------------------------
+
+// Distance along a world ray from inside the basin to its floor or walls (the analytic pool
+// box, steps ignored). Outside the footprint the ray is not in the pool: a large distance.
+float PoolBoxExit(float3 o, float3 d)
+{
+    if (o.x < PoolMin.x || o.x > PoolMax.x || o.z < PoolMin.z || o.z > PoolMax.z) return 1.0e3f;
+    float t = 1.0e3f;
+    if (d.x > 1.0e-4f) t = min(t, (PoolMax.x - o.x) / d.x);
+    else if (d.x < -1.0e-4f) t = min(t, (PoolMin.x - o.x) / d.x);
+    if (d.z > 1.0e-4f) t = min(t, (PoolMax.z - o.z) / d.z);
+    else if (d.z < -1.0e-4f) t = min(t, (PoolMin.z - o.z) / d.z);
+    if (d.y < -1.0e-4f) t = min(t, (PoolMin.y - o.y) / d.y);
+    return max(t, 0.0f);
+}
+
+struct RefractionHit
+{
+    float2 pixel;      // where the refracted ray meets the opaque scene (or the stand-in)
+    float sceneZ;
+    float distance;    // metres along the refracted ray
+    float visible;     // 1 = the hit is on screen, 0 = hidden (analytic distance, stand-in colour)
+};
+
+// March the refracted ray through the depth buffer and bisect the first crossing behind an
+// opaque surface that lies under the water. A crossing behind anything that is NOT under the
+// water (the coping lip, the deck) means the true hit is hidden from the camera.
+RefractionHit MarchRefraction(float3 origin, float3 direction, float maxDistance, float3 originWorld,
+                              float2 startPixel)
+{
+    RefractionHit hit;
+    hit.pixel = startPixel;
+    hit.sceneZ = LinearSceneDepth(int2(startPixel));
+    hit.distance = 0.0f;
+    hit.visible = 0.0f;
+    float2 lastGood = startPixel;
+    float lastGoodZ = hit.sceneZ;
+    float previous = 0.0f;
+    [loop]
+    for (int k = 1; k <= 16; ++k) {
+        const float s = float(k) / 16.0f;
+        const float t = maxDistance * s * sqrt(s);
+        const float3 q = origin + direction * t;
+        if (q.z <= 0.05f) break;
+        const float2 px = ProjectToPixel(q);
+        if (!OnScreen(px)) break;
+        const float sceneZ = LinearSceneDepth(int2(px));
+        if (q.z >= sceneZ) {
+            if (!UnderWater(int2(px))) break;   // hidden behind something above the water
+            float lo = previous;
+            float hi = t;
+            [unroll]
+            for (int r = 0; r < 5; ++r) {
+                const float mid = 0.5f * (lo + hi);
+                const float3 m = origin + direction * mid;
+                if (m.z >= LinearSceneDepth(int2(ProjectToPixel(m)))) hi = mid;
+                else lo = mid;
+            }
+            hit.pixel = clamp(ProjectToPixel(origin + direction * hi), float2(0.5f, 0.5f),
+                              float2(float(OutputWidth), float(OutputHeight)) - 0.5f);
+            hit.sceneZ = LinearSceneDepth(int2(hit.pixel));
+            hit.distance = hi;
+            hit.visible = 1.0f;
+            return hit;
+        }
+        // Both corners of the bilinear footprint, or the filter blends in the coping lip.
+        if (UnderWater(int2(px - 0.5f)) && UnderWater(int2(px + 0.5f))) {
+            lastGood = px;
+            lastGoodZ = sceneZ;
+        }
+        previous = t;
+    }
+    hit.pixel = lastGood;
+    hit.sceneZ = lastGoodZ;
+    hit.distance = min(PoolBoxExit(originWorld, ToWorld(direction)), maxDistance);
+    return hit;
+}
+
+// ---- Light under and in the water ---------------------------------------------------------
+
+// Colour of the opaque surface at a refraction hit, with the light that reaches it corrected
+// for the water above. The deferred pass lit it as if in air: the direct sun part (rebuilt from
+// the G-buffer: albedo, N.L, shadow) is absorbed along the refracted sun path and carries the
+// caustics; the ambient part is absorbed over the depth. `lightInfo` feeds debug view 8.
+float3 SubmergedRadiance(RefractionHit hit, float surfaceY, float3 sunWorld, float3 sunDown,
+                         float time, out float3 lightInfo)
+{
+    const float3 colour = SampleScene(hit.pixel);
+    lightInfo = float3(0.0f, 1.0f, 0.5f);
+    if (hit.visible < 0.5f || hit.sceneZ > 1.0e8f) return colour;
+    const int2 hp = int2(hit.pixel);
+    const float3 floorWorld = CameraPosition() + ToWorld(ViewPosition(hit.pixel, hit.sceneZ));
+    const float depth = surfaceY - floorWorld.y;
+    if (depth <= 0.01f) return colour;
+    const float3 albedo = SceneAlbedo.Load(SceneTexel(hp)).rgb;
+    const float3 n = SceneNormalWorld(hp);
+    const float shadow = SceneShadow.Load(SceneTexel(hp)).r;
+    const float3 direct = albedo * (saturate(dot(n, sunWorld)) * shadow * 0.96f / PI) * SunColor.rgb;
+    const float directFraction = saturate(Luminance(direct) / max(Luminance(colour), 1.0e-4f));
+    const float cosine = max(-sunDown.y, 0.2f);
+    const float3 one = float3(1.0f, 1.0f, 1.0f);
+    const float3 sunTransmit = lerp(one, exp(-FluidTint.rgb * depth / cosine), LightParams.x);
+    const float3 ambientTransmit = lerp(one, exp(-FluidTint.rgb * depth * 1.2f), LightParams.x);
+    float caustic = 1.0f;
+    if (CausticParams.x > 0.0f && directFraction > 0.0f) {
+        // The sun entered the surface above this point along the refracted sun ray.
+        const float2 entry = floorWorld.xz - sunDown.xz / cosine * depth;
+        const float fade = exp(-depth / max(CausticParams.w, 0.05f)) * smoothstep(0.02f, 0.15f, depth);
+        const float web = max(1.0f + CausticParams.x * fade * (CausticPattern(entry, time) * 2.4f - 0.3f), 0.0f);
+        caustic = web * pow(max(CausticFocus(entry), 0.05f), LightParams.y);
+    }
+    lightInfo = float3(directFraction, Luminance(sunTransmit), 0.5f * caustic);
+    return colour * ((1.0f - directFraction) * ambientTransmit + directFraction * sunTransmit * caustic);
+}
+
+// Sun visibility at a point of the water surface: the floor point on the same refracted sun
+// ray is shadowed by the same occluder above the water, and ShadowAccum knows that point when
+// the camera sees it.
+float SurfaceSunVisibility(float3 surfaceWorld, float3 sunDown)
+{
+    const float cosine = max(-sunDown.y, 0.2f);
+    const float depth = max(surfaceWorld.y - PoolMin.y, 0.05f);
+    const float3 v = ToView(surfaceWorld + sunDown * (depth / cosine) - CameraPosition());
+    if (v.z <= 0.1f) return 1.0f;
+    const float2 px = ProjectToPixel(v);
+    if (!OnScreen(px)) return 1.0f;
+    if (abs(LinearSceneDepth(int2(px)) - v.z) > 0.15f * v.z + 0.1f) return 1.0f;
+    return SceneShadow.Load(SceneTexel(int2(px))).r;
+}
+
+// Sun and sky light scattered toward the eye inside the water (the scene-7 volumetric term,
+// with a Henyey-Greenstein phase): the colour Beer-Lambert absorption is replaced by.
+float3 InScatter(float3 viewWorld, float3 sunWorld, float3 sunDown, float sunVisibility, float3 skyAmbient)
+{
+    const float phase = PhaseRelative(dot(sunDown, -viewWorld), ScatterParams.z);
+    const float3 light = skyAmbient * ScatterParams.y +
+                         SunColor.rgb * (ScatterParams.x * 0.25f * phase * saturate(sunWorld.y) * sunVisibility);
+    return FluidColor.rgb * light;
+}
+
+// Diffuse white (foam, spray, aerated water) lit like the deferred pass lights an up-facing
+// surface of albedo 0.85.
+float3 WhitewaterLight(float3 sunWorld, float sunVisibility, float3 skyAmbient)
+{
+    return 0.85f * (SunColor.rgb * (saturate(sunWorld.y) * sunVisibility / PI) + skyAmbient);
+}
+
+// A wet porous surface: darker, with a thin glossy film reflecting the sky.
+float3 WetSurface(float3 colour, float3 normal, float3 viewWorld, float wet)
+{
+    const float cosine = saturate(dot(normal, -viewWorld));
+    const float fresnel = 0.02f + 0.98f * pow(1.0f - cosine, 5.0f);
+    return colour * lerp(1.0f, 0.55f, wet) + EnvRadiance(reflect(viewWorld, normal), 1.0f) * (fresnel * wet * 0.8f);
+}
+
+// The pool surface seen through a splash sheet, a second interface at the resting water plane:
+// its own reflection, and the floor refracted and absorbed below it.
+float3 PoolSurfaceBehind(float3 pointWorld, float3 directionWorld, float3 sunWorld, float3 sunDown,
+                         float time, float3 skyAmbient)
+{
+    float lost;
+    const float distance = length(pointWorld - CameraPosition());
+    const float2 g = RippleGradient(pointWorld.xz, time, distance / Focal(), RippleParams.x * RippleFlow.y, lost);
+    const float3 n = normalize(float3(-g.x, 1.0f, -g.y));
+    const float3 pView = ToView(pointWorld - CameraPosition());
+    const float3 rWorld = reflect(directionWorld, n);
+    float3 hitColour;
+    const float hitWeight = TraceReflection(pView, ToView(rWorld), 0.02f, hitColour);
+    const float3 reflected = lerp(EnvRadiance(rWorld, 0.0f), hitColour, hitWeight);
+    float3 tWorld = refract(directionWorld, n, 1.0f / 1.33f);
+    if (dot(tWorld, tWorld) < 1.0e-6f) tWorld = directionWorld;
+    const RefractionHit hit = MarchRefraction(pView, ToView(tWorld), 4.0f, pointWorld, ProjectToPixel(pView));
+    float3 lightInfo;
+    const float3 below = SubmergedRadiance(hit, pointWorld.y, sunWorld, sunDown, time, lightInfo);
+    const float3 transmit = exp(-FluidTint.rgb * max(hit.distance, 0.05f));
+    const float3 refracted = below * transmit +
+                             InScatter(directionWorld, sunWorld, sunDown, 1.0f, skyAmbient) * (1.0f - transmit);
+    const float fresnel = 0.02f + 0.98f * pow(1.0f - saturate(dot(n, -directionWorld)), max(FresnelPower, 1.0f));
+    return lerp(refracted, reflected, fresnel);
+}
+
+// ---- Main ---------------------------------------------------------------------------------
+
 [numthreads(8, 8, 1)]
 void CS(uint3 id : SV_DispatchThreadID)
 {
     if (Mode == 0u) return;   // Splat mode: leave the splat target untouched.
     if (id.x >= OutputWidth || id.y >= OutputHeight) return;
 
-    const uint2 imagePixel = uint2(id.x, T850_IMAGE_Y(id.y, OutputHeight));
-    const float z = LoadDepth(int2(id.xy));
-    const float4 thicknessData = LoadThickness(int2(id.xy));
-    if (z <= 0.0f || thicknessData.a <= 0.001f) {
-        if (ShadeParams.x > 0.5f) {
-            OutputTexture[imagePixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
-        }
-        return;
-    }
+    SurfaceDepth.GetDimensions(FluidSize.x, FluidSize.y);
+    uint envWidth, envHeight, envLevels;
+    EnvironmentMap.GetDimensions(0, envWidth, envHeight, envLevels);
+    EnvMaxMip = float(max(envLevels, 1u) - 1u);
 
-    const float2 size = float2(float(OutputWidth), float(OutputHeight));
-    const float2 pixelCentre = float2(id.xy) + 0.5f;
+    const uint2 imagePixel = uint2(id.x, T850_IMAGE_Y(id.y, OutputHeight));
     const int2 base = int2(id.xy);
+    const float2 pixelCentre = float2(id.xy) + 0.5f;
     const float particleRadius = max(ShadeParams.y, 1.0e-3f);
     const float time = ShadeParams.z;
 
-    // ---- Geometry ------------------------------------------------------------------------
-    const int stencil = clamp(int(NormalStep + 0.5f), 1, 8);
+    // Secondary particles splatted this frame: read, then clear for the next frame.
+    const uint wwBase = (id.x + id.y * OutputWidth) * 4u;
+    const float sprayCover = float(WhitewaterBits[wwBase + 0u]) / 4096.0f;
+    const float foamCover = float(WhitewaterBits[wwBase + 1u]) / 4096.0f;
+    const float bubbleCover = float(WhitewaterBits[wwBase + 2u]) / 4096.0f;
+    const float sparkle = float(WhitewaterBits[wwBase + 3u]) / 65535.0f;
+    WhitewaterBits[wwBase + 0u] = 0u;
+    WhitewaterBits[wwBase + 1u] = 0u;
+    WhitewaterBits[wwBase + 2u] = 0u;
+    WhitewaterBits[wwBase + 3u] = 0u;
+
+    const float3 sunWorld = normalize(ToWorld(normalize(SunDirection.xyz)));
+    float3 sunDown = refract(-sunWorld, float3(0.0f, 1.0f, 0.0f), 1.0f / 1.33f);
+    if (dot(sunDown, sunDown) < 1.0e-6f || sunWorld.y <= 0.0f) sunDown = float3(0.0f, -1.0f, 0.0f);
+    const float3 skyAmbient = SkyIrradiance();
+    const float sprayAlpha = saturate(1.0f - exp(-2.5f * sprayCover)) * saturate(FoamParams.w);
+
+    float z;
+    float4 thicknessData;
+    SampleFluid(pixelCentre, z, thicknessData);
+    const float sceneZ = LinearSceneDepth(base);
+    const bool hasWater = z > 0.0f && thicknessData.a > 0.001f && z < sceneZ - 0.002f;
+
+    if (!hasWater) {
+        // An opaque pixel or the sky: a wet deck, and secondary spray in front of it.
+        float wet = 0.0f;
+        float3 colour = SampleScene(pixelCentre);
+        if (sceneZ < 1.0e8f && WetParams.w > 0.0f) {
+            const float3 world = CameraPosition() + ToWorld(ViewPosition(pixelCentre, sceneZ));
+            const float3 n = SceneNormalWorld(base);
+            if (n.y > 0.6f && world.y > PoolMin.y + 0.2f) {
+                wet = saturate(WetnessAt(world.xz) * WetParams.w);
+                if (wet > 0.001f) colour = WetSurface(colour, n, normalize(world - CameraPosition()), wet);
+            }
+        }
+        if (DebugView == 9u) { OutputTexture[imagePixel] = float4(wet, wet, wet, 1.0f); return; }
+        if (wet <= 0.001f && sprayAlpha <= 0.001f) {
+            if (ShadeParams.x > 0.5f) OutputTexture[imagePixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+            return;
+        }
+        const float3 spray = WhitewaterLight(sunWorld, 1.0f, skyAmbient);
+        if (wet > 0.001f) OutputTexture[imagePixel] = float4(lerp(colour, spray, sprayAlpha), 1.0f);
+        else OutputTexture[imagePixel] = float4(spray, sprayAlpha);
+        return;
+    }
+
+    // ---- Geometry ----
     const float3 p = ViewPosition(pixelCentre, z);
-    const float edge = 2.0f * particleRadius * float(stencil);
+    const float3 view = normalize(p);
+    const float3 toCamera = -view;
+    const float texelPixels = max(float(OutputHeight) / float(max(FluidSize.y, 1u)), 1.0f);
+    const int stencil = clamp(int(NormalStep * texelPixels + 0.5f), 1, 16);
+    const float edge = 2.0f * particleRadius * max(NormalStep, 1.0f);
     float3 tangentX = Tangent(base, p, z, int2(stencil, 0), edge);
     float3 tangentY = Tangent(base, p, z, int2(0, stencil), edge);
     tangentX.xy *= max(NormalScale, 0.0f);
     tangentY.xy *= max(NormalScale, 0.0f);
     if (length(tangentX) < 1e-6f) tangentX = float3(1.0f, 0.0f, 0.0f);
     if (length(tangentY) < 1e-6f) tangentY = float3(0.0f, -1.0f, 0.0f);
-
-    const float3 view = normalize(p);          // camera -> surface
-    const float3 toCamera = -view;
     float3 macroNormal = normalize(cross(tangentX, tangentY));
     if (dot(macroNormal, toCamera) < 0.0f) macroNormal = -macroNormal;
 
-    // World-space ripples on water that faces up; splash sheets and droplets keep their shape.
+    // Whitewater carried by the fluid particles on this ray.
+    const float chordRaw = max(thicknessData.r, 1.0e-4f);
+    const float4 aux = LoadAux(pixelCentre);
+    const float foamFluid = aux.x;
+    const float aeration = saturate(aux.y / chordRaw);
+    const float agitation = saturate(aux.z / chordRaw);
+    const float sprayFluid = saturate(aux.w / chordRaw);
+
+    // Ripples on water that faces up, as strong as the local flow is agitated.
+    const float3 viewWorld = ToWorld(view);
     const float3 surfaceWorld = CameraPosition() + ToWorld(p);
     const float3 macroWorld = ToWorld(macroNormal);
     const float metresPerPixel = z / Focal() / max(abs(dot(macroNormal, toCamera)), 0.08f);
     const float rippleWeight = smoothstep(0.75f, 0.95f, macroWorld.y) *
                                saturate(1.0f - length(p) / max(RippleParams.w, 0.01f));
+    const float slope = RippleParams.x * lerp(RippleFlow.y, 1.0f + RippleFlow.x, agitation) * rippleWeight;
     float3 normal = macroNormal;
-    if (rippleWeight > 0.0f && RippleParams.x > 0.0f) {
-        const float2 g = RippleGradient(surfaceWorld.xz, time, metresPerPixel) * rippleWeight;
+    float lostVariance = 0.0f;
+    if (slope > 0.0f) {
+        const float2 g = RippleGradient(surfaceWorld.xz, time, metresPerPixel, slope, lostVariance);
         normal = normalize(ToView(normalize(macroWorld + float3(-g.x, 0.0f, -g.y))));
         if (dot(normal, toCamera) < 0.02f) normal = macroNormal;
     }
+    lostVariance *= RippleFlow.z;
 
     if (DebugView == 1u) { OutputTexture[imagePixel] = float4(normal * 0.5f + 0.5f, 1.0f); return; }
     if (DebugView == 2u) { OutputTexture[imagePixel] = float4(saturate(z / 12.0f).xxx, 1.0f); return; }
 
-    // ---- Water column and refraction -----------------------------------------------------
-    // Metres from the surface to the opaque scene behind it, along the view ray.
-    const float sceneBehind = LinearSceneDepth(base);
-    const float gap = sceneBehind < 1.0e8f ? max(sceneBehind - z, 0.0f) / max(view.z, 0.05f) : 1.0e4f;
-    const float chord = max(thicknessData.r, 0.0f) * max(ThicknessScale, 0.0f);
-    // Under the pool surface the particles fill the gap and the geometric gap is the exact,
-    // noise-free path. Water in the air (a splash, the falling sphere) is thinner than the gap
-    // to the scene behind it, so its own chord sum is the path.
+    // ---- Water column and refraction ----
+    const float gap = sceneZ < 1.0e8f ? max(sceneZ - z, 0.0f) / max(view.z, 0.05f) : 1.0e4f;
+    const float chord = chordRaw * max(ThicknessScale, 0.0f);
+    // Under the pool surface the particles fill the gap; water in the air is thinner than the
+    // gap to the scene behind it.
     const float filled = smoothstep(0.45f, 0.8f, chord / max(gap, 1.0e-3f));
-    const float waterPath = lerp(chord, min(gap, chord * 1.5f + particleRadius), filled);
+    const float sunVisibility = SurfaceSunVisibility(surfaceWorld, sunDown);
 
     float3 transmitted = refract(view, normal, 1.0f / 1.33f);
     if (dot(transmitted, transmitted) < 1e-6f) transmitted = view;
-    // Follow the refracted ray as far as the water column reaches (capped), then look up the
-    // scene there. Bent toward -n, a flat pool shows its floor displaced toward the viewer.
-    const float travel = min(min(waterPath, gap), max(MaxTravel, 0.0f));
-    const float3 bent = normalize(lerp(view, transmitted, saturate(Refraction)));
-    const float3 refractEnd = p + bent * travel;
-    // The lookup must land on geometry that is under the water at that pixel. The pool floor
-    // nearer the camera is legitimate (it is behind its own surface even though it is nearer
-    // than this pixel's surface); the coping, the deck or anything in front of the water is
-    // not. Pull the offset back toward the pixel until it lands under water.
-    float2 offset = (refractEnd.z > 0.05f ? ProjectToPixel(refractEnd) : pixelCentre) - pixelCentre;
-    float2 refractPixel = pixelCentre;
-    float refractedSceneZ = sceneBehind;
-    [loop]
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        const float2 candidate = clamp(pixelCentre + offset, float2(0.5f, 0.5f), size - 0.5f);
-        // Both corners of the bilinear footprint, or the filter blends in the coping lip.
-        if (UnderWater(int2(candidate - 0.5f)) && UnderWater(int2(candidate + 0.5f))) {
-            refractPixel = candidate;
-            refractedSceneZ = LinearSceneDepth(int2(candidate));
-            break;
-        }
-        offset *= 0.5f;
-    }
-    float3 background = SceneColor.SampleLevel(LinearSampler, T850_UV(refractPixel / size), 0.0f).rgb;
+    // A thin sheet offsets the background but barely bends it; a body of water bends it fully.
+    const float bend = saturate(Refraction) * lerp(0.3f, 1.0f, filled);
+    const float3 bent = normalize(lerp(view, transmitted, bend));
+    const float marchLength = clamp(gap * 1.2f + 0.2f, 0.3f, max(MaxTravel, 0.3f) * 2.0f);
+    const RefractionHit hit = MarchRefraction(p, bent, marchLength, surfaceWorld, pixelCentre);
+    float3 lightInfo;
+    float3 background = SubmergedRadiance(hit, surfaceWorld.y, sunWorld, sunDown, time, lightInfo);
+    const float waterPath = lerp(chord, max(hit.distance, chord), filled);
 
-    // Caustics on what the refracted ray lands on, when that is under the water surface.
-    if (CausticParams.x > 0.0f && refractedSceneZ < 1.0e8f) {
-        const float3 floorWorld = CameraPosition() + ToWorld(ViewPosition(refractPixel, refractedSceneZ));
-        const float depthBelow = surfaceWorld.y - floorWorld.y;
-        if (depthBelow > 0.02f) {
-            // Project along the sun so the pattern sits where the light actually lands.
-            const float3 sunWorld = ToWorld(normalize(SunDirection.xyz));
-            const float2 shift = sunWorld.y > 0.1f ? sunWorld.xz / sunWorld.y * depthBelow : float2(0.0f, 0.0f);
-            const float caustic = CausticPattern(floorWorld.xz + shift, time);
-            const float fade = exp(-depthBelow / max(CausticParams.w, 0.05f)) * smoothstep(0.02f, 0.15f, depthBelow);
-            const float sunLevel = saturate(dot(SunColor.rgb, float3(0.2126f, 0.7152f, 0.0722f)) * 0.5f);
-            background *= 1.0f + CausticParams.x * fade * sunLevel * (caustic * 2.2f - 0.25f);
+    // Water in the air over the pool: the pool surface behind it is a second interface.
+    if (filled < 0.5f) {
+        const float3 bentWorld = ToWorld(bent);
+        if (bentWorld.y < -0.02f) {
+            const float tPlane = (PoolMin.w - surfaceWorld.y) / bentWorld.y;
+            const float3 planePoint = surfaceWorld + bentWorld * tPlane;
+            const bool overPool = planePoint.x > PoolMin.x && planePoint.x < PoolMax.x &&
+                                  planePoint.z > PoolMin.z && planePoint.z < PoolMax.z;
+            if (tPlane > chord && overPool && (hit.visible < 0.5f || tPlane < hit.distance))
+                background = lerp(background,
+                                  PoolSurfaceBehind(planePoint, bentWorld, sunWorld, sunDown, time, skyAmbient),
+                                  saturate(1.0f - 2.0f * filled));
         }
     }
 
-    // Beer-Lambert absorption; the absorbed light is replaced by the water's scattered colour.
-    const float3 transmittance = exp(-waterPath * max(FluidTint.rgb, 0.0f));
-    const float3 refracted = background * transmittance + (1.0f - transmittance) * FluidColor.rgb;
+    // Beer-Lambert over the water path; entrained air scatters (milky) and blocks the view.
+    const float air = saturate(aeration * ScatterParams.w + bubbleCover * FoamParams.z * 0.3f);
+    const float3 transmittance = exp(-waterPath * max(FluidTint.rgb, 0.0f)) * (1.0f - 0.85f * air);
+    const float3 whitewaterLight = WhitewaterLight(sunWorld, sunVisibility, skyAmbient);
+    const float3 inscatter = lerp(InScatter(viewWorld, sunWorld, sunDown, sunVisibility, skyAmbient),
+                                  whitewaterLight * 0.8f, air);
+    float3 refracted = background * transmittance + (1.0f - transmittance) * inscatter;
+    // Bubbles under the surface catch the light.
+    refracted += whitewaterLight * ((sparkle * 1.5f + bubbleCover * 0.15f) * saturate(FoamParams.z));
 
     if (DebugView == 3u) { OutputTexture[imagePixel] = float4(saturate(waterPath / 4.0f).xxx, 1.0f); return; }
     if (DebugView == 4u) { OutputTexture[imagePixel] = float4(thicknessData.a.xxx, 1.0f); return; }
     if (DebugView == 6u) { OutputTexture[imagePixel] = float4(refracted, 1.0f); return; }
+    if (DebugView == 7u) {
+        OutputTexture[imagePixel] = float4(saturate(foamFluid + foamCover), air, saturate(sprayFluid + sprayCover), 1.0f);
+        return;
+    }
+    if (DebugView == 8u) { OutputTexture[imagePixel] = float4(lightInfo, 1.0f); return; }
 
-    // ---- Reflection ----------------------------------------------------------------------
+    // ---- Reflection ----
+    // Toksvig: the slope variance of unresolved ripples widens the reflection cone and the glint.
+    const float coneTan = 0.015f + 2.0f * sqrt(lostVariance);
     const float3 reflectedView = reflect(view, normal);
     const float3 reflectedWorld = ToWorld(reflectedView);
     float3 hitColor;
-    const float hitWeight = TraceReflection(p, reflectedView, hitColor);
-    const float3 reflected = lerp(SkyGradient(reflectedWorld), hitColor, hitWeight);
+    const float hitWeight = TraceReflection(p, reflectedView, coneTan, hitColor);
+    const float envMip = clamp(log2(max(coneTan * 256.0f, 1.0f)), 0.0f, EnvMaxMip);
+    const float3 reflected = lerp(EnvRadiance(reflectedWorld, envMip), hitColor, hitWeight);
     if (DebugView == 5u) { OutputTexture[imagePixel] = float4(reflected, 1.0f); return; }
 
     // Fresnel from a normal half-way between the surface and the ripples: a ripple facet must
-    // not flip a grazing pixel to total reflection, but the ripples should still modulate it.
+    // not flip a grazing pixel to total reflection.
     const float3 fresnelNormal = normalize(macroNormal + normal);
     const float cosine = saturate(dot(fresnelNormal, toCamera));
     const float fresnel = 0.02f + 0.98f * pow(1.0f - cosine, max(FresnelPower, 1.0f));
     float3 color = lerp(refracted, reflected, saturate(fresnel));
 
-    // Sun glint: normalised Blinn-Phong, so a sharper lobe is brighter, not dimmer.
+    // Sun glint: normalised Blinn-Phong whose lobe widens by the unresolved slope variance, so
+    // distant water shows a glitter path instead of a vanishing highlight.
     const float3 sun = normalize(SunDirection.xyz);
     const float3 halfVector = normalize(sun + toCamera);
-    const float exponent = max(ShadeParams.w, 8.0f);
-    const float glint = pow(saturate(dot(normal, halfVector)), exponent) * (exponent + 8.0f) / 25.1327f;
-    color += SunColor.rgb * glint * Specular * fresnel * saturate(dot(normal, sun) * 4.0f);
+    const float baseExponent = max(ShadeParams.w, 8.0f);
+    const float roughness2 = 2.0f / (baseExponent + 2.0f) + 2.0f * lostVariance;
+    const float exponent = max(2.0f / roughness2 - 2.0f, 4.0f);
+    const float glint = pow(saturate(dot(normal, halfVector)), exponent) * (exponent + 8.0f) / (8.0f * PI);
+    color += SunColor.rgb * glint * Specular * fresnel * sunVisibility * saturate(dot(normal, sun) * 4.0f);
 
-    // Spray: a droplet is a pixel whose surroundings 2.5 particle radii out are empty or far
-    // behind it. Splashing water reads white (aerated, scattering), so isolated droplets fade
-    // toward a lit whitewater colour instead of drawing as clear refractive beads.
-    const float particlePx = particleRadius * Focal() / z;
-    const float ringPx = clamp(2.5f * particlePx, 2.0f, 48.0f);
-    const float layerGap = 4.0f * particleRadius;
-    float emptyCount = 0.0f;
-    [unroll]
-    for (int k = 0; k < 8; ++k) {
-        const float angle = float(k) * 0.7853982f;
-        const int2 probe = base + int2(round(float2(cos(angle), sin(angle)) * ringPx));
-        const float probeDepth = LoadDepth(probe);
-        emptyCount += (probeDepth <= 0.0f || probeDepth > z + layerGap) ? 1.0f : 0.0f;
+    // Thin crests and sheets seen toward the sun glow: sunlight passing through the water.
+    const float thin = (1.0f - filled) * exp(-chord * 1.5f) * (1.0f - exp(-chord * 6.0f));
+    const float forward = PhaseRelative(dot(sunWorld, viewWorld), 0.6f);
+    color += SunColor.rgb * FluidColor.rgb * (LightParams.w * 0.6f * thin * forward * sunVisibility * (1.0f - fresnel));
+
+    // The meniscus where the water meets a wall.
+    const float contact = (1.0f - smoothstep(0.004f, 0.035f, gap)) * filled * LightParams.z;
+    color = lerp(color, color * 1.25f + skyAmbient * 0.08f, saturate(contact));
+
+    // Surface foam: the solver's carried foam plus secondary foam particles, drawn as lace.
+    const float foamCoverage = saturate(foamFluid * 1.2f + foamCover * 0.6f);
+    if (foamCoverage > 0.01f && FoamParams.x > 0.0f) {
+        const float lace = FoamLace(surfaceWorld.xz, time);
+        const float foamMask = saturate((foamCoverage - (1.0f - lace)) * 2.5f + foamCoverage * foamCoverage) *
+                               saturate(FoamParams.x);
+        color = lerp(color, whitewaterLight * lerp(0.8f, 1.0f, lace), foamMask);
     }
-    const float spray = saturate((emptyCount - 5.0f) * 0.5f) * saturate(Foam);
-    const float3 whitewater = (SkyGradient(float3(0.0f, 0.5f, 0.0f)) + SunColor.rgb * 0.15f) * 0.85f;
-    color = lerp(color, whitewater, spray);
 
-    // The colour already contains the scene behind the water, so the composite must not
-    // blend it in again: alpha is the anti-aliased silhouette, lowered only for spray.
-    OutputTexture[imagePixel] = float4(color, saturate(thicknessData.a) * (1.0f - 0.35f * spray));
+    // Spray: isolated fluid particles (classified by the solver) and secondary droplets.
+    const float spray = saturate(sprayFluid * saturate(Foam));
+    color = lerp(color, whitewaterLight, spray * 0.85f);
+    color = lerp(color, whitewaterLight, sprayAlpha);
+
+    const float alpha = saturate(thicknessData.a) * (1.0f - 0.35f * spray);
+    OutputTexture[imagePixel] = float4(color, max(alpha, sprayAlpha));
 }

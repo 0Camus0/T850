@@ -996,12 +996,14 @@ public:
           // 3D volumes are read with textureLoad only, which is non-filtering by definition, so
           // D3 is accepted wherever D2 is; the sampler variant is chosen per dispatch below.
           const bool volume = resource.dimension == webgpu::TextureDimension::D3;
-          Require((volume || resource.dimension == webgpu::TextureDimension::D2) &&
+          const bool cube = resource.dimension == webgpu::TextureDimension::Cube;
+          Require((volume || cube || resource.dimension == webgpu::TextureDimension::D2) &&
                   resource.sampledType == webgpu::ShaderComponentType::Float,
-                  "Compute sampled textures must be float 2D or 3D textures");
+                  "Compute sampled textures must be float 2D, 3D or cube textures");
           entry.texture.sampleType = wgpu::TextureSampleType::Float;
           entry.texture.viewDimension = volume ? wgpu::TextureViewDimension::e3D
-                                               : wgpu::TextureViewDimension::e2D;
+                                      : (cube ? wgpu::TextureViewDimension::Cube
+                                              : wgpu::TextureViewDimension::e2D);
           break;
         }
         case webgpu::ResourceKind::Sampler:

@@ -17,6 +17,16 @@
 //
 // With ScreenSpace = 0 the same scatter feeds the particle renderer instead: it keeps the
 // nearest sphere per pixel as a packed (depth, index) key, and still sums the thickness.
+//
+// Whitewater (AuxEnabled): the solver's per-particle foam, aeration and agitation
+// (CS_PbfWhitewater) and the anisotropy's spray flag go into four channels per pixel:
+// foam as a maximum (it is a surface layer), the others as chord-weighted sums the shade
+// divides by the thickness.
+//
+// Resolution: the output may be smaller than the scene (the screen-space renderer splats at
+// half resolution). Projected radii come from the full-resolution stamp and are scaled, and
+// the opaque depth of an output pixel is the FARTHEST full-resolution depth inside it, so the
+// water reaches every pixel it might cover; CS_ParticleShade re-tests at full resolution.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -60,7 +70,7 @@ cbuffer ParticleConstants : register(b0)
     float3 Color0;
     float  ProjScaleX;          // Projection.m[0][0]
     float3 Color1;
-    float  Color1Pad;
+    float  AuxEnabled;          // 1 = accumulate the whitewater channels
     float3 Color2;
     float  Color2Pad;
     float3 Color3;
@@ -100,6 +110,19 @@ RWStructuredBuffer<uint> ThicknessBits : register(u1);
 #endif
 StructuredBuffer<float4> Anisotropy : register(t2);
 
+// Per particle from CS_PbfWhitewater: foam, aeration, agitation, trapped air.
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(6, 0)]]
+#endif
+StructuredBuffer<float4> Whitewater : register(t3);
+
+// Four per output pixel: foam (max, 1/65535), aeration, agitation, spray (sum of value x chord,
+// 1/1024 m). Cleared by CS_FluidClear.
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(7, 0)]]
+#endif
+RWStructuredBuffer<uint> AuxBits : register(u2);
+
 #if defined(T850_GL)
   #define T850_IMAGE_Y(y, h) ((uint)(h) - 1u - (uint)(y))
 #else
@@ -119,12 +142,30 @@ uint ParticleKey(float zFront, uint index)
     return (uint(t * KEY_DEPTH_MAX) << KEY_INDEX_BITS) | (index & KEY_INDEX_MASK);
 }
 
-// Linear view depth of the opaque scene at a pixel (reversed-Z projection terms).
-float SceneLinearDepth(int x, int y)
+// Linear view depth of the opaque scene at a full-resolution texel (reversed-Z projection
+// terms, not view-projection rows; see diagnosis-3 F10).
+float SceneTexelDepth(int x, int y, uint sceneHeight)
 {
-    const float rawDepth = SceneDepth.Load(int3(x, int(T850_IMAGE_Y(y, OutputHeight)), 0));
-    // Projection terms, not view-projection rows (see diagnosis-3 F10).
+    const float rawDepth = SceneDepth.Load(int3(x, int(T850_IMAGE_Y(y, sceneHeight)), 0));
     return rawDepth > 0.0f && abs(rawDepth - ProjA) > 1e-9f ? ProjB / (rawDepth - ProjA) : 1.0e30f;
+}
+
+// Opaque depth for an OUTPUT pixel: the texel itself at full resolution, otherwise the
+// farthest texel of the (up to 3x3) block the output pixel covers.
+float SceneLinearDepth(int x, int y, uint2 sceneSize)
+{
+    if (sceneSize.x == OutputWidth && sceneSize.y == OutputHeight)
+        return SceneTexelDepth(x, y, sceneSize.y);
+    const float2 scale = float2(sceneSize) / float2(float(OutputWidth), float(OutputHeight));
+    const int2 lo = int2(floor(float2(x, y) * scale));
+    const int2 hi = min(int2(ceil(float2(x + 1, y + 1) * scale)) - 1, int2(sceneSize) - 1);
+    float farthest = 0.0f;
+    [loop]
+    for (int sy = lo.y; sy <= min(hi.y, lo.y + 2); ++sy)
+        [loop]
+        for (int sx = lo.x; sx <= min(hi.x, lo.x + 2); ++sx)
+            farthest = max(farthest, SceneTexelDepth(sx, sy, sceneSize.y));
+    return farthest;
 }
 
 // World point/direction to view space through the row-vector view-projection: clip.x =
@@ -165,11 +206,13 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float4 p = Projected[i];
     if (p.z <= 0.0f) return;   // culled by the stamp (dead particle or behind the camera)
 
+    uint2 sceneSize;
+    SceneDepth.GetDimensions(sceneSize.x, sceneSize.y);
     const bool surface = ScreenSpace > 0.5f;
     const float2 centre = p.xy * float2(float(OutputWidth), float(OutputHeight));
     // Cap the per-particle disc so a particle close to the camera cannot monopolise a
-    // dispatch. The depth/thickness radii stay consistent with the projected radius.
-    const float rPx = min(p.z, 64.0f);
+    // dispatch. The stamp measured the radius in full-resolution pixels.
+    const float rPx = min(p.z * float(OutputHeight) / float(max(sceneSize.y, 1u)), 64.0f);
     const float worldThick = max(Radius, 1.0e-4f);
     const int2 screenMax = int2(int(OutputWidth) - 1, int(OutputHeight) - 1);
 
@@ -188,7 +231,7 @@ void CS(uint3 id : SV_DispatchThreadID)
                 if (d2 > r2) continue;
                 const float h = sqrt(max(1.0f - d2 / r2, 0.0f));
                 const float zFront = p.w - h * worldThick;
-                if (zFront >= SceneLinearDepth(x, y)) continue;   // behind opaque geometry
+                if (zFront >= SceneLinearDepth(x, y, sceneSize)) continue;   // behind opaque geometry
                 const uint pix = uint(x) + uint(y) * OutputWidth;
                 InterlockedMin(DepthBits[pix], ParticleKey(zFront, i));
                 InterlockedAdd(ThicknessBits[pix], uint(2.0f * h * worldThick * InvPackingFactor * 1024.0f));
@@ -201,6 +244,15 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float4 shape0 = Anisotropic > 0.5f ? Anisotropy[i * 3u + 0u] : float4(0.0f, 0.0f, 0.0f, 0.0f);
     if (shape0.w < 0.0f) return;
 
+    // Whitewater carried by this particle (zero when the solver has none).
+    const float4 whitewater = AuxEnabled > 0.5f ? Whitewater[i] : float4(0.0f, 0.0f, 0.0f, 0.0f);
+    const float spray = AuxEnabled > 0.5f && Anisotropic > 0.5f ? Anisotropy[i * 3u + 2u].w : 0.0f;
+    const bool hasFoam = whitewater.x > 0.02f;
+    const bool hasAir = whitewater.y > 0.02f;
+    const bool hasAgitation = whitewater.z > 0.02f;
+    const bool hasSpray = spray > 0.02f;
+    const bool anyWhitewater = hasFoam || hasAir || hasAgitation || hasSpray;
+
     // Thickness: isotropic spheres of radius spacing at the simulated position.
     if (rPx >= 0.5f) {
         const int2 lo = max(int2(floor(centre - rPx)), int2(0, 0));
@@ -212,9 +264,16 @@ void CS(uint3 id : SV_DispatchThreadID)
                 const float d2 = dot(delta, delta);
                 if (d2 > r2) continue;
                 const float h = sqrt(max(1.0f - d2 / r2, 0.0f));
-                if (p.w - h * worldThick >= SceneLinearDepth(x, y)) continue;
-                InterlockedAdd(ThicknessBits[uint(x) + uint(y) * OutputWidth],
-                               uint(2.0f * h * worldThick * InvPackingFactor * 1024.0f));
+                if (p.w - h * worldThick >= SceneLinearDepth(x, y, sceneSize)) continue;
+                const uint pix = uint(x) + uint(y) * OutputWidth;
+                const float chord = 2.0f * h * worldThick * InvPackingFactor;
+                InterlockedAdd(ThicknessBits[pix], uint(chord * 1024.0f));
+                if (anyWhitewater) {
+                    if (hasFoam) InterlockedMax(AuxBits[pix * 4u + 0u], uint(saturate(whitewater.x * h) * 65535.0f));
+                    if (hasAir) InterlockedAdd(AuxBits[pix * 4u + 1u], uint(min(whitewater.y, 2.0f) * chord * 1024.0f));
+                    if (hasAgitation) InterlockedAdd(AuxBits[pix * 4u + 2u], uint(whitewater.z * chord * 1024.0f));
+                    if (hasSpray) InterlockedAdd(AuxBits[pix * 4u + 3u], uint(spray * chord * 1024.0f));
+                }
             }
         }
     }
@@ -281,7 +340,7 @@ void CS(uint3 id : SV_DispatchThreadID)
                 const float disc = b * b - a * cc;
                 if (disc < 0.0f || a <= 1.0e-12f) continue;
                 const float zFront = c.z + (-b - sqrt(disc)) / a;
-                if (zFront <= 0.05f || zFront >= SceneLinearDepth(x, y)) continue;
+                if (zFront <= 0.05f || zFront >= SceneLinearDepth(x, y, sceneSize)) continue;
                 const uint pix = uint(x) + uint(y) * OutputWidth;
                 // Depths only decrease, so a plain read that is already nearer skips the
                 // atomic: most interior particles lie behind the surface layer.
@@ -304,7 +363,7 @@ void CS(uint3 id : SV_DispatchThreadID)
             const float d2 = dot(delta, delta);
             if (d2 > depthR2) continue;
             const float zFront = p.w - sqrt(max(1.0f - d2 / depthR2, 0.0f)) * worldDepth;
-            if (zFront >= SceneLinearDepth(x, y)) continue;
+            if (zFront >= SceneLinearDepth(x, y, sceneSize)) continue;
             InterlockedMin(DepthBits[uint(x) + uint(y) * OutputWidth], asuint(zFront));
         }
     }

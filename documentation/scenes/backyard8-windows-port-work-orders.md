@@ -220,7 +220,7 @@ section.
 | W1 | DeepSeek | tooling committed, build blocked | 4ec41c5 | milestone 1 tooling done; matrix waiting on a Release x64 build |
 | W2 | qwen-5090 | done (accepted) | none (local evidence) | 16 runs, 0 errors; noise table below |
 | W2b | qwen-5090 | done (accepted) | a144b0c, 0ae4cfc | compare tool and contact sheets (Linux-only) |
-| W2c | qwen-5090 | dispatched | | `--ref win` (Windows Vulkan yardstick) and a webgpu column |
+| W2c | qwen-5090 | done (accepted) | 196d5ee | `--ref win` (Windows Vulkan yardstick) and a webgpu column |
 | W3 | | blocked by W1 | | |
 
 ## Results
@@ -418,5 +418,31 @@ Root causes, all backend-local. Make one commit per API, `WO-W1: <api>: <fix>`:
 
 Then sync, Rebuild and run `matrix2` with all five APIs. Compare with `--ref win` (WO-W2c), look at the sheet and report.
 Per cell and API, the target is `noise` against Windows Vulkan. Explain any remaining DIFF with images (diff heat maps).
+
+### matrix2 review (Claude)
+
+After `a7f40b2`, `abaddb8`, `29ed39f` and `0e2a332`, D3D12, D3D11 and GL log **0 errors** in every cell.
+Self-test is 78 PASS and the gate exits 0 on every API.
+
+`--ref win` (`/tmp/winport/matrix2/compare_win/compare.md`):
+
+- **All four water150 cells**, in both renderers: d3d12, d3d11 and gl are at `noise` against Windows Vulkan.
+- **lake300 cells**: some small `DIFF`s.
+  - Their means are d3d12 0.43 to 0.45, d3d11 0.51 to 0.87, and gl 0.65 to 1.13, against noise of 0.20 to 0.91. That is
+    1.5x to 3x a very low noise floor. p99 is equal to noise, except GL (11 against 7).
+  - The heat maps show the same wave-pattern speckle as run-to-run noise, plus one structured GL defect (below).
+  - The surface itself is not offset: on every API the best vertical shift of `FluidParticles` against Vulkan is 0.
+- **GL-only band at the far coping.**
+  - Location: rows 582 to 584 of the 1080p default view, columns 341 to 1578 (exactly the pool width).
+  - Values: Vulkan `[68,66,63] [67,65,62] [26,26,23]`, GL `[24,24,20] [23,24,21] [64,62,60]`.
+  - It is identical in the surfel and screen-space cells, and `FluidParticles` is empty there.
+  - Zoomed (`/tmp/winport/band_zoom.png`), it is the fine striped detail on the far coping's front face. GL shows the
+    stripe sequence shifted or mirrored by about 2 rows. It is not the water.
+  - Likely a pre-existing GL texture-orientation or rasterization difference in the static scene.
+  - To confirm, keep all dumps for one GL and one Vulkan `ss_default_lake300` run and compare
+    `RT_Dump_GBuffer_Albedo` and `RT_Dump_Deferred` at rows 576 to 590. If the band is already in the G-buffer, it is a
+    scene issue outside this port: report it, do not fix it here.
+- **WebGPU**: `Fluid Surface Shade` dispatch failed every frame. `5e04cac` fixes the cube validation; `matrix3` checks it.
+  The 4K WebGPU run exited 1 after 2 s (22 errors). Read that log in `matrix3`.
 
 ## Requests to Claude

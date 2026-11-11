@@ -600,6 +600,57 @@ WO-P3 and WO-P2b included). 4K, default camera, lake f300, `--regressionFixedDt`
   explains its calm-view differences.
 - Timing goes into Claude's final guarded measurement.
 
+### Claude's final measurements (GPU otherwise idle, 2026-11-11 08:00): WO-P5 may start
+
+Setup:
+
+- RTX PRO 6000 Blackwell, Linux, Vulkan, 3840x2160, screen-space renderer.
+- Before: `a960d75`, whose fluid GPU path is the original code. It includes WO-P4 (CPU only)
+  and the WO-P2a marker (no effect).
+- After: HEAD `f8efec4` plus status commits (WO-P1, WO-P2a/b, WO-P3, WO-P4).
+- Close view: `--backyard-camera 0 1.3 -10.0 0.32 0`.
+
+GPU per pass (`--benchmarkFixedDt`, `--profile` 400 frames, second of two runs; builds
+alternated; r1 and r2 within 0.5 %). Milliseconds, before → after:
+
+| View, start | Fluid Splat | Fluid Surface Shade | Render graph total |
+|---|---|---|---|
+| Default, water | 2.40 → 0.92 | 0.97 → 0.94 | 6.12 → 4.65 (-24 %) |
+| Default, lake | 1.61 → 0.76 | 0.70 → 0.69 | 4.83 → 3.99 (-17 %) |
+| Close, water | 5.60 → 2.44 | 1.60 → 1.35 | 10.09 → 6.78 (-33 %) |
+| Close, lake | 4.25 → 2.29 | 1.26 → 1.22 | 8.20 → 6.26 (-24 %) |
+
+Real time (HUD on, no fixed dt, 840 frames after 60 warm-up):
+
+| View, start | Before | After |
+|---|---|---|
+| Default, water | 140 fps (7.15 ms mean, p99 12.4) | 174 fps (5.74 ms, p99 10.6) |
+| Default, lake | 172 fps (5.82 ms, p99 9.0) | 205 fps (4.88 ms, p99 7.6) |
+| Close, water | 88 fps (11.36 ms, p99 16.2) | 124 fps (8.08 ms, p99 12.6) |
+| Close, lake | 103 fps (9.66 ms, p99 13.1) | 134 fps (7.46 ms, p99 10.1) |
+
+CPU (WO-P4): Deferred Light Volumes 0.80-0.91 → 0.21-0.29 ms per frame.
+
+Contention: with qwen-local generating on the same GPU, the default/water view fell from 144 to
+46 fps (22 ms mean, p99 40 ms) before these changes.
+
+Contribution of each work order (4K):
+
+- WO-P1 (coarse thickness and whitewater grid): most of the splat gain, about 2.8 ms at the
+  close view.
+- WO-P2b (cap-aware buried skip): about 0.24 ms default, 0.06 ms close.
+- WO-P3 (sky hoist and Fresnel gate): about 0.25 ms of shade at the close view.
+- WO-P4: CPU only.
+
+Remaining costs at 4K, close/water after:
+
+- Fluid Splat 2.4 ms: the near-camera ellipsoids still splat every particle, because of the
+  64-px cap.
+- Shade 1.35 ms.
+- Shadow Accumulation about 1.0 ms.
+- GBuffer about 0.7 ms.
+- The PBF step, about 2 ms per 1/60 s step, outside the profiled passes.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

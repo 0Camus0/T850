@@ -1,7 +1,13 @@
 # One DayScene frame on the Windows host, to prove the tooling end to end.
+# -Root is the folder that holds T850\T850 and __parity; -Out a scratch folder. `windows_parity.py
+# run` passes both, so no host path is stored in the repository.
+param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$Out
+)
 $ErrorActionPreference = 'Continue'
-$root = 'D:\sandbox\T850\T850\bin\x64\Release'
-$out = 'D:\sandbox\__parity\smoke'
+$root = Join-Path $Root 'T850\T850\bin\x64\Release'
+$out = $Out
 Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $out | Out-Null
 Set-Location $root

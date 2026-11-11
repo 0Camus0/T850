@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_PbfDiffuse.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=f2669fe351884ca9cce8dd9ea57dec13ce9c28e1f9ecab8785fa4ee7415fbcfc; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_PbfDiffuse.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=b00e4ee9e85c01a1fa20084a0a3359b64c9fdd4a67fff0a84dc35a7854d9601d; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 #if defined(GL_EXT_control_flow_attributes)
 #extension GL_EXT_control_flow_attributes : require
 #define SPIRV_CROSS_FLATTEN [[flatten]]
@@ -99,18 +99,18 @@ void main()
         {
             break;
         }
-        uint _726 = gl_GlobalInvocationID.x * 2u;
-        vec4 _729 = Diffuse_1._data[_726];
-        if (_729.w <= 0.0)
+        uint _728 = gl_GlobalInvocationID.x * 2u;
+        vec4 _731 = Diffuse_1._data[_728];
+        if (_731.w <= 0.0)
         {
             break;
         }
-        uint _754 = (_24.GridX * _24.GridY) * _24.GridZ;
-        float _757 = max(_24.CellSize, 9.9999997473787516355514526367188e-05);
-        float _759 = 1.0 / _757;
-        int _768 = int(floor((_729.x - _24.GridOriginX) * _759));
-        int _777 = int(floor((_729.y - _24.GridOriginY) * _759));
-        int _786 = int(floor((_729.z - _24.GridOriginZ) * _759));
+        uint _756 = (_24.GridX * _24.GridY) * _24.GridZ;
+        float _759 = max(_24.CellSize, 9.9999997473787516355514526367188e-05);
+        float _761 = 1.0 / _759;
+        int _770 = int(floor((_731.x - _24.GridOriginX) * _761));
+        int _779 = int(floor((_731.y - _24.GridOriginY) * _761));
+        int _788 = int(floor((_731.z - _24.GridOriginZ) * _761));
         float _1265;
         vec3 _1266;
         float _1267;
@@ -141,18 +141,18 @@ void main()
                 SPIRV_CROSS_LOOP
                 for (int _1317 = -1; _1317 <= 1; _1331 = _1361, _1328 = _1359, _1325 = _1357, _1317++)
                 {
-                    int _804 = _768 + _1317;
-                    int _807 = _777 + _1315;
-                    int _810 = _786 + _1264;
-                    if ((((((_804 < 0) || (_807 < 0)) || (_810 < 0)) || (_804 >= int(_24.GridX))) || (_807 >= int(_24.GridY))) || (_810 >= int(_24.GridZ)))
+                    int _806 = _770 + _1317;
+                    int _809 = _779 + _1315;
+                    int _812 = _788 + _1264;
+                    if ((((((_806 < 0) || (_809 < 0)) || (_812 < 0)) || (_806 >= int(_24.GridX))) || (_809 >= int(_24.GridY))) || (_812 >= int(_24.GridZ)))
                     {
                         _1361 = _1331;
                         _1359 = _1328;
                         _1357 = _1325;
                         continue;
                     }
-                    uint _852 = uint(_804) + (_24.GridX * (uint(_807) + (_24.GridY * uint(_810))));
-                    uint _856 = min(GridBuffer_1._data[_852], 64u);
+                    uint _854 = uint(_806) + (_24.GridX * (uint(_809) + (_24.GridY * uint(_812))));
+                    uint _858 = min(GridBuffer_1._data[_854], 64u);
                     float _1324;
                     vec3 _1327;
                     float _1330;
@@ -163,36 +163,36 @@ void main()
                     vec3 _1360;
                     float _1362;
                     SPIRV_CROSS_LOOP
-                    for (uint _1320 = 0u; _1320 < _856; _1330 = _1362, _1327 = _1360, _1324 = _1358, _1320++)
+                    for (uint _1320 = 0u; _1320 < _858; _1330 = _1362, _1327 = _1360, _1324 = _1358, _1320++)
                     {
-                        uint _869 = (64u * (_754 + _852)) + _1320;
-                        if (GridBuffer_1._data[_869] >= _24.ParticleCount)
+                        uint _871 = (64u * (_756 + _854)) + _1320;
+                        if (GridBuffer_1._data[_871] >= _24.ParticleCount)
                         {
                             _1362 = _1330;
                             _1360 = _1327;
                             _1358 = _1324;
                             continue;
                         }
-                        if (Positions_1._data[GridBuffer_1._data[_869]].w < 0.5)
+                        if (Positions_1._data[GridBuffer_1._data[_871]].w < 0.5)
                         {
                             _1362 = _1330;
                             _1360 = _1327;
                             _1358 = _1324;
                             continue;
                         }
-                        vec3 _889 = _729.xyz - Positions_1._data[GridBuffer_1._data[_869]].xyz;
-                        float _892 = dot(_889, _889);
-                        if (_892 >= (_757 * _757))
+                        vec3 _891 = _731.xyz - Positions_1._data[GridBuffer_1._data[_871]].xyz;
+                        float _894 = dot(_891, _891);
+                        if (_894 >= (_759 * _759))
                         {
                             _1362 = _1330;
                             _1360 = _1327;
                             _1358 = _1324;
                             continue;
                         }
-                        float _904 = 1.0 - (sqrt(_892) * _759);
+                        float _906 = 1.0 - (sqrt(_894) * _761);
                         _1362 = _1330 + 1.0;
-                        _1360 = _1327 + (Velocities_1._data[GridBuffer_1._data[_869]].xyz * _904);
-                        _1358 = _1324 + _904;
+                        _1360 = _1327 + (Velocities_1._data[GridBuffer_1._data[_871]].xyz * _906);
+                        _1358 = _1324 + _906;
                     }
                     _1361 = _1330;
                     _1359 = _1327;
@@ -200,42 +200,42 @@ void main()
                 }
             }
         }
-        vec3 _938 = _1266 / vec3(max(_1265, 9.9999999747524270787835121154785e-07));
-        vec3 _942 = vec3(0.0, -_24.Gravity, 0.0);
-        float _961 = _729.w - _24.DeltaTime;
+        vec3 _940 = _1266 / vec3(max(_1265, 9.9999999747524270787835121154785e-07));
+        vec3 _944 = vec3(0.0, -_24.Gravity, 0.0);
+        float _963 = _731.w - _24.DeltaTime;
         vec3 _1270;
         float _1307;
         if (_1267 < 6.0)
         {
             _1307 = 0.0;
-            _1270 = (Diffuse_1._data[(gl_GlobalInvocationID.x * 2u) + 1u].xyz + (_942 * _24.DeltaTime)) * max(1.0 - (_24.SprayDrag * _24.DeltaTime), 0.0);
+            _1270 = (Diffuse_1._data[(gl_GlobalInvocationID.x * 2u) + 1u].xyz + (_944 * _24.DeltaTime)) * max(1.0 - (_24.SprayDrag * _24.DeltaTime), 0.0);
         }
         else
         {
-            bool _964 = _1267 <= 20.0;
+            bool _966 = _1267 <= 20.0;
             vec3 _1271;
-            if (_964)
+            if (_966)
             {
-                _1271 = _938;
+                _1271 = _940;
             }
             else
             {
-                _1271 = Diffuse_1._data[(gl_GlobalInvocationID.x * 2u) + 1u].xyz + (((_942 * (-_24.BubbleBuoyancy)) * _24.DeltaTime) + ((_938 - Diffuse_1._data[(gl_GlobalInvocationID.x * 2u) + 1u].xyz) * _24.BubbleDrag));
+                _1271 = Diffuse_1._data[(gl_GlobalInvocationID.x * 2u) + 1u].xyz + (((_944 * (-_24.BubbleBuoyancy)) * _24.DeltaTime) + ((_940 - Diffuse_1._data[(gl_GlobalInvocationID.x * 2u) + 1u].xyz) * _24.BubbleDrag));
             }
-            _1307 = _964 ? 1.0 : 2.0;
+            _1307 = _966 ? 1.0 : 2.0;
             _1270 = _1271;
         }
-        vec3 _996 = _729.xyz + (_1270 * _24.DeltaTime);
+        vec3 _998 = _731.xyz + (_1270 * _24.DeltaTime);
         vec3 _1282;
         float _1292;
         vec3 _1296;
-        if ((((_996.x > _24.BasinMinX) && (_996.x < _24.BasinMaxX)) && (_996.z > _24.BasinMinZ)) && (_996.z < _24.BasinMaxZ))
+        if ((((_998.x > _24.BasinMinX) && (_998.x < _24.BasinMaxX)) && (_998.z > _24.BasinMinZ)) && (_998.z < _24.BasinMaxZ))
         {
             vec3 _1283;
             vec3 _1297;
-            if (_996.y < (_24.BasinMinY + 0.00999999977648258209228515625))
+            if (_998.y < (_24.BasinMinY + 0.00999999977648258209228515625))
             {
-                vec3 _1249 = _996;
+                vec3 _1249 = _998;
                 _1249.y = _24.BasinMinY + 0.00999999977648258209228515625;
                 vec3 _1252 = _1270;
                 _1252.y = max(_1270.y, 0.0);
@@ -245,25 +245,25 @@ void main()
             else
             {
                 _1297 = _1270;
-                _1283 = _996;
+                _1283 = _998;
             }
             _1296 = _1297;
-            _1292 = _961;
+            _1292 = _963;
             _1282 = _1283;
         }
         else
         {
-            bool _1047 = _996.y < (max(_24.DeckY, _24.BasinMaxY) + 0.00999999977648258209228515625);
-            if (_1047)
+            bool _1049 = _998.y < (max(_24.DeckY, _24.BasinMaxY) + 0.00999999977648258209228515625);
+            if (_1049)
             {
-                float _1052 = 0.3499999940395355224609375 + (0.64999997615814208984375 * clamp(_961, 0.0, 1.0));
+                float _1054 = 0.3499999940395355224609375 + (0.64999997615814208984375 * clamp(_963, 0.0, 1.0));
                 do
                 {
                     if ((_24.WetWidth == 0u) || (_24.WetHeight == 0u))
                     {
                         break;
                     }
-                    vec2 _1152 = (_996.xz - vec2(_24.WetOriginX, _24.WetOriginZ)) / vec2(max(_24.WetTexelSize, 9.9999997473787516355514526367188e-05));
+                    vec2 _1152 = (_998.xz - vec2(_24.WetOriginX, _24.WetOriginZ)) / vec2(max(_24.WetTexelSize, 9.9999997473787516355514526367188e-05));
                     ivec2 _1155 = ivec2(floor(_1152));
                     SPIRV_CROSS_UNROLL
                     for (int _1277 = -1; _1277 <= 1; _1277++)
@@ -276,7 +276,7 @@ void main()
                             {
                                 continue;
                             }
-                            uint _1209 = uint(clamp(_1052 * clamp(1.0 - (length(_1152 - (vec2(_1170) + vec2(0.5))) * 0.625), 0.0, 1.0), 0.0, 1.0) * 65535.0);
+                            uint _1209 = uint(clamp(_1054 * clamp(1.0 - (length(_1152 - (vec2(_1170) + vec2(0.5))) * 0.625), 0.0, 1.0), 0.0, 1.0) * 65535.0);
                             if (_1209 > 0u)
                             {
                                 uint _1225 = atomicMax(Wetness_1._data[uint(_1170.x) + (uint(_1170.y) * _24.WetWidth)], _1209);
@@ -287,12 +287,10 @@ void main()
                 } while(false);
             }
             _1296 = _1270;
-            _1292 = _1047 ? 0.0 : _961;
-            _1282 = _996;
+            _1292 = _1049 ? 0.0 : _963;
+            _1282 = _998;
         }
-        bvec3 _1091 = not(isnan(_1282));
-        bvec3 _1094 = not(isinf(_1282));
-        Diffuse_1._data[gl_GlobalInvocationID.x * 2u] = vec4(_1282, (((_1282.y < (_24.BasinMinY - 0.5)) || any(greaterThan(abs(_1282 - (vec3(_24.BasinMinX + _24.BasinMaxX, _24.BasinMinY + _24.BasinMaxY, _24.BasinMinZ + _24.BasinMaxZ) * 0.5)), vec3(25.0)))) || (!all(bvec3(_1091.x && _1094.x, _1091.y && _1094.y, _1091.z && _1094.z)))) ? 0.0 : _1292);
+        Diffuse_1._data[gl_GlobalInvocationID.x * 2u] = vec4(_1282, (((_1282.y < (_24.BasinMinY - 0.5)) || any(greaterThan(abs(_1282 - (vec3(_24.BasinMinX + _24.BasinMaxX, _24.BasinMinY + _24.BasinMaxY, _24.BasinMinZ + _24.BasinMaxZ) * 0.5)), vec3(25.0)))) || (!all(notEqual((floatBitsToUint(_1282) & uvec3(2139095040u)), uvec3(2139095040u))))) ? 0.0 : _1292);
         Diffuse_1._data[(gl_GlobalInvocationID.x * 2u) + 1u] = vec4(_1296, _1307);
         break;
     } while(false);

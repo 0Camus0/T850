@@ -86,7 +86,12 @@ void CS(uint3 id : SV_DispatchThreadID)
     }
 
     const float margin = ParticleRadius;
-    if (!isfinite(p.x) || !isfinite(p.y) || !isfinite(p.z)) {
+    // Finiteness from the bit pattern: `isfinite` becomes OpIsNan, which Dawn's Tint SPIR-V
+    // reader does not implement and aborts the whole process on (WebGPU). See
+    // CS_FluidDiagnostics3D.hlsl for the same test.
+    const uint3 pBits = asuint(p);
+    const bool3 pFinite = (pBits & 0x7F800000u) != 0x7F800000u;
+    if (!pFinite.x || !pFinite.y || !pFinite.z) {
         Positions[i] = float4(0.0f, PARKED_Y, 0.0f, 0.0f);   // dead: skipped by every later kernel
         Velocities[i] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;

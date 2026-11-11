@@ -73,6 +73,14 @@ public:
   // Test hook (--backyard-pick-test): drives the real pick/drag input path with a
   // synthetic InputManager, so no OS mouse or keyboard input is ever generated.
   static void SetPickTest(bool enabled) { s_pickTest = enabled; }
+  // --backyard-camera x y z pitch yaw: override the authored camera at load time.
+  // Applied in InitVars right after the scene camera is read, before AttachCamera.
+  // enabled stays false when the flag was missing or malformed.
+  static void SetCameraOverride(float x, float y, float z, float pitch, float yaw) {
+    s_cameraOverride.x = x; s_cameraOverride.y = y; s_cameraOverride.z = z;
+    s_cameraOverride.pitch = pitch; s_cameraOverride.yaw = yaw;
+    s_cameraOverrideEnabled = true;
+  }
   // Test hook (--backyard-pad-test): drives the gamepad grab and the pad quick actions with a
   // synthetic InputManager, so the Deck path is covered without hardware.
   static void SetPadTest(bool enabled) { s_padTest = enabled; }
@@ -351,6 +359,11 @@ protected:
   static bool s_hudHidden;
   static uint32_t s_spawnSeed;
   static int s_massAuditFrames;
+  struct CameraOverride {
+    float x = 0.0f, y = 0.0f, z = 0.0f, pitch = 0.0f, yaw = 0.0f;
+  };
+  static CameraOverride s_cameraOverride;
+  static bool s_cameraOverrideEnabled;
   int m_massAuditCounter = 0;
   static int s_ballProbeFrames;
   int m_ballProbeCounter = 0;

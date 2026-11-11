@@ -52,6 +52,14 @@ cbuffer PbfAnisotropyConstants : register(b0)
 
 #define PBFCellCapacity 64u
 
+// WO-P2: buried classification. A particle sits at least two spacings inside the fluid when its
+// neighbourhood is full and its weighted neighbour mean points nowhere: every ellipsoid around
+// it then covers it from every direction, so the splat may skip it in the depth and surfel
+// passes. The splat reads Anisotropy[i*3+2].z as -neighbours when buried (it reads .x, .y and
+// .w of components 0..2, never .z), so no output changes. Thickness keeps every particle.
+#define BURIED_NEIGHBOURS 24.0f
+#define BURIED_OFFSET 0.1f       // length(weighted mean offset) <= this fraction of R
+
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(1, 0)]]
 #endif
@@ -217,7 +225,12 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float m22 = invA2.x * v0.z * v0.z + invA2.y * v1.z * v1.z + invA2.z * v2.z * v2.z;
 
     const float bound = max(axes.x, max(axes.y, axes.z));
+    // Buried: full, balanced neighbourhood. Marked as a negative neighbour count so the splat
+    // passes can skip it without a second buffer.
+    const bool buried = neighbours >= BURIED_NEIGHBOURS &&
+                        length(mean) <= BURIED_OFFSET * radius;
+    const float storedNeighbours = buried ? -neighbours : neighbours;
     Anisotropy[i * 3u + 0u] = float4(centre, bound);
     Anisotropy[i * 3u + 1u] = float4(m00, m01, m02, m11);
-    Anisotropy[i * 3u + 2u] = float4(m12, m22, neighbours, 1.0f - full);
+    Anisotropy[i * 3u + 2u] = float4(m12, m22, storedNeighbours, 1.0f - full);
 }

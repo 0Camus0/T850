@@ -342,6 +342,86 @@ Run and report in the status table; change no source.
 5. Write the results into the WO-4 row and append "WO-4 ready for review" to Requests to
    Claude.
 
+## WO-6: surfel normals, round 2 (owner: qwen-local, after Claude's review)
+
+Files: `T850/Assets/Shaders/CS_FluidSplat.hlsl`, `CS_ParticleShade.hlsl` and their twins.
+
+Claude's visual review found the per-pixel quadric normal wrong. Every particle is drawn as
+its own dome, so the calm pool reads as a lumpy carpet with no clean reflection. Claude
+prototyped the fix and checked it from four viewpoints against screen space: it now matches
+screen space, in `/tmp/surfel-proto/p5_cmp_*.png` (middle rows). Port the prototype
+(`/tmp/surfel-proto/CS_FluidSplat.diff`, `/tmp/surfel-proto/CS_ParticleShade.diff`, both
+against `10e9f8e`) with these differences:
+
+1. `CS_FluidSplat`, ellipsoid branch, surfel pass:
+   - Compute the **disc axis** once per particle, AFTER the early-out block, not before it
+     (the prototype computes it first, so skipped particles pay for it).
+   - The axis comes from 6 steps of power iteration on `viewM`, starting from world up in
+     view space (`ViewFromClip(ViewProjection[1])`). It converges to the largest eigenvalue's
+     eigenvector, the disc's shortest axis. Orient it toward the camera (`dot(axis, c) > 0`
+     means flip).
+   - `flatness = 1 - saturate(shape2.w)` (the anisotropy's spray flag).
+   - `AccumulateSurfel` takes `viewM`, the axis and the flatness. The per-pixel normal is
+     `normalize(lerp(quadricNormal, axis, flatness))`: isolated droplets keep their dome,
+     everything else is a flat disc.
+2. `CS_ParticleShade`, `SampleFluidNormal`:
+   - Replace the four-texel version with the prototype's 13-tap disc gather: the centre, a
+     ring of 6 at half the radius, and a ring of 6 at the radius rotated by 30 degrees.
+     Taps keep `SampleFluid`'s layer test against the centre depth. The weight is
+     `exp(-2 r^2) * confidence`.
+   - The radius is `EnvParams.y * particle radius * Focal() / z`, clamped to 1..48 px.
+   - Delete the prototype's `SURFEL_SMOOTHING` define and `SurfelSmoothing()` helper.
+   - Update the `EnvParams` comment: `y = surfel normal smoothing, in particle radii`.
+3. Update both file headers: one sentence each on the axis normal and the gather.
+4. Twins, glslangValidator/spirv-val, both validators.
+
+Acceptance:
+- `--scene 8 --fluid-render splat` at frames 120 (lake), 90 and 240 (water) with
+  `screenSpace.debugView` 1: the lake's normal view is a smooth, uniform green. It must not
+  be the committed version's mottled green; compare with Claude's `p5` captures.
+- Zero `[ERROR]`.
+- Surfel Splat GPU time within 0.05 ms of 0.57 ms (1080p water start, second of two
+  400-frame `--profile` runs). The prototype measured 0.57 ms with the axis before the early
+  out, so after the move it should be lower.
+
+## WO-7: surfel smoothing setting (owner: qwen-5090, in parallel with WO-6)
+
+Files: `ParticleSystem.h/.cpp`, `ComputeKernelRegistry.cpp`, `Backyard8FluidJson.h`,
+`Backyard8Scene.cpp`, `Backyard8Fluid.json`.
+- Descriptor: `float surfel_smoothing = 1.0f;` after `surfel_sharpness` ("normal gather
+  radius in the shade, in particle radii"). Validate [0, 4].
+- Shade builder: `value.envParams[1] = ss.surfels ? ss.surfel_smoothing : 0.0f;`. Update the
+  struct comment.
+- Config: `surfelSmoothing = 1.0f` under `particles`, with the JSON value equal to it.
+- `BuildParticleDesc`: clamp to [0, 4].
+- Dev GUI "Surfels" section: slider `normal smoothing (radii)` 0..4 (`lookChanged`).
+- Acceptance: build; the unknown-key rejection still works; the slider changes the look at
+  runtime (debug view 1, values 0 and 3).
+
+## WO-8: intermittent exit fault (owner: qwen-5090, after WO-7; investigation only)
+
+Claude saw 2 bad exits in about 20 captures at 22:33 and 22:34. Both came after
+`RT dump complete`, while other DayScene captures were running on the GPU at the same time:
+- a segfault (exit 139);
+- a hang: the main thread was in `futex_do_wait`, and one unnamed thread spun at 100% user
+  CPU until it was killed.
+
+16 later runs, one at a time, all exited 0. Reproduce with two instances at once, under gdb
+(it can trace its own child even though `ptrace_scope` is 1):
+```
+cd T850/bin/SteamDeck/Release
+for i in $(seq 1 15); do for k in a b; do
+  SDL_VIDEO_DRIVER=x11 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu timeout -s INT 120 \
+    gdb -q -batch -ex run -ex "thread apply all bt 25" --args ./DayScene --unattended --scene 8 \
+    --backyard-no-hud --regressionFixedDt 0.0166667 --postProcessMode compute \
+    --dump-frame 120 --fluid-render splat > /tmp/exitfault_${i}_$k.log 2>&1 &
+done; wait; rm -rf dumps_vulkan_f120_*; done
+```
+- On a hang, `timeout` interrupts gdb, which then prints the stacks.
+- Report how many of the 30 runs faulted, and the faulting stacks: the top 10 frames of every
+  thread that is not idle in the pool.
+- Change no source. Put the findings in the WO-8 row and in Requests to Claude.
+
 ## WO-5: documentation (owner: qwen-5090, ONLY after Claude's sign-off in Notes from Claude)
 
 New `documentation/scenes/backyard8-particle-surfels.md`:
@@ -360,17 +440,17 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
 
 ## Status
 
-**Before WO-4: apply Claude's reviews in "Notes from Claude". They change WO-1 and WO-2
-files.**
-
 | WO | Owner | State | Commit | Results |
 |---|---|---|---|---|
 | WO-1 engine plumbing | qwen-5090 | accepted | b9e89ad + a2a372b | Build exit 0. `check_fluid_constants.py` exit 0. `check_gl_twins.py` exit 0. Three 300-frame runs (`--scene 8`, `--dump-frame 300`): splat / splat+water / screen-space all exit 0, **0 `[ERROR]`** each; pipelines created: `CS_FluidSplat` bindings=9 (x3), `CS_FluidResolve` bindings=7 (x2), `CS_ParticleShade` bindings=16, `CS_FluidSphereShade` bindings=4. a2a372b drops manifest 4-7 + graph reg 2/3/4 of the sphere pass (Claude's review). |
 | WO-2 shaders | qwen-local | accepted | 5477235 + e5aefd8 | `5477235` initial (a3129ba/1a68237 `KeepWaterBindings` rejected by Claude and reverted). `e5aefd8` applies both review fixes: farthest-tap early out with empty tap disabling the test (correctness verified over 300k random cases: 0 unsafe skips; `nearest` rule proven unsafe), dead sphere-shade resources deleted. glslang+spirv-val exit 0 on all four; twins regenerated. `check_gl_twins.py` exit 0, `check_fluid_constants.py` exit 0, build exit 0. Splat style 0 and style 3 smoke: 0 `[ERROR]`. |
-| WO-3 scene + GUI | qwen-5090 | in progress | | |
-| WO-4 integration report | qwen-local | after WO-3 | | |
+| WO-3 scene + GUI | qwen-5090 | accepted | 10e9f8e | Build exit 0. Three 300-frame runs (`--scene 8 --dump-frame 300 --logLevel info`) all exit 0, **0 `[ERROR]`**: splat dispatches `Fluid Surfel Splat` x1 and `Fluid Resolve (surfels)` x1; splat+water likewise; screen-space dispatches neither (0/0). Unknown key rejected: `[Backyard8] Fluid config rejected: ... unknown_key`. `check_fluid_constants.py` exit 0, `check_gl_twins.py` exit 0. JSON has surfelBand 1.0 / surfelSharpness 2.0. |
+| WO-4 integration report | qwen-local | done | no source change | Build exit 0. `--game-selftest` **78 PASS, 0 FAIL, exit 0**. Both validators exit 0. Regression (vulkan 960x540): screen-space f24/f90/f300 **PASS** (dmean 0.04/0.23/0.09), spheres f24/f90/f300 **PASS** (0.04/0.93/0.05), levels **PASS** (lake -0.0438 m, water -0.1696 m), splat f24/f90/f300 **FAIL by design** (dmean 31.84/32.34/73.72). 8 captures 1920x1080 in `/tmp/surfel-review/`. 400-frame 1080p water-start, 2nd run, fluid passes: splat **1.865640 ms** vs screen-space **1.248405 ms** (ratio **1.50**); surfel passes (Surfel Splat + Resolve (surfels)) 0.492505 + 0.012263 ms. |
 | Claude review and tuning | Claude | after WO-4 | | |
-| WO-5 docs | qwen-5090 | after Claude's sign-off | | |
+| WO-6 surfel normals round 2 | qwen-local | ready | | |
+| WO-7 surfel smoothing setting | qwen-5090 | ready | | |
+| WO-8 exit fault investigation | qwen-5090 | after WO-7 | | |
+| WO-5 docs | qwen-5090 | after Claude's sign-off of WO-6/7 | | |
 
 ## Notes from Claude
 
@@ -426,6 +506,51 @@ files.**
   - On HEAD, `check_gl_twins.py` passes (it had failed since `5477235`) and
     `check_fluid_constants.py` exits 0.
 
+- **Review of WO-3 (`10e9f8e`) and WO-4: both accepted.**
+  - WO-3's routing is right: surfels run only for the particle water style, and anisotropy
+    and whitewater run for both water renderers.
+  - Claude reproduced WO-4's numbers. Committed surfels cost 1.73 ms of fluid passes, against
+    1.21 ms for screen space and 2.17 ms for the old splat style.
+  - Visual verdict: **the surface is wrong, not the plumbing.** Per-pixel ellipsoid normals
+    turn every surface particle into a dome, so the calm pool reads as lumpy, and the splash
+    sheet shows its particles.
+  - Claude's prototype puts one disc axis per particle, uses domes only for spray, and adds a
+    13-tap normal gather in the shade. It matches screen space from all four views; see WO-6.
+    Its cost is 1.84 ms on the water start and 1.19 ms on the lake, against 0.79 ms for
+    screen space; the gather is 0.01 ms.
+  - Claude's own capture runs added two side findings: the WO-8 exit fault, and that one
+    capture of the 22:33 batch was a prototype run. Neither affects WO-3/WO-4.
+- **Next round: WO-6 and WO-7 in parallel, then WO-8.** WO-5 waits for Claude's sign-off of
+  WO-6/7. Claude re-freezes the `splat` references after that sign-off.
+
 ## Requests to Claude
 
-(append here)
+- **WO-4 ready for review.**
+- **Design corrections made during the run** (smallest safe fix chosen; all verified):
+  1. **Surfel early out (WO-2).** The document's "farthest of five + any empty tap disables" was
+     reached only after two wrong versions. My first fix ("nearest valid tap") was worse than the
+     original: a pool particle at 8 m beside a splash-sheet silhouette is skipped, so the pool
+     pixels beside the sheet lose their surfel normals. Claude's rule is correct and is what ships
+     (`e5aefd8`): farthest tap, an empty tap disables the test, `(hi.x, hi.y)` tapped directly,
+     `cornerOffset` dropped. Verified over 300k random rectangles: 0 unsafe skips.
+  2. **`CS_FluidSphereShade` unused bindings.** Deleting the water style makes glslang drop
+     `ThicknessBits`/`SceneColor`/`LinearSampler`/`SceneDepth`, and
+     `ComputePipeline::SetValidatedLayout` rejects any declared/reflected count mismatch
+     (`BaseDriver.cpp:70`). The rejected dummy-read approach was abandoned as Claude instructed; the
+     declarations and their unused helpers are deleted in `e5aefd8`, and the manifest (indices 4-7)
+     and the `Fluid Sphere Shade` pass (register 2, both `Deferred:COLOR0`, `GBuffer:DEPTH`) follow
+     in `a2a372b`.
+  3. **`Fluid Surfel Splat` shares `CS_FluidSplat.hlsl` with `Fluid Splat`**, so pipeline-creation
+     logs cannot tell the two apart. The graph does log
+     `[RenderGraph] Pass 'Fluid Surfel Splat' dispatched ...`, which is what WO-3's acceptance uses;
+     the screen-space run logs neither surfel pass.
+- **Cost caveat (WO-4 item 4).** The specified 400-frame profile covers 6.7 s of simulation
+  including the splash-in, so it is not the settled steady state the Goal's 2.2 vs 1.3 ms figures
+  describe. Measured fluid-pass totals: splat 1.865640 ms, screen-space 1.248405 ms (ratio 1.50).
+  A settled measurement would need a longer `--profileFrames` run or a lake-settled start; not run.
+- **`backyard8_references.json` was not touched.** `splat` fails by design (dmean 31.84/32.34/73.72);
+  the eight captures in `/tmp/surfel-review/` are the sign-off set.
+- **One log observation (WO-3).** The graph logs "enabled" for every compute pass at build time even
+  when `ApplyRenderModeToGraph` disables it at runtime; only the `dispatched` lines reflect
+  execution. Framework-side, out of WO-3's scope.
+

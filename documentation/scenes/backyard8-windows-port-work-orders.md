@@ -189,6 +189,24 @@ This work is Linux-only: take no Windows lock and run no DayScene. DeepSeek call
   - Look at `sheet.png`. Report the table and the exact commands you ran.
 - Commit only that file: `WO-W2b: parity compare tool`.
 
+## WO-W2c (qwen-5090): compare against Windows Vulkan, and add WebGPU
+
+This work is Linux-only, with the same rules as WO-W2b. Test data: `/tmp/winport/matrix1/out`, a real Windows matrix
+(`vulkan`, `d3d12`, `d3d11` and `gl`, with Vulkan repeats `<cell>_r1` and `<cell>_r2`). Read it only.
+
+- Make the default `--apis` `vulkan,d3d12,d3d11,gl,webgpu`.
+- Add `--ref linux|win` (default `linux`, which keeps the current behaviour).
+  - With `--ref win`, the reference image is `<win>/vulkan/cells/<cell>_r1/RT_Dump_HDR_Final.ppm`.
+  - The noise is that image against `<win>/vulkan/cells/<cell>_r2/...`, computed with the same three metrics
+    (it does not come from `noise.json`).
+  - The verdict rule is unchanged (1.5x, and +1 point on % above 4).
+  - The columns are `[Win Vulkan r1 | Win Vulkan r2 | <apis other than vulkan>]`.
+    In `compare.md`, add a `noise` column showing the r1-against-r2 values.
+  - If a Windows Vulkan r2 image is missing, print a clear error for that cell and mark the row `no-noise`.
+- Test it on `/tmp/winport/matrix1/out` with `--ref win`. Expect `DIFF` for d3d12, d3d11 and gl in all 8 cells
+  (the water shade is broken there), and `missing` for webgpu. Look at the sheet and one diff image, and describe them.
+- Commit only that file: `WO-W2c: compare against Windows Vulkan, add webgpu`.
+
 ## WO-W3: documentation (later)
 
 Starts after Claude signs off WO-W1. Record the port: method, per-API results, fixes and the remaining
@@ -201,7 +219,8 @@ section.
 |---|---|---|---|---|
 | W1 | DeepSeek | tooling committed, build blocked | 4ec41c5 | milestone 1 tooling done; matrix waiting on a Release x64 build |
 | W2 | qwen-5090 | done (accepted) | none (local evidence) | 16 runs, 0 errors; noise table below |
-| W2b | qwen-5090 | dispatched | | compare tool and contact sheets (Linux-only) |
+| W2b | qwen-5090 | done (accepted) | a144b0c, 0ae4cfc | compare tool and contact sheets (Linux-only) |
+| W2c | qwen-5090 | dispatched | | `--ref win` (Windows Vulkan yardstick) and a webgpu column |
 | W3 | | blocked by W1 | | |
 
 ## Results
@@ -350,5 +369,54 @@ Linux cannot test GL (`LinuxFramework.cpp` forces Vulkan), so these come from re
 A static scan of the 13 kernels changed since Nov 10 found no FXC `cs_5_0` blockers.
 No `Sample` or derivatives are used in compute, the `float4` UAVs are only written (no typed UAV loads), and no kernel
 is near the 8-UAV limit. D3D11 compile failures would therefore be unexpected; check the log scan anyway.
+
+### matrix1 review and fix list (Claude)
+
+**Goal (from the user).** On Windows, every API (Vulkan, D3D12, D3D11, GL and **WebGPU**) must produce the same Backyard 8
+output as Vulkan, for both the particle (surfel) renderer and the screen-space renderer. WebGPU is added to WO-W1.
+
+Results (`backyard8_parity_compare.py --win /tmp/winport/matrix1/out`):
+
+- **Windows Vulkan** has 0 errors.
+  - The water150 cells are at noise against Linux.
+  - The lake300 cells are 1.2x to 3x the Linux r1/r2 noise. That noise is very low (0.2 to 0.9) and this is another GPU
+    (RTX 4080 Laptop against RTX PRO 6000).
+  - So the yardstick for the other APIs is **Windows Vulkan on the same machine** (r1 against r2 is the noise), not Linux.
+    WO-W2c adds `--ref win` to the compare tool.
+- **D3D12 and D3D11**: `Pass 'Fluid Surface Shade' compute dispatch failed; using graphics fallback` on every frame.
+  This is 100 lines per cell in all 9 cells, in both renderers, because both shade through `CS_ParticleShade`.
+  The result is a DIFF of 10 to 25 mean levels everywhere. These are the dispatch errors the user saw on the laptop.
+- **GL**: the `CS_ParticleShade` pipeline is never created (`SetValidatedLayout failed`), giving the same DIFF.
+
+Root causes, all backend-local. Make one commit per API, `WO-W1: <api>: <fix>`:
+
+1. **D3D12** (`D3D12Compute.cpp`, the dispatch validation at ~line 743).
+   - The non-volume branch requires `DepthOrArraySize == 1`. `EnvironmentMap` (t4, layout `dimension == Cube`)
+     is a cube with `DepthOrArraySize == 6`, so every dispatch returns false.
+   - Reflection already accepts cubes (~line 409), and the texture's own SRV is already `TEXTURECUBE`
+     (`D3D12Texture.cpp:126`, `:231`), so `srvGPU` can be bound as is.
+   - Fix: when `layout->dimension == ComputeTextureDimension::Cube`, require `ReadOnlyTexture`,
+     `Dimension == TEXTURE2D`, `DepthOrArraySize == 6` and `SampleDesc.Count == 1`. Keep the 2D rule otherwise.
+2. **D3D11** (`D3D11Compute.cpp:287`).
+   - The dispatch requires `ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2D`, but the cube's `pSRVTex` is `TEXTURECUBE`
+     (`D3D11Texture.cpp:159`).
+   - Fix: when the layout is Cube, require `TEXTURECUBE` (`ReadOnlyTexture` only). Keep `TEXTURE2D` otherwise.
+3. **GL** (`GLCompute.cpp`), three parts:
+   - (a) The reflection has 17 entries against 16 declared: `idx=7` appears twice.
+     - `CS_ParticleShade.hlsl:1122` calls `EnvironmentMap.GetDimensions` and also samples the map. SPIRV-Cross therefore
+       emitted two `samplerCube` aliases on binding 7 (`...LinearSampler` and `...SPIRV_Cross_DummySampler`).
+     - It is the only texture both sampled and queried. Every other `DummySampler` texture is load-only and has
+       one alias.
+     - `ReflectComputeBindings` does not merge aliases.
+     - Fix in `GLComputePipeline::Create`: before `SetValidatedLayout`, drop reflected entries that exactly duplicate an
+       earlier one (same type, bindingIndex, shaderRegister, dimension, storageFormat and constantCount). They are the
+       same texture unit. Do not touch the shared `ComputeReflection.cpp`; Vulkan uses it.
+   - (b) GL lead 1 above: accept `GL_TEXTURE_CUBE_MAP` for a Cube `ReadOnlyTexture` (~line 415).
+   - (c) GL lead 2 above: save the previous binding with `GL_TEXTURE_BINDING_CUBE_MAP` for cube targets (~line 503).
+4. **WebGPU**: add `webgpu` to the matrix (`-Apis` default in `backyard8_parity.ps1`). The compute bind group already
+   builds cube views (`WebGPUDriver.cpp:1004-1006`). Run it, then triage what appears.
+
+Then sync, Rebuild and run `matrix2` with all five APIs. Compare with `--ref win` (WO-W2c), look at the sheet and report.
+Per cell and API, the target is `noise` against Windows Vulkan. Explain any remaining DIFF with images (diff heat maps).
 
 ## Requests to Claude

@@ -4,9 +4,13 @@ Status: 2026-11-10 realism fixes (solver rim at the real coping, Yu–Turk aniso
 ellipsoids, plane-aware smoothing, and a rewritten shade with the water column, caustics,
 ripples, glossy SSR with off-frame continuation) are verified on **Vulkan only**; see
 [backyard8-ssfr-realism.md](backyard8-ssfr-realism.md) for the root causes, changed files, cost
-and the Windows verification commands. The 2026-11-09 fixes are recorded in
+and the Windows verification commands. The 2026-11-10 whitewater pass (Ihmsen 2012 foam and
+aeration, secondary spray/foam/bubble pool, wet deck, environment-cube reflections, G-buffer
+sun and caustics under water, half-resolution splat) is recorded in
+[backyard8-ssfr-whitewater.md](backyard8-ssfr-whitewater.md) (draft, cost and regression
+numbers TBD pending WO-4). The 2026-11-09 fixes are recorded in
 [backyard8-fluid-render-d3d-port.md](backyard8-fluid-render-d3d-port.md). The 2026-11-08
-cross-backend results below predate both.
+cross-backend results below predate all of these.
 
 This note scopes the gap between the particle renderer and
 
@@ -21,21 +25,39 @@ The implementation record is
 ## Current pipeline
 
 ```
-PBF positions ─► CS_PbfAnisotropy (after the solver step) ─► BackyardWaterAnisotropy
-              │      (smoothed centre + ellipsoid quadric per particle)
-              └► CS_ParticleSplat (stamp) ─► __particle_projected_BackyardWater
-                                                   │
-                       CS_FluidClear ──────────────┤ (depth bits / thickness bits)
-                       CS_FluidSplat (scatter) ────┤  one thread per particle:
-                                                   │  InterlockedMin(ellipsoid front depth)
-                                                   │  InterlockedAdd(thickness chord, spheres)
-                       CS_FluidResolve ────────────┴─► FluidDepthA (F32)
-                                                        FluidThickness (RGBA16F)
-                       CS_ParticleSmooth x6 (plane-aware a-trous, F32 ping-pong)
-                                                   │
-                       CS_ParticleShade (compute) ─┴─► FluidParticles (RGBA16F)
-                                                   │
-                       PARTICLE_COMPOSITE ─────────┴─► over Deferred
+ PBF positions ─► CS_PbfAnisotropy (after the solver step) ─► BackyardWaterAnisotropy
+               │      (smoothed centre + ellipsoid quadric + spray flag per particle)
+               └► CS_ParticleSplat (stamp) ─► __particle_projected_BackyardWater
+                                                    │
+   ┌─ solver whitewater kernels (2026-11-10, see backyard8-ssfr-whitewater.md) ─────────────┐
+   │  CS_PbfWhitewater ─► BackyardWaterWhitewater (per-particle foam/air/agitation),        │
+   │                       BackyardWaterDiffuse (secondary spray/foam/bubble pool),         │
+   │                       BackyardWaterWetness (deck wetness map)                          │
+   │  CS_PbfDiffuse ─────► BackyardWaterDiffuse (classify by fluid neighbours, move, land)  │
+   │  CS_PbfFields mode 0 (whitewater-dry) ─► wetness drying                                │
+   │  CS_PbfFields mode 1 (whitewater-caustics) ─► BackyardWaterCaustics (focus field)      │
+   └─────────────────────────────────────────────────────────────────────────────────────────┘
+                                                    │
+                        CS_FluidClear ──────────────┤ (depth bits / thickness bits / aux bits,
+                        CS_FluidSplat (scatter) ────┤  all at half resolution, $window_half)
+                                                    │  one thread per particle:
+                                                    │  InterlockedMin(ellipsoid front depth)
+                                                    │  InterlockedAdd(thickness chord, spheres)
+                                                    │  aux channels: foam / aeration /
+                                                    │  agitation / spray (from the solver)
+                        CS_FluidResolve ────────────┴─► FluidDepthA (F32, half res)
+                                                         FluidThickness (RGBA16F, half res)
+                        CS_ParticleSmooth x6 (plane-aware a-trous, F32 ping-pong, half res)
+                                                    │
+                        CS_FluidWhitewater ─────────► __whitewater_bits (spray/foam/bubble/
+                                                    │  sparkle channels, full res)
+                        CS_ParticleShade (compute) ─┴─► FluidParticles (RGBA16F, full res)
+                                                    │  depth-aware upsample of the half-res
+                                                    │  depth; reads @environment_map (cube),
+                                                    │  GBuffer:COLOR0/1, ShadowAccum,
+                                                    │  BackyardWaterCaustics,
+                                                    │  BackyardWaterWetness
+                        PARTICLE_COMPOSITE ─────────┴─► over Deferred
 ```
 
 The particle renderer (render mode splat, style water or spheres) reuses the stamp, clear and
@@ -81,16 +103,23 @@ frame 300: 85,115 px, bbox `x[0,959] y[269,479]`, mean (12.1, 22.8, 25.5).)
    and 40 full-resolution iterations it reduced but did not remove the cubic-lattice facets.
    The shipped filter is the edge-aware a-trous pass chain. Exact flow needs the paper's 40–100
    iterations, ideally at half resolution.
-2. **Half-resolution depth/smoothing** with bilateral upsample. This is the main performance
-   lever and the prerequisite for the paper's iteration counts. The graph currently has no
-   `$window_half` size reference.
-3. **Full-screen graphics shade with environment reflection.** The compute shade cannot bind
-   the IBL cubemap; reflection is a screen-space trace with the on-screen sky as the miss
-   colour. Moving to `FS_Quad` with `bind_environment_map` would add off-screen reflections.
-4. **Perlin noise/foam** (Eqs. 10–12) and **spray classification** by density. Spray is
-   currently detected in screen space (an isolated droplet's surroundings are empty) and drawn
-   as whitewater; the solver density buffer is not published to the renderer yet.
-5. **Exact thickness** (Eq. 9) and optional density-based spray separation.
+2. **Half-resolution depth/smoothing** with bilateral upsample. **Addressed on 2026-11-10**
+   (whitewater pass): the graph now has a `$window_half` size reference; `FluidDepthA/B` and
+   `FluidThickness` are half resolution, the splat tests the farthest full-resolution depth of
+   each half pixel, and the shade upsamples with a depth-aware bilinear filter. The smoothing
+   is still the a-trous chain, not the paper's exact curvature flow (item 1).
+3. **Full-screen graphics shade with environment reflection.** **Addressed on 2026-11-10**:
+   the compute shade now binds the IBL cubemap (`@environment_map`, a new cube binding for
+   compute passes); rays the screen trace cannot resolve sample the cube instead of the sky
+   gradient. The shade is still a compute pass, not `FS_Quad`.
+4. **Perlin noise/foam** (Eqs. 10–12) and **spray classification** by density. **Partly
+   addressed on 2026-11-10**: foam is now simulated per particle (Ihmsen 2012 potentials,
+   carried foam/aeration that decay, foam lace texture, secondary spray/foam/bubble pool) and
+   spray is classified by the solver (per-particle spray flag from the anisotropy pass plus the
+   secondary pool's fluid-neighbour count), not by the screen-ring heuristic. What remains:
+   the paper's Perlin-noise foam (Eqs. 10–12) is not implemented; the foam lace is a procedural
+   texture instead.
+5. **Exact thickness** (Eq. 9) and optional density-based spray separation. Still open.
 
 ## Tuning
 
@@ -106,7 +135,17 @@ Fresnel, normal scale/stencil, spray whitewater (`foam`), ripples (`rippleSlope`
 `anisotropySprayNeighbours`, `anisotropyMaxStretch`), splat fallback, debug view). The Dev GUI
 exposes the same values and writes them back into the in-memory config.
 
-`debugView`: 1 normals, 2 surface depth, 3 water path, 4 coverage, 5 reflection, 6 refraction.
+The 2026-11-10 whitewater pass added 16 more `screenSpace` keys (scene lighting:
+`envIntensity`, `sunAttenuation`, `causticFocus`, `contactLine`, `backlight`, `scatterSun`,
+`scatterSky`, `scatterAnisotropy`, `rippleCalm`, `rippleAgitation`; whitewater: `foamStrength`,
+`foamTextureScale`, `aeration`, `bubbleStrength`, `sprayStrength`, `wetness`) and a new
+top-level `whitewater` section mirroring the solver's `PbfWhitewaterSettings` (potentials,
+gains/lifetimes, secondary particle pool, drying time, wetness map, caustic gain). The JSON
+values equal the C++ defaults. Full key-by-key list and the Dev GUI sections ("Scene lighting",
+"Whitewater"): [backyard8-ssfr-whitewater.md](backyard8-ssfr-whitewater.md) §3.
+
+`debugView`: 1 normals, 2 surface depth, 3 water path, 4 coverage, 5 reflection, 6 refraction,
+7 whitewater (r foam, g aeration, b spray), 8 sun light under water, 9 wetness.
 
 `particles.splatFallback` (Dev GUI “keep splat underneath”) restores the old splat resolve as a
 debug fallback. It is off by default; turn it on for Proton D3D11 or while investigating a

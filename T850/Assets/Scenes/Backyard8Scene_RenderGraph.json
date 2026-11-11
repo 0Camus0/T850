@@ -41,6 +41,14 @@
       "clear": false
     },
     {
+      "name": "__fluid_surfel_bits_BackyardWater",
+      "structure_stride": 4,
+      "element_count": 5,
+      "size_ref": "$window",
+      "access": "read_write",
+      "clear": true
+    },
+    {
       "name": "__whitewater_bits_BackyardWater",
       "structure_stride": 4,
       "element_count": 4,
@@ -246,6 +254,19 @@
     },
     {
       "name": "FluidThickness",
+      "color_count": 1,
+      "color_format": "RGBA16F",
+      "depth_format": "NONE",
+      "size": [
+        0,
+        0
+      ],
+      "linear_filter": false,
+      "storage": true,
+      "size_ref": "$window_half"
+    },
+    {
+      "name": "FluidNormal",
       "color_count": 1,
       "color_format": "RGBA16F",
       "depth_format": "NONE",
@@ -584,6 +605,70 @@
           "resource": "__fluid_aux_bits_BackyardWater",
           "access": "buffer_write",
           "shader_register": 2
+        },
+        {
+          "resource": "__fluid_surfel_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 3
+        }
+      ],
+      "draws": []
+    },
+    {
+      "name": "Fluid Surfel Splat",
+      "target": "FluidDepthA",
+      "execution": "compute_if_supported",
+      "particle_context": "BackyardWater",
+      "compute_shader": "Shaders/CS_FluidSplat.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_stage": 2,
+      "compute_extent_from": "__particle_projected_BackyardWater",
+      "compute_resources": [
+        {
+          "resource": "@kernel_constants",
+          "access": "constants",
+          "shader_register": 0
+        },
+        {
+          "resource": "__particle_projected_BackyardWater",
+          "access": "buffer_read",
+          "shader_register": 0
+        },
+        {
+          "resource": "GBuffer:DEPTH",
+          "access": "sampled",
+          "shader_register": 1
+        },
+        {
+          "resource": "__fluid_depth_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 0
+        },
+        {
+          "resource": "__fluid_thickness_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 1
+        },
+        {
+          "resource": "BackyardWaterAnisotropy",
+          "access": "buffer_read",
+          "shader_register": 2
+        },
+        {
+          "resource": "BackyardWaterWhitewater",
+          "access": "buffer_read",
+          "shader_register": 3
+        },
+        {
+          "resource": "__fluid_aux_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 2
+        },
+        {
+          "resource": "__fluid_surfel_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 3
         }
       ],
       "draws": []
@@ -670,6 +755,11 @@
           "resource": "__fluid_aux_bits_BackyardWater",
           "access": "buffer_write",
           "shader_register": 2
+        },
+        {
+          "resource": "__fluid_surfel_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 3
         }
       ],
       "draws": []
@@ -761,6 +851,65 @@
           "resource": "FluidThickness:COLOR0",
           "access": "storage_write",
           "shader_register": 1
+        },
+        {
+          "resource": "__fluid_surfel_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 2
+        },
+        {
+          "resource": "FluidNormal:COLOR0",
+          "access": "storage_write",
+          "shader_register": 3
+        }
+      ],
+      "draws": []
+    },
+    {
+      "name": "Fluid Resolve (surfels)",
+      "target": "FluidDepthA",
+      "execution": "compute_if_supported",
+      "particle_context": "BackyardWater",
+      "compute_shader": "Shaders/CS_FluidResolve.hlsl",
+      "compute_entry": "CS",
+      "compute_permutation": "base",
+      "compute_stage": 2,
+      "compute_extent_from": "FluidDepthA:COLOR0",
+      "compute_resources": [
+        {
+          "resource": "@kernel_constants",
+          "access": "constants",
+          "shader_register": 0
+        },
+        {
+          "resource": "__fluid_depth_bits_BackyardWater",
+          "access": "buffer_read",
+          "shader_register": 0
+        },
+        {
+          "resource": "__fluid_thickness_bits_BackyardWater",
+          "access": "buffer_read",
+          "shader_register": 1
+        },
+        {
+          "resource": "FluidDepthA:COLOR0",
+          "access": "storage_write",
+          "shader_register": 0
+        },
+        {
+          "resource": "FluidThickness:COLOR0",
+          "access": "storage_write",
+          "shader_register": 1
+        },
+        {
+          "resource": "__fluid_surfel_bits_BackyardWater",
+          "access": "buffer_write",
+          "shader_register": 2
+        },
+        {
+          "resource": "FluidNormal:COLOR0",
+          "access": "storage_write",
+          "shader_register": 3
         }
       ],
       "draws": []
@@ -1119,6 +1268,11 @@
           "resource": "__whitewater_bits_BackyardWater",
           "access": "buffer_write",
           "shader_register": 1
+        },
+        {
+          "resource": "FluidNormal:COLOR0",
+          "access": "sampled",
+          "shader_register": 11
         }
       ],
       "draws": []

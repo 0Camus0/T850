@@ -1723,6 +1723,11 @@
           "type": "read_write_buffer",
           "shader_register": 2,
           "binding_index": 7
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 3,
+          "binding_index": 8
         }
       ]
     },
@@ -1761,6 +1766,17 @@
           "type": "storage_texture",
           "shader_register": 1,
           "binding_index": 4,
+          "storage_format": "rgba16float"
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 2,
+          "binding_index": 5
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 3,
+          "binding_index": 6,
           "storage_format": "rgba16float"
         }
       ]
@@ -1916,6 +1932,11 @@
           "type": "read_write_buffer",
           "shader_register": 1,
           "binding_index": 14
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 11,
+          "binding_index": 15
         }
       ]
     },

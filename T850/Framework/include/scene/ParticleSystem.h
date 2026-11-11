@@ -176,6 +176,12 @@ namespace t850 {
     // 6 = refraction, 7 = whitewater (r foam, g aeration, b spray), 8 = sun light under
     // water (r direct fraction, g transmittance, b caustics), 9 = wetness.
     int debug_view = 0;
+    // Surface reconstruction: false = smoothed screen-space depth (the smoothing passes); true =
+    // surfel splatting, the front layer of anisotropic particles blended into depth and normal
+    // in one pass (Backyard 8's particle renderer). The water shade is the same.
+    bool surfels = false;
+    float surfel_band = 1.0f;        // front-layer depth, in particle radii
+    float surfel_sharpness = 2.0f;   // exponent on the ellipsoid's centre weight
   };
 
   // Scene geometry a fluid renderer needs from its simulation (set by the owning scene).

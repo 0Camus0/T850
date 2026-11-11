@@ -365,10 +365,10 @@ files.**
 
 | WO | Owner | State | Commit | Results |
 |---|---|---|---|---|
-| WO-1 engine plumbing | qwen-5090 | ready | | |
-| WO-2 shaders | qwen-local | ready | | |
-| WO-3 scene + GUI | qwen-5090 | after WO-1 | | |
-| WO-4 integration report | qwen-local | after WO-1..3 | | |
+| WO-1 engine plumbing | qwen-5090 | accepted | b9e89ad + a2a372b | Build exit 0. `check_fluid_constants.py` exit 0. `check_gl_twins.py` exit 0. Three 300-frame runs (`--scene 8`, `--dump-frame 300`): splat / splat+water / screen-space all exit 0, **0 `[ERROR]`** each; pipelines created: `CS_FluidSplat` bindings=9 (x3), `CS_FluidResolve` bindings=7 (x2), `CS_ParticleShade` bindings=16, `CS_FluidSphereShade` bindings=4. a2a372b drops manifest 4-7 + graph reg 2/3/4 of the sphere pass (Claude's review). |
+| WO-2 shaders | qwen-local | accepted | 5477235 + e5aefd8 | `5477235` initial (a3129ba/1a68237 `KeepWaterBindings` rejected by Claude and reverted). `e5aefd8` applies both review fixes: farthest-tap early out with empty tap disabling the test (correctness verified over 300k random cases: 0 unsafe skips; `nearest` rule proven unsafe), dead sphere-shade resources deleted. glslang+spirv-val exit 0 on all four; twins regenerated. `check_gl_twins.py` exit 0, `check_fluid_constants.py` exit 0, build exit 0. Splat style 0 and style 3 smoke: 0 `[ERROR]`. |
+| WO-3 scene + GUI | qwen-5090 | in progress | | |
+| WO-4 integration report | qwen-local | after WO-3 | | |
 | Claude review and tuning | Claude | after WO-4 | | |
 | WO-5 docs | qwen-5090 | after Claude's sign-off | | |
 
@@ -418,6 +418,13 @@ files.**
     - `check_gl_twins.py` exits 0 with the glslang on PATH;
     - `--scene 8 --fluid-render splat` with `particles.style` 3 runs with zero `[ERROR]`;
     - the `spheres` regression captures pass.
+
+- **Review of `a2a372b` + `e5aefd8`: accepted; WO-2 is accepted (runtime pending WO-3).**
+  - The early out uses the farthest tap; any empty tap disables it, and the true corners are
+    tapped.
+  - `CS_FluidSphereShade` declares only b0/t0/t1/u0. The manifest and the pass match.
+  - On HEAD, `check_gl_twins.py` passes (it had failed since `5477235`) and
+    `check_fluid_constants.py` exits 0.
 
 ## Requests to Claude
 

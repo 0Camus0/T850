@@ -159,6 +159,36 @@ Done on Linux only; no code changes and no commits.
   px wide, with the cell name printed. Look at it and report anything that looks wrong.
 - Report the noise table and the exact commands you ran.
 
+## WO-W2b (qwen-5090): parity compare tool and contact sheets
+
+This work is Linux-only: take no Windows lock and run no DayScene. DeepSeek calls the tool after each matrix.
+
+- Write `T850/scripts/validation/backyard8_parity_compare.py` (Python 3; numpy and Pillow are allowed).
+  - Arguments: `--linux <dir>` (default `/tmp/winport/linux_ref`), `--win <dir>`, `--out <dir>` and
+    `--apis` (default `vulkan,d3d12,d3d11,gl`).
+  - Windows images are `<win>/<api>/cells/<cell>/RT_Dump_HDR_Final.ppm`. Read
+    `T850/scripts/validation/win/backyard8_parity.ps1` for the exact names, including the Vulkan repeats.
+  - The Linux reference is `<linux>/<cell>_r1/dump/RT_Dump_HDR_Final.ppm`. The eight cells are listed in
+    `/tmp/winport/linux_ref/analyze.py`.
+- For every (api, cell), compute the same three metrics as `analyze.py`, using its definitions:
+  mean absolute difference per channel, p99, and % of pixels above 4. Compare against the Linux r1 image.
+  - Verdict `noise` if all three are within 1.5x the cell's r1-against-r2 values in
+    `/tmp/winport/linux_ref/noise.json`. For % above 4, also allow +1 point.
+  - Otherwise `DIFF`. Use `missing` if the file is absent and `size` if the dimensions differ.
+- Outputs in `--out`:
+  - `compare.json`;
+  - `compare.md`: a table with one row per cell and one column per API, each entry `mean/p99/%>4 verdict`;
+  - `sheet.png`: one row per cell, columns `[Linux Vulkan r1 | <apis...>]`. Each tile is 480x270 and labelled
+    (cell name on the first tile, API on the others). Use a grey tile marked `missing` when there is no image;
+  - `diff_<api>_<cell>.png` for every `DIFF`: absolute difference x8, clamped.
+- Test it under `/tmp/winport/w2b_test/`.
+  - Make a fake Windows tree whose `vulkan` images are the Linux r2 dumps. Expect `noise` for all eight
+    `vulkan` cells and `missing` for the other APIs.
+  - Make one `d3d12` cell from r2 with a 200x200 black square drawn on it. Expect `DIFF` and a diff image
+    showing the square.
+  - Look at `sheet.png`. Report the table and the exact commands you ran.
+- Commit only that file: `WO-W2b: parity compare tool`.
+
 ## WO-W3: documentation (later)
 
 Starts after Claude signs off WO-W1. Record the port: method, per-API results, fixes and the remaining
@@ -171,6 +201,7 @@ section.
 |---|---|---|---|---|
 | W1 | DeepSeek | tooling committed, build blocked | 4ec41c5 | milestone 1 tooling done; matrix waiting on a Release x64 build |
 | W2 | qwen-5090 | done (accepted) | none (local evidence) | 16 runs, 0 errors; noise table below |
+| W2b | qwen-5090 | dispatched | | compare tool and contact sheets (Linux-only) |
 | W3 | | blocked by W1 | | |
 
 ## Results

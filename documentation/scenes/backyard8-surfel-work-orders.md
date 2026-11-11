@@ -450,7 +450,7 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
 | WO-6 surfel normals round 2 | qwen-local | accepted | d34f9f9 + ac4ca39 | `d34f9f9` ports the prototype with all three differences (axis after early-out was initially still before it; fixed in `ac4ca39`, early-out return line 419, axis line 421). glslang+spirv-val exit 0; twins regenerated; `check_gl_twins.py` exit 0; `check_fluid_constants.py` exit 0; build exit 0. Lake f120 normal view **smooth**: green-dominant pool G mean 153.5, **std 1.07/255** (mottled dome look gone); water f90 std 11.3, f240 std 11.4. `Fluid Surfel Splat` **0.578613 ms** (2nd of 2 runs) vs 0.57 target: +0.009, within 0.05. 300-frame splat/splat+water/screen-space: exit 0, **0 `[ERROR]`**. |
 | WO-7 surfel smoothing setting | qwen-5090 | accepted | 1f30211 | Build exit 0. `surfel_smoothing` default 1.0, validated [0,4], clamped in `BuildParticleDesc`, `envParams[1] = surfels ? smoothing : 0`, JSON `surfelSmoothing: 1.0`, GUI slider 0..4. Unknown key still rejected (`unknown_key`). 300-frame splat run exit 0, 0 `[ERROR]`. Both validators exit 0. Slider value verified reaching the GPU constant with a temporary probe (0.000 vs 4.000, probe reverted): live. Visual effect is **small** (MAD 0.28/255 between smoothing 0 and 4, ripples off) because the gather is already near-uniform on the calm lake; see Requests to Claude. |
 | WO-8 exit fault investigation | qwen-5090 | done (not reproduced) | no source change | **0 of 30** runs faulted with the work order's two-instance gdb loop (15 x 2, `--dump-frame 120`): 30 normal exits, 0 segfault, 0 hang; `RT dump complete` preceded every clean exit; 0 `[ERROR]`. Coordinator ran 16 more (`--dump-frame 300`, two instances): 16 normal, 0 signals, 0 `[ERROR]` — **46 runs total, 0 faults**. No stacks exist to report. Candidate subsystems (hypothesis only, unproven): `exit(0)` at `DayScene.cpp:2601` bypasses `OnDestroyApplication`, so the driver/`g_threadPool` are torn down by static destructors while threads may still run; `ThreadPool::~ThreadPool` joins workers that may be in `vkDeviceWaitIdle`; `SubmitCurrentFrameAndWait` -> `vkQueueWaitIdle` can block under GPU contention. Logs in `/tmp/exitfault_*.log`, `/tmp/xf2_*.log`. |
-| WO-5 docs | qwen-5090 | after Claude's sign-off of WO-6/7 | | |
+| WO-5 docs | qwen-5090 | ready (Claude signed off; see Notes) | | |
 
 ## Notes from Claude
 
@@ -539,6 +539,46 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
     3. Then WO-5. Its numbers: fluid passes at 1080p, second of two 400-frame runs, water
        start, surfels 1.84-1.95 ms (Surfel Splat 0.57 ms) vs screen space 1.21-1.25 ms; lake
        1.19 vs 0.79 ms; the old splat water style was 2.17 ms.
+
+- **Round 2 reviewed: done. WO-5 may start.**
+  - **WO-8:** accepted as "not reproduced" (0 of 46 runs). Claude confirms the lead.
+    `DayScene.cpp:2601` calls `exit(0)` straight after the frame dump (code from 2026-05-26,
+    not this branch). Pool, Jolt and driver threads are still alive, and GPU work may still
+    be in flight, so static destructors race them. That fits 2 bad exits in about 20 runs
+    under concurrent load, against 0 in 62 other runs. It affects only `--dump-frame` runs.
+    Record it as an open item: request a clean quit instead of `exit(0)`. Do not fix it on
+    this branch.
+  - **WO-7 slider verdict:** keep it, at default 1.0. It costs 0.01 ms. The measured effect is
+    small: normal-map roughness on the splash at f90 (mean |Laplacian| of debug view 1) is
+    4.23 at 0 and 4.15 at 4, and the two runs agree within 0.02. On calm water every disc
+    already points up. The docs must say this plainly.
+  - **Claude's integration commit `3b733f4`:**
+    - `splat` references re-frozen from three-run means, spread 0.002 / 0.056 / 0.214 %;
+      f300 bbox top set to 229, the far wet-deck patch, as for screen space;
+    - the `EnvParams.y` comments fixed and the twin regenerated.
+    - Full gate PASS on HEAD (screen-space 0.002/0.077/0.033 %, splat 0.000/0.060/0.247 %,
+      spheres 0.001/0.456/0.003 %, lake -0.0434 m, water -0.1700 m). Self-test 78 PASS, 0
+      FAIL.
+  - **Numbers for WO-5.** Use only these and the WO rows; anything else is "not run".
+    - Fluid-pass GPU at 1080p, second of two 400-frame runs:
+
+      | Renderer | Water start | Lake start |
+      |---|---|---|
+      | Surfels | 1.84 ms (Surfel Splat 0.57-0.58 ms) | 1.19 ms |
+      | Screen space | 1.21 ms | 0.79 ms |
+      | Old splat water style (`7c88f66`) | 2.17 ms | not measured |
+
+    - Prototype vs committed renders: mean absolute difference 0.61 / 0.09 / 0.27 levels
+      (lake / lake normals / high view). On the splash: 4.33, against 4.38 between two runs
+      of the same shaders.
+    - Calm-lake normal-view green standard deviation: 1.07 (committed) vs mottled before.
+  - **Open items for WO-5's "not done" section:**
+    - D3D11/D3D12/GL not run: the new `FluidNormal` texture (t11) and the `SurfelBits`
+      buffers on Windows backends; the GL twins are checked statically only.
+    - The `exit(0)` exit fault above.
+    - The surfel pass costs 0.5-0.6 ms more than the smoothing it replaces, mostly the scatter
+      loop of front-layer particles.
+    - The slider's small effect.
 
 ## Requests to Claude
 

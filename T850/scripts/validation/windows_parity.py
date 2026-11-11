@@ -215,6 +215,7 @@ def cmd_sync(args):
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
     manifest = []
+    eol = line_ending_rule()
     for name in files:
         src = (Path(args.tree) / name) if args.tree else REPO / name
         if not src.exists():
@@ -222,10 +223,12 @@ def cmd_sync(args):
             continue
         dst = staging / "T850" / name[len("T850/"):]
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        data = src.read_bytes()
+        if eol == "crlf":
+            data = to_crlf(name, data)
+        dst.write_bytes(data)
         # The archive's own timestamps do not matter: the host sets "now" on every file whose
         # content differs from the copy already there, and leaves the rest alone.
-        data = dst.read_bytes()
         manifest.append([name, len(data), hashlib.sha1(data).hexdigest()])
     # The submodule git links are written as plain files so the host can tell them apart.
     for link in links:
@@ -257,6 +260,28 @@ def cmd_sync(args):
     if "SYNC_OK" not in out.stdout:
         die("extract did not report SYNC_OK")
     host.ssh(f'cmd /c del /q "{remote_dir}\\t850_sync.tar.gz"', check=False)
+
+
+def line_ending_rule():
+    """The line ending the host's checkout uses for text files ("crlf" or "lf").
+
+    The host checkout has core.autocrlf=true (checked with
+    ``git -C <root>\\T850 config --get core.autocrlf``), so its tracked files are CRLF on disk
+    while the index holds LF. scp writes raw bytes, so sync must convert or every text file
+    shows up modified in the host's git status, and SetupDawn -Mode Check, whose recipe hashes
+    were taken over the CRLF files, rejects the package as changed.
+    """
+    return "crlf" if os.environ.get("T850_WIN_EOL", "crlf").lower() == "crlf" else "lf"
+
+
+def to_crlf(name, data):
+    """CRLF the way git writes it: text files only, never binary, never twice."""
+    if b"\0" in data[:8000]:
+        return data
+    # .gitattributes pins these to LF on the host too.
+    if fnmatch.fnmatch(name, "*.sh") or name.endswith(".gitattributes"):
+        return data
+    return data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
 
 
 def tree_files(tree):

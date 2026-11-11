@@ -888,13 +888,16 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
       lookChanged = true;
     lookChanged |= controls.slider("pbf8_opacity", "splat opacity", p.opacity, 0.0f, 1.0f, 0.01f);
     lookChanged |= controls.slider("pbf8_intensity", "additive intensity", p.intensity, 0.0f, 8.0f, 0.05f);
-    // The stamp's falloff is Style >= 0.5 (ring) or >= 1.5 (hard disc); at style 0 (water) it
-    // is a smoothstep over [Radius, Radius * (1 - Softness)], so the water does read softness.
+    // Softness, shape, depth bias, intensity and opacity are read only by the per-pixel
+    // resolve of CS_ParticleSplat (the "Fluid Particles (resolve)" pass), which
+    // ApplyRenderModeToGraph disables for the water style. The stamp writes only the
+    // projected radius and the tile masks.
     lookChanged |= controls.slider("pbf8_softness", "edge softness", p.softness, 0.0f, 1.0f, 0.01f);
     lookChanged |= controls.slider("pbf8_depth_bias", "soft depth bias (m)", p.depthBias, 0.0f, 0.5f, 0.005f);
-    gui.Text("Blend selects the water: alpha + the water style draws it, additive keeps the");
-    gui.Text("additive particle look. The water reads edge softness (its stamp falloff) but");
-    gui.Text("no falloff shape, opacity, intensity or depth bias; splat sizes are in 'Water Shading'.");
+    gui.Text("The water style ignores falloff shape, opacity, intensity, edge softness and depth");
+    gui.Text("bias: the per-pixel splat resolve that reads them runs only for the additive look");
+    gui.Text("and the screen-space debug fallback. Blend selects the water (alpha + water style)");
+    gui.Text("or the additive look. Splat sizes live in 'Water Shading' -> Splat.");
   }
 
   if (gui.BeginSection("Surfels", true)) {

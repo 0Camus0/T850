@@ -169,6 +169,17 @@ void Backyard8Scene::CreateAssets() {
   ApplyRenderModeToGraph();
 }
 
+bool Backyard8Scene::UsesWaterShade() const {
+  return m_config.particles.renderMode == 1 ||
+         (m_config.particles.renderMode == 0 && m_config.particles.blend == 1 &&
+          m_config.particles.style == 0);
+}
+
+bool Backyard8Scene::UsesSurfels() const {
+  return m_config.particles.renderMode == 0 && m_config.particles.blend == 1 &&
+         m_config.particles.style == 0;
+}
+
 void Backyard8Scene::ApplyRenderModeToGraph() {
   if (!m_assetsCreated) return;   // the graph is not loaded yet
   t850::RenderGraph& graph = m_renderContainer.Graph();
@@ -176,18 +187,23 @@ void Backyard8Scene::ApplyRenderModeToGraph() {
   const bool fallback = screenSpace && m_config.screenSpace.splatFallback;
   // Every alpha-blended particle style (water, wireframe, flat, spheres) now goes through the
   // key + sphere-shade path. Only additive blending keeps the legacy per-particle resolve.
-  const bool spheres = !screenSpace && m_config.particles.blend == 1;
+  const bool spheres = !screenSpace && m_config.particles.blend == 1 &&
+                       m_config.particles.style != 0;
+  const bool waterShade = UsesWaterShade();
+  const bool surfels = UsesSurfels();
   // The stamp always runs: it produces the projected particle table the scatter reads.
-  graph.SetPassEnabled("Fluid Particles (resolve)", (!screenSpace && !spheres) || fallback);
+  graph.SetPassEnabled("Fluid Particles (resolve)", (!waterShade && !spheres) || fallback);
   // The screen-space renderer scatters at the fluid targets' (half) resolution; the particle
   // renderer's sphere shade reads the same buffers at full resolution, so it has its own copy.
-  graph.SetPassEnabled("Fluid Clear", screenSpace);
-  graph.SetPassEnabled("Fluid Splat", screenSpace);
+  graph.SetPassEnabled("Fluid Clear", waterShade);
+  graph.SetPassEnabled("Fluid Splat", waterShade);
+  graph.SetPassEnabled("Fluid Surfel Splat", surfels);
   graph.SetPassEnabled("Fluid Clear (splat mode)", spheres);
   graph.SetPassEnabled("Fluid Splat (splat mode)", spheres);
-  graph.SetPassEnabled("Whitewater Splat", screenSpace);
+  graph.SetPassEnabled("Whitewater Splat", waterShade);
   graph.SetPassEnabled("Fluid Sphere Shade", spheres);
   graph.SetPassEnabled("Fluid Resolve", screenSpace);
+  graph.SetPassEnabled("Fluid Resolve (surfels)", surfels);
   // The shade always reads FluidDepthA. With an odd iteration count the extra pass copies
   // FluidDepthB back to A, so the final target is deterministic.
   const int requested = (std::min)((std::max)(m_config.screenSpace.smoothingIterations, 0), 40);
@@ -195,7 +211,7 @@ void Backyard8Scene::ApplyRenderModeToGraph() {
   for (int i = 1; i <= 8; ++i) {
     graph.SetPassEnabled("Fluid Smooth " + std::to_string(i), screenSpace && i <= effective);
   }
-  graph.SetPassEnabled("Fluid Surface Shade", screenSpace);
+  graph.SetPassEnabled("Fluid Surface Shade", waterShade);
 }
 
 void Backyard8Scene::OnLoadScene() {
@@ -213,8 +229,8 @@ void Backyard8Scene::BuildParticleDesc() {
   d.shape = static_cast<t850::ParticleShape>((std::min)((std::max)(c.shape, 0), 2));
   d.blend = static_cast<t850::ParticleBlend>((std::min)((std::max)(c.blend, 0), 1));
   d.style = static_cast<t850::ParticleStyle>((std::min)((std::max)(c.style, 0), 3));
-  d.render_mode = c.renderMode == 1 ? t850::ParticleRenderMode::ScreenSpace
-                                    : t850::ParticleRenderMode::Splat;
+  d.render_mode = UsesWaterShade() ? t850::ParticleRenderMode::ScreenSpace
+                                   : t850::ParticleRenderMode::Splat;
   d.radius = (std::max)(c.radius, 0.001f);
   d.opacity = (std::min)((std::max)(c.opacity, 0.0f), 1.0f);
   d.intensity = (std::max)(c.intensity, 0.0f);
@@ -306,6 +322,11 @@ void Backyard8Scene::BuildParticleDesc() {
   d.screen_space.spray_strength = (std::max)(ss.sprayStrength, 0.0f);
   d.screen_space.wetness = (std::max)(ss.wetness, 0.0f);
   d.screen_space.debug_view = (std::min)((std::max)(ss.debugView, 0), 9);
+  // Surfel splatting: the particle renderer's water style reconstructs the surface by blending
+  // the front layer of anisotropic particles, not by smoothing the depth field.
+  d.screen_space.surfels = UsesSurfels();
+  d.screen_space.surfel_band = (std::min)((std::max)(c.surfelBand, 0.1f), 8.0f);
+  d.screen_space.surfel_sharpness = (std::min)((std::max)(c.surfelSharpness, 0.25f), 8.0f);
   m_particleDesc = d;
 }
 
@@ -320,7 +341,9 @@ void Backyard8Scene::RegisterParticleSystem() {
               "%s style, %s blend",
               m_particleDesc.name.c_str(), m_particleDesc.buffer_count, m_particleDesc.radius,
               m_particleDesc.render_mode == t850::ParticleRenderMode::ScreenSpace
-                  ? "screen-space" : "splat",
+                  ? (UsesSurfels() ? "screen-space fluid (surfel splatting)"
+                                   : "screen-space fluid (smoothed depth)")
+                  : "splat",
               m_particleDesc.style == t850::ParticleStyle::Wireframe ? "wireframe"
                   : (m_particleDesc.style == t850::ParticleStyle::Flat ? "flat"
                   : (m_particleDesc.style == t850::ParticleStyle::Spheres ? "spheres" : "water")),
@@ -405,7 +428,9 @@ bool Backyard8Scene::InitPbf() {
   }
   T8_LOG_INFO("[Backyard8] Particle fluid bound: %u particles, surface %ux%u, renderer %s",
               m_pbf.ParticleCount(), applied.surfaceWidth, applied.surfaceDepth,
-              m_config.particles.renderMode == 1 ? "screen-space" : "splat");
+              UsesWaterShade() ? (UsesSurfels() ? "screen-space fluid (surfel splatting)"
+                                                 : "screen-space fluid (smoothed depth)")
+                                : "splat");
   // The pool always settles before the first frame. For the water start the relaxed sphere
   // is appended afterwards, so the surface the drop lands on is already at rest.
   m_settlePending = true;
@@ -520,8 +545,8 @@ void Backyard8Scene::OnUpdate(float deltaSeconds) {
   }
 
   // Anisotropic particle shapes for the screen-space depth splat, from the committed positions
-  // of this frame. Only the screen-space renderer reads them.
-  if (m_config.particles.renderMode == 1 && m_config.screenSpace.anisotropy) {
+  // of this frame. The water shade (both surface reconstructions) reads them.
+  if (UsesWaterShade() && m_config.screenSpace.anisotropy) {
     const t850::Backyard8ScreenSpaceConfig& ss = m_config.screenSpace;
     t850::PbfAnisotropySettings anisotropy;
     anisotropy.smoothing = ss.anisotropySmoothing;
@@ -539,7 +564,7 @@ void Backyard8Scene::OnUpdate(float deltaSeconds) {
   }
   // Foam, entrained air, spray/foam/bubble particles, caustic field and deck wetness, over the
   // time simulated this frame (after the anisotropy: they reuse its neighbour grid).
-  if (m_config.particles.renderMode == 1 && m_pbf.Whitewater().enabled) {
+  if (UsesWaterShade() && m_pbf.Whitewater().enabled) {
     if (!m_pbf.ComputeWhitewater(pFramework->pVideoDriver, static_cast<float>(steps) * kStep) &&
         !m_whitewaterErrorLogged) {
       T8_LOG_ERROR("[Backyard8] Whitewater pass failed; the water renders without foam, spray or wet deck");
@@ -707,12 +732,13 @@ void Backyard8Scene::DrawSolverPanel(t850::DevGuiContext& gui) {
   // two following panels is live. Everything else in this panel is solver-wide.
   if (gui.BeginSection("Renderer", true)) {
     if (controls.combo("pbf8_render_mode", "renderer",
-                       {"splat (particle splats)", "screen-space fluid"}, p.renderMode)) {
+                       {"particles (surfel splatting)", "screen-space fluid (smoothed depth)"},
+                       p.renderMode)) {
       if (s_renderMode < 0) s_renderMode = p.renderMode;
       lookChanged = true;
     }
-    gui.Text(p.renderMode == 0 ? "ACTIVE: particle splats"
-                               : "ACTIVE: screen-space fluid");
+    gui.Text(p.renderMode == 0 ? "ACTIVE: particle renderer (surfel splatting)"
+                               : "ACTIVE: screen-space fluid (smoothed depth)");
     gui.Text("Splat settings + wireframe/flat debug: 'Backyard 8 - Particles (Splat)'.");
     gui.Text("SSFR settings + normal/depth/thickness/coverage debug: 'Backyard 8 - Screen Space Fluid'.");
   }
@@ -829,8 +855,10 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
   t850::Backyard8ParticleConfig& p = m_config.particles;
 
   gui.Text(p.renderMode == 0 ? "ACTIVE: this renderer is drawing the pool"
-                              : "INACTIVE: select 'splat' in Backyard 8 - Fluid Simulation");
+                              : "INACTIVE: select 'particles' in Backyard 8 - Fluid Simulation");
   gui.Text("Water look uses the Optics of 'Backyard 8 - Screen Space Fluid' (absorption, refraction).");
+  gui.Text("The water style uses all shading settings of the Screen Space panel (Optics, Scene");
+  gui.Text("lighting, Whitewater, Debug) and none of its smoothing settings.");
 
   if (gui.BeginSection("Splat look", true)) {
     if (controls.combo("pbf8_shape", "falloff shape", {"soft sphere", "sprite", "streak"}, p.shape))
@@ -844,6 +872,14 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
     lookChanged |= controls.slider("pbf8_depth_bias", "soft depth bias (m)", p.depthBias, 0.0f, 0.5f, 0.005f);
     lookChanged |= controls.slider("pbf8_size_min", "size scale at age 0", p.sizeScaleMin, 0.1f, 4.0f, 0.05f);
     lookChanged |= controls.slider("pbf8_size_max", "size scale at age 1", p.sizeScaleMax, 0.1f, 4.0f, 0.05f);
+  }
+
+  if (gui.BeginSection("Surfels", true)) {
+    gui.Text("Surfel splatting: the front layer of anisotropic particles blended into depth");
+    gui.Text("and normal in one pass. Only the water style (alpha blend) uses it.");
+    lookChanged |= controls.slider("pbf8_srf_band", "surfel band (radii)", p.surfelBand, 0.1f, 8.0f, 0.05f);
+    lookChanged |= controls.slider("pbf8_srf_sharp", "surfel sharpness", p.surfelSharpness,
+                                   0.25f, 8.0f, 0.05f);
   }
 
   if (gui.BeginSection("Colour ramp", false)) {
@@ -870,8 +906,8 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
     gui.Text("  flat = filled coverage discs");
     gui.Text("  spheres = one lit sphere per particle, depth sorted");
     if (controls.combo("pbf8_style", "style / splat debug",
-                       {"water (blended)", "wireframe (particle lattice)", "flat (coverage discs)",
-                        "spheres (lit particles)"}, p.style))
+                       {"water (surfel splatting)", "wireframe (particle lattice)",
+                        "flat (coverage discs)", "spheres (lit particles)"}, p.style))
       lookChanged = true;
     if (controls.sliderInt("pbf8_draw_count", "draw only N particles (0 = all)", p.count,
                            0.0f, static_cast<float>((std::max)(static_cast<int>(m_pbf.ParticleCount()), 1)),
@@ -893,9 +929,16 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
   t850::Backyard8ParticleConfig& p = m_config.particles;
   t850::Backyard8ScreenSpaceConfig& ss = m_config.screenSpace;
 
-  gui.Text(p.renderMode == 1 ? "ACTIVE: SSFR is reconstructing the pool surface"
-                              : "INACTIVE: select 'screen-space fluid' in Backyard 8 - Fluid Simulation");
-  gui.Text("These controls affect only the screen-space renderer. The splat path ignores them.");
+  if (UsesWaterShade()) {
+    gui.Text(UsesSurfels() ? "ACTIVE: the particle renderer's water style is reconstructing the pool"
+                           : "ACTIVE: the screen-space renderer is reconstructing the pool");
+    gui.Text(UsesSurfels() ? "Surface reconstruction: surfel splatting (front layer blended into depth + normal)"
+                           : "Surface reconstruction: smoothed depth (a-trous smoothing passes)");
+  } else {
+    gui.Text("INACTIVE: select a water renderer in Backyard 8 - Fluid Simulation");
+  }
+  gui.Text("These controls affect the water shade of both renderers. The smoothing settings");
+  gui.Text("below are ignored by the particle renderer (surfel splatting instead).");
 
   if (gui.BeginSection("Surface reconstruction", true)) {
     if (controls.sliderInt("pbf8_ss_iters", "smoothing passes (0-8)", ss.smoothingIterations,

@@ -299,4 +299,25 @@ Then:
 2. `build` (Rebuild). The result must show `BUILD_EXIT=0` and `exe_newer=True`, and `DayScene.exe --help` must list `--backyard-camera`.
 3. Continue with milestone 1 (the full matrix).
 
+### GL leads from code reading (confirm against the matrix before fixing)
+
+Linux cannot test GL (`LinuxFramework.cpp` forces Vulkan), so these come from reading the code:
+
+1. **Expected failure: GL rejects the cube texture in `CS_ParticleShade`.**
+   `GLCompute.cpp` (~line 415) returns false for any texture whose `glTarget != GL_TEXTURE_2D`. `EnvironmentMap`
+   (t7, `"dimension": "cube"` in `compute_kernels.json`) is a `GL_TEXTURE_CUBE_MAP`. Expect the screen-space shade
+   to be refused on GL. The GLSL twin already declares `samplerCube` at binding 7, so no twin change is needed.
+   Fix: for `ReadOnlyTexture` with `layout->dimension == ComputeTextureDimension::Cube`, require
+   `GL_TEXTURE_CUBE_MAP`. Keep requiring `GL_TEXTURE_2D` for 2D layouts, and keep rejecting cubes for `ReadWriteTexture`.
+2. **Same file, bind site (~line 503).** The previous binding is saved with `GL_TEXTURE_BINDING_2D` whatever the target.
+   On restore, a 2D texture name would be bound to `GL_TEXTURE_CUBE_MAP`.
+   Query `GL_TEXTURE_BINDING_CUBE_MAP` when `texture->glTarget == GL_TEXTURE_CUBE_MAP`.
+3. **Possible GL-only difference.** Nothing in `video/gl` enables `GL_TEXTURE_CUBE_MAP_SEAMLESS`.
+   D3D and Vulkan always filter cube maps seamlessly. If GL reflections show seams at cube-face edges, enable it once at
+   GL device init. That is a backend-local change.
+
+A static scan of the 13 kernels changed since Nov 10 found no FXC `cs_5_0` blockers.
+No `Sample` or derivatives are used in compute, the `float4` UAVs are only written (no typed UAV loads), and no kernel
+is near the 8-UAV limit. D3D11 compile failures would therefore be unexpected; check the log scan anyway.
+
 ## Requests to Claude

@@ -100,7 +100,8 @@ struct ParticleComputeConstants {
 };
 static_assert(sizeof(ParticleComputeConstants) == 240);
 
-// Mirrors `cbuffer ParticleConstants` in CS_PbfParticles.hlsl: 16 DWORDs.
+// Mirrors `cbuffer ParticleConstants` in CS_PbfParticles.hlsl: 20 DWORDs (19 used; the
+// kernel reads TileCountY in its stamp mode, which a 16-DWORD upload left undefined).
 struct FluidParticleComputeConstants {
   uint32_t particleCount;
   uint32_t outputWidth;
@@ -114,8 +115,12 @@ struct FluidParticleComputeConstants {
   float pad1;
   float fluidColor[3];
   float tileCountX;
+  float tileCountY;
+  float pad2;
+  float pad3;
+  float pad4;
 };
-static_assert(sizeof(FluidParticleComputeConstants) == 64);
+static_assert(sizeof(FluidParticleComputeConstants) == 80);
 
 // Mirrors `cbuffer ParticleConstants` in CS_ParticleSplat.hlsl.
 // 4 + 12 + 4 + 12 + 8 floats/units = 160 bytes (40 DWORDs).
@@ -447,6 +452,7 @@ bool BuildFluidParticleConstants(const ComputeKernelConstantsContext& context,
   value.fluidColor[2] = props.FluidParticleColor.z;
   // 8x8 pixel tiles, matching [numthreads(8,8,1)] in the stamp pass.
   value.tileCountX = static_cast<float>((context.outputWidth + 7u) / 8u);
+  value.tileCountY = static_cast<float>((context.outputHeight + 7u) / 8u);
   CopyWords(value, constants);
   return true;
 }

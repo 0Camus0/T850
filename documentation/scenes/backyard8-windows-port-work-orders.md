@@ -251,7 +251,7 @@ Make one commit per file group, with subjects starting `WO-W3: docs -`.
 | W2 | qwen-5090 | done (accepted) | none (local evidence) | 16 runs, 0 errors; noise table below |
 | W2b | qwen-5090 | done (accepted) | a144b0c, 0ae4cfc | compare tool and contact sheets (Linux-only) |
 | W2c | qwen-5090 | done (accepted) | 196d5ee | `--ref win` (Windows Vulkan yardstick) and a webgpu column |
-| W3 | DeepSeek | dispatched | | docs: compute-shader doc, compute-kernel skill, session doc §4 |
+| W3 | DeepSeek | done | ba4d6dd ae92939 4964983 plus this commit | docs: compute-shader doc, compute-kernel skill, session doc §6.3 |
 
 ## Results (final)
 

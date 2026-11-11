@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_FluidSplat.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=b12a6742bbb8bee8b242a4b2838e840626bdf56c39d39e9af3b2f76acd064df9; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_FluidSplat.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=1fa85c3a189b6beca1798e7881769a29adc2aba2cf2fc5d943ab662739e51348; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 #if defined(GL_EXT_control_flow_attributes)
 #extension GL_EXT_control_flow_attributes : require
 #define SPIRV_CROSS_FLATTEN [[flatten]]
@@ -128,12 +128,12 @@ void main()
             }
             float _2035 = max(_1984 * _1984, 9.9999999747524270787835121154785e-07);
             int _2037 = _2010.y;
-            for (int _3742 = _2037; _3742 <= _2018.y; _3742++)
+            for (int _3736 = _2037; _3736 <= _2018.y; _3736++)
             {
                 int _2046 = _2010.x;
-                for (int _3743 = _2046; _3743 <= _2018.x; _3743++)
+                for (int _3737 = _2046; _3737 <= _2018.x; _3737++)
                 {
-                    vec2 _2062 = vec2(float(_3743) + 0.5, float(_3742) + 0.5) - _1972;
+                    vec2 _2062 = vec2(float(_3737) + 0.5, float(_3736) + 0.5) - _1972;
                     float _2065 = dot(_2062, _2062);
                     if (_2065 > _2035)
                     {
@@ -141,47 +141,47 @@ void main()
                     }
                     float _2076 = sqrt(max(1.0 - (_2065 / _2035), 0.0));
                     float _2082 = _1946.w - (_2076 * _1987);
-                    float _3750;
+                    float _3744;
                     do
                     {
                         if ((_1955 == _128.OutputWidth) && (_1958 == _128.OutputHeight))
                         {
-                            vec4 _3130 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_3743, int((_1958 - 1u) - uint(_3742)), 0).xy, 0);
+                            vec4 _3130 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_3737, int((_1958 - 1u) - uint(_3736)), 0).xy, 0);
                             float _3131 = _3130.x;
-                            _3750 = ((_3131 > 0.0) && (abs(_3131 - _128.ProjA) > 9.999999717180685365747194737196e-10)) ? (_128.ProjB / (_3131 - _128.ProjA)) : 1000000015047466219876688855040.0;
+                            _3744 = ((_3131 > 0.0) && (abs(_3131 - _128.ProjA) > 9.999999717180685365747194737196e-10)) ? (_128.ProjB / (_3131 - _128.ProjA)) : 1000000015047466219876688855040.0;
                             break;
                         }
                         vec2 _3036 = vec2(_1953) / vec2(float(_128.OutputWidth), float(_128.OutputHeight));
-                        ivec2 _3045 = ivec2(floor(vec2(float(_3743), float(_3742)) * _3036));
-                        ivec2 _3063 = min((ivec2(ceil(vec2(float(_3743 + 1), float(_3742 + 1)) * _3036)) - ivec2(1)), (ivec2(_1953) - ivec2(1)));
-                        int _3745;
-                        float _3746;
-                        _3746 = 0.0;
-                        _3745 = _3045.y;
-                        float _3749;
+                        ivec2 _3045 = ivec2(floor(vec2(float(_3737), float(_3736)) * _3036));
+                        ivec2 _3063 = min((ivec2(ceil(vec2(float(_3737 + 1), float(_3736 + 1)) * _3036)) - ivec2(1)), (ivec2(_1953) - ivec2(1)));
+                        int _3739;
+                        float _3740;
+                        _3740 = 0.0;
+                        _3739 = _3045.y;
+                        float _3743;
                         SPIRV_CROSS_LOOP
-                        for (; _3745 <= min(_3063.y, (_3045.y + 2)); _3746 = _3749, _3745++)
+                        for (; _3739 <= min(_3063.y, (_3045.y + 2)); _3740 = _3743, _3739++)
                         {
                             int _3078 = _3045.x;
-                            _3749 = _3746;
+                            _3743 = _3740;
                             SPIRV_CROSS_LOOP
-                            for (int _3747 = _3078; _3747 <= min(_3063.x, (_3045.x + 2)); )
+                            for (int _3741 = _3078; _3741 <= min(_3063.x, (_3045.x + 2)); )
                             {
-                                vec4 _3171 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_3747, int((_1958 - 1u) - uint(_3745)), 0).xy, 0);
+                                vec4 _3171 = texelFetch(SPIRV_Cross_CombinedSceneDepthSPIRV_Cross_DummySampler, ivec3(_3741, int((_1958 - 1u) - uint(_3739)), 0).xy, 0);
                                 float _3172 = _3171.x;
-                                _3749 = max(_3749, ((_3172 > 0.0) && (abs(_3172 - _128.ProjA) > 9.999999717180685365747194737196e-10)) ? (_128.ProjB / (_3172 - _128.ProjA)) : 1000000015047466219876688855040.0);
-                                _3747++;
+                                _3743 = max(_3743, ((_3172 > 0.0) && (abs(_3172 - _128.ProjA) > 9.999999717180685365747194737196e-10)) ? (_128.ProjB / (_3172 - _128.ProjA)) : 1000000015047466219876688855040.0);
+                                _3741++;
                                 continue;
                             }
                         }
-                        _3750 = _3746;
+                        _3744 = _3740;
                         break;
                     } while(false);
-                    if (_2082 >= _3750)
+                    if (_2082 >= _3744)
                     {
                         continue;
                     }
-                    uint _2098 = uint(_3743) + (uint(_3742) * _128.OutputWidth);
+                    uint _2098 = uint(_3737) + (uint(_3736) * _128.OutputWidth);
                     uint _2104 = atomicMin(DepthBits_1._data[_2098], (uint(clamp((log2(max(_2082, 0.0500000007450580596923828125)) + 4.3219280242919921875) * 0.069990210235118865966796875, 0.0, 1.0) * 32766.0) << 17u) | (gl_GlobalInvocationID.x & 131071u));
                     uint _2116 = atomicAdd(ThicknessBits_1._data[_2098], uint((((2.0 * _2076) * _1987) * _128.InvPackingFactor) * 1024.0));
                 }
@@ -220,16 +220,16 @@ void main()
             for (int _3700 = _2216; _3700 <= _2210.y; _3700++)
             {
                 int _2225 = _2202.x;
-                for (int _3734 = _2225; _3734 <= _2210.x; _3734++)
+                for (int _3728 = _2225; _3728 <= _2210.x; _3728++)
                 {
-                    vec2 _2241 = vec2(float(_3734) + 0.5, float(_3700) + 0.5) - _1972;
+                    vec2 _2241 = vec2(float(_3728) + 0.5, float(_3700) + 0.5) - _1972;
                     float _2244 = dot(_2241, _2241);
                     if (_2244 > _2214)
                     {
                         continue;
                     }
                     float _2255 = sqrt(max(1.0 - (_2244 / _2214), 0.0));
-                    uint _2263 = uint(_3734) + (uint(_3700) * _128.OutputWidth);
+                    uint _2263 = uint(_3728) + (uint(_3700) * _128.OutputWidth);
                     float _2270 = ((2.0 * _2255) * _1987) * _128.InvPackingFactor;
                     uint _2276 = atomicAdd(ThicknessBits_1._data[_2263], uint(_2270 * 1024.0));
                     if (_2189)
@@ -307,80 +307,80 @@ void main()
             {
                 break;
             }
-            vec3 _3720;
-            float _3727;
             if (_2143)
             {
-                vec3 _3706;
-                _3706 = vec3(_128.ViewProjection[1].x / max(_128.ProjScaleX, 9.9999999747524270787835121154785e-07), _128.ViewProjection[1].y / max(_128.ProjScaleY, 9.9999999747524270787835121154785e-07), _128.ViewProjection[1].w);
-                SPIRV_CROSS_UNROLL
-                for (int _3705 = 0; _3705 < 6; )
-                {
-                    _3706 = (_3706 / vec3(max(length(_3706), 9.9999996826552253889678874634872e-21))) * _2449;
-                    _3705++;
-                    continue;
-                }
-                float _2668 = length(_3706);
-                vec3 _3707;
-                if (_2668 > 9.9999996826552253889678874634872e-21)
-                {
-                    _3707 = _3706 / vec3(_2668);
-                }
-                else
-                {
-                    _3707 = vec3(0.0, 0.0, -1.0);
-                }
-                vec3 _3721;
-                if (dot(_3707, _3297) > 0.0)
-                {
-                    _3721 = -_3707;
-                }
-                else
-                {
-                    _3721 = _3707;
-                }
-                _3727 = 1.0 - clamp(Anisotropy_1._data[_2388].w, 0.0, 1.0);
-                _3720 = _3721;
-            }
-            else
-            {
-                _3727 = 0.0;
-                _3720 = vec3(0.0, 0.0, -1.0);
-            }
-            if (_2143)
-            {
-                uvec2 _1900[5] = uvec2[](uvec2(max(min(ivec2(floor(_2479)), _1996), ivec2(0))), uvec2(uint(_2619.x), uint(_2619.y)), uvec2(uint(_2631.x), uint(_2619.y)), uvec2(uint(_2619.x), uint(_2631.y)), uvec2(uint(_2631.x), uint(_2631.y)));
-                float _3710;
-                _3710 = 0.0;
-                float _2753;
-                bool _3711;
-                int _3709 = 0;
+                uvec2 _1894[5] = uvec2[](uvec2(max(min(ivec2(floor(_2479)), _1996), ivec2(0))), uvec2(uint(_2619.x), uint(_2619.y)), uvec2(uint(_2631.x), uint(_2619.y)), uvec2(uint(_2619.x), uint(_2631.y)), uvec2(uint(_2631.x), uint(_2631.y)));
+                float _3706;
+                _3706 = 0.0;
+                float _2708;
+                bool _3707;
+                int _3705 = 0;
                 SPIRV_CROSS_UNROLL
                 for (;;)
                 {
-                    if (_3709 < 5)
+                    if (_3705 < 5)
                     {
-                        uint _2743 = _1900[_3709].x + (_1900[_3709].y * _128.OutputWidth);
-                        if (DepthBits_1._data[_2743] >= 2139095040u)
+                        uint _2698 = _1894[_3705].x + (_1894[_3705].y * _128.OutputWidth);
+                        if (DepthBits_1._data[_2698] >= 2139095040u)
                         {
-                            _3711 = false;
+                            _3707 = false;
                             break;
                         }
-                        _2753 = max(_3710, uintBitsToFloat(DepthBits_1._data[_2743]));
-                        _3710 = _2753;
-                        _3709++;
+                        _2708 = max(_3706, uintBitsToFloat(DepthBits_1._data[_2698]));
+                        _3706 = _2708;
+                        _3705++;
                         continue;
                     }
                     else
                     {
-                        _3711 = true;
+                        _3707 = true;
                         break;
                     }
                 }
-                if (_3711 && ((_3296 - _2454) > (_3710 + _128.SurfelBand)))
+                if (_3707 && ((_3296 - _2454) > (_3706 + _128.SurfelBand)))
                 {
                     break;
                 }
+            }
+            vec3 _3719;
+            float _3723;
+            if (_2143)
+            {
+                vec3 _3711;
+                _3711 = vec3(_128.ViewProjection[1].x / max(_128.ProjScaleX, 9.9999999747524270787835121154785e-07), _128.ViewProjection[1].y / max(_128.ProjScaleY, 9.9999999747524270787835121154785e-07), _128.ViewProjection[1].w);
+                SPIRV_CROSS_UNROLL
+                for (int _3710 = 0; _3710 < 6; )
+                {
+                    _3711 = (_3711 / vec3(max(length(_3711), 9.9999996826552253889678874634872e-21))) * _2449;
+                    _3710++;
+                    continue;
+                }
+                float _2750 = length(_3711);
+                vec3 _3712;
+                if (_2750 > 9.9999996826552253889678874634872e-21)
+                {
+                    _3712 = _3711 / vec3(_2750);
+                }
+                else
+                {
+                    _3712 = vec3(0.0, 0.0, -1.0);
+                }
+                vec3 _3720;
+                if (dot(_3712, _3297) > 0.0)
+                {
+                    _3720 = -_3712;
+                }
+                else
+                {
+                    _3720 = _3712;
+                }
+                _3723 = 1.0 - clamp(Anisotropy_1._data[_2388].w, 0.0, 1.0);
+                _3719 = _3720;
+            }
+            else
+            {
+                _3723 = 0.0;
+                _3719 = vec3(0.0, 0.0, -1.0);
             }
             int _2773 = _2619.y;
             for (int _3714 = _2773; _3714 <= _2631.y; _3714++)
@@ -422,17 +422,17 @@ void main()
                             float _3450 = length(_3448);
                             vec3 _3456 = _3448 / vec3(_3450);
                             bvec3 _3458 = bvec3(_3450 > 9.9999999747524270787835121154785e-07);
-                            vec3 _3459 = vec3(_3458.x ? _3456.x : _3720.x, _3458.y ? _3456.y : _3720.y, _3458.z ? _3456.z : _3720.z);
-                            vec3 _3730;
+                            vec3 _3459 = vec3(_3458.x ? _3456.x : _3719.x, _3458.y ? _3456.y : _3719.y, _3458.z ? _3456.z : _3719.z);
+                            vec3 _3724;
                             if (dot(_3459, _3443) > 0.0)
                             {
-                                _3730 = -_3459;
+                                _3724 = -_3459;
                             }
                             else
                             {
-                                _3730 = _3459;
+                                _3724 = _3459;
                             }
-                            vec3 _3473 = normalize(mix(_3730, _3720, vec3(_3727)));
+                            vec3 _3473 = normalize(mix(_3724, _3719, vec3(_3723)));
                             float _3478 = 1.0 - (_3434 / _128.SurfelBand);
                             float _3488 = (pow(clamp(_2835 / _2819, 0.0, 1.0), max(_128.SurfelSharpness, 0.25)) * _3478) * _3478;
                             if (_3488 < 0.001000000047497451305389404296875)

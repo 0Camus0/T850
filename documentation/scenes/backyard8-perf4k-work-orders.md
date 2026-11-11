@@ -368,7 +368,7 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 | P2 | qwen-5090 (me) | done | 2ff6ea2, d1bc742, f8efec4 | Claude accepted f8efec4 |
 | P3 | qwen-local | done | 55ea7ed, be39443 | Claude accepted be39443 |
 | P4 | qwen-5090 | done | 4389a36, 6961c93 | Claude accepted 6961c93 |
-| P5 | qwen-5090 | in progress | | dispatched 2026-11-11 |
+| P5 | qwen-5090 | done (follow-up 51e285a) | 4741444, 51e285a | reviewed: 3 owned files only; every number traced to Notes from Claude; commands match backyard8_perf.py |
 
 ## Notes from Claude
 

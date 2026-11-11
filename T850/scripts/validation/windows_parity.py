@@ -372,7 +372,7 @@ if ($code -ne 0) {
 
 
 BUILD_COMMAND = ('powershell -NoProfile -ExecutionPolicy Bypass -File '
-                 '"{remote}\\parity_build.ps1" -Root "{{root}}" -Action {{action}}')
+                 '"{remote}\\parity_build.ps1" -Root "{root}" -Action "{action}"')
 
 
 SETUP_DAWN_SCRIPT = r'''param([string]$Root, [string]$Done)

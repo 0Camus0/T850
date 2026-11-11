@@ -547,6 +547,6 @@ Self-test is 78 PASS and the gate exits 0 on every API.
 4. **Host paths in an older doc (pre-existing, for your call).** My WO-W1 files carry none
    (`git grep` for the host, root and user over `T850/scripts/validation` and this doc finds
    nothing), but `documentation/scenes/backyard8-particle-fluid-investigation.md:626`
-   contains "MSVC v143 build on `camus@10.0.0.232` (`D:\sandbox\T850`) succeeded". It
-   arrived with `6e41c94` on 2026-11-09, outside WO-W1. I left it alone; say the word and I
-   will redact it and scan the remaining docs.
+   contains the Windows host name in backticks followed by the root in parentheses (an
+   MSVC build note). It arrived with `6e41c94` on 2026-11-09, outside WO-W1. I left it
+   alone; say the word and I will redact it and scan the remaining docs.

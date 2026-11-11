@@ -5,8 +5,13 @@ Runs on Linux and drives the Windows host over SSH/SCP. Every subcommand holds t
 Windows lock (``flock``) because the machine is one shared resource.
 
   python3 scripts/validation/windows_parity.py sync  [--tree <path>] [--revision <ref>]
-  python3 scripts/validation/windows_parity.py build [--setup-dawn]
+  python3 scripts/validation/windows_parity.py build [--action Rebuild|Build]
   python3 scripts/validation/windows_parity.py run <script.ps1> <tag> [--timeout <s>]
+
+``build`` defaults to ``-Action Rebuild`` and fails unless ``DayScene.exe`` postdates the
+build start. A plain ``-Action Build`` is only safe once a rebuild from the synced C++ has
+happened; old objects are newer than the synced sources would suggest unless the sync sets
+timestamps (it does: every file whose content changed gets the host's current time).
 
 Host and root come from ``--host``/``--root`` or from ``T850_WIN_HOST`` and
 ``T850_WIN_ROOT``. There are no defaults in the repository.
@@ -23,10 +28,11 @@ plain ``tar -x`` cannot replace tracked files there. ``sync`` therefore
 1. builds a file list from ``git ls-files`` (HEAD or ``--tree``),
 2. tars those files plus the git link for the vcpkg submodule, on Linux,
 3. uploads the archive, and
-4. on Windows copies each listed file over the existing tracked file, adds files that are
-   new, and (with ``--prune``) deletes tracked files that the new revision removed. The
-   ``.git`` directory, ``bin``, ``Librerias/vcpkg`` and every untracked asset stay as they
-   are.
+4. on Windows copies each listed file over the existing tracked file and adds files that
+   are new, stamping only those (content differs or absent) with the host's current time so
+   the incremental build sees them; unchanged files keep their timestamps. With ``--prune``
+   it also deletes tracked files that the new revision removed. The ``.git`` directory,
+   ``bin``, ``Librerias/vcpkg`` and every untracked asset stay as they are.
 """
 import argparse
 import fnmatch
@@ -47,6 +53,7 @@ REPO = PROJECT.parent
 LOCK = Path("/tmp/winport/windows.lock")
 SCRATCH = "/tmp/opencode/winparity"
 SSH_TIMEOUT = 300          # a single SSH round trip, not a whole remote step
+BUILD_TIMEOUT = 4 * 3600   # Rebuild compiles the whole solution, Dawn aside
 SCP_TIMEOUT = 1800         # a matrix folder can be a few hundred MB
 SSH_OPTS = [
     "-o", "BatchMode=yes",
@@ -80,7 +87,6 @@ EXCLUDES = (
     "T850/T850Launcher.exe",         # tracked build output
 )
 SUBMODULE_LINKS = ("T850/Librerias/vcpkg",)
-SOURCE_MTIME = 1609459200          # 2021-01-01T00:00:00Z; see cmd_sync
 
 
 def die(message):
@@ -217,14 +223,10 @@ def cmd_sync(args):
         dst = staging / "T850" / name[len("T850/"):]
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-        # A fixed timestamp, so that files an unchanged revision does not touch keep their
-        # build time and MSBuild skips them.
-        mtime = SOURCE_MTIME
-        if args.tree:
-            mtime = int(max(SOURCE_MTIME, (Path(args.tree) / name).stat().st_mtime))
-        os.utime(dst, (mtime, mtime))
+        # The archive's own timestamps do not matter: the host sets "now" on every file whose
+        # content differs from the copy already there, and leaves the rest alone.
         data = dst.read_bytes()
-        manifest.append([name, len(data), hashlib.sha1(data).hexdigest(), mtime])
+        manifest.append([name, len(data), hashlib.sha1(data).hexdigest()])
     # The submodule git links are written as plain files so the host can tell them apart.
     for link in links:
         dst = staging / "T850" / link[len("T850/"):]
@@ -285,30 +287,30 @@ if ($LASTEXITCODE -ne 0) { "SYNC_FAIL tar exit $LASTEXITCODE"; exit 1 }
 $manifest = Get-Content (Join-Path $work 'manifest.json') -Raw | ConvertFrom-Json
 $dstRoot = Join-Path $Root 'T850'
 $copied = 0; $added = 0; $same = 0
+# Changed and new files get the host's current time, so MSBuild's timestamp comparison sees
+# them as newer than the objects built from the previous revision. Unchanged files are left
+# alone entirely. (A fixed timestamp would hide changes from the incremental build.)
+$now = (Get-Date).ToUniversalTime()
 foreach ($entry in $manifest.files) {
     $name = $entry[0] -as [string]
     $rel = $name.Substring(5)                      # drop 'T850/'
     $hash = $entry[2] -as [string]
-    $mtime = [long]$entry[3]
     $src = Join-Path $work ('T850\' + $rel)
     $dst = Join-Path $dstRoot $rel
     if (!(Test-Path $src)) { continue }
     if (Test-Path $dst) {
         $b = (Get-FileHash $dst -Algorithm SHA1).Hash
         if ($b -eq $hash.ToUpper()) {
+            # Untouched: leave the time alone, or MSBuild would think it changed.
             $same++
-            $item = Get-Item -LiteralPath $dst
-            if ($item.LastWriteTimeUtc -ne ([DateTimeOffset]::FromUnixTimeSeconds($mtime).UtcDateTime)) {
-                $item.LastWriteTimeUtc = [DateTimeOffset]::FromUnixTimeSeconds($mtime).UtcDateTime
-            }
             continue
         }
         Copy-Item -LiteralPath $src -Destination $dst -Force; $copied++
-        (Get-Item -LiteralPath $dst).LastWriteTimeUtc = [DateTimeOffset]::FromUnixTimeSeconds($mtime).UtcDateTime
+        (Get-Item -LiteralPath $dst).LastWriteTimeUtc = $now
     } else {
         New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
         Copy-Item -LiteralPath $src -Destination $dst -Force; $added++
-        (Get-Item -LiteralPath $dst).LastWriteTimeUtc = [DateTimeOffset]::FromUnixTimeSeconds($mtime).UtcDateTime
+        (Get-Item -LiteralPath $dst).LastWriteTimeUtc = $now
     }
 }
 if ($Prune) {
@@ -331,24 +333,33 @@ Remove-Item -Recurse -Force $work
 
 # --------------------------------------------------------------------------- build
 
-BUILD_SCRIPT = r'''param([string]$Root)
+BUILD_SCRIPT = r'''param([string]$Root, [string]$Action = 'Rebuild')
 $ErrorActionPreference = 'Continue'
 $proj = Join-Path $Root 'T850'
 $log = Join-Path $Root '__parity\build\build.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
+$exe = Join-Path $proj 'bin\x64\Release\DayScene.exe'
+$startUtc = (Get-Date).ToUniversalTime()
 Set-Location $proj
 $sw = [Diagnostics.Stopwatch]::StartNew()
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $proj 'scripts\build.ps1') -Config Release -Platform x64 -Action Build *>&1 |
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $proj 'scripts\build.ps1') -Config Release -Platform x64 -Action $Action *>&1 |
     Tee-Object -FilePath $log
 $code = $LASTEXITCODE
 $sw.Stop()
-$dawn = @(Select-String -Path $log -Pattern 'Dawn').Count
-"BUILD_EXIT=$code seconds=$([int]$sw.Elapsed.TotalSeconds) dawn_lines=$dawn"
+# The binary must postdate the build start, or nothing was relinked.
+$exeTime = (Get-Item -LiteralPath $exe -ErrorAction SilentlyContinue).LastWriteTimeUtc
+$newer = $false
+if ($exeTime) { $newer = $exeTime -ge $startUtc }
+"BUILD_EXIT=$code action=$Action seconds=$([int]$sw.Elapsed.TotalSeconds) startUtc=$($startUtc.ToString('o')) exeUtc=$($exeTime.ToString('o')) exe_newer=$newer"
 if ($code -ne 0) {
     Select-String -Path $log -Pattern 'error [A-Z]+[0-9]+|: error ' | Select-Object -First 40 |
         ForEach-Object { "ERR " + $_.Line.Trim() }
 }
 '''
+
+
+BUILD_COMMAND = ('powershell -NoProfile -ExecutionPolicy Bypass -File '
+                 '"{remote}\\parity_build.ps1" -Root "{{root}}" -Action {{action}}')
 
 
 SETUP_DAWN_SCRIPT = r'''param([string]$Root, [string]$Done)
@@ -389,8 +400,11 @@ def cmd_build(args):
     ps = Path(SCRATCH) / "build.ps1"
     ps.write_text(BUILD_SCRIPT, encoding="utf-8")
     host.copy_to(ps, remote_dir + "\\parity_build.ps1")
-    out = host.ssh(f'powershell -NoProfile -ExecutionPolicy Bypass -File '
-                   f'"{remote_dir}\\parity_build.ps1" -Root "{args.root}"')
+    # A plain Build only relinks what the timestamps say changed; after a fresh sync the
+    # first build must be a full Rebuild (see the sync note: old objects predate the C++).
+    action = args.action
+    out = host.ssh(BUILD_COMMAND.format(remote=remote_dir, root=args.root, action=action),
+                   timeout=BUILD_TIMEOUT)
     text = out.stdout
     code = None
     for line in text.splitlines():
@@ -408,21 +422,28 @@ def cmd_build(args):
         host.ssh(f'cmd /c if not exist "{remote_dir}" mkdir "{remote_dir}"')
         out = host.ssh(f'powershell -NoProfile -ExecutionPolicy Bypass -File '
                        f'"{remote_dir}\\parity_setup_dawn.ps1" -Root "{args.root}" '
-                       f'-Done "{remote_dir}\\setup_dawn.done"')
+                       f'-Done "{remote_dir}\\setup_dawn.done"', timeout=BUILD_TIMEOUT)
         print("\n".join(l for l in out.stdout.splitlines()
                         if l.startswith(("SETUP", "Setup", "ERROR", "error"))))
         local_setup = Path("/tmp/winport/build")
         host.copy_from(f"{host.root}/__parity/build/setup_dawn.log",
                        local_setup / "setup_dawn.log")
-        out = host.ssh(f'powershell -NoProfile -ExecutionPolicy Bypass -File '
-                       f'"{remote_dir}\\parity_build.ps1" -Root "{args.root}"')
+        out = host.ssh(BUILD_COMMAND.format(remote=remote_dir, root=args.root,
+                                            action=action), timeout=BUILD_TIMEOUT)
         for line in out.stdout.splitlines():
             if line.startswith("BUILD_EXIT="):
                 code = int(line.split()[0].split("=")[1])
         retried = True
     local = Path("/tmp/winport/build")
     host.copy_from(f"{host.root}/__parity/build/build.log", local / "build.log")
-    print(f"build exit={code}" + (" (after SetupDawn)" if retried else ""))
+    summary = [l for l in text.splitlines() if l.startswith("BUILD_EXIT=")]
+    print(f"build exit={code} action={action}" + (" (after SetupDawn)" if retried else ""))
+    for line in summary:
+        print(line)
+    if code == 0 and "exe_newer=True" not in summary[0]:
+        print("DayScene.exe does not postdate the build start: nothing was relinked",
+              file=sys.stderr)
+        return 1
     return 0 if code == 0 else 1
 
 
@@ -544,6 +565,9 @@ def main():
     sync.set_defaults(func=cmd_sync)
 
     build = subs.add_parser("build", help="MSBuild Release x64 over SSH")
+    build.add_argument("--action", choices=("Rebuild", "Build"), default="Rebuild",
+                       help="build.ps1 action; the default Rebuild is required after a sync "
+                            "(old objects would otherwise hide changed C++)")
     build.add_argument("--setup-dawn", action="store_true",
                        help="run SetupDawn.ps1 even when the failure is not Dawn-related")
     build.set_defaults(func=cmd_build)

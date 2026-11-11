@@ -507,6 +507,56 @@ gate PASS, differences within noise.
 - The commit body has no 4K timing. Claude measures it with the GPU idle, together with WO-P2b
   and WO-P3.
 
+### WO-P2b (`d1bc742`) and WO-P3 (`55ea7ed`) reviewed: both need a follow-up
+
+Claude swapped shaders at runtime on the HEAD binary, 4K, `--regressionFixedDt`. "Noise" is two
+identical HEAD runs; levels are 0-255.
+
+**WO-P2b: blocky holes near the camera.**
+
+- Close view (`0 1.3 -10.0 0.32 0`), water start f45: the skip produces rectangular blocks and
+  streaks.
+  - HEAD against the same build without the skip: p99 103, 33.7 % of pixels above 4 levels.
+  - Noise: p99 23, 8.6 %.
+- Cause: the depth rectangle is capped at 64 half-res pixels. Near the camera a surface
+  ellipsoid projects well beyond that (about 140 px at 2 m in 4K), so its rectangle cuts it.
+  The overlapping interior particles used to fill those cuts.
+- Fix, prototyped and verified by Claude (f45 against no-skip: p99 25, 9.6 %, at noise):
+
+```hlsl
+// remove the early `if (buriedMarker < 0.0f) return;` before `const float3x3 worldM`, and
+// replace the bPx lines with:
+const float bPxRaw = bound * focalY / (c.z - bound);
+const float bPx = min(bPxRaw, 64.0f);
+if (bPx < 0.5f) return;
+// Buried skip only where the 64-px cap does not cut this ellipsoid: near the camera the
+// capped surface ellipsoids leave gaps that only the interior particles fill.
+if (buriedMarker < 0.0f && bPxRaw < 48.0f) return;
+```
+
+  Keep the sphere-fallback line (buried particles always have an ellipsoid, so it never
+  fires). Regenerate the twin; run the validators, the gate and the self-test. Report Fluid
+  Splat close/water and default/water timing with and without the skip, from one build.
+- The default-view lake difference in the commit body (mean about 2 levels) is not WO-P2b's.
+  The "before" was `2ff6ea2`, which predates WO-P1 and WO-P3. Same-build A/B is within noise:
+  no-skip against skip mean 0.25-0.32, against noise 0.25-0.34.
+
+**WO-P3: the Fresnel gate never skips anything.**
+
+- `fresnel = 0.02 + 0.98 * pow(1 - cos, 5)` is never below 0.02, so
+  `smoothstep(0, 0.10, fresnel)` is at least 0.104 and `TraceReflection` always runs.
+- All three pairs in the sweep had F0 below 0.02 too. The measured gain is the sky-term
+  hoist (Claude's ablation: about 0.17 ms) plus contention noise.
+- Units: the acceptance is in 0-255 levels. The commit's p99 of 0.172 on a 0-1 scale is about
+  44 levels. Same-build A/B at the default lake view is within noise anyway (pre-P3 shade
+  against HEAD: mean 0.26-0.34, against noise 0.25-0.34).
+- Follow-up:
+  - set F0 above the floor; suggested F0 = 0.03, F1 = 0.06 (with power 5, Fresnel 0.03 is
+    about 53 degrees of incidence and 0.06 about 62);
+  - measure the fraction of water pixels that skip the trace (temporary debug, then remove);
+  - report the shade time with and without the gate from one build, and the HDR_Final
+    difference against noise, at 4K default and close.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

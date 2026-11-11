@@ -17,7 +17,8 @@ references re-frozen in `3b733f4`. WO-4 and WO-8 changed no source.
 The particle renderer's water style (renderMode 0, blend 1, style 0) shaded the summed
 thickness as a fake height field: the normals faced the camera, there was no real
 reflection, and the refraction was a thickness-scaled offset. It cost 2.17 ms of fluid
-passes at 1080p against 1.21 ms for screen space.
+passes at 1080p on the water start, against 1.32 ms for screen space measured in the same
+session (`7c88f66`).
 
 Round 2: the first surfel implementation drew every particle as its own dome, because the
 per-pixel ellipsoid normals were used directly. The calm pool read as a lumpy carpet with
@@ -61,7 +62,7 @@ Fluid Surfel Splat (11)   CS_FluidSplat stage 2   scatters every particle again;
                                                   (weight, weighted depth offset,
                                                   weighted view-space normal) in
                                                   __fluid_surfel_bits_BackyardWater
-Fluid Resolve (15)        CS_FluidResolve stage 0 → FluidDepthA, FluidThickness
+Fluid Resolve (15)        CS_FluidResolve stage 0   screen space only: disabled for surfels
 Fluid Resolve (surfels)   CS_FluidResolve stage 2 → FluidDepthA (blended depth),
    (16, stage 2)                                  FluidNormal (RGBA16F, $window_half),
                                                   FluidThickness; clears the sums
@@ -100,7 +101,9 @@ Fluid-pass GPU at 1080p, second of two 400-frame runs, water start:
 | Screen space | 1.21 ms | 0.79 ms |
 | Old splat water style (`7c88f66`) | 2.17 ms | not measured |
 
-The lake column for the old splat water style is not measured.
+The lake column for the old splat water style is not measured. The old splat row comes from
+an earlier session, in which screen space measured 1.32 ms; the surfel and screen-space rows
+were measured together. Compare rows of the same session.
 
 ## 6. Verification
 

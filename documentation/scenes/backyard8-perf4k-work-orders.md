@@ -403,6 +403,18 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 - `T850/Assets/Scenes/scratch/` (WO-P1's scratch configs) must be deleted before WO-P1
   finishes. Never commit it.
 
+### Acceptance correction: visual equivalence against run-to-run noise (WO-P1 to WO-P3)
+
+- Two identical runs already differ in HDR_Final (solver nondeterminism), so "matches the
+  pre-change dumps" means: within about 1.5 times the noise floor.
+- The noise floor is the difference between two runs of the before build with the same command.
+  Report both numbers.
+- Comparisons inside one build (for example `thicknessDownsample` 2 against 1) are not
+  affected.
+- Uncommitted work of another work order in the shared tree (WO-P4's `RenderQuad.cpp`) is part
+  of every after build. Give the before worktree the same files, or compare after that work
+  order is committed.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

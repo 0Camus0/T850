@@ -187,9 +187,16 @@ session 1, exit 0, dump `dumps_d3d12_f10_20261111_101509`, results fetched to
 `sync` cannot use a plain `tar -x` of `Framework`, `DayScene`, ... into `<root>\T850`,
 because the host's tree is also the path of its own `.git` (`<root>\T850\.git`): extracting
 the archive would delete it and the vcpkg checkout. Instead it copies each listed file
-over its existing copy (hash compared first, fixed timestamp so unchanged files do not
-rebuild), adds new files, and `--prune` removes tracked files the revision dropped.
-`Librerias/vcpkg` is a gitlink and is never touched.
+over its existing copy (hash compared first), adds new files, and `--prune` removes tracked
+files the revision dropped. `Librerias/vcpkg` is a gitlink and is never touched.
+
+Timestamps (commit f1a7a72, after Claude caught the first version): only files whose
+content changed or that are new get a timestamp, the host's current time; unchanged files
+keep theirs. The first version stamped everything 2021-01-01, which made changed C++ look
+older than the 11/10 objects to MSBuild, so it would not have been recompiled while the
+runtime-compiled shaders were new. Because the first sync already wrote the changed files
+with 2021, `build` now defaults to `-Action Rebuild` (`--action Build` to opt in) and fails
+unless `DayScene.exe` postdates the build start (printed as `exe_newer=`).
 
 ## Blocker: Release x64 build on the host
 

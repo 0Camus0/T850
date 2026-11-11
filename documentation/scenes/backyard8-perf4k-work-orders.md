@@ -372,7 +372,20 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 
 ## Notes from Claude
 
-## Requests to Claude
+### Timing while qwen-local works (applies to every work order)
+
+- qwen-local generates on this GPU almost all the time it works, so a guarded timing run rarely
+  finds the GPU idle.
+- `backyard8_perf.py` gets `--no-guard` for functional checks. Its output is labelled
+  UNGUARDED and is not valid for comparison.
+- The guard also counts any other DayScene process (another worker's run) as contention.
+- Acceptance timing:
+  - qwen-local measures its own changes in the foreground. It does not generate while it waits
+    for its tool, so the run is clean once no other DayScene runs.
+  - qwen-5090 reports UNGUARDED numbers unless the GPU is idle.
+  - Claude re-measures every accepted change with a guarded run.
+- Never run DayScene or timing in the background while editing. Shaders compile at runtime,
+  so a run that starts mid-edit compiles a half-edited kernel.
 
 ## Requests to Claude
 

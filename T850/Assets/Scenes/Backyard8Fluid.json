@@ -123,6 +123,7 @@
     "causticSpeed": 1.0,
     "causticDepth": 1.6,
     "splatFallback": false,
+    "thicknessDownsample": 0,
     "anisotropy": true,
     "anisotropySmoothing": 0.5,
     "anisotropyMaxRatio": 4.0,

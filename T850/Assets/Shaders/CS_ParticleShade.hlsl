@@ -96,6 +96,11 @@ cbuffer ParticleShadeConstants : register(b0)
     float4 WetParams;         // x, y = wetness origin (world x, z), z = texel (m), w = strength
     uint4  GridParams;        // x, y = wetness texels, z, w = surface columns
     float4 RippleFlow;        // x = agitation gain, y = calm multiplier, z = Toksvig (0/1)
+
+    uint   ThicknessShift;   // WO-P1: 0 = aux on the depth grid, 1 = half grid
+    float ThicknessPad0; // WO-P1: pad to 68 DWORDs
+    float ThicknessPad1;
+    float ThicknessPad2;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -384,8 +389,11 @@ float LoadDepth(int2 p)
 
 float4 LoadAuxTexel(int2 t)
 {
-    const int2 c = clamp(t, int2(0, 0), int2(FluidSize) - 1);
-    const uint base = (uint(c.x) + uint(c.y) * FluidSize.x) * 4u;
+    const uint shift = min(ThicknessShift, 1u);
+    const uint widthT = (FluidSize.x + (1u << shift) - 1u) >> shift;
+    const uint heightT = (FluidSize.y + (1u << shift) - 1u) >> shift;
+    const int2 c = clamp(t >> shift, int2(0, 0), int2(int(widthT), int(heightT)) - 1);
+    const uint base = (uint(c.x) + uint(c.y) * widthT) * 4u;
     return float4(float(AuxBits[base + 0u]) / 65535.0f,
                   float(AuxBits[base + 1u]) / 1024.0f,
                   float(AuxBits[base + 2u]) / 1024.0f,

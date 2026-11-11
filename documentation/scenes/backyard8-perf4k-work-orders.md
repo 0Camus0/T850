@@ -415,6 +415,16 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
   of every after build. Give the before worktree the same files, or compare after that work
   order is committed.
 
+### Worktree runtimes (every before/after comparison)
+
+A worktree's `T850/bin/SteamDeck/Release` links:
+
+- Shaders, Scenes, Layouts and Fonts to the worktree's own `T850/Assets/<dir>`;
+- only Models and Textures to the main tree (downloaded, not in git).
+
+Shaders compile at runtime from the linked directory. A worktree that links the main tree's
+Shaders runs another work order's uncommitted kernels.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

@@ -327,6 +327,7 @@ void Backyard8Scene::BuildParticleDesc() {
   d.screen_space.surfels = UsesSurfels();
   d.screen_space.surfel_band = (std::min)((std::max)(c.surfelBand, 0.1f), 8.0f);
   d.screen_space.surfel_sharpness = (std::min)((std::max)(c.surfelSharpness, 0.25f), 8.0f);
+  d.screen_space.surfel_smoothing = (std::min)((std::max)(c.surfelSmoothing, 0.0f), 4.0f);
   m_particleDesc = d;
 }
 
@@ -880,6 +881,8 @@ void Backyard8Scene::DrawParticlePanel(t850::DevGuiContext& gui) {
     lookChanged |= controls.slider("pbf8_srf_band", "surfel band (radii)", p.surfelBand, 0.1f, 8.0f, 0.05f);
     lookChanged |= controls.slider("pbf8_srf_sharp", "surfel sharpness", p.surfelSharpness,
                                    0.25f, 8.0f, 0.05f);
+    lookChanged |= controls.slider("pbf8_srf_smooth", "normal smoothing (radii)", p.surfelSmoothing,
+                                   0.0f, 4.0f, 0.05f);
   }
 
   if (gui.BeginSection("Colour ramp", false)) {

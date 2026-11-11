@@ -182,6 +182,7 @@ namespace t850 {
     bool surfels = false;
     float surfel_band = 1.0f;        // front-layer depth, in particle radii
     float surfel_sharpness = 2.0f;   // exponent on the ellipsoid's centre weight
+    float surfel_smoothing = 1.0f;   // normal gather radius in the shade, in particle radii
   };
 
   // Scene geometry a fluid renderer needs from its simulation (set by the owning scene).

@@ -57,6 +57,7 @@ namespace {
     if (ss.debug_view < 0 || ss.debug_view > 9) return false;
     if (ss.surfel_band < 0.1f || ss.surfel_band > 8.0f) return false;
     if (ss.surfel_sharpness < 0.25f || ss.surfel_sharpness > 8.0f) return false;
+    if (ss.surfel_smoothing < 0.0f || ss.surfel_smoothing > 4.0f) return false;
     return true;
   }
 }  // namespace

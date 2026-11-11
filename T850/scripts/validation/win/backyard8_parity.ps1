@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Exe,
     [Parameter(Mandatory = $true)][string]$Out,
-    [string]$Apis  = 'vulkan,d3d12,d3d11,gl',
+    [string]$Apis  = 'vulkan,d3d12,d3d11,gl,webgpu',
     [int]$VulkanRepeats = 2,
     [switch]$SkipGate,
     [switch]$SkipCells,

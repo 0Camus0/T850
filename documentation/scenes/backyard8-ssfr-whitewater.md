@@ -8,8 +8,9 @@ item, not a pass.
 The implementation is checkpointed in `3ad6d1a` ("WIP Backyard 8: whitewater, env reflections,
 G-buffer lighting, half-res SSFR") and tuned in `9f83cd1` ("Backyard 8: tune whitewater and
 half-resolution splat"); the config keys and Dev GUI landed in WO-1 (`b060602`); the GL twins and
-a first screen-space re-freeze landed in WO-4 (`2105406`); the wet-deck rework and the final
-screen-space re-freeze landed in `2cfa0f6`. Cost and verification numbers below are WO-4's
+a first screen-space re-freeze landed in WO-4 (`2105406`); the wet-deck rework landed in
+`2cfa0f6`, and the refraction stand-in for hidden pool surfaces, with the final screen-space
+re-freeze, in `df80424`. Cost and verification numbers below are WO-4's
 measurements, re-run independently by the orchestrator, and re-run by Claude after `2cfa0f6`
 (§4, §5). Preceding record:
 [backyard8-ssfr-realism.md](backyard8-ssfr-realism.md). Pipeline reference:
@@ -25,7 +26,7 @@ commit. All files are relative to `T850/`.
 |---|---|---|---|---|
 | 1 | Off-screen reflections | Reflected rays the screen trace cannot resolve sample the scene's sky cube (`@environment_map`, a new cube binding for compute passes); on-screen hits keep SSR, and rays that exit the frame keep the exit-pixel continuation. `EnvRadiance` in the shade. | The old fallback was a flat sky gradient plus exit-pixel continuation, so the house above the frame never appeared in reflections (R7 in the realism record). | `Framework/src/scene/RenderGraph.cpp`, `Framework/src/utils/ComputeKernelRegistry.cpp`, `Framework/src/utils/ComputeReflection.cpp`, `Framework/src/video/{d3d11,d3d12,vulkan,webgpu}/*`, `Assets/Shaders/CS_ParticleShade.hlsl` |
 | 2 | SSR false hits | A screen-space crossing is accepted only if the G-buffer normal at the hit faces the ray (`TraceReflection`). | Rays tilted back toward the camera "hit" the top of the near coping (R7). | `Assets/Shaders/CS_ParticleShade.hlsl` |
-| 3 | Refraction under the coping | The refracted ray is marched through the depth buffer; a hidden hit takes the analytic pool-box distance (`PoolBoxExit`) and the last visible sample (`MarchRefraction`). | Refraction lookups that left the pool fell back to the unrefracted pixel, producing jagged islands (R6). | `Assets/Shaders/CS_ParticleShade.hlsl` |
+| 3 | Refraction of hidden surfaces | The refracted ray is marched through the depth buffer to at least the analytic box exit. When its hit is hidden from the camera (under the near coping, off screen), `PoolBoxHit` gives the true hit and its face, and `SameFaceStandIn` takes the colour of the nearest point of that face the camera sees. It walks along the face away from the camera and bisects back to the visibility edge. Since the box has no steps, a hit behind a step takes the submerged surface in front of it; when a whole line is hidden, the walk repeats from lines shifted across the face. Depth, absorption and caustics use the true hit (`RefractionHit.world`). (`df80424`) | Refraction lookups that left the pool fell back to the unrefracted pixel, producing jagged islands (R6). The next fallback (`3ad6d1a`) used the last visible sample along the ray's screen path, which runs down its screen column. Every pixel in a column copied the same strip above the near coping, so the wall/floor corner became a vertical line that moved with the viewpoint. From the default camera this was the whole near half of the pool: the floor is directly visible only within 1.2 m of the far wall. The stand-in has no seam (at the visibility edge the walk is zero), and the old fallback fires nowhere in four test viewpoints (default, high, low diagonal, side). | `Assets/Shaders/CS_ParticleShade.hlsl` |
 | 4 | Pool behind a splash sheet | Water in the air shades the resting pool surface behind it as a second interface (`PoolSurfaceBehind`). | A breaking sheet of water should still show the pool through it, not the sky. | `Assets/Shaders/CS_ParticleShade.hlsl` |
 | 5 | Spray classification | Per-particle spray flag from the anisotropy pass (`CS_PbfAnisotropy` w-channel) instead of the screen-ring heuristic; splatted into `CS_FluidSplat` aux channel 3. | The screen-space "isolated droplet" test misclassified water in the air; the solver knows which particles are actually airborne. | `Assets/Shaders/CS_FluidSplat.hlsl`, `Assets/Shaders/CS_PbfAnisotropy.hlsl` |
 | 6 | Sunlight under water | Direct sun rebuilt from G-buffer albedo and normal and `ShadowAccum`, absorbed along the refracted sun path (`SubmergedRadiance`); caustics only where the sun reaches (`SurfaceSunVisibility`). | The shade had no water column: the pool read as a milky volume with a flat sky colour (R5). | `Assets/Shaders/CS_ParticleShade.hlsl` |
@@ -182,7 +183,9 @@ GPU timestamps from `DayScene --unattended --api vulkan --scene 8 --width 960 --
 0.119 / 0.005 / 0.044 ms). A cold first run reads about 1.5x higher (Fluid Splat 0.25 ms) because
 the pool settle is slower; take a warm run. Re-measured by Claude after the wet-deck rework
 (`2cfa0f6`, warm runs): water 0.164 / 0.073 / 0.069 ms, lake 0.130 / 0.004 / 0.043 ms (Fluid
-Splat / Whitewater Splat / shade), unchanged within run-to-run noise.
+Splat / Whitewater Splat / shade), unchanged within run-to-run noise. After the refraction
+stand-in (`df80424`) the shade costs 0.086 ms on the water start and 0.069 ms on the lake start
+(+0.02 ms; at 1080p 0.162 / 0.202 ms, also +0.02 ms). Calm water shows the most hidden floor.
 
 | Pass | GPU time, water start | GPU time, lake start |
 |---|---|---|
@@ -210,8 +213,8 @@ not comparable to this 960x540 average.
 ### 5.1 Linux (Vulkan, native)
 
 WO-4 (`2105406`) produced these checks and the orchestrator re-ran them on the same tree; Claude
-re-ran the build, the self-test, the checkers and the full gate on the HEAD build after `2cfa0f6`;
-the table shows that final run.
+re-ran the build, the self-test, the checkers and the full gate on the HEAD build after `2cfa0f6`,
+and the checkers and the full gate again after `df80424`; the table shows that final run.
 
 | Check | Result |
 |---|---|
@@ -221,10 +224,10 @@ the table shows that final run.
 | `scripts/validation/check_gl_twins.py` | **pass** (exit 0): every twin matches its HLSL and the registered bindings |
 | GL twin reproducibility | **pass**: regenerating the twins with the pinned SPIRV-Cross reproduces them byte-for-byte (`git diff` empty) |
 | GL twins at runtime | **not run**: the native Linux build is Vulkan-only, so the twins are validated statically only (§5.3) |
-| `backyard8_regression.py` — `screen-space` captures | **pass**: f24 0.000 %, f90 0.096 %, f300 0.362 % pixels, dbox <= 2 |
-| `backyard8_regression.py` — `splat` captures | **pass** (references from `ec0ee11`, not re-frozen): f24 0.002 %, f90 0.120 %, f300 0.047 % pixels, dbox <= 1 |
-| `backyard8_regression.py` — `spheres` captures | **pass** (not re-frozen): f24 0.000 %, f90 0.355 %, f300 0.169 % pixels, dbox <= 2 |
-| Water levels (lake, water start) | **pass**: lake -0.0439 m (target -0.040 +/- 0.015), water -0.1701 m (target -0.170 +/- 0.020) |
+| `backyard8_regression.py` — `screen-space` captures | **pass**: f24 0.001 %, f90 0.224 %, f300 0.073 % pixels, dbox <= 4 |
+| `backyard8_regression.py` — `splat` captures | **pass** (references from `ec0ee11`, not re-frozen): f24 0.004 %, f90 0.050 %, f300 0.125 % pixels, dbox <= 1 |
+| `backyard8_regression.py` — `spheres` captures | **pass** (not re-frozen): f24 0.002 %, f90 0.230 %, f300 0.240 % pixels, dbox 0 |
+| Water levels (lake, water start) | **pass**: lake -0.0437 m (target -0.040 +/- 0.015), water -0.1690 m (target -0.170 +/- 0.020) |
 | Full gate | `RESULT: PASS`, exit 0 |
 
 ### 5.2 The screen-space reference re-freeze
@@ -237,8 +240,10 @@ running with a JSON that omits the new WO-1 keys gives the same f90 statistics. 
 three `screen-space` entries from one run (`2105406`). The wet-deck rework (`2cfa0f6`) changed
 them again: f24 is identical (nothing has landed yet), while at f90/f300 the deck is darker and
 the reconstructed wet region covers 1-2 % more pixels. Claude re-froze the entries as the mean of
-three runs, with the median bbox. `splat`, `spheres`, `tolerances` and `water_level` were never
-re-frozen, which is why they still pass against `ec0ee11`.
+three runs, with the median bbox. The refraction stand-in (`df80424`) changed them a third time.
+Coverage is the same within noise, and the mean colour moved by up to 4.6 levels at f300 (the near
+half of the pool), so the entries were re-frozen the same way. `splat`, `spheres`, `tolerances` and
+`water_level` were never re-frozen, which is why they still pass against `ec0ee11`.
 
 The gate compares statistics (covered pixels, bounding box, mean colour) with tolerances, not
 bytes. The renderer is not bit-exact run to run: atomic ordering in the solver grid and the
@@ -246,8 +251,9 @@ secondary-particle ring make two runs with an identical binary differ in individ
 Measured spread of the statistics with the gate's own arguments: covered pixels f24 <= 0.005 %,
 f90 <= 0.2 %, f300 <= 1.2 % (tolerances 0.5 / 2 / 2 %). The tightest margin is the f300 bounding
 box: since the wet deck joined the covered region, its top edge is the farthest wet patch on the
-far deck, set by chaotic droplet landings. Over 8 runs it fell at 226..232 px against the frozen
-229 and a 5 px tolerance. If that check ever flakes, raise the f300 `bbox_px` tolerance with this
+far deck, set by chaotic droplet landings, which refraction does not affect. Over 12 runs it fell
+at 226..232 px, so the reference is set to the midpoint, 229, rather than to a 3-run median, with
+a 5 px tolerance. If that check ever flakes, raise the f300 `bbox_px` tolerance with this
 explanation rather than re-freezing on a single run.
 
 ### 5.3 Windows (native x64 Release, not Proton) — **not run**

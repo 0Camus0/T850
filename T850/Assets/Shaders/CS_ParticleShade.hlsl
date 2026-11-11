@@ -567,20 +567,45 @@ float CausticFocus(float2 xz)
     return lerp(a, b, f.y);
 }
 
-// Wetness of the deck and coping at a world position (0 dry .. 1 soaked), bilinear.
+// Uniform cubic B-spline weights for the four texels around a fraction f.
+float4 BSplineWeights(float f)
+{
+    const float f2 = f * f;
+    const float f3 = f2 * f;
+    return float4(1.0f - 3.0f * f + 3.0f * f2 - f3,
+                  4.0f - 6.0f * f2 + 3.0f * f3,
+                  1.0f + 3.0f * f + 3.0f * f2 - 3.0f * f3,
+                  f3) * (1.0f / 6.0f);
+}
+
+// Wetness of the deck and coping at a world position (0 dry .. 1 soaked). A cubic B-spline over
+// the 4x4 texels: the map is coarse (droplet stamps on 6 cm texels), and bilinear filtering
+// shows its squares once the wet look is strong enough to see.
 float WetnessAt(float2 xz)
 {
-    const uint ww = GridParams.x;
-    const uint wh = GridParams.y;
-    if (ww < 2u || wh < 2u || WetParams.z <= 0.0f) return 0.0f;
+    const int ww = int(GridParams.x);
+    const int wh = int(GridParams.y);
+    if (ww < 4 || wh < 4 || WetParams.z <= 0.0f) return 0.0f;
     const float2 g = (xz - WetParams.xy) / WetParams.z - 0.5f;
-    if (any(g < 0.0f) || g.x >= float(ww - 1u) || g.y >= float(wh - 1u)) return 0.0f;
-    const uint2 t = uint2(g);
+    if (any(g < -1.0f) || g.x > float(ww) || g.y > float(wh)) return 0.0f;
+    const int2 t = int2(floor(g));
     const float2 f = g - float2(t);
-    const uint i = t.x + t.y * ww;
-    const float a = lerp(float(Wetness[i]), float(Wetness[i + 1u]), f.x);
-    const float b = lerp(float(Wetness[i + ww]), float(Wetness[i + ww + 1u]), f.x);
-    return lerp(a, b, f.y) / 65535.0f;
+    const float4 wx = BSplineWeights(f.x);
+    const float4 wy = BSplineWeights(f.y);
+    float sum = 0.0f;
+    [unroll]
+    for (int y = 0; y < 4; ++y) {
+        const int row = t.y - 1 + y;
+        if (row < 0 || row >= wh) continue;
+        float rowSum = 0.0f;
+        [unroll]
+        for (int x = 0; x < 4; ++x) {
+            const int column = t.x - 1 + x;
+            if (column >= 0 && column < ww) rowSum += wx[x] * float(Wetness[uint(column + row * ww)]);
+        }
+        sum += wy[y] * rowSum;
+    }
+    return sum / 65535.0f;
 }
 
 // Foam lace: the films between the bubbles of a slowly churning cellular pattern.
@@ -766,11 +791,24 @@ float3 WhitewaterLight(float3 sunWorld, float sunVisibility, float3 skyAmbient)
 }
 
 // A wet porous surface: darker, with a thin glossy film reflecting the sky.
-float3 WetSurface(float3 colour, float3 normal, float3 viewWorld, float wet)
+// A wet deck: water first fills the pores, darkening the surface (porous materials lose about
+// half their albedo); past that, a film pools in the hollows and reflects sharply, the screen
+// where the trace hits, the sky cube elsewhere. The film is level: reflecting about the normal
+// map would tip grazing rays into the deck and shatter the image.
+float3 WetSurface(float3 colour, float2 pixel, float sceneZ, float3 viewWorld, float wet)
 {
-    const float cosine = saturate(dot(normal, -viewWorld));
-    const float fresnel = 0.02f + 0.98f * pow(1.0f - cosine, 5.0f);
-    return colour * lerp(1.0f, 0.55f, wet) + EnvRadiance(reflect(viewWorld, normal), 1.0f) * (fresnel * wet * 0.8f);
+    const float pores = saturate(wet * 2.0f);
+    const float film = smoothstep(0.45f, 1.0f, wet);
+    const float3 darkened = colour * lerp(1.0f, 0.5f, pores);
+    if (film <= 0.0f) return darkened;
+    const float3 up = float3(0.0f, 1.0f, 0.0f);
+    const float cosine = saturate(dot(up, -viewWorld));
+    const float fresnel = (0.02f + 0.98f * pow(1.0f - cosine, 5.0f)) * film;
+    const float3 r = reflect(viewWorld, up);
+    float3 hit;
+    const float hitWeight = TraceReflection(ViewPosition(pixel, sceneZ), ToView(r), 0.04f, hit);
+    const float3 reflected = lerp(EnvRadiance(r, 1.0f), hit, hitWeight);
+    return lerp(darkened, reflected, fresnel);
 }
 
 // The pool surface seen through a splash sheet, a second interface at the resting water plane:
@@ -849,8 +887,11 @@ void CS(uint3 id : SV_DispatchThreadID)
             const float3 world = CameraPosition() + ToWorld(ViewPosition(pixelCentre, sceneZ));
             const float3 n = SceneNormalWorld(base);
             if (n.y > 0.6f && world.y > PoolMin.y + 0.2f) {
-                wet = saturate(WetnessAt(world.xz) * WetParams.w);
-                if (wet > 0.001f) colour = WetSurface(colour, n, normalize(world - CameraPosition()), wet);
+                // Below 1 % the darkening is invisible: leave those pixels alone so the faint
+                // tails of the reconstruction do not reach the composite.
+                wet = saturate((WetnessAt(world.xz) * WetParams.w - 0.01f) / 0.99f);
+                if (wet > 0.001f)
+                    colour = WetSurface(colour, pixelCentre, sceneZ, normalize(world - CameraPosition()), wet);
             }
         }
         if (DebugView == 9u) { OutputTexture[imagePixel] = float4(wet, wet, wet, 1.0f); return; }

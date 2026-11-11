@@ -202,7 +202,7 @@ struct ParticleShadeConstants {
   float skyHorizon[4];        // horizon sky
   float rippleParams[4];      // slope, longest wavelength (m), speed, fade distance (m)
   float causticParams[4];     // strength, scale (m), speed, depth fade (m)
-  float envParams[4];         // x = environment intensity (0 = analytic sky gradient)
+  float envParams[4];         // x = environment intensity (0 = analytic sky gradient), y = surfel normal smoothing (particle radii, 0 = flat)
   float poolMin[4];           // basin interior min (y = floor), w = water plane y
   float poolMax[4];           // basin interior max (y = coping top), w = deck y
   float lightParams[4];       // sun attenuation, caustic focus, contact line, backlight
@@ -696,6 +696,7 @@ bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
   const ParticleScreenSpaceDesc& ss = system->screen_space;
   const ParticleFluidGeometry& geometry = system->geometry;
   value.envParams[0] = ss.env_intensity * props.IBLFactor;
+  value.envParams[1] = ss.surfels ? ss.surfel_smoothing : 0.0f;
   for (int c = 0; c < 3; ++c) {
     value.poolMin[c] = geometry.pool_min[c];
     value.poolMax[c] = geometry.pool_max[c];

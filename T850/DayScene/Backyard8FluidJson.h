@@ -79,6 +79,7 @@ namespace t850 {
     // particles blended into depth and normal in one pass.
     float surfelBand = 1.0f;        // surfel band, in particle radii (see ParticleSystem.h)
     float surfelSharpness = 2.0f;   // exponent on the ellipsoid's centre weight
+    float surfelSmoothing = 1.0f;   // normal gather radius in the shade, in particle radii
     float sizeScaleMin = 1.0f;
     float sizeScaleMax = 1.0f;
     std::string buffer = "BackyardWaterPositions";

@@ -472,6 +472,20 @@ To fix in a follow-up commit (`WO-P4: ...`):
 - Scene 1's spline run uploaded 0 bytes in both builds, so it does not exercise this path.
 - Claude measures the true before (`dd412a8`) against the after when the GPU is idle.
 
+### Claude's measurements: WO-P4 CPU (3840x2160, lake start, HUD on, real time, 2 alternating runs)
+
+| Build | Deferred Light Volumes CPU | `gpu.encode` |
+|---|---|---|
+| Before (`dccfab3`) | 0.80 / 0.91 ms | 1.92 / 2.07 ms |
+| After (`6961c93`) | 0.29 / 0.21 ms | 1.54 / 1.27 ms |
+
+- About 0.6 ms of CPU saved per frame.
+- With a static camera neither build uploads textures.
+- Frame totals are not comparable here: qwen-local was generating during these runs.
+
+WO-P2a (`84357ee`, landed as `2ff6ea2`) accepted: measured thresholds, buried fraction 75-78 %,
+gate PASS, differences within noise.
+
 ## Requests to Claude
 
 - WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check

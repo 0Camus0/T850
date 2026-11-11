@@ -742,7 +742,18 @@ namespace t850 {
           const auto* texture = dynamic_cast<D3D12Texture*>(binding.texture);
           if (!texture || !texture->pTexResource) return false;
           const auto view = texture->pTexResource->GetDesc();
-          if (view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 1 || view.SampleDesc.Count != 1)
+          if (layout && layout->dimension == ComputeTextureDimension::Cube) {
+            // An environment cube: one resource, six faces. The texture's own SRV is already
+            // TEXTURECUBE, so it binds as is. Only read-only: there is no cube UAV here.
+            if (binding.type != ComputeBindingType::ReadOnlyTexture ||
+                view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 6 ||
+                view.SampleDesc.Count != 1) {
+              T8_LOG_ERROR("[D3D12][Compute] Cube t%u does not match: type=%d dim=%d faces=%u samples=%u",
+                           binding.shaderRegister, static_cast<int>(binding.type),
+                           static_cast<int>(view.Dimension), view.DepthOrArraySize, view.SampleDesc.Count);
+              return false;
+            }
+          } else if (view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 1 || view.SampleDesc.Count != 1)
             return false;
           if (binding.type == ComputeBindingType::ReadWriteTexture)
             if (view.Format != ToDxgiStorageFormat(layout->storageFormat)) return false;

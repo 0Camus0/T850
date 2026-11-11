@@ -25,6 +25,15 @@ kernel, the compression strength to alpha advection and the forcing gain to forc
 different meaning per dispatch, which is why this compares sizes and reports name differences as
 notes.
 
+**Grouping by constants_builder.** The same cbuffer NAME may be reused by kernels that fill it
+from DIFFERENT constant builders — e.g. `ParticleConstants` is filled by `fluid_particles` in
+`CS_PbfParticles.hlsl` (20 DWORDs) and by `particle_splat` in `CS_FluidClear`/`CS_FluidSplat`/
+`CS_FluidResolve`/`CS_ParticleSplat` (64 DWORDs). Those are independent layouts, so the layout
+comparison groups copies by `(cbuffer name, constants_builder)`: two copies with the same name but
+a different builder are never compared (and never flagged as an alias). Kernels whose manifest
+entry has no `constants_builder` group by name only (the historical behaviour, which is how the
+`FluidConstants` alias above is handled).
+
 The screen-space whitewater kernels (WO-2) are checked more strictly because no alias is
 sanctioned there:
 
@@ -246,6 +255,7 @@ def main() -> int:
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     kernels = registry.get("kernels", registry if isinstance(registry, list) else [])
     kernel_ids: dict[str, str] = {}
+    builders: dict[str, str | None] = {}
     declared: dict[str, dict[int, int]] = {}
     for kernel in kernels:
         source = kernel.get("source")
@@ -253,13 +263,20 @@ def main() -> int:
             continue
         if kernel.get("id"):
             kernel_ids[source] = str(kernel["id"])
+        if kernel.get("constants_builder"):
+            builders[source] = str(kernel["constants_builder"])
         for binding in kernel.get("bindings", []):
             if binding.get("type") == "constants":
                 declared.setdefault(source, {})[int(binding["shader_register"])] = int(
                     binding["constant_count"])
 
     failures: list[str] = []
-    canonical: dict[str, tuple[str, tuple, list[str]]] = {}
+    # Canonical copies are grouped by (cbuffer name, constants_builder). Kernels that reuse a
+    # cbuffer NAME but fill it from a different constants_builder (e.g. ParticleConstants filled
+    # by `fluid_particles` vs `particle_splat`) are NOT compared against each other — they are
+    # independent layouts. Kernels sharing a name with no (or a missing) builder group by name,
+    # as before.
+    canonical: dict[tuple[str, str | None], tuple[str, tuple, list[str]]] = {}
     aliases: list[str] = []
     strict: dict[str, list[tuple[str, tuple, list[str]]]] = {}
     checked_counts = 0
@@ -279,22 +296,34 @@ def main() -> int:
                 continue
             layout = tuple((offset, size) for _, _, offset, size in members)
             names = [n for _, n, _, _ in members]
-            first = canonical.get(name)
+            builder = builders.get(path.name)
+            key = (name, builder)
+            first = canonical.get(key)
             if first is None:
-                canonical[name] = (path.name, layout, names)
+                canonical[key] = (path.name, layout, names)
             elif first[1] != layout:
                 failures.append(
                     f"{name}: {path.name} has a different layout ({len(layout)} members) than "
-                    f"{first[0]} ({len(first[1])})")
+                    f"{first[0]} ({len(first[1])})"
+                    + ("" if builder is None else f" [builder {builder}]"))
             elif first[2] != names:
-                aliases.append(f"{name}: {path.name} names the members differently from {first[0]}")
+                aliases.append(f"{name}: {path.name} names the members differently from {first[0]}"
+                               + ("" if builder is None else f" [builder {builder}]"))
             # WO-2: the whitewater cbuffers have no sanctioned alias — any name divergence is a
-            # failure, reported with the exact member that disagrees.
-            if name in CROSS_CHECKS.values() and first is not None and path.name != first[0]:
-                if layout != first[1]:
-                    pass  # the generic layout check above already reported this pair
-                elif names != first[2]:
-                    strict.setdefault(name, []).append((path.name, layout, names))
+            # failure, reported with the exact member that disagrees. These are grouped by name
+            # (their manifest entries carry no constants_builder), so this stays name-based.
+            if name in CROSS_CHECKS.values():
+                name_first = canonical.get((name, None))
+                if name_first is None:
+                    for k2, v2 in canonical.items():
+                        if k2[0] == name:
+                            name_first = v2
+                            break
+                if name_first is not None and path.name != name_first[0]:
+                    if layout != name_first[1]:
+                        pass  # the generic layout check above already reported this pair
+                    elif names != name_first[2]:
+                        strict.setdefault(name, []).append((path.name, layout, names))
             if register == "":
                 continue
             expected = declared.get(path.name, {}).get(int(register))

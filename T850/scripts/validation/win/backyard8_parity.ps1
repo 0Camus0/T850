@@ -17,7 +17,7 @@ param(
 # because no host path belongs in the repository. `windows_parity.py run` passes them.
 $ErrorActionPreference = 'Continue'
 $exeDir = Split-Path -Parent $Exe
-$project = Split-Path -Parent (Split-Path -Parent $exeDir)     # <project>\bin\x64\Release
+$project = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $exeDir))   # <project>\bin\x64\Release
 $assets = Join-Path $project 'Assets\Scenes\Backyard8Fluid.json'
 # Absolute: the gate runs from a child PowerShell whose working directory is
 # bin\x64\Release, which is what broke the first matrix run.

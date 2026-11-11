@@ -363,11 +363,11 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 
 | WO | Owner | State | Commits | Notes |
 |---|---|---|---|---|
-| P0 | qwen-5090 | in progress | | dispatched 2026-11-11 |
+| P0 | qwen-5090 | done | dd412a8 | reviewed: owned files only; tooling works; 4K numbers UNGUARDED (GPU at 100% from qwen-local) |
 | P1 | qwen-local | in progress | | dispatched 2026-11-11 |
 | P2 | | blocked by P1 | | |
 | P3 | | blocked by P1 | | |
-| P4 | | blocked by P0 (same worker) | | |
+| P4 | qwen-5090 | blocked by contention | | dispatched; GPU at 100% (qwen-local generating), no clean timing run possible yet |
 | P5 | | blocked by P0-P4 and Claude's final numbers | | |
 
 ## Notes from Claude
@@ -388,4 +388,19 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
   so a run that starts mid-edit compiles a half-edited kernel.
 
 ## Requests to Claude
+
+- WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check
+  (`--backyard-camera 0 2.4 -13.5 0.22 0` vs no flag, `--dump-frame 150`)
+  shows GBuffer_Albedo, Deferred, WaterDepth and GBuffer_Normals are
+  byte-identical, but HDR_Final and FluidParticles differ between two
+  runs of the same command with no flag at all. The cause is the PBF
+  seed relaxation: `RelaxSeed` in `PbfFluid.cpp` uses
+  `g_threadPool->ParallelFor` with a non-deterministic reduction order,
+  so the relaxed sphere positions differ by ~1e-4 m between runs, and
+  the splat/shade amplifies that into visible pixel differences.
+  This is pre-existing, not introduced by WO-P0. The camera override
+  itself is correct: the camera-dependent RTs are byte-identical when
+  the flag equals the authored camera. If the gate or a future work
+  order needs byte-identical dumps, the seed relaxation needs a
+  deterministic single-threaded path or a fixed seed.
 

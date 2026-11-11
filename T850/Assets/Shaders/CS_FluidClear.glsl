@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_FluidClear.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=eb80fbf5fbb992a8b2260d4f144db274a24e778da06bd86bc2d1f1ba73aa2e6a; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_FluidClear.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=fc17a66dfae60138fe30255a4c6e9975a29392007dd6e0a13ada2e2e1feb5471; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(binding = 0, std140) uniform ParticleConstants
@@ -43,6 +43,10 @@ layout(binding = 0, std140) uniform ParticleConstants
     vec3 EmitterPosition;
     float EmitterPad;
     vec4 ViewProjection[4];
+    uint ThicknessShift;
+    float ThicknessPad0;
+    float ThicknessPad1;
+    float ThicknessPad2;
 } _24;
 
 layout(binding = 1, std430) buffer DepthBits
@@ -68,13 +72,15 @@ void main()
         {
             break;
         }
-        uint _119 = gl_GlobalInvocationID.x + (gl_GlobalInvocationID.y * _24.OutputWidth);
-        DepthBits_1._data[_119] = 4294967295u;
-        ThicknessBits_1._data[_119] = 0u;
-        AuxBits_1._data[_119 * 4u] = 0u;
-        AuxBits_1._data[(_119 * 4u) + 1u] = 0u;
-        AuxBits_1._data[(_119 * 4u) + 2u] = 0u;
-        AuxBits_1._data[(_119 * 4u) + 3u] = 0u;
+        uint _148 = gl_GlobalInvocationID.x + (gl_GlobalInvocationID.y * _24.OutputWidth);
+        DepthBits_1._data[_148] = 4294967295u;
+        uint _153 = min(_24.ThicknessShift, 1u);
+        ThicknessBits_1._data[_148] = 0u;
+        uint _176 = ((gl_GlobalInvocationID.x >> _153) + ((gl_GlobalInvocationID.y >> _153) * (((_24.OutputWidth + (1u << _153)) - 1u) >> _153))) * 4u;
+        AuxBits_1._data[_176] = 0u;
+        AuxBits_1._data[_176 + 1u] = 0u;
+        AuxBits_1._data[_176 + 2u] = 0u;
+        AuxBits_1._data[_176 + 3u] = 0u;
         break;
     } while(false);
 }

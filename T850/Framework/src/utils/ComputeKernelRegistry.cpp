@@ -156,8 +156,12 @@ struct ParticleSplatConstants {
   float color[4][4];          // four 16-byte slots: rgb + pad
   float emitterPosition[4];   // xyz + pad
   float viewProjection[16];   // row-major, 4 x float4
+  uint32_t thicknessShift;    // WO-P1: 0 = depth grid, 1 = half grid
+  float thicknessPad0;       // WO-P1: pad to 68 DWORDs
+  float thicknessPad1;
+  float thicknessPad2;
 };
-static_assert(sizeof(ParticleSplatConstants) == 256);
+static_assert(sizeof(ParticleSplatConstants) == 272);
 
 // Mirrors `cbuffer ParticleSmoothConstants` in CS_ParticleSmooth.hlsl.
 struct ParticleSmoothConstants {
@@ -211,8 +215,12 @@ struct ParticleShadeConstants {
   float wetParams[4];         // wetness origin x, z, texel (m), strength
   uint32_t gridParams[4];     // wetness texels x, y; surface columns x, z
   float rippleFlow[4];        // agitation gain, calm multiplier, Toksvig (0/1)
+  uint32_t thicknessShift;    // WO-P1: 0 = aux on the depth grid, 1 = half grid
+  float thicknessPad0;        // WO-P1: pad to 104 DWORDs (HLSL cbuffer is 416 bytes)
+  float thicknessPad1;
+  float thicknessPad2;
 };
-static_assert(sizeof(ParticleShadeConstants) == 400);
+static_assert(sizeof(ParticleShadeConstants) == 416);
 
 // Mirrors `cbuffer WhitewaterSplatConstants` in CS_FluidWhitewater.hlsl.
 struct WhitewaterSplatConstants {
@@ -501,7 +509,7 @@ bool BuildParticleSplatConstants(const ComputeKernelConstantsContext& context,
   value.blend  = static_cast<uint32_t>(system->blend);
   value.source = static_cast<uint32_t>(system->source);
   // Pad2 carries the particle look style (0 shaded, 1 wireframe, 2 flat). Keeping it in
-  // the existing padding slot preserves the 60-DWORD splat cbuffer.
+  // the existing padding slot preserves the 64-DWORD splat cbuffer.
   value.pad2 = static_cast<float>(system->style);
   // SpeedTint is unused by the splat: reuse it as the screen-space flag so the splat
   // resolve and the depth pass can stand down when the other renderer is active.
@@ -543,6 +551,14 @@ bool BuildParticleSplatConstants(const ComputeKernelConstantsContext& context,
   value.color[3][3] = system->screen_space.surfel_sharpness;
   // Row-major view-projection; the kernel multiplies rows against float4(p, 1).
   std::memcpy(value.viewProjection, &camera->VP, sizeof(value.viewProjection));
+  // WO-P1: the thickness and whitewater sums on half the depth grid when the window is
+  // at least 1440 px tall. 0 (auto) resolves here, where the pass output size is known,
+  // so a resize switches it without a graph rebuild. The sphere renderer (!surface)
+  // keeps the full grid, and the surfel pass never writes thickness (shift 0 = safe).
+  const int requested = (std::min)((std::max)(system->screen_space.thickness_downsample, 0), 2);
+  const int resolved = requested == 0
+      ? (context.outputHeight >= 720u ? 2 : 1) : requested;
+  value.thicknessShift = static_cast<uint32_t>(resolved == 2 ? 1 : 0);
   CopyWords(value, constants);
   return true;
 }
@@ -726,6 +742,14 @@ bool BuildParticleShadeConstants(const ComputeKernelConstantsContext& context,
   value.rippleFlow[0] = ss.ripple_agitation;
   value.rippleFlow[1] = ss.ripple_calm;
   value.rippleFlow[2] = 1.0f;
+  // WO-P1: the whitewater aux loads follow the thickness grid the same way the splat and
+  // resolve do (auto = half grid when the window is at least 1440 px tall).
+  {
+    const int requested = (std::min)((std::max)(system->screen_space.thickness_downsample, 0), 2);
+    const int resolved = requested == 0
+        ? (context.outputHeight >= 720u ? 2 : 1) : requested;
+    value.thicknessShift = static_cast<uint32_t>(resolved == 2 ? 1 : 0);
+  }
   CopyWords(value, constants);
   return true;
 }

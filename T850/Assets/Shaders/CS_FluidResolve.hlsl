@@ -48,7 +48,7 @@ cbuffer ParticleConstants : register(b0)
     float TileCountY;
     uint  FrameIndex;
     float ProjScaleY;
-    float Style;
+    float Style;          // particle look style (0..3); the fluid kernels ignore it
     float DepthRadiusScale;
     float InvPackingFactor;
     float ProjA;
@@ -67,6 +67,11 @@ cbuffer ParticleConstants : register(b0)
     float  EmitterPad;
 
     float4 ViewProjection[4];
+
+    uint   ThicknessShift;   // WO-P1: 0 = depth grid, 1 = half grid
+    float ThicknessPad0; // WO-P1: pad to 68 DWORDs
+    float ThicknessPad1;
+    float ThicknessPad2;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -130,21 +135,58 @@ void CS(uint3 id : SV_DispatchThreadID)
     // The clear writes all ones (a NaN pattern); anything non-finite is an empty pixel.
     float z = bits < 0x7F800000u ? asfloat(bits) : 0.0f;
 
-    // 5x5 binomial blur of the chord sum. Rays that pass between lattice columns see fewer
-    // chords than rays through them, so the raw sum carries radial moire streaks.
+    // WO-P1: the chord sum may sit on a grid half the depth grid (ThicknessShift == 1).
+    // Upsample it into FluidThickness here, in the same pass. With ThicknessShift == 0
+    // this is today's 5x5 binomial; with shift 1 it reads the coarse grid at
+    // ((x + 0.5) / 2 - 0.5, (y + 0.5) / 2 - 0.5) with a separable 4-tap kernel per axis
+    // (bilinear weights convolved with the [1 2 1] / 4 binomial), which roughly matches
+    // the 5x5 binomial on the depth grid.
+    const uint shift = min(ThicknessShift, 1u);
     float sum = 0.0f;
     float weightSum = 0.0f;
-    [unroll]
-    for (int dy = -2; dy <= 2; ++dy) {
-        const int y = int(id.y) + dy;
-        const float wy = dy == 0 ? 6.0f : (abs(dy) == 1 ? 4.0f : 1.0f);
+    if (shift == 0u) {
+        // 5x5 binomial blur of the chord sum. Rays that pass between lattice columns see fewer
+        // chords than rays through them, so the raw sum carries radial moire streaks.
         [unroll]
-        for (int dx = -2; dx <= 2; ++dx) {
-            const int x = int(id.x) + dx;
-            if (x < 0 || y < 0 || x >= int(OutputWidth) || y >= int(OutputHeight)) continue;
-            const float w = wy * (dx == 0 ? 6.0f : (abs(dx) == 1 ? 4.0f : 1.0f));
-            sum += float(ThicknessBits[uint(x) + uint(y) * OutputWidth]) * w;
-            weightSum += w;
+        for (int dy = -2; dy <= 2; ++dy) {
+            const int y = int(id.y) + dy;
+            const float wy = dy == 0 ? 6.0f : (abs(dy) == 1 ? 4.0f : 1.0f);
+            [unroll]
+            for (int dx = -2; dx <= 2; ++dx) {
+                const int x = int(id.x) + dx;
+                if (x < 0 || y < 0 || x >= int(OutputWidth) || y >= int(OutputHeight)) continue;
+                const float w = wy * (dx == 0 ? 6.0f : (abs(dx) == 1 ? 4.0f : 1.0f));
+                sum += float(ThicknessBits[uint(x) + uint(y) * OutputWidth]) * w;
+                weightSum += w;
+            }
+        }
+    } else {
+        const uint widthT = (OutputWidth + 1u) >> 1;
+        const uint heightT = (OutputHeight + 1u) >> 1;
+        const float2 f = (float2(id.xy) + 0.5f) * 0.5f - 0.5f;   // coarse texel centres
+        const int2 base = int2(floor(f));
+        const float2 w = f - float2(base);
+        // (1 - w, w) convolved with [1 2 1] / 4: four taps, k(b-1), k(b), k(b+1), k(b+2).
+        const float4 kx = float4((1.0f - w.x) * 0.25f,
+                                 (1.0f - w.x) * 0.5f + w.x * 0.25f,
+                                 (1.0f - w.x) * 0.25f + w.x * 0.5f,
+                                 w.x * 0.25f);
+        const float4 ky = float4((1.0f - w.y) * 0.25f,
+                                 (1.0f - w.y) * 0.5f + w.y * 0.25f,
+                                 (1.0f - w.y) * 0.25f + w.y * 0.5f,
+                                 w.y * 0.25f);
+        [unroll]
+        for (int dy = -1; dy <= 2; ++dy) {
+            const int y = int(base.y) + dy;
+            if (y < 0 || y >= int(heightT)) continue;
+            [unroll]
+            for (int dx = -1; dx <= 2; ++dx) {
+                const int x = int(base.x) + dx;
+                if (x < 0 || x >= int(widthT)) continue;
+                const float weight = ky[dy + 1] * kx[dx + 1];
+                sum += float(ThicknessBits[uint(x) + uint(y) * widthT]) * weight;
+                weightSum += weight;
+            }
         }
     }
     const float thickness = sum / max(weightSum, 1.0f) * (1.0f / 1024.0f);

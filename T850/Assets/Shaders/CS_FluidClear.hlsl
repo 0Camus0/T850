@@ -36,7 +36,7 @@ cbuffer ParticleConstants : register(b0)
     float TileCountY;
     uint  FrameIndex;
     float ProjScaleY;
-    float Style;
+    float Style;          // particle look style (0..3); the fluid kernels ignore it
     float DepthRadiusScale;
     float InvPackingFactor;
     float ProjA;
@@ -55,6 +55,11 @@ cbuffer ParticleConstants : register(b0)
     float  EmitterPad;
 
     float4 ViewProjection[4];
+
+    uint   ThicknessShift;   // WO-P1: 0 = depth grid, 1 = half grid
+    float ThicknessPad0; // WO-P1: pad to 68 DWORDs
+    float ThicknessPad1;
+    float ThicknessPad2;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -82,9 +87,17 @@ void CS(uint3 id : SV_DispatchThreadID)
     // All ones sorts above every positive float's bits and every packed particle key, so one
     // sentinel serves both the screen-space depth and the particle-impostor key.
     DepthBits[pixel] = 0xFFFFFFFFu;
+    // WO-P1: the thickness and aux accumulators may live on a grid half the depth grid;
+    // clear exactly the entries the splat can write (the first Wt*Ht, aux 4x that).
+    const uint shift = min(ThicknessShift, 1u);
+    const uint widthT = (OutputWidth + (1u << shift) - 1u) >> shift;
     ThicknessBits[pixel] = 0u;
-    AuxBits[pixel * 4u + 0u] = 0u;
-    AuxBits[pixel * 4u + 1u] = 0u;
-    AuxBits[pixel * 4u + 2u] = 0u;
-    AuxBits[pixel * 4u + 3u] = 0u;
+    const uint tIndex = (id.x >> shift) + (id.y >> shift) * widthT;
+    const uint a = tIndex * 4u;
+    AuxBits[a + 0u] = 0u;
+    AuxBits[a + 1u] = 0u;
+    AuxBits[a + 2u] = 0u;
+    AuxBits[a + 3u] = 0u;
+    // Threads that share a coarse cell (a 2x2 block when shift is 1) clear the same entries;
+    // the write is idempotent, so the duplicates are harmless.
 }

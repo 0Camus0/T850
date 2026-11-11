@@ -70,6 +70,11 @@ cbuffer ParticleConstants : register(b0)
     // Row-major view-projection. In the cbuffer rather than a buffer so the graph does not
     // need a per-frame buffer upload API (the engine only supports upload at creation).
     float4 ViewProjection[4];
+
+    uint   ThicknessShift;   // WO-P1: 0 = depth grid, 1 = half grid
+    float ThicknessPad0; // WO-P1: pad to 68 DWORDs
+    float ThicknessPad1;
+    float ThicknessPad2;
 };
 
 // Scene depth for soft-particle occlusion (R4).

@@ -135,6 +135,10 @@ namespace t850 {
     float causticSpeed = 1.0f;
     float causticDepth = 1.6f;        // metres of water over which caustics fade
     bool splatFallback = false;       // keep the splat resolve under the SSFR layer
+    // WO-P1: resolution of the thickness/whitewater sums. 0 = auto (half the depth grid
+    // when the window height is at least 1440, else the depth grid), 1 = the depth grid,
+    // 2 = half the depth grid. The sphere renderer always uses the depth grid.
+    int thicknessDownsample = 0;
     // Anisotropic particles (Yu and Turk 2013): each particle is an ellipsoid shaped by its
     // neighbours, so free surfaces are flat and sheets are films instead of rows of domes.
     bool anisotropy = true;

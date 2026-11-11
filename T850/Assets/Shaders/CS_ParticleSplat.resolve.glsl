@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_ParticleSplat.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=2fe7cfaf568c63e587c511820373cac9523cabcc941cb6db0bd9c224be378307; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_ParticleSplat.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=3b8000f836997abb63c06ecd9bff660787d28e68f71ecbbf4d5a36cdeb82ce49; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 #if defined(GL_EXT_control_flow_attributes)
 #extension GL_EXT_control_flow_attributes : require
 #define SPIRV_CROSS_FLATTEN [[flatten]]
@@ -55,6 +55,10 @@ layout(binding = 0, std140) uniform ParticleConstants
     vec3 EmitterPosition;
     float EmitterPad;
     vec4 ViewProjection[4];
+    uint ThicknessShift;
+    float ThicknessPad0;
+    float ThicknessPad1;
+    float ThicknessPad2;
 } _48;
 
 layout(binding = 1, std430) readonly buffer Positions
@@ -151,12 +155,13 @@ void main()
                 {
                     int _2017;
                     _2017 = max(_1187, 0);
+                    uint _1249;
                     SPIRV_CROSS_LOOP
                     for (;;)
                     {
                         if (_2017 <= min(_1194, _1213))
                         {
-                            uint _1249 = atomicMax(TileMasks_1._data[_2017 + (int(_48.TileCountX) * _2016)], _48.FrameIndex);
+                            _1249 = atomicMax(TileMasks_1._data[_2017 + (int(_48.TileCountX) * _2016)], _48.FrameIndex);
                             _2017++;
                             continue;
                         }

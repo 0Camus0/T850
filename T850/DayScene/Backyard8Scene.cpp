@@ -86,6 +86,8 @@ bool Backyard8Scene::LoadFluidConfig() {
       (std::min)((std::max)(m_config.screenSpace.smoothingIterations, 0), 8);
   m_config.screenSpace.smoothingStrength =
       (std::min)((std::max)(m_config.screenSpace.smoothingStrength, 0.0f), 1.0f);
+  m_config.screenSpace.thicknessDownsample =
+      (std::min)((std::max)(m_config.screenSpace.thicknessDownsample, 0), 2);
   return true;
 }
 
@@ -328,6 +330,8 @@ void Backyard8Scene::BuildParticleDesc() {
   d.screen_space.surfel_band = (std::min)((std::max)(c.surfelBand, 0.1f), 8.0f);
   d.screen_space.surfel_sharpness = (std::min)((std::max)(c.surfelSharpness, 0.25f), 8.0f);
   d.screen_space.surfel_smoothing = (std::min)((std::max)(c.surfelSmoothing, 0.0f), 4.0f);
+  d.screen_space.thickness_downsample =
+      (std::min)((std::max)(ss.thicknessDownsample, 0), 2);
   m_particleDesc = d;
 }
 
@@ -965,6 +969,11 @@ void Backyard8Scene::DrawScreenSpacePanel(t850::DevGuiContext& gui) {
     if (controls.slider("pbf8_ss_packing", "packing factor", ss.packingFactor, 1.0f, 8.0f, 0.01f))
       lookChanged = true;
     if (controls.slider("pbf8_ss_thick", "thickness scale", ss.thicknessScale, 0.0f, 4.0f, 0.05f))
+      lookChanged = true;
+    // WO-P1: the thickness/whitewater sums run at half resolution on large windows.
+    if (controls.combo("pbf8_ss_thick_ds", "thickness downsample",
+                       {"auto (half on 1440p+)", "full (depth grid)", "half (half grid)"},
+                       ss.thicknessDownsample))
       lookChanged = true;
   }
 

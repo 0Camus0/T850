@@ -42,9 +42,13 @@ sanctioned there:
     failure, unlike the `FluidConstants` alias), must be 48 DWORDs, and must match the C++
     mirror `struct PbfWhitewaterConstants` in `Framework/src/simulation/PbfFluid.cpp` and the
     manifest `constant_count` of the three `pbf_*` kernels.
-  * `ParticleShadeConstants` in `CS_ParticleShade.hlsl` must be 100 DWORDs and match the C++
-    mirror `struct ParticleShadeConstants` in `Framework/src/utils/ComputeKernelRegistry.cpp`
-    (400 bytes via its `static_assert`) and manifest `particle_shade`.
+  * `ParticleShadeConstants` in `CS_ParticleShade.hlsl` must be 104 DWORDs (416 bytes,
+    including the WO-P1 `ThicknessShift` slot) and match the C++ mirror
+    `struct ParticleShadeConstants` in `Framework/src/utils/ComputeKernelRegistry.cpp`
+    (via its `static_assert`) and manifest `particle_shade`.
+   * `ParticleConstants` in `CS_ParticleSplat.hlsl` must be 68 DWORDs (272 bytes) and match
+    the C++ mirror `struct ParticleSplatConstants` in `Framework/src/utils/ComputeKernelRegistry.cpp`
+    and manifest `particle_splat` / `particle_fluid_clear` / `particle_fluid_splat` / `particle_fluid_resolve`.
   * `WhitewaterSplatConstants` in `CS_FluidWhitewater.hlsl` must be 28 DWORDs and match the C++
     mirror `struct WhitewaterSplatConstants` (112 bytes) and manifest `particle_whitewater`.
 
@@ -94,6 +98,7 @@ COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 CPP_MIRRORS = {
     "PbfWhitewaterConstants": "simulation/PbfFluid.cpp",
     "ParticleShadeConstants": "utils/ComputeKernelRegistry.cpp",
+    "ParticleSplatConstants": "utils/ComputeKernelRegistry.cpp",
     "WhitewaterSplatConstants": "utils/ComputeKernelRegistry.cpp",
 }
 # Kernel source file -> the cbuffer (and C++ struct) it must cross-check against. Sources without
@@ -103,6 +108,7 @@ CROSS_CHECKS = {
     "CS_PbfDiffuse.hlsl": "PbfWhitewaterConstants",
     "CS_PbfFields.hlsl": "PbfWhitewaterConstants",
     "CS_ParticleShade.hlsl": "ParticleShadeConstants",
+    "CS_ParticleSplat.hlsl": "ParticleSplatConstants",
     "CS_FluidWhitewater.hlsl": "WhitewaterSplatConstants",
 }
 CPP_TYPES = {"uint32_t": 4, "int32_t": 4, "uint": 4, "int": 4, "float": 4}

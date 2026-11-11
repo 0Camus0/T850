@@ -79,7 +79,7 @@ cbuffer ParticleConstants : register(b0)
     float TileCountY;
     uint  FrameIndex;
     float ProjScaleY;
-    float Style;
+    float Style;          // particle look style (0..3); the fluid kernels ignore it
     float DepthRadiusScale;
     float InvPackingFactor;
     float ProjA;
@@ -98,6 +98,11 @@ cbuffer ParticleConstants : register(b0)
     float  Anisotropic;         // 1 = read the ellipsoids from `Anisotropy`
 
     float4 ViewProjection[4];
+
+    uint   ThicknessShift;   // WO-P1: 0 = depth grid, 1 = half grid
+    float ThicknessPad0; // WO-P1: pad to 68 DWORDs
+    float ThicknessPad1;
+    float ThicknessPad2;
 };
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
@@ -270,6 +275,12 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float rPx = min(p.z * float(OutputHeight) / float(max(sceneSize.y, 1u)), 64.0f);
     const float worldThick = max(Radius, 1.0e-4f);
     const int2 screenMax = int2(int(OutputWidth) - 1, int(OutputHeight) - 1);
+    // WO-P1: the thickness/whitewater sums live on a grid half the depth grid when
+    // ThicknessShift == 1 (both axes); the 64-px cap above was measured on the depth
+    // grid, so it divides with the centre and radius below. The sphere renderer
+    // (!surface) always splats its thickness at full resolution.
+    const uint shift = ScreenSpace > 0.5f ? min(ThicknessShift, 1u) : 0u;   // spheres: always full
+    const float downsample = 1.0f / float(1u << shift);
 
     if (!surface) {
         // ScreenSpace = 0: nearest-sphere key plus thickness for the particle renderer (full
@@ -318,16 +329,25 @@ void CS(uint3 id : SV_DispatchThreadID)
     // pass skips it: the scatter must not add the chord sum (and the whitewater channels)
     // twice, and the surfel surface is what the particle renderer shades.
     if (!surfelPass && rPx >= 0.5f) {
-        const int2 lo = max(int2(floor(centre - rPx)), int2(0, 0));
-        const int2 hi = min(int2(ceil(centre + rPx)), screenMax);
-        const float r2 = max(rPx * rPx, 1.0e-6f);
+        const float2 centreT = centre * downsample;
+        // A particle that just passed rPx >= 0.5 on the depth grid would be 0.25 of a
+        // coarse texel wide after the 2x downscale: too small to cover a texel centre,
+        // so distant water would lose its chords. The splat keeps a 0.75 coarse-texel
+        // minimum instead (the chord value still comes from the coarse disc).
+        const float rPxT = shift > 0u ? max(rPx * downsample, 0.75f) : rPx;
+        const uint widthT = (OutputWidth + (1u << shift) - 1u) >> shift;
+        const uint heightT = (OutputHeight + (1u << shift) - 1u) >> shift;
+        const int2 maxT = int2(int(widthT) - 1, int(heightT) - 1);
+        const int2 lo = max(int2(floor(centreT - rPxT)), int2(0, 0));
+        const int2 hi = min(int2(ceil(centreT + rPxT)), maxT);
+        const float r2 = max(rPxT * rPxT, 1.0e-6f);
         for (int y = lo.y; y <= hi.y; ++y) {
             for (int x = lo.x; x <= hi.x; ++x) {
-                const float2 delta = float2(float(x) + 0.5f, float(y) + 0.5f) - centre;
+                const float2 delta = float2(float(x) + 0.5f, float(y) + 0.5f) - centreT;
                 const float d2 = dot(delta, delta);
                 if (d2 > r2) continue;
                 const float h = sqrt(max(1.0f - d2 / r2, 0.0f));
-                const uint pix = uint(x) + uint(y) * OutputWidth;
+                const uint pix = uint(x) + uint(y) * widthT;
                 const float chord = 2.0f * h * worldThick * InvPackingFactor;
                 InterlockedAdd(ThicknessBits[pix], uint(chord * 1024.0f));
                 if (anyWhitewater) {

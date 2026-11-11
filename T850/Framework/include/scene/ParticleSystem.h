@@ -183,6 +183,10 @@ namespace t850 {
     float surfel_band = 1.0f;        // front-layer depth, in particle radii
     float surfel_sharpness = 2.0f;   // exponent on the ellipsoid's centre weight
     float surfel_smoothing = 1.0f;   // normal gather radius in the shade, in particle radii
+    // WO-P1: resolution of the thickness and whitewater sums. 0 = auto (half the depth
+    // grid when the window height is at least 1440, else the depth grid), 1 = the depth
+    // grid, 2 = half the depth grid. The sphere renderer always uses the depth grid.
+    int thickness_downsample = 0;
   };
 
   // Scene geometry a fluid renderer needs from its simulation (set by the owning scene).

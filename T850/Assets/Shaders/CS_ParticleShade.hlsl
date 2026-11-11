@@ -17,8 +17,9 @@
 //                slope follows the local flow; the slope variance of ripples too fine for the
 //                pixel widens the sun glint and the reflection (Toksvig), instead of vanishing.
 //   refraction   Snell (1/1.33). The refracted ray is MARCHED through the depth buffer to the
-//                floor, wall or step it meets. When that surface is hidden (under the coping lip)
-//                the analytic pool box gives the path and the last visible sample the colour.
+//                floor, wall or step it meets. When that surface is hidden (under the coping lip,
+//                off screen) the analytic pool box gives the hit, and the nearest point of the
+//                same face that the camera sees gives its colour.
 //                Water in the air (a sheet over the pool) sees the pool surface behind it,
 //                which is shaded here as a second interface.
 //   light below  the G-buffer rebuilds the direct sun on the submerged surface (albedo, N.L,
@@ -643,17 +644,153 @@ float FoamLace(float2 xz, float time, float cellPixels)
 // ---- Refraction ---------------------------------------------------------------------------
 
 // Distance along a world ray from inside the basin to its floor or walls (the analytic pool
-// box, steps ignored). Outside the footprint the ray is not in the pool: a large distance.
-float PoolBoxExit(float3 o, float3 d)
+// box, steps ignored), and the inward normal of the face it meets. Outside the footprint the
+// ray is not in the pool: a large distance.
+float PoolBoxHit(float3 o, float3 d, out float3 faceNormal)
 {
+    faceNormal = float3(0.0f, 1.0f, 0.0f);
     if (o.x < PoolMin.x || o.x > PoolMax.x || o.z < PoolMin.z || o.z > PoolMax.z) return 1.0e3f;
     float t = 1.0e3f;
-    if (d.x > 1.0e-4f) t = min(t, (PoolMax.x - o.x) / d.x);
-    else if (d.x < -1.0e-4f) t = min(t, (PoolMin.x - o.x) / d.x);
-    if (d.z > 1.0e-4f) t = min(t, (PoolMax.z - o.z) / d.z);
-    else if (d.z < -1.0e-4f) t = min(t, (PoolMin.z - o.z) / d.z);
-    if (d.y < -1.0e-4f) t = min(t, (PoolMin.y - o.y) / d.y);
+    float candidate = 1.0e3f;
+    if (d.x > 1.0e-4f) candidate = (PoolMax.x - o.x) / d.x;
+    else if (d.x < -1.0e-4f) candidate = (PoolMin.x - o.x) / d.x;
+    if (candidate < t) { t = candidate; faceNormal = float3(d.x > 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f); }
+    candidate = 1.0e3f;
+    if (d.z > 1.0e-4f) candidate = (PoolMax.z - o.z) / d.z;
+    else if (d.z < -1.0e-4f) candidate = (PoolMin.z - o.z) / d.z;
+    if (candidate < t) { t = candidate; faceNormal = float3(0.0f, 0.0f, d.z > 0.0f ? -1.0f : 1.0f); }
+    if (d.y < -1.0e-4f) {
+        candidate = (PoolMin.y - o.y) / d.y;
+        if (candidate < t) { t = candidate; faceNormal = float3(0.0f, 1.0f, 0.0f); }
+    }
     return max(t, 0.0f);
+}
+
+float PoolBoxExit(float3 o, float3 d)
+{
+    float3 faceNormal;
+    return PoolBoxHit(o, d, faceNormal);
+}
+
+// True when the camera sees the world point itself: the opaque depth at its pixel is the
+// point's own depth, not something in front of it. `pixel` is the texel centre.
+bool SeesPoint(float3 world, out float2 pixel, out float sceneZ)
+{
+    pixel = float2(0.5f, 0.5f);
+    sceneZ = 1.0e9f;
+    const float3 v = ToView(world - CameraPosition());
+    if (v.z <= 0.05f) return false;
+    const float2 px = ProjectToPixel(v);
+    if (!OnScreen(px)) return false;
+    pixel = floor(px) + 0.5f;
+    sceneZ = LinearSceneDepth(int2(pixel));
+    return abs(sceneZ - v.z) < 0.02f * v.z + 0.03f;
+}
+
+// Room left on the pool face from `start` along the axis direction `dir` (up a wall: to the
+// water plane), a little short of the edge.
+float FaceRoom(float3 start, float3 dir)
+{
+    return (dir.y > 0.5f ? PoolMin.w - start.y :
+            dir.x > 0.5f ? PoolMax.x - start.x :
+            dir.x < -0.5f ? start.x - PoolMin.x :
+            dir.z > 0.5f ? PoolMax.z - start.z : start.z - PoolMin.z) - 0.03f;
+}
+
+// Walks along a pool face from `start` in the axis direction `walk` to the nearest point the
+// camera sees, staying on the face.
+bool WalkFace(float3 start, float3 walk, out float2 pixel, out float sceneZ)
+{
+    pixel = float2(0.5f, 0.5f);
+    sceneZ = 1.0e9f;
+    const float room = FaceRoom(start, walk);
+    float hidden = 0.0f;
+    float step = 0.06f;
+    [loop]
+    for (int k = 0; k < 40 && hidden < room; ++k) {
+        float seen = min(hidden + step, room);
+        if (SeesPoint(start + walk * seen, pixel, sceneZ)) {
+            // Bisect back to the edge of the hidden region: the nearest visible point.
+            [unroll]
+            for (int r = 0; r < 4; ++r) {
+                const float mid = 0.5f * (hidden + seen);
+                float2 midPixel;
+                float midZ;
+                if (SeesPoint(start + walk * mid, midPixel, midZ)) {
+                    seen = mid;
+                    pixel = midPixel;
+                    sceneZ = midZ;
+                } else {
+                    hidden = mid;
+                }
+            }
+            return true;
+        }
+        hidden = seen;
+        step = min(step * 1.2f, 0.3f);
+    }
+    return false;
+}
+
+// A refraction hit the camera cannot see (under the coping, off screen) takes its colour from
+// the nearest point of the SAME pool face that the camera does see, found by walking along the
+// face away from the camera. The face keeps its own layout (its corners with the other faces,
+// the waterline band of a wall), and at the edge of the hidden region the walk shrinks to
+// nothing, so the stand-in meets the true image without a seam. The box has no steps: a hit
+// behind a step takes the submerged surface the camera sees in front of it (the step). When
+// the steps or the coping hide a whole line of the face, the walk is repeated from lines
+// shifted across the face (toward the middle of the floor, up a wall).
+// Returns 0 when nothing fits, 1 for a point of the same face, 2 for the surface in front.
+uint SameFaceStandIn(float3 hitWorld, float3 faceNormal, out float2 pixel, out float sceneZ)
+{
+    if (SeesPoint(hitWorld, pixel, sceneZ)) return 1u;
+    const float3 away = hitWorld - CameraPosition();
+    const float3 centre = 0.5f * (PoolMin.xyz + PoolMax.xyz);
+    const float3 awayX = float3(away.x >= 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f);
+    const float3 awayZ = float3(0.0f, 0.0f, away.z >= 0.0f ? 1.0f : -1.0f);
+    const float3 inX = float3(centre.x >= hitWorld.x ? 1.0f : -1.0f, 0.0f, 0.0f);
+    const float3 inZ = float3(0.0f, 0.0f, centre.z >= hitWorld.z ? 1.0f : -1.0f);
+    const float3 up = float3(0.0f, 1.0f, 0.0f);
+    // Two walks per face, the more promising first, each with the axis its line is shifted along.
+    float3 walkA, shiftA, walkB, shiftB;
+    if (abs(faceNormal.y) > 0.5f) {
+        const bool zFirst = abs(away.z) >= abs(away.x);
+        walkA = zFirst ? awayZ : awayX;
+        shiftA = zFirst ? inX : inZ;
+        walkB = zFirst ? awayX : awayZ;
+        shiftB = zFirst ? inZ : inX;
+    } else {
+        const bool xWall = abs(faceNormal.x) > 0.5f;
+        walkA = xWall ? awayZ : awayX;
+        shiftA = up;
+        walkB = up;
+        shiftB = xWall ? inZ : inX;
+    }
+    const float roomA = FaceRoom(hitWorld, shiftA);
+    const float roomB = FaceRoom(hitWorld, shiftB);
+    // Attempt 0 walks A, 1 tries the surface in front, 2 walks B, then A and B alternate from
+    // lines shifted 0.4, 0.8, 1.6 and 3.2 m. One call site keeps the inlined kernel small.
+    [loop]
+    for (int attempt = 0; attempt < 11; ++attempt) {
+        if (attempt == 1) {
+            const float3 v = ToView(hitWorld - CameraPosition());
+            if (v.z > 0.05f) {
+                const float2 px = ProjectToPixel(v);
+                if (OnScreen(px) && UnderWater(int2(px))) {
+                    pixel = floor(px) + 0.5f;
+                    sceneZ = LinearSceneDepth(int2(pixel));
+                    if (sceneZ < v.z) return 2u;
+                }
+            }
+            continue;
+        }
+        const bool useB = attempt == 2 || (attempt >= 3 && (attempt & 1) == 0);
+        const float shift = attempt < 3 ? 0.0f : 0.4f * exp2(float((attempt - 3) / 2));
+        if (shift >= (useB ? roomB : roomA)) continue;
+        if (WalkFace(hitWorld + (useB ? shiftB : shiftA) * shift, useB ? walkB : walkA, pixel, sceneZ))
+            return 1u;
+    }
+    return 0u;
 }
 
 struct RefractionHit
@@ -661,12 +798,14 @@ struct RefractionHit
     float2 pixel;      // where the refracted ray meets the opaque scene (or the stand-in)
     float sceneZ;
     float distance;    // metres along the refracted ray
-    float visible;     // 1 = the hit is on screen, 0 = hidden (analytic distance, stand-in colour)
+    float visible;     // 1 = a surface colour was found, 0 = none (last visible sample's colour)
+    float3 world;      // where the ray meets the pool: lighting, depth and caustics use this point
 };
 
 // March the refracted ray through the depth buffer and bisect the first crossing behind an
 // opaque surface that lies under the water. A crossing behind anything that is NOT under the
-// water (the coping lip, the deck) means the true hit is hidden from the camera.
+// water (the coping lip, the deck) means the true hit is hidden from the camera: the analytic
+// pool box then gives the hit and the same face's nearest visible point its colour.
 RefractionHit MarchRefraction(float3 origin, float3 direction, float maxDistance, float3 originWorld,
                               float2 startPixel)
 {
@@ -675,6 +814,7 @@ RefractionHit MarchRefraction(float3 origin, float3 direction, float maxDistance
     hit.sceneZ = LinearSceneDepth(int2(startPixel));
     hit.distance = 0.0f;
     hit.visible = 0.0f;
+    hit.world = originWorld;
     float2 lastGood = startPixel;
     float lastGoodZ = hit.sceneZ;
     float previous = 0.0f;
@@ -703,6 +843,7 @@ RefractionHit MarchRefraction(float3 origin, float3 direction, float maxDistance
             hit.sceneZ = LinearSceneDepth(int2(hit.pixel));
             hit.distance = hi;
             hit.visible = 1.0f;
+            hit.world = CameraPosition() + ToWorld(ViewPosition(hit.pixel, hit.sceneZ));
             return hit;
         }
         // Both corners of the bilinear footprint, or the filter blends in the coping lip.
@@ -712,9 +853,28 @@ RefractionHit MarchRefraction(float3 origin, float3 direction, float maxDistance
         }
         previous = t;
     }
+    const float3 directionWorld = ToWorld(direction);
+    float3 faceNormal;
+    const float boxDistance = PoolBoxHit(originWorld, directionWorld, faceNormal);
+    if (boxDistance < 100.0f) {
+        const float3 boxHit = originWorld + directionWorld * boxDistance;
+        float2 standInPixel;
+        float standInZ;
+        const uint standIn = SameFaceStandIn(boxHit, faceNormal, standInPixel, standInZ);
+        if (standIn != 0u) {
+            hit.pixel = standInPixel;
+            hit.sceneZ = standInZ;
+            hit.world = standIn == 1u ? boxHit
+                                      : CameraPosition() + ToWorld(ViewPosition(standInPixel, standInZ));
+            hit.distance = standIn == 1u ? boxDistance : length(hit.world - originWorld);
+            hit.visible = 1.0f;
+            return hit;
+        }
+    }
     hit.pixel = lastGood;
     hit.sceneZ = lastGoodZ;
-    hit.distance = min(PoolBoxExit(originWorld, ToWorld(direction)), maxDistance);
+    hit.distance = min(boxDistance, maxDistance);
+    hit.world = originWorld + directionWorld * hit.distance;
     return hit;
 }
 
@@ -731,7 +891,7 @@ float3 SubmergedRadiance(RefractionHit hit, float surfaceY, float3 sunWorld, flo
     lightInfo = float3(0.0f, 1.0f, 0.5f);
     if (hit.visible < 0.5f || hit.sceneZ > 1.0e8f) return colour;
     const int2 hp = int2(hit.pixel);
-    const float3 floorWorld = CameraPosition() + ToWorld(ViewPosition(hit.pixel, hit.sceneZ));
+    const float3 floorWorld = hit.world;
     const float depth = surfaceY - floorWorld.y;
     if (depth <= 0.01f) return colour;
     const float3 albedo = SceneAlbedo.Load(SceneTexel(hp)).rgb;
@@ -962,7 +1122,11 @@ void CS(uint3 id : SV_DispatchThreadID)
     // A thin sheet offsets the background but barely bends it; a body of water bends it fully.
     const float bend = saturate(Refraction) * lerp(0.3f, 1.0f, filled);
     const float3 bent = normalize(lerp(view, transmitted, bend));
-    const float marchLength = clamp(gap * 1.2f + 0.2f, 0.3f, max(MaxTravel, 0.3f) * 2.0f);
+    // Long enough to reach the pool box: a refracted ray is steeper than the view ray, so to a
+    // wall the view ray meets it travels further than the view ray's gap.
+    const float boxExit = PoolBoxExit(surfaceWorld, ToWorld(bent));
+    const float marchLength = clamp(max(gap * 1.2f + 0.2f, boxExit < 100.0f ? boxExit * 1.1f + 0.1f : 0.0f),
+                                    0.3f, max(MaxTravel, 0.3f) * 2.0f);
     const RefractionHit hit = MarchRefraction(p, bent, marchLength, surfaceWorld, pixelCentre);
     float3 lightInfo;
     float3 background = SubmergedRadiance(hit, surfaceWorld.y, sunWorld, sunDown, time, lightInfo);

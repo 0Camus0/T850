@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_PbfCull.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=f63797cf53caa7a70ce1af41501cbaf72d563f05d27e74282e0e36067e32f7f2; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_PbfCull.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=8fd26e4be10d12c79609decc642c60f335e2e1a2fdac54e9cb31b76d7f24dcb4; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 0, std140) uniform PbfConstants
@@ -60,19 +60,20 @@ void main()
         {
             break;
         }
-        vec4 _251 = Positions_1._data[gl_GlobalInvocationID.x];
-        if (_251.y <= (-999.0))
+        vec4 _237 = Positions_1._data[gl_GlobalInvocationID.x];
+        if (_237.y <= (-999.0))
         {
             Positions_1._data[gl_GlobalInvocationID.x].w = 0.0;
             break;
         }
-        if (((!((!isnan(_251.x)) && (!isinf(_251.x)))) || (!((!isnan(_251.y)) && (!isinf(_251.y))))) || (!((!isnan(_251.z)) && (!isinf(_251.z)))))
+        bvec3 _252 = notEqual((floatBitsToUint(_237.xyz) & uvec3(2139095040u)), uvec3(2139095040u));
+        if (((!_252.x) || (!_252.y)) || (!_252.z))
         {
             Positions_1._data[gl_GlobalInvocationID.x] = vec4(0.0, -1000.0, 0.0, 0.0);
             Velocities_1._data[gl_GlobalInvocationID.x] = vec4(0.0);
             break;
         }
-        if (((!(_251.y < (_22.BasinMinY - (2.0 * _22.ParticleRadius)))) && (!((((_251.x < (_22.BasinMinX - 0.60000002384185791015625)) || (_251.x > (_22.BasinMaxX + 0.60000002384185791015625))) || (_251.z < (_22.BasinMinZ - 0.60000002384185791015625))) || (_251.z > (_22.BasinMaxZ + 0.60000002384185791015625))))) && (!(((((_251.x < _22.BasinMinX) || (_251.x > _22.BasinMaxX)) || (_251.z < _22.BasinMinZ)) || (_251.z > _22.BasinMaxZ)) && (_251.y < max(_22.WallTopY, (_22.WaterPlaneY + 0.1599999964237213134765625) + (2.0 * _22.ParticleRadius))))))
+        if (((!(_237.y < (_22.BasinMinY - (2.0 * _22.ParticleRadius)))) && (!((((_237.x < (_22.BasinMinX - 0.60000002384185791015625)) || (_237.x > (_22.BasinMaxX + 0.60000002384185791015625))) || (_237.z < (_22.BasinMinZ - 0.60000002384185791015625))) || (_237.z > (_22.BasinMaxZ + 0.60000002384185791015625))))) && (!(((((_237.x < _22.BasinMinX) || (_237.x > _22.BasinMaxX)) || (_237.z < _22.BasinMinZ)) || (_237.z > _22.BasinMaxZ)) && (_237.y < max(_22.WallTopY, (_22.WaterPlaneY + 0.1599999964237213134765625) + (2.0 * _22.ParticleRadius))))))
         {
             break;
         }

@@ -224,7 +224,11 @@ void CS(uint3 id : SV_DispatchThreadID)
         life = 0.0f;
     }
     const float3 centre = 0.5f * float3(BasinMinX + BasinMaxX, BasinMinY + BasinMaxY, BasinMinZ + BasinMaxZ);
-    if (x.y < BasinMinY - 0.5f || any(abs(x - centre) > 25.0f) || !all(isfinite(x))) life = 0.0f;
+    // Bit-pattern finiteness: `isfinite` lowers to OpIsNan, which Tint's SPIR-V reader aborts
+    // on (WebGPU). See CS_FluidDiagnostics3D.hlsl.
+    const uint3 xBits = asuint(x);
+    const bool xFinite = all((xBits & 0x7F800000u) != 0x7F800000u);
+    if (x.y < BasinMinY - 0.5f || any(abs(x - centre) > 25.0f) || !xFinite) life = 0.0f;
 
     Diffuse[k * 2u + 0u] = float4(x, life);
     Diffuse[k * 2u + 1u] = float4(v, kind);

@@ -303,9 +303,9 @@ void WebGPUContext::Initialize(void* hwnd, uint32_t newWidth, uint32_t newHeight
   requiredLimits.maxColorAttachments = adapterLimits.maxColorAttachments;
   requiredLimits.maxColorAttachmentBytesPerSample = adapterLimits.maxColorAttachmentBytesPerSample;
   // The particle solver binds one structured buffer of the whole screen as a storage binding
-  // (the $window buffers); at 3840x2160 that is 2.03 bytes/pixel * 4K pixels * 16 B = 162 MB,
-  // over the WebGPU default of 128 MiB, and the dispatch was rejected at 4K. Ask for the
-  // adapter's ceiling, never more: Dawn errors when a required limit exceeds the adapter's.
+  // (the $window buffers): 20 B per pixel, so 165,888,000 B at 3840x2160, over the WebGPU
+  // default of 128 MiB, and the dispatch was rejected at 4K. Ask for the adapter's ceiling,
+  // never more: Dawn errors when a required limit exceeds the adapter's.
   requiredLimits.maxStorageBufferBindingSize = adapterLimits.maxStorageBufferBindingSize;
   requiredLimits.maxBufferSize = adapterLimits.maxBufferSize;
   deviceDesc.requiredLimits = &requiredLimits;

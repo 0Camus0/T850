@@ -70,6 +70,14 @@ nearest particle lit as an opaque sphere. The water style has no front-surface
 reconstruction, so it reflects only the sky and its normals are softer; screen space remains
 the final look.
 
+Second surface reconstruction (2026-11-11): the particle renderer now uses the same
+pipeline with `screen_space.surfels` — the water style (renderMode 0, blend 1, style 0)
+maps to `render_mode = ScreenSpace` with surfel front-layer reconstruction, so the shade
+is shared and the difference is only how the surface is reconstructed: the surfel front
+layer (per-particle disc axis, 13-tap normal gather into the new `FluidNormal` target)
+instead of the smoothed depth. See
+[backyard8-particle-surfels.md](backyard8-particle-surfels.md).
+
 Key properties:
 
 | Concern | Implementation |

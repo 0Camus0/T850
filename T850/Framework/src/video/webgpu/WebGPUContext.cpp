@@ -302,6 +302,12 @@ void WebGPUContext::Initialize(void* hwnd, uint32_t newWidth, uint32_t newHeight
   wgpu::Limits requiredLimits{};
   requiredLimits.maxColorAttachments = adapterLimits.maxColorAttachments;
   requiredLimits.maxColorAttachmentBytesPerSample = adapterLimits.maxColorAttachmentBytesPerSample;
+  // The particle solver binds one structured buffer of the whole screen as a storage binding
+  // (the $window buffers); at 3840x2160 that is 2.03 bytes/pixel * 4K pixels * 16 B = 162 MB,
+  // over the WebGPU default of 128 MiB, and the dispatch was rejected at 4K. Ask for the
+  // adapter's ceiling, never more: Dawn errors when a required limit exceeds the adapter's.
+  requiredLimits.maxStorageBufferBindingSize = adapterLimits.maxStorageBufferBindingSize;
+  requiredLimits.maxBufferSize = adapterLimits.maxBufferSize;
   deviceDesc.requiredLimits = &requiredLimits;
 #if T850_ENABLE_GPU_PROFILING && !defined(__EMSCRIPTEN__)
   const char* gpuProfilingToggles[] = {"allow_unsafe_apis"};
@@ -326,6 +332,9 @@ void WebGPUContext::Initialize(void* hwnd, uint32_t newWidth, uint32_t newHeight
 #endif
   T8_LOG_INFO("[WebGPU] color attachment limits: count=%u bytesPerSample=%u",
     requiredLimits.maxColorAttachments, requiredLimits.maxColorAttachmentBytesPerSample);
+  T8_LOG_INFO("[WebGPU] storage limits: maxStorageBufferBindingSize=%llu maxBufferSize=%llu",
+    static_cast<unsigned long long>(requiredLimits.maxStorageBufferBindingSize),
+    static_cast<unsigned long long>(requiredLimits.maxBufferSize));
   std::vector<wgpu::FeatureName> features;
   for (const auto optional : {wgpu::FeatureName::Float32Filterable, wgpu::FeatureName::TextureCompressionBC}) {
     if (adapter.HasFeature(optional)) features.push_back(optional);

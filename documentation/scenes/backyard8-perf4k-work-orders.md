@@ -366,8 +366,8 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 | P0 | qwen-5090 | done | dd412a8 | reviewed: owned files only; tooling works; 4K numbers UNGUARDED (GPU at 100% from qwen-local) |
 | P1 | qwen-local | in progress | | dispatched 2026-11-11 |
 | P1 | qwen-local | done | c960808 | Claude accepted on visuals; Claude measures the 4K timing |
-| P2 | qwen-5090 (me) | done, needs depth check | 2ff6ea2, d1bc742 | P2b: buried skip in depth+surfel; Fluid Splat close/water 5.44→2.39 ms, default/lake 1.56→0.75 (UNGUARDED). HDR after/control shows the change is ~20x b/b noise (0.17 of it from the skip). Depth-hole check NOT RUN (no usable depth readback) |
-| P3 | qwen-local | in review | 55ea7ed | F0/F1=(0,0.10); shade 1.283->0.989 (default/water), 1.766->1.508 (close/water); gate PASS, 78 PASS. UNGUARDED |
+| P2 | qwen-5090 (me) | in progress (follow-up) | 2ff6ea2, d1bc742 | Claude: buried skip punches holes near the camera; fix = skip only when uncapped bPx < 48. Follow-up in progress |
+| P3 | qwen-local | in progress (follow-up) | 55ea7ed | Claude: Fresnel gate inert (F0 0.0 < floor 0.02). Follow-up: F0 0.03 / F1 0.06, skip fraction, same-build timing |
 | P4 | qwen-5090 | done | 4389a36, 6961c93 | Claude accepted 6961c93 (code); Claude measures the CPU numbers. 4389a36's body misdescribes the Deferred diff (point lights restored in static views) |
 | P5 | | blocked by P0-P4 and Claude's final numbers | | |
 

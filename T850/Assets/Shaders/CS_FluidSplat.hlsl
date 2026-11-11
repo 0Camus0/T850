@@ -23,6 +23,18 @@
 // foam as a maximum (it is a surface layer), the others as chord-weighted sums the shade
 // divides by the thickness.
 //
+// Surfels (Iteration == 2, screen-space only, active while SurfelBand > 0): instead of writing
+// the front depth, each ellipsoid's front hit is blended into five per-pixel sums (SurfelBits,
+// CS_FluidResolve reads and clears them) when it lies within SurfelBand metres of the pixel's
+// front surface: the weight is the ellipsoid's centre weight (1 - s^2, the ray's distance from
+// the centre line in ellipsoid units) raised to SurfelSharpness, times a frontness term that
+// peaks at the front surface; the normal is the ellipsoid's own quadric normal M (hit - c).
+// CS_FluidResolve (stage 2) turns the sums into the blended depth and the normal map, so the
+// particle renderer keeps the whole screen-space shade (CS_ParticleShade, Mode 2) with a
+// smooth surface. The depth and thickness scatter, the whitewater and the sphere fallback
+// all stand down in this pass: the particle renderer draws the surface through the fluid
+// targets, so nothing of the splat path must be written twice.
+//
 // Resolution: the output may be smaller than the scene (the screen-space renderer splats at
 // half resolution); projected radii come from the full-resolution stamp and are scaled. The
 // screen-space mode does not test the opaque depth at all: CS_ParticleShade re-tests every
@@ -75,9 +87,9 @@ cbuffer ParticleConstants : register(b0)
     float3 Color1;
     float  AuxEnabled;          // 1 = accumulate the whitewater channels
     float3 Color2;
-    float  Color2Pad;
+    float  SurfelBand;          // metres behind the front surface to blend; 0 = surfel pass off
     float3 Color3;
-    float  Color3Pad;
+    float  SurfelSharpness;     // exponent on the ellipsoid's centre weight
 
     float3 EmitterPosition;
     float  Anisotropic;         // 1 = read the ellipsoids from `Anisotropy`
@@ -125,6 +137,15 @@ StructuredBuffer<float4> Whitewater : register(t3);
 [[vk::binding(7, 0)]]
 #endif
 RWStructuredBuffer<uint> AuxBits : register(u2);
+
+// Five per output pixel, written by the surfel pass (Iteration == 2) and read and cleared by
+// CS_FluidResolve: [0] sum w, [1] sum w * dz / SurfelBand, [2..4] sum w * n (view space,
+// two's complement), all in units of 1/4096.
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(8, 0)]]
+#endif
+RWStructuredBuffer<uint> SurfelBits : register(u3);
+#define SURFEL_SCALE 4096.0f
 
 #if defined(T850_GL)
   #define T850_IMAGE_Y(y, h) ((uint)(h) - 1u - (uint)(y))
@@ -200,6 +221,32 @@ float3x3 InverseSymmetric(float3x3 m)
     return float3x3(c00, c01, c02, c01, c11, c12, c02, c12, c22) * inv;
 }
 
+// Surfel pass: blend this ellipsoid's front hit into the pixel when it lies in the front
+// layer, weighted toward the ellipsoid's centre line and toward the front.
+// `centreWeight` = 1 - s^2, s = the ray's distance from the centre in ellipsoid units.
+void AccumulateSurfel(uint pix, float3 r, float zFront, float3 c, float3x3 viewM, float centreWeight)
+{
+    const uint bits = DepthBits[pix];
+    if (bits >= 0x7F800000u) return;            // empty (cleared) pixel
+    const float dz = max(zFront - asfloat(bits), 0.0f);
+    if (dz > SurfelBand) return;                 // behind the front layer
+    const float3 hit = r * zFront;               // view space (r.z == 1)
+    float3 n = mul(viewM, hit - c);              // quadric gradient: the ellipsoid's normal
+    const float len = length(n);
+    if (len < 1.0e-6f) return;
+    n /= len;
+    if (dot(n, hit) > 0.0f) n = -n;              // face the camera
+    const float front = 1.0f - dz / SurfelBand;
+    const float w = pow(saturate(centreWeight), max(SurfelSharpness, 0.25f)) * front * front;
+    if (w < 1.0e-3f) return;
+    const uint base = pix * 5u;
+    InterlockedAdd(SurfelBits[base + 0u], uint(w * SURFEL_SCALE + 0.5f));
+    InterlockedAdd(SurfelBits[base + 1u], uint(w * (dz / SurfelBand) * SURFEL_SCALE + 0.5f));
+    InterlockedAdd(SurfelBits[base + 2u], asuint(int(round(w * n.x * SURFEL_SCALE))));
+    InterlockedAdd(SurfelBits[base + 3u], asuint(int(round(w * n.y * SURFEL_SCALE))));
+    InterlockedAdd(SurfelBits[base + 4u], asuint(int(round(w * n.z * SURFEL_SCALE))));
+}
+
 [numthreads(64, 1, 1)]
 void CS(uint3 id : SV_DispatchThreadID)
 {
@@ -247,6 +294,12 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float4 shape0 = Anisotropic > 0.5f ? Anisotropy[i * 3u + 0u] : float4(0.0f, 0.0f, 0.0f, 0.0f);
     if (shape0.w < 0.0f) return;
 
+    // Surfel pass: screen-space only, and only while the surfel band is on. The depth
+    // (stage 0/1) writes nothing in it: CS_FluidResolve (stage 2) rebuilds the surface from
+    // the surfel sums.
+    const bool surfelPass = Iteration == 2u;
+    if (surfelPass && SurfelBand <= 0.0f) return;
+
     // Whitewater carried by this particle (zero when the solver has none).
     const float4 whitewater = AuxEnabled > 0.5f ? Whitewater[i] : float4(0.0f, 0.0f, 0.0f, 0.0f);
     const float spray = AuxEnabled > 0.5f && Anisotropic > 0.5f ? Anisotropy[i * 3u + 2u].w : 0.0f;
@@ -256,8 +309,10 @@ void CS(uint3 id : SV_DispatchThreadID)
     const bool hasSpray = spray > 0.02f;
     const bool anyWhitewater = hasFoam || hasAir || hasAgitation || hasSpray;
 
-    // Thickness: isotropic spheres of radius spacing at the simulated position.
-    if (rPx >= 0.5f) {
+    // Thickness: isotropic spheres of radius spacing at the simulated position. The surfel
+    // pass skips it: the scatter must not add the chord sum (and the whitewater channels)
+    // twice, and the surfel surface is what the particle renderer shades.
+    if (!surfelPass && rPx >= 0.5f) {
         const int2 lo = max(int2(floor(centre - rPx)), int2(0, 0));
         const int2 hi = min(int2(ceil(centre + rPx)), screenMax);
         const float r2 = max(rPx * rPx, 1.0e-6f);
@@ -284,6 +339,11 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float focalY = 0.5f * float(OutputHeight) * max(ProjScaleY, 1.0e-4f);
     const float focalX = 0.5f * float(OutputWidth) * max(ProjScaleX, 1.0e-4f);
     const float2 halfSize = 0.5f * float2(float(OutputWidth), float(OutputHeight));
+
+    // The sphere fallback has no quadric normal, so the surfel pass takes the front hit with a
+    // zero normal: the depth normal (InterlockedMin) is what those pixels keep, and CS_ParticleShade
+    // rebuilds its macro normal from the depth when the surfel normal is empty.
+    if (surfelPass && shape0.w <= 0.0f) return;
 
     if (shape0.w > 0.0f) {
         // Ellipsoid: (x - c)^T M (x - c) <= 1 in view space, with M_view = R M_world R^T and R
@@ -327,6 +387,33 @@ void CS(uint3 id : SV_DispatchThreadID)
                                       -min(slopeY.x, slopeY.y) * focalY) + halfSize;
         const int2 lo = max(max(int2(floor(cPx - bPx)), int2(floor(tightLo))), int2(0, 0));
         const int2 hi = min(min(int2(ceil(cPx + bPx)), int2(ceil(tightHi))), screenMax);
+        if (lo.x > hi.x || lo.y > hi.y) return;
+        // Surfel early out: if the particle's nearest view depth lies more than SurfelBand
+        // behind the NEAREST real front surface this pixel rectangle can see, no pixel of the
+        // rectangle can contribute, so skip the whole loop. Taps: the centre pixel (always
+        // inside the tight rectangle) and its four corners. A tap on an empty pixel reads as
+        // infinitely far and is ignored; the bound is the NEAREST of the valid taps, so the
+        // test can never return on a pixel that AccumulateSurfel would accept: a front surface
+        // within the band of this ellipsoid's front hit is the nearest of the five, and it
+        // fails the test.
+        if (surfelPass) {
+            const int2 cp = max(min(int2(floor(cPx)), screenMax), int2(0, 0));
+            const float2 cornerOffset = float2(hi - lo) / max(float2(hi - lo), float2(1, 1));
+            const uint2 taps[5] = { cp,
+                                    uint2(lo.x,                 lo.y),
+                                    uint2(hi.x,                 lo.y),
+                                    uint2(lo.x,                 hi.y),
+                                    uint2(hi.x - cornerOffset.x, hi.y - cornerOffset.y) };
+            // [unroll] cannot be combined with a non-constant array bound in this compiler;
+            // the five taps are fixed.
+            float nearest = 1.0e30f;
+            [unroll]
+            for (int k = 0; k < 5; ++k) {
+                const uint bits = DepthBits[taps[k].x + taps[k].y * OutputWidth];
+                if (bits < 0x7F800000u) nearest = min(nearest, asfloat(bits));
+            }
+            if (nearest < 1.0e30f && c.z - bound > nearest + SurfelBand) return;
+        }
         for (int y = lo.y; y <= hi.y; ++y) {
             for (int x = lo.x; x <= hi.x; ++x) {
                 // Ray through the pixel centre, z = 1. delta = point of the ray at the centre's
@@ -344,6 +431,12 @@ void CS(uint3 id : SV_DispatchThreadID)
                 const float zFront = c.z + (-b - sqrt(disc)) / a;
                 if (zFront <= 0.05f) continue;
                 const uint pix = uint(x) + uint(y) * OutputWidth;
+                if (surfelPass) {
+                    // disc = b^2 - a * cc, and s^2 = cc / a: disc / a is exactly 1 - s^2,
+                    // the ray's squared distance from the centre line in ellipsoid units.
+                    AccumulateSurfel(pix, r, zFront, c, viewM, disc / a);
+                    continue;
+                }
                 // Depths only decrease, so a plain read that is already nearer skips the
                 // atomic: most interior particles lie behind the surface layer.
                 InterlockedMin(DepthBits[pix], asuint(zFront));

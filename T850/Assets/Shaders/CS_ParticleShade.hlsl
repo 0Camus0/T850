@@ -4,6 +4,7 @@
 // here with a depth-aware bilinear filter and re-tested against the full-resolution scene):
 //   FluidDepthA     F32      view-space front surface, smoothed (0 = empty)
 //   FluidThickness  RGBA16F  r = metres of water along the ray (chord sum), a = coverage
+//   FluidNormal     RGBA16F  view-space surfel normal, a = confidence (Mode 2)
 //   AuxBits         per fluid pixel: foam (max), aeration, agitation, spray (chord-weighted)
 //   WhitewaterBits  per output pixel: secondary spray, foam, bubbles, sparkle; read AND
 //                   cleared here (CS_FluidWhitewater accumulates them each frame)
@@ -36,6 +37,11 @@
 //
 // The shaded colour already contains the background, so alpha is only coverage.
 // `Mode == 0` leaves the splat target untouched. `ShadeParams.x == 1` writes zero on empty pixels.
+//
+// `Mode == 2` is the particle renderer with surfel splatting (CS_FluidSplat Iteration 2 plus
+// CS_FluidResolve stage 2): the macro normal comes from the blended surfel normal in FluidNormal
+// instead of the depth derivative, which would show the unsmoothed surface's particle-scale
+// bumps. Everything downstream of the macro normal is identical to Mode 1.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -44,7 +50,7 @@ cbuffer ParticleShadeConstants : register(b0)
 {
     uint  OutputWidth;
     uint  OutputHeight;
-    uint  Mode;               // 0 splat, 1 screen space
+    uint  Mode;               // 0 splat, 1 screen space, 2 screen space with surfel normals
     uint  DebugView;          // see ParticleScreenSpaceDesc::debug_view
 
     float ProjScaleY;         // Projection.m[1][1]
@@ -98,6 +104,11 @@ Texture2D<float> SurfaceDepth : register(t0);
 [[vk::binding(2, 0)]]
 #endif
 Texture2D<float4> FluidThickness : register(t1);
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(15, 0)]]
+#endif
+Texture2D<float4> FluidNormal : register(t11);
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(3, 0)]]
@@ -278,6 +289,12 @@ float4 LoadFluidThicknessTexel(int2 t)
     return FluidThickness.Load(int3(c.x, int(T850_IMAGE_Y(c.y, FluidSize.y)), 0));
 }
 
+float4 LoadFluidNormalTexel(int2 t)
+{
+    const int2 c = clamp(t, int2(0, 0), int2(FluidSize) - 1);
+    return FluidNormal.Load(int3(c.x, int(T850_IMAGE_Y(c.y, FluidSize.y)), 0));
+}
+
 // Depth-aware bilinear upsample at a full-resolution pixel position. Texels of the nearest
 // layer (within 0.25 m of the front-most) are blended; the coverage is the plain bilinear
 // blend so silhouettes stay anti-aliased. At full resolution this is the texel itself.
@@ -313,6 +330,37 @@ void SampleFluid(float2 pixel, out float z, out float4 thickness)
     const float4 t11 = LoadFluidThicknessTexel(t0 + int2(1, 1));
     thickness.rgb = (t00.rgb * valid.x + t10.rgb * valid.y + t01.rgb * valid.z + t11.rgb * valid.w) / sum;
     thickness.a = dot(bw, float4(t00.a, t10.a, t01.a, t11.a));
+}
+
+// The surfel normal at a full-resolution pixel position, the same four-texel layer test as
+// SampleFluid: the valid-weighted mean of the texels' normals, or zero when no texel is valid
+// (the depth derivative then stands in; CS_ParticleShade lerps with the stored confidence).
+float4 SampleFluidNormal(float2 pixel)
+{
+    const float2 f = pixel * float2(FluidSize) / float2(float(OutputWidth), float(OutputHeight)) - 0.5f;
+    const int2 t0 = int2(floor(f));
+    const float2 w = f - float2(t0);
+    const float d00 = LoadFluidDepthTexel(t0);
+    const float d10 = LoadFluidDepthTexel(t0 + int2(1, 0));
+    const float d01 = LoadFluidDepthTexel(t0 + int2(0, 1));
+    const float d11 = LoadFluidDepthTexel(t0 + int2(1, 1));
+    const float4 bw = float4((1.0f - w.x) * (1.0f - w.y), w.x * (1.0f - w.y), (1.0f - w.x) * w.y, w.x * w.y);
+    const float4 d = float4(d00, d10, d01, d11);
+    float front = 1.0e9f;
+    [unroll]
+    for (int k = 0; k < 4; ++k)
+        if (d[k] > 0.0f) front = min(front, d[k]);
+    float4 valid = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    [unroll]
+    for (int j = 0; j < 4; ++j)
+        valid[j] = (d[j] > 0.0f && d[j] < front + max(0.25f, 0.03f * front)) ? bw[j] : 0.0f;
+    const float sum = valid.x + valid.y + valid.z + valid.w;
+    if (sum <= 1.0e-4f) return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    const float4 n00 = LoadFluidNormalTexel(t0);
+    const float4 n10 = LoadFluidNormalTexel(t0 + int2(1, 0));
+    const float4 n01 = LoadFluidNormalTexel(t0 + int2(0, 1));
+    const float4 n11 = LoadFluidNormalTexel(t0 + int2(1, 1));
+    return (n00 * valid.x + n10 * valid.y + n01 * valid.z + n11 * valid.w) / sum;
 }
 
 float LoadDepth(int2 p)
@@ -1080,6 +1128,18 @@ void CS(uint3 id : SV_DispatchThreadID)
     if (length(tangentY) < 1e-6f) tangentY = float3(0.0f, -1.0f, 0.0f);
     float3 macroNormal = normalize(cross(tangentX, tangentY));
     if (dot(macroNormal, toCamera) < 0.0f) macroNormal = -macroNormal;
+
+    // Surfel splatting (Mode 2): the front layer's blended ellipsoid normal replaces the depth
+    // derivative, which would show the unsmoothed surface's particle-scale bumps.
+    if (Mode == 2u) {
+        const float4 surfel = SampleFluidNormal(pixelCentre);
+        const float len = length(surfel.xyz);
+        if (len > 1.0e-3f) {
+            float3 n = surfel.xyz / len;
+            if (dot(n, toCamera) < 0.0f) n = -n;
+            macroNormal = normalize(lerp(macroNormal, n, saturate(surfel.w * 4.0f)));
+        }
+    }
 
     // Whitewater carried by the fluid particles on this ray.
     const float chordRaw = max(thicknessData.r, 1.0e-4f);

@@ -1,22 +1,19 @@
-// T850 particle renderer: blended water, or lit sphere impostors as a debug view.
+// T850 particle renderer: lit sphere impostors as the debug views.
 //
 // CS_FluidSplat (ScreenSpace = 0) leaves, per pixel, the packed key of the nearest particle
 // sphere in front of the opaque scene and the summed chord length (thickness) of every particle
 // along the ray.
 //
-// Style 0, water: the particles blend through their thickness field. A 5x5 binomial smooths it
-// for absorption and alpha; the derivative of a dense 9x9 binomial gives a blob-like surface
-// normal, so overlapping particles merge the way metaballs do. Colour is the paper's Eq. 13
-// without depth reconstruction: the scene seen through the refracted ray, Beer-Lambert
-// absorption over the thickness, a Fresnel sky reflection and the sun's highlight. Thin edges
-// fade out.
+// Style 1, wireframe; style 2, flat: debug looks on the nearest particle. Style 3, spheres:
+// decode the nearest particle and light its sphere (sun, sky/ground hemisphere, rim). A
+// z-buffered field of opaque spheres that shows every particle.
 //
-// Style 3, spheres: decode the nearest particle and light its sphere (sun, sky/ground
-// hemisphere, rim). A z-buffered field of opaque spheres that shows every particle.
-//
-// The old splat resolve averaged every overlapping disc into one constant colour with an alpha
-// that saturated after three particles, so the whole fluid drew as one flat, unlit tint with no
-// thickness, refraction or highlight. Neither style loops over particles.
+// The water style (style 0) no longer reaches this kernel: the water of the particle renderer
+// is now surfel splatting, which runs the screen-space pipeline (CS_FluidSplat Iteration 2,
+// CS_FluidResolve stage 2, CS_ParticleShade Mode 2) and draws the whole screen-space shade.
+// Neither path loops over particles. The thickness buffer and the cbuffer members the old
+// water style used stay declared: the manifest, the render graph and check_fluid_constants.py
+// expect them, and the unused ones are harmless.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -160,22 +157,6 @@ float3 SampleScene(float2 pixel)
     return SceneColor.SampleLevel(LinearSampler, T850_UV(uv), 0.0f).rgb;
 }
 
-// The sky as the deferred pass drew it, from the top row of the frame.
-float3 SkyEstimate()
-{
-    float3 sum = float3(0.0f, 0.0f, 0.0f);
-    float count = 0.0f;
-    [unroll]
-    for (int k = 1; k <= 3; ++k) {
-        const int2 probe = int2(int(OutputWidth) * k / 4, 1);
-        if (LinearSceneDepth(probe) > 1.0e8f) {
-            sum += SampleScene(float2(probe) + 0.5f);
-            count += 1.0f;
-        }
-    }
-    return count > 0.0f ? sum / count : SkyColor.rgb;
-}
-
 float LoadThickness(int2 coordinate)
 {
     if (coordinate.x < 0 || coordinate.y < 0 ||
@@ -183,53 +164,6 @@ float LoadThickness(int2 coordinate)
         return 0.0f;
     return float(ThicknessBits[uint(coordinate.x) + uint(coordinate.y) * OutputWidth]) *
            (1.0f / 1024.0f);
-}
-
-// Smoothed thickness (x) and its gradient in metres per pixel (yz): a 5x5 binomial kernel and
-// its derivative, taps `spacing` pixels apart.
-float3 ThicknessField(int2 base, int spacing)
-{
-    float t = 0.0f;
-    float gx = 0.0f;
-    float gy = 0.0f;
-    [unroll]
-    for (int j = -2; j <= 2; ++j) {
-        const float by = j == 0 ? 6.0f : (abs(j) == 1 ? 4.0f : 1.0f);
-        const float dy = j == 0 ? 0.0f : float(sign(j)) * (abs(j) == 1 ? 2.0f : 1.0f);
-        [unroll]
-        for (int i = -2; i <= 2; ++i) {
-            const float bx = i == 0 ? 6.0f : (abs(i) == 1 ? 4.0f : 1.0f);
-            const float dx = i == 0 ? 0.0f : float(sign(i)) * (abs(i) == 1 ? 2.0f : 1.0f);
-            const float v = LoadThickness(base + int2(i, j) * spacing);
-            t += bx * by * v;
-            gx += dx * by * v;
-            gy += bx * dy * v;
-        }
-    }
-    const float derivative = 1.0f / (128.0f * float(spacing));
-    return float3(t * (1.0f / 256.0f), gx * derivative, gy * derivative);
-}
-
-// The same with a 9x9 binomial kernel. The normal needs a footprint of about one particle radius
-// but dense taps: a sparse kernel aliases the particle lattice of the deeper layers (seen through
-// the water as moire), while this one removes every period longer than about two taps.
-static const float kBinomial8[9] = { 1.0f, 8.0f, 28.0f, 56.0f, 70.0f, 56.0f, 28.0f, 8.0f, 1.0f };
-static const float kBinomial8Slope[9] = { -1.0f, -6.0f, -14.0f, -14.0f, 0.0f, 14.0f, 14.0f, 6.0f, 1.0f };
-
-float2 ThicknessGradient9(int2 base, int spacing)
-{
-    float gx = 0.0f;
-    float gy = 0.0f;
-    [unroll]
-    for (int j = 0; j < 9; ++j) {
-        [unroll]
-        for (int i = 0; i < 9; ++i) {
-            const float v = LoadThickness(base + int2(i - 4, j - 4) * spacing);
-            gx += kBinomial8Slope[i] * kBinomial8[j] * v;
-            gy += kBinomial8[i] * kBinomial8Slope[j] * v;
-        }
-    }
-    return float2(gx, gy) * (1.0f / (128.0f * 256.0f * float(spacing)));
 }
 
 float4 ShadeSphere(uint index, float3 normal, float3 toCamera)
@@ -245,54 +179,6 @@ float4 ShadeSphere(uint index, float3 normal, float3 toCamera)
     const float3 color = albedo * (SunColor.rgb * diffuse + ambient) +
                          SunColor.rgb * specular + SkyColor.rgb * rim;
     return float4(color, saturate(Opacity));
-}
-
-float4 ShadeWater(int2 base, float2 pixelCentre, float rPx, float zFront)
-{
-    // Thickness and coverage blend over about a quarter of a particle radius per tap: enough to
-    // merge overlapping particles, little enough to keep droplets apart. The normal is smoothed
-    // over about one particle radius, which keeps the shape of the body of water.
-    const int spacing = clamp(int(rPx * 0.25f + 0.5f), 1, 16);
-    const float thickness = max(ThicknessField(base, spacing).x, 0.0f) * max(ThicknessScale, 0.0f);
-    const float2 gradient = ThicknessGradient9(base, spacing);
-
-    // The thickness field behaves like twice the height of a surface facing the camera.
-    const float metresPerPixel = zFront / Focal();
-    const float2 slope = 0.5f * gradient / metresPerPixel;
-    const float3 normal = normalize(float3(-slope.x, slope.y, -1.0f));   // pixel y grows down
-
-    const float3 p = ViewPosition(pixelCentre, zFront);
-    const float3 view = normalize(p);
-    const float3 toCamera = -view;
-    const float2 size = float2(float(OutputWidth), float(OutputHeight));
-
-    // Through deep water the gradient is mostly the noise of many summed particles, which the
-    // refracted ray would magnify into lumps; bend it less there. Glints and Fresnel keep the
-    // full normal.
-    const float2 refractSlope = slope / (1.0f + thickness / (8.0f * Radius));
-    float3 transmitted = refract(view, normalize(float3(-refractSlope.x, refractSlope.y, -1.0f)), 1.0f / 1.33f);
-    if (dot(transmitted, transmitted) < 1e-6f) transmitted = view;
-    const float3 refractEnd = p + transmitted * min(thickness * max(Refraction, 0.0f), 2.0f);
-    float2 refractPixel = refractEnd.z > 0.05f ? ProjectToPixel(refractEnd) : pixelCentre;
-    refractPixel = clamp(refractPixel, float2(0.5f, 0.5f), size - 0.5f);
-    if (LinearSceneDepth(int2(refractPixel)) < zFront) refractPixel = pixelCentre;
-    const float3 background = SampleScene(refractPixel);
-
-    const float3 transmittance = exp(-thickness * max(FluidTint.rgb, 0.0f));
-    const float3 refracted = background * transmittance + (1.0f - transmittance) * FluidColor.rgb;
-
-    const float3 sky = SkyEstimate();
-    const float elevation = dot(reflect(view, normal), WorldUp.xyz);
-    const float3 environment = lerp(sky * 0.25f, sky, smoothstep(-0.1f, 0.2f, elevation));
-    const float fresnel = 0.02f + 0.98f * pow(1.0f - saturate(dot(normal, toCamera)),
-                                              max(FresnelPower, 1.0f));
-    float3 color = lerp(refracted, environment, saturate(fresnel));
-    const float3 halfVector = normalize(normalize(SunDirection.xyz) + toCamera);
-    color += SunColor.rgb * pow(saturate(dot(normal, halfVector)), 96.0f) * Specular;
-
-    // Fade only where the water is thinner than a third of one particle's centre chord.
-    const float edge = max(0.7f * Radius * InvPackingFactor, 1.0e-4f);
-    return float4(color, smoothstep(0.0f, edge, thickness) * saturate(Opacity));
 }
 
 [numthreads(8, 8, 1)]
@@ -344,6 +230,7 @@ void CS(uint3 id : SV_DispatchThreadID)
         OutputTexture[imagePixel] = ShadeSphere(index, normal, toCamera);
         return;
     }
-    OutputTexture[imagePixel] = ShadeWater(int2(id.xy), pixelCentre, r,
-                                           max(proj.w - Radius * bulge, 0.05f));
+    // Style 0 (water) no longer reaches this kernel: the particle renderer's water is surfel
+    // splatting on the screen-space pipeline (CS_ParticleShade Mode 2).
+    OutputTexture[imagePixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
 }

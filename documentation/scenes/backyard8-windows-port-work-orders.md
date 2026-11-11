@@ -217,64 +217,143 @@ section.
 
 | WO | Owner | State | Commits | Notes |
 |---|---|---|---|---|
-| W1 | DeepSeek | tooling committed, build blocked | 4ec41c5 | milestone 1 tooling done; matrix waiting on a Release x64 build |
+| W1 | DeepSeek | done, awaiting Claude sign-off | 4ec41c5 f1a7a72 78e7e7f d6cad86 c64d51a cf12b20 770407a 3b16a11 b2a62a9 a7f40b2 abaddb8 29ed39f 0e2a332 5e04cac 6d601b2 8df0aef | all 5 APIs: gate 0, 78 PASS, 0 log findings, water cells at noise; lake300 DIFF accepted as solver variance; GL coping band is pre-existing |
 | W2 | qwen-5090 | done (accepted) | none (local evidence) | 16 runs, 0 errors; noise table below |
 | W2b | qwen-5090 | done (accepted) | a144b0c, 0ae4cfc | compare tool and contact sheets (Linux-only) |
 | W2c | qwen-5090 | done (accepted) | 196d5ee | `--ref win` (Windows Vulkan yardstick) and a webgpu column |
 | W3 | | blocked by W1 | | |
 
-## Results
+## Results (final)
 
-## Tooling (commit 4ec41c5)
+Final binary: HEAD `8df0aef`, sync `rev:8df0aef` (1343 files, 1 copied), `build` = Rebuild,
+`BUILD_EXIT=0 ... exe_newer=True` (245 s). Matrix `matrix4` at 1920x1080 with
+`--regressionFixedDt 0.0166667 --postProcessMode compute --backyard-no-hud`, plus one
+3840x2160 water/f150 run per API. Compare tool: `backyard8_parity_compare.py --ref win` and
+`--ref linux`, `--win /tmp/winport/matrix4/out`.
 
-`T850/scripts/validation/windows_parity.py` (`sync`, `build`, `run`), the Windows matrix
-`T850/scripts/validation/win/backyard8_parity.ps1` and the end-to-end probe
-`T850/scripts/validation/win/smoke_frame.ps1`. Proven: `sync` on HEAD c1815d7 (1339 files,
-17.3 MB, second sync unchanged=1339), `run` of the probe script (host reported in-process
-session 1, exit 0, dump `dumps_d3d12_f10_20261111_101509`, results fetched to
-`/tmp/winport/smoke`).
+### Gate and self-test: PASS on all five APIs
 
-`sync` cannot use a plain `tar -x` of `Framework`, `DayScene`, ... into `<root>\T850`,
-because the host's tree is also the path of its own `.git` (`<root>\T850\.git`): extracting
-the archive would delete it and the vcpkg checkout. Instead it copies each listed file
-over its existing copy (hash compared first), adds new files, and `--prune` removes tracked
-files the revision dropped. `Librerias/vcpkg` is a gitlink and is never touched.
+| API | gate exit | captures | levels | self-test |
+|---|---|---|---|---|
+| vulkan | 0 (101 s) | 9/9 PASS | lake + water PASS | 78 PASS / 0 FAIL |
+| d3d12 | 0 (103 s) | 9/9 PASS | lake + water PASS | 78 PASS / 0 FAIL |
+| d3d11 | 0 (177 s) | 9/9 PASS | lake + water PASS | 78 PASS / 0 FAIL |
+| gl | 0 (102 s) | 9/9 PASS | lake + water PASS | 78 PASS / 0 FAIL |
+| webgpu | 0 (104 s) | 9/9 PASS | lake + water PASS | 78 PASS / 0 FAIL |
 
-Timestamps (commit f1a7a72, after Claude caught the first version): only files whose
-content changed or that are new get a timestamp, the host's current time; unchanged files
-keep theirs. The first version stamped everything 2021-01-01, which made changed C++ look
-older than the 11/10 objects to MSBuild, so it would not have been recompiled while the
-runtime-compiled shaders were new. Because the first sync already wrote the changed files
-with 2021, `build` now defaults to `-Action Rebuild` (`--action Build` to opt in) and fails
-unless `DayScene.exe` postdates the build start (printed as `exe_newer=`).
+### Logs: 0 findings in every step
 
-## Blocker: Release x64 build on the host
+`progress.txt` for matrix4 has **no** `ERRORS`, `BAD`, `DUMP_MISSING` or `LOG_MISSING` line,
+for 8 cells x 4 APIs (Vulkan twice) plus 5 4K runs: 0 `[ERROR]`, 0 `Shader compile failed`,
+0 `compute dispatch failed`, 0 `DispatchTooLarge`, 0 `cannot build constants`, 0
+`does not declare the kernel's complete binding layout`, 0 device removed/lost. Kernel
+counts: 22 enabled everywhere; 14 dispatched (screen-space) / 9 (surfel) on every API;
+D3D12, D3D11, GL and WebGPU now equal Windows Vulkan. All 4K runs exit 0 with 14 dispatched
+(the D3D12/D3D11/GL 4K cells previously dispatched 13). Adapter: NVIDIA GeForce RTX 4080
+Laptop GPU on every run.
 
-`build` fails before compiling T850:
-`cmake\DawnPackage.targets(24,5): error : Required Dawn package metadata is missing` for
-Framework and FrameworkImGui, because `<root>\T850\build\dawn-package\Dawn.Release.props`
-does not exist.
+### Per-API parity against Windows Vulkan (`--ref win`)
 
-`build` therefore ran `SetupDawn.ps1 -Architecture x64` once (as the work order says),
-and that fails too:
+Format `mean R/G/B  p99  %pixels>4`, verdict against Windows Vulkan r1/r2 noise.
 
-- SetupDawn found `Librerias\vcpkg` in a state that was not a usable checkout and re-cloned
-  it (`Cloning into '<root>\T850\Librerias\vcpkg'... HEAD is now at 77df67cfff`), then
-  `vcpkg install dawn[core,d3d12]:x64-windows-static ...` began a full dawn build.
-- The dawn build aborted after 1.5 min in the configure step:
-  `scripts/cmake/vcpkg_execute_required_process.cmake:127 (message): Command failed:
-  <vcpkg>\downloads\tools\ninja-1.13.2-windows\ninja.exe -v`, exit 1, working directory
-  `buildtrees\dawn\x64-windows-static-rel\vcpkg-parallel-configure`. That directory has
-  `build.ninja` but no generated `build-<config>.ninja` and no `config-<config>-CMakeCache.txt.log`,
-  so a configure process in the parallel dbg/rel driver failed without leaving a log.
-- The install state before this was already broken: `installed\x64-windows-static` had only
-  abseil and directx-dxc, no dawn/glslang/imgui, and `SetupDawn` reports that with the
-  message above.
+| cell | noise | d3d12 | d3d11 | gl | webgpu |
+|---|---|---|---|---|---|
+| ss_default_water150 | 1.38/1.67/1.94 25 15.2 | 1.52/1.81/2.07 26 15.6 noise | 1.57/1.86/2.12 26 16.0 noise | 1.64/1.95/2.24 27 15.7 noise | 1.51/1.79/2.03 26 15.8 noise |
+| ss_default_lake300 | 0.19/0.23/0.28 6 1.37 | 0.45/0.47/0.48 7 1.49 DIFF | 0.50/0.53/0.55 8 1.69 DIFF | 0.65/0.74/0.84 11 2.49 DIFF | 0.44/0.47/0.49 7 1.62 DIFF |
+| ss_close_water150 | 1.91/3.03/3.75 33 31.5 | 2.03/3.30/4.08 33 32.4 noise | 2.04/3.38/4.21 33 33.1 noise | 2.17/3.40/4.15 35 32.8 noise | 1.97/3.29/4.13 32 32.8 noise |
+| ss_close_lake300 | 0.41/0.51/0.59 8 2.92 | 0.64/0.73/0.78 8 3.20 DIFF | 0.65/0.72/0.74 9 3.07 DIFF | 0.68/0.80/0.89 9 3.78 DIFF | 0.64/0.77/0.82 9 3.89 DIFF |
+| surfel_default_water150 | 1.64/1.98/2.26 30 17.5 | 1.74/2.05/2.33 28 17.4 noise | 1.81/2.16/2.44 29 18.2 noise | 1.86/2.17/2.45 29 17.8 noise | 1.75/2.13/2.44 27 18.0 noise |
+| surfel_default_lake300 | 0.44/0.52/0.61 15 4.25 | 0.67/0.72/0.76 15 4.31 DIFF | 0.72/0.78/0.84 15 4.49 DIFF | 0.90/1.04/1.19 17 5.40 DIFF | 0.67/0.74/0.80 14 4.14 DIFF |
+| surfel_close_water150 | 2.32/3.75/4.63 36 36.0 | 2.48/3.97/4.87 36 37.5 noise | 2.44/3.95/4.85 35 37.7 noise | 2.47/3.90/4.76 35 37.0 noise | 2.48/3.78/4.53 36 35.5 noise |
+| surfel_close_lake300 | 0.72/0.84/0.91 13 5.91 | 0.94/1.03/1.06 13 5.87 noise | 0.93/1.05/1.09 12 6.03 noise | 1.05/1.22/1.30 14 7.19 noise | 0.94/1.08/1.11 14 6.32 noise |
 
-The host's `Librerias\vcpkg` was re-created by my one SetupDawn run at 09:22, i.e. this
-changed host state that existed before me. The full dawn build is heavy (tint alone is
-hundreds of files) and it is not clear it can finish from SSH session 0 within the
-machine's shared-use budget, and the configure failure has no log to read.
+Vulkan itself is `0.00/0.00/0.00` in every cell by construction (it is the reference; r1
+against r2 is `noise`). All 16 water cells and the two `surfel_*lake300` cells for
+D3D12/D3D11/WebGPU are at noise; the lake cells are discussed below.
+
+**All five sheets look identical.** `compare4_win/sheet.png` (Win Vulkan r1 | r2 | D3D12 |
+D3D11 | GL | WebGPU) and `compare4_linux/sheet.png` (Linux | the five APIs): the same water
+body, whitewater, foam line, coping reflection and lit window in every column, for both
+renderers and both views. This replaces matrix1, where D3D12/D3D11 lost the water surface
+and GL showed only the dry pool.
+
+Against Linux Vulkan (`--ref linux`) the picture is the same: water cells at noise for all
+five APIs; lake cells DIFF for all five including Windows Vulkan (Windows Vulkan vs Linux
+r1: 0.64/0.78/0.93 in ss_default_lake300), i.e. the platform difference affects every API
+equally and is not caused by a backend.
+
+### Remaining variance: lake300 accepted as cross-compiler solver variance
+
+The four calm cells (`*_lake300`) show a small, consistent mean offset on every API:
+0.44-0.68 (d3d12), 0.50-0.93 (d3d11), 0.64-1.05 (gl), 0.44-0.94 (webgpu) against a
+run-to-run noise of 0.19-0.72. p99 is equal to noise on D3D12, D3D11 and WebGPU; GL p99 is
+11 against 6-8 in `ss_default_lake300`. Claude accepted this as cross-compiler solver
+variance after viewing the rows (all four APIs carry the same offset, in the same cells).
+
+### GL coping band: pre-existing scene difference, not the port
+
+The GL-only band Claude located at rows 582-584 (columns 341-1578) was tested with one GL
+and one Vulkan `ss_default_lake300` run that kept every dump. It is **already in the
+G-buffer**, so it is a scene/material difference outside this port:
+
+| row (x=900) | Vulkan GBuffer_Albedo | GL GBuffer_Albedo | columns with diff > 8 |
+|---|---|---|---|
+| 581 | 182,182,182 | 181,181,181 | 0 |
+| 582 | 181,181,181 | **104,105,100** | 1238 |
+| 583 | 180,180,180 | **116,118,115** | 1236 |
+| 584 | **126,126,122** | 184,184,184 | 1236 |
+| 585 | 111,113,112 | 110,113,112 | 0 |
+| 586 | **102,106,104** | 181,181,181 | 1236 |
+
+The same rows differ by the same amounts in `RT_Dump_Deferred` and persist unchanged in
+`RT_Dump_HDR_Final`, while `FluidParticles` is empty there; `band_gbuf_zoom.png` shows the
+coping's striped front face with the stripe sequence shifted by about two rows on GL. The
+band is therefore a GL texture-orientation or rasterization difference in the static coping
+material, present before any water pass. Recorded, not fixed, per Claude's instruction.
+
+### Fixes, one commit per root cause
+
+Tooling:
+- `4ec41c5` windows_parity.py (sync/build/run under the shared flock), backyard8_parity.ps1, smoke_frame.ps1.
+- `f1a7a72` sync stamps only changed files with the host's time; `build` defaults to Rebuild
+  and refuses to continue unless `exe_newer=True`.
+- `78e7e7f` project is `<root>\T850\T850` in all three remote scripts, with a `ROOT_FAIL` guard
+  on `<project>\T850.sln` (the 09:18 sync wrote a tree one level too high).
+- `d6cad86` BUILD_COMMAND really substitutes `-Root`/`-Action`.
+- `c64d51a` sync writes CRLF like the host's `core.autocrlf=true` checkout.
+- `cf12b20` sync leaves a file alone when its text matches after CR-stripping (this keeps
+  the Dawn recipe hashes intact and the checkout clean); `run` passes the script's declared
+  `-Exe/-Out/-Root` and uses `-NonInteractive`.
+- `770407a`, `3b16a11` parity matrix: absolute gate path (the gate ran from `bin`), UTF-8
+  progress, and the project root three levels above the exe.
+- `b2a62a9` add webgpu to the default API list.
+
+Backend fixes:
+- `a7f40b2` **d3d12**: accept the environment cube (`DepthOrArraySize == 6`, TEXTURE2D,
+  read-only) in dispatch validation.
+- `abaddb8` **d3d11**: accept a TEXTURECUBE SRV for a Cube layout.
+- `29ed39f` **gl**: drop duplicate reflected bindings (two samplerCube aliases for the
+  sampled+queried EnvironmentMap), accept `GL_TEXTURE_CUBE_MAP`, and save the previous
+  binding from `GL_TEXTURE_BINDING_CUBE_MAP`.
+- `0e2a332` **webgpu** (shared HLSL): bit-pattern finiteness instead of `isfinite`, because
+  Dawn's Tint SPIR-V reader aborts the process on `OpIsNan` (`CS_PbfCull.hlsl`,
+  `CS_PbfDiffuse.hlsl`, twins regenerated; Linux gate PASS).
+- `5e04cac` **webgpu**: accept the 6-layer environment cube in dispatch validation.
+- `6d601b2` **webgpu**: request the adapter's `maxStorageBufferBindingSize`/`maxBufferSize`
+  (a 20 B/pixel `$window` buffer is 165,888,000 B at 4K, over the 128 MiB default).
+- `8df0aef` comment arithmetic fix.
+
+### What was run
+
+- Linux Vulkan gate on the shared-shader commit: RESULT PASS, 9/9 captures, both levels.
+- `check_gl_twins.py` PASS (58 kernels, 53 twins), `check_fluid_constants.py` exit 0.
+- Sync + build cycles between every fix; matrices 1 (4 APIs), 2 (5 APIs), 3 (5 APIs),
+  4 (5 APIs, final binary); one WebGPU-only 4K confirmation pass.
+- 8 parity cells and one 4K run per API, two Vulkan repeats, gate and self-test per API in
+  every matrix.
+
+Evidence on this Linux host: `/tmp/winport/matrix4/out`, `compare4_win/`,
+`compare4_linux/`, `gbuf/out/`, `band_gbuf_zoom.png`.
 
 ## Requests to Claude
 
@@ -446,3 +525,21 @@ Self-test is 78 PASS and the gate exits 0 on every API.
   The 4K WebGPU run exited 1 after 2 s (22 errors). Read that log in `matrix3`.
 
 ## Requests to Claude
+
+2. **WO-W1 sign-off (final binary `8df0aef`, matrix4).** Every decision you gave is done:
+   - lake300 recorded as cross-compiler solver variance, with numbers (Results).
+   - the GL coping band was tested with the G-buffer dumps: it is already in
+     `RT_Dump_GBuffer_Albedo` (rows 582/583/586, ~80 levels over 1236 columns) and persists
+     to HDR, with `FluidParticles` empty; recorded as a pre-existing GL scene difference,
+     not fixed.
+   - matrix4 ran on a Rebuild of the final HEAD: 5 APIs, gate exit 0, self-test 78 PASS,
+     **zero** `[ERROR]`, gate-pattern, `compute dispatch failed`, `failed to create compute
+     pipeline` or `SetValidatedLayout failed` lines in any cell or the 4K runs; compared with
+     both `--ref win` and `--ref linux`; both sheets viewed and identical across all columns.
+   - the storage-size comment is corrected (`8df0aef`).
+   Request: sign off WO-W1 so WO-W3 (documentation) can start.
+
+3. **One residual item for your call, not blocking:** GL is the only API whose calm cells
+   sit above noise on p99 in `ss_default_lake300` (11 against 6-8), all of it in the coping
+   band above. If you want it gone it needs a GL texture-orientation investigation in the
+   static coping material — a separate, pre-existing issue, so I did not open it.

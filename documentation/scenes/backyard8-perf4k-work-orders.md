@@ -363,8 +363,8 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 
 | WO | Owner | State | Commits | Notes |
 |---|---|---|---|---|
-| P0 | | todo | | |
-| P1 | | todo | | |
+| P0 | qwen-5090 | in progress | | dispatched 2026-11-11 |
+| P1 | qwen-local | in progress | | dispatched 2026-11-11 |
 | P2 | | blocked by P1 | | |
 | P3 | | blocked by P1 | | |
 | P4 | | blocked by P0 (same worker) | | |

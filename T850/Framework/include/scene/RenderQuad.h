@@ -111,9 +111,11 @@ namespace t850 {
     int m_tiledLightIndexTex = -1;
     int m_tiledLightTilesX = 0;
     int m_tiledLightTilesY = 0;
+    int m_tiledLightIndexWidth = 0;  // current width of the index texture (lights per tile)
     std::vector<float> m_tiledLightHeaderData;
     std::vector<float> m_tiledLightIndexData;
     std::vector<unsigned int> m_tiledLightCounts;
+    std::vector<unsigned int> m_tiledLightSlotPerTile;  // per-tile write slot, hoisted to avoid per-frame allocation
     // (tile, light) pairs behind the textures' contents; an unchanged frame skips the 1.9 MB upload.
     std::vector<unsigned int> m_tiledLightAssignments;
     std::vector<unsigned int> m_tiledLightUploadedAssignments;

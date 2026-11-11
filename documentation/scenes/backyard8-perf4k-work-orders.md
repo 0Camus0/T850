@@ -365,8 +365,9 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 |---|---|---|---|---|
 | P0 | qwen-5090 | done | dd412a8 | reviewed: owned files only; tooling works; 4K numbers UNGUARDED (GPU at 100% from qwen-local) |
 | P1 | qwen-local | in progress | | dispatched 2026-11-11 |
-| P2 | qwen-5090 (me) | P2a done; P2b blocked by P1 | 2ff6ea2 | P2a landed on branch (cherry-picked 84357ee): buried = n>=24 and |mean|<=0.1R stored as -n in Anisotropy[i*3+2].z; buried 75-78%; gate PASS 11/11, 78 PASS, validators 0. Lake HDR not byte-identical (before/before differs 0.04-0.11 levels too). P2b (splat skip) waits for P1 |
-| P3 | | blocked by P1 | | |
+| P1 | qwen-local | done | c960808 | Claude accepted on visuals; Claude measures the 4K timing |
+| P2 | qwen-5090 (me) | P2a done (2ff6ea2); P2b in review | 2ff6ea2, P2b uncommitted in tree | P2b edits in CS_FluidSplat.hlsl/.glsl, not committed; worker burned its budget |
+| P3 | qwen-local | in review | 55ea7ed | F0/F1=(0,0.10); shade 1.283->0.989 (default/water), 1.766->1.508 (close/water); gate PASS, 78 PASS. UNGUARDED |
 | P4 | qwen-5090 | done | 4389a36, 6961c93 | Claude accepted 6961c93 (code); Claude measures the CPU numbers. 4389a36's body misdescribes the Deferred diff (point lights restored in static views) |
 | P5 | | blocked by P0-P4 and Claude's final numbers | | |
 

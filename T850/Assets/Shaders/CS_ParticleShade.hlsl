@@ -41,7 +41,9 @@
 // `Mode == 2` is the particle renderer with surfel splatting (CS_FluidSplat Iteration 2 plus
 // CS_FluidResolve stage 2): the macro normal comes from the blended surfel normal in FluidNormal
 // instead of the depth derivative, which would show the unsmoothed surface's particle-scale
-// bumps. Everything downstream of the macro normal is identical to Mode 1.
+// bumps; the surfel normal is a 13-tap disc gather over the normal map, one projected particle
+// radius wide, so the surface stays smooth at particle scale. Everything downstream of the
+// macro normal is identical to Mode 1.
 
 #if defined(T850_VULKAN) || defined(T850_SPIRV)
 [[vk::binding(0, 0)]]
@@ -84,7 +86,8 @@ cbuffer ParticleShadeConstants : register(b0)
     float4 RippleParams;      // x = slope, y = longest wavelength (m), z = speed, w = fade distance (m)
     float4 CausticParams;     // x = strength, y = pattern scale (m), z = speed, w = depth fade (m)
 
-    float4 EnvParams;         // x = environment intensity (0 = gradient)
+    float4 EnvParams;         // x = environmental intensity, y = surfel normal smoothing in
+                              // particle radii (0 = flat)
     float4 PoolMin;           // basin interior min (y = floor), w = water plane y
     float4 PoolMax;           // basin interior max (y = coping top), w = deck y
     float4 LightParams;       // x = sun attenuation, y = caustic focus, z = contact line, w = backlight
@@ -332,35 +335,43 @@ void SampleFluid(float2 pixel, out float z, out float4 thickness)
     thickness.a = dot(bw, float4(t00.a, t10.a, t01.a, t11.a));
 }
 
-// The surfel normal at a full-resolution pixel position, the same four-texel layer test as
-// SampleFluid: the valid-weighted mean of the texels' normals, or zero when no texel is valid
-// (the depth derivative then stands in; CS_ParticleShade lerps with the stored confidence).
+// The surfel normal at a full-resolution pixel position: a 13-tap disc gather one projected
+// particle radius wide (centre, a ring of six at half the radius, a ring of six at the radius
+// rotated by 30 degrees) with SampleFluid's layer test against the centre depth and weights
+// exp(-2 r^2) times the stored confidence, or zero when nothing is valid (the depth derivative
+// then stands in; CS_ParticleShade lerps with the stored confidence).
 float4 SampleFluidNormal(float2 pixel)
 {
-    const float2 f = pixel * float2(FluidSize) / float2(float(OutputWidth), float(OutputHeight)) - 0.5f;
-    const int2 t0 = int2(floor(f));
-    const float2 w = f - float2(t0);
-    const float d00 = LoadFluidDepthTexel(t0);
-    const float d10 = LoadFluidDepthTexel(t0 + int2(1, 0));
-    const float d01 = LoadFluidDepthTexel(t0 + int2(0, 1));
-    const float d11 = LoadFluidDepthTexel(t0 + int2(1, 1));
-    const float4 bw = float4((1.0f - w.x) * (1.0f - w.y), w.x * (1.0f - w.y), (1.0f - w.x) * w.y, w.x * w.y);
-    const float4 d = float4(d00, d10, d01, d11);
-    float front = 1.0e9f;
+    float zc;
+    float4 unusedThickness;
+    SampleFluid(pixel, zc, unusedThickness);
+    if (zc <= 0.0f) return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    const float radiusPx = clamp(max(ShadeParams.y, 1.0e-3f) * Focal() / zc * EnvParams.y, 1.0f, 48.0f);
+    const float2 scale = float2(FluidSize) / float2(float(OutputWidth), float(OutputHeight));
+    const float tolerance = max(0.25f, 0.03f * zc);
+    float4 sum = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float weightSum = 0.0f;
     [unroll]
-    for (int k = 0; k < 4; ++k)
-        if (d[k] > 0.0f) front = min(front, d[k]);
-    float4 valid = float4(0.0f, 0.0f, 0.0f, 0.0f);
-    [unroll]
-    for (int j = 0; j < 4; ++j)
-        valid[j] = (d[j] > 0.0f && d[j] < front + max(0.25f, 0.03f * front)) ? bw[j] : 0.0f;
-    const float sum = valid.x + valid.y + valid.z + valid.w;
-    if (sum <= 1.0e-4f) return float4(0.0f, 0.0f, 0.0f, 0.0f);
-    const float4 n00 = LoadFluidNormalTexel(t0);
-    const float4 n10 = LoadFluidNormalTexel(t0 + int2(1, 0));
-    const float4 n01 = LoadFluidNormalTexel(t0 + int2(0, 1));
-    const float4 n11 = LoadFluidNormalTexel(t0 + int2(1, 1));
-    return (n00 * valid.x + n10 * valid.y + n01 * valid.z + n11 * valid.w) / sum;
+    for (int k = 0; k < 13; ++k) {
+        float2 offset = float2(0.0f, 0.0f);
+        if (k > 0) {
+            const float ring = k <= 6 ? 0.5f : 1.0f;
+            const float angle = 6.2831853f * (float(k <= 6 ? k : k - 6) / 6.0f) + (k <= 6 ? 0.0f : 0.5236f);
+            offset = ring * radiusPx * float2(cos(angle), sin(angle));
+        }
+        const int2 t = int2(floor((pixel + offset) * scale));
+        const float d = LoadFluidDepthTexel(t);
+        if (d <= 0.0f || abs(d - zc) > tolerance) continue;
+        const float4 n = LoadFluidNormalTexel(t);
+        const float r2 = dot(offset, offset) / max(radiusPx * radiusPx, 1.0e-4f);
+        const float w = exp(-2.0f * r2) * n.w;
+        sum += n * w;
+        weightSum += w;
+    }
+    if (weightSum <= 1.0e-4f) return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    sum /= weightSum;
+    sum.w = min(sum.w, 1.0f);
+    return sum;
 }
 
 float LoadDepth(int2 p)

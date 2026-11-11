@@ -28,7 +28,10 @@
 // CS_FluidResolve reads and clears them) when it lies within SurfelBand metres of the pixel's
 // front surface: the weight is the ellipsoid's centre weight (1 - s^2, the ray's distance from
 // the centre line in ellipsoid units) raised to SurfelSharpness, times a frontness term that
-// peaks at the front surface; the normal is the ellipsoid's own quadric normal M (hit - c).
+// peaks at the front surface. The normal blends the ellipsoid's own quadric normal with a
+// single per-particle disc axis (the shortest quadric axis from a short power iteration on the
+// view-space quadric, oriented toward the camera) so that particles lying in the surface are
+// flat discs; only isolated spray (the anisotropy's spray flag) keeps its dome.
 // CS_FluidResolve (stage 2) turns the sums into the blended depth and the normal map, so the
 // particle renderer keeps the whole screen-space shade (CS_ParticleShade, Mode 2) with a
 // smooth surface. The depth and thickness scatter, the whitewater and the sphere fallback
@@ -223,19 +226,21 @@ float3x3 InverseSymmetric(float3x3 m)
 
 // Surfel pass: blend this ellipsoid's front hit into the pixel when it lies in the front
 // layer, weighted toward the ellipsoid's centre line and toward the front.
-// `centreWeight` = 1 - s^2, s = the ray's distance from the centre in ellipsoid units.
-void AccumulateSurfel(uint pix, float3 r, float zFront, float3 c, float3x3 viewM, float centreWeight)
+// `centreWeight` = 1 - s^2, s = the ray's distance from the centre in ellipsoid units;
+// `surfelNormal` is the particle's disc axis, and `flatness` blends the per-pixel quadric
+// normal toward it (1 = flat disc, 0 = the particle's own dome for spray).
+void AccumulateSurfel(uint pix, float3 r, float zFront, float3 c, float3x3 viewM, float3 surfelNormal, float flatness, float centreWeight)
 {
     const uint bits = DepthBits[pix];
     if (bits >= 0x7F800000u) return;            // empty (cleared) pixel
     const float dz = max(zFront - asfloat(bits), 0.0f);
     if (dz > SurfelBand) return;                 // behind the front layer
     const float3 hit = r * zFront;               // view space (r.z == 1)
-    float3 n = mul(viewM, hit - c);              // quadric gradient: the ellipsoid's normal
-    const float len = length(n);
-    if (len < 1.0e-6f) return;
-    n /= len;
-    if (dot(n, hit) > 0.0f) n = -n;              // face the camera
+    float3 q = mul(viewM, hit - c);              // quadric gradient: the ellipsoid's own normal
+    const float qLen = length(q);
+    q = qLen > 1.0e-6f ? q / qLen : surfelNormal;
+    if (dot(q, hit) > 0.0f) q = -q;              // face the camera
+    const float3 n = normalize(lerp(q, surfelNormal, flatness));
     const float front = 1.0f - dz / SurfelBand;
     const float w = pow(saturate(centreWeight), max(SurfelSharpness, 0.25f)) * front * front;
     if (w < 1.0e-3f) return;
@@ -388,6 +393,24 @@ void CS(uint3 id : SV_DispatchThreadID)
         const int2 lo = max(max(int2(floor(cPx - bPx)), int2(floor(tightLo))), int2(0, 0));
         const int2 hi = min(min(int2(ceil(cPx + bPx)), int2(ceil(tightHi))), screenMax);
         if (lo.x > hi.x || lo.y > hi.y) return;
+        // Disc axis for the surfel normal: six power-iteration steps of the view-space quadric
+        // from world up. It converges to the largest eigenvalue's eigenvector, the shortest
+        // quadric axis, which is the disc normal of a surface particle; a level surface
+        // converges at once. Computed only after the early out, so skipped particles pay for
+        // nothing.
+        float3 surfelNormal = float3(0.0f, 0.0f, -1.0f);
+        float surfelFlatness = 0.0f;
+        if (surfelPass) {
+            float3 v = ViewFromClip(ViewProjection[1]);
+            [unroll]
+            for (int it = 0; it < 6; ++it) v = mul(viewM, v / max(length(v), 1.0e-20f));
+            const float len = length(v);
+            if (len > 1.0e-20f) surfelNormal = v / len;
+            if (dot(surfelNormal, c) > 0.0f) surfelNormal = -surfelNormal;   // face the camera
+            // CS_PbfAnisotropy's spray flag: an isolated droplet is a sphere (its own dome
+            // normal); every other particle is a disc in the surface (the axis normal).
+            surfelFlatness = 1.0f - saturate(shape2.w);
+        }
         // Surfel early out: tap the front depth at the centre pixel and the four corners of
         // [lo, hi]. If even the FARTHEST front surface of these taps is more than SurfelBand
         // behind this ellipsoid's nearest point (c.z - bound), then no pixel of the rectangle
@@ -433,7 +456,7 @@ void CS(uint3 id : SV_DispatchThreadID)
                 if (surfelPass) {
                     // disc = b^2 - a * cc, and s^2 = cc / a: disc / a is exactly 1 - s^2,
                     // the ray's squared distance from the centre line in ellipsoid units.
-                    AccumulateSurfel(pix, r, zFront, c, viewM, disc / a);
+                    AccumulateSurfel(pix, r, zFront, c, viewM, surfelNormal, surfelFlatness, disc / a);
                     continue;
                 }
                 // Depths only decrease, so a plain read that is already nearer skips the

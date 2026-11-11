@@ -310,6 +310,12 @@ void CS(uint3 id : SV_DispatchThreadID)
     const float4 shape0 = Anisotropic > 0.5f ? Anisotropy[i * 3u + 0u] : float4(0.0f, 0.0f, 0.0f, 0.0f);
     if (shape0.w < 0.0f) return;
 
+    // WO-P2: buried particles (CS_PbfAnisotropy stores -neighbours in the .z of the third
+    // component) sit two spacings or more inside the fluid, so their neighbours' ellipsoids
+    // cover them from every direction. The depth and surfel scatter skip them; the
+    // thickness/whitewater loop below still includes them.
+    const float buriedMarker = Anisotropic > 0.5f ? Anisotropy[i * 3u + 2u].z : 0.0f;
+
     // Surfel pass: screen-space only, and only while the surfel band is on. The depth
     // (stage 0/1) writes nothing in it: CS_FluidResolve (stage 2) rebuilds the surface from
     // the surfel sums.
@@ -375,6 +381,7 @@ void CS(uint3 id : SV_DispatchThreadID)
         // the world-to-view rotation whose columns are the view images of the world axes.
         const float4 shape1 = Anisotropy[i * 3u + 1u];
         const float4 shape2 = Anisotropy[i * 3u + 2u];
+        if (buriedMarker < 0.0f) return;   // WO-P2: buried: depth and surfel scatter skip it
         const float3x3 worldM = float3x3(shape1.x, shape1.y, shape1.z,
                                          shape1.y, shape1.w, shape2.x,
                                          shape1.z, shape2.x, shape2.y);
@@ -487,6 +494,7 @@ void CS(uint3 id : SV_DispatchThreadID)
     }
 
     // Sphere fallback.
+    if (buriedMarker < 0.0f) return;   // WO-P2: buried: depth and surfel scatter skip it
     const float depthR = rPx * DepthRadiusScale;
     if (depthR < 0.5f) return;
     const float worldDepth = max(Radius * DepthRadiusScale, 1.0e-4f);

@@ -175,10 +175,14 @@ never recycled, because it must present.
   `"dimension": "cube"` on a `sampled_texture` binding in `compute_kernels.json`
   and sample it (`EnvironmentMap` in `CS_ParticleShade.hlsl`). Every backend binds
   the texture's own cube view: the `TEXTURECUBE` SRV on D3D11 and D3D12 (six
-  layers, `DepthOrArraySize == 6`), a `samplerCube` on Vulkan and GL
-  (`GL_TEXTURE_CUBE_MAP`), and a Cube view on WebGPU (`a7f40b2`, `abaddb8`,
-  `29ed39f`, `5e04cac`). Cubes are read-only: there is no storage (read-write)
-  form, because none of the five APIs has a writable cube image.
+  layers, `DepthOrArraySize == 6`), the cube image view with its sampler on Vulkan,
+  a `samplerCube` on GL (`GL_TEXTURE_CUBE_MAP`), and a Cube view on WebGPU
+  (`a7f40b2`, `abaddb8`, `29ed39f`, `5e04cac`). **In T850's compute abstraction a
+  cube is read-only.** `ComputeReflection` assigns `Cube` only to a
+  `ReadOnlyTexture`, and each backend treats a cube binding inside its sampled
+  branch and rejects it for `ReadWriteTexture`; the APIs themselves do have
+  writable cube forms (GL `imageCube`, D3D and Vulkan 2D-array views), which the
+  contract simply does not expose.
 - `ReadComputeBuffer` is a synchronous diagnostic boundary: a nonzero count
   divisible by four, no larger than the allocation. It works before a frame,
   immediately after dispatch and after submission. An open frame and its target

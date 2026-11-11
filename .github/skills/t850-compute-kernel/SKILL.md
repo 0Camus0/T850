@@ -98,7 +98,9 @@ Rules that bite:
   `check_fluid_constants.py` fails it for you.
 - `storage_format` is required for `storage_texture` and drives RT format validation.
 - Read-only cube textures are portable: declare `"dimension": "cube"` on a `sampled_texture`
-  and every backend binds the texture's own cube view. There is no writable cube form.
+  and every backend binds the texture's own cube view. T850's compute abstraction has no
+  writable cube binding: reflection assigns `Cube` only to sampled textures and the
+  backends reject it for `storage_texture`.
 - Only `type` values `constants | read_only_buffer | read_write_buffer | sampled_texture |
   storage_texture | sampler` are valid.
 

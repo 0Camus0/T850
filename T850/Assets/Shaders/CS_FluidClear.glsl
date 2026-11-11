@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from /home/camus000/testBitso/T850/Assets/Shaders/CS_FluidClear.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=1a533598a5456712bc5b0b6eb6ab872e506b866ff9673c7ade95d5de8a767fe9; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
+// GENERATED from CS_FluidClear.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=eb80fbf5fbb992a8b2260d4f144db274a24e778da06bd86bc2d1f1ba73aa2e6a; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(binding = 0, std140) uniform ParticleConstants
@@ -55,6 +55,11 @@ layout(binding = 2, std430) buffer ThicknessBits
     uint _data[];
 } ThicknessBits_1;
 
+layout(binding = 3, std430) buffer AuxBits
+{
+    uint _data[];
+} AuxBits_1;
+
 void main()
 {
     do
@@ -63,9 +68,13 @@ void main()
         {
             break;
         }
-        uint _100 = gl_GlobalInvocationID.x + (gl_GlobalInvocationID.y * _24.OutputWidth);
-        DepthBits_1._data[_100] = 4294967295u;
-        ThicknessBits_1._data[_100] = 0u;
+        uint _119 = gl_GlobalInvocationID.x + (gl_GlobalInvocationID.y * _24.OutputWidth);
+        DepthBits_1._data[_119] = 4294967295u;
+        ThicknessBits_1._data[_119] = 0u;
+        AuxBits_1._data[_119 * 4u] = 0u;
+        AuxBits_1._data[(_119 * 4u) + 1u] = 0u;
+        AuxBits_1._data[(_119 * 4u) + 2u] = 0u;
+        AuxBits_1._data[(_119 * 4u) + 3u] = 0u;
         break;
     } while(false);
 }

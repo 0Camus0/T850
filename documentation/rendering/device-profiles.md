@@ -212,7 +212,7 @@ measurements when P2/P3 land.
     slow motion that W-31 removed (`sim/wall` ≥ 0.95 is its acceptance).
   - Decide from a tablet A/B of `sim/wall` and fps at budgets 2 and 4.
 - The Steam Deck keeps 4 substeps; revisit if its log shows budget limiting.
-- No ball cap in any profile: the owner's decision (`97009aef`, re-confirmed 2026-11-06).
+- No ball cap in any profile: the owner's decision (`dc4f06e6`, re-confirmed 2026-11-06).
 
 ## 8. Rollback
 

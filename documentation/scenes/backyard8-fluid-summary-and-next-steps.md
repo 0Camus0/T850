@@ -6,7 +6,7 @@ not supported by the current Linux build** (Vulkan-only), although the OS driver
 
 This is the record of one working session on the particle-fluid scene. The commit that adds this
 file also contains the diagnosis-3 implementation that other agents had left uncommitted on top
-of `90f0550`, because the two are interleaved in the same files.
+of `6658d56`, because the two are interleaved in the same files.
 
 Detailed references:
 
@@ -134,7 +134,7 @@ The diagnosis-3 implementation rendered lumpy "cellophane" water. Fixed:
 
 ## 2.1 Phase 1 results (2026-11-09)
 
-Baseline tagged `backyard8-phase0-baseline` (commit `1544474`) before any Phase 1 edit. All
+Baseline tagged `backyard8-phase0-baseline` (commit `6fe9aa3`) before any Phase 1 edit. All
 numbers below are Vulkan on the RTX PRO 6000, fixed 1/60 s.
 
 ### 3.4 Free-surface compaction — done with `restDensityScale 0.907`

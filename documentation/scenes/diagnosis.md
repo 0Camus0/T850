@@ -7,7 +7,7 @@
 > plan and implementation status (F32 scatter depth, corrected normals, compositing).
 
 Status: diagnosed 2026-11-07 against the uncommitted scene-8 working tree on `master` (base
-commit `f5b8a11`). Vulkan findings were reproduced on Linux with the existing
+commit `0cd4e96`). Vulkan findings were reproduced on Linux with the existing
 `T850/bin/SteamDeck/Release/DayScene` build (NVIDIA RTX PRO 6000). D3D11, D3D12 and OpenGL
 findings come from source, manifest and validator analysis and are **not yet reproduced
 on-device**. The diagnosis changed no engine code.

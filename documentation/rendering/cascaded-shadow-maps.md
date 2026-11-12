@@ -1445,7 +1445,7 @@ SSAO, select `Shadow`, then increase Radius and Sigma before increasing Taps. A 
 comparison from radius/sigma/taps `1/1/3` to `3/8/45` increased intermediate shadow-edge
 pixels from 3,737 to 190,886 at 640x360.
 
-Shadow and SSAO are separate channels (`c4c680dc`; before that they shared one R8 scalar as
+Shadow and SSAO are separate channels (`f0105518`; before that they shared one R8 scalar as
 `shadow * occlusion`). Deferred lighting (`FS_Quad` HLSL, GLSL and WGSL alike) applies them
 differently:
 

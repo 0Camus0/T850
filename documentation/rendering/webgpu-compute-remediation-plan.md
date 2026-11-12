@@ -406,7 +406,7 @@ double-counts. Report them as a tree, not as a partition.
 - [x] Evidence linked; index and item status updated together.
 
 Tested revision: uncommitted R1 working tree based on
-`98d1e16c683c351ac946429f8e3599a4945ee168`. SHA-256 hashes for the five changed
+`7126e94db04b089e88e73d4bcbf31e2daab328a2`. SHA-256 hashes for the five changed
 source files are retained in `tested-source.json` under the evidence directory.
 
 Implementation: `Profiler.h/.cpp`, `ProfilerGpuBackend.cpp`, the deferred-query
@@ -610,7 +610,7 @@ maintained authored scene. `--frames` is not a supported runtime exit limit.
 - [x] Evidence linked; index and item status updated together.
 
 Tested revision: uncommitted R2 working tree on
-`98d1e16c683c351ac946429f8e3599a4945ee168`, including the prior R1 and offscreen
+`7126e94db04b089e88e73d4bcbf31e2daab328a2`, including the prior R1 and offscreen
 follow-up. Final tested source hashes are retained with the evidence.
 
 Implemented behavior:
@@ -917,7 +917,7 @@ their actual CLI/build options. Do not substitute the existing GPU-enabled
 - [ ] Owning docs updated; applicable registration and platform gates passed.
 - [x] Evidence linked; index and item status updated together.
 
-Tested revision: local uncommitted profiling implementation on `98d1e16c683c351ac946429f8e3599a4945ee168`; see the shared profiling implementation checkpoint.
+Tested revision: local uncommitted profiling implementation on `7126e94db04b089e88e73d4bcbf31e2daab328a2`; see the shared profiling implementation checkpoint.
 Commands and results: focused Framework/DayScene Debug build and 69 shared tests PASS; MSBuild compile-out build PASS. Short paired, streaming and dynamic-texture captures passed report-integrity checks. These are functional checks, not overhead acceptance.
 Evidence paths: `%LOCALAPPDATA%/T850Profiles/profiling-workstream-20260918` and `profiling-finish-20260918`; latest tests: enabled 69 PASS, compiled-out 65 PASS; normal Debug build restored.
 Completion date: pending.
@@ -1109,7 +1109,7 @@ Both backends must report the same schema, units and availability semantics.
 - [ ] Owning docs updated; applicable registration and platform gates passed.
 - [x] Evidence linked; index and item status updated together.
 
-Tested revision: local uncommitted profiling implementation on `98d1e16c683c351ac946429f8e3599a4945ee168`; see the shared profiling implementation checkpoint.
+Tested revision: local uncommitted profiling implementation on `7126e94db04b089e88e73d4bcbf31e2daab328a2`; see the shared profiling implementation checkpoint.
 Commands and results: focused Framework/DayScene Debug build and 69 shared tests PASS; MSBuild compile-out build PASS. Short paired, streaming and dynamic-texture captures passed report-integrity checks. These are functional checks, not overhead acceptance.
 Evidence paths: `%LOCALAPPDATA%/T850Profiles/profiling-workstream-20260918` and `profiling-finish-20260918`; latest tests cover unsampled/full-storage budgets, late staging, mip sizing, and worker/shared-texture provenance.
 Completion date: pending.
@@ -1358,7 +1358,7 @@ scope names.
 - [ ] Owning docs updated; applicable registration and platform gates passed.
 - [x] Evidence linked; index and item status updated together.
 
-Tested revision: local uncommitted profiling implementation on `98d1e16c683c351ac946429f8e3599a4945ee168`; see the shared profiling implementation checkpoint.
+Tested revision: local uncommitted profiling implementation on `7126e94db04b089e88e73d4bcbf31e2daab328a2`; see the shared profiling implementation checkpoint.
 Commands and results: focused Framework/DayScene Debug build and 69 shared tests PASS; MSBuild compile-out build PASS. Short paired, streaming and dynamic-texture captures passed report-integrity checks. These are functional checks, not overhead acceptance.
 Evidence paths: `%LOCALAPPDATA%/T850Profiles/profiling-workstream-20260918` and `profiling-finish-20260918`; final marker audit and focused compilation PASS.
 Completion date: pending.
@@ -2182,7 +2182,7 @@ foreach ($api in 'd3d11','d3d12','vulkan','gl','webgpu') { .\DayScene.exe --comp
 - [x] Existing kernels pass the five-backend compute self-test.
 - [x] Graph, shader-precompiler, Web/Wasm and Android package gates passed.
 
-Tested revision: working tree based on `ee03de54`.
+Tested revision: working tree based on `9260abea`.
 Commands and results: x64 Release build/self-tests; D3D11, D3D12, Vulkan, OpenGL and WebGPU compute self-tests; Web/Wasm and Android Release builds passed.
 Completion date: 2026-09-26.
 Remaining risks or blocked gates: custom scene-derived constants still require a named typed C++ builder; kernels without them are manifest-only.
@@ -2226,7 +2226,7 @@ foreach ($api in 'd3d11','d3d12','vulkan','gl','webgpu') { .\DayScene.exe --comp
 - [x] Existing maintained 2D graphs retain the default single-slice behavior.
 - [ ] A production or dedicated 3D kernel verifies multi-slice dispatch on all five backends.
 
-Tested revision: working tree based on `ee03de54`.
+Tested revision: working tree based on `9260abea`.
 Commands and results: x64 Release build and `T-COMPUTE-GRAPH-01` passed; five-backend 2D compute matrix passed.
 Completion date: 2026-09-26.
 Remaining risks or blocked gates: no production 3D texture kernel is currently authored, so five-backend multi-slice execution remains unverified.
@@ -2276,7 +2276,7 @@ and fresh-start captures, and retain the exact injection options and commands.
 - [x] Owning docs updated; focused platform gates passed.
 - [ ] Evidence linked; index and item status updated together.
 
-Tested revision: working tree based on `ee03de54` plus prior browser recovery evidence.
+Tested revision: working tree based on `9260abea` plus prior browser recovery evidence.
 Commands and results: native x64 Release
 `--webgpu-recovery-stress-selftest` performed three recreations and cleanly
 exhausted on the fourth loss; Emscripten Release self-tests PASS;

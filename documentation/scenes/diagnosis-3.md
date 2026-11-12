@@ -13,7 +13,7 @@
 > particles stranded below the rim. Measured before/after is in
 > [diagnosis-3-implementation.md](diagnosis-3-implementation.md#solver--analytic-solid-boundary-the-water-glued-to-the-walls-fix).
 
-Status: written 2026-11-08 against commit `90f0550` ("Backyard 8: screen-space fluid,
+Status: written 2026-11-08 against commit `6658d56` ("Backyard 8: screen-space fluid,
 config-driven particle scene, GL fix"). Vulkan findings were reproduced natively on Linux
 (NVIDIA RTX PRO 6000, `T850/bin/SteamDeck/Release/DayScene`, built from this commit). D3D11 and
 D3D12 findings were reproduced with the 2026-11-08 02:06 Windows build under GE-Proton 11-11,

@@ -7,10 +7,10 @@ texture (t11) and `SurfelBits` buffers are unverified on the Windows backends (Â
 Work orders: [backyard8-surfel-work-orders.md](backyard8-surfel-work-orders.md). Pipeline
 reference: [backyard8-screen-space-fluid.md](backyard8-screen-space-fluid.md).
 
-Branch `backyard8-surfels` from `5da6c0f`. Commits: WO-1 `0d77183` + `32bbe6b` (engine
-plumbing), WO-2 `7b510da` + `1ed5b85` (shaders), WO-3 `960d9f4` (scene, config, Dev GUI),
-WO-6 `e096de5` + `9432fa2` (surfel normals, round 2), WO-7 `b416143` (smoothing setting);
-references re-frozen in `8ead398`. WO-4 and WO-8 changed no source.
+Branch `backyard8-surfels` from `0a1852a`. Commits: WO-1 `3c4d2d1` + `87add7f` (engine
+plumbing), WO-2 `7df5fcb` + `68904bd` (shaders), WO-3 `1721971` (scene, config, Dev GUI),
+WO-6 `be6011b` + `f3ddff9` (surfel normals, round 2), WO-7 `92cbb2a` (smoothing setting);
+references re-frozen in `b3ef0c7`. WO-4 and WO-8 changed no source.
 
 ## 1. What was wrong
 
@@ -18,7 +18,7 @@ The particle renderer's water style (renderMode 0, blend 1, style 0) shaded the 
 thickness as a fake height field: the normals faced the camera, there was no real
 reflection, and the refraction was a thickness-scaled offset. It cost 2.17 ms of fluid
 passes at 1080p on the water start, against 1.32 ms for screen space measured in the same
-session (`5da6c0f`).
+session (`0a1852a`).
 
 Round 2: the first surfel implementation drew every particle as its own dome, because the
 per-pixel ellipsoid normals were used directly. The calm pool read as a lumpy carpet with
@@ -99,7 +99,7 @@ Fluid-pass GPU at 1080p, second of two 400-frame runs, water start:
 |---|---|---|
 | Surfels | 1.84 ms (Surfel Splat 0.57-0.58 ms) | 1.19 ms |
 | Screen space | 1.21 ms | 0.79 ms |
-| Old splat water style (`5da6c0f`) | 2.17 ms | not measured |
+| Old splat water style (`0a1852a`) | 2.17 ms | not measured |
 
 The lake column for the old splat water style is not measured. The old splat row comes from
 an earlier session, in which screen space measured 1.32 ms; the surfel and screen-space rows
@@ -109,7 +109,7 @@ were measured together. Compare rows of the same session.
 
 Vulkan-only on native Linux.
 
-- **Gate** (Claude's `8ead398`, full gate PASS on HEAD): screen-space 0.002/0.077/0.033
+- **Gate** (Claude's `b3ef0c7`, full gate PASS on HEAD): screen-space 0.002/0.077/0.033
   %, splat 0.000/0.060/0.247 %, spheres 0.001/0.456/0.003 %, lake -0.0434 m, water
   -0.1700 m.
 - **`splat` references re-frozen** from three-run means, spread 0.002 / 0.056 / 0.214 %;

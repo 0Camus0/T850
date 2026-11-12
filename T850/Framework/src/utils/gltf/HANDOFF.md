@@ -275,7 +275,7 @@ patches we want, re-vendor wholesale.
      the per-corner output on uniformly-mapped meshes.
   3. Returns `false` on degenerate input — caller falls back to the
      naive accumulator so a normal-mapped mesh always gets *something*.
-  4. **Handedness (`c4c680dc`).** glTF V runs down the image while glTF
+  4. **Handedness (`f0105518`).** glTF V runs down the image while glTF
      normal maps put +Y up, so MikkTSpace fed raw glTF UVs returns the
      opposite bitangent sign. The stored `w` is `-sign` (what Blender
      exports); before this fix normal-map bumps were inverted on every

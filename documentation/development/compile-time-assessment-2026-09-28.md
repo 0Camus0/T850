@@ -1,6 +1,6 @@
 # Cross-Platform Build and Compile-Time Assessment
 
-Status: measured on `microsoft_dawn_d3d12_cache_proposal` commit `1b0aa68e` on 2026-09-28. No compile-time optimization from this assessment is enabled in production yet.
+Status: measured on `microsoft_dawn_d3d12_cache_proposal` commit `84cf98c4` on 2026-09-28. No compile-time optimization from this assessment is enabled in production yet.
 
 ## Purpose
 
@@ -17,7 +17,7 @@ This assessment closes the platform compilation audit and measures where clean C
 | Android | `x86_64` Release | GitHub Actions run `36521043888` | PASS: development/production APK build and upload |
 | Browser WebGPU | Native x64 and ARM64 Edge | GitHub Actions run `36521043888` | PASS: compute and recovery tests |
 | SteamRT/Linux | Release runtime and T8ditor | GitHub Actions run `36521043888` | PASS: build, required outputs, package and upload |
-| Physical Steam Deck | SteamRT Release runtime and T8ditor on `deck@10.0.0.225` | Dedicated checkout `/home/deck/Code/T850-pr49-validation`, exact commit `1b0aa68e` | PASS: official build and 78/78 wrapper self-tests |
+| Physical Steam Deck | SteamRT Release runtime and T8ditor on `deck@10.0.0.225` | Dedicated checkout `/home/deck/Code/T850-pr49-validation`, exact commit `84cf98c4` | PASS: official build and 78/78 wrapper self-tests |
 
 The physical Deck official first build took 560 seconds, including container preparation and first-checkout dependency work. A dependency-warm clean application rebuild of DayScene and T8ditor took 198.860 seconds; a repeated clean rebuild took 188.765 seconds.
 

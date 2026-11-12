@@ -481,7 +481,7 @@ centre while the browser touch overlay is active, because its sticks and buttons
 edge; the wind controls wrap to a second row below 720 px wide): +10
 balls, Reset (two presses within 4 s, because it clears the spawned balls), wind speed −/+
 (0.5 m/s), heading << / >> (15°) and the wind-arrow toggle. There is no ball cap (owner decision,
-`97009aef`, re-confirmed 2026-11-06). The same actions exist without the bar:
+`dc4f06e6`, re-confirmed 2026-11-06). The same actions exist without the bar:
 
 | Action | Keyboard | Pad |
 |---|---|---|

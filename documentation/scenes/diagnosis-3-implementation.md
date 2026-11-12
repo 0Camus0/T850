@@ -6,7 +6,7 @@
 > the D3D11/D3D12 port steps.
 
 Status: implemented 2026-11-08 against the [Diagnosis 3](diagnosis-3.md) plan, on top of
-commit `90f0550`. Vulkan, D3D12 (Proton) and OpenGL (Windows build under Wine) now produce the
+commit `6658d56`. Vulkan, D3D12 (Proton) and OpenGL (Windows build under Wine) now produce the
 same particle layer at frame 24. Native D3D11 was not run; the Proton D3D11 result is
 geometry-correct but colour-wrong because Proton's D3D compiler is Wine's builtin, as
 diagnosis-3 F2 explains.

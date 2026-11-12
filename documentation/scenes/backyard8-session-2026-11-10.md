@@ -8,7 +8,7 @@
 
 This is the record of the work done **after** the frontier-model handoff document
 [backyard8-fluid-summary-and-next-steps.md](backyard8-fluid-summary-and-next-steps.md).
-The handoff started at commit `1544474`; the pre-work state is tagged
+The handoff started at commit `6fe9aa3`; the pre-work state is tagged
 `backyard8-phase0-baseline`.
 
 The session covered four things:
@@ -30,17 +30,17 @@ Nothing was pushed. The working tree is clean except the generated
 
 | Ref | Contents |
 |---|---|
-| `backyard8-phase0-baseline` (tag, `1544474`) | Verified pre-work state |
-| `6572247` | Phase 1 solver: rest density 0.907, wall no-slip, settle-before-drop, integer wind gate |
-| `0e4e6d9` | Docs: water-loss sweep (3.5) |
-| `7e28cef` | Docs: D3D12/D3D11 native Windows pass |
-| `84bf60e` | Docs: Windows GL pass; Linux GL driver/backend split |
-| `4e71223` | 2×6 solver, regression gate, 3.7/3.10 fixes, final references |
+| `backyard8-phase0-baseline` (tag, `6fe9aa3`) | Verified pre-work state |
+| `36e8f9f` | Phase 1 solver: rest density 0.907, wall no-slip, settle-before-drop, integer wind gate |
+| `6fe9394` | Docs: water-loss sweep (3.5) |
+| `c27e254` | Docs: D3D12/D3D11 native Windows pass |
+| `bfaaad8` | Docs: Windows GL pass; Linux GL driver/backend split |
+| `2bed308` | 2×6 solver, regression gate, 3.7/3.10 fixes, final references |
 
 Revert the whole session:
 
 ```bash
-git revert 6572247 0e4e6d9 7e28cef 84bf60e 4e71223
+git revert 36e8f9f 6fe9394 c27e254 bfaaad8 2bed308
 ```
 
 Or return to the pre-work state (destructive):
@@ -185,7 +185,7 @@ Regression therefore uses tolerances, not pixel identity.
 - `check_gl_twins.py` PASS (53 kernels / 48 twins); `check_fluid_constants.py` PASS.
 - Vulkan frame 24 screen-space matched the new table to the pixel; frame 300 within the
   documented GPU-atomic variation.
-- Phase 1 commits: `6572247` (code/config/docs), `0e4e6d9` (3.5 measurements).
+- Phase 1 commits: `36e8f9f` (code/config/docs), `6fe9394` (3.5 measurements).
 
 ---
 
@@ -234,7 +234,7 @@ Nine captures per API (screen space, water, spheres at 24/90/300), 960×540, wat
 - No `Shader compile failed`, `using graphics implementation`, `compute dispatch failed`,
   `cannot build constants`, or incomplete-binding-layout messages.
 
-D3D12/D3D11 docs commit: `7e28cef`.
+D3D12/D3D11 docs commit: `c27e254`.
 
 ### 4.3 GL on Windows
 
@@ -248,7 +248,7 @@ only the depth-export warning).
 - 4K: `Fluid Clear` 480 × 270, no `DispatchTooLarge`.
 - Selftest: 78 PASS / 0 FAIL.
 
-GL docs commit: `84bf60e`.
+GL docs commit: `bfaaad8`.
 
 ### 4.4 GL on Linux
 
@@ -400,7 +400,7 @@ Also verified:
 
 ### 6.3 Windows port, 2026-11-11 (five APIs)
 
-The 83 commits after `7e28cef` had never run on Windows: whitewater, environment-cube
+The 83 commits after `c27e254` had never run on Windows: whitewater, environment-cube
 reflections sampled in a compute kernel, G-buffer lighting in the shade, caustics, the
 surfel `FluidNormal` target and the coarse thickness grid. All five APIs were checked on the
 RTX 4080 Laptop GPU at 1920x1080, `--regressionFixedDt 0.0166667 --postProcessMode compute`.
@@ -427,12 +427,12 @@ Fixes, one per root cause:
 
 | Commit | Change |
 |---|---|
-| `0bd825b` | D3D12: cube textures (`DepthOrArraySize == 6`) pass dispatch validation |
-| `639e8a5` | D3D11: a `TEXTURECUBE` SRV is accepted for a cube layout |
-| `a5f6ba6` | GL: drop duplicate combined-sampler aliases, accept and restore cubes |
-| `b4a8a75` | WebGPU: bit-pattern finiteness, because Tint aborts on `OpIsNan` |
-| `238be0f` | WebGPU: accept the 6-layer cube in dispatch validation |
-| `130e6b9` | WebGPU: request the adapter's storage-buffer limits (4K is 165,888,000 B) |
+| `719b3d2` | D3D12: cube textures (`DepthOrArraySize == 6`) pass dispatch validation |
+| `445b27a` | D3D11: a `TEXTURECUBE` SRV is accepted for a cube layout |
+| `1c4b149` | GL: drop duplicate combined-sampler aliases, accept and restore cubes |
+| `35dc8a5` | WebGPU: bit-pattern finiteness, because Tint aborts on `OpIsNan` |
+| `9eb3414` | WebGPU: accept the 6-layer cube in dispatch validation |
+| `a9a8d6d` | WebGPU: request the adapter's storage-buffer limits (4K is 165,888,000 B) |
 
 The GL-only band at rows 582-584 is the coping's striped front face, shifted by about two
 rows: it is already present in `RT_Dump_GBuffer_Albedo` with `FluidParticles` empty, so it is

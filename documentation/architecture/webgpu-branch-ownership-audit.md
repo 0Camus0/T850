@@ -1,7 +1,7 @@
 # WebGPU Branch Ownership Audit
 
 Scope: the nine commits in `microsoft_daniel_branch` after shared base
-`c9bb6a75b0b75314673d95ef0e2702c575ac4d0d`, plus the runtime scene callers affected
+`9d0ccccd962bd3c37dd81ec963a716638a2bf92a`, plus the runtime scene callers affected
 by their contracts. PR #39 remains unmerged. This is not a claim that all legacy
 scene architecture has been migrated into Framework.
 
@@ -9,15 +9,15 @@ scene architecture has been migrated into Framework.
 
 | Commit | Change | Assessment and disposition |
 | --- | --- | --- |
-| `95293d19` | WebGPU proposal | Design documentation, not runtime behavior. Preserve historical proposal versus implemented-status distinctions. |
-| `b67f4f05` | Shadows and event loop | Shadow sampling, SSAO initialization and frame completion belong in Framework. Retain those shared fixes; validate all native APIs as well as WebGPU. |
-| `9e5119a6` | Mouse capture | Scene-class constant overrides were inappropriate policy. Replaced by authored `mouse_capture`, applied by Framework `SceneSetup` and queried through `SceneBase`. |
-| `66e1139a` | Proposal update | Documentation only. Does not authorize scene-specific renderer workarounds. |
-| `851277e9` | WebGPU runtime and shader flows | Driver/compiler/reflection and mipmap utilities have appropriate Framework owners. Removed backend guesses for absent scene texture slots. Shader-flow configuration now occurs in the Windows driver factory, not via a platform-host downcast. The app's scene-transition GPU drain is now Framework lifecycle behavior. |
-| `21556f9b` | Launcher cache compilation | Manifest parsing, source selection, compilation, cancellation and progress were incorrectly implemented in the executable entry point. Moved them into Framework shader services and a Framework-owned tool host. CLI parsing/help/validation live in `ConfigRuntime`; recording exit hooks live with the recorder. |
-| `ae02906a` | Restore CI self-tests | Keep enabled; tests exit before graphics startup. No scene ownership exception needed. |
-| `563c985b` | Stage Vulkan loader | Correct packaging responsibility in build targets. Preserve architecture-correct runtime staging for self-tests and executables. |
-| `cac79fbf` | Shared-branch PR validation | Keep branch routing and PR validation; no engine behavior. |
+| `9e4bdda1` | WebGPU proposal | Design documentation, not runtime behavior. Preserve historical proposal versus implemented-status distinctions. |
+| `cfd88640` | Shadows and event loop | Shadow sampling, SSAO initialization and frame completion belong in Framework. Retain those shared fixes; validate all native APIs as well as WebGPU. |
+| `909d9883` | Mouse capture | Scene-class constant overrides were inappropriate policy. Replaced by authored `mouse_capture`, applied by Framework `SceneSetup` and queried through `SceneBase`. |
+| `4a2306bd` | Proposal update | Documentation only. Does not authorize scene-specific renderer workarounds. |
+| `52fa8b5a` | WebGPU runtime and shader flows | Driver/compiler/reflection and mipmap utilities have appropriate Framework owners. Removed backend guesses for absent scene texture slots. Shader-flow configuration now occurs in the Windows driver factory, not via a platform-host downcast. The app's scene-transition GPU drain is now Framework lifecycle behavior. |
+| `0e2c6afb` | Launcher cache compilation | Manifest parsing, source selection, compilation, cancellation and progress were incorrectly implemented in the executable entry point. Moved them into Framework shader services and a Framework-owned tool host. CLI parsing/help/validation live in `ConfigRuntime`; recording exit hooks live with the recorder. |
+| `b159ea90` | Restore CI self-tests | Keep enabled; tests exit before graphics startup. No scene ownership exception needed. |
+| `27ddf4f8` | Stage Vulkan loader | Correct packaging responsibility in build targets. Preserve architecture-correct runtime staging for self-tests and executables. |
+| `961cb384` | Shared-branch PR validation | Keep branch routing and PR validation; no engine behavior. |
 
 The branch changes 108 files before this cleanup. These include shader assets,
 compiler/backend code, test fixtures, vendored simplecpp, dependency overlays,

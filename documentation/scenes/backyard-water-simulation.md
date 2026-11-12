@@ -1,6 +1,6 @@
 # Backyard Scene & GPU Pool Water — Implementation Record
 
-> **Status (2026-10-28):** commit `e90752b4` rebuilt the solver on a staggered (MAC) grid with a
+> **Status (2026-10-28):** commit `52490d7a` rebuilt the solver on a staggered (MAC) grid with a
 > ghost-fluid free surface and fixed several rendering defects. Sections 6–8 and 14–16 below
 > describe the earlier collocated solver. The current architecture, open issues and how to fix
 > them are in [backyard-water-remaining-work.md](backyard-water-remaining-work.md).
@@ -15,7 +15,7 @@ fixed, the tradeoffs, and the limits that remain.
 
 Branch: `backyard_scene` (worktree `D:\Code\QwenFlashT850\T850-backyard`)
 Base: `master`
-Commits: 22 (`950d717b` → `8ebb35e5`)
+Commits: 22 (`7a22afb4` → `e6ddafe5`)
 Backends verified: **D3D12** and **Vulkan** on Windows x64.
 
 ---
@@ -262,7 +262,7 @@ class ComputeTexture3D { public: virtual ~ComputeTexture3D() = default;
 
 // ComputeBindingDesc gained:
 ComputeTexture3D* texture3D = nullptr;
-// ...and later (97009aef) per-dispatch data for a ReadOnlyBuffer without a persistent buffer:
+// ...and later (dc4f06e6) per-dispatch data for a ReadOnlyBuffer without a persistent buffer:
 const void* inlineData = nullptr; uint32_t inlineBytes = 0, inlineStride = 0;
 
 virtual bool SupportsComputeTextures3D() const { return false; }
@@ -293,7 +293,7 @@ Plus driver headers (`D3D11Driver.h`, `D3D12Driver.h`, `VulkanDriver.h`, `GLDriv
    or `[[spv::format_r32f]]` for the scalar fields). Consequence:
    **every field needs ping-pong** — no in-place updates anywhere in the solver.
 2. **Originally only `RGBA8` and `RGBA16F` storage formats existed**, so scalars were packed into
-   `.x` of an RGBA16F volume. Since W-02 (`14c705f4` format, then the switch) `R32Float` exists
+   `.x` of an RGBA16F volume. Since W-02 (`55974492` format, then the switch) `R32Float` exists
    on D3D11/D3D12/Vulkan/GL; α, pressure and divergence are R32F and velocity stays RGBA16F.
    Readers still declare `Texture3D<float4>` and read `.x`: an R32F view returns `(r, 0, 0, 1)`.
 3. Storage textures cannot be hardware-filtered — all reconstruction is manual (see §9.5).
@@ -781,7 +781,7 @@ body kernels can look up that body's velocity:
   later bodies win on overlap, authored solids untouched (the same rules as the CPU stamp).
 - The CPU stamp (copy the base mask, stamp, re-create the buffer) is kept only as a fallback
   when the GPU path is unavailable. It used to run on every footprint change and its blocking
-  re-upload stalled the frame for ~10 ms while a ball moved (W-15 P6, fixed in `c911381a`).
+  re-upload stalled the frame for ~10 ms while a ball moved (W-15 P6, fixed in `78d3f6f1`).
 
 Making the body solid in the mask is what clears its footprint from the alpha field: the
 advection kernel writes solid cells to zero, so no separate removal pass is needed.
@@ -941,7 +941,7 @@ Two mechanisms:
 conservative up to the clamping that keeps α in [0,1].
 
 **2. Global correction.** `CorrectVolumeFraction` runs every `volumeCheckInterval` frames
-(default 15) and never leaves the GPU (`c911381a`):
+(default 15) and never leaves the GPU (`78d3f6f1`):
 
 1. `CS_FluidVolumeReduce3D` sums total α, interface headroom `Σ(1 − α)` and interface α over
    the band `[0.5, 0.999)` into a 4×`uint4` buffer: group-shared tree reduction, then one
@@ -1039,7 +1039,7 @@ with symmetric crests and troughs of about 10 cm. At 60 it is 0.8-0.9 cm with tr
 and crests of only 2-6 cm. The under-converged pressure solve lets the water near a body compress
 instead of displacing, so each ball sits in a smooth dent on a calm sheet: the owner's "bowling ball
 on fabric". The gates still pass at 60 (they check mass and the waterline cell, not the wave
-field), which is how the web cap shipped on 11-02 (`5d11cd43`) with this side effect. The desktop
+field), which is how the web cap shipped on 11-02 (`82f3e2b0`) with this side effect. The desktop
 browser has the headroom for 120: with 121 balls, Firefox runs at 172 fps and Edge at 270 fps at
 1280 x 720 on the RTX 4080 Laptop (202 and 344 at 60).
 

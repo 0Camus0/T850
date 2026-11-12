@@ -8,7 +8,7 @@ local verification below is not a universal hardware portability sign-off.
 The request was to assess the complete compute implementation: the BaseDriver
 contract, every driver implementation, code organization, and rendering pipeline
 correctness. This assessment covers the working tree rebased onto
-`microsoft_webgpu_branch` at `91af57aaef3cad4787e90e1744ac7907d53d892f`, including
+`microsoft_webgpu_branch` at `c7a3f4f373a970f6d981ec9924fbd09c6f10eec3`, including
 the browser integration and subsequent particle-depth/camera fixes. It is not
 limited to the original compute PR's diff.
 

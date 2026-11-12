@@ -389,7 +389,7 @@ now stop their workflow steps explicitly.
 | Registration, atlas, Launcher | PASS: source registration, 20 blocks/120 atlas face mappings, Windows PowerShell WPF/routing tests |
 | Android Release | PASS: arm64-v8a and x86_64, development and production APKs; ABI contents and signatures verified |
 | Workflow lint | PASS: checksum-verified actionlint 1.7.7; optional shellcheck/pyflakes integrations disabled |
-| Steam Deck job | PASS on commit `851277e9`: hosted SteamRT build/package plus physical Deck runtime/editor smoke; details below |
+| Steam Deck job | PASS on commit `52fa8b5a`: hosted SteamRT build/package plus physical Deck runtime/editor smoke; details below |
 
 The first local Win32 attempt failed because x86 vcpkg packages were absent.
 Installing the workflow's exact package list resolved it; the subsequent complete
@@ -425,7 +425,7 @@ GitHub check statuses. Windows MSBuild jobs are not reproduced by Linux-only `ac
 
 ### Hosted CI and Steam Deck
 
-The [hosted Build run for commit 851277e9](https://github.com/0Camus0/T850/actions/runs/35031344666)
+The [hosted Build run for commit 52fa8b5a](https://github.com/0Camus0/T850/actions/runs/35031344666)
 completed successfully: registration, all six Windows cells, both Android ABIs,
 and Steam Deck. The tag-only release job was skipped for the PR, as expected.
 
@@ -525,7 +525,7 @@ change the stage or incoming compute-PR handoff below.
 ### Compute Handoff
 
 The owner initially expected non-WebGPU compute from another PR and will perform
-the rebase later. Inspection of PR #40 at `594d5cd1` supersedes that scope
+the rebase later. Inspection of PR #40 at `efaf2228` supersedes that scope
 assumption: it also includes native WebGPU/Dawn and desktop OpenGL 4.3+ compute.
 Do not rebase now, duplicate those implementations, or invent a competing shared
 compute abstraction. Emscripten support is not established by native Dawn tests.
@@ -585,15 +585,15 @@ or deployment occurred, and production remains v0.1.7.
 ### PR #40 Integration Completed (2026-09-17)
 
 Rebased `microsoft_daniel_branch` onto the merged upstream
-`91af57aaef3cad4787e90e1744ac7907d53d892f`. The two local web commits are now
-`4712f86f` and `c3ece587`. All rebase conflicts are resolved. Follow-up browser
+`c7a3f4f373a970f6d981ec9924fbd09c6f10eec3`. The two local web commits are now
+`54c7c4db` and `740f9811`. All rebase conflicts are resolved. Follow-up browser
 compute integration remains as working-tree changes; nothing was pushed or
 deployed. Production remains v0.1.7. The local config was restored byte-for-byte
 from its external backup; the pre-rebase stash is retained as a backup.
 
-The final PR head `e63096be` passed the required upstream CI before merge,
+The final PR head `e67e1614` passed the required upstream CI before merge,
 including the corrected 56-DWORD TorchParticles ABI test. The earlier review
-below concerns the older `594d5cd1` revision, not current CI status.
+below concerns the older `efaf2228` revision, not current CI status.
 
 Integration preserves the context-owned uniform pages, epochs, cached graphics
 bindings, completion-tracked buffer reuse, browser scheduling, 512-face no-BC
@@ -651,9 +651,9 @@ merge simulations left HEAD, index and the working tree unchanged.
 | Checkpoint | SHA / State |
 | --- | --- |
 | Our local release commit | `bf387f8303867b76fc8fb1b886e1d3023bbe75b7` on `microsoft_daniel_branch` |
-| Common ancestor | `8e31f4aab07b2b7a425890790e2bf1505b05def8` |
-| Intended future upstream | `origin/microsoft_webgpu_branch`, `70327f39fcd7140b00d0445521bd22ddf432b683` |
-| Incoming branch | `origin/microsoft_compute_shaders`, `594d5cd1e00baf605127bd44d22df240289bebf7` |
+| Common ancestor | `d3c7c78a8d9b39aa7bd4aeee52e00374f09c158a` |
+| Intended future upstream | `origin/microsoft_webgpu_branch`, `742b3b7ca7d14b1e47c23a4070923b9f1593ba09` |
+| Incoming branch | `origin/microsoft_compute_shaders`, `efaf2228499a821dedf41fff821614a472d3c251` |
 | PR | [#40: Add cross-backend compute shaders](https://github.com/0Camus0/T850/pull/40), open, mergeable, checks unstable at inspection |
 | CI | [Build 35280243567](https://github.com/0Camus0/T850/actions/runs/35280243567): x64 Debug/Release failed; registration, Win32/ARM64 and both Android ABIs/Steam Deck passed; tag-only release skipped |
 
@@ -666,9 +666,9 @@ by `bf387f83`; upstream's PR #39 merge already contains their parent.
 #### Findings to Resolve or Track Upstream
 
 1. **High: current x64 CI is deterministically failing.**
-   [ShaderProbe.cpp:508](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/cmake/dawn-package/ShaderProbe.cpp#L508)
+   [ShaderProbe.cpp:508](https://github.com/0Camus0/T850/blob/efaf2228499a821dedf41fff821614a472d3c251/T850/cmake/dawn-package/ShaderProbe.cpp#L508)
    expects 28 DWORDs for TorchParticles, while
-   [the HLSL constant block](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/Assets/Shaders/CS_TorchParticles.hlsl#L4)
+   [the HLSL constant block](https://github.com/0Camus0/T850/blob/efaf2228499a821dedf41fff821614a472d3c251/T850/Assets/Shaders/CS_TorchParticles.hlsl#L4)
    contains a float4x4 plus ten float4 values: 56 DWORDs / 224 bytes. Both failed
    jobs report `CS_TorchParticles.hlsl: unexpected ComputeV1 constant layout`.
    Correct the expectation/ABI consistently and rerun both checks; this is not
@@ -676,20 +676,20 @@ by `bf387f83`; upstream's PR #39 merge already contains their parent.
 2. **High: storage allocation can prevent the promised raster fallback.**
    `RenderGraph::CreateRenderTargets` passes `rt.storage` directly to `CreateRT`
    before `CreateComputePipelines` checks mode/capability.
-   [D3D11RT.cpp:103](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/Framework/src/video/d3d11/D3D11RT.cpp#L103)
+   [D3D11RT.cpp:103](https://github.com/0Camus0/T850/blob/efaf2228499a821dedf41fff821614a472d3c251/T850/Framework/src/video/d3d11/D3D11RT.cpp#L103)
    unconditionally adds the UAV bind flag for these targets, then exits on
    texture creation failure or returns false on UAV creation failure. Thus an
    unsupported storage format can fail startup even in raster mode. Gate storage
    allocation or retry a non-storage target consistently with graph selection;
    validate with missing typed-UAV format support, not only the development GPU.
 3. **Medium: the compute self-test cannot validate non-Windows ports.**
-   [App.cpp:129](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/DayScene/App.cpp#L129)
+   [App.cpp:129](https://github.com/0Camus0/T850/blob/efaf2228499a821dedf41fff821614a472d3c251/T850/DayScene/App.cpp#L129)
    rejects every non-Windows `--compute-selftest`, including explicit Vulkan.
    Preserve the useful native harness, but adapt host selection/lifecycle before
    counting Linux/Deck or browser compute execution as validated. Android/Deck
    CI compilation does not close this runtime coverage gap.
 4. **Hardware risk: Vulkan queue selection changes without a present check.**
-   [VulkanDriver.cpp:475](https://github.com/0Camus0/T850/blob/594d5cd1e00baf605127bd44d22df240289bebf7/T850/Framework/src/video/vulkan/VulkanDriver.cpp#L475)
+   [VulkanDriver.cpp:475](https://github.com/0Camus0/T850/blob/efaf2228499a821dedf41fff821614a472d3c251/T850/Framework/src/video/vulkan/VulkanDriver.cpp#L475)
    prefers a graphics+compute queue and assumes the same family can present.
    Verify surface support or preserve separate presentation ownership before
    claiming broader GPU compatibility. This was inspected, not reproduced on

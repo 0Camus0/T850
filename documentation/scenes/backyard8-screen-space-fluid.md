@@ -168,7 +168,7 @@ The 960x540 figures in
 work. At 3840x2160 (RTX PRO 6000 Blackwell, Linux, Vulkan, screen-space renderer), the
 4K performance work orders (WO-P0 through WO-P4, see
 [backyard8-perf4k.md](backyard8-perf4k.md)) measured the per-pass GPU time before
-(`764c078`) and after (`620f833` plus status commits), in milliseconds:
+(`b890a58`) and after (`2fd3500` plus status commits), in milliseconds:
 
 | View, start | Fluid Splat | Fluid Surface Shade | Render graph total |
 |---|---|---|---|

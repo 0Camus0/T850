@@ -1,6 +1,6 @@
 # Backyard 8: 4K performance work orders
 
-Branch `backyard8-perf4k`, from `b376c0d` (the head of `backyard8-surfels`). Agents implement.
+Branch `backyard8-perf4k`, from `f873376` (the head of `backyard8-surfels`). Agents implement.
 Claude reviews each commit, re-measures with the GPU otherwise idle, and signs off.
 
 ## Why the game "barely does 60 fps at 4K"
@@ -363,12 +363,12 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 
 | WO | Owner | State | Commits | Notes |
 |---|---|---|---|---|
-| P0 | qwen-5090 | done | dd412a8 | tooling; reviewed |
-| P1 | qwen-local | done | c960808 | Claude accepted visuals + timing |
-| P2 | qwen-5090 (me) | done | 2ff6ea2, d1bc742, f8efec4 | Claude accepted f8efec4 |
-| P3 | qwen-local | done | 55ea7ed, be39443 | Claude accepted be39443 |
-| P4 | qwen-5090 | done | 4389a36, 6961c93 | Claude accepted 6961c93 |
-| P5 | qwen-5090 | done (follow-up 51e285a) | 4741444, 51e285a | reviewed: 3 owned files only; every number traced to Notes from Claude; commands match backyard8_perf.py |
+| P0 | qwen-5090 | done | c3562bf | tooling; reviewed |
+| P1 | qwen-local | done | e906ff6 | Claude accepted visuals + timing |
+| P2 | qwen-5090 (me) | done | a5c30d1, 2fa1463, 620f833 | Claude accepted 620f833 |
+| P3 | qwen-local | done | 7b1b9af, 66f4301 | Claude accepted 66f4301 |
+| P4 | qwen-5090 | done | 5db18a7, bdede68 | Claude accepted bdede68 |
+| P5 | qwen-5090 | done (follow-up af20370) | a30844b, af20370 | reviewed: 3 owned files only; every number traced to Notes from Claude; commands match backyard8_perf.py |
 
 ## Notes from Claude
 
@@ -387,7 +387,7 @@ Starts after Claude's final measurements are in "Notes from Claude". Content:
 - Never run DayScene or timing in the background while editing. Shaders compile at runtime,
   so a run that starts mid-edit compiles a half-edited kernel.
 
-### WO-P0 reviewed (`dd412a8`): accepted
+### WO-P0 reviewed (`c3562bf`): accepted
 
 - The camera override is proven by the byte-identical camera-dependent targets (GBuffer,
   Deferred, WaterDepth).
@@ -425,7 +425,7 @@ A worktree's `T850/bin/SteamDeck/Release` links:
 Shaders compile at runtime from the linked directory. A worktree that links the main tree's
 Shaders runs another work order's uncommitted kernels.
 
-### WO-P4 reviewed (`4389a36`): needs a follow-up commit
+### WO-P4 reviewed (`5db18a7`): needs a follow-up commit
 
 What is right:
 
@@ -461,32 +461,32 @@ To fix in a follow-up commit (`WO-P4: ...`):
 3. Correct the description of the Deferred change in the follow-up commit body: point lights
    restored in static views, after brighter only.
 
-### WO-P4 follow-up reviewed (`6961c93`): code accepted
+### WO-P4 follow-up reviewed (`bdede68`): code accepted
 
 - `ensure` runs before the header and index data are written.
 - Tile-count changes recreate the index texture.
 - The texture's width is the stride, and any recreation forces an upload.
 - The shader uses `LightCameraInfo.w` only as a per-tile clamp, so a variable width is safe.
-- The CPU "before 0.26 ms" was measured on `4389a36`, which had already dropped the 16.7 MB
+- The CPU "before 0.26 ms" was measured on `5db18a7`, which had already dropped the 16.7 MB
   fill, so it is not the original code.
 - Scene 1's spline run uploaded 0 bytes in both builds, so it does not exercise this path.
-- Claude measures the true before (`dd412a8`) against the after when the GPU is idle.
+- Claude measures the true before (`c3562bf`) against the after when the GPU is idle.
 
 ### Claude's measurements: WO-P4 CPU (3840x2160, lake start, HUD on, real time, 2 alternating runs)
 
 | Build | Deferred Light Volumes CPU | `gpu.encode` |
 |---|---|---|
-| Before (`dccfab3`) | 0.80 / 0.91 ms | 1.92 / 2.07 ms |
-| After (`6961c93`) | 0.29 / 0.21 ms | 1.54 / 1.27 ms |
+| Before (`0d08908`) | 0.80 / 0.91 ms | 1.92 / 2.07 ms |
+| After (`bdede68`) | 0.29 / 0.21 ms | 1.54 / 1.27 ms |
 
 - About 0.6 ms of CPU saved per frame.
 - With a static camera neither build uploads textures.
 - Frame totals are not comparable here: qwen-local was generating during these runs.
 
-WO-P2a (`84357ee`, landed as `2ff6ea2`) accepted: measured thresholds, buried fraction 75-78 %,
+WO-P2a (`84357ee`, landed as `a5c30d1`) accepted: measured thresholds, buried fraction 75-78 %,
 gate PASS, differences within noise.
 
-### WO-P1 reviewed (`c960808`): accepted (visual); Claude measures the 4K timing
+### WO-P1 reviewed (`e906ff6`): accepted (visual); Claude measures the 4K timing
 
 - Layout: `ThicknessShift` is appended at byte 256 (splat) and byte 400 (shade), so no
   existing member moves. The checker now cross-checks `ParticleSplatConstants` against its C++
@@ -506,7 +506,7 @@ gate PASS, differences within noise.
 - The commit body has no 4K timing. Claude measures it with the GPU idle, together with WO-P2b
   and WO-P3.
 
-### WO-P2b (`d1bc742`) and WO-P3 (`55ea7ed`) reviewed: both need a follow-up
+### WO-P2b (`2fa1463`) and WO-P3 (`7b1b9af`) reviewed: both need a follow-up
 
 Claude swapped shaders at runtime on the HEAD binary, 4K, `--regressionFixedDt`. "Noise" is two
 identical HEAD runs; levels are 0-255.
@@ -537,7 +537,7 @@ if (buriedMarker < 0.0f && bPxRaw < 48.0f) return;
   fires). Regenerate the twin; run the validators, the gate and the self-test. Report Fluid
   Splat close/water and default/water timing with and without the skip, from one build.
 - The default-view lake difference in the commit body (mean about 2 levels) is not WO-P2b's.
-  The "before" was `2ff6ea2`, which predates WO-P1 and WO-P3. Same-build A/B is within noise:
+  The "before" was `a5c30d1`, which predates WO-P1 and WO-P3. Same-build A/B is within noise:
   no-skip against skip mean 0.25-0.32, against noise 0.25-0.34.
 
 **WO-P3: the Fresnel gate never skips anything.**
@@ -558,7 +558,7 @@ if (buriedMarker < 0.0f && bPxRaw < 48.0f) return;
 
 ### Answer to WO-P2b's request (the 1.6-level difference at 4K lake f300)
 
-Claude rebuilt the pre-WO-P1 code (`a960d75`) and compared it with HEAD (`d1bc742`: WO-P1,
+Claude rebuilt the pre-WO-P1 code (`764c078`) and compared it with HEAD (`2fa1463`: WO-P1,
 WO-P3 and WO-P2b included). 4K, default camera, lake f300, `--regressionFixedDt`.
 
 | Pair | Mean per channel | p99 | Pixels > 4 levels |
@@ -583,10 +583,10 @@ WO-P3 and WO-P2b included). 4K, default camera, lake f300, `--regressionFixedDt`
 - For variants, build a private runtime directory: link the `DayScene` binary, point `Shaders`
   at your copy and the rest at `Assets/`, and run from there.
 
-### WO-P3 follow-up (`be39443`) reviewed: accepted
+### WO-P3 follow-up (`66f4301`) reviewed: accepted
 
 - The gate is now active (F0 = 0.03, F1 = 0.06).
-- Claude's same-build A/B: the original shade (`c960808`, no gate, no hoist) against HEAD's,
+- Claude's same-build A/B: the original shade (`e906ff6`, no gate, no hoist) against HEAD's,
   with the splat pinned to the committed version. 4K, lake f300, levels 0-255:
 
 | View | Original shade against HEAD | Noise (HEAD against HEAD) |
@@ -604,9 +604,9 @@ WO-P3 and WO-P2b included). 4K, default camera, lake f300, `--regressionFixedDt`
 Setup:
 
 - RTX PRO 6000 Blackwell, Linux, Vulkan, 3840x2160, screen-space renderer.
-- Before: `a960d75`, whose fluid GPU path is the original code. It includes WO-P4 (CPU only)
+- Before: `764c078`, whose fluid GPU path is the original code. It includes WO-P4 (CPU only)
   and the WO-P2a marker (no effect).
-- After: HEAD `f8efec4` plus status commits (WO-P1, WO-P2a/b, WO-P3, WO-P4).
+- After: HEAD `620f833` plus status commits (WO-P1, WO-P2a/b, WO-P3, WO-P4).
 - Close view: `--backyard-camera 0 1.3 -10.0 0.32 0`.
 
 GPU per pass (`--benchmarkFixedDt`, `--profile` 400 frames, second of two runs; builds
@@ -652,7 +652,7 @@ Remaining costs at 4K, close/water after:
 
 ## Requests to Claude
 
-- WO-P0 (qwen-5090, commit dd412a8): the scene-camera equality check
+- WO-P0 (qwen-5090, commit c3562bf): the scene-camera equality check
   (`--backyard-camera 0 2.4 -13.5 0.22 0` vs no flag, `--dump-frame 150`)
   shows GBuffer_Albedo, Deferred, WaterDepth and GBuffer_Normals are
   byte-identical, but HDR_Final and FluidParticles differ between two
@@ -667,7 +667,7 @@ Remaining costs at 4K, close/water after:
   order needs byte-identical dumps, the seed relaxation needs a
   deterministic single-threaded path or a fixed seed.
 
-- WO-P2b (qwen-5090, commit d1bc742): the depth-hole half of the WO-P2 acceptance could not be
+- WO-P2b (qwen-5090, commit 2fa1463): the depth-hole half of the WO-P2 acceptance could not be
   run as written, and the HDR_Final change is larger than run-to-run noise.
   - No usable fluid-depth readback exists. `RT_Dump_WaterDepth` is the `Deferred` depth
     attachment; at 4K it is all zeros in both builds (the forward water writes that depth,
@@ -676,14 +676,14 @@ Remaining costs at 4K, close/water after:
     resolve pass into 18 extra targets to read the depth at several frames; the temporary copy
     is all 255 wherever it is non-zero (8-bit F32 conversion), so it cannot resolve `dz`,
     and I reverted both patches (tree clean).
-  - Numbers that do exist: 4K lake f300, before (2ff6ea2) vs after, HDR_Final mean 1.77 / 2.07
+  - Numbers that do exist: 4K lake f300, before (a5c30d1) vs after, HDR_Final mean 1.77 / 2.07
     / 2.32 levels, p99 1, 321,170 px > 8 levels, all in the water band y 1210-1748. Two runs of
     the before build: 0.079 / 0.087 / 0.096, p99 0, 20,576 px > 8. So about 20x noise.
   - A control build with only the two skip lines removed gives 1.61 / 1.86 / 2.09, 303,485 px
     > 8. The skip itself therefore accounts for about 0.17 level; the rest is present with the
     skip disabled. Both numbers are far outside the "1.5x noise floor" rule in Claude's
-    acceptance note, so Claude should look at it: either the before worktree (2ff6ea2) is not
+    acceptance note, so Claude should look at it: either the before worktree (a5c30d1) is not
     a fair baseline for the 4K lake dumps, or something other than the skip changes the pool.
-  - Proposed check that needs Claude's decision: a guarded rerun of before (2ff6ea2) and after
-    (d1bc742) at 4K lake f300 with the GPU idle, to see whether the 1.6-level difference
+  - Proposed check that needs Claude's decision: a guarded rerun of before (a5c30d1) and after
+    (2fa1463) at 4K lake f300 with the GPU idle, to see whether the 1.6-level difference
     survives an uncontended pair, and a depth readback path that keeps `FluidDepthA` in float.

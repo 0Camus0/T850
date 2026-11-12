@@ -12,12 +12,13 @@
 #include <utils/InputManager.h>
 #include <utils/Picking.h>
 
+#include <string>
 #include <vector>
 
 // Backyard: authored residential backyard with a house and a detached pool
 // mesh. The pool GLB carries named wall/floor/step nodes so the fluid solver
 // can derive its boundary mask from geometry instead of authored numbers.
-class BackyardScene final : public t850::SceneBase {
+class BackyardScene : public t850::SceneBase {
 public:
   BackyardScene();
 
@@ -34,8 +35,14 @@ public:
   // debug panel, on every platform. Drawn through the runtime GUI so ImGui owns the hit test
   // (a tap on a button must not also turn the camera).
   void DrawGameplayGui(t850::DevGuiContext& gui) override;
-  // The GUI can change the solver grid, which means new 3D textures.
-  bool RebuildFluid();
+  // The GUI can change the solver grid, which means new 3D textures. Virtual so a
+  // subclass can run a different solver (see Backyard8Scene).
+  virtual bool RebuildFluid();
+  // False when the scene runs another solver; the VOF rebuild then does nothing.
+  virtual bool UsesVofFluid() const { return true; }
+  // False for starts that own the opening shot (the Backyard8 water/lake dam break), so the
+  // scripted ball does not drop into the pool and mask the water column collapsing.
+  virtual bool StartModeUsesBall() const { return true; }
   // Clears the solver to a flat, motionless pool and re-arms the dropped body at the
   // configured height, so a changed drop parameter can be retested from a comparable
   // initial state.
@@ -51,6 +58,10 @@ public:
   // Test hook: spawn this many balls as soon as the solver is ready. Used by
   // --backyard-spawn so the multi-body path can be exercised without the GUI.
   static void SetSpawnOnStart(int count) { s_spawnOnStart = count; }
+  // --backyard-no-hud: hide the always-on quick bar (and the grab crosshair) so the water
+  // can be watched unobstructed. The Dev GUI still has every control.
+  static void SetHudHidden(bool hidden) { s_hudHidden = hidden; }
+  static bool HudHidden() { return s_hudHidden; }
   // Test hook (--backyard-spawn-seed): fixes the spawn RNG so a run is reproducible.
   static void SetSpawnSeed(uint32_t seed) { s_spawnSeed = seed; }
   // Test hook (--backyard-mass-audit N): log the W-03 mass audit every N frames.
@@ -62,6 +73,14 @@ public:
   // Test hook (--backyard-pick-test): drives the real pick/drag input path with a
   // synthetic InputManager, so no OS mouse or keyboard input is ever generated.
   static void SetPickTest(bool enabled) { s_pickTest = enabled; }
+  // --backyard-camera x y z pitch yaw: override the authored camera at load time.
+  // Applied in InitVars right after the scene camera is read, before AttachCamera.
+  // enabled stays false when the flag was missing or malformed.
+  static void SetCameraOverride(float x, float y, float z, float pitch, float yaw) {
+    s_cameraOverride.x = x; s_cameraOverride.y = y; s_cameraOverride.z = z;
+    s_cameraOverride.pitch = pitch; s_cameraOverride.yaw = yaw;
+    s_cameraOverrideEnabled = true;
+  }
   // Test hook (--backyard-pad-test): drives the gamepad grab and the pad quick actions with a
   // synthetic InputManager, so the Deck path is covered without hardware.
   static void SetPadTest(bool enabled) { s_padTest = enabled; }
@@ -73,7 +92,16 @@ public:
   void ResetAndroidVirtualControls();
 #endif
 
-private:
+protected:
+  BackyardScene(const char* descriptorPath, const char* renderGraphPath, const char* waterTunablesPath,
+                const char* ballPalettePath);
+  // Scene JSON the subclass points at. Backyard 7 uses the BackyardScene* files,
+  // Backyard 8 its own Backyard8Scene* copies of the same scene.
+  std::string m_descriptorPath;
+  std::string m_renderGraphPath;
+  std::string m_waterTunablesPath;
+  std::string m_ballPalettePath;
+
   struct AssetRequest {
     const char* path;
     const char* label;
@@ -328,8 +356,14 @@ private:
   float m_deltaSeconds = 0.0f;
   bool m_assetsCreated = false;
   static int s_spawnOnStart;
+  static bool s_hudHidden;
   static uint32_t s_spawnSeed;
   static int s_massAuditFrames;
+  struct CameraOverride {
+    float x = 0.0f, y = 0.0f, z = 0.0f, pitch = 0.0f, yaw = 0.0f;
+  };
+  static CameraOverride s_cameraOverride;
+  static bool s_cameraOverrideEnabled;
   int m_massAuditCounter = 0;
   static int s_ballProbeFrames;
   int m_ballProbeCounter = 0;

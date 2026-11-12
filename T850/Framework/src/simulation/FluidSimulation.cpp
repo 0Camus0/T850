@@ -1,6 +1,7 @@
 #include <pch.h>
 
 #include <simulation/FluidSimulation.h>
+#include <simulation/PoolLayoutJson.h>
 
 #include <utils/ComputeKernelRegistry.h>
 #include <utils/Log.h>
@@ -20,30 +21,8 @@
 
 namespace t850 {
 
-  // Minimal mirror of the pool section of backyard_layout.json. Only the fields
-  // the solver needs; unknown keys are tolerated so the layout can grow.
-  // Declared outside the anonymous namespace so glz::meta can specialise on them.
-  struct LayoutStepJson {
-    std::string name;
-    double minX = 0.0, minY = 0.0, minZ = 0.0;
-    double maxX = 0.0, maxY = 0.0, maxZ = 0.0;
-  };
-  struct LayoutPoolJson {
-    double minX = 0.0, minY = 0.0, maxX = 0.0, maxY = 0.0;
-    double depth = 0.0;
-    // Metres of air the solver domain keeps above the still-water plane so a
-    // splash has room to rise into. With no freeboard the top row of the volume
-    // is already full and the free surface behaves like a solid lid.
-    double freeboard = 0.35;
-    std::vector<LayoutStepJson> steps;
-  };
-  struct LayoutJson {
-    double waterLine = 0.0;
-    // Absolute world Y of the still-water surface, i.e. the plane the water mesh
-    // is authored at. Authoritative: the solver derives its fill level from it.
-    double waterPlaneY = 0.0;
-    LayoutPoolJson pool;
-  };
+  // The pool layout types live in simulation/PoolLayoutJson.h, shared with PbfFluid so the
+  // two solvers cannot disagree about the geometry.
 
 namespace {
 

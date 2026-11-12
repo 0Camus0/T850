@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_FluidClearFloat3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=eebb5cc03973c2f34a5f4d184041224410179f3ffc5585446e97195fe1b1a0de; defines=T850_SPIRV=1,T850_VULKAN=1
+// GENERATED from CS_FluidClearFloat3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=98e5502db13e23b551385bd7bab7a69c24be11224abdef83eb0d53c33bb0b2e8; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 layout(binding = 0, std140) uniform FluidConstants

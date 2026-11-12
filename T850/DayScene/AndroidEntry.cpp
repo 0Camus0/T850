@@ -24,7 +24,7 @@ t850::AppBase* pApp = nullptr;
 
 namespace {
   // Highest index registered in DayScene/Application.cpp (0 Sandbox ... 7 Backyard).
-  constexpr int kMaxSceneIndex = 7;
+  constexpr int kMaxSceneIndex = 8;
   constexpr const char* kExtraScene = "com.t850.engine.extra.SCENE";
   constexpr const char* kExtraModel = "com.t850.engine.extra.MODEL";
   constexpr const char* kExtraSceneFile = "com.t850.engine.extra.SCENE_FILE";

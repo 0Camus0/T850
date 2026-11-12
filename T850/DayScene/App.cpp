@@ -49,6 +49,7 @@
 #include <BackyardSelfTest.h>
 // W-22: App.cpp parses --backyard-spawn and hands the count to the scene.
 #include <BackyardScene.h>
+#include <Backyard8Scene.h>
 #include <debug/CrashDiagnostics.h>
 #include <debug/GraphicsFixture.h>
 #if (defined(_WIN32) && (defined(_M_X64) || defined(_M_ARM64))) || defined(__EMSCRIPTEN__)
@@ -207,6 +208,69 @@ int main(int arg,char ** args) try {
       backyardSpawnOnStart = (std::max)(std::stoi(args[++i]), 0);
       BackyardScene::SetSpawnOnStart(backyardSpawnOnStart);
     }
+    if (std::string_view(args[i]) == "--backyard-no-hud") {
+      BackyardScene::SetHudHidden(true);
+    }
+    if (std::string_view(args[i]) == "--backyard-camera" && i + 5 < arg) {
+      // Five floats: x y z pitch yaw. Malformed values log an error and leave the flag ignored.
+      try {
+        const float x = std::stof(args[i + 1]);
+        const float y = std::stof(args[i + 2]);
+        const float z = std::stof(args[i + 3]);
+        const float pitch = std::stof(args[i + 4]);
+        const float yaw = std::stof(args[i + 5]);
+        if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z) &&
+            std::isfinite(pitch) && std::isfinite(yaw)) {
+          BackyardScene::SetCameraOverride(x, y, z, pitch, yaw);
+        } else {
+          T8_LOG_ERROR("[App] --backyard-camera has a non-finite value; ignoring the flag");
+        }
+        i += 5;
+      } catch (const std::exception&) {
+        T8_LOG_ERROR("[App] --backyard-camera expects five floats <x> <y> <z> <pitch> <yaw>; ignoring the flag");
+      }
+    }
+    if (std::string_view(args[i]) == "--backyard-start" && i + 1 < arg) {
+      const std::string_view mode(args[++i]);
+      if (mode == "balls") Backyard8Scene::SetStartMode(0);
+      else if (mode == "water") Backyard8Scene::SetStartMode(1);
+      else if (mode == "lake") Backyard8Scene::SetStartMode(2);
+      else T8_LOG_ERROR("[App] --backyard-start '%s' is not 'balls', 'water' or 'lake'", std::string(mode).c_str());
+    }
+    if (std::string_view(args[i]) == "--pbf-iterations" && i + 1 < arg)
+      Backyard8Scene::SetSolverIterations(std::stoi(args[++i]));
+    if (std::string_view(args[i]) == "--pbf-substeps" && i + 1 < arg)
+      Backyard8Scene::SetSubsteps(std::stoi(args[++i]));
+    if (std::string_view(args[i]) == "--pbf-radius" && i + 1 < arg)
+      Backyard8Scene::SetParticleRadius(std::stod(args[++i]));
+    if (std::string_view(args[i]) == "--pbf-overflow" && i + 1 < arg)
+      Backyard8Scene::SetOverflowHeight(std::stod(args[++i]));
+    if (std::string_view(args[i]) == "--pbf-k" && i + 1 < arg)
+      Backyard8Scene::SetArtPressure(std::stod(args[++i]), -1.0);
+    if (std::string_view(args[i]) == "--pbf-visc" && i + 1 < arg)
+      Backyard8Scene::SetViscosity(std::stod(args[++i]));
+    if (std::string_view(args[i]) == "--pbf-wind" && i + 1 < arg) {
+      const double speed = std::stod(args[++i]);
+      const double heading = (i + 1 < arg) ? std::stod(args[++i]) : 0.0;
+      Backyard8Scene::SetWind((std::max)(speed, 0.0), heading);
+    }
+    if (std::string_view(args[i]) == "--pbf-gravity" && i + 1 < arg)
+      Backyard8Scene::SetGravity(std::stod(args[++i]));
+    if (std::string_view(args[i]) == "--pbf-maxvel" && i + 1 < arg)
+      Backyard8Scene::SetMaxVelocity(std::stod(args[++i]));
+    if (std::string_view(args[i]) == "--pbf-diagnostics" && i + 1 < arg)
+      Backyard8Scene::SetMassAuditFrames(std::stoi(args[++i]));
+    if (std::string_view(args[i]) == "--fluid-render" && i + 1 < arg) {
+      const std::string_view mode(args[++i]);
+      if (mode == "splat" || mode == "splatting") Backyard8Scene::SetRenderMode(0);
+      else if (mode == "screen-space" || mode == "screenspace" || mode == "ss")
+        Backyard8Scene::SetRenderMode(1);
+      else T8_LOG_ERROR("[App] --fluid-render '%s' is not 'splat' or 'screen-space'",
+                        std::string(mode).c_str());
+    }
+    if (std::string_view(args[i]) == "--fluid-config" && i + 1 < arg)
+      Backyard8Scene::SetConfigPath(args[++i]);
+    // Frame-limited runs use the framework's existing --benchmarkFrames / --dump-frame.
     if (std::string_view(args[i]) == "--backyard-spawn-seed" && i + 1 < arg) {
       BackyardScene::SetSpawnSeed(static_cast<uint32_t>((std::max)(std::stoul(args[++i]), 0ul)));
     }

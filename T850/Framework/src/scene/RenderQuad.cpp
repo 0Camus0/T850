@@ -214,7 +214,9 @@ namespace t850 {
       PassType::DOF, PassType::DOF_2, PassType::BACKBUFFER,
       PassType::GOD_RAY_CALCULATION, PassType::GOD_RAY_BLEND,
       PassType::SSAO, PassType::RAY_MARCH, PassType::LIGHT_ADD, PassType::FADE,
-      PassType::LENS_FLARE_SUN, PassType::LENS_FLARE_GHOST, PassType::CASCADE_DEBUG
+      PassType::LENS_FLARE_SUN, PassType::LENS_FLARE_GHOST, PassType::CASCADE_DEBUG,
+      // Translucent particle layers: sampled slot0 (particles) + slot1 (scene), straight-over.
+      PassType::PARTICLE_COMPOSITE
     };
     for (uint8_t p : simplePasses) {
       ShaderKey k(sigBase.bits);
@@ -344,7 +346,7 @@ namespace t850 {
       SetTexture(nullptr, kTiledLightIndexSlot);
     };
 
-    auto ensureTiledLightTextures = [&](int tilesX, int tilesY) -> bool {
+    auto ensureTiledLightTextures = [&](int tilesX, int tilesY, int indexWidth) -> bool {
       const int tileCount = tilesX * tilesY;
       if (tilesX <= 0 || tilesY <= 0 || tileCount <= 0)
         return false;
@@ -352,36 +354,60 @@ namespace t850 {
       const bool recreateHeaders = m_tiledLightHeaderTex < 0 ||
                                    m_tiledLightTilesX != tilesX ||
                                    m_tiledLightTilesY != tilesY;
-      if (recreateHeaders) {
-        if (m_tiledLightHeaderTex >= 0)
-          g_pBaseDriver->DestroyTexture(m_tiledLightHeaderTex);
-        if (m_tiledLightIndexTex >= 0)
-          g_pBaseDriver->DestroyTexture(m_tiledLightIndexTex);
-
-        m_tiledLightTilesX = tilesX;
-        m_tiledLightTilesY = tilesY;
-        m_tiledLightUploaded = false;
-        m_tiledLightHeaderData.assign(static_cast<size_t>(tileCount) * 4u, 0.0f);
-        m_tiledLightIndexData.assign(static_cast<size_t>(tileCount) * kMaxTiledLightsPerTile * 4u, 0.0f);
-        m_tiledLightHeaderTex = g_pBaseDriver->CreateFloatTexture(tilesX, tilesY, m_tiledLightHeaderData.data());
-        m_tiledLightIndexTex = g_pBaseDriver->CreateFloatTexture(static_cast<int>(kMaxTiledLightsPerTile), tileCount, m_tiledLightIndexData.data());
-        if (m_tiledLightHeaderTex < 0 || m_tiledLightIndexTex < 0) {
-          if (m_tiledLightHeaderTex >= 0) g_pBaseDriver->DestroyTexture(m_tiledLightHeaderTex);
-          if (m_tiledLightIndexTex >= 0) g_pBaseDriver->DestroyTexture(m_tiledLightIndexTex);
-          m_tiledLightHeaderTex = -1;
-          m_tiledLightIndexTex = -1;
-          return false;
+      // Recreate the index texture when it does not exist, when the tile
+      // count changed (the texture height must match tileCount), or when
+      // the width must grow.  A shrink keeps the old (larger) width.
+      const bool tileCountChanged = (m_tiledLightTilesX != tilesX || m_tiledLightTilesY != tilesY);
+      const bool recreateIndex = m_tiledLightIndexTex < 0 ||
+                                 tileCountChanged ||
+                                 (m_tiledLightIndexWidth > 0 && indexWidth > m_tiledLightIndexWidth);
+      if (recreateHeaders || recreateIndex) {
+        if (recreateHeaders) {
+          if (m_tiledLightHeaderTex >= 0)
+            g_pBaseDriver->DestroyTexture(m_tiledLightHeaderTex);
+          m_tiledLightTilesX = tilesX;
+          m_tiledLightTilesY = tilesY;
+          m_tiledLightUploaded = false;
+          // Create the texture from a temporary zero vector; do not touch
+          // m_tiledLightHeaderData, which the caller has just filled.
+          std::vector<float> zeros(static_cast<size_t>(tileCount) * 4u, 0.0f);
+          m_tiledLightHeaderTex = g_pBaseDriver->CreateFloatTexture(tilesX, tilesY, zeros.data());
+          if (m_tiledLightHeaderTex < 0) {
+            m_tiledLightHeaderTex = -1;
+            return false;
+          }
+        }
+        if (recreateIndex) {
+          if (m_tiledLightIndexTex >= 0)
+            g_pBaseDriver->DestroyTexture(m_tiledLightIndexTex);
+          m_tiledLightIndexWidth = indexWidth;
+          m_tiledLightUploaded = false;
+          // Re-zero the index buffer to the new layout so that a grow
+          // followed by a shrink never leaves a stale buffer shorter
+          // than the texture.
+          m_tiledLightIndexData.assign(
+              static_cast<size_t>(tileCount) * static_cast<size_t>(indexWidth) * 4u, 0.0f);
+          m_tiledLightIndexTex = g_pBaseDriver->CreateFloatTexture(
+              indexWidth, tileCount, m_tiledLightIndexData.data());
+          if (m_tiledLightIndexTex < 0) {
+            m_tiledLightIndexTex = -1;
+            return false;
+          }
         }
       }
 
       const size_t headerCount = static_cast<size_t>(tileCount) * 4u;
-      const size_t indexCount = static_cast<size_t>(tileCount) * kMaxTiledLightsPerTile * 4u;
+      // The index data buffer must match the texture's actual width, which may
+      // be larger than the needed width when the texture was not shrunk.
+      const size_t indexCount = static_cast<size_t>(tileCount) * static_cast<size_t>(m_tiledLightIndexWidth) * 4u;
       if (m_tiledLightHeaderData.size() != headerCount)
         m_tiledLightHeaderData.resize(headerCount);
       if (m_tiledLightIndexData.size() != indexCount)
         m_tiledLightIndexData.resize(indexCount);
       if (m_tiledLightCounts.size() != static_cast<size_t>(tileCount))
         m_tiledLightCounts.resize(static_cast<size_t>(tileCount));
+      if (m_tiledLightSlotPerTile.size() != static_cast<size_t>(tileCount))
+        m_tiledLightSlotPerTile.resize(static_cast<size_t>(tileCount));
       return true;
     };
 
@@ -434,15 +460,14 @@ namespace t850 {
 
         const int tileCount = tilesX * tilesY;
         const size_t headerCount = static_cast<size_t>(tileCount) * 4u;
-        const size_t indexCount = static_cast<size_t>(tileCount) * kMaxTiledLightsPerTile * 4u;
         if (m_tiledLightHeaderData.size() != headerCount)
           m_tiledLightHeaderData.resize(headerCount);
-        if (m_tiledLightIndexData.size() != indexCount)
-          m_tiledLightIndexData.resize(indexCount);
         if (m_tiledLightCounts.size() != static_cast<size_t>(tileCount))
           m_tiledLightCounts.resize(static_cast<size_t>(tileCount));
+        // Clear only the headers and counts, not the index array. The shader
+        // reads only the first `count` entries per tile, so stale index data
+        // beyond the count is never touched.
         std::fill(m_tiledLightHeaderData.begin(), m_tiledLightHeaderData.end(), 0.0f);
-        std::fill(m_tiledLightIndexData.begin(), m_tiledLightIndexData.end(), 0.0f);
         std::fill(m_tiledLightCounts.begin(), m_tiledLightCounts.end(), 0u);
         m_tiledLightAssignments.clear();
 
@@ -500,8 +525,6 @@ namespace t850 {
                 unsigned int& count = m_tiledLightCounts[static_cast<size_t>(tileIndex)];
                 if (count >= kMaxTiledLightsPerTile)
                   continue;
-                const size_t texel = (static_cast<size_t>(tileIndex) * kMaxTiledLightsPerTile + count) * 4u;
-                m_tiledLightIndexData[texel] = static_cast<float>(lightIndex);
                 m_tiledLightAssignments.push_back(static_cast<unsigned int>(tileIndex));
                 m_tiledLightAssignments.push_back(lightIndex);
                 ++count;
@@ -511,34 +534,77 @@ namespace t850 {
             volumePixels += static_cast<unsigned long long>(viewportRect.w) * static_cast<unsigned long long>(viewportRect.h);
         }
 
-        for (int tileIndex = 0; tileIndex < tileCount; ++tileIndex) {
-            const size_t texel = static_cast<size_t>(tileIndex) * 4u;
-            const unsigned int tileLightCount = m_tiledLightCounts[static_cast<size_t>(tileIndex)];
-            m_tiledLightHeaderData[texel] = static_cast<float>(tileIndex);
-            m_tiledLightHeaderData[texel + 1u] = static_cast<float>(tileLightCount);
-        }
+        // Compute the dynamic index texture width: largest per-tile count in use,
+        // rounded up to 8, capped at kMaxTiledLightsPerTile.
+        unsigned int maxCountInUse = 0;
+        for (unsigned int count : m_tiledLightCounts)
+          if (count > maxCountInUse)
+            maxCountInUse = count;
+        int neededWidth = static_cast<int>((maxCountInUse + 7u) & ~7u);
+        if (neededWidth < 8)
+          neededWidth = 8;
+        if (neededWidth > static_cast<int>(kMaxTiledLightsPerTile))
+          neededWidth = static_cast<int>(kMaxTiledLightsPerTile);
 
+        // The effective stride is the texture's actual width. When the needed
+        // width shrinks, the texture keeps its old (larger) width, so the
+        // stride stays the same and no re-creation is needed.
+        int effectiveWidth = neededWidth;
+
+        // Resolve the texture dimensions BEFORE writing header counts or
+        // index entries, so the stride used for the whole frame matches the
+        // texture that is actually uploaded.
         if (packedLights > 0) {
-          if (ensureTiledLightTextures(tilesX, tilesY)) {
+          if (!ensureTiledLightTextures(tilesX, tilesY, neededWidth)) {
+            clearTiledLightTextures();
+            skipCurrentDraw = true;
+          } else {
+            effectiveWidth = m_tiledLightIndexWidth;
+
+            // Write the header counts and index entries in the same pass,
+            // using the texture's actual width as the stride.
+            for (int tileIndex = 0; tileIndex < tileCount; ++tileIndex) {
+              const size_t texel = static_cast<size_t>(tileIndex) * 4u;
+              const unsigned int tileLightCount = m_tiledLightCounts[static_cast<size_t>(tileIndex)];
+              m_tiledLightHeaderData[texel] = static_cast<float>(tileIndex);
+              m_tiledLightHeaderData[texel + 1u] = static_cast<float>(tileLightCount);
+            }
+            {
+              std::fill(m_tiledLightSlotPerTile.begin(), m_tiledLightSlotPerTile.end(), 0u);
+              for (size_t a = 0; a < m_tiledLightAssignments.size(); a += 2u) {
+                const unsigned int tileIndex = m_tiledLightAssignments[a];
+                const unsigned int lightIndex = m_tiledLightAssignments[a + 1u];
+                const unsigned int slot = m_tiledLightSlotPerTile[tileIndex]++;
+                const size_t texel = (static_cast<size_t>(tileIndex) * static_cast<size_t>(effectiveWidth) + slot) * 4u;
+                m_tiledLightIndexData[texel] = static_cast<float>(lightIndex);
+              }
+            }
+
             Texture* headerTex = g_pBaseDriver->GetTexture(m_tiledLightHeaderTex);
             Texture* indexTex = g_pBaseDriver->GetTexture(m_tiledLightIndexTex);
             if (headerTex && indexTex) {
-              if (!m_tiledLightUploaded || m_tiledLightAssignments != m_tiledLightUploadedAssignments) {
+              // Guard: never upload from a buffer smaller than the texture.
+              const size_t indexTexels = static_cast<size_t>(effectiveWidth) * static_cast<size_t>(tileCount) * 4u;
+              if (m_tiledLightIndexData.size() < indexTexels) {
+                T8_LOG_ERROR("[RenderQuad] tiled light index buffer (%zu) smaller than texture (%zu); skipping upload",
+                             m_tiledLightIndexData.size(), indexTexels);
+                clearTiledLightTextures();
+                skipCurrentDraw = true;
+              } else if (!m_tiledLightUploaded || m_tiledLightAssignments != m_tiledLightUploadedAssignments) {
                 headerTex->UpdateFloatData(*T8DeviceContext, tilesX, tilesY, m_tiledLightHeaderData.data());
-                indexTex->UpdateFloatData(*T8DeviceContext, static_cast<int>(kMaxTiledLightsPerTile), tileCount, m_tiledLightIndexData.data());
+                indexTex->UpdateFloatData(*T8DeviceContext, effectiveWidth, tileCount, m_tiledLightIndexData.data());
                 m_tiledLightUploadedAssignments = m_tiledLightAssignments;
                 m_tiledLightUploaded = true;
               }
-              SetTexture(headerTex, kTiledLightHeaderSlot);
-              SetTexture(indexTex, kTiledLightIndexSlot);
-              useTiledLightPass = true;
+              if (!skipCurrentDraw) {
+                SetTexture(headerTex, kTiledLightHeaderSlot);
+                SetTexture(indexTex, kTiledLightIndexSlot);
+                useTiledLightPass = true;
+              }
             } else {
               clearTiledLightTextures();
               skipCurrentDraw = true;
             }
-          } else {
-            clearTiledLightTextures();
-            skipCurrentDraw = true;
           }
         } else {
           skipCurrentDraw = true;
@@ -547,7 +613,7 @@ namespace t850 {
         CnstBuffer.LightCameraInfo = XVECTOR3(static_cast<float>(kTiledLightTileSize),
                                                 static_cast<float>(tilesX),
                                                 static_cast<float>(tilesY),
-                                                static_cast<float>(kMaxTiledLightsPerTile));
+                                                static_cast<float>(effectiveWidth));
           pScProp->DebugDeferredLightsSceneTotal = sceneLightCount;
           pScProp->DebugDeferredLightsActiveLimit = activeLightLimit;
           pScProp->DebugDeferredLightsConsidered = numLights;

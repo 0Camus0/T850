@@ -79,7 +79,12 @@ def main() -> int:
 
     kernels: list[tuple[str, str, dict[str, int]]] = []
     for kernel in registry["kernels"]:
-        bindings = {b["binding_index"] for b in kernel.get("bindings", [])}
+        # GL has no separate sampler objects: SPIRV-Cross folds each SamplerState into the
+        # texture it samples, so the combined `sampler2D` keeps the TEXTURE's binding index
+        # and the sampler's own index disappears. Exclude sampler entries from the expected
+        # set; otherwise every generated kernel with a sampler looks like a lost binding.
+        bindings = {b["binding_index"] for b in kernel.get("bindings", [])
+                    if b.get("type") != "sampler"}
         kernels.append((kernel["source"], kernel["entry"], bindings))
     for source in UNREGISTERED:
         kernels.append((source, "CS", set()))
@@ -101,6 +106,11 @@ def main() -> int:
             if not generated:
                 continue
             checked += 1
+            if twin.read_bytes()[:3] == b"\xef\xbb\xbf":
+                problems.append(
+                    f"{twin.name}: starts with a UTF-8 BOM; the GL loader requires #version on line 1"
+                )
+                continue
             if not header[0].startswith("#version"):
                 problems.append(f"{twin.name}: line 1 must be #version, found {header[0][:40]!r}")
             match = SHA_RE.search(header[1])

@@ -93,8 +93,12 @@ gracefully:
    (`vector_element_pointer.cc`). Every atomic accumulator is therefore a flat `uint` array:
    `CS_FluidDiagnostics3D` (8 words), `CS_FluidVolumeReduce3D` (`entry * 4 + word`) and the two
    volume self-test readers.
-2. **`isfinite` / `isnan` / `isinf` on a float3** hits the same ICE. Test the exponent bits
-   instead — `(asuint(v.x) & 0x7F800000) != 0x7F800000` — which is exact and lowers cleanly.
+2. **Any `isfinite` / `isnan` / `isinf`, scalar or vector**, hits the same ICE: they lower to
+   `OpIsNan` / `OpIsInf`, and the reader does not implement them (`TINT_UNIMPLEMENTED unhandled
+   SPIR-V instruction: OpIsNan`), after which the process aborts with `0xC0000409`. Test the
+   exponent bits instead — `(asuint(v) & 0x7F800000) != 0x7F800000` — which is false exactly for
+   NaN and ±Inf, is exact, and lowers cleanly: `CS_FluidDiagnostics3D.hlsl`, `CS_PbfCull.hlsl`
+   and `CS_PbfDiffuse.hlsl` (`b4a8a75`).
 3. **A shader family name may not carry a `#permutation` suffix**: the WGSL-first attempt
    resolves the file from the requested name and rejects any extension but `.hlsl`/`.wgsl`, so
    `CS_FluidSeed3D.hlsl#divergent` failed to prepare. The driver strips everything from `#`
@@ -167,6 +171,18 @@ never recycled, because it must present.
   `ReadWriteTexture` name means write-only storage, RGBA8 UNORM or RGBA16F.
   A resource cannot be both sampled/read and written in one dispatch. Samplers
   must use the texture bound at the same logical register.
+- **Read-only cube textures are portable.** A kernel may declare
+  `"dimension": "cube"` on a `sampled_texture` binding in `compute_kernels.json`
+  and sample it (`EnvironmentMap` in `CS_ParticleShade.hlsl`). Every backend binds
+  the texture's own cube view: the `TEXTURECUBE` SRV on D3D11 and D3D12 (six
+  layers, `DepthOrArraySize == 6`), the cube image view with its sampler on Vulkan,
+  a `samplerCube` on GL (`GL_TEXTURE_CUBE_MAP`), and a Cube view on WebGPU
+  (`0bd825b`, `639e8a5`, `a5f6ba6`, `238be0f`). **In T850's compute abstraction a
+  cube is read-only.** `ComputeReflection` assigns `Cube` only to a
+  `ReadOnlyTexture`, and each backend treats a cube binding inside its sampled
+  branch and rejects it for `ReadWriteTexture`; the APIs themselves do have
+  writable cube forms (GL `imageCube`, D3D and Vulkan 2D-array views), which the
+  contract simply does not expose.
 - `ReadComputeBuffer` is a synchronous diagnostic boundary: a nonzero count
   divisible by four, no larger than the allocation. It works before a frame,
   immediately after dispatch and after submission. An open frame and its target
@@ -335,7 +351,7 @@ compute layout supports one bind group containing:
 
 - uniform buffers with reflected minimum sizes;
 - read-only and read-write storage buffers;
-- sampled float 2D textures;
+- sampled float 2D textures, and read-only cubes as a Cube view;
 - non-comparison filtering samplers;
 - write-only `rgba8unorm` or `rgba16float` storage textures (and `r32float` on the native
   compute backends: D3D11, D3D12 and Vulkan accept it for 2D and 3D storage; WebGPU has no
@@ -380,6 +396,13 @@ and never waits. Ordinary render-graph execution never maps or waits. Device hea
 dispatch, and readback so validation or device-loss failures surface through the normal
 WebGPU diagnostics.
 
+**Device limits follow the adapter (`130e6b9`).** The device requests the adapter's
+`maxStorageBufferBindingSize` and `maxBufferSize`, logged as
+`[WebGPU] storage limits: ...`. The WebGPU defaults (128 MiB and 256 MiB) are too small for
+full-screen per-pixel buffers at 4K: the particle solver's window buffer is 20 B per pixel,
+165,888,000 B at 3840x2160, and every bind group that carried it was rejected at 4K while
+the 1080p cells passed. Never request more than the adapter reports; Dawn errors otherwise.
+
 ## OpenGL behavior
 
 On Windows, the GL host first requests a desktop OpenGL 4.3 compatibility context. If the
@@ -402,6 +425,20 @@ Desktop OpenGL contexts below 4.3 and OpenGL ES report no compute support. Optio
 post-process passes use their existing fullscreen raster fallback, and compute-only passes
 retain their existing clear behavior. The Windows 3.3 context fallback is explicitly
 raster-only and never compiles or dispatches a compute shader.
+
+### OpenGL combined samplers and read-only cubes
+
+GL is the one backend that reflects from the twin's SPIR-V with combined samplers.
+SPIRV-Cross emits one combined sampler per (texture, sampler) pair, so a texture that is
+both sampled and queried with `GetDimensions` gets a second `..._SPIRV_Cross_DummySampler`
+alias on the same `binding`. `GLComputePipeline::Create` therefore drops exactly duplicated
+reflected entries (same type, binding index, register, dimension, storage format and
+constant count) before `SetValidatedLayout`; without it the water shade reflected 17
+bindings against 16 declared and the pipeline was never created (`a5f6ba6`).
+
+Read-only cubes bind as `GL_TEXTURE_CUBE_MAP` and sample through `samplerCube`. The dispatch
+saves the previous binding with `GL_TEXTURE_BINDING_CUBE_MAP` for a cube target and
+`GL_TEXTURE_BINDING_2D` otherwise, so the restore returns the unit to what it held.
 
 ### OpenGL volumes, inline buffers and the twin generator (W-28, 2026-11-02)
 

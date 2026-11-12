@@ -985,6 +985,8 @@ void PrintHelp() {
     << "                                      10 cm bands. The only instrument that sees a local moat\n"
     << "  --backyard-mass-audit <N>          Log the W-03 mass audit (total alpha, bulk dilution,\n"
     << "                                      interface width, divergence rms) every N frames\n"
+    << "  --backyard-camera <x> <y> <z> <pitch> <yaw>\n"
+    << "                                     Override the authored camera at load time\n"
     << "  --fluid-selftest                   Run the solver self-test, then exit (needs --scene 7 so the\n"
     << "                                      device is not already holding a solver)\n"
     << "  --fluid-selftest-frames <N>        Frames for the solver self-test\n"

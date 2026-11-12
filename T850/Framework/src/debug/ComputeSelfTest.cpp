@@ -223,7 +223,7 @@ namespace {
       if (scenario == 7) props.ParticleEmitterPosition.x = 20.0f;
       std::vector<uint32_t> constants;
       std::string error;
-      passed = depth && BuildComputeConstants(*kernel, {&props, width, height, "base"}, constants, error);
+      passed = depth && BuildComputeConstants(*kernel, {&props, width, height, 0u, "base"}, constants, error);
       if (passed) {
         const std::vector<ComputeBindingDesc> bindings = {
           {ComputeBindingType::Constants32, 0, nullptr, constants.data(), static_cast<uint32_t>(constants.size())},

@@ -1074,6 +1074,904 @@
           "binding_index": 2
         }
       ]
+    },
+    {
+      "id": "pbf_integrate",
+      "source": "CS_PbfIntegrate.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 2,
+          "binding_index": 3
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 4
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 5
+        }
+      ]
+    },
+    {
+      "id": "pbf_clear_grid",
+      "source": "CS_PbfClearGrid.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        }
+      ]
+    },
+    {
+      "id": "pbf_build_grid",
+      "source": "CS_PbfBuildGrid.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 2
+        }
+      ]
+    },
+    {
+      "id": "pbf_density",
+      "source": "CS_PbfDensity.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 3
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 2,
+          "binding_index": 4
+        }
+      ]
+    },
+    {
+      "id": "pbf_solve",
+      "source": "CS_PbfSolve.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 3
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 2,
+          "binding_index": 4
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 3,
+          "binding_index": 5
+        }
+      ]
+    },
+    {
+      "id": "pbf_update_velocity",
+      "source": "CS_PbfUpdateVelocity.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 2
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 3,
+          "binding_index": 3
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 4,
+          "binding_index": 4
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 5
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 2,
+          "binding_index": 6
+        }
+      ]
+    },
+    {
+      "id": "pbf_clear_heights",
+      "source": "CS_PbfClearHeights.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        }
+      ]
+    },
+    {
+      "id": "pbf_surface",
+      "source": "CS_PbfSurface.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 3
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 2,
+          "binding_index": 4,
+          "storage_format": "rgba16float"
+        }
+      ]
+    },
+    {
+      "id": "pbf_cull",
+      "source": "CS_PbfCull.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        }
+      ]
+    },
+    {
+      "id": "pbf_anisotropy",
+      "source": "CS_PbfAnisotropy.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 16
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 3
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 2,
+          "binding_index": 4
+        }
+      ]
+    },
+    {
+      "id": "pbf_whitewater",
+      "source": "CS_PbfWhitewater.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 48
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 2,
+          "binding_index": 3
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 4
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 5
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 2,
+          "binding_index": 6
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 3,
+          "binding_index": 7
+        }
+      ]
+    },
+    {
+      "id": "pbf_diffuse",
+      "source": "CS_PbfDiffuse.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 48
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 2,
+          "binding_index": 3
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 4
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 5
+        }
+      ]
+    },
+    {
+      "id": "pbf_fields",
+      "source": "CS_PbfFields.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 48
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 2
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 3
+        }
+      ]
+    },
+    {
+      "id": "pbf_particles",
+      "source": "CS_PbfParticles.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 20
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 3
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 4
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 2,
+          "binding_index": 5
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 2,
+          "binding_index": 6,
+          "storage_format": "rgba16float"
+        }
+      ],
+      "constants_builder": "fluid_particles"
+    },
+    {
+      "id": "particle_splat",
+      "source": "CS_ParticleSplat.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "stamp",
+        "resolve"
+      ],
+      "constants_builder": "particle_splat",
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 68
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 2
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 3
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 3,
+          "binding_index": 4,
+          "storage_format": "rgba16float"
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 2,
+          "binding_index": 5
+        }
+      ]
+    },
+    {
+      "id": "pbf_copy_fields",
+      "source": "CS_PbfCopyFields.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 36
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 2
+        }
+      ]
+    },
+    {
+      "id": "particle_fluid_clear",
+      "source": "CS_FluidClear.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "constants_builder": "particle_splat",
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 68
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 2,
+          "binding_index": 3
+        }
+      ]
+    },
+    {
+      "id": "particle_fluid_splat",
+      "source": "CS_FluidSplat.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "constants_builder": "particle_splat",
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 68
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 3
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 4
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 2,
+          "binding_index": 5
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 3,
+          "binding_index": 6
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 2,
+          "binding_index": 7
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 3,
+          "binding_index": 8
+        }
+      ]
+    },
+    {
+      "id": "particle_fluid_resolve",
+      "source": "CS_FluidResolve.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "constants_builder": "particle_splat",
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 68
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 0,
+          "binding_index": 3,
+          "storage_format": "r32float"
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 1,
+          "binding_index": 4,
+          "storage_format": "rgba16float"
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 2,
+          "binding_index": 5
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 3,
+          "binding_index": 6,
+          "storage_format": "rgba16float"
+        }
+      ]
+    },
+    {
+      "id": "particle_smooth",
+      "source": "CS_ParticleSmooth.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "constants_builder": "particle_smooth",
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 8
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 0,
+          "binding_index": 2,
+          "storage_format": "r32float"
+        }
+      ]
+    },
+    {
+      "id": "particle_whitewater",
+      "source": "CS_FluidWhitewater.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "constants_builder": "particle_whitewater",
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 28
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 2,
+          "binding_index": 3
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 0,
+          "binding_index": 4
+        }
+      ]
+    },
+    {
+      "id": "particle_shade",
+      "source": "CS_ParticleShade.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "constants_builder": "particle_shade",
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 104
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 2,
+          "binding_index": 3
+        },
+        {
+          "type": "sampler",
+          "shader_register": 2,
+          "binding_index": 4
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 0,
+          "binding_index": 5,
+          "storage_format": "rgba16float"
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 3,
+          "binding_index": 6
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 4,
+          "binding_index": 7,
+          "dimension": "cube"
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 5,
+          "binding_index": 8
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 6,
+          "binding_index": 9
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 7,
+          "binding_index": 10
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 8,
+          "binding_index": 11
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 9,
+          "binding_index": 12
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 10,
+          "binding_index": 13
+        },
+        {
+          "type": "read_write_buffer",
+          "shader_register": 1,
+          "binding_index": 14
+        },
+        {
+          "type": "sampled_texture",
+          "shader_register": 11,
+          "binding_index": 15
+        }
+      ]
+    },
+    {
+      "id": "particle_sphere_shade",
+      "source": "CS_FluidSphereShade.hlsl",
+      "entry": "CS",
+      "permutations": [
+        "base"
+      ],
+      "constants_builder": "particle_sphere",
+      "bindings": [
+        {
+          "type": "constants",
+          "shader_register": 0,
+          "binding_index": 0,
+          "constant_count": 56
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 0,
+          "binding_index": 1
+        },
+        {
+          "type": "read_only_buffer",
+          "shader_register": 1,
+          "binding_index": 2
+        },
+        {
+          "type": "storage_texture",
+          "shader_register": 0,
+          "binding_index": 3,
+          "storage_format": "rgba16float"
+        }
+      ]
     }
   ]
 }

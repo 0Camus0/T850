@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_FluidObstacleVelocity3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=4dbb7bc97b370a4763712ded9b7b852bc08b0bddef65131fca85f5e77ddb8aea; defines=T850_SPIRV=1,T850_VULKAN=1
+// GENERATED from CS_FluidObstacleVelocity3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=4dbb7bc97b370a4763712ded9b7b852bc08b0bddef65131fca85f5e77ddb8aea; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 layout(binding = 0, std140) uniform FluidConstants

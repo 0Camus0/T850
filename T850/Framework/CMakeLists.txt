@@ -69,6 +69,8 @@ set(FRAMEWORK_SOURCES
   src/scene/SceneRegions.cpp
   src/scene/RenderGraph.cpp
 src/simulation/FluidSimulation.cpp
+src/simulation/PbfFluid.cpp
+src/scene/ParticleSystem.cpp
 src/simulation/FluidDebugRenderer.cpp
   src/scene/SceneDescriptor.cpp
   src/scene/SceneSetup.cpp

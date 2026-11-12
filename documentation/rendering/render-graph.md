@@ -1,6 +1,9 @@
 # Render Graph
 
 Status: capability-validation behavior verified against source and focused tests on 2026-09-18.
+Named compute buffers (`compute_buffers`, `buffer_read`/`buffer_write`) added 2026-11-07:
+schema, validation and Vulkan execution verified; **D3D11, D3D12 and GL are not yet
+validated on-device — see "Verification status" below.**
 
 This document explains T850's data-driven render graph: JSON descriptors, render target creation, pass execution, input/output edges, render-target push/pop behavior, state overrides, mesh and fullscreen-quad draws, post-processing, and final output routing.
 
@@ -318,14 +321,86 @@ Every `compute_if_supported` pass declares the complete shader binding ABI in
 | `sampled` | `RT:COLORn` or `RT:DEPTH` | Read-only texture at `tN` |
 | `sampler` | Same texture as a sampled resource | Sampler at `sN` |
 | `storage_write` | Storage-enabled color target | Write-only texture at `uN` |
+| `buffer_read` | A `compute_buffers[]` name | `StructuredBuffer` at `tN` |
+| `buffer_write` | A `compute_buffers[]` name | `RWStructuredBuffer` at `uN` |
+
+### Named compute buffers
+
+A compute pass that needs particle-style data rather than a render target declares
+`StructuredBuffer`s in the top-level `compute_buffers` array:
+
+```json
+{
+  "compute_buffers": [
+    { "name": "ParticlePositions", "structure_stride": 16, "element_count": 65536,
+      "access": "read_write", "clear": true }
+  ],
+  "passes": [{
+    "name": "Simulate", "target": "", "execution": "compute_if_supported",
+    "compute_shader": "Shaders/CS_PbfIntegrate.hlsl", "compute_entry": "CS",
+    "compute_extent_from": "ParticlePositions",
+    "compute_resources": [
+      { "resource": "@kernel_constants",   "access": "constants",    "shader_register": 0 },
+      { "resource": "ParticlePositions",   "access": "buffer_write", "shader_register": 0 }
+    ],
+    "draws": []
+  }]
+}
+```
+
+`compute_buffers[]` fields:
+
+| Field | Meaning |
+|---|---|
+| `name` | Graph-unique name referenced from `compute_resources` and `compute_extent_from` |
+| `structure_stride` | Bytes per element; must be a positive multiple of 4 |
+| `element_count` | Element count (`byteWidth = stride * count`); may be omitted when `size_ref` is set |
+| `access` | `read_only` or `read_write`, fixed at creation |
+| `clear` | Zero the buffer when the graph is created |
+| `size_ref` | `$window` sizes `element_count` from the current viewport pixel count |
+
+Buffers share the render-target lifetime: they are created in `CreateRenderTargets`
+and destroyed with it, on the render thread. Rules enforced at load time:
+
+- buffer names must be non-empty and unique;
+- a pass may not reference an undeclared buffer;
+- a `buffer_write` binding to a buffer declared `read_only` is rejected;
+- when `compute_extent_from` names a buffer, the dispatch is 1D over
+  `element_count` elements and that buffer must be written by the same pass;
+- a pass may bind one buffer to several registers (including two write registers);
+  unlike a storage texture there is no single dispatch-sized extent to collide on;
+- read/write feedback on the same buffer in one dispatch is rejected;
+- dispatches exceeding 65535 groups in any dimension are rejected with
+  `[DispatchTooLarge]` rather than silently truncated (D3D11/D3D12 hard limit,
+  Vulkan minimum guarantee).
+
+Graphs without a `compute_buffers` key load exactly as before, so this is additive.
+
+#### Verification status (named compute buffers)
+
+| Backend | Status | Evidence |
+|---|---|---|
+| Vulkan | Verified | Graph logged `Compute buffer '<name>': N elements x M bytes`; compute pass resolved the `buffer_read`/`buffer_write` bindings on the live driver. |
+| D3D11 | Verified through DXVK-D3D11 (not a native Windows driver) | `particle_splat` graph ran under GE-Proton 11-11: named buffers resolved, both particle passes dispatched, `FluidParticles` non-empty and identical to D3D12/Vulkan. PBF buffers are now `float4`/`SolidBox`, matching the D3D11 view strides. Native Windows driver run still pending. |
+| D3D12 | Verified through vkd3d-proton (not a native Windows driver) | `particle_splat` graph ran under GE-Proton 11-11: named buffers resolved, both particle passes dispatched, non-empty `FluidParticles` RT, root cost 10/64 after the B2 root-CBV fallback. Native Windows driver run still pending. |
+| OpenGL | **Not validated on-device** | As D3D11 (`GLCompute.cpp`). GL also needs the `.glsl` twin of any new kernel. |
+| WebGPU | **Not validated on-device** | Graph path is backend-agnostic; WebGPU buffer limits (size, binding count) are unexercised. |
+
+The graph layer added no backend-specific code: it resolves JSON to the existing
+`ComputeBindingDesc` that each backend already accepts. That is a strong argument, not
+a substitute for running it. **Before relying on this feature on D3D, run
+`DayScene.exe --game-selftest` plus one scene with a buffer compute pass on a Windows
+build** (`scripts/build.ps1`), and on GL run a graph that dispatches a new kernel and
+confirm its `.glsl` twin compiles.
 
 Graph loading rejects unknown accesses, duplicate or incomplete bindings, invalid
 permutations, missing attachments, writes to non-storage targets, sampler entries
 without a matching sampled texture, and read/write feedback on the same subresource.
-`compute_extent_from` must name one declared storage output. Workgroup dimensions
-are reflected from the compiled pipeline on every backend; they are not authored in
-JSON. Dispatch uses ceiling division against the selected output width/height and
-the authored `compute_depth`, producing X, Y and Z group counts.
+`compute_extent_from` must name one declared storage output or one written compute
+buffer. Workgroup dimensions are reflected from the compiled pipeline on every
+backend; they are not authored in JSON. Dispatch uses ceiling division against the
+selected output width/height (or buffer element count) and the authored
+`compute_depth`, producing X, Y and Z group counts.
 
 `RenderGraphDescriptor.h` mentions `@environment_map`, but the current execution path binds environment maps through `bind_environment_map`, not through this input string.
 

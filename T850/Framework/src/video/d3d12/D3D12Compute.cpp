@@ -140,6 +140,10 @@ namespace t850 {
     return found == m_constantWordCounts.end() ? 0u : found->second;
   }
 
+  bool D3D12ComputePipeline::ConstantUsesCbv(uint32_t shaderRegister) const {
+    return m_constantCbvRegisters.count(shaderRegister) != 0;
+  }
+
   bool D3D12ComputePipeline::Create(ID3D12Device* device, D3D12PipelineLibrary* pipelineLibrary,
                                     D3D12ShaderCacheSession* cacheSession, const ComputePipelineDesc& desc) {
     if (!device || desc.source.empty() || desc.entryPoint.empty()) {
@@ -221,6 +225,60 @@ namespace t850 {
     }
     threadGroupSize = {threadGroupX, threadGroupY, threadGroupZ};
 
+    // D3D12 limits a root signature to 64 DWORDs. Root constants cost one DWORD per
+    // 32-bit value, root SRV/UAV descriptors cost two, and descriptor tables cost one.
+    // The particle splat is 60 constants + three root buffers + two tables = 68, so
+    // serialization failed and the pass silently fell back to an empty graphics draw.
+    //
+    // When the budget is exceeded, bind the cbuffer as a root CBV (two DWORDs) instead
+    // of root constants. That takes the splat to 10/64 and does not change the shader ABI.
+    bool constantsAsCbv = false;
+    uint32_t rootCost = 0;
+    uint32_t cbufferCost = 0;
+    uint32_t cbufferCount = 0;
+    for (UINT resourceIndex = 0; resourceIndex < shaderDesc.BoundResources; ++resourceIndex) {
+      D3D12_SHADER_INPUT_BIND_DESC binding = {};
+      if (FAILED(reflection->GetResourceBindingDesc(resourceIndex, &binding)))
+        continue;
+      switch (binding.Type) {
+        case D3D_SIT_CBUFFER: {
+          ID3D12ShaderReflectionConstantBuffer* constantBuffer =
+            reflection->GetConstantBufferByName(binding.Name);
+          D3D12_SHADER_BUFFER_DESC constantDesc = {};
+          if (constantBuffer && SUCCEEDED(constantBuffer->GetDesc(&constantDesc))) {
+            const uint32_t words = constantDesc.Size / sizeof(uint32_t);
+            rootCost += words;
+            cbufferCost += words;
+            ++cbufferCount;
+          }
+          break;
+        }
+        case D3D_SIT_STRUCTURED:
+        case D3D_SIT_BYTEADDRESS:
+        case D3D_SIT_UAV_RWSTRUCTURED:
+        case D3D_SIT_UAV_RWBYTEADDRESS:
+          rootCost += 2;
+          break;
+        default:
+          rootCost += 1;
+          break;
+      }
+    }
+    const uint32_t rootCostWithConstants = rootCost;
+    if (rootCost > 64 && cbufferCount > 0) {
+      constantsAsCbv = true;
+      rootCost = rootCost - cbufferCost + 2u * cbufferCount;
+    }
+    T8_LOG_INFO("[D3D12][Compute] Root cost %u/64 for '%s': %s (root-constant layout would be %u)",
+                rootCost, desc.debugName.c_str(),
+                constantsAsCbv ? "constants bound as root CBV" : "root constants",
+                rootCostWithConstants);
+    if (rootCost > 64) {
+      T8_LOG_ERROR("[D3D12][Compute] Root signature still exceeds 64 DWORDs (%u) after moving "
+                   "constants to a CBV for '%s'", rootCost, desc.debugName.c_str());
+      return false;
+    }
+
     std::vector<D3D12_ROOT_PARAMETER> parameters;
     std::vector<ComputeBindingLayoutDesc> reflected;
     parameters.reserve(shaderDesc.BoundResources);
@@ -258,18 +316,27 @@ namespace t850 {
             return false;
           }
           const uint32_t wordCount = constantDesc.Size / sizeof(uint32_t);
-          if (wordCount > 64) {
-            T8_LOG_ERROR("[D3D12][Compute] Root constants exceed 64 DWORDs for '%s'", binding.Name);
-            return false;
+          if (constantsAsCbv) {
+            parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+            parameter.Descriptor.ShaderRegister = binding.BindPoint;
+            parameter.Descriptor.RegisterSpace = binding.Space;
+            m_constantCbvRegisters.insert(binding.BindPoint);
+            T8_LOG_INFO("[D3D12][Compute] Root parameter %d: constants b%u (%u DWORDs) as root CBV",
+                        rootIndex, binding.BindPoint, wordCount);
+          } else {
+            if (wordCount > 64) {
+              T8_LOG_ERROR("[D3D12][Compute] Root constants exceed 64 DWORDs for '%s'", binding.Name);
+              return false;
+            }
+            parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+            parameter.Constants.ShaderRegister = binding.BindPoint;
+            parameter.Constants.RegisterSpace = binding.Space;
+            parameter.Constants.Num32BitValues = wordCount;
+            T8_LOG_INFO("[D3D12][Compute] Root parameter %d: constants b%u (%u DWORDs)",
+                        rootIndex, binding.BindPoint, wordCount);
           }
-          parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-          parameter.Constants.ShaderRegister = binding.BindPoint;
-          parameter.Constants.RegisterSpace = binding.Space;
-          parameter.Constants.Num32BitValues = wordCount;
           m_constantRootIndices[binding.BindPoint] = rootIndex;
           m_constantWordCounts[binding.BindPoint] = wordCount;
-          T8_LOG_INFO("[D3D12][Compute] Root parameter %d: constants b%u (%u DWORDs)",
-                      rootIndex, binding.BindPoint, wordCount);
           break;
         }
         case D3D_SIT_STRUCTURED:
@@ -339,6 +406,10 @@ namespace t850 {
       if ((resource.type == ComputeBindingType::ReadOnlyTexture || resource.type == ComputeBindingType::ReadWriteTexture)) {
         if (binding.Dimension == D3D_SRV_DIMENSION_TEXTURE3D) {
           resource.dimension = ComputeTextureDimension::Tex3D;
+        } else if (binding.Dimension == D3D_SRV_DIMENSION_TEXTURECUBE &&
+                   resource.type == ComputeBindingType::ReadOnlyTexture) {
+          // An environment cube binds through the texture's own SRV, like a 2D texture.
+          resource.dimension = ComputeTextureDimension::Cube;
         } else if (binding.Dimension != D3D_SRV_DIMENSION_TEXTURE2D) {
           return false;
         }
@@ -671,7 +742,18 @@ namespace t850 {
           const auto* texture = dynamic_cast<D3D12Texture*>(binding.texture);
           if (!texture || !texture->pTexResource) return false;
           const auto view = texture->pTexResource->GetDesc();
-          if (view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 1 || view.SampleDesc.Count != 1)
+          if (layout && layout->dimension == ComputeTextureDimension::Cube) {
+            // An environment cube: one resource, six faces. The texture's own SRV is already
+            // TEXTURECUBE, so it binds as is. Only read-only: there is no cube UAV here.
+            if (binding.type != ComputeBindingType::ReadOnlyTexture ||
+                view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 6 ||
+                view.SampleDesc.Count != 1) {
+              T8_LOG_ERROR("[D3D12][Compute] Cube t%u does not match: type=%d dim=%d faces=%u samples=%u",
+                           binding.shaderRegister, static_cast<int>(binding.type),
+                           static_cast<int>(view.Dimension), view.DepthOrArraySize, view.SampleDesc.Count);
+              return false;
+            }
+          } else if (view.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || view.DepthOrArraySize != 1 || view.SampleDesc.Count != 1)
             return false;
           if (binding.type == ComputeBindingType::ReadWriteTexture)
             if (view.Format != ToDxgiStorageFormat(layout->storageFormat)) return false;
@@ -823,11 +905,20 @@ namespace t850 {
       const ComputeBindingDesc& binding = *item.binding;
       switch (binding.type) {
         case ComputeBindingType::Constants32:
-          commandList->SetComputeRoot32BitConstants(
-            static_cast<UINT>(item.rootIndex),
-            binding.constantCount,
-            binding.constants,
-            0);
+          if (pipeline->ConstantUsesCbv(binding.shaderRegister)) {
+            // Root CBV: copy the block into the per-frame 256-byte-aligned CB ring and
+            // bind its GPU VA. The shader's cbuffer is unchanged; only the root
+            // parameter type differs.
+            const UINT bytes = binding.constantCount * static_cast<UINT>(sizeof(uint32_t));
+            commandList->SetComputeRootConstantBufferView(
+              static_cast<UINT>(item.rootIndex), AllocateCBData(binding.constants, bytes));
+          } else {
+            commandList->SetComputeRoot32BitConstants(
+              static_cast<UINT>(item.rootIndex),
+              binding.constantCount,
+              binding.constants,
+              0);
+          }
           break;
         case ComputeBindingType::ReadOnlyBuffer:
           if (!item.buffer) {

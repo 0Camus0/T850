@@ -1,5 +1,5 @@
 #version 430
-// GENERATED from CS_FluidExtrapolate3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=e37bc9b3547c19e18fa890a548dd38c15bafab605cbedebecb6a3d9275c804ac; defines=T850_SPIRV=1,T850_VULKAN=1
+// GENERATED from CS_FluidExtrapolate3D.hlsl by scripts/shaders/generate_gl_compute_twins.ps1, do not edit; hlsl-sha256=e37bc9b3547c19e18fa890a548dd38c15bafab605cbedebecb6a3d9275c804ac; defines=T850_SPIRV=1,T850_VULKAN=1,T850_GL=1
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 layout(binding = 0, std140) uniform FluidConstants

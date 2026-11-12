@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -399,6 +399,8 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     <ClCompile Include="VoxelScene.cpp" />
     <ClCompile Include="MinecraftScene.cpp" />
     <ClCompile Include="BackyardScene.cpp" />
+    <ClCompile Include="Backyard8Scene.cpp" />
+    <ClCompile Include="Backyard8FluidJson.cpp" />
     <ClCompile Include="BackyardWaterJson.cpp" />
     <ClCompile Include="BackyardSelfTest.cpp" />
   </ItemGroup>
@@ -413,6 +415,8 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     <ClInclude Include="VoxelScene.h" />
     <ClInclude Include="MinecraftScene.h" />
     <ClInclude Include="BackyardScene.h" />
+    <ClInclude Include="Backyard8Scene.h" />
+    <ClInclude Include="Backyard8FluidJson.h" />
     <ClInclude Include="BackyardWaterJson.h" />
     <ClInclude Include="BackyardSelfTest.h" />
   </ItemGroup>

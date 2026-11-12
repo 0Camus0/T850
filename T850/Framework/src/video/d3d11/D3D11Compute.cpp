@@ -127,6 +127,10 @@ namespace t850 {
       if ((resource.type == ComputeBindingType::ReadOnlyTexture || resource.type == ComputeBindingType::ReadWriteTexture)) {
         if (binding.Dimension == D3D_SRV_DIMENSION_TEXTURE3D) {
           resource.dimension = ComputeTextureDimension::Tex3D;
+        } else if (binding.Dimension == D3D_SRV_DIMENSION_TEXTURECUBE &&
+                   resource.type == ComputeBindingType::ReadOnlyTexture) {
+          // An environment cube binds through the texture's own SRV, like a 2D texture.
+          resource.dimension = ComputeTextureDimension::Cube;
         } else if (binding.Dimension != D3D_SRV_DIMENSION_TEXTURE2D) {
           return false;
         }
@@ -138,8 +142,11 @@ namespace t850 {
     if (!desc.debugName.empty())
       shader->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(desc.debugName.size()), desc.debugName.data());
     ShaderPermutationDump::RecordCompute(desc.debugName, desc.entryPoint, desc.permutationName, desc.defines);
-    T8_LOG_INFO("[D3D11][Compute] Pipeline '%s' created (threads=%ux%ux%u constants=%zu bufferSRVs=%zu bufferUAVs=%zu)",
-                desc.debugName.c_str(), tx, ty, tz, constantWordCounts.size(), bufferSrvs.size(), bufferUavs.size());
+    std::string uavList;
+    for (UINT slot : textureUavs) { uavList += std::to_string(slot); uavList += ','; }
+    T8_LOG_INFO("[D3D11][Compute] Pipeline '%s' created (threads=%ux%ux%u constants=%zu bufferSRVs=%zu bufferUAVs=%zu textureSRVs=%zu textureUAVs=%zu[%s] samplers=%zu)",
+                desc.debugName.c_str(), tx, ty, tz, constantWordCounts.size(), bufferSrvs.size(), bufferUavs.size(),
+                textureSrvs.size(), textureUavs.size(), uavList.c_str(), samplers.size());
     return true;
   }
 
@@ -277,7 +284,16 @@ namespace t850 {
           if (!texture || !texture->pSRVTex) return false;
           D3D11_SHADER_RESOURCE_VIEW_DESC view{};
           texture->pSRVTex->GetDesc(&view);
-          if (view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) return false;
+          if (layout && layout->dimension == ComputeTextureDimension::Cube) {
+            // An environment cube binds through its own TEXTURECUBE SRV. Read-only only.
+            if (binding.type != ComputeBindingType::ReadOnlyTexture ||
+                view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURECUBE) {
+              T8_LOG_ERROR("[D3D11][Compute] Cube t%u does not match: type=%d view=%d",
+                           binding.shaderRegister, static_cast<int>(binding.type),
+                           static_cast<int>(view.ViewDimension));
+              return false;
+            }
+          } else if (view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) return false;
           if (binding.type == ComputeBindingType::ReadWriteTexture) {
             if (!texture->pUAVTex) return false;
             D3D11_UNORDERED_ACCESS_VIEW_DESC output{};

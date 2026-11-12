@@ -73,6 +73,8 @@ bool ReflectComputeBindings(const std::vector<uint32_t>& spirv, const ComputePip
         return false;
       }
       if (resource->image.dim == SpvDim3D) binding.dimension = ComputeTextureDimension::Tex3D;
+      else if (resource->image.dim == SpvDimCube && binding.type == ComputeBindingType::ReadOnlyTexture)
+        binding.dimension = ComputeTextureDimension::Cube;
       else if (resource->image.dim != SpvDim2D) {
         T8_LOG_ERROR("[ComputeReflection] Image %u rejected: dim=%d", resource->binding,
                      static_cast<int>(resource->image.dim));

@@ -1,0 +1,122 @@
+// T850 Position Based Fluids: retire particles that left the water.
+//
+// The pool is an OPEN container, so a splash throws particles onto the deck or over the wall.
+// Those must not keep participating in the simulation (they would form a puddle that the
+// density constraint tries to pull back in), and they must not be drawn.
+//
+// This is deliberately NOT a compaction. Compaction needs a scratch buffer, a readback to
+// learn the surviving count and a handle swap; every one of those invalidated a pointer held
+// elsewhere (the particle renderer, a descriptor set recorded earlier in the frame), and that
+// is exactly what crashed. Retired particles are instead PARKED: written far below the floor
+// with zero velocity. They keep their slot, so buffers keep their size and address for the
+// solver's whole lifetime, and they are out of every density neighbourhood and out of frame.
+//
+// Parking is idempotent and order-independent, so no atomics or barriers are needed.
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(0, 0)]]
+#endif
+cbuffer PbfConstants : register(b0)
+{
+    uint  ParticleCount;
+    uint  GridX;
+    uint  GridY;
+    uint  GridZ;
+    float DeltaTime;
+    float SmoothingRadius;
+    float ParticleRadius;
+    float RestDensity;
+    float StiffnessEps;
+    float ArtPressureK;
+    float ArtPressureN;
+    float ViscosityC;
+    float Gravity;
+    float MaxVelocity;
+    float GridOriginX;
+    float GridOriginY;
+    float GridOriginZ;
+    float BasinMinX;
+    float BasinMinY;
+    float BasinMinZ;
+    float BasinMaxX;
+    float BasinMaxY;
+    float BasinMaxZ;
+    uint  BoxCount;
+    uint  Iteration;
+    uint  SurfaceWidth;
+    uint  SurfaceDepth;
+    float WaterPlaneY;
+    float RestScale;
+    float RestDenomReference;
+    float MinNeighbours;
+    float WallTopY;   // solid walls end here (the pool rim); open above
+    float WindX;
+    float WindZ;
+    float WindStrength;
+    float Pad7;
+};
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(1, 0)]]
+#endif
+RWStructuredBuffer<float4> Positions : register(u0);
+
+#if defined(T850_VULKAN) || defined(T850_SPIRV)
+[[vk::binding(2, 0)]]
+#endif
+RWStructuredBuffer<float4> Velocities : register(u1);
+
+// How far below the floor a retired particle is parked. Well outside the neighbour grid and
+// the kernel radius, so it cannot influence anything that is still simulated.
+#define PARKED_Y (-1000.0f)
+
+[numthreads(64, 1, 1)]
+void CS(uint3 id : SV_DispatchThreadID)
+{
+    const uint i = id.x;
+    if (i >= ParticleCount)
+        return;
+
+    const float3 p = Positions[i].xyz;
+
+    // Already parked: keep the alive flag clear and do nothing else (idempotent).
+    if (p.y <= PARKED_Y + 1.0f) {
+        Positions[i].w = 0.0f;
+        return;
+    }
+
+    const float margin = ParticleRadius;
+    // Finiteness from the bit pattern: `isfinite` becomes OpIsNan, which Dawn's Tint SPIR-V
+    // reader does not implement and aborts the whole process on (WebGPU). See
+    // CS_FluidDiagnostics3D.hlsl for the same test.
+    const uint3 pBits = asuint(p);
+    const bool3 pFinite = (pBits & 0x7F800000u) != 0x7F800000u;
+    if (!pFinite.x || !pFinite.y || !pFinite.z) {
+        Positions[i] = float4(0.0f, PARKED_Y, 0.0f, 0.0f);   // dead: skipped by every later kernel
+        Velocities[i] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return;
+    }
+
+    const bool belowFloor = p.y < BasinMinY - 2.0f * margin;
+    const float slack = 0.6f;
+    const bool outsideXZ = p.x < BasinMinX - slack || p.x > BasinMaxX + slack ||
+                           p.z < BasinMinZ - slack || p.z > BasinMaxZ + slack;
+    // Water that crossed the wall and is now BELOW the rim is inside the wall solid or
+    // standing on the deck/coping: it can never return to the pool. The old test only retired
+    // particles 0.6 m outside the footprint, so everything parked between the inner face and
+    // the coping outer edge (242 particles on this scene) sat at the deck clamp height for the
+    // whole run: invisible inside the coping stone, still consuming slots and neighbours.
+    const bool outsideFootprint = p.x < BasinMinX || p.x > BasinMaxX ||
+                                  p.z < BasinMinZ || p.z > BasinMaxZ;
+    // Outside the footprint the deck clamp (CS_PbfIntegrate/CS_PbfSolve Collide) holds water at
+    // deckY + radius/2. Anything that has come down to the deck or coping is stranded: retire it
+    // rather than leave a puddle of particles that renders as blobs on the rim. Particles still
+    // in the air above that band keep flying until they land.
+    const float deckY = WaterPlaneY + 0.16f;
+    const bool strandedOnSolid = outsideFootprint && p.y < max(WallTopY, deckY + 2.0f * margin);
+    if (!belowFloor && !outsideXZ && !strandedOnSolid)
+        return;
+
+    Positions[i] = float4(0.0f, PARKED_Y, 0.0f, 0.0f);   // dead: skipped by every later kernel
+    Velocities[i] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+}

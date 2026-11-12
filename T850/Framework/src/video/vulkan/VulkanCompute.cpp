@@ -192,8 +192,18 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
   if (!CompileCompute(desc, spirv, threadGroupSize)) return false;
 #endif
   std::vector<ComputeBindingLayoutDesc> reflected;
-  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize) ||
-      !SetValidatedLayout(desc, reflected, true)) return false;
+  // Split the two legs: both are silent internally, so a combined condition makes every
+  // cause surface as the caller's generic "failed to create compute pipeline".
+  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize)) {
+    T8_LOG_ERROR("[Vulkan][Compute] Reflection failed for '%s'", desc.debugName.c_str());
+    return false;
+  }
+  if (!SetValidatedLayout(desc, reflected, true)) {
+    T8_LOG_ERROR("[Vulkan][Compute] Declared bindings do not match reflection for '%s' "
+                 "(declared %zu, reflected %zu)",
+                 desc.debugName.c_str(), desc.bindings.size(), reflected.size());
+    return false;
+  }
   VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
   moduleInfo.codeSize = spirv.size() * sizeof(uint32_t);
   moduleInfo.pCode = spirv.data();
@@ -229,7 +239,11 @@ bool VulkanComputePipeline::Create(VulkanDriver* driver, const ComputePipelineDe
   pipelineInfo.layout = pipelineLayout;
   const VkResult result = T8_TELEMETRY_CALL("pipeline.create.compute", vkCreateComputePipelines(driver->GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
   vkDestroyShaderModule(driver->GetDevice(), module, nullptr);
-  if (result != VK_SUCCESS) return false;
+  if (result != VK_SUCCESS) {
+    T8_LOG_ERROR("[Vulkan][Compute] vkCreateComputePipelines failed for '%s' (result=%d, entry=%s)",
+                 desc.debugName.c_str(), static_cast<int>(result), desc.entryPoint.c_str());
+    return false;
+  }
   ShaderPermutationDump::RecordCompute(desc.debugName, desc.entryPoint, desc.permutationName, desc.defines);
   T8_LOG_INFO("[Vulkan][Compute] Pipeline '%s' created (bindings=%zu)", desc.debugName.c_str(), bindings.size());
   return true;
@@ -335,8 +349,12 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     }
     if (binding.texture) {
       const auto* texture = dynamic_cast<VulkanTexture*>(binding.texture);
+      // A cube map is valid only where the kernel declares a sampled cube (an environment map).
+      const ComputeBindingLayoutDesc* textureLayout = pipeline->Find(binding.type, binding.shaderRegister);
+      const bool cubeAllowed = textureLayout && binding.type == ComputeBindingType::ReadOnlyTexture &&
+                               textureLayout->dimension == ComputeTextureDimension::Cube;
         if (!texture || !texture->m_imageView || !texture->m_image ||
-          (texture->cil_props & CIL_CUBE_MAP)) return false;
+          ((texture->cil_props & CIL_CUBE_MAP) && !cubeAllowed)) return false;
       if (binding.type == ComputeBindingType::Sampler && !texture->m_sampler) return false;
       if (binding.type == ComputeBindingType::ReadWriteTexture) {
         if (!texture->m_storageUsage) return false;
@@ -484,6 +502,11 @@ bool VulkanDriver::DispatchCompute(ComputePipeline& pipelineBase, const std::vec
     VkDescriptorImageInfo imageInfo{};
     if (binding.type == ComputeBindingType::ReadOnlyTexture) {
       if (texture->GetLayout() != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        // TransitionImageLayout covers one layer and one mip: a cube must already be sampled.
+        if (texture->cil_props & CIL_CUBE_MAP) {
+          T8_LOG_ERROR("[Vulkan][Compute] Cube texture t%u is not in shader-read layout", binding.shaderRegister);
+          return false;
+        }
         TransitionImageLayout(cmd, texture->m_image, texture->GetLayout(),
                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, TextureAspect(*texture));
         texture->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);

@@ -194,6 +194,13 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	// Live-editable water parameters, driven by the dev GUI panel.
 	t850::WaterTunables Water;
 	int ParticleCount = 0;
+	// Fluid particle splat (scene 8): count, splat radius in metres and shading terms.
+	// Read by the fluid_particles compute constants builder in ComputeKernelRegistry.
+	int FluidParticleCount = 0;
+	float FluidParticleRadius = 0.13f;
+	float FluidParticleDepthBias = 0.05f;
+	float FluidParticleOpacity = 0.22f;
+	XVECTOR3 FluidParticleColor = XVECTOR3(0.35f, 0.62f, 0.82f, 0.0f);
 	float ParticleLifetime = 0.0f;
 	float ParticleRiseHeight = 0.0f;
 	float ParticleSpread = 0.0f;

@@ -13,6 +13,7 @@
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <sstream>
 #include <unordered_map>
@@ -161,12 +162,54 @@ bool GLComputePipeline::Create(const ComputePipelineDesc& desc) {
   }
   glslang::TProgram reflectionProgram;
   reflectionProgram.addShader(&reflectionShader);
-  if (!reflectionProgram.link(messages)) return false;
+  if (!reflectionProgram.link(messages)) {
+    T8_LOG_ERROR("[GL][Compute] Reflection link failed for '%s': %s", desc.debugName.c_str(),
+                 reflectionProgram.getInfoLog());
+    return false;
+  }
   std::vector<uint32_t> spirv;
   glslang::GlslangToSpv(*reflectionProgram.getIntermediate(EShLangCompute), spirv);
   std::vector<ComputeBindingLayoutDesc> reflected;
-  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize, true) ||
-      !SetValidatedLayout(desc, reflected, true) || !CompileComputeProgram(desc, source, program)) return false;
+  if (!ReflectComputeBindings(spirv, desc, reflected, threadGroupSize, true)) {
+    T8_LOG_ERROR("[GL][Compute] ReflectComputeBindings failed for '%s'", desc.debugName.c_str());
+    return false;
+  }
+  // SPIRV-Cross emits one combined sampler per distinct sampler state, so a cube that is both
+  // sampled and queried with GetDimensions (CS_ParticleShade's EnvironmentMap) arrives as two
+  // samplerCube aliases on the same binding. They are one texture unit, not two bindings.
+  {
+    std::vector<ComputeBindingLayoutDesc> unique;
+    unique.reserve(reflected.size());
+    for (const ComputeBindingLayoutDesc& entry : reflected) {
+      const bool duplicate = std::any_of(unique.begin(), unique.end(),
+          [&entry](const ComputeBindingLayoutDesc& seen) {
+            return seen.type == entry.type && seen.bindingIndex == entry.bindingIndex &&
+                   seen.shaderRegister == entry.shaderRegister && seen.dimension == entry.dimension &&
+                   seen.storageFormat == entry.storageFormat &&
+                   seen.constantCount == entry.constantCount;
+          });
+      if (!duplicate) unique.push_back(entry);
+    }
+    reflected.swap(unique);
+  }
+  if (!SetValidatedLayout(desc, reflected, true)) {
+    for (const ComputeBindingLayoutDesc& b : reflected) {
+      T8_LOG_ERROR("[GL][Compute] reflected '%s': type=%d reg=%u idx=%u count=%u dim=%d fmt=%d",
+                   desc.debugName.c_str(), static_cast<int>(b.type), b.shaderRegister, b.bindingIndex,
+                   b.constantCount, static_cast<int>(b.dimension), static_cast<int>(b.storageFormat));
+    }
+    for (const ComputeBindingLayoutDesc& b : desc.bindings) {
+      T8_LOG_ERROR("[GL][Compute] declared  '%s': type=%d reg=%u idx=%u count=%u dim=%d fmt=%d",
+                   desc.debugName.c_str(), static_cast<int>(b.type), b.shaderRegister, b.bindingIndex,
+                   b.constantCount, static_cast<int>(b.dimension), static_cast<int>(b.storageFormat));
+    }
+    T8_LOG_ERROR("[GL][Compute] SetValidatedLayout failed for '%s'", desc.debugName.c_str());
+    return false;
+  }
+  if (!CompileComputeProgram(desc, source, program)) {
+    T8_LOG_ERROR("[GL][Compute] CompileComputeProgram failed for '%s'", desc.debugName.c_str());
+    return false;
+  }
   GLint reflectedGroupSize[3] = {};
   glGetProgramiv(program, GL_COMPUTE_WORK_GROUP_SIZE, reflectedGroupSize);
   if (reflectedGroupSize[0] <= 0 || reflectedGroupSize[1] <= 0 || reflectedGroupSize[2] <= 0) {
@@ -388,7 +431,17 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
            volume->internalFormat != ToGLStorageFormat(layout->storageFormat))) return false;
     } else {
       auto* texture = dynamic_cast<GLTexture*>(binding.texture);
-      if (!texture || texture->glTarget != GL_TEXTURE_2D) return false;
+      if (!texture) return false;
+      const bool cube = layout->dimension == ComputeTextureDimension::Cube;
+      if (cube) {
+        // An environment cube: a GL_TEXTURE_CUBE_MAP read through a samplerCube. Read-only.
+        if (binding.type != ComputeBindingType::ReadOnlyTexture ||
+            texture->glTarget != GL_TEXTURE_CUBE_MAP) {
+          T8_LOG_ERROR("[GL][Compute] Cube t%u does not match: type=%d target=0x%X",
+                       binding.shaderRegister, static_cast<int>(binding.type), texture->glTarget);
+          return false;
+        }
+      } else if (texture->glTarget != GL_TEXTURE_2D) return false;
       if (binding.type == ComputeBindingType::ReadOnlyTexture) {
         if (layout->bindingIndex >= static_cast<uint32_t>(maxTextureUnits) ||
             !sampledTextures.emplace(binding.shaderRegister, texture).second) return false;
@@ -477,7 +530,10 @@ bool GLDriver::DispatchCompute(ComputePipeline& pipelineBase,
       auto* texture = static_cast<GLTexture*>(binding.texture);
       glActiveTexture(GL_TEXTURE0 + layout->bindingIndex);
       GLint previousTexture = 0;
-      glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+      // Query the binding point of the target being replaced: a cube is not GL_TEXTURE_2D.
+      glGetIntegerv(texture->glTarget == GL_TEXTURE_CUBE_MAP ? GL_TEXTURE_BINDING_CUBE_MAP
+                                                             : GL_TEXTURE_BINDING_2D,
+                    &previousTexture);
       textureBindings.push_back({layout->bindingIndex, texture->glTarget, previousTexture});
       glBindTexture(texture->glTarget, texture->id);
     } else if (binding.type == ComputeBindingType::ReadWriteTexture) {

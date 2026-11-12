@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "generated": "2026-11-10",
+  "solver": {
+    "substeps": 2,
+    "iterations": 6,
+    "restDensityScale": 0.907,
+    "wallFriction": 8.0,
+    "windStrength": 1.0
+  },
+  "capture": {
+    "width": 960,
+    "height": 540,
+    "start": "water",
+    "fixedDt": 0.0166667,
+    "frames": [
+      24,
+      90,
+      300
+    ]
+  },
+  "references": {
+    "screen-space": {
+      "24": {
+        "pixels": 224391,
+        "bbox": [
+          0,
+          959,
+          0,
+          436
+        ],
+        "mean": [
+          36.6,
+          114.7,
+          141.0
+        ]
+      },
+      "90": {
+        "pixels": 296424,
+        "bbox": [
+          0,
+          959,
+          147,
+          539
+        ],
+        "mean": [
+          43.6,
+          88.0,
+          106.4
+        ]
+      },
+      "300": {
+        "pixels": 232789,
+        "bbox": [
+          0,
+          959,
+          229,
+          539
+        ],
+        "mean": [
+          31.7,
+          64.1,
+          81.5
+        ]
+      }
+    },
+    "splat": {
+      "24": {
+        "pixels": 224389,
+        "bbox": [
+          0,
+          959,
+          0,
+          436
+        ],
+        "mean": [
+          37.3,
+          116.7,
+          142.9
+        ]
+      },
+      "90": {
+        "pixels": 297036,
+        "bbox": [
+          0,
+          959,
+          147,
+          539
+        ],
+        "mean": [
+          43.0,
+          88.2,
+          106.8
+        ]
+      },
+      "300": {
+        "pixels": 231456,
+        "bbox": [
+          0,
+          959,
+          229,
+          539
+        ],
+        "mean": [
+          32.0,
+          64.5,
+          81.9
+        ]
+      }
+    },
+    "spheres": {
+      "24": {
+        "pixels": 233181,
+        "bbox": [
+          0,
+          959,
+          0,
+          436
+        ],
+        "mean": [
+          215.7,
+          236.9,
+          238.8
+        ]
+      },
+      "90": {
+        "pixels": 201506,
+        "bbox": [
+          0,
+          959,
+          151,
+          443
+        ],
+        "mean": [
+          228.4,
+          245.9,
+          247.7
+        ]
+      },
+      "300": {
+        "pixels": 113999,
+        "bbox": [
+          0,
+          959,
+          293,
+          436
+        ],
+        "mean": [
+          239.6,
+          254.0,
+          254.6
+        ]
+      }
+    }
+  },
+  "tolerances": {
+    "24": {
+      "pixel_percent": 0.5,
+      "bbox_px": 2,
+      "mean_levels": 3
+    },
+    "90": {
+      "pixel_percent": 2.0,
+      "bbox_px": 55,
+      "mean_levels": 5
+    },
+    "300": {
+      "pixel_percent": 2.0,
+      "bbox_px": 5,
+      "mean_levels": 5
+    }
+  },
+  "water_level": {
+    "lake": {
+      "target_m": -0.04,
+      "tolerance_m": 0.015
+    },
+    "water": {
+      "target_m": -0.17,
+      "tolerance_m": 0.02
+    }
+  }
+}

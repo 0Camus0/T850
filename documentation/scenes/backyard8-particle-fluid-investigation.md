@@ -623,7 +623,7 @@ pre-existing and not introduced by this work.
 
 ### Windows (build verified, runtime not fully re-verified)
 
-- MSVC v143 build on `camus@10.0.0.232` (`D:\sandbox\T850`) succeeded:
+- MSVC v143 build on the Windows test host succeeded:
   `BUILD SUCCEEDED`, `DayScene.exe` 21,459,456 bytes.
 - Under GE-Proton 11-11, D3D12 ran to exit 0 and produced RT dumps.
 - D3D11 crashed **before** the `Interlocked*` operand fixes. Those fixes have been

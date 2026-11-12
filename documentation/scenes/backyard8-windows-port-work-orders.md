@@ -12,7 +12,7 @@ does bounded Linux tasks.
   - Commits `7e28cef` and `84bf60e`.
 - Since then there are 83 commits and about 8,500 changed lines in `Assets/Shaders` and
   `Framework/src/video`. None of these features has run on D3D12, D3D11 or GL:
-  - the SSFR realism shade (`ec0ee11`);
+  - the SSFR realism shade (`76fd80b`);
   - whitewater (`CS_PbfWhitewater`, `CS_PbfDiffuse`, `CS_PbfFields`, `CS_FluidWhitewater`);
   - environment-cube reflections (a `TextureCube` sampled in a compute kernel);
   - G-buffer lighting in the shade;
@@ -216,13 +216,13 @@ Make one commit per file group, with subjects starting `WO-W3: docs -`.
    - **WebGPU specifics, Tint limit 2**: make it say *any* `isfinite`/`isnan`/`isinf`, scalar or vector.
      They lower to `OpIsNan`/`OpIsInf`, and Dawn's Tint SPIR-V reader does not implement them:
      `TINT_UNIMPLEMENTED unhandled SPIR-V instruction: OpIsNan`, then the process aborts with `0xC0000409`.
-     Cite `CS_PbfCull.hlsl` / `CS_PbfDiffuse.hlsl` (`0e2a332`) beside `CS_FluidDiagnostics3D.hlsl`.
+     Cite `CS_PbfCull.hlsl` / `CS_PbfDiffuse.hlsl` (`b4a8a75`) beside `CS_FluidDiagnostics3D.hlsl`.
    - **Read-only cube textures in compute** (contract or "Portable guarantees"). A kernel may declare a read-only
      `"dimension": "cube"` texture in `compute_kernels.json`.
      - Supported on D3D11 (the texture's `TEXTURECUBE` SRV), D3D12 (`DepthOrArraySize == 6`, the texture's cube SRV),
        Vulkan, GL (`GL_TEXTURE_CUBE_MAP`, `samplerCube`) and WebGPU (a Cube view).
      - Not supported as storage (read-write).
-     - Commits: `a7f40b2`, `abaddb8`, `29ed39f`, `5e04cac`.
+     - Commits: `0bd825b`, `639e8a5`, `a5f6ba6`, `238be0f`.
    - **OpenGL behavior**: SPIRV-Cross emits one combined sampler per (texture, sampler) pair.
      - A texture that is both sampled and queried with `GetDimensions` gets a second
        `..._SPIRV_Cross_DummySampler` alias on the same binding.
@@ -230,7 +230,7 @@ Make one commit per file group, with subjects starting `WO-W3: docs -`.
      - Cube bindings save and restore `GL_TEXTURE_BINDING_CUBE_MAP`.
    - **WebGPU/Dawn implementation**: the device requests the adapter's `maxStorageBufferBindingSize` and
      `maxBufferSize`. The WebGPU defaults (128 MiB and 256 MiB) reject full-screen per-pixel buffers at 4K:
-     20 B/pixel at 3840x2160 is 165,888,000 B (`6d601b2`).
+     20 B/pixel at 3840x2160 is 165,888,000 B (`130e6b9`).
 2. `.github/skills/t850-compute-kernel/SKILL.md`: add two short rules where they fit the existing structure.
    - Read-only cube textures are portable (declare `"dimension": "cube"`).
    - Never use `isfinite`/`isnan`/`isinf` in a compute kernel (WebGPU aborts); use the exponent-bits test.
@@ -247,15 +247,15 @@ Make one commit per file group, with subjects starting `WO-W3: docs -`.
 
 | WO | Owner | State | Commits | Notes |
 |---|---|---|---|---|
-| W1 | DeepSeek | done (signed off by Claude) | 4ec41c5 f1a7a72 78e7e7f d6cad86 c64d51a cf12b20 770407a 3b16a11 b2a62a9 a7f40b2 abaddb8 29ed39f 0e2a332 5e04cac 6d601b2 8df0aef | all 5 APIs: gate 0, 78 PASS, 0 log findings, water cells at noise; lake300 DIFF accepted as solver variance; GL coping band is pre-existing |
+| W1 | DeepSeek | done (signed off by Claude) | caf9b2d 05abb78 8eb749f 64e527d 6046bec 1fe5ca5 14dd602 bc28091 3e2e6ac 0bd825b 639e8a5 a5f6ba6 b4a8a75 238be0f 130e6b9 1f37bfc | all 5 APIs: gate 0, 78 PASS, 0 log findings, water cells at noise; lake300 DIFF accepted as solver variance; GL coping band is pre-existing |
 | W2 | qwen-5090 | done (accepted) | none (local evidence) | 16 runs, 0 errors; noise table below |
-| W2b | qwen-5090 | done (accepted) | a144b0c, 0ae4cfc | compare tool and contact sheets (Linux-only) |
-| W2c | qwen-5090 | done (accepted) | 196d5ee | `--ref win` (Windows Vulkan yardstick) and a webgpu column |
-| W3 | DeepSeek | done | ba4d6dd ae92939 4964983 plus this commit | docs: compute-shader doc, compute-kernel skill, session doc §6.3 |
+| W2b | qwen-5090 | done (accepted) | 67ea48b, 90acd92 | compare tool and contact sheets (Linux-only) |
+| W2c | qwen-5090 | done (accepted) | 5f92c4e | `--ref win` (Windows Vulkan yardstick) and a webgpu column |
+| W3 | DeepSeek | done | a887d9c bb2c471 2fe5031 plus this commit | docs: compute-shader doc, compute-kernel skill, session doc §6.3 |
 
 ## Results (final)
 
-Final binary: HEAD `8df0aef`, sync `rev:8df0aef` (1343 files, 1 copied), `build` = Rebuild,
+Final binary: HEAD `1f37bfc`, sync `rev:1f37bfc` (1343 files, 1 copied), `build` = Rebuild,
 `BUILD_EXIT=0 ... exe_newer=True` (245 s). Matrix `matrix4` at 1920x1080 with
 `--regressionFixedDt 0.0166667 --postProcessMode compute --backyard-no-hud`, plus one
 3840x2160 water/f150 run per API. Compare tool: `backyard8_parity_compare.py --ref win` and
@@ -344,34 +344,34 @@ material, present before any water pass. Recorded, not fixed, per Claude's instr
 ### Fixes, one commit per root cause
 
 Tooling:
-- `4ec41c5` windows_parity.py (sync/build/run under the shared flock), backyard8_parity.ps1, smoke_frame.ps1.
-- `f1a7a72` sync stamps only changed files with the host's time; `build` defaults to Rebuild
+- `caf9b2d` windows_parity.py (sync/build/run under the shared flock), backyard8_parity.ps1, smoke_frame.ps1.
+- `05abb78` sync stamps only changed files with the host's time; `build` defaults to Rebuild
   and refuses to continue unless `exe_newer=True`.
-- `78e7e7f` project is `<root>\T850\T850` in all three remote scripts, with a `ROOT_FAIL` guard
+- `8eb749f` project is `<root>\T850\T850` in all three remote scripts, with a `ROOT_FAIL` guard
   on `<project>\T850.sln` (the 09:18 sync wrote a tree one level too high).
-- `d6cad86` BUILD_COMMAND really substitutes `-Root`/`-Action`.
-- `c64d51a` sync writes CRLF like the host's `core.autocrlf=true` checkout.
-- `cf12b20` sync leaves a file alone when its text matches after CR-stripping (this keeps
+- `64e527d` BUILD_COMMAND really substitutes `-Root`/`-Action`.
+- `6046bec` sync writes CRLF like the host's `core.autocrlf=true` checkout.
+- `1fe5ca5` sync leaves a file alone when its text matches after CR-stripping (this keeps
   the Dawn recipe hashes intact and the checkout clean); `run` passes the script's declared
   `-Exe/-Out/-Root` and uses `-NonInteractive`.
-- `770407a`, `3b16a11` parity matrix: absolute gate path (the gate ran from `bin`), UTF-8
+- `14dd602`, `bc28091` parity matrix: absolute gate path (the gate ran from `bin`), UTF-8
   progress, and the project root three levels above the exe.
-- `b2a62a9` add webgpu to the default API list.
+- `3e2e6ac` add webgpu to the default API list.
 
 Backend fixes:
-- `a7f40b2` **d3d12**: accept the environment cube (`DepthOrArraySize == 6`, TEXTURE2D,
+- `0bd825b` **d3d12**: accept the environment cube (`DepthOrArraySize == 6`, TEXTURE2D,
   read-only) in dispatch validation.
-- `abaddb8` **d3d11**: accept a TEXTURECUBE SRV for a Cube layout.
-- `29ed39f` **gl**: drop duplicate reflected bindings (two samplerCube aliases for the
+- `639e8a5` **d3d11**: accept a TEXTURECUBE SRV for a Cube layout.
+- `a5f6ba6` **gl**: drop duplicate reflected bindings (two samplerCube aliases for the
   sampled+queried EnvironmentMap), accept `GL_TEXTURE_CUBE_MAP`, and save the previous
   binding from `GL_TEXTURE_BINDING_CUBE_MAP`.
-- `0e2a332` **webgpu** (shared HLSL): bit-pattern finiteness instead of `isfinite`, because
+- `b4a8a75` **webgpu** (shared HLSL): bit-pattern finiteness instead of `isfinite`, because
   Dawn's Tint SPIR-V reader aborts the process on `OpIsNan` (`CS_PbfCull.hlsl`,
   `CS_PbfDiffuse.hlsl`, twins regenerated; Linux gate PASS).
-- `5e04cac` **webgpu**: accept the 6-layer environment cube in dispatch validation.
-- `6d601b2` **webgpu**: request the adapter's `maxStorageBufferBindingSize`/`maxBufferSize`
+- `238be0f` **webgpu**: accept the 6-layer environment cube in dispatch validation.
+- `130e6b9` **webgpu**: request the adapter's `maxStorageBufferBindingSize`/`maxBufferSize`
   (a 20 B/pixel `$window` buffer is 165,888,000 B at 4K, over the 128 MiB default).
-- `8df0aef` comment arithmetic fix.
+- `1f37bfc` comment arithmetic fix.
 
 ### What was run
 
@@ -517,7 +517,7 @@ Per cell and API, the target is `noise` against Windows Vulkan. Explain any rema
 
 ### matrix2 review (Claude)
 
-After `a7f40b2`, `abaddb8`, `29ed39f` and `0e2a332`, D3D12, D3D11 and GL log **0 errors** in every cell.
+After `0bd825b`, `639e8a5`, `a5f6ba6` and `b4a8a75`, D3D12, D3D11 and GL log **0 errors** in every cell.
 Self-test is 78 PASS and the gate exits 0 on every API.
 
 `--ref win` (`/tmp/winport/matrix2/compare_win/compare.md`):
@@ -538,12 +538,12 @@ Self-test is 78 PASS and the gate exits 0 on every API.
   - To confirm, keep all dumps for one GL and one Vulkan `ss_default_lake300` run and compare
     `RT_Dump_GBuffer_Albedo` and `RT_Dump_Deferred` at rows 576 to 590. If the band is already in the G-buffer, it is a
     scene issue outside this port: report it, do not fix it here.
-- **WebGPU**: `Fluid Surface Shade` dispatch failed every frame. `5e04cac` fixes the cube validation; `matrix3` checks it.
+- **WebGPU**: `Fluid Surface Shade` dispatch failed every frame. `238be0f` fixes the cube validation; `matrix3` checks it.
   The 4K WebGPU run exited 1 after 2 s (22 errors). Read that log in `matrix3`.
 
 ### WO-W1 sign-off (Claude)
 
-**Signed off** on `8df0aef` / `matrix4`. Claude checked it independently, without relying on the Results text:
+**Signed off** on `1f37bfc` / `matrix4`. Claude checked it independently, without relying on the Results text:
 
 - **Logs**: 0 `[ERROR]` and 0 `[WARN ]` in all 53 runs (17 Vulkan, 9 each for d3d12, d3d11, gl and webgpu,
   including every 4K run).
@@ -562,7 +562,7 @@ WO-W3 is dispatched to DeepSeek.
 
 ## Requests to Claude
 
-1. **WO-W1 sign-off (final binary `8df0aef`, matrix4).** Every decision you gave is done:
+1. **WO-W1 sign-off (final binary `1f37bfc`, matrix4).** Every decision you gave is done:
    - lake300 recorded as cross-compiler solver variance, with numbers (Results).
    - the GL coping band was tested with the G-buffer dumps: it is already in
      `RT_Dump_GBuffer_Albedo` (rows 582/583/586, ~80 levels over 1236 columns) and persists
@@ -572,7 +572,7 @@ WO-W3 is dispatched to DeepSeek.
      **zero** `[ERROR]`, gate-pattern, `compute dispatch failed`, `failed to create compute
      pipeline` or `SetValidatedLayout failed` lines in any cell or the 4K runs; compared with
      both `--ref win` and `--ref linux`; both sheets viewed and identical across all columns.
-   - the storage-size comment is corrected (`8df0aef`).
+   - the storage-size comment is corrected (`1f37bfc`).
    Request: sign off WO-W1 so WO-W3 (documentation) can start.
 
 2. **One residual item for your call, not blocking:** GL is the only API whose calm cells

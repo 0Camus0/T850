@@ -427,12 +427,12 @@ Fixes, one per root cause:
 
 | Commit | Change |
 |---|---|
-| `a7f40b2` | D3D12: cube textures (`DepthOrArraySize == 6`) pass dispatch validation |
-| `abaddb8` | D3D11: a `TEXTURECUBE` SRV is accepted for a cube layout |
-| `29ed39f` | GL: drop duplicate combined-sampler aliases, accept and restore cubes |
-| `0e2a332` | WebGPU: bit-pattern finiteness, because Tint aborts on `OpIsNan` |
-| `5e04cac` | WebGPU: accept the 6-layer cube in dispatch validation |
-| `6d601b2` | WebGPU: request the adapter's storage-buffer limits (4K is 165,888,000 B) |
+| `0bd825b` | D3D12: cube textures (`DepthOrArraySize == 6`) pass dispatch validation |
+| `639e8a5` | D3D11: a `TEXTURECUBE` SRV is accepted for a cube layout |
+| `a5f6ba6` | GL: drop duplicate combined-sampler aliases, accept and restore cubes |
+| `b4a8a75` | WebGPU: bit-pattern finiteness, because Tint aborts on `OpIsNan` |
+| `238be0f` | WebGPU: accept the 6-layer cube in dispatch validation |
+| `130e6b9` | WebGPU: request the adapter's storage-buffer limits (4K is 165,888,000 B) |
 
 The GL-only band at rows 582-584 is the coping's striped front face, shifted by about two
 rows: it is already present in `RT_Dump_GBuffer_Albedo` with `FluidParticles` empty, so it is

@@ -98,7 +98,7 @@ gracefully:
    SPIR-V instruction: OpIsNan`), after which the process aborts with `0xC0000409`. Test the
    exponent bits instead — `(asuint(v) & 0x7F800000) != 0x7F800000` — which is false exactly for
    NaN and ±Inf, is exact, and lowers cleanly: `CS_FluidDiagnostics3D.hlsl`, `CS_PbfCull.hlsl`
-   and `CS_PbfDiffuse.hlsl` (`0e2a332`).
+   and `CS_PbfDiffuse.hlsl` (`b4a8a75`).
 3. **A shader family name may not carry a `#permutation` suffix**: the WGSL-first attempt
    resolves the file from the requested name and rejects any extension but `.hlsl`/`.wgsl`, so
    `CS_FluidSeed3D.hlsl#divergent` failed to prepare. The driver strips everything from `#`
@@ -177,7 +177,7 @@ never recycled, because it must present.
   the texture's own cube view: the `TEXTURECUBE` SRV on D3D11 and D3D12 (six
   layers, `DepthOrArraySize == 6`), the cube image view with its sampler on Vulkan,
   a `samplerCube` on GL (`GL_TEXTURE_CUBE_MAP`), and a Cube view on WebGPU
-  (`a7f40b2`, `abaddb8`, `29ed39f`, `5e04cac`). **In T850's compute abstraction a
+  (`0bd825b`, `639e8a5`, `a5f6ba6`, `238be0f`). **In T850's compute abstraction a
   cube is read-only.** `ComputeReflection` assigns `Cube` only to a
   `ReadOnlyTexture`, and each backend treats a cube binding inside its sampled
   branch and rejects it for `ReadWriteTexture`; the APIs themselves do have
@@ -396,7 +396,7 @@ and never waits. Ordinary render-graph execution never maps or waits. Device hea
 dispatch, and readback so validation or device-loss failures surface through the normal
 WebGPU diagnostics.
 
-**Device limits follow the adapter (`6d601b2`).** The device requests the adapter's
+**Device limits follow the adapter (`130e6b9`).** The device requests the adapter's
 `maxStorageBufferBindingSize` and `maxBufferSize`, logged as
 `[WebGPU] storage limits: ...`. The WebGPU defaults (128 MiB and 256 MiB) are too small for
 full-screen per-pixel buffers at 4K: the particle solver's window buffer is 20 B per pixel,
@@ -434,7 +434,7 @@ both sampled and queried with `GetDimensions` gets a second `..._SPIRV_Cross_Dum
 alias on the same `binding`. `GLComputePipeline::Create` therefore drops exactly duplicated
 reflected entries (same type, binding index, register, dimension, storage format and
 constant count) before `SetValidatedLayout`; without it the water shade reflected 17
-bindings against 16 declared and the pipeline was never created (`29ed39f`).
+bindings against 16 declared and the pipeline was never created (`a5f6ba6`).
 
 Read-only cubes bind as `GL_TEXTURE_CUBE_MAP` and sample through `samplerCube`. The dispatch
 saves the previous binding with `GL_TEXTURE_BINDING_CUBE_MAP` for a cube target and

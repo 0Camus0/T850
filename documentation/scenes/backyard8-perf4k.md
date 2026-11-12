@@ -10,9 +10,9 @@ measurements". Pipeline reference:
 
 Setup: RTX PRO 6000 Blackwell, Linux, Vulkan, 3840x2160, screen-space renderer.
 
-- Before: `a960d75`, whose fluid GPU path is the original code. It includes WO-P4 (CPU only)
+- Before: `764c078`, whose fluid GPU path is the original code. It includes WO-P4 (CPU only)
   and the WO-P2a marker (no effect).
-- After: HEAD `f8efec4` plus status commits (WO-P1, WO-P2a/b, WO-P3, WO-P4).
+- After: HEAD `620f833` plus status commits (WO-P1, WO-P2a/b, WO-P3, WO-P4).
 - Close view: `--backyard-camera 0 1.3 -10.0 0.32 0`.
 
 GPU per pass (`--benchmarkFixedDt`, `--profile` 400 frames, second of two runs; builds
@@ -57,7 +57,7 @@ How to measure cleanly:
 
 ## What changed
 
-### WO-P0: measurement tooling (`dd412a8`)
+### WO-P0: measurement tooling (`c3562bf`)
 
 - `--backyard-camera <x> <y> <z> <pitch> <yaw>` flag: overrides the authored camera at load
   time, applied in `BackyardScene::InitVars` right after `m_camera = *m_sceneSetup.GetCamera()`
@@ -66,7 +66,7 @@ How to measure cleanly:
   mode (frame statistics and CPU scope means), and the contention guard described above.
 - No GPU change; the tooling is what makes the other work orders measurable.
 
-### WO-P1: thickness and whitewater on a coarser grid (`c960808`)
+### WO-P1: thickness and whitewater on a coarser grid (`e906ff6`)
 
 The splat's thickness and whitewater scatter was the largest single cost (3.7 of 5.4 ms
 close up, 2.3 ms of that in the four whitewater atomics). The resolve blurs the thickness
@@ -87,7 +87,7 @@ sum with a 5x5 binomial anyway, so a coarser grid loses nothing visible.
   grid.
 - Measured effect: most of the splat gain, about 2.8 ms at the close view.
 
-### WO-P2a: buried marker in the anisotropy buffer (`2ff6ea2`)
+### WO-P2a: buried marker in the anisotropy buffer (`a5c30d1`)
 
 `CS_PbfAnisotropy` already has each particle's neighbour count and the weighted mean offset
 of its neighbours. A particle is buried when its neighbourhood is full and balanced:
@@ -95,7 +95,7 @@ of its neighbours. A particle is buried when its neighbourhood is full and balan
 `Anisotropy[i * 3 + 2].z` as `-neighbours`, positive otherwise. No new buffer; the marker
 has no effect on its own (no effect in the before build).
 
-### WO-P2b: cap-aware buried skip (`d1bc742`, follow-up `f8efec4`)
+### WO-P2b: cap-aware buried skip (`2fa1463`, follow-up `620f833`)
 
 `CS_FluidSplat` skips buried particles in the ellipsoid depth loop and the surfel pass,
 before the rectangle loop. The thickness/whitewater loop still includes them, so coverage
@@ -104,11 +104,11 @@ and the metre-of-water sum do not change.
 The first version skipped everywhere and punched rectangular holes near the camera: the
 depth rectangle is capped at 64 half-res pixels, and a surface ellipsoid 2 m away projects
 to about 140 px in 4K, so the cap cut it and the overlapping interior particles that used
-to fill those cuts were the ones being skipped. The follow-up (`f8efec4`) computes the
+to fill those cuts were the ones being skipped. The follow-up (`620f833`) computes the
 uncapped projected bound first and applies the skip only when `bPxRaw < 48`, where the
 cap does not bite. Measured effect: about 0.24 ms default, 0.06 ms close.
 
-### WO-P3: shade: per-frame sky term and Fresnel-gated SSR (`55ea7ed`, follow-up `be39443`)
+### WO-P3: shade: per-frame sky term and Fresnel-gated SSR (`7b1b9af`, follow-up `66f4301`)
 
 - `SkyIrradiance()` gives the same value for every pixel. Thread 0 of each 8x8 group
   computes it into `groupshared float3`, followed by `GroupMemoryBarrierWithGroupSync()`;
@@ -119,12 +119,12 @@ cap does not bite. Measured effect: about 0.24 ms default, 0.06 ms close.
   trace is skipped and the environment is used. The first commit's gate was inert:
   `fresnel = 0.02 + 0.98 * pow(1 - cos, 5)` never drops below 0.02, so `F0 = 0.0 /
   F1 = 0.10` left `smoothstep` at least 0.104 and the trace always ran. The follow-up
-  (`be39443`) sets F0 = 0.03, F1 = 0.06 (with power 5, Fresnel 0.03 is about 53 degrees of
+  (`66f4301`) sets F0 = 0.03, F1 = 0.06 (with power 5, Fresnel 0.03 is about 53 degrees of
   incidence and 0.06 about 62), so the gate is active. Measured effect: about 0.25 ms of
   shade at the close view.
 
 ### WO-P4: tiled deferred lights: CPU work and uploads proportional to the lights in use
-(`4389a36`, follow-up `6961c93`)
+(`5db18a7`, follow-up `bdede68`)
 
 At 4K the tiled-light path in `RenderQuad.cpp` cleared a 16.7 MB index array with
 `std::fill` every frame and re-uploaded it whole through a new staging buffer whenever any
@@ -245,8 +245,8 @@ From the work orders document:
 
 | WO | Commits |
 |---|---|
-| P0 | `dd412a8` |
-| P1 | `c960808` |
-| P2 | `2ff6ea2` (P2a), `d1bc742` (P2b), `f8efec4` (P2b follow-up) |
-| P3 | `55ea7ed`, `be39443` (follow-up) |
-| P4 | `4389a36`, `6961c93` (follow-up) |
+| P0 | `c3562bf` |
+| P1 | `e906ff6` |
+| P2 | `a5c30d1` (P2a), `2fa1463` (P2b), `620f833` (P2b follow-up) |
+| P3 | `7b1b9af`, `66f4301` (follow-up) |
+| P4 | `5db18a7`, `bdede68` (follow-up) |

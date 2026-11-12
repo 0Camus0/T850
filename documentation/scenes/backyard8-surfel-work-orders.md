@@ -1,6 +1,6 @@
 # Backyard 8: surfel splatting for the particle renderer, work orders
 
-Branch `backyard8-surfels` (from `7c88f66`). Coordinator: the opencode orchestrator. Workers:
+Branch `backyard8-surfels` (from `5da6c0f`). Coordinator: the opencode orchestrator. Workers:
 `qwen-5090`, `qwen-local`. Reviewer: Claude. Paths are relative to the repository root unless
 they start with `T850/`-relative names inside a work order.
 
@@ -351,7 +351,7 @@ its own dome, so the calm pool reads as a lumpy carpet with no clean reflection.
 prototyped the fix and checked it from four viewpoints against screen space: it now matches
 screen space, in `/tmp/surfel-proto/p5_cmp_*.png` (middle rows). Port the prototype
 (`/tmp/surfel-proto/CS_FluidSplat.diff`, `/tmp/surfel-proto/CS_ParticleShade.diff`, both
-against `10e9f8e`) with these differences:
+against `960d9f4`) with these differences:
 
 1. `CS_FluidSplat`, ellipsoid branch, surfel pass:
    - Compute the **disc axis** once per particle, AFTER the early-out block, not before it
@@ -442,15 +442,15 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
 
 | WO | Owner | State | Commit | Results |
 |---|---|---|---|---|
-| WO-1 engine plumbing | qwen-5090 | accepted | b9e89ad + a2a372b | Build exit 0. `check_fluid_constants.py` exit 0. `check_gl_twins.py` exit 0. Three 300-frame runs (`--scene 8`, `--dump-frame 300`): splat / splat+water / screen-space all exit 0, **0 `[ERROR]`** each; pipelines created: `CS_FluidSplat` bindings=9 (x3), `CS_FluidResolve` bindings=7 (x2), `CS_ParticleShade` bindings=16, `CS_FluidSphereShade` bindings=4. a2a372b drops manifest 4-7 + graph reg 2/3/4 of the sphere pass (Claude's review). |
-| WO-2 shaders | qwen-local | accepted | 5477235 + e5aefd8 | `5477235` initial (a3129ba/1a68237 `KeepWaterBindings` rejected by Claude and reverted). `e5aefd8` applies both review fixes: farthest-tap early out with empty tap disabling the test (correctness verified over 300k random cases: 0 unsafe skips; `nearest` rule proven unsafe), dead sphere-shade resources deleted. glslang+spirv-val exit 0 on all four; twins regenerated. `check_gl_twins.py` exit 0, `check_fluid_constants.py` exit 0, build exit 0. Splat style 0 and style 3 smoke: 0 `[ERROR]`. |
-| WO-3 scene + GUI | qwen-5090 | accepted | 10e9f8e | Build exit 0. Three 300-frame runs (`--scene 8 --dump-frame 300 --logLevel info`) all exit 0, **0 `[ERROR]`**: splat dispatches `Fluid Surfel Splat` x1 and `Fluid Resolve (surfels)` x1; splat+water likewise; screen-space dispatches neither (0/0). Unknown key rejected: `[Backyard8] Fluid config rejected: ... unknown_key`. `check_fluid_constants.py` exit 0, `check_gl_twins.py` exit 0. JSON has surfelBand 1.0 / surfelSharpness 2.0. |
+| WO-1 engine plumbing | qwen-5090 | accepted | 0d77183 + 32bbe6b | Build exit 0. `check_fluid_constants.py` exit 0. `check_gl_twins.py` exit 0. Three 300-frame runs (`--scene 8`, `--dump-frame 300`): splat / splat+water / screen-space all exit 0, **0 `[ERROR]`** each; pipelines created: `CS_FluidSplat` bindings=9 (x3), `CS_FluidResolve` bindings=7 (x2), `CS_ParticleShade` bindings=16, `CS_FluidSphereShade` bindings=4. 32bbe6b drops manifest 4-7 + graph reg 2/3/4 of the sphere pass (Claude's review). |
+| WO-2 shaders | qwen-local | accepted | 7b510da + 1ed5b85 | `7b510da` initial (9d99a66/76e9221 `KeepWaterBindings` rejected by Claude and reverted). `1ed5b85` applies both review fixes: farthest-tap early out with empty tap disabling the test (correctness verified over 300k random cases: 0 unsafe skips; `nearest` rule proven unsafe), dead sphere-shade resources deleted. glslang+spirv-val exit 0 on all four; twins regenerated. `check_gl_twins.py` exit 0, `check_fluid_constants.py` exit 0, build exit 0. Splat style 0 and style 3 smoke: 0 `[ERROR]`. |
+| WO-3 scene + GUI | qwen-5090 | accepted | 960d9f4 | Build exit 0. Three 300-frame runs (`--scene 8 --dump-frame 300 --logLevel info`) all exit 0, **0 `[ERROR]`**: splat dispatches `Fluid Surfel Splat` x1 and `Fluid Resolve (surfels)` x1; splat+water likewise; screen-space dispatches neither (0/0). Unknown key rejected: `[Backyard8] Fluid config rejected: ... unknown_key`. `check_fluid_constants.py` exit 0, `check_gl_twins.py` exit 0. JSON has surfelBand 1.0 / surfelSharpness 2.0. |
 | WO-4 integration report | qwen-local | done | no source change | Build exit 0. `--game-selftest` **78 PASS, 0 FAIL, exit 0**. Both validators exit 0. Regression (vulkan 960x540): screen-space f24/f90/f300 **PASS** (dmean 0.04/0.23/0.09), spheres f24/f90/f300 **PASS** (0.04/0.93/0.05), levels **PASS** (lake -0.0438 m, water -0.1696 m), splat f24/f90/f300 **FAIL by design** (dmean 31.84/32.34/73.72). 8 captures 1920x1080 in `/tmp/surfel-review/`. 400-frame 1080p water-start, 2nd run, fluid passes: splat **1.865640 ms** vs screen-space **1.248405 ms** (ratio **1.50**); surfel passes (Surfel Splat + Resolve (surfels)) 0.492505 + 0.012263 ms. |
-| Claude review and tuning | Claude | done | `3b733f4` + docs fix | Rounds 1-2 reviewed; surfel normals prototyped and ported (WO-6); splat references re-frozen; full gate PASS; WO-5 corrected (old-splat cost pairing, data-flow resolve stage) |
-| WO-6 surfel normals round 2 | qwen-local | accepted | d34f9f9 + ac4ca39 | `d34f9f9` ports the prototype with all three differences (axis after early-out was initially still before it; fixed in `ac4ca39`, early-out return line 419, axis line 421). glslang+spirv-val exit 0; twins regenerated; `check_gl_twins.py` exit 0; `check_fluid_constants.py` exit 0; build exit 0. Lake f120 normal view **smooth**: green-dominant pool G mean 153.5, **std 1.07/255** (mottled dome look gone); water f90 std 11.3, f240 std 11.4. `Fluid Surfel Splat` **0.578613 ms** (2nd of 2 runs) vs 0.57 target: +0.009, within 0.05. 300-frame splat/splat+water/screen-space: exit 0, **0 `[ERROR]`**. |
-| WO-7 surfel smoothing setting | qwen-5090 | accepted | 1f30211 | Build exit 0. `surfel_smoothing` default 1.0, validated [0,4], clamped in `BuildParticleDesc`, `envParams[1] = surfels ? smoothing : 0`, JSON `surfelSmoothing: 1.0`, GUI slider 0..4. Unknown key still rejected (`unknown_key`). 300-frame splat run exit 0, 0 `[ERROR]`. Both validators exit 0. Slider value verified reaching the GPU constant with a temporary probe (0.000 vs 4.000, probe reverted): live. Visual effect is **small** (MAD 0.28/255 between smoothing 0 and 4, ripples off) because the gather is already near-uniform on the calm lake; see Requests to Claude. |
+| Claude review and tuning | Claude | done | `8ead398` + docs fix | Rounds 1-2 reviewed; surfel normals prototyped and ported (WO-6); splat references re-frozen; full gate PASS; WO-5 corrected (old-splat cost pairing, data-flow resolve stage) |
+| WO-6 surfel normals round 2 | qwen-local | accepted | e096de5 + 9432fa2 | `e096de5` ports the prototype with all three differences (axis after early-out was initially still before it; fixed in `9432fa2`, early-out return line 419, axis line 421). glslang+spirv-val exit 0; twins regenerated; `check_gl_twins.py` exit 0; `check_fluid_constants.py` exit 0; build exit 0. Lake f120 normal view **smooth**: green-dominant pool G mean 153.5, **std 1.07/255** (mottled dome look gone); water f90 std 11.3, f240 std 11.4. `Fluid Surfel Splat` **0.578613 ms** (2nd of 2 runs) vs 0.57 target: +0.009, within 0.05. 300-frame splat/splat+water/screen-space: exit 0, **0 `[ERROR]`**. |
+| WO-7 surfel smoothing setting | qwen-5090 | accepted | b416143 | Build exit 0. `surfel_smoothing` default 1.0, validated [0,4], clamped in `BuildParticleDesc`, `envParams[1] = surfels ? smoothing : 0`, JSON `surfelSmoothing: 1.0`, GUI slider 0..4. Unknown key still rejected (`unknown_key`). 300-frame splat run exit 0, 0 `[ERROR]`. Both validators exit 0. Slider value verified reaching the GPU constant with a temporary probe (0.000 vs 4.000, probe reverted): live. Visual effect is **small** (MAD 0.28/255 between smoothing 0 and 4, ripples off) because the gather is already near-uniform on the calm lake; see Requests to Claude. |
 | WO-8 exit fault investigation | qwen-5090 | done (not reproduced) | no source change | **0 of 30** runs faulted with the work order's two-instance gdb loop (15 x 2, `--dump-frame 120`): 30 normal exits, 0 segfault, 0 hang; `RT dump complete` preceded every clean exit; 0 `[ERROR]`. Coordinator ran 16 more (`--dump-frame 300`, two instances): 16 normal, 0 signals, 0 `[ERROR]` — **46 runs total, 0 faults**. No stacks exist to report. Candidate subsystems (hypothesis only, unproven): `exit(0)` at `DayScene.cpp:2601` bypasses `OnDestroyApplication`, so the driver/`g_threadPool` are torn down by static destructors while threads may still run; `ThreadPool::~ThreadPool` joins workers that may be in `vkDeviceWaitIdle`; `SubmitCurrentFrameAndWait` -> `vkQueueWaitIdle` can block under GPU contention. Logs in `/tmp/exitfault_*.log`, `/tmp/xf2_*.log`. |
-| WO-5 docs | qwen-5090 | done | 46d78e2 | 3 files, +145/-0: new `backyard8-particle-surfels.md` (136 lines, sections 1-7: what was wrong / design / data flow / config keys / cost / verification / not done), one README row at line 108 **directly after** `backyard8-ssfr-whitewater.md` (line 107), one paragraph in `backyard8-screen-space-fluid.md`. Number audit: every value traces to the round-2 notes list or a Status row (no invented numbers; lake column of the old style is "not measured"). All four open items present: D3D11/D3D12/GL not run, `exit(0)` fault, +0.5-0.6 ms surfel cost, slider 4.23->4.15. Code claims spot-checked against HEAD (6 power-iteration steps, `clamp(... * EnvParams.y, 1, 48)`, `exp(-2 r^2)`, `saturate(conf*4)`). |
+| WO-5 docs | qwen-5090 | done | 94379da | 3 files, +145/-0: new `backyard8-particle-surfels.md` (136 lines, sections 1-7: what was wrong / design / data flow / config keys / cost / verification / not done), one README row at line 108 **directly after** `backyard8-ssfr-whitewater.md` (line 107), one paragraph in `backyard8-screen-space-fluid.md`. Number audit: every value traces to the round-2 notes list or a Status row (no invented numbers; lake column of the old style is "not measured"). All four open items present: D3D11/D3D12/GL not run, `exit(0)` fault, +0.5-0.6 ms surfel cost, slider 4.23->4.15. Code claims spot-checked against HEAD (6 power-iteration steps, `clamp(... * EnvParams.y, 1, 48)`, `exp(-2 r^2)`, `saturate(conf*4)`). |
 
 ## Notes from Claude
 
@@ -461,7 +461,7 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
   Backyard 8, and both put the wrong scene on the user's desktop; the 21:30 run never exited.
   A guard now stops agent-launched DayScene runs without `--scene 8`. Use `--dump-frame N`,
   which exits after frame N.
-- **Review of WO-2 (`5477235`): not accepted yet. Two fixes; the rest matches the spec.**
+- **Review of WO-2 (`7b510da`): not accepted yet. Two fixes; the rest matches the spec.**
   1. **`CS_FluidSplat` early out tests the wrong tap.** It must use the **farthest** of the
      five front depths, and any empty tap must disable the early out. The committed code
      returns when `c.z - bound > nearest + SurfelBand`, and that skips particles that do
@@ -471,8 +471,8 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
      `cornerOffset` and tap `(hi.x, hi.y)` directly.
   2. **`CS_FluidSphereShade` unused bindings.** See the amended last step of WO-2.
   3. Correction to the WO-2 commit body: the twin check does **not** fail on the base tree.
-     `77a0e3f` passes (58 kernels, 53 twins).
-- **Review of WO-1 (`b9e89ad`): accepted, with one follow-up.** Correct as specified:
+     `e0ce83d` passes (58 kernels, 53 twins).
+- **Review of WO-1 (`0d77183`): accepted, with one follow-up.** Correct as specified:
   - the scope;
   - the descriptor and validation;
   - the builder (stage to `Iteration`, band in metres, sharpness, shade `Mode` 2);
@@ -485,7 +485,7 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
   the only twin failure is `CS_FluidSphereShade.glsl`. Both other checks pass:
   `check_fluid_constants.py` exits 0 and the WO-2 twins match.
 
-- **Review of `a3129ba` (`KeepWaterBindings`): rejected; revert it.** Fake reads multiplied by
+- **Review of `9d99a66` (`KeepWaterBindings`): rejected; revert it.** Fake reads multiplied by
   zero are compiler-dependent: the worker showed that the glslang on PATH removes them, so the
   twin check still fails. They cost three reads per pixel, and `dot(inf, 0)` is NaN in the
   alpha.
@@ -499,14 +499,14 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
     - `--scene 8 --fluid-render splat` with `particles.style` 3 runs with zero `[ERROR]`;
     - the `spheres` regression captures pass.
 
-- **Review of `a2a372b` + `e5aefd8`: accepted; WO-2 is accepted (runtime pending WO-3).**
+- **Review of `32bbe6b` + `1ed5b85`: accepted; WO-2 is accepted (runtime pending WO-3).**
   - The early out uses the farthest tap; any empty tap disables it, and the true corners are
     tapped.
   - `CS_FluidSphereShade` declares only b0/t0/t1/u0. The manifest and the pass match.
-  - On HEAD, `check_gl_twins.py` passes (it had failed since `5477235`) and
+  - On HEAD, `check_gl_twins.py` passes (it had failed since `7b510da`) and
     `check_fluid_constants.py` exits 0.
 
-- **Review of WO-3 (`10e9f8e`) and WO-4: both accepted.**
+- **Review of WO-3 (`960d9f4`) and WO-4: both accepted.**
   - WO-3's routing is right: surfels run only for the particle water style, and anisotropy
     and whitewater run for both water renderers.
   - Claude reproduced WO-4's numbers. Committed surfels cost 1.73 ms of fluid passes, against
@@ -523,7 +523,7 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
 - **Next round: WO-6 and WO-7 in parallel, then WO-8.** WO-5 waits for Claude's sign-off of
   WO-6/7. Claude re-freezes the `splat` references after that sign-off.
 
-- **Review of WO-6 (`d34f9f9`) and WO-7 (`1f30211`): both accepted; Claude signs off the
+- **Review of WO-6 (`e096de5`) and WO-7 (`b416143`): both accepted; Claude signs off the
   surfel renderer.**
   - The code matches the prototype with the specified differences.
   - Claude's captures from the committed shaders match the prototype: mean absolute
@@ -552,7 +552,7 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
     small: normal-map roughness on the splash at f90 (mean |Laplacian| of debug view 1) is
     4.23 at 0 and 4.15 at 4, and the two runs agree within 0.02. On calm water every disc
     already points up. The docs must say this plainly.
-  - **Claude's integration commit `3b733f4`:**
+  - **Claude's integration commit `8ead398`:**
     - `splat` references re-frozen from three-run means, spread 0.002 / 0.056 / 0.214 %;
       f300 bbox top set to 229, the far wet-deck patch, as for screen space;
     - the `EnvParams.y` comments fixed and the twin regenerated.
@@ -566,7 +566,7 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
       |---|---|---|
       | Surfels | 1.84 ms (Surfel Splat 0.57-0.58 ms) | 1.19 ms |
       | Screen space | 1.21 ms | 0.79 ms |
-      | Old splat water style (`7c88f66`) | 2.17 ms | not measured |
+      | Old splat water style (`5da6c0f`) | 2.17 ms | not measured |
 
     - Prototype vs committed renders: mean absolute difference 0.61 / 0.09 / 0.27 levels
       (lake / lake normals / high view). On the splash: 4.33, against 4.38 between two runs
@@ -582,7 +582,7 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
 
 ## Requests to Claude
 
-- **WO-5 ready for review.** `46d78e2`: exactly three files (new `backyard8-particle-surfels.md` 136 lines with sections 1-7, one README row, one paragraph in the screen-space doc), +145/-0. Verified:
+- **WO-5 ready for review.** `94379da`: exactly three files (new `backyard8-particle-surfels.md` 136 lines with sections 1-7, one README row, one paragraph in the screen-space doc), +145/-0. Verified:
   - the README row is at line 108, **directly after** the `backyard8-ssfr-whitewater.md` row at line 107 (the only README change is that one inserted line);
   - every number traces to your round-2 list or a Status row — no invented values, and the old style's lake column is "not measured";
   - all four open items are in "what is not done" (D3D11/D3D12/GL, the `exit(0)` fault, the 0.5-0.6 ms surfel cost, the slider's 4.23 -> 4.15);
@@ -590,7 +590,7 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
   - code claims spot-checked against HEAD (6 power-iteration steps, `clamp(... * EnvParams.y, 1, 48)`, `exp(-2 r^2)`, `saturate(conf * 4)`).
 - **One stale paragraph left alone (out of WO-5 scope, your call).** In `backyard8-screen-space-fluid.md` the older paragraph before the new one still says the particle water style goes through `CS_FluidSphereShade` "with no front-surface reconstruction, so it reflects only the sky". Style 0 no longer reaches that kernel at all, so that sentence is now wrong and contradicts the paragraph WO-5 added right after it. WO-5 was scoped to "one paragraph", so I did not let it rewrite the earlier one. Suggest a follow-up sentence: style 0 routes to the screen-space pipeline with surfels; styles 1-3 keep `CS_FluidSphereShade`.
 - **Round 2 integration is green:** build exit 0; `check_gl_twins.py` exit 0; `check_fluid_constants.py` exit 0; splat / splat+water / screen-space 300-frame runs all exit 0 with 0 `[ERROR]`.
-- **WO-6:** one requirement was missed on the first commit and sent back (`d34f9f9` computed the disc axis *before* the early out, the prototype's ordering WO-6 rules out, with a comment claiming otherwise). `ac4ca39` moves it after the early-out return (now line 419; axis 421). Output verified unchanged (lake G std 1.07 vs 1.1). Visual result: the lake normal view is smooth (G std 1.07/255 over green-dominant pool pixels). `Fluid Surfel Splat` 0.578613 ms vs the 0.57 target.
+- **WO-6:** one requirement was missed on the first commit and sent back (`e096de5` computed the disc axis *before* the early out, the prototype's ordering WO-6 rules out, with a comment claiming otherwise). `9432fa2` moves it after the early-out return (now line 419; axis 421). Output verified unchanged (lake G std 1.07 vs 1.1). Visual result: the lake normal view is smooth (G std 1.07/255 over green-dominant pool pixels). `Fluid Surfel Splat` 0.578613 ms vs the 0.57 target.
 - **WO-7 needs your judgement — the slider is live but visually weak.** Config -> descriptor -> `EnvParams.y` is verified end to end (temporary probe showed 0.000 vs 4.000 reaching the constant; probe reverted). But the rendered effect is small: MAD **0.28/255** between `surfelSmoothing` 0 and 4 (lake, ripples off), against 0.69 for a band change. The gather radius should swing 1 px to ~49 px at that distance, so the surface is already near-uniform and extra taps converge on the same mean. That may be exactly what WO-6's acceptance wanted ("smooth, uniform green"), but it makes WO-7's slider nearly inert on calm water. Options: accept as-is, raise the gain (e.g. `EnvParams.y` squared, or remove the 1 px floor), or widen the range. Not changed — awaiting your call.
 - **WO-8 did not reproduce.** 0 of 30 in your loop; I added 16 more at `--dump-frame 300` with two instances: 0 in 46 total. No stacks, so no cause is established. The `exit(0)` at `DayScene.cpp:2601` (bypasses `OnDestroyApplication`) is the most plausible lead and is a one-line-ish thing to test (return through the normal shutdown instead), but that is a source change outside WO-8 and I did not make it.
 - **Process note:** the WO-6 worker could not start the first time because I asked it to view PNGs and this host lacks libturbojpeg; I re-dispatched without image viewing and used pixel statistics instead. Also, only one real GPU exists here, so the two parallel workers contend for it; WO-6's timing runs were done with no other worker active.
@@ -600,15 +600,15 @@ Use numbers only from the WO-4 row and Claude's notes; anything not measured is 
      reached only after two wrong versions. My first fix ("nearest valid tap") was worse than the
      original: a pool particle at 8 m beside a splash-sheet silhouette is skipped, so the pool
      pixels beside the sheet lose their surfel normals. Claude's rule is correct and is what ships
-     (`e5aefd8`): farthest tap, an empty tap disables the test, `(hi.x, hi.y)` tapped directly,
+     (`1ed5b85`): farthest tap, an empty tap disables the test, `(hi.x, hi.y)` tapped directly,
      `cornerOffset` dropped. Verified over 300k random rectangles: 0 unsafe skips.
   2. **`CS_FluidSphereShade` unused bindings.** Deleting the water style makes glslang drop
      `ThicknessBits`/`SceneColor`/`LinearSampler`/`SceneDepth`, and
      `ComputePipeline::SetValidatedLayout` rejects any declared/reflected count mismatch
      (`BaseDriver.cpp:70`). The rejected dummy-read approach was abandoned as Claude instructed; the
-     declarations and their unused helpers are deleted in `e5aefd8`, and the manifest (indices 4-7)
+     declarations and their unused helpers are deleted in `1ed5b85`, and the manifest (indices 4-7)
      and the `Fluid Sphere Shade` pass (register 2, both `Deferred:COLOR0`, `GBuffer:DEPTH`) follow
-     in `a2a372b`.
+     in `32bbe6b`.
   3. **`Fluid Surfel Splat` shares `CS_FluidSplat.hlsl` with `Fluid Splat`**, so pipeline-creation
      logs cannot tell the two apart. The graph does log
      `[RenderGraph] Pass 'Fluid Surfel Splat' dispatched ...`, which is what WO-3's acceptance uses;

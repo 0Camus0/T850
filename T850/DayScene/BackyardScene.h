@@ -175,6 +175,11 @@ protected:
     HeadingDown,
     HeadingUp,
     ToggleArrow,
+    // Backyard 8 owns these three; the base handler dispatches them to the virtual
+    // PerformSceneQuickAction so the Android touch bar works without ImGui input.
+    RestartStill,
+    RestartDrop,
+    ToggleRenderer,
     Count
   };
   struct QuickBarHit {
@@ -185,6 +190,9 @@ protected:
   QuickBarHit m_quickBarHits[kQuickBarMaxHits];
   int m_quickBarHitCount = 0;
   void PerformQuickAction(QuickBarAction action);
+  // Called for the scene-8 actions above. The base ignores them; Backyard8Scene handles
+  // restart-still, restart-drop and the renderer toggle.
+  virtual void PerformSceneQuickAction(QuickBarAction action) { (void)action; }
   // Reset clears the spawned balls, so it takes two presses: the first arms it for a few
   // seconds and the label changes, the second acts.
   bool ResetArmed() const;

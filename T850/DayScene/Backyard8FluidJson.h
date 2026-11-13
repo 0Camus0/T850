@@ -213,6 +213,21 @@ namespace t850 {
     float causticGain = 0.25f;
   };
 
+  // Android-only performance overrides. Zero / negative means "keep the base value".
+  // They are applied by LoadBackyard8FluidConfig only when OS_ANDROID is defined, so the
+  // desktop and Steam Deck keep the full-quality profile in the same JSON file.
+  struct Backyard8AndroidConfig {
+    int solverIterations = 0;
+    int substeps = 0;
+    int smoothingIterations = -1;
+    int thicknessDownsample = -1;
+    int maxStepsPerFrame = 0;
+    float particleRadius = 0.0f;  // 0 = keep; larger spacing seeds fewer particles
+    float fixedStep = 0.0f;       // 0 = keep; mobile can run one larger step per frame
+    int anisotropy = -1;          // -1 = keep, 0 = skip the per-particle anisotropy pass
+    int whitewater = -1;          // -1 = keep, 0 = skip whitewater kernels and splat
+  };
+
   struct Backyard8FluidConfig {
     int version = 1;
     Backyard8SolverConfig solver;
@@ -220,6 +235,7 @@ namespace t850 {
     Backyard8ParticleConfig particles;
     Backyard8ScreenSpaceConfig screenSpace;
     Backyard8WhitewaterConfig whitewater;
+    Backyard8AndroidConfig android;
   };
 
   // Returns false only when the file exists and is malformed. A missing file leaves the

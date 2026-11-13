@@ -43,7 +43,8 @@ def t850PhysicsDemoAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
     'Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb',
     'Models/rewind_cyborg.glb',
-    'Models/porsche_992_gt3_r__www.vecarz.com.glb'
+    'Models/porsche_992_gt3_r__www.vecarz.com.glb',
+    'Models/Backyard/backyard_layout.json'
 ]
 def t850BackyardAssetIncludes = t850AndroidCoreAssetIncludes + [
     'Scenes/Backyard*.json',
@@ -82,7 +83,8 @@ def t850ModelAssetIncludes = t850AndroidCommonAssetIncludes + [
 def t850ProductionAssetIncludes = t850AndroidBaseAssetIncludes + [
     'Scenes/**',
     'Models/RagdollEdits/**',
-    'Models/Q3/*_work/*_manifest.json'
+    'Models/Q3/*_work/*_manifest.json',
+    'Models/Backyard/backyard_layout.json'
 ]
 
 def localSigningProperties = new Properties()

@@ -2520,6 +2520,11 @@ void BackyardScene::PerformQuickAction(QuickBarAction action) {
     case QuickBarAction::ToggleArrow:
       m_showWind = !m_showWind;
       break;
+    case QuickBarAction::RestartStill:
+    case QuickBarAction::RestartDrop:
+    case QuickBarAction::ToggleRenderer:
+      PerformSceneQuickAction(action);
+      break;
     case QuickBarAction::Count:
       break;
   }

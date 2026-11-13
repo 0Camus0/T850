@@ -29,8 +29,8 @@ import org.json.JSONObject;
 
 @SuppressWarnings("deprecation")
 public final class LauncherActivity extends Activity {
-    // Highest index registered in DayScene/Application.cpp (0 Sandbox ... 7 Backyard).
-    public static final int MAX_SCENE_INDEX = 7;
+    // Highest index registered in DayScene/Application.cpp (0 Sandbox ... 8 Backyard 8).
+    public static final int MAX_SCENE_INDEX = 8;
     public static final String EXTRA_SCENE = "com.t850.engine.extra.SCENE";
     public static final String EXTRA_MODEL = "com.t850.engine.extra.MODEL";
     public static final String EXTRA_SCENE_FILE = "com.t850.engine.extra.SCENE_FILE";
@@ -208,6 +208,7 @@ public final class LauncherActivity extends Activity {
         scenes.add(new Option("Ragdoll Editor", 3));
         scenes.add(new Option("Scene Template", 4));
         scenes.add(new Option("Backyard", 7));
+        scenes.add(new Option("Backyard 8", 8));
 
         sandboxContentOptions.add(new Option("Scene file (.t8scene)", CONTENT_SCENE_FILE));
         sandboxContentOptions.add(new Option("Model file", CONTENT_MODEL));

@@ -174,5 +174,16 @@
     "wetTexel": 0.06,
     "wetResolution": 320,
     "causticGain": 0.25
+  },
+  "android": {
+    "solverIterations": 3,
+    "substeps": 1,
+    "smoothingIterations": 2,
+    "thicknessDownsample": 2,
+    "maxStepsPerFrame": 1,
+    "particleRadius": 0.16,
+    "anisotropy": 1,
+    "whitewater": 1,
+    "fixedStep": 0.0333333
   }
 }

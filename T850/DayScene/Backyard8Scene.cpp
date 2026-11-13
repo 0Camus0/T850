@@ -202,7 +202,7 @@ void Backyard8Scene::ApplyRenderModeToGraph() {
   graph.SetPassEnabled("Fluid Surfel Splat", surfels);
   graph.SetPassEnabled("Fluid Clear (splat mode)", spheres);
   graph.SetPassEnabled("Fluid Splat (splat mode)", spheres);
-  graph.SetPassEnabled("Whitewater Splat", waterShade);
+  graph.SetPassEnabled("Whitewater Splat", waterShade && m_config.whitewater.enabled);
   graph.SetPassEnabled("Fluid Sphere Shade", spheres);
   graph.SetPassEnabled("Fluid Resolve", screenSpace);
   graph.SetPassEnabled("Fluid Resolve (surfels)", surfels);
@@ -1243,6 +1243,96 @@ void Backyard8Scene::DrawWaterShadingPanel(t850::DevGuiContext& gui) {
   if (lookChanged) RegisterParticleSystem();
   gui.EndPanel();
 }
+
+void Backyard8Scene::DrawGameplayGui(t850::DevGuiContext& gui) {
+#ifdef OS_ANDROID
+  (void)gui;
+  m_runtimeGuiOpen = m_devGuiDrawnThisFrame;
+  m_devGuiDrawnThisFrame = false;
+  if (HudHidden()) return;
+  DrawGrabCrosshair();
+  DrawScene8QuickBar();
+  DrawAndroidTouchControls();
+#else
+  BackyardScene::DrawGameplayGui(gui);
+#endif
+}
+
+void Backyard8Scene::PerformSceneQuickAction(QuickBarAction action) {
+  switch (action) {
+    case QuickBarAction::RestartStill:
+      s_startMode = m_config.scene.startMode = 2;  // lake: resting pool, no drop
+      ApplyStartMode();
+      T8_LOG_INFO("[Backyard8] Quick action: restart still (lake)");
+      break;
+    case QuickBarAction::RestartDrop:
+      s_startMode = m_config.scene.startMode = 1;  // water: settled pool + falling sphere
+      ApplyStartMode();
+      T8_LOG_INFO("[Backyard8] Quick action: restart with falling ball");
+      break;
+    case QuickBarAction::ToggleRenderer:
+      m_config.particles.renderMode = m_config.particles.renderMode == 1 ? 0 : 1;
+      s_renderMode = m_config.particles.renderMode;
+      RegisterParticleSystem();
+      T8_LOG_INFO("[Backyard8] Quick action: renderer -> %s",
+                  m_config.particles.renderMode == 1 ? "screen space" : "particles");
+      break;
+    default:
+      break;
+  }
+}
+
+#ifdef OS_ANDROID
+void Backyard8Scene::DrawScene8QuickBar() {
+  if (!m_assetsCreated || !ImGui::GetCurrentContext()) return;
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  if (!viewport) return;
+  m_quickBarHitCount = 0;
+
+  constexpr float kMargin = 14.0f;
+  const float bottomInset =
+      BuildAndroidTouchLayout(viewport->WorkSize.x, viewport->WorkSize.y).stickRadius * 2.3f;
+  const float anchorY = viewport->WorkPos.y + viewport->WorkSize.y - kMargin - bottomInset;
+  ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, anchorY),
+                          ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+  ImGui::SetNextWindowBgAlpha(0.72f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 8.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+  const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing;
+  if (ImGui::Begin("##Backyard8QuickBar", nullptr, flags)) {
+    auto record = [this](QuickBarAction action) {
+      if (m_quickBarHitCount >= kQuickBarMaxHits) return;
+      const ImVec2 min = ImGui::GetItemRectMin();
+      const ImVec2 max = ImGui::GetItemRectMax();
+      QuickBarHit& hit = m_quickBarHits[m_quickBarHitCount++];
+      hit.minX = min.x;
+      hit.minY = min.y;
+      hit.maxX = max.x;
+      hit.maxY = max.y;
+      hit.action = action;
+    };
+    const bool screenSpace = m_config.particles.renderMode == 1;
+    if (ImGui::Button("Restart still")) PerformQuickAction(QuickBarAction::RestartStill);
+    record(QuickBarAction::RestartStill);
+    ImGui::SameLine();
+    if (ImGui::Button("Restart + falling ball")) PerformQuickAction(QuickBarAction::RestartDrop);
+    record(QuickBarAction::RestartDrop);
+    ImGui::SameLine();
+    if (ImGui::Button(screenSpace ? "Switch to particles" : "Switch to screen space"))
+      PerformQuickAction(QuickBarAction::ToggleRenderer);
+    record(QuickBarAction::ToggleRenderer);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", screenSpace ? "renderer: screen space" : "renderer: particles");
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(5);
+}
+#endif
 
 void Backyard8Scene::DrawDevGui(t850::DevGuiContext& gui) {
   m_devGuiDrawnThisFrame = true;

@@ -34,6 +34,9 @@ public:
   void OnDestoryScene() override;
   void OnUpdate(float deltaSeconds) override;
   void DrawDevGui(t850::DevGuiContext& gui) override;
+  // Android: replace the inherited Backyard 7 quick bar (balls/wind) with the three
+  // particle-fluid actions. Desktop keeps the inherited bar; its Dev GUI has the full set.
+  void DrawGameplayGui(t850::DevGuiContext& gui) override;
   // Scene 8's opening is the WATER sphere. The scripted ball is a solid mesh, so drawing it
   // put an opaque ball where the water should be.
   bool StartModeUsesBall() const override { return false; }
@@ -77,6 +80,12 @@ private:
   // Four panels: the solver (with the renderer combo), one per renderer (the two are
   // exclusive: only the selected renderer says ACTIVE), and the water shade, whose settings
   // both renderers' water paths draw with.
+  void PerformSceneQuickAction(QuickBarAction action) override;
+#ifdef OS_ANDROID
+  // Bottom-centre bar: restart still, restart with the falling water ball, and switch
+  // between screen-space and particle rendering.
+  void DrawScene8QuickBar();
+#endif
   void DrawSolverPanel(t850::DevGuiContext& gui);
   void DrawParticlePanel(t850::DevGuiContext& gui);
   void DrawScreenSpacePanel(t850::DevGuiContext& gui);

@@ -207,7 +207,10 @@ Order: defaults, JSON root fields, nested JSON fields, CLI, validation. The laun
 |---|---|
 | MSBuild missing | install a Visual Studio C++ host with v143; VS 2022 is preferred, while VS 2026 requires the v143 compatibility toolset |
 | ARM64 compiler missing | install Host x64 to ARM64 tools |
-| unresolved external after new file | `.vcxproj` and CMake registration |
+| unresolved external, or Android `undefined symbol`, after a new file | `.vcxproj`, desktop CMake and `cmake/AndroidBuild.cmake` registration; run `check_change.py` (`t850-change-self-check`) |
+| `Required Dawn package metadata is missing` | confirm the printed project path is the project you meant and the props file is missing there before running SetupDawn (`t850-error-triage`) |
+| `Dawn setup changed (<file>)` | an unintended byte change, often only line endings: restore the bytes. After an intentional translator edit, rerun setup; it does not rebuild unchanged packages (`t850-error-triage`) |
+| `--api gl`, `d3d11` or `d3d12` ignored on Linux | Linux and Android force Vulkan; use `t850-windows-remote-host` |
 | newer MSVC ABI in vcpkg library | rerun setup and verify the v143 host/toolset pin; ARM64 CI also requires the tracked v143 overlay triplets |
 | missing DLL | run from output dir and inspect post-build copies |
 | missing asset | cloud status/dependency list; use resource-relative path |

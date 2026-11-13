@@ -115,7 +115,7 @@ Classify common native exit codes:
 |---|---|
 | `0x80000003` | breakpoint, commonly Debug CRT/STL assertion |
 | `0xC0000005` | access violation |
-| `0xC0000409` | stack buffer overrun/fail-fast |
+| `0xC0000409` | stack buffer overrun/fail-fast; on WebGPU, first read stderr for a Tint compiler abort (`t850-error-triage`) |
 | `0xE06D7363` | unhandled MSVC C++ exception |
 
 A missing frame dump after a timed capture is not itself a diagnosis. Check the native exit code and CDB stack.

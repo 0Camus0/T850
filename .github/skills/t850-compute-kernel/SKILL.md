@@ -157,7 +157,9 @@ Either add a builder (below) or use a kernel that has one.
 - Every kernel GL can load needs `<stem>.glsl` next to the `.hlsl`. GL is the only backend that
   reads the twin; Vulkan/D3D compile the HLSL.
 - Generated twins carry `hlsl-sha256` in line 2. After editing the HLSL either regenerate with
-  `scripts/shaders/generate_gl_compute_twins.ps1 -Force` or update the twin by hand **and** fix
+  `scripts/shaders/generate_gl_compute_twins.ps1 -Force` (Windows) or, from `T850/` on Linux,
+  `SPIRV_CROSS=<spirv-cross> python3 scripts/shaders/generate_gl_compute_twins.py CS_X.hlsl` (tools from
+  `PATH` or `GLSLANG`/`SPIRV_CROSS`; `--check` verifies), or update the twin by hand **and** fix
   the hash, then check:
 
 ```bash
@@ -200,8 +202,10 @@ grep -E "dispatched compute|enabled compute kernel|using graphics implementation
 - `using graphics implementation by post-process mode` = compute is off; add
   `--postProcessMode compute`.
 - `compute dispatch failed; using graphics fallback` = it ran and failed; read the preceding
-  ERROR.
+  ERROR. With no ERROR before it, the backend's dispatch validation returned false silently;
+  `t850-error-triage` lists the causes seen so far and how to instrument it.
 
 Windows backends cannot be built on Linux (`MSVC` + `.vcxproj` + `windows-msvc-x64` triplets).
 Proton runs Windows binaries; it does not produce them. Until `scripts/build.ps1` plus a
 `--game-selftest` run has happened on Windows, D3D11/D3D12 are **unvalidated** — say so.
+From Linux, `t850-windows-remote-host` builds and runs D3D11, D3D12, GL and WebGPU on a Windows machine.

@@ -561,6 +561,22 @@ function Test-LauncherUi([string]$Name) {
         Assert-True ($btnRun.IsEnabled -and $btnEditor.IsEnabled -and $txtStatus.Text -notmatch 'WebGPU') 'Native readiness behavior changed'
         Assert-True ((Get-LaunchCommand).Args -notcontains '--graphics-fixture') 'Native API became a fixture'
         Assert-True ((Get-EditorLaunchCommand).Args -contains 'd3d12') 'Native editor mapping changed'
+        $originalScene = $cmbScene.SelectedItem
+        $particleScenes = @($cmbScene.Items | Where-Object Tag -eq '8')
+        Assert-True ($particleScenes.Count -eq 1 -and $particleScenes[0].Content -eq 'Backyard 8 (PBF)') "$Name must offer the particle Backyard scene exactly once"
+        foreach ($sceneId in @('7', '8')) {
+            $cmbScene.SelectedItem = @($cmbScene.Items | Where-Object Tag -eq $sceneId)[0]
+            Update-Preview
+            $command = Get-LaunchCommand
+            $sceneArgument = [array]::IndexOf($command.Args, '--scene')
+            Assert-True ($sceneArgument -ge 0 -and $command.Args[$sceneArgument + 1] -eq $sceneId) "$Name lost Backyard scene $sceneId in its launch command"
+            Assert-True ($command.Args -notcontains '--model' -and $command.Args -notcontains '--sceneFile') "$Name added unrelated asset overrides to Backyard scene $sceneId"
+            Save-Config
+            $cmbScene.SelectedItem = $originalScene
+            Load-Config
+            Assert-True ($cmbScene.SelectedItem.Tag -eq $sceneId) "$Name did not restore Backyard scene $sceneId from config"
+        }
+        $cmbScene.SelectedItem = $originalScene
         Set-Api 'webgpu-browser'
         Update-Preview
         Assert-True (-not $btnRun.IsEnabled -and $txtStatus.Text -match 'Browser (build|bundle) missing') 'Missing browser runtime did not disable RUN'

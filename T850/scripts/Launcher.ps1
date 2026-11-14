@@ -285,6 +285,7 @@ $xaml = @"
                             <ComboBoxItem Content="Voxel Streaming" Tag="5"/>
                             <ComboBoxItem Content="Minecraft" Tag="6"/>
                             <ComboBoxItem Content="Backyard" Tag="7"/>
+                            <ComboBoxItem Content="Backyard 8 (PBF)" Tag="8"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">

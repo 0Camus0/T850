@@ -10,6 +10,8 @@ Use this workflow to compare one deterministic scene state across graphics APIs.
 
 ## 1. Establish Paths and Preserve State
 
+On a Linux workstation, drive a Windows machine with `t850-windows-remote-host` instead; Linux builds run Vulkan only.
+
 ```powershell
 $RepoRoot = git rev-parse --show-toplevel
 $SourceRoot = Join-Path $RepoRoot 'T850'
@@ -113,6 +115,10 @@ Do not call a uniform image a pass merely because the process exited 0. White, b
 Frame dumps generally capture render targets before the runtime ImGui gameplay/developer overlay. For HUD validation, capture the composed application window separately; do not infer HUD correctness from `RT_Dump_BackBuffer.ppm`.
 
 ## 6. Compare Dumps
+
+When the scene's simulation is not deterministic (the Backyard 8 particle water), judge every API against the
+reference's run-to-run noise: capture the reference twice and compare each API's difference with the difference
+between those two runs (`backyard8_parity_compare.py`, `t850-windows-remote-host`).
 
 Use D3D12 as the usual diagnostic reference on Windows:
 

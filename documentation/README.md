@@ -24,6 +24,9 @@ This tree documents the current T850 rendering/game engine, runtime hosts, edito
 | voxel terrain/streaming skill | [T850 voxel-terrain skill](../.github/skills/t850-voxel-terrain/SKILL.md) |
 | image dump/compare skill | [T850 visual regression skill](../.github/skills/t850-visual-regression/SKILL.md) |
 | platform deploy/package skill | [T850 platform deploy skill](../.github/skills/t850-platform-deploy/SKILL.md) |
+| error message triage skill | [T850 error-triage skill](../.github/skills/t850-error-triage/SKILL.md) |
+| pre-commit and review skill | [T850 change self-check skill](../.github/skills/t850-change-self-check/SKILL.md) |
+| remote Windows host skill | [T850 Windows remote-host skill](../.github/skills/t850-windows-remote-host/SKILL.md) |
 
 ## Operations
 

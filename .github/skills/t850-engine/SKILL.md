@@ -34,6 +34,9 @@ Repository root contains `documentation/` and `LaunchSolution.bat`. Source root 
 | runtime ImGui controls, scene/profile precedence, startup-vs-live settings | `t850-scene-runtime-controls` skill |
 | new compute kernel, `compute_kernels.json`, compute pass, `compute_buffers`, binding registers, constants builder, compute falling back to graphics | `t850-compute-kernel` skill |
 | GPU uploads, staging, fences, retirement, resource lifetime, memory | `t850-gpu-resource-lifetime` skill |
+| an `[ERROR]`, compute fallback, pipeline or dispatch failure, Dawn/MSBuild check failure, undefined symbols, native exit code | `t850-error-triage` skill, before any fix |
+| before committing; reviewing another agent's change | `t850-change-self-check` skill |
+| D3D11, D3D12, GL or WebGPU build, run or parity from a Linux workstation | `t850-windows-remote-host` skill |
 | current implementation status | `documentation/current-status-and-roadmap.md` |
 | subsystem owner/dependencies | `documentation/dependency-map.md` then one owning document |
 | runtime scene choice | `documentation/runtime/runtime-hosts.md` |
@@ -72,17 +75,18 @@ Use only the indexed documentation tree; superseded documents belong in Git hist
 ## Local Change Procedure
 
 1. Start from one file, symbol, failing command, scene, backend, or visible behavior.
-2. Read the owning doc and one nearby call site/test.
-3. State one falsifiable hypothesis and one cheap check.
+2. Read the owning doc and one nearby call site/test. For an error message, first find the code that emits it (`t850-error-triage`).
+3. State one falsifiable hypothesis and one cheap check. Prove it before any action that takes more than a few minutes or changes another machine (SetupDawn, vcpkg, full rebuilds, deleting folders).
 4. Make the smallest edit.
 5. Run the focused check immediately.
 6. Broaden builds/tests according to blast radius.
 7. Update the owning doc when behavior, API, schema, command, output, or limitation changed.
+8. Before committing, run `check_change.py` (`t850-change-self-check`).
 
 ## Non-Negotiable Architecture Rules
 
 - Windows primary build is MSBuild/v143; keep CMake in parity for Android/Steam Deck.
-- Every new Framework `.cpp`: add to `Framework.vcxproj`, filters, and `Framework/CMakeLists.txt`.
+- Every new Framework `.cpp`: add to `Framework.vcxproj`, its filters, `Framework/CMakeLists.txt` and, unless it is desktop-only, `cmake/AndroidBuild.cmake`. New DayScene sources go in `DayScene.vcxproj`, `DayScene/CMakeLists.txt` and `cmake/AndroidBuild.cmake`. `check_change.py` checks every added source; `ValidateBuildRegistration.ps1` covers only a fixed subset.
 - Use `ResourceLocator` for portable runtime resources.
 - Render-pass order belongs in render-graph JSON.
 - Compute graph X/Y extent comes from `compute_extent_from`; authored `compute_depth` is a positive logical Z extent and defaults to 1.
@@ -106,6 +110,7 @@ Use only the indexed documentation tree; superseded documents belong in Git hist
 | local implementation | focused test/compile |
 | Framework/game/schema/physics/nav | x64 Debug + ARM64 Debug + self-test when applicable |
 | renderer/shared scene | Release + focused visual comparison |
+| backend (`video/<api>/`) change | that backend on Windows; from Linux use `t850-windows-remote-host` |
 | final/release | x64/ARM64 Debug+Release + Release self-test + full visual + platforms |
 | docs | relative-link audit + `git diff --check` |
 
@@ -120,6 +125,7 @@ State:
 - commands run and result;
 - visual cases/tolerance/skips;
 - docs updated;
+- each claim in docs, UI text and commit messages, backed by the code read or a measured run;
 - unrun or environment-blocked platforms;
 - remaining risks.
 

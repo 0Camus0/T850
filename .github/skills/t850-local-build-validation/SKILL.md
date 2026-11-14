@@ -46,6 +46,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Build registration failed' }
 
 Fix registration before spending time on platform builds.
 
+For Framework and DayScene sources, `ValidateBuildRegistration.ps1` checks only `game/`, `terrain/`, a fixed list of
+files and two DayScene scenes. For every other new source, and on Linux, run `check_change.py` from
+`t850-change-self-check`: it checks each added `.cpp` against the vcxproj, filters, desktop CMake and
+`cmake/AndroidBuild.cmake`.
+
 ## 3. Run the Authoritative Windows Matrix
 
 The repository script runs six cells and verifies outputs:

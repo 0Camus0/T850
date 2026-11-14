@@ -99,7 +99,8 @@ warps the mouse. Never move or click the real cursor or send keystrokes to test 
 input in-process instead (for example `--backyard-pick-test`, which feeds a synthetic
 `InputManager`).
 
-Use the focused workspace skills for exact procedures:
+Use the focused workspace skills for exact procedures. They live in `.github/skills/<name>/SKILL.md`; opencode reads
+them through the `.opencode/skills` link. Read the matching skill before you start:
 
 - `t850-build-run`
 - `t850-editor-extensions` (external/private editor hosts and static tools)
@@ -110,6 +111,9 @@ Use the focused workspace skills for exact procedures:
 - `t850-compute-kernel` (new compute kernels, `compute_kernels.json`, render-graph compute passes, `compute_buffers`)
 - `t850-arm64-gpu-benchmark` (Windows x64/ARM64 GPU, CPU, shader-cost capture and reporting)
 - `t850-platform-deploy`
+- `t850-error-triage` (find the code behind an `[ERROR]`, a compute fallback, a Dawn/MSBuild or link failure before fixing or rebuilding)
+- `t850-change-self-check` (before every commit: `check_change.py`, gates per changed path, claims, repository rules)
+- `t850-windows-remote-host` (D3D11/D3D12/GL/WebGPU build, run and parity on a Windows machine from Linux)
 
 ### Solution structure (`T850.sln`)
 
@@ -135,7 +139,7 @@ Platform mapping in MSBuild: `x64` → `x64`, `x86` → `Win32`, `ARM64` → `AR
 ### Important
 
 - **Never modify CMakeLists.txt files as a hack to fix linker errors.** The `.vcxproj` files are the source of truth. If something doesn't link, check the vcxproj file references and link settings.
-- Keep CMake source lists in parity because Android and Steam Deck consume them.
+- Keep the source lists in parity: the desktop `CMakeLists.txt` files feed Steam Deck, and Android builds from its own list in `cmake/AndroidBuild.cmake`. `ValidateBuildRegistration.ps1` checks only a fixed subset; `check_change.py` (`t850-change-self-check`) checks every new `.cpp`.
 - Post-build steps in the vcxproj files create **directory junctions** (symlinks) from the output directory to `Assets/` subdirectories (Shaders, Models, Fonts, Textures, Scenes, Layouts), so the running executable can find assets via relative paths.
 
 ---
@@ -143,6 +147,8 @@ Platform mapping in MSBuild: `x64` → `x64`, `x86` → `Win32`, `ARM64` → `AR
 ## Workflow rules
 
 - **Read docs before code.** When a user asks about a feature, first search `documentation/` for that subsystem doc (`grep` or MCP `search_docs`).
+- **Prove the premise before acting on an error.** Find the code that emits the message and check its inputs before fixing, rebuilding or changing another machine (`t850-error-triage`).
+- **Run `t850-change-self-check` before every commit.** Commit with pathspecs; never stash, reset or switch branches in a shared checkout; no Copilot co-author trailer; no host details.
 - **Use the dependency map** (`documentation/dependency-map.md`) to find what else changes. Every row tells you "read first" and "then read".
 - **Use ResourceLocator**, never raw filesystem paths (must work on Android packaged assets).
 - T850-owned config/scene/render-graph/compute-manifest JSON rejects unknown keys; preserve permissive parsing only for external extension formats and opaque component payloads.

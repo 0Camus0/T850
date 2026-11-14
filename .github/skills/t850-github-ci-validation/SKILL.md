@@ -193,7 +193,10 @@ Examples:
 - CMake configuration failure caused by repository files;
 - missing expected executable/APK/package;
 - shader compile failure;
-- deterministic test/package validation failure.
+- deterministic test/package validation failure;
+- Android-only `ld.lld: error: undefined symbol` for code the change added: the sources are missing from
+  `T850/cmake/AndroidBuild.cmake`. The desktop builds and `validate-build-registration` can still pass;
+  `check_change.py` from `t850-change-self-check` catches it before pushing.
 
 Fix locally, run `t850-local-build-validation`, commit/push only when authorized, and monitor the new SHA's new run.
 
